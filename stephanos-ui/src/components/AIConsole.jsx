@@ -24,6 +24,7 @@ const getCommandDeckOwnershipRegistry = () => {
 
 export default function AIConsole({
   surfaceOwnerKey,
+  panelId = 'commandDeck',
   input,
   setInput,
   submitPrompt,
@@ -32,7 +33,10 @@ export default function AIConsole({
   commandHistory,
 }) {
   const containerRef = useRef(null);
+  const rootRef = useRef(null);
   const inputRef = useRef(null);
+  const composerRef = useRef(null);
+  const executeRef = useRef(null);
   const documentScrollTopRef = useRef(0);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [perfCopyState, setPerfCopyState] = useState('idle');
@@ -164,7 +168,7 @@ export default function AIConsole({
     innerHistoryScrollCompleted: 'no',
   });
 
-  const getAnswerHistoryScrollContainer = () => resolveVisibleAnswerHistoryContainer() || containerRef.current || null;
+  const getAnswerHistoryScrollContainer = () => containerRef.current || null;
   const resolveOwnerKey = () => {
     if (typeof surfaceOwnerKey === 'string' && surfaceOwnerKey.trim()) {
       return surfaceOwnerKey.trim();
@@ -210,30 +214,10 @@ export default function AIConsole({
     return true;
   };
 
-  const resolveVisibleCommandDeckRoot = () => {
-    const localRoot = containerRef.current?.closest?.('[data-testid="command-deck-root"]')
-      || inputRef.current?.closest?.('[data-testid="command-deck-root"]')
-      || null;
-    if (localRoot) return localRoot;
-    const roots = Array.from(document.querySelectorAll('[data-testid="command-deck-root"]'));
-    return roots.find((root) => isElementActuallyVisible(root)) || roots[0] || null;
-  };
-  const resolveLocalCommandDeckRoot = () => (
-    containerRef.current?.closest?.('[data-testid="command-deck-root"]')
-    || inputRef.current?.closest?.('[data-testid="command-deck-root"]')
-    || null
-  );
+  const resolveVisibleCommandDeckRoot = () => resolveLocalCommandDeckRoot();
+  const resolveLocalCommandDeckRoot = () => rootRef.current || null;
 
-  const resolveVisibleAnswerHistoryContainer = () => {
-    const visibleDeckRoot = resolveVisibleCommandDeckRoot();
-    if (!visibleDeckRoot) return null;
-    const localContainer = containerRef.current;
-    if (localContainer && visibleDeckRoot.contains(localContainer)) {
-      return localContainer;
-    }
-    const historyNodes = Array.from(visibleDeckRoot.querySelectorAll('[data-testid="command-deck-answer-history"]'));
-    return historyNodes.find((node) => isElementActuallyVisible(node)) || historyNodes[0] || null;
-  };
+  const resolveVisibleAnswerHistoryContainer = () => containerRef.current || null;
 
   const resolveLatestVisibleAssistantAnswerElement = (assistantAnswerId = '') => {
     const visibleDeckRoot = resolveVisibleCommandDeckRoot();
@@ -329,9 +313,9 @@ export default function AIConsole({
     const isDevMode = Boolean(isViteDev || isNodeDev);
     if (!isDevMode) return;
     const visibleDeckRoot = resolveVisibleCommandDeckRoot();
-    const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
-    const inputEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-input"]') || null;
-    const executeButtonEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-execute"]') || null;
+    const composerEl = composerRef.current || null;
+    const inputEl = inputRef.current || null;
+    const executeButtonEl = executeRef.current || null;
     setComposerContractFailure(!(composerEl && inputEl && executeButtonEl));
   }, [safeUiLayout.commandDeck, safeCommandHistory.length, isBusy]);
 
@@ -373,9 +357,9 @@ export default function AIConsole({
     if (!localDeckRoot) return;
     const visibleDeckRoot = localDeckRoot;
     const historyContainer = resolveVisibleAnswerHistoryContainer();
-    const composerEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-composer"]') || null;
-    const inputEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-input"]') || null;
-    const executeButtonEl = visibleDeckRoot?.querySelector('[data-testid="command-deck-execute"]') || null;
+    const composerEl = composerRef.current || null;
+    const inputEl = inputRef.current || null;
+    const executeButtonEl = executeRef.current || null;
     const latestFinalAssistantCard = resolveLatestVisibleAssistantAnswerElement(deliveryAnchoredAssistantAnswerId);
     const deliveryOwnerInstanceId = String(lastExecutionMetadata?.ai_console_instance_id || '').trim() || aiConsoleInstanceIdRef.current;
     const ownerMismatch = deliveryOwnerInstanceId !== aiConsoleInstanceIdRef.current;
@@ -578,6 +562,18 @@ export default function AIConsole({
         pageJumpPrevented: previous.pageJumpPrevented || 'no',
         innerHistoryScrollRequested: previous.innerHistoryScrollRequested || 'no',
         innerHistoryScrollCompleted: previous.innerHistoryScrollCompleted || 'no',
+        commandDeckLocalRootRefPresent: rootRef.current ? 'yes' : 'no',
+        commandDeckLocalHistoryRefPresent: containerRef.current ? 'yes' : 'no',
+        commandDeckLocalLatestAnswerRefPresent: targetEl ? 'yes' : 'no',
+        commandDeckLocalRevealAttempted: previous.requested || 'no',
+        commandDeckLocalRevealResult: previous.completed || 'no',
+        commandDeckLocalRevealReason: previous.skipReason || 'none',
+        commandDeckLocalRevealAssistantId: deliveryAnchoredAssistantAnswerId || 'none',
+        commandDeckLocalHistoryScrollPrevious: previous.previousScrollTop ?? 'n/a',
+        commandDeckLocalHistoryScrollNext: previous.nextScrollTop ?? 'n/a',
+        commandDeckLocalLatestAnswerVisible: visibility.fullyVisible ? 'yes' : 'no',
+        commandDeckSubmissionSource: String(lastExecutionMetadata?.submission_console || lastExecutionMetadata?.command_envelope_submission_source || 'unknown').trim() || 'unknown',
+        commandDeckSurfaceOwnerKey: resolveOwnerKey(),
         ...buildOwnershipProjection(),
         ...overrides,
       };
@@ -623,7 +619,7 @@ export default function AIConsole({
         const latestAssistantAnswerTarget = resolveLatestVisibleAssistantAnswerElement(deliveryAnchoredAssistantAnswerId) || latestAssistantAnswerRef.current;
         const scrollContainerEl = getAnswerHistoryScrollContainer();
         if (!latestAssistantAnswerTarget) {
-          publishScrollDiagnostics({ requested: 'yes', requestReason: 'missing-target-diagnostic-failure', method: 'skipped-no-target-after-raf', completed: 'no', skipReason: 'target-missing-after-render' });
+          publishScrollDiagnostics({ requested: 'yes', requestReason: 'missing-target-diagnostic-failure', method: 'skipped-no-target-after-raf', completed: 'no', skipReason: 'latest-answer-card-not-found-in-command-deck-instance' });
               return;
         }
         if (!scrollContainerEl) {
@@ -749,10 +745,10 @@ export default function AIConsole({
     if (typeof window === 'undefined') return undefined;
     const localRoot = resolveLocalCommandDeckRoot();
     const rootElement = localRoot;
-    const historyElement = rootElement?.querySelector('[data-testid="command-deck-answer-history"]') || null;
-    const composerElement = rootElement?.querySelector('[data-testid="command-deck-composer"]') || null;
-    const inputElement = rootElement?.querySelector('[data-testid="command-deck-input"]') || null;
-    const executeElement = rootElement?.querySelector('[data-testid="command-deck-execute"]') || null;
+    const historyElement = containerRef.current || null;
+    const composerElement = composerRef.current || null;
+    const inputElement = inputRef.current || null;
+    const executeElement = executeRef.current || null;
     const paneAncestor = rootElement?.closest?.('[data-pane-id], [data-pane-title], [data-title], .panel') || null;
     const ownerKey = resolveOwnerKey();
     const isCanonicalOwner = ownerKey === COMMAND_DECK_OWNER_KEY;
@@ -853,7 +849,7 @@ export default function AIConsole({
       isOpen={safeUiLayout.commandDeck !== false}
       onToggle={() => togglePanel('commandDeck')}
     >
-      <div className="mission-console-shell" data-testid="command-deck-root" data-ai-chat-command-deck="true" data-ai-console-instance-id={aiConsoleInstanceIdRef.current}>
+      <div ref={rootRef} className="mission-console-shell" data-testid="command-deck-root" data-ai-chat-command-deck="true" data-panel-id={panelId} data-ai-console-instance-id={aiConsoleInstanceIdRef.current}>
         <div data-testid="command-deck-ownership-stamp" style={{ fontSize: '0.75rem', color: '#2f6f3e', paddingBottom: '0.25rem' }}>
           CD Ownership · component=AIConsole · instance={aiConsoleInstanceIdRef.current} · render={renderCountRef.current} · src={AICONSOLE_SOURCE_MARKER} · owns(inputRef={inputRef.current ? 'yes' : 'no'},containerRef={containerRef.current ? 'yes' : 'no'},historyRef={containerRef.current ? 'yes' : 'no'}) · ownsDeliveryState={answerDeliveryStatus === 'delivered' ? 'yes' : 'no'} · finalAssistant={deliveryAnchoredAssistantAnswerId || 'none'}
         </div>
@@ -960,7 +956,7 @@ export default function AIConsole({
             Command Deck composer missing — protected canon failure.
           </div>
         ) : null}
-        <form className="command-form mission-console-input paneFormLayout mission-console__composer" data-testid="command-deck-composer" onSubmit={onSubmit}>
+        <form ref={composerRef} className="command-form mission-console-input paneFormLayout mission-console__composer" data-testid="command-deck-composer" onSubmit={onSubmit}>
           <div className="mission-console__input-row">
             <input
               className="paneInput paneControl"
@@ -973,7 +969,7 @@ export default function AIConsole({
             />
           </div>
           <div className="mission-console__action-row">
-            <button type="submit" data-testid="command-deck-execute" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
+            <button ref={executeRef} type="submit" data-testid="command-deck-execute" disabled={isBusy}>{isBusy ? 'Routing...' : 'Execute'}</button>
             {isBusy ? (
               <button type="button" className="ghost-button" onClick={() => cancelActivePrompt?.()}>
                 Stop generating
