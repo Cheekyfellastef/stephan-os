@@ -116,3 +116,20 @@ test('App operator relief projection handler records source surface and bridge d
   assert.match(appSource, /sourceSurface,/);
   assert.match(appSource, /createMissionConsoleTileBridgeProps\(/);
 });
+
+
+test('createMissionConsoleTileBridgeProps does not register mission console instances during render', async () => {
+  const appSource = await fs.readFile(appPath, 'utf8');
+  const start = appSource.indexOf('const createMissionConsoleTileBridgeProps = useCallback((panelId, options = {}) => {');
+  const end = appSource.indexOf('}, [handleOperatorReliefProjectionUpdate, registerMissionConsoleBridgeInstance]);', start);
+  const createBody = start >= 0 && end > start ? appSource.slice(start, end) : '';
+  assert.equal(createBody.includes('onMissionConsoleInstanceRegistration'), true);
+});
+
+test('MissionConsoleTile mount telemetry remains mount scoped and registration is emitted from separate effect', async () => {
+  const missionConsoleSource = await fs.readFile(missionConsolePath, 'utf8');
+  assert.match(missionConsoleSource, /setPerfIdentityField\('component\.MissionConsoleTile\.mounted', true\)/);
+  assert.match(missionConsoleSource, /recordPerfCounter\('surface_mount', 'MissionConsoleTile\.mount'\)/);
+  assert.match(missionConsoleSource, /\}, \[\]\);/);
+  assert.match(missionConsoleSource, /onMissionConsoleInstanceRegistration\(\{/);
+});

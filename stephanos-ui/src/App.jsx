@@ -266,15 +266,22 @@ export default function App() {
   const missionConsoleBridgeLastPublisherRef = useRef({ panelId: '', sourceSurface: '' });
   const registerMissionConsoleBridgeInstance = useCallback((panelId, metadata = {}) => {
     const key = typeof panelId === 'string' && panelId ? panelId : 'unknown';
+    const nextEntry = {
+      panelId: key,
+      sourceSurface: metadata.sourceSurface || key,
+      visible: metadata.visible === true,
+      collapsed: metadata.collapsed === true,
+      hasBridgeCallback: metadata.hasBridgeCallback !== false,
+    };
+    const previousEntry = missionConsoleBridgeInstancesRef.current?.[key] || null;
+    const previousSignature = previousEntry ? JSON.stringify(previousEntry) : '';
+    const nextSignature = JSON.stringify(nextEntry);
+    if (previousSignature === nextSignature) {
+      return;
+    }
     missionConsoleBridgeInstancesRef.current = {
       ...missionConsoleBridgeInstancesRef.current,
-      [key]: {
-        panelId: key,
-        sourceSurface: metadata.sourceSurface || key,
-        visible: metadata.visible === true,
-        collapsed: metadata.collapsed === true,
-        hasBridgeCallback: metadata.hasBridgeCallback !== false,
-      },
+      [key]: nextEntry,
     };
   }, []);
   const handleOperatorReliefProjectionUpdate = useCallback((projection, options = {}) => {
@@ -285,49 +292,58 @@ export default function App() {
       return;
     }
     operatorReliefProjectionSignatureRef.current = nextSignature;
-    const publishedAt = new Date().toISOString();
-    operatorReliefBridgePublishedAtRef.current = publishedAt;
     const publisherPanelId = options?.panelId || sourceSurface;
-    missionConsoleBridgeLastPublisherRef.current = { panelId: publisherPanelId, sourceSurface };
     const bridgeInstances = Object.values(missionConsoleBridgeInstancesRef.current || {});
     const instanceIds = bridgeInstances.map((entry) => entry.panelId);
     const visibleInstance = bridgeInstances.find((entry) => entry.visible && entry.collapsed !== true) || null;
     const bridgeCapableInstanceIds = bridgeInstances.filter((entry) => entry.hasBridgeCallback).map((entry) => entry.panelId);
     const missingBridgeCallbackIds = bridgeInstances.filter((entry) => !entry.hasBridgeCallback).map((entry) => entry.panelId);
     const visibleInstancePublished = visibleInstance ? visibleInstance.panelId === publisherPanelId : false;
+    const baseDiagnostics = {
+      published: 'yes',
+      sourceSurface,
+      sourcePanelId: publisherPanelId,
+      missionConsoleInstanceCount: instanceIds.length,
+      missionConsoleInstanceIds: instanceIds,
+      missionConsoleVisibleInstanceId: visibleInstance?.panelId || '',
+      missionConsoleBridgeCapableInstanceIds: bridgeCapableInstanceIds,
+      missionConsoleInstancesMissingBridgeCallback: missingBridgeCallbackIds,
+      missionConsoleLastPublishingInstanceId: publisherPanelId,
+      missionConsoleLastPublishingSourceSurface: sourceSurface,
+      missionConsoleVisibleInstancePublished: visibleInstancePublished ? 'yes' : 'no',
+      missionConsoleBridgeParityStatus: missingBridgeCallbackIds.length === 0 ? 'OK' : 'FAIL',
+      missionConsoleBridgeParityBlocker: missingBridgeCallbackIds.length === 0 ? 'none' : 'missing-bridge-callback',
+      projectionKeysSeen: nextProjection && typeof nextProjection === 'object' ? Object.keys(nextProjection) : [],
+      agentRealityLoopSeen: Boolean(nextProjection?.agentRealityLoopProjection && typeof nextProjection.agentRealityLoopProjection === 'object' && Object.keys(nextProjection.agentRealityLoopProjection).length),
+      storeUpdated: 'yes',
+    };
+    const nextDiagnosticsSignature = JSON.stringify(baseDiagnostics);
+    if (operatorReliefBridgePublishedAtRef.current === nextDiagnosticsSignature) {
+      return;
+    }
+    operatorReliefBridgePublishedAtRef.current = nextDiagnosticsSignature;
+    missionConsoleBridgeLastPublisherRef.current = { panelId: publisherPanelId, sourceSurface };
+    const publishedAt = new Date().toISOString();
     setOperatorReliefProjectionBridge({
       projection: nextProjection,
       diagnostics: {
-        published: 'yes',
-        sourceSurface,
-        sourcePanelId: publisherPanelId,
-        missionConsoleInstanceCount: instanceIds.length,
-        missionConsoleInstanceIds: instanceIds,
-        missionConsoleVisibleInstanceId: visibleInstance?.panelId || '',
-        missionConsoleBridgeCapableInstanceIds: bridgeCapableInstanceIds,
-        missionConsoleInstancesMissingBridgeCallback: missingBridgeCallbackIds,
-        missionConsoleLastPublishingInstanceId: publisherPanelId,
-        missionConsoleLastPublishingSourceSurface: sourceSurface,
-        missionConsoleVisibleInstancePublished: visibleInstancePublished ? 'yes' : 'no',
-        missionConsoleBridgeParityStatus: missingBridgeCallbackIds.length === 0 ? 'OK' : 'FAIL',
-        missionConsoleBridgeParityBlocker: missingBridgeCallbackIds.length === 0 ? 'none' : 'missing-bridge-callback',
-        projectionKeysSeen: nextProjection && typeof nextProjection === 'object' ? Object.keys(nextProjection) : [],
-        agentRealityLoopSeen: Boolean(nextProjection?.agentRealityLoopProjection && typeof nextProjection.agentRealityLoopProjection === 'object' && Object.keys(nextProjection.agentRealityLoopProjection).length),
-        storeUpdated: 'yes',
+        ...baseDiagnostics,
         lastUpdatedAt: publishedAt,
       },
     });
   }, [setOperatorReliefProjectionBridge]);
   const createMissionConsoleTileBridgeProps = useCallback((panelId, options = {}) => {
     const sourceSurface = options?.sourceSurface || panelId || 'unknown';
-    registerMissionConsoleBridgeInstance(panelId, {
-      sourceSurface,
-      visible: options?.visible === true,
-      collapsed: options?.collapsed === true,
-      hasBridgeCallback: true,
-    });
     return {
       panelId,
+      onMissionConsoleInstanceRegistration: (metadata = {}) => {
+        registerMissionConsoleBridgeInstance(panelId, {
+          sourceSurface,
+          visible: metadata?.visible === true,
+          collapsed: metadata?.collapsed === true,
+          hasBridgeCallback: metadata?.hasBridgeCallback !== false,
+        });
+      },
       onOperatorReliefProjectionUpdate: (projection, callbackOptions = {}) => {
         handleOperatorReliefProjectionUpdate(projection, { ...callbackOptions, panelId, sourceSurface });
       },
