@@ -108,6 +108,7 @@ function MissionConsoleTile({
   emergencyReleaseOllamaLoad = null,
   orchestrationTruth = null,
   agentTaskProjection = null,
+  onMissionConsoleInstanceRegistration = () => {},
   onOperatorReliefProjectionUpdate = () => {},
   forcePanelOpen = false,
   panelId = 'missionConsolePanel',
@@ -122,6 +123,16 @@ function MissionConsoleTile({
       recordPerfCounter('surface_mount', 'MissionConsoleTile.unmount');
     };
   }, []);
+
+  useEffect(() => {
+    onMissionConsoleInstanceRegistration({
+      panelId,
+      sourceSurface: panelId,
+      visible: forcePanelOpen ? true : uiLayout?.[panelId] !== false,
+      collapsed: forcePanelOpen ? false : uiLayout?.[panelId] === false,
+      hasBridgeCallback: typeof onOperatorReliefProjectionUpdate === 'function',
+    });
+  }, [forcePanelOpen, onMissionConsoleInstanceRegistration, onOperatorReliefProjectionUpdate, panelId, uiLayout]);
   recordMissionConsoleRenderReasons({
     uiLayout, runtimeStatusModel, finalRouteTruth, finalAgentView, branchName,
     onOpenClawIntegrationUpdate, onIntentToBuildUpdate, onMissionBridgeUpdate,
