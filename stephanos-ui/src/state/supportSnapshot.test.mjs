@@ -2329,6 +2329,70 @@ test('support snapshot reports mission console bridge parity blocker as projecti
   assert.match(snapshot, /Mission Console Bridge Parity Blocker: projection-not-published/);
 });
 
+test('support snapshot prefers live operator relief bridge diagnostics when final execution metadata is stale', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        mission_console_instance_count: '0',
+        mission_console_visible_instance_id: 'unknown',
+        operator_relief_bridge_published: 'no',
+      },
+      runtimeContext: {
+        operatorReliefBridgeDiagnostics: {
+          published: 'yes',
+          storeUpdated: 'yes',
+          runtimeContextSeen: 'yes',
+          missionConsoleInstanceCount: 2,
+          missionConsoleInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
+          missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel',
+          missionConsoleBridgeCapableInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
+          missionConsoleVisibleInstancePublished: 'yes',
+          missionConsoleBridgeParityStatus: 'OK',
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /Mission Console Diagnostics Source: live-operator-relief-bridge/);
+  assert.match(snapshot, /Mission Console Registration Callback Seen: yes/);
+  assert.match(snapshot, /Mission Console Registration Store Updated: yes/);
+  assert.match(snapshot, /Mission Console Registration RuntimeContext Seen: yes/);
+  assert.match(snapshot, /Mission Console Instance Count: 2/);
+  assert.match(snapshot, /Mission Console Visible Instance ID: aiCoreMissionConsolePanel/);
+});
+
+test('support snapshot does not allow final execution metadata zero defaults to overwrite live mission console diagnostics', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        mission_console_instance_count: '0',
+        mission_console_instance_ids: 'none',
+        mission_console_visible_instance_id: 'unknown',
+        mission_console_bridge_capable_instance_ids: 'none',
+        mission_console_visible_instance_published: 'no',
+        operator_relief_bridge_published: 'no',
+      },
+      runtimeContext: {
+        operatorReliefBridgeDiagnostics: {
+          published: 'yes',
+          storeUpdated: 'yes',
+          runtimeContextSeen: 'yes',
+          missionConsoleInstanceCount: 1,
+          missionConsoleInstanceIds: ['aiCoreMissionConsolePanel'],
+          missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel',
+          missionConsoleBridgeCapableInstanceIds: ['aiCoreMissionConsolePanel'],
+          missionConsoleVisibleInstancePublished: 'yes',
+          missionConsoleBridgeParityStatus: 'OK',
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /Mission Console Diagnostics Source: live-operator-relief-bridge/);
+  assert.match(snapshot, /Mission Console Instance Count: 1/);
+  assert.match(snapshot, /Mission Console Instance IDs: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Visible Instance ID: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Bridge-Capable Instance IDs: aiCoreMissionConsolePanel/);
+});
+
 test('support snapshot reads chat_context_* fields from latest execution metadata', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
