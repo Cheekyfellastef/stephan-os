@@ -54,6 +54,10 @@ test('protected canon: support snapshot keeps missing visible command deck diagn
   assert.match(source, /Input Found:/);
   assert.match(source, /Execute Found:/);
   assert.match(source, /Answer Pane Count:/);
+  assert.match(source, /Command Deck Render Proof Source:/);
+  assert.match(source, /Latest Assistant DOM Proof Source:/);
+  assert.match(source, /Answer Delivery Rendered Zero Pane Explanation:/);
+  assert.match(source, /render-proof-from-local-ref/);
   assert.match(source, /Command Deck Ownership Instance Count:/);
   assert.match(source, /Command Deck DOM Fallback Root Found:/);
 });

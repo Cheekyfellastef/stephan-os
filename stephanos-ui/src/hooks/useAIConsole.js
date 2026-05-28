@@ -881,6 +881,22 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     rebuiltExecutionMetadata.agent_reality_loop_projection_available,
     'no',
   );
+  const resolvedAgentRealityLoopProjectionSourceSeen = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'agent_reality_loop_projection_source_seen',
+    raw.agent_reality_loop_projection_source_seen,
+    trace.agent_reality_loop_projection_source_seen,
+    requestChatContext.agent_reality_loop_projection_source_seen,
+    rebuiltExecutionMetadata.agent_reality_loop_projection_source_seen,
+    'none',
+  );
+  const resolvedAgentRealityLoopContextInjectedRaw = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'agent_reality_loop_context_injected',
+    raw.agent_reality_loop_context_injected,
+    trace.agent_reality_loop_context_injected,
+    requestChatContext.agent_reality_loop_context_injected,
+    rebuiltExecutionMetadata.agent_reality_loop_context_injected,
+    'no',
+  );
   const resolvedAgentRealityLoopRecommendedLead = pickChatContextFieldPreferPackOrRebuildNonDefault(
     'agent_reality_loop_recommended_lead',
     raw.agent_reality_loop_recommended_lead,
@@ -914,6 +930,17 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     'projection-missing-from-command-deck-path',
   );
   const resolvedAgentRealityLoopProjectionUnavailable = String(resolvedAgentRealityLoopProjectionAvailable).trim().toLowerCase() !== 'yes';
+  const resolvedAgentRealityLoopProjectionSource = resolvedAgentRealityLoopProjectionUnavailable
+    ? resolvedAgentRealityLoopProjectionSourceSeen
+    : (String(resolvedAgentRealityLoopProjectionSourceSeen || '').trim().toLowerCase() === 'none'
+      ? 'command-deck-projection-bridge'
+      : resolvedAgentRealityLoopProjectionSourceSeen);
+  const resolvedAgentRealityLoopContextInjected = String(resolvedAgentRealityLoopContextInjectedRaw || '').trim().toLowerCase() === 'yes'
+    || (String(resolvedAgentRealityLoopContextRecognized || '').trim().toLowerCase() === 'yes'
+      && !resolvedAgentRealityLoopProjectionUnavailable
+      && String(resolvedAgentRealityLoopProjectionSource || '').trim().toLowerCase() !== 'none')
+    ? 'yes'
+    : 'no';
   const resolvedAgentRealityLoopAvailabilityBlocker = resolvedAgentRealityLoopProjectionUnavailable
     ? (
       String(resolvedAgentRealityLoopAvailabilityBlockerRaw || '').trim()
@@ -971,6 +998,8 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     agent_reality_loop_context_recognized: resolvedAgentRealityLoopContextRecognized,
     agent_reality_loop_context_source: resolvedAgentRealityLoopContextSource,
     agent_reality_loop_projection_available: resolvedAgentRealityLoopProjectionAvailable,
+    agent_reality_loop_projection_source_seen: resolvedAgentRealityLoopProjectionSource,
+    agent_reality_loop_context_injected: resolvedAgentRealityLoopContextInjected,
     agent_reality_loop_recommended_lead: resolvedAgentRealityLoopRecommendedLead,
     agent_reality_loop_merge_recommendation: resolvedAgentRealityLoopMergeRecommendation,
     agent_reality_loop_copy_packets_available: resolvedAgentRealityLoopCopyPacketsAvailable,
