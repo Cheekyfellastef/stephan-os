@@ -133,6 +133,7 @@ test('visible aiCore MissionConsoleTile path passes onMissionConsoleInstanceRegi
     /id: 'aiCoreMissionConsolePanel'[\s\S]*?<MissionConsoleTile[\s\S]*?\{\.\.\.createMissionConsoleTileBridgeProps\('aiCoreMissionConsolePanel'[\s\S]*?visible: true/m,
   );
   assert.match(appSource, /onMissionConsoleInstanceRegistration: \(metadata = \{\}\) => \{/);
+  assert.match(appSource, /registrationTrace/);
   assert.match(appSource, /setOperatorReliefProjectionBridge\(\{/);
 });
 
@@ -142,4 +143,6 @@ test('MissionConsoleTile mount telemetry remains mount scoped and registration i
   assert.match(missionConsoleSource, /recordPerfCounter\('surface_mount', 'MissionConsoleTile\.mount'\)/);
   assert.match(missionConsoleSource, /\}, \[\]\);/);
   assert.match(missionConsoleSource, /onMissionConsoleInstanceRegistration\(\{/);
+  assert.match(missionConsoleSource, /callbackPropPresent: 'yes'/);
+  assert.match(missionConsoleSource, /dropBoundary: 'none'/);
 });

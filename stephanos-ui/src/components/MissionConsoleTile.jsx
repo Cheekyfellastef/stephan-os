@@ -125,12 +125,33 @@ function MissionConsoleTile({
   }, []);
 
   useEffect(() => {
+    const callbackPresent = typeof onMissionConsoleInstanceRegistration === 'function';
+    if (!callbackPresent) {
+      onOperatorReliefProjectionUpdate(null, {
+        sourceSurface: panelId,
+        registrationTrace: {
+          effectSeen: 'yes',
+          effectPanelId: panelId,
+          callbackPropPresent: 'no',
+          callbackInvoked: 'no',
+          dropBoundary: 'missing-prop',
+        },
+      });
+      return;
+    }
     onMissionConsoleInstanceRegistration({
       panelId,
       sourceSurface: panelId,
       visible: forcePanelOpen ? true : uiLayout?.[panelId] !== false,
       collapsed: forcePanelOpen ? false : uiLayout?.[panelId] === false,
       hasBridgeCallback: typeof onOperatorReliefProjectionUpdate === 'function',
+      registrationTrace: {
+        effectSeen: 'yes',
+        effectPanelId: panelId,
+        callbackPropPresent: 'yes',
+        callbackInvoked: 'yes',
+        dropBoundary: 'none',
+      },
     });
   }, [forcePanelOpen, onMissionConsoleInstanceRegistration, onOperatorReliefProjectionUpdate, panelId, uiLayout]);
   recordMissionConsoleRenderReasons({

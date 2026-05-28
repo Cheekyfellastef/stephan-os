@@ -264,6 +264,16 @@ export default function App() {
   const operatorReliefBridgePublishedAtRef = useRef('');
   const missionConsoleBridgeInstancesRef = useRef({});
   const missionConsoleBridgeLastPublisherRef = useRef({ panelId: '', sourceSurface: '' });
+  const missionConsoleRegistrationTraceRef = useRef({
+    effectSeen: 'no',
+    effectPanelId: 'unknown',
+    callbackPropPresent: 'no',
+    callbackInvoked: 'no',
+    appHandlerSeen: 'no',
+    storeWriteAttempted: 'no',
+    storeWriteAccepted: 'no',
+    dropBoundary: 'effect-not-fired',
+  });
   const registerMissionConsoleBridgeInstance = useCallback((panelId, metadata = {}) => {
     const key = typeof panelId === 'string' && panelId ? panelId : 'unknown';
     const nextEntry = {
@@ -282,6 +292,16 @@ export default function App() {
     missionConsoleBridgeInstancesRef.current = {
       ...missionConsoleBridgeInstancesRef.current,
       [key]: nextEntry,
+    };
+    const trace = metadata?.registrationTrace && typeof metadata.registrationTrace === 'object' ? metadata.registrationTrace : {};
+    missionConsoleRegistrationTraceRef.current = {
+      ...missionConsoleRegistrationTraceRef.current,
+      effectSeen: trace.effectSeen || 'yes',
+      effectPanelId: trace.effectPanelId || key,
+      callbackPropPresent: trace.callbackPropPresent || 'yes',
+      callbackInvoked: trace.callbackInvoked || 'yes',
+      appHandlerSeen: 'yes',
+      dropBoundary: trace.dropBoundary || 'none',
     };
   }, []);
   const handleOperatorReliefProjectionUpdate = useCallback((projection, options = {}) => {
@@ -316,6 +336,14 @@ export default function App() {
       projectionKeysSeen: nextProjection && typeof nextProjection === 'object' ? Object.keys(nextProjection) : [],
       agentRealityLoopSeen: Boolean(nextProjection?.agentRealityLoopProjection && typeof nextProjection.agentRealityLoopProjection === 'object' && Object.keys(nextProjection.agentRealityLoopProjection).length),
       storeUpdated: 'yes',
+      registrationEffectSeen: missionConsoleRegistrationTraceRef.current.effectSeen || 'no',
+      registrationEffectPanelId: missionConsoleRegistrationTraceRef.current.effectPanelId || 'unknown',
+      registrationCallbackPropPresent: missionConsoleRegistrationTraceRef.current.callbackPropPresent || 'no',
+      registrationCallbackInvoked: missionConsoleRegistrationTraceRef.current.callbackInvoked || 'no',
+      registrationAppHandlerSeen: missionConsoleRegistrationTraceRef.current.appHandlerSeen || 'no',
+      registrationStoreWriteAttempted: 'yes',
+      registrationStoreWriteAccepted: 'yes',
+      registrationDropBoundary: missionConsoleRegistrationTraceRef.current.dropBoundary || 'none',
     };
     const nextDiagnosticsSignature = JSON.stringify(baseDiagnostics);
     if (operatorReliefBridgePublishedAtRef.current === nextDiagnosticsSignature) {
@@ -337,6 +365,15 @@ export default function App() {
     return {
       panelId,
       onMissionConsoleInstanceRegistration: (metadata = {}) => {
+        missionConsoleRegistrationTraceRef.current = {
+          ...missionConsoleRegistrationTraceRef.current,
+          appHandlerSeen: 'yes',
+          effectSeen: metadata?.registrationTrace?.effectSeen || 'yes',
+          effectPanelId: metadata?.registrationTrace?.effectPanelId || panelId,
+          callbackPropPresent: metadata?.registrationTrace?.callbackPropPresent || 'yes',
+          callbackInvoked: metadata?.registrationTrace?.callbackInvoked || 'yes',
+          dropBoundary: metadata?.registrationTrace?.dropBoundary || 'none',
+        };
         registerMissionConsoleBridgeInstance(panelId, {
           sourceSurface,
           visible: metadata?.visible === true,
@@ -345,6 +382,10 @@ export default function App() {
         });
       },
       onOperatorReliefProjectionUpdate: (projection, callbackOptions = {}) => {
+        missionConsoleRegistrationTraceRef.current = {
+          ...missionConsoleRegistrationTraceRef.current,
+          storeWriteAttempted: 'yes',
+        };
         handleOperatorReliefProjectionUpdate(projection, { ...callbackOptions, panelId, sourceSurface });
       },
     };
