@@ -1906,6 +1906,10 @@ export default function App() {
         const missionConsoleVisible = rendered
           ? Boolean(markerNode.querySelector('[data-testid="mission-console-inner-command-deck"]'))
           : false;
+        const missionConsoleComponentNode = rendered
+          ? markerNode.querySelector('[data-mission-console-component="MissionConsoleTile"]')
+          : null;
+        const componentTraceSource = missionConsoleComponentNode ? 'dom' : 'missing';
         const visibilityReason = !rendered
           ? 'not-mounted'
           : !markerVisible
@@ -1952,6 +1956,15 @@ export default function App() {
           insideAgentMissionConsole,
           domAncestryPath,
           placementReason,
+          componentTrace: {
+            source: componentTraceSource,
+            isMissionConsoleTile: missionConsoleComponentNode ? 'yes' : 'no',
+            panelId: missionConsoleComponentNode?.getAttribute('data-mission-console-panel-id') || 'unknown',
+            registrationEffectSeen: missionConsoleComponentNode?.getAttribute('data-mission-console-registration-effect-seen') || 'no',
+            registrationCallbackPropPresent: missionConsoleComponentNode?.getAttribute('data-mission-console-registration-callback-prop-present') || 'no',
+            registrationCallbackInvoked: missionConsoleComponentNode?.getAttribute('data-mission-console-registration-callback-invoked') || 'no',
+            registrationDropBoundary: missionConsoleComponentNode?.getAttribute('data-mission-console-registration-drop-boundary') || 'visible-surface-not-missionconsoletile',
+          },
         };
       })(),
       aiCoreActivePath: missionConsoleSurfaceMode ? 'missionConsoleSurfaceMode' : 'commandDeck',
