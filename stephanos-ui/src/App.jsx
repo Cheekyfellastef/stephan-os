@@ -1906,10 +1906,19 @@ export default function App() {
         const missionConsoleVisible = rendered
           ? Boolean(markerNode.querySelector('[data-testid="mission-console-inner-command-deck"]'))
           : false;
-        const missionConsoleComponentNode = rendered
-          ? markerNode.querySelector('[data-mission-console-component="MissionConsoleTile"]')
-          : null;
-        const componentTraceSource = missionConsoleComponentNode ? 'dom' : 'missing';
+        const missionConsoleComponentNode = (() => {
+          if (!rendered) return null;
+          const markerInsideAiCore = markerNode.querySelector('[data-mission-console-component="MissionConsoleTile"]');
+          if (markerInsideAiCore) return markerInsideAiCore;
+          const paneShell = document.querySelector('[data-pane-id="aiCoreMissionConsolePanel"]');
+          if (!paneShell) return null;
+          return paneShell.querySelector('[data-mission-console-component="MissionConsoleTile"]');
+        })();
+        const componentTraceSource = missionConsoleComponentNode
+          ? markerNode?.contains(missionConsoleComponentNode)
+            ? 'dom'
+            : 'pane-fallback'
+          : 'missing';
         const visibilityReason = !rendered
           ? 'not-mounted'
           : !markerVisible
