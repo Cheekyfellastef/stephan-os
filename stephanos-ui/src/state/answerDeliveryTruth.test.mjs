@@ -83,3 +83,18 @@ test('structured empty-state payload satisfies final assistant content presence'
   assert.equal(truth.finalAssistantPayloadPresent, 'yes');
   assert.equal(truth.answerDeliveryGenerated, 'yes');
 });
+
+
+test('final assistant text and render proof override stale provider pending metadata', () => {
+  const truth = buildAnswerDeliveryTruth({
+    providerExecutionStatus: 'provider-execution-pending',
+    executionSuccess: true,
+    finalAssistantMessageId: 'cmd_final',
+    finalAssistantText: 'Visible final answer',
+    answerPaneRendered: true,
+  });
+  assert.equal(truth.answerDeliveryStatus, 'delivered');
+  assert.equal(truth.answerDeliveryFailureReason, 'none');
+  assert.equal(truth.answerDeliveryGenerated, 'yes');
+  assert.equal(truth.answerDeliveryRendered, 'yes');
+});

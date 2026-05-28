@@ -28,7 +28,7 @@ import { classifyPromptFreshness, resolveFreshnessRoutingDecision } from '../ai/
 import { buildContextAssembly } from '../ai/contextAssembly.js';
 import { classifyOperatorIntent } from '../ai/intentEngine.js';
 import { buildMissionExecutionPacket } from '../ai/missionExecutionEngine.js';
-import { appendCommandHistory } from './commandHistory.js';
+import { appendCommandHistory, upsertCommandHistoryById } from './commandHistory.js';
 import { evaluateRequestDispatchGate } from './requestDispatchGate.js';
 import { normalizeMissionPacketTruth } from '../state/missionPacketWorkflow.js';
 import { buildCanonicalMissionPacket } from '../state/runtimeOrchestrationTruth.js';
@@ -4313,8 +4313,9 @@ export function useAIConsole() {
         },
       });
       const { data, requestPayload: effectiveRequestPayload } = providerDispatchResult;
-      executeStageLastReached = 'provider-dispatch-complete';
-      executePhase = 'provider-dispatch-complete';
+      const deterministicAnswerCompleted = Boolean(identityRecallDeterministicResult || agentRealityLoopDeterministicResult || operatorExplanationDeterministicResult);
+      executeStageLastReached = deterministicAnswerCompleted ? 'deterministic-answer-complete' : 'provider-dispatch-complete';
+      executePhase = executeStageLastReached;
 
       if (
         data.success
@@ -4445,7 +4446,9 @@ export function useAIConsole() {
         id: routeUnavailableOutcome ? `cmd_${Date.now()}` : streamEntryId,
         raw_input: prompt,
         parsed_command: parsed,
-        route: data.route,
+        role: 'assistant',
+        final: streamFinalizationMissing ? false : true,
+        route: data.route || 'assistant',
         tool_used: data.tools_used?.[0] ?? null,
         success: data.success,
         output_text: effectiveOutputText,
@@ -4464,11 +4467,19 @@ export function useAIConsole() {
       };
 
       setCommandHistory((prev) => {
-        if (routeUnavailableOutcome || identityRecallDeterministicResult) return appendCommandHistory(prev, entry);
-        return prev.map((existing) => existing.id === streamEntryId ? entry : existing);
+        if (routeUnavailableOutcome) return appendCommandHistory(prev, entry);
+        return upsertCommandHistoryById(prev, entry, streamEntryId);
       });
       submitAccepted = !routeUnavailableOutcome;
-      lastFinalizationPath = routeUnavailableOutcome ? 'error' : (identityRecallDeterministicResult ? 'deterministic-identity' : 'provider');
+      lastFinalizationPath = routeUnavailableOutcome
+        ? 'error'
+        : identityRecallDeterministicResult
+          ? 'deterministic-identity'
+          : agentRealityLoopDeterministicResult
+            ? 'deterministic-agent-reality-loop'
+            : operatorExplanationDeterministicResult
+              ? 'deterministic-operator-explanation'
+              : 'provider';
       setLastRoute(data.route || 'assistant');
       setStatus(data.success ? deriveExecutionStatus(executionMetadata) : 'error');
 

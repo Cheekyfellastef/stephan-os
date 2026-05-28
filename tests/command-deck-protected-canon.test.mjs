@@ -44,6 +44,20 @@ test('protected canon: layout diagnostics include visibility and non-zero-height
   assert.match(source, /innerHistoryScrollCompleted/);
 });
 
+
+
+test('protected canon: support snapshot keeps missing visible command deck diagnostics as hard failures', async () => {
+  const source = await read(new URL('../stephanos-ui/src/state/supportSnapshot.js', import.meta.url));
+  assert.match(source, /Visible Deck Root Found:/);
+  assert.match(source, /History Container Found:/);
+  assert.match(source, /Composer Found:/);
+  assert.match(source, /Input Found:/);
+  assert.match(source, /Execute Found:/);
+  assert.match(source, /Answer Pane Count:/);
+  assert.match(source, /Command Deck Ownership Instance Count:/);
+  assert.match(source, /Command Deck DOM Fallback Root Found:/);
+});
+
 test('protected canon: answer history scrolls while composer is fixed in flow and non-shrinking', async () => {
   const styles = await read(stylesPath);
   assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*overflow-y:\s*auto;/m);
