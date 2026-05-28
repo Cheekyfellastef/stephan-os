@@ -245,6 +245,23 @@ export default function AIConsole({
   };
 
 
+
+  const deriveLatestAssistantVisibilityBlocker = (targetEl, measureRect, containerRect) => {
+    if (!targetEl) return 'wrong-node';
+    const style = getComputedStyle(targetEl);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return 'hidden-style';
+    let parent = targetEl.parentElement || null;
+    const root = resolveVisibleCommandDeckRoot();
+    while (parent && parent !== root) {
+      const parentStyle = getComputedStyle(parent);
+      if (parentStyle.display === 'none' || parentStyle.visibility === 'hidden' || parentStyle.opacity === '0' || parent.hidden === true) return 'collapsed-ancestor';
+      parent = parent.parentElement || null;
+    }
+    if ((measureRect?.height || 0) <= 0 || (targetEl.clientHeight || 0) <= 0) return 'zero-height';
+    if (containerRect && ((measureRect?.bottom || 0) <= containerRect.top || (measureRect?.top || 0) >= containerRect.bottom)) return 'offscreen';
+    return 'none';
+  };
+
   const computeAnswerScrollVisibility = (targetRect, containerRect) => {
     const topVisible = targetRect.top >= containerRect.top;
     const bottomVisible = targetRect.bottom <= containerRect.bottom;
@@ -446,7 +463,9 @@ export default function AIConsole({
       const composerBottomWithinView = !!composerEl && composerRect.bottom <= viewRect.bottom && composerRect.top >= viewRect.top;
       const inputVisible = !!inputEl && inputRect.bottom > viewRect.top && inputRect.top < viewRect.bottom;
       const executeVisible = !!executeButtonEl && executeRect.bottom > viewRect.top && executeRect.top < viewRect.bottom;
-      const visibility = computeAnswerScrollVisibility(targetRect, containerRect);
+      const visibility = targetEl && (targetRect.height || 0) > 0 ? computeAnswerScrollVisibility(targetRect, containerRect) : { topVisible: false, bottomVisible: false, fullyVisible: false, occlusionReason: targetEl ? 'target-zero-height' : 'target-missing' };
+      const latestAssistantVisibilityBlocker = deriveLatestAssistantVisibilityBlocker(targetEl, targetRect, containerRect);
+      const latestAssistantVisualProof = targetEl ? (visibility.fullyVisible && latestAssistantVisibilityBlocker === 'none' ? 'visible' : 'present-not-visible') : 'missing';
       const latestAnswerVisibleRatio = targetEl ? computeVisibleRatio(targetRect, viewportRect) : 0;
       const commandDeckRect = visibleDeckRoot?.getBoundingClientRect?.() || null;
       const commandDeckVisibleRatio = commandDeckRect ? computeVisibleRatio(commandDeckRect, viewportRect) : 0;
@@ -520,7 +539,11 @@ export default function AIConsole({
         effectFiredAt: nowIso,
         answerPaneCount: visibleAnswerPanes.length || answerPaneCount,
         latestAssistantAnswerDomFound: targetEl ? 'yes' : 'no',
-        latestAssistantAnswerVisible: visibility.fullyVisible ? 'yes' : 'no',
+        latestAssistantAnswerVisible: latestAssistantVisualProof === 'visible' ? 'yes' : 'no',
+        latestAssistantVisualProof,
+        latestAssistantVisibilityBlocker,
+        latestAssistantTextLengthDrift: 'no',
+        latestAssistantTextLengthDriftReason: 'metadata-source-measured',
         answerPaneClientHeight: latestAnswerCardClientHeight,
         answerPaneScrollHeight: latestAnswerCardScrollHeight,
         answerContainerClientHeight: answerViewportClientHeight,
@@ -583,7 +606,7 @@ export default function AIConsole({
         commandDeckLocalRevealAssistantId: deliveryAnchoredAssistantAnswerId || 'none',
         commandDeckLocalHistoryScrollPrevious: previous.previousScrollTop ?? 'n/a',
         commandDeckLocalHistoryScrollNext: previous.nextScrollTop ?? 'n/a',
-        commandDeckLocalLatestAnswerVisible: (visibility.fullyVisible || ((previous.skipReason || 'none') === 'already-visible-confirmed')) ? 'yes' : 'no',
+        commandDeckLocalLatestAnswerVisible: (latestAssistantVisualProof === 'visible' || ((previous.skipReason || 'none') === 'already-visible-confirmed')) ? 'yes' : 'no',
         commandDeckLocalRevealSignature: lastRevealSignatureRef.current || currentSignature || 'none',
         commandDeckLocalLastRevealedAssistantId: lastRevealedAssistantIdRef.current || 'none',
         commandDeckManualScrollAfterReveal: manualScrollAfterRevealDetectedRef.current ? 'yes' : 'no',
