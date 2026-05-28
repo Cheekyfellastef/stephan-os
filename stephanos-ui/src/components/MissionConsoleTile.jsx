@@ -1058,7 +1058,7 @@ function MissionConsoleTile({
       onToggle={handleMissionConsolePanelToggle}
       testIdBase="pane-agent-mission-console"
     >
-      <div
+      <span
         data-mission-console-component="MissionConsoleTile"
         data-mission-console-panel-id={panelId}
         data-mission-console-registration-effect-seen="yes"
@@ -1066,6 +1066,7 @@ function MissionConsoleTile({
         data-mission-console-registration-callback-invoked={registrationCallbackInvokedRef.current}
         data-mission-console-registration-drop-boundary={registrationDropBoundaryRef.current}
         hidden
+        aria-hidden="true"
       />
       <div data-testid="mission-console-inner-command-deck">
       <MissionCommandDeck
