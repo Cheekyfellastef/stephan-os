@@ -107,6 +107,23 @@ test('rendered App path keeps ai-core mission console in aiCoreMissionConsolePan
   assert.equal(uiReality.uiRealityAiCoreMissionConsoleInsideAgentMissionConsole, 'no');
 });
 
+test('visible ai-core mission console DOM path exposes MissionConsoleTile trace attributes on rendered CollapsiblePanel root', async () => {
+  const { renderApp } = await importBundledModule(
+    path.join(srcRoot, 'test/renderAppEntry.jsx'),
+    {},
+    'app-ai-core-pane-trace-attrs',
+  );
+  const html = renderApp();
+  const markerIndex = html.indexOf('data-testid="ai-core-mission-console"');
+  assert.notEqual(markerIndex, -1);
+  const missionTileIndex = html.indexOf('data-mission-console-component="MissionConsoleTile"', markerIndex);
+  assert.notEqual(missionTileIndex, -1);
+  assert.match(html.slice(missionTileIndex, missionTileIndex + 600), /data-mission-console-panel-id="aiCoreMissionConsolePanel"/);
+  assert.match(html.slice(missionTileIndex, missionTileIndex + 600), /data-mission-console-registration-effect-seen="yes"/);
+  assert.match(html.slice(missionTileIndex, missionTileIndex + 600), /data-mission-console-registration-callback-prop-present="yes"/);
+  assert.match(html.slice(missionTileIndex, missionTileIndex + 700), /data-mission-console-registration-drop-boundary="(none|effect-not-fired)"/);
+});
+
 
 test('App operator relief projection handler records source surface and bridge diagnostics from MissionConsoleTile mounts', async () => {
   const appSource = await fs.readFile(appPath, 'utf8');
