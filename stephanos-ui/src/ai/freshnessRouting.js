@@ -1,3 +1,6 @@
+import { resolveHostedCloudPathCapability } from './hostedCloudPath.js';
+import { reconcileExecutionRequestedProvider } from '../state/providerRoutingTruth.js';
+
 const FRESHNESS_HIGH_PATTERNS = [
   /\b(uk|united kingdom|us|united states)\s+(prime minister|president)\b/i,
   /\b(who is|who's)\s+(the\s+)?(prime minister|president|ceo|governor|mayor)\b/i,
@@ -294,7 +297,8 @@ export function resolveFreshnessRoutingDecision({
   let freshnessRouted = false;
   let fallbackReasonCode = null;
   let staleFallbackAttempted = false;
-  const staleFallbackPermitted = false;
+  const staleFallbackPermitted = runtimeStatus?.staleFallbackPermitted === true;
+  const fallbackPermitted = runtimeStatus?.fallbackEnabled === true || runtimeStatus?.providerFallbackPermitted === true;
   let policyReason = 'Local-private default for low-freshness or private/system reasoning.';
 
   const freshRouteFailureReasons = [];
@@ -357,14 +361,19 @@ export function resolveFreshnessRoutingDecision({
     policyReason = 'Local route unavailable; cloud route selected as safe execution path.';
   } else if (classification?.freshnessNeed === 'low' && hostedSession) {
     if (!localRouteAvailable && cloudRouteAvailable) {
-      selectedProvider = requestedProviderRouteViable
-        ? requested
-        : (selectedFreshProvider || 'gemini');
-      selectedAnswerMode = 'cloud-basic';
-      freshnessRouted = true;
-      policyReason = backendReachable
-        ? 'Hosted session using zero-cost cloud reasoning path for low-freshness request.'
-        : 'Battle Bridge unavailable; hosted-safe cloud cognition path remains available for planning and reasoning.';
+      const explicitCloudProviderRequested = requested !== 'ollama';
+      const cloudExecutionAllowed = fallbackPermitted || explicitCloudProviderRequested;
+      selectedProvider = cloudExecutionAllowed
+        ? (explicitCloudProviderRequested || requestedProviderRouteViable ? requested : (selectedFreshProvider || 'gemini'))
+        : requested;
+      selectedAnswerMode = cloudExecutionAllowed ? 'cloud-basic' : 'route-unavailable';
+      freshnessRouted = cloudExecutionAllowed;
+      fallbackReasonCode = cloudExecutionAllowed ? null : 'low-freshness-cloud-fallback-not-permitted';
+      policyReason = cloudExecutionAllowed
+        ? (backendReachable
+          ? 'Hosted session using zero-cost cloud reasoning path for low-freshness request.'
+          : 'Battle Bridge unavailable; hosted-safe cloud cognition path remains available for planning and reasoning.')
+        : 'Low-freshness local-first request preserved requested provider; cloud fallback requires explicit fallback policy permission.';
     } else if (localRouteAvailable) {
       selectedProvider = requested === 'groq' && cloudRouteAvailable ? 'groq' : 'ollama';
       selectedAnswerMode = selectedProvider === 'ollama' ? 'local-private' : 'cloud-basic';
@@ -393,7 +402,8 @@ export function resolveFreshnessRoutingDecision({
     && !localRouteAvailable
     && cloudRouteAvailable
     && selectedProvider !== 'ollama'
-    && selectedAnswerMode !== 'cloud-basic';
+    && selectedAnswerMode !== 'cloud-basic'
+    && (fallbackPermitted || requested !== 'ollama');
 
   if (shouldForceHostedCloudBasic) {
     selectedAnswerMode = 'cloud-basic';
@@ -402,6 +412,28 @@ export function resolveFreshnessRoutingDecision({
     policyReason = backendReachable
       ? 'Hosted session using zero-cost cloud reasoning path for low-freshness request.'
       : 'Battle Bridge unavailable; hosted-safe cloud cognition path remains available for planning and reasoning.';
+  }
+
+  const executionProviderPolicy = reconcileExecutionRequestedProvider({
+    uiSelectedProvider: requested,
+    uiDefaultProvider: requested,
+    requestedProviderIntent: requested,
+    freshnessCandidateProvider: selectedFreshProvider || null,
+    proposedExecutionProvider: selectedProvider,
+    freshnessRequiredForTruth: classification?.freshnessNeed === 'high',
+    freshAnswerRequired: selectedAnswerMode === 'fresh-cloud',
+    freshnessNeed: classification?.freshnessNeed || 'low',
+    staleFallbackRequired: staleFallbackAttempted,
+    explicitProviderSelection: requested !== 'ollama',
+    fallbackPermitted,
+    localRouteAvailable,
+  });
+  selectedProvider = executionProviderPolicy.executionRequestedProvider;
+  if (executionProviderPolicy.preservedLocalFirst) {
+    freshnessRouted = false;
+    selectedAnswerMode = 'local-private';
+    policyReason = executionProviderPolicy.reason;
+    fallbackReasonCode = null;
   }
 
   const requestedProviderForRequest = selectedProvider;
@@ -424,6 +456,8 @@ export function resolveFreshnessRoutingDecision({
     staleFallbackPermitted,
     aiPolicy,
     policyReason,
+    executionProviderPolicySource: executionProviderPolicy.policySource,
+    executionProviderPolicyReason: executionProviderPolicy.reason,
     overrideRequested,
     overrideDeniedReason,
     freshRouteAvailable,
@@ -451,4 +485,3 @@ export function resolveFreshnessRoutingDecision({
     freshnessCandidateProvider: selectedFreshProvider || null,
   };
 }
-import { resolveHostedCloudPathCapability } from './hostedCloudPath.js';

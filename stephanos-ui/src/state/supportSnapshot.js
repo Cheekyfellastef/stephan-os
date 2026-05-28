@@ -3,6 +3,7 @@ import { deriveUiRealityStatus } from './uiRealityStatus.js';
 import { buildMissionRepairLoopModel } from './missionRepairLoopModel.js';
 import { parsePrReferenceFromPrompt } from './githubPrEvidenceProvider.js';
 import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
+import { diagnoseProviderDrift } from './providerRoutingTruth.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -1080,6 +1081,23 @@ export function buildSupportSnapshot({
   const visibleLastModelUsed = providerExecutionIsSuppressed ? 'n/a' : asText(runtimeStatus?.lastModelUsed);
   const visibleLastTimeoutEffectiveProvider = providerExecutionIsSuppressed ? 'none' : asText(runtimeStatus?.lastTimeoutEffectiveProvider);
   const visibleLastTimeoutEffectiveModel = providerExecutionIsSuppressed ? 'n/a' : asText(runtimeStatus?.lastTimeoutEffectiveModel);
+  const providerDriftDiagnostics = diagnoseProviderDrift({
+    uiSelectedProvider: routeTruthView?.selectedProvider,
+    uiDefaultProvider: runtimeStatus?.lastUiDefaultProvider,
+    requestedProviderIntent: runtimeStatus?.lastRequestedProviderIntent,
+    freshnessCandidateProvider: runtimeStatus?.lastFreshnessCandidateProvider,
+    executionRequestedProvider: runtimeStatus?.lastExecutionRequestedProvider || executionMetadata?.execution_requested_provider,
+    routerSelectedProvider: runtimeStatus?.lastRouterSelectedProvider,
+    executableProvider: runtimeStatus?.lastExecutableProvider,
+    actualProviderUsed: runtimeStatus?.lastActualProviderUsed,
+    freshnessRequiredForTruth: runtimeStatus?.freshnessRequiredForTruth || executionMetadata?.freshness_required_for_truth,
+    freshAnswerRequired: runtimeStatus?.freshAnswerRequired || executionMetadata?.fresh_answer_required,
+    freshnessNeed: runtimeStatus?.lastFreshnessNeed || executionMetadata?.freshness_need,
+    fallbackPermitted: runtimeStatus?.fallbackEnabled || executionMetadata?.fallback_permitted,
+    providerOverrideReason: runtimeStatus?.lastProviderOverrideReason || executionMetadata?.provider_override_reason,
+    fallbackUsed: runtimeStatus?.lastFallbackUsed || executionMetadata?.fallback_used,
+    policySource: executionMetadata?.execution_provider_policy_source || executionMetadata?.ai_policy_mode,
+  });
   const executeActualTargetUsed = asText(executionMetadata?.execute_actual_target_used, 'n/a');
   const visibleActualTargetUsed = routeBlockedBeforeProvider
     ? executeActualTargetUsed
@@ -1981,6 +1999,7 @@ export function buildSupportSnapshot({
     `Last UI Default Provider: ${asText(runtimeStatus?.lastUiDefaultProvider)}`,
     `Last Requested Provider Intent: ${asText(runtimeStatus?.lastRequestedProviderIntent)}`,
     `Last Freshness Candidate Provider: ${asText(runtimeStatus?.lastFreshnessCandidateProvider)}`,
+    `Last Execution Requested Provider: ${asText(runtimeStatus?.lastExecutionRequestedProvider || executionMetadata?.execution_requested_provider)}`,
     `Last Requested Provider For Request: ${asText(runtimeStatus?.lastRequestedProviderForRequest)}`,
     `Last Fallback Provider Used: ${asText(runtimeStatus?.lastFallbackProviderUsed)}`,
     `Last Backend Default Provider: ${asText(runtimeStatus?.lastBackendDefaultProvider || safeApiStatus?.backendDefaultProvider)}`,
@@ -2935,7 +2954,11 @@ export function buildSupportSnapshot({
     `Route Reconciliation Reason: ${asText(routeTruthView?.routeReconciliationReason, 'n/a')}`,
     `Truth Inconsistent: ${routeTruthView?.truthInconsistent ? 'yes' : 'no'}`,
     `Route Usability Conflict: ${routeTruthView?.routeUsabilityConflict ? 'yes' : 'no'}`,
-    `Provider Mismatch: ${providerExecutionIsSuppressed ? (routeBlockedBeforeProvider ? 'route-blocked/no-provider-executed' : 'historical-stale-provider-suppressed') : (routeTruthView?.providerMismatch ? 'yes' : 'no')}`,
+    `Provider Mismatch: ${providerExecutionIsSuppressed ? (routeBlockedBeforeProvider ? 'route-blocked/no-provider-executed' : 'historical-stale-provider-suppressed') : (routeTruthView?.providerMismatch ? 'yes' : providerDriftDiagnostics.providerMismatch)}`,
+    `Provider Drift Boundary: ${providerExecutionIsSuppressed ? 'none' : providerDriftDiagnostics.providerDriftBoundary}`,
+    `Provider Drift Reason: ${providerExecutionIsSuppressed ? 'none' : providerDriftDiagnostics.providerDriftReason}`,
+    `Provider Drift Allowed: ${providerExecutionIsSuppressed ? 'n/a' : providerDriftDiagnostics.providerDriftAllowed}`,
+    `Provider Drift Policy Source: ${providerExecutionIsSuppressed ? 'n/a' : providerDriftDiagnostics.providerDriftPolicySource}`,
     `Home Available: ${asYesNoUnknown(runtimeStatus?.homeNodeReachable)}`,
     `Executable Provider: ${providerExecutionIsSuppressed ? 'none' : asText(canonicalTruth.executedProvider || runtimeProviderTruth?.executableProvider, 'none')}`,
     '',

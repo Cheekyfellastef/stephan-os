@@ -446,6 +446,7 @@ test('hosted low-freshness request uses cloud-basic when local/home bridge is un
       localAvailable: true,
       homeNodeAvailable: false,
       backendReachable: true,
+      fallbackEnabled: true,
     },
     routeTruthView: {
       backendReachableState: 'yes',

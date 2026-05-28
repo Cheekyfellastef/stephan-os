@@ -3756,3 +3756,112 @@ test('support snapshot ARL answer path keeps visible-card proof diagnostics', ()
   assert.match(snapshot, /Agent Reality Loop Projection Available: yes/);
   assert.match(snapshot, /Agent Reality Loop Availability Blocker: none/);
 });
+
+test('buildSupportSnapshot reports ARL low-freshness provider intent separation without drift', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastUiDefaultProvider: 'ollama',
+      lastUiRequestedProvider: 'ollama',
+      lastRequestedProviderIntent: 'ollama',
+      lastFreshnessCandidateProvider: 'gemini',
+      lastExecutionRequestedProvider: 'ollama',
+      lastRequestedProviderForRequest: 'ollama',
+      lastRequestSelectedProvider: 'ollama',
+      lastRouterSelectedProvider: 'ollama',
+      lastSelectedProvider: 'ollama',
+      lastExecutableProvider: 'ollama',
+      lastActualProviderUsed: 'ollama',
+      lastTimeoutEffectiveProvider: 'ollama',
+      lastFreshnessNeed: 'low',
+      lastFreshnessRequiredForTruth: 'false',
+      lastFreshAnswerRequired: 'false',
+      freshAnswerRequired: false,
+      freshnessRequiredForTruth: false,
+      lastExecutionMetadata: {
+        agent_reality_loop_context_recognized: 'yes',
+        agent_reality_loop_context_injected: 'yes',
+        agent_reality_loop_projection_available: 'yes',
+        agent_reality_loop_availability_blocker: 'none',
+      },
+      agentRealityLoopContextRecognized: 'yes',
+      agentRealityLoopContextInjected: 'yes',
+      agentRealityLoopProjectionAvailable: 'yes',
+      agentRealityLoopAvailabilityBlocker: 'none',
+    },
+    routeTruthView: {
+      selectedProvider: 'ollama',
+      executedProvider: 'ollama',
+      fallbackActive: false,
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: { executableProvider: 'ollama' },
+    runtimeDiagnosticsTruth: { invariantWarnings: [], blockingIssues: [] },
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-05-28T00:00:00.000Z' },
+  });
+
+  assert.match(snapshot, /Selected Provider: ollama/);
+  assert.match(snapshot, /Active Provider: ollama/);
+  assert.match(snapshot, /Fallback Active: no/);
+  assert.match(snapshot, /Last Requested Provider For Request: ollama/);
+  assert.match(snapshot, /Last Request-Side Selected Provider: ollama/);
+  assert.match(snapshot, /Last Router Selected Provider: ollama/);
+  assert.match(snapshot, /Last Executable Provider: ollama/);
+  assert.match(snapshot, /Last Actual Provider Used: ollama/);
+  assert.match(snapshot, /Last Timeout Effective Provider: ollama/);
+  assert.match(snapshot, /Provider Mismatch: no/);
+  assert.match(snapshot, /Freshness Required For Truth: false/);
+  assert.match(snapshot, /Fresh Answer Required: false/);
+  assert.match(snapshot, /Last Freshness Need: low/);
+  assert.match(snapshot, /Agent Reality Loop Context Recognized: yes/);
+  assert.match(snapshot, /Agent Reality Loop Context Injected: yes/);
+  assert.match(snapshot, /Agent Reality Loop Projection Available: yes/);
+  assert.match(snapshot, /Agent Reality Loop Availability Blocker: none/);
+  assert.match(snapshot, /Provider Drift Boundary: none/);
+});
+
+test('buildSupportSnapshot identifies provider drift boundary and policy source', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastUiDefaultProvider: 'ollama',
+      lastUiRequestedProvider: 'ollama',
+      lastRequestedProviderIntent: 'ollama',
+      lastFreshnessCandidateProvider: 'gemini',
+      lastExecutionRequestedProvider: 'gemini',
+      lastRequestedProviderForRequest: 'gemini',
+      lastRequestSelectedProvider: 'gemini',
+      lastRouterSelectedProvider: 'gemini',
+      lastSelectedProvider: 'gemini',
+      lastExecutableProvider: 'gemini',
+      lastActualProviderUsed: 'gemini',
+      lastFreshnessNeed: 'low',
+      freshAnswerRequired: false,
+      freshnessRequiredForTruth: false,
+    },
+    routeTruthView: {
+      selectedProvider: 'ollama',
+      executedProvider: 'gemini',
+      fallbackActive: true,
+      providerMismatch: true,
+    },
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: { executableProvider: 'gemini' },
+    runtimeDiagnosticsTruth: { invariantWarnings: [], blockingIssues: [] },
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: { toISOString: () => '2026-05-28T00:00:01.000Z' },
+  });
+
+  assert.match(snapshot, /Provider Mismatch: yes/);
+  assert.match(snapshot, /Provider Drift Boundary: execution-requested-provider/);
+  assert.match(snapshot, /Provider Drift Reason: freshness-candidate-crossed-into-execution-provider-without-freshness-requirement/);
+  assert.match(snapshot, /Provider Drift Allowed: no/);
+  assert.match(snapshot, /Provider Drift Policy Source: local-first-low-freshness-policy/);
+});
