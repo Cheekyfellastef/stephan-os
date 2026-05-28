@@ -126,6 +126,16 @@ test('createMissionConsoleTileBridgeProps does not register mission console inst
   assert.equal(createBody.includes('onMissionConsoleInstanceRegistration'), true);
 });
 
+test('visible aiCore MissionConsoleTile path passes onMissionConsoleInstanceRegistration callback via bridge props', async () => {
+  const appSource = await fs.readFile(appPath, 'utf8');
+  assert.match(
+    appSource,
+    /id: 'aiCoreMissionConsolePanel'[\s\S]*?<MissionConsoleTile[\s\S]*?\{\.\.\.createMissionConsoleTileBridgeProps\('aiCoreMissionConsolePanel'[\s\S]*?visible: true/m,
+  );
+  assert.match(appSource, /onMissionConsoleInstanceRegistration: \(metadata = \{\}\) => \{/);
+  assert.match(appSource, /setOperatorReliefProjectionBridge\(\{/);
+});
+
 test('MissionConsoleTile mount telemetry remains mount scoped and registration is emitted from separate effect', async () => {
   const missionConsoleSource = await fs.readFile(missionConsolePath, 'utf8');
   assert.match(missionConsoleSource, /setPerfIdentityField\('component\.MissionConsoleTile\.mounted', true\)/);

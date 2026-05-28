@@ -104,6 +104,73 @@ function deriveMissionConsoleBridgeParityBlocker(executionMetadata = {}) {
   return 'bridge-instance-diagnostics-unavailable';
 }
 
+function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadata = {}) {
+  const liveDiagnostics = runtimeStatus?.runtimeContext?.operatorReliefBridgeDiagnostics
+    && typeof runtimeStatus.runtimeContext.operatorReliefBridgeDiagnostics === 'object'
+    ? runtimeStatus.runtimeContext.operatorReliefBridgeDiagnostics
+    : {};
+  const liveCount = Number(liveDiagnostics?.missionConsoleInstanceCount);
+  const liveHasInstances = Number.isFinite(liveCount) && liveCount > 0;
+  const executionCount = Number(executionMetadata?.mission_console_instance_count);
+  const executionHasInstances = Number.isFinite(executionCount) && executionCount > 0;
+  const useLiveDiagnostics = liveHasInstances || !executionHasInstances;
+  const source = Object.keys(liveDiagnostics).length
+    ? (useLiveDiagnostics ? 'live-operator-relief-bridge' : 'final-execution-metadata')
+    : (Object.keys(executionMetadata).length ? 'final-execution-metadata' : 'missing');
+  const selected = useLiveDiagnostics ? liveDiagnostics : {};
+  const selectedCount = useLiveDiagnostics ? liveCount : executionCount;
+  return {
+    source,
+    callbackSeen: (selected?.storeUpdated || executionMetadata?.operator_relief_bridge_store_updated) === 'yes' ? 'yes' : 'no',
+    storeUpdated: useLiveDiagnostics
+      ? (selected?.storeUpdated || 'no')
+      : (executionMetadata?.operator_relief_bridge_store_updated || 'no'),
+    runtimeContextSeen: useLiveDiagnostics
+      ? (selected?.runtimeContextSeen || 'no')
+      : (executionMetadata?.operator_relief_bridge_runtime_context_seen || 'no'),
+    operatorReliefBridgePublished: useLiveDiagnostics
+      ? (selected?.published || executionMetadata?.operator_relief_bridge_published || 'no')
+      : (executionMetadata?.operator_relief_bridge_published || selected?.published || 'no'),
+    operatorReliefBridgeSourceSurface: useLiveDiagnostics
+      ? (selected?.sourceSurface || executionMetadata?.operator_relief_bridge_source_surface || 'unknown')
+      : (executionMetadata?.operator_relief_bridge_source_surface || 'unknown'),
+    operatorReliefBridgeProjectionKeysSeen: useLiveDiagnostics
+      ? (Array.isArray(selected?.projectionKeysSeen) ? selected.projectionKeysSeen.join('|') : (executionMetadata?.operator_relief_bridge_projection_keys_seen || 'none'))
+      : (executionMetadata?.operator_relief_bridge_projection_keys_seen || (Array.isArray(selected?.projectionKeysSeen) ? selected.projectionKeysSeen.join('|') : 'none')),
+    operatorReliefBridgeAgentRealityLoopSeen: useLiveDiagnostics
+      ? (selected?.agentRealityLoopSeen ? 'yes' : (executionMetadata?.operator_relief_bridge_agent_reality_loop_seen || 'no'))
+      : (executionMetadata?.operator_relief_bridge_agent_reality_loop_seen || (selected?.agentRealityLoopSeen ? 'yes' : 'no')),
+    operatorReliefBridgeLastUpdatedAt: useLiveDiagnostics
+      ? (selected?.lastUpdatedAt || executionMetadata?.operator_relief_bridge_last_updated_at || 'unknown')
+      : (executionMetadata?.operator_relief_bridge_last_updated_at || 'unknown'),
+    missionConsoleInstanceCount: Number.isFinite(selectedCount) ? String(selectedCount) : String(executionMetadata?.mission_console_instance_count || 0),
+    missionConsoleInstanceIds: useLiveDiagnostics
+      ? (Array.isArray(selected?.missionConsoleInstanceIds) ? selected.missionConsoleInstanceIds.join('|') : (executionMetadata?.mission_console_instance_ids || 'none'))
+      : (executionMetadata?.mission_console_instance_ids || 'none'),
+    missionConsoleVisibleInstanceId: useLiveDiagnostics
+      ? (selected?.missionConsoleVisibleInstanceId || executionMetadata?.mission_console_visible_instance_id || 'unknown')
+      : (executionMetadata?.mission_console_visible_instance_id || 'unknown'),
+    missionConsoleBridgeCapableInstanceIds: useLiveDiagnostics
+      ? (Array.isArray(selected?.missionConsoleBridgeCapableInstanceIds) ? selected.missionConsoleBridgeCapableInstanceIds.join('|') : (executionMetadata?.mission_console_bridge_capable_instance_ids || 'none'))
+      : (executionMetadata?.mission_console_bridge_capable_instance_ids || 'none'),
+    missionConsoleInstancesMissingBridgeCallback: useLiveDiagnostics
+      ? (Array.isArray(selected?.missionConsoleInstancesMissingBridgeCallback) ? selected.missionConsoleInstancesMissingBridgeCallback.join('|') : (executionMetadata?.mission_console_instances_missing_bridge_callback || 'none'))
+      : (executionMetadata?.mission_console_instances_missing_bridge_callback || 'none'),
+    missionConsoleLastPublishingInstanceId: useLiveDiagnostics
+      ? (selected?.missionConsoleLastPublishingInstanceId || executionMetadata?.mission_console_last_publishing_instance_id || 'unknown')
+      : (executionMetadata?.mission_console_last_publishing_instance_id || 'unknown'),
+    missionConsoleLastPublishingSourceSurface: useLiveDiagnostics
+      ? (selected?.missionConsoleLastPublishingSourceSurface || executionMetadata?.mission_console_last_publishing_source_surface || 'unknown')
+      : (executionMetadata?.mission_console_last_publishing_source_surface || 'unknown'),
+    missionConsoleVisibleInstancePublished: useLiveDiagnostics
+      ? (selected?.missionConsoleVisibleInstancePublished || executionMetadata?.mission_console_visible_instance_published || 'no')
+      : (executionMetadata?.mission_console_visible_instance_published || 'no'),
+    missionConsoleBridgeParityStatus: useLiveDiagnostics
+      ? (selected?.missionConsoleBridgeParityStatus || executionMetadata?.mission_console_bridge_parity_status || 'WARN')
+      : (executionMetadata?.mission_console_bridge_parity_status || 'WARN'),
+  };
+}
+
 function resolvePrEvidenceNumber(executionMetadata = {}, runtimeStatus = {}, prFallback = { source: 'none', parseInput: '', prNumber: '' }) {
   const candidates = [
     { source: 'explicit-provider', value: executionMetadata?.github_pr_evidence_number },
@@ -667,6 +734,7 @@ export function buildSupportSnapshot({
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
     : {};
+  const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
     ? runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll
     : {};
@@ -2051,25 +2119,34 @@ export function buildSupportSnapshot({
         ? 'none'
         : 'projection-missing-from-command-deck-path',
     )}`,
-    `Operator Relief Bridge Published: ${asText(executionMetadata?.operator_relief_bridge_published, 'no')}`,
-    `Operator Relief Bridge Source Surface: ${asText(executionMetadata?.operator_relief_bridge_source_surface, 'unknown')}`,
-    `Operator Relief Bridge Projection Keys Seen: ${asText(executionMetadata?.operator_relief_bridge_projection_keys_seen, 'none')}`,
-    `Operator Relief Bridge Agent Reality Loop Seen: ${asText(executionMetadata?.operator_relief_bridge_agent_reality_loop_seen, 'no')}`,
-    `Operator Relief Bridge Store Updated: ${asText(executionMetadata?.operator_relief_bridge_store_updated, 'no')}`,
-    `Operator Relief Bridge RuntimeContext Seen: ${asText(executionMetadata?.operator_relief_bridge_runtime_context_seen, 'no')}`,
+    `Mission Console Diagnostics Source: ${asText(missionConsoleDiagnostics?.source, 'missing')}`,
+    `Mission Console Registration Callback Seen: ${asText(missionConsoleDiagnostics?.callbackSeen, 'no')}`,
+    `Mission Console Registration Store Updated: ${asText(missionConsoleDiagnostics?.storeUpdated, 'no')}`,
+    `Mission Console Registration RuntimeContext Seen: ${asText(missionConsoleDiagnostics?.runtimeContextSeen, 'no')}`,
+    `Operator Relief Bridge Published: ${asText(missionConsoleDiagnostics?.operatorReliefBridgePublished, 'no')}`,
+    `Operator Relief Bridge Source Surface: ${asText(missionConsoleDiagnostics?.operatorReliefBridgeSourceSurface, 'unknown')}`,
+    `Operator Relief Bridge Projection Keys Seen: ${asText(missionConsoleDiagnostics?.operatorReliefBridgeProjectionKeysSeen, 'none')}`,
+    `Operator Relief Bridge Agent Reality Loop Seen: ${asText(missionConsoleDiagnostics?.operatorReliefBridgeAgentRealityLoopSeen, 'no')}`,
+    `Operator Relief Bridge Store Updated: ${asText(missionConsoleDiagnostics?.storeUpdated, 'no')}`,
+    `Operator Relief Bridge RuntimeContext Seen: ${asText(missionConsoleDiagnostics?.runtimeContextSeen, 'no')}`,
     `Operator Relief Bridge RequestRuntimeStatus Seen: ${asText(executionMetadata?.operator_relief_bridge_request_runtime_status_seen, 'no')}`,
-    `Operator Relief Bridge Last Updated At: ${asText(executionMetadata?.operator_relief_bridge_last_updated_at, 'unknown')}`,
+    `Operator Relief Bridge Last Updated At: ${asText(missionConsoleDiagnostics?.operatorReliefBridgeLastUpdatedAt, 'unknown')}`,
     `Operator Relief Bridge Drop Boundary: ${asText(executionMetadata?.operator_relief_bridge_drop_boundary, 'unknown')}`,
-    `Mission Console Instance Count: ${asText(executionMetadata?.mission_console_instance_count, '0')}`,
-    `Mission Console Instance IDs: ${asText(executionMetadata?.mission_console_instance_ids, 'none')}`,
-    `Mission Console Visible Instance ID: ${asText(executionMetadata?.mission_console_visible_instance_id, 'unknown')}`,
-    `Mission Console Bridge-Capable Instance IDs: ${asText(executionMetadata?.mission_console_bridge_capable_instance_ids, 'none')}`,
-    `Mission Console Instances Missing Bridge Callback: ${asText(executionMetadata?.mission_console_instances_missing_bridge_callback, 'none')}`,
-    `Mission Console Last Publishing Instance ID: ${asText(executionMetadata?.mission_console_last_publishing_instance_id, 'unknown')}`,
-    `Mission Console Last Publishing Source Surface: ${asText(executionMetadata?.mission_console_last_publishing_source_surface, 'unknown')}`,
-    `Mission Console Visible Instance Published: ${asText(executionMetadata?.mission_console_visible_instance_published, 'no')}`,
-    `Mission Console Bridge Parity Status: ${asText(executionMetadata?.mission_console_bridge_parity_status, 'WARN')}`,
-    `Mission Console Bridge Parity Blocker: ${deriveMissionConsoleBridgeParityBlocker(executionMetadata)}`,
+    `Mission Console Instance Count: ${asText(missionConsoleDiagnostics?.missionConsoleInstanceCount, '0')}`,
+    `Mission Console Instance IDs: ${asText(missionConsoleDiagnostics?.missionConsoleInstanceIds, 'none')}`,
+    `Mission Console Visible Instance ID: ${asText(missionConsoleDiagnostics?.missionConsoleVisibleInstanceId, 'unknown')}`,
+    `Mission Console Bridge-Capable Instance IDs: ${asText(missionConsoleDiagnostics?.missionConsoleBridgeCapableInstanceIds, 'none')}`,
+    `Mission Console Instances Missing Bridge Callback: ${asText(missionConsoleDiagnostics?.missionConsoleInstancesMissingBridgeCallback, 'none')}`,
+    `Mission Console Last Publishing Instance ID: ${asText(missionConsoleDiagnostics?.missionConsoleLastPublishingInstanceId, 'unknown')}`,
+    `Mission Console Last Publishing Source Surface: ${asText(missionConsoleDiagnostics?.missionConsoleLastPublishingSourceSurface, 'unknown')}`,
+    `Mission Console Visible Instance Published: ${asText(missionConsoleDiagnostics?.missionConsoleVisibleInstancePublished, 'no')}`,
+    `Mission Console Bridge Parity Status: ${asText(missionConsoleDiagnostics?.missionConsoleBridgeParityStatus, 'WARN')}`,
+    `Mission Console Bridge Parity Blocker: ${deriveMissionConsoleBridgeParityBlocker({
+      ...executionMetadata,
+      mission_console_instance_count: missionConsoleDiagnostics?.missionConsoleInstanceCount,
+      mission_console_visible_instance_published: missionConsoleDiagnostics?.missionConsoleVisibleInstancePublished,
+      operator_relief_bridge_published: missionConsoleDiagnostics?.operatorReliefBridgePublished,
+    })}`,
     `Operator Approved Repair Loop Status: ${asText(executionMetadata?.operator_approved_repair_loop_status, 'inactive')}`,
     `Operator Approved Repair Loop Mission: ${asText(executionMetadata?.operator_approved_repair_loop_mission, 'none')}`,
     `Operator Approved Repair Loop Approval Still Valid: ${asText(executionMetadata?.operator_approved_repair_loop_approval_still_valid, 'no')}`,
