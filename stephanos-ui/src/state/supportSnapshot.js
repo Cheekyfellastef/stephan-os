@@ -121,7 +121,9 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
   const selectedCount = useLiveDiagnostics ? liveCount : executionCount;
   return {
     source,
-    callbackSeen: (selected?.storeUpdated || executionMetadata?.operator_relief_bridge_store_updated) === 'yes' ? 'yes' : 'no',
+    callbackSeen: useLiveDiagnostics
+      ? (selected?.registrationCallbackInvoked || 'no')
+      : (executionMetadata?.mission_console_registration_callback_seen || 'no'),
     storeUpdated: useLiveDiagnostics
       ? (selected?.storeUpdated || 'no')
       : (executionMetadata?.operator_relief_bridge_store_updated || 'no'),
@@ -168,6 +170,30 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     missionConsoleBridgeParityStatus: useLiveDiagnostics
       ? (selected?.missionConsoleBridgeParityStatus || executionMetadata?.mission_console_bridge_parity_status || 'WARN')
       : (executionMetadata?.mission_console_bridge_parity_status || 'WARN'),
+    registrationEffectSeen: useLiveDiagnostics
+      ? (selected?.registrationEffectSeen || 'no')
+      : (executionMetadata?.mission_console_registration_effect_seen || 'no'),
+    registrationEffectPanelId: useLiveDiagnostics
+      ? (selected?.registrationEffectPanelId || 'unknown')
+      : (executionMetadata?.mission_console_registration_effect_panel_id || 'unknown'),
+    registrationCallbackPropPresent: useLiveDiagnostics
+      ? (selected?.registrationCallbackPropPresent || 'no')
+      : (executionMetadata?.mission_console_registration_callback_prop_present || 'no'),
+    registrationCallbackInvoked: useLiveDiagnostics
+      ? (selected?.registrationCallbackInvoked || 'no')
+      : (executionMetadata?.mission_console_registration_callback_seen || 'no'),
+    registrationAppHandlerSeen: useLiveDiagnostics
+      ? (selected?.registrationAppHandlerSeen || 'no')
+      : (executionMetadata?.mission_console_registration_app_handler_seen || 'no'),
+    registrationStoreWriteAttempted: useLiveDiagnostics
+      ? (selected?.registrationStoreWriteAttempted || 'no')
+      : (executionMetadata?.mission_console_registration_store_write_attempted || 'no'),
+    registrationStoreWriteAccepted: useLiveDiagnostics
+      ? (selected?.registrationStoreWriteAccepted || 'no')
+      : (executionMetadata?.mission_console_registration_store_write_accepted || 'no'),
+    registrationDropBoundary: useLiveDiagnostics
+      ? (selected?.registrationDropBoundary || 'runtime-context-not-injected')
+      : (executionMetadata?.operator_relief_bridge_drop_boundary || 'runtime-context-not-injected'),
   };
 }
 
@@ -2121,6 +2147,13 @@ export function buildSupportSnapshot({
     )}`,
     `Mission Console Diagnostics Source: ${asText(missionConsoleDiagnostics?.source, 'missing')}`,
     `Mission Console Registration Callback Seen: ${asText(missionConsoleDiagnostics?.callbackSeen, 'no')}`,
+    `Mission Console Registration Effect Seen: ${asText(missionConsoleDiagnostics?.registrationEffectSeen, 'no')}`,
+    `Mission Console Registration Effect Panel ID: ${asText(missionConsoleDiagnostics?.registrationEffectPanelId, 'unknown')}`,
+    `Mission Console Registration Callback Prop Present: ${asText(missionConsoleDiagnostics?.registrationCallbackPropPresent, 'no')}`,
+    `Mission Console Registration Callback Invoked: ${asText(missionConsoleDiagnostics?.registrationCallbackInvoked, 'no')}`,
+    `Mission Console Registration App Handler Seen: ${asText(missionConsoleDiagnostics?.registrationAppHandlerSeen, 'no')}`,
+    `Mission Console Registration Store Write Attempted: ${asText(missionConsoleDiagnostics?.registrationStoreWriteAttempted, 'no')}`,
+    `Mission Console Registration Store Write Accepted: ${asText(missionConsoleDiagnostics?.registrationStoreWriteAccepted, 'no')}`,
     `Mission Console Registration Store Updated: ${asText(missionConsoleDiagnostics?.storeUpdated, 'no')}`,
     `Mission Console Registration RuntimeContext Seen: ${asText(missionConsoleDiagnostics?.runtimeContextSeen, 'no')}`,
     `Operator Relief Bridge Published: ${asText(missionConsoleDiagnostics?.operatorReliefBridgePublished, 'no')}`,
@@ -2131,7 +2164,7 @@ export function buildSupportSnapshot({
     `Operator Relief Bridge RuntimeContext Seen: ${asText(missionConsoleDiagnostics?.runtimeContextSeen, 'no')}`,
     `Operator Relief Bridge RequestRuntimeStatus Seen: ${asText(executionMetadata?.operator_relief_bridge_request_runtime_status_seen, 'no')}`,
     `Operator Relief Bridge Last Updated At: ${asText(missionConsoleDiagnostics?.operatorReliefBridgeLastUpdatedAt, 'unknown')}`,
-    `Operator Relief Bridge Drop Boundary: ${asText(executionMetadata?.operator_relief_bridge_drop_boundary, 'unknown')}`,
+    `Operator Relief Bridge Drop Boundary: ${asText(missionConsoleDiagnostics?.registrationDropBoundary, 'runtime-context-not-injected')}`,
     `Mission Console Instance Count: ${asText(missionConsoleDiagnostics?.missionConsoleInstanceCount, '0')}`,
     `Mission Console Instance IDs: ${asText(missionConsoleDiagnostics?.missionConsoleInstanceIds, 'none')}`,
     `Mission Console Visible Instance ID: ${asText(missionConsoleDiagnostics?.missionConsoleVisibleInstanceId, 'unknown')}`,

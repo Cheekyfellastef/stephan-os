@@ -2342,6 +2342,14 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
           published: 'yes',
           storeUpdated: 'yes',
           runtimeContextSeen: 'yes',
+          registrationEffectSeen: 'yes',
+          registrationEffectPanelId: 'aiCoreMissionConsolePanel',
+          registrationCallbackPropPresent: 'yes',
+          registrationCallbackInvoked: 'yes',
+          registrationAppHandlerSeen: 'yes',
+          registrationStoreWriteAttempted: 'yes',
+          registrationStoreWriteAccepted: 'yes',
+          registrationDropBoundary: 'none',
           missionConsoleInstanceCount: 2,
           missionConsoleInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
           missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel',
@@ -2354,6 +2362,12 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
   });
   assert.match(snapshot, /Mission Console Diagnostics Source: live-operator-relief-bridge/);
   assert.match(snapshot, /Mission Console Registration Callback Seen: yes/);
+  assert.match(snapshot, /Mission Console Registration Effect Seen: yes/);
+  assert.match(snapshot, /Mission Console Registration Callback Prop Present: yes/);
+  assert.match(snapshot, /Mission Console Registration Callback Invoked: yes/);
+  assert.match(snapshot, /Mission Console Registration App Handler Seen: yes/);
+  assert.match(snapshot, /Mission Console Registration Store Write Attempted: yes/);
+  assert.match(snapshot, /Mission Console Registration Store Write Accepted: yes/);
   assert.match(snapshot, /Mission Console Registration Store Updated: yes/);
   assert.match(snapshot, /Mission Console Registration RuntimeContext Seen: yes/);
   assert.match(snapshot, /Mission Console Instance Count: 2/);
@@ -2391,6 +2405,22 @@ test('support snapshot does not allow final execution metadata zero defaults to 
   assert.match(snapshot, /Mission Console Instance IDs: aiCoreMissionConsolePanel/);
   assert.match(snapshot, /Mission Console Visible Instance ID: aiCoreMissionConsolePanel/);
   assert.match(snapshot, /Mission Console Bridge-Capable Instance IDs: aiCoreMissionConsolePanel/);
+});
+
+test('support snapshot reports truthful drop boundary when callback prop is missing', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      runtimeContext: {
+        operatorReliefBridgeDiagnostics: {
+          missionConsoleInstanceCount: 1,
+          registrationDropBoundary: 'missing-prop',
+          registrationCallbackInvoked: 'no',
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /Operator Relief Bridge Drop Boundary: missing-prop/);
+  assert.match(snapshot, /Mission Console Registration Callback Seen: no/);
 });
 
 test('support snapshot reads chat_context_* fields from latest execution metadata', () => {
