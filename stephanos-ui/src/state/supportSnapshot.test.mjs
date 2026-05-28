@@ -3408,3 +3408,171 @@ test('support snapshot copy-time sampler overrides stale cached missing MissionC
     else globalThis.document = previousDocument;
   }
 });
+
+test('support snapshot live sampler finds current AIConsole Command Deck DOM and latest final assistant card', () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const latest = {
+    textContent: 'Final assistant answer from live DOM.',
+    getAttribute(name) {
+      return {
+        'data-assistant-answer-id': 'assistant-live-1',
+        'data-answer-final': 'true',
+      }[name] || '';
+    },
+  };
+  const history = {
+    querySelectorAll(selector) {
+      return selector.includes('data-answer-role') ? [latest] : [];
+    },
+  };
+  const root = {
+    getAttribute(name) {
+      return {
+        'data-surface-owner-key': 'commandDeck-pane',
+        'data-submission-source': 'stephanos-command-deck',
+      }[name] || '';
+    },
+    querySelector(selector) {
+      if (selector.includes('command-deck-answer-history')) return history;
+      if (selector === '[data-testid="command-deck-composer"]') return {};
+      if (selector === '[data-testid="command-deck-input"]') return {};
+      if (selector === '[data-testid="command-deck-execute"]') return {};
+      return null;
+    },
+    querySelectorAll(selector) {
+      return selector.includes('data-answer-role') ? [latest] : [];
+    },
+  };
+  globalThis.document = {
+    querySelector(selector) {
+      return selector.includes('command-deck-root') || selector.includes('data-ai-chat-command-deck') || selector.includes('data-panel-id') ? root : null;
+    },
+  };
+  globalThis.window = { document: globalThis.document };
+  try {
+    const snapshot = buildSupportSnapshot({
+      runtimeStatus: {
+        lastExecutionMetadata: {
+          answer_delivery_status: 'delivered',
+          answer_delivery_rendered: 'yes',
+          command_pipeline_last_answer_pane_rendered: 'yes',
+          final_assistant_message_id: 'assistant-live-1',
+        },
+      },
+    });
+    assert.match(snapshot, /Visible Deck Root Found: yes/);
+    assert.match(snapshot, /History Container Found: yes/);
+    assert.match(snapshot, /Composer Found: yes/);
+    assert.match(snapshot, /Input Found: yes/);
+    assert.match(snapshot, /Execute Found: yes/);
+    assert.match(snapshot, /Answer Pane Count: 1/);
+    assert.match(snapshot, /Latest Assistant Answer ID: assistant-live-1/);
+    assert.match(snapshot, /Latest Assistant Answer Final: true/);
+    assert.match(snapshot, /Latest Assistant Answer DOM Found: yes/);
+    assert.match(snapshot, /Command Deck Render Proof Source: live-dom/);
+    assert.match(snapshot, /Latest Assistant DOM Proof Source: live-dom/);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test('support snapshot explains delivered rendered answer with zero live pane count when local ref proof owns render', () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  globalThis.document = { querySelector() { return null; } };
+  globalThis.window = {
+    document: globalThis.document,
+    __STEPHANOS_COMMAND_DECK_LOCAL_REVEAL__: {
+      rootRefPresent: 'yes',
+      historyRefPresent: 'yes',
+      latestAnswerRefPresent: 'yes',
+    },
+  };
+  try {
+    const snapshot = buildSupportSnapshot({
+      runtimeStatus: {
+        lastExecutionMetadata: {
+          answer_delivery_status: 'delivered',
+          answer_delivery_rendered: 'yes',
+          command_pipeline_last_answer_pane_rendered: 'yes',
+        },
+        uiDiagnostics: { aiConsoleAnswerScroll: { answerPaneCount: '0' } },
+      },
+    });
+    assert.match(snapshot, /Answer Delivery Rendered: yes/);
+    assert.match(snapshot, /Answer Pane Count: 0/);
+    assert.match(snapshot, /Command Deck Render Proof Source: local-ref/);
+    assert.match(snapshot, /Latest Assistant DOM Proof Source: local-ref/);
+    assert.match(snapshot, /Answer Delivery Rendered Zero Pane Explanation: render-proof-from-local-ref/);
+    assert.match(snapshot, /Visible Deck Root Found: no/);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test('support snapshot normalizes ARL projection available proof to non-none source and injected context', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        agent_reality_loop_context_recognized: 'yes',
+        agent_reality_loop_projection_available: 'yes',
+        agent_reality_loop_projection_source_seen: 'none',
+        agent_reality_loop_context_injected: 'no',
+        agent_reality_loop_availability_blocker: 'none',
+      },
+    },
+  });
+  assert.match(snapshot, /Agent Reality Loop Projection Available: yes/);
+  assert.match(snapshot, /ARL Projection Source: command-deck-projection-bridge/);
+  assert.doesNotMatch(snapshot, /ARL Projection Source: none/);
+  assert.match(snapshot, /Agent Reality Loop Context Injected: yes/);
+  assert.match(snapshot, /Agent Reality Loop Context Injection Blocker: none/);
+});
+
+test('support snapshot live MissionConsoleTile sampler falls back to pane selector and reports checked selector when missing', () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const marker = {
+    getAttribute(name) {
+      return {
+        'data-mission-console-component': 'MissionConsoleTile',
+        'data-mission-console-panel-id': 'aiCoreMissionConsolePanel',
+      }[name] || '';
+    },
+  };
+  const pane = {
+    querySelector(selector) {
+      return selector === '[data-mission-console-component="MissionConsoleTile"]' ? marker : null;
+    },
+  };
+  globalThis.document = {
+    querySelector(selector) {
+      if (selector === '[data-testid="ai-core-mission-console"]') return null;
+      if (selector === '[data-pane-id="aiCoreMissionConsolePanel"]') return pane;
+      return null;
+    },
+  };
+  globalThis.window = { document: globalThis.document };
+  try {
+    const paneSnapshot = buildSupportSnapshot({ runtimeStatus: { lastExecutionMetadata: {} } });
+    assert.match(paneSnapshot, /Mission Console Component Trace Source: pane-fallback/);
+    assert.match(paneSnapshot, /Mission Console Visible Component Is MissionConsoleTile: yes/);
+    globalThis.document = { querySelector() { return null; } };
+    globalThis.window.document = globalThis.document;
+    const missingSnapshot = buildSupportSnapshot({ runtimeStatus: { lastExecutionMetadata: {} } });
+    assert.match(missingSnapshot, /Mission Console Component Trace Source: missing/);
+    assert.match(missingSnapshot, /Mission Console Component Trace Selector Checked: \[data-testid="ai-core-mission-console"\]/);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});

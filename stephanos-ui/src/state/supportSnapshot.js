@@ -18,8 +18,96 @@ function asList(value) {
   return value.map((item) => `- ${asText(item, 'n/a')}`);
 }
 
+
+function getDocument() {
+  return globalThis?.document || globalThis?.window?.document || null;
+}
+
+function elementExists(node) {
+  return Boolean(node);
+}
+
+function sampleLiveCommandDeckProof(preferredAssistantAnswerId = '') {
+  const doc = getDocument();
+  const checkedRootSelector = '[data-testid="command-deck-root"][data-ai-chat-command-deck="true"], [data-ai-chat-command-deck="true"][data-panel-id="commandDeck"], [data-panel-id="commandDeck"], [data-testid="command-deck-root"]';
+  if (!doc?.querySelector) {
+    return { source: 'missing', rootSelectorChecked: checkedRootSelector };
+  }
+  const root = doc.querySelector(checkedRootSelector);
+  if (!root?.querySelector) {
+    return { source: 'missing', rootSelectorChecked: checkedRootSelector };
+  }
+  const history = root.querySelector('[data-testid="command-deck-answer-history"], [data-testid="command-deck-body"], [data-pane-id="answer-history"]');
+  const queryRoot = history || root;
+  const composer = root.querySelector('[data-testid="command-deck-composer"]');
+  const input = root.querySelector('[data-testid="command-deck-input"]');
+  const execute = root.querySelector('[data-testid="command-deck-execute"]');
+  const answers = Array.from(queryRoot.querySelectorAll('[data-answer-role="assistant"][data-answer-final="true"][data-assistant-answer-id], [data-answer-role="assistant"][data-answer-final="true"]'));
+  const preferred = preferredAssistantAnswerId
+    ? answers.find((node) => String(node.getAttribute?.('data-assistant-answer-id') || '') === String(preferredAssistantAnswerId))
+    : null;
+  const latest = preferred || answers[answers.length - 1] || null;
+  return {
+    source: 'live-dom',
+    rootSelectorChecked: checkedRootSelector,
+    root,
+    rootFound: elementExists(root) ? 'yes' : 'no',
+    historyFound: elementExists(history) ? 'yes' : 'no',
+    composerFound: elementExists(composer) ? 'yes' : 'no',
+    inputFound: elementExists(input) ? 'yes' : 'no',
+    executeFound: elementExists(execute) ? 'yes' : 'no',
+    answerPaneCount: String(answers.length),
+    latestAnswerFound: elementExists(latest) ? 'yes' : 'no',
+    latestAnswerId: latest?.getAttribute?.('data-assistant-answer-id') || 'none',
+    latestAnswerFinal: latest?.getAttribute?.('data-answer-final') || 'no',
+    latestAnswerTextLength: String(latest?.textContent?.trim?.().length || 0),
+    ownerAttr: root.getAttribute?.('data-surface-owner-key') || 'unknown',
+    submissionSourceAttr: root.getAttribute?.('data-submission-source') || 'unknown',
+  };
+}
+
+function deriveCommandDeckProof({ aiConsoleAnswerScroll = {}, commandDeckLocalReveal = null, executionMetadata = {} } = {}) {
+  const live = sampleLiveCommandDeckProof(aiConsoleAnswerScroll?.latestAssistantAnswerId || executionMetadata?.final_assistant_message_id || '');
+  const localRootRef = asText(commandDeckLocalReveal?.rootRefPresent || aiConsoleAnswerScroll?.commandDeckLocalRootRefPresent, 'no') === 'yes';
+  const localHistoryRef = asText(commandDeckLocalReveal?.historyRefPresent || aiConsoleAnswerScroll?.commandDeckLocalHistoryRefPresent, 'no') === 'yes';
+  const localLatestRef = asText(commandDeckLocalReveal?.latestAnswerRefPresent || aiConsoleAnswerScroll?.commandDeckLocalLatestAnswerRefPresent, 'no') === 'yes';
+  const metadataRendered = asText(executionMetadata?.answer_delivery_rendered || executionMetadata?.command_pipeline_last_answer_pane_rendered, 'no') === 'yes';
+  const answerPaneCount = Number.parseInt(live.answerPaneCount || aiConsoleAnswerScroll?.answerPaneCount || '0', 10) || 0;
+  const renderProofSource = live.source === 'live-dom' && answerPaneCount > 0
+    ? 'live-dom'
+    : (localLatestRef || (localRootRef && localHistoryRef && metadataRendered))
+      ? 'local-ref'
+      : metadataRendered
+        ? 'final-metadata'
+        : 'missing';
+  const latestAssistantDomProofSource = live.latestAnswerFound === 'yes'
+    ? 'live-dom'
+    : localLatestRef
+      ? 'local-ref'
+      : 'missing';
+  const renderedWithZeroPaneExplanation = metadataRendered && answerPaneCount === 0 && renderProofSource === 'local-ref'
+    ? 'render-proof-from-local-ref'
+    : 'none';
+  return {
+    live,
+    renderProofSource,
+    latestAssistantDomProofSource,
+    renderedWithZeroPaneExplanation,
+    visibleDeckRootFound: live.rootFound || aiConsoleAnswerScroll?.visibleDeckRootFound || 'no',
+    historyContainerFound: live.historyFound || aiConsoleAnswerScroll?.historyContainerFound || 'no',
+    composerFound: live.composerFound || aiConsoleAnswerScroll?.composerFound || 'no',
+    inputFound: live.inputFound || aiConsoleAnswerScroll?.inputFound || 'no',
+    executeFound: live.executeFound || aiConsoleAnswerScroll?.executeFound || 'no',
+    answerPaneCount: live.source === 'live-dom' ? live.answerPaneCount : asText(aiConsoleAnswerScroll?.answerPaneCount, '0'),
+    latestAssistantAnswerDomFound: live.latestAnswerFound === 'yes' ? 'yes' : asText(aiConsoleAnswerScroll?.latestAssistantAnswerDomFound || aiConsoleAnswerScroll?.targetFound, 'no'),
+    latestAssistantAnswerId: live.latestAnswerFound === 'yes' ? live.latestAnswerId : asText(aiConsoleAnswerScroll?.latestAssistantAnswerId, 'none'),
+    latestAssistantAnswerFinal: live.latestAnswerFound === 'yes' ? live.latestAnswerFinal : asText(aiConsoleAnswerScroll?.latestAssistantAnswerFinal, 'no'),
+    latestAssistantAnswerTextLength: live.latestAnswerFound === 'yes' ? live.latestAnswerTextLength : asText(aiConsoleAnswerScroll?.latestAssistantAnswerTextLength, '0'),
+  };
+}
+
 function sampleLiveMissionConsoleComponentTrace() {
-  const doc = globalThis?.document;
+  const doc = getDocument();
   if (!doc?.querySelector) return null;
   const aiCoreNode = doc.querySelector('[data-testid="ai-core-mission-console"]');
   const aiCorePane = doc.querySelector('[data-pane-id="aiCoreMissionConsolePanel"]');
@@ -27,7 +115,7 @@ function sampleLiveMissionConsoleComponentTrace() {
     || aiCorePane?.querySelector?.('[data-mission-console-component="MissionConsoleTile"]')
     || null;
   if (!marker) {
-    return { source: 'missing' };
+    return { source: 'missing', selectorPathChecked: '[data-testid="ai-core-mission-console"] [data-mission-console-component="MissionConsoleTile"] | [data-pane-id="aiCoreMissionConsolePanel"] [data-mission-console-component="MissionConsoleTile"]' };
   }
   return {
     source: aiCoreNode?.contains?.(marker) ? 'dom' : 'pane-fallback',
@@ -219,6 +307,7 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
       ? (selected?.registrationStoreWriteAccepted || 'no')
       : (executionMetadata?.mission_console_registration_store_write_accepted || 'no'),
     componentTraceSource,
+    componentTraceSelectorChecked: asText(liveDomComponentTrace?.selectorPathChecked || uiRealityComponentTrace?.selectorPathChecked, 'n/a'),
     visibleComponentIsMissionConsoleTile: asText(uiRealityComponentTrace?.isMissionConsoleTile, executionMetadata?.mission_console_visible_component_is_missionconsoletile || 'no'),
     visibleComponentPanelId: asText(uiRealityComponentTrace?.panelId, executionMetadata?.mission_console_visible_component_panel_id || 'unknown'),
     componentEffectSeen: asText(uiRealityComponentTrace?.registrationEffectSeen, executionMetadata?.mission_console_component_effect_seen || 'no'),
@@ -800,9 +889,10 @@ export function buildSupportSnapshot({
   const commandDeckLocalReveal = globalThis.window?.__STEPHANOS_COMMAND_DECK_LOCAL_REVEAL__ && typeof globalThis.window.__STEPHANOS_COMMAND_DECK_LOCAL_REVEAL__ === 'object'
     ? globalThis.window.__STEPHANOS_COMMAND_DECK_LOCAL_REVEAL__
     : null;
-  const commandDeckFallbackRoot = commandDeckLocalReveal ? null : globalThis.window?.document?.querySelector?.('[data-panel-id="commandDeck"]');
+  const commandDeckProof = deriveCommandDeckProof({ aiConsoleAnswerScroll, commandDeckLocalReveal, executionMetadata });
+  const commandDeckFallbackRoot = commandDeckProof.live?.root || null;
   const commandDeckFallbackAnswers = commandDeckFallbackRoot ? Array.from(commandDeckFallbackRoot.querySelectorAll('[data-answer-role="assistant"][data-answer-final="true"]')) : [];
-  const commandDeckFallbackLatestAnswer = commandDeckFallbackAnswers.length ? commandDeckFallbackAnswers[commandDeckFallbackAnswers.length - 1] : null;
+  const commandDeckFallbackLatestAnswer = commandDeckProof.live?.latestAnswerFound === 'yes' ? { getAttribute: (name) => (name === 'data-assistant-answer-id' ? commandDeckProof.live.latestAnswerId : '') } : null;
   const providerExecutionGateStatus = String(executionMetadata?.provider_execution_gate_status || '').trim().toLowerCase();
   const commandPipelineFailureReason = String(executionMetadata?.command_pipeline_last_failure_reason || '').trim().toLowerCase();
   const executionTruthState = String(runtimeStatus?.executionTruth || '').trim().toLowerCase();
@@ -1001,8 +1091,20 @@ export function buildSupportSnapshot({
   let chatContextAgentWorkRoutingContextIncluded = /\bagentWorkRouting\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
   let normalizedChatContextSourcesUsed = chatContextSourcesUsed;
   let normalizedChatContextStatus = chatContextStatus;
-  const arlContextInjected = executionMetadata?.agent_reality_loop_context_injected || 'no';
-  const arlProjectionSource = executionMetadata?.agent_reality_loop_projection_source_seen || 'none';
+  const arlProjectionAvailable = String(executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes';
+  const arlContextRecognized = String(executionMetadata?.agent_reality_loop_context_recognized || '').trim().toLowerCase() === 'yes';
+  const arlProjectionSource = firstKnownValue([
+    executionMetadata?.agent_reality_loop_projection_source_seen,
+    String(executionMetadata?.operator_relief_bridge_agent_reality_loop_seen || '').trim().toLowerCase() === 'yes' ? 'operator-relief-bridge' : '',
+    String(executionMetadata?.operator_relief_bridge_published || '').trim().toLowerCase() === 'yes' ? 'operator-relief-bridge' : '',
+    arlProjectionAvailable ? 'command-deck-projection-bridge' : '',
+  ], 'none');
+  const arlContextInjected = arlContextRecognized && arlProjectionAvailable && arlProjectionSource !== 'none'
+    ? 'yes'
+    : firstKnownValue([executionMetadata?.agent_reality_loop_context_injected], 'no');
+  const arlContextInjectionBlocker = arlContextInjected === 'yes'
+    ? 'none'
+    : (arlContextRecognized && arlProjectionAvailable ? 'projection-available-but-chat-context-injection-proof-missing' : 'none');
   if (String(executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes'
     && normalizedChatContextStatus === 'unavailable') {
     normalizedChatContextStatus = 'degraded-with-arl';
@@ -2179,8 +2281,9 @@ export function buildSupportSnapshot({
     `Work Routing Prompt Sources: ${asText(workRoutingPromptSources, 'none')}`,
     `Agent Reality Loop Context Recognized: ${asText(executionMetadata?.agent_reality_loop_context_recognized, 'no')}`,
     `Agent Reality Loop Context Source: ${asText(executionMetadata?.agent_reality_loop_context_source, 'none')}`,
-    `Agent Reality Loop Context Injected: ${asText(executionMetadata?.agent_reality_loop_context_injected, 'no')}`,
-    `ARL Projection Source: ${asText(executionMetadata?.agent_reality_loop_projection_source_seen, 'none')}`,
+    `Agent Reality Loop Context Injected: ${asText(arlContextInjected, 'no')}`,
+    `Agent Reality Loop Context Injection Blocker: ${asText(arlContextInjectionBlocker, 'none')}`,
+    `ARL Projection Source: ${asText(arlProjectionSource, 'none')}`,
     `Agent Reality Loop Projection Available: ${asText(executionMetadata?.agent_reality_loop_projection_available, 'no')}`,
     `Agent Reality Loop Recommended Lead: ${asText(executionMetadata?.agent_reality_loop_recommended_lead, 'hold')}`,
     `Agent Reality Loop Merge Recommendation: ${asText(executionMetadata?.agent_reality_loop_merge_recommendation, 'hold')}`,
@@ -2193,6 +2296,7 @@ export function buildSupportSnapshot({
     )}`,
     `Mission Console Diagnostics Source: ${asText(missionConsoleDiagnostics?.source, 'missing')}`,
     `Mission Console Component Trace Source: ${asText(missionConsoleDiagnostics?.componentTraceSource, 'missing')}`,
+    `Mission Console Component Trace Selector Checked: ${asText(missionConsoleDiagnostics?.componentTraceSelectorChecked, 'n/a')}`,
     `Mission Console Visible Component Is MissionConsoleTile: ${asText(missionConsoleDiagnostics?.visibleComponentIsMissionConsoleTile, 'no')}`,
     `Mission Console Visible Component Panel ID: ${asText(missionConsoleDiagnostics?.visibleComponentPanelId, 'unknown')}`,
     `Mission Console Component Effect Seen: ${asText(missionConsoleDiagnostics?.componentEffectSeen, 'no')}`,
@@ -2312,14 +2416,17 @@ export function buildSupportSnapshot({
     `Answer Delivery Failure Reason: ${asText(executionMetadata?.answer_delivery_failure_reason, 'none')}`,
     `Answer Delivery Contradiction Detected: ${asText(executionMetadata?.answer_delivery_contradiction_detected, 'no')}`,
     `Answer Delivery Next Action: ${asText(executionMetadata?.answer_delivery_next_action, 'none')}`,
+    `Command Deck Render Proof Source: ${asText(commandDeckProof.renderProofSource, 'missing')}`,
+    `Latest Assistant DOM Proof Source: ${asText(commandDeckProof.latestAssistantDomProofSource, 'missing')}`,
+    `Answer Delivery Rendered Zero Pane Explanation: ${asText(commandDeckProof.renderedWithZeroPaneExplanation, 'none')}`,
     `Explanation Normal Chat Bypass: ${asText(executionMetadata?.operator_explanation_triggered === 'yes' ? 'yes' : 'no', 'no')}`,
     `Answer Scroll Requested: ${asText(aiConsoleAnswerScroll?.requested, 'no')}`,
     `Visible Deck Instance Mounted: ${asText(aiConsoleAnswerScroll?.visibleDeckInstanceMounted, 'no')}`,
-    `Visible Deck Root Found: ${asText(aiConsoleAnswerScroll?.visibleDeckRootFound, 'no')}`,
-    `History Container Found: ${asText(aiConsoleAnswerScroll?.historyContainerFound, 'no')}`,
-    `Composer Found: ${asText(aiConsoleAnswerScroll?.composerFound, 'no')}`,
-    `Input Found: ${asText(aiConsoleAnswerScroll?.inputFound, 'no')}`,
-    `Execute Found: ${asText(aiConsoleAnswerScroll?.executeFound, 'no')}`,
+    `Visible Deck Root Found: ${asText(commandDeckProof.visibleDeckRootFound, 'no')}`,
+    `History Container Found: ${asText(commandDeckProof.historyContainerFound, 'no')}`,
+    `Composer Found: ${asText(commandDeckProof.composerFound, 'no')}`,
+    `Input Found: ${asText(commandDeckProof.inputFound, 'no')}`,
+    `Execute Found: ${asText(commandDeckProof.executeFound, 'no')}`,
     `Latest Final Assistant Card Found: ${asText(aiConsoleAnswerScroll?.latestFinalAssistantCardFound, 'no')}`,
     `Answer Scroll Source: ${asText(aiConsoleAnswerScroll?.source, 'unknown')}`,
     `Answer Scroll Reveal Owner Instance ID: ${asText(aiConsoleAnswerScroll?.revealOwnerInstanceId, 'none')}`,
@@ -2342,11 +2449,11 @@ export function buildSupportSnapshot({
     `Answer Scroll Occlusion Reason: ${asText(aiConsoleAnswerScroll?.occlusionReason, 'none')}`,
     `Answer Scroll Last Requested At: ${asText(aiConsoleAnswerScroll?.lastRequestedAt, 'none')}`,
     `Answer Scroll Last Completed At: ${asText(aiConsoleAnswerScroll?.lastCompletedAt, 'none')}`,
-    `Answer Pane Count: ${asText(aiConsoleAnswerScroll?.answerPaneCount, '0')}`,
-    `Latest Assistant Answer ID: ${asText(aiConsoleAnswerScroll?.latestAssistantAnswerId, 'none')}`,
-    `Latest Assistant Answer Final: ${asText(aiConsoleAnswerScroll?.latestAssistantAnswerFinal, 'no')}`,
-    `Latest Assistant Answer Text Length: ${asText(aiConsoleAnswerScroll?.latestAssistantAnswerTextLength, '0')}`,
-    `Latest Assistant Answer DOM Found: ${asText(aiConsoleAnswerScroll?.latestAssistantAnswerDomFound || aiConsoleAnswerScroll?.targetFound, 'no')}`,
+    `Answer Pane Count: ${asText(commandDeckProof.answerPaneCount, '0')}`,
+    `Latest Assistant Answer ID: ${asText(commandDeckProof.latestAssistantAnswerId, 'none')}`,
+    `Latest Assistant Answer Final: ${asText(commandDeckProof.latestAssistantAnswerFinal, 'no')}`,
+    `Latest Assistant Answer Text Length: ${asText(commandDeckProof.latestAssistantAnswerTextLength, '0')}`,
+    `Latest Assistant Answer DOM Found: ${asText(commandDeckProof.latestAssistantAnswerDomFound, 'no')}`,
     `Latest Assistant Answer Visible: ${asText(aiConsoleAnswerScroll?.latestAssistantAnswerVisible, 'no')}`,
     `Answer Pane Client Height: ${asText(aiConsoleAnswerScroll?.answerPaneClientHeight, '0')}`,
     `Answer Pane Scroll Height: ${asText(aiConsoleAnswerScroll?.answerPaneScrollHeight, '0')}`,
