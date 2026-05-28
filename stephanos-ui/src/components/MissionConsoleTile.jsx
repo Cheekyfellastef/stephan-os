@@ -116,6 +116,10 @@ function MissionConsoleTile({
 }) {
   const registrationCallbackInvokedRef = useRef('no');
   const registrationDropBoundaryRef = useRef('effect-not-fired');
+  const [registrationTraceState, setRegistrationTraceState] = useState({
+    callbackInvoked: 'no',
+    dropBoundary: 'effect-not-fired',
+  });
   recordPerfCounter('render', 'MissionConsoleTile');
   useEffect(() => {
     setPerfIdentityField('component.MissionConsoleTile.mounted', true);
@@ -129,6 +133,7 @@ function MissionConsoleTile({
   useEffect(() => {
     const callbackPresent = typeof onMissionConsoleInstanceRegistration === 'function';
     registrationDropBoundaryRef.current = callbackPresent ? 'none' : 'missing-prop';
+    setRegistrationTraceState({ callbackInvoked: 'no', dropBoundary: registrationDropBoundaryRef.current });
     if (!callbackPresent) {
       onOperatorReliefProjectionUpdate(null, {
         sourceSurface: panelId,
@@ -143,6 +148,7 @@ function MissionConsoleTile({
       return;
     }
     registrationCallbackInvokedRef.current = 'yes';
+    setRegistrationTraceState({ callbackInvoked: 'yes', dropBoundary: 'none' });
     onMissionConsoleInstanceRegistration({
       panelId,
       sourceSurface: panelId,
@@ -1063,8 +1069,8 @@ function MissionConsoleTile({
         data-mission-console-panel-id={panelId}
         data-mission-console-registration-effect-seen="yes"
         data-mission-console-registration-callback-prop-present={typeof onMissionConsoleInstanceRegistration === 'function' ? 'yes' : 'no'}
-        data-mission-console-registration-callback-invoked={registrationCallbackInvokedRef.current}
-        data-mission-console-registration-drop-boundary={registrationDropBoundaryRef.current}
+        data-mission-console-registration-callback-invoked={registrationTraceState.callbackInvoked}
+        data-mission-console-registration-drop-boundary={registrationTraceState.dropBoundary}
         hidden
         aria-hidden="true"
       />

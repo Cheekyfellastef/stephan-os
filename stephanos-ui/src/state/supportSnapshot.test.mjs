@@ -2552,6 +2552,8 @@ test('support snapshot exposes agent reality loop proof lines from execution met
         agent_reality_loop_context_recognized: 'yes',
         agent_reality_loop_context_source: 'chatContext.intent+projectAwareness',
         agent_reality_loop_projection_available: 'yes',
+        agent_reality_loop_context_injected: 'yes',
+        agent_reality_loop_projection_source_seen: 'operator-relief-bridge',
         agent_reality_loop_recommended_lead: 'codex',
         agent_reality_loop_merge_recommendation: 'hold',
         agent_reality_loop_copy_packets_available: 'yes',
@@ -2561,6 +2563,8 @@ test('support snapshot exposes agent reality loop proof lines from execution met
   });
   assert.match(snapshot, /Agent Reality Loop Context Recognized: yes/);
   assert.match(snapshot, /Agent Reality Loop Context Source: chatContext\.intent\+projectAwareness/);
+  assert.match(snapshot, /Agent Reality Loop Context Injected: yes/);
+  assert.match(snapshot, /ARL Projection Source: operator-relief-bridge/);
   assert.match(snapshot, /Agent Reality Loop Projection Available: yes/);
   assert.match(snapshot, /Agent Reality Loop Recommended Lead: codex/);
   assert.match(snapshot, /Agent Reality Loop Merge Recommendation: hold/);
@@ -3349,4 +3353,58 @@ test('support snapshot never reports availability blocker none when projection i
   assert.match(snapshot, /Agent Reality Loop Projection Available: no/);
   assert.match(snapshot, /Agent Reality Loop Availability Blocker: projection-missing-from-command-deck-path/);
   assert.doesNotMatch(snapshot, /Agent Reality Loop Availability Blocker: none/);
+});
+
+test('support snapshot copy-time sampler overrides stale cached missing MissionConsoleTile trace with live DOM trace', () => {
+  const previousDocument = globalThis.document;
+  const marker = {
+    getAttribute(name) {
+      return {
+        'data-mission-console-component': 'MissionConsoleTile',
+        'data-mission-console-panel-id': 'aiCoreMissionConsolePanel',
+        'data-mission-console-registration-effect-seen': 'yes',
+        'data-mission-console-registration-callback-prop-present': 'yes',
+        'data-mission-console-registration-callback-invoked': 'yes',
+        'data-mission-console-registration-drop-boundary': 'none',
+      }[name] || '';
+    },
+  };
+  const aiCoreNode = {
+    querySelector(selector) {
+      return selector === '[data-mission-console-component="MissionConsoleTile"]' ? marker : null;
+    },
+    contains(node) { return node === marker; },
+  };
+  globalThis.document = {
+    querySelector(selector) {
+      if (selector === '[data-testid="ai-core-mission-console"]') return aiCoreNode;
+      if (selector === '[data-pane-id="aiCoreMissionConsolePanel"]') return null;
+      return null;
+    },
+  };
+  try {
+    const snapshot = buildSupportSnapshot({
+      runtimeStatus: {
+        lastExecutionMetadata: {
+          mission_console_component_trace_source: 'missing',
+          mission_console_visible_component_is_missionconsoletile: 'no',
+          mission_console_visible_component_panel_id: 'unknown',
+        },
+        runtimeContext: {
+          uiReality: { aiCoreMissionConsole: { componentTrace: { source: 'missing' } } },
+        },
+      },
+    });
+    assert.match(snapshot, /Mission Console Component Trace Source: dom/);
+    assert.match(snapshot, /Mission Console Visible Component Is MissionConsoleTile: yes/);
+    assert.match(snapshot, /Mission Console Visible Component Panel ID: aiCoreMissionConsolePanel/);
+    assert.match(snapshot, /Mission Console Component Effect Seen: yes/);
+    assert.match(snapshot, /Mission Console Component Callback Prop Present: yes/);
+    assert.match(snapshot, /Mission Console Component Callback Invoked: yes/);
+    assert.match(snapshot, /Mission Console Registration Drop Boundary: none/);
+    assert.match(snapshot, /Mission Console Instance Count: 0/);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
 });

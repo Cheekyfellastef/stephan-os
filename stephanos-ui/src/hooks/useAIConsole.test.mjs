@@ -24,6 +24,8 @@ test('command deck missionState bridge forwards operator relief agent reality lo
   assert.match(source, /const bridgedOperatorReliefProjection = requestRuntimeStatus\?\.operatorReliefProjection/);
   assert.match(source, /operatorReliefProjection: bridgedOperatorReliefProjection,/);
   assert.match(source, /agentRealityLoopProjection: bridgedOperatorReliefProjection\?\.agentRealityLoopProjection \|\| \{\},/);
+  assert.match(source, /submitRuntimeContextWithOperatorReliefBridge/);
+  assert.match(source, /operatorReliefBridgeDiagnostics:/);
 });
 
 test('agent reality loop availability blocker cannot be none when projection is unavailable', async () => {
@@ -365,7 +367,7 @@ test('submitPrompt pre-envelope path keeps submit-wide symbols initialized and c
   assert.match(source, /let routeUnavailableOutcome = null;/);
   assert.match(source, /let providerDispatchResult = null;/);
   assert.match(source, /let streamBuffer = '';/);
-  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| operatorExplanationDeterministicResult \|\| await sendPrompt\(/);
+  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| agentRealityLoopDeterministicResult \|\| operatorExplanationDeterministicResult \|\| await sendPrompt\(/);
   assert.match(source, /const \{ data, requestPayload: effectiveRequestPayload \} = providerDispatchResult;/);
   assert.match(source, /const preEnvelopeFailureActive = String\(timeoutFailureMetadata\.command_pipeline_last_finalization_path \|\| ''\) === 'pre-envelope-error';/);
   assert.match(source, /timeoutFailureMetadata\.active_provider = 'none';/);
@@ -378,7 +380,7 @@ test('operator explanation deterministic path is eligible from classified respon
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /const operatorExplanationModeClassified = String\(chatContextPack\?\.recommendedResponseMode \|\| responsePlan\?\.responseMode \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'operator-explanation';/);
   assert.match(source, /const operatorExplanationDeterministicEligible = operatorExplanationModeClassified \|\| explanationIntent\.matched;/);
-  assert.match(source, /const operatorExplanationDeterministicResult = \(!routeUnavailableOutcome && !identityRecallDeterministicResult && operatorExplanationDeterministicEligible\)/);
+  assert.match(source, /const operatorExplanationDeterministicResult = \(!routeUnavailableOutcome && !identityRecallDeterministicResult && !agentRealityLoopDeterministicResult && operatorExplanationDeterministicEligible\)/);
 });
 
 
