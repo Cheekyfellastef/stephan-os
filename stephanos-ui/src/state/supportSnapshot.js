@@ -114,6 +114,8 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
   const executionCount = Number(executionMetadata?.mission_console_instance_count);
   const executionHasInstances = Number.isFinite(executionCount) && executionCount > 0;
   const useLiveDiagnostics = liveHasInstances || !executionHasInstances;
+  const uiRealityComponentTrace = runtimeStatus?.runtimeContext?.uiReality?.aiCoreMissionConsole?.componentTrace || {};
+  const componentTraceSource = asText(executionMetadata?.mission_console_component_trace_source, uiRealityComponentTrace?.source || 'missing');
   const source = Object.keys(liveDiagnostics).length
     ? (useLiveDiagnostics ? 'live-operator-relief-bridge' : 'final-execution-metadata')
     : (Object.keys(executionMetadata).length ? 'final-execution-metadata' : 'missing');
@@ -191,9 +193,15 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     registrationStoreWriteAccepted: useLiveDiagnostics
       ? (selected?.registrationStoreWriteAccepted || 'no')
       : (executionMetadata?.mission_console_registration_store_write_accepted || 'no'),
+    componentTraceSource,
+    visibleComponentIsMissionConsoleTile: asText(executionMetadata?.mission_console_visible_component_is_missionconsoletile, uiRealityComponentTrace?.isMissionConsoleTile || 'no'),
+    visibleComponentPanelId: asText(executionMetadata?.mission_console_visible_component_panel_id, uiRealityComponentTrace?.panelId || 'unknown'),
+    componentEffectSeen: asText(executionMetadata?.mission_console_component_effect_seen, uiRealityComponentTrace?.registrationEffectSeen || 'no'),
+    componentCallbackPropPresent: asText(executionMetadata?.mission_console_component_callback_prop_present, uiRealityComponentTrace?.registrationCallbackPropPresent || 'no'),
+    componentCallbackInvoked: asText(executionMetadata?.mission_console_component_callback_invoked, uiRealityComponentTrace?.registrationCallbackInvoked || 'no'),
     registrationDropBoundary: useLiveDiagnostics
       ? (selected?.registrationDropBoundary || 'runtime-context-not-injected')
-      : (executionMetadata?.operator_relief_bridge_drop_boundary || 'runtime-context-not-injected'),
+      : (executionMetadata?.mission_console_registration_drop_boundary || executionMetadata?.operator_relief_bridge_drop_boundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected'),
   };
 }
 
@@ -2146,6 +2154,12 @@ export function buildSupportSnapshot({
         : 'projection-missing-from-command-deck-path',
     )}`,
     `Mission Console Diagnostics Source: ${asText(missionConsoleDiagnostics?.source, 'missing')}`,
+    `Mission Console Component Trace Source: ${asText(missionConsoleDiagnostics?.componentTraceSource, 'missing')}`,
+    `Mission Console Visible Component Is MissionConsoleTile: ${asText(missionConsoleDiagnostics?.visibleComponentIsMissionConsoleTile, 'no')}`,
+    `Mission Console Visible Component Panel ID: ${asText(missionConsoleDiagnostics?.visibleComponentPanelId, 'unknown')}`,
+    `Mission Console Component Effect Seen: ${asText(missionConsoleDiagnostics?.componentEffectSeen, 'no')}`,
+    `Mission Console Component Callback Prop Present: ${asText(missionConsoleDiagnostics?.componentCallbackPropPresent, 'no')}`,
+    `Mission Console Component Callback Invoked: ${asText(missionConsoleDiagnostics?.componentCallbackInvoked, 'no')}`,
     `Mission Console Registration Callback Seen: ${asText(missionConsoleDiagnostics?.callbackSeen, 'no')}`,
     `Mission Console Registration Effect Seen: ${asText(missionConsoleDiagnostics?.registrationEffectSeen, 'no')}`,
     `Mission Console Registration Effect Panel ID: ${asText(missionConsoleDiagnostics?.registrationEffectPanelId, 'unknown')}`,
@@ -2164,6 +2178,7 @@ export function buildSupportSnapshot({
     `Operator Relief Bridge RuntimeContext Seen: ${asText(missionConsoleDiagnostics?.runtimeContextSeen, 'no')}`,
     `Operator Relief Bridge RequestRuntimeStatus Seen: ${asText(executionMetadata?.operator_relief_bridge_request_runtime_status_seen, 'no')}`,
     `Operator Relief Bridge Last Updated At: ${asText(missionConsoleDiagnostics?.operatorReliefBridgeLastUpdatedAt, 'unknown')}`,
+    `Mission Console Registration Drop Boundary: ${asText(missionConsoleDiagnostics?.registrationDropBoundary, 'runtime-context-not-injected')}`,
     `Operator Relief Bridge Drop Boundary: ${asText(missionConsoleDiagnostics?.registrationDropBoundary, 'runtime-context-not-injected')}`,
     `Mission Console Instance Count: ${asText(missionConsoleDiagnostics?.missionConsoleInstanceCount, '0')}`,
     `Mission Console Instance IDs: ${asText(missionConsoleDiagnostics?.missionConsoleInstanceIds, 'none')}`,
