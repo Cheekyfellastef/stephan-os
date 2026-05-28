@@ -46,6 +46,20 @@ function buildLiveUiRealitySnapshot({ cachedReality = null } = {}) {
   if (typeof window === 'undefined' || typeof document === 'undefined') return { reality: cachedReality, source: 'unavailable' };
   const sampledAt = new Date().toISOString();
   const aiCoreNode = document.querySelector('[data-testid="ai-core-mission-console"]');
+  const aiCorePane = document.querySelector('[data-pane-id="aiCoreMissionConsolePanel"]');
+  const marker =
+    aiCoreNode?.querySelector('[data-mission-console-component="MissionConsoleTile"]')
+    || aiCorePane?.querySelector('[data-mission-console-component="MissionConsoleTile"]')
+    || null;
+  const componentTrace = {
+    source: marker && aiCoreNode?.contains(marker) ? 'dom' : marker ? 'pane-fallback' : 'missing',
+    isMissionConsoleTile: marker ? 'yes' : 'no',
+    panelId: marker?.getAttribute('data-mission-console-panel-id') || 'unknown',
+    registrationEffectSeen: marker?.getAttribute('data-mission-console-registration-effect-seen') || 'no',
+    registrationCallbackPropPresent: marker?.getAttribute('data-mission-console-registration-callback-prop-present') || 'no',
+    registrationCallbackInvoked: marker?.getAttribute('data-mission-console-registration-callback-invoked') || 'no',
+    registrationDropBoundary: marker?.getAttribute('data-mission-console-registration-drop-boundary') || 'visible-surface-not-missionconsoletile',
+  };
   const rendered = Boolean(aiCoreNode);
   const closestPane = aiCoreNode?.closest?.('[data-pane-id]') || null;
   const collapsedAncestor = aiCoreNode?.closest?.('.panel-body[hidden], [data-testid$="-body"][hidden]') || null;
@@ -62,6 +76,7 @@ function buildLiveUiRealitySnapshot({ cachedReality = null } = {}) {
       collapsedAncestorPaneId: collapsedAncestor?.closest?.('[data-pane-id]')?.getAttribute?.('data-pane-id') || null,
       domParentPaneId: closestPane?.getAttribute?.('data-pane-id') || 'unknown',
       domParentPaneTitle: closestPane?.getAttribute?.('data-pane-title') || 'unknown',
+      componentTrace,
     },
     stateDomMismatch: Boolean(cachedReality?.aiCoreMissionConsole?.visibilityReason === 'collapsed' && visible),
     stateDomMismatchReason: cachedReality?.aiCoreMissionConsole?.visibilityReason === 'collapsed' && visible

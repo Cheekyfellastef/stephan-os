@@ -28,3 +28,16 @@ test('StatusPanel copy buttons expose explicit non-silent failure feedback', () 
   assert.match(source, /Copy Codex Handoff Packet failed/);
   assert.match(source, /role="status" aria-live="polite"/);
 });
+
+test('StatusPanel live Support Snapshot sampling overwrites cached Mission Console componentTrace from live DOM marker', () => {
+  assert.match(source, /const aiCorePane = document\.querySelector\('\[data-pane-id="aiCoreMissionConsolePanel"\]'\);/);
+  assert.match(source, /const marker =[\s\S]*aiCoreNode\?\.querySelector\('\[data-mission-console-component="MissionConsoleTile"\]'\)[\s\S]*aiCorePane\?\.querySelector\('\[data-mission-console-component="MissionConsoleTile"\]'\)[\s\S]*\|\| null;/m);
+  assert.match(source, /componentTrace:?[\s\S]*source: marker && aiCoreNode\?\.contains\(marker\) \? 'dom' : marker \? 'pane-fallback' : 'missing'/m);
+  assert.match(source, /aiCoreMissionConsole:\s*\{[\s\S]*componentTrace,/m);
+});
+
+test('StatusPanel live Support Snapshot sampling keeps Mission Console componentTrace diagnostic-only defaults', () => {
+  assert.match(source, /isMissionConsoleTile: marker \? 'yes' : 'no'/);
+  assert.match(source, /registrationDropBoundary: marker\?\.getAttribute\('data-mission-console-registration-drop-boundary'\) \|\| 'visible-surface-not-missionconsoletile'/);
+  assert.doesNotMatch(source, /missionConsoleInstanceCount\s*:\s*componentTrace/);
+});
