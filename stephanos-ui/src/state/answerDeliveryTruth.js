@@ -30,14 +30,14 @@ export function buildAnswerDeliveryTruth(input = {}) {
   let answerDeliveryFailureReason = 'final-assistant-message-missing';
   let answerDeliveryNextAction = 'Create a final assistant message and append it to history.';
 
-  if (providerPending) {
-    answerDeliveryStatus = 'pending';
-    answerDeliveryFailureReason = 'provider-execution-pending';
-    answerDeliveryNextAction = 'Wait for provider finalization before claiming generated/rendered.';
-  } else if (providerUnknown) {
+  if (providerUnknown) {
     answerDeliveryStatus = 'diagnostic-failure';
     answerDeliveryFailureReason = 'provider-execution-status-unknown';
     answerDeliveryNextAction = 'Inspect provider execution status plumbing before claiming generated/rendered.';
+  } else if (providerPending && !(executionSuccess && finalAssistantMessagePresent && finalAssistantContentPresent)) {
+    answerDeliveryStatus = 'pending';
+    answerDeliveryFailureReason = 'provider-execution-pending';
+    answerDeliveryNextAction = 'Wait for provider finalization before claiming generated/rendered.';
   } else if (executionSuccess && finalAssistantMessagePresent && !finalAssistantContentPresent) {
     answerDeliveryStatus = 'failed';
     answerDeliveryFailureReason = 'provider-returned-empty-text';
@@ -47,6 +47,7 @@ export function buildAnswerDeliveryTruth(input = {}) {
     answerDeliveryFailureReason = answerPaneRendered ? 'none' : 'final-message-present-pane-not-rendered';
     answerDeliveryNextAction = answerPaneRendered ? 'none' : 'Inspect answer pane render diagnostics and canonical data attributes.';
   }
+
 
   if (responseMode === 'operator-explanation' && !operatorExplanationProjectionUsed) {
     answerDeliveryStatus = 'failed';

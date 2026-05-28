@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendCommandHistory, MAX_COMMAND_HISTORY } from './commandHistory.js';
+import { appendCommandHistory, upsertCommandHistoryById, MAX_COMMAND_HISTORY } from './commandHistory.js';
 
 test('appendCommandHistory keeps command history bounded', () => {
   let history = [];
@@ -18,6 +18,17 @@ import path from 'node:path';
 
 
 
+
+
+
+test('upsertCommandHistoryById replaces an existing stream entry or appends deterministic final answers', () => {
+  const existing = [{ id: 'cmd_stream', route: 'assistant', output_text: '', stream_finalized: false }];
+  const finalEntry = { id: 'cmd_stream', role: 'assistant', final: true, route: 'assistant', output_text: 'provider answer', stream_finalized: true };
+  assert.deepEqual(upsertCommandHistoryById(existing, finalEntry, 'cmd_stream'), [finalEntry]);
+
+  const deterministicEntry = { id: 'cmd_arl_stream', role: 'assistant', final: true, route: 'assistant', output_text: 'ARL answer', stream_finalized: true };
+  assert.deepEqual(upsertCommandHistoryById(existing, deterministicEntry, 'cmd_arl_stream'), [...existing, deterministicEntry]);
+});
 
 test('command deck missionState bridge forwards operator relief agent reality loop projection into chat context pack', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
@@ -286,10 +297,23 @@ test('useAIConsole wires response planner into metadata and prompt guidance', as
   assert.match(source, /Yes\. Your name is \$\{safeName\}\./);
 });
 
-test('deterministic identity recall appends assistant answer through command history path', async () => {
+test('deterministic answers append assistant answer through the shared command history finalization path', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
-  assert.match(source, /if \(routeUnavailableOutcome \|\| identityRecallDeterministicResult\) return appendCommandHistory\(prev, entry\);/);
-  assert.match(source, /lastFinalizationPath = routeUnavailableOutcome \? 'error' : \(identityRecallDeterministicResult \? 'deterministic-identity' : 'provider'\);/);
+  assert.match(source, /return upsertCommandHistoryById\(prev, entry, streamEntryId\);/);
+  assert.match(source, /role: 'assistant'/);
+  assert.match(source, /final: streamFinalizationMissing \? false : true/);
+  assert.match(source, /deterministic-agent-reality-loop/);
+  assert.match(source, /deterministic-operator-explanation/);
+  assert.match(source, /executeStageLastReached = deterministicAnswerCompleted \? 'deterministic-answer-complete' : 'provider-dispatch-complete';/);
+});
+
+test('agent reality loop deterministic answer cannot bypass answer pane finalization', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const agentRealityLoopDeterministicResult = agentRealityLoopDeterministicEligible/);
+  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| agentRealityLoopDeterministicResult \|\| operatorExplanationDeterministicResult \|\| await sendPrompt/);
+  assert.match(source, /const entry = \{[\s\S]*role: 'assistant',[\s\S]*final: streamFinalizationMissing \? false : true,[\s\S]*output_text: effectiveOutputText,/m);
+  assert.match(source, /return upsertCommandHistoryById\(prev, entry, streamEntryId\);/);
+  assert.match(source, /buildAnswerDeliveryTruth\(\{[\s\S]*finalAssistantMessageId: entry\?\.id \|\| '',[\s\S]*finalAssistantText: effectiveOutputText,[\s\S]*answerPaneRendered: finalAssistantAnswerVisibleCandidate,/m);
 });
 
 test('command pipeline render truth only reports rendered when final assistant text exists', async () => {

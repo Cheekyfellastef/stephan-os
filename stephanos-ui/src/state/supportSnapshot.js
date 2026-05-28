@@ -225,7 +225,7 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     componentCallbackPropPresent: asText(uiRealityComponentTrace?.registrationCallbackPropPresent, executionMetadata?.mission_console_component_callback_prop_present || 'no'),
     componentCallbackInvoked: asText(uiRealityComponentTrace?.registrationCallbackInvoked, executionMetadata?.mission_console_component_callback_invoked || 'no'),
     registrationDropBoundary: useLiveDiagnostics
-      ? (selected?.registrationDropBoundary || 'runtime-context-not-injected')
+      ? (selected?.registrationDropBoundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected')
       : (executionMetadata?.mission_console_registration_drop_boundary || executionMetadata?.operator_relief_bridge_drop_boundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected'),
   };
 }
