@@ -27,26 +27,154 @@ function elementExists(node) {
   return Boolean(node);
 }
 
-function sampleLiveCommandDeckProof(preferredAssistantAnswerId = '') {
+function safeGetComputedStyle(node) {
+  if (!node || typeof globalThis?.getComputedStyle !== 'function') {
+    return { display: 'block', visibility: 'visible', opacity: '1' };
+  }
+  try {
+    return globalThis.getComputedStyle(node);
+  } catch (_error) {
+    return { display: 'block', visibility: 'visible', opacity: '1' };
+  }
+}
+
+function getNodeRect(node) {
+  const rect = node?.getBoundingClientRect?.();
+  if (!rect) {
+    return { top: 0, bottom: 0, left: 0, right: 0, width: Number(node?.clientWidth || 0), height: Number(node?.clientHeight || 0) };
+  }
+  const height = Number.isFinite(Number(rect.height)) ? Number(rect.height) : Math.max(0, Number(rect.bottom || 0) - Number(rect.top || 0));
+  const width = Number.isFinite(Number(rect.width)) ? Number(rect.width) : Math.max(0, Number(rect.right || 0) - Number(rect.left || 0));
+  return { ...rect, height, width };
+}
+
+function nodeHasBox(node) {
+  if (!node) return false;
+  const rect = getNodeRect(node);
+  return rect.width > 0 && rect.height > 0;
+}
+
+function isNodeStyleHidden(node) {
+  if (!node) return false;
+  const style = safeGetComputedStyle(node);
+  return style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0';
+}
+
+function findCollapsedAncestor(node, stopAt = null) {
+  let current = node?.parentElement || null;
+  while (current && current !== stopAt) {
+    if (isNodeStyleHidden(current)) return { node: current, reason: 'hidden-style' };
+    const rect = getNodeRect(current);
+    const clientHeight = Number(current.clientHeight || 0);
+    if ((rect.height <= 0 && clientHeight <= 0) || current.hidden === true) {
+      return { node: current, reason: 'collapsed-ancestor' };
+    }
+    current = current.parentElement || null;
+  }
+  return null;
+}
+
+function findVisibleMeasureNode(card, root = null) {
+  if (!card) return null;
+  if (nodeHasBox(card)) return card;
+  const wrapper = card.closest?.('[data-testid="latest-assistant-answer-pane"], [data-testid="assistant-answer-pane"], [data-answer-role="assistant"][data-answer-final="true"]') || null;
+  if (wrapper && wrapper !== card && nodeHasBox(wrapper)) return wrapper;
+  let current = card.parentElement || null;
+  while (current && current !== root) {
+    const ownsAssistantCard = current.querySelector?.('[data-answer-role="assistant"][data-answer-final="true"][data-assistant-answer-id]') === card;
+    if (ownsAssistantCard && nodeHasBox(current)) return current;
+    current = current.parentElement || null;
+  }
+  return card;
+}
+
+function computeNodeVisibilityProof(card, { root = null, viewportHeight = 0 } = {}) {
+  if (!card) {
+    return { visible: 'no', visualProof: 'missing', blocker: 'wrong-node', measureNode: null, rect: getNodeRect(null) };
+  }
+  const measureNode = findVisibleMeasureNode(card, root);
+  const rect = getNodeRect(measureNode);
+  if (isNodeStyleHidden(measureNode) || isNodeStyleHidden(card)) {
+    return { visible: 'no', visualProof: 'present-not-visible', blocker: 'hidden-style', measureNode, rect };
+  }
+  const collapsedAncestor = findCollapsedAncestor(measureNode, root);
+  if (collapsedAncestor) {
+    return { visible: 'no', visualProof: 'present-not-visible', blocker: collapsedAncestor.reason, measureNode, rect };
+  }
+  if (rect.height <= 0 || Number(measureNode?.clientHeight || 0) <= 0) {
+    return { visible: 'no', visualProof: 'present-not-visible', blocker: 'zero-height', measureNode, rect };
+  }
+  if (rect.width <= 0) {
+    return { visible: 'no', visualProof: 'present-not-visible', blocker: 'zero-height', measureNode, rect };
+  }
+  const viewportBottom = Number(viewportHeight || globalThis?.window?.innerHeight || 0);
+  if (viewportBottom > 0 && (rect.bottom <= 0 || rect.top >= viewportBottom)) {
+    return { visible: 'no', visualProof: 'present-not-visible', blocker: 'offscreen', measureNode, rect };
+  }
+  return { visible: 'yes', visualProof: 'visible', blocker: 'none', measureNode, rect };
+}
+
+function isAcceptableCommandDeckRoot(root) {
+  if (!root?.querySelector) return false;
+  const owner = String(root.getAttribute?.('data-surface-owner-key') || '').trim();
+  const panel = String(root.getAttribute?.('data-panel-id') || root.closest?.('[data-panel-id]')?.getAttribute?.('data-panel-id') || '').trim();
+  if (owner && owner !== 'commandDeck-pane') return false;
+  if (panel && panel !== 'commandDeck') return false;
+  return true;
+}
+
+function pickVisibleCommandDeckRoot(doc, checkedRootSelector) {
+  const roots = Array.from(doc.querySelectorAll?.(checkedRootSelector) || []);
+  if (roots.length === 0) {
+    const single = doc.querySelector?.(checkedRootSelector) || null;
+    return single && isAcceptableCommandDeckRoot(single) ? single : single;
+  }
+  const acceptable = roots.filter(isAcceptableCommandDeckRoot);
+  const candidates = acceptable.length > 0 ? acceptable : roots;
+  return candidates.find((node) => !isNodeStyleHidden(node) && nodeHasBox(node)) || candidates[0] || null;
+}
+
+function measureTextLengthDrift(domLength, metadataLength) {
+  const finalLength = Number(metadataLength || 0);
+  if (!Number.isFinite(finalLength) || finalLength <= 0) {
+    return { drift: 'no', reason: 'final-metadata-text-length-unavailable' };
+  }
+  const liveLength = Number(domLength || 0);
+  const absoluteDelta = Math.abs(liveLength - finalLength);
+  const wildRatio = liveLength > Math.max(finalLength * 5, finalLength + 200);
+  const drift = absoluteDelta > 200 && wildRatio;
+  return {
+    drift: drift ? 'yes' : 'no',
+    reason: drift ? `dom-text-length-${liveLength}-differs-from-final-metadata-${finalLength}` : 'none',
+  };
+}
+
+function sampleLiveCommandDeckProof(preferredAssistantAnswerId = '', finalAssistantTextLength = 0) {
   const doc = getDocument();
-  const checkedRootSelector = '[data-testid="command-deck-root"][data-ai-chat-command-deck="true"], [data-ai-chat-command-deck="true"][data-panel-id="commandDeck"], [data-panel-id="commandDeck"], [data-testid="command-deck-root"]';
+  const checkedRootSelector = '[data-testid="command-deck-root"][data-ai-chat-command-deck="true"], [data-ai-chat-command-deck="true"][data-panel-id="commandDeck"], [data-panel-id="commandDeck"] [data-testid="command-deck-root"], [data-panel-id="commandDeck"], [data-testid="command-deck-root"]';
   if (!doc?.querySelector) {
     return { source: 'missing', rootSelectorChecked: checkedRootSelector };
   }
-  const root = doc.querySelector(checkedRootSelector);
+  const root = pickVisibleCommandDeckRoot(doc, checkedRootSelector);
   if (!root?.querySelector) {
     return { source: 'missing', rootSelectorChecked: checkedRootSelector };
   }
-  const history = root.querySelector('[data-testid="command-deck-answer-history"], [data-testid="command-deck-body"], [data-pane-id="answer-history"]');
+  const history = root.querySelector('[data-testid="command-deck-answer-history"], [data-testid="command-deck-body"] [data-testid="command-deck-answer-history"], [data-pane-id="answer-history"] [data-testid="command-deck-answer-history"]');
   const queryRoot = history || root;
   const composer = root.querySelector('[data-testid="command-deck-composer"]');
   const input = root.querySelector('[data-testid="command-deck-input"]');
   const execute = root.querySelector('[data-testid="command-deck-execute"]');
-  const answers = Array.from(queryRoot.querySelectorAll('[data-answer-role="assistant"][data-answer-final="true"][data-assistant-answer-id], [data-answer-role="assistant"][data-answer-final="true"]'));
+  const finalAssistantSelector = '[data-answer-role="assistant"][data-answer-final="true"][data-assistant-answer-id]';
+  const answers = Array.from(queryRoot.querySelectorAll(finalAssistantSelector));
   const preferred = preferredAssistantAnswerId
     ? answers.find((node) => String(node.getAttribute?.('data-assistant-answer-id') || '') === String(preferredAssistantAnswerId))
     : null;
-  const latest = preferred || answers[answers.length - 1] || null;
+  const visibleAnswers = answers.filter((node) => computeNodeVisibilityProof(node, { root }).visible === 'yes');
+  const latest = preferred || visibleAnswers[visibleAnswers.length - 1] || answers[answers.length - 1] || null;
+  const visibility = computeNodeVisibilityProof(latest, { root });
+  const measureNode = visibility.measureNode || latest;
+  const answerTextLength = latest?.textContent?.trim?.().length || 0;
+  const drift = measureTextLengthDrift(answerTextLength, finalAssistantTextLength);
   return {
     source: 'live-dom',
     rootSelectorChecked: checkedRootSelector,
@@ -58,16 +186,29 @@ function sampleLiveCommandDeckProof(preferredAssistantAnswerId = '') {
     executeFound: elementExists(execute) ? 'yes' : 'no',
     answerPaneCount: String(answers.length),
     latestAnswerFound: elementExists(latest) ? 'yes' : 'no',
+    latestFinalAssistantCardFound: elementExists(latest) ? 'yes' : 'no',
     latestAnswerId: latest?.getAttribute?.('data-assistant-answer-id') || 'none',
     latestAnswerFinal: latest?.getAttribute?.('data-answer-final') || 'no',
-    latestAnswerTextLength: String(latest?.textContent?.trim?.().length || 0),
+    latestAnswerTextLength: String(answerTextLength),
+    latestAssistantAnswerVisible: visibility.visible,
+    latestAssistantVisualProof: visibility.visualProof,
+    latestAssistantVisibilityBlocker: visibility.blocker,
+    latestAssistantTextLengthDrift: drift.drift,
+    latestAssistantTextLengthDriftReason: drift.reason,
+    answerPaneClientHeight: String(measureNode?.clientHeight ?? 0),
+    answerPaneScrollHeight: String(measureNode?.scrollHeight ?? 0),
+    answerContainerClientHeight: String(history?.clientHeight ?? 0),
+    answerContainerScrollHeight: String(history?.scrollHeight ?? 0),
+    latestAnswerCardClientHeight: String(measureNode?.clientHeight ?? 0),
+    latestAnswerCardScrollHeight: String(measureNode?.scrollHeight ?? 0),
+    answerViewportClientHeight: String(history?.clientHeight ?? 0),
+    answerViewportScrollHeight: String(history?.scrollHeight ?? 0),
     ownerAttr: root.getAttribute?.('data-surface-owner-key') || 'unknown',
     submissionSourceAttr: root.getAttribute?.('data-submission-source') || 'unknown',
   };
 }
-
 function deriveCommandDeckProof({ aiConsoleAnswerScroll = {}, commandDeckLocalReveal = null, executionMetadata = {} } = {}) {
-  const live = sampleLiveCommandDeckProof(aiConsoleAnswerScroll?.latestAssistantAnswerId || executionMetadata?.final_assistant_message_id || '');
+  const live = sampleLiveCommandDeckProof(aiConsoleAnswerScroll?.latestAssistantAnswerId || executionMetadata?.final_assistant_message_id || '', executionMetadata?.final_assistant_text_length || 0);
   const localRootRef = asText(commandDeckLocalReveal?.rootRefPresent || aiConsoleAnswerScroll?.commandDeckLocalRootRefPresent, 'no') === 'yes';
   const localHistoryRef = asText(commandDeckLocalReveal?.historyRefPresent || aiConsoleAnswerScroll?.commandDeckLocalHistoryRefPresent, 'no') === 'yes';
   const localLatestRef = asText(commandDeckLocalReveal?.latestAnswerRefPresent || aiConsoleAnswerScroll?.commandDeckLocalLatestAnswerRefPresent, 'no') === 'yes';
@@ -103,6 +244,20 @@ function deriveCommandDeckProof({ aiConsoleAnswerScroll = {}, commandDeckLocalRe
     latestAssistantAnswerId: live.latestAnswerFound === 'yes' ? live.latestAnswerId : asText(aiConsoleAnswerScroll?.latestAssistantAnswerId, 'none'),
     latestAssistantAnswerFinal: live.latestAnswerFound === 'yes' ? live.latestAnswerFinal : asText(aiConsoleAnswerScroll?.latestAssistantAnswerFinal, 'no'),
     latestAssistantAnswerTextLength: live.latestAnswerFound === 'yes' ? live.latestAnswerTextLength : asText(aiConsoleAnswerScroll?.latestAssistantAnswerTextLength, '0'),
+    latestFinalAssistantCardFound: live.latestFinalAssistantCardFound === 'yes' ? 'yes' : asText(aiConsoleAnswerScroll?.latestFinalAssistantCardFound, 'no'),
+    latestAssistantAnswerVisible: live.latestAnswerFound === 'yes' ? live.latestAssistantAnswerVisible : asText(aiConsoleAnswerScroll?.latestAssistantAnswerVisible, 'no'),
+    latestAssistantVisualProof: live.latestAnswerFound === 'yes' ? live.latestAssistantVisualProof : (asText(aiConsoleAnswerScroll?.latestAssistantAnswerVisible, 'no') === 'yes' ? 'visible' : (asText(aiConsoleAnswerScroll?.latestAssistantAnswerDomFound || aiConsoleAnswerScroll?.targetFound, 'no') === 'yes' ? 'present-not-visible' : 'missing')),
+    latestAssistantVisibilityBlocker: live.latestAnswerFound === 'yes' ? live.latestAssistantVisibilityBlocker : asText(aiConsoleAnswerScroll?.latestAssistantVisibilityBlocker, 'unknown'),
+    latestAssistantTextLengthDrift: live.latestAnswerFound === 'yes' ? live.latestAssistantTextLengthDrift : asText(aiConsoleAnswerScroll?.latestAssistantTextLengthDrift, 'no'),
+    latestAssistantTextLengthDriftReason: live.latestAnswerFound === 'yes' ? live.latestAssistantTextLengthDriftReason : asText(aiConsoleAnswerScroll?.latestAssistantTextLengthDriftReason, 'none'),
+    answerPaneClientHeight: live.latestAnswerFound === 'yes' ? live.answerPaneClientHeight : asText(aiConsoleAnswerScroll?.answerPaneClientHeight, '0'),
+    answerPaneScrollHeight: live.latestAnswerFound === 'yes' ? live.answerPaneScrollHeight : asText(aiConsoleAnswerScroll?.answerPaneScrollHeight, '0'),
+    answerContainerClientHeight: live.source === 'live-dom' ? live.answerContainerClientHeight : asText(aiConsoleAnswerScroll?.answerContainerClientHeight, '0'),
+    answerContainerScrollHeight: live.source === 'live-dom' ? live.answerContainerScrollHeight : asText(aiConsoleAnswerScroll?.answerContainerScrollHeight, '0'),
+    latestAnswerCardClientHeight: live.latestAnswerFound === 'yes' ? live.latestAnswerCardClientHeight : asText(aiConsoleAnswerScroll?.latestAnswerCardClientHeight, '0'),
+    latestAnswerCardScrollHeight: live.latestAnswerFound === 'yes' ? live.latestAnswerCardScrollHeight : asText(aiConsoleAnswerScroll?.latestAnswerCardScrollHeight, '0'),
+    answerViewportClientHeight: live.source === 'live-dom' ? live.answerViewportClientHeight : asText(aiConsoleAnswerScroll?.answerViewportClientHeight, '0'),
+    answerViewportScrollHeight: live.source === 'live-dom' ? live.answerViewportScrollHeight : asText(aiConsoleAnswerScroll?.answerViewportScrollHeight, '0'),
   };
 }
 
@@ -2427,7 +2582,7 @@ export function buildSupportSnapshot({
     `Composer Found: ${asText(commandDeckProof.composerFound, 'no')}`,
     `Input Found: ${asText(commandDeckProof.inputFound, 'no')}`,
     `Execute Found: ${asText(commandDeckProof.executeFound, 'no')}`,
-    `Latest Final Assistant Card Found: ${asText(aiConsoleAnswerScroll?.latestFinalAssistantCardFound, 'no')}`,
+    `Latest Final Assistant Card Found: ${asText(commandDeckProof.latestFinalAssistantCardFound, 'no')}`,
     `Answer Scroll Source: ${asText(aiConsoleAnswerScroll?.source, 'unknown')}`,
     `Answer Scroll Reveal Owner Instance ID: ${asText(aiConsoleAnswerScroll?.revealOwnerInstanceId, 'none')}`,
     `Answer Scroll Delivery Owner Instance ID: ${asText(aiConsoleAnswerScroll?.deliveryOwnerInstanceId, 'none')}`,
@@ -2454,11 +2609,15 @@ export function buildSupportSnapshot({
     `Latest Assistant Answer Final: ${asText(commandDeckProof.latestAssistantAnswerFinal, 'no')}`,
     `Latest Assistant Answer Text Length: ${asText(commandDeckProof.latestAssistantAnswerTextLength, '0')}`,
     `Latest Assistant Answer DOM Found: ${asText(commandDeckProof.latestAssistantAnswerDomFound, 'no')}`,
-    `Latest Assistant Answer Visible: ${asText(aiConsoleAnswerScroll?.latestAssistantAnswerVisible, 'no')}`,
-    `Answer Pane Client Height: ${asText(aiConsoleAnswerScroll?.answerPaneClientHeight, '0')}`,
-    `Answer Pane Scroll Height: ${asText(aiConsoleAnswerScroll?.answerPaneScrollHeight, '0')}`,
-    `Answer Container Client Height: ${asText(aiConsoleAnswerScroll?.answerContainerClientHeight, '0')}`,
-    `Answer Container Scroll Height: ${asText(aiConsoleAnswerScroll?.answerContainerScrollHeight, '0')}`,
+    `Latest Assistant Answer Visible: ${asText(commandDeckProof.latestAssistantAnswerVisible, 'no')}`,
+    `Latest Assistant Visual Proof: ${asText(commandDeckProof.latestAssistantVisualProof, 'missing')}`,
+    `Latest Assistant Visibility Blocker: ${asText(commandDeckProof.latestAssistantVisibilityBlocker, 'unknown')}`,
+    `Latest Assistant Text Length Drift: ${asText(commandDeckProof.latestAssistantTextLengthDrift, 'no')}`,
+    `Latest Assistant Text Length Drift Reason: ${asText(commandDeckProof.latestAssistantTextLengthDriftReason, 'none')}`,
+    `Answer Pane Client Height: ${asText(commandDeckProof.answerPaneClientHeight, '0')}`,
+    `Answer Pane Scroll Height: ${asText(commandDeckProof.answerPaneScrollHeight, '0')}`,
+    `Answer Container Client Height: ${asText(commandDeckProof.answerContainerClientHeight, '0')}`,
+    `Answer Container Scroll Height: ${asText(commandDeckProof.answerContainerScrollHeight, '0')}`,
     `Answer Container OverflowY: ${asText(aiConsoleAnswerScroll?.answerContainerOverflowY, 'unknown')}`,
     `Answer Pane Clipped Reason: ${asText(aiConsoleAnswerScroll?.answerPaneClippedReason, 'none')}`,
     `Command Deck Composer Found: ${asText(aiConsoleAnswerScroll?.commandDeckComposerFound, 'unknown')}`,
@@ -2473,10 +2632,10 @@ export function buildSupportSnapshot({
     `Answer History Client Height: ${asText(aiConsoleAnswerScroll?.answerHistoryClientHeight, '0')}`,
     `Answer History Scroll Height: ${asText(aiConsoleAnswerScroll?.answerHistoryScrollHeight, '0')}`,
     `Answer History OverflowY: ${asText(aiConsoleAnswerScroll?.answerHistoryOverflowY, 'unknown')}`,
-    `Latest Answer Card Client Height: ${asText(aiConsoleAnswerScroll?.latestAnswerCardClientHeight, '0')}`,
-    `Latest Answer Card Scroll Height: ${asText(aiConsoleAnswerScroll?.latestAnswerCardScrollHeight, '0')}`,
-    `Answer Viewport Client Height: ${asText(aiConsoleAnswerScroll?.answerViewportClientHeight, '0')}`,
-    `Answer Viewport Scroll Height: ${asText(aiConsoleAnswerScroll?.answerViewportScrollHeight, '0')}`,
+    `Latest Answer Card Client Height: ${asText(commandDeckProof.latestAnswerCardClientHeight, '0')}`,
+    `Latest Answer Card Scroll Height: ${asText(commandDeckProof.latestAnswerCardScrollHeight, '0')}`,
+    `Answer Viewport Client Height: ${asText(commandDeckProof.answerViewportClientHeight, '0')}`,
+    `Answer Viewport Scroll Height: ${asText(commandDeckProof.answerViewportScrollHeight, '0')}`,
     `Answer Viewport Fits Latest Answer: ${asText(aiConsoleAnswerScroll?.answerViewportFitsLatestAnswer, 'no')}`,
     `Answer Viewport Fit Ratio: ${asText(aiConsoleAnswerScroll?.answerViewportFitRatio, '0')}`,
     `Answer Viewport Fit Verdict: ${asText(aiConsoleAnswerScroll?.answerViewportFitVerdict, 'unknown')}`,

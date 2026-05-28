@@ -37,6 +37,9 @@ test('protected canon: layout diagnostics include visibility and non-zero-height
   assert.match(source, /standardAnswerFitTarget/);
   assert.match(source, /standardTenItemAnswerFitVerdict/);
   assert.match(source, /answerViewportTooSmallReason/);
+  assert.match(source, /latestAssistantVisualProof/);
+  assert.match(source, /latestAssistantVisibilityBlocker/);
+  assert.match(source, /deriveLatestAssistantVisibilityBlocker/);
   assert.match(source, /outerRevealRequested/);
   assert.match(source, /outerRevealSkipped/);
   assert.match(source, /outerRevealSkipReason/);
@@ -57,6 +60,10 @@ test('protected canon: support snapshot keeps missing visible command deck diagn
   assert.match(source, /Command Deck Render Proof Source:/);
   assert.match(source, /Latest Assistant DOM Proof Source:/);
   assert.match(source, /Answer Delivery Rendered Zero Pane Explanation:/);
+  assert.match(source, /Latest Assistant Visual Proof:/);
+  assert.match(source, /Latest Assistant Visibility Blocker:/);
+  assert.match(source, /Latest Assistant Text Length Drift:/);
+  assert.match(source, /\[data-answer-role=\"assistant\"\]\[data-answer-final=\"true\"\]\[data-assistant-answer-id\]/);
   assert.match(source, /render-proof-from-local-ref/);
   assert.match(source, /Command Deck Ownership Instance Count:/);
   assert.match(source, /Command Deck DOM Fallback Root Found:/);

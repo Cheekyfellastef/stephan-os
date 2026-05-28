@@ -3576,3 +3576,183 @@ test('support snapshot live MissionConsoleTile sampler falls back to pane select
     else globalThis.window = previousWindow;
   }
 });
+
+function createCommandDeckNode({
+  answerId = 'assistant-final-1',
+  answerText = '4',
+  containerText = '',
+  answerHeight = 32,
+  historyHeight = 240,
+  rootHeight = 480,
+  hidden = false,
+} = {}) {
+  const attrs = {
+    'data-assistant-answer-id': answerId,
+    'data-answer-final': 'true',
+    'data-answer-role': 'assistant',
+  };
+  const latest = {
+    textContent: answerText,
+    clientHeight: answerHeight,
+    scrollHeight: answerHeight,
+    parentElement: null,
+    hidden: false,
+    getBoundingClientRect() { return { top: 24, bottom: 24 + answerHeight, left: 0, right: 300, width: 300, height: answerHeight }; },
+    getAttribute(name) { return attrs[name] || ''; },
+    closest() { return latest; },
+    querySelector() { return null; },
+  };
+  const history = {
+    textContent: containerText || answerText,
+    clientHeight: historyHeight,
+    scrollHeight: Math.max(historyHeight, answerHeight),
+    parentElement: null,
+    hidden: false,
+    getBoundingClientRect() { return { top: 0, bottom: historyHeight, left: 0, right: 320, width: 320, height: historyHeight }; },
+    querySelectorAll(selector) { return selector.includes('data-answer-role') ? [latest] : []; },
+    querySelector() { return null; },
+    getAttribute() { return ''; },
+  };
+  const root = {
+    clientHeight: rootHeight,
+    scrollHeight: rootHeight,
+    parentElement: null,
+    hidden,
+    getBoundingClientRect() { return { top: 0, bottom: rootHeight, left: 0, right: 360, width: 360, height: rootHeight }; },
+    getAttribute(name) {
+      return {
+        'data-surface-owner-key': 'commandDeck-pane',
+        'data-submission-source': 'stephanos-command-deck',
+        'data-panel-id': 'commandDeck',
+      }[name] || '';
+    },
+    closest() { return null; },
+    querySelector(selector) {
+      if (selector.includes('command-deck-answer-history')) return history;
+      if (selector === '[data-testid="command-deck-composer"]') return { clientHeight: 44, getBoundingClientRect: () => ({ top: 260, bottom: 304, width: 320, height: 44 }) };
+      if (selector === '[data-testid="command-deck-input"]') return { clientHeight: 32, getBoundingClientRect: () => ({ top: 264, bottom: 296, width: 220, height: 32 }) };
+      if (selector === '[data-testid="command-deck-execute"]') return { clientHeight: 32, getBoundingClientRect: () => ({ top: 264, bottom: 296, width: 80, height: 32 }) };
+      return null;
+    },
+    querySelectorAll(selector) { return selector.includes('data-answer-role') ? [latest] : []; },
+  };
+  history.parentElement = root;
+  latest.parentElement = history;
+  return { root, history, latest };
+}
+
+function withCommandDeckDocument(nodeSet, fn) {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousGetComputedStyle = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = (node) => ({
+    display: node?.hidden ? 'none' : 'block',
+    visibility: 'visible',
+    opacity: '1',
+    overflowY: 'auto',
+  });
+  globalThis.document = {
+    querySelector(selector) {
+      return selector.includes('command-deck-root') || selector.includes('data-ai-chat-command-deck') || selector.includes('data-panel-id') ? nodeSet.root : null;
+    },
+    querySelectorAll(selector) {
+      return selector.includes('command-deck-root') || selector.includes('data-ai-chat-command-deck') || selector.includes('data-panel-id') ? [nodeSet.root] : [];
+    },
+  };
+  globalThis.window = { document: globalThis.document, innerHeight: 800 };
+  try {
+    return fn();
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    if (previousGetComputedStyle === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = previousGetComputedStyle;
+  }
+}
+
+test('support snapshot live sampler anchors latest final assistant card by final assistant id instead of container text', () => {
+  const hugeContainerText = 'support snapshot noise '.repeat(8000);
+  const nodes = createCommandDeckNode({ answerId: 'final-answer-2-plus-2', answerText: '4', containerText: hugeContainerText });
+  const snapshot = withCommandDeckDocument(nodes, () => buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        answer_delivery_status: 'delivered',
+        answer_delivery_rendered: 'yes',
+        command_pipeline_last_answer_pane_rendered: 'yes',
+        final_assistant_message_id: 'final-answer-2-plus-2',
+        final_assistant_text_length: 1,
+      },
+    },
+  }));
+  assert.match(snapshot, /Latest Final Assistant Card Found: yes/);
+  assert.match(snapshot, /Latest Assistant Answer ID: final-answer-2-plus-2/);
+  assert.match(snapshot, /Latest Assistant Answer Text Length: 1/);
+  assert.match(snapshot, /Latest Assistant Text Length Drift: no/);
+  assert.doesNotMatch(snapshot, /Latest Assistant Answer Text Length: 153763/);
+});
+
+test('support snapshot live sampler cannot report missing final card when matching live DOM card exists', () => {
+  const nodes = createCommandDeckNode({ answerId: 'matching-final-card', answerText: 'ARL proof' });
+  const snapshot = withCommandDeckDocument(nodes, () => buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        answer_delivery_status: 'delivered',
+        answer_delivery_rendered: 'yes',
+        command_pipeline_last_answer_pane_rendered: 'yes',
+        final_assistant_message_id: 'matching-final-card',
+        final_assistant_text_length: 9,
+      },
+    },
+  }));
+  assert.match(snapshot, /Command Deck Render Proof Source: live-dom/);
+  assert.match(snapshot, /Latest Assistant DOM Proof Source: live-dom/);
+  assert.match(snapshot, /Latest Final Assistant Card Found: yes/);
+  assert.match(snapshot, /Latest Assistant Answer DOM Found: yes/);
+});
+
+test('support snapshot live sampler reports explicit zero-height visibility blocker', () => {
+  const nodes = createCommandDeckNode({ answerId: 'zero-height-final-card', answerText: '4', answerHeight: 0 });
+  const snapshot = withCommandDeckDocument(nodes, () => buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        answer_delivery_status: 'delivered',
+        answer_delivery_rendered: 'yes',
+        command_pipeline_last_answer_pane_rendered: 'yes',
+        final_assistant_message_id: 'zero-height-final-card',
+        final_assistant_text_length: 1,
+      },
+    },
+  }));
+  assert.match(snapshot, /Latest Final Assistant Card Found: yes/);
+  assert.match(snapshot, /Latest Assistant Visual Proof: present-not-visible/);
+  assert.match(snapshot, /Latest Assistant Visibility Blocker: zero-height/);
+});
+
+test('support snapshot ARL answer path keeps visible-card proof diagnostics', () => {
+  const nodes = createCommandDeckNode({ answerId: 'arl-final-card', answerText: 'ARL works.' });
+  const snapshot = withCommandDeckDocument(nodes, () => buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        answer_delivery_status: 'delivered',
+        answer_delivery_rendered: 'yes',
+        command_pipeline_last_answer_pane_rendered: 'yes',
+        final_assistant_message_id: 'arl-final-card',
+        final_assistant_text_length: 10,
+        agent_reality_loop_context_recognized: 'yes',
+        agent_reality_loop_context_injected: 'yes',
+        agent_reality_loop_projection_source_seen: 'operator-relief-bridge',
+        agent_reality_loop_projection_available: 'yes',
+        agent_reality_loop_availability_blocker: 'none',
+      },
+    },
+  }));
+  assert.match(snapshot, /Latest Final Assistant Card Found: yes/);
+  assert.match(snapshot, /Latest Assistant Visual Proof: visible/);
+  assert.match(snapshot, /Agent Reality Loop Context Recognized: yes/);
+  assert.match(snapshot, /Agent Reality Loop Context Injected: yes/);
+  assert.match(snapshot, /ARL Projection Source: operator-relief-bridge/);
+  assert.match(snapshot, /Agent Reality Loop Projection Available: yes/);
+  assert.match(snapshot, /Agent Reality Loop Availability Blocker: none/);
+});
