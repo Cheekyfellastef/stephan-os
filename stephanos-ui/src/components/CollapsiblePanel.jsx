@@ -15,6 +15,7 @@ export default function CollapsiblePanel({
   titleAs = 'h2',
   keepMountedWhenClosed = false,
   testIdBase = '',
+  ...rootProps
 }) {
   const TitleTag = titleAs;
   const resolvedTestIdBase = testIdBase || (panelId ? `pane-${panelId}` : '');
@@ -49,7 +50,13 @@ export default function CollapsiblePanel({
   const paneMoveControls = claimResult?.node || null;
   const combinedActions = actions ? <>{actions}{paneMoveControls}</> : paneMoveControls;
   return (
-    <Component className={rootClassName} data-panel-id={panelId} data-panel-open={isOpen ? 'true' : 'false'} data-testid={resolvedTestIdBase || undefined}>
+    <Component
+      className={rootClassName}
+      data-panel-id={panelId}
+      data-panel-open={isOpen ? 'true' : 'false'}
+      data-testid={resolvedTestIdBase || undefined}
+      {...rootProps}
+    >
       <div className="panel-header-row" data-pane-drag-handle="true" data-testid={resolvedTestIdBase ? `${resolvedTestIdBase}-header` : undefined}>
         <div className="panel-heading-wrap" data-pane-drag-handle="true">
           <div className="panel-collapse-toggle" data-pane-drag-handle="true">
