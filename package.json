@@ -38,10 +38,12 @@
     "test:ui:reality": "playwright test",
     "stephanos:ignite": "node scripts/ignite-stephanos-local.mjs --mode=ignite",
     "stephanos:ignite:auto-publish": "node scripts/ignite-stephanos-local-autopublish.mjs",
-    "stephanos:guard:pr-clean": "node scripts/guard-pr-clean.mjs",
+    "stephanos:guard:pr-clean": "node scripts/guard-pr-clean.mjs --strict",
     "stephanos:ignite:pr-clean": "node scripts/ignite-stephanos-local.mjs --mode=pr-clean",
     "stephanos:ignite:housekeep": "node scripts/ignite-stephanos-local.mjs --mode=housekeep",
-    "stephanos:ignite:housekeep:dry-run": "node scripts/ignite-stephanos-local.mjs --mode=housekeep-dry-run"
+    "stephanos:ignite:housekeep:dry-run": "node scripts/ignite-stephanos-local.mjs --mode=housekeep-dry-run",
+    "stephanos:guard:pr-clean:local": "node scripts/guard-pr-clean.mjs --local",
+    "stephanos:pr:prepare": "node scripts/guard-pr-clean.mjs --prepare"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
