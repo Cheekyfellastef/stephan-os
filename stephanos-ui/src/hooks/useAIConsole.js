@@ -1108,7 +1108,12 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
   const requestedProviderForRequest = executionMetadata.requested_provider_for_request
     || requestTrace.requested_provider_for_request
     || requestPayload.routeDecision?.requestedProviderForRequest
+    || requestPayload.execution_requested_provider
     || requestPayload.provider;
+  const executionRequestedProvider = executionMetadata.execution_requested_provider
+    || requestTrace.execution_requested_provider
+    || requestPayload.execution_requested_provider
+    || requestedProviderForRequest;
   const selectedProvider = blockedBeforeProvider
     ? 'none'
     : (
@@ -1379,6 +1384,11 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     submission_console: requestTrace.submission_console || requestPayload.submissionSource || executionMetadata.submission_console || 'stephanos-mission-console',
     submission_route: executionMetadata.submission_route || requestTrace.submission_route || requestPayload.submissionRoute || 'assistant-router',
     requested_provider_intent: requestedProviderIntent,
+    freshness_candidate_provider: executionMetadata.freshness_candidate_provider
+      || requestTrace.freshness_candidate_provider
+      || requestPayload.routeDecision?.freshnessCandidateProvider
+      || null,
+    execution_requested_provider: executionRequestedProvider,
     requested_provider_for_request: requestedProviderForRequest,
     backend_default_provider: executionMetadata.backend_default_provider || requestTrace.backend_default_provider || backendDefaultProvider || 'unknown',
     route_mode: executionMetadata.route_mode || requestTrace.route_mode || requestPayload.routeMode || 'auto',
@@ -1516,10 +1526,6 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestPayload.runtimeContext?.timeoutPolicy?.timeoutModel
       || modelUsed
       || null,
-    freshness_candidate_provider: executionMetadata.freshness_candidate_provider
-      || requestTrace.freshness_candidate_provider
-      || requestPayload.routeDecision?.freshnessCandidateProvider
-      || null,
     timeout_override_applied: Boolean(
       executionMetadata.timeout_override_applied
       ?? requestTrace.timeout_override_applied
@@ -1641,6 +1647,8 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
       || requestPayload.routeDecision?.aiPolicy?.aiPolicyMode
       || 'local-first-cloud-when-needed',
     ai_policy_reason: aiPolicyReason,
+    execution_provider_policy_source: routeDecision?.executionProviderPolicySource || 'freshness-routing-policy',
+    execution_provider_policy_reason: routeDecision?.executionProviderPolicyReason || null,
     groq_endpoint_used: executionMetadata.groq_endpoint_used || requestTrace.groq_endpoint_used || null,
     groq_model_used: executionMetadata.groq_model_used || requestTrace.groq_model_used || null,
     groq_fresh_web_active: Boolean(executionMetadata.groq_fresh_web_active ?? requestTrace.groq_fresh_web_active ?? false),
@@ -2499,6 +2507,8 @@ function buildTimeoutFailureExecutionMetadata({
     request_side_selected_provider: requestPayload?.request_side_selected_provider || requestedProvider || fallbackProvider || 'unknown',
     router_selected_provider: requestPayload?.routeDecision?.selectedProvider || selectedProvider || fallbackProvider || 'unknown',
     requested_provider_intent: requestPayload?.routeDecision?.defaultProvider || fallbackProvider || selectedProvider || 'unknown',
+    freshness_candidate_provider: requestPayload?.routeDecision?.freshnessCandidateProvider || null,
+    execution_requested_provider: requestedProvider || fallbackProvider || 'unknown',
     requested_provider_for_request: requestedProvider || fallbackProvider || 'unknown',
     backend_default_provider: 'unknown',
     route_mode: requestPayload?.routeMode || 'auto',
@@ -2597,9 +2607,10 @@ function buildTimeoutFailureExecutionMetadata({
     override_denial_reason: requestPayload?.routeDecision?.overrideDeniedReason || null,
     freshness_warning: requestPayload?.routeDecision?.freshnessWarning || null,
     freshness_routed: Boolean(requestPayload?.routeDecision?.freshnessRouted ?? false),
-    freshness_candidate_provider: requestPayload?.routeDecision?.freshnessCandidateProvider || null,
     ai_policy_mode: requestPayload?.routeDecision?.aiPolicy?.aiPolicyMode || 'local-first-cloud-when-needed',
     ai_policy_reason: requestPayload?.routeDecision?.policyReason || 'Local-first policy applied.',
+    execution_provider_policy_source: requestPayload?.routeDecision?.executionProviderPolicySource || 'freshness-routing-policy',
+    execution_provider_policy_reason: requestPayload?.routeDecision?.executionProviderPolicyReason || null,
   };
 }
 
@@ -3975,6 +3986,7 @@ export function useAIConsole() {
       const requestPayload = {
         request_execution_id: `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
         provider: requestedProvider,
+        execution_requested_provider: requestedProvider,
         raw_input: prompt,
         ui_requested_provider: normalizedUiRequestedProvider || requestedProvider,
         request_side_selected_provider: normalizedRequestProvider || requestedProvider,
@@ -4604,6 +4616,7 @@ export function useAIConsole() {
         ui_requested_provider: finalExecutionMetadata.ui_requested_provider,
         backend_default_provider: finalExecutionMetadata.backend_default_provider,
         requested_provider_intent: finalExecutionMetadata.requested_provider_intent,
+        execution_requested_provider: finalExecutionMetadata.execution_requested_provider,
         requested_provider: effectiveRequestPayload.provider,
         selected_provider: executionMetadata.selected_provider,
         actual_provider_used: executionMetadata.actual_provider_used,

@@ -329,6 +329,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastUiRequestedProvider: lastExecutionMetadata?.ui_requested_provider,
       lastRequestedProviderIntent: lastExecutionMetadata?.requested_provider_intent || 'n/a',
       lastFreshnessCandidateProvider: lastExecutionMetadata?.freshness_candidate_provider || 'n/a',
+      lastExecutionRequestedProvider: lastExecutionMetadata?.execution_requested_provider || 'n/a',
       lastRequestedProviderForRequest: lastExecutionMetadata?.requested_provider_for_request || lastExecutionMetadata?.requested_provider,
       lastFallbackProviderUsed: lastExecutionMetadata?.fallback_provider_used || 'n/a',
       lastBackendDefaultProvider: lastExecutionMetadata?.backend_default_provider || safeApiStatus.backendDefaultProvider,
@@ -1005,6 +1006,8 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
         <li>Last UI Requested Provider: {lastExecutionMetadata?.ui_requested_provider || 'n/a'}</li>
         <li>Last UI Default Provider: {lastExecutionMetadata?.ui_default_provider || provider || 'n/a'}</li>
         <li>Last Requested Provider For Request: {lastExecutionMetadata?.requested_provider_for_request || lastExecutionMetadata?.requested_provider || 'n/a'}</li>
+        <li>Last Execution Requested Provider: {lastExecutionMetadata?.execution_requested_provider || 'n/a'}</li>
+        <li>Last Freshness Candidate Provider: {lastExecutionMetadata?.freshness_candidate_provider || 'n/a'}</li>
         <li>Last Backend Default Provider: {lastExecutionMetadata?.backend_default_provider || safeApiStatus.backendDefaultProvider || 'n/a'}</li>
         <li>Last Route Mode: {lastExecutionMetadata?.route_mode || 'n/a'}</li>
         <li>Last Effective Route Mode: {lastExecutionMetadata?.effective_route_mode || 'n/a'}</li>
