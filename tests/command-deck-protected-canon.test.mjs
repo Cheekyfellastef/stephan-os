@@ -109,3 +109,13 @@ test('protected canon: render sites pass canonical and non-canonical AIConsole i
   assert.match(missionSource, /<AIConsole[\s\S]*surfaceOwnerKey="mission-console-section"[\s\S]*panelId="aiCoreMissionConsolePanel"/m);
   assert.match(missionSource, /submissionSource: 'stephanos-mission-console'/);
 });
+
+test('protected canon: agent reality loop repair stays on existing projection path without scroll/autoscroll changes', async () => {
+  const hookSource = await read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url));
+  const missionSource = await read(missionConsoleTilePath);
+  assert.match(hookSource, /submitRuntimeContextWithOperatorReliefBridge/);
+  assert.match(hookSource, /createAgentRealityLoopDeterministicResult/);
+  assert.match(hookSource, /agent_reality_loop_unavailable_claim_suppressed: 'yes'/);
+  assert.match(missionSource, /data-mission-console-registration-callback-invoked=\{registrationTraceState\.callbackInvoked\}/);
+  assert.doesNotMatch(hookSource, /manual-scroll suppression/i);
+});

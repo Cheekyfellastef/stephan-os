@@ -174,7 +174,7 @@ test('codex/openclaw routing prompts classify as work-routing and include co-bui
   }
 });
 
-test('agent reality loop prompts classify as architecture-guidance and use project-aware subsystems', () => {
+test('agent reality loop prompts classify as mission-planning and inject ARL projection', () => {
   const pack = buildChatContextPack({
     operatorMessage: 'tell me about the agent reality loop',
     missionState: {
@@ -183,12 +183,15 @@ test('agent reality loop prompts classify as architecture-guidance and use proje
       },
     },
   });
-  assert.equal(pack.recommendedResponseMode, 'architecture-guidance');
+  assert.equal(pack.recommendedResponseMode, 'mission-planning');
   assert.equal(pack.intentClassifierMatchedRule, 'agent-reality-loop');
   assert.ok(pack.affectedSubsystems.includes('operator-relief'));
   assert.ok(pack.contextProviderIdsUsed.includes('missionState'));
   assert.match(pack.recommendedNextAction, /Agent Reality Loop V1 projection/i);
   assert.equal(pack.compactSummary.projectAwareness.agentRealityLoopProjectionStatus, 'active');
+  assert.equal(pack.compactSummary.agentRealityLoopContextInjected, 'yes');
+  assert.equal(pack.compactSummary.agentRealityLoopProjectionSource, 'operator-relief-bridge');
+  assert.equal(pack.compactSummary.missionIntelligence.agentRealityLoop.projectionAvailable, 'yes');
 });
 
 test('project awareness keeps agent reality loop projection available from canonical projection status field', () => {
@@ -201,6 +204,9 @@ test('project awareness keeps agent reality loop projection available from canon
     },
   });
   assert.equal(pack.compactSummary.projectAwareness.agentRealityLoopProjectionStatus, 'active');
+  assert.equal(pack.compactSummary.agentRealityLoopContextInjected, 'yes');
+  assert.equal(pack.compactSummary.agentRealityLoopProjectionSource, 'operator-relief-bridge');
+  assert.equal(pack.compactSummary.missionIntelligence.agentRealityLoop.projectionAvailable, 'yes');
 });
 
 test('project awareness degrades truthfully when mission intelligence is missing', () => {

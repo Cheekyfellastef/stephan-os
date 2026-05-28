@@ -18,6 +18,28 @@ function asList(value) {
   return value.map((item) => `- ${asText(item, 'n/a')}`);
 }
 
+function sampleLiveMissionConsoleComponentTrace() {
+  const doc = globalThis?.document;
+  if (!doc?.querySelector) return null;
+  const aiCoreNode = doc.querySelector('[data-testid="ai-core-mission-console"]');
+  const aiCorePane = doc.querySelector('[data-pane-id="aiCoreMissionConsolePanel"]');
+  const marker = aiCoreNode?.querySelector?.('[data-mission-console-component="MissionConsoleTile"]')
+    || aiCorePane?.querySelector?.('[data-mission-console-component="MissionConsoleTile"]')
+    || null;
+  if (!marker) {
+    return { source: 'missing' };
+  }
+  return {
+    source: aiCoreNode?.contains?.(marker) ? 'dom' : 'pane-fallback',
+    isMissionConsoleTile: marker.getAttribute('data-mission-console-component') === 'MissionConsoleTile' ? 'yes' : 'no',
+    panelId: marker.getAttribute('data-mission-console-panel-id') || 'unknown',
+    registrationEffectSeen: marker.getAttribute('data-mission-console-registration-effect-seen') || 'no',
+    registrationCallbackPropPresent: marker.getAttribute('data-mission-console-registration-callback-prop-present') || 'no',
+    registrationCallbackInvoked: marker.getAttribute('data-mission-console-registration-callback-invoked') || 'no',
+    registrationDropBoundary: marker.getAttribute('data-mission-console-registration-drop-boundary') || 'visible-surface-not-missionconsoletile',
+  };
+}
+
 function normalizeTruthText(value = '') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized || normalized === 'n/a' || normalized === 'unknown' || normalized === 'none') return '';
@@ -114,8 +136,11 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
   const executionCount = Number(executionMetadata?.mission_console_instance_count);
   const executionHasInstances = Number.isFinite(executionCount) && executionCount > 0;
   const useLiveDiagnostics = liveHasInstances || !executionHasInstances;
-  const uiRealityComponentTrace = runtimeStatus?.runtimeContext?.uiReality?.aiCoreMissionConsole?.componentTrace || {};
-  const componentTraceSource = asText(executionMetadata?.mission_console_component_trace_source, uiRealityComponentTrace?.source || 'missing');
+  const liveDomComponentTrace = sampleLiveMissionConsoleComponentTrace() || {};
+  const uiRealityComponentTrace = Object.keys(liveDomComponentTrace).length && liveDomComponentTrace.source !== 'missing'
+    ? liveDomComponentTrace
+    : (runtimeStatus?.runtimeContext?.uiReality?.aiCoreMissionConsole?.componentTrace || {});
+  const componentTraceSource = asText(uiRealityComponentTrace?.source, executionMetadata?.mission_console_component_trace_source || 'missing');
   const source = Object.keys(liveDiagnostics).length
     ? (useLiveDiagnostics ? 'live-operator-relief-bridge' : 'final-execution-metadata')
     : (Object.keys(executionMetadata).length ? 'final-execution-metadata' : 'missing');
@@ -194,11 +219,11 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
       ? (selected?.registrationStoreWriteAccepted || 'no')
       : (executionMetadata?.mission_console_registration_store_write_accepted || 'no'),
     componentTraceSource,
-    visibleComponentIsMissionConsoleTile: asText(executionMetadata?.mission_console_visible_component_is_missionconsoletile, uiRealityComponentTrace?.isMissionConsoleTile || 'no'),
-    visibleComponentPanelId: asText(executionMetadata?.mission_console_visible_component_panel_id, uiRealityComponentTrace?.panelId || 'unknown'),
-    componentEffectSeen: asText(executionMetadata?.mission_console_component_effect_seen, uiRealityComponentTrace?.registrationEffectSeen || 'no'),
-    componentCallbackPropPresent: asText(executionMetadata?.mission_console_component_callback_prop_present, uiRealityComponentTrace?.registrationCallbackPropPresent || 'no'),
-    componentCallbackInvoked: asText(executionMetadata?.mission_console_component_callback_invoked, uiRealityComponentTrace?.registrationCallbackInvoked || 'no'),
+    visibleComponentIsMissionConsoleTile: asText(uiRealityComponentTrace?.isMissionConsoleTile, executionMetadata?.mission_console_visible_component_is_missionconsoletile || 'no'),
+    visibleComponentPanelId: asText(uiRealityComponentTrace?.panelId, executionMetadata?.mission_console_visible_component_panel_id || 'unknown'),
+    componentEffectSeen: asText(uiRealityComponentTrace?.registrationEffectSeen, executionMetadata?.mission_console_component_effect_seen || 'no'),
+    componentCallbackPropPresent: asText(uiRealityComponentTrace?.registrationCallbackPropPresent, executionMetadata?.mission_console_component_callback_prop_present || 'no'),
+    componentCallbackInvoked: asText(uiRealityComponentTrace?.registrationCallbackInvoked, executionMetadata?.mission_console_component_callback_invoked || 'no'),
     registrationDropBoundary: useLiveDiagnostics
       ? (selected?.registrationDropBoundary || 'runtime-context-not-injected')
       : (executionMetadata?.mission_console_registration_drop_boundary || executionMetadata?.operator_relief_bridge_drop_boundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected'),
@@ -976,6 +1001,17 @@ export function buildSupportSnapshot({
   let chatContextAgentWorkRoutingContextIncluded = /\bagentWorkRouting\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
   let normalizedChatContextSourcesUsed = chatContextSourcesUsed;
   let normalizedChatContextStatus = chatContextStatus;
+  const arlContextInjected = executionMetadata?.agent_reality_loop_context_injected || 'no';
+  const arlProjectionSource = executionMetadata?.agent_reality_loop_projection_source_seen || 'none';
+  if (String(executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes'
+    && normalizedChatContextStatus === 'unavailable') {
+    normalizedChatContextStatus = 'degraded-with-arl';
+  }
+  if (arlContextInjected === 'yes') {
+    const sourceSet = new Set(String(normalizedChatContextSourcesUsed || 'none').split('|').map((item) => item.trim()).filter(Boolean).filter((item) => item !== 'none'));
+    if (arlProjectionSource && arlProjectionSource !== 'none') sourceSet.add(arlProjectionSource);
+    normalizedChatContextSourcesUsed = sourceSet.size ? Array.from(sourceSet).join('|') : normalizedChatContextSourcesUsed;
+  }
   if (hasWorkRoutingPromptMarker) {
     chatContextCoBuilderContextIncluded = 'yes';
     chatContextAgentWorkRoutingContextIncluded = 'yes';
@@ -2143,6 +2179,8 @@ export function buildSupportSnapshot({
     `Work Routing Prompt Sources: ${asText(workRoutingPromptSources, 'none')}`,
     `Agent Reality Loop Context Recognized: ${asText(executionMetadata?.agent_reality_loop_context_recognized, 'no')}`,
     `Agent Reality Loop Context Source: ${asText(executionMetadata?.agent_reality_loop_context_source, 'none')}`,
+    `Agent Reality Loop Context Injected: ${asText(executionMetadata?.agent_reality_loop_context_injected, 'no')}`,
+    `ARL Projection Source: ${asText(executionMetadata?.agent_reality_loop_projection_source_seen, 'none')}`,
     `Agent Reality Loop Projection Available: ${asText(executionMetadata?.agent_reality_loop_projection_available, 'no')}`,
     `Agent Reality Loop Recommended Lead: ${asText(executionMetadata?.agent_reality_loop_recommended_lead, 'hold')}`,
     `Agent Reality Loop Merge Recommendation: ${asText(executionMetadata?.agent_reality_loop_merge_recommendation, 'hold')}`,

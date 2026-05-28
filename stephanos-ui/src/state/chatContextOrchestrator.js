@@ -27,7 +27,7 @@ export const INTENT_RULES = [
   },
   {
     id: 'agent-reality-loop',
-    responseMode: 'architecture-guidance',
+    responseMode: 'mission-planning',
     pattern: /\b(agent reality loop( v1)?|reality loop|agent loop|codex\/openclaw coordination loop|proof loop|merge readiness loop)\b/,
   },
   {
@@ -165,6 +165,10 @@ function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}
   if (operatorProfile && Object.keys(operatorProfile).length) sourcesUsed.push('operatorProfile');
   sourcesUsed.push('canonRules');
   const agentRealityLoopProjection = missionState?.operatorReliefProjection?.agentRealityLoopProjection || missionState?.agentRealityLoopProjection || {};
+  const agentRealityLoopProjectionSource = missionState?.operatorReliefProjection?.agentRealityLoopProjection
+    ? 'operator-relief-bridge'
+    : (missionState?.agentRealityLoopProjection ? 'mission-brain' : 'none');
+  if (agentRealityLoopProjectionSource !== 'none') sourcesUsed.push(agentRealityLoopProjectionSource);
 
   const warnings = [
     'Do not add new panes when existing Mission Brain / Operator Relief / Command Deck surfaces can be extended.',
@@ -192,7 +196,8 @@ function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}
     openClawRole: 'OpenClaw supports orchestration/research/proof under approval gates without bypassing operator merge authority.',
     nextBestAction: missionIntelligence.nextBestAction || 'Integrate Mission Brain, Harness, proof, and canon context into the existing Chat Context Pack path.',
     agentRealityLoopV1Summary: 'Agent Reality Loop V1 is a read-only coordination/proof projection in Mission Brain / Operator Relief that routes work between Codex, OpenClaw, operator, or hold; exposes required proof; blocks merge when proof is missing; and proposes lesson candidates for operator approval.',
-    agentRealityLoopProjectionStatus: agentRealityLoopProjection.status || agentRealityLoopProjection.loopStatus || 'unavailable',
+    agentRealityLoopProjectionStatus: agentRealityLoopProjection.status || agentRealityLoopProjection.loopStatus || (Object.keys(agentRealityLoopProjection).length ? 'available' : 'unavailable'),
+    agentRealityLoopProjectionSource,
     forbiddenComplexityWarnings: warnings,
     warningCount: warnings.length,
   };
@@ -270,6 +275,10 @@ export function buildChatContextPack(input = {}) {
     || {};
   const agentWorkRouting = missionState?.operatorReliefProjection?.agentWorkRoutingProjection || missionState?.agentWorkRoutingProjection || {};
   const coBuilderLoop = missionState?.operatorReliefProjection?.coBuilderLoopProjection || missionState?.coBuilderLoopProjection || {};
+  const agentRealityLoopProjection = missionState?.operatorReliefProjection?.agentRealityLoopProjection || missionState?.agentRealityLoopProjection || {};
+  const agentRealityLoopProjectionSource = missionState?.operatorReliefProjection?.agentRealityLoopProjection
+    ? 'operator-relief-bridge'
+    : (missionState?.agentRealityLoopProjection ? 'mission-brain' : 'none');
   const boundedMissionIntelligenceContext = {
     missionSummary: missionIntelligence.currentMissionSummary || missionState?.activeMission?.summary || 'unknown',
     nextBestAction: missionIntelligence.nextBestAction || 'Review mission intelligence summary in Mission Brain.',
@@ -293,6 +302,16 @@ export function buildChatContextPack(input = {}) {
       operatorApprovalRequired: agentWorkRouting.operatorApprovalRequired || 'yes',
       requiredProof: Array.isArray(agentWorkRouting.requiredProof) ? agentWorkRouting.requiredProof : [],
       nextOperatorAction: agentWorkRouting.nextOperatorAction || 'Review mission routing summary and hold or approve bounded packet.',
+    } : undefined,
+    agentRealityLoop: agentRealityLoopTask ? {
+      projectionSource: agentRealityLoopProjectionSource,
+      projectionAvailable: Object.keys(agentRealityLoopProjection).length ? 'yes' : 'no',
+      status: agentRealityLoopProjection.status || agentRealityLoopProjection.loopStatus || (Object.keys(agentRealityLoopProjection).length ? 'available' : 'unavailable'),
+      recommendedLead: agentRealityLoopProjection.recommendedLead || 'hold',
+      mergeRecommendation: agentRealityLoopProjection.mergeRecommendation || 'hold',
+      operatorApprovalRequired: agentRealityLoopProjection.operatorApprovalRequired ?? true,
+      requiredProof: Array.isArray(agentRealityLoopProjection.requiredProof) ? agentRealityLoopProjection.requiredProof : [],
+      copyPacketsAvailable: agentRealityLoopProjection.copyCodexPacket && agentRealityLoopProjection.copyOpenClawPacket && agentRealityLoopProjection.copyOperatorProofChecklist ? 'yes' : 'no',
     } : undefined,
     coBuilderLoop: missionPlanningTask ? {
       coBuilderStatus: coBuilderLoop.coBuilderStatus || 'inactive',
@@ -337,6 +356,9 @@ export function buildChatContextPack(input = {}) {
     warnings,
     missionIntelligence: boundedMissionIntelligenceContext,
     projectAwareness,
+    agentRealityLoopProjection: agentRealityLoopTask ? agentRealityLoopProjection : undefined,
+    agentRealityLoopProjectionSource: agentRealityLoopTask ? agentRealityLoopProjectionSource : 'none',
+    agentRealityLoopContextInjected: agentRealityLoopTask && Object.keys(agentRealityLoopProjection).length ? 'yes' : 'no',
     contextProviderIdsUsed: providerSnapshot.contextProviderIdsUsed,
     contextProviderIdsRegistered,
     contextProviderRegistryStatus,

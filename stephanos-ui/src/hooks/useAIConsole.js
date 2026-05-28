@@ -371,13 +371,19 @@ export function normalizeProjectAwarenessMetadata({
     chatContextMissionState = boundedMissionKnown || 'degraded';
   }
   const sourceSet = new Set(Array.isArray(compact?.contextSourcesUsed) ? compact.contextSourcesUsed.filter(Boolean) : []);
+  const agentRealityLoopProjection = missionState?.operatorReliefProjection?.agentRealityLoopProjection || missionState?.agentRealityLoopProjection || {};
+  const agentRealityLoopAvailable = Object.keys(agentRealityLoopProjection).length > 0;
   const planningOrRoutingMode = responseMode === 'mission-planning' || responseMode === 'work-routing';
   if (planningOrRoutingMode && status !== 'unavailable') sourceSet.add('projectAwareness');
   if (planningOrRoutingMode && boundedMissionKnown) sourceSet.add('missionIntelligence');
+  if (agentRealityLoopAvailable) sourceSet.add(missionState?.operatorReliefProjection?.agentRealityLoopProjection ? 'operator-relief-bridge' : 'mission-brain');
   const chatContextSourcesUsed = Array.from(sourceSet);
-  const chatContextPackStatus = compact?.status === 'unavailable' && planningOrRoutingMode && providerIdsUsed.length
+  const baseChatContextPackStatus = compact?.status === 'unavailable' && planningOrRoutingMode && providerIdsUsed.length
     ? 'degraded'
     : (compact?.status || 'unavailable');
+  const chatContextPackStatus = agentRealityLoopAvailable && baseChatContextPackStatus !== 'active'
+    ? 'degraded-with-arl'
+    : baseChatContextPackStatus;
 
   return {
     projectAwarenessStatus: status,
@@ -438,6 +444,9 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const projectionAvailableStatus = ['available', 'active', 'ready'].includes(projectionStatus);
   const projectionObjectPresent = Object.keys(agentRealityLoopProjection).length > 0;
   const projectionAvailable = projectionAvailableStatus || projectionObjectPresent;
+  const projectionSourceSeen = projectionObjectPresent
+    ? (chatContextPack?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection ? 'operator-relief-bridge' : 'mission-brain')
+    : (projectAwareness?.agentRealityLoopProjectionStatus ? 'projectAwareness.status-only' : 'none');
   const copyPacketsAvailable = Boolean(
     agentRealityLoopProjection?.copyCodexPacket
     && agentRealityLoopProjection?.copyOpenClawPacket
@@ -507,8 +516,9 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     agent_reality_loop_context_recognized: agentRealityLoopContextRecognized ? 'yes' : 'no',
     agent_reality_loop_context_source: contextSource,
     agent_reality_loop_projection_available: projectionAvailable ? 'yes' : 'no',
-    agent_reality_loop_projection_source_seen: projectionObjectPresent ? 'missionState.operatorReliefProjection' : (projectAwareness?.agentRealityLoopProjectionStatus ? 'projectAwareness.status-only' : 'none'),
+    agent_reality_loop_projection_source_seen: projectionSourceSeen,
     agent_reality_loop_projection_raw_status: projectionStatus || String(projectAwareness?.agentRealityLoopProjectionStatus || '').trim().toLowerCase() || 'unknown',
+    agent_reality_loop_context_injected: agentRealityLoopContextRecognized && projectionAvailable ? 'yes' : 'no',
     agent_reality_loop_projection_keys_seen: projectionObjectPresent ? Object.keys(agentRealityLoopProjection).join('|') : 'none',
     agent_reality_loop_metadata_source: hasPack ? 'chatContextPack' : 'none',
     agent_reality_loop_metadata_derivation_reason: agentRealityLoopContextRecognized ? 'intent-classifier-match-or-term-detection' : 'no-agent-reality-loop-signal',
@@ -2216,6 +2226,63 @@ function createOperatorExplanationDeterministicResult({
   };
 }
 
+function formatAgentRealityLoopAnswer(projection = {}, projectAwareness = {}) {
+  const recommendedLead = projection?.recommendedLead || 'hold';
+  const mergeRecommendation = projection?.mergeRecommendation || 'hold';
+  const status = projection?.status || projection?.loopStatus || 'available';
+  const requiredProof = Array.isArray(projection?.requiredProof) && projection.requiredProof.length
+    ? projection.requiredProof.join(', ')
+    : 'targeted proof from the existing Operator Relief / Mission Brain projection';
+  const copyPackets = [
+    projection?.copyCodexPacket ? 'Codex packet' : '',
+    projection?.copyOpenClawPacket ? 'OpenClaw packet' : '',
+    projection?.copyOperatorProofChecklist ? 'operator proof checklist' : '',
+  ].filter(Boolean).join(', ') || 'no copy packets reported';
+  const degradedNotice = String(projectAwareness?.status || '').trim().toLowerCase() === 'degraded'
+    ? '\n\nSome mission details may be incomplete because Project Awareness is degraded.'
+    : '';
+  return [
+    'Agent Reality Loop V1 is live in the Operator Relief / Mission Brain projection path.',
+    `Current ARL status: ${status}.`,
+    `Recommended lead: ${recommendedLead}.`,
+    `Merge recommendation: ${mergeRecommendation}.`,
+    `Required proof: ${requiredProof}.`,
+    `Available handoff material: ${copyPackets}.`,
+    'It is a read-only coordination/proof projection: it routes bounded work between Codex, OpenClaw, the operator, or hold; preserves operator approval; and does not create a second ARL authority.',
+  ].join('\n') + degradedNotice;
+}
+
+function createAgentRealityLoopDeterministicResult({
+  prompt,
+  parsed,
+  startedAt,
+  requestPayload,
+  projection = {},
+  projectAwareness = {},
+}) {
+  return {
+    data: {
+      type: 'assistant_response',
+      route: 'assistant',
+      success: true,
+      output_text: formatAgentRealityLoopAnswer(projection, projectAwareness),
+      error: null,
+      error_code: null,
+      timing_ms: Math.round(performance.now() - startedAt),
+      data: {
+        execution_metadata: {
+          agent_reality_loop_answer_used_live_projection: 'yes',
+          agent_reality_loop_unavailable_claim_suppressed: 'yes',
+        },
+      },
+      raw_input: prompt,
+      parsed_command: parsed,
+      request_execution_id: requestPayload?.request_execution_id || null,
+    },
+    requestPayload: { ...requestPayload },
+  };
+}
+
 function transportErrorToUi(error, { routeDecision = null } = {}) {
   const routeFailureReason = routeDecision?.fallbackReasonCode || routeDecision?.freshRouteValidation?.failureReasons?.[0] || '';
   const routeTruthUsable = routeDecision?.requestDispatchGate?.selectedRouteUsable === true
@@ -3544,8 +3611,19 @@ export function useAIConsole() {
       const submitHydratedRuntimeContext = submitHealth?.ok
         ? buildRuntimeContextFromHealth(resolvedRuntimeContext, submitHealth)
         : resolvedRuntimeContext;
+      const liveOperatorReliefRuntimeContext = runtimeStatusModel?.runtimeContext || {};
+      const submitRuntimeContextWithOperatorReliefBridge = {
+        ...submitHydratedRuntimeContext,
+        operatorReliefProjection: liveOperatorReliefRuntimeContext.operatorReliefProjection
+          || submitHydratedRuntimeContext.operatorReliefProjection
+          || null,
+        operatorReliefBridgeDiagnostics: {
+          ...(submitHydratedRuntimeContext.operatorReliefBridgeDiagnostics || {}),
+          ...(liveOperatorReliefRuntimeContext.operatorReliefBridgeDiagnostics || {}),
+        },
+      };
       const finalizedRequestContext = finalizeRuntimeContext(
-        submitHydratedRuntimeContext,
+        submitRuntimeContextWithOperatorReliefBridge,
         providerHealth,
         submitHealth?.ok === true,
       ).runtimeContext;
@@ -4132,6 +4210,23 @@ export function useAIConsole() {
           operatorProfileSource: chatContextPack?.providerSummaries?.operatorProfile?.source || 'operator profile',
         })
         : null;
+      const agentRealityLoopProjectionForAnswer = chatContextPack?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection
+        || chatContextPack?.inputMissionState?.agentRealityLoopProjection
+        || {};
+      const agentRealityLoopDeterministicEligible = !routeUnavailableOutcome
+        && !identityRecallDeterministicResult
+        && String(chatContextPack?.intentClassifierMatchedRule || '').trim().toLowerCase() === 'agent-reality-loop'
+        && Object.keys(agentRealityLoopProjectionForAnswer).length > 0;
+      const agentRealityLoopDeterministicResult = agentRealityLoopDeterministicEligible
+        ? createAgentRealityLoopDeterministicResult({
+          prompt,
+          parsed,
+          startedAt,
+          requestPayload,
+          projection: agentRealityLoopProjectionForAnswer,
+          projectAwareness: chatContextPack?.compactSummary?.projectAwareness || {},
+        })
+        : null;
       const explanationIntent = detectOperatorExplanationIntent(prompt);
       const operatorExplanationModeClassified = String(chatContextPack?.recommendedResponseMode || responsePlan?.responseMode || '').trim().toLowerCase() === 'operator-explanation';
       const operatorExplanationDeterministicEligible = operatorExplanationModeClassified || explanationIntent.matched;
@@ -4147,7 +4242,7 @@ export function useAIConsole() {
           supportSnapshot: requestRuntimeStatus?.supportSnapshot || requestRuntimeStatus || {},
         }, prompt)
         : null;
-      const operatorExplanationDeterministicResult = (!routeUnavailableOutcome && !identityRecallDeterministicResult && operatorExplanationDeterministicEligible)
+      const operatorExplanationDeterministicResult = (!routeUnavailableOutcome && !identityRecallDeterministicResult && !agentRealityLoopDeterministicResult && operatorExplanationDeterministicEligible)
         ? createOperatorExplanationDeterministicResult({
           prompt,
           parsed,
@@ -4157,7 +4252,7 @@ export function useAIConsole() {
           output: formatOperatorExplanation(operatorExplanationProjection, { mode: operatorExplanationProjection?.mode || explanationIntent.mode }),
         })
         : null;
-      if (!routeUnavailableOutcome && !identityRecallDeterministicResult && !operatorExplanationDeterministicResult) {
+      if (!routeUnavailableOutcome && !identityRecallDeterministicResult && !agentRealityLoopDeterministicResult && !operatorExplanationDeterministicResult) {
         executeStageLastReached = 'provider-dispatch-started';
         executePhase = 'provider-dispatch-started';
         setCommandHistory((prev) => appendCommandHistory(prev, {
@@ -4182,7 +4277,7 @@ export function useAIConsole() {
           continuity_retrieval_reason: continuityLookup.reason,
         }));
       }
-      providerDispatchResult = routeUnavailableOutcome || identityRecallDeterministicResult || operatorExplanationDeterministicResult || await sendPrompt({
+      providerDispatchResult = routeUnavailableOutcome || identityRecallDeterministicResult || agentRealityLoopDeterministicResult || operatorExplanationDeterministicResult || await sendPrompt({
         prompt: contextAssembly.truthMetadata.augmented_prompt_used
           ? contextAssembly.augmentedPrompt.replace(prompt, promptWithRoutingContext)
           : promptWithRoutingContext,
