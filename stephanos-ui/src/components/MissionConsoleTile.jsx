@@ -34,6 +34,8 @@ import { buildMissionIntelligenceLayer } from '../../../shared/agents/missionInt
 import MissionCommandDeck from './MissionCommandDeck';
 import AIConsole from './AIConsole';
 import { buildMusicMissionContext } from '../../../apps/music-tile/engine/musicMissionContext.js';
+import { discoverLocalAiRunnerModels, runLocalAiWorkbenchReview } from '../ai/localAiRunner.js';
+import { getProviderHealth, sendPrompt } from '../ai/aiClient';
 import { buildMissionConsoleContext, registerTileMissionContext } from '../../../shared/runtime/tileMissionContextRegistry.mjs';
 import { emitPresenceEvent } from '../../../shared/runtime/stephanosPresenceBridge.mjs';
 import { copyPerfDiagnosticsSnapshot, recordPerfCounter, setPerfIdentityField } from '../state/perfDiagnostics.js';
@@ -224,6 +226,7 @@ function MissionConsoleTile({
   const { copyState: openClawPatchPlanPacketCopyState, setCopyState: setOpenClawPatchPlanPacketCopyState } = useClipboardButtonState();
   const { copyState: githubPrInspectionPacketCopyState, setCopyState: setGithubPrInspectionPacketCopyState } = useClipboardButtonState();
   const { copyState: codexFallbackPacketCopyState, setCopyState: setCodexFallbackPacketCopyState } = useClipboardButtonState();
+  const { copyState: localAiRunnerRawCopyState, setCopyState: setLocalAiRunnerRawCopyState } = useClipboardButtonState();
   const { copyState: perfCopyState, setCopyState: setPerfCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
@@ -276,6 +279,12 @@ function MissionConsoleTile({
     openClawResearchRequested: false,
     localAiReviewText: '',
     openClawResearchText: '',
+    localAiRunnerStatus: 'idle',
+    localAiRunnerSelectedModel: '',
+    localAiRunnerAvailableModels: [],
+    localAiRunnerLastRunResult: 'none',
+    localAiRunnerLastRunBlockedReason: '',
+    localAiRunnerRawResponse: '',
   }));
   const [showBuilderWorkbenchVerdict, setShowBuilderWorkbenchVerdict] = useState(false);
 
@@ -1140,6 +1149,75 @@ function MissionConsoleTile({
     dispatchPanelToggle(panelId);
   };
 
+
+  useEffect(() => {
+    let cancelled = false;
+    setBuilderWorkbenchInput((prev) => prev.localAiRunnerStatus === 'idle'
+      ? { ...prev, localAiRunnerStatus: 'running', localAiRunnerLastRunResult: 'model-discovery-running' }
+      : prev);
+    discoverLocalAiRunnerModels({ providerConfigs: {}, runtimeConfig: runtimeStatusModel || {}, fetchHealth: getProviderHealth })
+      .then((discovery) => {
+        if (cancelled) return;
+        setBuilderWorkbenchInput((prev) => ({
+          ...prev,
+          localAiRunnerStatus: discovery.ok ? 'idle' : 'blocked',
+          localAiRunnerAvailableModels: discovery.models || [],
+          localAiRunnerSelectedModel: prev.localAiRunnerSelectedModel || discovery.selectedModel || '',
+          localAiRunnerLastRunResult: discovery.ok ? 'model-discovery-succeeded' : 'model-discovery-blocked',
+          localAiRunnerLastRunBlockedReason: discovery.ok ? '' : (discovery.reason || 'No approved local Ollama models discovered.'),
+        }));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setBuilderWorkbenchInput((prev) => ({
+          ...prev,
+          localAiRunnerStatus: 'blocked',
+          localAiRunnerLastRunResult: 'model-discovery-failed',
+          localAiRunnerLastRunBlockedReason: error?.message || 'Ollama model discovery failed.',
+        }));
+      });
+    return () => { cancelled = true; };
+  }, [runtimeStatusModel]);
+
+  const runBuilderWorkbenchLocalAiReview = async () => {
+    const packet = operatorReliefProjection.builderMeshProjection?.copyPackets?.localAiReviewPacket || {};
+    setBuilderWorkbenchInput((prev) => ({
+      ...prev,
+      activePacketType: 'local-ai-review',
+      activePacketTarget: 'local-ai-runner',
+      localAiReviewRequested: true,
+      localAiReviewRequestedAt: new Date().toISOString(),
+      localAiRunnerStatus: 'running',
+      localAiRunnerLastRunResult: 'running',
+      localAiRunnerLastRunBlockedReason: '',
+    }));
+    try {
+      const result = await runLocalAiWorkbenchReview({
+        packet,
+        selectedModel: builderWorkbenchInput.localAiRunnerSelectedModel,
+        availableModels: builderWorkbenchInput.localAiRunnerAvailableModels,
+        runtimeConfig: runtimeStatusModel || {},
+        sendPromptImpl: sendPrompt,
+      });
+      setBuilderWorkbenchInput((prev) => ({
+        ...prev,
+        localAiRunnerStatus: result.status || (result.ok ? 'succeeded' : 'failed'),
+        localAiRunnerLastRunResult: result.ok ? 'succeeded' : (result.status || 'failed'),
+        localAiRunnerLastRunBlockedReason: result.blockedReason || '',
+        localAiRunnerRawResponse: result.responseText || '',
+        localAiReviewText: result.responseText || prev.localAiReviewText,
+        activePacketType: 'local-ai-review',
+      }));
+    } catch (error) {
+      setBuilderWorkbenchInput((prev) => ({
+        ...prev,
+        localAiRunnerStatus: 'failed',
+        localAiRunnerLastRunResult: 'failed',
+        localAiRunnerLastRunBlockedReason: error?.message || 'Local AI review failed.',
+      }));
+    }
+  };
+
   return (
     <CollapsiblePanel
       panelId={panelId}
@@ -1394,6 +1472,21 @@ function MissionConsoleTile({
                 <button type="button" className={`status-panel-copy-button ${localAiReviewPacketCopyState}`} onClick={() => { setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'local-ai-review', activePacketTarget: operatorReliefProjection.builderMeshProjection?.recommendedBuilder || 'local-ai', localAiReviewRequested: true, localAiReviewRequestedAt: new Date().toISOString() })); copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.localAiReviewPacket || {}, null, 2), setLocalAiReviewPacketCopyState, 'MissionConsoleTile.copyBuilderMeshLocalAiReviewPacket'); }}>
                   {localAiReviewPacketCopyState === COPY_STATE.SUCCESS ? 'Local AI Review Packet Copied' : localAiReviewPacketCopyState === COPY_STATE.FAILURE ? 'Copy Local AI Review Packet failed' : 'Copy Local AI Review Packet'}
                 </button>
+                <label className="mission-console__field-label">Local model selector<select value={builderWorkbenchInput.localAiRunnerSelectedModel} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, localAiRunnerSelectedModel: event.target.value, localAiRunnerStatus: prev.localAiRunnerStatus === 'blocked' && event.target.value ? 'idle' : prev.localAiRunnerStatus }))}>
+                  {(builderWorkbenchInput.localAiRunnerAvailableModels || []).length ? (builderWorkbenchInput.localAiRunnerAvailableModels || []).map((model) => <option key={model} value={model}>{model}</option>) : <option value="">No approved Ollama models discovered</option>}
+                </select></label>
+                <button type="button" className="status-panel-copy-button" disabled={builderWorkbenchInput.localAiRunnerStatus === 'running' || !builderWorkbenchInput.localAiRunnerSelectedModel} onClick={runBuilderWorkbenchLocalAiReview}>Run Local AI Review</button>
+                <ul className="mission-console__status-list">
+                  <li><strong>Local AI Runner Status:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerStatus || builderWorkbenchInput.localAiRunnerStatus || 'idle'}</li>
+                  <li><strong>Local AI Runner Selected Model:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerSelectedModel || builderWorkbenchInput.localAiRunnerSelectedModel || 'none'}</li>
+                  <li><strong>Local AI Runner Last Run Result:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerLastRunResult || builderWorkbenchInput.localAiRunnerLastRunResult || 'none'}</li>
+                  <li><strong>Local AI Runner Last Run Blocked Reason:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerLastRunBlockedReason || builderWorkbenchInput.localAiRunnerLastRunBlockedReason || 'none'}</li>
+                  <li><strong>Local AI Runner Parsed Result Present:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerParsedResultPresent ? 'yes' : 'no'}</li>
+                  <li><strong>Response summary:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiReview?.summary || 'none'}</li>
+                  <li><strong>Parsed verdict:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.verdict || 'awaiting-results'}</li>
+                  <li><strong>Fallback still needed:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.codexFallbackStillNeeded ? 'yes' : 'no'}</li>
+                </ul>
+                <button type="button" className={`status-panel-copy-button ${localAiRunnerRawCopyState}`} onClick={() => copyToClipboard(builderWorkbenchInput.localAiRunnerRawResponse || builderWorkbenchInput.localAiReviewText || '', setLocalAiRunnerRawCopyState, 'MissionConsoleTile.copyLocalAiRunnerRawBoundedResponse')}>Copy raw bounded response</button>
                 <button type="button" className={`status-panel-copy-button ${openClawPatchPlanPacketCopyState}`} onClick={() => { setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-research-patch-plan', activePacketTarget: 'openclaw', openClawResearchRequested: true, openClawResearchRequestedAt: new Date().toISOString() })); copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.openClawResearchPacket || {}, null, 2), setOpenClawPatchPlanPacketCopyState, 'MissionConsoleTile.copyBuilderMeshOpenClawResearchPacket'); }}>
                   {openClawPatchPlanPacketCopyState === COPY_STATE.SUCCESS ? 'OpenClaw Research Packet Copied' : openClawPatchPlanPacketCopyState === COPY_STATE.FAILURE ? 'Copy OpenClaw Research Packet failed' : 'Copy OpenClaw Research Packet'}
                 </button>

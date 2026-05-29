@@ -414,6 +414,11 @@ function buildBuilderWorkbenchExecutionMetadata(builderWorkbenchProjection = {},
   return {
     builder_workbench_status: workbench?.workbenchStatus || 'unavailable',
     builder_workbench_local_ai_review_result_present: workbench?.localAiReviewResultPresent ? 'yes' : 'no',
+    local_ai_runner_status: workbench?.localAiRunnerStatus || 'idle',
+    local_ai_runner_selected_model: workbench?.localAiRunnerSelectedModel || 'none',
+    local_ai_runner_last_run_result: workbench?.localAiRunnerLastRunResult || 'none',
+    local_ai_runner_last_run_blocked_reason: workbench?.localAiRunnerLastRunBlockedReason || 'none',
+    local_ai_runner_parsed_result_present: workbench?.localAiRunnerParsedResultPresent ? 'yes' : 'no',
     builder_workbench_openclaw_research_result_present: workbench?.openClawResearchResultPresent ? 'yes' : 'no',
     builder_workbench_patch_plan_present: workbench?.patchPlanPresent ? 'yes' : 'no',
     builder_workbench_patch_plan_risk: workbench?.patchPlanRisk || 'unknown',
@@ -1128,6 +1133,11 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
   const workbenchFields = [
     ['builder_workbench_status', 'unavailable'],
     ['builder_workbench_local_ai_review_result_present', 'no'],
+    ['local_ai_runner_status', 'idle'],
+    ['local_ai_runner_selected_model', 'none'],
+    ['local_ai_runner_last_run_result', 'none'],
+    ['local_ai_runner_last_run_blocked_reason', 'none'],
+    ['local_ai_runner_parsed_result_present', 'no'],
     ['builder_workbench_openclaw_research_result_present', 'no'],
     ['builder_workbench_patch_plan_present', 'no'],
     ['builder_workbench_patch_plan_risk', 'unknown'],
@@ -2516,6 +2526,8 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
   const warnings = Array.isArray(projection?.warnings) ? projection.warnings.length : 0;
   const workbench = projection?.builderWorkbenchProjection || {};
   const localAiSummary = workbench?.localAiReview?.summary || 'no local AI review result pasted yet';
+  const localAiRunnerStatus = workbench?.localAiRunnerStatus || 'idle';
+  const localAiRunnerModel = workbench?.localAiRunnerSelectedModel || 'none';
   const openClawSummary = workbench?.openClawResearch?.summary || 'no OpenClaw research / patch plan pasted yet';
   const degradedNotice = String(projectAwareness?.status || '').trim().toLowerCase() === 'degraded'
     ? '\n\nSome mission details may be incomplete because Project Awareness is degraded.'
@@ -2532,6 +2544,7 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
     `Proof required before merge: ${proof}.`,
     `Blockers/warnings: ${blockers} blocker(s), ${warnings} warning(s).`,
     `Builder Workbench status: ${workbench?.workbenchStatus || 'unavailable'}; local AI review present: ${workbench?.localAiReviewResultPresent ? 'yes' : 'no'}; OpenClaw result present: ${workbench?.openClawResearchResultPresent ? 'yes' : 'no'}; patch plan present: ${workbench?.patchPlanPresent ? 'yes' : 'no'}.`,
+    `Local AI Runner status: ${localAiRunnerStatus}; selected model: ${localAiRunnerModel}; last result: ${workbench?.localAiRunnerLastRunResult || 'none'}; parsed result present: ${workbench?.localAiRunnerParsedResultPresent ? 'yes' : 'no'}.`,
     `Local AI review summary: ${localAiSummary}.`,
     `OpenClaw research / patch plan summary: ${openClawSummary}.`,
     `Workbench Codex fallback still needed: ${workbench?.codexFallbackStillNeeded ? 'yes' : 'no'} — ${workbench?.codexFallbackReason || 'none'}.`,

@@ -106,6 +106,9 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const localRaw = asText(workbenchInput.localAiReviewText || workbenchInput.localAiReviewResult || '', '');
   const openClawRaw = asText(workbenchInput.openClawResearchText || workbenchInput.openClawResearchResult || workbenchInput.openClawPatchPlanText || '', '');
   const localAiReview = localRaw ? parseBuilderWorkbenchResult(localRaw, { source: 'local-ai-review' }) : null;
+  const localAiRunnerStatus = asText(workbenchInput.localAiRunnerStatus || (workbenchInput.localAiRunnerRequested ? 'running' : 'idle'), 'idle');
+  const localAiRunnerLastRunResult = asText(workbenchInput.localAiRunnerLastRunResult || (localAiReview ? localAiReview.resultStatus : 'none'), 'none');
+  const localAiRunnerLastRunBlockedReason = asText(workbenchInput.localAiRunnerLastRunBlockedReason || (localAiReview && !localAiReview.safeForWorkbench ? 'Local AI response failed Workbench safety parsing.' : ''), '');
   const openClawResearch = openClawRaw ? parseBuilderWorkbenchResult(openClawRaw, { source: 'openclaw-research-patch-plan' }) : null;
   const parsedResults = [localAiReview, openClawResearch].filter(Boolean);
   const forbidden = parsedResults.flatMap((result) => result.forbiddenActionsDetected || []);
@@ -141,6 +144,13 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     activePacketType: workbenchInput.activePacketType || (openClawRaw ? 'openclaw-research-patch-plan' : (localRaw ? 'local-ai-review' : 'none')),
     activePacketTarget: workbenchInput.activePacketTarget || builderMeshBase.recommendedBuilder || 'zero-cost-builder-mesh',
     localAiReviewRequested: workbenchInput.localAiReviewRequested === true || Boolean(workbenchInput.localAiReviewRequestedAt) || false,
+    localAiRunnerStatus,
+    localAiRunnerSelectedModel: asText(workbenchInput.localAiRunnerSelectedModel, 'none'),
+    localAiRunnerAvailableModels: asList(workbenchInput.localAiRunnerAvailableModels),
+    localAiRunnerLastRunResult: forbidden.length > 0 && localAiReview ? 'blocked' : localAiRunnerLastRunResult,
+    localAiRunnerLastRunBlockedReason: forbidden.length > 0 && localAiReview ? 'Forbidden mutation/autonomy language detected in Local AI Runner response.' : (localAiRunnerLastRunBlockedReason || 'none'),
+    localAiRunnerParsedResultPresent: Boolean(localAiReview && localAiReview.safeForWorkbench),
+    localAiRunnerRawResponse: truncateWorkbenchText(workbenchInput.localAiRunnerRawResponse || localRaw || ''),
     openClawResearchRequested: workbenchInput.openClawResearchRequested === true || Boolean(workbenchInput.openClawResearchRequestedAt) || false,
     localAiReviewResultPresent: Boolean(localAiReview),
     openClawResearchResultPresent: Boolean(openClawResearch),
@@ -537,7 +547,7 @@ function buildBuilderMeshProjection({
     workbenchInput: builderWorkbenchInput,
     implementationRequested,
   });
-  if (recommendedBuilder === 'codex-fallback' && workbenchPreview.codexFallbackStillNeeded === false) {
+  if (workbenchPreview.codexFallbackStillNeeded === false && (workbenchPreview.localAiReviewResultPresent === true || workbenchPreview.openClawResearchResultPresent === true)) {
     recommendedBuilder = 'operator';
     codexReason = workbenchPreview.codexFallbackReason;
   }
@@ -551,9 +561,11 @@ function buildBuilderMeshProjection({
   ];
   const nextBestAction = recommendedBuilder === 'hold'
     ? 'Hold and resolve Builder Mesh blockers before routing more build work.'
-    : (recommendedBuilder === 'codex-fallback'
+    : (recommendedBuilder === 'operator' && workbenchPreview.localAiReviewResultPresent === true
+      ? 'Review the parsed Local AI Runner findings and use the Operator Approval Checklist before any patch or Codex fallback.'
+      : (recommendedBuilder === 'codex-fallback'
       ? 'Copy the Codex Fallback Packet only after operator approval confirms zero-cost routes cannot safely implement.'
-      : `Copy the ${recommendedBuilder === 'github-inspection' ? 'GitHub Inspection Packet' : recommendedBuilder === 'openclaw' ? 'OpenClaw Research Packet' : recommendedBuilder === 'operator' ? 'Operator Approval Checklist' : 'Local AI Review Packet'} and keep the route read-only until mutation approval.`);
+      : `Copy the ${recommendedBuilder === 'github-inspection' ? 'GitHub Inspection Packet' : recommendedBuilder === 'openclaw' ? 'OpenClaw Research Packet' : recommendedBuilder === 'operator' ? 'Operator Approval Checklist' : 'Local AI Review Packet'} and keep the route read-only until mutation approval.`));
   const builderWorkbenchProjection = buildBuilderWorkbenchProjection({
     builderMeshBase: { recommendedBuilder, codexReason },
     workbenchInput: builderWorkbenchInput,

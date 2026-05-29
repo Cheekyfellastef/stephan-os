@@ -3929,6 +3929,11 @@ test('support snapshot aligns Builder Workbench truth from live projection when 
           builderWorkbenchProjection: {
             workbenchStatus: 'ready',
             localAiReviewResultPresent: false,
+            localAiRunnerStatus: 'succeeded',
+            localAiRunnerSelectedModel: 'llama3.2:3b',
+            localAiRunnerLastRunResult: 'succeeded',
+            localAiRunnerLastRunBlockedReason: 'none',
+            localAiRunnerParsedResultPresent: true,
             openClawResearchResultPresent: false,
             patchPlanPresent: false,
             patchPlanRisk: 'unknown',
@@ -3967,6 +3972,11 @@ test('support snapshot aligns Builder Workbench truth from live projection when 
   assert.match(snapshot, /Builder Mesh Projection Available: yes/);
   assert.match(snapshot, /Builder Mesh Codex Required: no/);
   assert.match(snapshot, /Builder Workbench Status: ready/);
+  assert.match(snapshot, /Local AI Runner Status: succeeded/);
+  assert.match(snapshot, /Local AI Runner Selected Model: llama3\.2:3b/);
+  assert.match(snapshot, /Local AI Runner Last Run Result: succeeded/);
+  assert.match(snapshot, /Local AI Runner Last Run Blocked Reason: none/);
+  assert.match(snapshot, /Local AI Runner Parsed Result Present: yes/);
   assert.match(snapshot, /Local AI Review Result Present: no/);
   assert.match(snapshot, /OpenClaw Research Result Present: no/);
   assert.match(snapshot, /Patch Plan Present: no/);

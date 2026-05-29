@@ -386,6 +386,60 @@ test('Builder Workbench V1 parses safe OpenClaw patch plan and can reduce Codex 
   assert.equal(r.builderMeshProjection.codexRequired, false);
 });
 
+
+test('Builder Workbench Local AI Runner safe result updates verdict and routes to operator checklist', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Review workbench local AI runner output' } },
+    supportSnapshot: {
+      nextBuilderTaskKind: 'implementation',
+      localAiConnected: true,
+      builderWorkbenchInput: {
+        localAiRunnerStatus: 'succeeded',
+        localAiRunnerSelectedModel: 'llama3.2:3b',
+        localAiRunnerLastRunResult: 'succeeded',
+        localAiReviewText: `Summary: Safe projection-only review found no blocker.
+Files suspected: stephanos-ui/src/state/operatorReliefProjection.js
+Proposed change type: read-only-review
+Risk level: low
+Tests recommended: node --test tests/operator-relief-projection.test.mjs
+Confidence: 90%
+Requires Codex fallback: no
+Requires operator approval: yes`,
+      },
+    },
+  });
+  const workbench = r.builderMeshProjection.builderWorkbenchProjection;
+  assert.equal(workbench.localAiRunnerStatus, 'succeeded');
+  assert.equal(workbench.localAiRunnerSelectedModel, 'llama3.2:3b');
+  assert.equal(workbench.localAiRunnerParsedResultPresent, true);
+  assert.equal(workbench.codexFallbackStillNeeded, false);
+  assert.equal(workbench.verdict, 'operator-review-before-patch');
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'operator');
+  assert.match(r.builderMeshProjection.nextBestAction, /Operator Approval Checklist|workbench findings/i);
+  assert.equal(r.builderMeshProjection.codexRequired, false);
+});
+
+test('Builder Workbench Local AI Runner malformed/empty result does not break UI projection', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderMeshTaskKind: 'read-only',
+      localAiConnected: true,
+      builderWorkbenchInput: {
+        localAiRunnerStatus: 'failed',
+        localAiRunnerSelectedModel: 'llama3.2:3b',
+        localAiRunnerLastRunResult: 'failed',
+        localAiRunnerLastRunBlockedReason: 'Local AI review returned no parseable response text.',
+        localAiReviewText: '',
+      },
+    },
+  });
+  const workbench = r.builderMeshProjection.builderWorkbenchProjection;
+  assert.equal(workbench.workbenchStatus, 'ready');
+  assert.equal(workbench.localAiRunnerStatus, 'failed');
+  assert.equal(workbench.localAiRunnerParsedResultPresent, false);
+  assert.equal(workbench.codexFallbackStillNeeded, false);
+});
+
 test('Builder Workbench V1 blocks forbidden mutation language in pasted results', () => {
   const r = deriveOperatorReliefProjection({
     intentToBuildModel: { missionSpec: { objective: 'Implement bounded workbench projection' } },
