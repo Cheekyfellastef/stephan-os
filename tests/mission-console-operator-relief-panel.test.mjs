@@ -81,3 +81,14 @@ test('Mission Console publishes operator relief projection bridge payload with s
   assert.match(source, /onOperatorReliefProjectionUpdate\(nextProjection, \{ sourceSurface: panelId \}\);/);
   assert.match(source, /\}, \[onOperatorReliefProjectionUpdate, operatorReliefProjection, panelId\]\);/);
 });
+
+test('Zero-Cost Builder Mesh is hosted inside existing Builder Harness panel, not a duplicate top-level pane', () => {
+  assert.match(source, /panelId="missionConsoleBuilderHarnessPanel" title="OpenClaw Builder Harness V1"/);
+  assert.match(source, /panelId="missionConsoleBuilderMeshPanel" title="Zero-Cost Builder Mesh V1"/);
+  assert.doesNotMatch(source, /mission-console-section--builder-mesh/);
+  assert.match(source, /copyBuilderMeshLocalAiReviewPacket/);
+  assert.match(source, /copyBuilderMeshOpenClawResearchPacket/);
+  assert.match(source, /copyBuilderMeshGithubInspectionPacket/);
+  assert.match(source, /copyBuilderMeshCodexFallbackPacket/);
+  assert.match(source, /copyBuilderMeshOperatorApprovalChecklist/);
+});

@@ -56,6 +56,11 @@ export const INTENT_RULES = [
     pattern: /\bbroken\b|\bnot working\b|\berror\b|\bbug\b|\bpane is broken\b/,
   },
   {
+    id: 'builder-mesh-routing',
+    responseMode: 'work-routing',
+    pattern: /\b(who should (work on|handle|do) this|who should do (the )?next task|what builder should (take|handle|do)|can openclaw help|can my local ais? do this|how do we avoid using codex|without using metered codex|without hitting the meter|keep building without (using )?(metered )?codex|zero-cost builder|builder mesh|local ai.*openclaw|codex meter)\b/,
+  },
+  {
     id: 'work-routing',
     responseMode: 'work-routing',
     pattern: /\b(who should do (the )?next task|should (codex|openclaw)\b[^.!?]{0,40}\b(handle|do)\b|what packet should i copy next|can (codex|openclaw) help with this|what should the next round be|click monkey|can codex and openclaw help with the next task)\b/,
@@ -275,6 +280,7 @@ export function buildChatContextPack(input = {}) {
     || {};
   const agentWorkRouting = missionState?.operatorReliefProjection?.agentWorkRoutingProjection || missionState?.agentWorkRoutingProjection || {};
   const coBuilderLoop = missionState?.operatorReliefProjection?.coBuilderLoopProjection || missionState?.coBuilderLoopProjection || {};
+  const builderMeshProjection = missionState?.operatorReliefProjection?.builderMeshProjection || missionState?.builderMeshProjection || {};
   const agentRealityLoopProjection = missionState?.operatorReliefProjection?.agentRealityLoopProjection || missionState?.agentRealityLoopProjection || {};
   const agentRealityLoopProjectionSource = missionState?.operatorReliefProjection?.agentRealityLoopProjection
     ? 'operator-relief-bridge'
@@ -312,6 +318,22 @@ export function buildChatContextPack(input = {}) {
       operatorApprovalRequired: agentRealityLoopProjection.operatorApprovalRequired ?? true,
       requiredProof: Array.isArray(agentRealityLoopProjection.requiredProof) ? agentRealityLoopProjection.requiredProof : [],
       copyPacketsAvailable: agentRealityLoopProjection.copyCodexPacket && agentRealityLoopProjection.copyOpenClawPacket && agentRealityLoopProjection.copyOperatorProofChecklist ? 'yes' : 'no',
+    } : undefined,
+    builderMesh: missionPlanningTask ? {
+      builderMeshStatus: builderMeshProjection.builderMeshStatus || 'unavailable',
+      recommendedBuilder: builderMeshProjection.recommendedBuilder || 'hold',
+      zeroCostRouteAvailable: builderMeshProjection.zeroCostRouteAvailable === true,
+      codexRequired: builderMeshProjection.codexRequired === true,
+      codexReason: builderMeshProjection.codexReason || 'Codex is fallback only unless explicitly justified.',
+      localAiCanHelp: builderMeshProjection.localAiCanHelp || 'unknown',
+      openClawCanHelp: builderMeshProjection.openClawCanHelp || 'unknown',
+      githubCanHelp: builderMeshProjection.githubCanHelp || 'unknown',
+      approvalRequiredBeforeMutation: builderMeshProjection.approvalRequiredBeforeMutation !== false,
+      proofRequiredBeforeMerge: Array.isArray(builderMeshProjection.proofRequiredBeforeMerge) ? builderMeshProjection.proofRequiredBeforeMerge : [],
+      blockers: Array.isArray(builderMeshProjection.blockers) ? builderMeshProjection.blockers : [],
+      warnings: Array.isArray(builderMeshProjection.warnings) ? builderMeshProjection.warnings : [],
+      nextBestAction: builderMeshProjection.nextBestAction || 'Review Builder Mesh truth in Operator Relief.',
+      copyPacketNames: builderMeshProjection.copyPackets ? Object.keys(builderMeshProjection.copyPackets) : [],
     } : undefined,
     coBuilderLoop: missionPlanningTask ? {
       coBuilderStatus: coBuilderLoop.coBuilderStatus || 'inactive',
@@ -372,11 +394,12 @@ export function buildChatContextPack(input = {}) {
         ? ['missionIntelligence']
         : []),
       ...(projectAwareness.status !== 'unavailable' ? ['projectAwareness'] : []),
-      ...(missionPlanningTask ? ['agentWorkRouting', 'coBuilderLoop'] : []),
+      ...(missionPlanningTask ? ['agentWorkRouting', 'coBuilderLoop', 'builderMesh'] : []),
     ].filter((key) => key === 'missionIntelligence'
       || key === 'projectAwareness'
       || key === 'agentWorkRouting'
       || key === 'coBuilderLoop'
+      || key === 'builderMesh'
       || (input[key] && typeof input[key] === 'object')),
     uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
     missionStateAtBuild: boundedMissionIntelligenceContext.missionSummary !== 'unknown' ? 'known' : String(missionState.mode || missionState.status || 'unknown'),

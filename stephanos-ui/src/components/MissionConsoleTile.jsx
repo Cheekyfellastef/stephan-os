@@ -1361,6 +1361,33 @@ function MissionConsoleTile({
             </CollapsiblePanel>
           </CollapsiblePanel>
           <CollapsiblePanel panelId="missionConsoleBuilderHarnessPanel" title="OpenClaw Builder Harness V1" isOpen={uiLayout.missionConsoleBuilderHarnessPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleBuilderHarnessPanel')}>
+            <CollapsiblePanel panelId="missionConsoleBuilderMeshPanel" title="Zero-Cost Builder Mesh V1" titleAs="h5" description={operatorReliefProjection.builderMeshProjection?.recommendedBuilder || 'routing pending'} isOpen={uiLayout.missionConsoleBuilderMeshPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleBuilderMeshPanel')}>
+              <ul className="mission-console__status-list">
+                <li><strong>Builder mesh status:</strong> {operatorReliefProjection.builderMeshProjection?.builderMeshStatus || 'unknown'}</li>
+                <li><strong>Recommended builder:</strong> {operatorReliefProjection.builderMeshProjection?.recommendedBuilder || 'hold'}</li>
+                <li><strong>Zero-cost route available:</strong> {operatorReliefProjection.builderMeshProjection?.zeroCostRouteAvailable ? 'yes' : 'no'}</li>
+                <li><strong>Codex required:</strong> {operatorReliefProjection.builderMeshProjection?.codexRequired ? 'yes' : 'no'} · {operatorReliefProjection.builderMeshProjection?.codexReason || 'Codex is fallback only.'}</li>
+                <li><strong>Local AI / OpenClaw / GitHub readiness:</strong> {operatorReliefProjection.builderMeshProjection?.localAiCanHelp || 'unknown'} · {operatorReliefProjection.builderMeshProjection?.openClawCanHelp || 'unknown'} · {operatorReliefProjection.builderMeshProjection?.githubCanHelp || 'unknown'}</li>
+                <li><strong>Next best action:</strong> {operatorReliefProjection.builderMeshProjection?.nextBestAction || 'Review Builder Mesh truth.'}</li>
+                <li><strong>Blockers / warnings:</strong> {(operatorReliefProjection.builderMeshProjection?.blockers || []).length} blocker(s) · {(operatorReliefProjection.builderMeshProjection?.warnings || []).length} warning(s)</li>
+                <li><strong>Approval before mutation:</strong> {operatorReliefProjection.builderMeshProjection?.approvalRequiredBeforeMutation ? 'required' : 'not reported'}</li>
+              </ul>
+              <button type="button" className={`status-panel-copy-button ${localAiReviewPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.localAiReviewPacket || {}, null, 2), setLocalAiReviewPacketCopyState, 'MissionConsoleTile.copyBuilderMeshLocalAiReviewPacket')}>
+                {localAiReviewPacketCopyState === COPY_STATE.SUCCESS ? 'Local AI Review Packet Copied' : localAiReviewPacketCopyState === COPY_STATE.FAILURE ? 'Copy Local AI Review Packet failed' : 'Copy Local AI Review Packet'}
+              </button>
+              <button type="button" className={`status-panel-copy-button ${openClawPatchPlanPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.openClawResearchPacket || {}, null, 2), setOpenClawPatchPlanPacketCopyState, 'MissionConsoleTile.copyBuilderMeshOpenClawResearchPacket')}>
+                {openClawPatchPlanPacketCopyState === COPY_STATE.SUCCESS ? 'OpenClaw Research Packet Copied' : openClawPatchPlanPacketCopyState === COPY_STATE.FAILURE ? 'Copy OpenClaw Research Packet failed' : 'Copy OpenClaw Research Packet'}
+              </button>
+              <button type="button" className={`status-panel-copy-button ${githubPrInspectionPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.githubInspectionPacket || {}, null, 2), setGithubPrInspectionPacketCopyState, 'MissionConsoleTile.copyBuilderMeshGithubInspectionPacket')}>
+                {githubPrInspectionPacketCopyState === COPY_STATE.SUCCESS ? 'GitHub Inspection Packet Copied' : githubPrInspectionPacketCopyState === COPY_STATE.FAILURE ? 'Copy GitHub Inspection Packet failed' : 'Copy GitHub Inspection Packet'}
+              </button>
+              <button type="button" className={`status-panel-copy-button ${codexFallbackPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.codexFallbackPacket || {}, null, 2), setCodexFallbackPacketCopyState, 'MissionConsoleTile.copyBuilderMeshCodexFallbackPacket')}>
+                {codexFallbackPacketCopyState === COPY_STATE.SUCCESS ? 'Codex Fallback Packet Copied' : codexFallbackPacketCopyState === COPY_STATE.FAILURE ? 'Copy Codex Fallback Packet failed' : 'Copy Codex Fallback Packet'}
+              </button>
+              <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.operatorApprovalChecklist || {}, null, 2), setOperatorChecklistCopyState, 'MissionConsoleTile.copyBuilderMeshOperatorApprovalChecklist')}>
+                {operatorChecklistCopyState === COPY_STATE.SUCCESS ? 'Operator Approval Checklist Copied' : operatorChecklistCopyState === COPY_STATE.FAILURE ? 'Copy Operator Approval Checklist failed' : 'Copy Operator Approval Checklist'}
+              </button>
+            </CollapsiblePanel>
             <ul className="mission-console__status-list">
               <li><strong>Builder harness status:</strong> {operatorReliefProjection.builderHarnessProjection?.builderHarnessStatus || 'unknown'}</li>
               <li><strong>Can OpenClaw build?</strong> {operatorReliefProjection.builderHarnessProjection?.canOpenClawBuild || 'unknown'}</li>

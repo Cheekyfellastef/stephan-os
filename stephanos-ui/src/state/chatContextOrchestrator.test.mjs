@@ -164,7 +164,7 @@ test('codex/openclaw routing prompts classify as work-routing and include co-bui
   for (const operatorMessage of prompts) {
     const pack = buildChatContextPack({ operatorMessage, missionState });
     assert.equal(pack.recommendedResponseMode, 'work-routing');
-    assert.equal(pack.intentClassifierMatchedRule, 'work-routing');
+    assert.ok(['work-routing', 'builder-mesh-routing'].includes(pack.intentClassifierMatchedRule));
     assert.ok(pack.compactSummary.contextSourcesUsed.includes('coBuilderLoop'));
     assert.ok(pack.compactSummary.contextSourcesUsed.includes('agentWorkRouting'));
     assert.equal(pack.compactSummary.missionIntelligence.agentWorkRouting.openClawExecutionReady, 'no');
@@ -273,4 +273,45 @@ test('codex dispatch phrases map to codex-dispatch or codex-prompt', () => {
   assert.equal(buildChatContextPack({ operatorMessage: 'ask Codex to build the next step' }).recommendedResponseMode, 'codex-dispatch');
   assert.equal(buildChatContextPack({ operatorMessage: 'have Codex repair the failing PR' }).recommendedResponseMode, 'codex-dispatch');
   assert.equal(buildChatContextPack({ operatorMessage: 'give me a Codex prompt' }).recommendedResponseMode, 'codex-prompt');
+});
+
+test('Builder Mesh routing prompts use Builder Mesh context from Operator Relief', () => {
+  const prompts = [
+    'Can we keep building without using metered Codex?',
+    'What builder should take the next task?',
+    'Can my local AIs do this?',
+    'How do we avoid using Codex?',
+  ];
+  const missionState = {
+    mode: 'active',
+    operatorReliefProjection: {
+      missionIntelligenceSummary: { currentMissionSummary: 'Route build work away from metered Codex.', nextBestAction: 'Use Builder Mesh.' },
+      builderMeshProjection: {
+        builderMeshStatus: 'ready-read-only',
+        recommendedBuilder: 'local-ai',
+        zeroCostRouteAvailable: true,
+        codexRequired: false,
+        codexReason: 'Codex is fallback only.',
+        localAiCanHelp: 'yes-read-only-review',
+        openClawCanHelp: 'yes-read-only-research-and-patch-planning',
+        githubCanHelp: 'yes-read-only-pr-diff-status-evidence',
+        approvalRequiredBeforeMutation: true,
+        proofRequiredBeforeMerge: ['npm run stephanos:verify'],
+        nextBestAction: 'Copy the Local AI Review Packet.',
+        copyPackets: { localAiReviewPacket: {}, openClawResearchPacket: {}, githubInspectionPacket: {}, codexFallbackPacket: {}, operatorApprovalChecklist: {} },
+      },
+      agentWorkRoutingProjection: { openClawExecutionReady: 'no', operatorApprovalRequired: 'yes' },
+      coBuilderLoopProjection: { openClawResearchPacketAvailable: 'yes', codexPacketAvailable: 'yes' },
+    },
+  };
+  for (const operatorMessage of prompts) {
+    const pack = buildChatContextPack({ operatorMessage, missionState });
+    assert.equal(pack.recommendedResponseMode, 'work-routing');
+    assert.equal(pack.intentClassifierMatchedRule, 'builder-mesh-routing');
+    assert.ok(pack.compactSummary.contextSourcesUsed.includes('builderMesh'));
+    assert.equal(pack.compactSummary.missionIntelligence.builderMesh.recommendedBuilder, 'local-ai');
+    assert.equal(pack.compactSummary.missionIntelligence.builderMesh.zeroCostRouteAvailable, true);
+    assert.equal(pack.compactSummary.missionIntelligence.builderMesh.codexRequired, false);
+    assert.ok(pack.compactSummary.missionIntelligence.builderMesh.copyPacketNames.includes('operatorApprovalChecklist'));
+  }
 });

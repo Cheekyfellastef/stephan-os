@@ -297,3 +297,58 @@ test('Builder Harness projection exposes read-only OpenClaw/local AI/GitHub read
   assert.equal(r.builderHarnessProjection.copyCodexFallbackPacket.codexRole, 'fallback-specialist-only');
   assert.match(r.builderHarnessProjection.nextBestAction, /operator approval/i);
 });
+
+test('Builder Mesh low-risk read-only task recommends zero-cost builder and not Codex', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Review next task without implementation', repoArchitectureContext: { testsLikelyRequired: [] } } },
+    supportSnapshot: { builderMeshTaskKind: 'read-only', localAiConnected: true, openClawApprovalGateOpen: true },
+  });
+  assert.ok(['local-ai', 'openclaw'].includes(r.builderMeshProjection.recommendedBuilder));
+  assert.notEqual(r.builderMeshProjection.recommendedBuilder, 'codex-fallback');
+  assert.equal(r.builderMeshProjection.codexRequired, false);
+  assert.equal(r.builderMeshProjection.zeroCostRouteAvailable, true);
+});
+
+test('Builder Mesh GitHub inspection task recommends github-inspection when PR evidence is available', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Inspect the PR diff and checks' } },
+    prEvidenceModel: { prUrl: 'https://github.example/pr/1', changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] },
+    supportSnapshot: { builderMeshTaskKind: 'github-inspection', githubIntegrationStatus: 'connected' },
+  });
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'github-inspection');
+  assert.equal(r.builderMeshProjection.githubCanHelp, 'yes-read-only-pr-diff-status-evidence');
+});
+
+test('Builder Mesh implementation task uses Codex fallback only with a clear non-default reason', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Implement a bounded patch after planning' } },
+    supportSnapshot: { builderMeshTaskKind: 'implementation', localAiConnected: true, openClawApprovalGateOpen: true },
+  });
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'codex-fallback');
+  assert.equal(r.builderMeshProjection.codexRequired, false);
+  assert.match(r.builderMeshProjection.codexReason, /no approved local\/OpenClaw mutation path is proven/i);
+});
+
+test('Builder Mesh high-risk mutation routes to operator approval before mutation', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Approve high-risk mutation' } },
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/hooks/useAIConsole.js'] },
+    supportSnapshot: { builderMeshTaskKind: 'high-risk-mutation', localAiConnected: true },
+  });
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'operator');
+  assert.equal(r.builderMeshProjection.approvalRequiredBeforeMutation, true);
+  assert.notEqual(r.builderMeshProjection.codexRequired, true);
+});
+
+test('Builder Mesh copy packets exist and stay bounded/read-only', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Route next build task' } },
+    supportSnapshot: { builderMeshTaskKind: 'read-only', localAiConnected: true },
+  });
+  const packets = r.builderMeshProjection.copyPackets;
+  for (const key of ['localAiReviewPacket', 'openClawResearchPacket', 'githubInspectionPacket', 'codexFallbackPacket', 'operatorApprovalChecklist']) {
+    assert.ok(packets[key], `${key} should exist`);
+    assert.ok(JSON.stringify(packets[key]).length < 5000, `${key} should be bounded`);
+    assert.match(JSON.stringify(packets[key]), /Do not mutate repo files/);
+  }
+});
