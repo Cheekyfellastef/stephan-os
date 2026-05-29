@@ -401,6 +401,33 @@ export function normalizeProjectAwarenessMetadata({
   };
 }
 
+
+function buildBuilderWorkbenchExecutionMetadata(builderWorkbenchProjection = {}, {
+  projectionSource = 'none',
+  metadataSource = 'none',
+  deterministicAnswerUsed = 'no',
+  projectionDropBoundary = 'none',
+} = {}) {
+  const workbench = builderWorkbenchProjection && typeof builderWorkbenchProjection === 'object'
+    ? builderWorkbenchProjection
+    : {};
+  return {
+    builder_workbench_status: workbench?.workbenchStatus || 'unavailable',
+    builder_workbench_local_ai_review_result_present: workbench?.localAiReviewResultPresent ? 'yes' : 'no',
+    builder_workbench_openclaw_research_result_present: workbench?.openClawResearchResultPresent ? 'yes' : 'no',
+    builder_workbench_patch_plan_present: workbench?.patchPlanPresent ? 'yes' : 'no',
+    builder_workbench_patch_plan_risk: workbench?.patchPlanRisk || 'unknown',
+    builder_workbench_approval_required_before_patch: workbench?.approvalRequiredBeforePatch === false ? 'no' : 'yes',
+    builder_workbench_codex_fallback_still_needed: workbench?.codexFallbackStillNeeded ? 'yes' : 'no',
+    builder_workbench_codex_fallback_reason: workbench?.codexFallbackReason || 'none',
+    builder_workbench_next_best_action: workbench?.nextBestAction || 'Copy Local AI/OpenClaw packets and paste bounded read-only results.',
+    builder_workbench_projection_source: projectionSource,
+    builder_workbench_metadata_source: metadataSource,
+    builder_workbench_deterministic_answer_used: deterministicAnswerUsed,
+    builder_workbench_projection_drop_boundary: projectionDropBoundary,
+  };
+}
+
 export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const hasPack = chatContextPack && typeof chatContextPack === 'object';
   const compact = chatContextPack?.compactSummary || {};
@@ -437,6 +464,7 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const matchedRule = String(chatContextPack?.intentClassifierMatchedRule || compact?.intentClassifierMatchedRule || '').trim().toLowerCase();
   const builderMeshContext = compact?.missionIntelligence?.builderMesh || {};
   const builderWorkbenchProjection = builderMeshProjection?.builderWorkbenchProjection || builderMeshContext?.builderWorkbench || {};
+  const builderWorkbenchProjectionObjectPresent = Object.keys(builderWorkbenchProjection).length > 0;
   const builderMeshProjectionObjectPresent = Object.keys(builderMeshProjection).length > 0;
   const builderMeshContextPresent = Object.keys(builderMeshContext).length > 0;
   const builderMeshContextReportsProjection = String(builderMeshContext?.projectionAvailable || '').trim().toLowerCase() === 'yes';
@@ -492,15 +520,14 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     builder_mesh_openclaw_can_help: builderMeshProjection?.openClawCanHelp || builderMeshContext?.openClawCanHelp || 'unknown',
     builder_mesh_github_can_help: builderMeshProjection?.githubCanHelp || builderMeshContext?.githubCanHelp || 'unknown',
     builder_mesh_next_best_action: builderMeshProjection?.nextBestAction || builderMeshContext?.nextBestAction || 'Review Builder Mesh truth.',
-    builder_workbench_status: builderWorkbenchProjection?.workbenchStatus || 'unavailable',
-    builder_workbench_local_ai_review_result_present: builderWorkbenchProjection?.localAiReviewResultPresent ? 'yes' : 'no',
-    builder_workbench_openclaw_research_result_present: builderWorkbenchProjection?.openClawResearchResultPresent ? 'yes' : 'no',
-    builder_workbench_patch_plan_present: builderWorkbenchProjection?.patchPlanPresent ? 'yes' : 'no',
-    builder_workbench_patch_plan_risk: builderWorkbenchProjection?.patchPlanRisk || 'unknown',
-    builder_workbench_approval_required_before_patch: builderWorkbenchProjection?.approvalRequiredBeforePatch === false ? 'no' : 'yes',
-    builder_workbench_codex_fallback_still_needed: builderWorkbenchProjection?.codexFallbackStillNeeded ? 'yes' : 'no',
-    builder_workbench_codex_fallback_reason: builderWorkbenchProjection?.codexFallbackReason || 'none',
-    builder_workbench_next_best_action: builderWorkbenchProjection?.nextBestAction || 'Copy Local AI/OpenClaw packets and paste bounded read-only results.',
+    ...buildBuilderWorkbenchExecutionMetadata(builderWorkbenchProjection, {
+      projectionSource: builderWorkbenchProjectionObjectPresent
+        ? (builderMeshProjectionObjectPresent ? `${builderMeshProjectionSource}.builderWorkbenchProjection` : 'chat-context-mission-intelligence.builderWorkbench')
+        : 'none',
+      metadataSource: builderWorkbenchProjectionObjectPresent ? 'chat-context-pack' : 'none',
+      deterministicAnswerUsed: 'no',
+      projectionDropBoundary: builderWorkbenchProjectionObjectPresent ? 'none' : (builderMeshProjectionPresent ? 'builder-workbench-projection-not-attached-to-builder-mesh' : 'none'),
+    }),
     builder_mesh_projection_source: builderMeshProjectionSource,
     builder_mesh_metadata_source: builderMeshProjectionPresent ? 'chat-context-pack' : (builderMeshContextRecognized ? 'chat-context-context-only' : 'none'),
     builder_mesh_deterministic_answer_used: 'no',
@@ -686,6 +713,11 @@ function isDefaultChatContextValue(key = '', value = '') {
   if (key === 'builder_mesh_recommended_builder') return normalized === 'hold';
   if (key === 'builder_mesh_next_best_action') return normalized === 'review builder mesh truth.' || normalized === 'review builder mesh truth in operator relief.';
   if (key.startsWith('builder_mesh_')) return ['none', 'unknown', 'n/a'].includes(normalized);
+  if (key === 'builder_workbench_status') return normalized === 'unavailable';
+  if (key === 'builder_workbench_codex_fallback_still_needed' || key === 'builder_workbench_deterministic_answer_used') return normalized === 'no';
+  if (key === 'builder_workbench_codex_fallback_reason') return normalized === 'none';
+  if (key === 'builder_workbench_next_best_action') return normalized === 'copy local ai/openclaw packets and paste bounded read-only results.';
+  if (key.startsWith('builder_workbench_')) return ['none', 'unknown', 'n/a'].includes(normalized);
   return ['none', 'unknown', 'n/a'].includes(normalized);
 }
 
@@ -1093,6 +1125,32 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     rebuiltExecutionMetadata.builder_mesh_projection_drop_boundary,
     'none',
   );
+  const workbenchFields = [
+    ['builder_workbench_status', 'unavailable'],
+    ['builder_workbench_local_ai_review_result_present', 'no'],
+    ['builder_workbench_openclaw_research_result_present', 'no'],
+    ['builder_workbench_patch_plan_present', 'no'],
+    ['builder_workbench_patch_plan_risk', 'unknown'],
+    ['builder_workbench_approval_required_before_patch', 'yes'],
+    ['builder_workbench_codex_fallback_still_needed', 'no'],
+    ['builder_workbench_codex_fallback_reason', 'none'],
+    ['builder_workbench_next_best_action', 'Copy Local AI/OpenClaw packets and paste bounded read-only results.'],
+    ['builder_workbench_projection_source', 'none'],
+    ['builder_workbench_metadata_source', 'none'],
+    ['builder_workbench_deterministic_answer_used', 'no'],
+    ['builder_workbench_projection_drop_boundary', 'none'],
+  ];
+  const resolvedBuilderWorkbenchMetadata = Object.fromEntries(workbenchFields.map(([key, defaultValue]) => [
+    key,
+    pickChatContextFieldPreferPackOrRebuildNonDefault(
+      key,
+      raw[key],
+      trace[key],
+      requestChatContext[key],
+      rebuiltExecutionMetadata[key],
+      defaultValue,
+    ),
+  ]));
   const resolvedAgentRealityLoopProjectionUnavailable = String(resolvedAgentRealityLoopProjectionAvailable).trim().toLowerCase() !== 'yes';
   const resolvedAgentRealityLoopProjectionSource = resolvedAgentRealityLoopProjectionUnavailable
     ? resolvedAgentRealityLoopProjectionSourceSeen
@@ -1174,6 +1232,7 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     builder_mesh_metadata_source: resolvedBuilderMeshMetadataSource,
     builder_mesh_deterministic_answer_used: resolvedBuilderMeshDeterministicAnswerUsed,
     builder_mesh_projection_drop_boundary: resolvedBuilderMeshProjectionDropBoundary,
+    ...resolvedBuilderWorkbenchMetadata,
     agent_reality_loop_context_recognized: resolvedAgentRealityLoopContextRecognized,
     agent_reality_loop_context_source: resolvedAgentRealityLoopContextSource,
     agent_reality_loop_projection_available: resolvedAgentRealityLoopProjectionAvailable,
@@ -2514,14 +2573,12 @@ function createBuilderMeshDeterministicResult({
           builder_mesh_openclaw_can_help: projection?.openClawCanHelp || 'unknown',
           builder_mesh_github_can_help: projection?.githubCanHelp || 'unknown',
           builder_mesh_next_best_action: projection?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.',
-          builder_workbench_status: projection?.builderWorkbenchProjection?.workbenchStatus || 'unavailable',
-          builder_workbench_local_ai_review_result_present: projection?.builderWorkbenchProjection?.localAiReviewResultPresent ? 'yes' : 'no',
-          builder_workbench_openclaw_research_result_present: projection?.builderWorkbenchProjection?.openClawResearchResultPresent ? 'yes' : 'no',
-          builder_workbench_patch_plan_present: projection?.builderWorkbenchProjection?.patchPlanPresent ? 'yes' : 'no',
-          builder_workbench_patch_plan_risk: projection?.builderWorkbenchProjection?.patchPlanRisk || 'unknown',
-          builder_workbench_approval_required_before_patch: projection?.builderWorkbenchProjection?.approvalRequiredBeforePatch === false ? 'no' : 'yes',
-          builder_workbench_codex_fallback_still_needed: projection?.builderWorkbenchProjection?.codexFallbackStillNeeded ? 'yes' : 'no',
-          builder_workbench_codex_fallback_reason: projection?.builderWorkbenchProjection?.codexFallbackReason || 'none',
+          ...buildBuilderWorkbenchExecutionMetadata(projection?.builderWorkbenchProjection || {}, {
+            projectionSource: 'deterministic-answer-live-projection.builderWorkbenchProjection',
+            metadataSource: 'deterministic-result-execution-metadata',
+            deterministicAnswerUsed: 'yes',
+            projectionDropBoundary: 'none',
+          }),
           builder_mesh_projection_source: 'deterministic-answer-live-projection',
           builder_mesh_metadata_source: 'deterministic-result-execution-metadata',
           builder_mesh_projection_drop_boundary: 'none',

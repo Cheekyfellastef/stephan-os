@@ -243,6 +243,10 @@ test('protected canon: builder mesh stays in Builder Harness and uses determinis
   assert.match(supportSnapshotSource, /Builder Mesh Metadata Source:/);
   assert.match(supportSnapshotSource, /Builder Mesh Deterministic Answer Used:/);
   assert.match(supportSnapshotSource, /Builder Mesh Projection Drop Boundary:/);
+  assert.match(supportSnapshotSource, /Builder Workbench Projection Source:/);
+  assert.match(supportSnapshotSource, /Builder Workbench Metadata Source:/);
+  assert.match(supportSnapshotSource, /Builder Workbench Deterministic Answer Used:/);
+  assert.match(supportSnapshotSource, /Builder Workbench Projection Drop Boundary:/);
 });
 
 test('protected canon: builder workbench stays inside Builder Harness and gates Codex fallback copy', async () => {

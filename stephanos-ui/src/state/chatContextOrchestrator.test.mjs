@@ -281,6 +281,7 @@ test('Builder Mesh routing prompts use Builder Mesh context from Operator Relief
     'What builder should take the next task?',
     'Can my local AIs do this?',
     'How do we avoid using Codex?',
+    'What is the Zero-Cost Builder Workbench status?',
   ];
   const missionState = {
     mode: 'active',

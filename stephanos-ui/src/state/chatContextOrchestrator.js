@@ -58,7 +58,7 @@ export const INTENT_RULES = [
   {
     id: 'builder-mesh-routing',
     responseMode: 'work-routing',
-    pattern: /\b(who should (work on|handle|do) this|who should do (the )?next task|what builder should (take|handle|do)|can openclaw help|can my local ais? do this|how do we avoid using codex|without using metered codex|without hitting the meter|keep building without (using )?(metered )?codex|zero-cost builder|builder mesh|local ai.*openclaw|codex meter)\b/,
+    pattern: /\b(who should (work on|handle|do) this|who should do (the )?next task|what builder should (take|handle|do)|can openclaw help|can my local ais? do this|how do we avoid using codex|without using metered codex|without hitting the meter|keep building without (using )?(metered )?codex|zero-cost builder|builder mesh|builder workbench|workbench status|local ai.*openclaw|codex meter)\b/,
   },
   {
     id: 'work-routing',

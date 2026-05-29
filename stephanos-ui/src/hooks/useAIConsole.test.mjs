@@ -49,6 +49,10 @@ test('Builder Mesh final metadata preserves live projection truth through attach
   assert.match(source, /builder_mesh_projection_drop_boundary: 'none'/);
   assert.match(source, /builder_workbench_status:/);
   assert.match(source, /builder_workbench_codex_fallback_still_needed:/);
+  assert.match(source, /builder_workbench_projection_source:/);
+  assert.match(source, /builder_workbench_metadata_source:/);
+  assert.match(source, /builder_workbench_deterministic_answer_used:/);
+  assert.match(source, /builder_workbench_projection_drop_boundary:/);
 });
 
 test('Command Deck Builder Mesh answer can report local AI review findings from Workbench projection', async () => {
@@ -57,6 +61,7 @@ test('Command Deck Builder Mesh answer can report local AI review findings from 
   assert.match(source, /const localAiSummary = workbench\?\.localAiReview\?\.summary \|\| 'no local AI review result pasted yet';/);
   assert.match(source, /Local AI review summary:/);
   assert.match(source, /Workbench Codex fallback still needed:/);
+  assert.match(source, /buildBuilderWorkbenchExecutionMetadata\(projection\?\.builderWorkbenchProjection \|\| \{\}, \{/);
 });
 
 test('agent reality loop availability blocker cannot be none when projection is unavailable', async () => {

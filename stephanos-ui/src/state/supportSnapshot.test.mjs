@@ -3907,3 +3907,76 @@ test('Support Snapshot reports Builder Mesh routing evidence from final executio
   assert.match(snapshot, /Builder Mesh Deterministic Answer Used: yes/);
   assert.match(snapshot, /Builder Mesh Projection Drop Boundary: none/);
 });
+
+test('support snapshot aligns Builder Workbench truth from live projection when final metadata defaults are stale', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        builder_mesh_projection_available: 'yes',
+        builder_mesh_status: 'ready-read-only',
+        builder_mesh_codex_required: 'no',
+        builder_mesh_projection_source: 'deterministic-answer-live-projection',
+        builder_mesh_metadata_source: 'deterministic-result-execution-metadata',
+        builder_mesh_deterministic_answer_used: 'yes',
+        builder_mesh_projection_drop_boundary: 'none',
+        builder_workbench_status: 'unavailable',
+        builder_workbench_codex_fallback_still_needed: 'no',
+        builder_workbench_codex_fallback_reason: 'none',
+        builder_workbench_deterministic_answer_used: 'yes',
+      },
+      operatorReliefProjection: {
+        builderMeshProjection: {
+          builderWorkbenchProjection: {
+            workbenchStatus: 'ready',
+            localAiReviewResultPresent: false,
+            openClawResearchResultPresent: false,
+            patchPlanPresent: false,
+            patchPlanRisk: 'unknown',
+            approvalRequiredBeforePatch: true,
+            codexFallbackStillNeeded: true,
+            codexFallbackReason: 'implementation requested but no approved local/OpenClaw mutation path is proven',
+            nextBestAction: 'Copy Local AI/OpenClaw packets and paste bounded read-only results',
+          },
+        },
+      },
+    },
+    uiReality: {
+      paneShells: [
+        { panelId: 'commandDeck', title: 'Command Deck', bodyVisible: true },
+        { panelId: 'aiCoreMissionConsolePanel', title: 'AI Core Mission Console', bodyVisible: true },
+        { panelId: 'missionConsolePanel', title: 'Agent Mission Console', bodyVisible: true },
+      ],
+      renderedPaneOrder: ['commandDeck', 'aiCoreMissionConsolePanel', 'missionConsolePanel'],
+      domPaneOrder: ['commandDeck', 'aiCoreMissionConsolePanel', 'missionConsolePanel'],
+      panesMissingCollapseControls: [],
+      panesMissingMoveControls: [],
+      moveControlGroups: [],
+      totalFirstClassPanes: 3,
+      orphanMoveControlCount: 0,
+      arrangeMode: false,
+      aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', domParentPaneId: 'aiCoreMissionConsolePanel' },
+      dedicatedMissionConsole: { rendered: true, visible: true },
+      agentMissionConsoleNestedOperationalPanes: [],
+      agentMissionConsoleCollapse: { bodyVisibleWhenCollapsed: false },
+      copyButtons: [],
+      canonicalCopyControls: [],
+    },
+  });
+
+  assert.match(snapshot, /UI Reality Status: OK/);
+  assert.match(snapshot, /Builder Mesh Projection Available: yes/);
+  assert.match(snapshot, /Builder Mesh Codex Required: no/);
+  assert.match(snapshot, /Builder Workbench Status: ready/);
+  assert.match(snapshot, /Local AI Review Result Present: no/);
+  assert.match(snapshot, /OpenClaw Research Result Present: no/);
+  assert.match(snapshot, /Patch Plan Present: no/);
+  assert.match(snapshot, /Approval Required Before Patch: yes/);
+  assert.match(snapshot, /Codex Fallback Still Needed: yes/);
+  assert.match(snapshot, /Codex Fallback Reason: implementation requested but no approved local\/OpenClaw mutation path is proven/);
+  assert.match(snapshot, /Builder Workbench Next Best Action: Copy Local AI\/OpenClaw packets and paste bounded read-only results/);
+  assert.match(snapshot, /Builder Workbench Projection Source: runtimeStatus\.operatorReliefProjection\.builderMeshProjection\.builderWorkbenchProjection/);
+  assert.match(snapshot, /Builder Workbench Metadata Source: support-snapshot-live-operator-relief-projection/);
+  assert.match(snapshot, /Builder Workbench Deterministic Answer Used: yes/);
+  assert.match(snapshot, /Builder Workbench Projection Drop Boundary: none/);
+  assert.match(snapshot, /Provider Mismatch: no/);
+});
