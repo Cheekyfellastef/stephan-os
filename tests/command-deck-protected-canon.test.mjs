@@ -273,3 +273,14 @@ test('protected canon: builder workbench stays inside Builder Harness and gates 
   assert.match(source, /Paste OpenClaw Research \/ Patch Plan Result/);
   assert.match(source, /builderWorkbenchProjection\?\.codexFallbackStillNeeded \? \(/);
 });
+
+test('protected canon: Local AI Runner cannot stay running before request-sent boundary', async () => {
+  const missionConsoleSource = await read(new URL('../stephanos-ui/src/components/MissionConsoleTile.jsx', import.meta.url));
+  const localAiRunnerSource = await read(new URL('../stephanos-ui/src/ai/localAiRunner.js', import.meta.url));
+  assert.match(missionConsoleSource, /localAiRunnerInFlightRef/);
+  assert.match(missionConsoleSource, /onRequestSent:/);
+  assert.match(missionConsoleSource, /localAiRunnerRequestSent: 'yes'/);
+  assert.match(localAiRunnerSource, /DEFAULT_LOCAL_AI_REQUEST_TIMEOUT_MS/);
+  assert.match(localAiRunnerSource, /requestSent = true/);
+  assert.match(localAiRunnerSource, /parseResultStatus: 'failed'/);
+});

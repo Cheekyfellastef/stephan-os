@@ -2,6 +2,7 @@ import { parseBuilderWorkbenchResult } from '../state/operatorReliefProjection.j
 
 const MAX_LOCAL_AI_PACKET_LENGTH = 3600;
 const MAX_LOCAL_AI_RAW_RESPONSE_LENGTH = 2400;
+const DEFAULT_LOCAL_AI_REQUEST_TIMEOUT_MS = 45000;
 const LOCAL_AI_RUNNER_FORBIDDEN_PACKET_PATTERNS = [
   /\b(git\s+(add|commit|push|merge|checkout|reset|clean)|npm\s+version|rm\s+-rf)\b/i,
   /\b(write|mutate|modify|edit|delete|create)\s+(the\s+)?(file|repo|source|code)\b/i,
@@ -153,54 +154,118 @@ export async function discoverLocalAiRunnerModels({ providerConfigs = {}, runtim
   };
 }
 
+function localAiBlockedResult({ selectedModel = '', reason = 'Local AI Runner blocked before request dispatch.' } = {}) {
+  return {
+    ok: false,
+    status: 'blocked',
+    selectedModel: asText(selectedModel, ''),
+    dispatchAttempted: true,
+    requestSent: false,
+    responseRetained: 'no',
+    parseAttempted: 'no',
+    parseResultStatus: 'blocked',
+    blockedReason: reason,
+    errorMessage: reason,
+    responseText: '',
+    parsedResult: null,
+  };
+}
+
+function hasPacketPayload(packet) {
+  if (!packet || typeof packet !== 'object') return false;
+  return Object.keys(packet).length > 0;
+}
+
+function withTimeout(promise, timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`Local AI review request timed out before completion after ${timeoutMs}ms.`)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
 export async function runLocalAiWorkbenchReview({
-  packet = {},
+  packet = null,
   selectedModel = '',
   availableModels = [],
   runtimeConfig = null,
   sendPromptImpl = null,
+  onRequestSent = null,
+  requestTimeoutMs = DEFAULT_LOCAL_AI_REQUEST_TIMEOUT_MS,
 } = {}) {
   const resolvedRuntimeConfig = runtimeConfig || {};
   const resolvedSendPrompt = sendPromptImpl;
-  if (typeof resolvedSendPrompt !== 'function') {
-    return { ok: false, status: 'blocked', selectedModel: asText(selectedModel, ''), dispatchAttempted: true, requestSent: false, responseRetained: 'no', parseAttempted: 'no', parseResultStatus: 'blocked', blockedReason: 'Local AI Runner requires the Stephanos chat backend route.', errorMessage: '', responseText: '' };
-  }
   const model = asText(selectedModel, '');
   const approvedModels = uniqueModels(availableModels);
+  let requestSent = false;
+
   if (!model) {
-    return { ok: false, status: 'blocked', selectedModel: model, dispatchAttempted: true, requestSent: false, responseRetained: 'no', parseAttempted: 'no', parseResultStatus: 'blocked', blockedReason: 'No approved Ollama model selected.', errorMessage: '', responseText: '' };
+    return localAiBlockedResult({ selectedModel: model, reason: 'No approved Ollama model selected.' });
   }
-  if (approvedModels.length > 0 && !approvedModels.includes(model)) {
-    return { ok: false, status: 'blocked', selectedModel: model, dispatchAttempted: true, requestSent: false, responseRetained: 'no', parseAttempted: 'no', parseResultStatus: 'blocked', blockedReason: 'Selected Ollama model is not in the discovered approved model list.', errorMessage: '', responseText: '' };
+  if (approvedModels.length === 0) {
+    return localAiBlockedResult({ selectedModel: model, reason: 'No discovered approved Ollama models are available for Local AI Runner.' });
+  }
+  if (!approvedModels.includes(model)) {
+    return localAiBlockedResult({ selectedModel: model, reason: 'Selected Ollama model is not in the discovered approved model list.' });
+  }
+  if (typeof resolvedSendPrompt !== 'function') {
+    return localAiBlockedResult({ selectedModel: model, reason: 'Local AI Runner requires the Stephanos chat backend route.' });
+  }
+  if (!hasPacketPayload(packet)) {
+    return localAiBlockedResult({ selectedModel: model, reason: 'Local AI Runner requires a Builder Workbench packet before request dispatch.' });
   }
 
   const prompt = buildLocalAiReviewPrompt(packet);
-  const result = await resolvedSendPrompt({
-    prompt,
-    provider: 'ollama',
-    uiRequestedProvider: 'ollama',
-    requestSideSelectedProvider: 'ollama',
-    routerSelectedProvider: 'ollama',
-    providerOverrideReason: 'local-ai-runner-read-only-builder-workbench-review',
-    routeMode: 'local-first',
-    providerConfigs: { ollama: { model } },
-    fallbackEnabled: false,
-    fallbackOrder: [],
-    devMode: true,
-    runtimeConfig: resolvedRuntimeConfig,
-    freshnessContext: { freshnessNeed: 'low', reason: 'read-only-builder-workbench-local-review' },
-    routeDecision: {
-      uiSelectedProvider: 'ollama',
-      defaultProvider: 'ollama',
-      selectedProvider: 'ollama',
-      requestedProviderForRequest: 'ollama',
-      localRouteAvailable: true,
-      staleFallbackPermitted: false,
-      selectedAnswerMode: 'local-private',
-    },
-    streamingMode: 'off',
-    ollamaLoadMode: 'balanced',
-  });
+  let result = null;
+  try {
+    requestSent = true;
+    if (typeof onRequestSent === 'function') onRequestSent({ selectedModel: model });
+    result = await withTimeout(resolvedSendPrompt({
+      prompt,
+      provider: 'ollama',
+      uiRequestedProvider: 'ollama',
+      requestSideSelectedProvider: 'ollama',
+      routerSelectedProvider: 'ollama',
+      providerOverrideReason: 'local-ai-runner-read-only-builder-workbench-review',
+      routeMode: 'local-first',
+      providerConfigs: { ollama: { model } },
+      fallbackEnabled: false,
+      fallbackOrder: [],
+      devMode: true,
+      runtimeConfig: resolvedRuntimeConfig,
+      freshnessContext: { freshnessNeed: 'low', reason: 'read-only-builder-workbench-local-review' },
+      routeDecision: {
+        uiSelectedProvider: 'ollama',
+        defaultProvider: 'ollama',
+        selectedProvider: 'ollama',
+        requestedProviderForRequest: 'ollama',
+        localRouteAvailable: true,
+        staleFallbackPermitted: false,
+        selectedAnswerMode: 'local-private',
+      },
+      streamingMode: 'off',
+      ollamaLoadMode: 'balanced',
+    }), requestTimeoutMs);
+  } catch (error) {
+    const message = error?.message || 'Local AI review request failed before completion.';
+    return {
+      ok: false,
+      status: 'failed',
+      selectedModel: model,
+      dispatchAttempted: true,
+      requestSent,
+      responseRetained: 'no',
+      parseAttempted: 'no',
+      parseResultStatus: 'failed',
+      blockedReason: 'none',
+      errorMessage: message,
+      responseText: '',
+      rawResult: null,
+    };
+  }
   const responseText = truncateRawResponse(resolveLocalAiRunnerResponseText(result));
   if (!result?.ok) {
     return {
@@ -208,11 +273,11 @@ export async function runLocalAiWorkbenchReview({
       status: 'failed',
       selectedModel: model,
       dispatchAttempted: true,
-      requestSent: true,
+      requestSent,
       responseRetained: responseText ? 'yes' : 'no',
       parseAttempted: 'no',
-      parseResultStatus: 'blocked',
-      blockedReason: result?.data?.error || 'Local AI review request failed.',
+      parseResultStatus: 'failed',
+      blockedReason: 'none',
       errorMessage: result?.data?.error || 'Local AI review request failed.',
       responseText,
       rawResult: result,
