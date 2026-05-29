@@ -1,3 +1,5 @@
+import CollapsiblePanel from './CollapsiblePanel';
+
 function statusTone(value = '') {
   const normalized = String(value).toLowerCase();
   if (/(ready|pass|live|online|healthy|nominal|verified)/.test(normalized)) return 'ok';
@@ -30,10 +32,15 @@ export default function MissionCommandDeck(props) {
     finalRouteTruth,
     runtimeStatusModel,
     compactVerificationSummary,
+    uiLayout = {},
+    togglePanel = () => {},
   } = props;
 
   const decisions = (operatorDecisionConsole?.decisions || []).slice(0, 5);
   const activity = (missionEvidenceLedger?.entries || []).slice(0, 8);
+  const activitySummary = activity.length > 0
+    ? `${activity.length} recent evidence event${activity.length === 1 ? '' : 's'} · latest ${activity[0]?.eventType || activity[0]?.label || activity[0]?.event || 'activity'}`
+    : 'No recent activity';
   const readinessScore = Math.max(0, Math.min(100, missionRoutingReadiness?.readinessScore ?? missionRoutingReadiness?.readinessPercent ?? 0));
   const matrixRows = ['Codex', 'OpenClaw', 'Verification Judge', 'Memory Librarian', 'Task Finisher', 'Operator'];
   const assignments = (agentAssignmentMatrix?.assignments || []);
@@ -109,7 +116,27 @@ export default function MissionCommandDeck(props) {
 
         <article className="mission-deck-card"><h4>Mission Command Packet</h4><div className="mission-deck-metrics"><Metric label="mission id" value={missionCommandPacket?.missionId || 'unknown'} /><Metric label="lead role" value={missionCommandPacket?.leadRole || 'operator'} /><Metric label="risk level" value={missionCommandPacket?.riskLevel || 'unknown'} /><Metric label="delegation state" value={missionCommandPacket?.delegationState || 'pending'} /><Metric label="operator approval state" value={missionCommandPacket?.operatorApprovalState || 'required'} /></div></article>
         <article className="mission-deck-card"><h4>Support Snapshot / Runtime Truth</h4><div className="mission-deck-metrics"><Metric label="source truth" value={supportSnapshot?.sourceTruth || 'unknown'} /><Metric label="dist parity" value={supportSnapshot?.distParity || 'unknown'} /><Metric label="runtime marker" value={runtimeStatusModel?.runtimeMarker || 'unavailable'} /><Metric label="build fingerprint" value={runtimeStatusModel?.buildFingerprint || 'unavailable'} /><Metric label="route/provider truth" value={`${finalRouteTruth?.routeKind || 'unknown'} / ${finalRouteTruth?.provider || 'unknown'}`} /><Metric label="last verify" value={supportSnapshot?.lastVerify || 'pending'} /></div></article>
-        <article className="mission-deck-card mission-deck-grid-activity-feed"><h4>Activity Feed</h4><ul className="mission-deck-feed">{activity.map((entry, index) => <li key={`${entry.id || 'entry'}-${index}`}><span>{entry.timestamp || entry.time || 'pending'}</span><p>{entry.label || entry.event || 'pending evidence'}</p></li>)}{activity.length === 0 ? <li><span>pending</span><p>no evidence yet / unavailable</p></li> : null}</ul></article>
+        <CollapsiblePanel
+          as="article"
+          panelId="missionConsoleMissionCommandDeckActivityPanel"
+          title="Activity Feed"
+          titleAs="h4"
+          description={activitySummary}
+          className="mission-deck-card mission-deck-grid-activity-feed mission-deck-compact-feed-panel"
+          isOpen={uiLayout.missionConsoleMissionCommandDeckActivityPanel !== false}
+          onToggle={() => togglePanel('missionConsoleMissionCommandDeckActivityPanel')}
+        >
+          <ul className="mission-deck-feed mission-deck-feed--compact" aria-label="Mission command activity feed rows">
+            {activity.map((entry, index) => (
+              <li key={`${entry.entryId || entry.id || 'entry'}-${index}`} className="compact-feed-row">
+                <time>{entry.timestamp || entry.time || 'pending'}</time>
+                <span className={`status-chip status-${statusTone(entry.status || entry.eventType || entry.label || entry.event)}`}>{entry.status || entry.eventType || entry.type || 'event'}</span>
+                <p>{entry.summary || entry.label || entry.event || 'pending evidence'}</p>
+              </li>
+            ))}
+            {activity.length === 0 ? <li className="compact-feed-row compact-feed-row--empty"><time>idle</time><span className="status-chip status-info">empty</span><p>No recent activity</p></li> : null}
+          </ul>
+        </CollapsiblePanel>
         <div className="mission-deck-secondary-grid" aria-label="Mission Command secondary cards"><article className="mission-deck-card mission-deck-secondary-card"><h4>Memory Librarian</h4><p>Pending: {memoryLibrarian?.counts?.pending ?? 'unknown'} · durable memory review remains operator-governed.</p></article>
         <article className="mission-deck-card mission-deck-secondary-card"><h4>Guardrail State</h4><p>OpenClaw authority: {openClawDelegation?.authorityLevel || 'unknown'} · approval gates: {openClawDelegation?.requiredOperatorApproval ? 'required' : 'not declared'} · verification: {verificationJudge?.judgment || 'pending'}.</p></article></div>
       </div>

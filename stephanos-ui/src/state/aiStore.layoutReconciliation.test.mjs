@@ -32,3 +32,17 @@ test('uiLayout forces missionConsolePanel open when persisted pane order omitted
   assert.match(source, /shouldForceAiCoreMissionConsoleOpen = !persistedPaneOrderIncludesPane\(persistedSession, 'aiCoreMissionConsolePanel'\)/m);
   assert.match(source, /aiCoreMissionConsolePanel: true/m);
 });
+
+test('DEFAULT_UI_LAYOUT registers compact Mission Console activity feed panel ids', () => {
+  [
+    'missionConsoleMissionCommandDeckActivityPanel: true',
+    'missionConsoleCodexChangeSummaryPanel: false',
+    'missionConsoleTestsBuildVerifyPanel: false',
+    'missionConsoleBrowserProofChecklistPanel: false',
+    'missionConsoleRuntimeEvidenceWarningsPanel: false',
+    'missionConsoleMergeSafetyVerdictPanel: false',
+    'missionConsoleNextBestActionPanel: true',
+    'missionConsoleLessonCandidatesPanel: false',
+    'missionConsoleOperatorDecisionQueuePanel: false',
+  ].forEach((token) => assert.equal(source.includes(token), true, `missing default uiLayout token: ${token}`));
+});

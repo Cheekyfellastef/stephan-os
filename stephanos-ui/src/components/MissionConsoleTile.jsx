@@ -1165,6 +1165,8 @@ function MissionConsoleTile({
         finalRouteTruth={finalRouteTruth}
         runtimeStatusModel={runtimeStatusModel}
         compactVerificationSummary={compactVerificationSummary}
+        uiLayout={uiLayout}
+        togglePanel={dispatchPanelToggle}
       />
       </div>
       <section className="mission-console-section mission-console-section--operator-overview" style={getMissionConsoleSectionOrderStyle('missionConsoleOperatorOverviewPanel')}>
@@ -1439,24 +1441,29 @@ function MissionConsoleTile({
               <pre>{JSON.stringify(operatorReliefProjection.verificationReturnIntake || {}, null, 2)}</pre>
             </CollapsiblePanel>
           </CollapsiblePanel>
-          <h5>Codex Change Summary</h5>
-          <p><strong>PR:</strong> {operatorReliefProjection.codex.prTitle} · <strong>Branch:</strong> {operatorReliefProjection.codex.branch}</p>
-          <p>{operatorReliefProjection.codex.deltaSummary}</p>
-          <h5>Tests / Build / Verify Evidence</h5>
-          <p>Required tests: {operatorReliefProjection.tests.required.length} · Passed: {operatorReliefProjection.tests.passed} · Failed: {operatorReliefProjection.tests.failed}</p>
-          <p>Build: {operatorReliefProjection.tests.buildPassed ? 'passed' : 'not-passed'} · Verify: {operatorReliefProjection.tests.verifyPassed ? 'passed' : 'not-passed'}</p>
-          <h5>Browser Proof Checklist</h5>
-          <p>Required: {operatorReliefProjection.browserProof.required ? 'yes' : 'no'} · Missing: {operatorReliefProjection.browserProof.missingItems?.length || 0}</p>
-          <ul>{(operatorReliefProjection.browserProof.missingItems || []).map((item) => <li key={item}>{item}</li>)}</ul>
-          <h5>Runtime Evidence and Warnings</h5>
-          <p>Route: {operatorReliefProjection.runtimeEvidence.routeStatus} · Provider: {operatorReliefProjection.runtimeEvidence.providerStatus} · Tile readiness: {operatorReliefProjection.runtimeEvidence.tileStatus}</p>
-          <ul>{operatorReliefProjection.runtimeEvidence.warnings.map((warn) => <li key={warn}>{warn}</li>)}</ul>
-          <h5>Merge Safety Verdict</h5>
-          <p>{operatorReliefProjection.mergeSafety.verdict === 'safe-to-merge' ? 'Merge candidate — operator approval required' : operatorReliefProjection.mergeSafety.verdict}</p>
-          <h5>Next Best Action</h5>
-          <p><strong>{operatorReliefProjection.nextBestAction?.label || 'Review mission evidence'}</strong> — {operatorReliefProjection.nextBestAction?.reason}</p>
-          <h5>Secondary Actions</h5>
-          <ul>{operatorReliefProjection.nextActions.slice(1).map((action) => <li key={action.id}>{action.label}: {action.reason}</li>)}</ul>
+          <CollapsiblePanel panelId="missionConsoleCodexChangeSummaryPanel" title="Codex Change Summary" titleAs="h5" description={operatorReliefProjection.codex.prTitle || 'No PR change summary yet'} isOpen={uiLayout.missionConsoleCodexChangeSummaryPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleCodexChangeSummaryPanel')}>
+            <p className="compact-feed-summary"><strong>PR:</strong> {operatorReliefProjection.codex.prTitle} · <strong>Branch:</strong> {operatorReliefProjection.codex.branch}</p>
+            <p>{operatorReliefProjection.codex.deltaSummary}</p>
+          </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleTestsBuildVerifyPanel" title="Tests / Build / Verify Evidence" titleAs="h5" description={`Passed ${operatorReliefProjection.tests.passed} · Failed ${operatorReliefProjection.tests.failed}`} isOpen={uiLayout.missionConsoleTestsBuildVerifyPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleTestsBuildVerifyPanel')}>
+            <p className="compact-feed-summary">Required tests: {operatorReliefProjection.tests.required.length} · Passed: {operatorReliefProjection.tests.passed} · Failed: {operatorReliefProjection.tests.failed}</p>
+            <p>Build: {operatorReliefProjection.tests.buildPassed ? 'passed' : 'not-passed'} · Verify: {operatorReliefProjection.tests.verifyPassed ? 'passed' : 'not-passed'}</p>
+          </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleBrowserProofChecklistPanel" title="Browser Proof Checklist" titleAs="h5" description={`${operatorReliefProjection.browserProof.missingItems?.length || 0} missing`} isOpen={uiLayout.missionConsoleBrowserProofChecklistPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleBrowserProofChecklistPanel')}>
+            <p className="compact-feed-summary">Required: {operatorReliefProjection.browserProof.required ? 'yes' : 'no'} · Missing: {operatorReliefProjection.browserProof.missingItems?.length || 0}</p>
+            <ul className="compact-feed-list">{(operatorReliefProjection.browserProof.missingItems || []).map((item) => <li key={item}>{item}</li>)}{(operatorReliefProjection.browserProof.missingItems || []).length === 0 ? <li>No recent activity</li> : null}</ul>
+          </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleRuntimeEvidenceWarningsPanel" title="Runtime Evidence and Warnings" titleAs="h5" description={`${operatorReliefProjection.runtimeEvidence.warnings.length} warning(s)`} isOpen={uiLayout.missionConsoleRuntimeEvidenceWarningsPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleRuntimeEvidenceWarningsPanel')}>
+            <p className="compact-feed-summary">Route: {operatorReliefProjection.runtimeEvidence.routeStatus} · Provider: {operatorReliefProjection.runtimeEvidence.providerStatus} · Tile readiness: {operatorReliefProjection.runtimeEvidence.tileStatus}</p>
+            <ul className="compact-feed-list">{operatorReliefProjection.runtimeEvidence.warnings.map((warn) => <li key={warn}>{warn}</li>)}{operatorReliefProjection.runtimeEvidence.warnings.length === 0 ? <li>No recent activity</li> : null}</ul>
+          </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleMergeSafetyVerdictPanel" title="Merge Safety Verdict" titleAs="h5" description={operatorReliefProjection.mergeSafety.verdict || 'pending'} isOpen={uiLayout.missionConsoleMergeSafetyVerdictPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleMergeSafetyVerdictPanel')}>
+            <p>{operatorReliefProjection.mergeSafety.verdict === 'safe-to-merge' ? 'Merge candidate — operator approval required' : operatorReliefProjection.mergeSafety.verdict}</p>
+          </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleNextBestActionPanel" title="Next Best Action" titleAs="h5" description={operatorReliefProjection.nextBestAction?.label || 'Review mission evidence'} isOpen={uiLayout.missionConsoleNextBestActionPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleNextBestActionPanel')}>
+            <p><strong>{operatorReliefProjection.nextBestAction?.label || 'Review mission evidence'}</strong> — {operatorReliefProjection.nextBestAction?.reason}</p>
+            <ul className="compact-feed-list">{operatorReliefProjection.nextActions.slice(1).map((action) => <li key={action.id}>{action.label}: {action.reason}</li>)}{operatorReliefProjection.nextActions.slice(1).length === 0 ? <li>No recent activity</li> : null}</ul>
+          </CollapsiblePanel>
           <CollapsiblePanel
             panelId="missionConsoleRepairPromptPanel"
             title="Repair Prompt"
@@ -1474,8 +1481,9 @@ function MissionConsoleTile({
             <pre>{operatorReliefProjection.repairPrompt.available ? operatorReliefProjection.repairPrompt.prompt : 'No active repair prompt. Operator Relief will generate one when failures or proof gaps appear.'}</pre>
           ) : null}
           </CollapsiblePanel>
-          <h5>Lesson Candidates</h5>
-          <ul>{operatorReliefProjection.lessonCandidates.map((candidate) => <li key={candidate.id}>{candidate.title} (approval required)</li>)}</ul>
+          <CollapsiblePanel panelId="missionConsoleLessonCandidatesPanel" title="Lesson Candidates" titleAs="h5" description={`${operatorReliefProjection.lessonCandidates.length} candidate(s)`} isOpen={uiLayout.missionConsoleLessonCandidatesPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleLessonCandidatesPanel')}>
+            <ul className="compact-feed-list">{operatorReliefProjection.lessonCandidates.map((candidate) => <li key={candidate.id}>{candidate.title} (approval required)</li>)}{operatorReliefProjection.lessonCandidates.length === 0 ? <li>No recent activity</li> : null}</ul>
+          </CollapsiblePanel>
           <CollapsiblePanel
             panelId="missionConsoleEvidenceGapsPanel"
             title="Evidence Gaps / Proof Requirements"
@@ -1485,9 +1493,10 @@ function MissionConsoleTile({
           <h5>Evidence Gaps</h5>
           <ul>{(operatorReliefProjection.evidenceGaps || []).map((gap) => <li key={gap.id}><strong>{gap.label}</strong>: {gap.reason}</li>)}</ul>
           </CollapsiblePanel>
-          <h5>Operator Decision Queue</h5>
-          <p>Decision required: {(operatorReliefProjection.operatorDecisionQueue || []).length > 0 ? 'yes' : 'no'}</p>
-          <ul>{(operatorReliefProjection.operatorDecisionQueue || []).map((decision) => <li key={decision.id}>{decision.label} — recommended: {decision.recommendedChoice}</li>)}</ul>
+          <CollapsiblePanel panelId="missionConsoleOperatorDecisionQueuePanel" title="Operator Decision Queue" titleAs="h5" description={`${(operatorReliefProjection.operatorDecisionQueue || []).length} pending`} isOpen={uiLayout.missionConsoleOperatorDecisionQueuePanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleOperatorDecisionQueuePanel')}>
+            <p className="compact-feed-summary">Decision required: {(operatorReliefProjection.operatorDecisionQueue || []).length > 0 ? 'yes' : 'no'}</p>
+            <ul className="compact-feed-list">{(operatorReliefProjection.operatorDecisionQueue || []).map((decision) => <li key={decision.id}>{decision.label} — recommended: {decision.recommendedChoice}</li>)}{(operatorReliefProjection.operatorDecisionQueue || []).length === 0 ? <li>No recent activity</li> : null}</ul>
+          </CollapsiblePanel>
           <CollapsiblePanel
             panelId="missionConsoleMissionHandoffPanel"
             title="Mission Handoff Pack"
@@ -2000,11 +2009,11 @@ function MissionConsoleTile({
           <li><strong>next required evidence:</strong> {missionEvidenceLedger.summary.nextRequiredEvidence}</li>
           <li><strong>readiness narrative:</strong> {missionEvidenceLedger.summary.missionReadyNarrative}</li>
         </ul>
-        <ul className="mission-console__status-list">
+        <ul className="mission-console__status-list compact-feed-list" aria-label="Mission Evidence Ledger compact event rows">
           {(missionEvidenceLedger.entries || []).slice(0, 6).map((entry) => (
-            <li key={entry.entryId}><strong>{entry.eventType}</strong>: {entry.summary}</li>
+            <li key={entry.entryId} className="compact-feed-row"><time>{entry.timestamp || entry.createdAt || 'pending'}</time><span className={`status-chip status-${String(entry.severity || entry.status || 'info').toLowerCase()}`}>{entry.eventType}</span><p>{entry.summary}</p></li>
           ))}
-          {(missionEvidenceLedger.entries || []).length === 0 ? <li>none</li> : null}
+          {(missionEvidenceLedger.entries || []).length === 0 ? <li className="compact-feed-row compact-feed-row--empty"><time>idle</time><span className="status-chip status-info">empty</span><p>No recent activity</p></li> : null}
         </ul>
 
         <h5>PR Evidence Intake</h5>
@@ -2069,7 +2078,7 @@ function MissionConsoleTile({
 
         <div className="mission-console-ledger">
           {messages.map((message) => (
-            <article key={message.id} className={`mission-console-message mission-console-message-${message.role}`}>
+            <article key={message.id} className={`mission-console-message compact-feed-row mission-console-message-${message.role}`}>
               <header>
                 <strong>{message.responder}</strong> - target <strong>{message.target}</strong> - status <strong>{message.status}</strong>
                 {message.approvalNeeded ? <span className="mission-console-pill">approval-needed</span> : null}
