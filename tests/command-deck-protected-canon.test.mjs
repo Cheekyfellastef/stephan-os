@@ -231,10 +231,16 @@ test('protected canon: nested Mission Console Agent Assignment Matrix keeps comp
 test('protected canon: builder mesh stays in Builder Harness and uses deterministic answer finalization path', async () => {
   const missionConsoleSource = await read(missionConsoleTilePath);
   const useAIConsoleSource = await read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url));
+  const supportSnapshotSource = await read(new URL('../stephanos-ui/src/state/supportSnapshot.js', import.meta.url));
   assert.match(missionConsoleSource, /panelId="missionConsoleBuilderHarnessPanel" title="OpenClaw Builder Harness V1"/);
   assert.match(missionConsoleSource, /panelId="missionConsoleBuilderMeshPanel" title="Zero-Cost Builder Mesh V1"/);
   assert.doesNotMatch(missionConsoleSource, /mission-console-section--builder-mesh/);
   assert.match(useAIConsoleSource, /createBuilderMeshDeterministicResult/);
   assert.match(useAIConsoleSource, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| agentRealityLoopDeterministicResult \|\| builderMeshDeterministicResult \|\| operatorExplanationDeterministicResult \|\| await sendPrompt/);
   assert.match(useAIConsoleSource, /return upsertCommandHistoryById\(prev, entry, streamEntryId\);/);
+  assert.match(supportSnapshotSource, /Builder Mesh Projection Available:/);
+  assert.match(supportSnapshotSource, /Builder Mesh Projection Source:/);
+  assert.match(supportSnapshotSource, /Builder Mesh Metadata Source:/);
+  assert.match(supportSnapshotSource, /Builder Mesh Deterministic Answer Used:/);
+  assert.match(supportSnapshotSource, /Builder Mesh Projection Drop Boundary:/);
 });

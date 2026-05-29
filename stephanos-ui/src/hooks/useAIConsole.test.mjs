@@ -39,6 +39,16 @@ test('command deck missionState bridge forwards operator relief agent reality lo
   assert.match(source, /operatorReliefBridgeDiagnostics:/);
 });
 
+test('Builder Mesh final metadata preserves live projection truth through attachment proof fields', async () => {
+  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  assert.match(source, /const builderMeshProjectionSource = builderMeshProjectionObjectPresent/);
+  assert.match(source, /builder_mesh_projection_source: builderMeshProjectionSource/);
+  assert.match(source, /const resolvedBuilderMeshProjectionAvailable = pickChatContextFieldPreferPackOrRebuildNonDefault/);
+  assert.match(source, /builder_mesh_projection_available: resolvedBuilderMeshProjectionAvailable/);
+  assert.match(source, /builder_mesh_deterministic_answer_used: 'yes'/);
+  assert.match(source, /builder_mesh_projection_drop_boundary: 'none'/);
+});
+
 test('agent reality loop availability blocker cannot be none when projection is unavailable', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /const projectionObjectPresent = Object\.keys\(agentRealityLoopProjection\)\.length > 0;/);

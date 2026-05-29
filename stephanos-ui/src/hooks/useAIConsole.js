@@ -436,7 +436,13 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     || {};
   const matchedRule = String(chatContextPack?.intentClassifierMatchedRule || compact?.intentClassifierMatchedRule || '').trim().toLowerCase();
   const builderMeshContext = compact?.missionIntelligence?.builderMesh || {};
-  const builderMeshProjectionPresent = Object.keys(builderMeshProjection).length > 0;
+  const builderMeshProjectionObjectPresent = Object.keys(builderMeshProjection).length > 0;
+  const builderMeshContextPresent = Object.keys(builderMeshContext).length > 0;
+  const builderMeshContextReportsProjection = String(builderMeshContext?.projectionAvailable || '').trim().toLowerCase() === 'yes';
+  const builderMeshProjectionPresent = builderMeshProjectionObjectPresent || builderMeshContextReportsProjection;
+  const builderMeshProjectionSource = builderMeshProjectionObjectPresent
+    ? (chatContextPack?.inputMissionState?.operatorReliefProjection?.builderMeshProjection ? 'operator-relief-bridge' : 'mission-state')
+    : (builderMeshContextPresent ? (builderMeshContext?.projectionSource || 'chat-context-mission-intelligence') : 'none');
   const builderMeshContextRecognized = matchedRule === 'builder-mesh-routing' || /builderMesh/.test(String(projectAwarenessTruth.chatContextSourcesUsed.join('|')));
   const firstMatchingRule = String(chatContextPack?.firstMatchingRule || compact?.firstMatchingRule || '').trim().toLowerCase();
   const explicitIntentMatched = String(chatContextPack?.contextForPrompt?.intentClassifierMatchedRule || '').trim().toLowerCase() === 'agent-reality-loop';
@@ -485,6 +491,10 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     builder_mesh_openclaw_can_help: builderMeshProjection?.openClawCanHelp || builderMeshContext?.openClawCanHelp || 'unknown',
     builder_mesh_github_can_help: builderMeshProjection?.githubCanHelp || builderMeshContext?.githubCanHelp || 'unknown',
     builder_mesh_next_best_action: builderMeshProjection?.nextBestAction || builderMeshContext?.nextBestAction || 'Review Builder Mesh truth.',
+    builder_mesh_projection_source: builderMeshProjectionSource,
+    builder_mesh_metadata_source: builderMeshProjectionPresent ? 'chat-context-pack' : (builderMeshContextRecognized ? 'chat-context-context-only' : 'none'),
+    builder_mesh_deterministic_answer_used: 'no',
+    builder_mesh_projection_drop_boundary: builderMeshProjectionPresent ? 'none' : (builderMeshContextRecognized ? 'operator-relief-projection-not-attached-to-chat-context' : 'none'),
     chat_context_ui_reality_status: compact?.uiRealityStatusAtBuild || 'UNKNOWN',
     chat_context_mission_state: projectAwarenessTruth.chatContextMissionState || 'unknown',
     chat_context_next_action: chatContextPack?.recommendedNextAction || compact?.nextAction || 'Answer directly with bounded confidence.',
@@ -660,6 +670,12 @@ function isDefaultChatContextValue(key = '', value = '') {
   if (key === 'chat_context_provider_registry_status') return normalized === 'inactive';
   if (key === 'chat_context_provider_warning_count' || key === 'chat_context_provider_canon_links_count') return normalized === '0';
   if (key.startsWith('chat_context_provider_')) return ['none', 'unknown'].includes(normalized);
+  if (key === 'builder_mesh_projection_available' || key === 'builder_mesh_zero_cost_route_available') return normalized === 'no';
+  if (key === 'builder_mesh_context_recognized' || key === 'builder_mesh_deterministic_answer_used') return normalized === 'no';
+  if (key === 'builder_mesh_status') return normalized === 'unavailable';
+  if (key === 'builder_mesh_recommended_builder') return normalized === 'hold';
+  if (key === 'builder_mesh_next_best_action') return normalized === 'review builder mesh truth.' || normalized === 'review builder mesh truth in operator relief.';
+  if (key.startsWith('builder_mesh_')) return ['none', 'unknown', 'n/a'].includes(normalized);
   return ['none', 'unknown', 'n/a'].includes(normalized);
 }
 
@@ -947,6 +963,126 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     rebuiltExecutionMetadata.agent_reality_loop_availability_blocker,
     'projection-missing-from-command-deck-path',
   );
+  const resolvedBuilderMeshContextRecognized = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_context_recognized',
+    raw.builder_mesh_context_recognized,
+    trace.builder_mesh_context_recognized,
+    requestChatContext.builder_mesh_context_recognized,
+    rebuiltExecutionMetadata.builder_mesh_context_recognized,
+    'no',
+  );
+  const resolvedBuilderMeshProjectionAvailable = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_projection_available',
+    raw.builder_mesh_projection_available,
+    trace.builder_mesh_projection_available,
+    requestChatContext.builder_mesh_projection_available,
+    rebuiltExecutionMetadata.builder_mesh_projection_available,
+    'no',
+  );
+  const resolvedBuilderMeshStatus = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_status',
+    raw.builder_mesh_status,
+    trace.builder_mesh_status,
+    requestChatContext.builder_mesh_status,
+    rebuiltExecutionMetadata.builder_mesh_status,
+    'unavailable',
+  );
+  const resolvedBuilderMeshRecommendedBuilder = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_recommended_builder',
+    raw.builder_mesh_recommended_builder,
+    trace.builder_mesh_recommended_builder,
+    requestChatContext.builder_mesh_recommended_builder,
+    rebuiltExecutionMetadata.builder_mesh_recommended_builder,
+    'hold',
+  );
+  const resolvedBuilderMeshZeroCostRouteAvailable = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_zero_cost_route_available',
+    raw.builder_mesh_zero_cost_route_available,
+    trace.builder_mesh_zero_cost_route_available,
+    requestChatContext.builder_mesh_zero_cost_route_available,
+    rebuiltExecutionMetadata.builder_mesh_zero_cost_route_available,
+    'no',
+  );
+  const resolvedBuilderMeshCodexRequired = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_codex_required',
+    raw.builder_mesh_codex_required,
+    trace.builder_mesh_codex_required,
+    requestChatContext.builder_mesh_codex_required,
+    rebuiltExecutionMetadata.builder_mesh_codex_required,
+    'no',
+  );
+  const resolvedBuilderMeshCodexReason = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_codex_reason',
+    raw.builder_mesh_codex_reason,
+    trace.builder_mesh_codex_reason,
+    requestChatContext.builder_mesh_codex_reason,
+    rebuiltExecutionMetadata.builder_mesh_codex_reason,
+    'Codex is fallback only unless justified.',
+  );
+  const resolvedBuilderMeshLocalAiCanHelp = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_local_ai_can_help',
+    raw.builder_mesh_local_ai_can_help,
+    trace.builder_mesh_local_ai_can_help,
+    requestChatContext.builder_mesh_local_ai_can_help,
+    rebuiltExecutionMetadata.builder_mesh_local_ai_can_help,
+    'unknown',
+  );
+  const resolvedBuilderMeshOpenClawCanHelp = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_openclaw_can_help',
+    raw.builder_mesh_openclaw_can_help,
+    trace.builder_mesh_openclaw_can_help,
+    requestChatContext.builder_mesh_openclaw_can_help,
+    rebuiltExecutionMetadata.builder_mesh_openclaw_can_help,
+    'unknown',
+  );
+  const resolvedBuilderMeshGithubCanHelp = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_github_can_help',
+    raw.builder_mesh_github_can_help,
+    trace.builder_mesh_github_can_help,
+    requestChatContext.builder_mesh_github_can_help,
+    rebuiltExecutionMetadata.builder_mesh_github_can_help,
+    'unknown',
+  );
+  const resolvedBuilderMeshNextBestAction = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_next_best_action',
+    raw.builder_mesh_next_best_action,
+    trace.builder_mesh_next_best_action,
+    requestChatContext.builder_mesh_next_best_action,
+    rebuiltExecutionMetadata.builder_mesh_next_best_action,
+    'Review Builder Mesh truth.',
+  );
+  const resolvedBuilderMeshProjectionSource = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_projection_source',
+    raw.builder_mesh_projection_source,
+    trace.builder_mesh_projection_source,
+    requestChatContext.builder_mesh_projection_source,
+    rebuiltExecutionMetadata.builder_mesh_projection_source,
+    'none',
+  );
+  const resolvedBuilderMeshMetadataSource = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_metadata_source',
+    raw.builder_mesh_metadata_source,
+    trace.builder_mesh_metadata_source,
+    requestChatContext.builder_mesh_metadata_source,
+    rebuiltExecutionMetadata.builder_mesh_metadata_source,
+    'none',
+  );
+  const resolvedBuilderMeshDeterministicAnswerUsed = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_deterministic_answer_used',
+    raw.builder_mesh_deterministic_answer_used || raw.builder_mesh_answer_used_live_projection,
+    trace.builder_mesh_deterministic_answer_used || trace.builder_mesh_answer_used_live_projection,
+    requestChatContext.builder_mesh_deterministic_answer_used,
+    rebuiltExecutionMetadata.builder_mesh_deterministic_answer_used,
+    'no',
+  );
+  const resolvedBuilderMeshProjectionDropBoundary = pickChatContextFieldPreferPackOrRebuildNonDefault(
+    'builder_mesh_projection_drop_boundary',
+    raw.builder_mesh_projection_drop_boundary,
+    trace.builder_mesh_projection_drop_boundary,
+    requestChatContext.builder_mesh_projection_drop_boundary,
+    rebuiltExecutionMetadata.builder_mesh_projection_drop_boundary,
+    'none',
+  );
   const resolvedAgentRealityLoopProjectionUnavailable = String(resolvedAgentRealityLoopProjectionAvailable).trim().toLowerCase() !== 'yes';
   const resolvedAgentRealityLoopProjectionSource = resolvedAgentRealityLoopProjectionUnavailable
     ? resolvedAgentRealityLoopProjectionSourceSeen
@@ -1013,6 +1149,21 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     project_awareness_prompt_block_length: Number(requestPayload?.project_awareness_prompt_block_length || 0),
     project_awareness_prompt_sources: String(requestPayload?.project_awareness_prompt_sources || 'none'),
     mission_planning_prompt_context_used: String(requestPayload?.mission_planning_prompt_context_used || 'no'),
+    builder_mesh_context_recognized: resolvedBuilderMeshContextRecognized,
+    builder_mesh_projection_available: resolvedBuilderMeshProjectionAvailable,
+    builder_mesh_status: resolvedBuilderMeshStatus,
+    builder_mesh_recommended_builder: resolvedBuilderMeshRecommendedBuilder,
+    builder_mesh_zero_cost_route_available: resolvedBuilderMeshZeroCostRouteAvailable,
+    builder_mesh_codex_required: resolvedBuilderMeshCodexRequired,
+    builder_mesh_codex_reason: resolvedBuilderMeshCodexReason,
+    builder_mesh_local_ai_can_help: resolvedBuilderMeshLocalAiCanHelp,
+    builder_mesh_openclaw_can_help: resolvedBuilderMeshOpenClawCanHelp,
+    builder_mesh_github_can_help: resolvedBuilderMeshGithubCanHelp,
+    builder_mesh_next_best_action: resolvedBuilderMeshNextBestAction,
+    builder_mesh_projection_source: resolvedBuilderMeshProjectionSource,
+    builder_mesh_metadata_source: resolvedBuilderMeshMetadataSource,
+    builder_mesh_deterministic_answer_used: resolvedBuilderMeshDeterministicAnswerUsed,
+    builder_mesh_projection_drop_boundary: resolvedBuilderMeshProjectionDropBoundary,
     agent_reality_loop_context_recognized: resolvedAgentRealityLoopContextRecognized,
     agent_reality_loop_context_source: resolvedAgentRealityLoopContextSource,
     agent_reality_loop_projection_available: resolvedAgentRealityLoopProjectionAvailable,
@@ -2334,8 +2485,21 @@ function createBuilderMeshDeterministicResult({
       data: {
         execution_metadata: {
           builder_mesh_answer_used_live_projection: 'yes',
-          builder_mesh_codex_required: projection?.codexRequired === true ? 'yes' : 'no',
+          builder_mesh_deterministic_answer_used: 'yes',
+          builder_mesh_context_recognized: 'yes',
+          builder_mesh_projection_available: Object.keys(projection || {}).length > 0 ? 'yes' : 'no',
+          builder_mesh_status: projection?.builderMeshStatus || 'active',
           builder_mesh_recommended_builder: projection?.recommendedBuilder || 'hold',
+          builder_mesh_zero_cost_route_available: projection?.zeroCostRouteAvailable === true ? 'yes' : 'no',
+          builder_mesh_codex_required: projection?.codexRequired === true ? 'yes' : 'no',
+          builder_mesh_codex_reason: projection?.codexReason || 'Codex is fallback only unless justified.',
+          builder_mesh_local_ai_can_help: projection?.localAiCanHelp || 'unknown',
+          builder_mesh_openclaw_can_help: projection?.openClawCanHelp || 'unknown',
+          builder_mesh_github_can_help: projection?.githubCanHelp || 'unknown',
+          builder_mesh_next_best_action: projection?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.',
+          builder_mesh_projection_source: 'deterministic-answer-live-projection',
+          builder_mesh_metadata_source: 'deterministic-result-execution-metadata',
+          builder_mesh_projection_drop_boundary: 'none',
         },
       },
       raw_input: prompt,
