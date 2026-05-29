@@ -247,6 +247,11 @@ test('protected canon: builder mesh stays in Builder Harness and uses determinis
   assert.match(supportSnapshotSource, /Builder Workbench Metadata Source:/);
   assert.match(supportSnapshotSource, /Builder Workbench Deterministic Answer Used:/);
   assert.match(supportSnapshotSource, /Builder Workbench Projection Drop Boundary:/);
+  assert.match(supportSnapshotSource, /Local AI Runner Status:/);
+  assert.match(supportSnapshotSource, /Local AI Runner Selected Model:/);
+  assert.match(supportSnapshotSource, /Local AI Runner Last Run Result:/);
+  assert.match(supportSnapshotSource, /Local AI Runner Last Run Blocked Reason:/);
+  assert.match(supportSnapshotSource, /Local AI Runner Parsed Result Present:/);
 });
 
 test('protected canon: builder workbench stays inside Builder Harness and gates Codex fallback copy', async () => {
@@ -254,6 +259,9 @@ test('protected canon: builder workbench stays inside Builder Harness and gates 
   assert.match(source, /panelId="missionConsoleBuilderHarnessPanel" title="OpenClaw Builder Harness V1"/);
   assert.match(source, /panelId="missionConsoleBuilderWorkbenchPanel" title="Zero-Cost Builder Workbench V1"/);
   assert.match(source, /Paste Local AI Review Result/);
+  assert.match(source, /Local model selector/);
+  assert.match(source, /Run Local AI Review/);
+  assert.match(source, /Copy raw bounded response/);
   assert.match(source, /Paste OpenClaw Research \/ Patch Plan Result/);
   assert.match(source, /builderWorkbenchProjection\?\.codexFallbackStillNeeded \? \(/);
 });
