@@ -418,11 +418,15 @@ function buildBuilderWorkbenchExecutionMetadata(builderWorkbenchProjection = {},
     local_ai_runner_selected_model: workbench?.localAiRunnerSelectedModel || 'none',
     local_ai_runner_last_run_result: workbench?.localAiRunnerLastRunResult || 'none',
     local_ai_runner_last_run_blocked_reason: workbench?.localAiRunnerLastRunBlockedReason || 'none',
+    local_ai_runner_error_message: workbench?.localAiRunnerErrorMessage || 'none',
+    local_ai_runner_dispatch_attempted: workbench?.localAiRunnerDispatchAttempted || 'no',
+    local_ai_runner_request_sent: workbench?.localAiRunnerRequestSent || 'no',
     local_ai_runner_parsed_result_present: workbench?.localAiRunnerParsedResultPresent ? 'yes' : 'no',
     workbench_answer_context_used: workbench?.workbenchAnswerContextUsed || 'no',
     workbench_answer_source: workbench?.workbenchAnswerSource || 'none',
     workbench_parsed_result_source: workbench?.workbenchParsedResultSource || workbench?.localAiReview?.source || workbench?.openClawResearch?.source || 'none',
     local_ai_runner_response_retained: workbench?.localAiRunnerResponseRetained || (workbench?.localAiRunnerRawResponse ? 'yes' : 'no'),
+    local_ai_runner_parse_attempted: workbench?.localAiRunnerParseAttempted || 'no',
     local_ai_runner_parse_input_length: String(workbench?.localAiRunnerParseInputLength ?? (workbench?.localAiRunnerRawResponse || '').length ?? 0),
     local_ai_runner_parse_result_status: workbench?.localAiRunnerParseResultStatus || workbench?.localAiReview?.resultStatus || 'empty',
     workbench_output_viewport_status: workbench?.workbenchOutputViewportStatus || 'unknown',
@@ -2546,12 +2550,19 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
   const workbench = projection?.builderWorkbenchProjection || {};
   const localAiParsedPresent = workbench?.localAiRunnerParsedResultPresent === true || (workbench?.localAiReview?.safeForWorkbench === true && workbench?.localAiReview?.resultStatus === 'parsed');
   const localAiParseStatus = workbench?.localAiRunnerParseResultStatus || workbench?.localAiReview?.resultStatus || (workbench?.localAiRunnerRawResponse ? 'malformed-or-blocked' : 'empty');
+  const localAiRunnerStatus = workbench?.localAiRunnerStatus || 'idle';
+  const localAiFailureReason = workbench?.localAiRunnerLastRunBlockedReason || workbench?.localAiRunnerErrorMessage || 'none';
   const localAiSummary = localAiParsedPresent
     ? (workbench?.localAiReview?.summary || 'parsed local AI review result is present but summary is empty')
-    : (workbench?.localAiRunnerRawResponse
-      ? `runner response retained but no parsed local AI review result is present yet; parse status ${localAiParseStatus}`
-      : 'no parsed local AI review result is present yet');
-  const localAiRunnerStatus = workbench?.localAiRunnerStatus || 'idle';
+    : (localAiRunnerStatus === 'running'
+      ? 'local AI review is running'
+      : (['failed', 'blocked'].includes(localAiRunnerStatus)
+        ? `local AI review did not produce parsed Workbench truth; reason: ${localAiFailureReason}`
+        : (localAiRunnerStatus === 'parse-failed'
+          ? `raw response was retained but could not be parsed; parse status ${localAiParseStatus}; reason: ${localAiFailureReason}`
+          : (workbench?.localAiRunnerRawResponse
+            ? `runner response retained but no parsed local AI review result is present yet; parse status ${localAiParseStatus}`
+            : 'no local AI review result is present yet; press Run Local AI Review'))));
   const localAiRunnerModel = workbench?.localAiRunnerSelectedModel || 'none';
   const openClawParsedPresent = workbench?.openClawResearch?.safeForWorkbench === true;
   const openClawSummary = openClawParsedPresent

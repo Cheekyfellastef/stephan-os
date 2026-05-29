@@ -20,10 +20,11 @@ function isDefaultWorkbenchMetadataValue(key = '', value = '') {
   if (key === 'builder_workbench_codex_fallback_still_needed' || key === 'builder_workbench_deterministic_answer_used') return normalized === 'no';
   if (key === 'builder_workbench_codex_fallback_reason') return normalized === 'none';
   if (key === 'builder_workbench_next_best_action') return normalized === 'copy local ai/openclaw packets and paste bounded read-only results.';
-  if (['workbench_answer_context_used', 'local_ai_runner_response_retained'].includes(key)) return normalized === 'no';
+  if (['workbench_answer_context_used', 'local_ai_runner_response_retained', 'local_ai_runner_dispatch_attempted', 'local_ai_runner_request_sent', 'local_ai_runner_parse_attempted'].includes(key)) return normalized === 'no';
   if (['workbench_answer_source', 'workbench_parsed_result_source'].includes(key)) return normalized === 'none';
   if (key === 'local_ai_runner_parse_input_length') return normalized === '0';
   if (key === 'local_ai_runner_parse_result_status') return normalized === 'empty';
+  if (key === 'local_ai_runner_error_message') return normalized === 'none';
   if (key === 'workbench_output_viewport_status') return normalized === 'unknown';
   return ['none', 'unknown', 'n/a'].includes(normalized);
 }
@@ -45,11 +46,15 @@ function buildWorkbenchMetadataFromProjection(workbench = {}, source = 'none') {
     local_ai_runner_selected_model: projection.localAiRunnerSelectedModel || 'none',
     local_ai_runner_last_run_result: projection.localAiRunnerLastRunResult || 'none',
     local_ai_runner_last_run_blocked_reason: projection.localAiRunnerLastRunBlockedReason || 'none',
+    local_ai_runner_error_message: projection.localAiRunnerErrorMessage || 'none',
+    local_ai_runner_dispatch_attempted: projection.localAiRunnerDispatchAttempted || 'no',
+    local_ai_runner_request_sent: projection.localAiRunnerRequestSent || 'no',
     local_ai_runner_parsed_result_present: projection.localAiRunnerParsedResultPresent ? 'yes' : 'no',
     workbench_answer_context_used: projection.workbenchAnswerContextUsed || 'no',
     workbench_answer_source: projection.workbenchAnswerSource || 'none',
     workbench_parsed_result_source: projection.workbenchParsedResultSource || projection.localAiReview?.source || projection.openClawResearch?.source || 'none',
     local_ai_runner_response_retained: projection.localAiRunnerResponseRetained || (projection.localAiRunnerRawResponse ? 'yes' : 'no'),
+    local_ai_runner_parse_attempted: projection.localAiRunnerParseAttempted || 'no',
     local_ai_runner_parse_input_length: String(projection.localAiRunnerParseInputLength ?? (projection.localAiRunnerRawResponse || '').length ?? 0),
     local_ai_runner_parse_result_status: projection.localAiRunnerParseResultStatus || projection.localAiReview?.resultStatus || 'empty',
     workbench_output_viewport_status: projection.workbenchOutputViewportStatus || 'unknown',
@@ -89,11 +94,15 @@ function resolveBuilderWorkbenchSupportMetadata(executionMetadata = {}, runtimeS
     ['local_ai_runner_selected_model', 'none'],
     ['local_ai_runner_last_run_result', 'none'],
     ['local_ai_runner_last_run_blocked_reason', 'none'],
+    ['local_ai_runner_error_message', 'none'],
+    ['local_ai_runner_dispatch_attempted', 'no'],
+    ['local_ai_runner_request_sent', 'no'],
     ['local_ai_runner_parsed_result_present', 'no'],
     ['workbench_answer_context_used', 'no'],
     ['workbench_answer_source', 'none'],
     ['workbench_parsed_result_source', 'none'],
     ['local_ai_runner_response_retained', 'no'],
+    ['local_ai_runner_parse_attempted', 'no'],
     ['local_ai_runner_parse_input_length', '0'],
     ['local_ai_runner_parse_result_status', 'empty'],
     ['workbench_output_viewport_status', 'unknown'],
@@ -2505,11 +2514,16 @@ export function buildSupportSnapshot({
     `Local AI Runner Selected Model: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_selected_model, 'none')}`,
     `Local AI Runner Last Run Result: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_last_run_result, 'none')}`,
     `Local AI Runner Last Run Blocked Reason: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_last_run_blocked_reason, 'none')}`,
+    `Local AI Runner Blocked Reason: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_last_run_blocked_reason, 'none')}`,
+    `Local AI Runner Error Message: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_error_message, 'none')}`,
+    `Local AI Runner Dispatch Attempted: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_dispatch_attempted, 'no')}`,
+    `Local AI Runner Request Sent: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_request_sent, 'no')}`,
     `Local AI Runner Parsed Result Present: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_parsed_result_present, 'no')}`,
     `Workbench Answer Context Used: ${asText(builderWorkbenchSupportMetadata.workbench_answer_context_used, 'no')}`,
     `Workbench Answer Source: ${asText(builderWorkbenchSupportMetadata.workbench_answer_source, 'none')}`,
     `Workbench Parsed Result Source: ${asText(builderWorkbenchSupportMetadata.workbench_parsed_result_source, 'none')}`,
     `Local AI Runner Response Retained: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_response_retained, 'no')}`,
+    `Local AI Runner Parse Attempted: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_parse_attempted, 'no')}`,
     `Local AI Runner Parse Input Length: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_parse_input_length, '0')}`,
     `Local AI Runner Parse Result Status: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_parse_result_status, 'empty')}`,
     `Workbench Output Viewport Status: ${asText(builderWorkbenchSupportMetadata.workbench_output_viewport_status, 'unknown')}`, 

@@ -1,4 +1,7 @@
+import { parseBuilderWorkbenchResult } from '../state/operatorReliefProjection.js';
+
 const MAX_LOCAL_AI_PACKET_LENGTH = 3600;
+const MAX_LOCAL_AI_RAW_RESPONSE_LENGTH = 2400;
 const LOCAL_AI_RUNNER_FORBIDDEN_PACKET_PATTERNS = [
   /\b(git\s+(add|commit|push|merge|checkout|reset|clean)|npm\s+version|rm\s+-rf)\b/i,
   /\b(write|mutate|modify|edit|delete|create)\s+(the\s+)?(file|repo|source|code)\b/i,
@@ -24,26 +27,40 @@ function truncatePacket(value = '') {
     : text;
 }
 
+function truncateRawResponse(value = '') {
+  const text = asText(value, '');
+  return text.length > MAX_LOCAL_AI_RAW_RESPONSE_LENGTH
+    ? `${text.slice(0, MAX_LOCAL_AI_RAW_RESPONSE_LENGTH)}…[bounded-local-ai-response-truncated]`
+    : text;
+}
+
 export function buildLocalAiReviewPrompt(packet = {}) {
   const boundedPacket = truncatePacket(JSON.stringify(packet || {}, null, 2));
   return [
-    'Stephanos Builder Workbench Local AI Runner V1: read-only review only.',
-    'You are not allowed to write files, run shell commands, run git commands, apply patches, mutate source, or claim operator approval.',
-    'Review only the bounded Builder Workbench packet below and return this exact field format:',
-    'Summary: <one concise review summary>',
-    'Files suspected: <comma-separated files/areas or none>',
-    'Proposed change type: read-only-review',
-    'Risk level: low|medium|high|critical|unknown',
-    'Tests recommended: <comma-separated tests/checks>',
-    'Confidence: <percent or low|medium|high>',
-    'Requires Codex fallback: yes|no',
+    'Respond as a read-only Builder Workbench review.',
+    'Do not edit files.',
+    'Do not apply patches.',
+    'Do not run shell commands.',
+    'Do not run git commands.',
+    'Do not claim mutation authority.',
+    '',
+    'Return exactly:',
+    'Summary:',
+    'Suspected files:',
+    'Proposed change type:',
+    'Risk level:',
+    'Tests recommended:',
+    'Confidence:',
+    'Requires Codex fallback: yes/no',
     'Requires operator approval: yes',
-    'Mutation requested: no',
+    'Forbidden actions detected: none',
+    'Reasoning:',
     '',
     'Bounded Builder Workbench packet:',
     boundedPacket,
   ].join('\n');
 }
+
 
 export function resolveLocalAiRunnerResponseText(result = {}) {
   const data = result?.data || {};
@@ -61,6 +78,51 @@ export function resolveLocalAiRunnerResponseText(result = {}) {
 
 export function responseContainsMutationLanguage(text = '') {
   return LOCAL_AI_RUNNER_FORBIDDEN_PACKET_PATTERNS.some((pattern) => pattern.test(asText(text, '')));
+}
+
+const LOCAL_AI_RUNNER_REQUIRED_FIELDS = [
+  ['summary'],
+  ['suspected files', 'files suspected'],
+  ['proposed change type'],
+  ['risk level'],
+  ['tests recommended'],
+  ['confidence'],
+  ['requires codex fallback'],
+  ['requires operator approval'],
+  ['forbidden actions detected'],
+  ['reasoning'],
+];
+
+function hasLocalAiRunnerField(text, names = []) {
+  return names.some((name) => {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:^|\\n)\\s*(?:${escaped})\\s*[:=-]\\s*\\S`, 'i').test(text);
+  });
+}
+
+export function parseLocalAiRunnerWorkbenchReview(responseText = '') {
+  const boundedResponse = truncateRawResponse(responseText);
+  if (!boundedResponse) {
+    return { ok: false, status: 'empty', parsedResult: null, reason: 'Local AI response was empty.', boundedResponse };
+  }
+  if (responseContainsMutationLanguage(boundedResponse)) {
+    return { ok: false, status: 'mutation-language-blocked', parsedResult: null, reason: 'Local AI response contained mutation/autonomy language.', boundedResponse };
+  }
+  const missingFields = LOCAL_AI_RUNNER_REQUIRED_FIELDS.filter((names) => !hasLocalAiRunnerField(boundedResponse, names));
+  if (missingFields.length > 0) {
+    return {
+      ok: false,
+      status: 'malformed',
+      parsedResult: null,
+      reason: `Local AI response missing required Workbench field(s): ${missingFields.map((names) => names[0]).join(', ')}.`,
+      boundedResponse,
+    };
+  }
+  const parsedResult = parseBuilderWorkbenchResult(boundedResponse, { source: 'local-ai-runner' });
+  if (!parsedResult.safeForWorkbench) {
+    return { ok: false, status: parsedResult.resultStatus || 'blocked', parsedResult, reason: 'Local AI response failed Workbench safety parsing.', boundedResponse };
+  }
+  return { ok: true, status: 'parsed', parsedResult, reason: 'parsed', boundedResponse };
 }
 
 export async function discoverLocalAiRunnerModels({ providerConfigs = {}, runtimeConfig = null, fetchHealth = null } = {}) {
@@ -83,7 +145,7 @@ export async function discoverLocalAiRunnerModels({ providerConfigs = {}, runtim
   const models = uniqueModels(ollama.models || snapshot.models || []);
   return {
     ok: health?.ok === true && ollama.ok !== false && models.length > 0,
-    status: health?.ok === true && ollama.ok !== false ? 'succeeded' : 'failed',
+    status: health?.ok === true && ollama.ok !== false && models.length > 0 ? 'ready' : 'failed',
     models,
     selectedModel: models[0] || '',
     reason: ollama.reason || ollama.detail || (models.length ? 'ollama-models-discovered' : 'no-ollama-models-discovered'),
@@ -101,15 +163,15 @@ export async function runLocalAiWorkbenchReview({
   const resolvedRuntimeConfig = runtimeConfig || {};
   const resolvedSendPrompt = sendPromptImpl;
   if (typeof resolvedSendPrompt !== 'function') {
-    return { ok: false, status: 'blocked', selectedModel: asText(selectedModel, ''), blockedReason: 'Local AI Runner requires the Stephanos chat backend route.', responseText: '' };
+    return { ok: false, status: 'blocked', selectedModel: asText(selectedModel, ''), dispatchAttempted: true, requestSent: false, responseRetained: 'no', parseAttempted: 'no', parseResultStatus: 'blocked', blockedReason: 'Local AI Runner requires the Stephanos chat backend route.', errorMessage: '', responseText: '' };
   }
   const model = asText(selectedModel, '');
   const approvedModels = uniqueModels(availableModels);
   if (!model) {
-    return { ok: false, status: 'blocked', blockedReason: 'No approved Ollama model selected.', responseText: '' };
+    return { ok: false, status: 'blocked', selectedModel: model, dispatchAttempted: true, requestSent: false, responseRetained: 'no', parseAttempted: 'no', parseResultStatus: 'blocked', blockedReason: 'No approved Ollama model selected.', errorMessage: '', responseText: '' };
   }
   if (approvedModels.length > 0 && !approvedModels.includes(model)) {
-    return { ok: false, status: 'blocked', blockedReason: 'Selected Ollama model is not in the discovered approved model list.', responseText: '' };
+    return { ok: false, status: 'blocked', selectedModel: model, dispatchAttempted: true, requestSent: false, responseRetained: 'no', parseAttempted: 'no', parseResultStatus: 'blocked', blockedReason: 'Selected Ollama model is not in the discovered approved model list.', errorMessage: '', responseText: '' };
   }
 
   const prompt = buildLocalAiReviewPrompt(packet);
@@ -139,24 +201,39 @@ export async function runLocalAiWorkbenchReview({
     streamingMode: 'off',
     ollamaLoadMode: 'balanced',
   });
-  const responseText = resolveLocalAiRunnerResponseText(result);
-  if (!result?.ok || !responseText) {
+  const responseText = truncateRawResponse(resolveLocalAiRunnerResponseText(result));
+  if (!result?.ok) {
     return {
       ok: false,
       status: 'failed',
       selectedModel: model,
-      blockedReason: result?.data?.error || 'Local AI review returned no parseable response text.',
+      dispatchAttempted: true,
+      requestSent: true,
+      responseRetained: responseText ? 'yes' : 'no',
+      parseAttempted: 'no',
+      parseResultStatus: 'blocked',
+      blockedReason: result?.data?.error || 'Local AI review request failed.',
+      errorMessage: result?.data?.error || 'Local AI review request failed.',
       responseText,
       rawResult: result,
     };
   }
-  if (responseContainsMutationLanguage(responseText)) {
+  const parsed = parseLocalAiRunnerWorkbenchReview(responseText);
+  if (!parsed.ok) {
+    const mutationBlocked = parsed.status === 'mutation-language-blocked';
     return {
       ok: false,
-      status: 'blocked',
+      status: mutationBlocked ? 'blocked' : 'parse-failed',
       selectedModel: model,
-      blockedReason: 'Local AI response contained mutation/autonomy language; Workbench intake kept fallback needed.',
-      responseText,
+      dispatchAttempted: true,
+      requestSent: true,
+      responseRetained: responseText ? 'yes' : 'no',
+      parseAttempted: 'yes',
+      parseResultStatus: parsed.status,
+      blockedReason: mutationBlocked ? 'mutation-language-blocked' : parsed.reason,
+      errorMessage: mutationBlocked ? '' : parsed.reason,
+      responseText: parsed.boundedResponse,
+      parsedResult: parsed.parsedResult,
       rawResult: result,
     };
   }
@@ -164,8 +241,15 @@ export async function runLocalAiWorkbenchReview({
     ok: true,
     status: 'succeeded',
     selectedModel: model,
-    blockedReason: '',
-    responseText,
+    dispatchAttempted: true,
+    requestSent: true,
+    responseRetained: 'yes',
+    parseAttempted: 'yes',
+    parseResultStatus: 'parsed',
+    blockedReason: 'none',
+    errorMessage: '',
+    responseText: parsed.boundedResponse,
+    parsedResult: parsed.parsedResult,
     rawResult: result,
   };
 }

@@ -251,6 +251,9 @@ test('protected canon: builder mesh stays in Builder Harness and uses determinis
   assert.match(supportSnapshotSource, /Local AI Runner Selected Model:/);
   assert.match(supportSnapshotSource, /Local AI Runner Last Run Result:/);
   assert.match(supportSnapshotSource, /Local AI Runner Last Run Blocked Reason:/);
+  assert.match(supportSnapshotSource, /Local AI Runner Dispatch Attempted:/);
+  assert.match(supportSnapshotSource, /Local AI Runner Request Sent:/);
+  assert.match(supportSnapshotSource, /Local AI Runner Parse Attempted:/);
   assert.match(supportSnapshotSource, /Local AI Runner Parsed Result Present:/);
   assert.match(supportSnapshotSource, /Workbench Answer Context Used:/);
   assert.match(supportSnapshotSource, /Workbench Output Viewport Status:/);

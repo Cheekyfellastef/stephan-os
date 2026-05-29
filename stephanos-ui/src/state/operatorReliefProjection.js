@@ -103,17 +103,23 @@ export function parseBuilderWorkbenchResult(rawText = '', { source = 'local-ai-r
 }
 
 function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput = {}, implementationRequested = false } = {}) {
-  const localRaw = asText(workbenchInput.localAiReviewText || workbenchInput.localAiReviewResult || '', '');
+  const localRaw = asText(workbenchInput.localAiReviewText || workbenchInput.localAiReviewResult || workbenchInput.localAiRunnerRawResponse || '', '');
   const openClawRaw = asText(workbenchInput.openClawResearchText || workbenchInput.openClawResearchResult || workbenchInput.openClawPatchPlanText || '', '');
-  const localAiReview = localRaw ? parseBuilderWorkbenchResult(localRaw, { source: 'local-ai-review' }) : null;
   const localAiRunnerRawResponse = truncateWorkbenchText(workbenchInput.localAiRunnerRawResponse || localRaw || '');
+  const runnerParseStatusInput = asText(workbenchInput.localAiRunnerParseResultStatus || '', '');
+  const runnerParseAttempted = asText(workbenchInput.localAiRunnerParseAttempted || (localAiRunnerRawResponse ? 'yes' : 'no'), 'no');
+  const runnerParseSucceeded = runnerParseStatusInput === 'parsed' || (!runnerParseStatusInput && localRaw && !workbenchInput.localAiRunnerRawResponse);
+  const localAiReviewSource = workbenchInput.localAiRunnerRawResponse ? 'local-ai-runner' : 'local-ai-review';
+  const localAiReview = localRaw && runnerParseSucceeded ? parseBuilderWorkbenchResult(localRaw, { source: localAiReviewSource }) : null;
   const localAiRunnerParseInputLength = localAiRunnerRawResponse.length || localRaw.length || 0;
-  const localAiRunnerParseResultStatus = localAiReview
-    ? (localAiReview.safeForWorkbench ? 'parsed' : (localAiReview.resultStatus || 'malformed-or-blocked'))
-    : (localAiRunnerRawResponse ? 'malformed-or-unparsed' : 'empty');
+  const localAiRunnerParseResultStatus = runnerParseStatusInput
+    || (localAiReview ? (localAiReview.safeForWorkbench ? 'parsed' : (localAiReview.resultStatus || 'malformed-or-blocked')) : (localAiRunnerRawResponse ? 'malformed-or-unparsed' : 'empty'));
   const localAiRunnerStatus = asText(workbenchInput.localAiRunnerStatus || (workbenchInput.localAiRunnerRequested ? 'running' : 'idle'), 'idle');
   const localAiRunnerLastRunResult = asText(workbenchInput.localAiRunnerLastRunResult || (localAiReview ? localAiReview.resultStatus : 'none'), 'none');
   const localAiRunnerLastRunBlockedReason = asText(workbenchInput.localAiRunnerLastRunBlockedReason || (localAiReview && !localAiReview.safeForWorkbench ? 'Local AI response failed Workbench safety parsing.' : ''), '');
+  const localAiRunnerErrorMessage = asText(workbenchInput.localAiRunnerErrorMessage || '', '');
+  const localAiRunnerDispatchAttempted = asText(workbenchInput.localAiRunnerDispatchAttempted || (workbenchInput.localAiReviewRequested ? 'yes' : 'no'), 'no');
+  const localAiRunnerRequestSent = asText(workbenchInput.localAiRunnerRequestSent || 'no', 'no');
   const openClawResearch = openClawRaw ? parseBuilderWorkbenchResult(openClawRaw, { source: 'openclaw-research-patch-plan' }) : null;
   const parsedResults = [localAiReview, openClawResearch].filter(Boolean);
   const forbidden = parsedResults.flatMap((result) => result.forbiddenActionsDetected || []);
@@ -154,8 +160,12 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     localAiRunnerAvailableModels: asList(workbenchInput.localAiRunnerAvailableModels),
     localAiRunnerLastRunResult: forbidden.length > 0 && localAiReview ? 'blocked' : localAiRunnerLastRunResult,
     localAiRunnerLastRunBlockedReason: forbidden.length > 0 && localAiReview ? 'Forbidden mutation/autonomy language detected in Local AI Runner response.' : (localAiRunnerLastRunBlockedReason || 'none'),
+    localAiRunnerErrorMessage: localAiRunnerErrorMessage || 'none',
+    localAiRunnerDispatchAttempted,
+    localAiRunnerRequestSent,
     localAiRunnerParsedResultPresent: Boolean(localAiReview && localAiReview.safeForWorkbench),
-    localAiRunnerResponseRetained: localAiRunnerRawResponse ? 'yes' : 'no',
+    localAiRunnerResponseRetained: asText(workbenchInput.localAiRunnerResponseRetained || (localAiRunnerRawResponse ? 'yes' : 'no'), 'no'),
+    localAiRunnerParseAttempted: runnerParseAttempted,
     localAiRunnerParseInputLength,
     localAiRunnerParseResultStatus,
     localAiRunnerRawResponse,
