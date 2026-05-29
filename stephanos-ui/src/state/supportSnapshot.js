@@ -12,6 +12,80 @@ function asText(value, fallback = 'n/a') {
   return text.length > 0 ? text : fallback;
 }
 
+
+function isDefaultWorkbenchMetadataValue(key = '', value = '') {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return true;
+  if (key === 'builder_workbench_status') return normalized === 'unavailable';
+  if (key === 'builder_workbench_codex_fallback_still_needed' || key === 'builder_workbench_deterministic_answer_used') return normalized === 'no';
+  if (key === 'builder_workbench_codex_fallback_reason') return normalized === 'none';
+  if (key === 'builder_workbench_next_best_action') return normalized === 'copy local ai/openclaw packets and paste bounded read-only results.';
+  return ['none', 'unknown', 'n/a'].includes(normalized);
+}
+
+function pickWorkbenchTruth(key, defaultValue, ...candidates) {
+  const meaningful = candidates.find((value) => !isDefaultWorkbenchMetadataValue(key, value));
+  if (meaningful !== undefined && meaningful !== null && String(meaningful).trim() !== '') return meaningful;
+  const present = candidates.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
+  return present !== undefined ? present : defaultValue;
+}
+
+function buildWorkbenchMetadataFromProjection(workbench = {}, source = 'none') {
+  const projection = workbench && typeof workbench === 'object' ? workbench : {};
+  const present = Object.keys(projection).length > 0;
+  return {
+    builder_workbench_status: projection.workbenchStatus || 'unavailable',
+    builder_workbench_local_ai_review_result_present: projection.localAiReviewResultPresent ? 'yes' : 'no',
+    builder_workbench_openclaw_research_result_present: projection.openClawResearchResultPresent ? 'yes' : 'no',
+    builder_workbench_patch_plan_present: projection.patchPlanPresent ? 'yes' : 'no',
+    builder_workbench_patch_plan_risk: projection.patchPlanRisk || 'unknown',
+    builder_workbench_approval_required_before_patch: projection.approvalRequiredBeforePatch === false ? 'no' : 'yes',
+    builder_workbench_codex_fallback_still_needed: projection.codexFallbackStillNeeded ? 'yes' : 'no',
+    builder_workbench_codex_fallback_reason: projection.codexFallbackReason || 'none',
+    builder_workbench_next_best_action: projection.nextBestAction || 'Copy Local AI/OpenClaw packets and paste bounded read-only results.',
+    builder_workbench_projection_source: present ? source : 'none',
+    builder_workbench_metadata_source: present ? 'support-snapshot-live-operator-relief-projection' : 'none',
+    builder_workbench_deterministic_answer_used: 'no',
+    builder_workbench_projection_drop_boundary: present ? 'none' : 'builder-workbench-projection-not-found-in-live-runtime-status',
+  };
+}
+
+function resolveLiveBuilderWorkbenchProjection(runtimeStatus = {}) {
+  const candidates = [
+    ['runtimeStatus.operatorReliefProjection.builderMeshProjection.builderWorkbenchProjection', runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection],
+    ['runtimeStatus.runtimeContext.operatorReliefProjection.builderMeshProjection.builderWorkbenchProjection', runtimeStatus?.runtimeContext?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection],
+    ['runtimeStatus.missionState.operatorReliefProjection.builderMeshProjection.builderWorkbenchProjection', runtimeStatus?.missionState?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection],
+    ['runtimeStatus.inputMissionState.operatorReliefProjection.builderMeshProjection.builderWorkbenchProjection', runtimeStatus?.inputMissionState?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection],
+    ['runtimeStatus.builderMeshProjection.builderWorkbenchProjection', runtimeStatus?.builderMeshProjection?.builderWorkbenchProjection],
+  ];
+  const found = candidates.find(([, value]) => value && typeof value === 'object' && Object.keys(value).length > 0);
+  return found ? { source: found[0], projection: found[1] } : { source: 'none', projection: {} };
+}
+
+function resolveBuilderWorkbenchSupportMetadata(executionMetadata = {}, runtimeStatus = {}) {
+  const live = resolveLiveBuilderWorkbenchProjection(runtimeStatus);
+  const liveMetadata = buildWorkbenchMetadataFromProjection(live.projection, live.source);
+  const fields = [
+    ['builder_workbench_status', 'unavailable'],
+    ['builder_workbench_local_ai_review_result_present', 'no'],
+    ['builder_workbench_openclaw_research_result_present', 'no'],
+    ['builder_workbench_patch_plan_present', 'no'],
+    ['builder_workbench_patch_plan_risk', 'unknown'],
+    ['builder_workbench_approval_required_before_patch', 'yes'],
+    ['builder_workbench_codex_fallback_still_needed', 'no'],
+    ['builder_workbench_codex_fallback_reason', 'none'],
+    ['builder_workbench_next_best_action', 'Copy Local AI/OpenClaw packets and paste bounded read-only results.'],
+    ['builder_workbench_projection_source', 'none'],
+    ['builder_workbench_metadata_source', 'none'],
+    ['builder_workbench_deterministic_answer_used', 'no'],
+    ['builder_workbench_projection_drop_boundary', 'none'],
+  ];
+  return Object.fromEntries(fields.map(([key, fallback]) => [
+    key,
+    pickWorkbenchTruth(key, fallback, executionMetadata?.[key], liveMetadata[key]),
+  ]));
+}
+
 function asList(value) {
   if (!Array.isArray(value) || value.length === 0) {
     return ['- n/a'];
@@ -1038,6 +1112,7 @@ export function buildSupportSnapshot({
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
     : {};
+  const builderWorkbenchSupportMetadata = resolveBuilderWorkbenchSupportMetadata(executionMetadata, runtimeStatus);
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
     ? runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll
@@ -2396,15 +2471,19 @@ export function buildSupportSnapshot({
     `Builder Mesh Metadata Source: ${asText(executionMetadata?.builder_mesh_metadata_source, 'none')}`,
     `Builder Mesh Deterministic Answer Used: ${asText(executionMetadata?.builder_mesh_deterministic_answer_used || executionMetadata?.builder_mesh_answer_used_live_projection, 'no')}`,
     `Builder Mesh Projection Drop Boundary: ${asText(executionMetadata?.builder_mesh_projection_drop_boundary, 'none')}`,
-    `Builder Workbench Status: ${asText(executionMetadata?.builder_workbench_status, 'unavailable')}`,
-    `Local AI Review Result Present: ${asText(executionMetadata?.builder_workbench_local_ai_review_result_present, 'no')}`,
-    `OpenClaw Research Result Present: ${asText(executionMetadata?.builder_workbench_openclaw_research_result_present, 'no')}`,
-    `Patch Plan Present: ${asText(executionMetadata?.builder_workbench_patch_plan_present, 'no')}`,
-    `Patch Plan Risk: ${asText(executionMetadata?.builder_workbench_patch_plan_risk, 'unknown')}`,
-    `Approval Required Before Patch: ${asText(executionMetadata?.builder_workbench_approval_required_before_patch, 'yes')}`,
-    `Codex Fallback Still Needed: ${asText(executionMetadata?.builder_workbench_codex_fallback_still_needed, 'no')}`,
-    `Codex Fallback Reason: ${asText(executionMetadata?.builder_workbench_codex_fallback_reason, 'none')}`,
-    `Builder Workbench Next Best Action: ${asText(executionMetadata?.builder_workbench_next_best_action, 'Copy Local AI/OpenClaw packets and paste bounded read-only results.')}`,
+    `Builder Workbench Status: ${asText(builderWorkbenchSupportMetadata.builder_workbench_status, 'unavailable')}`,
+    `Local AI Review Result Present: ${asText(builderWorkbenchSupportMetadata.builder_workbench_local_ai_review_result_present, 'no')}`,
+    `OpenClaw Research Result Present: ${asText(builderWorkbenchSupportMetadata.builder_workbench_openclaw_research_result_present, 'no')}`,
+    `Patch Plan Present: ${asText(builderWorkbenchSupportMetadata.builder_workbench_patch_plan_present, 'no')}`,
+    `Patch Plan Risk: ${asText(builderWorkbenchSupportMetadata.builder_workbench_patch_plan_risk, 'unknown')}`,
+    `Approval Required Before Patch: ${asText(builderWorkbenchSupportMetadata.builder_workbench_approval_required_before_patch, 'yes')}`,
+    `Codex Fallback Still Needed: ${asText(builderWorkbenchSupportMetadata.builder_workbench_codex_fallback_still_needed, 'no')}`,
+    `Codex Fallback Reason: ${asText(builderWorkbenchSupportMetadata.builder_workbench_codex_fallback_reason, 'none')}`,
+    `Builder Workbench Next Best Action: ${asText(builderWorkbenchSupportMetadata.builder_workbench_next_best_action, 'Copy Local AI/OpenClaw packets and paste bounded read-only results.')}`,
+    `Builder Workbench Projection Source: ${asText(builderWorkbenchSupportMetadata.builder_workbench_projection_source, 'none')}`,
+    `Builder Workbench Metadata Source: ${asText(builderWorkbenchSupportMetadata.builder_workbench_metadata_source, 'none')}`,
+    `Builder Workbench Deterministic Answer Used: ${asText(builderWorkbenchSupportMetadata.builder_workbench_deterministic_answer_used, 'no')}`,
+    `Builder Workbench Projection Drop Boundary: ${asText(builderWorkbenchSupportMetadata.builder_workbench_projection_drop_boundary, 'none')}`,
     `Chat Context UI Reality Status: ${asText(chatContextUiRealityStatus, 'UNKNOWN')}`,
     `Chat Context Mission State: ${asText(chatContextMissionState, 'unknown')}`,
     `Chat Context Next Action: ${asText(chatContextNextAction, 'Submit a Command Deck message to generate context pack.')}`,
