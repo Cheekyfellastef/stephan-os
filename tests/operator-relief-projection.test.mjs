@@ -412,6 +412,10 @@ Requires operator approval: yes`,
   assert.equal(workbench.localAiRunnerStatus, 'succeeded');
   assert.equal(workbench.localAiRunnerSelectedModel, 'llama3.2:3b');
   assert.equal(workbench.localAiRunnerParsedResultPresent, true);
+  assert.equal(workbench.workbenchAnswerContextUsed, 'no');
+  assert.equal(workbench.workbenchParsedResultSource, 'local-ai-review');
+  assert.equal(workbench.localAiRunnerParseResultStatus, 'parsed');
+  assert.equal(workbench.workbenchOutputViewportStatus, 'usable-css-hooks-present');
   assert.equal(workbench.codexFallbackStillNeeded, false);
   assert.equal(workbench.verdict, 'operator-review-before-patch');
   assert.equal(r.builderMeshProjection.recommendedBuilder, 'operator');
@@ -437,6 +441,7 @@ test('Builder Workbench Local AI Runner malformed/empty result does not break UI
   assert.equal(workbench.workbenchStatus, 'ready');
   assert.equal(workbench.localAiRunnerStatus, 'failed');
   assert.equal(workbench.localAiRunnerParsedResultPresent, false);
+  assert.equal(workbench.localAiRunnerParseResultStatus, 'empty');
   assert.equal(workbench.codexFallbackStillNeeded, false);
 });
 

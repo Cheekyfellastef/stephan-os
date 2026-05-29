@@ -53,12 +53,17 @@ test('Builder Mesh final metadata preserves live projection truth through attach
   assert.match(source, /builder_workbench_metadata_source:/);
   assert.match(source, /builder_workbench_deterministic_answer_used:/);
   assert.match(source, /builder_workbench_projection_drop_boundary:/);
+  assert.match(source, /workbench_answer_context_used:/);
+  assert.match(source, /workbench_answer_source:/);
+  assert.match(source, /local_ai_runner_parse_input_length:/);
+  assert.match(source, /workbench_output_viewport_status:/);
 });
 
 test('Command Deck Builder Mesh answer can report local AI review findings from Workbench projection', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /const workbench = projection\?\.builderWorkbenchProjection \|\| \{\};/);
-  assert.match(source, /const localAiSummary = workbench\?\.localAiReview\?\.summary \|\| 'no local AI review result pasted yet';/);
+  assert.match(source, /const localAiParsedPresent = workbench\?\.localAiRunnerParsedResultPresent === true/);
+  assert.match(source, /no parsed local AI review result is present yet/);
   assert.match(source, /Local AI review summary:/);
   assert.match(source, /Workbench Codex fallback still needed:/);
   assert.match(source, /buildBuilderWorkbenchExecutionMetadata\(projection\?\.builderWorkbenchProjection \|\| \{\}, \{/);
@@ -78,7 +83,7 @@ test('useAIConsole includes project awareness truth contract normalization helpe
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /export function normalizeProjectAwarenessMetadata/);
   assert.match(source, /if \(hasMeaningfulField && status === 'unavailable'\) status = 'degraded';/);
-  assert.match(source, /const planningOrRoutingMode = responseMode === 'mission-planning' \|\| responseMode === 'work-routing';/);
+  assert.match(source, /const planningOrRoutingMode = responseMode === 'mission-planning' \|\| responseMode === 'work-routing' \|\| responseMode === 'builder-mesh-routing' \|\| responseMode === 'workbench-routing';/);
   assert.match(source, /if \(planningOrRoutingMode && status !== 'unavailable'\) sourceSet\.add\('projectAwareness'\);/);
   assert.match(source, /chatContextMissionState = boundedMissionKnown \|\| 'degraded';/);
   assert.match(source, /project awareness current mission summary unavailable/);

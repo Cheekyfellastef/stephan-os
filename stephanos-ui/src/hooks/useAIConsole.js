@@ -295,7 +295,7 @@ function buildWorkRoutingPromptContext(chatContextPack = null, prompt = '', mode
     .map((value) => String(value || '').trim().toLowerCase())
     .filter(Boolean);
   const responseMode = responseModeCandidates.find((value) => value !== 'direct-answer') || (responseModeCandidates[0] || '');
-  if (responseMode !== 'work-routing') {
+  if (!['work-routing', 'builder-mesh-routing', 'workbench-routing'].includes(responseMode)) {
     return { block: '', injected: 'no', sources: [], packStatus: 'unavailable' };
   }
   const missionIntelligence = chatContextPack?.contextForPrompt?.missionIntelligence || chatContextPack?.compactSummary?.missionIntelligence || {};
@@ -374,7 +374,7 @@ export function normalizeProjectAwarenessMetadata({
   const sourceSet = new Set(Array.isArray(compact?.contextSourcesUsed) ? compact.contextSourcesUsed.filter(Boolean) : []);
   const agentRealityLoopProjection = missionState?.operatorReliefProjection?.agentRealityLoopProjection || missionState?.agentRealityLoopProjection || {};
   const agentRealityLoopAvailable = Object.keys(agentRealityLoopProjection).length > 0;
-  const planningOrRoutingMode = responseMode === 'mission-planning' || responseMode === 'work-routing';
+  const planningOrRoutingMode = responseMode === 'mission-planning' || responseMode === 'work-routing' || responseMode === 'builder-mesh-routing' || responseMode === 'workbench-routing';
   if (planningOrRoutingMode && status !== 'unavailable') sourceSet.add('projectAwareness');
   if (planningOrRoutingMode && boundedMissionKnown) sourceSet.add('missionIntelligence');
   if (agentRealityLoopAvailable) sourceSet.add(missionState?.operatorReliefProjection?.agentRealityLoopProjection ? 'operator-relief-bridge' : 'mission-brain');
@@ -419,6 +419,13 @@ function buildBuilderWorkbenchExecutionMetadata(builderWorkbenchProjection = {},
     local_ai_runner_last_run_result: workbench?.localAiRunnerLastRunResult || 'none',
     local_ai_runner_last_run_blocked_reason: workbench?.localAiRunnerLastRunBlockedReason || 'none',
     local_ai_runner_parsed_result_present: workbench?.localAiRunnerParsedResultPresent ? 'yes' : 'no',
+    workbench_answer_context_used: workbench?.workbenchAnswerContextUsed || 'no',
+    workbench_answer_source: workbench?.workbenchAnswerSource || 'none',
+    workbench_parsed_result_source: workbench?.workbenchParsedResultSource || workbench?.localAiReview?.source || workbench?.openClawResearch?.source || 'none',
+    local_ai_runner_response_retained: workbench?.localAiRunnerResponseRetained || (workbench?.localAiRunnerRawResponse ? 'yes' : 'no'),
+    local_ai_runner_parse_input_length: String(workbench?.localAiRunnerParseInputLength ?? (workbench?.localAiRunnerRawResponse || '').length ?? 0),
+    local_ai_runner_parse_result_status: workbench?.localAiRunnerParseResultStatus || workbench?.localAiReview?.resultStatus || 'empty',
+    workbench_output_viewport_status: workbench?.workbenchOutputViewportStatus || 'unknown',
     builder_workbench_openclaw_research_result_present: workbench?.openClawResearchResultPresent ? 'yes' : 'no',
     builder_workbench_patch_plan_present: workbench?.patchPlanPresent ? 'yes' : 'no',
     builder_workbench_patch_plan_risk: workbench?.patchPlanRisk || 'unknown',
@@ -477,7 +484,7 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const builderMeshProjectionSource = builderMeshProjectionObjectPresent
     ? (chatContextPack?.inputMissionState?.operatorReliefProjection?.builderMeshProjection ? 'operator-relief-bridge' : 'mission-state')
     : (builderMeshContextPresent ? (builderMeshContext?.projectionSource || 'chat-context-mission-intelligence') : 'none');
-  const builderMeshContextRecognized = matchedRule === 'builder-mesh-routing' || /builderMesh/.test(String(projectAwarenessTruth.chatContextSourcesUsed.join('|')));
+  const builderMeshContextRecognized = ['builder-mesh-routing', 'workbench-routing'].includes(matchedRule) || /builderMesh/.test(String(projectAwarenessTruth.chatContextSourcesUsed.join('|')));
   const firstMatchingRule = String(chatContextPack?.firstMatchingRule || compact?.firstMatchingRule || '').trim().toLowerCase();
   const explicitIntentMatched = String(chatContextPack?.contextForPrompt?.intentClassifierMatchedRule || '').trim().toLowerCase() === 'agent-reality-loop';
   const agentRealityLoopTermsDetected = /\b(agent reality loop( v1)?|reality loop|agent loop|codex\/openclaw coordination loop|proof loop|merge readiness loop)\b/.test(
@@ -722,6 +729,11 @@ function isDefaultChatContextValue(key = '', value = '') {
   if (key === 'builder_workbench_codex_fallback_still_needed' || key === 'builder_workbench_deterministic_answer_used') return normalized === 'no';
   if (key === 'builder_workbench_codex_fallback_reason') return normalized === 'none';
   if (key === 'builder_workbench_next_best_action') return normalized === 'copy local ai/openclaw packets and paste bounded read-only results.';
+  if (['workbench_answer_context_used', 'local_ai_runner_response_retained'].includes(key)) return normalized === 'no';
+  if (['workbench_answer_source', 'workbench_parsed_result_source'].includes(key)) return normalized === 'none';
+  if (key === 'local_ai_runner_parse_input_length') return normalized === '0';
+  if (key === 'local_ai_runner_parse_result_status') return normalized === 'empty';
+  if (key === 'workbench_output_viewport_status') return normalized === 'unknown';
   if (key.startsWith('builder_workbench_')) return ['none', 'unknown', 'n/a'].includes(normalized);
   return ['none', 'unknown', 'n/a'].includes(normalized);
 }
@@ -1138,6 +1150,13 @@ export function buildChatContextAttachmentMetadata({ normalizedExecutionMetadata
     ['local_ai_runner_last_run_result', 'none'],
     ['local_ai_runner_last_run_blocked_reason', 'none'],
     ['local_ai_runner_parsed_result_present', 'no'],
+    ['workbench_answer_context_used', 'no'],
+    ['workbench_answer_source', 'none'],
+    ['workbench_parsed_result_source', 'none'],
+    ['local_ai_runner_response_retained', 'no'],
+    ['local_ai_runner_parse_input_length', '0'],
+    ['local_ai_runner_parse_result_status', 'empty'],
+    ['workbench_output_viewport_status', 'unknown'],
     ['builder_workbench_openclaw_research_result_present', 'no'],
     ['builder_workbench_patch_plan_present', 'no'],
     ['builder_workbench_patch_plan_risk', 'unknown'],
@@ -2525,10 +2544,19 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
   const blockers = Array.isArray(projection?.blockers) ? projection.blockers.length : 0;
   const warnings = Array.isArray(projection?.warnings) ? projection.warnings.length : 0;
   const workbench = projection?.builderWorkbenchProjection || {};
-  const localAiSummary = workbench?.localAiReview?.summary || 'no local AI review result pasted yet';
+  const localAiParsedPresent = workbench?.localAiRunnerParsedResultPresent === true || (workbench?.localAiReview?.safeForWorkbench === true && workbench?.localAiReview?.resultStatus === 'parsed');
+  const localAiParseStatus = workbench?.localAiRunnerParseResultStatus || workbench?.localAiReview?.resultStatus || (workbench?.localAiRunnerRawResponse ? 'malformed-or-blocked' : 'empty');
+  const localAiSummary = localAiParsedPresent
+    ? (workbench?.localAiReview?.summary || 'parsed local AI review result is present but summary is empty')
+    : (workbench?.localAiRunnerRawResponse
+      ? `runner response retained but no parsed local AI review result is present yet; parse status ${localAiParseStatus}`
+      : 'no parsed local AI review result is present yet');
   const localAiRunnerStatus = workbench?.localAiRunnerStatus || 'idle';
   const localAiRunnerModel = workbench?.localAiRunnerSelectedModel || 'none';
-  const openClawSummary = workbench?.openClawResearch?.summary || 'no OpenClaw research / patch plan pasted yet';
+  const openClawParsedPresent = workbench?.openClawResearch?.safeForWorkbench === true;
+  const openClawSummary = openClawParsedPresent
+    ? (workbench?.openClawResearch?.summary || 'parsed OpenClaw result is present but summary is empty')
+    : 'no parsed OpenClaw research / patch plan result is present yet';
   const degradedNotice = String(projectAwareness?.status || '').trim().toLowerCase() === 'degraded'
     ? '\n\nSome mission details may be incomplete because Project Awareness is degraded.'
     : '';
@@ -2546,6 +2574,7 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
     `Builder Workbench status: ${workbench?.workbenchStatus || 'unavailable'}; local AI review present: ${workbench?.localAiReviewResultPresent ? 'yes' : 'no'}; OpenClaw result present: ${workbench?.openClawResearchResultPresent ? 'yes' : 'no'}; patch plan present: ${workbench?.patchPlanPresent ? 'yes' : 'no'}.`,
     `Local AI Runner status: ${localAiRunnerStatus}; selected model: ${localAiRunnerModel}; last result: ${workbench?.localAiRunnerLastRunResult || 'none'}; parsed result present: ${workbench?.localAiRunnerParsedResultPresent ? 'yes' : 'no'}.`,
     `Local AI review summary: ${localAiSummary}.`,
+    `Workbench parsed result source: ${workbench?.workbenchParsedResultSource || workbench?.localAiReview?.source || 'none'}.`,
     `OpenClaw research / patch plan summary: ${openClawSummary}.`,
     `Workbench Codex fallback still needed: ${workbench?.codexFallbackStillNeeded ? 'yes' : 'no'} — ${workbench?.codexFallbackReason || 'none'}.`,
     `Next operator action: ${projection?.nextBestAction || workbench?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.'}`,
@@ -2592,6 +2621,8 @@ function createBuilderMeshDeterministicResult({
             deterministicAnswerUsed: 'yes',
             projectionDropBoundary: 'none',
           }),
+          workbench_answer_context_used: 'yes',
+          workbench_answer_source: 'builder-workbench-projection',
           builder_mesh_projection_source: 'deterministic-answer-live-projection',
           builder_mesh_metadata_source: 'deterministic-result-execution-metadata',
           builder_mesh_projection_drop_boundary: 'none',
@@ -4675,7 +4706,7 @@ export function useAIConsole() {
       const builderMeshDeterministicEligible = !routeUnavailableOutcome
         && !identityRecallDeterministicResult
         && !agentRealityLoopDeterministicResult
-        && String(chatContextPack?.intentClassifierMatchedRule || '').trim().toLowerCase() === 'builder-mesh-routing'
+        && ['builder-mesh-routing', 'workbench-routing'].includes(String(chatContextPack?.intentClassifierMatchedRule || '').trim().toLowerCase())
         && Object.keys(builderMeshProjectionForAnswer).length > 0;
       const builderMeshDeterministicResult = builderMeshDeterministicEligible
         ? createBuilderMeshDeterministicResult({

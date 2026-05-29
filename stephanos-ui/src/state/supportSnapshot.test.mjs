@@ -3934,6 +3934,13 @@ test('support snapshot aligns Builder Workbench truth from live projection when 
             localAiRunnerLastRunResult: 'succeeded',
             localAiRunnerLastRunBlockedReason: 'none',
             localAiRunnerParsedResultPresent: true,
+            workbenchAnswerContextUsed: 'no',
+            workbenchAnswerSource: 'builder-workbench-projection',
+            workbenchParsedResultSource: 'local-ai-review',
+            localAiRunnerResponseRetained: 'yes',
+            localAiRunnerParseInputLength: 64,
+            localAiRunnerParseResultStatus: 'parsed',
+            workbenchOutputViewportStatus: 'usable-css-hooks-present',
             openClawResearchResultPresent: false,
             patchPlanPresent: false,
             patchPlanRisk: 'unknown',
@@ -3977,6 +3984,13 @@ test('support snapshot aligns Builder Workbench truth from live projection when 
   assert.match(snapshot, /Local AI Runner Last Run Result: succeeded/);
   assert.match(snapshot, /Local AI Runner Last Run Blocked Reason: none/);
   assert.match(snapshot, /Local AI Runner Parsed Result Present: yes/);
+  assert.match(snapshot, /Workbench Answer Context Used: no/);
+  assert.match(snapshot, /Workbench Answer Source: builder-workbench-projection/);
+  assert.match(snapshot, /Workbench Parsed Result Source: local-ai-review/);
+  assert.match(snapshot, /Local AI Runner Response Retained: yes/);
+  assert.match(snapshot, /Local AI Runner Parse Input Length: 64/);
+  assert.match(snapshot, /Local AI Runner Parse Result Status: parsed/);
+  assert.match(snapshot, /Workbench Output Viewport Status: usable-css-hooks-present/);
   assert.match(snapshot, /Local AI Review Result Present: no/);
   assert.match(snapshot, /OpenClaw Research Result Present: no/);
   assert.match(snapshot, /Patch Plan Present: no/);

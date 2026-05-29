@@ -4959,3 +4959,75 @@ pre {
     grid-row: auto;
   }
 }
+
+/* Builder Workbench usability guardrails: keep operational review windows readable despite compact pane density. */
+.builder-workbench-field-label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.builder-workbench-result-textarea {
+  min-height: 180px;
+  max-height: min(46vh, 28rem);
+  resize: vertical;
+  overflow: auto;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.builder-workbench-output-card {
+  border: 1px solid rgba(102, 174, 255, 0.36);
+  border-radius: 10px;
+  background: rgba(5, 13, 26, 0.72);
+  padding: 0.6rem;
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.builder-workbench-output-card--raw,
+.builder-workbench-raw-output {
+  min-height: 160px;
+}
+
+.builder-workbench-output-card--parsed,
+.builder-workbench-parsed-output {
+  min-height: 140px;
+}
+
+.builder-workbench-raw-output,
+.builder-workbench-parsed-output {
+  max-height: min(42vh, 26rem);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.builder-workbench-summary-row {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.builder-workbench-summary-text {
+  display: block;
+  min-height: 3.2rem;
+  max-height: min(24vh, 12rem);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+@media (max-width: 720px) {
+  .builder-workbench-result-textarea {
+    min-height: 180px;
+    max-height: 50vh;
+  }
+
+  .builder-workbench-raw-output,
+  .builder-workbench-parsed-output {
+    max-height: 44vh;
+  }
+}
