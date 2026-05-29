@@ -288,6 +288,124 @@ function buildCoBuilderLoopProjection({ missionIntelligenceSummary = {}, harness
   };
 }
 
+
+function buildBuilderHarnessProjection({
+  missionIntelligenceSummary = {},
+  harnessAgentProjection = {},
+  agentWorkRoutingProjection = {},
+  coBuilderLoopProjection = {},
+  verificationReturnIntake = {},
+  missionBrainNextAction = {},
+  supportSnapshot = {},
+  prEvidenceModel = {},
+  browserProof = {},
+} = {}) {
+  const warnings = [];
+  const blockers = [];
+  const protectedCanonClauses = asList(harnessAgentProjection.protectedCanonClauses);
+  const requiredProof = Array.from(new Set([
+    ...asList(agentWorkRoutingProjection.requiredProof),
+    ...asList(verificationReturnIntake.missingEvidence),
+  ]));
+  const localAiConnected = supportSnapshot.localAiConnected === true
+    || supportSnapshot.localAvailable === true
+    || supportSnapshot.localNodeReachable === true
+    || String(supportSnapshot.provider || supportSnapshot.selectedProvider || supportSnapshot.effectiveProvider || '').toLowerCase() === 'ollama';
+  const githubInspectable = Boolean(
+    supportSnapshot.githubIntegrationStatus === 'connected'
+    || supportSnapshot.githubConnected === true
+    || prEvidenceModel.prUrl
+    || prEvidenceModel.pullRequestUrl
+    || prEvidenceModel.branch
+    || prEvidenceModel.prBranch
+    || asList(prEvidenceModel.changedFiles).length > 0
+  );
+  const killSwitchEngaged = supportSnapshot.openClawKillSwitchEngaged === true
+    || supportSnapshot.openClawKillSwitchState === 'engaged'
+    || supportSnapshot.openClawKillSwitchMode === 'engaged';
+
+  if (!protectedCanonClauses.length) blockers.push('Harness protected canon clauses are missing.');
+  if (killSwitchEngaged) warnings.push('OpenClaw kill switch is engaged; keep builder harness read-only and execution disabled.');
+  if (!localAiConnected) warnings.push('Local AI connection is not reality-proven; review packet is copy-only until a local model is verified.');
+  if (!githubInspectable) warnings.push('GitHub/PR inspection is not connected; use copied packet with an external GitHub review route.');
+  if (browserProof.required === true && asList(browserProof.missingItems).length > 0) blockers.push('Browser proof is required and missing.');
+
+  const repoInspectionCapability = protectedCanonClauses.length > 0 ? 'available-read-only' : 'blocked-missing-harness-contract';
+  const patchPlanningCapability = blockers.length === 0 ? 'available-proposal-only' : 'limited-until-blockers-clear';
+  const testExecutionCapability = 'operator-approved-command-only';
+  const browserProofCapability = browserProof.required === true ? 'required-operator-browser-proof' : 'available-when-ui-claim-exists';
+  const builderHarnessStatus = blockers.length > 0 ? 'blocked-read-only' : 'ready-read-only';
+  const connectedLocalAiStatus = localAiConnected ? 'connected-read-only-review' : 'not-proven-copy-packet-only';
+  const githubIntegrationStatus = githubInspectable ? 'inspectable-read-only' : 'not-connected-copy-packet-only';
+  const nextBestAction = blockers.length > 0
+    ? 'Resolve blockers, then copy the appropriate read-only builder packet for operator-approved review.'
+    : 'Copy OpenClaw/local AI/GitHub builder packet for read-only review or proposal planning; operator approval remains required before any repo mutation.';
+
+  const packetBase = {
+    missionSummary: missionIntelligenceSummary.currentMissionSummary || missionBrainNextAction.missionObjective || 'Stephanos builder harness mission.',
+    nextBestAction,
+    allowedReadOnlyScope: asList(harnessAgentProjection.allowedFileScopes),
+    forbiddenMutations: ['No uncontrolled repo writes.', 'No generated dist/runtime artifacts.', 'No auto-merge.', 'No execution without explicit existing approval route.'],
+    protectedCanonClauses,
+    requiredProof,
+    operatorApprovalRequired: true,
+  };
+
+  return {
+    builderHarnessStatus,
+    connectedLocalAiStatus,
+    githubIntegrationStatus,
+    repoInspectionCapability,
+    patchPlanningCapability,
+    testExecutionCapability,
+    browserProofCapability,
+    approvalRequired: true,
+    nextBestAction,
+    blockers,
+    warnings,
+    canOpenClawBuild: patchPlanningCapability === 'available-proposal-only' ? 'proposal-only-read-only' : 'blocked',
+    canLocalAisHelp: localAiConnected ? 'yes-review-only' : 'not-proven-copy-packet-only',
+    canGithubBeInspected: githubInspectable ? 'yes-read-only' : 'not-connected-copy-packet-only',
+    canPatchBeProposed: patchPlanningCapability === 'available-proposal-only' ? 'yes-proposal-only' : 'blocked',
+    approvalNeeded: 'Operator approval required before mutation, execution, or merge.',
+    noAutoMerge: true,
+    mutationAllowed: false,
+    codexRole: 'fallback-specialist-only',
+    copyLocalAiReviewPacket: {
+      ...packetBase,
+      packetType: 'local_ai_review_packet',
+      localAiStatus: connectedLocalAiStatus,
+      requestedOutput: 'Review findings, risk notes, suggested tests, and proof gaps only. Do not write files.',
+    },
+    copyOpenClawPatchPlanPacket: {
+      ...packetBase,
+      packetType: 'openclaw_patch_plan_packet',
+      openClawStatus: builderHarnessStatus,
+      requestedOutput: 'Bounded patch plan with file map, risks, tests, and browser proof plan. Proposal only; no mutation.',
+      existingPolicyHarnessPreserved: true,
+      killSwitchRespected: true,
+    },
+    copyGithubPrInspectionPacket: {
+      ...packetBase,
+      packetType: 'github_pr_inspection_packet',
+      githubIntegrationStatus,
+      requestedOutput: 'Inspect changed files, PR hygiene, generated artifact risk, and review proof gaps. No merge action.',
+      prEvidence: {
+        branch: prEvidenceModel.branch || prEvidenceModel.prBranch || 'unknown',
+        prUrl: prEvidenceModel.prUrl || prEvidenceModel.pullRequestUrl || 'unknown',
+        changedFiles: asList(prEvidenceModel.changedFiles),
+      },
+    },
+    copyCodexFallbackPacket: {
+      ...packetBase,
+      packetType: 'codex_fallback_specialist_packet',
+      codexRole: 'fallback-specialist-only',
+      requestedOutput: 'Use Codex only for bounded specialist implementation after operator approval and after non-Codex review packets are considered.',
+      requiredCommands: asList(coBuilderLoopProjection.requiredProof).concat(['targeted tests', 'npm run stephanos:build', 'npm run stephanos:verify', 'npm run stephanos:guard:pr-clean']),
+    },
+  };
+}
+
 function buildAgentRealityLoopProjection({
   missionState = 'active',
   missionBrainNextAction = {},
@@ -697,6 +815,17 @@ export function deriveOperatorReliefProjection(models = {}) {
       : (protectedCanonWarning ? 'Protected canon clauses need review before merge recommendation.' : (missionApprovalQueue.topRecommendation?.title || 'Review harness contract.')),
   };
   const coBuilderLoopProjection = buildCoBuilderLoopProjection({ missionIntelligenceSummary, harnessAgentProjection, agentWorkRoutingProjection, verificationReturnIntake, missionBrainNextAction, supportSnapshot });
+  const builderHarnessProjection = buildBuilderHarnessProjection({
+    missionIntelligenceSummary,
+    harnessAgentProjection,
+    agentWorkRoutingProjection,
+    coBuilderLoopProjection,
+    verificationReturnIntake,
+    missionBrainNextAction,
+    supportSnapshot,
+    prEvidenceModel,
+    browserProof: missionHandoff.browserProofChecklist,
+  });
   const agentRealityLoopProjection = buildAgentRealityLoopProjection({
     missionState,
     missionBrainNextAction,
@@ -717,5 +846,5 @@ export function deriveOperatorReliefProjection(models = {}) {
   });
 
   return { status: missionState,
-    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection, missionIntelligenceSummary, coBuilderLoopProjection, agentRealityLoopProjection, operatorApprovedRepairLoopProjection };
+    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection, missionIntelligenceSummary, coBuilderLoopProjection, builderHarnessProjection, agentRealityLoopProjection, operatorApprovedRepairLoopProjection };
 }

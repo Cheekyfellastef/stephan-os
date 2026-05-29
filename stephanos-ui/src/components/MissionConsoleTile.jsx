@@ -179,6 +179,10 @@ function MissionConsoleTile({
   const { copyState: nextCodexPromptCopyState, setCopyState: setNextCodexPromptCopyState } = useClipboardButtonState();
   const { copyState: codexPacketCopyState, setCopyState: setCodexPacketCopyState } = useClipboardButtonState();
   const { copyState: operatorChecklistCopyState, setCopyState: setOperatorChecklistCopyState } = useClipboardButtonState();
+  const { copyState: localAiReviewPacketCopyState, setCopyState: setLocalAiReviewPacketCopyState } = useClipboardButtonState();
+  const { copyState: openClawPatchPlanPacketCopyState, setCopyState: setOpenClawPatchPlanPacketCopyState } = useClipboardButtonState();
+  const { copyState: githubPrInspectionPacketCopyState, setCopyState: setGithubPrInspectionPacketCopyState } = useClipboardButtonState();
+  const { copyState: codexFallbackPacketCopyState, setCopyState: setCodexFallbackPacketCopyState } = useClipboardButtonState();
   const { copyState: perfCopyState, setCopyState: setPerfCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
   const [targetId, setTargetId] = useState('stephanos');
@@ -1144,8 +1148,9 @@ function MissionConsoleTile({
           <ul className="mission-console__status-list">
             <li><strong>Current Mission:</strong> {operatorReliefProjection.missionIntelligenceSummary?.currentMissionSummary || operatorReliefProjection.mission.objective}</li>
             <li><strong>Next Best Action:</strong> {operatorReliefProjection.missionIntelligenceSummary?.nextBestAction || operatorReliefProjection.missionBrainNextAction?.nextBestAction || 'Review mission evidence'}</li>
-            <li><strong>Can Codex Help?</strong> {operatorReliefProjection.missionIntelligenceSummary?.codexReady || 'unknown'}</li>
+            <li><strong>Can Codex Help?</strong> fallback/specialist only — {operatorReliefProjection.missionIntelligenceSummary?.codexReady || 'unknown'}</li>
             <li><strong>Can OpenClaw Help?</strong> {operatorReliefProjection.missionIntelligenceSummary?.openClawReady || 'unknown'}</li>
+            <li><strong>Codex role:</strong> {operatorReliefProjection.builderHarnessProjection?.codexRole || 'fallback-specialist-only'}</li>
             <li><strong>Operator Decision Needed:</strong> {operatorReliefProjection.missionIntelligenceSummary?.operatorDecisionRequired === false ? 'no' : 'yes'}</li>
           </ul>
           <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(JSON.stringify({
@@ -1277,6 +1282,36 @@ function MissionConsoleTile({
             <CollapsiblePanel panelId="missionConsoleWorkRoutingPacketPreviewPanel" title="Work Routing Packet Payload Preview" isOpen={workRoutingPayloadOpen} onToggle={() => dispatchPanelToggle('missionConsoleWorkRoutingPacketPreviewPanel')}>
               <pre>{JSON.stringify(operatorReliefProjection.agentWorkRoutingProjection?.copyCodexWorkPacket || {}, null, 2)}</pre>
             </CollapsiblePanel>
+          </CollapsiblePanel>
+          <CollapsiblePanel panelId="missionConsoleBuilderHarnessPanel" title="OpenClaw Builder Harness V1" isOpen={uiLayout.missionConsoleBuilderHarnessPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleBuilderHarnessPanel')}>
+            <ul className="mission-console__status-list">
+              <li><strong>Builder harness status:</strong> {operatorReliefProjection.builderHarnessProjection?.builderHarnessStatus || 'unknown'}</li>
+              <li><strong>Can OpenClaw build?</strong> {operatorReliefProjection.builderHarnessProjection?.canOpenClawBuild || 'unknown'}</li>
+              <li><strong>Can local AIs help?</strong> {operatorReliefProjection.builderHarnessProjection?.canLocalAisHelp || 'unknown'} · {operatorReliefProjection.builderHarnessProjection?.connectedLocalAiStatus || 'unknown'}</li>
+              <li><strong>Can GitHub be inspected?</strong> {operatorReliefProjection.builderHarnessProjection?.canGithubBeInspected || 'unknown'} · {operatorReliefProjection.builderHarnessProjection?.githubIntegrationStatus || 'unknown'}</li>
+              <li><strong>Can a patch be proposed?</strong> {operatorReliefProjection.builderHarnessProjection?.canPatchBeProposed || 'unknown'} · {operatorReliefProjection.builderHarnessProjection?.patchPlanningCapability || 'unknown'}</li>
+              <li><strong>What approval is needed?</strong> {operatorReliefProjection.builderHarnessProjection?.approvalNeeded || 'Operator approval required before mutation, execution, or merge.'}</li>
+              <li><strong>Repo inspection capability:</strong> {operatorReliefProjection.builderHarnessProjection?.repoInspectionCapability || 'unknown'}</li>
+              <li><strong>Test execution capability:</strong> {operatorReliefProjection.builderHarnessProjection?.testExecutionCapability || 'unknown'}</li>
+              <li><strong>Browser proof capability:</strong> {operatorReliefProjection.builderHarnessProjection?.browserProofCapability || 'unknown'}</li>
+              <li><strong>Next best action:</strong> {operatorReliefProjection.builderHarnessProjection?.nextBestAction || 'Review builder harness readiness.'}</li>
+              <li><strong>Mutation allowed:</strong> {operatorReliefProjection.builderHarnessProjection?.mutationAllowed ? 'yes' : 'no'}</li>
+              <li><strong>No auto-merge:</strong> {operatorReliefProjection.builderHarnessProjection?.noAutoMerge ? 'yes' : 'unknown'}</li>
+              <li><strong>Warnings:</strong> {(operatorReliefProjection.builderHarnessProjection?.warnings || []).join(' · ') || 'none'}</li>
+              <li><strong>Blockers:</strong> {(operatorReliefProjection.builderHarnessProjection?.blockers || []).join(' · ') || 'none'}</li>
+            </ul>
+            <button type="button" className={`status-panel-copy-button ${localAiReviewPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderHarnessProjection?.copyLocalAiReviewPacket || {}, null, 2), setLocalAiReviewPacketCopyState, 'MissionConsoleTile.copyLocalAiReviewPacket')}>
+              {localAiReviewPacketCopyState === COPY_STATE.SUCCESS ? 'Local AI Review Packet Copied' : localAiReviewPacketCopyState === COPY_STATE.FAILURE ? 'Copy Local AI Review Packet failed' : 'Copy Local AI Review Packet'}
+            </button>
+            <button type="button" className={`status-panel-copy-button ${openClawPatchPlanPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderHarnessProjection?.copyOpenClawPatchPlanPacket || {}, null, 2), setOpenClawPatchPlanPacketCopyState, 'MissionConsoleTile.copyOpenClawPatchPlanPacket')}>
+              {openClawPatchPlanPacketCopyState === COPY_STATE.SUCCESS ? 'OpenClaw Patch Plan Packet Copied' : openClawPatchPlanPacketCopyState === COPY_STATE.FAILURE ? 'Copy OpenClaw Patch Plan Packet failed' : 'Copy OpenClaw Patch Plan Packet'}
+            </button>
+            <button type="button" className={`status-panel-copy-button ${githubPrInspectionPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderHarnessProjection?.copyGithubPrInspectionPacket || {}, null, 2), setGithubPrInspectionPacketCopyState, 'MissionConsoleTile.copyGithubPrInspectionPacket')}>
+              {githubPrInspectionPacketCopyState === COPY_STATE.SUCCESS ? 'GitHub PR Inspection Packet Copied' : githubPrInspectionPacketCopyState === COPY_STATE.FAILURE ? 'Copy GitHub PR Inspection Packet failed' : 'Copy GitHub PR Inspection Packet'}
+            </button>
+            <button type="button" className={`status-panel-copy-button ${codexFallbackPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderHarnessProjection?.copyCodexFallbackPacket || {}, null, 2), setCodexFallbackPacketCopyState, 'MissionConsoleTile.copyCodexFallbackPacket')}>
+              {codexFallbackPacketCopyState === COPY_STATE.SUCCESS ? 'Codex Fallback Packet Copied' : codexFallbackPacketCopyState === COPY_STATE.FAILURE ? 'Copy Codex Fallback Packet failed' : 'Copy Codex Fallback Packet'}
+            </button>
           </CollapsiblePanel>
           <CollapsiblePanel panelId="missionConsoleCoBuilderLoopPanel" title="Co-Builder Loop V1" isOpen={uiLayout.missionConsoleCoBuilderLoopPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleCoBuilderLoopPanel')}>
             <ul className="mission-console__status-list">
