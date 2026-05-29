@@ -269,6 +269,15 @@ function MissionConsoleTile({
   const [showRepairPromptBody, setShowRepairPromptBody] = useState(false);
   const [showMissionHandoffJson, setShowMissionHandoffJson] = useState(false);
   const [missionApprovalDecisionState, setMissionApprovalDecisionState] = useState(() => ({ selectedDecision: 'hold', timestamp: '', sourceQueueItemId: '' }));
+  const [builderWorkbenchInput, setBuilderWorkbenchInput] = useState(() => ({
+    activePacketType: 'none',
+    activePacketTarget: 'zero-cost-builder-mesh',
+    localAiReviewRequested: false,
+    openClawResearchRequested: false,
+    localAiReviewText: '',
+    openClawResearchText: '',
+  }));
+  const [showBuilderWorkbenchVerdict, setShowBuilderWorkbenchVerdict] = useState(false);
 
   const operatorReliefPresenceSignatureRef = useRef('');
   const operatorReliefProjectionPublishSignatureRef = useRef('');
@@ -434,9 +443,10 @@ function MissionConsoleTile({
     proofOfDoneModel: { verificationJudge: verificationReturnAdjudication, browserChecksObserved: verificationReturnAdjudication?.parsed?.proofClaim ? ['tile opens'] : [], consoleErrors: verificationReturnAdjudication?.parsed?.hasFailure ? ['Verification return reports failure/error.'] : [] },
     operatorDecisionQueue: intentToBuild?.missionSpec?.operatorDecisionConsole || {},
     memoryLibrarianQueue: memoryLibrarian || {},
-    supportSnapshot: runtimeStatusModel || {},
+    supportSnapshot: { ...(runtimeStatusModel || {}), builderWorkbenchInput },
+    builderWorkbenchInput,
     });
-  }, [intentToBuild, missionEvidenceLedger, verificationReturnAdjudication, memoryLibrarian, runtimeStatusModel]);
+  }, [intentToBuild, missionEvidenceLedger, verificationReturnAdjudication, memoryLibrarian, runtimeStatusModel, builderWorkbenchInput]);
 
   useEffect(() => {
     const nextProjection = operatorReliefProjection || null;
@@ -1372,20 +1382,36 @@ function MissionConsoleTile({
                 <li><strong>Blockers / warnings:</strong> {(operatorReliefProjection.builderMeshProjection?.blockers || []).length} blocker(s) · {(operatorReliefProjection.builderMeshProjection?.warnings || []).length} warning(s)</li>
                 <li><strong>Approval before mutation:</strong> {operatorReliefProjection.builderMeshProjection?.approvalRequiredBeforeMutation ? 'required' : 'not reported'}</li>
               </ul>
-              <button type="button" className={`status-panel-copy-button ${localAiReviewPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.localAiReviewPacket || {}, null, 2), setLocalAiReviewPacketCopyState, 'MissionConsoleTile.copyBuilderMeshLocalAiReviewPacket')}>
-                {localAiReviewPacketCopyState === COPY_STATE.SUCCESS ? 'Local AI Review Packet Copied' : localAiReviewPacketCopyState === COPY_STATE.FAILURE ? 'Copy Local AI Review Packet failed' : 'Copy Local AI Review Packet'}
-              </button>
-              <button type="button" className={`status-panel-copy-button ${openClawPatchPlanPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.openClawResearchPacket || {}, null, 2), setOpenClawPatchPlanPacketCopyState, 'MissionConsoleTile.copyBuilderMeshOpenClawResearchPacket')}>
-                {openClawPatchPlanPacketCopyState === COPY_STATE.SUCCESS ? 'OpenClaw Research Packet Copied' : openClawPatchPlanPacketCopyState === COPY_STATE.FAILURE ? 'Copy OpenClaw Research Packet failed' : 'Copy OpenClaw Research Packet'}
-              </button>
+              <CollapsiblePanel panelId="missionConsoleBuilderWorkbenchPanel" title="Zero-Cost Builder Workbench V1" titleAs="h6" description={operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.workbenchStatus || 'ready'} isOpen={uiLayout.missionConsoleBuilderWorkbenchPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleBuilderWorkbenchPanel')}>
+                <ul className="mission-console__status-list">
+                  <li><strong>Builder Workbench Status:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.workbenchStatus || 'unknown'}</li>
+                  <li><strong>Local AI Review Result Present:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiReviewResultPresent ? 'yes' : 'no'}</li>
+                  <li><strong>OpenClaw Research Result Present:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawResearchResultPresent ? 'yes' : 'no'}</li>
+                  <li><strong>Patch Plan Present:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.patchPlanPresent ? 'yes' : 'no'} · risk {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.patchPlanRisk || 'unknown'}</li>
+                  <li><strong>Approval Required Before Patch:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.approvalRequiredBeforePatch ? 'yes' : 'no'}</li>
+                  <li><strong>Codex Fallback Still Needed:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.codexFallbackStillNeeded ? 'yes' : 'no'} · {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.codexFallbackReason || 'none'}</li>
+                </ul>
+                <button type="button" className={`status-panel-copy-button ${localAiReviewPacketCopyState}`} onClick={() => { setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'local-ai-review', activePacketTarget: operatorReliefProjection.builderMeshProjection?.recommendedBuilder || 'local-ai', localAiReviewRequested: true, localAiReviewRequestedAt: new Date().toISOString() })); copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.localAiReviewPacket || {}, null, 2), setLocalAiReviewPacketCopyState, 'MissionConsoleTile.copyBuilderMeshLocalAiReviewPacket'); }}>
+                  {localAiReviewPacketCopyState === COPY_STATE.SUCCESS ? 'Local AI Review Packet Copied' : localAiReviewPacketCopyState === COPY_STATE.FAILURE ? 'Copy Local AI Review Packet failed' : 'Copy Local AI Review Packet'}
+                </button>
+                <button type="button" className={`status-panel-copy-button ${openClawPatchPlanPacketCopyState}`} onClick={() => { setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-research-patch-plan', activePacketTarget: 'openclaw', openClawResearchRequested: true, openClawResearchRequestedAt: new Date().toISOString() })); copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.openClawResearchPacket || {}, null, 2), setOpenClawPatchPlanPacketCopyState, 'MissionConsoleTile.copyBuilderMeshOpenClawResearchPacket'); }}>
+                  {openClawPatchPlanPacketCopyState === COPY_STATE.SUCCESS ? 'OpenClaw Research Packet Copied' : openClawPatchPlanPacketCopyState === COPY_STATE.FAILURE ? 'Copy OpenClaw Research Packet failed' : 'Copy OpenClaw Research Packet'}
+                </button>
+                <label className="mission-console__field-label">Paste Local AI Review Result<textarea value={builderWorkbenchInput.localAiReviewText} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'local-ai-review', localAiReviewText: event.target.value }))} placeholder="Paste local AI read-only review output here." /></label>
+                <label className="mission-console__field-label">Paste OpenClaw Research / Patch Plan Result<textarea value={builderWorkbenchInput.openClawResearchText} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-research-patch-plan', openClawResearchText: event.target.value }))} placeholder="Paste OpenClaw research or patch plan output here." /></label>
+                <button type="button" className="status-panel-copy-button" onClick={() => setShowBuilderWorkbenchVerdict((value) => !value)}>{showBuilderWorkbenchVerdict ? 'Hide Workbench Verdict' : 'Show Workbench Verdict'}</button>
+                {showBuilderWorkbenchVerdict ? <pre>{JSON.stringify(operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection || {}, null, 2)}</pre> : null}
+                <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.operatorApprovalChecklist || {}, null, 2), setOperatorChecklistCopyState, 'MissionConsoleTile.copyBuilderWorkbenchOperatorApprovalChecklist')}>
+                  {operatorChecklistCopyState === COPY_STATE.SUCCESS ? 'Operator Approval Checklist Copied' : operatorChecklistCopyState === COPY_STATE.FAILURE ? 'Copy Operator Approval Checklist failed' : 'Copy Operator Approval Checklist'}
+                </button>
+                {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.codexFallbackStillNeeded ? (
+                  <button type="button" className={`status-panel-copy-button ${codexFallbackPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.codexFallbackPacket || {}, null, 2), setCodexFallbackPacketCopyState, 'MissionConsoleTile.copyBuilderWorkbenchCodexFallbackPacket')}>
+                    {codexFallbackPacketCopyState === COPY_STATE.SUCCESS ? 'Codex Fallback Packet Copied' : codexFallbackPacketCopyState === COPY_STATE.FAILURE ? 'Copy Codex Fallback Packet failed' : 'Copy Codex Fallback Packet'}
+                  </button>
+                ) : null}
+              </CollapsiblePanel>
               <button type="button" className={`status-panel-copy-button ${githubPrInspectionPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.githubInspectionPacket || {}, null, 2), setGithubPrInspectionPacketCopyState, 'MissionConsoleTile.copyBuilderMeshGithubInspectionPacket')}>
                 {githubPrInspectionPacketCopyState === COPY_STATE.SUCCESS ? 'GitHub Inspection Packet Copied' : githubPrInspectionPacketCopyState === COPY_STATE.FAILURE ? 'Copy GitHub Inspection Packet failed' : 'Copy GitHub Inspection Packet'}
-              </button>
-              <button type="button" className={`status-panel-copy-button ${codexFallbackPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.codexFallbackPacket || {}, null, 2), setCodexFallbackPacketCopyState, 'MissionConsoleTile.copyBuilderMeshCodexFallbackPacket')}>
-                {codexFallbackPacketCopyState === COPY_STATE.SUCCESS ? 'Codex Fallback Packet Copied' : codexFallbackPacketCopyState === COPY_STATE.FAILURE ? 'Copy Codex Fallback Packet failed' : 'Copy Codex Fallback Packet'}
-              </button>
-              <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.builderMeshProjection?.copyPackets?.operatorApprovalChecklist || {}, null, 2), setOperatorChecklistCopyState, 'MissionConsoleTile.copyBuilderMeshOperatorApprovalChecklist')}>
-                {operatorChecklistCopyState === COPY_STATE.SUCCESS ? 'Operator Approval Checklist Copied' : operatorChecklistCopyState === COPY_STATE.FAILURE ? 'Copy Operator Approval Checklist failed' : 'Copy Operator Approval Checklist'}
               </button>
             </CollapsiblePanel>
             <ul className="mission-console__status-list">

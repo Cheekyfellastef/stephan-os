@@ -338,6 +338,7 @@ export function buildChatContextPack(input = {}) {
       blockers: Array.isArray(builderMeshProjection.blockers) ? builderMeshProjection.blockers : [],
       warnings: Array.isArray(builderMeshProjection.warnings) ? builderMeshProjection.warnings : [],
       nextBestAction: builderMeshProjection.nextBestAction || 'Review Builder Mesh truth in Operator Relief.',
+      builderWorkbench: builderMeshProjection.builderWorkbenchProjection || {},
       copyPacketNames: builderMeshProjection.copyPackets ? Object.keys(builderMeshProjection.copyPackets) : [],
     } : undefined,
     coBuilderLoop: missionPlanningTask ? {

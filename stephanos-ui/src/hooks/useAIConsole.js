@@ -436,6 +436,7 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     || {};
   const matchedRule = String(chatContextPack?.intentClassifierMatchedRule || compact?.intentClassifierMatchedRule || '').trim().toLowerCase();
   const builderMeshContext = compact?.missionIntelligence?.builderMesh || {};
+  const builderWorkbenchProjection = builderMeshProjection?.builderWorkbenchProjection || builderMeshContext?.builderWorkbench || {};
   const builderMeshProjectionObjectPresent = Object.keys(builderMeshProjection).length > 0;
   const builderMeshContextPresent = Object.keys(builderMeshContext).length > 0;
   const builderMeshContextReportsProjection = String(builderMeshContext?.projectionAvailable || '').trim().toLowerCase() === 'yes';
@@ -491,6 +492,15 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     builder_mesh_openclaw_can_help: builderMeshProjection?.openClawCanHelp || builderMeshContext?.openClawCanHelp || 'unknown',
     builder_mesh_github_can_help: builderMeshProjection?.githubCanHelp || builderMeshContext?.githubCanHelp || 'unknown',
     builder_mesh_next_best_action: builderMeshProjection?.nextBestAction || builderMeshContext?.nextBestAction || 'Review Builder Mesh truth.',
+    builder_workbench_status: builderWorkbenchProjection?.workbenchStatus || 'unavailable',
+    builder_workbench_local_ai_review_result_present: builderWorkbenchProjection?.localAiReviewResultPresent ? 'yes' : 'no',
+    builder_workbench_openclaw_research_result_present: builderWorkbenchProjection?.openClawResearchResultPresent ? 'yes' : 'no',
+    builder_workbench_patch_plan_present: builderWorkbenchProjection?.patchPlanPresent ? 'yes' : 'no',
+    builder_workbench_patch_plan_risk: builderWorkbenchProjection?.patchPlanRisk || 'unknown',
+    builder_workbench_approval_required_before_patch: builderWorkbenchProjection?.approvalRequiredBeforePatch === false ? 'no' : 'yes',
+    builder_workbench_codex_fallback_still_needed: builderWorkbenchProjection?.codexFallbackStillNeeded ? 'yes' : 'no',
+    builder_workbench_codex_fallback_reason: builderWorkbenchProjection?.codexFallbackReason || 'none',
+    builder_workbench_next_best_action: builderWorkbenchProjection?.nextBestAction || 'Copy Local AI/OpenClaw packets and paste bounded read-only results.',
     builder_mesh_projection_source: builderMeshProjectionSource,
     builder_mesh_metadata_source: builderMeshProjectionPresent ? 'chat-context-pack' : (builderMeshContextRecognized ? 'chat-context-context-only' : 'none'),
     builder_mesh_deterministic_answer_used: 'no',
@@ -2445,6 +2455,9 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
     : 'targeted tests, build, verify, PR-clean, and browser proof for UI claims';
   const blockers = Array.isArray(projection?.blockers) ? projection.blockers.length : 0;
   const warnings = Array.isArray(projection?.warnings) ? projection.warnings.length : 0;
+  const workbench = projection?.builderWorkbenchProjection || {};
+  const localAiSummary = workbench?.localAiReview?.summary || 'no local AI review result pasted yet';
+  const openClawSummary = workbench?.openClawResearch?.summary || 'no OpenClaw research / patch plan pasted yet';
   const degradedNotice = String(projectAwareness?.status || '').trim().toLowerCase() === 'degraded'
     ? '\n\nSome mission details may be incomplete because Project Awareness is degraded.'
     : '';
@@ -2459,7 +2472,11 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
     `Approval before mutation: ${projection?.approvalRequiredBeforeMutation === false ? 'not reported' : 'required'}.`,
     `Proof required before merge: ${proof}.`,
     `Blockers/warnings: ${blockers} blocker(s), ${warnings} warning(s).`,
-    `Next operator action: ${projection?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.'}`,
+    `Builder Workbench status: ${workbench?.workbenchStatus || 'unavailable'}; local AI review present: ${workbench?.localAiReviewResultPresent ? 'yes' : 'no'}; OpenClaw result present: ${workbench?.openClawResearchResultPresent ? 'yes' : 'no'}; patch plan present: ${workbench?.patchPlanPresent ? 'yes' : 'no'}.`,
+    `Local AI review summary: ${localAiSummary}.`,
+    `OpenClaw research / patch plan summary: ${openClawSummary}.`,
+    `Workbench Codex fallback still needed: ${workbench?.codexFallbackStillNeeded ? 'yes' : 'no'} — ${workbench?.codexFallbackReason || 'none'}.`,
+    `Next operator action: ${projection?.nextBestAction || workbench?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.'}`,
     `Copyable packets: ${packets.length ? packets.join(', ') : 'Local AI Review Packet, OpenClaw Research Packet, GitHub Inspection Packet, Codex Fallback Packet, Operator Approval Checklist'}.`,
     'This is read-only routing truth: it does not authorize local AI, OpenClaw, or Codex to mutate files without explicit operator approval.',
   ].join('\n') + degradedNotice;
@@ -2497,6 +2514,14 @@ function createBuilderMeshDeterministicResult({
           builder_mesh_openclaw_can_help: projection?.openClawCanHelp || 'unknown',
           builder_mesh_github_can_help: projection?.githubCanHelp || 'unknown',
           builder_mesh_next_best_action: projection?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.',
+          builder_workbench_status: projection?.builderWorkbenchProjection?.workbenchStatus || 'unavailable',
+          builder_workbench_local_ai_review_result_present: projection?.builderWorkbenchProjection?.localAiReviewResultPresent ? 'yes' : 'no',
+          builder_workbench_openclaw_research_result_present: projection?.builderWorkbenchProjection?.openClawResearchResultPresent ? 'yes' : 'no',
+          builder_workbench_patch_plan_present: projection?.builderWorkbenchProjection?.patchPlanPresent ? 'yes' : 'no',
+          builder_workbench_patch_plan_risk: projection?.builderWorkbenchProjection?.patchPlanRisk || 'unknown',
+          builder_workbench_approval_required_before_patch: projection?.builderWorkbenchProjection?.approvalRequiredBeforePatch === false ? 'no' : 'yes',
+          builder_workbench_codex_fallback_still_needed: projection?.builderWorkbenchProjection?.codexFallbackStillNeeded ? 'yes' : 'no',
+          builder_workbench_codex_fallback_reason: projection?.builderWorkbenchProjection?.codexFallbackReason || 'none',
           builder_mesh_projection_source: 'deterministic-answer-live-projection',
           builder_mesh_metadata_source: 'deterministic-result-execution-metadata',
           builder_mesh_projection_drop_boundary: 'none',
