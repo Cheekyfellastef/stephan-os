@@ -95,6 +95,10 @@ test('Zero-Cost Builder Mesh is hosted inside existing Builder Harness panel, no
   assert.match(source, /Run Local AI Review/);
   assert.match(source, /Local AI Runner Status/);
   assert.match(source, /Copy raw bounded response/);
+  assert.match(source, /localAiRunnerInFlightRef/);
+  assert.match(source, /runLocalAiWorkbenchReview\(\{/);
+  assert.match(source, /selectedModel,/);
+  assert.match(source, /onRequestSent:/);
   assert.match(source, /Paste OpenClaw Research \/ Patch Plan Result/);
   assert.match(source, /Show Workbench Verdict/);
   assert.match(source, /builder-workbench-result-textarea--local-ai/);

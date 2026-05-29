@@ -53,7 +53,7 @@ test('Local AI Runner blocks mutation language in responses', async () => {
 
 test('Local AI Runner refuses unapproved selected model', async () => {
   const result = await runLocalAiWorkbenchReview({
-    packet: {},
+    packet: { packetType: 'Local AI Review Packet' },
     selectedModel: 'unlisted:latest',
     availableModels: ['llama3.2:3b'],
     sendPromptImpl: async () => { throw new Error('should not send'); },
@@ -100,4 +100,70 @@ test('Local AI Runner malformed response produces parse-failed proof, not idle',
   assert.equal(result.parseAttempted, 'yes');
   assert.equal(result.parseResultStatus, 'malformed');
   assert.match(result.blockedReason, /missing required Workbench field/);
+});
+
+
+test('Local AI Runner preflight blocked path sets requestSent no with specific blocked reason', async () => {
+  let sent = false;
+  const result = await runLocalAiWorkbenchReview({
+    packet: { packetType: 'Local AI Review Packet' },
+    selectedModel: 'llama3.2:3b',
+    availableModels: [],
+    sendPromptImpl: async () => { sent = true; return { ok: true, data: { output_text: '' } }; },
+  });
+  assert.equal(sent, false);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.dispatchAttempted, true);
+  assert.equal(result.requestSent, false);
+  assert.match(result.blockedReason, /No discovered approved Ollama models/i);
+  assert.match(result.errorMessage, /No discovered approved Ollama models/i);
+  assert.equal(result.parseResultStatus, 'blocked');
+});
+
+test('Local AI Runner marks request sent before invoking local Ollama request', async () => {
+  const events = [];
+  const result = await runLocalAiWorkbenchReview({
+    packet: { packetType: 'Local AI Review Packet' },
+    selectedModel: 'llama3.2:3b',
+    availableModels: ['llama3.2:3b'],
+    onRequestSent: () => events.push('request-sent'),
+    sendPromptImpl: async () => {
+      events.push('ollama-call');
+      return { ok: false, data: { error: 'Ollama unavailable' } };
+    },
+  });
+  assert.deepEqual(events, ['request-sent', 'ollama-call']);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.requestSent, true);
+  assert.equal(result.parseResultStatus, 'failed');
+  assert.match(result.errorMessage, /Ollama unavailable/);
+});
+
+test('Local AI Runner request throw becomes failed terminal state, not stuck running', async () => {
+  const result = await runLocalAiWorkbenchReview({
+    packet: { packetType: 'Local AI Review Packet' },
+    selectedModel: 'llama3.2:3b',
+    availableModels: ['llama3.2:3b'],
+    sendPromptImpl: async () => { throw new Error('network down before response'); },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.requestSent, true);
+  assert.equal(result.parseAttempted, 'no');
+  assert.equal(result.parseResultStatus, 'failed');
+  assert.match(result.errorMessage, /network down/);
+});
+
+test('Local AI Runner timeout guard fails terminally after request-sent boundary', async () => {
+  const result = await runLocalAiWorkbenchReview({
+    packet: { packetType: 'Local AI Review Packet' },
+    selectedModel: 'llama3.2:3b',
+    availableModels: ['llama3.2:3b'],
+    requestTimeoutMs: 5,
+    sendPromptImpl: async () => new Promise(() => {}),
+  });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.requestSent, true);
+  assert.equal(result.parseResultStatus, 'failed');
+  assert.match(result.errorMessage, /timed out/);
 });

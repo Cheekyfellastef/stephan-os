@@ -1187,8 +1187,14 @@ function MissionConsoleTile({
     return () => { cancelled = true; };
   }, [runtimeStatusModel]);
 
+  const localAiRunnerInFlightRef = useRef(false);
+
   const runBuilderWorkbenchLocalAiReview = async () => {
-    const packet = operatorReliefProjection.builderMeshProjection?.copyPackets?.localAiReviewPacket || {};
+    if (localAiRunnerInFlightRef.current) return;
+    localAiRunnerInFlightRef.current = true;
+    const packet = operatorReliefProjection.builderMeshProjection?.copyPackets?.localAiReviewPacket || null;
+    const selectedModel = builderWorkbenchInput.localAiRunnerSelectedModel || '';
+    const availableModels = builderWorkbenchInput.localAiRunnerAvailableModels || [];
     setBuilderWorkbenchInput((prev) => ({
       ...prev,
       activePacketType: 'local-ai-review',
@@ -1208,10 +1214,17 @@ function MissionConsoleTile({
     try {
       const result = await runLocalAiWorkbenchReview({
         packet,
-        selectedModel: builderWorkbenchInput.localAiRunnerSelectedModel,
-        availableModels: builderWorkbenchInput.localAiRunnerAvailableModels,
+        selectedModel,
+        availableModels,
         runtimeConfig: runtimeStatusModel || {},
         sendPromptImpl: sendPrompt,
+        onRequestSent: () => setBuilderWorkbenchInput((prev) => ({
+          ...prev,
+          localAiRunnerStatus: 'running',
+          localAiRunnerLastRunResult: 'running',
+          localAiRunnerDispatchAttempted: 'yes',
+          localAiRunnerRequestSent: 'yes',
+        })),
       });
       setBuilderWorkbenchInput((prev) => ({
         ...prev,
@@ -1229,18 +1242,21 @@ function MissionConsoleTile({
         activePacketType: 'local-ai-review',
       }));
     } catch (error) {
+      const message = error?.message || 'Local AI review failed.';
       setBuilderWorkbenchInput((prev) => ({
         ...prev,
         localAiRunnerStatus: 'failed',
         localAiRunnerLastRunResult: 'failed',
-        localAiRunnerLastRunBlockedReason: error?.message || 'Local AI review failed.',
-        localAiRunnerErrorMessage: error?.message || 'Local AI review failed.',
+        localAiRunnerLastRunBlockedReason: 'none',
+        localAiRunnerErrorMessage: message,
         localAiRunnerDispatchAttempted: 'yes',
-        localAiRunnerRequestSent: 'no',
+        localAiRunnerRequestSent: prev.localAiRunnerRequestSent === 'yes' ? 'yes' : 'no',
         localAiRunnerResponseRetained: 'no',
         localAiRunnerParseAttempted: 'no',
-        localAiRunnerParseResultStatus: 'blocked',
+        localAiRunnerParseResultStatus: 'failed',
       }));
+    } finally {
+      localAiRunnerInFlightRef.current = false;
     }
   };
 
