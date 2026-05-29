@@ -310,7 +310,9 @@ test('Support Snapshot exposes provider drift diagnostics for Command Deck provi
   const statusPanelSource = await fs.readFile(path.join(srcRoot, 'components/StatusPanel.jsx'), 'utf8');
   const snapshotSource = await fs.readFile(path.join(srcRoot, 'state/supportSnapshot.js'), 'utf8');
   assert.match(statusPanelSource, /lastExecutionRequestedProvider: lastExecutionMetadata\?\.execution_requested_provider/);
+  assert.match(statusPanelSource, /lastExplicitProviderOverrideForRequest: lastExecutionMetadata\?\.explicit_provider_override_for_request/);
   assert.match(statusPanelSource, /Last Freshness Candidate Provider:/);
+  assert.match(snapshotSource, /Explicit Provider Override For Request:/);
   assert.match(snapshotSource, /Provider Drift Boundary:/);
   assert.match(snapshotSource, /Provider Drift Policy Source:/);
 });

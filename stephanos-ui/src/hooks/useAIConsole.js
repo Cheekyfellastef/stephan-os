@@ -20,6 +20,7 @@ import { createRuntimeWorkGovernor } from '../../../shared/runtime/runtimeWorkGo
 import { useAIStore } from '../state/aiStore';
 import { resolveUiReachabilityFromHealth, summarizeHomeNodeUsabilityTruth } from '../state/homeNodeUsabilityTruth.js';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView.js';
+import { reconcileFinalProviderDispatch } from '../state/providerRoutingTruth.js';
 import { buildContinuitySummary, getContinuityContext } from '../state/continuityRetrieval.js';
 import { assembleStephanosContext } from '../../../shared/ai/assembleStephanosContext.mjs';
 import { buildAiActionContext, readMissionDashboardStateFromMemory } from '../state/aiActionContext';
@@ -1101,10 +1102,14 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     || requestPayload.provider_override_reason
     || '',
   ).trim();
-  const requestedProviderIntent = requestPayload?.routeDecision?.defaultProvider
-    || requestTrace.ui_default_provider
-    || executionMetadata.ui_default_provider
-    || requestPayload.provider;
+  const explicitProviderOverrideForRequest = executionMetadata.explicit_provider_override_for_request
+    || requestTrace.explicit_provider_override_for_request
+    || requestPayload.explicit_provider_override_for_request
+    || requestPayload.routeDecision?.explicitProviderOverrideForRequest
+    || 'no';
+  const requestedProviderIntent = requestPayload?.routeDecision?.explicitProviderOverrideForRequest === 'yes'
+    ? (requestPayload?.routeDecision?.defaultProvider || requestTrace.ui_default_provider || executionMetadata.ui_default_provider || requestPayload.provider)
+    : (requestPayload?.routeDecision?.uiSelectedProvider || requestPayload.request_side_selected_provider || requestPayload.provider);
   const requestedProviderForRequest = executionMetadata.requested_provider_for_request
     || requestTrace.requested_provider_for_request
     || requestPayload.routeDecision?.requestedProviderForRequest
@@ -1383,6 +1388,7 @@ function normalizeExecutionMetadata({ data, requestPayload, backendDefaultProvid
     router_selected_provider: routerSelectedProvider || selectedProvider,
     submission_console: requestTrace.submission_console || requestPayload.submissionSource || executionMetadata.submission_console || 'stephanos-mission-console',
     submission_route: executionMetadata.submission_route || requestTrace.submission_route || requestPayload.submissionRoute || 'assistant-router',
+    explicit_provider_override_for_request: explicitProviderOverrideForRequest,
     requested_provider_intent: requestedProviderIntent,
     freshness_candidate_provider: executionMetadata.freshness_candidate_provider
       || requestTrace.freshness_candidate_provider
@@ -2522,6 +2528,10 @@ function buildTimeoutFailureExecutionMetadata({
     model_used: postGovernorModel,
     fallback_provider_used: null,
     provider_override_reason: requestPayload?.provider_override_reason || null,
+    explicit_provider_override_for_request: requestPayload?.explicit_provider_override_for_request || 'no',
+    final_pre_dispatch_provider_guard: requestPayload?.final_pre_dispatch_provider_guard || 'unknown',
+    execution_provider_policy_source: requestPayload?.execution_provider_policy_source || requestPayload?.routeDecision?.executionProviderPolicySource || null,
+    execution_provider_policy_reason: requestPayload?.execution_provider_policy_reason || requestPayload?.routeDecision?.executionProviderPolicyReason || null,
     ollama_load_mode: selectedProvider === 'ollama' ? (ollamaLoadGovernor?.ollamaLoadMode || ollamaLoadMode || 'balanced') : null,
     ollama_load_policy_applied: selectedProvider === 'ollama' ? Boolean(ollamaLoadGovernor?.policyApplied) : false,
     ollama_load_policy_reason: selectedProvider === 'ollama' ? (ollamaLoadGovernor?.policyReason || null) : null,
@@ -3738,16 +3748,27 @@ export function useAIConsole() {
         providerMismatch: requestRouteTruthView.providerMismatch === true,
         routeUsabilityVetoReason: requestRouteTruthView.routeUsabilityVetoReason || null,
       };
+      const normalizedRouteSelectedProvider = normalizeProviderKey(requestRouteTruthView.selectedProvider || provider || 'ollama');
+      const normalizedUiDefaultProviderForRequest = normalizeProviderKey(provider || 'ollama');
+      const explicitProviderOverrideForRequest = providerSelectionSource === 'saved:user-selection'
+        && normalizedUiDefaultProviderForRequest
+        && normalizedUiDefaultProviderForRequest !== 'ollama'
+        && normalizedUiDefaultProviderForRequest === normalizedRouteSelectedProvider;
       const freshnessRouteDecision = {
         ...resolveFreshnessRoutingDecision({
           classification: freshnessClassification,
           requestedProvider: provider,
+          uiSelectedProvider: normalizedRouteSelectedProvider,
+          explicitProviderOverrideForRequest,
           providerHealth: refreshedProviderHealth,
           runtimeStatus: requestRuntimeStatus,
           routeTruthView: requestRouteTruthView,
           providerConfigs: effectiveProviderConfigs,
         }),
         defaultProvider: provider,
+        uiDefaultProvider: normalizedUiDefaultProviderForRequest,
+        uiSelectedProvider: normalizedRouteSelectedProvider,
+        explicitProviderOverrideForRequest: explicitProviderOverrideForRequest ? 'yes' : 'no',
         requestRouteTruth,
       };
       activeRouteDecision = freshnessRouteDecision;
@@ -3774,12 +3795,12 @@ export function useAIConsole() {
           }),
         },
       }));
-      const requestedProvider = freshnessRouteDecision.requestedProviderForRequest
+      let requestedProvider = freshnessRouteDecision.requestedProviderForRequest
         || freshnessRouteDecision.selectedProvider
         || provider;
       const normalizedUiRequestedProvider = normalizeProviderKey(provider);
       const normalizedRequestProvider = normalizeProviderKey(requestedProvider);
-      const providerOverrideReason = normalizedRequestProvider !== normalizedUiRequestedProvider
+      let providerOverrideReason = normalizedRequestProvider !== normalizedUiRequestedProvider
         ? (
           freshnessRouteDecision.freshnessRouted === true
             ? `freshness-routing:${freshnessRouteDecision.policyReason || 'provider override required by freshness truth'}`
@@ -3992,6 +4013,7 @@ export function useAIConsole() {
         request_side_selected_provider: normalizedRequestProvider || requestedProvider,
         router_selected_provider: normalizeProviderKey(freshnessRouteDecision.selectedProvider || requestedProvider) || requestedProvider,
         provider_override_reason: providerOverrideReason,
+        explicit_provider_override_for_request: explicitProviderOverrideForRequest ? 'yes' : 'no',
         routeMode: routeModeForRequest,
         streamingMode,
         ollama_load_mode: normalizeProviderKey(requestedProvider) === 'ollama'
@@ -4142,6 +4164,40 @@ export function useAIConsole() {
       requestPayload.work_routing_prompt_block_length = workRoutingPromptContext.block.length;
       requestPayload.work_routing_prompt_sources = workRoutingPromptContext.sources.length ? workRoutingPromptContext.sources.join('|') : 'none';
       requestPayload.work_routing_pack_status = workRoutingPromptContext.packStatus;
+      const finalProviderDispatchPolicy = reconcileFinalProviderDispatch({
+        uiSelectedProvider: normalizedRouteSelectedProvider,
+        uiDefaultProvider: normalizedUiDefaultProviderForRequest,
+        requestedProviderIntent: explicitProviderOverrideForRequest ? normalizedUiDefaultProviderForRequest : normalizedRouteSelectedProvider,
+        freshnessCandidateProvider: freshnessRouteDecision.freshnessCandidateProvider || null,
+        executionRequestedProvider: requestPayload.execution_requested_provider || requestedProvider,
+        freshnessRequiredForTruth: freshnessClassification.freshnessNeed === 'high',
+        freshAnswerRequired: freshnessRouteDecision.selectedAnswerMode === 'fresh-cloud',
+        freshnessNeed: freshnessClassification.freshnessNeed || 'low',
+        explicitProviderOverrideForRequest,
+        fallbackPolicyTriggered: fallbackEnabled === true && freshnessRouteDecision.staleFallbackPermitted === true,
+        localRouteAvailable: freshnessRouteDecision.localRouteAvailable !== false,
+      });
+      if (finalProviderDispatchPolicy.executionRequestedProvider && finalProviderDispatchPolicy.executionRequestedProvider !== requestedProvider) {
+        requestedProvider = finalProviderDispatchPolicy.executionRequestedProvider;
+        requestPayload.provider = requestedProvider;
+        requestPayload.execution_requested_provider = requestedProvider;
+        requestPayload.requested_provider_for_request = requestedProvider;
+        requestPayload.request_side_selected_provider = requestedProvider;
+        requestPayload.router_selected_provider = requestedProvider;
+        requestPayload.providerConfig = effectiveProviderConfigs?.[requestedProvider] || requestPayload.providerConfig;
+        freshnessRouteDecision.selectedProvider = requestedProvider;
+        freshnessRouteDecision.requestedProviderForRequest = requestedProvider;
+        freshnessRouteDecision.finalPreDispatchGuardApplied = 'yes';
+        freshnessRouteDecision.executionProviderPolicySource = finalProviderDispatchPolicy.policySource;
+        freshnessRouteDecision.executionProviderPolicyReason = finalProviderDispatchPolicy.reason;
+        providerOverrideReason = null;
+        requestPayload.provider_override_reason = null;
+      } else {
+        freshnessRouteDecision.finalPreDispatchGuardApplied = 'no';
+      }
+      requestPayload.final_pre_dispatch_provider_guard = freshnessRouteDecision.finalPreDispatchGuardApplied;
+      requestPayload.execution_provider_policy_source = finalProviderDispatchPolicy.policySource;
+      requestPayload.execution_provider_policy_reason = finalProviderDispatchPolicy.reason;
       inFlightRequestPayload = requestPayload;
       setLastExecutionMetadata((prev) => attachChatContextToExecutionMetadata({
         executionMetadata: {
@@ -4149,6 +4205,15 @@ export function useAIConsole() {
         request_execution_id: requestPayload.request_execution_id,
         ui_requested_provider: requestPayload.ui_requested_provider || 'unknown',
         request_side_selected_provider: requestPayload.request_side_selected_provider || 'unknown',
+        explicit_provider_override_for_request: requestPayload.explicit_provider_override_for_request || 'no',
+        ui_default_provider: requestPayload.routeDecision?.defaultProvider || requestPayload.ui_requested_provider || 'unknown',
+        requested_provider_intent: requestPayload.routeDecision?.explicitProviderOverrideForRequest === 'yes' ? (requestPayload.ui_requested_provider || 'unknown') : (requestPayload.routeDecision?.uiSelectedProvider || requestPayload.request_side_selected_provider || 'unknown'),
+        freshness_candidate_provider: requestPayload.routeDecision?.freshnessCandidateProvider || 'n/a',
+        execution_requested_provider: requestPayload.execution_requested_provider || requestPayload.provider || 'unknown',
+        requested_provider_for_request: requestPayload.requested_provider_for_request || requestPayload.provider || 'unknown',
+        execution_provider_policy_source: requestPayload.execution_provider_policy_source || requestPayload.routeDecision?.executionProviderPolicySource || 'unknown',
+        execution_provider_policy_reason: requestPayload.execution_provider_policy_reason || requestPayload.routeDecision?.executionProviderPolicyReason || 'unknown',
+        final_pre_dispatch_provider_guard: requestPayload.final_pre_dispatch_provider_guard || 'unknown',
         router_selected_provider: requestPayload.router_selected_provider || 'unknown',
         router_provider: requestPayload.router_selected_provider || 'unknown',
         request_trace: {

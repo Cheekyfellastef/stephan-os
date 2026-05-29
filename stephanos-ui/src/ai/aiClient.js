@@ -9,6 +9,7 @@ import {
 import { DEFAULT_PROVIDER_KEY } from './providerConfig';
 import { resolveUiRequestTimeoutPolicy } from './timeoutPolicy';
 import { resolveOllamaLoadGovernorPolicy } from '../../../shared/ai/ollamaLoadGovernor.mjs';
+import { reconcileFinalProviderDispatch } from '../state/providerRoutingTruth.js';
 
 const HOSTED_COGNITION_CONTRACT_VERSION = 'stephanos.hosted-cognition.v1';
 const HOSTED_COGNITION_CHAT_PATH = '/api/ai/chat';
@@ -1089,6 +1090,31 @@ export async function sendPrompt({
   abortSignal = null,
 }) {
   const safeProviderConfigs = stripSecretsFromProviderConfigs(providerConfigs);
+  const providerBeforeFinalDispatch = provider;
+  const finalProviderDispatchPolicy = reconcileFinalProviderDispatch({
+    uiSelectedProvider: routeDecision?.uiSelectedProvider || requestSideSelectedProvider || provider,
+    uiDefaultProvider: routeDecision?.defaultProvider || uiRequestedProvider || provider,
+    requestedProviderIntent: routeDecision?.explicitProviderOverrideForRequest === 'yes'
+      ? (routeDecision?.defaultProvider || uiRequestedProvider || provider)
+      : (routeDecision?.uiSelectedProvider || requestSideSelectedProvider || provider),
+    freshnessCandidateProvider: routeDecision?.freshnessCandidateProvider || null,
+    executionRequestedProvider: provider,
+    freshnessRequiredForTruth: freshnessContext?.freshnessNeed === 'high' || routeDecision?.selectedAnswerMode === 'fresh-cloud',
+    freshAnswerRequired: routeDecision?.selectedAnswerMode === 'fresh-cloud',
+    freshnessNeed: freshnessContext?.freshnessNeed || 'low',
+    explicitProviderOverrideForRequest: routeDecision?.explicitProviderOverrideForRequest === 'yes',
+    fallbackPolicyTriggered: fallbackEnabled === true && routeDecision?.staleFallbackPermitted === true,
+    localRouteAvailable: routeDecision?.localRouteAvailable !== false,
+  });
+  const finalDispatchProvider = finalProviderDispatchPolicy.executionRequestedProvider || provider;
+  if (routeDecision && typeof routeDecision === 'object') {
+    routeDecision.finalPreDispatchGuardApplied = finalDispatchProvider !== provider ? 'yes' : (routeDecision.finalPreDispatchGuardApplied || 'no');
+    routeDecision.selectedProvider = finalDispatchProvider;
+    routeDecision.requestedProviderForRequest = finalDispatchProvider;
+    routeDecision.executionProviderPolicySource = finalProviderDispatchPolicy.policySource || routeDecision.executionProviderPolicySource;
+    routeDecision.executionProviderPolicyReason = finalProviderDispatchPolicy.reason || routeDecision.executionProviderPolicyReason;
+  }
+  provider = finalDispatchProvider;
   const timeoutExecutionTruth = resolveTimeoutExecutionTruth({
     requestedProvider: provider,
     routeDecision,
@@ -1136,9 +1162,9 @@ export async function sendPrompt({
     request_execution_id: firstNonEmpty(requestExecutionId),
     provider,
     ui_requested_provider: firstNonEmpty(uiRequestedProvider, routeDecision?.uiRequestedProvider, provider),
-    request_side_selected_provider: firstNonEmpty(requestSideSelectedProvider, provider),
-    router_selected_provider: firstNonEmpty(routerSelectedProvider, routeDecision?.selectedProvider, provider),
-    provider_override_reason: firstNonEmpty(providerOverrideReason, routeDecision?.providerOverrideReason),
+    request_side_selected_provider: routeDecision?.finalPreDispatchGuardApplied === 'yes' ? provider : firstNonEmpty(requestSideSelectedProvider, provider),
+    router_selected_provider: routeDecision?.finalPreDispatchGuardApplied === 'yes' ? provider : firstNonEmpty(routerSelectedProvider, routeDecision?.selectedProvider, provider),
+    provider_override_reason: providerBeforeFinalDispatch === finalDispatchProvider ? firstNonEmpty(providerOverrideReason, routeDecision?.providerOverrideReason) : '',
     routeMode,
     ollama_load_mode: String(ollamaLoadMode || 'balanced').trim().toLowerCase(),
     providerConfig: safeProviderConfigs?.[provider] || {},
@@ -1151,6 +1177,12 @@ export async function sendPrompt({
     ...(continuityContext && typeof continuityContext === 'object' ? { continuityContext } : {}),
     ...(freshnessContext && typeof freshnessContext === 'object' ? { freshnessContext } : {}),
     ...(routeDecision && typeof routeDecision === 'object' ? { routeDecision } : {}),
+    execution_requested_provider: provider,
+    requested_provider_for_request: provider,
+    explicit_provider_override_for_request: routeDecision?.explicitProviderOverrideForRequest || 'no',
+    final_pre_dispatch_provider_guard: routeDecision?.finalPreDispatchGuardApplied || 'no',
+    execution_provider_policy_source: finalProviderDispatchPolicy.policySource || routeDecision?.executionProviderPolicySource || '',
+    execution_provider_policy_reason: finalProviderDispatchPolicy.reason || routeDecision?.executionProviderPolicyReason || '',
     ...(contextAssembly?.truthMetadata && typeof contextAssembly.truthMetadata === 'object'
       ? { contextAssemblyMetadata: contextAssembly.truthMetadata }
       : {}),

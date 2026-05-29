@@ -192,6 +192,8 @@ function resolveCurrentAnswerCapability(providerHealth = {}, providerKey = '') {
 export function resolveFreshnessRoutingDecision({
   classification,
   requestedProvider = 'ollama',
+  uiSelectedProvider = '',
+  explicitProviderOverrideForRequest = false,
   providerHealth = {},
   runtimeStatus = {},
   routeTruthView = {},
@@ -205,7 +207,12 @@ export function resolveFreshnessRoutingDecision({
     cloudAllowedForFreshness: true,
     cloudReasonRequired: true,
   };
-  const requested = String(requestedProvider || 'ollama');
+  const requested = String(requestedProvider || 'ollama').trim().toLowerCase();
+  const rawUiSelectedProvider = String(uiSelectedProvider || '').trim().toLowerCase();
+  const selectedProviderIntent = String(rawUiSelectedProvider || requested || 'ollama').trim().toLowerCase();
+  const explicitOverrideForRequest = explicitProviderOverrideForRequest === true
+    || String(explicitProviderOverrideForRequest || '').trim().toLowerCase() === 'yes'
+    || (!rawUiSelectedProvider && requested !== 'ollama');
   const routeUsable = String(routeTruthView?.routeUsableState || '').toLowerCase() === 'yes'
     || runtimeStatus?.canonicalRouteRuntimeTruth?.routeUsable === true;
   const backendReachable = String(routeTruthView?.backendReachableState || '').toLowerCase() === 'yes'
@@ -361,7 +368,7 @@ export function resolveFreshnessRoutingDecision({
     policyReason = 'Local route unavailable; cloud route selected as safe execution path.';
   } else if (classification?.freshnessNeed === 'low' && hostedSession) {
     if (!localRouteAvailable && cloudRouteAvailable) {
-      const explicitCloudProviderRequested = requested !== 'ollama';
+      const explicitCloudProviderRequested = explicitOverrideForRequest && requested !== 'ollama';
       const cloudExecutionAllowed = fallbackPermitted || explicitCloudProviderRequested;
       selectedProvider = cloudExecutionAllowed
         ? (explicitCloudProviderRequested || requestedProviderRouteViable ? requested : (selectedFreshProvider || 'gemini'))
@@ -403,7 +410,7 @@ export function resolveFreshnessRoutingDecision({
     && cloudRouteAvailable
     && selectedProvider !== 'ollama'
     && selectedAnswerMode !== 'cloud-basic'
-    && (fallbackPermitted || requested !== 'ollama');
+    && (fallbackPermitted || explicitOverrideForRequest);
 
   if (shouldForceHostedCloudBasic) {
     selectedAnswerMode = 'cloud-basic';
@@ -415,16 +422,16 @@ export function resolveFreshnessRoutingDecision({
   }
 
   const executionProviderPolicy = reconcileExecutionRequestedProvider({
-    uiSelectedProvider: requested,
+    uiSelectedProvider: selectedProviderIntent || requested,
     uiDefaultProvider: requested,
-    requestedProviderIntent: requested,
+    requestedProviderIntent: explicitOverrideForRequest ? requested : (selectedProviderIntent || requested),
     freshnessCandidateProvider: selectedFreshProvider || null,
     proposedExecutionProvider: selectedProvider,
     freshnessRequiredForTruth: classification?.freshnessNeed === 'high',
     freshAnswerRequired: selectedAnswerMode === 'fresh-cloud',
     freshnessNeed: classification?.freshnessNeed || 'low',
     staleFallbackRequired: staleFallbackAttempted,
-    explicitProviderSelection: requested !== 'ollama',
+    explicitProviderSelection: explicitOverrideForRequest,
     fallbackPermitted,
     localRouteAvailable,
   });
@@ -450,6 +457,8 @@ export function resolveFreshnessRoutingDecision({
     freshnessRouted,
     selectedProvider,
     requestedProviderForRequest,
+    uiSelectedProvider: selectedProviderIntent || requested,
+    explicitProviderOverrideForRequest: explicitOverrideForRequest ? 'yes' : 'no',
     selectedAnswerMode,
     freshnessWarning,
     staleFallbackAttempted,
