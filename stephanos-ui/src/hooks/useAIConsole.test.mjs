@@ -310,7 +310,7 @@ test('deterministic answers append assistant answer through the shared command h
 test('agent reality loop deterministic answer cannot bypass answer pane finalization', async () => {
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /const agentRealityLoopDeterministicResult = agentRealityLoopDeterministicEligible/);
-  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| agentRealityLoopDeterministicResult \|\| operatorExplanationDeterministicResult \|\| await sendPrompt/);
+  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| agentRealityLoopDeterministicResult \|\| builderMeshDeterministicResult \|\| operatorExplanationDeterministicResult \|\| await sendPrompt/);
   assert.match(source, /const entry = \{[\s\S]*role: 'assistant',[\s\S]*final: streamFinalizationMissing \? false : true,[\s\S]*output_text: effectiveOutputText,/m);
   assert.match(source, /return upsertCommandHistoryById\(prev, entry, streamEntryId\);/);
   assert.match(source, /buildAnswerDeliveryTruth\(\{[\s\S]*finalAssistantMessageId: entry\?\.id \|\| '',[\s\S]*finalAssistantText: effectiveOutputText,[\s\S]*answerPaneRendered: finalAssistantAnswerVisibleCandidate,/m);
@@ -391,7 +391,7 @@ test('submitPrompt pre-envelope path keeps submit-wide symbols initialized and c
   assert.match(source, /let routeUnavailableOutcome = null;/);
   assert.match(source, /let providerDispatchResult = null;/);
   assert.match(source, /let streamBuffer = '';/);
-  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| agentRealityLoopDeterministicResult \|\| operatorExplanationDeterministicResult \|\| await sendPrompt\(/);
+  assert.match(source, /providerDispatchResult = routeUnavailableOutcome \|\| identityRecallDeterministicResult \|\| agentRealityLoopDeterministicResult \|\| builderMeshDeterministicResult \|\| operatorExplanationDeterministicResult \|\| await sendPrompt\(/);
   assert.match(source, /const \{ data, requestPayload: effectiveRequestPayload \} = providerDispatchResult;/);
   assert.match(source, /const preEnvelopeFailureActive = String\(timeoutFailureMetadata\.command_pipeline_last_finalization_path \|\| ''\) === 'pre-envelope-error';/);
   assert.match(source, /timeoutFailureMetadata\.active_provider = 'none';/);
@@ -404,7 +404,7 @@ test('operator explanation deterministic path is eligible from classified respon
   const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
   assert.match(source, /const operatorExplanationModeClassified = String\(chatContextPack\?\.recommendedResponseMode \|\| responsePlan\?\.responseMode \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'operator-explanation';/);
   assert.match(source, /const operatorExplanationDeterministicEligible = operatorExplanationModeClassified \|\| explanationIntent\.matched;/);
-  assert.match(source, /const operatorExplanationDeterministicResult = \(!routeUnavailableOutcome && !identityRecallDeterministicResult && !agentRealityLoopDeterministicResult && operatorExplanationDeterministicEligible\)/);
+  assert.match(source, /const operatorExplanationDeterministicResult = \(!routeUnavailableOutcome && !identityRecallDeterministicResult && !agentRealityLoopDeterministicResult && !builderMeshDeterministicResult && operatorExplanationDeterministicEligible\)/);
 });
 
 

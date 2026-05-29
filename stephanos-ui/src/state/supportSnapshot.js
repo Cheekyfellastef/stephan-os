@@ -1262,6 +1262,7 @@ export function buildSupportSnapshot({
   const chatContextStatus = projectAwarenessProjection.chatContextPackStatus || rawChatContextStatus;
   const chatContextSourcesUsed = projectAwarenessProjection.chatContextSourcesUsed || rawChatContextSourcesUsed;
   let chatContextCoBuilderContextIncluded = /\bcoBuilderLoop\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
+  const chatContextBuilderMeshContextIncluded = /\bbuilderMesh\b/i.test(chatContextSourcesUsed) || String(executionMetadata?.builder_mesh_context_recognized || '').trim().toLowerCase() === 'yes' ? 'yes' : 'no';
   let chatContextAgentWorkRoutingContextIncluded = /\bagentWorkRouting\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
   let normalizedChatContextSourcesUsed = chatContextSourcesUsed;
   let normalizedChatContextStatus = chatContextStatus;
@@ -2380,6 +2381,17 @@ export function buildSupportSnapshot({
     `Chat Context Sources Used: ${asText(normalizedChatContextSourcesUsed, 'none')}`,
     `Chat Context Co-Builder Context Included: ${asText(chatContextCoBuilderContextIncluded, 'no')}`,
     `Chat Context Agent Work Routing Context Included: ${asText(chatContextAgentWorkRoutingContextIncluded, 'no')}`,
+    `Builder Mesh Context Included: ${asText(chatContextBuilderMeshContextIncluded, 'no')}`,
+    `Builder Mesh Projection Available: ${asText(executionMetadata?.builder_mesh_projection_available, 'no')}`,
+    `Builder Mesh Status: ${asText(executionMetadata?.builder_mesh_status, 'unavailable')}`,
+    `Builder Mesh Recommended Builder: ${asText(executionMetadata?.builder_mesh_recommended_builder, 'hold')}`,
+    `Builder Mesh Zero-Cost Route Available: ${asText(executionMetadata?.builder_mesh_zero_cost_route_available, 'no')}`,
+    `Builder Mesh Codex Required: ${asText(executionMetadata?.builder_mesh_codex_required, 'no')}`,
+    `Builder Mesh Codex Reason: ${asText(executionMetadata?.builder_mesh_codex_reason, 'Codex is fallback only unless justified.')}`,
+    `Builder Mesh Local AI Can Help: ${asText(executionMetadata?.builder_mesh_local_ai_can_help, 'unknown')}`,
+    `Builder Mesh OpenClaw Can Help: ${asText(executionMetadata?.builder_mesh_openclaw_can_help, 'unknown')}`,
+    `Builder Mesh GitHub Can Help: ${asText(executionMetadata?.builder_mesh_github_can_help, 'unknown')}`,
+    `Builder Mesh Next Best Action: ${asText(executionMetadata?.builder_mesh_next_best_action, 'Review Builder Mesh truth.')}`,
     `Chat Context UI Reality Status: ${asText(chatContextUiRealityStatus, 'UNKNOWN')}`,
     `Chat Context Mission State: ${asText(chatContextMissionState, 'unknown')}`,
     `Chat Context Next Action: ${asText(chatContextNextAction, 'Submit a Command Deck message to generate context pack.')}`,

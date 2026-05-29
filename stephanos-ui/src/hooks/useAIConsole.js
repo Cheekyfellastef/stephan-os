@@ -431,7 +431,13 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
   const agentRealityLoopProjection = chatContextPack?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection
     || chatContextPack?.inputMissionState?.agentRealityLoopProjection
     || {};
+  const builderMeshProjection = chatContextPack?.inputMissionState?.operatorReliefProjection?.builderMeshProjection
+    || chatContextPack?.inputMissionState?.builderMeshProjection
+    || {};
   const matchedRule = String(chatContextPack?.intentClassifierMatchedRule || compact?.intentClassifierMatchedRule || '').trim().toLowerCase();
+  const builderMeshContext = compact?.missionIntelligence?.builderMesh || {};
+  const builderMeshProjectionPresent = Object.keys(builderMeshProjection).length > 0;
+  const builderMeshContextRecognized = matchedRule === 'builder-mesh-routing' || /builderMesh/.test(String(projectAwarenessTruth.chatContextSourcesUsed.join('|')));
   const firstMatchingRule = String(chatContextPack?.firstMatchingRule || compact?.firstMatchingRule || '').trim().toLowerCase();
   const explicitIntentMatched = String(chatContextPack?.contextForPrompt?.intentClassifierMatchedRule || '').trim().toLowerCase() === 'agent-reality-loop';
   const agentRealityLoopTermsDetected = /\b(agent reality loop( v1)?|reality loop|agent loop|codex\/openclaw coordination loop|proof loop|merge readiness loop)\b/.test(
@@ -468,6 +474,17 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_relevant_canon_count: Array.isArray(chatContextPack?.relevantCanon) ? chatContextPack.relevantCanon.length : Number(compact?.relevantCanonCount || 0),
     chat_context_affected_subsystems: Array.isArray(chatContextPack?.affectedSubsystems) ? chatContextPack.affectedSubsystems.join('|') : (Array.isArray(compact?.affectedSubsystems) ? compact.affectedSubsystems.join('|') : 'none'),
     chat_context_sources_used: projectAwarenessTruth.chatContextSourcesUsed.length ? projectAwarenessTruth.chatContextSourcesUsed.join('|') : 'none',
+    builder_mesh_context_recognized: builderMeshContextRecognized ? 'yes' : 'no',
+    builder_mesh_projection_available: builderMeshProjectionPresent ? 'yes' : 'no',
+    builder_mesh_status: builderMeshProjection?.builderMeshStatus || builderMeshContext?.builderMeshStatus || 'unavailable',
+    builder_mesh_recommended_builder: builderMeshProjection?.recommendedBuilder || builderMeshContext?.recommendedBuilder || 'hold',
+    builder_mesh_zero_cost_route_available: (builderMeshProjection?.zeroCostRouteAvailable === true || builderMeshContext?.zeroCostRouteAvailable === true) ? 'yes' : 'no',
+    builder_mesh_codex_required: (builderMeshProjection?.codexRequired === true || builderMeshContext?.codexRequired === true) ? 'yes' : 'no',
+    builder_mesh_codex_reason: builderMeshProjection?.codexReason || builderMeshContext?.codexReason || 'Codex is fallback only unless justified.',
+    builder_mesh_local_ai_can_help: builderMeshProjection?.localAiCanHelp || builderMeshContext?.localAiCanHelp || 'unknown',
+    builder_mesh_openclaw_can_help: builderMeshProjection?.openClawCanHelp || builderMeshContext?.openClawCanHelp || 'unknown',
+    builder_mesh_github_can_help: builderMeshProjection?.githubCanHelp || builderMeshContext?.githubCanHelp || 'unknown',
+    builder_mesh_next_best_action: builderMeshProjection?.nextBestAction || builderMeshContext?.nextBestAction || 'Review Builder Mesh truth.',
     chat_context_ui_reality_status: compact?.uiRealityStatusAtBuild || 'UNKNOWN',
     chat_context_mission_state: projectAwarenessTruth.chatContextMissionState || 'unknown',
     chat_context_next_action: chatContextPack?.recommendedNextAction || compact?.nextAction || 'Answer directly with bounded confidence.',
@@ -2259,6 +2276,66 @@ function createOperatorExplanationDeterministicResult({
           operator_explanation_verdict: projection?.verdict || 'unknown',
           operator_explanation_triggered: 'yes',
           operator_explanation_projection_used: 'yes',
+        },
+      },
+      raw_input: prompt,
+      parsed_command: parsed,
+      request_execution_id: requestPayload?.request_execution_id || null,
+    },
+    requestPayload: { ...requestPayload },
+  };
+}
+
+
+function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
+  const packets = projection?.copyPackets ? Object.keys(projection.copyPackets) : [];
+  const proof = Array.isArray(projection?.proofRequiredBeforeMerge) && projection.proofRequiredBeforeMerge.length
+    ? projection.proofRequiredBeforeMerge.join(', ')
+    : 'targeted tests, build, verify, PR-clean, and browser proof for UI claims';
+  const blockers = Array.isArray(projection?.blockers) ? projection.blockers.length : 0;
+  const warnings = Array.isArray(projection?.warnings) ? projection.warnings.length : 0;
+  const degradedNotice = String(projectAwareness?.status || '').trim().toLowerCase() === 'degraded'
+    ? '\n\nSome mission details may be incomplete because Project Awareness is degraded.'
+    : '';
+  return [
+    'Zero-Cost Builder Mesh V1 is live in the Operator Relief / Builder Harness path.',
+    `Recommended builder: ${projection?.recommendedBuilder || 'hold'}.`,
+    `Zero-cost route available: ${projection?.zeroCostRouteAvailable === true ? 'yes' : 'no'}.`,
+    `Local AI readiness: ${projection?.localAiCanHelp || 'unknown'}.`,
+    `OpenClaw readiness: ${projection?.openClawCanHelp || 'unknown'}.`,
+    `GitHub inspection readiness: ${projection?.githubCanHelp || 'unknown'}.`,
+    `Codex required: ${projection?.codexRequired === true ? 'yes' : 'no'} — ${projection?.codexReason || 'Codex is fallback only unless justified.'}`,
+    `Approval before mutation: ${projection?.approvalRequiredBeforeMutation === false ? 'not reported' : 'required'}.`,
+    `Proof required before merge: ${proof}.`,
+    `Blockers/warnings: ${blockers} blocker(s), ${warnings} warning(s).`,
+    `Next operator action: ${projection?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.'}`,
+    `Copyable packets: ${packets.length ? packets.join(', ') : 'Local AI Review Packet, OpenClaw Research Packet, GitHub Inspection Packet, Codex Fallback Packet, Operator Approval Checklist'}.`,
+    'This is read-only routing truth: it does not authorize local AI, OpenClaw, or Codex to mutate files without explicit operator approval.',
+  ].join('\n') + degradedNotice;
+}
+
+function createBuilderMeshDeterministicResult({
+  prompt,
+  parsed,
+  startedAt,
+  requestPayload,
+  projection = {},
+  projectAwareness = {},
+}) {
+  return {
+    data: {
+      type: 'assistant_response',
+      route: 'assistant',
+      success: true,
+      output_text: formatBuilderMeshAnswer(projection, projectAwareness),
+      error: null,
+      error_code: null,
+      timing_ms: Math.round(performance.now() - startedAt),
+      data: {
+        execution_metadata: {
+          builder_mesh_answer_used_live_projection: 'yes',
+          builder_mesh_codex_required: projection?.codexRequired === true ? 'yes' : 'no',
+          builder_mesh_recommended_builder: projection?.recommendedBuilder || 'hold',
         },
       },
       raw_input: prompt,
@@ -4319,6 +4396,9 @@ export function useAIConsole() {
       const agentRealityLoopProjectionForAnswer = chatContextPack?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection
         || chatContextPack?.inputMissionState?.agentRealityLoopProjection
         || {};
+      const builderMeshProjectionForAnswer = chatContextPack?.inputMissionState?.operatorReliefProjection?.builderMeshProjection
+        || chatContextPack?.inputMissionState?.builderMeshProjection
+        || {};
       const agentRealityLoopDeterministicEligible = !routeUnavailableOutcome
         && !identityRecallDeterministicResult
         && String(chatContextPack?.intentClassifierMatchedRule || '').trim().toLowerCase() === 'agent-reality-loop'
@@ -4330,6 +4410,21 @@ export function useAIConsole() {
           startedAt,
           requestPayload,
           projection: agentRealityLoopProjectionForAnswer,
+          projectAwareness: chatContextPack?.compactSummary?.projectAwareness || {},
+        })
+        : null;
+      const builderMeshDeterministicEligible = !routeUnavailableOutcome
+        && !identityRecallDeterministicResult
+        && !agentRealityLoopDeterministicResult
+        && String(chatContextPack?.intentClassifierMatchedRule || '').trim().toLowerCase() === 'builder-mesh-routing'
+        && Object.keys(builderMeshProjectionForAnswer).length > 0;
+      const builderMeshDeterministicResult = builderMeshDeterministicEligible
+        ? createBuilderMeshDeterministicResult({
+          prompt,
+          parsed,
+          startedAt,
+          requestPayload,
+          projection: builderMeshProjectionForAnswer,
           projectAwareness: chatContextPack?.compactSummary?.projectAwareness || {},
         })
         : null;
@@ -4348,7 +4443,7 @@ export function useAIConsole() {
           supportSnapshot: requestRuntimeStatus?.supportSnapshot || requestRuntimeStatus || {},
         }, prompt)
         : null;
-      const operatorExplanationDeterministicResult = (!routeUnavailableOutcome && !identityRecallDeterministicResult && !agentRealityLoopDeterministicResult && operatorExplanationDeterministicEligible)
+      const operatorExplanationDeterministicResult = (!routeUnavailableOutcome && !identityRecallDeterministicResult && !agentRealityLoopDeterministicResult && !builderMeshDeterministicResult && operatorExplanationDeterministicEligible)
         ? createOperatorExplanationDeterministicResult({
           prompt,
           parsed,
@@ -4358,7 +4453,7 @@ export function useAIConsole() {
           output: formatOperatorExplanation(operatorExplanationProjection, { mode: operatorExplanationProjection?.mode || explanationIntent.mode }),
         })
         : null;
-      if (!routeUnavailableOutcome && !identityRecallDeterministicResult && !agentRealityLoopDeterministicResult && !operatorExplanationDeterministicResult) {
+      if (!routeUnavailableOutcome && !identityRecallDeterministicResult && !agentRealityLoopDeterministicResult && !builderMeshDeterministicResult && !operatorExplanationDeterministicResult) {
         executeStageLastReached = 'provider-dispatch-started';
         executePhase = 'provider-dispatch-started';
         setCommandHistory((prev) => appendCommandHistory(prev, {
@@ -4383,7 +4478,7 @@ export function useAIConsole() {
           continuity_retrieval_reason: continuityLookup.reason,
         }));
       }
-      providerDispatchResult = routeUnavailableOutcome || identityRecallDeterministicResult || agentRealityLoopDeterministicResult || operatorExplanationDeterministicResult || await sendPrompt({
+      providerDispatchResult = routeUnavailableOutcome || identityRecallDeterministicResult || agentRealityLoopDeterministicResult || builderMeshDeterministicResult || operatorExplanationDeterministicResult || await sendPrompt({
         prompt: contextAssembly.truthMetadata.augmented_prompt_used
           ? contextAssembly.augmentedPrompt.replace(prompt, promptWithRoutingContext)
           : promptWithRoutingContext,
@@ -4419,7 +4514,7 @@ export function useAIConsole() {
         },
       });
       const { data, requestPayload: effectiveRequestPayload } = providerDispatchResult;
-      const deterministicAnswerCompleted = Boolean(identityRecallDeterministicResult || agentRealityLoopDeterministicResult || operatorExplanationDeterministicResult);
+      const deterministicAnswerCompleted = Boolean(identityRecallDeterministicResult || agentRealityLoopDeterministicResult || builderMeshDeterministicResult || operatorExplanationDeterministicResult);
       executeStageLastReached = deterministicAnswerCompleted ? 'deterministic-answer-complete' : 'provider-dispatch-complete';
       executePhase = executeStageLastReached;
 

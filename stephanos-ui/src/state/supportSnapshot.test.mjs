@@ -3870,3 +3870,32 @@ test('buildSupportSnapshot identifies provider drift boundary and policy source'
   assert.match(snapshot, /Provider Drift Allowed: no/);
   assert.match(snapshot, /Provider Drift Policy Source: local-first-freshness-guard/);
 });
+
+test('Support Snapshot reports Builder Mesh routing evidence from final execution metadata', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        chat_context_pack_status: 'active',
+        chat_context_response_mode: 'work-routing',
+        chat_context_sources_used: 'missionState|builderMesh|agentWorkRouting',
+        builder_mesh_context_recognized: 'yes',
+        builder_mesh_projection_available: 'yes',
+        builder_mesh_status: 'ready-read-only',
+        builder_mesh_recommended_builder: 'local-ai',
+        builder_mesh_zero_cost_route_available: 'yes',
+        builder_mesh_codex_required: 'no',
+        builder_mesh_codex_reason: 'Codex is fallback only.',
+        builder_mesh_local_ai_can_help: 'yes-read-only-review',
+        builder_mesh_openclaw_can_help: 'yes-read-only-research-and-patch-planning',
+        builder_mesh_github_can_help: 'yes-read-only-pr-diff-status-evidence',
+        builder_mesh_next_best_action: 'Copy the Local AI Review Packet.',
+      },
+    },
+  });
+  assert.match(snapshot, /Builder Mesh Context Included: yes/);
+  assert.match(snapshot, /Builder Mesh Projection Available: yes/);
+  assert.match(snapshot, /Builder Mesh Recommended Builder: local-ai/);
+  assert.match(snapshot, /Builder Mesh Zero-Cost Route Available: yes/);
+  assert.match(snapshot, /Builder Mesh Codex Required: no/);
+  assert.match(snapshot, /Builder Mesh Next Best Action: Copy the Local AI Review Packet\./);
+});
