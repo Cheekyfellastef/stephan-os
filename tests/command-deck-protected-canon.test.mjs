@@ -144,3 +144,24 @@ test('protected canon: agent reality loop repair stays on existing projection pa
   assert.match(missionSource, /data-mission-console-registration-callback-invoked=\{registrationTraceState\.callbackInvoked\}/);
   assert.doesNotMatch(hookSource, /manual-scroll suppression/i);
 });
+
+test('protected canon: builder harness stays inside Operator Relief and keeps Codex fallback-only', async () => {
+  const source = await read(missionConsoleTilePath);
+  assert.match(source, /title="Operator Relief v2 · Mission Brain"/);
+  assert.match(source, /panelId="missionConsoleBuilderHarnessPanel"/);
+  assert.match(source, /OpenClaw Builder Harness V1/);
+  assert.match(source, /Copy Local AI Review Packet/);
+  assert.match(source, /Copy OpenClaw Patch Plan Packet/);
+  assert.match(source, /Copy GitHub PR Inspection Packet/);
+  assert.match(source, /Copy Codex Fallback Packet/);
+  assert.match(source, /fallback\/specialist only/);
+  assert.match(source, /fallback-specialist-only/);
+  assert.doesNotMatch(source, /builder-harness-duplicate-pane/i);
+  assert.match(source, /No auto-merge:/);
+
+  const builderHarnessIndex = source.indexOf('missionConsoleBuilderHarnessPanel');
+  const operatorReliefIndex = source.indexOf('mission-console-section--operator-relief');
+  const commandDeckIndex = source.indexOf('data-testid="mission-console-inner-command-deck"');
+  assert.ok(builderHarnessIndex > operatorReliefIndex);
+  assert.ok(builderHarnessIndex > commandDeckIndex);
+});

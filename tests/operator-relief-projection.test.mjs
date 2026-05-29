@@ -269,3 +269,31 @@ test('Operator-Approved Repair Loop routes projection bridge loss to OpenClaw wh
   assert.equal(r.operatorApprovedRepairLoopProjection.operatorApprovalStillValid, 'yes');
   assert.equal(r.operatorApprovedRepairLoopProjection.scopeChangeRequired, 'no');
 });
+
+test('Builder Harness projection exposes read-only OpenClaw/local AI/GitHub readiness and copy packets', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Enable OpenClaw builder harness' } },
+    prEvidenceModel: { branch: 'builder-harness', prUrl: 'https://github.com/example/repo/pull/1', changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] },
+    proofOfDoneModel: {
+      verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test tests/operator-relief-projection.test.mjs'] } },
+      browserChecksObserved: ['Mission Console opens from landing tile','Operator Relief panel visible','idle state renders','active/fixture state renders','merge safety verdict visible','browser proof gaps visible','repair prompt visible/copyable','no red console errors','no broken chevron/collapse','existing Mission Console controls still work'],
+    },
+    supportSnapshot: { localAvailable: true, openClawKillSwitchState: 'armed' },
+  });
+
+  assert.equal(r.builderHarnessProjection.builderHarnessStatus, 'ready-read-only');
+  assert.equal(r.builderHarnessProjection.connectedLocalAiStatus, 'connected-read-only-review');
+  assert.equal(r.builderHarnessProjection.githubIntegrationStatus, 'inspectable-read-only');
+  assert.equal(r.builderHarnessProjection.repoInspectionCapability, 'available-read-only');
+  assert.equal(r.builderHarnessProjection.patchPlanningCapability, 'available-proposal-only');
+  assert.equal(r.builderHarnessProjection.testExecutionCapability, 'operator-approved-command-only');
+  assert.equal(r.builderHarnessProjection.approvalRequired, true);
+  assert.equal(r.builderHarnessProjection.mutationAllowed, false);
+  assert.equal(r.builderHarnessProjection.noAutoMerge, true);
+  assert.equal(r.builderHarnessProjection.codexRole, 'fallback-specialist-only');
+  assert.equal(r.builderHarnessProjection.copyLocalAiReviewPacket.packetType, 'local_ai_review_packet');
+  assert.equal(r.builderHarnessProjection.copyOpenClawPatchPlanPacket.packetType, 'openclaw_patch_plan_packet');
+  assert.equal(r.builderHarnessProjection.copyGithubPrInspectionPacket.packetType, 'github_pr_inspection_packet');
+  assert.equal(r.builderHarnessProjection.copyCodexFallbackPacket.codexRole, 'fallback-specialist-only');
+  assert.match(r.builderHarnessProjection.nextBestAction, /operator approval/i);
+});

@@ -48,6 +48,17 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /copyVerificationPacket/);
   assert.match(source, /Copy Codex Implementation Packet/);
   assert.match(source, /Copy OpenClaw Research Packet/);
+  assert.match(source, /OpenClaw Builder Harness V1/);
+  assert.match(source, /Can OpenClaw build\?/);
+  assert.match(source, /Can local AIs help\?/);
+  assert.match(source, /Can GitHub be inspected\?/);
+  assert.match(source, /Can a patch be proposed\?/);
+  assert.match(source, /What approval is needed\?/);
+  assert.match(source, /Copy Local AI Review Packet/);
+  assert.match(source, /Copy OpenClaw Patch Plan Packet/);
+  assert.match(source, /Copy GitHub PR Inspection Packet/);
+  assert.match(source, /Copy Codex Fallback Packet/);
+  assert.match(source, /fallback-specialist-only/);
   assert.match(source, /Co-Builder Loop V1/);
   assert.match(source, /Copy Operator Proof Checklist/);
   assert.match(source, /operator_relief\.browser_proof_missing/);
