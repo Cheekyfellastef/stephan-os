@@ -4674,3 +4674,48 @@ pre {
 .ui-reality-status-panel.severity-fail { border-color: rgba(220,90,90,0.65); }
 .ui-reality-status-panel.severity-warn { border-color: rgba(220,180,90,0.65); }
 .ui-reality-status-panel.severity-ok { border-color: rgba(90,200,120,0.65); }
+
+/* Mission Console pane-canon density: nested operational panels stay compact while preserving canonical headers. */
+.mission-console-workspace > .panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.mission-console-workspace .mission-console-section {
+  padding: 0.35rem;
+  margin-bottom: 0.2rem;
+}
+
+.mission-console-workspace .mission-console-section > .collapsible-panel {
+  border-color: rgba(118, 154, 216, 0.22);
+  background: rgba(4, 12, 24, 0.42);
+}
+
+.mission-console-workspace .mission-console-section > .collapsible-panel > .panel-header-row {
+  min-height: 2.1rem;
+  padding: 0.32rem 0.45rem;
+}
+
+.mission-console-workspace .mission-console-section > .collapsible-panel > .panel-body {
+  min-height: 0;
+  display: block;
+  padding: 0.45rem 0.55rem 0.55rem;
+  overflow: visible;
+}
+
+.mission-console-workspace .mission-console-section > .collapsible-panel.is-collapsed > .panel-body {
+  padding: 0;
+}
+
+.mission-console-workspace .mission-console__status-list,
+.mission-console-workspace .paneList {
+  margin-block: 0.2rem;
+}
+
+.mission-console-workspace p,
+.mission-console-workspace h4,
+.mission-console-workspace h5,
+.mission-console-workspace h6 {
+  margin-block: 0.25rem;
+}

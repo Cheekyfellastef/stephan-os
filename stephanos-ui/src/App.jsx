@@ -251,6 +251,7 @@ export default function App() {
     togglePanel,
     setPanelState,
     setPaneOrder,
+    setMissionConsoleSectionOrder,
     paneLayout,
     lastExecutionMetadata,
     missionPacketWorkflow,
@@ -1431,6 +1432,8 @@ export default function App() {
             emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
             orchestrationTruth={orchestrationTruth}
             agentTaskProjection={agentTaskProjection}
+            paneLayout={safePaneLayout}
+            setMissionConsoleSectionOrder={setMissionConsoleSectionOrder}
           />
         </div>
       ),
@@ -1598,6 +1601,8 @@ export default function App() {
             emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
             orchestrationTruth={orchestrationTruth}
             agentTaskProjection={agentTaskProjection}
+            paneLayout={safePaneLayout}
+            setMissionConsoleSectionOrder={setMissionConsoleSectionOrder}
           />
         </div>
       ),
@@ -1842,14 +1847,29 @@ export default function App() {
       successState: /success/i.test(node.className || '') || /copied/i.test(node.textContent || ''),
     }));
     const canonicalCopyControls = getCanonicalCopySources();
-    const operationalPaneIds = [
-      'aiCoreMissionConsolePanel',
+    const operationalPaneIds = [];
+    const missionConsoleCanonicalSectionPaneIds = [
       'missionConsoleOperatorOverviewPanel',
       'missionConsoleRuntimeRouteStatusPanel',
       'missionConsoleOperatorReliefPanel',
+      'missionConsoleAssistantCommandConsolePanel',
       'missionConsoleSecondaryDiagnosticsPanel',
       'missionConsoleConnectedTileContextsPanel',
+      'missionConsoleQuickContextPanel',
+      'missionConsoleRoutingControlsPanel',
       'missionConsoleIntentToBuildPanel',
+      'missionConsoleAgentAssignmentMatrixPanel',
+      'missionConsoleRoutingReadinessPanel',
+      'missionConsolePrEvidencePanel',
+      'missionConsoleEvidenceLedgerPanel',
+      'missionConsoleMissionIntelligencePanel',
+      'missionConsoleRealityUpgradePanel',
+      'missionConsoleConversationWorkspacePanel',
+      'missionConsoleAgentCommandPanel',
+      'missionConsoleSharedAgentContextPanel',
+      'missionConsoleProposalApprovalRailPanel',
+      'missionConsoleIntegrationTopologyPanel',
+      'missionConsoleGuardrailsPanel',
     ];
     const missionConsolePanel = document.querySelector('[data-panel-id="missionConsolePanel"]');
     const missionConsolePanelBody = missionConsolePanel?.querySelector('.panel-body') || null;
@@ -2003,6 +2023,8 @@ export default function App() {
       })(),
       agentMissionConsoleInnerMounted: Boolean(document.querySelector('.mission-console-shell, [data-testid="mission-console-inner-command-deck"]')),
       agentMissionConsoleNestedOperationalPanes: nestedOperationalPaneFacts,
+      missionConsoleCanonicalSectionPaneIds,
+      missionConsoleSectionOrder: safePaneLayout.missionConsoleSectionOrder || [],
       agentMissionConsoleCollapse: {
         collapsed: missionConsolePanelCollapsed,
         bodyVisibleWhenCollapsed: Boolean(missionConsolePanelCollapsed && missionConsolePanelBody && !missionConsolePanelBody.hidden),
@@ -2071,6 +2093,8 @@ export default function App() {
         },
       },
       intentToBuildPanel: { panelId: 'missionConsoleIntentToBuildPanel', open: safeUiLayout.missionConsoleIntentToBuildPanel !== false },
+      missionConsoleCanonicalSectionPaneIds,
+      missionConsoleSectionOrder: safePaneLayout.missionConsoleSectionOrder || [],
       copyControls: {
         totalCopyControlsDetected: 4,
         canonicalCopyControls,

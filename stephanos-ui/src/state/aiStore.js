@@ -123,6 +123,11 @@ const DEFAULT_UI_LAYOUT = {
   missionConsoleOperatorReliefPanel: false,
   missionConsoleOperatorReliefSummaryPanel: true,
   missionConsoleMissionBrainPanel: true,
+  missionConsoleHarnessAgentPanel: true,
+  missionConsoleAgentRealityLoopPanel: true,
+  missionConsoleOperatorApprovedRepairLoopPanel: true,
+  missionConsoleBuilderHarnessPanel: true,
+  missionConsoleCoBuilderLoopPanel: true,
   missionConsoleEvidenceGapsPanel: false,
   missionConsoleNextCodexPromptPanel: false,
   missionConsoleWorkRoutingCandidatePanel: true,
@@ -133,6 +138,21 @@ const DEFAULT_UI_LAYOUT = {
   missionConsoleSupportSnapshotPanel: false,
   missionConsoleRepairPromptPanel: false,
   missionConsoleMissionHandoffPanel: false,
+  missionConsoleAssistantCommandConsolePanel: true,
+  missionConsoleQuickContextPanel: false,
+  missionConsoleRoutingControlsPanel: true,
+  missionConsoleAgentAssignmentMatrixPanel: false,
+  missionConsoleRoutingReadinessPanel: false,
+  missionConsolePrEvidencePanel: false,
+  missionConsoleEvidenceLedgerPanel: false,
+  missionConsoleMissionIntelligencePanel: false,
+  missionConsoleRealityUpgradePanel: false,
+  missionConsoleConversationWorkspacePanel: true,
+  missionConsoleAgentCommandPanel: false,
+  missionConsoleSharedAgentContextPanel: false,
+  missionConsoleProposalApprovalRailPanel: false,
+  missionConsoleIntegrationTopologyPanel: false,
+  missionConsoleGuardrailsPanel: false,
   missionConsoleIntentToBuildPanel: false,
   missionConsoleSecondaryDiagnosticsPanel: false,
   missionConsoleConnectedTileContextsPanel: false,
@@ -165,6 +185,30 @@ const DEFAULT_UI_LAYOUT = {
   arrangeMode: false,
   debugConsole: false,
 };
+
+const DEFAULT_MISSION_CONSOLE_SECTION_ORDER = [
+  'missionConsoleOperatorOverviewPanel',
+  'missionConsoleRuntimeRouteStatusPanel',
+  'missionConsoleOperatorReliefPanel',
+  'missionConsoleAssistantCommandConsolePanel',
+  'missionConsoleSecondaryDiagnosticsPanel',
+  'missionConsoleConnectedTileContextsPanel',
+  'missionConsoleQuickContextPanel',
+  'missionConsoleRoutingControlsPanel',
+  'missionConsoleIntentToBuildPanel',
+  'missionConsoleAgentAssignmentMatrixPanel',
+  'missionConsoleRoutingReadinessPanel',
+  'missionConsolePrEvidencePanel',
+  'missionConsoleEvidenceLedgerPanel',
+  'missionConsoleMissionIntelligencePanel',
+  'missionConsoleRealityUpgradePanel',
+  'missionConsoleConversationWorkspacePanel',
+  'missionConsoleAgentCommandPanel',
+  'missionConsoleSharedAgentContextPanel',
+  'missionConsoleProposalApprovalRailPanel',
+  'missionConsoleIntegrationTopologyPanel',
+  'missionConsoleGuardrailsPanel',
+];
 const DEFAULT_OPERATOR_PANE_ORDER = [
   'commandDeck',
   'aiCoreMissionConsolePanel',
@@ -488,6 +532,9 @@ function normalizeOperatorPaneOrder(value = [], requiredPaneOrder = DEFAULT_OPER
   return normalized;
 }
 
+function normalizeMissionConsoleSectionOrder(value = []) {
+  return normalizeOperatorPaneOrder(value, DEFAULT_MISSION_CONSOLE_SECTION_ORDER);
+}
 
 function persistedPaneOrderIncludesPane(persistedSession = {}, paneId = '') {
   const sessionUi = persistedSession?.session?.ui || {};
@@ -500,9 +547,13 @@ export function reconcilePersistedOperatorPaneLayout(persistedSession = {}) {
   const sessionUi = persistedSession?.session?.ui || {};
   const legacyPaneOrder = sessionUi?.uiLayout?.paneOrder || sessionUi?.paneOrder || [];
   const persistedOrder = sessionUi?.operatorPaneLayout?.order;
-  return normalizeOperatorPaneOrder(
-    Array.isArray(persistedOrder) && persistedOrder.length > 0 ? persistedOrder : legacyPaneOrder,
-  );
+  const persistedMissionConsoleSectionOrder = sessionUi?.operatorPaneLayout?.missionConsoleSectionOrder;
+  return {
+    order: normalizeOperatorPaneOrder(
+      Array.isArray(persistedOrder) && persistedOrder.length > 0 ? persistedOrder : legacyPaneOrder,
+    ),
+    missionConsoleSectionOrder: normalizeMissionConsoleSectionOrder(persistedMissionConsoleSectionOrder),
+  };
 }
 
 function normalizeOllamaConnection(value = {}) {
@@ -766,7 +817,7 @@ function createInitialMemorySnapshot() {
     });
     const hasPersistedUiLayout = restoredVisibilityEntries.length > 0;
     const normalizedUiLayout = normalizeUiLayout(persistedSession?.session?.ui?.uiLayout || DEFAULT_UI_LAYOUT);
-    const reconciledPaneOrder = reconcilePersistedOperatorPaneLayout(persistedSession);
+    const reconciledPaneLayout = reconcilePersistedOperatorPaneLayout(persistedSession);
     const effectiveUiLayoutBase = hasPersistedUiLayout
       ? normalizedUiLayout
       : normalizeUiLayout(resolveSurfaceUiLayoutDefaults(normalizedUiLayout, surfaceAwareness.effectiveSurfaceExperience));
@@ -857,7 +908,8 @@ function createInitialMemorySnapshot() {
       hostedCloudCognitionRestoreDiagnostics,
       uiLayout: effectiveUiLayout,
       paneLayout: {
-        order: reconciledPaneOrder,
+        order: reconciledPaneLayout.order,
+        missionConsoleSectionOrder: reconciledPaneLayout.missionConsoleSectionOrder,
       },
       lastRoute: String(persistedSession?.session?.ui?.recentRoute || STEPHANOS_ACTIVE_SUBVIEW),
       commandHistory: sanitizePersistedCommandHistory(
@@ -1374,6 +1426,7 @@ export function AIStoreProvider({ children }) {
           uiLayout: normalizeUiLayout(uiLayout),
           operatorPaneLayout: {
             order: normalizeOperatorPaneOrder(paneLayout.order),
+            missionConsoleSectionOrder: normalizeMissionConsoleSectionOrder(paneLayout.missionConsoleSectionOrder),
           },
           debugConsoleVisible: debugVisible,
           missionDashboard: normalizeMissionDashboardUiState(missionDashboardUiState),
@@ -1470,6 +1523,15 @@ export function AIStoreProvider({ children }) {
       console.info('[PANES] pane order updated', { order: resolvedOrder });
       return { ...prev, order: resolvedOrder };
     });
+  }, []);
+
+  const setMissionConsoleSectionOrder = useCallback((nextOrder) => {
+    setPaneLayout((prev) => ({
+      ...prev,
+      missionConsoleSectionOrder: normalizeMissionConsoleSectionOrder(
+        typeof nextOrder === 'function' ? nextOrder(prev.missionConsoleSectionOrder) : nextOrder,
+      ),
+    }));
   }, []);
 
   const updateUiLayout = useCallback((updater) => {
@@ -2697,6 +2759,7 @@ export function AIStoreProvider({ children }) {
     togglePanel,
     setPanelState,
     setPaneOrder,
+    setMissionConsoleSectionOrder,
     setMissionDashboardUiState,
     provider,
     setProvider,
@@ -2897,6 +2960,7 @@ export function AIStoreProvider({ children }) {
     togglePanel,
     setPanelState,
     setPaneOrder,
+    setMissionConsoleSectionOrder,
     setMissionDashboardUiState,
     setProvider,
     setRouteMode,
