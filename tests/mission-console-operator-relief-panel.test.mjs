@@ -89,6 +89,10 @@ test('Zero-Cost Builder Mesh is hosted inside existing Builder Harness panel, no
   assert.match(source, /copyBuilderMeshLocalAiReviewPacket/);
   assert.match(source, /copyBuilderMeshOpenClawResearchPacket/);
   assert.match(source, /copyBuilderMeshGithubInspectionPacket/);
-  assert.match(source, /copyBuilderMeshCodexFallbackPacket/);
-  assert.match(source, /copyBuilderMeshOperatorApprovalChecklist/);
+  assert.match(source, /panelId="missionConsoleBuilderWorkbenchPanel" title="Zero-Cost Builder Workbench V1"/);
+  assert.match(source, /Paste Local AI Review Result/);
+  assert.match(source, /Paste OpenClaw Research \/ Patch Plan Result/);
+  assert.match(source, /Show Workbench Verdict/);
+  assert.match(source, /copyBuilderWorkbenchCodexFallbackPacket/);
+  assert.match(source, /copyBuilderWorkbenchOperatorApprovalChecklist/);
 });

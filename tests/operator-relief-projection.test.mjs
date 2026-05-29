@@ -352,3 +352,53 @@ test('Builder Mesh copy packets exist and stay bounded/read-only', () => {
     assert.match(JSON.stringify(packets[key]), /Do not mutate repo files/);
   }
 });
+
+test('Builder Workbench V1 parses safe local AI review intake and keeps approval before patch required', async () => {
+  const { parseBuilderWorkbenchResult } = await import('../stephanos-ui/src/state/operatorReliefProjection.js');
+  const parsed = parseBuilderWorkbenchResult(`Summary: Review found a small projection-only follow-up.\nFiles suspected: stephanos-ui/src/state/operatorReliefProjection.js, tests/operator-relief-projection.test.mjs\nProposed change type: read-only-review\nRisk level: low\nTests recommended: node --test tests/operator-relief-projection.test.mjs\nConfidence: 88%\nRequires Codex fallback: no\nRequires operator approval: yes`);
+  assert.equal(parsed.safeForWorkbench, true);
+  assert.equal(parsed.summary, 'Review found a small projection-only follow-up.');
+  assert.equal(parsed.filesSuspected.includes('stephanos-ui/src/state/operatorReliefProjection.js'), true);
+  assert.equal(parsed.riskLevel, 'low');
+  assert.equal(parsed.requiresCodexFallback, 'no');
+  assert.equal(parsed.requiresOperatorApproval, 'yes');
+});
+
+test('Builder Workbench V1 parses safe OpenClaw patch plan and can reduce Codex fallback need', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Implement bounded workbench projection', repoArchitectureContext: { testsLikelyRequired: [] } } },
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } }, browserChecksObserved: ['tile opens'] },
+    supportSnapshot: {
+      nextBuilderTaskKind: 'implementation',
+      builderWorkbenchInput: {
+        openClawResearchText: `Summary: Patch plan is source-only and approval-gated.\nFiles suspected: stephanos-ui/src/state/operatorReliefProjection.js, stephanos-ui/src/components/MissionConsoleTile.jsx\nProposed change type: patch-plan\nRisk level: medium\nTests recommended: node --test tests/operator-relief-projection.test.mjs, npm run stephanos:build\nConfidence: high\nRequires Codex fallback: no\nRequires operator approval: yes`,
+      },
+    },
+  });
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.workbenchStatus, 'ready');
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.openClawResearchResultPresent, true);
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.patchPlanPresent, true);
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.patchPlanRisk, 'medium');
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.approvalRequiredBeforePatch, true);
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.codexFallbackStillNeeded, false);
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'operator');
+  assert.equal(r.builderMeshProjection.codexRequired, false);
+});
+
+test('Builder Workbench V1 blocks forbidden mutation language in pasted results', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Implement bounded workbench projection' } },
+    prEvidenceModel: { changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] },
+    supportSnapshot: {
+      nextBuilderTaskKind: 'implementation',
+      builderWorkbenchInput: {
+        localAiReviewText: 'Summary: I edited the source file and applied the patch without operator approval.\nRequires Codex fallback: no',
+      },
+    },
+  });
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.localAiReviewResultPresent, true);
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.blockers.includes('Forbidden mutation/autonomy language detected in pasted workbench result.'), true);
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.codexFallbackStillNeeded, true);
+  assert.equal(r.builderMeshProjection.builderWorkbenchProjection.localAiReview.safeForWorkbench, false);
+});

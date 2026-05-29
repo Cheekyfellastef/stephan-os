@@ -13,6 +13,153 @@ const MAX_REPAIR_PROMPT_LENGTH = 4000;
 const MAX_QUEUE_PAYLOAD_LENGTH = 2400;
 
 
+
+const MAX_WORKBENCH_RAW_TEXT_LENGTH = 2400;
+const WORKBENCH_FORBIDDEN_ACTION_PATTERNS = [
+  /\b(i\s+)?(edited|modified|changed|wrote|created|deleted|removed|renamed)\b[^.\n]*(file|repo|source|code|component|module|test)/i,
+  /\b(applied|apply)\b[^.\n]*(patch|diff|change|fix)/i,
+  /\b(git\s+(add|commit|push|merge|checkout|reset|clean)|npm\s+version|rm\s+-rf)\b/i,
+  /\b(write|mutate|modify|edit|delete|create)\s+(the\s+)?(file|repo|source|code)/i,
+  /\b(no\s+approval\s+needed|without\s+operator\s+approval|approval\s+not\s+required)\b/i,
+];
+const WORKBENCH_RISK_VALUES = ['low', 'medium', 'high', 'critical'];
+
+function truncateWorkbenchText(value) {
+  const text = asText(value, '');
+  return text.length > MAX_WORKBENCH_RAW_TEXT_LENGTH ? `${text.slice(0, MAX_WORKBENCH_RAW_TEXT_LENGTH)}…[truncated]` : text;
+}
+
+function escapeWorkbenchRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractWorkbenchField(text, names = []) {
+  for (const name of names) {
+    const escaped = escapeWorkbenchRegex(name);
+    const match = text.match(new RegExp(`(?:^|\\n)\\s*(?:[-*]\\s*)?(?:${escaped})\\s*[:=-]\\s*([^\\n]+)`, 'i'));
+    if (match) return asText(match[1], '');
+  }
+  return '';
+}
+
+function parseWorkbenchListField(text, names = []) {
+  const field = extractWorkbenchField(text, names);
+  if (!field) return [];
+  return field.split(/[,;|]/).map((item) => asText(item, '')).filter(Boolean).slice(0, 12);
+}
+
+function parseWorkbenchYesNo(text, names = [], fallback = 'unknown') {
+  const field = extractWorkbenchField(text, names).toLowerCase();
+  if (/\b(yes|true|required|needed)\b/.test(field)) return 'yes';
+  if (/\b(no|false|not required|not needed)\b/.test(field)) return 'no';
+  return fallback;
+}
+
+function parseWorkbenchRisk(text) {
+  const field = extractWorkbenchField(text, ['risk level', 'risk', 'patch plan risk']).toLowerCase();
+  const found = WORKBENCH_RISK_VALUES.find((risk) => field.includes(risk));
+  if (found) return found;
+  if (/\b(small|safe|minor)\b/.test(field)) return 'low';
+  if (/\b(broad|protected|destructive|command deck|provider routing)\b/.test(text.toLowerCase())) return 'high';
+  return 'unknown';
+}
+
+function parseWorkbenchConfidence(text) {
+  const field = extractWorkbenchField(text, ['confidence']);
+  if (!field) return 'unknown';
+  const percent = field.match(/\b(\d{1,3})\s*%/);
+  if (percent) return `${Math.min(100, Number(percent[1]))}%`;
+  const word = field.match(/\b(low|medium|high|strong|weak)\b/i);
+  return word ? word[1].toLowerCase() : field.slice(0, 80);
+}
+
+export function parseBuilderWorkbenchResult(rawText = '', { source = 'local-ai-review' } = {}) {
+  const raw = truncateWorkbenchText(rawText);
+  const lower = raw.toLowerCase();
+  const forbiddenActionsDetected = WORKBENCH_FORBIDDEN_ACTION_PATTERNS
+    .filter((pattern) => pattern.test(raw))
+    .map((pattern) => String(pattern));
+  const fallbackSummary = raw.split(/\n+/).map((line) => asText(line, '')).find(Boolean) || 'No review text provided.';
+  const riskLevel = parseWorkbenchRisk(raw);
+  const requiresCodexFallback = parseWorkbenchYesNo(raw, ['requires codex fallback', 'codex fallback', 'codex required'], 'unknown');
+  const requiresOperatorApproval = parseWorkbenchYesNo(raw, ['requires operator approval', 'operator approval', 'approval required'], 'yes') === 'no' ? 'yes' : 'yes';
+  const proposedChangeType = extractWorkbenchField(raw, ['proposed change type', 'change type', 'plan type'])
+    || (/\b(read[- ]only|review only|research only)\b/.test(lower) ? 'read-only-review' : (/\b(patch|implementation|fix)\b/.test(lower) ? 'patch-plan' : 'unknown'));
+  return {
+    source,
+    resultStatus: raw ? (forbiddenActionsDetected.length ? 'blocked-forbidden-action' : 'parsed') : 'empty',
+    safeForWorkbench: Boolean(raw) && forbiddenActionsDetected.length === 0,
+    summary: extractWorkbenchField(raw, ['summary', 'finding summary', 'review summary', 'plan summary']) || fallbackSummary.slice(0, 320),
+    filesSuspected: parseWorkbenchListField(raw, ['files suspected', 'suspected files', 'files', 'target files']),
+    proposedChangeType,
+    riskLevel,
+    testsRecommended: parseWorkbenchListField(raw, ['tests recommended', 'recommended tests', 'tests']),
+    confidence: parseWorkbenchConfidence(raw),
+    requiresCodexFallback,
+    requiresOperatorApproval,
+    forbiddenActionsDetected,
+    rawText: raw,
+  };
+}
+
+function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput = {}, implementationRequested = false } = {}) {
+  const localRaw = asText(workbenchInput.localAiReviewText || workbenchInput.localAiReviewResult || '', '');
+  const openClawRaw = asText(workbenchInput.openClawResearchText || workbenchInput.openClawResearchResult || workbenchInput.openClawPatchPlanText || '', '');
+  const localAiReview = localRaw ? parseBuilderWorkbenchResult(localRaw, { source: 'local-ai-review' }) : null;
+  const openClawResearch = openClawRaw ? parseBuilderWorkbenchResult(openClawRaw, { source: 'openclaw-research-patch-plan' }) : null;
+  const parsedResults = [localAiReview, openClawResearch].filter(Boolean);
+  const forbidden = parsedResults.flatMap((result) => result.forbiddenActionsDetected || []);
+  const safeResults = parsedResults.filter((result) => result.safeForWorkbench);
+  const patchPlanPresent = Boolean(openClawResearch && /patch|plan|implementation|fix/i.test(openClawResearch.proposedChangeType || openClawResearch.rawText || ''));
+  const patchPlanRisk = openClawResearch?.riskLevel || localAiReview?.riskLevel || 'unknown';
+  const resultRequestsFallback = parsedResults.some((result) => result.requiresCodexFallback === 'yes');
+  const resultDeniesFallback = safeResults.length > 0 && parsedResults.every((result) => result.requiresCodexFallback !== 'yes');
+  let codexFallbackStillNeeded = Boolean(builderMeshBase.recommendedBuilder === 'codex-fallback');
+  let codexFallbackReason = builderMeshBase.codexReason || 'Codex fallback remains optional unless a safe workbench result proves it is needed.';
+  if (forbidden.length > 0) {
+    codexFallbackStillNeeded = true;
+    codexFallbackReason = 'Workbench intake detected forbidden mutation/autonomy language; use operator review and Codex fallback only after explicit approval.';
+  } else if (resultRequestsFallback) {
+    codexFallbackStillNeeded = true;
+    codexFallbackReason = 'Workbench result says local/OpenClaw cannot safely proceed without Codex fallback.';
+  } else if (resultDeniesFallback) {
+    codexFallbackStillNeeded = false;
+    codexFallbackReason = 'Safe workbench review/patch plan is present and does not require Codex fallback; operator approval checklist is the next gate.';
+  }
+  const blockers = [];
+  const warnings = [];
+  if (forbidden.length > 0) blockers.push('Forbidden mutation/autonomy language detected in pasted workbench result.');
+  if (patchPlanPresent && !['low', 'medium'].includes(patchPlanRisk)) warnings.push('Patch plan risk is not low/medium; operator should review scope before any mutation approval.');
+  if (!parsedResults.length) warnings.push('No local AI/OpenClaw workbench result has been pasted yet.');
+  const nextBestAction = forbidden.length > 0
+    ? 'Reject the pasted result for mutation authority and request a read-only review/patch plan only.'
+    : (safeResults.length > 0
+      ? 'Review safe workbench findings, then use the Operator Approval Checklist before any patch is applied.'
+      : 'Copy Local AI/OpenClaw packets and paste bounded read-only results into the Workbench.');
+  return {
+    workbenchStatus: 'ready',
+    activePacketType: workbenchInput.activePacketType || (openClawRaw ? 'openclaw-research-patch-plan' : (localRaw ? 'local-ai-review' : 'none')),
+    activePacketTarget: workbenchInput.activePacketTarget || builderMeshBase.recommendedBuilder || 'zero-cost-builder-mesh',
+    localAiReviewRequested: workbenchInput.localAiReviewRequested === true || Boolean(workbenchInput.localAiReviewRequestedAt) || false,
+    openClawResearchRequested: workbenchInput.openClawResearchRequested === true || Boolean(workbenchInput.openClawResearchRequestedAt) || false,
+    localAiReviewResultPresent: Boolean(localAiReview),
+    openClawResearchResultPresent: Boolean(openClawResearch),
+    patchPlanPresent,
+    patchPlanRisk,
+    approvalRequiredBeforePatch: true,
+    codexFallbackStillNeeded,
+    codexFallbackReason,
+    nextBestAction,
+    blockers,
+    warnings,
+    localAiReview,
+    openClawResearch,
+    patchPlanSummary: openClawResearch?.summary || 'none',
+    verdict: codexFallbackStillNeeded ? 'fallback-needed-or-hold' : (safeResults.length ? 'operator-review-before-patch' : 'awaiting-results'),
+    implementationRequested,
+  };
+}
+
 const PROTECTED_CANON_CLAUSE_CATALOG = Object.freeze({
   COMMAND_DECK: [
     'Preserve Answer Delivery Contract.',
@@ -318,6 +465,7 @@ function buildBuilderMeshProjection({
   supportSnapshot = {},
   prEvidenceModel = {},
   browserProof = {},
+  builderWorkbenchInput = {},
 } = {}) {
   const protectedCanonClauses = asList(harnessAgentProjection.protectedCanonClauses);
   const requiredProof = Array.from(new Set([
@@ -384,6 +532,15 @@ function buildBuilderMeshProjection({
   if (recommendedBuilder === 'codex-fallback' && codexRequired !== true) {
     codexReason = `${codexReason} Codex fallback is recommended, not marked required, unless the operator explicitly requests Codex.`;
   }
+  const workbenchPreview = buildBuilderWorkbenchProjection({
+    builderMeshBase: { recommendedBuilder, codexReason },
+    workbenchInput: builderWorkbenchInput,
+    implementationRequested,
+  });
+  if (recommendedBuilder === 'codex-fallback' && workbenchPreview.codexFallbackStillNeeded === false) {
+    recommendedBuilder = 'operator';
+    codexReason = workbenchPreview.codexFallbackReason;
+  }
   const zeroCostRouteAvailable = ['local-ai', 'openclaw', 'github-inspection', 'operator'].includes(recommendedBuilder)
     || localAiReady || openClawReady || githubReady;
   const safeReadOnlyActions = [
@@ -397,6 +554,11 @@ function buildBuilderMeshProjection({
     : (recommendedBuilder === 'codex-fallback'
       ? 'Copy the Codex Fallback Packet only after operator approval confirms zero-cost routes cannot safely implement.'
       : `Copy the ${recommendedBuilder === 'github-inspection' ? 'GitHub Inspection Packet' : recommendedBuilder === 'openclaw' ? 'OpenClaw Research Packet' : recommendedBuilder === 'operator' ? 'Operator Approval Checklist' : 'Local AI Review Packet'} and keep the route read-only until mutation approval.`);
+  const builderWorkbenchProjection = buildBuilderWorkbenchProjection({
+    builderMeshBase: { recommendedBuilder, codexReason },
+    workbenchInput: builderWorkbenchInput,
+    implementationRequested,
+  });
   const packetBase = {
     missionSummary: missionIntelligenceSummary.currentMissionSummary || missionBrainNextAction.missionObjective || 'Stephanos Zero-Cost Builder Mesh mission.',
     recommendedBuilder,
@@ -421,7 +583,8 @@ function buildBuilderMeshProjection({
     proofRequiredBeforeMerge: requiredProof,
     blockers,
     warnings,
-    nextBestAction,
+    nextBestAction: builderWorkbenchProjection.nextBestAction || nextBestAction,
+    builderWorkbenchProjection,
     copyPackets: {
       localAiReviewPacket: { ...packetBase, packetType: 'Local AI Review Packet', requestedOutput: 'Bounded findings, risks, tests, and proof gaps only. No file writes.' },
       openClawResearchPacket: { ...packetBase, packetType: 'OpenClaw Research Packet', requestedOutput: 'Read-only research, repo inspection, patch plan, cross-checks, blockers/warnings. No mutation without operator approval.', openClawCanHelp },
@@ -968,6 +1131,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     supportSnapshot,
     prEvidenceModel,
     browserProof: missionHandoff.browserProofChecklist,
+    builderWorkbenchInput: supportSnapshot.builderWorkbenchInput || models.builderWorkbenchInput || {},
   });
   const builderHarnessProjection = buildBuilderHarnessProjection({
     missionIntelligenceSummary,
