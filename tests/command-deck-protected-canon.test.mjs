@@ -190,3 +190,40 @@ test('protected canon: compact Mission Console feed panes preserve Command Deck 
   assert.match(styles, /\.openclaw-prompt-box,[\s\S]*max-height:\s*14rem;/m);
   assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*overflow-y:\s*auto;/m);
 });
+
+test('protected canon: Mission Command Deck packs packet support and activity cards with compact Agent Assignment Matrix', async () => {
+  const commandDeckSource = await read(missionCommandDeckPath);
+  const styles = await read(stylesPath);
+
+  assert.match(commandDeckSource, /mission-deck-card--compact-matrix/);
+  assert.match(commandDeckSource, /mission-deck-assignment-row--compact/);
+  assert.match(commandDeckSource, /mission-deck-assignment-facts/);
+  assert.match(commandDeckSource, /summarizeList\(row\.allowedActions, 2\)/);
+  assert.match(commandDeckSource, /summarizeList\(row\.blockedActions, 2\)/);
+  assert.match(commandDeckSource, /mission-deck-grid-command-packet/);
+  assert.match(commandDeckSource, /mission-deck-grid-support-snapshot/);
+  assert.match(commandDeckSource, /mission-deck-grid-activity-feed/);
+  assert.match(commandDeckSource, /panelId="missionConsoleMissionCommandDeckActivityPanel"/);
+  assert.match(commandDeckSource, /togglePanel\('missionConsoleMissionCommandDeckActivityPanel'\)/);
+
+  assert.match(styles, /\.mission-command-deck-grid\s*\{[\s\S]*grid-auto-flow:\s*dense;/m);
+  assert.match(styles, /\.mission-command-deck-grid\s*\{[\s\S]*grid-auto-rows:\s*minmax\(0, auto\);/m);
+  assert.match(styles, /\.mission-deck-card\.mission-deck-card--compact-matrix\s*\{[\s\S]*padding:\s*8px;/m);
+  assert.match(styles, /\.mission-deck-assignment-row\.mission-deck-assignment-row--compact\s*\{[\s\S]*line-height:\s*1\.22;/m);
+});
+
+test('protected canon: nested Mission Console Agent Assignment Matrix keeps compact rows without losing move or collapse persistence', async () => {
+  const missionConsoleSource = await read(missionConsoleTilePath);
+  const styles = await read(stylesPath);
+
+  assert.match(missionConsoleSource, /panelId="missionConsoleAgentAssignmentMatrixPanel"/);
+  assert.match(missionConsoleSource, /onToggle=\{\(\) => dispatchPanelToggle\('missionConsoleAgentAssignmentMatrixPanel'\)\}/);
+  assert.match(missionConsoleSource, /actions=\{getMissionConsoleMoveControls\('missionConsoleAgentAssignmentMatrixPanel'\)\}/);
+  assert.match(missionConsoleSource, /style=\{getMissionConsoleSectionOrderStyle\('missionConsoleAgentAssignmentMatrixPanel'\)\}/);
+  assert.match(missionConsoleSource, /mission-console-compact-summary-grid/);
+  assert.match(missionConsoleSource, /mission-console__status-list mission-console-agent-matrix-list/);
+  assert.match(missionConsoleSource, /mission-console-agent-matrix-row/);
+
+  assert.match(styles, /\.mission-console-agent-matrix-row\s*\{[\s\S]*font-size:\s*0\.75rem;[\s\S]*line-height:\s*1\.22;/m);
+  assert.match(styles, /\.mission-console-workspace \.mission-console-agent-matrix-list\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fit, minmax\(min\(20rem, 100%\), 1fr\)\);/m);
+});

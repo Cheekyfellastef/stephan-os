@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const componentDir = path.dirname(fileURLToPath(import.meta.url));
 const componentPath = path.resolve(componentDir, 'MissionConsoleTile.jsx');
 const commandDeckPath = path.resolve(componentDir, 'MissionCommandDeck.jsx');
+const stylesPath = path.resolve(componentDir, '../styles.css');
 
 test('MissionConsoleTile includes mission router labels, governed routing, and explicit approval rail actions', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
@@ -297,4 +298,45 @@ test('Mission Console activity and evidence feeds use compact canonical collapsi
   assert.equal(source.includes('compact-feed-row compact-feed-row--empty'), true, 'empty feed state must use compact row class');
   assert.equal(source.includes('No recent activity'), true, 'empty feeds should not render giant blank cards');
   assert.equal(source.includes('aria-label="Mission Evidence Ledger compact event rows"'), true);
+});
+
+test('Mission Command Deck protects compact Agent Assignment Matrix structure', async () => {
+  const source = await fs.readFile(commandDeckPath, 'utf8');
+  assert.equal(source.includes('mission-deck-card--compact-matrix'), true, 'matrix card must opt into compact density styling');
+  assert.equal(source.includes('mission-deck-assignment-rows--compact'), true, 'matrix rows must use compact row stack');
+  assert.equal(source.includes('mission-deck-assignment-row--compact'), true, 'each matrix row must use compact row structure');
+  assert.equal(source.includes('mission-deck-assignment-facts'), true, 'matrix entries must use grouped facts instead of tall paragraph gutters');
+  assert.equal(source.includes('summarizeList(row.allowedActions, 2)'), true, 'allowed actions should be summarized to prevent tall rows');
+  assert.equal(source.includes('summarizeList(row.blockedActions, 2)'), true, 'blocked actions should be summarized to prevent tall rows');
+});
+
+test('Mission Command Deck packet support and activity panes use dense packing hooks', async () => {
+  const source = await fs.readFile(commandDeckPath, 'utf8');
+  assert.equal(source.includes('mission-deck-grid-command-packet'), true, 'Mission Command Packet must expose a grid hook for dense packing');
+  assert.equal(source.includes('mission-deck-grid-support-snapshot'), true, 'Support Snapshot must expose a grid hook for dense packing');
+  assert.equal(source.includes('mission-deck-grid-activity-feed'), true, 'Activity Feed must keep a grid hook for dense packing');
+  assert.equal(source.includes('as="article"'), true, 'Activity Feed must remain canonical CollapsiblePanel article');
+  assert.equal(source.includes('panelId="missionConsoleMissionCommandDeckActivityPanel"'), true, 'Activity Feed collapse state must remain persisted by panel id');
+  assert.equal(source.includes("togglePanel('missionConsoleMissionCommandDeckActivityPanel')"), true, 'Activity Feed toggle must still route through uiLayout persistence');
+});
+
+test('Mission Console nested Agent Assignment Matrix keeps canonical compact rows with move and collapse persistence', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  assert.equal(source.includes('panelId="missionConsoleAgentAssignmentMatrixPanel"'), true, 'nested matrix must remain canonical CollapsiblePanel');
+  assert.equal(source.includes("onToggle={() => dispatchPanelToggle('missionConsoleAgentAssignmentMatrixPanel')}"), true, 'nested matrix collapse must persist through dispatchPanelToggle');
+  assert.equal(source.includes("actions={getMissionConsoleMoveControls('missionConsoleAgentAssignmentMatrixPanel')}"), true, 'nested matrix move controls must remain canonical and non-orphaned');
+  assert.equal(source.includes("style={getMissionConsoleSectionOrderStyle('missionConsoleAgentAssignmentMatrixPanel')}"), true, 'nested matrix order persistence must remain canonical');
+  assert.equal(source.includes('mission-console-compact-summary-grid'), true, 'nested matrix summary must use compact metric grid');
+  assert.equal(source.includes('mission-console-agent-matrix-row'), true, 'nested matrix assignments must use compact rows');
+  assert.equal(source.includes('mission-console__status-list mission-console-agent-matrix-list'), true, 'nested matrix should retain status-list canon while adding compact matrix styling');
+});
+
+
+test('Mission Console CSS protects dense Tetris packing and compact matrix rhythm', async () => {
+  const source = await fs.readFile(stylesPath, 'utf8');
+  assert.match(source, /\.mission-command-deck-grid\s*\{[\s\S]*grid-auto-flow:\s*dense;/, 'deck grid must use dense auto-placement to avoid vertical holes');
+  assert.match(source, /\.mission-command-deck-grid\s*\{[\s\S]*grid-auto-rows:\s*minmax\(0, auto\);/, 'deck grid rows must remain content-height driven');
+  assert.match(source, /\.mission-deck-card\.mission-deck-card--compact-matrix\s*\{[\s\S]*padding:\s*8px;/, 'matrix card padding must remain compact after legacy deck rules');
+  assert.match(source, /\.mission-deck-assignment-row\.mission-deck-assignment-row--compact\s*\{[\s\S]*line-height:\s*1\.22;/, 'matrix rows must keep compact line-height');
+  assert.match(source, /\.mission-console-agent-matrix-row\s*\{[\s\S]*font-size:\s*0\.75rem;[\s\S]*line-height:\s*1\.22;/, 'nested matrix rows must keep compact readable typography');
 });

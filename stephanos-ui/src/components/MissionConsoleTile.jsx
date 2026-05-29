@@ -1926,18 +1926,18 @@ function MissionConsoleTile({
       <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleAgentAssignmentMatrixPanel')}>
         <CollapsiblePanel panelId="missionConsoleAgentAssignmentMatrixPanel" title="Agent Assignment Matrix" isOpen={uiLayout.missionConsoleAgentAssignmentMatrixPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleAgentAssignmentMatrixPanel')} actions={getMissionConsoleMoveControls('missionConsoleAgentAssignmentMatrixPanel')}>
 
-        <ul>
-          <li><strong>assignment count:</strong> {agentAssignmentMatrix.summary.assignmentCount}</li>
-          <li><strong>active roles:</strong> {agentAssignmentMatrix.summary.activeRoleCount}</li>
-          <li><strong>recommended lead role:</strong> {agentAssignmentMatrix.summary.recommendedLeadRole}</li>
-          <li><strong>openclaw assigned:</strong> {agentAssignmentMatrix.summary.openClawAssigned ? 'yes' : 'no'}</li>
-          <li><strong>codex assigned:</strong> {agentAssignmentMatrix.summary.codexAssigned ? 'yes' : 'no'}</li>
-          <li><strong>operator approval required:</strong> {agentAssignmentMatrix.summary.operatorApprovalRequired ? 'yes' : 'no'}</li>
-          <li><strong>high-risk count:</strong> {agentAssignmentMatrix.summary.highRiskAssignmentCount}</li>
-        </ul>
-        <ul className="mission-console__status-list">
+        <dl className="mission-console-compact-summary-grid" aria-label="Agent Assignment Matrix summary">
+          <div><dt>assignments</dt><dd>{agentAssignmentMatrix.summary.assignmentCount}</dd></div>
+          <div><dt>active roles</dt><dd>{agentAssignmentMatrix.summary.activeRoleCount}</dd></div>
+          <div><dt>lead</dt><dd>{agentAssignmentMatrix.summary.recommendedLeadRole}</dd></div>
+          <div><dt>openclaw</dt><dd>{agentAssignmentMatrix.summary.openClawAssigned ? 'yes' : 'no'}</dd></div>
+          <div><dt>codex</dt><dd>{agentAssignmentMatrix.summary.codexAssigned ? 'yes' : 'no'}</dd></div>
+          <div><dt>approval</dt><dd>{agentAssignmentMatrix.summary.operatorApprovalRequired ? 'required' : 'clear'}</dd></div>
+          <div><dt>high risk</dt><dd>{agentAssignmentMatrix.summary.highRiskAssignmentCount}</dd></div>
+        </dl>
+        <ul className="mission-console__status-list mission-console-agent-matrix-list" aria-label="Agent Assignment Matrix compact rows">
           {(agentAssignmentMatrix.assignments || []).slice(0, 8).map((assignment) => (
-            <li key={assignment.assignmentId}><strong>{assignment.roleLabel}</strong> - {assignment.responsibility} | authority: {assignment.authorityLevel} | allow: {(assignment.allowedActions || []).join(', ') || 'none'} | block: {(assignment.blockedActions || []).slice(0, 3).join(', ') || 'none'} | output: {assignment.outputExpected} | next: {assignment.nextAction}</li>
+            <li key={assignment.assignmentId} className="mission-console-agent-matrix-row"><strong>{assignment.roleLabel}</strong><span>{assignment.responsibility}</span><span>authority: {assignment.authorityLevel}</span><span>allow: {(assignment.allowedActions || []).join(', ') || 'none'}</span><span>block: {(assignment.blockedActions || []).slice(0, 3).join(', ') || 'none'}</span><span>output: {assignment.outputExpected}</span><span>next: {assignment.nextAction}</span></li>
           ))}
         </ul>
         </CollapsiblePanel>
