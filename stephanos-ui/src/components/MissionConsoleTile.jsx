@@ -90,6 +90,45 @@ const OPENCLAW_INTENT_OPTIONS = Object.freeze([
   { id: 'generate-candidate-prompts', label: 'Generate alternatives / refine prompts' },
 ]);
 
+const DEFAULT_MISSION_CONSOLE_SECTION_ORDER = Object.freeze([
+  'missionConsoleOperatorOverviewPanel',
+  'missionConsoleRuntimeRouteStatusPanel',
+  'missionConsoleOperatorReliefPanel',
+  'missionConsoleAssistantCommandConsolePanel',
+  'missionConsoleSecondaryDiagnosticsPanel',
+  'missionConsoleConnectedTileContextsPanel',
+  'missionConsoleQuickContextPanel',
+  'missionConsoleRoutingControlsPanel',
+  'missionConsoleIntentToBuildPanel',
+  'missionConsoleAgentAssignmentMatrixPanel',
+  'missionConsoleRoutingReadinessPanel',
+  'missionConsolePrEvidencePanel',
+  'missionConsoleEvidenceLedgerPanel',
+  'missionConsoleMissionIntelligencePanel',
+  'missionConsoleRealityUpgradePanel',
+  'missionConsoleConversationWorkspacePanel',
+  'missionConsoleAgentCommandPanel',
+  'missionConsoleSharedAgentContextPanel',
+  'missionConsoleProposalApprovalRailPanel',
+  'missionConsoleIntegrationTopologyPanel',
+  'missionConsoleGuardrailsPanel',
+]);
+
+function normalizeMissionConsoleSectionOrder(value = []) {
+  const seen = new Set();
+  const normalized = [];
+  (Array.isArray(value) ? value : []).forEach((panelId) => {
+    const id = String(panelId || '');
+    if (!DEFAULT_MISSION_CONSOLE_SECTION_ORDER.includes(id) || seen.has(id)) return;
+    seen.add(id);
+    normalized.push(id);
+  });
+  DEFAULT_MISSION_CONSOLE_SECTION_ORDER.forEach((id) => {
+    if (!seen.has(id)) normalized.push(id);
+  });
+  return normalized;
+}
+
 function MissionConsoleTile({
   uiLayout,
   togglePanel,
@@ -113,6 +152,8 @@ function MissionConsoleTile({
   forcePanelOpen = false,
   panelId = 'missionConsolePanel',
   panelTitle = 'Agent Mission Console',
+  paneLayout = {},
+  setMissionConsoleSectionOrder,
 }) {
   const registrationCallbackInvokedRef = useRef('no');
   const registrationDropBoundaryRef = useRef('effect-not-fired');
@@ -970,6 +1011,37 @@ function MissionConsoleTile({
 
   const missionConsolePanelOpen = forcePanelOpen ? true : uiLayout[panelId] !== false;
   const dispatchPanelToggle = (panelId) => togglePanel(panelId, 'MissionConsoleTile');
+  const missionConsoleSectionOrder = useMemo(
+    () => normalizeMissionConsoleSectionOrder(paneLayout?.missionConsoleSectionOrder),
+    [paneLayout?.missionConsoleSectionOrder],
+  );
+  const moveMissionConsoleSection = (sectionPanelId, direction) => {
+    if (typeof setMissionConsoleSectionOrder !== 'function') return;
+    const currentOrder = normalizeMissionConsoleSectionOrder(paneLayout?.missionConsoleSectionOrder);
+    const currentIndex = currentOrder.indexOf(sectionPanelId);
+    const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= currentOrder.length) return;
+    const nextOrder = [...currentOrder];
+    const [moved] = nextOrder.splice(currentIndex, 1);
+    nextOrder.splice(nextIndex, 0, moved);
+    setMissionConsoleSectionOrder(nextOrder);
+  };
+  const getMissionConsoleSectionOrderStyle = (sectionPanelId) => ({
+    order: missionConsoleSectionOrder.indexOf(sectionPanelId) >= 0
+      ? missionConsoleSectionOrder.indexOf(sectionPanelId)
+      : DEFAULT_MISSION_CONSOLE_SECTION_ORDER.length,
+  });
+  const getMissionConsoleMoveControls = (sectionPanelId) => {
+    const sectionIndex = missionConsoleSectionOrder.indexOf(sectionPanelId);
+    const arrangeModeActive = uiLayout?.arrangeMode === true;
+    if (!arrangeModeActive) return null;
+    return (
+      <div className="pane-order-controls" aria-label={`${sectionPanelId} arrangement controls`} data-pane-control-group="move-order" data-pane-control-layer="mission-console-section-header" data-pane-control-attached="true" data-testid={`pane-${sectionPanelId}-move-controls`}>
+        <button type="button" className="ghost-button pane-order-button" onClick={() => moveMissionConsoleSection(sectionPanelId, 'up')} disabled={sectionIndex <= 0} aria-label={`Move ${sectionPanelId} up`} data-testid={`pane-${sectionPanelId}-move-up`}>Move up</button>
+        <button type="button" className="ghost-button pane-order-button" onClick={() => moveMissionConsoleSection(sectionPanelId, 'down')} disabled={sectionIndex < 0 || sectionIndex >= missionConsoleSectionOrder.length - 1} aria-label={`Move ${sectionPanelId} down`} data-testid={`pane-${sectionPanelId}-move-down`}>Move down</button>
+      </div>
+    );
+  };
   const missionBrainPanelOpen = uiLayout.missionConsoleMissionBrainPanel !== false;
   const operatorReliefSummaryPanelOpen = uiLayout.missionConsoleOperatorReliefSummaryPanel !== false;
   const evidenceGapsPanelOpen = (operatorReliefProjection.evidenceGaps || []).length > 0
@@ -1095,12 +1167,13 @@ function MissionConsoleTile({
         compactVerificationSummary={compactVerificationSummary}
       />
       </div>
-      <section className="mission-console-section mission-console-section--operator-overview">
+      <section className="mission-console-section mission-console-section--operator-overview" style={getMissionConsoleSectionOrderStyle('missionConsoleOperatorOverviewPanel')}>
         <CollapsiblePanel
           panelId="missionConsoleOperatorOverviewPanel"
           title="Operator Overview"
           isOpen={uiLayout.missionConsoleOperatorOverviewPanel !== false}
           onToggle={() => dispatchPanelToggle('missionConsoleOperatorOverviewPanel')}
+          actions={getMissionConsoleMoveControls('missionConsoleOperatorOverviewPanel')}
         >
           <ul className="mission-console__status-list">
             <li><strong>Workspace / mode:</strong> Agent Mission Console · {sessionMode}</li>
@@ -1112,12 +1185,13 @@ function MissionConsoleTile({
           </ul>
         </CollapsiblePanel>
       </section>
-      <section className="mission-console-section mission-console-section--status-strip">
+      <section className="mission-console-section mission-console-section--status-strip" style={getMissionConsoleSectionOrderStyle('missionConsoleRuntimeRouteStatusPanel')}>
         <CollapsiblePanel
           panelId="missionConsoleRuntimeRouteStatusPanel"
           title="Runtime + Route Status"
           isOpen={uiLayout.missionConsoleRuntimeRouteStatusPanel !== false}
           onToggle={() => dispatchPanelToggle('missionConsoleRuntimeRouteStatusPanel')}
+          actions={getMissionConsoleMoveControls('missionConsoleRuntimeRouteStatusPanel')}
         >
           <ul className="mission-console__status-list">
             <li><strong>Opened route:</strong> mission-console</li>
@@ -1131,12 +1205,13 @@ function MissionConsoleTile({
         </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section mission-console-section--operator-relief">
+      <section className="mission-console-section mission-console-section--operator-relief" style={getMissionConsoleSectionOrderStyle('missionConsoleOperatorReliefPanel')}>
         <CollapsiblePanel
           panelId="missionConsoleOperatorReliefPanel"
           title="Operator Relief v2 · Mission Brain"
           isOpen={uiLayout.missionConsoleOperatorReliefPanel !== false}
           onToggle={() => dispatchPanelToggle('missionConsoleOperatorReliefPanel')}
+          actions={getMissionConsoleMoveControls('missionConsoleOperatorReliefPanel')}
         >
           <CollapsiblePanel
             panelId="missionConsoleOperatorReliefSummaryPanel"
@@ -1429,26 +1504,35 @@ function MissionConsoleTile({
         </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section mission-console-section--assistant-console">
-        <h4>Assistant Command Console</h4>
-        <AIConsole
-          surfaceOwnerKey="mission-console-section"
-          panelId="aiCoreMissionConsolePanel"
-          input={sharedConsoleInput}
-          setInput={setSharedConsoleInput}
-          submitPrompt={(rawPrompt) => submitPrompt?.(rawPrompt, { orchestrationTruth, submissionSource: 'stephanos-mission-console', submissionRoute: 'assistant-router' })}
-          cancelActivePrompt={cancelActivePrompt}
-          emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
-          commandHistory={sharedCommandHistory}
-        />
+      <section className="mission-console-section mission-console-section--assistant-console" style={getMissionConsoleSectionOrderStyle('missionConsoleAssistantCommandConsolePanel')}>
+        <CollapsiblePanel
+          panelId="missionConsoleAssistantCommandConsolePanel"
+          title="Assistant Command Console"
+          isOpen={uiLayout.missionConsoleAssistantCommandConsolePanel !== false}
+          onToggle={() => dispatchPanelToggle('missionConsoleAssistantCommandConsolePanel')}
+          actions={getMissionConsoleMoveControls('missionConsoleAssistantCommandConsolePanel')}
+          keepMountedWhenClosed
+        >
+          <AIConsole
+            surfaceOwnerKey="mission-console-section"
+            panelId="aiCoreMissionConsolePanel"
+            input={sharedConsoleInput}
+            setInput={setSharedConsoleInput}
+            submitPrompt={(rawPrompt) => submitPrompt?.(rawPrompt, { orchestrationTruth, submissionSource: 'stephanos-mission-console', submissionRoute: 'assistant-router' })}
+            cancelActivePrompt={cancelActivePrompt}
+            emergencyReleaseOllamaLoad={emergencyReleaseOllamaLoad}
+            commandHistory={sharedCommandHistory}
+          />
+        </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section mission-console-section--secondary">
+      <section className="mission-console-section mission-console-section--secondary" style={getMissionConsoleSectionOrderStyle('missionConsoleSecondaryDiagnosticsPanel')}>
         <CollapsiblePanel
           panelId="missionConsoleSecondaryDiagnosticsPanel"
           title="Secondary Diagnostics"
           isOpen={uiLayout.missionConsoleSecondaryDiagnosticsPanel !== false}
           onToggle={() => dispatchPanelToggle('missionConsoleSecondaryDiagnosticsPanel')}
+          actions={getMissionConsoleMoveControls('missionConsoleSecondaryDiagnosticsPanel')}
         >
         <h4>Workspace Header / Command Authority</h4>
         <button type="button" onClick={copyPerfDiagnostics}>
@@ -1467,12 +1551,13 @@ function MissionConsoleTile({
         </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section">
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleConnectedTileContextsPanel')}>
         <CollapsiblePanel
           panelId="missionConsoleConnectedTileContextsPanel"
           title="Connected Tile Contexts (advanced)"
           isOpen={uiLayout.missionConsoleConnectedTileContextsPanel !== false}
           onToggle={() => dispatchPanelToggle('missionConsoleConnectedTileContextsPanel')}
+          actions={getMissionConsoleMoveControls('missionConsoleConnectedTileContextsPanel')}
         >
           <h4>Connected Tile Contexts</h4>
           <p><strong>Music Tile:</strong> {musicTileContext ? 'available' : 'unavailable'}</p>
@@ -1484,20 +1569,33 @@ function MissionConsoleTile({
         </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section">
-        <h4>Quick Chat Context Selector</h4>
-        <select className="paneSelect paneControl" value={contextScope} onChange={(event) => setContextScope(event.target.value)}>
-          <option value="whole-stephanos">Whole Stephanos</option>
-          <option value="music">Music Tile</option>
-          <option value="openclaw">OpenClaw</option>
-          <option value="codex">Codex/PRs</option>
-          <option value="route-health">Route Health</option>
-          <option value="runtime-diagnostics">Runtime Diagnostics</option>
-        </select>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleQuickContextPanel')}>
+        <CollapsiblePanel
+          panelId="missionConsoleQuickContextPanel"
+          title="Quick Chat Context Selector"
+          isOpen={uiLayout.missionConsoleQuickContextPanel !== false}
+          onToggle={() => dispatchPanelToggle('missionConsoleQuickContextPanel')}
+          actions={getMissionConsoleMoveControls('missionConsoleQuickContextPanel')}
+        >
+          <select className="paneSelect paneControl" value={contextScope} onChange={(event) => setContextScope(event.target.value)}>
+            <option value="whole-stephanos">Whole Stephanos</option>
+            <option value="music">Music Tile</option>
+            <option value="openclaw">OpenClaw</option>
+            <option value="codex">Codex/PRs</option>
+            <option value="route-health">Route Health</option>
+            <option value="runtime-diagnostics">Runtime Diagnostics</option>
+          </select>
+        </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section">
-        <h4>Addressing / Routing Controls</h4>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleRoutingControlsPanel')}>
+        <CollapsiblePanel
+          panelId="missionConsoleRoutingControlsPanel"
+          title="Addressing / Routing Controls"
+          isOpen={uiLayout.missionConsoleRoutingControlsPanel !== false}
+          onToggle={() => dispatchPanelToggle('missionConsoleRoutingControlsPanel')}
+          actions={getMissionConsoleMoveControls('missionConsoleRoutingControlsPanel')}
+        >
         <div className="mission-console-target-controls">
           {MISSION_CONSOLE_TARGETS.map((target) => (
             <label key={target.id}>
@@ -1532,15 +1630,17 @@ function MissionConsoleTile({
         <p><strong>Active routing target before submit:</strong> {resolvedTarget.label}</p>
         <p><strong>Target: Agents → Mission Bridge</strong></p>
         <p><strong>Target: Stephanos → Assistant Router</strong></p>
+        </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section mission-console-section--intent-to-build-loop">
+      <section className="mission-console-section mission-console-section--intent-to-build-loop" style={getMissionConsoleSectionOrderStyle('missionConsoleIntentToBuildPanel')}>
         <CollapsiblePanel
           panelId="missionConsoleIntentToBuildPanel"
           title="Intent-to-Build Control Loop"
           description={`Mission ${intentToBuild.missionSpec.missionId || 'pending'} · status ${intentToBuild.missionSpec.missionStatus || 'draft'} · next ${intentToBuild.missionSpec.nextBestAction || 'generate spec'}`}
           isOpen={uiLayout.missionConsoleIntentToBuildPanel !== false}
           onToggle={() => dispatchPanelToggle('missionConsoleIntentToBuildPanel')}
+          actions={getMissionConsoleMoveControls('missionConsoleIntentToBuildPanel')}
         >
         <label className="paneFieldGroup">
           Raw intent
@@ -1814,8 +1914,9 @@ function MissionConsoleTile({
         </CollapsiblePanel>
       </section>
 
-      <div className="paneSection">
-        <h5>Agent Assignment Matrix</h5>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleAgentAssignmentMatrixPanel')}>
+        <CollapsiblePanel panelId="missionConsoleAgentAssignmentMatrixPanel" title="Agent Assignment Matrix" isOpen={uiLayout.missionConsoleAgentAssignmentMatrixPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleAgentAssignmentMatrixPanel')} actions={getMissionConsoleMoveControls('missionConsoleAgentAssignmentMatrixPanel')}>
+
         <ul>
           <li><strong>assignment count:</strong> {agentAssignmentMatrix.summary.assignmentCount}</li>
           <li><strong>active roles:</strong> {agentAssignmentMatrix.summary.activeRoleCount}</li>
@@ -1830,9 +1931,11 @@ function MissionConsoleTile({
             <li key={assignment.assignmentId}><strong>{assignment.roleLabel}</strong> - {assignment.responsibility} | authority: {assignment.authorityLevel} | allow: {(assignment.allowedActions || []).join(', ') || 'none'} | block: {(assignment.blockedActions || []).slice(0, 3).join(', ') || 'none'} | output: {assignment.outputExpected} | next: {assignment.nextAction}</li>
           ))}
         </ul>
-      </div>
-      <div className="paneSection">
-        <h5>Mission Routing / Delegation Readiness</h5>
+        </CollapsiblePanel>
+      </section>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleRoutingReadinessPanel')}>
+        <CollapsiblePanel panelId="missionConsoleRoutingReadinessPanel" title="Mission Routing / Delegation Readiness" isOpen={uiLayout.missionConsoleRoutingReadinessPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleRoutingReadinessPanel')} actions={getMissionConsoleMoveControls('missionConsoleRoutingReadinessPanel')}>
+
         <ul>
           <li><strong>route status:</strong> {missionRoutingReadiness.routeStatus}</li>
           <li><strong>recommended route:</strong> {missionRoutingReadiness.recommendedRoute}</li>
@@ -1856,9 +1959,11 @@ function MissionConsoleTile({
           <li><strong>next action:</strong> {missionCommandPacket.nextAction}</li>
           <li><strong>included systems summary:</strong> memory, architecture, openclaw, finish-authority, pr-evidence, verification-judge, task-finisher, memory-librarian, evidence-ledger, operator-decision</li>
         </ul>
-      </div>
-      <div className="paneSection">
-        <h5>PR Evidence Input</h5>
+        </CollapsiblePanel>
+      </section>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsolePrEvidencePanel')}>
+        <CollapsiblePanel panelId="missionConsolePrEvidencePanel" title="PR Evidence Input" isOpen={uiLayout.missionConsolePrEvidencePanel !== false} onToggle={() => dispatchPanelToggle('missionConsolePrEvidencePanel')} actions={getMissionConsoleMoveControls('missionConsolePrEvidencePanel')}>
+
         <textarea
           className="paneTextarea paneControl"
           rows={5}
@@ -1882,9 +1987,11 @@ function MissionConsoleTile({
             <li><strong>normalized PR status:</strong> {intentToBuild?.missionSpec?.prEvidenceIntake?.normalizedStatus || 'no_pr_evidence'}</li>
           </ul>
         )}
-      </div>
-      <div className="paneSection">
-        <h5>Mission Evidence Ledger</h5>
+        </CollapsiblePanel>
+      </section>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleEvidenceLedgerPanel')}>
+        <CollapsiblePanel panelId="missionConsoleEvidenceLedgerPanel" title="Mission Evidence Ledger" isOpen={uiLayout.missionConsoleEvidenceLedgerPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleEvidenceLedgerPanel')} actions={getMissionConsoleMoveControls('missionConsoleEvidenceLedgerPanel')}>
+
         <ul className="mission-console__status-list">
           <li><strong>evidence completeness:</strong> {missionEvidenceLedger.summary.evidenceCompleteness}</li>
           <li><strong>latest event:</strong> {missionEvidenceLedger.summary.latestEventType}</li>
@@ -1916,10 +2023,12 @@ function MissionConsoleTile({
             <li><strong>warnings:</strong> {(intentToBuild.missionSpec.prEvidenceIntake.evidenceWarnings || []).join(' | ') || 'none'}</li>
           </ul>
         )}
-      </div>
+        </CollapsiblePanel>
+      </section>
 
-      <section className="mission-console-section">
-        <h4>Mission Intelligence Brief</h4>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleMissionIntelligencePanel')}>
+        <CollapsiblePanel panelId="missionConsoleMissionIntelligencePanel" title="Mission Intelligence Brief" isOpen={uiLayout.missionConsoleMissionIntelligencePanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleMissionIntelligencePanel')} actions={getMissionConsoleMoveControls('missionConsoleMissionIntelligencePanel')}>
+
         <p><strong>Current phase:</strong> {missionIntelligence.missionPhase}</p>
         <p><strong>Situation summary:</strong> {missionIntelligence.currentSituationSummary}</p>
         <p><strong>Recommended next mission:</strong> {missionIntelligence.recommendedNextMission}</p>
@@ -1938,11 +2047,13 @@ function MissionConsoleTile({
           <li><strong>Stale signals:</strong> {missionIntelligence.staleSignals.join(' | ') || 'none'}</li>
           <li><strong>Suggested operator actions:</strong> {missionIntelligence.suggestedOperatorActions.join(' | ') || 'none'}</li>
         </ul>
+        </CollapsiblePanel>
       </section>
 
 
-      <section className="mission-console-section">
-        <h4>Reality Upgrade Orchestrator v1</h4>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleRealityUpgradePanel')}>
+        <CollapsiblePanel panelId="missionConsoleRealityUpgradePanel" title="Reality Upgrade Orchestrator v1" isOpen={uiLayout.missionConsoleRealityUpgradePanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleRealityUpgradePanel')} actions={getMissionConsoleMoveControls('missionConsoleRealityUpgradePanel')}>
+
         <p><strong>Upgrade intent:</strong> {runtimeStatusModel?.realityUpgradeOrchestrator?.upgradeIntent || 'Awaiting intent'}</p>
         <p><strong>Affected system area:</strong> {runtimeStatusModel?.realityUpgradeOrchestrator?.affectedSystemArea || 'unknown'}</p>
         <p><strong>Current stage:</strong> {runtimeStatusModel?.realityUpgradeOrchestrator?.supportSnapshot?.activeMissionStage || 'none'}</p>
@@ -1950,10 +2061,12 @@ function MissionConsoleTile({
         <p><strong>Approval checkpoints:</strong> {(runtimeStatusModel?.realityUpgradeOrchestrator?.approvalCheckpoints || []).join(' | ') || 'none'}</p>
         <p><strong>Verification contract:</strong> {(runtimeStatusModel?.realityUpgradeOrchestrator?.verificationContract?.checks || []).join(' | ') || 'none'}</p>
         <button type="button" onClick={() => copyToClipboard(JSON.stringify(runtimeStatusModel?.realityUpgradeOrchestrator || {}, null, 2), setSpecCopyState)}>Generate Codex Handoff Packet</button>
+        </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section">
-        <h4>Conversation Workspace</h4>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleConversationWorkspacePanel')}>
+        <CollapsiblePanel panelId="missionConsoleConversationWorkspacePanel" title="Conversation Workspace" isOpen={uiLayout.missionConsoleConversationWorkspacePanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleConversationWorkspacePanel')} actions={getMissionConsoleMoveControls('missionConsoleConversationWorkspacePanel')} keepMountedWhenClosed>
+
         <div className="mission-console-ledger">
           {messages.map((message) => (
             <article key={message.id} className={`mission-console-message mission-console-message-${message.role}`}>
@@ -1976,11 +2089,12 @@ function MissionConsoleTile({
           />
           <button type="submit">Submit to {resolvedTarget.label}</button>
         </form>
+        </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section">
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleAgentCommandPanel')}>
+        <CollapsiblePanel panelId="missionConsoleAgentCommandPanel" title="Agent Command Console Mission Card" isOpen={uiLayout.missionConsoleAgentCommandPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleAgentCommandPanel')} actions={getMissionConsoleMoveControls('missionConsoleAgentCommandPanel')}>
 
-        <h4>Agent Command Console Mission Card</h4>
         <ul className="paneList">
           <li><strong>Current mission state:</strong> {agentCommandConsole.commandConsoleStatus}</li>
           <li><strong>Active agent:</strong> {agentCommandConsole.activeAgent}</li>
@@ -2030,10 +2144,12 @@ function MissionConsoleTile({
             <span>{openClawIntegration.warnings.join(' ')}</span>
           </div>
         ) : null}
+        </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section">
-        <h4>Shared Agent Context Panel</h4>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleSharedAgentContextPanel')}>
+        <CollapsiblePanel panelId="missionConsoleSharedAgentContextPanel" title="Shared Agent Context Panel" isOpen={uiLayout.missionConsoleSharedAgentContextPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleSharedAgentContextPanel')} actions={getMissionConsoleMoveControls('missionConsoleSharedAgentContextPanel')}>
+
         <ul>
           <li><strong>active / visible agents:</strong> {visibleAgents.map((agent) => agent.agentId).join(', ') || 'none visible'}</li>
           <li><strong>currently acting agent:</strong> {actingAgentId}</li>
@@ -2042,10 +2158,12 @@ function MissionConsoleTile({
           <li><strong>selected agent:</strong> {selectedAgentId}</li>
           <li><strong>active agents:</strong> {activeAgentIds.join(', ') || 'none'}</li>
         </ul>
+        </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section">
-        <h4>Proposal / Approval Rail</h4>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleProposalApprovalRailPanel')}>
+        <CollapsiblePanel panelId="missionConsoleProposalApprovalRailPanel" title="Proposal / Approval Rail" isOpen={uiLayout.missionConsoleProposalApprovalRailPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleProposalApprovalRailPanel')} actions={getMissionConsoleMoveControls('missionConsoleProposalApprovalRailPanel')}>
+
         {proposalCards.length === 0 ? <p>No active OpenClaw proposal cards.</p> : (
           <div className="openclaw-findings-grid">
             {proposalCards.map((card) => (
@@ -2068,18 +2186,22 @@ function MissionConsoleTile({
             ))}
           </div>
         )}
+        </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section">
-        <h4>Integration Topology in Agent Mission Console</h4>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleIntegrationTopologyPanel')}>
+        <CollapsiblePanel panelId="missionConsoleIntegrationTopologyPanel" title="Integration Topology in Agent Mission Console" isOpen={uiLayout.missionConsoleIntegrationTopologyPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleIntegrationTopologyPanel')} actions={getMissionConsoleMoveControls('missionConsoleIntegrationTopologyPanel')}>
+
         <p>{openClawIntegration.topology.map((node) => node.label).join(' -> ')}</p>
         <ul>
           {openClawIntegration.topology.map((node) => <li key={node.id}><strong>{node.label}:</strong> {node.policyNote}</li>)}
         </ul>
+        </CollapsiblePanel>
       </section>
 
-      <section className="mission-console-section">
-        <h4>Guardrails</h4>
+      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleGuardrailsPanel')}>
+        <CollapsiblePanel panelId="missionConsoleGuardrailsPanel" title="Guardrails" isOpen={uiLayout.missionConsoleGuardrailsPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleGuardrailsPanel')} actions={getMissionConsoleMoveControls('missionConsoleGuardrailsPanel')}>
+
         <ul>
           <li><strong>zero-cost posture active:</strong> {guardrails.zeroCostPosture}</li>
           <li><strong>proposal-only OpenClaw posture:</strong> {openClawIntegration.proposalOnlyEnforced ? 'active' : 'degraded'}</li>
@@ -2091,6 +2213,7 @@ function MissionConsoleTile({
           <li><strong>no filesystem destructive operations:</strong> blocked</li>
           <li><strong>no hidden background tasks:</strong> blocked</li>
         </ul>
+        </CollapsiblePanel>
       </section>
     </CollapsiblePanel>
   );

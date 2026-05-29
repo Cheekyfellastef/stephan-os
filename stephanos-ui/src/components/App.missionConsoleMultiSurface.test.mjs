@@ -163,3 +163,10 @@ test('MissionConsoleTile mount telemetry remains mount scoped and registration i
   assert.match(missionConsoleSource, /callbackPropPresent: 'yes'/);
   assert.match(missionConsoleSource, /dropBoundary: 'none'/);
 });
+
+test('App UI reality no longer treats canonical Mission Console sections as deferred nested operational panes', async () => {
+  const source = await fs.readFile(appPath, 'utf8');
+  assert.equal(source.includes('const operationalPaneIds = [];'), true);
+  assert.equal(source.includes('missionConsoleCanonicalSectionPaneIds'), true);
+  assert.equal(source.includes('missionConsoleSectionOrder: safePaneLayout.missionConsoleSectionOrder || []'), true);
+});

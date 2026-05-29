@@ -165,3 +165,14 @@ test('protected canon: builder harness stays inside Operator Relief and keeps Co
   assert.ok(builderHarnessIndex > operatorReliefIndex);
   assert.ok(builderHarnessIndex > commandDeckIndex);
 });
+
+test('protected canon: Mission Console internal boxes use pane canon without duplicate AI Core nesting', async () => {
+  const missionConsoleSource = await read(missionConsoleTilePath);
+  const appSource = await read(appPath);
+  assert.match(missionConsoleSource, /missionConsoleAssistantCommandConsolePanel/);
+  assert.match(missionConsoleSource, /getMissionConsoleMoveControls\('missionConsoleOperatorOverviewPanel'\)/);
+  assert.match(missionConsoleSource, /getMissionConsoleMoveControls\('missionConsoleGuardrailsPanel'\)/);
+  assert.match(missionConsoleSource, /getMissionConsoleSectionOrderStyle\('missionConsoleConversationWorkspacePanel'\)/);
+  assert.match(appSource, /const operationalPaneIds = \[\];/);
+  assert.match(appSource, /missionConsoleCanonicalSectionPaneIds/);
+});

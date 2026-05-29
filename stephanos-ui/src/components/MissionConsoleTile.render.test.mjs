@@ -234,3 +234,44 @@ test('MissionConsoleTile passes explicit assistant-console surface owner key to 
   const source = await fs.readFile(componentPath, 'utf8');
   assert.match(source, /<AIConsole[\s\S]*surfaceOwnerKey="mission-console-section"/m);
 });
+
+test('MissionConsoleTile promotes every internal mission console box to canonical CollapsiblePanel wiring', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  const canonicalPanelIds = [
+    'missionConsoleOperatorOverviewPanel',
+    'missionConsoleRuntimeRouteStatusPanel',
+    'missionConsoleOperatorReliefPanel',
+    'missionConsoleAssistantCommandConsolePanel',
+    'missionConsoleSecondaryDiagnosticsPanel',
+    'missionConsoleConnectedTileContextsPanel',
+    'missionConsoleQuickContextPanel',
+    'missionConsoleRoutingControlsPanel',
+    'missionConsoleIntentToBuildPanel',
+    'missionConsoleAgentAssignmentMatrixPanel',
+    'missionConsoleRoutingReadinessPanel',
+    'missionConsolePrEvidencePanel',
+    'missionConsoleEvidenceLedgerPanel',
+    'missionConsoleMissionIntelligencePanel',
+    'missionConsoleRealityUpgradePanel',
+    'missionConsoleConversationWorkspacePanel',
+    'missionConsoleAgentCommandPanel',
+    'missionConsoleSharedAgentContextPanel',
+    'missionConsoleProposalApprovalRailPanel',
+    'missionConsoleIntegrationTopologyPanel',
+    'missionConsoleGuardrailsPanel',
+  ];
+  for (const panelId of canonicalPanelIds) {
+    assert.equal(source.includes(`panelId="${panelId}"`), true, `missing canonical CollapsiblePanel for ${panelId}`);
+    assert.equal(source.includes(`dispatchPanelToggle('${panelId}')`), true, `missing persisted collapse toggle for ${panelId}`);
+    assert.equal(source.includes(`getMissionConsoleMoveControls('${panelId}')`), true, `missing Arrange Mode move controls for ${panelId}`);
+    assert.equal(source.includes(`getMissionConsoleSectionOrderStyle('${panelId}')`), true, `missing persisted section order style for ${panelId}`);
+  }
+  assert.equal(source.includes('className="paneSection"'), false, 'legacy non-canonical paneSection wrappers should not remain');
+});
+
+test('MissionConsoleTile separates first-class AI Core Mission Console from internal assistant command console', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  assert.equal(source.includes('<CollapsiblePanel\n          panelId="aiCoreMissionConsolePanel"'), false);
+  assert.equal(source.includes('missionConsoleAssistantCommandConsolePanel'), true);
+  assert.equal(source.includes('panelId="aiCoreMissionConsolePanel"'), true);
+});
