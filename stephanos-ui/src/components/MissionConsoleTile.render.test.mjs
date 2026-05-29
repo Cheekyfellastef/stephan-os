@@ -4,7 +4,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const componentPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'MissionConsoleTile.jsx');
+const componentDir = path.dirname(fileURLToPath(import.meta.url));
+const componentPath = path.resolve(componentDir, 'MissionConsoleTile.jsx');
+const commandDeckPath = path.resolve(componentDir, 'MissionCommandDeck.jsx');
 
 test('MissionConsoleTile includes mission router labels, governed routing, and explicit approval rail actions', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
@@ -274,4 +276,25 @@ test('MissionConsoleTile separates first-class AI Core Mission Console from inte
   assert.equal(source.includes('<CollapsiblePanel\n          panelId="aiCoreMissionConsolePanel"'), false);
   assert.equal(source.includes('missionConsoleAssistantCommandConsolePanel'), true);
   assert.equal(source.includes('panelId="aiCoreMissionConsolePanel"'), true);
+});
+
+test('Mission Console activity and evidence feeds use compact canonical collapsible panels', async () => {
+  const source = `${await fs.readFile(componentPath, 'utf8')}\n${await fs.readFile(commandDeckPath, 'utf8')}`;
+  [
+    'missionConsoleMissionCommandDeckActivityPanel',
+    'missionConsoleCodexChangeSummaryPanel',
+    'missionConsoleTestsBuildVerifyPanel',
+    'missionConsoleBrowserProofChecklistPanel',
+    'missionConsoleRuntimeEvidenceWarningsPanel',
+    'missionConsoleMergeSafetyVerdictPanel',
+    'missionConsoleNextBestActionPanel',
+    'missionConsoleLessonCandidatesPanel',
+    'missionConsoleOperatorDecisionQueuePanel',
+  ].forEach((panelId) => {
+    assert.equal(source.includes(`panelId="${panelId}"`), true, `missing compact feed panel: ${panelId}`);
+    assert.equal(source.includes(`dispatchPanelToggle('${panelId}')`) || source.includes(`togglePanel('${panelId}')`), true, `missing uiLayout toggle persistence for: ${panelId}`);
+  });
+  assert.equal(source.includes('compact-feed-row compact-feed-row--empty'), true, 'empty feed state must use compact row class');
+  assert.equal(source.includes('No recent activity'), true, 'empty feeds should not render giant blank cards');
+  assert.equal(source.includes('aria-label="Mission Evidence Ledger compact event rows"'), true);
 });

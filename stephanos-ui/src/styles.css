@@ -4719,3 +4719,89 @@ pre {
 .mission-console-workspace h6 {
   margin-block: 0.25rem;
 }
+
+/* Mission Console compact feed canon: keep nested activity/evidence rows dense and collapsible. */
+.mission-console-workspace .collapsible-panel .collapsible-panel,
+.mission-command-deck .collapsible-panel {
+  margin: 0 0 0.45rem;
+  border-radius: 10px;
+}
+
+.mission-console-workspace .collapsible-panel .collapsible-panel .panel-header-row,
+.mission-command-deck .mission-deck-compact-feed-panel .panel-header-row {
+  min-height: 0;
+  padding: 0.38rem 0.55rem;
+}
+
+.mission-console-workspace .collapsible-panel .collapsible-panel .panel-body,
+.mission-command-deck .mission-deck-compact-feed-panel .panel-body {
+  padding: 0.45rem 0.55rem 0.55rem;
+}
+
+.mission-console-workspace .collapsible-panel .collapsible-panel.is-collapsed,
+.mission-command-deck .mission-deck-compact-feed-panel.is-collapsed {
+  min-height: 0;
+}
+
+.compact-feed-summary {
+  margin: 0 0 0.35rem;
+}
+
+.compact-feed-list,
+.mission-deck-feed--compact {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.compact-feed-row,
+.mission-deck-feed--compact .compact-feed-row,
+.mission-console-ledger .mission-console-message.compact-feed-row {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(4.8rem, auto) auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.45rem;
+  padding: 0.36rem 0.48rem;
+  border: 1px solid rgba(88, 148, 220, 0.28);
+  border-radius: 8px;
+  background: rgba(8, 16, 29, 0.72);
+}
+
+.compact-feed-row p,
+.mission-console-ledger .mission-console-message.compact-feed-row p {
+  margin: 0;
+}
+
+.compact-feed-row time,
+.mission-deck-feed--compact .compact-feed-row time,
+.mission-console-ledger .mission-console-message.compact-feed-row small {
+  color: #9fb2d0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.compact-feed-row--empty {
+  opacity: 0.82;
+}
+
+.openclaw-prompt-box,
+.mission-console-section--operator-relief pre,
+.mission-console-workspace pre {
+  max-height: 14rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 0.35rem 0;
+  padding: 0.55rem;
+}
+
+.mission-dashboard__milestone {
+  padding: 0.55rem;
+  margin: 0;
+}
+
+.mission-console-section {
+  margin-bottom: 0.55rem;
+}

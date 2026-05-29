@@ -30,7 +30,7 @@ test('Agent assignment and PR repair actions remain bounded and safe', async () 
 
 test('Missing/unknown data fallback is explicit and safe', async () => {
   const source = await fs.readFile(componentPath, 'utf8');
-  ['unknown', 'pending', 'no evidence yet / unavailable'].forEach((token) => {
+  ['unknown', 'pending', 'No recent activity'].forEach((token) => {
     assert.equal(source.includes(token), true, `missing fallback token: ${token}`);
   });
 });

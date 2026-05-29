@@ -11,6 +11,7 @@ const surfacePaneSource = fs.readFileSync(path.join(thisDirPath, './StephanosSur
 const openClawSource = fs.readFileSync(path.join(thisDirPath, './OpenClawTile.jsx'), 'utf8');
 const collapsiblePanelSource = fs.readFileSync(path.join(thisDirPath, './CollapsiblePanel.jsx'), 'utf8');
 const aiStoreSource = fs.readFileSync(path.join(thisDirPath, '../state/aiStore.js'), 'utf8');
+const stylesSource = fs.readFileSync(path.join(thisDirPath, '../styles.css'), 'utf8');
 
 function collectSourceFiles(dirPath) {
   const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -199,4 +200,13 @@ test('wide panes mount through canonical workspace shell, lane, and gutters', ()
     'data-workspace-shell="canonical"',
     'operator-pane-wall stephanos-workspace-lane',
   ].forEach((token) => assert.equal(appSource.includes(token), true, `missing app workspace shell token: ${token}`));
+});
+
+test('Mission Console compact feed CSS removes excessive feed row dead space', () => {
+  assert.equal(stylesSource.includes('.compact-feed-row'), true);
+  assert.equal(stylesSource.includes('min-height: 0;'), true);
+  assert.equal(stylesSource.includes('padding: 0.36rem 0.48rem;'), true);
+  assert.equal(stylesSource.includes('grid-template-columns: minmax(4.8rem, auto) auto minmax(0, 1fr);'), true);
+  assert.equal(stylesSource.includes('.compact-feed-row--empty'), true);
+  assert.equal(stylesSource.includes('max-height: 14rem;'), true);
 });

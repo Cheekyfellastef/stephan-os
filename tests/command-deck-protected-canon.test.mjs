@@ -7,6 +7,7 @@ const stylesPath = new URL('../stephanos-ui/src/styles.css', import.meta.url);
 
 const missionConsoleTilePath = new URL('../stephanos-ui/src/components/MissionConsoleTile.jsx', import.meta.url);
 const appPath = new URL('../stephanos-ui/src/App.jsx', import.meta.url);
+const missionCommandDeckPath = new URL('../stephanos-ui/src/components/MissionCommandDeck.jsx', import.meta.url);
 
 async function read(fileUrl) {
   return fs.readFile(fileUrl, 'utf8');
@@ -175,4 +176,17 @@ test('protected canon: Mission Console internal boxes use pane canon without dup
   assert.match(missionConsoleSource, /getMissionConsoleSectionOrderStyle\('missionConsoleConversationWorkspacePanel'\)/);
   assert.match(appSource, /const operationalPaneIds = \[\];/);
   assert.match(appSource, /missionConsoleCanonicalSectionPaneIds/);
+});
+
+test('protected canon: compact Mission Console feed panes preserve Command Deck answer surface boundaries', async () => {
+  const missionConsoleSource = await read(missionConsoleTilePath);
+  const commandDeckSource = await read(missionCommandDeckPath);
+  const styles = await read(stylesPath);
+  assert.match(commandDeckSource, /panelId="missionConsoleMissionCommandDeckActivityPanel"/);
+  assert.match(missionConsoleSource, /panelId="missionConsoleBrowserProofChecklistPanel"/);
+  assert.match(missionConsoleSource, /panelId="missionConsoleRuntimeEvidenceWarningsPanel"/);
+  assert.match(missionConsoleSource, /compact-feed-row compact-feed-row--empty/);
+  assert.match(styles, /\.compact-feed-row,[\s\S]*min-height:\s*0;/m);
+  assert.match(styles, /\.openclaw-prompt-box,[\s\S]*max-height:\s*14rem;/m);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history[\s\S]*overflow-y:\s*auto;/m);
 });
