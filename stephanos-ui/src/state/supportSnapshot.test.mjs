@@ -3889,6 +3889,10 @@ test('Support Snapshot reports Builder Mesh routing evidence from final executio
         builder_mesh_openclaw_can_help: 'yes-read-only-research-and-patch-planning',
         builder_mesh_github_can_help: 'yes-read-only-pr-diff-status-evidence',
         builder_mesh_next_best_action: 'Copy the Local AI Review Packet.',
+        builder_mesh_projection_source: 'operator-relief-bridge',
+        builder_mesh_metadata_source: 'lastExecutionMetadata',
+        builder_mesh_deterministic_answer_used: 'yes',
+        builder_mesh_projection_drop_boundary: 'none',
       },
     },
   });
@@ -3898,4 +3902,8 @@ test('Support Snapshot reports Builder Mesh routing evidence from final executio
   assert.match(snapshot, /Builder Mesh Zero-Cost Route Available: yes/);
   assert.match(snapshot, /Builder Mesh Codex Required: no/);
   assert.match(snapshot, /Builder Mesh Next Best Action: Copy the Local AI Review Packet\./);
+  assert.match(snapshot, /Builder Mesh Projection Source: operator-relief-bridge/);
+  assert.match(snapshot, /Builder Mesh Metadata Source: lastExecutionMetadata/);
+  assert.match(snapshot, /Builder Mesh Deterministic Answer Used: yes/);
+  assert.match(snapshot, /Builder Mesh Projection Drop Boundary: none/);
 });

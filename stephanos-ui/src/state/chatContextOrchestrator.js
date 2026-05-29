@@ -281,6 +281,9 @@ export function buildChatContextPack(input = {}) {
   const agentWorkRouting = missionState?.operatorReliefProjection?.agentWorkRoutingProjection || missionState?.agentWorkRoutingProjection || {};
   const coBuilderLoop = missionState?.operatorReliefProjection?.coBuilderLoopProjection || missionState?.coBuilderLoopProjection || {};
   const builderMeshProjection = missionState?.operatorReliefProjection?.builderMeshProjection || missionState?.builderMeshProjection || {};
+  const builderMeshProjectionSource = missionState?.operatorReliefProjection?.builderMeshProjection
+    ? 'operator-relief-bridge'
+    : (missionState?.builderMeshProjection ? 'mission-state' : 'none');
   const agentRealityLoopProjection = missionState?.operatorReliefProjection?.agentRealityLoopProjection || missionState?.agentRealityLoopProjection || {};
   const agentRealityLoopProjectionSource = missionState?.operatorReliefProjection?.agentRealityLoopProjection
     ? 'operator-relief-bridge'
@@ -320,6 +323,8 @@ export function buildChatContextPack(input = {}) {
       copyPacketsAvailable: agentRealityLoopProjection.copyCodexPacket && agentRealityLoopProjection.copyOpenClawPacket && agentRealityLoopProjection.copyOperatorProofChecklist ? 'yes' : 'no',
     } : undefined,
     builderMesh: missionPlanningTask ? {
+      projectionSource: builderMeshProjectionSource,
+      projectionAvailable: Object.keys(builderMeshProjection).length ? 'yes' : 'no',
       builderMeshStatus: builderMeshProjection.builderMeshStatus || 'unavailable',
       recommendedBuilder: builderMeshProjection.recommendedBuilder || 'hold',
       zeroCostRouteAvailable: builderMeshProjection.zeroCostRouteAvailable === true,
