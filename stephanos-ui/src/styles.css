@@ -1983,6 +1983,7 @@ pre {
   }
 }
 
+
 @media (max-width: 820px) {
   .mission-summary-strip {
     font-size: 0.8rem;
@@ -4804,4 +4805,157 @@ pre {
 
 .mission-console-section {
   margin-bottom: 0.55rem;
+}
+
+/* Final Mission Console density overrides live after legacy duplicated deck rules. */
+.mission-command-deck-grid {
+  align-items: start;
+  grid-auto-flow: dense;
+  grid-auto-rows: minmax(0, auto);
+}
+
+.mission-deck-grid-command-packet,
+.mission-deck-grid-support-snapshot,
+.mission-deck-grid-activity-feed {
+  align-self: start;
+}
+
+.mission-deck-card.mission-deck-card--compact-matrix {
+  padding: 8px;
+}
+
+.mission-deck-card--compact-matrix h4 {
+  margin-block: 0 0.38rem;
+}
+
+.mission-deck-assignment-rows.mission-deck-assignment-rows--compact {
+  gap: 0.35rem;
+}
+
+.mission-deck-assignment-row.mission-deck-assignment-row--compact {
+  min-inline-size: 0;
+  gap: 0.28rem;
+  padding: 0.42rem 0.5rem;
+  line-height: 1.22;
+}
+
+.mission-deck-assignment-primary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.mission-deck-assignment-primary h5 {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.15;
+}
+
+.mission-deck-assignment-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.3rem;
+  margin: 0;
+}
+
+.mission-deck-assignment-facts div {
+  min-width: 0;
+}
+
+.mission-deck-assignment-facts dt {
+  margin: 0;
+  color: #9fb2d0;
+  font-size: 0.64rem;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.mission-deck-assignment-facts dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .mission-deck-assignment-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+
+/* Mission Console nested Agent Assignment Matrix density. */
+.mission-console-compact-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(7.4rem, 100%), 1fr));
+  gap: 0.35rem;
+  margin: 0 0 0.45rem;
+}
+
+.mission-console-compact-summary-grid div {
+  min-width: 0;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid rgba(88, 148, 220, 0.24);
+  border-radius: 8px;
+  background: rgba(8, 16, 29, 0.64);
+}
+
+.mission-console-compact-summary-grid dt {
+  margin: 0;
+  color: #9fb2d0;
+  font-size: 0.64rem;
+  line-height: 1.1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mission-console-compact-summary-grid dd {
+  margin: 0.12rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+}
+
+.mission-console-workspace .mission-console-agent-matrix-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-console-agent-matrix-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 0.9fr) minmax(0, 1.5fr);
+  gap: 0.18rem 0.45rem;
+  min-height: 0;
+  padding: 0.42rem 0.5rem;
+  border: 1px solid rgba(88, 148, 220, 0.24);
+  border-radius: 8px;
+  background: rgba(8, 16, 29, 0.64);
+  font-size: 0.75rem;
+  line-height: 1.22;
+}
+
+.mission-console-agent-matrix-row strong {
+  grid-row: span 2;
+  color: #d8f7ff;
+}
+
+.mission-console-agent-matrix-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .mission-console-agent-matrix-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mission-console-agent-matrix-row strong {
+    grid-row: auto;
+  }
 }

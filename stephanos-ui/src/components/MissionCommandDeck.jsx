@@ -17,6 +17,15 @@ function Metric({ label, value }) {
   return <div className="mission-deck-metric"><span>{label}</span><strong>{value || 'unknown'}</strong></div>;
 }
 
+function summarizeList(items = [], limit = 2) {
+  const values = (Array.isArray(items) ? items : [])
+    .filter(Boolean)
+    .slice(0, limit);
+  if (values.length === 0) return 'none';
+  const remaining = Math.max(0, items.length - values.length);
+  return `${values.join(' · ')}${remaining > 0 ? ` +${remaining}` : ''}`;
+}
+
 export default function MissionCommandDeck(props) {
   const {
     missionRoutingReadiness,
@@ -84,11 +93,11 @@ export default function MissionCommandDeck(props) {
           </div>
         </article>
 
-        <article className="mission-deck-card mission-deck-grid-agent-assignment" aria-label="Agent Assignment Matrix">
+        <article className="mission-deck-card mission-deck-grid-agent-assignment mission-deck-card--compact-matrix" aria-label="Agent Assignment Matrix">
           <h4>Agent Assignment Matrix</h4>
-          <div className="mission-deck-assignment-rows" role="list" aria-label="Agent Assignment card rows">{matrixRows.map((role) => {
+          <div className="mission-deck-assignment-rows mission-deck-assignment-rows--compact" role="list" aria-label="Agent Assignment card rows">{matrixRows.map((role) => {
             const row = assignments.find((item) => (item.role || item.roleId || '').toLowerCase() === role.toLowerCase()) || {};
-            return <section key={role} className="mission-deck-assignment-row" role="listitem"><h5>{role}</h5><div className="mission-deck-assignment-grid"><div><span className="matrix-label">authority</span><span className={`status-chip status-${statusTone(row.authorityLevel || 'unknown')}`}>{row.authorityLevel || 'unknown'}</span></div><div><span className="matrix-label">allowed</span><p>{(row.allowedActions || []).join(' · ') || 'none'}</p></div><div><span className="matrix-label">blocked</span><p>{(row.blockedActions || []).join(' · ') || 'none'}</p></div><div><span className="matrix-label">status / next action</span><p>{row.nextAction || row.status || 'pending'}</p></div></div></section>;
+            return <section key={role} className="mission-deck-assignment-row mission-deck-assignment-row--compact" role="listitem"><div className="mission-deck-assignment-primary"><h5>{role}</h5><span className={`status-chip status-${statusTone(row.authorityLevel || 'unknown')}`}>{row.authorityLevel || 'unknown'}</span></div><dl className="mission-deck-assignment-facts"><div><dt>allow</dt><dd>{summarizeList(row.allowedActions, 2)}</dd></div><div><dt>block</dt><dd>{summarizeList(row.blockedActions, 2)}</dd></div><div><dt>next</dt><dd>{row.nextAction || row.status || 'pending'}</dd></div></dl></section>;
           })}</div>
         </article>
 
@@ -114,8 +123,8 @@ export default function MissionCommandDeck(props) {
           <p className="mission-deck-footnote">Operator chooses the path — no default manual code surgery.</p>
         </article>
 
-        <article className="mission-deck-card"><h4>Mission Command Packet</h4><div className="mission-deck-metrics"><Metric label="mission id" value={missionCommandPacket?.missionId || 'unknown'} /><Metric label="lead role" value={missionCommandPacket?.leadRole || 'operator'} /><Metric label="risk level" value={missionCommandPacket?.riskLevel || 'unknown'} /><Metric label="delegation state" value={missionCommandPacket?.delegationState || 'pending'} /><Metric label="operator approval state" value={missionCommandPacket?.operatorApprovalState || 'required'} /></div></article>
-        <article className="mission-deck-card"><h4>Support Snapshot / Runtime Truth</h4><div className="mission-deck-metrics"><Metric label="source truth" value={supportSnapshot?.sourceTruth || 'unknown'} /><Metric label="dist parity" value={supportSnapshot?.distParity || 'unknown'} /><Metric label="runtime marker" value={runtimeStatusModel?.runtimeMarker || 'unavailable'} /><Metric label="build fingerprint" value={runtimeStatusModel?.buildFingerprint || 'unavailable'} /><Metric label="route/provider truth" value={`${finalRouteTruth?.routeKind || 'unknown'} / ${finalRouteTruth?.provider || 'unknown'}`} /><Metric label="last verify" value={supportSnapshot?.lastVerify || 'pending'} /></div></article>
+        <article className="mission-deck-card mission-deck-grid-command-packet"><h4>Mission Command Packet</h4><div className="mission-deck-metrics"><Metric label="mission id" value={missionCommandPacket?.missionId || 'unknown'} /><Metric label="lead role" value={missionCommandPacket?.leadRole || 'operator'} /><Metric label="risk level" value={missionCommandPacket?.riskLevel || 'unknown'} /><Metric label="delegation state" value={missionCommandPacket?.delegationState || 'pending'} /><Metric label="operator approval state" value={missionCommandPacket?.operatorApprovalState || 'required'} /></div></article>
+        <article className="mission-deck-card mission-deck-grid-support-snapshot"><h4>Support Snapshot / Runtime Truth</h4><div className="mission-deck-metrics"><Metric label="source truth" value={supportSnapshot?.sourceTruth || 'unknown'} /><Metric label="dist parity" value={supportSnapshot?.distParity || 'unknown'} /><Metric label="runtime marker" value={runtimeStatusModel?.runtimeMarker || 'unavailable'} /><Metric label="build fingerprint" value={runtimeStatusModel?.buildFingerprint || 'unavailable'} /><Metric label="route/provider truth" value={`${finalRouteTruth?.routeKind || 'unknown'} / ${finalRouteTruth?.provider || 'unknown'}`} /><Metric label="last verify" value={supportSnapshot?.lastVerify || 'pending'} /></div></article>
         <CollapsiblePanel
           as="article"
           panelId="missionConsoleMissionCommandDeckActivityPanel"
