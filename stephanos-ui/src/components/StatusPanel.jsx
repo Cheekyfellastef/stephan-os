@@ -328,6 +328,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
       lastUiDefaultProvider: lastExecutionMetadata?.ui_default_provider || provider,
       lastUiRequestedProvider: lastExecutionMetadata?.ui_requested_provider,
       lastRequestedProviderIntent: lastExecutionMetadata?.requested_provider_intent || 'n/a',
+      lastExplicitProviderOverrideForRequest: lastExecutionMetadata?.explicit_provider_override_for_request || 'no',
       lastFreshnessCandidateProvider: lastExecutionMetadata?.freshness_candidate_provider || 'n/a',
       lastExecutionRequestedProvider: lastExecutionMetadata?.execution_requested_provider || 'n/a',
       lastRequestedProviderForRequest: lastExecutionMetadata?.requested_provider_for_request || lastExecutionMetadata?.requested_provider,

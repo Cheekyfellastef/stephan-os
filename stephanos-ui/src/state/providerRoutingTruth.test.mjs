@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   diagnoseProviderDrift,
   reconcileExecutionRequestedProvider,
+  reconcileFinalProviderDispatch,
   shouldPreserveLocalFirstExecution,
 } from './providerRoutingTruth.js';
 import { classifyPromptFreshness, resolveFreshnessRoutingDecision } from '../ai/freshnessRouting.js';
@@ -63,7 +64,7 @@ test('Project Awareness prompt injection cannot force Gemini when freshness stay
   });
 
   assert.equal(reconciled.executionRequestedProvider, 'ollama');
-  assert.equal(reconciled.reason, 'freshness-candidate-provider-not-allowed-to-overwrite-execution-request');
+  assert.equal(reconciled.reason, 'freshness-candidate-crossed-into-execution-provider-without-freshness-requirement');
 });
 
 test('freshness candidate Gemini remains separate from execution provider', () => {
@@ -91,6 +92,8 @@ test('explicit Gemini selection still uses Gemini for low freshness', () => {
   const decision = resolveFreshnessRoutingDecision({
     classification: classifyPromptFreshness('summarize this plan'),
     requestedProvider: 'gemini',
+    uiSelectedProvider: 'gemini',
+    explicitProviderOverrideForRequest: true,
     providerHealth: { gemini: { ok: true, transportReachable: true }, ollama: { ok: true } },
     runtimeStatus: { sessionKind: 'hosted-web', cloudAvailable: true, localAvailable: false, homeNodeAvailable: false, backendReachable: true },
     routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes', homeNodeUsableState: 'no', actualTarget: 'https://api.example.test' },
@@ -160,4 +163,67 @@ test('provider mismatch diagnostics identify freshness candidate drift boundary'
   assert.equal(drift.providerDriftBoundary, 'execution-requested-provider');
   assert.equal(drift.providerDriftAllowed, 'no');
   assert.match(drift.providerDriftReason, /freshness-candidate/);
+  assert.equal(drift.providerDriftPolicySource, 'local-first-freshness-guard');
+});
+
+test('stale UI default Gemini is not explicit current-request provider selection', () => {
+  const decision = resolveFreshnessRoutingDecision({
+    classification: classifyPromptFreshness('tell me about the agent reality loop'),
+    requestedProvider: 'gemini',
+    uiSelectedProvider: 'ollama',
+    explicitProviderOverrideForRequest: false,
+    providerHealth: {
+      ollama: { ok: true },
+      gemini: { ok: true, providerCapability: { supportsFreshWeb: true, supportsCurrentAnswers: true, transportReachable: true } },
+    },
+    runtimeStatus: { localAvailable: true, cloudAvailable: true, backendReachable: true },
+    routeTruthView: { routeUsableState: 'yes', backendReachableState: 'yes' },
+  });
+
+  assert.equal(decision.explicitProviderOverrideForRequest, 'no');
+  assert.equal(decision.uiSelectedProvider, 'ollama');
+  assert.equal(decision.freshnessCandidateProvider, 'gemini');
+  assert.equal(decision.selectedProvider, 'ollama');
+  assert.equal(decision.requestedProviderForRequest, 'ollama');
+});
+
+test('final pre-dispatch guard rewrites stale Gemini execution back to Ollama', () => {
+  const guarded = reconcileFinalProviderDispatch({
+    uiSelectedProvider: 'ollama',
+    uiDefaultProvider: 'gemini',
+    requestedProviderIntent: 'ollama',
+    freshnessCandidateProvider: 'gemini',
+    executionRequestedProvider: 'gemini',
+    freshnessRequiredForTruth: false,
+    freshAnswerRequired: false,
+    freshnessNeed: 'low',
+    explicitProviderOverrideForRequest: false,
+    fallbackPolicyTriggered: false,
+    localRouteAvailable: true,
+  });
+
+  assert.equal(guarded.executionRequestedProvider, 'ollama');
+  assert.equal(guarded.policySource, 'local-first-freshness-guard');
+  assert.equal(guarded.reason, 'freshness-candidate-crossed-into-execution-provider-without-freshness-requirement');
+});
+
+test('diagnostics ignore stale UI default when execution remains selected Ollama', () => {
+  const drift = diagnoseProviderDrift({
+    uiSelectedProvider: 'ollama',
+    uiDefaultProvider: 'gemini',
+    requestedProviderIntent: 'ollama',
+    freshnessCandidateProvider: 'gemini',
+    executionRequestedProvider: 'ollama',
+    routerSelectedProvider: 'ollama',
+    executableProvider: 'ollama',
+    actualProviderUsed: 'ollama',
+    freshnessRequiredForTruth: false,
+    freshAnswerRequired: false,
+    freshnessNeed: 'low',
+    explicitProviderOverrideForRequest: false,
+  });
+
+  assert.equal(drift.providerMismatch, 'no');
+  assert.equal(drift.providerDriftBoundary, 'none');
+  assert.equal(drift.providerDriftAllowed, 'n/a');
 });

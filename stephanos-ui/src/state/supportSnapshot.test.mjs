@@ -3760,9 +3760,10 @@ test('support snapshot ARL answer path keeps visible-card proof diagnostics', ()
 test('buildSupportSnapshot reports ARL low-freshness provider intent separation without drift', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
-      lastUiDefaultProvider: 'ollama',
-      lastUiRequestedProvider: 'ollama',
+      lastUiDefaultProvider: 'gemini',
+      lastUiRequestedProvider: 'gemini',
       lastRequestedProviderIntent: 'ollama',
+      lastExplicitProviderOverrideForRequest: 'no',
       lastFreshnessCandidateProvider: 'gemini',
       lastExecutionRequestedProvider: 'ollama',
       lastRequestedProviderForRequest: 'ollama',
@@ -3807,6 +3808,9 @@ test('buildSupportSnapshot reports ARL low-freshness provider intent separation 
   assert.match(snapshot, /Selected Provider: ollama/);
   assert.match(snapshot, /Active Provider: ollama/);
   assert.match(snapshot, /Fallback Active: no/);
+  assert.match(snapshot, /Last UI Default Provider: gemini/);
+  assert.match(snapshot, /Explicit Provider Override For Request: no/);
+  assert.match(snapshot, /Last Execution Requested Provider: ollama/);
   assert.match(snapshot, /Last Requested Provider For Request: ollama/);
   assert.match(snapshot, /Last Request-Side Selected Provider: ollama/);
   assert.match(snapshot, /Last Router Selected Provider: ollama/);
@@ -3822,6 +3826,7 @@ test('buildSupportSnapshot reports ARL low-freshness provider intent separation 
   assert.match(snapshot, /Agent Reality Loop Projection Available: yes/);
   assert.match(snapshot, /Agent Reality Loop Availability Blocker: none/);
   assert.match(snapshot, /Provider Drift Boundary: none/);
+  assert.match(snapshot, /Provider Drift Allowed: n\/a/);
 });
 
 test('buildSupportSnapshot identifies provider drift boundary and policy source', () => {
@@ -3863,5 +3868,5 @@ test('buildSupportSnapshot identifies provider drift boundary and policy source'
   assert.match(snapshot, /Provider Drift Boundary: execution-requested-provider/);
   assert.match(snapshot, /Provider Drift Reason: freshness-candidate-crossed-into-execution-provider-without-freshness-requirement/);
   assert.match(snapshot, /Provider Drift Allowed: no/);
-  assert.match(snapshot, /Provider Drift Policy Source: local-first-low-freshness-policy/);
+  assert.match(snapshot, /Provider Drift Policy Source: local-first-freshness-guard/);
 });

@@ -76,8 +76,8 @@ export function reconcileExecutionRequestedProvider({
     return {
       executionRequestedProvider: 'ollama',
       preservedLocalFirst: true,
-      policySource: 'local-first-low-freshness-provider-intent-separation',
-      reason: 'freshness-candidate-provider-not-allowed-to-overwrite-execution-request',
+      policySource: 'local-first-freshness-guard',
+      reason: 'freshness-candidate-crossed-into-execution-provider-without-freshness-requirement',
     };
   }
 
@@ -85,7 +85,7 @@ export function reconcileExecutionRequestedProvider({
     return {
       executionRequestedProvider: 'ollama',
       preservedLocalFirst: true,
-      policySource: 'local-first-low-freshness-provider-intent-separation',
+      policySource: 'local-first-freshness-guard',
       reason: localAvailable
         ? 'low-freshness-local-route-available'
         : 'low-freshness-cloud-fallback-not-permitted',
@@ -98,6 +98,35 @@ export function reconcileExecutionRequestedProvider({
     policySource: 'freshness-routing-policy',
     reason: 'execution-provider-policy-unchanged',
   };
+}
+
+export function reconcileFinalProviderDispatch({
+  uiSelectedProvider,
+  uiDefaultProvider,
+  requestedProviderIntent,
+  freshnessCandidateProvider,
+  executionRequestedProvider,
+  freshnessRequiredForTruth = false,
+  freshAnswerRequired = false,
+  freshnessNeed = 'low',
+  explicitProviderOverrideForRequest = false,
+  fallbackPolicyTriggered = false,
+  localRouteAvailable = true,
+} = {}) {
+  return reconcileExecutionRequestedProvider({
+    uiSelectedProvider,
+    uiDefaultProvider,
+    requestedProviderIntent,
+    freshnessCandidateProvider,
+    proposedExecutionProvider: executionRequestedProvider,
+    freshnessRequiredForTruth,
+    freshAnswerRequired,
+    freshnessNeed,
+    staleFallbackRequired: false,
+    explicitProviderSelection: explicitProviderOverrideForRequest,
+    fallbackPermitted: fallbackPolicyTriggered,
+    localRouteAvailable,
+  });
 }
 
 export function diagnoseProviderDrift({
@@ -113,25 +142,28 @@ export function diagnoseProviderDrift({
   freshAnswerRequired = false,
   freshnessNeed = 'low',
   fallbackPermitted = false,
+  explicitProviderOverrideForRequest = false,
   providerOverrideReason = '',
   fallbackUsed = false,
   policySource = '',
 } = {}) {
-  const checkpoints = [
-    ['ui-selected-provider', normalizeProvider(uiSelectedProvider)],
-    ['ui-default-provider', normalizeProvider(uiDefaultProvider)],
-    ['requested-provider-intent', normalizeProvider(requestedProviderIntent)],
+  const selected = normalizeProvider(uiSelectedProvider);
+  const defaultProvider = normalizeProvider(uiDefaultProvider);
+  const intent = normalizeProvider(requestedProviderIntent);
+  const baseline = selected || intent || defaultProvider;
+  const executionCheckpoints = [
     ['execution-requested-provider', normalizeProvider(executionRequestedProvider)],
     ['router-selected-provider', normalizeProvider(routerSelectedProvider)],
     ['executable-provider', normalizeProvider(executableProvider)],
     ['actual-provider-used', normalizeProvider(actualProviderUsed)],
   ].filter(([, provider]) => Boolean(provider));
-  const baseline = normalizeProvider(uiSelectedProvider) || normalizeProvider(uiDefaultProvider) || normalizeProvider(requestedProviderIntent);
   let boundary = 'none';
   let driftProvider = '';
-  for (const [label, provider] of checkpoints) {
+  for (const [label, provider] of executionCheckpoints) {
     if (baseline && provider && provider !== baseline) {
-      boundary = label;
+      boundary = (!boolFrom(explicitProviderOverrideForRequest) && defaultProvider && provider === defaultProvider && defaultProvider !== baseline)
+        ? 'ui-default-provider'
+        : label;
       driftProvider = provider;
       break;
     }
@@ -139,18 +171,27 @@ export function diagnoseProviderDrift({
   const mismatch = Boolean(boundary !== 'none');
   const freshAllowed = boolFrom(freshnessRequiredForTruth) || boolFrom(freshAnswerRequired) || normalizeFreshnessNeed(freshnessNeed) === 'high';
   const fallbackAllowed = boolFrom(fallbackPermitted) && boolFrom(fallbackUsed);
-  const driftAllowed = mismatch ? (freshAllowed || fallbackAllowed || Boolean(String(providerOverrideReason || '').trim())) : true;
+  const explicitOverrideAllowed = boolFrom(explicitProviderOverrideForRequest);
   const freshCandidate = normalizeProvider(freshnessCandidateProvider);
+  const freshnessCandidateCrossed = mismatch && freshCandidate && driftProvider === freshCandidate && !freshAllowed;
+  const driftAllowed = mismatch
+    ? (!freshnessCandidateCrossed && (freshAllowed || fallbackAllowed || explicitOverrideAllowed))
+    : false;
   const reason = !mismatch
     ? 'none'
-    : (freshCandidate && driftProvider === freshCandidate && !freshAllowed
+    : (freshnessCandidateCrossed
       ? 'freshness-candidate-crossed-into-execution-provider-without-freshness-requirement'
-      : (providerOverrideReason || (fallbackAllowed ? 'fallback-policy-permitted-provider-drift' : 'provider-chain-changed-before-actual-execution')));
+      : (explicitOverrideAllowed
+        ? 'explicit-provider-override-for-request'
+        : (fallbackAllowed ? 'fallback-policy-permitted-provider-drift' : (providerOverrideReason || 'provider-chain-changed-before-actual-execution'))));
+  const deniedLocalFirstDrift = mismatch && !driftAllowed && !freshAllowed && !fallbackAllowed && !explicitOverrideAllowed;
   return {
     providerMismatch: mismatch ? 'yes' : 'no',
     providerDriftBoundary: boundary,
     providerDriftReason: reason,
     providerDriftAllowed: mismatch ? (driftAllowed ? 'yes' : 'no') : 'n/a',
-    providerDriftPolicySource: policySource || (freshAllowed ? 'freshness-required-policy' : fallbackAllowed ? 'fallback-policy' : 'local-first-low-freshness-policy'),
+    providerDriftPolicySource: deniedLocalFirstDrift
+      ? 'local-first-freshness-guard'
+      : (policySource || (freshAllowed ? 'freshness-required-policy' : fallbackAllowed ? 'fallback-policy' : 'local-first-low-freshness-policy')),
   };
 }
