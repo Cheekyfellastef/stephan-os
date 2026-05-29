@@ -284,6 +284,12 @@ function MissionConsoleTile({
     localAiRunnerAvailableModels: [],
     localAiRunnerLastRunResult: 'none',
     localAiRunnerLastRunBlockedReason: '',
+    localAiRunnerErrorMessage: '',
+    localAiRunnerDispatchAttempted: 'no',
+    localAiRunnerRequestSent: 'no',
+    localAiRunnerResponseRetained: 'no',
+    localAiRunnerParseAttempted: 'no',
+    localAiRunnerParseResultStatus: 'empty',
     localAiRunnerRawResponse: '',
   }));
   const [showBuilderWorkbenchVerdict, setShowBuilderWorkbenchVerdict] = useState(false);
@@ -1160,11 +1166,12 @@ function MissionConsoleTile({
         if (cancelled) return;
         setBuilderWorkbenchInput((prev) => ({
           ...prev,
-          localAiRunnerStatus: discovery.ok ? 'idle' : 'blocked',
+          localAiRunnerStatus: discovery.ok ? 'ready' : 'blocked',
           localAiRunnerAvailableModels: discovery.models || [],
           localAiRunnerSelectedModel: prev.localAiRunnerSelectedModel || discovery.selectedModel || '',
           localAiRunnerLastRunResult: discovery.ok ? 'model-discovery-succeeded' : 'model-discovery-blocked',
-          localAiRunnerLastRunBlockedReason: discovery.ok ? '' : (discovery.reason || 'No approved local Ollama models discovered.'),
+          localAiRunnerLastRunBlockedReason: discovery.ok ? 'none' : (discovery.reason || 'No approved local Ollama models discovered.'),
+          localAiRunnerErrorMessage: discovery.ok ? '' : (discovery.reason || 'No approved local Ollama models discovered.'),
         }));
       })
       .catch((error) => {
@@ -1174,6 +1181,7 @@ function MissionConsoleTile({
           localAiRunnerStatus: 'blocked',
           localAiRunnerLastRunResult: 'model-discovery-failed',
           localAiRunnerLastRunBlockedReason: error?.message || 'Ollama model discovery failed.',
+          localAiRunnerErrorMessage: error?.message || 'Ollama model discovery failed.',
         }));
       });
     return () => { cancelled = true; };
@@ -1189,7 +1197,13 @@ function MissionConsoleTile({
       localAiReviewRequestedAt: new Date().toISOString(),
       localAiRunnerStatus: 'running',
       localAiRunnerLastRunResult: 'running',
-      localAiRunnerLastRunBlockedReason: '',
+      localAiRunnerLastRunBlockedReason: 'none',
+      localAiRunnerErrorMessage: '',
+      localAiRunnerDispatchAttempted: 'yes',
+      localAiRunnerRequestSent: 'no',
+      localAiRunnerResponseRetained: 'no',
+      localAiRunnerParseAttempted: 'no',
+      localAiRunnerParseResultStatus: 'empty',
     }));
     try {
       const result = await runLocalAiWorkbenchReview({
@@ -1203,7 +1217,13 @@ function MissionConsoleTile({
         ...prev,
         localAiRunnerStatus: result.status || (result.ok ? 'succeeded' : 'failed'),
         localAiRunnerLastRunResult: result.ok ? 'succeeded' : (result.status || 'failed'),
-        localAiRunnerLastRunBlockedReason: result.blockedReason || '',
+        localAiRunnerLastRunBlockedReason: result.blockedReason || 'none',
+        localAiRunnerErrorMessage: result.errorMessage || '',
+        localAiRunnerDispatchAttempted: result.dispatchAttempted ? 'yes' : 'yes',
+        localAiRunnerRequestSent: result.requestSent ? 'yes' : 'no',
+        localAiRunnerResponseRetained: result.responseRetained || (result.responseText ? 'yes' : 'no'),
+        localAiRunnerParseAttempted: result.parseAttempted || 'no',
+        localAiRunnerParseResultStatus: result.parseResultStatus || (result.ok ? 'parsed' : 'blocked'),
         localAiRunnerRawResponse: result.responseText || '',
         localAiReviewText: result.responseText || prev.localAiReviewText,
         activePacketType: 'local-ai-review',
@@ -1214,6 +1234,12 @@ function MissionConsoleTile({
         localAiRunnerStatus: 'failed',
         localAiRunnerLastRunResult: 'failed',
         localAiRunnerLastRunBlockedReason: error?.message || 'Local AI review failed.',
+        localAiRunnerErrorMessage: error?.message || 'Local AI review failed.',
+        localAiRunnerDispatchAttempted: 'yes',
+        localAiRunnerRequestSent: 'no',
+        localAiRunnerResponseRetained: 'no',
+        localAiRunnerParseAttempted: 'no',
+        localAiRunnerParseResultStatus: 'blocked',
       }));
     }
   };
@@ -1481,6 +1507,12 @@ function MissionConsoleTile({
                   <li><strong>Local AI Runner Selected Model:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerSelectedModel || builderWorkbenchInput.localAiRunnerSelectedModel || 'none'}</li>
                   <li><strong>Local AI Runner Last Run Result:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerLastRunResult || builderWorkbenchInput.localAiRunnerLastRunResult || 'none'}</li>
                   <li><strong>Local AI Runner Last Run Blocked Reason:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerLastRunBlockedReason || builderWorkbenchInput.localAiRunnerLastRunBlockedReason || 'none'}</li>
+                  <li><strong>Local AI Runner Error Message:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerErrorMessage || builderWorkbenchInput.localAiRunnerErrorMessage || 'none'}</li>
+                  <li><strong>Local AI Runner Dispatch Attempted:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerDispatchAttempted || builderWorkbenchInput.localAiRunnerDispatchAttempted || 'no'}</li>
+                  <li><strong>Local AI Runner Request Sent:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerRequestSent || builderWorkbenchInput.localAiRunnerRequestSent || 'no'}</li>
+                  <li><strong>Local AI Runner Response Retained:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerResponseRetained || builderWorkbenchInput.localAiRunnerResponseRetained || 'no'}</li>
+                  <li><strong>Local AI Runner Parse Attempted:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerParseAttempted || builderWorkbenchInput.localAiRunnerParseAttempted || 'no'}</li>
+                  <li><strong>Local AI Runner Parse Result Status:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerParseResultStatus || builderWorkbenchInput.localAiRunnerParseResultStatus || 'empty'}</li>
                   <li><strong>Local AI Runner Parsed Result Present:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiRunnerParsedResultPresent ? 'yes' : 'no'}</li>
                   <li className="builder-workbench-summary-row"><strong>Response summary:</strong> <span className="builder-workbench-summary-text">{operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.localAiReview?.summary || 'none'}</span></li>
                   <li><strong>Parsed verdict:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.verdict || 'awaiting-results'}</li>

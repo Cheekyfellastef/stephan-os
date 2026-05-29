@@ -355,7 +355,7 @@ test('Builder Mesh copy packets exist and stay bounded/read-only', () => {
 
 test('Builder Workbench V1 parses safe local AI review intake and keeps approval before patch required', async () => {
   const { parseBuilderWorkbenchResult } = await import('../stephanos-ui/src/state/operatorReliefProjection.js');
-  const parsed = parseBuilderWorkbenchResult(`Summary: Review found a small projection-only follow-up.\nFiles suspected: stephanos-ui/src/state/operatorReliefProjection.js, tests/operator-relief-projection.test.mjs\nProposed change type: read-only-review\nRisk level: low\nTests recommended: node --test tests/operator-relief-projection.test.mjs\nConfidence: 88%\nRequires Codex fallback: no\nRequires operator approval: yes`);
+  const parsed = parseBuilderWorkbenchResult(`Summary: Review found a small projection-only follow-up.\nSuspected files: stephanos-ui/src/state/operatorReliefProjection.js, tests/operator-relief-projection.test.mjs\nProposed change type: read-only-review\nRisk level: low\nTests recommended: node --test tests/operator-relief-projection.test.mjs\nConfidence: 88%\nRequires Codex fallback: no\nRequires operator approval: yes`);
   assert.equal(parsed.safeForWorkbench, true);
   assert.equal(parsed.summary, 'Review found a small projection-only follow-up.');
   assert.equal(parsed.filesSuspected.includes('stephanos-ui/src/state/operatorReliefProjection.js'), true);
@@ -372,7 +372,9 @@ test('Builder Workbench V1 parses safe OpenClaw patch plan and can reduce Codex 
     supportSnapshot: {
       nextBuilderTaskKind: 'implementation',
       builderWorkbenchInput: {
-        openClawResearchText: `Summary: Patch plan is source-only and approval-gated.\nFiles suspected: stephanos-ui/src/state/operatorReliefProjection.js, stephanos-ui/src/components/MissionConsoleTile.jsx\nProposed change type: patch-plan\nRisk level: medium\nTests recommended: node --test tests/operator-relief-projection.test.mjs, npm run stephanos:build\nConfidence: high\nRequires Codex fallback: no\nRequires operator approval: yes`,
+        openClawResearchText: `Summary: Patch plan is source-only and approval-gated.\nSuspected files: stephanos-ui/src/state/operatorReliefProjection.js, stephanos-ui/src/components/MissionConsoleTile.jsx\nProposed change type: patch-plan\nRisk level: medium\nTests recommended: node --test tests/operator-relief-projection.test.mjs, npm run stephanos:build\nConfidence: high\nRequires Codex fallback: no\nRequires operator approval: yes
+Forbidden actions detected: none
+Reasoning: Safe parsed runner output.`,
       },
     },
   });
@@ -397,14 +399,22 @@ test('Builder Workbench Local AI Runner safe result updates verdict and routes t
         localAiRunnerStatus: 'succeeded',
         localAiRunnerSelectedModel: 'llama3.2:3b',
         localAiRunnerLastRunResult: 'succeeded',
-        localAiReviewText: `Summary: Safe projection-only review found no blocker.
-Files suspected: stephanos-ui/src/state/operatorReliefProjection.js
+        localAiRunnerLastRunBlockedReason: 'none',
+        localAiRunnerDispatchAttempted: 'yes',
+        localAiRunnerRequestSent: 'yes',
+        localAiRunnerResponseRetained: 'yes',
+        localAiRunnerParseAttempted: 'yes',
+        localAiRunnerParseResultStatus: 'parsed',
+        localAiRunnerRawResponse: `Summary: Safe projection-only review found no blocker.
+Suspected files: stephanos-ui/src/state/operatorReliefProjection.js
 Proposed change type: read-only-review
 Risk level: low
 Tests recommended: node --test tests/operator-relief-projection.test.mjs
 Confidence: 90%
 Requires Codex fallback: no
-Requires operator approval: yes`,
+Requires operator approval: yes
+Forbidden actions detected: none
+Reasoning: Safe parsed runner output.`,
       },
     },
   });
@@ -413,7 +423,11 @@ Requires operator approval: yes`,
   assert.equal(workbench.localAiRunnerSelectedModel, 'llama3.2:3b');
   assert.equal(workbench.localAiRunnerParsedResultPresent, true);
   assert.equal(workbench.workbenchAnswerContextUsed, 'no');
-  assert.equal(workbench.workbenchParsedResultSource, 'local-ai-review');
+  assert.equal(workbench.workbenchParsedResultSource, 'local-ai-runner');
+  assert.equal(workbench.localAiRunnerDispatchAttempted, 'yes');
+  assert.equal(workbench.localAiRunnerRequestSent, 'yes');
+  assert.equal(workbench.localAiRunnerResponseRetained, 'yes');
+  assert.equal(workbench.localAiRunnerParseAttempted, 'yes');
   assert.equal(workbench.localAiRunnerParseResultStatus, 'parsed');
   assert.equal(workbench.workbenchOutputViewportStatus, 'usable-css-hooks-present');
   assert.equal(workbench.codexFallbackStillNeeded, false);
@@ -432,7 +446,13 @@ test('Builder Workbench Local AI Runner malformed/empty result does not break UI
         localAiRunnerStatus: 'failed',
         localAiRunnerSelectedModel: 'llama3.2:3b',
         localAiRunnerLastRunResult: 'failed',
-        localAiRunnerLastRunBlockedReason: 'Local AI review returned no parseable response text.',
+        localAiRunnerLastRunBlockedReason: 'Local AI response missing required Workbench field(s): summary.',
+        localAiRunnerDispatchAttempted: 'yes',
+        localAiRunnerRequestSent: 'yes',
+        localAiRunnerResponseRetained: 'yes',
+        localAiRunnerParseAttempted: 'yes',
+        localAiRunnerParseResultStatus: 'malformed',
+        localAiRunnerRawResponse: 'not parseable',
         localAiReviewText: '',
       },
     },
@@ -441,7 +461,9 @@ test('Builder Workbench Local AI Runner malformed/empty result does not break UI
   assert.equal(workbench.workbenchStatus, 'ready');
   assert.equal(workbench.localAiRunnerStatus, 'failed');
   assert.equal(workbench.localAiRunnerParsedResultPresent, false);
-  assert.equal(workbench.localAiRunnerParseResultStatus, 'empty');
+  assert.equal(workbench.localAiRunnerParseResultStatus, 'malformed');
+  assert.equal(workbench.localAiRunnerDispatchAttempted, 'yes');
+  assert.equal(workbench.localAiRunnerRequestSent, 'yes');
   assert.equal(workbench.codexFallbackStillNeeded, false);
 });
 

@@ -3933,11 +3933,15 @@ test('support snapshot aligns Builder Workbench truth from live projection when 
             localAiRunnerSelectedModel: 'llama3.2:3b',
             localAiRunnerLastRunResult: 'succeeded',
             localAiRunnerLastRunBlockedReason: 'none',
+            localAiRunnerErrorMessage: 'none',
+            localAiRunnerDispatchAttempted: 'yes',
+            localAiRunnerRequestSent: 'yes',
             localAiRunnerParsedResultPresent: true,
             workbenchAnswerContextUsed: 'no',
             workbenchAnswerSource: 'builder-workbench-projection',
             workbenchParsedResultSource: 'local-ai-review',
             localAiRunnerResponseRetained: 'yes',
+            localAiRunnerParseAttempted: 'yes',
             localAiRunnerParseInputLength: 64,
             localAiRunnerParseResultStatus: 'parsed',
             workbenchOutputViewportStatus: 'usable-css-hooks-present',
@@ -3983,11 +3987,14 @@ test('support snapshot aligns Builder Workbench truth from live projection when 
   assert.match(snapshot, /Local AI Runner Selected Model: llama3\.2:3b/);
   assert.match(snapshot, /Local AI Runner Last Run Result: succeeded/);
   assert.match(snapshot, /Local AI Runner Last Run Blocked Reason: none/);
+  assert.match(snapshot, /Local AI Runner Dispatch Attempted: yes/);
+  assert.match(snapshot, /Local AI Runner Request Sent: yes/);
   assert.match(snapshot, /Local AI Runner Parsed Result Present: yes/);
   assert.match(snapshot, /Workbench Answer Context Used: no/);
   assert.match(snapshot, /Workbench Answer Source: builder-workbench-projection/);
   assert.match(snapshot, /Workbench Parsed Result Source: local-ai-review/);
   assert.match(snapshot, /Local AI Runner Response Retained: yes/);
+  assert.match(snapshot, /Local AI Runner Parse Attempted: yes/);
   assert.match(snapshot, /Local AI Runner Parse Input Length: 64/);
   assert.match(snapshot, /Local AI Runner Parse Result Status: parsed/);
   assert.match(snapshot, /Workbench Output Viewport Status: usable-css-hooks-present/);

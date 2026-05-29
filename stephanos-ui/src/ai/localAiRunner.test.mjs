@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildLocalAiReviewPrompt,
   discoverLocalAiRunnerModels,
+  parseLocalAiRunnerWorkbenchReview,
   responseContainsMutationLanguage,
   runLocalAiWorkbenchReview,
 } from './localAiRunner.js';
@@ -26,14 +27,14 @@ test('Local AI Runner sends bounded read-only packet to approved selected model'
     runtimeConfig: {},
     sendPromptImpl: async (payload) => {
       captured = payload;
-      return { ok: true, data: { output_text: 'Summary: Safe review only\nProposed change type: read-only-review\nRisk level: low\nRequires Codex fallback: no\nRequires operator approval: yes' } };
+      return { ok: true, data: { output_text: `Summary: Safe review only\nSuspected files: stephanos-ui/src/state/operatorReliefProjection.js\nProposed change type: read-only-review\nRisk level: low\nTests recommended: node --test tests/operator-relief-projection.test.mjs\nConfidence: 90%\nRequires Codex fallback: no\nRequires operator approval: yes\nForbidden actions detected: none\nReasoning: Parsed through Workbench truth.` } };
     },
   });
   assert.equal(result.ok, true);
   assert.equal(captured.provider, 'ollama');
   assert.equal(captured.providerConfigs.ollama.model, 'llama3.2:3b');
   assert.equal(captured.fallbackEnabled, false);
-  assert.match(captured.prompt, /read-only review only/i);
+  assert.match(captured.prompt, /Respond as a read-only Builder Workbench review/i);
   assert.match(captured.prompt, /Do not mutate repo files/i);
 });
 
@@ -43,7 +44,7 @@ test('Local AI Runner blocks mutation language in responses', async () => {
     packet: { packetType: 'Local AI Review Packet' },
     selectedModel: 'llama3.2:3b',
     availableModels: ['llama3.2:3b'],
-    sendPromptImpl: async () => ({ ok: true, data: { output_text: 'Summary: I applied a patch and changed the file.\nRequires Codex fallback: no' } }),
+    sendPromptImpl: async () => ({ ok: true, data: { output_text: 'Summary: I applied a patch and changed the file.\nSuspected files: none\nProposed change type: read-only-review\nRisk level: low\nTests recommended: none\nConfidence: low\nRequires Codex fallback: no\nRequires operator approval: yes\nForbidden actions detected: none\nReasoning: unsafe' } }),
   });
   assert.equal(result.ok, false);
   assert.equal(result.status, 'blocked');
@@ -65,4 +66,38 @@ test('Local AI Runner prompt bounds packet payload', () => {
   const prompt = buildLocalAiReviewPrompt({ huge: 'x'.repeat(5000) });
   assert.match(prompt, /bounded-read-only-packet-truncated/);
   assert.ok(prompt.length < 4500);
+});
+
+
+test('Local AI Runner parses safe review into Workbench result with local-ai-runner source', () => {
+  const parsed = parseLocalAiRunnerWorkbenchReview(`Summary: Safe projection review
+Suspected files: stephanos-ui/src/state/operatorReliefProjection.js
+Proposed change type: read-only-review
+Risk level: low
+Tests recommended: node --test tests/operator-relief-projection.test.mjs
+Confidence: high
+Requires Codex fallback: no
+Requires operator approval: yes
+Forbidden actions detected: none
+Reasoning: Safe read-only analysis only.`);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.status, 'parsed');
+  assert.equal(parsed.parsedResult.source, 'local-ai-runner');
+  assert.equal(parsed.parsedResult.requiresCodexFallback, 'no');
+});
+
+test('Local AI Runner malformed response produces parse-failed proof, not idle', async () => {
+  const result = await runLocalAiWorkbenchReview({
+    packet: { packetType: 'Local AI Review Packet' },
+    selectedModel: 'llama3.2:3b',
+    availableModels: ['llama3.2:3b'],
+    sendPromptImpl: async () => ({ ok: true, data: { output_text: 'This is not the required Workbench field format.' } }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'parse-failed');
+  assert.equal(result.requestSent, true);
+  assert.equal(result.responseRetained, 'yes');
+  assert.equal(result.parseAttempted, 'yes');
+  assert.equal(result.parseResultStatus, 'malformed');
+  assert.match(result.blockedReason, /missing required Workbench field/);
 });
