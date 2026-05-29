@@ -2540,7 +2540,7 @@ function createOperatorExplanationDeterministicResult({
 }
 
 
-function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
+function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt = '') {
   const packets = projection?.copyPackets ? Object.keys(projection.copyPackets) : [];
   const proof = Array.isArray(projection?.proofRequiredBeforeMerge) && projection.proofRequiredBeforeMerge.length
     ? projection.proofRequiredBeforeMerge.join(', ')
@@ -2571,6 +2571,27 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
   const degradedNotice = String(projectAwareness?.status || '').trim().toLowerCase() === 'degraded'
     ? '\n\nSome mission details may be incomplete because Project Awareness is degraded.'
     : '';
+  const promptText = String(prompt || '').toLowerCase();
+  const wantsPacketPayloads = /\b(packet|packets|local ai review packet|openclaw research packet|copyable packets|show me the.*packet|show.*packets)\b/.test(promptText);
+  const copyPackets = projection?.copyPackets || {};
+  const formatPacketBlock = (label, packet) => {
+    if (!packet || !Object.keys(packet).length) {
+      return `${label}: not available in the live Builder Mesh projection.`;
+    }
+    return label + ':\n```json\n' + JSON.stringify(packet, null, 2) + '\n```';
+  };
+  const packetPayloadSection = wantsPacketPayloads
+    ? [
+      '',
+      'Requested Builder Workbench packet payloads:',
+      formatPacketBlock('LOCAL_AI_REVIEW_PACKET_JSON', copyPackets.localAiReviewPacket),
+      formatPacketBlock('OPENCLAW_RESEARCH_PACKET_JSON', copyPackets.openClawResearchPacket),
+      formatPacketBlock('OPERATOR_APPROVAL_CHECKLIST_JSON', copyPackets.operatorApprovalChecklist),
+      'Paste Local AI review output into the Builder Workbench Local AI Review result field.',
+      'Paste OpenClaw research / patch-plan output into the Builder Workbench OpenClaw Research / Patch Plan result field.',
+      'Mutation remains blocked until the operator explicitly approves it.',
+    ].join('\n')
+    : '';
   return [
     'Zero-Cost Builder Mesh V1 is live in the Operator Relief / Builder Harness path.',
     `Recommended builder: ${projection?.recommendedBuilder || 'hold'}.`,
@@ -2591,7 +2612,7 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}) {
     `Next operator action: ${projection?.nextBestAction || workbench?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.'}`,
     `Copyable packets: ${packets.length ? packets.join(', ') : 'Local AI Review Packet, OpenClaw Research Packet, GitHub Inspection Packet, Codex Fallback Packet, Operator Approval Checklist'}.`,
     'This is read-only routing truth: it does not authorize local AI, OpenClaw, or Codex to mutate files without explicit operator approval.',
-  ].join('\n') + degradedNotice;
+  ].join('\n') + packetPayloadSection + degradedNotice;
 }
 
 function createBuilderMeshDeterministicResult({
@@ -2607,7 +2628,7 @@ function createBuilderMeshDeterministicResult({
       type: 'assistant_response',
       route: 'assistant',
       success: true,
-      output_text: formatBuilderMeshAnswer(projection, projectAwareness),
+      output_text: formatBuilderMeshAnswer(projection, projectAwareness, prompt),
       error: null,
       error_code: null,
       timing_ms: Math.round(performance.now() - startedAt),
