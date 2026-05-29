@@ -56,6 +56,11 @@ export const INTENT_RULES = [
     pattern: /\bbroken\b|\bnot working\b|\berror\b|\bbug\b|\bpane is broken\b/,
   },
   {
+    id: 'workbench-routing',
+    responseMode: 'workbench-routing',
+    pattern: /\b(what did (the )?(local ai review|workbench|openclaw) (say|parse|recommend)|show (the )?(local ai review|workbench parse|openclaw recommendation)|what did the workbench parse|what did openclaw recommend|is codex fallback still needed|local ai review|workbench parse|openclaw recommend)\b/,
+  },
+  {
     id: 'builder-mesh-routing',
     responseMode: 'work-routing',
     pattern: /\b(who should (work on|handle|do) this|who should do (the )?next task|what builder should (take|handle|do)|can openclaw help|can my local ais? do this|how do we avoid using codex|without using metered codex|without hitting the meter|keep building without (using )?(metered )?codex|zero-cost builder|builder mesh|builder workbench|workbench status|local ai.*openclaw|codex meter)\b/,
@@ -226,7 +231,7 @@ export function buildChatContextPack(input = {}) {
   const codexDispatchTask = responseMode === 'codex-dispatch' || responseMode === 'codex-prompt';
   const identityRecallTask = responseMode === 'identity-recall';
   const operatorExplanationTask = responseMode === 'operator-explanation' || explanationIntent.matched;
-  const missionPlanningTask = responseMode === 'mission-planning' || responseMode === 'work-routing';
+  const missionPlanningTask = responseMode === 'mission-planning' || responseMode === 'work-routing' || responseMode === 'builder-mesh-routing' || responseMode === 'workbench-routing';
   const agentRealityLoopTask = intent.matchedRule === 'agent-reality-loop';
   const requiredProviders = mergeDecisionTask
     ? ['uiReality', 'proofState', 'prEvidence', 'canonRules', 'runtimeTruth', 'providerTruth', 'missionState']

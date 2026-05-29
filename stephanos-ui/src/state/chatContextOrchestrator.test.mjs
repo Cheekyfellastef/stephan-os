@@ -104,6 +104,22 @@ test('missing PR evidence does not downgrade merge-decision and keeps canon/subs
   assert.ok(pack.affectedSubsystems.includes('pr'));
 });
 
+
+
+test('Workbench questions route through Workbench context instead of direct answer', () => {
+  for (const prompt of [
+    'What did the local AI review say?',
+    'Show the local AI review',
+    'What did the Workbench parse?',
+    'What did OpenClaw recommend?',
+    'Is Codex fallback still needed?',
+  ]) {
+    const pack = buildChatContextPack({ operatorMessage: prompt });
+    assert.equal(pack.recommendedResponseMode, 'workbench-routing');
+    assert.equal(pack.intentClassifierMatchedRule, 'workbench-routing');
+  }
+});
+
 test('direct-answer remains fallback for generic prompts', () => {
   const pack = buildChatContextPack({ operatorMessage: 'hello there' });
   assert.equal(pack.recommendedResponseMode, 'direct-answer');

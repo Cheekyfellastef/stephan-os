@@ -97,6 +97,10 @@ test('Zero-Cost Builder Mesh is hosted inside existing Builder Harness panel, no
   assert.match(source, /Copy raw bounded response/);
   assert.match(source, /Paste OpenClaw Research \/ Patch Plan Result/);
   assert.match(source, /Show Workbench Verdict/);
+  assert.match(source, /builder-workbench-result-textarea--local-ai/);
+  assert.match(source, /builder-workbench-result-textarea--openclaw/);
+  assert.match(source, /data-workbench-output-viewport="raw-bounded-response"/);
+  assert.match(source, /data-workbench-output-viewport="parsed-verdict"/);
   assert.match(source, /copyBuilderWorkbenchCodexFallbackPacket/);
   assert.match(source, /copyBuilderWorkbenchOperatorApprovalChecklist/);
 });
