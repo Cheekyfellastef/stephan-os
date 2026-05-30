@@ -4011,3 +4011,28 @@ test('support snapshot aligns Builder Workbench truth from live projection when 
   assert.match(snapshot, /Builder Workbench Projection Drop Boundary: none/);
   assert.match(snapshot, /Provider Mismatch: no/);
 });
+
+test('support snapshot includes OpenClaw Control Bridge fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      openClawControlBridge: { localScoutProofStatus: 'pending' },
+      lastExecutionMetadata: {},
+    },
+    routeTruthView: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: new Date('2026-05-30T00:00:00Z'),
+  });
+
+  assert.match(snapshot, /OpenClaw Control Bridge Status: manual-control-readonly/);
+  assert.match(snapshot, /OpenClaw Gateway Target: ws:\/\/127\.0\.0\.1:18789/);
+  assert.match(snapshot, /OpenClaw Dashboard URL: http:\/\/127\.0\.0\.1:18789\//);
+  assert.match(snapshot, /OpenClaw Local Scout Expected Model: ollama\/llama3\.2:3b/);
+  assert.match(snapshot, /OpenClaw Local Scout Proof Status: pending/);
+  assert.match(snapshot, /OpenClaw Mutation Locked: yes/);
+  assert.match(snapshot, /OpenClaw Auto-Start Forbidden: yes/);
+  assert.match(snapshot, /OpenClaw Operator Approval Required: yes/);
+  assert.match(snapshot, /OpenClaw Last Proof Command Present: yes/);
+  assert.match(snapshot, /OpenClaw Dashboard Temporary Cockpit: yes/);
+});

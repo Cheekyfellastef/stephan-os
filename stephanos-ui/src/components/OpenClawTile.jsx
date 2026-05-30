@@ -16,6 +16,7 @@ import { appendAuditEvent, createAuditEvent } from './openclaw/openclawAuditMode
 import { resolveReadonlyValidationEndpoint } from '../utils/openClawEndpointConfig.js';
 import { clearOpenClawReviewDecision, loadOpenClawReviewDecisions, saveOpenClawReviewDecision } from '../../../shared/agents/openClawReviewDecisionStore.mjs';
 import { buildOpenClawEvidenceAttachment } from '../../../shared/agents/openClawEvidenceAttachment.mjs';
+import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
 import { clearOpenClawCodexReviewResult, loadOpenClawCodexReviewResults, saveOpenClawCodexReviewResult } from '../../../shared/agents/openClawCodexReviewResultStore.mjs';
 
 
@@ -165,6 +166,7 @@ export default function OpenClawTile({
   const [codexReviewText, setCodexReviewText] = useState('');
   const [localCodexReviewResult, setLocalCodexReviewResult] = useState(null);
   const [codexReviewCopyStatus, setCodexReviewCopyStatus] = useState('idle');
+  const [controlBridgeCopyStatus, setControlBridgeCopyStatus] = useState('idle');
   const [implementationPlanCopyStatus, setImplementationPlanCopyStatus] = useState('idle');
   const [dryRunCopyStatus, setDryRunCopyStatus] = useState('idle');
   const codexPromptText = operatorTask?.openClawCodexProposalExport?.codexPrompt || 'OpenClaw Codex prompt unavailable.';
@@ -172,6 +174,7 @@ export default function OpenClawTile({
 
   const [evidenceNote, setEvidenceNote] = useState('');
   const [localEvidenceAttachments, setLocalEvidenceAttachments] = useState([]);
+  const controlBridge = useMemo(() => buildOpenClawControlBridgeProjection(operatorTask?.openClawControlBridge || {}), [operatorTask]);
   const evidenceRequest = operatorTask?.openClawEvidenceRequest || null;
   const evidenceAttachments = operatorTask?.openClawEvidenceAttachments?.length ? operatorTask.openClawEvidenceAttachments : localEvidenceAttachments;
 
@@ -272,6 +275,15 @@ export default function OpenClawTile({
     setCodexExportCopyStatus('copied');
   }
 
+  async function copyControlBridgeText(text, label) {
+    await navigator.clipboard.writeText(text);
+    setControlBridgeCopyStatus(label);
+  }
+
+  function openControlBridgeDashboard() {
+    window.open(controlBridge.dashboardUrl, '_blank', 'noopener,noreferrer');
+  }
+
 
   function attachOperatorEvidenceNote() {
     const attachment = buildOpenClawEvidenceAttachment({
@@ -347,6 +359,37 @@ export default function OpenClawTile({
             <li><strong>Adapter health:</strong> {operatorTask?.openClawHealthState || 'not_run'}</li>
             <li><strong>Handshake:</strong> {operatorTask?.openClawHandshakeState || 'not_run'}</li>
           </ul>
+        </section>
+
+
+        <section className="openclaw-section openclaw-card" data-card-id="openclaw-control-bridge-card">
+          <h4>OpenClaw Control Bridge V1</h4>
+          <p className="muted"><strong>{controlBridge.builderWarning}</strong></p>
+          <ul>
+            <li><strong>Bridge status:</strong> {controlBridge.bridgeStatus}</li>
+            <li><strong>Gateway target:</strong> {controlBridge.gatewayTarget}</li>
+            <li><strong>Gateway status:</strong> {controlBridge.gatewayStatus}</li>
+            <li><strong>Dashboard URL:</strong> <a href={controlBridge.dashboardUrl} target="_blank" rel="noreferrer">{controlBridge.dashboardUrl}</a></li>
+            <li><strong>Dashboard status:</strong> {controlBridge.dashboardStatus} · temporary cockpit: {controlBridge.dashboardTemporaryCockpit}</li>
+            <li><strong>Expected local models:</strong> {controlBridge.expectedLocalModels.join(', ')}</li>
+            <li><strong>Expected agents:</strong> {controlBridge.expectedAgents.join(', ')}</li>
+            <li><strong>Local scout proof status:</strong> {controlBridge.localScoutProofStatus}</li>
+            <li><strong>Mutation lock status:</strong> {controlBridge.mutationAuthority}</li>
+            <li><strong>Operator approval required:</strong> {controlBridge.operatorApprovalRequired}</li>
+            <li><strong>No Windows auto-start guarantee:</strong> {controlBridge.autoStart} — {controlBridge.noAutoStartGuarantee}</li>
+          </ul>
+          <label className="openclaw-field">Scout proof command<textarea className="openclaw-input" rows={4} value={controlBridge.lastProofCommand} readOnly aria-readonly="true" /></label>
+          <p className="muted">Expected proof text: {controlBridge.lastProofExpectedText}</p>
+          {controlBridge.lastProofObservedText ? <p className="muted">Observed proof text: {controlBridge.lastProofObservedText}</p> : null}
+          <div className="openclaw-button-row">
+            <button type="button" onClick={() => copyControlBridgeText(controlBridge.startGatewayCommand, 'start-copied')}>Copy Start Gateway command</button>
+            <button type="button" onClick={() => copyControlBridgeText(controlBridge.stopOpenClawCommand, 'stop-copied')}>Copy Stop OpenClaw command</button>
+            <button type="button" onClick={() => copyControlBridgeText(controlBridge.lastProofCommand, 'proof-copied')}>Copy Proof Local Scout command</button>
+            <button type="button" onClick={() => copyControlBridgeText(controlBridge.dashboardUrl, 'dashboard-copied')}>Copy dashboard URL</button>
+            <button type="button" onClick={openControlBridgeDashboard}>Open dashboard URL</button>
+          </div>
+          {controlBridgeCopyStatus !== 'idle' ? <p className="muted openclaw-copy-success">OpenClaw bridge helper copied: {controlBridgeCopyStatus}.</p> : null}
+          {controlBridge.warnings.map((warning) => <p className="muted" key={warning}><strong>Warning:</strong> {warning}</p>)}
         </section>
 
         <section className="openclaw-section openclaw-card" data-card-id="openclaw-mission-card">
