@@ -268,6 +268,15 @@ test('protected canon: builder mesh stays in Builder Harness and uses determinis
   assert.match(supportSnapshotSource, /OpenClaw Doctor Non-Blocking Findings:/);
   assert.match(supportSnapshotSource, /OpenClaw Dashboard Failure Examples:/);
   assert.match(supportSnapshotSource, /OpenClaw Minimum Viable Route Recommendation:/);
+  assert.match(supportSnapshotSource, /OpenClaw Workspace Hygiene Status:/);
+  assert.match(supportSnapshotSource, /OpenClaw Workspace Dirt Detected:/);
+  assert.match(supportSnapshotSource, /OpenClaw Workspace Dirt Paths:/);
+  assert.match(supportSnapshotSource, /OpenClaw Workspace Dirt Count:/);
+  assert.match(supportSnapshotSource, /OpenClaw Workspace Blocks Ignition:/);
+  assert.match(supportSnapshotSource, /OpenClaw Workspace Recommended Cleanup:/);
+  assert.match(supportSnapshotSource, /OpenClaw Workspace Safe Runtime Directory:/);
+  assert.match(supportSnapshotSource, /OpenClaw Workspace Mutation Authority:/);
+  assert.match(supportSnapshotSource, /OpenClaw Workspace Next Operator Action:/);
 });
 
 test('protected canon: builder workbench stays inside Builder Harness and gates Codex fallback copy', async () => {
@@ -287,6 +296,10 @@ test('protected canon: builder workbench stays inside Builder Harness and gates 
   assert.match(source, /Copy Cleaned Patch Plan Handoff/);
   assert.match(source, /builderWorkbenchProjection\?\.openClawPatchPlanner\?\.codexFallbackNeeded/);
   assert.match(source, /OpenClaw Route Trust:/);
+  assert.match(source, /OpenClaw Workspace Hygiene Status:/);
+  assert.match(source, /OpenClaw Workspace Dirt Paths:/);
+  assert.match(source, /OpenClaw Workspace Cleanup:/);
+  assert.match(source, /copyOpenClawWorkspaceCleanupCommand/);
   assert.match(source, /trustedForPatchPlanning/);
   assert.match(source, /activeSessionContaminationRisk/);
   assert.match(source, /routeModelMismatchDetected/);
@@ -309,6 +322,10 @@ test('protected canon: Command Deck deterministic Builder Mesh answer covers Ope
   assert.match(source, /non-blocking doctor findings/);
   assert.match(source, /blocked from Builder Mesh research\/patch-planning routing/);
   assert.match(source, /OpenClaw Patch Planner: status/);
+  assert.match(source, /OpenClaw Workspace Hygiene: status/);
+  assert.match(source, /Why is ignition blocked after using OpenClaw\?/);
+  assert.match(source, /What should I do with the OpenClaw hard-block files\?/);
+  assert.match(source, /workspaceRecommendedCleanup/);
 });
 
 test('protected canon: Local AI Runner cannot stay running before request-sent boundary', async () => {

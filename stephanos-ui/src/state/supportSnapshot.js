@@ -20,6 +20,7 @@ function isDefaultWorkbenchMetadataValue(key = '', value = '') {
   if (key === 'builder_workbench_status') return normalized === 'unavailable';
   if (key === 'builder_workbench_codex_fallback_still_needed' || key === 'builder_workbench_deterministic_answer_used') return normalized === 'no';
   if (key.startsWith('openclaw_patch_planner_')) return ['none', 'unknown', 'n/a', 'idle', 'no', '0', 'locked', 'forbidden', 'copy the openclaw patch planner prompt and run it externally/read-only.'].includes(normalized);
+  if (key.startsWith('openclaw_workspace_')) return ['none', 'unknown', 'n/a', 'clean', 'no', '0', 'locked', 'no cleanup needed.'].includes(normalized);
   if (key.startsWith('openclaw_route_') || key.startsWith('openclaw_sanity_') || key.startsWith('openclaw_template_') || key.startsWith('openclaw_wrong_repo_') || key.startsWith('openclaw_exact_response_') || key === 'openclaw_cli_banner_ignored' || key === 'openclaw_dashboard_failure_examples' || key === 'openclaw_minimum_viable_route_recommendation' || key === 'openclaw_model_pin_mismatch_warnings' || key === 'openclaw_doctor_non_blocking_findings' || key === 'openclaw_trusted_for_builder_routing' || key.startsWith('openclaw_active_session_') || key === 'openclaw_plaintext_token_security_warning') return ['none', 'unknown', 'n/a', 'idle', 'no', 'paste an openclaw result to run the sanity gate before builder mesh routing.'].includes(normalized);
   if (key === 'builder_workbench_codex_fallback_reason') return normalized === 'none';
   if (key === 'builder_workbench_next_best_action') return normalized === 'copy local ai/openclaw packets and paste bounded read-only results.';
@@ -112,6 +113,15 @@ function buildWorkbenchMetadataFromProjection(workbench = {}, source = 'none') {
     openclaw_patch_planner_codex_fallback_needed: projection.openClawPatchPlanner?.codexFallbackNeeded || 'unknown',
     openclaw_patch_planner_trusted_for_patch: projection.openClawPatchPlanner?.trustedForPatch || 'no',
     openclaw_patch_planner_next_operator_action: projection.openClawPatchPlanner?.nextOperatorAction || 'Copy the OpenClaw Patch Planner Prompt and run it externally/read-only.',
+    openclaw_workspace_hygiene_status: projection.openClawWorkspaceHygiene?.workspaceHygieneStatus || 'clean',
+    openclaw_workspace_dirt_detected: projection.openClawWorkspaceHygiene?.workspaceDirtDetected || 'no',
+    openclaw_workspace_dirt_paths: (projection.openClawWorkspaceHygiene?.workspaceDirtPaths || []).join(' | ') || 'none',
+    openclaw_workspace_dirt_count: String(projection.openClawWorkspaceHygiene?.workspaceDirtCount ?? 0),
+    openclaw_workspace_blocks_ignition: projection.openClawWorkspaceHygiene?.workspaceBlocksIgnition || 'no',
+    openclaw_workspace_recommended_cleanup: projection.openClawWorkspaceHygiene?.workspaceRecommendedCleanup || 'No cleanup needed.',
+    openclaw_workspace_safe_runtime_directory: projection.openClawWorkspaceHygiene?.workspaceSafeRuntimeDirectory || 'unknown',
+    openclaw_workspace_mutation_authority: projection.openClawWorkspaceHygiene?.workspaceMutationAuthority || 'locked',
+    openclaw_workspace_next_operator_action: projection.openClawWorkspaceHygiene?.workspaceNextOperatorAction || 'No OpenClaw workspace dirt detected.',
     builder_workbench_projection_source: present ? source : 'none',
     builder_workbench_metadata_source: present ? 'support-snapshot-live-operator-relief-projection' : 'none',
     builder_workbench_deterministic_answer_used: 'no',
@@ -204,6 +214,15 @@ function resolveBuilderWorkbenchSupportMetadata(executionMetadata = {}, runtimeS
     ['openclaw_patch_planner_codex_fallback_needed', 'unknown'],
     ['openclaw_patch_planner_trusted_for_patch', 'no'],
     ['openclaw_patch_planner_next_operator_action', 'Copy the OpenClaw Patch Planner Prompt and run it externally/read-only.'],
+    ['openclaw_workspace_hygiene_status', 'clean'],
+    ['openclaw_workspace_dirt_detected', 'no'],
+    ['openclaw_workspace_dirt_paths', 'none'],
+    ['openclaw_workspace_dirt_count', '0'],
+    ['openclaw_workspace_blocks_ignition', 'no'],
+    ['openclaw_workspace_recommended_cleanup', 'No cleanup needed.'],
+    ['openclaw_workspace_safe_runtime_directory', 'unknown'],
+    ['openclaw_workspace_mutation_authority', 'locked'],
+    ['openclaw_workspace_next_operator_action', 'No OpenClaw workspace dirt detected.'],
     ['builder_workbench_projection_source', 'none'],
     ['builder_workbench_metadata_source', 'none'],
     ['builder_workbench_deterministic_answer_used', 'no'],
@@ -2671,6 +2690,15 @@ export function buildSupportSnapshot({
     `OpenClaw Wrong Repo Path Detected: ${asText(builderWorkbenchSupportMetadata.openclaw_wrong_repo_path_detected, 'no')}`,
     `OpenClaw Trusted For Builder Routing: ${asText(builderWorkbenchSupportMetadata.openclaw_trusted_for_builder_routing, 'no')}`,
     `OpenClaw Sanity Next Operator Action: ${asText(builderWorkbenchSupportMetadata.openclaw_sanity_next_operator_action, 'Paste an OpenClaw result to run the sanity gate before Builder Mesh routing.')}`,
+    `OpenClaw Workspace Hygiene Status: ${asText(builderWorkbenchSupportMetadata.openclaw_workspace_hygiene_status, 'clean')}`,
+    `OpenClaw Workspace Dirt Detected: ${asText(builderWorkbenchSupportMetadata.openclaw_workspace_dirt_detected, 'no')}`,
+    `OpenClaw Workspace Dirt Paths: ${asText(builderWorkbenchSupportMetadata.openclaw_workspace_dirt_paths, 'none')}`,
+    `OpenClaw Workspace Dirt Count: ${asText(builderWorkbenchSupportMetadata.openclaw_workspace_dirt_count, '0')}`,
+    `OpenClaw Workspace Blocks Ignition: ${asText(builderWorkbenchSupportMetadata.openclaw_workspace_blocks_ignition, 'no')}`,
+    `OpenClaw Workspace Recommended Cleanup: ${asText(builderWorkbenchSupportMetadata.openclaw_workspace_recommended_cleanup, 'No cleanup needed.')}`,
+    `OpenClaw Workspace Safe Runtime Directory: ${asText(builderWorkbenchSupportMetadata.openclaw_workspace_safe_runtime_directory, 'unknown')}`,
+    `OpenClaw Workspace Mutation Authority: ${asText(builderWorkbenchSupportMetadata.openclaw_workspace_mutation_authority, 'locked')}`,
+    `OpenClaw Workspace Next Operator Action: ${asText(builderWorkbenchSupportMetadata.openclaw_workspace_next_operator_action, 'No OpenClaw workspace dirt detected.')}`,
     `OpenClaw Patch Planner Status: ${asText(builderWorkbenchSupportMetadata.openclaw_patch_planner_status, 'idle')}`,
     `OpenClaw Patch Planner Risk Level: ${asText(builderWorkbenchSupportMetadata.openclaw_patch_planner_risk_level, 'unknown')}`,
     `OpenClaw Patch Planner Likely File Count: ${asText(builderWorkbenchSupportMetadata.openclaw_patch_planner_likely_file_count, '0')}`,

@@ -341,6 +341,8 @@ test('OpenClaw online/control prompts route to Builder Mesh context instead of d
     'show OpenClaw proof command',
     'Can OpenClaw plan the next patch, and is Codex still required?',
     'bring OpenClaw online inside Stephanos',
+    'Why is ignition blocked after using OpenClaw?',
+    'What should I do with the OpenClaw hard-block files?',
   ];
   for (const operatorMessage of prompts) {
     const pack = buildChatContextPack({ operatorMessage, missionState: { operatorReliefProjection: { builderMeshProjection: { builderMeshStatus: 'ready-read-only', openClawCanHelp: 'yes-read-only-research-and-patch-planning' } } } });
