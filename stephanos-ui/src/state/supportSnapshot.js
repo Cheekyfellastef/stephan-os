@@ -4,6 +4,7 @@ import { buildMissionRepairLoopModel } from './missionRepairLoopModel.js';
 import { parsePrReferenceFromPrompt } from './githubPrEvidenceProvider.js';
 import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
 import { diagnoseProviderDrift } from './providerRoutingTruth.js';
+import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -1151,6 +1152,7 @@ export function buildSupportSnapshot({
     ? runtimeStatus.lastExecutionMetadata
     : {};
   const builderWorkbenchSupportMetadata = resolveBuilderWorkbenchSupportMetadata(executionMetadata, runtimeStatus);
+  const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
     ? runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll
@@ -2509,6 +2511,16 @@ export function buildSupportSnapshot({
     `Builder Mesh Metadata Source: ${asText(executionMetadata?.builder_mesh_metadata_source, 'none')}`,
     `Builder Mesh Deterministic Answer Used: ${asText(executionMetadata?.builder_mesh_deterministic_answer_used || executionMetadata?.builder_mesh_answer_used_live_projection, 'no')}`,
     `Builder Mesh Projection Drop Boundary: ${asText(executionMetadata?.builder_mesh_projection_drop_boundary, 'none')}`,
+    `OpenClaw Control Bridge Status: ${asText(openClawControlBridge.bridgeStatus, 'manual-control-readonly')}`,
+    `OpenClaw Gateway Target: ${asText(openClawControlBridge.gatewayTarget, 'ws://127.0.0.1:18789')}`,
+    `OpenClaw Dashboard URL: ${asText(openClawControlBridge.dashboardUrl, 'http://127.0.0.1:18789/')}`,
+    `OpenClaw Local Scout Expected Model: ${asText(openClawControlBridge.expectedLocalModels?.[0], 'ollama/llama3.2:3b')}`,
+    `OpenClaw Local Scout Proof Status: ${asText(openClawControlBridge.localScoutProofStatus, 'unknown')}`,
+    `OpenClaw Mutation Locked: ${openClawControlBridge.mutationAuthority === 'locked' ? 'yes' : 'no'}`,
+    `OpenClaw Auto-Start Forbidden: ${openClawControlBridge.autoStart === 'forbidden' ? 'yes' : 'no'}`,
+    `OpenClaw Operator Approval Required: ${asText(openClawControlBridge.operatorApprovalRequired, 'yes')}`,
+    `OpenClaw Last Proof Command Present: ${openClawControlBridge.lastProofCommand ? 'yes' : 'no'}`,
+    `OpenClaw Dashboard Temporary Cockpit: ${asText(openClawControlBridge.dashboardTemporaryCockpit, 'yes')}`,
     `Builder Workbench Status: ${asText(builderWorkbenchSupportMetadata.builder_workbench_status, 'unavailable')}`,
     `Local AI Runner Status: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_status, 'idle')}`,
     `Local AI Runner Selected Model: ${asText(builderWorkbenchSupportMetadata.local_ai_runner_selected_model, 'none')}`,

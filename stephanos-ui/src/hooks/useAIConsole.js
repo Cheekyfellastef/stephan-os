@@ -46,6 +46,7 @@ import { readOperatorProfile, updateOperatorProfileFromMessage, persistOperatorP
 import { buildActiveMissionState, persistActiveMissionState, readActiveMissionState } from '../state/activeMissionState.js';
 import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachPrEvidenceToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
 import { buildAnswerDeliveryTruth } from '../state/answerDeliveryTruth.js';
+import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
@@ -2541,6 +2542,7 @@ function createOperatorExplanationDeterministicResult({
 
 
 function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt = '') {
+  const openClawControlBridge = buildOpenClawControlBridgeProjection(projection?.openClawControlBridge || {});
   const packets = projection?.copyPackets ? Object.keys(projection.copyPackets) : [];
   const proof = Array.isArray(projection?.proofRequiredBeforeMerge) && projection.proofRequiredBeforeMerge.length
     ? projection.proofRequiredBeforeMerge.join(', ')
@@ -2598,6 +2600,9 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt 
     `Zero-cost route available: ${projection?.zeroCostRouteAvailable === true ? 'yes' : 'no'}.`,
     `Local AI readiness: ${projection?.localAiCanHelp || 'unknown'}.`,
     `OpenClaw readiness: ${projection?.openClawCanHelp || 'unknown'}.`,
+    `OpenClaw Control Bridge: ${openClawControlBridge.bridgeStatus}; gateway ${openClawControlBridge.gatewayTarget}; dashboard ${openClawControlBridge.dashboardUrl}.`,
+    `OpenClaw proof command: ${openClawControlBridge.lastProofCommand}.`,
+    `OpenClaw mutation authority: ${openClawControlBridge.mutationAuthority}; auto-start: ${openClawControlBridge.autoStart}; operator approval required: ${openClawControlBridge.operatorApprovalRequired}.`,
     `GitHub inspection readiness: ${projection?.githubCanHelp || 'unknown'}.`,
     `Codex required: ${projection?.codexRequired === true ? 'yes' : 'no'} — ${projection?.codexReason || 'Codex is fallback only unless justified.'}`,
     `Approval before mutation: ${projection?.approvalRequiredBeforeMutation === false ? 'not reported' : 'required'}.`,

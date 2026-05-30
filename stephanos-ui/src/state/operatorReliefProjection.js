@@ -1,3 +1,4 @@
+import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -522,6 +523,7 @@ function buildBuilderMeshProjection({
     || supportSnapshot.githubConnected === true
     || Boolean(prEvidenceModel.prUrl || prEvidenceModel.pullRequestUrl || prEvidenceModel.branch || prEvidenceModel.prBranch)
     || asList(prEvidenceModel.changedFiles).length > 0;
+  const openClawControlBridge = buildOpenClawControlBridgeProjection(supportSnapshot.openClawControlBridge || {});
   const taskKind = inferBuilderMeshTaskKind({ missionBrainNextAction, supportSnapshot, prEvidenceModel });
   const blockers = [];
   const warnings = [];
@@ -619,9 +621,10 @@ function buildBuilderMeshProjection({
     warnings,
     nextBestAction: builderWorkbenchProjection.nextBestAction || nextBestAction,
     builderWorkbenchProjection,
+    openClawControlBridge,
     copyPackets: {
       localAiReviewPacket: { ...packetBase, packetType: 'Local AI Review Packet', requestedOutput: 'Bounded findings, risks, tests, and proof gaps only. No file writes.' },
-      openClawResearchPacket: { ...packetBase, packetType: 'OpenClaw Research Packet', requestedOutput: 'Read-only research, repo inspection, patch plan, cross-checks, blockers/warnings. No mutation without operator approval.', openClawCanHelp },
+      openClawResearchPacket: { ...packetBase, packetType: 'OpenClaw Research Packet', requestedOutput: 'Read-only research, repo inspection, patch plan, cross-checks, blockers/warnings. No mutation without operator approval.', openClawCanHelp, openClawControlBridge: { gatewayTarget: openClawControlBridge.gatewayTarget, dashboardUrl: openClawControlBridge.dashboardUrl, localScoutProofStatus: openClawControlBridge.localScoutProofStatus, mutationAuthority: openClawControlBridge.mutationAuthority, autoStart: openClawControlBridge.autoStart, operatorApprovalRequired: openClawControlBridge.operatorApprovalRequired } },
       githubInspectionPacket: { ...packetBase, packetType: 'GitHub Inspection Packet', requestedOutput: 'Inspect PR/status/diff/evidence and report proof gaps only. No merge action.', githubCanHelp, prEvidence: { branch: prEvidenceModel.branch || prEvidenceModel.prBranch || 'unknown', prUrl: prEvidenceModel.prUrl || prEvidenceModel.pullRequestUrl || 'unknown', changedFiles: asList(prEvidenceModel.changedFiles) } },
       codexFallbackPacket: { ...packetBase, packetType: 'Codex Fallback Packet', requestedOutput: 'Bounded specialist implementation only after operator approval and after zero-cost routes cannot safely produce a plan.', codexReason, codexRequired },
       operatorApprovalChecklist: { ...packetBase, packetType: 'Operator Approval Checklist', checklist: ['Confirm mutation is necessary.', 'Confirm local/OpenClaw/GitHub read-only routes were considered.', 'Approve exact files/scope before mutation.', 'Require tests/build/verify/pr-clean and UI/browser proof for UI claims.'] },

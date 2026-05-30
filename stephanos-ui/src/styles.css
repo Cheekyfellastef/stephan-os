@@ -5031,3 +5031,11 @@ pre {
     max-height: 44vh;
   }
 }
+
+.openclaw-copy-success {
+  color: #8ef3a0;
+  border: 1px solid rgba(46, 204, 113, 0.5);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  background: rgba(46, 204, 113, 0.12);
+}

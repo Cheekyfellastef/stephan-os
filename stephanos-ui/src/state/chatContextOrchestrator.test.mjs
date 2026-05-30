@@ -332,3 +332,21 @@ test('Builder Mesh routing prompts use Builder Mesh context from Operator Relief
     assert.ok(pack.compactSummary.missionIntelligence.builderMesh.copyPacketNames.includes('operatorApprovalChecklist'));
   }
 });
+
+test('OpenClaw online/control prompts route to Builder Mesh context instead of direct answer', () => {
+  const prompts = [
+    'is OpenClaw online?',
+    'can OpenClaw help with this build?',
+    'start OpenClaw bridge',
+    'show OpenClaw proof command',
+    'bring OpenClaw online inside Stephanos',
+  ];
+  for (const operatorMessage of prompts) {
+    const pack = buildChatContextPack({ operatorMessage, missionState: { operatorReliefProjection: { builderMeshProjection: { builderMeshStatus: 'ready-read-only', openClawCanHelp: 'yes-read-only-research-and-patch-planning' } } } });
+    assert.equal(pack.recommendedResponseMode, 'work-routing');
+    assert.equal(pack.intentClassifierMatchedRule, 'builder-mesh-routing');
+    assert.notEqual(pack.recommendedResponseMode, 'direct-answer');
+    assert.ok(pack.affectedSubsystems.includes('openclaw-control'));
+    assert.ok(pack.compactSummary.contextSourcesUsed.includes('builderMesh'));
+  }
+});
