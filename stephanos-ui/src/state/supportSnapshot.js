@@ -19,6 +19,7 @@ function isDefaultWorkbenchMetadataValue(key = '', value = '') {
   if (!normalized) return true;
   if (key === 'builder_workbench_status') return normalized === 'unavailable';
   if (key === 'builder_workbench_codex_fallback_still_needed' || key === 'builder_workbench_deterministic_answer_used') return normalized === 'no';
+  if (key.startsWith('openclaw_source_pack_')) return ['none', 'unknown', 'n/a', 'idle', 'no', '0', 'locked', 'forbidden', 'copy the source pack cli prompt and paste a bounded source-pack result.'].includes(normalized);
   if (key.startsWith('openclaw_patch_planner_')) return ['none', 'unknown', 'n/a', 'idle', 'no', '0', 'locked', 'forbidden', 'copy the openclaw patch planner prompt and run it externally/read-only.'].includes(normalized);
   if (key.startsWith('openclaw_workspace_')) return ['none', 'unknown', 'n/a', 'clean', 'no', '0', 'locked', 'no cleanup needed.'].includes(normalized);
   if (key.startsWith('openclaw_route_') || key.startsWith('openclaw_sanity_') || key.startsWith('openclaw_template_') || key.startsWith('openclaw_wrong_repo_') || key.startsWith('openclaw_exact_response_') || key === 'openclaw_cli_banner_ignored' || key === 'openclaw_dashboard_failure_examples' || key === 'openclaw_minimum_viable_route_recommendation' || key === 'openclaw_model_pin_mismatch_warnings' || key === 'openclaw_doctor_non_blocking_findings' || key === 'openclaw_trusted_for_builder_routing' || key.startsWith('openclaw_active_session_') || key === 'openclaw_plaintext_token_security_warning') return ['none', 'unknown', 'n/a', 'idle', 'no', 'paste an openclaw result to run the sanity gate before builder mesh routing.'].includes(normalized);
@@ -113,6 +114,30 @@ function buildWorkbenchMetadataFromProjection(workbench = {}, source = 'none') {
     openclaw_patch_planner_codex_fallback_needed: projection.openClawPatchPlanner?.codexFallbackNeeded || 'unknown',
     openclaw_patch_planner_trusted_for_patch: projection.openClawPatchPlanner?.trustedForPatch || 'no',
     openclaw_patch_planner_next_operator_action: projection.openClawPatchPlanner?.nextOperatorAction || 'Copy the OpenClaw Patch Planner Prompt and run it externally/read-only.',
+    openclaw_source_pack_runner_status: projection.openClawSourcePackRunner?.sourcePackStatus || 'idle',
+    openclaw_source_pack_route: projection.openClawSourcePackRunner?.route || 'stephanos-scout / llama3.2 CLI',
+    openclaw_source_pack_model: projection.openClawSourcePackRunner?.model || 'ollama/llama3.2:3b',
+    openclaw_source_pack_result_present: projection.openClawSourcePackRunner?.sourcePackResultPresent || 'no',
+    openclaw_source_pack_source_bounded: projection.openClawSourcePackRunner?.sourceBounded || 'unknown',
+    openclaw_source_pack_hallucinated_sources_detected: projection.openClawSourcePackRunner?.hallucinatedSourcesDetected || 'no',
+    openclaw_source_pack_template_leakage_detected: projection.openClawSourcePackRunner?.templateLeakageDetected || 'no',
+    openclaw_source_pack_asks_for_next_detected: projection.openClawSourcePackRunner?.asksForNextDetected || 'no',
+    openclaw_source_pack_useful_fact_count: String(projection.openClawSourcePackRunner?.usefulFactCount ?? 0),
+    openclaw_source_pack_unknown_count: String(projection.openClawSourcePackRunner?.unknownCount ?? 0),
+    openclaw_source_pack_risk_count: String(projection.openClawSourcePackRunner?.riskCount ?? 0),
+    openclaw_source_pack_next_question_count: String(projection.openClawSourcePackRunner?.nextQuestionCount ?? 0),
+    openclaw_source_pack_handoff_present: projection.openClawSourcePackRunner?.handoffPacketPresent || 'no',
+    openclaw_source_pack_trusted_for_canon: projection.openClawSourcePackRunner?.trustedForCanon || 'no',
+    openclaw_source_pack_trusted_for_research: projection.openClawSourcePackRunner?.trustedForResearch || 'no',
+    openclaw_source_pack_codex_fallback_needed: projection.openClawSourcePackRunner?.codexFallbackNeeded || 'unknown',
+    openclaw_source_pack_next_operator_action: projection.openClawSourcePackRunner?.nextOperatorAction || 'Copy the Source Pack CLI Prompt and paste a bounded source-pack result.',
+    openclaw_source_pack_button_clicked: projection.openClawSourcePackButtonClicked || 'no',
+    openclaw_source_pack_text_length: String(projection.openClawSourcePackTextLength ?? 0),
+    openclaw_source_pack_output_length: String(projection.openClawSourcePackOutputLength ?? 0),
+    openclaw_source_pack_judgment_attempted: projection.openClawSourcePackJudgmentAttempted || 'no',
+    openclaw_source_pack_projection_written: projection.openClawSourcePackProjectionWritten || 'no',
+    openclaw_source_pack_projection_source: projection.openClawSourcePackProjectionSource || 'none',
+    openclaw_source_pack_projection_write_error: projection.openClawSourcePackProjectionWriteError || 'none',
     openclaw_workspace_hygiene_status: projection.openClawWorkspaceHygiene?.workspaceHygieneStatus || 'clean',
     openclaw_workspace_dirt_detected: projection.openClawWorkspaceHygiene?.workspaceDirtDetected || 'no',
     openclaw_workspace_dirt_paths: (projection.openClawWorkspaceHygiene?.workspaceDirtPaths || []).join(' | ') || 'none',
@@ -214,6 +239,30 @@ function resolveBuilderWorkbenchSupportMetadata(executionMetadata = {}, runtimeS
     ['openclaw_patch_planner_codex_fallback_needed', 'unknown'],
     ['openclaw_patch_planner_trusted_for_patch', 'no'],
     ['openclaw_patch_planner_next_operator_action', 'Copy the OpenClaw Patch Planner Prompt and run it externally/read-only.'],
+    ['openclaw_source_pack_runner_status', 'idle'],
+    ['openclaw_source_pack_route', 'stephanos-scout / llama3.2 CLI'],
+    ['openclaw_source_pack_model', 'ollama/llama3.2:3b'],
+    ['openclaw_source_pack_result_present', 'no'],
+    ['openclaw_source_pack_source_bounded', 'unknown'],
+    ['openclaw_source_pack_hallucinated_sources_detected', 'no'],
+    ['openclaw_source_pack_template_leakage_detected', 'no'],
+    ['openclaw_source_pack_asks_for_next_detected', 'no'],
+    ['openclaw_source_pack_useful_fact_count', '0'],
+    ['openclaw_source_pack_unknown_count', '0'],
+    ['openclaw_source_pack_risk_count', '0'],
+    ['openclaw_source_pack_next_question_count', '0'],
+    ['openclaw_source_pack_handoff_present', 'no'],
+    ['openclaw_source_pack_trusted_for_canon', 'no'],
+    ['openclaw_source_pack_trusted_for_research', 'no'],
+    ['openclaw_source_pack_codex_fallback_needed', 'unknown'],
+    ['openclaw_source_pack_next_operator_action', 'Copy the Source Pack CLI Prompt and paste a bounded source-pack result.'],
+    ['openclaw_source_pack_button_clicked', 'no'],
+    ['openclaw_source_pack_text_length', '0'],
+    ['openclaw_source_pack_output_length', '0'],
+    ['openclaw_source_pack_judgment_attempted', 'no'],
+    ['openclaw_source_pack_projection_written', 'no'],
+    ['openclaw_source_pack_projection_source', 'none'],
+    ['openclaw_source_pack_projection_write_error', 'none'],
     ['openclaw_workspace_hygiene_status', 'clean'],
     ['openclaw_workspace_dirt_detected', 'no'],
     ['openclaw_workspace_dirt_paths', 'none'],
@@ -1260,7 +1309,7 @@ export function buildSupportSnapshot({
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
     : {};
-  const builderWorkbenchSupportMetadata = resolveBuilderWorkbenchSupportMetadata(executionMetadata, runtimeStatus);
+  const builderWorkbenchSupportMetadata = resolveBuilderWorkbenchSupportMetadata(executionMetadata, { ...(runtimeStatus || {}), runtimeContext });
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
@@ -2726,6 +2775,13 @@ export function buildSupportSnapshot({
     `OpenClaw Source Pack Trusted For Research: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_trusted_for_research, 'no')}`,
     `OpenClaw Source Pack Codex Fallback Needed: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_codex_fallback_needed, 'unknown')}`,
     `OpenClaw Source Pack Next Operator Action: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_next_operator_action, 'Copy the Source Pack CLI Prompt and paste a bounded source-pack result.')}`,
+    `OpenClaw Source Pack Button Clicked: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_button_clicked, 'no')}`,
+    `OpenClaw Source Pack Text Length: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_text_length, '0')}`,
+    `OpenClaw Source Pack Output Length: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_output_length, '0')}`,
+    `OpenClaw Source Pack Judgment Attempted: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_judgment_attempted, 'no')}`,
+    `OpenClaw Source Pack Projection Written: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_projection_written, 'no')}`,
+    `OpenClaw Source Pack Projection Source: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_projection_source, 'none')}`,
+    `OpenClaw Source Pack Projection Write Error: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_projection_write_error, 'none')}`,
     `Builder Workbench Projection Source: ${asText(builderWorkbenchSupportMetadata.builder_workbench_projection_source, 'none')}`,
     `Builder Workbench Metadata Source: ${asText(builderWorkbenchSupportMetadata.builder_workbench_metadata_source, 'none')}`,
     `Builder Workbench Deterministic Answer Used: ${asText(builderWorkbenchSupportMetadata.builder_workbench_deterministic_answer_used, 'no')}`,

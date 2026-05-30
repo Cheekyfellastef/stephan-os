@@ -481,7 +481,10 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const localAiRunnerErrorMessage = asText(workbenchInput.localAiRunnerErrorMessage || '', '');
   const localAiRunnerDispatchAttempted = asText(workbenchInput.localAiRunnerDispatchAttempted || (workbenchInput.localAiReviewRequested ? 'yes' : 'no'), 'no');
   const localAiRunnerRequestSent = asText(workbenchInput.localAiRunnerRequestSent || 'no', 'no');
-  const openClawSourcePackRunner = buildOpenClawSourcePackRunnerProjection({
+  const openClawSourcePackJudgment = workbenchInput.openClawSourcePackJudgment && typeof workbenchInput.openClawSourcePackJudgment === 'object'
+    ? workbenchInput.openClawSourcePackJudgment
+    : null;
+  const openClawSourcePackRunner = openClawSourcePackJudgment || buildOpenClawSourcePackRunnerProjection({
     rawResult: workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '',
     sourcePackText: workbenchInput.openClawSourcePackText || '',
   });
@@ -581,6 +584,13 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     openClawSourcePackPrompt: OPENCLAW_SOURCE_PACK_CLI_PROMPT,
     openClawSourcePackTemplate: OPENCLAW_SOURCE_PACK_TEMPLATE,
     openClawSourcePackRunner: { ...openClawSourcePackRunner, routeEligibility: sourcePackEligibility },
+    openClawSourcePackButtonClicked: asText(workbenchInput.openClawSourcePackButtonClicked || 'no', 'no'),
+    openClawSourcePackTextLength: Number(workbenchInput.openClawSourcePackTextLength ?? (workbenchInput.openClawSourcePackText || '').length ?? 0),
+    openClawSourcePackOutputLength: Number(workbenchInput.openClawSourcePackOutputLength ?? (workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '').length ?? 0),
+    openClawSourcePackJudgmentAttempted: asText(workbenchInput.openClawSourcePackJudgmentAttempted || (workbenchInput.openClawSourcePackJudgedAt ? 'yes' : 'no'), 'no'),
+    openClawSourcePackProjectionWritten: asText(workbenchInput.openClawSourcePackProjectionWritten || (openClawSourcePackJudgment ? 'yes' : 'no'), 'no'),
+    openClawSourcePackProjectionSource: asText(workbenchInput.openClawSourcePackProjectionSource || (openClawSourcePackJudgment ? 'runtimeContext.operatorReliefProjection.builderMeshProjection.builderWorkbenchProjection.openClawSourcePackRunner' : 'none'), 'none'),
+    openClawSourcePackProjectionWriteError: asText(workbenchInput.openClawSourcePackProjectionWriteError || 'none', 'none'),
     openClawWebResearchIntake: openClawResearchIntake,
     openClawSanityGate,
     openClawPatchPlanner,

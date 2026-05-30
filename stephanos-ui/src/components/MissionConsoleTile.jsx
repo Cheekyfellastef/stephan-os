@@ -27,6 +27,7 @@ import { buildMissionCommandPacket, buildMissionCommandPacketJson, buildMissionC
 import { buildAgentAssignmentMatrix } from '../state/agentAssignmentMatrixModel.js';
 import { buildMissionRoutingReadiness } from '../state/missionRoutingReadinessModel.js';
 import { deriveOperatorReliefProjection } from '../state/operatorReliefProjection.js';
+import { buildOpenClawSourcePackRunnerProjection } from '../../../shared/agents/openClawSourcePackRunner.mjs';
 import { createMissionBridgeState, processMissionBridgeIntent, requestMissionBridgeAI } from '../state/missionBridge.js';
 import { buildAgentCommandConsoleProjection } from '../../../shared/agents/agentCommandConsole.mjs';
 import { buildAgentCommandQueue } from '../../../shared/agents/agentCommandQueue.mjs';
@@ -287,6 +288,14 @@ function MissionConsoleTile({
     openClawPatchPlanRequested: false,
     openClawPatchPlanJudgedAt: '',
     openClawSourcePackJudgedAt: '',
+    openClawSourcePackButtonClicked: 'no',
+    openClawSourcePackTextLength: 0,
+    openClawSourcePackOutputLength: 0,
+    openClawSourcePackJudgmentAttempted: 'no',
+    openClawSourcePackProjectionWritten: 'no',
+    openClawSourcePackProjectionSource: 'none',
+    openClawSourcePackProjectionWriteError: 'none',
+    openClawSourcePackJudgment: null,
     localAiReviewText: '',
     openClawResearchText: '',
     openClawSourcePackText: '',
@@ -509,6 +518,48 @@ function MissionConsoleTile({
     if (repairPromptAvailable) emitPresenceEvent({ kind: 'operator_relief.repair_prompt_available', summary: 'A repair prompt is available from mission evidence.' });
     if (hasLessonCandidates) emitPresenceEvent({ kind: 'operator_relief.lesson_candidate_available', summary: 'I found a project lesson candidate from this failure.' });
   }, [operatorReliefProjection]);
+  function handleSourcePackIntakeJudgment() {
+    const sourcePackText = builderWorkbenchInput.openClawSourcePackText || '';
+    const sourcePackOutput = builderWorkbenchInput.openClawSourcePackOutput || '';
+    const judgedAt = new Date().toISOString();
+    const sourcePackTextLength = sourcePackText.length;
+    const sourcePackOutputLength = sourcePackOutput.length;
+    try {
+      const judgment = buildOpenClawSourcePackRunnerProjection({
+        rawResult: sourcePackOutput,
+        sourcePackText,
+      });
+      setBuilderWorkbenchInput((prev) => ({
+        ...prev,
+        activePacketType: 'openclaw-source-pack-runner',
+        activePacketTarget: 'openclaw',
+        openClawSourcePackJudgedAt: judgedAt,
+        openClawSourcePackButtonClicked: 'yes',
+        openClawSourcePackTextLength: sourcePackTextLength,
+        openClawSourcePackOutputLength: sourcePackOutputLength,
+        openClawSourcePackJudgmentAttempted: 'yes',
+        openClawSourcePackProjectionWritten: 'yes',
+        openClawSourcePackProjectionSource: 'runtimeContext.operatorReliefProjection.builderMeshProjection.builderWorkbenchProjection.openClawSourcePackRunner',
+        openClawSourcePackProjectionWriteError: 'none',
+        openClawSourcePackJudgment: judgment,
+      }));
+    } catch (error) {
+      setBuilderWorkbenchInput((prev) => ({
+        ...prev,
+        activePacketType: 'openclaw-source-pack-runner',
+        activePacketTarget: 'openclaw',
+        openClawSourcePackJudgedAt: judgedAt,
+        openClawSourcePackButtonClicked: 'yes',
+        openClawSourcePackTextLength: sourcePackTextLength,
+        openClawSourcePackOutputLength: sourcePackOutputLength,
+        openClawSourcePackJudgmentAttempted: 'yes',
+        openClawSourcePackProjectionWritten: 'no',
+        openClawSourcePackProjectionSource: 'none',
+        openClawSourcePackProjectionWriteError: error?.message || 'unknown-source-pack-projection-write-error',
+      }));
+    }
+  }
+
   const missionCommandPacket = useMemo(() => buildMissionCommandPacket({
     missionSpec: intentToBuild?.missionSpec || {},
     codexPrompt: intentToBuild?.codexPrompt || '',
@@ -1341,6 +1392,7 @@ function MissionConsoleTile({
             <li><strong>Opened route:</strong> mission-console</li>
             <li><strong>Canonical route:</strong> mission-console</li>
             <li><strong>Execution readiness:</strong> {executionReadiness.ready ? 'true' : 'false'}</li>
+            <li><strong>AI route:</strong> {executionReadiness.aiRouteStatus}</li>
             <li><strong>Route status:</strong> {finalRouteTruth?.routeUsableState || 'unknown'} / {finalRouteTruth?.routeKind || 'unknown'}</li>
             <li><strong>Provider chain:</strong> requested {finalRouteTruth?.providerRequested || 'unknown'} → selected {finalRouteTruth?.providerSelected || 'unknown'} → executed {finalRouteTruth?.providerExecuted || 'unknown'}</li>
             <li><strong>Addressed target:</strong> {resolvedTarget.label}</li>
@@ -1609,7 +1661,7 @@ function MissionConsoleTile({
                 </CollapsiblePanel>
                 <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Text<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-text" value={builderWorkbenchInput.openClawSourcePackText} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackText: event.target.value }))} placeholder={operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackTemplate || 'SOURCE PACK START...'} /></label>
                 <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Output<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-output" value={builderWorkbenchInput.openClawSourcePackOutput} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackOutput: event.target.value }))} placeholder="Paste OpenClaw SOURCE_PACK_STATUS / SUMMARY / USEFUL_FACTS / UNKNOWNS / RISKS / NEXT_RESEARCH_QUESTIONS / STEPHANOS_HANDOFF_PACKET output here." /></label>
-                <button type="button" className="status-panel-copy-button" onClick={() => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackJudgedAt: new Date().toISOString() }))}>Run Source Pack Intake Judgment</button>
+                <button type="button" className="status-panel-copy-button" onClick={handleSourcePackIntakeJudgment}>Run Source Pack Intake Judgment</button>
                 <button type="button" className={`status-panel-copy-button ${openClawSourcePackHandoffCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackRunner?.cleanedSourcePackHandoff || '', setOpenClawSourcePackHandoffCopyState, 'MissionConsoleTile.copyCleanedOpenClawSourcePackHandoff')}>
                   {openClawSourcePackHandoffCopyState === COPY_STATE.SUCCESS ? 'Cleaned Source Pack Handoff Copied' : openClawSourcePackHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Cleaned Source Pack Handoff failed' : 'Copy Cleaned Source Pack Handoff'}
                 </button>
