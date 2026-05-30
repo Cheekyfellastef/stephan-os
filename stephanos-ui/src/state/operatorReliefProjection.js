@@ -1,5 +1,6 @@
 import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
 import { buildOpenClawWebResearchIntakeProjection, OPENCLAW_VR_RESEARCH_PROMPT } from '../../../shared/agents/openClawWebResearchIntake.mjs';
+import { buildOpenClawWorkspaceHygieneProjection } from '../../../shared/agents/openClawWorkspaceHygiene.mjs';
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -454,7 +455,7 @@ export function parseBuilderWorkbenchResult(rawText = '', { source = 'local-ai-r
   };
 }
 
-function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput = {}, implementationRequested = false } = {}) {
+function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput = {}, implementationRequested = false, supportSnapshot = {} } = {}) {
   const localRaw = asText(workbenchInput.localAiReviewText || workbenchInput.localAiReviewResult || workbenchInput.localAiRunnerRawResponse || '', '');
   const openClawRaw = asText(workbenchInput.openClawResearchText || workbenchInput.openClawResearchResult || workbenchInput.openClawPatchPlanText || '', '');
   const localAiRunnerRawResponse = truncateWorkbenchText(workbenchInput.localAiRunnerRawResponse || localRaw || '');
@@ -476,6 +477,17 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const openClawSanityGate = buildOpenClawSanityGate(openClawRaw, workbenchInput);
   const openClawResearch = openClawRaw ? parseBuilderWorkbenchResult(openClawRaw, { source: 'openclaw-research-patch-plan' }) : null;
   const openClawPatchPlanner = buildOpenClawPatchPlannerIntake(openClawResearch, workbenchInput, openClawResearchIntake, openClawSanityGate);
+  const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({
+    ...supportSnapshot,
+    ...workbenchInput,
+    diagnosticText: [
+      supportSnapshot.diagnosticText,
+      supportSnapshot.housekeepOutput,
+      workbenchInput.openClawWorkspaceDiagnosticText,
+      workbenchInput.openClawResearchText,
+      workbenchInput.openClawPatchPlanText,
+    ].filter(Boolean).join('\n'),
+  });
   const parsedResults = [localAiReview, openClawResearch].filter(Boolean);
   const forbidden = parsedResults.flatMap((result) => result.forbiddenActionsDetected || []);
   const safeResults = parsedResults.filter((result) => result.safeForWorkbench && (!String(result.source || '').includes('openclaw') || openClawSanityGate.trustedForBuilderRouting === 'yes'));
@@ -502,16 +514,19 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   if (openClawResearchIntake.placeholderLeakageDetected === 'yes') blockers.push('OpenClaw Web Research Intake detected placeholder/template leakage.');
   if (openClawResearchIntake.taskFrameAdherence === 'fail') blockers.push('OpenClaw Web Research Intake detected task-frame drift.');
   if (openClawSanityGate.sanityStatus === 'failed') blockers.push('OpenClaw Sanity Gate failed; block OpenClaw from Builder Mesh routing until the session/template is reset.');
+  if (openClawWorkspaceHygiene.workspaceBlocksIgnition === 'yes') blockers.push('OpenClaw workspace dirt is blocking ignition; stash only the known OpenClaw workspace paths before routing OpenClaw again.');
   if (openClawPatchPlanner.patchPlannerStatus === 'failed') blockers.push('OpenClaw Patch Planner intake failed; revise plan before handoff.');
   if (patchPlanPresent && !['low', 'medium'].includes(patchPlanRisk)) warnings.push('Patch plan risk is not low/medium; operator should review scope before any mutation approval.');
   if (openClawPatchPlanner.patchPlannerStatus === 'needs-review') warnings.push('OpenClaw Patch Planner intake needs operator review before fallback decisions.');
   warnings.push(...asList(openClawResearchIntake.warnings));
   if (!parsedResults.length) warnings.push('No local AI/OpenClaw workbench result has been pasted yet.');
-  const nextBestAction = forbidden.length > 0
+  const nextBestAction = openClawWorkspaceHygiene.workspaceBlocksIgnition === 'yes'
+    ? openClawWorkspaceHygiene.workspaceNextOperatorAction
+    : (forbidden.length > 0
     ? 'Reject the pasted result for mutation authority and request a read-only review/patch plan only.'
     : (safeResults.length > 0
       ? 'Review safe workbench findings, then use the Operator Approval Checklist before any patch is applied.'
-      : 'Copy Local AI/OpenClaw packets and paste bounded read-only results into the Workbench.');
+      : 'Copy Local AI/OpenClaw packets and paste bounded read-only results into the Workbench.'));
   return {
     workbenchStatus: 'ready',
     activePacketType: workbenchInput.activePacketType || (openClawRaw ? 'openclaw-research-patch-plan' : (localRaw ? 'local-ai-review' : 'none')),
@@ -541,6 +556,7 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     openClawWebResearchIntake: openClawResearchIntake,
     openClawSanityGate,
     openClawPatchPlanner,
+    openClawWorkspaceHygiene,
     localAiReviewResultPresent: Boolean(localAiReview),
     openClawResearchResultPresent: Boolean(openClawResearch),
     patchPlanPresent,
@@ -940,8 +956,13 @@ function buildBuilderMeshProjection({
     builderMeshBase: { recommendedBuilder, codexReason },
     workbenchInput: builderWorkbenchInput,
     implementationRequested,
+    supportSnapshot,
   });
-  if (workbenchPreview.openClawSanityGate?.sanityStatus === 'failed' || (workbenchPreview.openClawResearchResultPresent && workbenchPreview.openClawSanityGate?.trustedForPatchPlanning !== 'yes')) {
+  if (workbenchPreview.openClawWorkspaceHygiene?.workspaceBlocksIgnition === 'yes') {
+    blockers.push('OpenClaw workspace dirt blocks ignition; Builder Mesh must not route work to OpenClaw until the operator stashes/quarantines only the known workspace paths.');
+    recommendedBuilder = localAiReady ? 'local-ai' : 'codex-fallback';
+    codexReason = 'OpenClaw workspace dirt is blocking ignition. Codex remains fallback implementation capacity; immediate action is operator cleanup of known OpenClaw workspace paths only.';
+  } else if (workbenchPreview.openClawSanityGate?.sanityStatus === 'failed' || (workbenchPreview.openClawResearchResultPresent && workbenchPreview.openClawSanityGate?.trustedForPatchPlanning !== 'yes')) {
     blockers.push('OpenClaw route trust is insufficient; Builder Mesh OpenClaw research/patch-planning routing is blocked until route sanity and task-frame proof pass.');
     recommendedBuilder = localAiReady ? 'local-ai' : 'operator';
     codexReason = `OpenClaw route is not trusted for patch planning. ${workbenchPreview.openClawSanityGate?.routeTrustReason || workbenchPreview.openClawSanityGate?.failureReason || 'Route-specific proof is missing.'}`;
@@ -963,17 +984,21 @@ function buildBuilderMeshProjection({
     'Inspect GitHub PR/status/diff/evidence when connected.',
     'Collect proof gaps and next checks from Operator Relief / Mission Brain.',
   ];
-  const nextBestAction = recommendedBuilder === 'hold'
+  const workspaceBlocksIgnition = workbenchPreview.openClawWorkspaceHygiene?.workspaceBlocksIgnition === 'yes';
+  const nextBestAction = workspaceBlocksIgnition
+    ? workbenchPreview.openClawWorkspaceHygiene.workspaceNextOperatorAction
+    : (recommendedBuilder === 'hold'
     ? 'Hold and resolve Builder Mesh blockers before routing more build work.'
     : (recommendedBuilder === 'operator' && workbenchPreview.localAiReviewResultPresent === true
       ? 'Review the parsed Local AI Runner findings and use the Operator Approval Checklist before any patch or Codex fallback.'
       : (recommendedBuilder === 'codex-fallback'
       ? 'Copy the Codex Fallback Packet only after operator approval confirms zero-cost routes cannot safely implement.'
-      : `Copy the ${recommendedBuilder === 'github-inspection' ? 'GitHub Inspection Packet' : recommendedBuilder === 'openclaw' ? 'OpenClaw Research Packet' : recommendedBuilder === 'operator' ? 'Operator Approval Checklist' : 'Local AI Review Packet'} and keep the route read-only until mutation approval.`));
+      : `Copy the ${recommendedBuilder === 'github-inspection' ? 'GitHub Inspection Packet' : recommendedBuilder === 'openclaw' ? 'OpenClaw Research Packet' : recommendedBuilder === 'operator' ? 'Operator Approval Checklist' : 'Local AI Review Packet'} and keep the route read-only until mutation approval.`)));
   const builderWorkbenchProjection = buildBuilderWorkbenchProjection({
     builderMeshBase: { recommendedBuilder, codexReason },
     workbenchInput: builderWorkbenchInput,
     implementationRequested,
+    supportSnapshot,
   });
   const packetBase = {
     missionSummary: missionIntelligenceSummary.currentMissionSummary || missionBrainNextAction.missionObjective || 'Stephanos Zero-Cost Builder Mesh mission.',
@@ -992,7 +1017,7 @@ function buildBuilderMeshProjection({
     codexRequired,
     codexReason,
     localAiCanHelp,
-    openClawCanHelp: workbenchPreview.openClawSanityGate?.sanityStatus === 'failed' ? 'blocked-sanity-failed' : (workbenchPreview.openClawSanityGate?.trustedForPatchPlanning === 'yes' ? openClawCanHelp : (workbenchPreview.openClawResearchResultPresent ? 'blocked-route-untrusted' : openClawCanHelp)),
+    openClawCanHelp: workbenchPreview.openClawWorkspaceHygiene?.workspaceBlocksIgnition === 'yes' ? 'blocked-workspace-dirt' : (workbenchPreview.openClawSanityGate?.sanityStatus === 'failed' ? 'blocked-sanity-failed' : (workbenchPreview.openClawSanityGate?.trustedForPatchPlanning === 'yes' ? openClawCanHelp : (workbenchPreview.openClawResearchResultPresent ? 'blocked-route-untrusted' : openClawCanHelp))),
     githubCanHelp,
     safeReadOnlyActions,
     approvalRequiredBeforeMutation,
@@ -1003,6 +1028,7 @@ function buildBuilderMeshProjection({
     builderWorkbenchProjection,
     openClawControlBridge,
     openClawWebResearchIntake: builderWorkbenchProjection.openClawWebResearchIntake,
+    openClawWorkspaceHygiene: builderWorkbenchProjection.openClawWorkspaceHygiene,
     openClawSanityGate: builderWorkbenchProjection.openClawSanityGate,
     openClawResearchScoutGuidance: builderWorkbenchProjection.openClawSanityGate?.minimumViableRouteRecommendation || 'OpenClaw is route-specific only: dashboard/qwen routes are untrusted by default, CLI llama3.2 exact-response sanity is not enough for research or patch planning, mutation remains locked, and operator approval is required before canon/build promotion.',
     copyPackets: {

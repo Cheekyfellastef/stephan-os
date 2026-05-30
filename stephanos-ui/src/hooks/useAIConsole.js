@@ -480,6 +480,15 @@ function buildBuilderWorkbenchExecutionMetadata(builderWorkbenchProjection = {},
     openclaw_patch_planner_codex_fallback_needed: workbench?.openClawPatchPlanner?.codexFallbackNeeded || 'unknown',
     openclaw_patch_planner_trusted_for_patch: workbench?.openClawPatchPlanner?.trustedForPatch || 'no',
     openclaw_patch_planner_next_operator_action: workbench?.openClawPatchPlanner?.nextOperatorAction || 'Copy the OpenClaw Patch Planner Prompt and run it externally/read-only.',
+    openclaw_workspace_hygiene_status: workbench?.openClawWorkspaceHygiene?.workspaceHygieneStatus || 'clean',
+    openclaw_workspace_dirt_detected: workbench?.openClawWorkspaceHygiene?.workspaceDirtDetected || 'no',
+    openclaw_workspace_dirt_paths: (workbench?.openClawWorkspaceHygiene?.workspaceDirtPaths || []).join(' | ') || 'none',
+    openclaw_workspace_dirt_count: String(workbench?.openClawWorkspaceHygiene?.workspaceDirtCount ?? 0),
+    openclaw_workspace_blocks_ignition: workbench?.openClawWorkspaceHygiene?.workspaceBlocksIgnition || 'no',
+    openclaw_workspace_recommended_cleanup: workbench?.openClawWorkspaceHygiene?.workspaceRecommendedCleanup || 'No cleanup needed.',
+    openclaw_workspace_safe_runtime_directory: workbench?.openClawWorkspaceHygiene?.workspaceSafeRuntimeDirectory || 'unknown',
+    openclaw_workspace_mutation_authority: workbench?.openClawWorkspaceHygiene?.workspaceMutationAuthority || 'locked',
+    openclaw_workspace_next_operator_action: workbench?.openClawWorkspaceHygiene?.workspaceNextOperatorAction || 'No OpenClaw workspace dirt detected.',
     builder_workbench_projection_source: projectionSource,
     builder_workbench_metadata_source: metadataSource,
     builder_workbench_deterministic_answer_used: deterministicAnswerUsed,
@@ -781,6 +790,7 @@ function isDefaultChatContextValue(key = '', value = '') {
   if (key === 'local_ai_runner_parse_input_length') return normalized === '0';
   if (key === 'local_ai_runner_parse_result_status') return normalized === 'empty';
   if (key === 'workbench_output_viewport_status') return normalized === 'unknown';
+  if (key.startsWith('openclaw_workspace_')) return ['none', 'unknown', 'n/a', 'clean', 'no', '0', 'locked', 'no cleanup needed.'].includes(normalized);
   if (key.startsWith('builder_workbench_')) return ['none', 'unknown', 'n/a'].includes(normalized);
   return ['none', 'unknown', 'n/a'].includes(normalized);
 }
@@ -2611,6 +2621,7 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt 
   const openClawParsedPresent = workbench?.openClawResearch?.safeForWorkbench === true;
   const openClawWebResearchIntake = workbench?.openClawWebResearchIntake || projection?.openClawWebResearchIntake || {};
   const openClawPatchPlanner = workbench?.openClawPatchPlanner || {};
+  const openClawWorkspaceHygiene = workbench?.openClawWorkspaceHygiene || projection?.openClawWorkspaceHygiene || {};
   const openClawSanityGate = workbench?.openClawSanityGate || {};
   const openClawSummary = openClawParsedPresent
     ? (workbench?.openClawResearch?.summary || 'parsed OpenClaw result is present but summary is empty')
@@ -2662,6 +2673,9 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt 
     `OpenClaw Route Trust: route ${openClawSanityGate.routeLabel || 'unknown'}; trust ${openClawSanityGate.routeTrustStatus || 'untrusted'}; task-frame ${openClawSanityGate.routeTaskFrameStatus || 'unknown'}; session ${openClawSanityGate.routeSessionId || 'unknown'}; active sessions ${openClawSanityGate.activeSessionCount || '0'}; session contamination ${openClawSanityGate.activeSessionContaminationRisk || 'no'}; model mismatch ${openClawSanityGate.routeModelMismatchDetected || 'no'}; model warnings ${(openClawSanityGate.modelPinMismatchWarnings || []).join(' | ') || 'none'}; plaintext token security warning ${openClawSanityGate.plaintextTokenSecurityWarning || 'no'}; non-blocking doctor findings ${(openClawSanityGate.doctorNonBlockingFindings || []).join(' | ') || 'none'}; dashboard failures ${(openClawSanityGate.dashboardFailureExamples || []).join(' | ') || 'none'}; minimum viable route ${openClawSanityGate.minimumViableRouteRecommendation || 'Use CLI llama3.2 for bounded source-pack processing only.'}.`,
     `OpenClaw Sanity Gate: status ${openClawSanityGate.sanityStatus || 'idle'}; exact response ${openClawSanityGate.exactResponseStatus || 'unknown'}; payload ${openClawSanityGate.exactResponsePayload || 'none'}; CLI banner ignored ${openClawSanityGate.cliBannerIgnored || 'no'}; template leakage ${openClawSanityGate.templateLeakageDetected || 'no'}; wrong repo path ${openClawSanityGate.wrongRepoPathDetected || 'no'}; trusted for builder routing ${openClawSanityGate.trustedForBuilderRouting || 'no'}; reason ${openClawSanityGate.failureReason || 'none'}.`,
     `OpenClaw Patch Planner: status ${openClawPatchPlanner.patchPlannerStatus || 'idle'}; risk ${openClawPatchPlanner.riskLevel || 'unknown'}; scope ${openClawPatchPlanner.patchScope || 'unknown'}; files ${(openClawPatchPlanner.likelyFiles || []).length || 0}; tests ${(openClawPatchPlanner.requiredTests || []).length || 0}; browser proof ${openClawPatchPlanner.browserProofRequired || 'unknown'}; trusted for patch ${openClawPatchPlanner.trustedForPatch || 'no'}.`,
+    `OpenClaw Workspace Hygiene: status ${openClawWorkspaceHygiene.workspaceHygieneStatus || 'clean'}; dirt detected ${openClawWorkspaceHygiene.workspaceDirtDetected || 'no'}; paths ${(openClawWorkspaceHygiene.workspaceDirtPaths || []).join(', ') || 'none'}; count ${openClawWorkspaceHygiene.workspaceDirtCount ?? 0}; blocks ignition ${openClawWorkspaceHygiene.workspaceBlocksIgnition || 'no'}; mutation authority ${openClawWorkspaceHygiene.workspaceMutationAuthority || 'locked'}.`,
+    `Why is ignition blocked after using OpenClaw? ${openClawWorkspaceHygiene.workspaceBlocksIgnition === 'yes' ? `OpenClaw generated repo-root workspace/runtime files (${(openClawWorkspaceHygiene.workspaceDirtPaths || []).join(', ') || 'known OpenClaw paths'}), and housekeep correctly hard-blocks them as non-source dirt.` : 'No OpenClaw workspace dirt is currently projected as an ignition blocker.'}`,
+    `What should I do with the OpenClaw hard-block files? ${openClawWorkspaceHygiene.workspaceDirtDetected === 'yes' ? `Copy/run only this safe stash command: ${openClawWorkspaceHygiene.workspaceRecommendedCleanup}. Do not delete files or pop the stash automatically; future-safe quarantine is ${openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory || 'outside the repo via supported config only'}.` : 'No cleanup command is needed unless known OpenClaw workspace files appear in the repo root.'}`,
     `Can OpenClaw plan the next patch? ${['plan-pasted', 'passed', 'needs-review'].includes(openClawPatchPlanner.patchPlannerStatus) ? 'yes, as read-only patch planner/reviewer only' : 'yes, once the operator copies the planner prompt and pastes a specific plan'}. Is Codex still required? ${openClawPatchPlanner.codexFallbackNeeded || (projection?.codexRequired === true ? 'yes' : 'no')} — ${openClawPatchPlanner.codexFallbackReason || projection?.codexReason || 'Codex is fallback only.'}`,
     `${openClawSanityGate.sanityStatus === 'failed' ? 'OpenClaw is blocked from Builder Mesh research/patch-planning routing until sanity is restored.' : 'OpenClaw can help as a read-only web research scout and patch planner if pasted results pass sanity and intake.'} OpenClaw cannot mutate files or build, Codex remains fallback implementation capacity only, and operator approval is required before canon/build promotion.`,
     `Workbench Codex fallback still needed: ${workbench?.codexFallbackStillNeeded ? 'yes' : 'no'} — ${workbench?.codexFallbackReason || 'none'}.`,

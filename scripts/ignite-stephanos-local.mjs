@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
+import { buildOpenClawWorkspaceHygieneProjection } from '../shared/agents/openClawWorkspaceHygiene.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -424,6 +425,7 @@ function collectAllowlistedUntrackedPaths(statusAssessment) {
 function runCleanlinessGovernor({ statusAssessment, runStepFn = runStep, mode = process.env.STEPHANOS_IGNITION_MODE || 'launcher-root', allowDirtySource = String(process.env.STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE || '') === '1' } = {}) {
   const autoCleanedFiles = [];
   const blockedFiles = allowDirtySource ? statusAssessment.forbiddenOrUnknownEntries.flatMap((entry) => entry.paths) : statusAssessment.meaningfulEntries.flatMap((entry) => entry.paths);
+  const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({ blockedFiles, blocksIgnition: blockedFiles.length > 0 });
   const sourceDirtFiles = statusAssessment.meaningfulEntries
     .filter((entry) => entry.category === 'meaningful-source-dirt')
     .flatMap((entry) => entry.paths);
@@ -453,6 +455,15 @@ function runCleanlinessGovernor({ statusAssessment, runStepFn = runStep, mode = 
       ignitionSourceDirtCount: sourceDirtFiles.length,
       ignitionDependencyWarningCount: dependencyWarnings.length,
       ignitionHardBlockCount: blockedFiles.length,
+      openClawWorkspaceHygieneStatus: openClawWorkspaceHygiene.workspaceHygieneStatus,
+      openClawWorkspaceDirtDetected: openClawWorkspaceHygiene.workspaceDirtDetected,
+      openClawWorkspaceDirtPaths: openClawWorkspaceHygiene.workspaceDirtPaths,
+      openClawWorkspaceDirtCount: openClawWorkspaceHygiene.workspaceDirtCount,
+      openClawWorkspaceBlocksIgnition: openClawWorkspaceHygiene.workspaceBlocksIgnition,
+      openClawWorkspaceRecommendedCleanup: openClawWorkspaceHygiene.workspaceRecommendedCleanup,
+      openClawWorkspaceSafeRuntimeDirectory: openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory,
+      openClawWorkspaceMutationAuthority: openClawWorkspaceHygiene.workspaceMutationAuthority,
+      openClawWorkspaceNextOperatorAction: openClawWorkspaceHygiene.workspaceNextOperatorAction,
       ignitionNextOperatorAction: blockedFiles.length > 0 ? 'Remove hard-block files from working tree and PR range.' : (sourceDirtFiles.length > 0 ? 'Commit/stash/discard source dirt or set STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE=1.' : 'Continue ignition.'),
       ignitionReadyToEnterCommandDeck: blockedFiles.length === 0 && sourceDirtFiles.length === 0,
     },
@@ -785,6 +796,7 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
   const uniqueRuntimeTargets = [...new Set(runtimeTargets)];
   const uniqueHardBlockTargets = [...new Set(hardBlockTargets)];
   const blocked = sourceTargets.length > 0 || uniqueHardBlockTargets.length > 0;
+  const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({ hardBlockPaths: uniqueHardBlockTargets, sourcePaths: sourceTargets, blocksIgnition: blocked });
   const status = {
     ignitionStatus: blocked ? 'BLOCKED' : 'READY',
     ignitionPhase: dryRun ? 'housekeep-dry-run' : 'housekeep',
@@ -797,6 +809,15 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     ignitionDependencyWarningCount: dependencyTargets.length,
     ignitionHardBlockCount: uniqueHardBlockTargets.length,
     ignitionHardBlockPaths: uniqueHardBlockTargets.slice(0, 10),
+    openClawWorkspaceHygieneStatus: openClawWorkspaceHygiene.workspaceHygieneStatus,
+    openClawWorkspaceDirtDetected: openClawWorkspaceHygiene.workspaceDirtDetected,
+    openClawWorkspaceDirtPaths: openClawWorkspaceHygiene.workspaceDirtPaths,
+    openClawWorkspaceDirtCount: openClawWorkspaceHygiene.workspaceDirtCount,
+    openClawWorkspaceBlocksIgnition: openClawWorkspaceHygiene.workspaceBlocksIgnition,
+    openClawWorkspaceRecommendedCleanup: openClawWorkspaceHygiene.workspaceRecommendedCleanup,
+    openClawWorkspaceSafeRuntimeDirectory: openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory,
+    openClawWorkspaceMutationAuthority: openClawWorkspaceHygiene.workspaceMutationAuthority,
+    openClawWorkspaceNextOperatorAction: openClawWorkspaceHygiene.workspaceNextOperatorAction,
     ignitionBlockedReason: uniqueHardBlockTargets.length > 0 ? 'Hard-block dirt detected' : (sourceTargets.length > 0 ? 'Source dirt detected' : ''),
     ignitionNextOperatorAction: blocked ? 'Resolve source dirt/hard-block files before ignition.' : 'Housekeeping complete.',
     ignitionReadyToEnterCommandDeck: !blocked,

@@ -294,6 +294,35 @@ test('housekeep hard-blocks unknown data files and surfaces exact hardBlockPaths
     runStepFn: () => {},
   }), /housekeep blocked/);
 });
+test('housekeep classifies known OpenClaw workspace dirt without weakening hard-block', () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    assert.throws(() => runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return { stdout: '?? .openclaw/\n?? HEARTBEAT.md\n?? stephanos-ui/src/App.jsx\n', stderr: '' };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: () => {},
+    }), /housekeep blocked/);
+  } finally {
+    console.log = originalLog;
+  }
+  const statusLine = logs.find((line) => line.startsWith('[HOUSEKEEP] status='));
+  assert.ok(statusLine);
+  const status = JSON.parse(statusLine.replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.openClawWorkspaceHygieneStatus, 'blocked-openclaw-workspace-dirt');
+  assert.equal(status.openClawWorkspaceDirtDetected, 'yes');
+  assert.deepEqual(status.openClawWorkspaceDirtPaths, ['.openclaw', 'HEARTBEAT.md']);
+  assert.equal(status.openClawWorkspaceBlocksIgnition, 'yes');
+  assert.match(status.openClawWorkspaceRecommendedCleanup, /git stash push -u -m/);
+  assert.equal(status.ignitionStatus, 'BLOCKED');
+});
+
 test('preflight restores approved tracked generated dirt before pull', () => {
   const steps = [];
   runGitPullPreflightWithDeps({

@@ -3952,6 +3952,17 @@ test('support snapshot aligns Builder Workbench truth from live projection when 
             codexFallbackStillNeeded: true,
             codexFallbackReason: 'implementation requested but no approved local/OpenClaw mutation path is proven',
             nextBestAction: 'Copy Local AI/OpenClaw packets and paste bounded read-only results',
+            openClawWorkspaceHygiene: {
+              workspaceHygieneStatus: 'blocked-openclaw-workspace-dirt',
+              workspaceDirtDetected: 'yes',
+              workspaceDirtPaths: ['.openclaw', 'HEARTBEAT.md'],
+              workspaceDirtCount: 2,
+              workspaceBlocksIgnition: 'yes',
+              workspaceRecommendedCleanup: 'git stash push -u -m \"stash-openclaw-workspace-dirt-before-ignition\" -- .openclaw HEARTBEAT.md IDENTITY.md SOUL.md TOOLS.md USER.md',
+              workspaceSafeRuntimeDirectory: '~/.local/share/stephanos/openclaw-workspace',
+              workspaceMutationAuthority: 'locked',
+              workspaceNextOperatorAction: 'Run the named stash command.',
+            },
           },
         },
       },
@@ -4009,6 +4020,15 @@ test('support snapshot aligns Builder Workbench truth from live projection when 
   assert.match(snapshot, /Builder Workbench Metadata Source: support-snapshot-live-operator-relief-projection/);
   assert.match(snapshot, /Builder Workbench Deterministic Answer Used: yes/);
   assert.match(snapshot, /Builder Workbench Projection Drop Boundary: none/);
+  assert.match(snapshot, /OpenClaw Workspace Hygiene Status: blocked-openclaw-workspace-dirt/);
+  assert.match(snapshot, /OpenClaw Workspace Dirt Detected: yes/);
+  assert.match(snapshot, /OpenClaw Workspace Dirt Paths: \.openclaw \| HEARTBEAT\.md/);
+  assert.match(snapshot, /OpenClaw Workspace Dirt Count: 2/);
+  assert.match(snapshot, /OpenClaw Workspace Blocks Ignition: yes/);
+  assert.match(snapshot, /OpenClaw Workspace Recommended Cleanup: git stash push -u -m/);
+  assert.match(snapshot, /OpenClaw Workspace Safe Runtime Directory: ~\/.local\/share\/stephanos\/openclaw-workspace/);
+  assert.match(snapshot, /OpenClaw Workspace Mutation Authority: locked/);
+  assert.match(snapshot, /OpenClaw Workspace Next Operator Action: Run the named stash command\./);
   assert.match(snapshot, /Provider Mismatch: no/);
 });
 
