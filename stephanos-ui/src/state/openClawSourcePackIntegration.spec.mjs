@@ -27,6 +27,16 @@ test('Support Snapshot includes all OpenClaw Source Pack Runner fields', () => {
     'OpenClaw Source Pack Trusted For Canon',
     'OpenClaw Source Pack Trusted For Research',
     'OpenClaw Source Pack Codex Fallback Needed',
+    'OpenClaw Source Pack Text Textarea Mounted',
+    'OpenClaw Source Pack Output Textarea Mounted',
+    'OpenClaw Source Pack Text DOM Value Length',
+    'OpenClaw Source Pack Output DOM Value Length',
+    'OpenClaw Source Pack Output OnChange Fired',
+    'OpenClaw Source Pack Output State Length',
+    'OpenClaw Source Pack Judgment Button Clicked',
+    'OpenClaw Source Pack Judgment Read Output Length',
+    'OpenClaw Source Pack Judgment Read Source',
+    'OpenClaw Source Pack Active Surface',
     'OpenClaw Source Pack Next Operator Action',
   ]) {
     assert.match(supportSnapshotSource, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -63,8 +73,22 @@ test('Source Pack Output textarea updates the same output state judged by the ru
   assert.match(missionConsoleTileSource, /openClawSourcePackOutput: sourcePackOutput,/);
   assert.match(missionConsoleTileSource, /data-testid="builder-workbench-openclaw-source-pack-output"[^>]+value=\{builderWorkbenchInput\.openClawSourcePackOutput\}[^>]+onChange=\{updateOpenClawSourcePackOutput\}/);
   assert.match(missionConsoleTileSource, /const handleSourcePackIntakeJudgment = \(\) => \{/);
-  assert.match(missionConsoleTileSource, /openClawSourcePackLastJudgedOutput: prev\.openClawSourcePackOutput \|\| '',/);
+  assert.match(missionConsoleTileSource, /openClawSourcePackOutputMirrorRef\.current = sourcePackOutput/);
+  assert.match(missionConsoleTileSource, /openClawSourcePackOutput: latestOutput,/);
+  assert.match(missionConsoleTileSource, /openClawSourcePackLastJudgedOutput: latestOutput,/);
   assert.match(missionConsoleTileSource, /Run Source Pack Intake Judgment<\/button>/);
+});
+
+test('Source Pack judgment reads latest visible textarea mirrors instead of stale closure state', () => {
+  assert.match(missionConsoleTileSource, /const openClawSourcePackTextMirrorRef = useRef\(''\);/);
+  assert.match(missionConsoleTileSource, /const openClawSourcePackOutputMirrorRef = useRef\(''\);/);
+  assert.match(missionConsoleTileSource, /const latestOutput = openClawSourcePackOutputMirrorRef\.current \?\? openClawSourcePackOutputTextareaRef\.current\?\.value \?\? prev\.openClawSourcePackOutput \?\? '';/);
+  assert.match(missionConsoleTileSource, /openClawSourcePackJudgmentReadSource: 'ref-backed-visible-textarea'/);
+});
+
+test('active Builder Workbench path has one live Source Pack Text and Output textarea selector', () => {
+  assert.equal((missionConsoleTileSource.match(/data-testid="builder-workbench-openclaw-source-pack-text"/g) || []).length, 1);
+  assert.equal((missionConsoleTileSource.match(/data-testid="builder-workbench-openclaw-source-pack-output"/g) || []).length, 1);
 });
 
 const BAD_SOURCE_PACK_TEXT = `SOURCE PACK START
@@ -249,6 +273,45 @@ test('Support Snapshot exposes failed bad Source Pack output lengths and leakage
   assert.match(snapshot, /OpenClaw Source Pack Asks For Next Detected: yes/);
   assert.match(snapshot, /OpenClaw Source Pack Trusted For Canon: no/);
   assert.match(snapshot, /OpenClaw Source Pack Trusted For Research: no/);
+});
+
+test('Support Snapshot exposes Source Pack runtime diagnostics for the visible output path', () => {
+  const workbench = sourcePackWorkbenchProjection({
+    openClawSourcePackText: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackOutput: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackLastJudgedText: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackLastJudgedOutput: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackTextTextareaMounted: 'yes',
+    openClawSourcePackOutputTextareaMounted: 'yes',
+    openClawSourcePackTextDomValueLength: '58',
+    openClawSourcePackOutputDomValueLength: '58',
+    openClawSourcePackOutputOnChangeFired: 'yes',
+    openClawSourcePackOutputStateLength: '58',
+    openClawSourcePackJudgmentButtonClicked: 'yes',
+    openClawSourcePackJudgmentReadOutputLength: '58',
+    openClawSourcePackJudgmentReadSource: 'ref-backed-visible-textarea',
+    openClawSourcePackActiveSurface: 'missionConsolePanel',
+  });
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjection: {
+        builderMeshProjection: {
+          builderWorkbenchProjection: workbench,
+        },
+      },
+    },
+  });
+
+  assert.match(snapshot, /OpenClaw Source Pack Text Textarea Mounted: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Output Textarea Mounted: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Text DOM Value Length: 58/);
+  assert.match(snapshot, /OpenClaw Source Pack Output DOM Value Length: 58/);
+  assert.match(snapshot, /OpenClaw Source Pack Output OnChange Fired: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Output State Length: 58/);
+  assert.match(snapshot, /OpenClaw Source Pack Judgment Button Clicked: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Judgment Read Output Length: 58/);
+  assert.match(snapshot, /OpenClaw Source Pack Judgment Read Source: ref-backed-visible-textarea/);
+  assert.match(snapshot, /OpenClaw Source Pack Active Surface: missionConsolePanel/);
 });
 
 test('operator bad Source Pack judgment becomes stale after output character edit', () => {

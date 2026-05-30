@@ -481,13 +481,34 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const localAiRunnerErrorMessage = asText(workbenchInput.localAiRunnerErrorMessage || '', '');
   const localAiRunnerDispatchAttempted = asText(workbenchInput.localAiRunnerDispatchAttempted || (workbenchInput.localAiReviewRequested ? 'yes' : 'no'), 'no');
   const localAiRunnerRequestSent = asText(workbenchInput.localAiRunnerRequestSent || 'no', 'no');
-  const openClawSourcePackRunner = buildOpenClawSourcePackRunnerProjection({
+  const openClawSourcePackDiagnostics = {
+    textTextareaMounted: asText(workbenchInput.openClawSourcePackTextTextareaMounted || 'unknown', 'unknown'),
+    outputTextareaMounted: asText(workbenchInput.openClawSourcePackOutputTextareaMounted || 'unknown', 'unknown'),
+    textDomValueLength: asText(workbenchInput.openClawSourcePackTextDomValueLength ?? '0', '0'),
+    outputDomValueLength: asText(workbenchInput.openClawSourcePackOutputDomValueLength ?? '0', '0'),
+    outputOnChangeFired: asText(workbenchInput.openClawSourcePackOutputOnChangeFired || 'no', 'no'),
+    outputStateLength: asText(workbenchInput.openClawSourcePackOutputStateLength ?? String((workbenchInput.openClawSourcePackOutput || '').length), '0'),
+    judgmentButtonClicked: asText(workbenchInput.openClawSourcePackJudgmentButtonClicked || 'no', 'no'),
+    judgmentReadOutputLength: asText(workbenchInput.openClawSourcePackJudgmentReadOutputLength ?? '0', '0'),
+    judgmentReadSource: asText(workbenchInput.openClawSourcePackJudgmentReadSource || 'not-run', 'not-run'),
+    activeSurface: asText(workbenchInput.openClawSourcePackActiveSurface || workbenchInput.panelId || 'missionConsolePanel', 'missionConsolePanel'),
+  };
+  const rawOpenClawSourcePackRunner = buildOpenClawSourcePackRunnerProjection({
     rawResult: workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '',
     sourcePackText: workbenchInput.openClawSourcePackText || '',
     openClawSourcePackJudgedAt: workbenchInput.openClawSourcePackJudgedAt || '',
     openClawSourcePackLastJudgedText: workbenchInput.openClawSourcePackJudgedAt ? (workbenchInput.openClawSourcePackLastJudgedText ?? '') : (workbenchInput.openClawSourcePackLastJudgedText ?? workbenchInput.openClawSourcePackText ?? ''),
     openClawSourcePackLastJudgedOutput: workbenchInput.openClawSourcePackJudgedAt ? (workbenchInput.openClawSourcePackLastJudgedOutput ?? '') : (workbenchInput.openClawSourcePackLastJudgedOutput ?? workbenchInput.openClawSourcePackOutput ?? workbenchInput.openClawSourcePackResult ?? ''),
   });
+  const openClawSourcePackRunner = openClawSourcePackDiagnostics.outputTextareaMounted === 'no'
+    ? {
+      ...rawOpenClawSourcePackRunner,
+      sourcePackStatus: 'needs-output',
+      nextOperatorAction: 'Source Pack Output textarea is not mounted in the active Builder Workbench surface; reopen the active surface before judgment.',
+      trustedForCanon: 'no',
+      trustedForResearch: 'no',
+    }
+    : rawOpenClawSourcePackRunner;
   const openClawResearchIntake = buildOpenClawWebResearchIntakeProjection({ rawResult: openClawRaw, requestedTaskFrame: 'vr-research' });
   const openClawSanityGate = buildOpenClawSanityGate(openClawRaw || workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '', workbenchInput);
   const sourcePackEligibility = isOpenClawSourcePackRouteEligible({
@@ -584,7 +605,8 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     openClawPatchPlannerPrompt: OPENCLAW_PATCH_PLANNER_PROMPT,
     openClawSourcePackPrompt: OPENCLAW_SOURCE_PACK_CLI_PROMPT,
     openClawSourcePackTemplate: OPENCLAW_SOURCE_PACK_TEMPLATE,
-    openClawSourcePackRunner: { ...openClawSourcePackRunner, routeEligibility: sourcePackEligibility },
+    openClawSourcePackDiagnostics,
+    openClawSourcePackRunner: { ...openClawSourcePackRunner, routeEligibility: sourcePackEligibility, diagnostics: openClawSourcePackDiagnostics },
     openClawWebResearchIntake: openClawResearchIntake,
     openClawSanityGate,
     openClawPatchPlanner,
