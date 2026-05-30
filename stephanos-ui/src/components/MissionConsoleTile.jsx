@@ -1274,6 +1274,35 @@ function MissionConsoleTile({
     }
   };
 
+
+  const updateOpenClawSourcePackText = (event) => {
+    const sourcePackText = event.target.value;
+    setBuilderWorkbenchInput((prev) => ({
+      ...prev,
+      activePacketType: 'openclaw-source-pack-runner',
+      openClawSourcePackText: sourcePackText,
+    }));
+  };
+
+  const updateOpenClawSourcePackOutput = (event) => {
+    const sourcePackOutput = event.target.value;
+    setBuilderWorkbenchInput((prev) => ({
+      ...prev,
+      activePacketType: 'openclaw-source-pack-runner',
+      openClawSourcePackOutput: sourcePackOutput,
+    }));
+  };
+
+  const handleSourcePackIntakeJudgment = () => {
+    setBuilderWorkbenchInput((prev) => ({
+      ...prev,
+      activePacketType: 'openclaw-source-pack-runner',
+      openClawSourcePackJudgedAt: new Date().toISOString(),
+      openClawSourcePackLastJudgedText: prev.openClawSourcePackText || '',
+      openClawSourcePackLastJudgedOutput: prev.openClawSourcePackOutput || '',
+    }));
+  };
+
   return (
     <CollapsiblePanel
       panelId={panelId}
@@ -1611,9 +1640,9 @@ function MissionConsoleTile({
                     {openClawWebHandoffCopyState === COPY_STATE.SUCCESS ? 'Cleaned Handoff Packet Copied' : openClawWebHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Cleaned Handoff Packet failed' : 'Copy Cleaned Handoff Packet'}
                   </button>
                 </CollapsiblePanel>
-                <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Text<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-text" value={builderWorkbenchInput.openClawSourcePackText} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackText: event.target.value }))} placeholder={operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackTemplate || 'SOURCE PACK START...'} /></label>
-                <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Output<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-output" value={builderWorkbenchInput.openClawSourcePackOutput} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackOutput: event.target.value }))} placeholder="Paste OpenClaw SOURCE_PACK_STATUS / SUMMARY / USEFUL_FACTS / UNKNOWNS / RISKS / NEXT_RESEARCH_QUESTIONS / STEPHANOS_HANDOFF_PACKET output here." /></label>
-                <button type="button" className="status-panel-copy-button" onClick={() => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackJudgedAt: new Date().toISOString(), openClawSourcePackLastJudgedText: prev.openClawSourcePackText || '', openClawSourcePackLastJudgedOutput: prev.openClawSourcePackOutput || '' }))}>Run Source Pack Intake Judgment</button>
+                <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Text<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-text" value={builderWorkbenchInput.openClawSourcePackText} onChange={updateOpenClawSourcePackText} placeholder={operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackTemplate || 'SOURCE PACK START...'} /></label>
+                <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Output<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-output" value={builderWorkbenchInput.openClawSourcePackOutput} onChange={updateOpenClawSourcePackOutput} placeholder="Paste OpenClaw SOURCE_PACK_STATUS / SUMMARY / USEFUL_FACTS / UNKNOWNS / RISKS / NEXT_RESEARCH_QUESTIONS / STEPHANOS_HANDOFF_PACKET output here." /></label>
+                <button type="button" className="status-panel-copy-button" onClick={handleSourcePackIntakeJudgment}>Run Source Pack Intake Judgment</button>
                 <button type="button" className={`status-panel-copy-button ${openClawSourcePackHandoffCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackRunner?.cleanedSourcePackHandoff || '', setOpenClawSourcePackHandoffCopyState, 'MissionConsoleTile.copyCleanedOpenClawSourcePackHandoff')}>
                   {openClawSourcePackHandoffCopyState === COPY_STATE.SUCCESS ? 'Cleaned Source Pack Handoff Copied' : openClawSourcePackHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Cleaned Source Pack Handoff failed' : 'Copy Cleaned Source Pack Handoff'}
                 </button>

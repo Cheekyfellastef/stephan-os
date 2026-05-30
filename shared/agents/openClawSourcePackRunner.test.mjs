@@ -109,3 +109,22 @@ test('projection defaults trusted-for-canon and trusted-for-research to no', () 
   assert.equal(projection.trustedForResearch, 'no');
   assert.equal(projection.mutationAuthority, 'locked');
 });
+
+test('projection judges the provided Source Pack output field with non-zero current output length', () => {
+  const badOutput = `As a language model, ask away or say next.
+<your response>`;
+  const projection = buildOpenClawSourcePackRunnerProjection({
+    openClawSourcePackOutput: badOutput,
+    sourcePackText: badOutput,
+    openClawSourcePackJudgedAt: '2026-05-30T00:00:00.000Z',
+    openClawSourcePackLastJudgedText: badOutput,
+    openClawSourcePackLastJudgedOutput: badOutput,
+  });
+
+  assert.equal(badOutput.length, 58);
+  assert.equal(projection.sourcePackCurrentOutputLength, 58);
+  assert.equal(projection.sourcePackLastJudgedOutputLength, 58);
+  assert.equal(projection.sourcePackStatus, 'failed');
+  assert.equal(projection.templateLeakageDetected, 'yes');
+  assert.equal(projection.asksForNextDetected, 'yes');
+});

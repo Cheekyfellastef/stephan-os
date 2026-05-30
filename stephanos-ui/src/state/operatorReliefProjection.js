@@ -485,8 +485,8 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     rawResult: workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '',
     sourcePackText: workbenchInput.openClawSourcePackText || '',
     openClawSourcePackJudgedAt: workbenchInput.openClawSourcePackJudgedAt || '',
-    openClawSourcePackLastJudgedText: workbenchInput.openClawSourcePackLastJudgedText || workbenchInput.openClawSourcePackText || '',
-    openClawSourcePackLastJudgedOutput: workbenchInput.openClawSourcePackLastJudgedOutput || workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '',
+    openClawSourcePackLastJudgedText: workbenchInput.openClawSourcePackJudgedAt ? (workbenchInput.openClawSourcePackLastJudgedText ?? '') : (workbenchInput.openClawSourcePackLastJudgedText ?? workbenchInput.openClawSourcePackText ?? ''),
+    openClawSourcePackLastJudgedOutput: workbenchInput.openClawSourcePackJudgedAt ? (workbenchInput.openClawSourcePackLastJudgedOutput ?? '') : (workbenchInput.openClawSourcePackLastJudgedOutput ?? workbenchInput.openClawSourcePackOutput ?? workbenchInput.openClawSourcePackResult ?? ''),
   });
   const openClawResearchIntake = buildOpenClawWebResearchIntakeProjection({ rawResult: openClawRaw, requestedTaskFrame: 'vr-research' });
   const openClawSanityGate = buildOpenClawSanityGate(openClawRaw || workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '', workbenchInput);
