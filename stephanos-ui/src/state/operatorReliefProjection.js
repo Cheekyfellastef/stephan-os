@@ -1,4 +1,5 @@
 import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
+import { buildOpenClawWebResearchIntakeProjection, OPENCLAW_VR_RESEARCH_PROMPT } from '../../../shared/agents/openClawWebResearchIntake.mjs';
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -121,6 +122,7 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const localAiRunnerErrorMessage = asText(workbenchInput.localAiRunnerErrorMessage || '', '');
   const localAiRunnerDispatchAttempted = asText(workbenchInput.localAiRunnerDispatchAttempted || (workbenchInput.localAiReviewRequested ? 'yes' : 'no'), 'no');
   const localAiRunnerRequestSent = asText(workbenchInput.localAiRunnerRequestSent || 'no', 'no');
+  const openClawResearchIntake = buildOpenClawWebResearchIntakeProjection({ rawResult: openClawRaw, requestedTaskFrame: 'vr-research' });
   const openClawResearch = openClawRaw ? parseBuilderWorkbenchResult(openClawRaw, { source: 'openclaw-research-patch-plan' }) : null;
   const parsedResults = [localAiReview, openClawResearch].filter(Boolean);
   const forbidden = parsedResults.flatMap((result) => result.forbiddenActionsDetected || []);
@@ -144,7 +146,11 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const blockers = [];
   const warnings = [];
   if (forbidden.length > 0) blockers.push('Forbidden mutation/autonomy language detected in pasted workbench result.');
+  if (openClawResearchIntake.forbiddenLeakageDetected === 'yes') blockers.push('OpenClaw Web Research Intake detected forbidden mutation/command/autostart language.');
+  if (openClawResearchIntake.placeholderLeakageDetected === 'yes') blockers.push('OpenClaw Web Research Intake detected placeholder/template leakage.');
+  if (openClawResearchIntake.taskFrameAdherence === 'fail') blockers.push('OpenClaw Web Research Intake detected task-frame drift.');
   if (patchPlanPresent && !['low', 'medium'].includes(patchPlanRisk)) warnings.push('Patch plan risk is not low/medium; operator should review scope before any mutation approval.');
+  warnings.push(...asList(openClawResearchIntake.warnings));
   if (!parsedResults.length) warnings.push('No local AI/OpenClaw workbench result has been pasted yet.');
   const nextBestAction = forbidden.length > 0
     ? 'Reject the pasted result for mutation authority and request a read-only review/patch plan only.'
@@ -175,6 +181,8 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     workbenchParsedResultSource: localAiReview?.source || openClawResearch?.source || 'none',
     workbenchOutputViewportStatus: 'usable-css-hooks-present',
     openClawResearchRequested: workbenchInput.openClawResearchRequested === true || Boolean(workbenchInput.openClawResearchRequestedAt) || false,
+    openClawWebResearchPrompt: OPENCLAW_VR_RESEARCH_PROMPT,
+    openClawWebResearchIntake: openClawResearchIntake,
     localAiReviewResultPresent: Boolean(localAiReview),
     openClawResearchResultPresent: Boolean(openClawResearch),
     patchPlanPresent,
@@ -622,9 +630,11 @@ function buildBuilderMeshProjection({
     nextBestAction: builderWorkbenchProjection.nextBestAction || nextBestAction,
     builderWorkbenchProjection,
     openClawControlBridge,
+    openClawWebResearchIntake: builderWorkbenchProjection.openClawWebResearchIntake,
+    openClawResearchScoutGuidance: 'OpenClaw can help as a read-only web research scout only when source-cited pasted results pass intake; it cannot mutate files, Codex remains fallback implementation lane, and operator approval is required before canon/build promotion.',
     copyPackets: {
       localAiReviewPacket: { ...packetBase, packetType: 'Local AI Review Packet', requestedOutput: 'Bounded findings, risks, tests, and proof gaps only. No file writes.' },
-      openClawResearchPacket: { ...packetBase, packetType: 'OpenClaw Research Packet', requestedOutput: 'Read-only research, repo inspection, patch plan, cross-checks, blockers/warnings. No mutation without operator approval.', openClawCanHelp, openClawControlBridge: { gatewayTarget: openClawControlBridge.gatewayTarget, dashboardUrl: openClawControlBridge.dashboardUrl, localScoutProofStatus: openClawControlBridge.localScoutProofStatus, mutationAuthority: openClawControlBridge.mutationAuthority, autoStart: openClawControlBridge.autoStart, operatorApprovalRequired: openClawControlBridge.operatorApprovalRequired } },
+      openClawResearchPacket: { ...packetBase, packetType: 'OpenClaw Research Packet', requestedOutput: 'Read-only research, repo inspection, patch plan, cross-checks, blockers/warnings. No mutation without operator approval.', webResearchIntakeRequired: true, defaultPromptName: 'VR Research Lab web research prompt', openClawCanHelp, openClawControlBridge: { gatewayTarget: openClawControlBridge.gatewayTarget, dashboardUrl: openClawControlBridge.dashboardUrl, localScoutProofStatus: openClawControlBridge.localScoutProofStatus, mutationAuthority: openClawControlBridge.mutationAuthority, autoStart: openClawControlBridge.autoStart, operatorApprovalRequired: openClawControlBridge.operatorApprovalRequired } },
       githubInspectionPacket: { ...packetBase, packetType: 'GitHub Inspection Packet', requestedOutput: 'Inspect PR/status/diff/evidence and report proof gaps only. No merge action.', githubCanHelp, prEvidence: { branch: prEvidenceModel.branch || prEvidenceModel.prBranch || 'unknown', prUrl: prEvidenceModel.prUrl || prEvidenceModel.pullRequestUrl || 'unknown', changedFiles: asList(prEvidenceModel.changedFiles) } },
       codexFallbackPacket: { ...packetBase, packetType: 'Codex Fallback Packet', requestedOutput: 'Bounded specialist implementation only after operator approval and after zero-cost routes cannot safely produce a plan.', codexReason, codexRequired },
       operatorApprovalChecklist: { ...packetBase, packetType: 'Operator Approval Checklist', checklist: ['Confirm mutation is necessary.', 'Confirm local/OpenClaw/GitHub read-only routes were considered.', 'Approve exact files/scope before mutation.', 'Require tests/build/verify/pr-clean and UI/browser proof for UI claims.'] },

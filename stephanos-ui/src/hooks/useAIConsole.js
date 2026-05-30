@@ -432,6 +432,15 @@ function buildBuilderWorkbenchExecutionMetadata(builderWorkbenchProjection = {},
     local_ai_runner_parse_result_status: workbench?.localAiRunnerParseResultStatus || workbench?.localAiReview?.resultStatus || 'empty',
     workbench_output_viewport_status: workbench?.workbenchOutputViewportStatus || 'unknown',
     builder_workbench_openclaw_research_result_present: workbench?.openClawResearchResultPresent ? 'yes' : 'no',
+    openclaw_web_research_intake_status: workbench?.openClawWebResearchIntake?.status || 'idle',
+    openclaw_web_access_status: workbench?.openClawWebResearchIntake?.webAccessStatus || 'unknown',
+    openclaw_research_source_count: String(workbench?.openClawWebResearchIntake?.sourceCount ?? 0),
+    openclaw_research_valid_url_count: String(workbench?.openClawWebResearchIntake?.validUrlCount ?? 0),
+    openclaw_research_placeholder_leakage_detected: workbench?.openClawWebResearchIntake?.placeholderLeakageDetected || 'no',
+    openclaw_research_forbidden_leakage_detected: workbench?.openClawWebResearchIntake?.forbiddenLeakageDetected || 'no',
+    openclaw_research_task_frame_adherence: workbench?.openClawWebResearchIntake?.taskFrameAdherence || 'unknown',
+    openclaw_research_trusted_for_canon: workbench?.openClawWebResearchIntake?.resultTrustedForCanon || 'no',
+    openclaw_research_next_operator_action: workbench?.openClawWebResearchIntake?.nextOperatorAction || 'Copy the bounded prompt, run OpenClaw externally/manually, then paste source-cited results for deterministic intake.',
     builder_workbench_patch_plan_present: workbench?.patchPlanPresent ? 'yes' : 'no',
     builder_workbench_patch_plan_risk: workbench?.patchPlanRisk || 'unknown',
     builder_workbench_approval_required_before_patch: workbench?.approvalRequiredBeforePatch === false ? 'no' : 'yes',
@@ -2567,6 +2576,7 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt 
             : 'no local AI review result is present yet; press Run Local AI Review'))));
   const localAiRunnerModel = workbench?.localAiRunnerSelectedModel || 'none';
   const openClawParsedPresent = workbench?.openClawResearch?.safeForWorkbench === true;
+  const openClawWebResearchIntake = workbench?.openClawWebResearchIntake || projection?.openClawWebResearchIntake || {};
   const openClawSummary = openClawParsedPresent
     ? (workbench?.openClawResearch?.summary || 'parsed OpenClaw result is present but summary is empty')
     : 'no parsed OpenClaw research / patch plan result is present yet';
@@ -2613,6 +2623,8 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt 
     `Local AI review summary: ${localAiSummary}.`,
     `Workbench parsed result source: ${workbench?.workbenchParsedResultSource || workbench?.localAiReview?.source || 'none'}.`,
     `OpenClaw research / patch plan summary: ${openClawSummary}.`,
+    `OpenClaw Web Research Intake: status ${openClawWebResearchIntake.status || 'idle'}; web access ${openClawWebResearchIntake.webAccessStatus || 'unknown'}; sources ${openClawWebResearchIntake.sourceCount ?? 0}; valid URLs ${openClawWebResearchIntake.validUrlCount ?? 0}; task frame ${openClawWebResearchIntake.taskFrameAdherence || 'unknown'}; trusted for canon ${openClawWebResearchIntake.resultTrustedForCanon || 'no'}.`,
+    'OpenClaw can help as a read-only web research scout if source-cited pasted results pass intake; OpenClaw cannot mutate files or build, Codex remains the fallback implementation lane, and operator approval is required before canon/build promotion.',
     `Workbench Codex fallback still needed: ${workbench?.codexFallbackStillNeeded ? 'yes' : 'no'} — ${workbench?.codexFallbackReason || 'none'}.`,
     `Next operator action: ${projection?.nextBestAction || workbench?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.'}`,
     `Copyable packets: ${packets.length ? packets.join(', ') : 'Local AI Review Packet, OpenClaw Research Packet, GitHub Inspection Packet, Codex Fallback Packet, Operator Approval Checklist'}.`,

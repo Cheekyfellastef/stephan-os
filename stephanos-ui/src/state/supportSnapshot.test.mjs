@@ -4036,3 +4036,37 @@ test('support snapshot includes OpenClaw Control Bridge fields', () => {
   assert.match(snapshot, /OpenClaw Last Proof Command Present: yes/);
   assert.match(snapshot, /OpenClaw Dashboard Temporary Cockpit: yes/);
 });
+
+test('buildSupportSnapshot includes OpenClaw Web Research Intake fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjection: {
+        builderMeshProjection: {
+          builderWorkbenchProjection: {
+            workbenchStatus: 'ready',
+            openClawWebResearchIntake: {
+              status: 'failed',
+              webAccessStatus: 'unavailable',
+              sourceCount: 0,
+              validUrlCount: 0,
+              placeholderLeakageDetected: 'yes',
+              forbiddenLeakageDetected: 'no',
+              taskFrameAdherence: 'fail',
+              resultTrustedForCanon: 'no',
+              nextOperatorAction: 'Reject pasted result.',
+            },
+          },
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /OpenClaw Web Research Intake Status: failed/);
+  assert.match(snapshot, /OpenClaw Web Access Status: unavailable/);
+  assert.match(snapshot, /OpenClaw Research Source Count: 0/);
+  assert.match(snapshot, /OpenClaw Research Valid URL Count: 0/);
+  assert.match(snapshot, /OpenClaw Research Placeholder Leakage Detected: yes/);
+  assert.match(snapshot, /OpenClaw Research Forbidden Leakage Detected: no/);
+  assert.match(snapshot, /OpenClaw Research Task Frame Adherence: fail/);
+  assert.match(snapshot, /OpenClaw Research Trusted For Canon: no/);
+  assert.match(snapshot, /OpenClaw Research Next Operator Action: Reject pasted result\./);
+});

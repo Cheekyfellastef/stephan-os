@@ -483,3 +483,23 @@ test('Builder Workbench V1 blocks forbidden mutation language in pasted results'
   assert.equal(r.builderMeshProjection.builderWorkbenchProjection.codexFallbackStillNeeded, true);
   assert.equal(r.builderMeshProjection.builderWorkbenchProjection.localAiReview.safeForWorkbench, false);
 });
+
+test('Builder Mesh context includes OpenClaw web research intake state and bounded routing guidance', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Research VR conversion techniques' } },
+    supportSnapshot: {
+      builderMeshTaskKind: 'read-only',
+      localAiConnected: true,
+      builderWorkbenchInput: {
+        openClawResearchText: 'Sources:\n- https://example.com/vr\nTechnique taxonomy: flat-to-VR depth reconstruction. Starfield VR relevance. Unknowns. Confidence: medium',
+      },
+    },
+  });
+  assert.equal(r.builderMeshProjection.openClawWebResearchIntake.validUrlCount, 1);
+  assert.equal(r.builderMeshProjection.openClawWebResearchIntake.mutationAuthority, 'locked');
+  assert.equal(r.builderMeshProjection.openClawWebResearchIntake.recommendedUse, 'research-only');
+  assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /read-only web research scout/i);
+  assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /cannot mutate files/i);
+  assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /Codex remains fallback implementation lane/i);
+  assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /operator approval/i);
+});
