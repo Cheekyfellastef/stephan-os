@@ -180,7 +180,7 @@ export function judgeOpenClawSourcePackResult(rawText = '', options = {}) {
   const nextOperatorAction = sourcePackStatus === 'passed'
     ? 'Review the cleaned handoff; OpenClaw remains untrusted for canon/research until operator approval and cannot mutate.'
     : sourcePackStatus === 'failed'
-      ? 'Do not route this OpenClaw result into Builder Mesh. Reset the route/session or use a stricter source pack prompt.'
+      ? 'reject/reset/correct source-pack result'
       : text
         ? 'Review source-boundedness manually or rerun with the stricter Source Pack CLI Prompt.'
         : 'Copy the Source Pack CLI Prompt, run stephanos-scout / llama3.2 CLI in a fresh session, then paste the structured result.';

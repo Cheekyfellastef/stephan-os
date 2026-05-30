@@ -340,3 +340,14 @@ test('Mission Console CSS protects dense Tetris packing and compact matrix rhyth
   assert.match(source, /\.mission-deck-assignment-row\.mission-deck-assignment-row--compact\s*\{[\s\S]*line-height:\s*1\.22;/, 'matrix rows must keep compact line-height');
   assert.match(source, /\.mission-console-agent-matrix-row\s*\{[\s\S]*font-size:\s*0\.75rem;[\s\S]*line-height:\s*1\.22;/, 'nested matrix rows must keep compact readable typography');
 });
+
+test('MissionConsoleTile Source Pack judgment button marks intake diagnostics and keeps existing workbench surface', async () => {
+  const source = await fs.readFile(componentPath, 'utf8');
+  assert.match(source, /data-testid="builder-workbench-openclaw-source-pack-text"/);
+  assert.match(source, /data-testid="builder-workbench-openclaw-source-pack-output"/);
+  assert.match(source, /Run Source Pack Intake Judgment/);
+  assert.match(source, /openClawSourcePackIntakeButtonClicked: 'yes'/);
+  assert.match(source, /openClawSourcePackJudgmentAttempted: 'yes'/);
+  assert.match(source, /activePacketType: 'openclaw-source-pack-runner'/);
+  assert.doesNotMatch(source, /title="OpenClaw Source Pack Dashboard/);
+});

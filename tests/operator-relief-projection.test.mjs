@@ -738,3 +738,81 @@ test('Builder Mesh context includes OpenClaw web research intake state and bound
   assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /Codex remains fallback implementation lane/i);
   assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /operator approval/i);
 });
+
+test('OpenClaw Source Pack Runner judged result appears in builderWorkbenchProjection without using research intake as only path', () => {
+  const bad = 'As a language model, ask away or say next.\n<your response>';
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderMeshTaskKind: 'read-only',
+      builderWorkbenchInput: {
+        activePacketType: 'openclaw-source-pack-runner',
+        openClawSourcePackIntakeButtonClicked: 'yes',
+        openClawSourcePackJudgmentAttempted: 'yes',
+        openClawSourcePackJudgedAt: '2026-05-30T00:00:00.000Z',
+        openClawSourcePackText: bad,
+        openClawSourcePackOutput: bad,
+        openClawResearchText: '',
+      },
+    },
+  });
+  const workbench = r.builderMeshProjection.builderWorkbenchProjection;
+  assert.equal(workbench.openClawSourcePackRunner.sourcePackStatus, 'failed');
+  assert.equal(workbench.openClawSourcePackRunner.sourcePackResultPresent, 'yes');
+  assert.equal(workbench.openClawSourcePackRunner.templateLeakageDetected, 'yes');
+  assert.equal(workbench.openClawSourcePackRunner.asksForNextDetected, 'yes');
+  assert.equal(workbench.openClawSourcePackRunner.trustedForCanon, 'no');
+  assert.equal(workbench.openClawSourcePackRunner.trustedForResearch, 'no');
+  assert.equal(workbench.openClawSourcePackRunner.nextOperatorAction, 'reject/reset/correct source-pack result');
+  assert.equal(workbench.openClawSourcePackDiagnostics.intakeButtonClicked, 'yes');
+  assert.equal(workbench.openClawSourcePackDiagnostics.judgmentAttempted, 'yes');
+  assert.equal(workbench.openClawSourcePackDiagnostics.judgmentResultStatus, 'failed');
+  assert.equal(workbench.openClawSourcePackDiagnostics.projectionWritten, 'yes');
+  assert.equal(workbench.workbenchParsedResultSource, 'openclaw-source-pack-runner');
+  assert.equal(workbench.openClawResearchResultPresent, false);
+});
+
+test('OpenClaw Source Pack Runner accepts bounded good source-pack output as source-pack path only', () => {
+  const sourcePackText = `SOURCE PACK START
+Source 1 title: Example
+Source 1 URL: https://example.com/source
+Source 1 notes: Fact alpha is supported. Unknown beta is unresolved. Risk gamma remains.
+SOURCE PACK END`;
+  const output = `SOURCE_PACK_STATUS: passed
+SUMMARY:
+Bounded summary from the pasted source pack.
+USEFUL_FACTS:
+- Fact alpha is supported by Source 1.
+UNKNOWNS:
+- Unknown beta remains unresolved.
+RISKS:
+- Risk gamma remains.
+NEXT_RESEARCH_QUESTIONS:
+- What evidence resolves beta?
+STEPHANOS_HANDOFF_PACKET:
+Use Fact alpha only; keep beta unknown and gamma as risk.`;
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderMeshTaskKind: 'read-only',
+      builderWorkbenchInput: {
+        activePacketType: 'openclaw-source-pack-runner',
+        openClawSourcePackIntakeButtonClicked: 'yes',
+        openClawSourcePackJudgmentAttempted: 'yes',
+        openClawSourcePackJudgedAt: '2026-05-30T00:00:00.000Z',
+        openClawSourcePackText: sourcePackText,
+        openClawSourcePackOutput: output,
+      },
+    },
+  });
+  const runner = r.builderMeshProjection.builderWorkbenchProjection.openClawSourcePackRunner;
+  assert.match(runner.sourcePackStatus, /^(passed|needs-review)$/);
+  assert.equal(runner.sourcePackResultPresent, 'yes');
+  assert.match(runner.sourceBounded, /^(yes|needs-review)$/);
+  assert.equal(runner.usefulFactCount > 0, true);
+  assert.equal(runner.unknownCount > 0, true);
+  assert.equal(runner.riskCount > 0, true);
+  assert.equal(runner.handoffPacketPresent, 'yes');
+  assert.equal(runner.trustedForCanon, 'no');
+  assert.equal(runner.trustedForResearch, 'no');
+  assert.equal(runner.mutationAuthority, 'locked');
+  assert.equal(runner.autoStart, 'forbidden');
+});

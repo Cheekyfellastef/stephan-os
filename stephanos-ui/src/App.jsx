@@ -346,10 +346,7 @@ export default function App() {
       registrationStoreWriteAccepted: 'yes',
       registrationDropBoundary: missionConsoleRegistrationTraceRef.current.dropBoundary || 'none',
     };
-    const nextDiagnosticsSignature = JSON.stringify(baseDiagnostics);
-    if (operatorReliefBridgePublishedAtRef.current === nextDiagnosticsSignature) {
-      return;
-    }
+    const nextDiagnosticsSignature = JSON.stringify({ ...baseDiagnostics, projectionSignature: nextSignature });
     operatorReliefBridgePublishedAtRef.current = nextDiagnosticsSignature;
     missionConsoleBridgeLastPublisherRef.current = { panelId: publisherPanelId, sourceSurface };
     const publishedAt = new Date().toISOString();

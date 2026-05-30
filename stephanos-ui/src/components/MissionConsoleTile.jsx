@@ -287,6 +287,8 @@ function MissionConsoleTile({
     openClawPatchPlanRequested: false,
     openClawPatchPlanJudgedAt: '',
     openClawSourcePackJudgedAt: '',
+    openClawSourcePackIntakeButtonClicked: 'no',
+    openClawSourcePackJudgmentAttempted: 'no',
     localAiReviewText: '',
     openClawResearchText: '',
     openClawSourcePackText: '',
@@ -1609,7 +1611,7 @@ function MissionConsoleTile({
                 </CollapsiblePanel>
                 <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Text<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-text" value={builderWorkbenchInput.openClawSourcePackText} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackText: event.target.value }))} placeholder={operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackTemplate || 'SOURCE PACK START...'} /></label>
                 <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Output<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-output" value={builderWorkbenchInput.openClawSourcePackOutput} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackOutput: event.target.value }))} placeholder="Paste OpenClaw SOURCE_PACK_STATUS / SUMMARY / USEFUL_FACTS / UNKNOWNS / RISKS / NEXT_RESEARCH_QUESTIONS / STEPHANOS_HANDOFF_PACKET output here." /></label>
-                <button type="button" className="status-panel-copy-button" onClick={() => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackJudgedAt: new Date().toISOString() }))}>Run Source Pack Intake Judgment</button>
+                <button type="button" className="status-panel-copy-button" onClick={() => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-source-pack-runner', openClawSourcePackIntakeButtonClicked: 'yes', openClawSourcePackJudgmentAttempted: 'yes', openClawSourcePackJudgedAt: new Date().toISOString() }))}>Run Source Pack Intake Judgment</button>
                 <button type="button" className={`status-panel-copy-button ${openClawSourcePackHandoffCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackRunner?.cleanedSourcePackHandoff || '', setOpenClawSourcePackHandoffCopyState, 'MissionConsoleTile.copyCleanedOpenClawSourcePackHandoff')}>
                   {openClawSourcePackHandoffCopyState === COPY_STATE.SUCCESS ? 'Cleaned Source Pack Handoff Copied' : openClawSourcePackHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Cleaned Source Pack Handoff failed' : 'Copy Cleaned Source Pack Handoff'}
                 </button>

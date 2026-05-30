@@ -4090,3 +4090,103 @@ test('buildSupportSnapshot includes OpenClaw Web Research Intake fields', () => 
   assert.match(snapshot, /OpenClaw Research Trusted For Canon: no/);
   assert.match(snapshot, /OpenClaw Research Next Operator Action: Reject pasted result\./);
 });
+
+test('buildSupportSnapshot updates bad OpenClaw Source Pack Runner fields from builder workbench projection', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjection: {
+        builderMeshProjection: {
+          builderWorkbenchProjection: {
+            workbenchStatus: 'ready',
+            workbenchParsedResultSource: 'openclaw-source-pack-runner',
+            openClawSourcePackRunner: {
+              sourcePackStatus: 'failed',
+              route: 'stephanos-scout / llama3.2 CLI',
+              model: 'ollama/llama3.2:3b',
+              sourcePackResultPresent: 'yes',
+              sourceBounded: 'unknown',
+              hallucinatedSourcesDetected: 'no',
+              templateLeakageDetected: 'yes',
+              asksForNextDetected: 'yes',
+              usefulFactCount: 0,
+              unknownCount: 0,
+              riskCount: 0,
+              nextQuestionCount: 0,
+              handoffPacketPresent: 'no',
+              trustedForCanon: 'no',
+              trustedForResearch: 'no',
+              codexFallbackNeeded: 'yes',
+              nextOperatorAction: 'reject/reset/correct source-pack result',
+              diagnostics: {
+                intakeButtonClicked: 'yes',
+                sourcePackTextLength: '58',
+                sourcePackOutputLength: '58',
+                judgmentAttempted: 'yes',
+                judgmentResultStatus: 'failed',
+                projectionWritten: 'yes',
+                projectionWriteBoundary: 'builderMeshProjection.builderWorkbenchProjection.openClawSourcePackRunner',
+                snapshotSource: 'runtimeStatus.operatorReliefProjection.builderMeshProjection.builderWorkbenchProjection',
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /OpenClaw Source Pack Runner Status: failed/);
+  assert.match(snapshot, /OpenClaw Source Pack Result Present: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Template Leakage Detected: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Asks For Next Detected: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Trusted For Canon: no/);
+  assert.match(snapshot, /OpenClaw Source Pack Trusted For Research: no/);
+  assert.match(snapshot, /OpenClaw Source Pack Next Operator Action: reject\/reset\/correct source-pack result/);
+  assert.match(snapshot, /Source Pack Intake Button Clicked: yes/);
+  assert.match(snapshot, /Source Pack Judgment Result Status: failed/);
+  assert.match(snapshot, /Source Pack Projection Written: yes/);
+});
+
+test('buildSupportSnapshot updates good OpenClaw Source Pack Runner counts and handoff from projection', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      runtimeContext: {
+        operatorReliefProjection: {
+          builderMeshProjection: {
+            builderWorkbenchProjection: {
+              workbenchStatus: 'ready',
+              openClawSourcePackRunner: {
+                sourcePackStatus: 'passed',
+                route: 'stephanos-scout / llama3.2 CLI',
+                model: 'ollama/llama3.2:3b',
+                sourcePackResultPresent: 'yes',
+                sourceBounded: 'yes',
+                hallucinatedSourcesDetected: 'no',
+                templateLeakageDetected: 'no',
+                asksForNextDetected: 'no',
+                usefulFactCount: 2,
+                unknownCount: 1,
+                riskCount: 1,
+                nextQuestionCount: 1,
+                handoffPacketPresent: 'yes',
+                trustedForCanon: 'no',
+                trustedForResearch: 'no',
+                codexFallbackNeeded: 'no',
+                nextOperatorAction: 'Review the cleaned handoff; OpenClaw remains untrusted for canon/research until operator approval and cannot mutate.',
+                diagnostics: { intakeButtonClicked: 'yes', judgmentAttempted: 'yes', judgmentResultStatus: 'passed', projectionWritten: 'yes' },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /OpenClaw Source Pack Runner Status: passed/);
+  assert.match(snapshot, /OpenClaw Source Pack Result Present: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Source-Bounded: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Useful Fact Count: 2/);
+  assert.match(snapshot, /OpenClaw Source Pack Unknown Count: 1/);
+  assert.match(snapshot, /OpenClaw Source Pack Risk Count: 1/);
+  assert.match(snapshot, /OpenClaw Source Pack Handoff Present: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Trusted For Canon: no/);
+  assert.match(snapshot, /OpenClaw Source Pack Trusted For Research: no/);
+  assert.match(snapshot, /Source Pack Snapshot Source: runtimeStatus\.runtimeContext\.operatorReliefProjection\.builderMeshProjection\.builderWorkbenchProjection/);
+});

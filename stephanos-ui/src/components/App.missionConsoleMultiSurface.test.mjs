@@ -170,3 +170,9 @@ test('App UI reality no longer treats canonical Mission Console sections as defe
   assert.equal(source.includes('missionConsoleCanonicalSectionPaneIds'), true);
   assert.equal(source.includes('missionConsoleSectionOrder: safePaneLayout.missionConsoleSectionOrder || []'), true);
 });
+
+test('App bridge store write is keyed by projection content so Source Pack projection updates are not dropped by unchanged diagnostics', async () => {
+  const appSource = await fs.readFile(appPath, 'utf8');
+  assert.match(appSource, /projectionSignature: nextSignature/);
+  assert.doesNotMatch(appSource, /if \(operatorReliefBridgePublishedAtRef\.current === nextDiagnosticsSignature\) \{\s*return;\s*\}/);
+});

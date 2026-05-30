@@ -481,12 +481,25 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const localAiRunnerErrorMessage = asText(workbenchInput.localAiRunnerErrorMessage || '', '');
   const localAiRunnerDispatchAttempted = asText(workbenchInput.localAiRunnerDispatchAttempted || (workbenchInput.localAiReviewRequested ? 'yes' : 'no'), 'no');
   const localAiRunnerRequestSent = asText(workbenchInput.localAiRunnerRequestSent || 'no', 'no');
+  const openClawSourcePackText = asText(workbenchInput.openClawSourcePackText || '', '');
+  const openClawSourcePackOutput = asText(workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '', '');
+  const openClawSourcePackJudgmentAttempted = asText(workbenchInput.openClawSourcePackJudgmentAttempted || (workbenchInput.openClawSourcePackJudgedAt ? 'yes' : (openClawSourcePackOutput ? 'yes' : 'no')), 'no');
   const openClawSourcePackRunner = buildOpenClawSourcePackRunnerProjection({
-    rawResult: workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '',
-    sourcePackText: workbenchInput.openClawSourcePackText || '',
+    rawResult: openClawSourcePackOutput,
+    sourcePackText: openClawSourcePackText,
   });
+  const openClawSourcePackDiagnostics = {
+    intakeButtonClicked: asText(workbenchInput.openClawSourcePackIntakeButtonClicked || (workbenchInput.openClawSourcePackJudgedAt ? 'yes' : 'no'), 'no'),
+    sourcePackTextLength: String(openClawSourcePackText.length),
+    sourcePackOutputLength: String(openClawSourcePackOutput.length),
+    judgmentAttempted: openClawSourcePackJudgmentAttempted,
+    judgmentResultStatus: openClawSourcePackJudgmentAttempted === 'yes' ? openClawSourcePackRunner.sourcePackStatus : 'not-attempted',
+    projectionWritten: openClawSourcePackJudgmentAttempted === 'yes' ? 'yes' : 'no',
+    projectionWriteBoundary: 'builderMeshProjection.builderWorkbenchProjection.openClawSourcePackRunner',
+    snapshotSource: 'runtimeStatus.runtimeContext.operatorReliefProjection.builderMeshProjection.builderWorkbenchProjection',
+  };
   const openClawResearchIntake = buildOpenClawWebResearchIntakeProjection({ rawResult: openClawRaw, requestedTaskFrame: 'vr-research' });
-  const openClawSanityGate = buildOpenClawSanityGate(openClawRaw || workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '', workbenchInput);
+  const openClawSanityGate = buildOpenClawSanityGate(openClawRaw || openClawSourcePackOutput, workbenchInput);
   const sourcePackEligibility = isOpenClawSourcePackRouteEligible({
     routeId: openClawSanityGate.routeId,
     routeLabel: openClawSanityGate.routeLabel,
@@ -505,8 +518,8 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
       workbenchInput.openClawWorkspaceDiagnosticText,
       workbenchInput.openClawResearchText,
       workbenchInput.openClawPatchPlanText,
-      workbenchInput.openClawSourcePackText,
-      workbenchInput.openClawSourcePackOutput,
+      openClawSourcePackText,
+      openClawSourcePackOutput,
     ].filter(Boolean).join('\n'),
   });
   const parsedResults = [localAiReview, openClawResearch].filter(Boolean);
@@ -554,7 +567,7 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
       : 'Copy Local AI/OpenClaw packets and paste bounded read-only results into the Workbench.')));
   return {
     workbenchStatus: 'ready',
-    activePacketType: workbenchInput.activePacketType || (openClawRaw ? 'openclaw-research-patch-plan' : (localRaw ? 'local-ai-review' : 'none')),
+    activePacketType: workbenchInput.activePacketType || (openClawSourcePackOutput ? 'openclaw-source-pack-runner' : (openClawRaw ? 'openclaw-research-patch-plan' : (localRaw ? 'local-ai-review' : 'none'))),
     activePacketTarget: workbenchInput.activePacketTarget || builderMeshBase.recommendedBuilder || 'zero-cost-builder-mesh',
     localAiReviewRequested: workbenchInput.localAiReviewRequested === true || Boolean(workbenchInput.localAiReviewRequestedAt) || false,
     localAiRunnerStatus,
@@ -573,14 +586,15 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     localAiRunnerRawResponse,
     workbenchAnswerContextUsed: 'no',
     workbenchAnswerSource: 'builder-workbench-projection',
-    workbenchParsedResultSource: localAiReview?.source || openClawResearch?.source || 'none',
+    workbenchParsedResultSource: localAiReview?.source || openClawResearch?.source || (openClawSourcePackOutput ? 'openclaw-source-pack-runner' : 'none'),
     workbenchOutputViewportStatus: 'usable-css-hooks-present',
     openClawResearchRequested: workbenchInput.openClawResearchRequested === true || Boolean(workbenchInput.openClawResearchRequestedAt) || false,
     openClawWebResearchPrompt: OPENCLAW_VR_RESEARCH_PROMPT,
     openClawPatchPlannerPrompt: OPENCLAW_PATCH_PLANNER_PROMPT,
     openClawSourcePackPrompt: OPENCLAW_SOURCE_PACK_CLI_PROMPT,
     openClawSourcePackTemplate: OPENCLAW_SOURCE_PACK_TEMPLATE,
-    openClawSourcePackRunner: { ...openClawSourcePackRunner, routeEligibility: sourcePackEligibility },
+    openClawSourcePackRunner: { ...openClawSourcePackRunner, routeEligibility: sourcePackEligibility, diagnostics: openClawSourcePackDiagnostics },
+    openClawSourcePackDiagnostics,
     openClawWebResearchIntake: openClawResearchIntake,
     openClawSanityGate,
     openClawPatchPlanner,
