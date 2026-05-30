@@ -57,6 +57,16 @@ test('existing Builder Workbench surface exposes Source Pack Runner controls wit
   assert.doesNotMatch(missionConsoleTileSource, /title="OpenClaw Source Pack Dashboard/);
 });
 
+test('Source Pack Output textarea updates the same output state judged by the runner', () => {
+  assert.match(missionConsoleTileSource, /const updateOpenClawSourcePackOutput = \(event\) => \{/);
+  assert.match(missionConsoleTileSource, /const sourcePackOutput = event\.target\.value;/);
+  assert.match(missionConsoleTileSource, /openClawSourcePackOutput: sourcePackOutput,/);
+  assert.match(missionConsoleTileSource, /data-testid="builder-workbench-openclaw-source-pack-output"[^>]+value=\{builderWorkbenchInput\.openClawSourcePackOutput\}[^>]+onChange=\{updateOpenClawSourcePackOutput\}/);
+  assert.match(missionConsoleTileSource, /const handleSourcePackIntakeJudgment = \(\) => \{/);
+  assert.match(missionConsoleTileSource, /openClawSourcePackLastJudgedOutput: prev\.openClawSourcePackOutput \|\| '',/);
+  assert.match(missionConsoleTileSource, /Run Source Pack Intake Judgment<\/button>/);
+});
+
 const BAD_SOURCE_PACK_TEXT = `SOURCE PACK START
 Topic:
 Operator route hygiene
@@ -67,6 +77,10 @@ none
 Source 1 notes:
 OpenClaw must stay source-bounded and cannot ask for next.
 SOURCE PACK END`;
+
+
+const OPERATOR_BAD_SHORT_OUTPUT = `As a language model, ask away or say next.
+<your response>`;
 
 const BAD_SOURCE_PACK_OUTPUT = `SOURCE_PACK_STATUS
 failed
@@ -183,4 +197,73 @@ test('stale Source Pack judgment is never trusted for canon or research', () => 
   assert.equal(runner.trustedForCanon, 'no');
   assert.equal(runner.trustedForResearch, 'no');
   assert.match(runner.nextOperatorAction, /Rerun Source Pack Intake Judgment/);
+});
+
+test('operator bad Source Pack output keeps non-zero judged output length and fails leakage flags', () => {
+  const runner = sourcePackWorkbenchProjection({
+    openClawSourcePackText: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackOutput: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackLastJudgedText: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackLastJudgedOutput: OPERATOR_BAD_SHORT_OUTPUT,
+  }).openClawSourcePackRunner;
+
+  assert.equal(OPERATOR_BAD_SHORT_OUTPUT.length, 58);
+  assert.equal(runner.sourcePackCurrentTextLength, 58);
+  assert.equal(runner.sourcePackCurrentOutputLength, 58);
+  assert.equal(runner.sourcePackLastJudgedTextLength, 58);
+  assert.equal(runner.sourcePackLastJudgedOutputLength, 58);
+  assert.equal(runner.sourcePackProjectionWritten, 'yes');
+  assert.equal(runner.sourcePackStatus, 'failed');
+  assert.equal(runner.sourcePackResultPresent, 'yes');
+  assert.equal(runner.templateLeakageDetected, 'yes');
+  assert.equal(runner.asksForNextDetected, 'yes');
+  assert.equal(runner.trustedForCanon, 'no');
+  assert.equal(runner.trustedForResearch, 'no');
+});
+
+test('Support Snapshot exposes failed bad Source Pack output lengths and leakage flags', () => {
+  const workbench = sourcePackWorkbenchProjection({
+    openClawSourcePackText: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackOutput: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackLastJudgedText: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackLastJudgedOutput: OPERATOR_BAD_SHORT_OUTPUT,
+  });
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjection: {
+        builderMeshProjection: {
+          builderWorkbenchProjection: workbench,
+        },
+      },
+    },
+  });
+
+  assert.match(snapshot, /OpenClaw Source Pack Current Text Length: 58/);
+  assert.match(snapshot, /OpenClaw Source Pack Current Output Length: 58/);
+  assert.match(snapshot, /OpenClaw Source Pack Last Judged Text Length: 58/);
+  assert.match(snapshot, /OpenClaw Source Pack Last Judged Output Length: 58/);
+  assert.match(snapshot, /OpenClaw Source Pack Projection Written: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Runner Status: failed/);
+  assert.match(snapshot, /OpenClaw Source Pack Result Present: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Template Leakage Detected: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Asks For Next Detected: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Trusted For Canon: no/);
+  assert.match(snapshot, /OpenClaw Source Pack Trusted For Research: no/);
+});
+
+test('operator bad Source Pack judgment becomes stale after output character edit', () => {
+  const runner = sourcePackWorkbenchProjection({
+    openClawSourcePackText: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackOutput: `${OPERATOR_BAD_SHORT_OUTPUT}!`,
+    openClawSourcePackLastJudgedText: OPERATOR_BAD_SHORT_OUTPUT,
+    openClawSourcePackLastJudgedOutput: OPERATOR_BAD_SHORT_OUTPUT,
+  }).openClawSourcePackRunner;
+
+  assert.equal(runner.sourcePackStatus, 'stale');
+  assert.equal(runner.sourcePackJudgmentStale, 'yes');
+  assert.equal(runner.trustedForCanon, 'no');
+  assert.equal(runner.trustedForResearch, 'no');
+  assert.match(runner.nextOperatorAction, /Rerun Source Pack Intake Judgment/);
+  assert.equal(runner.sourcePackLastJudgedOutputLength, 58);
+  assert.equal(runner.sourcePackCurrentOutputLength, 59);
 });
