@@ -480,6 +480,23 @@ function buildBuilderWorkbenchExecutionMetadata(builderWorkbenchProjection = {},
     openclaw_patch_planner_codex_fallback_needed: workbench?.openClawPatchPlanner?.codexFallbackNeeded || 'unknown',
     openclaw_patch_planner_trusted_for_patch: workbench?.openClawPatchPlanner?.trustedForPatch || 'no',
     openclaw_patch_planner_next_operator_action: workbench?.openClawPatchPlanner?.nextOperatorAction || 'Copy the OpenClaw Patch Planner Prompt and run it externally/read-only.',
+    openclaw_source_pack_runner_status: workbench?.openClawSourcePackRunner?.sourcePackStatus || 'idle',
+    openclaw_source_pack_route: workbench?.openClawSourcePackRunner?.route || 'stephanos-scout / llama3.2 CLI',
+    openclaw_source_pack_model: workbench?.openClawSourcePackRunner?.model || 'ollama/llama3.2:3b',
+    openclaw_source_pack_result_present: workbench?.openClawSourcePackRunner?.sourcePackResultPresent || 'no',
+    openclaw_source_pack_source_bounded: workbench?.openClawSourcePackRunner?.sourceBounded || 'unknown',
+    openclaw_source_pack_hallucinated_sources_detected: workbench?.openClawSourcePackRunner?.hallucinatedSourcesDetected || 'no',
+    openclaw_source_pack_template_leakage_detected: workbench?.openClawSourcePackRunner?.templateLeakageDetected || 'no',
+    openclaw_source_pack_asks_for_next_detected: workbench?.openClawSourcePackRunner?.asksForNextDetected || 'no',
+    openclaw_source_pack_useful_fact_count: String(workbench?.openClawSourcePackRunner?.usefulFactCount ?? 0),
+    openclaw_source_pack_unknown_count: String(workbench?.openClawSourcePackRunner?.unknownCount ?? 0),
+    openclaw_source_pack_risk_count: String(workbench?.openClawSourcePackRunner?.riskCount ?? 0),
+    openclaw_source_pack_next_question_count: String(workbench?.openClawSourcePackRunner?.nextQuestionCount ?? 0),
+    openclaw_source_pack_handoff_present: workbench?.openClawSourcePackRunner?.handoffPacketPresent || 'no',
+    openclaw_source_pack_trusted_for_canon: workbench?.openClawSourcePackRunner?.trustedForCanon || 'no',
+    openclaw_source_pack_trusted_for_research: workbench?.openClawSourcePackRunner?.trustedForResearch || 'no',
+    openclaw_source_pack_codex_fallback_needed: workbench?.openClawSourcePackRunner?.codexFallbackNeeded || 'unknown',
+    openclaw_source_pack_next_operator_action: workbench?.openClawSourcePackRunner?.nextOperatorAction || 'Copy the Source Pack CLI Prompt and paste a bounded source-pack result.',
     openclaw_workspace_hygiene_status: workbench?.openClawWorkspaceHygiene?.workspaceHygieneStatus || 'clean',
     openclaw_workspace_dirt_detected: workbench?.openClawWorkspaceHygiene?.workspaceDirtDetected || 'no',
     openclaw_workspace_dirt_paths: (workbench?.openClawWorkspaceHygiene?.workspaceDirtPaths || []).join(' | ') || 'none',
@@ -2621,6 +2638,7 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt 
   const openClawParsedPresent = workbench?.openClawResearch?.safeForWorkbench === true;
   const openClawWebResearchIntake = workbench?.openClawWebResearchIntake || projection?.openClawWebResearchIntake || {};
   const openClawPatchPlanner = workbench?.openClawPatchPlanner || {};
+  const openClawSourcePackRunner = workbench?.openClawSourcePackRunner || {};
   const openClawWorkspaceHygiene = workbench?.openClawWorkspaceHygiene || projection?.openClawWorkspaceHygiene || {};
   const openClawSanityGate = workbench?.openClawSanityGate || {};
   const openClawSummary = openClawParsedPresent
@@ -2644,9 +2662,10 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt 
       'Requested Builder Workbench packet payloads:',
       formatPacketBlock('LOCAL_AI_REVIEW_PACKET_JSON', copyPackets.localAiReviewPacket),
       formatPacketBlock('OPENCLAW_RESEARCH_PACKET_JSON', copyPackets.openClawResearchPacket),
+      formatPacketBlock('OPENCLAW_SOURCE_PACK_PACKET_JSON', copyPackets.openClawSourcePackPacket),
       formatPacketBlock('OPERATOR_APPROVAL_CHECKLIST_JSON', copyPackets.operatorApprovalChecklist),
       'Paste Local AI review output into the Builder Workbench Local AI Review result field.',
-      'Paste OpenClaw research / patch-plan output into the Builder Workbench OpenClaw Research / Patch Plan result field.',
+      'Paste OpenClaw source-pack output into the Builder Workbench OpenClaw Source Pack Runner field.',
       'Mutation remains blocked until the operator explicitly approves it.',
     ].join('\n')
     : '';
@@ -2670,6 +2689,7 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt 
     `Workbench parsed result source: ${workbench?.workbenchParsedResultSource || workbench?.localAiReview?.source || 'none'}.`,
     `OpenClaw research / patch plan summary: ${openClawSummary}.`,
     `OpenClaw Web Research Intake: status ${openClawWebResearchIntake.status || 'idle'}; web access ${openClawWebResearchIntake.webAccessStatus || 'unknown'}; sources ${openClawWebResearchIntake.sourceCount ?? 0}; valid URLs ${openClawWebResearchIntake.validUrlCount ?? 0}; task frame ${openClawWebResearchIntake.taskFrameAdherence || 'unknown'}; trusted for canon ${openClawWebResearchIntake.resultTrustedForCanon || 'no'}.`,
+    `Can OpenClaw process a source pack safely? ${openClawSourcePackRunner.sourcePackStatus === 'passed' ? 'yes, but only as bounded source-pack processing' : 'only after a pasted source-pack result passes intake'} through the stephanos-scout / llama3.2 CLI route; dashboard/qwen remain untrusted; source bounded ${openClawSourcePackRunner.sourceBounded || 'unknown'}; useful facts ${openClawSourcePackRunner.usefulFactCount ?? 0}; unknowns ${openClawSourcePackRunner.unknownCount ?? 0}; risks ${openClawSourcePackRunner.riskCount ?? 0}; handoff ${openClawSourcePackRunner.handoffPacketPresent || 'no'}; trusted for canon ${openClawSourcePackRunner.trustedForCanon || 'no'}; trusted for research ${openClawSourcePackRunner.trustedForResearch || 'no'}.`,
     `OpenClaw Route Trust: route ${openClawSanityGate.routeLabel || 'unknown'}; trust ${openClawSanityGate.routeTrustStatus || 'untrusted'}; task-frame ${openClawSanityGate.routeTaskFrameStatus || 'unknown'}; session ${openClawSanityGate.routeSessionId || 'unknown'}; active sessions ${openClawSanityGate.activeSessionCount || '0'}; session contamination ${openClawSanityGate.activeSessionContaminationRisk || 'no'}; model mismatch ${openClawSanityGate.routeModelMismatchDetected || 'no'}; model warnings ${(openClawSanityGate.modelPinMismatchWarnings || []).join(' | ') || 'none'}; plaintext token security warning ${openClawSanityGate.plaintextTokenSecurityWarning || 'no'}; non-blocking doctor findings ${(openClawSanityGate.doctorNonBlockingFindings || []).join(' | ') || 'none'}; dashboard failures ${(openClawSanityGate.dashboardFailureExamples || []).join(' | ') || 'none'}; minimum viable route ${openClawSanityGate.minimumViableRouteRecommendation || 'Use CLI llama3.2 for bounded source-pack processing only.'}.`,
     `OpenClaw Sanity Gate: status ${openClawSanityGate.sanityStatus || 'idle'}; exact response ${openClawSanityGate.exactResponseStatus || 'unknown'}; payload ${openClawSanityGate.exactResponsePayload || 'none'}; CLI banner ignored ${openClawSanityGate.cliBannerIgnored || 'no'}; template leakage ${openClawSanityGate.templateLeakageDetected || 'no'}; wrong repo path ${openClawSanityGate.wrongRepoPathDetected || 'no'}; trusted for builder routing ${openClawSanityGate.trustedForBuilderRouting || 'no'}; reason ${openClawSanityGate.failureReason || 'none'}.`,
     `OpenClaw Patch Planner: status ${openClawPatchPlanner.patchPlannerStatus || 'idle'}; risk ${openClawPatchPlanner.riskLevel || 'unknown'}; scope ${openClawPatchPlanner.patchScope || 'unknown'}; files ${(openClawPatchPlanner.likelyFiles || []).length || 0}; tests ${(openClawPatchPlanner.requiredTests || []).length || 0}; browser proof ${openClawPatchPlanner.browserProofRequired || 'unknown'}; trusted for patch ${openClawPatchPlanner.trustedForPatch || 'no'}.`,
@@ -2677,7 +2697,7 @@ function formatBuilderMeshAnswer(projection = {}, projectAwareness = {}, prompt 
     `Why is ignition blocked after using OpenClaw? ${openClawWorkspaceHygiene.workspaceBlocksIgnition === 'yes' ? `OpenClaw generated repo-root workspace/runtime files (${(openClawWorkspaceHygiene.workspaceDirtPaths || []).join(', ') || 'known OpenClaw paths'}), and housekeep correctly hard-blocks them as non-source dirt.` : 'No OpenClaw workspace dirt is currently projected as an ignition blocker.'}`,
     `What should I do with the OpenClaw hard-block files? ${openClawWorkspaceHygiene.workspaceDirtDetected === 'yes' ? `Copy/run only this safe stash command: ${openClawWorkspaceHygiene.workspaceRecommendedCleanup}. Do not delete files or pop the stash automatically; future-safe quarantine is ${openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory || 'outside the repo via supported config only'}.` : 'No cleanup command is needed unless known OpenClaw workspace files appear in the repo root.'}`,
     `Can OpenClaw plan the next patch? ${['plan-pasted', 'passed', 'needs-review'].includes(openClawPatchPlanner.patchPlannerStatus) ? 'yes, as read-only patch planner/reviewer only' : 'yes, once the operator copies the planner prompt and pastes a specific plan'}. Is Codex still required? ${openClawPatchPlanner.codexFallbackNeeded || (projection?.codexRequired === true ? 'yes' : 'no')} — ${openClawPatchPlanner.codexFallbackReason || projection?.codexReason || 'Codex is fallback only.'}`,
-    `${openClawSanityGate.sanityStatus === 'failed' ? 'OpenClaw is blocked from Builder Mesh research/patch-planning routing until sanity is restored.' : 'OpenClaw can help as a read-only web research scout and patch planner if pasted results pass sanity and intake.'} OpenClaw cannot mutate files or build, Codex remains fallback implementation capacity only, and operator approval is required before canon/build promotion.`,
+    `${openClawSanityGate.sanityStatus === 'failed' || openClawSourcePackRunner.sourcePackStatus === 'failed' ? 'OpenClaw is blocked from Builder Mesh research/build routing until sanity and source-pack intake are restored.' : 'OpenClaw can help only as a bounded source-pack processor through the llama3.2 CLI route unless separate route proof exists.'} OpenClaw cannot browse on its own or mutate files/build, dashboard/qwen remain untrusted, Codex remains fallback implementation capacity, and operator approval is required before mutation or canon/build promotion.`,
     `Workbench Codex fallback still needed: ${workbench?.codexFallbackStillNeeded ? 'yes' : 'no'} — ${workbench?.codexFallbackReason || 'none'}.`,
     `Next operator action: ${projection?.nextBestAction || workbench?.nextBestAction || 'Copy the recommended read-only packet and keep mutation approval-gated.'}`,
     `Copyable packets: ${packets.length ? packets.join(', ') : 'Local AI Review Packet, OpenClaw Research Packet, GitHub Inspection Packet, Codex Fallback Packet, Operator Approval Checklist'}.`,

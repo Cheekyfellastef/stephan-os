@@ -1,6 +1,7 @@
 import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
 import { buildOpenClawWebResearchIntakeProjection, OPENCLAW_VR_RESEARCH_PROMPT } from '../../../shared/agents/openClawWebResearchIntake.mjs';
 import { buildOpenClawWorkspaceHygieneProjection } from '../../../shared/agents/openClawWorkspaceHygiene.mjs';
+import { OPENCLAW_SOURCE_PACK_CLI_PROMPT, OPENCLAW_SOURCE_PACK_MODEL, OPENCLAW_SOURCE_PACK_ROUTE, OPENCLAW_SOURCE_PACK_TEMPLATE, buildOpenClawSourcePackRunnerProjection, isOpenClawSourcePackRouteEligible } from '../../../shared/agents/openClawSourcePackRunner.mjs';
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -157,8 +158,11 @@ function judgeOpenClawTaskFrame(rawText = '', workbenchInput = {}) {
   if (normalized === 'NO') return { taskFrameStatus: 'failed', taskFrameFailureReason: 'Dashboard returned only "NO" when structured output was required.' };
   if (!raw) return { taskFrameStatus: 'unknown', taskFrameFailureReason: 'none' };
   if (raw.trim() === OPENCLAW_SANITY_EXPECTED_PAYLOAD || /OPENCLAW_SANITY_PASS/.test(raw)) {
-    return { taskFrameStatus: 'exact-response-only', taskFrameFailureReason: 'Exact-response sanity proves only basic route obedience, not research or patch-planning task-frame adherence.' };
+    return { taskFrameStatus: 'exact-response-only', taskFrameFailureReason: 'Exact-response sanity proves only basic route obedience, not research, source-pack, or patch-planning task-frame adherence.' };
   }
+  const hasSourcePackFrame = ['source_pack_status', 'summary', 'useful_facts', 'unknowns', 'stephanos_handoff_packet']
+    .filter((field) => new RegExp(`(?:^|\n)\s*${field}\s*:`, 'i').test(raw)).length >= 5;
+  if (hasSourcePackFrame) return { taskFrameStatus: 'passed', taskFrameFailureReason: 'none' };
   const hasStructuredPatchFrame = ['summary', 'likely files', 'required tests', 'risk level', 'requires codex fallback']
     .filter((field) => new RegExp(`(?:^|\\n)\\s*${field}\\s*:`, 'i').test(raw)).length >= 4;
   if (hasStructuredPatchFrame) return { taskFrameStatus: 'passed', taskFrameFailureReason: 'none' };
@@ -215,7 +219,11 @@ function buildOpenClawRouteSessionDiagnostics(rawText = '', workbenchInput = {})
 
 function buildOpenClawSanityGate(rawText = '', workbenchInput = {}) {
   const raw = truncateWorkbenchText(rawText);
-  const exactResponse = judgeOpenClawExactResponse(raw);
+  const exactResponseInput = judgeOpenClawExactResponse(raw);
+  const manualExactStatus = asText(workbenchInput.openClawExactResponseStatus || workbenchInput.openClawRouteExactResponseStatus || '', '').toLowerCase();
+  const exactResponse = ['passed', 'failed', 'unknown'].includes(manualExactStatus)
+    ? { ...exactResponseInput, exactResponseStatus: manualExactStatus, exactResponsePayload: manualExactStatus === 'passed' ? OPENCLAW_SANITY_EXPECTED_PAYLOAD : exactResponseInput.exactResponsePayload }
+    : exactResponseInput;
   const route = inferOpenClawRoute(raw, workbenchInput);
   const taskFrame = judgeOpenClawTaskFrame(raw, workbenchInput);
   const sessionDiagnostics = buildOpenClawRouteSessionDiagnostics(raw, workbenchInput);
@@ -473,8 +481,19 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const localAiRunnerErrorMessage = asText(workbenchInput.localAiRunnerErrorMessage || '', '');
   const localAiRunnerDispatchAttempted = asText(workbenchInput.localAiRunnerDispatchAttempted || (workbenchInput.localAiReviewRequested ? 'yes' : 'no'), 'no');
   const localAiRunnerRequestSent = asText(workbenchInput.localAiRunnerRequestSent || 'no', 'no');
+  const openClawSourcePackRunner = buildOpenClawSourcePackRunnerProjection({
+    rawResult: workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '',
+    sourcePackText: workbenchInput.openClawSourcePackText || '',
+  });
   const openClawResearchIntake = buildOpenClawWebResearchIntakeProjection({ rawResult: openClawRaw, requestedTaskFrame: 'vr-research' });
-  const openClawSanityGate = buildOpenClawSanityGate(openClawRaw, workbenchInput);
+  const openClawSanityGate = buildOpenClawSanityGate(openClawRaw || workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '', workbenchInput);
+  const sourcePackEligibility = isOpenClawSourcePackRouteEligible({
+    routeId: openClawSanityGate.routeId,
+    routeLabel: openClawSanityGate.routeLabel,
+    exactResponseStatus: openClawSanityGate.exactResponseStatus,
+    routeTaskFrameStatus: openClawSanityGate.routeTaskFrameStatus,
+    sourcePackStatus: openClawSourcePackRunner.sourcePackStatus,
+  });
   const openClawResearch = openClawRaw ? parseBuilderWorkbenchResult(openClawRaw, { source: 'openclaw-research-patch-plan' }) : null;
   const openClawPatchPlanner = buildOpenClawPatchPlannerIntake(openClawResearch, workbenchInput, openClawResearchIntake, openClawSanityGate);
   const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({
@@ -486,6 +505,8 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
       workbenchInput.openClawWorkspaceDiagnosticText,
       workbenchInput.openClawResearchText,
       workbenchInput.openClawPatchPlanText,
+      workbenchInput.openClawSourcePackText,
+      workbenchInput.openClawSourcePackOutput,
     ].filter(Boolean).join('\n'),
   });
   const parsedResults = [localAiReview, openClawResearch].filter(Boolean);
@@ -516,17 +537,21 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   if (openClawSanityGate.sanityStatus === 'failed') blockers.push('OpenClaw Sanity Gate failed; block OpenClaw from Builder Mesh routing until the session/template is reset.');
   if (openClawWorkspaceHygiene.workspaceBlocksIgnition === 'yes') blockers.push('OpenClaw workspace dirt is blocking ignition; stash only the known OpenClaw workspace paths before routing OpenClaw again.');
   if (openClawPatchPlanner.patchPlannerStatus === 'failed') blockers.push('OpenClaw Patch Planner intake failed; revise plan before handoff.');
+  if (openClawSourcePackRunner.sourcePackStatus === 'failed') blockers.push('OpenClaw Source Pack Runner intake failed; reset the route/session or use the stricter prompt.');
   if (patchPlanPresent && !['low', 'medium'].includes(patchPlanRisk)) warnings.push('Patch plan risk is not low/medium; operator should review scope before any mutation approval.');
   if (openClawPatchPlanner.patchPlannerStatus === 'needs-review') warnings.push('OpenClaw Patch Planner intake needs operator review before fallback decisions.');
+  if (openClawSourcePackRunner.sourcePackStatus === 'needs-review') warnings.push('OpenClaw Source Pack Runner intake needs operator review before research routing.');
   warnings.push(...asList(openClawResearchIntake.warnings));
   if (!parsedResults.length) warnings.push('No local AI/OpenClaw workbench result has been pasted yet.');
   const nextBestAction = openClawWorkspaceHygiene.workspaceBlocksIgnition === 'yes'
     ? openClawWorkspaceHygiene.workspaceNextOperatorAction
+    : (openClawSourcePackRunner.sourcePackStatus === 'failed'
+    ? openClawSourcePackRunner.nextOperatorAction
     : (forbidden.length > 0
     ? 'Reject the pasted result for mutation authority and request a read-only review/patch plan only.'
     : (safeResults.length > 0
       ? 'Review safe workbench findings, then use the Operator Approval Checklist before any patch is applied.'
-      : 'Copy Local AI/OpenClaw packets and paste bounded read-only results into the Workbench.'));
+      : 'Copy Local AI/OpenClaw packets and paste bounded read-only results into the Workbench.')));
   return {
     workbenchStatus: 'ready',
     activePacketType: workbenchInput.activePacketType || (openClawRaw ? 'openclaw-research-patch-plan' : (localRaw ? 'local-ai-review' : 'none')),
@@ -553,12 +578,16 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     openClawResearchRequested: workbenchInput.openClawResearchRequested === true || Boolean(workbenchInput.openClawResearchRequestedAt) || false,
     openClawWebResearchPrompt: OPENCLAW_VR_RESEARCH_PROMPT,
     openClawPatchPlannerPrompt: OPENCLAW_PATCH_PLANNER_PROMPT,
+    openClawSourcePackPrompt: OPENCLAW_SOURCE_PACK_CLI_PROMPT,
+    openClawSourcePackTemplate: OPENCLAW_SOURCE_PACK_TEMPLATE,
+    openClawSourcePackRunner: { ...openClawSourcePackRunner, routeEligibility: sourcePackEligibility },
     openClawWebResearchIntake: openClawResearchIntake,
     openClawSanityGate,
     openClawPatchPlanner,
     openClawWorkspaceHygiene,
     localAiReviewResultPresent: Boolean(localAiReview),
     openClawResearchResultPresent: Boolean(openClawResearch),
+    openClawSourcePackResultPresent: openClawSourcePackRunner.sourcePackResultPresent === 'yes',
     patchPlanPresent,
     patchPlanRisk,
     approvalRequiredBeforePatch: true,
@@ -921,7 +950,7 @@ function buildBuilderMeshProjection({
   const implementationRequested = taskKind === 'implementation' || taskKind === 'mutation' || taskKind === 'high-risk-mutation';
   const approvalRequiredBeforeMutation = true;
   const localAiCanHelp = localAiReady ? 'yes-read-only-review' : 'copy-packet-only-not-proven';
-  const openClawCanHelp = openClawReady ? 'route-specific-proof-required' : 'blocked-by-approval-or-kill-switch';
+  const openClawCanHelp = openClawReady ? 'llama3.2-cli-bounded-source-pack-only-after-proof' : 'blocked-by-approval-or-kill-switch';
   const githubCanHelp = githubReady ? 'yes-read-only-pr-diff-status-evidence' : 'copy-packet-only-not-connected';
   let recommendedBuilder = 'local-ai';
   let codexReason = 'Codex is not required by default; local/zero-cost read-only routes should be tried first.';
@@ -980,7 +1009,7 @@ function buildBuilderMeshProjection({
     || localAiReady || openClawReady || githubReady;
   const safeReadOnlyActions = [
     'Ask local AI for review findings only; do not write files.',
-    'Ask OpenClaw for research, repo inspection, patch planning, and cross-checking under approval gates.',
+    'Ask OpenClaw only for bounded llama3.2 CLI source-pack processing unless route-specific research proof exists; no browsing or mutation.',
     'Inspect GitHub PR/status/diff/evidence when connected.',
     'Collect proof gaps and next checks from Operator Relief / Mission Brain.',
   ];
@@ -1033,7 +1062,8 @@ function buildBuilderMeshProjection({
     openClawResearchScoutGuidance: builderWorkbenchProjection.openClawSanityGate?.minimumViableRouteRecommendation || 'OpenClaw is route-specific only: dashboard/qwen routes are untrusted by default, CLI llama3.2 exact-response sanity is not enough for research or patch planning, mutation remains locked, and operator approval is required before canon/build promotion.',
     copyPackets: {
       localAiReviewPacket: { ...packetBase, packetType: 'Local AI Review Packet', requestedOutput: 'Bounded findings, risks, tests, and proof gaps only. No file writes.' },
-      openClawResearchPacket: { ...packetBase, packetType: 'OpenClaw Research Packet', requestedOutput: 'Read-only research, repo inspection, patch plan, cross-checks, blockers/warnings. No mutation without operator approval.', webResearchIntakeRequired: true, defaultPromptName: 'VR Research Lab web research prompt', openClawCanHelp, openClawControlBridge: { gatewayTarget: openClawControlBridge.gatewayTarget, dashboardUrl: openClawControlBridge.dashboardUrl, localScoutProofStatus: openClawControlBridge.localScoutProofStatus, mutationAuthority: openClawControlBridge.mutationAuthority, autoStart: openClawControlBridge.autoStart, operatorApprovalRequired: openClawControlBridge.operatorApprovalRequired } },
+      openClawResearchPacket: { ...packetBase, packetType: 'OpenClaw Research Packet', requestedOutput: 'Blocked for autonomous research unless route-specific research proof exists. Prefer Source Pack Runner.', webResearchIntakeRequired: true, defaultPromptName: 'VR Research Lab web research prompt', openClawCanHelp, openClawControlBridge: { gatewayTarget: openClawControlBridge.gatewayTarget, dashboardUrl: openClawControlBridge.dashboardUrl, localScoutProofStatus: openClawControlBridge.localScoutProofStatus, mutationAuthority: openClawControlBridge.mutationAuthority, autoStart: openClawControlBridge.autoStart, operatorApprovalRequired: openClawControlBridge.operatorApprovalRequired } },
+      openClawSourcePackPacket: { ...packetBase, packetType: 'OpenClaw Source Pack Runner Packet', requestedOutput: OPENCLAW_SOURCE_PACK_CLI_PROMPT, route: OPENCLAW_SOURCE_PACK_ROUTE, model: OPENCLAW_SOURCE_PACK_MODEL, routeEligibility: builderWorkbenchProjection.openClawSourcePackRunner?.routeEligibility, mutationAuthority: 'locked', autoStart: 'forbidden', trustedForCanon: 'no', trustedForResearch: 'no' },
       openClawPatchPlannerPacket: { ...packetBase, packetType: 'OpenClaw Patch Planner Packet', requestedOutput: OPENCLAW_PATCH_PLANNER_PROMPT, patchPlannerIntakeRequired: true, mutationAuthority: 'locked', autoStart: 'forbidden', trustedForPatch: 'no' },
       githubInspectionPacket: { ...packetBase, packetType: 'GitHub Inspection Packet', requestedOutput: 'Inspect PR/status/diff/evidence and report proof gaps only. No merge action.', githubCanHelp, prEvidence: { branch: prEvidenceModel.branch || prEvidenceModel.prBranch || 'unknown', prUrl: prEvidenceModel.prUrl || prEvidenceModel.pullRequestUrl || 'unknown', changedFiles: asList(prEvidenceModel.changedFiles) } },
       codexFallbackPacket: { ...packetBase, packetType: 'Codex Fallback Packet', requestedOutput: 'Bounded specialist implementation only after operator approval and after zero-cost routes cannot safely produce a plan.', codexReason, codexRequired },
