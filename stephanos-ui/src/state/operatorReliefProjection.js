@@ -8,6 +8,25 @@ function asText(value, fallback = '') {
 function asList(value) { return Array.isArray(value) ? value.filter(Boolean) : []; }
 export const HARNESS_AGENT_VERSION = 'v1.2';
 
+export const OPENCLAW_PATCH_PLANNER_PROMPT = [
+  'You are OpenClaw acting as a read-only Stephanos patch planner/reviewer.',
+  'Do not edit files, run commands, commit, push, start services, store secrets, or claim mutation authority.',
+  'Return a bounded patch plan using these fields exactly:',
+  'Summary:',
+  'Likely files:',
+  'Required tests:',
+  'Risk level: low|medium|high',
+  'Patch scope: docs-only|source-only|ui-runtime|backend|mixed',
+  'Browser proof required: yes|no|unknown',
+  'Requires Codex fallback: yes|no|unknown',
+  'Codex fallback reason:',
+  'Requires operator approval: yes',
+  'Mutation authority: locked',
+  'Auto-start: forbidden',
+  'Next operator action:',
+  'Keep the plan specific to source files/tests and proposal-only until the operator approves mutation.',
+].join('\n');
+
 const UI_BROWSER_CHECKLIST = ['Mission Console opens from landing tile','Operator Relief panel visible','idle state renders','active/fixture state renders','merge safety verdict visible','browser proof gaps visible','repair prompt visible/copyable','no red console errors','no broken chevron/collapse','existing Mission Console controls still work'];
 const AI_CONSOLE_AUTOSCROLL_PROOF_ID = 'aiconsole-answer-pane-autoscroll';
 const MAX_GAP_REASON_LENGTH = 240;
@@ -22,6 +41,7 @@ const WORKBENCH_FORBIDDEN_ACTION_PATTERNS = [
   /\b(applied|apply)\b[^.\n]*(patch|diff|change|fix)/i,
   /\b(git\s+(add|commit|push|merge|checkout|reset|clean)|npm\s+version|rm\s+-rf)\b/i,
   /\b(write|mutate|modify|edit|delete|create)\s+(the\s+)?(file|repo|source|code)/i,
+  /\b(i\s+)?(ran|executed|started|launched)\b[^.\n]*(npm|node|git|command|test|build|verify|openclaw)/i,
   /\b(no\s+approval\s+needed|without\s+operator\s+approval|approval\s+not\s+required)\b/i,
 ];
 const WORKBENCH_RISK_VALUES = ['low', 'medium', 'high', 'critical'];
@@ -75,6 +95,336 @@ function parseWorkbenchConfidence(text) {
   return word ? word[1].toLowerCase() : field.slice(0, 80);
 }
 
+
+const WORKBENCH_FILE_PATH_PATTERN = /(?:^|[\s'"`(])((?:[A-Za-z0-9_.-]+\/)+(?:[A-Za-z0-9_.-]+)(?:\.[A-Za-z0-9_.-]+)?)(?=$|[\s'"`).,;:])/g;
+const WORKBENCH_TEST_COMMAND_PATTERN = /\b((?:npm|pnpm|yarn)\s+run\s+[A-Za-z0-9:_.-]+(?:\s+--\s+[^\n,;]+)?|node\s+--test\s+[^\n,;]+|npx\s+[^\n,;]+|vitest\s+[^\n,;]*|playwright\s+test\s+[^\n,;]*)/gi;
+const WORKBENCH_PLACEHOLDER_PATTERN = /<\s*(?:your\s+)?(?:answer|response|end-tool)\s*>|<\s*(?:file|path|test|summary|todo|insert|example)[^>]*>|\{\{[^}]+\}\}|TODO_PLACEHOLDER/i;
+const WORKBENCH_GENERIC_PLAN_PATTERN = /\b(update the files|make the changes|run the tests|fix the bug|implement the feature|review the code|ensure everything works|as needed|appropriate files|relevant tests)\b/i;
+
+const OPENCLAW_CANONICAL_WINDOWS_REPO_PATH = 'c:\\users\\stephan callear\\documents\\github\\stephan-os';
+const OPENCLAW_SANITY_EXPECTED_PAYLOAD = 'OPENCLAW_SANITY_PASS';
+const OPENCLAW_TEMPLATE_LEAKAGE_PATTERN = /<\s*(?:your\s+)?(?:response|answer|end-tool)\s*>|your question or action request|\bsay next\b|as a language model/i;
+const OPENCLAW_EXACT_RESPONSE_FAILURE_PATTERN = /as a language model[\s\S]{0,240}(?:say next|your question or action request)|##\s*<\s*(?:your\s+)?response\s*>|<\s*(?:your\s+)?(?:response|answer|end-tool)\s*>|your response\s*---/i;
+const OPENCLAW_WINDOWS_PATH_PATTERN = /[a-z]:\\[^\n`'")]+/gi;
+
+function normalizeOpenClawPath(value = '') {
+  return String(value).trim().replace(/\\+/g, '\\').replace(/\/+$/, '').toLowerCase();
+}
+
+function extractOpenClawWindowsPaths(text = '') {
+  return uniqueWorkbenchItems(Array.from(String(text).matchAll(OPENCLAW_WINDOWS_PATH_PATTERN)).map((match) => match[0].replace(/[.,;:]+$/, '')), 8);
+}
+
+
+function extractOpenClawSanityPayload(rawText = '') {
+  const lines = String(rawText).split(/\r?\n/).map((line) => asText(line, '')).filter(Boolean);
+  const payloadLine = [...lines].reverse().find((line) => !/^[-=\s]+$/.test(line) && !/^openclaw\b.*\b(banner|cli|scout|workspace|session)\b/i.test(line)) || '';
+  return payloadLine.replace(/^```(?:text|markdown)?/i, '').replace(/```$/i, '').trim();
+}
+
+function judgeOpenClawExactResponse(rawText = '') {
+  const raw = truncateWorkbenchText(rawText);
+  if (!raw) return { exactResponseStatus: 'unknown', exactResponsePayload: 'none', exactResponseExpected: OPENCLAW_SANITY_EXPECTED_PAYLOAD, cliBannerIgnored: 'no' };
+  const payload = extractOpenClawSanityPayload(raw);
+  const hasExpectedPayload = payload === OPENCLAW_SANITY_EXPECTED_PAYLOAD || /(?:^|\n)\s*OPENCLAW_SANITY_PASS\s*(?:\n|$)/.test(raw);
+  const leakage = OPENCLAW_EXACT_RESPONSE_FAILURE_PATTERN.test(raw);
+  const bannerIgnored = hasExpectedPayload && payload === OPENCLAW_SANITY_EXPECTED_PAYLOAD && raw.split(/\r?\n/).filter((line) => asText(line, '')).length > 1 ? 'yes' : 'no';
+  return {
+    exactResponseStatus: hasExpectedPayload && !leakage ? 'passed' : (leakage ? 'failed' : 'unknown'),
+    exactResponsePayload: payload || 'none',
+    exactResponseExpected: OPENCLAW_SANITY_EXPECTED_PAYLOAD,
+    cliBannerIgnored: bannerIgnored,
+  };
+}
+
+function inferOpenClawRoute(rawText = '', workbenchInput = {}) {
+  const explicit = asText(workbenchInput.openClawRouteId || workbenchInput.openClawRoute || workbenchInput.openClawRouteName || '', '').toLowerCase();
+  const lower = `${rawText} ${explicit}`.toLowerCase();
+  if (/qwen14|qwen:14b|stephanos-scout-qwen14/.test(lower)) return { routeId: 'cli-qwen14', routeLabel: 'stephanos-scout-qwen14 / qwen:14b' };
+  if (/llama3\.2|llama3\.2:3b|ollama\/llama3\.2|stephanos-scout/.test(lower)) return { routeId: 'cli-llama3.2', routeLabel: 'stephanos-scout / llama3.2 CLI' };
+  if (/dashboard|browser|openclaw dashboard/.test(lower)) return { routeId: 'dashboard', routeLabel: 'OpenClaw dashboard route' };
+  return { routeId: 'dashboard', routeLabel: 'OpenClaw dashboard route' };
+}
+
+function judgeOpenClawTaskFrame(rawText = '', workbenchInput = {}) {
+  const explicit = asText(workbenchInput.openClawTaskFrameStatus || workbenchInput.openClawRouteTaskFrameStatus || '', '').toLowerCase();
+  if (['passed', 'failed', 'unknown'].includes(explicit)) {
+    return { taskFrameStatus: explicit, taskFrameFailureReason: explicit === 'failed' ? 'Explicit route task-frame proof failed.' : 'none' };
+  }
+  const raw = truncateWorkbenchText(rawText);
+  const normalized = raw.trim().toUpperCase();
+  if (normalized === 'NO') return { taskFrameStatus: 'failed', taskFrameFailureReason: 'Dashboard returned only "NO" when structured output was required.' };
+  if (!raw) return { taskFrameStatus: 'unknown', taskFrameFailureReason: 'none' };
+  if (raw.trim() === OPENCLAW_SANITY_EXPECTED_PAYLOAD || /OPENCLAW_SANITY_PASS/.test(raw)) {
+    return { taskFrameStatus: 'exact-response-only', taskFrameFailureReason: 'Exact-response sanity proves only basic route obedience, not research or patch-planning task-frame adherence.' };
+  }
+  const hasStructuredPatchFrame = ['summary', 'likely files', 'required tests', 'risk level', 'requires codex fallback']
+    .filter((field) => new RegExp(`(?:^|\\n)\\s*${field}\\s*:`, 'i').test(raw)).length >= 4;
+  if (hasStructuredPatchFrame) return { taskFrameStatus: 'passed', taskFrameFailureReason: 'none' };
+  return { taskFrameStatus: 'unknown', taskFrameFailureReason: 'No route-specific task-frame proof is available for this OpenClaw output.' };
+}
+
+
+function collectOpenClawStatusText(rawText = '', workbenchInput = {}) {
+  return [
+    rawText,
+    workbenchInput.openClawDoctorText,
+    workbenchInput.openClawStatusText,
+    workbenchInput.openClawRouteStatusText,
+    workbenchInput.openClawSessionStatusText,
+  ].map((value) => truncateWorkbenchText(value || '')).filter(Boolean).join('\n');
+}
+
+function buildOpenClawRouteSessionDiagnostics(rawText = '', workbenchInput = {}) {
+  const statusText = collectOpenClawStatusText(rawText, workbenchInput);
+  const explicitSessionId = asText(workbenchInput.openClawSessionId || workbenchInput.openClawRouteSessionId || '', '');
+  const routeSessionMatch = statusText.match(/\b(agent:[A-Za-z0-9_.:-]+)/i);
+  const sessionId = explicitSessionId || routeSessionMatch?.[1] || 'unknown';
+  const activeSessionCount = Number(statusText.match(/\b(\d+)\s+active sessions?\b/i)?.[1] || workbenchInput.openClawActiveSessionCount || 0);
+  const oldSessionRisk = activeSessionCount > 1 || /\bold\s+(?:dashboard|qwen|sessions?)\b/i.test(statusText);
+  const modelMismatchWarnings = uniqueWorkbenchItems(Array.from(statusText.matchAll(/\b(agent:[^\s:]+(?::[^\s:]+){1,3})[^\n]*?pinned\s+to\s+([^\s,.;]+)[^\n]*?(?:config\s+primary\s+is|primary\s+is)\s+([^\s,.;]+)/gi)).map((match) => `${match[1]} pinned ${match[2]} but primary ${match[3]}`), 6);
+  const explicitPinned = asText(workbenchInput.openClawPinnedModel || workbenchInput.openClawRoutePinnedModel || '', '');
+  const explicitPrimary = asText(workbenchInput.openClawConfigPrimaryModel || workbenchInput.openClawRoutePrimaryModel || '', '');
+  const explicitMismatch = explicitPinned && explicitPrimary && explicitPinned !== explicitPrimary ? [`${sessionId} pinned ${explicitPinned} but primary ${explicitPrimary}`] : [];
+  const mismatchWarnings = uniqueWorkbenchItems([...modelMismatchWarnings, ...explicitMismatch], 6);
+  const plaintextTokenWarning = /plaintext[^\n]{0,80}(?:gateway\s+)?tokens?|(?:gateway\s+)?tokens?[^\n]{0,80}plaintext|openclaw\.json[^\n]{0,120}tokens?/i.test(statusText) ? 'yes' : 'no';
+  const doctorNonBlockingFindings = [];
+  if (/gateway\s+(?:local\s+)?(?:is\s+)?reachable|ws:\/\/127\.0\.0\.1:18789/i.test(statusText)) doctorNonBlockingFindings.push('gateway-local-reachable');
+  if (/dashboard\s+(?:is\s+)?reachable|http:\/\/127\.0\.0\.1:18789/i.test(statusText)) doctorNonBlockingFindings.push('dashboard-reachable');
+  if (/gateway service[^\n]*(?:not installed|missing)|node service[^\n]*(?:not installed|missing)|service[^\n]*(?:not installed|missing)/i.test(statusText)) doctorNonBlockingFindings.push('service-not-installed-intentional-no-autostart');
+  if (/channels?[^\n]*(?:not configured|missing|unconfigured)/i.test(statusText)) doctorNonBlockingFindings.push('channels-not-configured-manual-local-ok');
+  if (/command owner[^\n]*(?:not configured|missing|unconfigured)/i.test(statusText)) doctorNonBlockingFindings.push('command-owner-not-configured-manual-local-ok');
+  if (/memory search[^\n]*(?:disabled|explicitly disabled)/i.test(statusText)) doctorNonBlockingFindings.push('memory-search-disabled-not-builder-blocker');
+  const activeSessionContaminationRisk = oldSessionRisk || mismatchWarnings.length > 0 ? 'yes' : 'no';
+  return {
+    routeSessionId: sessionId,
+    activeSessionCount: String(activeSessionCount || 0),
+    activeSessionContaminationRisk,
+    sessionContaminationRiskReason: activeSessionContaminationRisk === 'yes'
+      ? `OpenClaw status indicates ${activeSessionCount || 'multiple/old'} active sessions or model pin overrides; require fresh route/session proof before Builder Mesh trust.`
+      : 'none',
+    routeModelPinned: explicitPinned || (mismatchWarnings[0]?.match(/ pinned ([^\s]+) but primary /)?.[1]) || 'unknown',
+    routeModelConfiguredPrimary: explicitPrimary || (mismatchWarnings[0]?.match(/ but primary ([^\s]+)/)?.[1]) || 'unknown',
+    routeModelMismatchDetected: mismatchWarnings.length > 0 ? 'yes' : 'no',
+    modelPinMismatchWarnings: mismatchWarnings,
+    plaintextTokenSecurityWarning: plaintextTokenWarning,
+    doctorNonBlockingFindings: uniqueWorkbenchItems(doctorNonBlockingFindings, 8),
+  };
+}
+
+function buildOpenClawSanityGate(rawText = '', workbenchInput = {}) {
+  const raw = truncateWorkbenchText(rawText);
+  const exactResponse = judgeOpenClawExactResponse(raw);
+  const route = inferOpenClawRoute(raw, workbenchInput);
+  const taskFrame = judgeOpenClawTaskFrame(raw, workbenchInput);
+  const sessionDiagnostics = buildOpenClawRouteSessionDiagnostics(raw, workbenchInput);
+  const exactResponseFailureDetected = exactResponse.exactResponseStatus === 'failed' ? 'yes' : 'no';
+  const templateLeakageDetected = raw && OPENCLAW_TEMPLATE_LEAKAGE_PATTERN.test(raw) ? 'yes' : 'no';
+  const windowsPaths = extractOpenClawWindowsPaths(raw);
+  const wrongRepoPaths = windowsPaths.filter((path) => !normalizeOpenClawPath(path).startsWith(OPENCLAW_CANONICAL_WINDOWS_REPO_PATH));
+  const wrongRepoPathDetected = wrongRepoPaths.length > 0 ? 'yes' : 'no';
+  const dashboardFailureExamples = route.routeId === 'dashboard' && raw.trim().toUpperCase() === 'NO' ? ['NO'] : [];
+  const failureReasons = [];
+  if (exactResponseFailureDetected === 'yes') failureReasons.push('Exact/template wrapper response failure detected in OpenClaw output.');
+  if (templateLeakageDetected === 'yes') failureReasons.push('OpenClaw template/tool leakage detected.');
+  if (wrongRepoPathDetected === 'yes') failureReasons.push(`OpenClaw claimed non-canonical repo path(s): ${wrongRepoPaths.join(', ')}.`);
+  if (taskFrame.taskFrameStatus === 'failed') failureReasons.push(taskFrame.taskFrameFailureReason);
+  const routeDefaultTrust = route.routeId === 'dashboard' || route.routeId === 'cli-qwen14' ? 'untrusted-by-default' : (route.routeId === 'cli-llama3.2' ? (exactResponse.exactResponseStatus === 'passed' ? 'basic-sanity-pass' : 'sanity-only') : 'unknown');
+  const routeTrustOverride = asText(workbenchInput.openClawRouteTrustStatus || '', '').toLowerCase();
+  const explicitRouteTrusted = routeTrustOverride === 'trusted';
+  const routeSanityStatus = exactResponse.exactResponseStatus === 'passed' ? 'passed' : (failureReasons.length ? 'failed' : 'unknown');
+  const routeTaskFrameStatus = taskFrame.taskFrameStatus;
+  const sessionRiskClear = sessionDiagnostics.activeSessionContaminationRisk === 'no' && sessionDiagnostics.routeModelMismatchDetected === 'no';
+  const routeTrustStatus = failureReasons.length
+    ? 'failed'
+    : (explicitRouteTrusted && routeSanityStatus === 'passed' && routeTaskFrameStatus === 'passed' && sessionRiskClear
+      ? 'trusted-for-builder-routing'
+      : routeDefaultTrust);
+  const trustedForResearch = routeTrustStatus === 'trusted-for-builder-routing' ? 'yes' : 'no';
+  const trustedForPatchPlanning = routeTrustStatus === 'trusted-for-builder-routing' && routeTaskFrameStatus === 'passed' ? 'yes' : 'no';
+  const sanityStatus = raw ? (failureReasons.length ? 'failed' : (routeSanityStatus === 'passed' ? 'passed' : 'needs-route-proof')) : 'idle';
+  const minimumViableRouteRecommendation = 'Use stephanos-scout / llama3.2 CLI for bounded source-pack processing only; OpenClaw cannot mutate files; do not trust dashboard or qwen14 for builder routing until route sanity and task-frame proof pass; Codex remains fallback implementation lane and operator approval is required before mutation.';
+  const routeTrustReason = failureReasons.length
+    ? failureReasons.join(' ')
+    : (trustedForPatchPlanning === 'yes'
+      ? 'Route has explicit trust plus route sanity, task-frame proof, and no session/model contamination warnings.'
+      : (sessionDiagnostics.activeSessionContaminationRisk === 'yes' || sessionDiagnostics.routeModelMismatchDetected === 'yes'
+        ? `${route.routeLabel} has session/model contamination risk; no Builder Mesh trust until a fresh route/session proof clears model pins and old sessions.`
+        : (route.routeId === 'cli-llama3.2' && exactResponse.exactResponseStatus === 'passed'
+        ? 'CLI llama3.2 is basic-sanity-pass from exact-response proof only; research and patch planning remain untrusted until task-frame proof passes.'
+        : `${route.routeLabel} is ${routeDefaultTrust}; no global OpenClaw builder trust is granted.`)));
+  return {
+    sanityStatus,
+    routeId: route.routeId,
+    routeLabel: route.routeLabel,
+    routeTrustStatus,
+    routeTrustReason,
+    routeSanityStatus,
+    routeTaskFrameStatus,
+    routeSessionId: sessionDiagnostics.routeSessionId,
+    activeSessionCount: sessionDiagnostics.activeSessionCount,
+    activeSessionContaminationRisk: sessionDiagnostics.activeSessionContaminationRisk,
+    sessionContaminationRiskReason: sessionDiagnostics.sessionContaminationRiskReason,
+    routeModelPinned: sessionDiagnostics.routeModelPinned,
+    routeModelConfiguredPrimary: sessionDiagnostics.routeModelConfiguredPrimary,
+    routeModelMismatchDetected: sessionDiagnostics.routeModelMismatchDetected,
+    modelPinMismatchWarnings: sessionDiagnostics.modelPinMismatchWarnings,
+    plaintextTokenSecurityWarning: sessionDiagnostics.plaintextTokenSecurityWarning,
+    doctorNonBlockingFindings: sessionDiagnostics.doctorNonBlockingFindings,
+    taskFrameFailureReason: taskFrame.taskFrameFailureReason,
+    exactResponseStatus: exactResponse.exactResponseStatus,
+    exactResponsePayload: exactResponse.exactResponsePayload,
+    exactResponseExpected: exactResponse.exactResponseExpected,
+    cliBannerIgnored: exactResponse.cliBannerIgnored,
+    exactResponseFailureDetected,
+    templateLeakageDetected,
+    wrongRepoPathDetected,
+    wrongRepoPaths,
+    dashboardFailureExamples,
+    failureReason: failureReasons.join(' ') || 'none',
+    trustedForResearch,
+    trustedForPatchPlanning,
+    trustedForBuilderRouting: trustedForPatchPlanning,
+    minimumViableRouteRecommendation,
+    nextOperatorAction: failureReasons.length
+      ? 'Do not route this OpenClaw result into Builder Mesh. Reset/clear the route/session/template and paste clean route sanity plus task-frame proof before retrying.'
+      : (trustedForPatchPlanning === 'yes'
+        ? 'OpenClaw route sanity and task-frame proof passed; continue with read-only Workbench intake and operator approval gates.'
+        : minimumViableRouteRecommendation),
+  };
+}
+
+function uniqueWorkbenchItems(items = [], limit = 16) {
+  const seen = new Set();
+  return items.map((item) => asText(item, '').replace(/[.)\]]+$/, '')).filter((item) => {
+    const key = item.toLowerCase();
+    if (!item || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, limit);
+}
+
+function extractWorkbenchFilePaths(text = '') {
+  return uniqueWorkbenchItems(Array.from(String(text).matchAll(WORKBENCH_FILE_PATH_PATTERN)).map((match) => match[1]), 20);
+}
+
+function extractWorkbenchTestCommands(text = '') {
+  const explicit = parseWorkbenchListField(text, ['required tests', 'tests required', 'tests recommended', 'recommended tests', 'tests']);
+  const commands = Array.from(String(text).matchAll(WORKBENCH_TEST_COMMAND_PATTERN)).map((match) => match[1]);
+  return uniqueWorkbenchItems([...explicit, ...commands], 16);
+}
+
+function normalizePatchPlannerRisk(risk = 'unknown') {
+  const normalized = asText(risk, 'unknown').toLowerCase();
+  if (normalized === 'critical') return 'high';
+  return ['low', 'medium', 'high'].includes(normalized) ? normalized : 'unknown';
+}
+
+function inferPatchScope(text = '', files = []) {
+  const lower = `${text}\n${files.join('\n')}`.toLowerCase();
+  const docs = files.length > 0 && files.every((file) => /(^|\/)docs\/|\.mdx?$|\.txt$/.test(file.toLowerCase()));
+  const ui = /stephanos-ui\/src|\.jsx$|\.tsx$|css|browser proof|ui|runtime/.test(lower);
+  const backend = /server|backend|api\/|\.mjs|\.cjs|express|route/.test(lower) && !ui;
+  if (docs) return 'docs-only';
+  if (ui && backend) return 'mixed';
+  if (ui) return 'ui-runtime';
+  if (backend) return 'backend';
+  if (files.length > 0) return 'source-only';
+  return 'unknown';
+}
+
+function inferPlanSpecificity({ raw = '', files = [], tests = [], placeholderLeakageDetected = 'no' } = {}) {
+  if (!raw) return 'unknown';
+  if (placeholderLeakageDetected === 'yes') return 'low';
+  const specificSignals = files.length + tests.length + (extractWorkbenchField(raw, ['summary', 'plan summary']) ? 1 : 0) + (extractWorkbenchField(raw, ['codex fallback reason']) ? 1 : 0);
+  if (specificSignals >= 5) return 'high';
+  if (files.length >= 1 && tests.length >= 1) return 'medium';
+  if (WORKBENCH_GENERIC_PLAN_PATTERN.test(raw) || raw.length < 160) return 'low';
+  return 'unknown';
+}
+
+function buildOpenClawPatchPlannerIntake(openClawResearch = null, workbenchInput = {}, openClawResearchIntake = {}, openClawSanityGate = {}) {
+  const raw = openClawResearch?.rawText || truncateWorkbenchText(workbenchInput.openClawPatchPlanText || workbenchInput.openClawResearchText || '');
+  const likelyFiles = uniqueWorkbenchItems([...(openClawResearch?.filesSuspected || []), ...extractWorkbenchFilePaths(raw)], 20);
+  const requiredTests = extractWorkbenchTestCommands(raw);
+  const forbiddenActionsDetected = (openClawResearch?.forbiddenActionsDetected || []).length > 0 ? 'yes' : 'no';
+  const placeholderLeakageDetected = WORKBENCH_PLACEHOLDER_PATTERN.test(raw) || openClawResearchIntake?.placeholderLeakageDetected === 'yes' || openClawSanityGate?.templateLeakageDetected === 'yes' ? 'yes' : 'no';
+  const browserProofRequired = parseWorkbenchYesNo(raw, ['browser proof required', 'browser proof', 'ui proof required'], /\b(ui|browser|visual|jsx|css|mission console|command deck)\b/i.test(raw) ? 'yes' : 'unknown');
+  const riskLevel = normalizePatchPlannerRisk(parseWorkbenchRisk(raw));
+  const patchScope = extractWorkbenchField(raw, ['patch scope', 'scope'])?.toLowerCase().match(/docs-only|source-only|ui-runtime|backend|mixed/)?.[0]
+    || inferPatchScope(raw, likelyFiles);
+  const planSpecificity = inferPlanSpecificity({ raw, files: likelyFiles, tests: requiredTests, placeholderLeakageDetected });
+  const explicitFallback = parseWorkbenchYesNo(raw, ['requires codex fallback', 'codex fallback needed', 'codex fallback', 'codex required'], 'unknown');
+  const judged = Boolean(workbenchInput.openClawPatchPlanJudgedAt || workbenchInput.patchPlanJudgedAt);
+  const rawPresent = Boolean(raw);
+  let patchPlannerStatus = rawPresent ? (judged ? 'needs-review' : 'plan-pasted') : (workbenchInput.openClawPatchPlanRequested || workbenchInput.openClawResearchRequested ? 'awaiting-plan' : 'idle');
+  const sanityFailed = openClawSanityGate?.sanityStatus === 'failed';
+  const hardFail = sanityFailed || forbiddenActionsDetected === 'yes' || placeholderLeakageDetected === 'yes' || planSpecificity === 'low';
+  if (rawPresent && judged) {
+    patchPlannerStatus = hardFail ? 'failed' : (planSpecificity === 'medium' || planSpecificity === 'high' ? 'passed' : 'needs-review');
+  }
+  let codexFallbackNeeded = explicitFallback;
+  let codexFallbackReason = extractWorkbenchField(raw, ['codex fallback reason', 'fallback reason']) || 'unknown until a specific safe plan is pasted and judged.';
+  if (hardFail) {
+    codexFallbackNeeded = 'yes';
+    codexFallbackReason = sanityFailed
+      ? `OpenClaw sanity gate failed: ${openClawSanityGate.failureReason || 'untrusted OpenClaw output.'}`
+      : (forbiddenActionsDetected === 'yes'
+        ? 'Forbidden mutation/command language was detected in the OpenClaw plan.'
+        : (placeholderLeakageDetected === 'yes'
+          ? 'Placeholder/template leakage was detected in the OpenClaw plan.'
+          : 'Plan specificity is too low for operator-ready handoff.'));
+  } else if (explicitFallback === 'no' && rawPresent && (planSpecificity === 'medium' || planSpecificity === 'high')) {
+    codexFallbackNeeded = 'no';
+    codexFallbackReason = codexFallbackReason === 'unknown until a specific safe plan is pasted and judged.'
+      ? 'OpenClaw supplied a specific read-only patch plan and did not request Codex fallback; operator approval is still required before mutation.'
+      : codexFallbackReason;
+  }
+  const nextOperatorAction = patchPlannerStatus === 'idle'
+    ? 'Copy the OpenClaw Patch Planner Prompt and run it externally/read-only.'
+    : (patchPlannerStatus === 'awaiting-plan'
+      ? 'Paste the OpenClaw patch-plan result into the existing Builder Workbench field.'
+      : (patchPlannerStatus === 'plan-pasted'
+        ? 'Run Patch Plan Intake Judgment before trusting the handoff.'
+        : (patchPlannerStatus === 'passed'
+          ? 'Review the cleaned handoff and operator approval checklist; trusted-for-patch remains no until approval.'
+          : 'Reject or revise the OpenClaw patch plan before any implementation fallback.')));
+  return {
+    patchPlannerStatus,
+    likelyFiles,
+    requiredTests,
+    riskLevel,
+    patchScope,
+    browserProofRequired,
+    forbiddenActionsDetected,
+    placeholderLeakageDetected,
+    planSpecificity,
+    codexFallbackNeeded,
+    codexFallbackReason,
+    mutationAuthority: 'locked',
+    autoStart: 'forbidden',
+    operatorApprovalRequired: 'yes',
+    sanityStatus: openClawSanityGate?.sanityStatus || 'idle',
+    trustedForPatch: 'no',
+    nextOperatorAction,
+    cleanedPatchPlanHandoff: [
+      'OpenClaw Patch Plan Handoff (read-only, operator approval required)',
+      `Status: ${patchPlannerStatus}`,
+      `Risk level: ${riskLevel}`,
+      `Patch scope: ${patchScope}`,
+      `Likely files: ${likelyFiles.join(', ') || 'none'}`,
+      `Required tests: ${requiredTests.join(', ') || 'none'}`,
+      `Browser proof required: ${browserProofRequired}`,
+      `Codex fallback needed: ${codexFallbackNeeded}`,
+      `Codex fallback reason: ${codexFallbackReason}`,
+      'Mutation authority: locked',
+      'Auto-start: forbidden',
+      'Trusted for patch: no until operator approval',
+      `Next operator action: ${nextOperatorAction}`,
+    ].join('\n'),
+  };
+}
+
 export function parseBuilderWorkbenchResult(rawText = '', { source = 'local-ai-review' } = {}) {
   const raw = truncateWorkbenchText(rawText);
   const lower = raw.toLowerCase();
@@ -123,14 +473,16 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const localAiRunnerDispatchAttempted = asText(workbenchInput.localAiRunnerDispatchAttempted || (workbenchInput.localAiReviewRequested ? 'yes' : 'no'), 'no');
   const localAiRunnerRequestSent = asText(workbenchInput.localAiRunnerRequestSent || 'no', 'no');
   const openClawResearchIntake = buildOpenClawWebResearchIntakeProjection({ rawResult: openClawRaw, requestedTaskFrame: 'vr-research' });
+  const openClawSanityGate = buildOpenClawSanityGate(openClawRaw, workbenchInput);
   const openClawResearch = openClawRaw ? parseBuilderWorkbenchResult(openClawRaw, { source: 'openclaw-research-patch-plan' }) : null;
+  const openClawPatchPlanner = buildOpenClawPatchPlannerIntake(openClawResearch, workbenchInput, openClawResearchIntake, openClawSanityGate);
   const parsedResults = [localAiReview, openClawResearch].filter(Boolean);
   const forbidden = parsedResults.flatMap((result) => result.forbiddenActionsDetected || []);
-  const safeResults = parsedResults.filter((result) => result.safeForWorkbench);
-  const patchPlanPresent = Boolean(openClawResearch && /patch|plan|implementation|fix/i.test(openClawResearch.proposedChangeType || openClawResearch.rawText || ''));
-  const patchPlanRisk = openClawResearch?.riskLevel || localAiReview?.riskLevel || 'unknown';
-  const resultRequestsFallback = parsedResults.some((result) => result.requiresCodexFallback === 'yes');
-  const resultDeniesFallback = safeResults.length > 0 && parsedResults.every((result) => result.requiresCodexFallback !== 'yes');
+  const safeResults = parsedResults.filter((result) => result.safeForWorkbench && (!String(result.source || '').includes('openclaw') || openClawSanityGate.trustedForBuilderRouting === 'yes'));
+  const patchPlanPresent = Boolean(openClawResearch && /patch|plan|implementation|fix/i.test(openClawResearch.proposedChangeType || openClawResearch.rawText || '')) || ['plan-pasted', 'passed', 'failed', 'needs-review'].includes(openClawPatchPlanner.patchPlannerStatus);
+  const patchPlanRisk = openClawPatchPlanner.riskLevel !== 'unknown' ? openClawPatchPlanner.riskLevel : (openClawResearch?.riskLevel || localAiReview?.riskLevel || 'unknown');
+  const resultRequestsFallback = parsedResults.some((result) => result.requiresCodexFallback === 'yes') || openClawPatchPlanner.codexFallbackNeeded === 'yes';
+  const resultDeniesFallback = safeResults.length > 0 && parsedResults.every((result) => result.requiresCodexFallback !== 'yes') && openClawPatchPlanner.codexFallbackNeeded !== 'yes';
   let codexFallbackStillNeeded = Boolean(builderMeshBase.recommendedBuilder === 'codex-fallback');
   let codexFallbackReason = builderMeshBase.codexReason || 'Codex fallback remains optional unless a safe workbench result proves it is needed.';
   if (forbidden.length > 0) {
@@ -149,7 +501,10 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   if (openClawResearchIntake.forbiddenLeakageDetected === 'yes') blockers.push('OpenClaw Web Research Intake detected forbidden mutation/command/autostart language.');
   if (openClawResearchIntake.placeholderLeakageDetected === 'yes') blockers.push('OpenClaw Web Research Intake detected placeholder/template leakage.');
   if (openClawResearchIntake.taskFrameAdherence === 'fail') blockers.push('OpenClaw Web Research Intake detected task-frame drift.');
+  if (openClawSanityGate.sanityStatus === 'failed') blockers.push('OpenClaw Sanity Gate failed; block OpenClaw from Builder Mesh routing until the session/template is reset.');
+  if (openClawPatchPlanner.patchPlannerStatus === 'failed') blockers.push('OpenClaw Patch Planner intake failed; revise plan before handoff.');
   if (patchPlanPresent && !['low', 'medium'].includes(patchPlanRisk)) warnings.push('Patch plan risk is not low/medium; operator should review scope before any mutation approval.');
+  if (openClawPatchPlanner.patchPlannerStatus === 'needs-review') warnings.push('OpenClaw Patch Planner intake needs operator review before fallback decisions.');
   warnings.push(...asList(openClawResearchIntake.warnings));
   if (!parsedResults.length) warnings.push('No local AI/OpenClaw workbench result has been pasted yet.');
   const nextBestAction = forbidden.length > 0
@@ -182,7 +537,10 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     workbenchOutputViewportStatus: 'usable-css-hooks-present',
     openClawResearchRequested: workbenchInput.openClawResearchRequested === true || Boolean(workbenchInput.openClawResearchRequestedAt) || false,
     openClawWebResearchPrompt: OPENCLAW_VR_RESEARCH_PROMPT,
+    openClawPatchPlannerPrompt: OPENCLAW_PATCH_PLANNER_PROMPT,
     openClawWebResearchIntake: openClawResearchIntake,
+    openClawSanityGate,
+    openClawPatchPlanner,
     localAiReviewResultPresent: Boolean(localAiReview),
     openClawResearchResultPresent: Boolean(openClawResearch),
     patchPlanPresent,
@@ -196,6 +554,8 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     localAiReview,
     openClawResearch,
     patchPlanSummary: openClawResearch?.summary || 'none',
+    likelyFiles: openClawPatchPlanner.likelyFiles,
+    requiredTests: openClawPatchPlanner.requiredTests,
     verdict: codexFallbackStillNeeded ? 'fallback-needed-or-hold' : (safeResults.length ? 'operator-review-before-patch' : 'awaiting-results'),
     implementationRequested,
   };
@@ -545,7 +905,7 @@ function buildBuilderMeshProjection({
   const implementationRequested = taskKind === 'implementation' || taskKind === 'mutation' || taskKind === 'high-risk-mutation';
   const approvalRequiredBeforeMutation = true;
   const localAiCanHelp = localAiReady ? 'yes-read-only-review' : 'copy-packet-only-not-proven';
-  const openClawCanHelp = openClawReady ? 'yes-read-only-research-and-patch-planning' : 'blocked-by-approval-or-kill-switch';
+  const openClawCanHelp = openClawReady ? 'route-specific-proof-required' : 'blocked-by-approval-or-kill-switch';
   const githubCanHelp = githubReady ? 'yes-read-only-pr-diff-status-evidence' : 'copy-packet-only-not-connected';
   let recommendedBuilder = 'local-ai';
   let codexReason = 'Codex is not required by default; local/zero-cost read-only routes should be tried first.';
@@ -558,7 +918,8 @@ function buildBuilderMeshProjection({
   } else if (taskKind === 'github-inspection' && githubReady) {
     recommendedBuilder = 'github-inspection';
   } else if ((taskKind === 'research' || taskKind === 'read-only') && openClawReady) {
-    recommendedBuilder = localAiReady ? 'local-ai' : 'openclaw';
+    recommendedBuilder = localAiReady ? 'local-ai' : 'operator';
+    codexReason = 'OpenClaw is not globally available; route-specific sanity and task-frame proof are required before OpenClaw builder routing.';
   } else if (implementationRequested) {
     if (supportSnapshot.localBuilderCanImplement === true || supportSnapshot.openClawImplementationApproved === true) {
       recommendedBuilder = supportSnapshot.openClawImplementationApproved === true ? 'openclaw' : 'local-ai';
@@ -568,7 +929,8 @@ function buildBuilderMeshProjection({
       codexReason = 'Implementation is requested but no approved local/OpenClaw mutation path is proven; use Codex only as an operator-approved fallback specialist.';
     }
   } else if (openClawReady) {
-    recommendedBuilder = 'openclaw';
+    recommendedBuilder = 'operator';
+    codexReason = 'OpenClaw route trust is not global; use minimum viable CLI llama3.2 source-pack processing only after route proof.';
   }
   const codexRequired = recommendedBuilder === 'codex-fallback' && implementationRequested && supportSnapshot.operatorExplicitlyRequestedCodex === true;
   if (recommendedBuilder === 'codex-fallback' && codexRequired !== true) {
@@ -579,7 +941,17 @@ function buildBuilderMeshProjection({
     workbenchInput: builderWorkbenchInput,
     implementationRequested,
   });
-  if (workbenchPreview.codexFallbackStillNeeded === false && (workbenchPreview.localAiReviewResultPresent === true || workbenchPreview.openClawResearchResultPresent === true)) {
+  if (workbenchPreview.openClawSanityGate?.sanityStatus === 'failed' || (workbenchPreview.openClawResearchResultPresent && workbenchPreview.openClawSanityGate?.trustedForPatchPlanning !== 'yes')) {
+    blockers.push('OpenClaw route trust is insufficient; Builder Mesh OpenClaw research/patch-planning routing is blocked until route sanity and task-frame proof pass.');
+    recommendedBuilder = localAiReady ? 'local-ai' : 'operator';
+    codexReason = `OpenClaw route is not trusted for patch planning. ${workbenchPreview.openClawSanityGate?.routeTrustReason || workbenchPreview.openClawSanityGate?.failureReason || 'Route-specific proof is missing.'}`;
+  } else if (workbenchPreview.openClawPatchPlanner?.patchPlannerStatus === 'failed') {
+    recommendedBuilder = 'codex-fallback';
+    codexReason = workbenchPreview.openClawPatchPlanner.codexFallbackReason;
+  } else if (workbenchPreview.openClawPatchPlanner?.patchPlannerStatus === 'passed') {
+    recommendedBuilder = 'operator';
+    codexReason = workbenchPreview.openClawPatchPlanner.codexFallbackReason;
+  } else if (workbenchPreview.codexFallbackStillNeeded === false && (workbenchPreview.localAiReviewResultPresent === true || workbenchPreview.openClawResearchResultPresent === true)) {
     recommendedBuilder = 'operator';
     codexReason = workbenchPreview.codexFallbackReason;
   }
@@ -620,7 +992,7 @@ function buildBuilderMeshProjection({
     codexRequired,
     codexReason,
     localAiCanHelp,
-    openClawCanHelp,
+    openClawCanHelp: workbenchPreview.openClawSanityGate?.sanityStatus === 'failed' ? 'blocked-sanity-failed' : (workbenchPreview.openClawSanityGate?.trustedForPatchPlanning === 'yes' ? openClawCanHelp : (workbenchPreview.openClawResearchResultPresent ? 'blocked-route-untrusted' : openClawCanHelp)),
     githubCanHelp,
     safeReadOnlyActions,
     approvalRequiredBeforeMutation,
@@ -631,10 +1003,12 @@ function buildBuilderMeshProjection({
     builderWorkbenchProjection,
     openClawControlBridge,
     openClawWebResearchIntake: builderWorkbenchProjection.openClawWebResearchIntake,
-    openClawResearchScoutGuidance: 'OpenClaw can help as a read-only web research scout only when source-cited pasted results pass intake; it cannot mutate files, Codex remains fallback implementation lane, and operator approval is required before canon/build promotion.',
+    openClawSanityGate: builderWorkbenchProjection.openClawSanityGate,
+    openClawResearchScoutGuidance: builderWorkbenchProjection.openClawSanityGate?.minimumViableRouteRecommendation || 'OpenClaw is route-specific only: dashboard/qwen routes are untrusted by default, CLI llama3.2 exact-response sanity is not enough for research or patch planning, mutation remains locked, and operator approval is required before canon/build promotion.',
     copyPackets: {
       localAiReviewPacket: { ...packetBase, packetType: 'Local AI Review Packet', requestedOutput: 'Bounded findings, risks, tests, and proof gaps only. No file writes.' },
       openClawResearchPacket: { ...packetBase, packetType: 'OpenClaw Research Packet', requestedOutput: 'Read-only research, repo inspection, patch plan, cross-checks, blockers/warnings. No mutation without operator approval.', webResearchIntakeRequired: true, defaultPromptName: 'VR Research Lab web research prompt', openClawCanHelp, openClawControlBridge: { gatewayTarget: openClawControlBridge.gatewayTarget, dashboardUrl: openClawControlBridge.dashboardUrl, localScoutProofStatus: openClawControlBridge.localScoutProofStatus, mutationAuthority: openClawControlBridge.mutationAuthority, autoStart: openClawControlBridge.autoStart, operatorApprovalRequired: openClawControlBridge.operatorApprovalRequired } },
+      openClawPatchPlannerPacket: { ...packetBase, packetType: 'OpenClaw Patch Planner Packet', requestedOutput: OPENCLAW_PATCH_PLANNER_PROMPT, patchPlannerIntakeRequired: true, mutationAuthority: 'locked', autoStart: 'forbidden', trustedForPatch: 'no' },
       githubInspectionPacket: { ...packetBase, packetType: 'GitHub Inspection Packet', requestedOutput: 'Inspect PR/status/diff/evidence and report proof gaps only. No merge action.', githubCanHelp, prEvidence: { branch: prEvidenceModel.branch || prEvidenceModel.prBranch || 'unknown', prUrl: prEvidenceModel.prUrl || prEvidenceModel.pullRequestUrl || 'unknown', changedFiles: asList(prEvidenceModel.changedFiles) } },
       codexFallbackPacket: { ...packetBase, packetType: 'Codex Fallback Packet', requestedOutput: 'Bounded specialist implementation only after operator approval and after zero-cost routes cannot safely produce a plan.', codexReason, codexRequired },
       operatorApprovalChecklist: { ...packetBase, packetType: 'Operator Approval Checklist', checklist: ['Confirm mutation is necessary.', 'Confirm local/OpenClaw/GitHub read-only routes were considered.', 'Approve exact files/scope before mutation.', 'Require tests/build/verify/pr-clean and UI/browser proof for UI claims.'] },

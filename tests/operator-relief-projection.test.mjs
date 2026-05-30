@@ -346,7 +346,7 @@ test('Builder Mesh copy packets exist and stay bounded/read-only', () => {
     supportSnapshot: { builderMeshTaskKind: 'read-only', localAiConnected: true },
   });
   const packets = r.builderMeshProjection.copyPackets;
-  for (const key of ['localAiReviewPacket', 'openClawResearchPacket', 'githubInspectionPacket', 'codexFallbackPacket', 'operatorApprovalChecklist']) {
+  for (const key of ['localAiReviewPacket', 'openClawResearchPacket', 'openClawPatchPlannerPacket', 'githubInspectionPacket', 'codexFallbackPacket', 'operatorApprovalChecklist']) {
     assert.ok(packets[key], `${key} should exist`);
     assert.ok(JSON.stringify(packets[key]).length < 5000, `${key} should be bounded`);
     assert.match(JSON.stringify(packets[key]), /Do not mutate repo files/);
@@ -388,6 +388,241 @@ Reasoning: Safe parsed runner output.`,
   assert.equal(r.builderMeshProjection.codexRequired, false);
 });
 
+
+
+
+test('OpenClaw Sanity Gate passes exact payload with CLI banner for stephanos-scout llama route', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderWorkbenchInput: {
+        openClawResearchText: `OpenClaw CLI banner: stephanos-scout ollama/llama3.2:3b
+OPENCLAW_SANITY_PASS`,
+      },
+    },
+  });
+  const sanity = r.builderMeshProjection.builderWorkbenchProjection.openClawSanityGate;
+  assert.equal(sanity.sanityStatus, 'passed');
+  assert.equal(sanity.exactResponseStatus, 'passed');
+  assert.equal(sanity.exactResponsePayload, 'OPENCLAW_SANITY_PASS');
+  assert.equal(sanity.cliBannerIgnored, 'yes');
+  assert.equal(sanity.routeTrustStatus, 'basic-sanity-pass');
+  assert.equal(sanity.trustedForBuilderRouting, 'no');
+  assert.equal(sanity.trustedForPatchPlanning, 'no');
+});
+
+test('OpenClaw Sanity Gate fails qwen14 exact-response template leakage', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderWorkbenchInput: {
+        openClawResearchText: '<your response>   --- a change request or PRs',
+      },
+    },
+  });
+  const sanity = r.builderMeshProjection.builderWorkbenchProjection.openClawSanityGate;
+  assert.equal(sanity.sanityStatus, 'failed');
+  assert.equal(sanity.exactResponseStatus, 'failed');
+  assert.equal(sanity.templateLeakageDetected, 'yes');
+  assert.equal(sanity.trustedForBuilderRouting, 'no');
+  assert.equal(r.builderMeshProjection.openClawCanHelp, 'blocked-sanity-failed');
+});
+
+
+test('OpenClaw Sanity Gate treats dashboard NO as task-frame failure and blocks routing', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      nextBuilderTaskKind: 'read-only',
+      builderWorkbenchInput: {
+        openClawRouteId: 'dashboard',
+        openClawResearchText: 'NO',
+      },
+    },
+  });
+  const sanity = r.builderMeshProjection.builderWorkbenchProjection.openClawSanityGate;
+  assert.equal(sanity.routeId, 'dashboard');
+  assert.equal(sanity.routeTaskFrameStatus, 'failed');
+  assert.deepEqual(sanity.dashboardFailureExamples, ['NO']);
+  assert.equal(sanity.trustedForPatchPlanning, 'no');
+  assert.notEqual(r.builderMeshProjection.recommendedBuilder, 'openclaw');
+  assert.equal(r.builderMeshProjection.openClawCanHelp, 'blocked-sanity-failed');
+});
+
+
+test('OpenClaw Sanity Gate tracks doctor route/session/model warnings without making manual-mode findings blockers', () => {
+  const doctorText = `Gateway local is reachable at ws://127.0.0.1:18789.
+Dashboard is reachable at http://127.0.0.1:18789/.
+Gateway service and Node service are not installed.
+Channels are not configured.
+14 active sessions exist, including old dashboard/qwen sessions.
+agent:stephanos-scout-qwen14:dashboard session is pinned to ollama/llama3.2:3b even though qwen14 config primary is ollama/qwen:14b.
+agent:main:main is pinned to ollama/qwen:14b even though config primary is openai/gpt-5.5.
+Doctor warns plaintext gateway tokens exist in openclaw.json.
+Doctor says memory search explicitly disabled.
+Command owner is not configured.`;
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      nextBuilderTaskKind: 'read-only',
+      builderWorkbenchInput: {
+        openClawRouteId: 'dashboard',
+        openClawStatusText: doctorText,
+        openClawResearchText: 'Summary: route status only.',
+      },
+    },
+  });
+  const sanity = r.builderMeshProjection.builderWorkbenchProjection.openClawSanityGate;
+  assert.equal(sanity.routeId, 'dashboard');
+  assert.equal(sanity.routeTrustStatus, 'untrusted-by-default');
+  assert.equal(sanity.activeSessionCount, '14');
+  assert.equal(sanity.activeSessionContaminationRisk, 'yes');
+  assert.equal(sanity.routeModelMismatchDetected, 'yes');
+  assert.match(sanity.modelPinMismatchWarnings.join(' | '), /stephanos-scout-qwen14/);
+  assert.equal(sanity.plaintextTokenSecurityWarning, 'yes');
+  assert.match(sanity.doctorNonBlockingFindings.join(' | '), /service-not-installed-intentional-no-autostart/);
+  assert.match(sanity.doctorNonBlockingFindings.join(' | '), /channels-not-configured-manual-local-ok/);
+  assert.match(sanity.doctorNonBlockingFindings.join(' | '), /command-owner-not-configured-manual-local-ok/);
+  assert.match(sanity.doctorNonBlockingFindings.join(' | '), /memory-search-disabled-not-builder-blocker/);
+  assert.notEqual(r.builderMeshProjection.recommendedBuilder, 'openclaw');
+  assert.equal(r.builderMeshProjection.openClawCanHelp, 'blocked-route-untrusted');
+});
+
+test('OpenClaw Sanity Gate fails template-contaminated wrapper outputs before Builder Mesh routing', () => {
+  const contaminatedOutputs = [
+    'As a language model, I can help you... say next... <your question or action request>',
+    '## <response> C:\\Users\\Stephan Callear\\GitHub\\stephanos.',
+    '<END-TOOL >',
+  ];
+  for (const openClawResearchText of contaminatedOutputs) {
+    const r = deriveOperatorReliefProjection({
+      supportSnapshot: {
+        nextBuilderTaskKind: 'read-only',
+        builderWorkbenchInput: {
+          openClawPatchPlanJudgedAt: '2026-05-30T00:00:00.000Z',
+          openClawResearchText,
+        },
+      },
+    });
+    const workbench = r.builderMeshProjection.builderWorkbenchProjection;
+    assert.equal(workbench.openClawSanityGate.sanityStatus, 'failed');
+    assert.equal(workbench.openClawSanityGate.trustedForBuilderRouting, 'no');
+    assert.notEqual(r.builderMeshProjection.recommendedBuilder, 'openclaw');
+    assert.equal(r.builderMeshProjection.openClawCanHelp, 'blocked-sanity-failed');
+    assert.match(workbench.openClawSanityGate.nextOperatorAction, /Do not route this OpenClaw result/i);
+  }
+});
+
+test('OpenClaw Sanity Gate flags wrong repo paths and allows only the canonical Windows repo path', () => {
+  const bad = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderWorkbenchInput: {
+        openClawPatchPlanJudgedAt: '2026-05-30T00:00:00.000Z',
+        openClawResearchText: 'Summary: inspect C:\\Users\\Stephan Callear\\GitHub\\stephanos for files.',
+      },
+    },
+  }).builderMeshProjection.builderWorkbenchProjection.openClawSanityGate;
+  assert.equal(bad.wrongRepoPathDetected, 'yes');
+  assert.equal(bad.sanityStatus, 'failed');
+
+  const good = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderWorkbenchInput: {
+        openClawPatchPlanJudgedAt: '2026-05-30T00:00:00.000Z',
+        openClawResearchText: `Summary: Specific plan uses the canonical operator repo path only.
+Likely files: stephanos-ui/src/state/operatorReliefProjection.js
+Required tests: node --test tests/operator-relief-projection.test.mjs
+Risk level: low
+Patch scope: source-only
+Browser proof required: no
+Requires Codex fallback: no
+Codex fallback reason: specific plan
+Repo path: C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os`,
+      },
+    },
+  }).builderMeshProjection.builderWorkbenchProjection.openClawSanityGate;
+  assert.equal(good.wrongRepoPathDetected, 'no');
+  assert.equal(good.sanityStatus, 'needs-route-proof');
+  assert.equal(good.trustedForBuilderRouting, 'no');
+});
+
+test('OpenClaw Patch Planner V1 defaults keep mutation locked and auto-start forbidden', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: { builderMeshTaskKind: 'read-only', builderWorkbenchInput: {} },
+  });
+  const planner = r.builderMeshProjection.builderWorkbenchProjection.openClawPatchPlanner;
+  assert.equal(planner.patchPlannerStatus, 'idle');
+  assert.equal(planner.mutationAuthority, 'locked');
+  assert.equal(planner.autoStart, 'forbidden');
+  assert.equal(planner.operatorApprovalRequired, 'yes');
+  assert.equal(planner.trustedForPatch, 'no');
+});
+
+test('OpenClaw Patch Planner V1 detects specific files, tests, browser proof, and no Codex fallback', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      nextBuilderTaskKind: 'implementation',
+      builderWorkbenchInput: {
+        openClawPatchPlanJudgedAt: '2026-05-30T00:00:00.000Z',
+        openClawResearchText: `Summary: Extend the existing Builder Workbench projection and UI for patch planning.
+Likely files: stephanos-ui/src/state/operatorReliefProjection.js, stephanos-ui/src/components/MissionConsoleTile.jsx, stephanos-ui/src/state/supportSnapshot.js
+Required tests: node --test tests/operator-relief-projection.test.mjs, npm run stephanos:build
+Risk level: medium
+Patch scope: ui-runtime
+Browser proof required: yes
+Requires Codex fallback: no
+Codex fallback reason: Specific read-only plan is enough for operator handoff.
+Requires operator approval: yes
+Mutation authority: locked
+Auto-start: forbidden
+Next operator action: Review handoff and approve exact files before mutation.`,
+      },
+    },
+  });
+  const planner = r.builderMeshProjection.builderWorkbenchProjection.openClawPatchPlanner;
+  assert.equal(planner.patchPlannerStatus, 'passed');
+  assert.equal(planner.likelyFiles.includes('stephanos-ui/src/state/operatorReliefProjection.js'), true);
+  assert.equal(planner.requiredTests.includes('node --test tests/operator-relief-projection.test.mjs'), true);
+  assert.equal(planner.browserProofRequired, 'yes');
+  assert.equal(planner.codexFallbackNeeded, 'no');
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'operator');
+});
+
+test('OpenClaw Patch Planner V1 fails generic placeholder boilerplate and requires Codex fallback reason', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderWorkbenchInput: {
+        openClawPatchPlanJudgedAt: '2026-05-30T00:00:00.000Z',
+        openClawResearchText: `Summary: <answer>
+Likely files: appropriate files
+Required tests: run the tests
+Risk level: low
+Requires Codex fallback: unknown`,
+      },
+    },
+  });
+  const planner = r.builderMeshProjection.builderWorkbenchProjection.openClawPatchPlanner;
+  assert.equal(planner.patchPlannerStatus, 'failed');
+  assert.equal(planner.placeholderLeakageDetected, 'yes');
+  assert.equal(planner.planSpecificity, 'low');
+  assert.equal(planner.codexFallbackNeeded, 'yes');
+  assert.match(planner.codexFallbackReason, /Placeholder|specificity|sanity|template/i);
+});
+
+test('OpenClaw Patch Planner V1 catches forbidden edit commit push and run-command claims', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderWorkbenchInput: {
+        openClawPatchPlanJudgedAt: '2026-05-30T00:00:00.000Z',
+        openClawResearchText: `Summary: I edited the source file and ran npm run stephanos:build.
+Likely files: stephanos-ui/src/state/operatorReliefProjection.js
+Required tests: npm run stephanos:build
+Risk level: low
+Requires Codex fallback: no`,
+      },
+    },
+  });
+  const planner = r.builderMeshProjection.builderWorkbenchProjection.openClawPatchPlanner;
+  assert.equal(planner.forbiddenActionsDetected, 'yes');
+  assert.equal(planner.patchPlannerStatus, 'failed');
+  assert.equal(planner.codexFallbackNeeded, 'yes');
+});
 
 test('Builder Workbench Local AI Runner safe result updates verdict and routes to operator checklist', () => {
   const r = deriveOperatorReliefProjection({
@@ -498,7 +733,7 @@ test('Builder Mesh context includes OpenClaw web research intake state and bound
   assert.equal(r.builderMeshProjection.openClawWebResearchIntake.validUrlCount, 1);
   assert.equal(r.builderMeshProjection.openClawWebResearchIntake.mutationAuthority, 'locked');
   assert.equal(r.builderMeshProjection.openClawWebResearchIntake.recommendedUse, 'research-only');
-  assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /read-only web research scout/i);
+  assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /minimum viable|bounded source-pack|llama3\.2/i);
   assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /cannot mutate files/i);
   assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /Codex remains fallback implementation lane/i);
   assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /operator approval/i);

@@ -257,6 +257,17 @@ test('protected canon: builder mesh stays in Builder Harness and uses determinis
   assert.match(supportSnapshotSource, /Local AI Runner Parsed Result Present:/);
   assert.match(supportSnapshotSource, /Workbench Answer Context Used:/);
   assert.match(supportSnapshotSource, /Workbench Output Viewport Status:/);
+  assert.match(supportSnapshotSource, /OpenClaw Route ID:/);
+  assert.match(supportSnapshotSource, /OpenClaw Route Trust Status:/);
+  assert.match(supportSnapshotSource, /OpenClaw Route Task Frame Status:/);
+  assert.match(supportSnapshotSource, /OpenClaw Route Session ID:/);
+  assert.match(supportSnapshotSource, /OpenClaw Active Session Contamination Risk:/);
+  assert.match(supportSnapshotSource, /OpenClaw Route Model Mismatch Detected:/);
+  assert.match(supportSnapshotSource, /OpenClaw Model Pin Mismatch Warnings:/);
+  assert.match(supportSnapshotSource, /OpenClaw Plaintext Token Security Warning:/);
+  assert.match(supportSnapshotSource, /OpenClaw Doctor Non-Blocking Findings:/);
+  assert.match(supportSnapshotSource, /OpenClaw Dashboard Failure Examples:/);
+  assert.match(supportSnapshotSource, /OpenClaw Minimum Viable Route Recommendation:/);
 });
 
 test('protected canon: builder workbench stays inside Builder Harness and gates Codex fallback copy', async () => {
@@ -271,7 +282,33 @@ test('protected canon: builder workbench stays inside Builder Harness and gates 
   assert.match(source, /builder-workbench-raw-output/);
   assert.match(source, /builder-workbench-parsed-output/);
   assert.match(source, /Paste OpenClaw Research \/ Patch Plan Result/);
-  assert.match(source, /builderWorkbenchProjection\?\.codexFallbackStillNeeded \? \(/);
+  assert.match(source, /Copy OpenClaw Patch Planner Prompt/);
+  assert.match(source, /Run Patch Plan Intake Judgment/);
+  assert.match(source, /Copy Cleaned Patch Plan Handoff/);
+  assert.match(source, /builderWorkbenchProjection\?\.openClawPatchPlanner\?\.codexFallbackNeeded/);
+  assert.match(source, /OpenClaw Route Trust:/);
+  assert.match(source, /trustedForPatchPlanning/);
+  assert.match(source, /activeSessionContaminationRisk/);
+  assert.match(source, /routeModelMismatchDetected/);
+});
+
+
+test('protected canon: Command Deck deterministic Builder Mesh answer covers OpenClaw patch planner and Codex fallback', async () => {
+  const source = await read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url));
+  assert.match(source, /Can OpenClaw plan the next patch\?/);
+  assert.match(source, /read-only patch planner\/reviewer only/);
+  assert.match(source, /Is Codex still required\?/);
+  assert.match(source, /fallback implementation capacity only/);
+  assert.match(source, /OpenClaw Sanity Gate: status/);
+  assert.match(source, /CLI banner ignored/);
+  assert.match(source, /OpenClaw Route Trust:/);
+  assert.match(source, /minimum viable route/);
+  assert.match(source, /session contamination/);
+  assert.match(source, /model mismatch/);
+  assert.match(source, /plaintext token security warning/);
+  assert.match(source, /non-blocking doctor findings/);
+  assert.match(source, /blocked from Builder Mesh research\/patch-planning routing/);
+  assert.match(source, /OpenClaw Patch Planner: status/);
 });
 
 test('protected canon: Local AI Runner cannot stay running before request-sent boundary', async () => {

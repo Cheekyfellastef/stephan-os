@@ -339,6 +339,7 @@ test('OpenClaw online/control prompts route to Builder Mesh context instead of d
     'can OpenClaw help with this build?',
     'start OpenClaw bridge',
     'show OpenClaw proof command',
+    'Can OpenClaw plan the next patch, and is Codex still required?',
     'bring OpenClaw online inside Stephanos',
   ];
   for (const operatorMessage of prompts) {
