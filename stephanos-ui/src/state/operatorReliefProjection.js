@@ -484,6 +484,9 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const openClawSourcePackRunner = buildOpenClawSourcePackRunnerProjection({
     rawResult: workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '',
     sourcePackText: workbenchInput.openClawSourcePackText || '',
+    openClawSourcePackJudgedAt: workbenchInput.openClawSourcePackJudgedAt || '',
+    openClawSourcePackLastJudgedText: workbenchInput.openClawSourcePackLastJudgedText || workbenchInput.openClawSourcePackText || '',
+    openClawSourcePackLastJudgedOutput: workbenchInput.openClawSourcePackLastJudgedOutput || workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '',
   });
   const openClawResearchIntake = buildOpenClawWebResearchIntakeProjection({ rawResult: openClawRaw, requestedTaskFrame: 'vr-research' });
   const openClawSanityGate = buildOpenClawSanityGate(openClawRaw || workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '', workbenchInput);
@@ -538,6 +541,7 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   if (openClawWorkspaceHygiene.workspaceBlocksIgnition === 'yes') blockers.push('OpenClaw workspace dirt is blocking ignition; stash only the known OpenClaw workspace paths before routing OpenClaw again.');
   if (openClawPatchPlanner.patchPlannerStatus === 'failed') blockers.push('OpenClaw Patch Planner intake failed; revise plan before handoff.');
   if (openClawSourcePackRunner.sourcePackStatus === 'failed') blockers.push('OpenClaw Source Pack Runner intake failed; reset the route/session or use the stricter prompt.');
+  if (openClawSourcePackRunner.sourcePackStatus === 'stale') blockers.push('OpenClaw Source Pack Runner judgment is stale; rerun judgment before routing research, canon, or planning trust.');
   if (patchPlanPresent && !['low', 'medium'].includes(patchPlanRisk)) warnings.push('Patch plan risk is not low/medium; operator should review scope before any mutation approval.');
   if (openClawPatchPlanner.patchPlannerStatus === 'needs-review') warnings.push('OpenClaw Patch Planner intake needs operator review before fallback decisions.');
   if (openClawSourcePackRunner.sourcePackStatus === 'needs-review') warnings.push('OpenClaw Source Pack Runner intake needs operator review before research routing.');

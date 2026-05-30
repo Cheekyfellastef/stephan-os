@@ -140,9 +140,85 @@ function sourcePackHasSupportingSource(sourcePackText = '') {
   return Boolean(sourceText && (/SOURCE PACK START/i.test(sourceText) || /source\s+\d+\s+notes\s*:/i.test(sourceText) || /source\s+\d+\s+url\s*:/i.test(sourceText)));
 }
 
+function exactText(value = '') {
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
+function sourcePackProjectionSource({ currentSourcePackText = '', currentSourcePackOutput = '', judgedAt = '', stale = false } = {}) {
+  if (stale) return 'source-pack-input-changed-after-judgment';
+  if (judgedAt) return 'source-pack-intake-judgment';
+  if (currentSourcePackText || currentSourcePackOutput) return 'source-pack-current-input-preview';
+  return 'source-pack-runner-idle';
+}
+
 export function judgeOpenClawSourcePackResult(rawText = '', options = {}) {
-  const text = asText(rawText, '');
-  const sourcePackText = asText(options.sourcePackText || options.openClawSourcePackText || '', '');
+  const currentSourcePackOutput = exactText(rawText);
+  const currentSourcePackText = exactText(options.sourcePackText ?? options.openClawSourcePackText ?? '');
+  const judgedAt = asText(options.openClawSourcePackJudgedAt || options.sourcePackJudgedAt || '', '');
+  const lastJudgedSourcePackText = exactText(options.openClawSourcePackLastJudgedText ?? options.lastJudgedSourcePackText ?? currentSourcePackText);
+  const lastJudgedSourcePackOutput = exactText(options.openClawSourcePackLastJudgedOutput ?? options.lastJudgedSourcePackOutput ?? currentSourcePackOutput);
+  const sourcePackJudgmentStale = judgedAt && (lastJudgedSourcePackText !== currentSourcePackText || lastJudgedSourcePackOutput !== currentSourcePackOutput) ? 'yes' : 'no';
+  const projectionWritten = currentSourcePackText || currentSourcePackOutput || judgedAt ? 'yes' : 'no';
+  const projectionSource = sourcePackProjectionSource({ currentSourcePackText, currentSourcePackOutput, judgedAt, stale: sourcePackJudgmentStale === 'yes' });
+  const staleLengths = {
+    sourcePackJudgmentStale,
+    sourcePackLastJudgedTextLength: lastJudgedSourcePackText.length,
+    sourcePackCurrentTextLength: currentSourcePackText.length,
+    sourcePackLastJudgedOutputLength: lastJudgedSourcePackOutput.length,
+    sourcePackCurrentOutputLength: currentSourcePackOutput.length,
+    sourcePackProjectionWritten: projectionWritten,
+    sourcePackProjectionSource: projectionSource,
+    sourcePackJudgedAt: judgedAt || 'none',
+  };
+  if (sourcePackJudgmentStale === 'yes') {
+    const staleNextOperatorAction = 'Source Pack input changed after the last judgment. Rerun Source Pack Intake Judgment before any canon, research, planning, or routing trust.';
+    const staleHandoffPacket = JSON.stringify({
+      packetType: 'OpenClaw Source Pack Runner Handoff',
+      sourcePackStatus: 'stale',
+      sourcePackJudgmentStale: 'yes',
+      trustedForCanon: 'no',
+      trustedForResearch: 'no',
+      mutationAuthority: 'locked',
+      route: OPENCLAW_SOURCE_PACK_ROUTE,
+      model: OPENCLAW_SOURCE_PACK_MODEL,
+      nextOperatorAction: staleNextOperatorAction,
+    }, null, 2);
+    return {
+      sourcePackResultPresent: currentSourcePackOutput ? 'yes' : 'no',
+      sourcePackStatus: 'stale',
+      route: OPENCLAW_SOURCE_PACK_ROUTE,
+      model: OPENCLAW_SOURCE_PACK_MODEL,
+      sourceBounded: 'unknown',
+      hallucinatedSourcesDetected: 'unknown',
+      inventedUrls: [],
+      templateLeakageDetected: 'unknown',
+      asksForNextDetected: 'unknown',
+      mutationClaimDetected: 'unknown',
+      webResearchClaimDetected: 'unknown',
+      usefulFactCount: 0,
+      unknownCount: 0,
+      riskCount: 0,
+      nextQuestionCount: 0,
+      handoffPacketPresent: 'no',
+      trustedForCanon: 'no',
+      trustedForResearch: 'no',
+      codexFallbackNeeded: 'unknown',
+      nextOperatorAction: staleNextOperatorAction,
+      mutationAuthority: 'locked',
+      autoStart: 'forbidden',
+      operatorApprovalRequired: 'yes',
+      blockers: ['Source Pack judgment is stale because Source Pack Text or Source Pack Output changed after the last judgment.'],
+      warnings: ['Rerun Source Pack Intake Judgment before using this result.'],
+      requiredSectionsPresent: [],
+      cleanedSourcePackHandoff: staleHandoffPacket,
+      defaultPrompt: OPENCLAW_SOURCE_PACK_CLI_PROMPT,
+      sourcePackTemplate: OPENCLAW_SOURCE_PACK_TEMPLATE,
+      ...staleLengths,
+    };
+  }
+  const text = asText(currentSourcePackOutput, '');
+  const sourcePackText = asText(currentSourcePackText, '');
   const sourcePackUrls = extractUrls(sourcePackText);
   const resultUrls = extractUrls(text);
   const inventedUrls = resultUrls.filter((url) => !sourcePackUrls.includes(url));
@@ -231,6 +307,7 @@ export function judgeOpenClawSourcePackResult(rawText = '', options = {}) {
     warnings,
     requiredSectionsPresent: sectionsPresent,
     cleanedSourcePackHandoff: cleanedHandoffPacket,
+    ...staleLengths,
     defaultPrompt: OPENCLAW_SOURCE_PACK_CLI_PROMPT,
     sourcePackTemplate: OPENCLAW_SOURCE_PACK_TEMPLATE,
   };
