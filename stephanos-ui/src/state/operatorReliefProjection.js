@@ -492,6 +492,10 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     judgmentReadOutputLength: asText(workbenchInput.openClawSourcePackJudgmentReadOutputLength ?? '0', '0'),
     judgmentReadSource: asText(workbenchInput.openClawSourcePackJudgmentReadSource || 'not-run', 'not-run'),
     activeSurface: asText(workbenchInput.openClawSourcePackActiveSurface || workbenchInput.panelId || 'missionConsolePanel', 'missionConsolePanel'),
+    runnerRenderGate: asText(workbenchInput.openClawSourcePackRunnerRenderGate || 'unknown', 'unknown'),
+    runnerRenderBlocker: asText(workbenchInput.openClawSourcePackRunnerRenderBlocker || 'unknown', 'unknown'),
+    parentPanelId: asText(workbenchInput.openClawSourcePackParentPanelId || workbenchInput.panelId || 'missionConsolePanel', 'missionConsolePanel'),
+    controlsMountedCount: asText(workbenchInput.openClawSourcePackControlsMountedCount ?? '0', '0'),
   };
   const rawOpenClawSourcePackRunner = buildOpenClawSourcePackRunnerProjection({
     rawResult: workbenchInput.openClawSourcePackOutput || workbenchInput.openClawSourcePackResult || '',
@@ -504,7 +508,7 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
     ? {
       ...rawOpenClawSourcePackRunner,
       sourcePackStatus: 'needs-output',
-      nextOperatorAction: 'Source Pack Output textarea is not mounted in the active Builder Workbench surface; reopen the active surface before judgment.',
+      nextOperatorAction: `Source Pack Output textarea is not mounted in the active Builder Workbench surface; render blocker: ${openClawSourcePackDiagnostics.runnerRenderBlocker || 'unknown'}.`,
       trustedForCanon: 'no',
       trustedForResearch: 'no',
     }
