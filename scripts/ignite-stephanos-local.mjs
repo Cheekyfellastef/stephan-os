@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
-import { buildOpenClawWorkspaceHygieneProjection } from '../shared/agents/openClawWorkspaceHygiene.mjs';
+import { buildOpenClawWorkspaceHygieneProjection, isSanctionedOpenClawWorkspacePath } from '../shared/agents/openClawWorkspaceHygiene.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -362,6 +362,7 @@ function isAllowlistedRootRuntimePath(path) {
 
 function classifyStatusEntry(entry) {
   if (entry.paths.some((path) => SECRETS_PATTERN.test(path))) return 'forbidden-or-unknown';
+  if (entry.paths.every((path) => isSanctionedOpenClawWorkspacePath(path))) return 'openclaw-runtime-workspace';
   if (entry.paths.some((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)))) return 'meaningful-source-dirt';
   if (entry.paths.every((path) => path === RUNTIME_MEMORY_PATH)) return 'runtime-state';
   if (entry.paths.every((path) => isTransientRootDataPath(path))) return 'transient-root-data';
@@ -381,6 +382,7 @@ export function classifyIgnitionDirtPath(path) {
   const normalized = normalizeGitPath(path);
   if (SECRETS_PATTERN.test(normalized)) return 'HARD_BLOCK';
   if (normalized === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(normalized)) return 'RUNTIME_CHECKPOINT_CLEAN';
+  if (isSanctionedOpenClawWorkspacePath(normalized)) return 'OPENCLAW_RUNTIME_WORKSPACE_ALLOWED';
   if (isDependencyDirtPath(normalized)) return 'DEPENDENCY_WARNING';
   if (isApprovedGeneratedDistPath(normalized)) return 'AUTO_CLEAN_GENERATED';
   if (KNOWN_SOURCE_FILES.has(normalized) || KNOWN_SOURCE_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return 'SOURCE_DIRT_APPROVAL_REQUIRED';
@@ -461,7 +463,11 @@ function runCleanlinessGovernor({ statusAssessment, runStepFn = runStep, mode = 
       openClawWorkspaceDirtCount: openClawWorkspaceHygiene.workspaceDirtCount,
       openClawWorkspaceBlocksIgnition: openClawWorkspaceHygiene.workspaceBlocksIgnition,
       openClawWorkspaceRecommendedCleanup: openClawWorkspaceHygiene.workspaceRecommendedCleanup,
+      openClawWorkspaceMigrationCommand: openClawWorkspaceHygiene.workspaceRecommendedMigration,
       openClawWorkspaceSafeRuntimeDirectory: openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory,
+      openClawWorkspaceSanctionedAllowedPath: openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory,
+      openClawWorkspaceRootDirtDetected: openClawWorkspaceHygiene.workspaceDirtDetected,
+      openClawWorkspaceRootFilesStillBlockIgnition: openClawWorkspaceHygiene.workspaceBlocksIgnition,
       openClawWorkspaceMutationAuthority: openClawWorkspaceHygiene.workspaceMutationAuthority,
       openClawWorkspaceNextOperatorAction: openClawWorkspaceHygiene.workspaceNextOperatorAction,
       ignitionNextOperatorAction: blockedFiles.length > 0 ? 'Remove hard-block files from working tree and PR range.' : (sourceDirtFiles.length > 0 ? 'Commit/stash/discard source dirt or set STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE=1.' : 'Continue ignition.'),
@@ -620,6 +626,12 @@ export function runGitPullPreflightWithDeps({
   console.log(`[IGNITION] checkpointedRuntimeFiles=${cleanlinessReport.checkpointedRuntimeFiles.join(',') || 'none'}`);
   console.log(`[IGNITION] blockedFiles=${cleanlinessReport.blockedFiles.join(',') || 'none'}`);
   console.log(`[IGNITION] dependencyWarnings=${cleanlinessReport.dependencyWarnings.join(',') || 'none'}`);
+  if (cleanlinessReport.ignitionStatusModel.openClawWorkspaceRootDirtDetected === 'yes') {
+    console.log('[IGNITION] root OpenClaw workspace dirt detected');
+    console.log('[IGNITION] root OpenClaw files still block ignition');
+    console.log(`[IGNITION] sanctioned allowed path: ${cleanlinessReport.ignitionStatusModel.openClawWorkspaceSanctionedAllowedPath}`);
+    console.log(`[IGNITION] copyable migration command: ${cleanlinessReport.ignitionStatusModel.openClawWorkspaceMigrationCommand}`);
+  }
   console.log(`[IGNITION] nextOperatorAction=${cleanlinessReport.nextOperatorAction}`);
   console.log(`[IGNITION] ignitionStatus=${cleanlinessReport.ignitionStatusModel.ignitionStatus}`);
   console.log('[IGNITION] housekeeping enabled');
@@ -815,7 +827,11 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     openClawWorkspaceDirtCount: openClawWorkspaceHygiene.workspaceDirtCount,
     openClawWorkspaceBlocksIgnition: openClawWorkspaceHygiene.workspaceBlocksIgnition,
     openClawWorkspaceRecommendedCleanup: openClawWorkspaceHygiene.workspaceRecommendedCleanup,
+    openClawWorkspaceMigrationCommand: openClawWorkspaceHygiene.workspaceRecommendedMigration,
     openClawWorkspaceSafeRuntimeDirectory: openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory,
+    openClawWorkspaceSanctionedAllowedPath: openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory,
+    openClawWorkspaceRootDirtDetected: openClawWorkspaceHygiene.workspaceDirtDetected,
+    openClawWorkspaceRootFilesStillBlockIgnition: openClawWorkspaceHygiene.workspaceBlocksIgnition,
     openClawWorkspaceMutationAuthority: openClawWorkspaceHygiene.workspaceMutationAuthority,
     openClawWorkspaceNextOperatorAction: openClawWorkspaceHygiene.workspaceNextOperatorAction,
     ignitionBlockedReason: uniqueHardBlockTargets.length > 0 ? 'Hard-block dirt detected' : (sourceTargets.length > 0 ? 'Source dirt detected' : ''),
@@ -823,6 +839,12 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     ignitionReadyToEnterCommandDeck: !blocked,
   };
   console.log(`[HOUSEKEEP] status=${JSON.stringify(status)}`);
+  if (openClawWorkspaceHygiene.workspaceDirtDetected === 'yes') {
+    console.log('[HOUSEKEEP] root OpenClaw workspace dirt detected');
+    console.log('[HOUSEKEEP] root OpenClaw files still block ignition');
+    console.log(`[HOUSEKEEP] sanctioned allowed path: ${openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory}`);
+    console.log(`[HOUSEKEEP] copyable migration command: ${openClawWorkspaceHygiene.workspaceRecommendedMigration}`);
+  }
   if (blocked) {
     const hardBlockLine = uniqueHardBlockTargets.slice(0, 10).join(',') || 'none';
     console.log(`[HOUSEKEEP] hardBlockPaths=${hardBlockLine}`);
