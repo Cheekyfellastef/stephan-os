@@ -37,6 +37,10 @@ test('Support Snapshot includes all OpenClaw Source Pack Runner fields', () => {
     'OpenClaw Source Pack Judgment Read Output Length',
     'OpenClaw Source Pack Judgment Read Source',
     'OpenClaw Source Pack Active Surface',
+    'OpenClaw Source Pack Runner Render Gate',
+    'OpenClaw Source Pack Runner Render Blocker',
+    'OpenClaw Source Pack Parent Panel ID',
+    'OpenClaw Source Pack Controls Mounted Count',
     'OpenClaw Source Pack Next Operator Action',
   ]) {
     assert.match(supportSnapshotSource, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -87,8 +91,24 @@ test('Source Pack judgment reads latest visible textarea mirrors instead of stal
 });
 
 test('active Builder Workbench path has one live Source Pack Text and Output textarea selector', () => {
-  assert.equal((missionConsoleTileSource.match(/data-testid="builder-workbench-openclaw-source-pack-text"/g) || []).length, 1);
-  assert.equal((missionConsoleTileSource.match(/data-testid="builder-workbench-openclaw-source-pack-output"/g) || []).length, 1);
+  assert.equal((missionConsoleTileSource.match(/<textarea[^>]+data-testid="builder-workbench-openclaw-source-pack-text"/g) || []).length, 1);
+  assert.equal((missionConsoleTileSource.match(/<textarea[^>]+data-testid="builder-workbench-openclaw-source-pack-output"/g) || []).length, 1);
+});
+
+test('missionConsolePanel Source Pack controls mount in the active Agent Mission Console surface', () => {
+  const sourcePackSectionIndex = missionConsoleTileSource.indexOf('mission-console-section--builder-workbench-source-pack');
+  const builderHarnessIndex = missionConsoleTileSource.indexOf('panelId="missionConsoleBuilderHarnessPanel"');
+  assert.ok(sourcePackSectionIndex > -1, 'Source Pack Runner section should be present');
+  assert.ok(builderHarnessIndex > -1, 'Builder Harness section should remain present');
+  assert.ok(sourcePackSectionIndex < builderHarnessIndex, 'Source Pack controls should not be hidden behind Builder Harness nested collapse');
+  assert.match(missionConsoleTileSource, /panelId === 'missionConsolePanel' \? \(/);
+  assert.match(missionConsoleTileSource, /data-openclaw-source-pack-parent-panel-id=\{panelId\}/);
+});
+
+test('missionConsolePanel Source Pack controls report no duplicates in the active surface', () => {
+  assert.match(missionConsoleTileSource, /querySelectorAll\('textarea\[data-testid="builder-workbench-openclaw-source-pack-text"\]'\)/);
+  assert.match(missionConsoleTileSource, /querySelectorAll\('textarea\[data-testid="builder-workbench-openclaw-source-pack-output"\]'\)/);
+  assert.match(missionConsoleTileSource, /openClawSourcePackControlsMountedCount: String\(controlsMountedCount\)/);
 });
 
 const BAD_SOURCE_PACK_TEXT = `SOURCE PACK START
@@ -291,6 +311,10 @@ test('Support Snapshot exposes Source Pack runtime diagnostics for the visible o
     openClawSourcePackJudgmentReadOutputLength: '58',
     openClawSourcePackJudgmentReadSource: 'ref-backed-visible-textarea',
     openClawSourcePackActiveSurface: 'missionConsolePanel',
+    openClawSourcePackRunnerRenderGate: 'missionConsolePanel-builder-workbench-source-pack',
+    openClawSourcePackRunnerRenderBlocker: 'none',
+    openClawSourcePackParentPanelId: 'missionConsolePanel',
+    openClawSourcePackControlsMountedCount: '2',
   });
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
@@ -312,6 +336,10 @@ test('Support Snapshot exposes Source Pack runtime diagnostics for the visible o
   assert.match(snapshot, /OpenClaw Source Pack Judgment Read Output Length: 58/);
   assert.match(snapshot, /OpenClaw Source Pack Judgment Read Source: ref-backed-visible-textarea/);
   assert.match(snapshot, /OpenClaw Source Pack Active Surface: missionConsolePanel/);
+  assert.match(snapshot, /OpenClaw Source Pack Runner Render Gate: missionConsolePanel-builder-workbench-source-pack/);
+  assert.match(snapshot, /OpenClaw Source Pack Runner Render Blocker: none/);
+  assert.match(snapshot, /OpenClaw Source Pack Parent Panel ID: missionConsolePanel/);
+  assert.match(snapshot, /OpenClaw Source Pack Controls Mounted Count: 2/);
 });
 
 test('operator bad Source Pack judgment becomes stale after output character edit', () => {

@@ -303,6 +303,10 @@ function MissionConsoleTile({
     openClawSourcePackJudgmentReadOutputLength: '0',
     openClawSourcePackJudgmentReadSource: 'not-run',
     openClawSourcePackActiveSurface: panelId,
+    openClawSourcePackRunnerRenderGate: panelId === 'missionConsolePanel' ? 'missionConsolePanel-builder-workbench-source-pack' : 'inactive-surface',
+    openClawSourcePackRunnerRenderBlocker: panelId === 'missionConsolePanel' ? 'awaiting-dom-mount' : 'inactive-surface',
+    openClawSourcePackParentPanelId: panelId,
+    openClawSourcePackControlsMountedCount: '0',
     localAiRunnerStatus: 'idle',
     localAiRunnerSelectedModel: '',
     localAiRunnerAvailableModels: [],
@@ -1292,13 +1296,38 @@ function MissionConsoleTile({
   const buildOpenClawSourcePackRuntimeDiagnostics = (prev, overrides = {}) => {
     const textDomValue = openClawSourcePackTextTextareaRef.current?.value ?? openClawSourcePackTextMirrorRef.current ?? prev.openClawSourcePackText ?? '';
     const outputDomValue = openClawSourcePackOutputTextareaRef.current?.value ?? openClawSourcePackOutputMirrorRef.current ?? prev.openClawSourcePackOutput ?? '';
+    const textTextareaMounted = openClawSourcePackTextTextareaRef.current ? 'yes' : 'no';
+    const outputTextareaMounted = openClawSourcePackOutputTextareaRef.current ? 'yes' : 'no';
+    let controlsMountedCount = (openClawSourcePackTextTextareaRef.current ? 1 : 0) + (openClawSourcePackOutputTextareaRef.current ? 1 : 0);
+    if (typeof document !== 'undefined') {
+      const parentSurface = document.querySelector(`[data-panel-id="${panelId}"]`);
+      const mountedTextControls = parentSurface?.querySelectorAll('textarea[data-testid="builder-workbench-openclaw-source-pack-text"]')?.length ?? 0;
+      const mountedOutputControls = parentSurface?.querySelectorAll('textarea[data-testid="builder-workbench-openclaw-source-pack-output"]')?.length ?? 0;
+      controlsMountedCount = mountedTextControls + mountedOutputControls;
+    }
+    const runnerRenderGate = panelId === 'missionConsolePanel'
+      ? 'missionConsolePanel-builder-workbench-source-pack'
+      : 'inactive-surface';
+    const runnerRenderBlocker = panelId !== 'missionConsolePanel'
+      ? 'inactive-surface'
+      : (!missionConsolePanelOpen
+        ? 'mission-console-panel-collapsed'
+        : (controlsMountedCount === 2
+          ? 'none'
+          : (textTextareaMounted !== 'yes'
+            ? 'source-pack-text-textarea-not-mounted'
+            : 'source-pack-output-textarea-not-mounted')));
     return {
-      openClawSourcePackTextTextareaMounted: openClawSourcePackTextTextareaRef.current ? 'yes' : 'no',
-      openClawSourcePackOutputTextareaMounted: openClawSourcePackOutputTextareaRef.current ? 'yes' : 'no',
+      openClawSourcePackTextTextareaMounted: textTextareaMounted,
+      openClawSourcePackOutputTextareaMounted: outputTextareaMounted,
       openClawSourcePackTextDomValueLength: String(textDomValue.length),
       openClawSourcePackOutputDomValueLength: String(outputDomValue.length),
       openClawSourcePackOutputStateLength: String((prev.openClawSourcePackOutput || '').length),
       openClawSourcePackActiveSurface: panelId,
+      openClawSourcePackRunnerRenderGate: runnerRenderGate,
+      openClawSourcePackRunnerRenderBlocker: runnerRenderBlocker,
+      openClawSourcePackParentPanelId: panelId,
+      openClawSourcePackControlsMountedCount: String(controlsMountedCount),
       ...overrides,
     };
   };
@@ -1356,6 +1385,15 @@ function MissionConsoleTile({
     });
   };
 
+
+  useEffect(() => {
+    setBuilderWorkbenchInput((prev) => {
+      const diagnostics = buildOpenClawSourcePackRuntimeDiagnostics(prev);
+      const changed = Object.entries(diagnostics).some(([key, value]) => prev[key] !== value);
+      return changed ? { ...prev, ...diagnostics } : prev;
+    });
+  }, [missionConsolePanelOpen, panelId, builderWorkbenchInput.openClawSourcePackText, builderWorkbenchInput.openClawSourcePackOutput]);
+
   return (
     <CollapsiblePanel
       panelId={panelId}
@@ -1395,6 +1433,34 @@ function MissionConsoleTile({
         togglePanel={dispatchPanelToggle}
       />
       </div>
+      {panelId === 'missionConsolePanel' ? (
+        <section className="mission-console-section mission-console-section--builder-workbench-source-pack" data-openclaw-source-pack-parent-panel-id={panelId} data-openclaw-source-pack-render-gate="missionConsolePanel-builder-workbench-source-pack">
+          <CollapsiblePanel
+            panelId="missionConsoleBuilderWorkbenchSourcePackPanel"
+            title="Builder Workbench Source Pack Runner"
+            titleAs="h3"
+            description="Active missionConsolePanel Source Pack intake controls. Local-first, approval-gated, and not trusted until judged."
+            isOpen={true}
+            onToggle={() => {}}
+            keepMountedWhenClosed={true}
+          >
+            <p className="mission-console__helper-text">Paste the exact Source Pack text and OpenClaw output here, then run the intake judgment from this same Agent Mission Console surface.</p>
+            <ul className="mission-console__status-list">
+              <li><strong>Runner status:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackRunner?.sourcePackStatus || 'idle'}</li>
+              <li><strong>Runner render gate:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackDiagnostics?.runnerRenderGate || builderWorkbenchInput.openClawSourcePackRunnerRenderGate || 'missionConsolePanel-builder-workbench-source-pack'}</li>
+              <li><strong>Runner render blocker:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackDiagnostics?.runnerRenderBlocker || builderWorkbenchInput.openClawSourcePackRunnerRenderBlocker || 'awaiting-dom-mount'}</li>
+              <li><strong>Controls mounted count:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackDiagnostics?.controlsMountedCount || builderWorkbenchInput.openClawSourcePackControlsMountedCount || '0'}</li>
+              <li><strong>Next operator action:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackRunner?.nextOperatorAction || 'Paste Source Pack text/output and run Source Pack Intake Judgment.'}</li>
+            </ul>
+            <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Text<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-text" ref={openClawSourcePackTextTextareaRef} value={builderWorkbenchInput.openClawSourcePackText} onChange={updateOpenClawSourcePackText} placeholder={operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackTemplate || 'SOURCE PACK START...'} /></label>
+            <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Output<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-output" ref={openClawSourcePackOutputTextareaRef} value={builderWorkbenchInput.openClawSourcePackOutput} onChange={updateOpenClawSourcePackOutput} placeholder="Paste OpenClaw SOURCE_PACK_STATUS / SUMMARY / USEFUL_FACTS / UNKNOWNS / RISKS / NEXT_RESEARCH_QUESTIONS / STEPHANOS_HANDOFF_PACKET output here." /></label>
+            <button type="button" className="status-panel-copy-button" onClick={handleSourcePackIntakeJudgment}>Run Source Pack Intake Judgment</button>
+            <button type="button" className={`status-panel-copy-button ${openClawSourcePackHandoffCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackRunner?.cleanedSourcePackHandoff || '', setOpenClawSourcePackHandoffCopyState, 'MissionConsoleTile.copyCleanedOpenClawSourcePackHandoff')}>
+              {openClawSourcePackHandoffCopyState === COPY_STATE.SUCCESS ? 'Cleaned Source Pack Handoff Copied' : openClawSourcePackHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Cleaned Source Pack Handoff failed' : 'Copy Cleaned Source Pack Handoff'}
+            </button>
+          </CollapsiblePanel>
+        </section>
+      ) : null}
       <section className="mission-console-section mission-console-section--operator-overview" style={getMissionConsoleSectionOrderStyle('missionConsoleOperatorOverviewPanel')}>
         <CollapsiblePanel
           panelId="missionConsoleOperatorOverviewPanel"
@@ -1693,12 +1759,6 @@ function MissionConsoleTile({
                     {openClawWebHandoffCopyState === COPY_STATE.SUCCESS ? 'Cleaned Handoff Packet Copied' : openClawWebHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Cleaned Handoff Packet failed' : 'Copy Cleaned Handoff Packet'}
                   </button>
                 </CollapsiblePanel>
-                <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Text<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-text" ref={openClawSourcePackTextTextareaRef} value={builderWorkbenchInput.openClawSourcePackText} onChange={updateOpenClawSourcePackText} placeholder={operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackTemplate || 'SOURCE PACK START...'} /></label>
-                <label className="mission-console__field-label builder-workbench-field-label">Paste Source Pack Output<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw-source-pack" data-testid="builder-workbench-openclaw-source-pack-output" ref={openClawSourcePackOutputTextareaRef} value={builderWorkbenchInput.openClawSourcePackOutput} onChange={updateOpenClawSourcePackOutput} placeholder="Paste OpenClaw SOURCE_PACK_STATUS / SUMMARY / USEFUL_FACTS / UNKNOWNS / RISKS / NEXT_RESEARCH_QUESTIONS / STEPHANOS_HANDOFF_PACKET output here." /></label>
-                <button type="button" className="status-panel-copy-button" onClick={handleSourcePackIntakeJudgment}>Run Source Pack Intake Judgment</button>
-                <button type="button" className={`status-panel-copy-button ${openClawSourcePackHandoffCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawSourcePackRunner?.cleanedSourcePackHandoff || '', setOpenClawSourcePackHandoffCopyState, 'MissionConsoleTile.copyCleanedOpenClawSourcePackHandoff')}>
-                  {openClawSourcePackHandoffCopyState === COPY_STATE.SUCCESS ? 'Cleaned Source Pack Handoff Copied' : openClawSourcePackHandoffCopyState === COPY_STATE.FAILURE ? 'Copy Cleaned Source Pack Handoff failed' : 'Copy Cleaned Source Pack Handoff'}
-                </button>
                 <label className="mission-console__field-label builder-workbench-field-label">Paste OpenClaw Research / Patch Plan Result<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--openclaw" data-testid="builder-workbench-openclaw-research-result" value={builderWorkbenchInput.openClawResearchText} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-research-patch-plan', openClawResearchText: event.target.value }))} placeholder="Paste OpenClaw research or patch plan output here." /></label>
                 <button type="button" className="status-panel-copy-button" onClick={() => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'openclaw-patch-planner', openClawPatchPlanJudgedAt: new Date().toISOString() }))}>Run Patch Plan Intake Judgment</button>
                 <button type="button" className={`status-panel-copy-button ${openClawPatchPlannerHandoffCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawPatchPlanner?.cleanedPatchPlanHandoff || '', setOpenClawPatchPlannerHandoffCopyState, 'MissionConsoleTile.copyCleanedOpenClawPatchPlanHandoff')}>
