@@ -1,19 +1,21 @@
 const KNOWN_OPENCLAW_WORKSPACE_DIRT_PATHS = Object.freeze([
   '.openclaw',
+  'DREAMS.md',
   'HEARTBEAT.md',
   'IDENTITY.md',
   'SOUL.md',
   'TOOLS.md',
   'USER.md',
+  'memory',
 ]);
 
 export const OPENCLAW_WORKSPACE_DIRT_PATHS = KNOWN_OPENCLAW_WORKSPACE_DIRT_PATHS;
-export const OPENCLAW_WORKSPACE_CLEANUP_STASH_NAME = 'stash-openclaw-workspace-dirt-before-ignition';
-export const OPENCLAW_WORKSPACE_CLEANUP_COMMAND = `git stash push -u -m "${OPENCLAW_WORKSPACE_CLEANUP_STASH_NAME}" -- .openclaw HEARTBEAT.md IDENTITY.md SOUL.md TOOLS.md USER.md`;
-export const OPENCLAW_WORKSPACE_SAFE_RUNTIME_DIRECTORY = '~/.local/share/stephanos/openclaw-workspace (proposed outside-repo runtime workspace; configure manually only when OpenClaw exposes a supported workspace/runtime directory setting)';
+export const OPENCLAW_WORKSPACE_SAFE_RUNTIME_DIRECTORY = 'runtime/openclaw-workspace/';
+export const OPENCLAW_WORKSPACE_MIGRATION_COMMAND = 'New-Item -ItemType Directory -Force -Path "runtime\\openclaw-workspace" | Out-Null; Move-Item -Force ".openclaw","DREAMS.md","HEARTBEAT.md","IDENTITY.md","SOUL.md","TOOLS.md","USER.md","memory" "runtime\\openclaw-workspace\\"';
+export const OPENCLAW_WORKSPACE_CLEANUP_COMMAND = OPENCLAW_WORKSPACE_MIGRATION_COMMAND;
 
 const PATH_MATCHERS = new Map(KNOWN_OPENCLAW_WORKSPACE_DIRT_PATHS.map((path) => [path.toLowerCase(), path]));
-const ROOT_FILE_PATTERN = /(^|[\s,;:[({"'`])(?:\.\/)?(\.openclaw\/?|HEARTBEAT\.md|IDENTITY\.md|SOUL\.md|TOOLS\.md|USER\.md)(?=$|[\s,;:\])}"'`])/gi;
+const ROOT_FILE_PATTERN = /(^|[\s,;:[({"'`])(?:\.\/)?(\.openclaw\/?|DREAMS\.md|HEARTBEAT\.md|IDENTITY\.md|SOUL\.md|TOOLS\.md|USER\.md|memory\/?)(?=$|[\s,;:\])}"'`])/gi;
 const GIT_STATUS_PATH_PATTERN = /^(?:[ MADRCU?!]{1,2}|\?\?)\s+(.+?)(?:\s+->\s+(.+))?$/;
 
 function asText(value, fallback = '') {
@@ -34,15 +36,26 @@ export function normalizeOpenClawWorkspacePath(path = '') {
     .replace(/^['"`]+|['"`]+$/g, '')
     .replace(/^[.][\\/]/, '')
     .replace(/\\/g, '/')
-    .replace(/\/+$|\s+$/g, '');
+    .replace(/\/+$/g, '')
+    .replace(/\s+$/g, '');
   if (!text) return '';
   if (text === '.openclaw' || text.startsWith('.openclaw/')) return '.openclaw';
-  const basename = text.split('/').filter(Boolean).pop() || text;
-  return PATH_MATCHERS.get(basename.toLowerCase()) || PATH_MATCHERS.get(text.toLowerCase()) || text;
+  if (text === 'memory' || text.startsWith('memory/')) return 'memory';
+  return PATH_MATCHERS.get(text.toLowerCase()) || text;
 }
 
 export function isOpenClawWorkspaceDirtPath(path = '') {
   return PATH_MATCHERS.has(normalizeOpenClawWorkspacePath(path).toLowerCase());
+}
+
+export function isSanctionedOpenClawWorkspacePath(path = '') {
+  const text = asText(path, '')
+    .replace(/^['"`]+|['"`]+$/g, '')
+    .replace(/^[.][\\/]/, '')
+    .replace(/\\/g, '/')
+    .replace(/\/+$/g, '');
+  return text === OPENCLAW_WORKSPACE_SAFE_RUNTIME_DIRECTORY.replace(/\/$/, '')
+    || text.startsWith(OPENCLAW_WORKSPACE_SAFE_RUNTIME_DIRECTORY);
 }
 
 function collectPathsFromText(text = '') {
@@ -82,6 +95,7 @@ export function buildOpenClawWorkspaceHygieneProjection(input = {}) {
   const detected = [];
   const seen = new Set();
   for (const path of collectCandidatePaths(input)) {
+    if (isSanctionedOpenClawWorkspacePath(path)) continue;
     const normalized = normalizeOpenClawWorkspacePath(path);
     if (!isOpenClawWorkspaceDirtPath(normalized)) continue;
     const key = normalized.toLowerCase();
@@ -96,17 +110,18 @@ export function buildOpenClawWorkspaceHygieneProjection(input = {}) {
     || input.blocksIgnition === true
     || input.openClawWorkspaceBlocksIgnition === true
     || input.housekeepBlocked === true
-    || collectPathsFromText(input.housekeepOutput).length > 0);
+    || collectPathsFromText(input.housekeepOutput).some((path) => !isSanctionedOpenClawWorkspacePath(path)));
   const nextOperatorAction = dirtDetected
-    ? 'Run/copy the named stash command for only the known OpenClaw workspace paths, then rerun ignition/housekeep. Do not pop the stash automatically; move OpenClaw runtime output outside the repo via a supported config in a future task.'
-    : 'No OpenClaw workspace dirt detected; keep OpenClaw output outside the repo and leave mutation locked.';
+    ? `Move the root-level OpenClaw workspace files into ${OPENCLAW_WORKSPACE_SAFE_RUNTIME_DIRECTORY} with the recommended PowerShell command, then rerun ignition/housekeep. Do not delete files; keep OpenClaw mutation locked.`
+    : `No root-level OpenClaw workspace dirt detected; keep OpenClaw output in ${OPENCLAW_WORKSPACE_SAFE_RUNTIME_DIRECTORY} and leave mutation locked.`;
   return {
     workspaceHygieneStatus: dirtDetected ? 'blocked-openclaw-workspace-dirt' : 'clean',
     workspaceDirtDetected: dirtDetected ? 'yes' : 'no',
     workspaceDirtPaths: detected,
     workspaceDirtCount: detected.length,
     workspaceBlocksIgnition: blocksIgnition ? 'yes' : 'no',
-    workspaceRecommendedCleanup: dirtDetected ? OPENCLAW_WORKSPACE_CLEANUP_COMMAND : 'No cleanup needed.',
+    workspaceRecommendedCleanup: dirtDetected ? OPENCLAW_WORKSPACE_MIGRATION_COMMAND : 'No cleanup needed.',
+    workspaceRecommendedMigration: dirtDetected ? OPENCLAW_WORKSPACE_MIGRATION_COMMAND : 'No migration needed.',
     workspaceSafeRuntimeDirectory: OPENCLAW_WORKSPACE_SAFE_RUNTIME_DIRECTORY,
     workspaceMutationAuthority: 'locked',
     workspaceNextOperatorAction: nextOperatorAction,

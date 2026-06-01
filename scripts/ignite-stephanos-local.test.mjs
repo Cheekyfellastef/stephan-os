@@ -250,6 +250,59 @@ test('ignition dirt classifier maps required categories', () => {
 
 
 
+
+
+test('ignition keeps root-level OpenClaw workspace files hard-blocked', () => {
+  const rootOpenClawPaths = [
+    '.openclaw',
+    'DREAMS.md',
+    'HEARTBEAT.md',
+    'IDENTITY.md',
+    'SOUL.md',
+    'TOOLS.md',
+    'USER.md',
+    'memory',
+  ];
+
+  for (const path of rootOpenClawPaths) {
+    assert.equal(classifyIgnitionDirtPath(path), 'HARD_BLOCK', `${path} remains root hard-blocked`);
+  }
+
+  const rootStatusPaths = rootOpenClawPaths.map((path) => (path === '.openclaw' || path === 'memory') ? `?? ${path}/` : `?? ${path}`);
+  const evaluation = evaluateGitStatusForIgnition(rootStatusPaths.join('\n'));
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, rootOpenClawPaths.length);
+  assert.equal(evaluation.meaningfulEntries.length, rootOpenClawPaths.length);
+});
+
+test('ignition allows OpenClaw files only under sanctioned runtime workspace', () => {
+  const sanctionedPaths = [
+    'runtime/openclaw-workspace/.openclaw/config.json',
+    'runtime/openclaw-workspace/DREAMS.md',
+    'runtime/openclaw-workspace/HEARTBEAT.md',
+    'runtime/openclaw-workspace/IDENTITY.md',
+    'runtime/openclaw-workspace/SOUL.md',
+    'runtime/openclaw-workspace/TOOLS.md',
+    'runtime/openclaw-workspace/USER.md',
+    'runtime/openclaw-workspace/memory/index.json',
+  ];
+
+  for (const path of sanctionedPaths) {
+    assert.equal(classifyIgnitionDirtPath(path), 'OPENCLAW_RUNTIME_WORKSPACE_ALLOWED', `${path} is allowed only in the sanctioned runtime workspace`);
+  }
+
+  const evaluation = evaluateGitStatusForIgnition(sanctionedPaths.map((path) => `?? ${path}`).join('\n'));
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(isGitWorkingTreeClean(sanctionedPaths.map((path) => `?? ${path}`).join('\n')), true);
+});
+
+test('ignition still blocks unrelated unknown hard-block files', () => {
+  const evaluation = evaluateGitStatusForIgnition('?? random-runtime-output.txt\n?? unknown/payload.bin\n');
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 2);
+  assert.equal(evaluation.meaningfulEntries.length, 2);
+  assert.equal(isGitWorkingTreeClean('?? random-runtime-output.txt\n'), false);
+});
+
 test('housekeep auto-cleans allowlisted root runtime data and stays READY', () => {
   const steps = [];
   runIgnitionHousekeep({
@@ -312,6 +365,10 @@ test('housekeep classifies known OpenClaw workspace dirt without weakening hard-
   } finally {
     console.log = originalLog;
   }
+  assert.ok(logs.includes('[HOUSEKEEP] root OpenClaw workspace dirt detected'));
+  assert.ok(logs.includes('[HOUSEKEEP] root OpenClaw files still block ignition'));
+  assert.ok(logs.includes('[HOUSEKEEP] sanctioned allowed path: runtime/openclaw-workspace/'));
+  assert.ok(logs.some((line) => line.startsWith('[HOUSEKEEP] copyable migration command: New-Item -ItemType Directory')));
   const statusLine = logs.find((line) => line.startsWith('[HOUSEKEEP] status='));
   assert.ok(statusLine);
   const status = JSON.parse(statusLine.replace('[HOUSEKEEP] status=', ''));
@@ -319,8 +376,49 @@ test('housekeep classifies known OpenClaw workspace dirt without weakening hard-
   assert.equal(status.openClawWorkspaceDirtDetected, 'yes');
   assert.deepEqual(status.openClawWorkspaceDirtPaths, ['.openclaw', 'HEARTBEAT.md']);
   assert.equal(status.openClawWorkspaceBlocksIgnition, 'yes');
-  assert.match(status.openClawWorkspaceRecommendedCleanup, /git stash push -u -m/);
+  assert.match(status.openClawWorkspaceRecommendedCleanup, /Move-Item -Force/);
+  assert.match(status.openClawWorkspaceRecommendedCleanup, /runtime\\openclaw-workspace/);
   assert.equal(status.ignitionStatus, 'BLOCKED');
+});
+
+
+
+test('housekeep allows OpenClaw files under sanctioned runtime workspace', () => {
+  const steps = [];
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return { stdout: [
+          '?? runtime/openclaw-workspace/.openclaw/config.json',
+          '?? runtime/openclaw-workspace/DREAMS.md',
+          '?? runtime/openclaw-workspace/HEARTBEAT.md',
+          '?? runtime/openclaw-workspace/IDENTITY.md',
+          '?? runtime/openclaw-workspace/SOUL.md',
+          '?? runtime/openclaw-workspace/TOOLS.md',
+          '?? runtime/openclaw-workspace/USER.md',
+          '?? runtime/openclaw-workspace/memory/index.json',
+        ].join('\n'), stderr: '' };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: (label, command, args) => steps.push({ label, command, args }),
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  const statusLine = logs.find((line) => line.startsWith('[HOUSEKEEP] status='));
+  assert.ok(statusLine);
+  const status = JSON.parse(statusLine.replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'READY');
+  assert.equal(status.ignitionHardBlockCount, 0);
+  assert.equal(status.openClawWorkspaceDirtDetected, 'no');
+  assert.equal(status.openClawWorkspaceSafeRuntimeDirectory, 'runtime/openclaw-workspace/');
+  assert.deepEqual(steps.map((step) => step.label), ['git-clean-dist-untracked']);
 });
 
 test('preflight restores approved tracked generated dirt before pull', () => {
