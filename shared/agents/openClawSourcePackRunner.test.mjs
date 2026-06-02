@@ -125,6 +125,8 @@ test('projection judges the provided Source Pack output field with non-zero curr
   assert.equal(projection.sourcePackCurrentOutputLength, 58);
   assert.equal(projection.sourcePackLastJudgedOutputLength, 58);
   assert.equal(projection.sourcePackStatus, 'failed');
+  assert.equal(projection.sourcePackProjectionWritten, 'yes');
+  assert.equal(projection.sourcePackProjectionSource, 'source-pack-runner-judged');
   assert.equal(projection.templateLeakageDetected, 'yes');
   assert.equal(projection.asksForNextDetected, 'yes');
 });

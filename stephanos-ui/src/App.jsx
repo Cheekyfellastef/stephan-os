@@ -320,6 +320,14 @@ export default function App() {
     const bridgeCapableInstanceIds = bridgeInstances.filter((entry) => entry.hasBridgeCallback).map((entry) => entry.panelId);
     const missingBridgeCallbackIds = bridgeInstances.filter((entry) => !entry.hasBridgeCallback).map((entry) => entry.panelId);
     const visibleInstancePublished = visibleInstance ? visibleInstance.panelId === publisherPanelId : false;
+    const builderWorkbenchProjection = nextProjection?.builderMeshProjection?.builderWorkbenchProjection || null;
+    const openClawSourcePackRunner = builderWorkbenchProjection?.openClawSourcePackRunner || null;
+    const openClawSourcePackDiagnostics = builderWorkbenchProjection?.openClawSourcePackDiagnostics || openClawSourcePackRunner?.diagnostics || null;
+    const builderWorkbenchProjectionSignature = builderWorkbenchProjection ? JSON.stringify({
+      activePacketType: builderWorkbenchProjection.activePacketType || '',
+      openClawSourcePackRunner,
+      openClawSourcePackDiagnostics,
+    }) : '';
     const baseDiagnostics = {
       published: 'yes',
       sourceSurface,
@@ -336,6 +344,13 @@ export default function App() {
       missionConsoleBridgeParityBlocker: missingBridgeCallbackIds.length === 0 ? 'none' : 'missing-bridge-callback',
       projectionKeysSeen: nextProjection && typeof nextProjection === 'object' ? Object.keys(nextProjection) : [],
       agentRealityLoopSeen: Boolean(nextProjection?.agentRealityLoopProjection && typeof nextProjection.agentRealityLoopProjection === 'object' && Object.keys(nextProjection.agentRealityLoopProjection).length),
+      builderWorkbenchProjectionSeen: builderWorkbenchProjection ? 'yes' : 'no',
+      builderWorkbenchProjectionSignature,
+      openClawSourcePackRunnerStatus: openClawSourcePackRunner?.sourcePackStatus || 'idle',
+      openClawSourcePackProjectionWritten: openClawSourcePackRunner?.sourcePackProjectionWritten || 'no',
+      openClawSourcePackProjectionSource: openClawSourcePackRunner?.sourcePackProjectionSource || 'source-pack-runner-idle',
+      openClawSourcePackJudgmentButtonClicked: openClawSourcePackDiagnostics?.judgmentButtonClicked || 'no',
+      openClawSourcePackJudgmentReadSource: openClawSourcePackDiagnostics?.judgmentReadSource || 'not-run',
       storeUpdated: 'yes',
       registrationEffectSeen: missionConsoleRegistrationTraceRef.current.effectSeen || 'no',
       registrationEffectPanelId: missionConsoleRegistrationTraceRef.current.effectPanelId || 'unknown',

@@ -8,6 +8,7 @@ const supportSnapshotSource = readFileSync(new URL('./supportSnapshot.js', impor
 const aiConsoleSource = readFileSync(new URL('../hooks/useAIConsole.js', import.meta.url), 'utf8');
 const operatorReliefSource = readFileSync(new URL('./operatorReliefProjection.js', import.meta.url), 'utf8');
 const missionConsoleTileSource = readFileSync(new URL('../components/MissionConsoleTile.jsx', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8');
 
 test('Support Snapshot includes all OpenClaw Source Pack Runner fields', () => {
   for (const field of [
@@ -83,11 +84,31 @@ test('Source Pack Output textarea updates the same output state judged by the ru
   assert.match(missionConsoleTileSource, /Run Source Pack Intake Judgment<\/button>/);
 });
 
+
+test('visible missionConsolePanel judgment bridge writes builderWorkbench projection digest to canonical runtime bridge', () => {
+  assert.match(missionConsoleTileSource, /onOperatorReliefProjectionUpdate\(nextProjection, \{ sourceSurface: panelId \}\)/);
+  assert.match(appSource, /const builderWorkbenchProjection = nextProjection\?\.builderMeshProjection\?\.builderWorkbenchProjection \|\| null;/);
+  assert.match(appSource, /const openClawSourcePackRunner = builderWorkbenchProjection\?\.openClawSourcePackRunner \|\| null;/);
+  assert.match(appSource, /builderWorkbenchProjectionSignature/);
+  assert.match(appSource, /openClawSourcePackRunnerStatus: openClawSourcePackRunner\?\.sourcePackStatus \|\| 'idle'/);
+  assert.match(appSource, /setOperatorReliefProjectionBridge\(\{/);
+  assert.match(appSource, /projection: nextProjection/);
+});
+
+test('App bridge Source Pack diagnostics are bounded and never become source truth', () => {
+  assert.match(appSource, /const builderWorkbenchProjection = nextProjection\?\.builderMeshProjection\?\.builderWorkbenchProjection \|\| null;/);
+  assert.match(appSource, /projection: nextProjection/);
+  assert.match(appSource, /openClawSourcePackRunnerStatus: openClawSourcePackRunner\?\.sourcePackStatus \|\| 'idle'/);
+  assert.match(appSource, /openClawSourcePackJudgmentReadSource: openClawSourcePackDiagnostics\?\.judgmentReadSource \|\| 'not-run'/);
+  assert.doesNotMatch(appSource, /window\.__STEPHANOS_OPENCLAW_SOURCE_PACK/);
+  assert.doesNotMatch(appSource, /globalThis\.__STEPHANOS_OPENCLAW_SOURCE_PACK/);
+});
+
 test('Source Pack judgment reads latest visible textarea mirrors instead of stale closure state', () => {
   assert.match(missionConsoleTileSource, /const openClawSourcePackTextMirrorRef = useRef\(''\);/);
   assert.match(missionConsoleTileSource, /const openClawSourcePackOutputMirrorRef = useRef\(''\);/);
-  assert.match(missionConsoleTileSource, /const latestOutput = openClawSourcePackOutputMirrorRef\.current \?\? openClawSourcePackOutputTextareaRef\.current\?\.value \?\? prev\.openClawSourcePackOutput \?\? '';/);
-  assert.match(missionConsoleTileSource, /openClawSourcePackJudgmentReadSource: 'ref-backed-visible-textarea'/);
+  assert.match(missionConsoleTileSource, /readOpenClawSourcePackVisibleValue\(openClawSourcePackOutputMirrorRef\.current, openClawSourcePackOutputTextareaRef, prev\.openClawSourcePackOutput \?\? ''\)/);
+  assert.match(missionConsoleTileSource, /openClawSourcePackJudgmentReadSource: 'visible-ref-or-mirror'/);
 });
 
 test('active Builder Workbench path has one live Source Pack Text and Output textarea selector', () => {
@@ -176,6 +197,7 @@ test('bad Source Pack output publishes failed projection truth without canon or 
   assert.equal(runner.templateLeakageDetected, 'yes');
   assert.equal(runner.asksForNextDetected, 'yes');
   assert.equal(runner.sourcePackProjectionWritten, 'yes');
+  assert.equal(runner.sourcePackProjectionSource, 'source-pack-runner-judged');
   assert.equal(runner.trustedForCanon, 'no');
   assert.equal(runner.trustedForResearch, 'no');
 });
@@ -287,6 +309,7 @@ test('Support Snapshot exposes failed bad Source Pack output lengths and leakage
   assert.match(snapshot, /OpenClaw Source Pack Last Judged Text Length: 58/);
   assert.match(snapshot, /OpenClaw Source Pack Last Judged Output Length: 58/);
   assert.match(snapshot, /OpenClaw Source Pack Projection Written: yes/);
+  assert.match(snapshot, /OpenClaw Source Pack Projection Source: source-pack-runner-judged/);
   assert.match(snapshot, /OpenClaw Source Pack Runner Status: failed/);
   assert.match(snapshot, /OpenClaw Source Pack Result Present: yes/);
   assert.match(snapshot, /OpenClaw Source Pack Template Leakage Detected: yes/);
@@ -309,7 +332,7 @@ test('Support Snapshot exposes Source Pack runtime diagnostics for the visible o
     openClawSourcePackOutputStateLength: '58',
     openClawSourcePackJudgmentButtonClicked: 'yes',
     openClawSourcePackJudgmentReadOutputLength: '58',
-    openClawSourcePackJudgmentReadSource: 'ref-backed-visible-textarea',
+    openClawSourcePackJudgmentReadSource: 'visible-ref-or-mirror',
     openClawSourcePackActiveSurface: 'missionConsolePanel',
     openClawSourcePackRunnerRenderGate: 'missionConsolePanel-builder-workbench-source-pack',
     openClawSourcePackRunnerRenderBlocker: 'none',
@@ -334,7 +357,7 @@ test('Support Snapshot exposes Source Pack runtime diagnostics for the visible o
   assert.match(snapshot, /OpenClaw Source Pack Output State Length: 58/);
   assert.match(snapshot, /OpenClaw Source Pack Judgment Button Clicked: yes/);
   assert.match(snapshot, /OpenClaw Source Pack Judgment Read Output Length: 58/);
-  assert.match(snapshot, /OpenClaw Source Pack Judgment Read Source: ref-backed-visible-textarea/);
+  assert.match(snapshot, /OpenClaw Source Pack Judgment Read Source: visible-ref-or-mirror/);
   assert.match(snapshot, /OpenClaw Source Pack Active Surface: missionConsolePanel/);
   assert.match(snapshot, /OpenClaw Source Pack Runner Render Gate: missionConsolePanel-builder-workbench-source-pack/);
   assert.match(snapshot, /OpenClaw Source Pack Runner Render Blocker: none/);

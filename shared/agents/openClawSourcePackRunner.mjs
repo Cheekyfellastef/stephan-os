@@ -147,7 +147,7 @@ function exactText(value = '') {
 
 function sourcePackProjectionSource({ currentSourcePackText = '', currentSourcePackOutput = '', judgedAt = '', stale = false } = {}) {
   if (stale) return 'source-pack-input-changed-after-judgment';
-  if (judgedAt) return 'source-pack-intake-judgment';
+  if (judgedAt) return 'source-pack-runner-judged';
   if (currentSourcePackText || currentSourcePackOutput) return 'source-pack-current-input-preview';
   return 'source-pack-runner-idle';
 }
