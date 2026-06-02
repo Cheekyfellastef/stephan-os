@@ -1361,10 +1361,18 @@ function MissionConsoleTile({
     }));
   };
 
+  const readOpenClawSourcePackVisibleValue = (mirrorValue, textareaRef, fallbackValue = '') => {
+    const mirrored = mirrorValue ?? '';
+    if (mirrored.length > 0) return mirrored;
+    const visibleValue = textareaRef.current?.value ?? '';
+    if (visibleValue.length > 0) return visibleValue;
+    return fallbackValue ?? '';
+  };
+
   const handleSourcePackIntakeJudgment = () => {
     setBuilderWorkbenchInput((prev) => {
-      const latestText = openClawSourcePackTextMirrorRef.current ?? openClawSourcePackTextTextareaRef.current?.value ?? prev.openClawSourcePackText ?? '';
-      const latestOutput = openClawSourcePackOutputMirrorRef.current ?? openClawSourcePackOutputTextareaRef.current?.value ?? prev.openClawSourcePackOutput ?? '';
+      const latestText = readOpenClawSourcePackVisibleValue(openClawSourcePackTextMirrorRef.current, openClawSourcePackTextTextareaRef, prev.openClawSourcePackText ?? '');
+      const latestOutput = readOpenClawSourcePackVisibleValue(openClawSourcePackOutputMirrorRef.current, openClawSourcePackOutputTextareaRef, prev.openClawSourcePackOutput ?? '');
       return {
         ...prev,
         activePacketType: 'openclaw-source-pack-runner',
@@ -1379,7 +1387,7 @@ function MissionConsoleTile({
           openClawSourcePackOutputStateLength: String(latestOutput.length),
           openClawSourcePackJudgmentButtonClicked: 'yes',
           openClawSourcePackJudgmentReadOutputLength: String(latestOutput.length),
-          openClawSourcePackJudgmentReadSource: 'ref-backed-visible-textarea',
+          openClawSourcePackJudgmentReadSource: 'visible-ref-or-mirror',
         }),
       };
     });
