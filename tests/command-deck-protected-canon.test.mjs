@@ -338,3 +338,17 @@ test('protected canon: Local AI Runner cannot stay running before request-sent b
   assert.match(localAiRunnerSource, /requestSent = true/);
   assert.match(localAiRunnerSource, /parseResultStatus: 'failed'/);
 });
+
+test('protected canon: Builder Mesh V1 remains a projection and does not create a duplicate pane', async () => {
+  const operatorReliefSource = await read(new URL('../stephanos-ui/src/state/operatorReliefProjection.js', import.meta.url));
+  const supportSnapshotSource = await read(new URL('../stephanos-ui/src/state/supportSnapshot.js', import.meta.url));
+  const missionConsoleSource = await read(missionConsoleTilePath);
+
+  assert.match(operatorReliefSource, /builderMeshProjectionSource: 'operator-relief-existing-truth-v1'/);
+  assert.match(operatorReliefSource, /recommendedBuilderReason/);
+  assert.match(operatorReliefSource, /mutationAllowed: false/);
+  assert.match(supportSnapshotSource, /Builder Mesh Recommended Builder/);
+  assert.match(supportSnapshotSource, /Builder Mesh Missing Proof/);
+  assert.equal((missionConsoleSource.match(/panelId="missionConsoleBuilderMeshPanel"/g) || []).length, 1);
+  assert.match(missionConsoleSource, /title="Zero-Cost Builder Mesh V1"/);
+});
