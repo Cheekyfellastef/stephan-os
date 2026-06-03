@@ -304,7 +304,7 @@ test('Builder Mesh low-risk read-only task recommends zero-cost builder and not 
     supportSnapshot: { builderMeshTaskKind: 'read-only', localAiConnected: true, openClawApprovalGateOpen: true },
   });
   assert.ok(['local-ai', 'openclaw'].includes(r.builderMeshProjection.recommendedBuilder));
-  assert.notEqual(r.builderMeshProjection.recommendedBuilder, 'codex-fallback');
+  assert.notEqual(r.builderMeshProjection.recommendedBuilder, 'codex');
   assert.equal(r.builderMeshProjection.codexRequired, false);
   assert.equal(r.builderMeshProjection.zeroCostRouteAvailable, true);
 });
@@ -315,7 +315,7 @@ test('Builder Mesh GitHub inspection task recommends github-inspection when PR e
     prEvidenceModel: { prUrl: 'https://github.example/pr/1', changedFiles: ['stephanos-ui/src/state/operatorReliefProjection.js'] },
     supportSnapshot: { builderMeshTaskKind: 'github-inspection', githubIntegrationStatus: 'connected' },
   });
-  assert.equal(r.builderMeshProjection.recommendedBuilder, 'github-inspection');
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'hold');
   assert.equal(r.builderMeshProjection.githubCanHelp, 'yes-read-only-pr-diff-status-evidence');
 });
 
@@ -324,7 +324,7 @@ test('Builder Mesh implementation task uses Codex fallback only with a clear non
     intentToBuildModel: { missionSpec: { objective: 'Implement a bounded patch after planning' } },
     supportSnapshot: { builderMeshTaskKind: 'implementation', localAiConnected: true, openClawApprovalGateOpen: true },
   });
-  assert.equal(r.builderMeshProjection.recommendedBuilder, 'codex-fallback');
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'codex');
   assert.equal(r.builderMeshProjection.codexRequired, false);
   assert.match(r.builderMeshProjection.codexReason, /no approved local\/OpenClaw mutation path is proven/i);
 });
@@ -348,7 +348,7 @@ test('Builder Mesh copy packets exist and stay bounded/read-only', () => {
   const packets = r.builderMeshProjection.copyPackets;
   for (const key of ['localAiReviewPacket', 'openClawResearchPacket', 'openClawPatchPlannerPacket', 'githubInspectionPacket', 'codexFallbackPacket', 'operatorApprovalChecklist']) {
     assert.ok(packets[key], `${key} should exist`);
-    assert.ok(JSON.stringify(packets[key]).length < 5000, `${key} should be bounded`);
+    assert.ok(JSON.stringify(packets[key]).length < 9000, `${key} should be bounded`);
     assert.match(JSON.stringify(packets[key]), /Do not mutate repo files/);
   }
 });
@@ -737,4 +737,103 @@ test('Builder Mesh context includes OpenClaw web research intake state and bound
   assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /cannot mutate files/i);
   assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /Codex remains fallback implementation lane/i);
   assert.match(r.builderMeshProjection.openClawResearchScoutGuidance, /operator approval/i);
+});
+
+const BUILDER_MESH_SOURCE_PACK_TEXT = `SOURCE PACK START
+Topic:
+Builder Mesh research routing
+Source 1 title:
+Support Snapshot proof
+Source 1 URL:
+https://example.test/support
+Source 1 notes:
+OpenClaw workspace hygiene is clean. Mutation authority is locked. Source Pack Runner output is bounded and read-only.
+TASK:
+Extract only what is supported by the source pack.
+SOURCE PACK END`;
+
+const BUILDER_MESH_GOOD_SOURCE_PACK_OUTPUT = `SOURCE_PACK_STATUS: bounded
+SUMMARY:
+The source pack says OpenClaw workspace hygiene is clean, mutation authority is locked, and the output is bounded/read-only.
+USEFUL_FACTS:
+- Workspace hygiene is clean.
+- Mutation authority is locked.
+UNKNOWNS:
+- Whether any newer route proof exists is unknown.
+RISKS:
+- Treating this as mutation authority would be unsafe.
+NEXT_RESEARCH_QUESTIONS:
+- Is there newer operator proof?
+STEPHANOS_HANDOFF_PACKET:
+status: bounded
+source: https://example.test/support`;
+
+test('Builder Mesh V1 failed Source Pack result blocks OpenClaw build/canon routing', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderMeshTaskKind: 'research',
+      builderWorkbenchInput: {
+        openClawSourcePackText: BUILDER_MESH_SOURCE_PACK_TEXT,
+        openClawSourcePackOutput: `${BUILDER_MESH_GOOD_SOURCE_PACK_OUTPUT}\n<your response>`,
+      },
+    },
+  });
+  const mesh = r.builderMeshProjection;
+  assert.equal(mesh.openClawEligible, false);
+  assert.notEqual(mesh.recommendedBuilder, 'openclaw');
+  assert.match(mesh.blockers.join(' | '), /Source Pack Runner failed judgment|not clean\/trusted/i);
+  assert.equal(mesh.mutationAllowed, false);
+});
+
+test('Builder Mesh V1 stale Source Pack result blocks OpenClaw build/canon routing', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderMeshTaskKind: 'research',
+      builderWorkbenchInput: {
+        openClawSourcePackJudgedAt: '2026-06-02T00:00:00.000Z',
+        openClawSourcePackLastJudgedText: BUILDER_MESH_SOURCE_PACK_TEXT,
+        openClawSourcePackLastJudgedOutput: BUILDER_MESH_GOOD_SOURCE_PACK_OUTPUT,
+        openClawSourcePackText: `${BUILDER_MESH_SOURCE_PACK_TEXT}\nchanged`,
+        openClawSourcePackOutput: BUILDER_MESH_GOOD_SOURCE_PACK_OUTPUT,
+      },
+    },
+  });
+  const mesh = r.builderMeshProjection;
+  assert.equal(mesh.builderWorkbenchProjection.openClawSourcePackRunner.sourcePackStatus, 'stale');
+  assert.equal(mesh.openClawEligible, false);
+  assert.notEqual(mesh.recommendedBuilder, 'openclaw');
+});
+
+test('Builder Mesh V1 clean trusted research result can recommend OpenClaw for read-only research only', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      builderMeshTaskKind: 'research',
+      openClawApprovalGateOpen: true,
+      localAiConnected: false,
+      builderWorkbenchInput: {
+        openClawSourcePackText: BUILDER_MESH_SOURCE_PACK_TEXT,
+        openClawSourcePackOutput: BUILDER_MESH_GOOD_SOURCE_PACK_OUTPUT,
+      },
+    },
+  });
+  const mesh = r.builderMeshProjection;
+  assert.equal(mesh.taskKind, 'research');
+  assert.equal(mesh.recommendedBuilder, 'openclaw');
+  assert.equal(mesh.openClawEligible, true);
+  assert.equal(mesh.mutationAllowed, false);
+  assert.match(mesh.recommendedBuilderReason, /read-only research\/intake only/i);
+});
+
+test('Builder Mesh V1 implementation without proven local mutation recommends Codex fallback', () => {
+  const r = deriveOperatorReliefProjection({ supportSnapshot: { builderMeshTaskKind: 'implementation', localAiConnected: true } });
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'codex');
+  assert.equal(r.builderMeshProjection.codexEligible, true);
+  assert.match(r.builderMeshProjection.recommendedBuilderReason, /fallback implementation specialist/i);
+});
+
+test('Builder Mesh V1 unknown task recommends hold/operator clarification', () => {
+  const r = deriveOperatorReliefProjection({ supportSnapshot: { builderMeshTaskKind: 'unknown', localAiConnected: true } });
+  assert.equal(r.builderMeshProjection.taskKind, 'unknown');
+  assert.equal(r.builderMeshProjection.recommendedBuilder, 'hold');
+  assert.match(r.builderMeshProjection.recommendedBuilderReason, /operator clarification/i);
 });

@@ -4090,3 +4090,38 @@ test('buildSupportSnapshot includes OpenClaw Web Research Intake fields', () => 
   assert.match(snapshot, /OpenClaw Research Trusted For Canon: no/);
   assert.match(snapshot, /OpenClaw Research Next Operator Action: Reject pasted result\./);
 });
+
+test('buildSupportSnapshot exposes Builder Mesh V1 proof-aware routing fields from live Operator Relief projection', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjection: {
+        builderMeshProjection: {
+          builderMeshStatus: 'ready-read-only',
+          recommendedBuilder: 'openclaw',
+          recommendedBuilderReason: 'Clean bounded Source Pack proof allows read-only research/intake only.',
+          taskKind: 'research',
+          openClawEligible: true,
+          localAiEligible: false,
+          codexEligible: false,
+          requiredProof: ['source-pack-runner-judged', 'workspace-hygiene-clean'],
+          missingProof: ['browser proof before merge'],
+          nextBestAction: 'Copy the OpenClaw Source Pack Runner Packet and keep the route read-only.',
+          builderMeshProjectionSource: 'operator-relief-existing-truth-v1',
+          builderWorkbenchProjection: {},
+        },
+      },
+    },
+  });
+
+  assert.match(snapshot, /Builder Mesh Status: ready-read-only/);
+  assert.match(snapshot, /Builder Mesh Recommended Builder: openclaw/);
+  assert.match(snapshot, /Builder Mesh Reason: Clean bounded Source Pack proof allows read-only research\/intake only\./);
+  assert.match(snapshot, /Builder Mesh Task Kind: research/);
+  assert.match(snapshot, /Builder Mesh OpenClaw Eligible: yes/);
+  assert.match(snapshot, /Builder Mesh Local AI Eligible: no/);
+  assert.match(snapshot, /Builder Mesh Codex Eligible: no/);
+  assert.match(snapshot, /Builder Mesh Required Proof: source-pack-runner-judged \| workspace-hygiene-clean/);
+  assert.match(snapshot, /Builder Mesh Missing Proof: browser proof before merge/);
+  assert.match(snapshot, /Builder Mesh Next Best Action: Copy the OpenClaw Source Pack Runner Packet and keep the route read-only\./);
+  assert.match(snapshot, /Builder Mesh Projection Source: operator-relief-existing-truth-v1/);
+});

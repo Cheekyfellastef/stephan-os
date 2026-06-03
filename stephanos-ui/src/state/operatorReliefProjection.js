@@ -544,7 +544,7 @@ function buildBuilderWorkbenchProjection({ builderMeshBase = {}, workbenchInput 
   const patchPlanRisk = openClawPatchPlanner.riskLevel !== 'unknown' ? openClawPatchPlanner.riskLevel : (openClawResearch?.riskLevel || localAiReview?.riskLevel || 'unknown');
   const resultRequestsFallback = parsedResults.some((result) => result.requiresCodexFallback === 'yes') || openClawPatchPlanner.codexFallbackNeeded === 'yes';
   const resultDeniesFallback = safeResults.length > 0 && parsedResults.every((result) => result.requiresCodexFallback !== 'yes') && openClawPatchPlanner.codexFallbackNeeded !== 'yes';
-  let codexFallbackStillNeeded = Boolean(builderMeshBase.recommendedBuilder === 'codex-fallback');
+  let codexFallbackStillNeeded = Boolean(builderMeshBase.recommendedBuilder === 'codex');
   let codexFallbackReason = builderMeshBase.codexReason || 'Codex fallback remains optional unless a safe workbench result proves it is needed.';
   if (forbidden.length > 0) {
     codexFallbackStillNeeded = true;
@@ -915,7 +915,10 @@ function buildCoBuilderLoopProjection({ missionIntelligenceSummary = {}, harness
 
 function inferBuilderMeshTaskKind({ missionBrainNextAction = {}, supportSnapshot = {}, prEvidenceModel = {} } = {}) {
   const explicit = asText(supportSnapshot.builderMeshTaskKind || supportSnapshot.nextBuilderTaskKind || supportSnapshot.taskKind, '').toLowerCase();
-  if (['read-only', 'research', 'github-inspection', 'implementation', 'mutation', 'high-risk-mutation', 'approval', 'hold'].includes(explicit)) return explicit;
+  if (['research', 'planning', 'implementation', 'verification', 'browser-proof', 'cleanup', 'unknown'].includes(explicit)) return explicit;
+  if (explicit === 'read-only' || explicit === 'github-inspection') return 'research';
+  if (explicit === 'mutation' || explicit === 'high-risk-mutation') return 'implementation';
+  if (explicit === 'approval' || explicit === 'hold') return 'unknown';
   const text = [
     missionBrainNextAction.missionObjective,
     missionBrainNextAction.nextBestAction,
@@ -924,11 +927,13 @@ function inferBuilderMeshTaskKind({ missionBrainNextAction = {}, supportSnapshot
     supportSnapshot.activeMissionStage,
     asList(prEvidenceModel.changedFiles).join(' '),
   ].map((v) => asText(v, '')).join(' ').toLowerCase();
-  if (/github|pull request|\bpr\b|diff|status|review checks|changed files/.test(text)) return 'github-inspection';
-  if (/approve|approval|mutation|write files|edit files|apply patch|merge|high risk/.test(text)) return 'mutation';
-  if (/implement|build|fix|repair|code change|patch/.test(text)) return 'implementation';
-  if (/research|inspect|audit|plan|cross-check|review|who should work|avoid using codex|meter|local ai|openclaw/.test(text)) return 'read-only';
-  return 'read-only';
+  if (/browser proof|ui proof|screenshot|visual proof/.test(text)) return 'browser-proof';
+  if (/cleanup|housekeep|workspace dirt|stash|quarantine/.test(text)) return 'cleanup';
+  if (/verify|verification|test|build|guard|checks|evidence|proof/.test(text)) return 'verification';
+  if (/implement|build|fix|repair|code change|patch|mutation|write files|edit files|apply patch|merge|high risk/.test(text)) return 'implementation';
+  if (/plan|planning|design|scope|architecture/.test(text)) return 'planning';
+  if (/research|inspect|audit|cross-check|review|github|pull request|\bpr\b|diff|status|changed files|who should work|avoid using codex|meter|local ai|openclaw/.test(text)) return 'research';
+  return 'unknown';
 }
 
 function buildBuilderMeshProjection({
@@ -976,65 +981,114 @@ function buildBuilderMeshProjection({
   if (!githubReady) warnings.push('GitHub inspection route is not connected; use GitHub packet externally only.');
   if (browserProof.required === true && asList(browserProof.missingItems).length > 0) warnings.push('Browser/UI proof is still required before merge.');
 
-  const highRiskMutation = taskKind === 'high-risk-mutation' || (taskKind === 'mutation' && harnessAgentProjection.harnessStatus === 'blocked-until-proof');
-  const implementationRequested = taskKind === 'implementation' || taskKind === 'mutation' || taskKind === 'high-risk-mutation';
+  const highRiskApprovalRequested = /high-risk|approval/.test(String(supportSnapshot.builderMeshTaskKind || supportSnapshot.nextBuilderTaskKind || supportSnapshot.taskKind || '').toLowerCase());
+  const implementationRequested = taskKind === 'implementation';
+  const proofMissing = Array.from(new Set([
+    ...asList(verificationReturnIntake.missingEvidence).filter((item) => item !== '- n/a'),
+    ...asList(browserProof.missingItems).filter((item) => item !== '- n/a'),
+  ]));
   const approvalRequiredBeforeMutation = true;
-  const localAiCanHelp = localAiReady ? 'yes-read-only-review' : 'copy-packet-only-not-proven';
+  const localMutationProven = supportSnapshot.localBuilderCanImplement === true
+    || supportSnapshot.localMutationPathProven === true
+    || supportSnapshot.localAiMutationApproved === true;
+  const localAiEligible = localAiReady && (taskKind !== 'implementation' || localMutationProven);
+  const codexEligible = implementationRequested || supportSnapshot.operatorExplicitlyRequestedCodex === true;
+  const localAiCanHelp = localAiReady ? (localMutationProven ? 'yes-approved-local-mutation' : 'yes-read-only-review') : 'copy-packet-only-not-proven';
   const openClawCanHelp = openClawReady ? 'llama3.2-cli-bounded-source-pack-only-after-proof' : 'blocked-by-approval-or-kill-switch';
   const githubCanHelp = githubReady ? 'yes-read-only-pr-diff-status-evidence' : 'copy-packet-only-not-connected';
-  let recommendedBuilder = 'local-ai';
-  let codexReason = 'Codex is not required by default; local/zero-cost read-only routes should be tried first.';
-  if (blockers.length > 0 && implementationRequested) {
-    recommendedBuilder = 'hold';
-    codexReason = 'Hold because harness/proof blockers must clear before any implementation route.';
-  } else if (highRiskMutation) {
-    recommendedBuilder = 'operator';
-    codexReason = 'Operator approval is required before high-risk mutation; Codex is not required until approved and justified.';
-  } else if (taskKind === 'github-inspection' && githubReady) {
-    recommendedBuilder = 'github-inspection';
-  } else if ((taskKind === 'research' || taskKind === 'read-only') && openClawReady) {
-    recommendedBuilder = localAiReady ? 'local-ai' : 'operator';
-    codexReason = 'OpenClaw is not globally available; route-specific sanity and task-frame proof are required before OpenClaw builder routing.';
-  } else if (implementationRequested) {
-    if (supportSnapshot.localBuilderCanImplement === true || supportSnapshot.openClawImplementationApproved === true) {
-      recommendedBuilder = supportSnapshot.openClawImplementationApproved === true ? 'openclaw' : 'local-ai';
-      codexReason = 'A zero-cost implementation route has explicit capability/approval; Codex remains fallback only.';
-    } else {
-      recommendedBuilder = 'codex-fallback';
-      codexReason = 'Implementation is requested but no approved local/OpenClaw mutation path is proven; use Codex only as an operator-approved fallback specialist.';
-    }
-  } else if (openClawReady) {
-    recommendedBuilder = 'operator';
-    codexReason = 'OpenClaw route trust is not global; use minimum viable CLI llama3.2 source-pack processing only after route proof.';
-  }
-  const codexRequired = recommendedBuilder === 'codex-fallback' && implementationRequested && supportSnapshot.operatorExplicitlyRequestedCodex === true;
-  if (recommendedBuilder === 'codex-fallback' && codexRequired !== true) {
-    codexReason = `${codexReason} Codex fallback is recommended, not marked required, unless the operator explicitly requests Codex.`;
-  }
+  let recommendedBuilder = 'hold';
+  let recommendedBuilderReason = 'Task kind is unknown; operator clarification is required before routing.';
+  let codexReason = 'Codex remains fallback only; Builder Mesh must prove why local/read-only routes cannot safely continue.';
   const workbenchPreview = buildBuilderWorkbenchProjection({
     builderMeshBase: { recommendedBuilder, codexReason },
     workbenchInput: builderWorkbenchInput,
     implementationRequested,
     supportSnapshot,
   });
-  if (workbenchPreview.openClawWorkspaceHygiene?.workspaceBlocksIgnition === 'yes') {
-    blockers.push('OpenClaw workspace dirt blocks ignition; Builder Mesh must not route work to OpenClaw until the operator stashes/quarantines only the known workspace paths.');
-    recommendedBuilder = localAiReady ? 'local-ai' : 'codex-fallback';
-    codexReason = 'OpenClaw workspace dirt is blocking ignition. Codex remains fallback implementation capacity; immediate action is operator cleanup of known OpenClaw workspace paths only.';
-  } else if (workbenchPreview.openClawSanityGate?.sanityStatus === 'failed' || (workbenchPreview.openClawResearchResultPresent && workbenchPreview.openClawSanityGate?.trustedForPatchPlanning !== 'yes')) {
-    blockers.push('OpenClaw route trust is insufficient; Builder Mesh OpenClaw research/patch-planning routing is blocked until route sanity and task-frame proof pass.');
-    recommendedBuilder = localAiReady ? 'local-ai' : 'operator';
-    codexReason = `OpenClaw route is not trusted for patch planning. ${workbenchPreview.openClawSanityGate?.routeTrustReason || workbenchPreview.openClawSanityGate?.failureReason || 'Route-specific proof is missing.'}`;
-  } else if (workbenchPreview.openClawPatchPlanner?.patchPlannerStatus === 'failed') {
-    recommendedBuilder = 'codex-fallback';
-    codexReason = workbenchPreview.openClawPatchPlanner.codexFallbackReason;
+  const sourcePack = workbenchPreview.openClawSourcePackRunner || {};
+  const sanity = workbenchPreview.openClawSanityGate || {};
+  const hygiene = workbenchPreview.openClawWorkspaceHygiene || {};
+  const sourcePackClean = sourcePack.sourcePackStatus === 'passed'
+    && sourcePack.sourcePackJudgmentStale !== 'yes'
+    && sourcePack.sourceBounded === 'yes'
+    && sourcePack.hallucinatedSourcesDetected !== 'yes'
+    && sourcePack.templateLeakageDetected !== 'yes'
+    && sourcePack.mutationClaimDetected !== 'yes';
+  const sourcePackRouteEligible = sourcePack.routeEligibility?.eligible === 'yes' || sourcePackClean;
+  const openClawSanityPassed = sanity.sanityStatus === 'passed' || sanity.routeSanityStatus === 'passed' || sanity.exactResponseStatus === 'passed';
+  const openClawReadOnlyOnly = !openClawSanityPassed;
+  const openClawEligible = openClawReady
+    && hygiene.workspaceBlocksIgnition !== 'yes'
+    && sourcePackClean
+    && sourcePackRouteEligible
+    && ['research', 'planning'].includes(taskKind);
+
+  if (hygiene.workspaceBlocksIgnition === 'yes') {
+    blockers.push('OpenClaw workspace dirt blocks ignition; Builder Mesh must hold until the operator stashes/quarantines only the known OpenClaw workspace paths.');
+    recommendedBuilder = 'hold';
+    recommendedBuilderReason = 'OpenClaw workspace hygiene is blocked; no builder should receive more work until cleanup proof is collected.';
+    codexReason = 'Workspace hygiene is a hard proof blocker; Codex remains fallback only after cleanup and operator approval.';
+  } else if (sourcePack.sourcePackStatus === 'failed') {
+    blockers.push('OpenClaw Source Pack Runner failed judgment; OpenClaw cannot be used for canon/build routing.');
+  } else if (sourcePack.sourcePackStatus === 'stale' || sourcePack.sourcePackJudgmentStale === 'yes') {
+    blockers.push('OpenClaw Source Pack Runner judgment is stale; OpenClaw cannot be used for canon/build routing.');
+  } else if (sourcePack.sourcePackResultPresent === 'yes' && !sourcePackClean) {
+    blockers.push('OpenClaw Source Pack Runner is not clean/trusted; OpenClaw cannot be recommended for canon/build routing.');
+  }
+
+  if (openClawReadOnlyOnly) {
+    warnings.push('OpenClaw sanity is failed or unknown; OpenClaw is limited to bounded read-only research/intake and never mutation.');
+  }
+  if (taskKind === 'unknown') {
+    recommendedBuilder = 'hold';
+    recommendedBuilderReason = 'Task kind is unknown; operator clarification is required before routing.';
+  } else if (proofMissing.length > 0 && !implementationRequested && !openClawEligible && !localAiEligible) {
+    recommendedBuilder = 'hold';
+    recommendedBuilderReason = 'Required proof is missing; collect operator/runtime proof before routing more work.';
+  } else if (highRiskApprovalRequested) {
+    recommendedBuilder = 'operator';
+    recommendedBuilderReason = 'High-risk or approval-gated implementation requires operator approval before any builder route.';
+  } else if (hygiene.workspaceBlocksIgnition !== 'yes') {
+    if (implementationRequested) {
+      if (localMutationProven) {
+        recommendedBuilder = 'local-ai';
+        recommendedBuilderReason = 'Implementation is requested and a local mutation path is proven; route locally only within operator-approved scope.';
+        codexReason = 'A proven local mutation path exists; Codex is not the default.';
+      } else {
+        recommendedBuilder = 'codex';
+        recommendedBuilderReason = 'Implementation is requested but no proven local mutation path exists; Codex is the fallback implementation specialist.';
+        codexReason = 'Implementation is requested but no approved local/OpenClaw mutation path is proven; use Codex only as an operator-approved fallback specialist.';
+      }
+    } else if (openClawEligible && taskKind === 'research') {
+      recommendedBuilder = 'openclaw';
+      recommendedBuilderReason = 'Clean bounded Source Pack proof and eligible llama3.2 CLI route allow OpenClaw for read-only research/intake only.';
+      codexReason = 'Read-only research can use OpenClaw Source Pack proof; Codex remains fallback, not default.';
+    } else if (localAiEligible && ['research', 'planning', 'verification', 'browser-proof', 'cleanup'].includes(taskKind)) {
+      recommendedBuilder = 'local-ai';
+      recommendedBuilderReason = 'Local AI is eligible for read-only review/planning/proof triage; mutation remains approval-gated.';
+    } else if (['verification', 'browser-proof', 'cleanup', 'planning'].includes(taskKind)) {
+      recommendedBuilder = 'operator';
+      recommendedBuilderReason = 'Operator proof collection or clarification is the safest next route for this non-implementation task.';
+    }
+  }
+  if (workbenchPreview.openClawPatchPlanner?.patchPlannerStatus === 'failed') {
+    recommendedBuilder = 'codex';
+    recommendedBuilderReason = workbenchPreview.openClawPatchPlanner.codexFallbackReason || 'OpenClaw patch planner failed; Codex is the fallback after operator approval.';
+    codexReason = recommendedBuilderReason;
   } else if (workbenchPreview.openClawPatchPlanner?.patchPlannerStatus === 'passed') {
     recommendedBuilder = 'operator';
-    codexReason = workbenchPreview.openClawPatchPlanner.codexFallbackReason;
+    recommendedBuilderReason = 'OpenClaw patch planner produced a read-only plan; operator approval is the next gate before mutation.';
+    codexReason = workbenchPreview.openClawPatchPlanner.codexFallbackReason || codexReason;
   } else if (workbenchPreview.codexFallbackStillNeeded === false && (workbenchPreview.localAiReviewResultPresent === true || workbenchPreview.openClawResearchResultPresent === true)) {
     recommendedBuilder = 'operator';
-    codexReason = workbenchPreview.codexFallbackReason;
+    recommendedBuilderReason = 'A safe workbench result is present; operator approval checklist is the next gate.';
+    codexReason = workbenchPreview.codexFallbackReason || codexReason;
   }
+  if (blockers.length > 0 && !implementationRequested) {
+    recommendedBuilder = 'hold';
+    recommendedBuilderReason = blockers[0];
+  }
+  const codexRequired = false;
   const zeroCostRouteAvailable = ['local-ai', 'openclaw', 'github-inspection', 'operator'].includes(recommendedBuilder)
     || localAiReady || openClawReady || githubReady;
   const safeReadOnlyActions = [
@@ -1047,12 +1101,12 @@ function buildBuilderMeshProjection({
   const nextBestAction = workspaceBlocksIgnition
     ? workbenchPreview.openClawWorkspaceHygiene.workspaceNextOperatorAction
     : (recommendedBuilder === 'hold'
-    ? 'Hold and resolve Builder Mesh blockers before routing more build work.'
+    ? 'Hold and resolve Builder Mesh blockers/proof gaps before routing more work.'
     : (recommendedBuilder === 'operator' && workbenchPreview.localAiReviewResultPresent === true
       ? 'Review the parsed Local AI Runner findings and use the Operator Approval Checklist before any patch or Codex fallback.'
-      : (recommendedBuilder === 'codex-fallback'
-      ? 'Copy the Codex Fallback Packet only after operator approval confirms zero-cost routes cannot safely implement.'
-      : `Copy the ${recommendedBuilder === 'github-inspection' ? 'GitHub Inspection Packet' : recommendedBuilder === 'openclaw' ? 'OpenClaw Research Packet' : recommendedBuilder === 'operator' ? 'Operator Approval Checklist' : 'Local AI Review Packet'} and keep the route read-only until mutation approval.`)));
+      : (recommendedBuilder === 'codex'
+      ? 'Copy the Codex Fallback Packet only after operator approval confirms no proven local mutation route exists.'
+      : `Copy the ${recommendedBuilder === 'openclaw' ? 'OpenClaw Source Pack Runner Packet' : recommendedBuilder === 'operator' ? 'Operator Approval Checklist' : 'Local AI Review Packet'} and keep the route read-only until mutation approval.`)));
   const builderWorkbenchProjection = buildBuilderWorkbenchProjection({
     builderMeshBase: { recommendedBuilder, codexReason },
     workbenchInput: builderWorkbenchInput,
@@ -1062,6 +1116,18 @@ function buildBuilderMeshProjection({
   const packetBase = {
     missionSummary: missionIntelligenceSummary.currentMissionSummary || missionBrainNextAction.missionObjective || 'Stephanos Zero-Cost Builder Mesh mission.',
     recommendedBuilder,
+    recommendedBuilderReason,
+    taskKind,
+    openClawEligible,
+    localAiEligible,
+    codexEligible,
+    operatorApprovalRequired: true,
+    mutationAllowed: false,
+    requiredProof,
+    missingProof: proofMissing,
+    copyablePacketKind: recommendedBuilder === 'openclaw' ? 'openClawSourcePackPacket' : recommendedBuilder === 'codex' ? 'codexFallbackPacket' : recommendedBuilder === 'operator' ? 'operatorApprovalChecklist' : recommendedBuilder === 'local-ai' ? 'localAiReviewPacket' : 'none',
+    copyablePacketAvailable: recommendedBuilder !== 'hold',
+    builderMeshProjectionSource: 'operator-relief-existing-truth-v1',
     zeroCostRouteAvailable,
     approvalRequiredBeforeMutation,
     proofRequiredBeforeMerge: requiredProof,
@@ -1072,18 +1138,30 @@ function buildBuilderMeshProjection({
   return {
     builderMeshStatus: blockers.length ? 'blocked-read-only' : 'ready-read-only',
     recommendedBuilder,
+    recommendedBuilderReason,
+    taskKind,
+    openClawEligible,
+    localAiEligible,
+    codexEligible,
+    operatorApprovalRequired: true,
+    mutationAllowed: false,
+    requiredProof,
+    missingProof: proofMissing,
+    copyablePacketKind: recommendedBuilder === 'openclaw' ? 'openClawSourcePackPacket' : recommendedBuilder === 'codex' ? 'codexFallbackPacket' : recommendedBuilder === 'operator' ? 'operatorApprovalChecklist' : recommendedBuilder === 'local-ai' ? 'localAiReviewPacket' : 'none',
+    copyablePacketAvailable: recommendedBuilder !== 'hold',
+    builderMeshProjectionSource: 'operator-relief-existing-truth-v1',
     zeroCostRouteAvailable,
     codexRequired,
     codexReason,
     localAiCanHelp,
-    openClawCanHelp: workbenchPreview.openClawWorkspaceHygiene?.workspaceBlocksIgnition === 'yes' ? 'blocked-workspace-dirt' : (workbenchPreview.openClawSanityGate?.sanityStatus === 'failed' ? 'blocked-sanity-failed' : (workbenchPreview.openClawSanityGate?.trustedForPatchPlanning === 'yes' ? openClawCanHelp : (workbenchPreview.openClawResearchResultPresent ? 'blocked-route-untrusted' : openClawCanHelp))),
+    openClawCanHelp: workbenchPreview.openClawWorkspaceHygiene?.workspaceBlocksIgnition === 'yes' ? 'blocked-workspace-dirt' : (openClawEligible ? 'yes-read-only-source-pack-research' : (workbenchPreview.openClawSanityGate?.sanityStatus === 'failed' ? 'blocked-sanity-failed' : (workbenchPreview.openClawResearchResultPresent ? 'blocked-route-untrusted' : openClawCanHelp))),
     githubCanHelp,
     safeReadOnlyActions,
     approvalRequiredBeforeMutation,
     proofRequiredBeforeMerge: requiredProof,
     blockers,
     warnings,
-    nextBestAction: builderWorkbenchProjection.nextBestAction || nextBestAction,
+    nextBestAction,
     builderWorkbenchProjection,
     openClawControlBridge,
     openClawWebResearchIntake: builderWorkbenchProjection.openClawWebResearchIntake,

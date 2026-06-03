@@ -23,6 +23,7 @@ function isDefaultWorkbenchMetadataValue(key = '', value = '') {
   if (key.startsWith('openclaw_patch_planner_')) return ['none', 'unknown', 'n/a', 'idle', 'no', '0', 'locked', 'forbidden', 'copy the openclaw patch planner prompt and run it externally/read-only.'].includes(normalized);
   if (key.startsWith('openclaw_workspace_')) return ['none', 'unknown', 'n/a', 'clean', 'no', '0', 'locked', 'no cleanup needed.'].includes(normalized);
   if (key.startsWith('openclaw_route_') || key.startsWith('openclaw_sanity_') || key.startsWith('openclaw_template_') || key.startsWith('openclaw_wrong_repo_') || key.startsWith('openclaw_exact_response_') || key === 'openclaw_cli_banner_ignored' || key === 'openclaw_dashboard_failure_examples' || key === 'openclaw_minimum_viable_route_recommendation' || key === 'openclaw_model_pin_mismatch_warnings' || key === 'openclaw_doctor_non_blocking_findings' || key === 'openclaw_trusted_for_builder_routing' || key.startsWith('openclaw_active_session_') || key === 'openclaw_plaintext_token_security_warning') return ['none', 'unknown', 'n/a', 'idle', 'no', 'paste an openclaw result to run the sanity gate before builder mesh routing.'].includes(normalized);
+  if (key.startsWith('builder_mesh_')) return ['none', 'unknown', 'n/a', 'idle', 'no', '0', 'hold', 'operator clarification is required before routing.', 'operator-relief-existing-truth-v1'].includes(normalized);
   if (key === 'builder_workbench_codex_fallback_reason') return normalized === 'none';
   if (key === 'builder_workbench_next_best_action') return normalized === 'copy local ai/openclaw packets and paste bounded read-only results.';
   if (['workbench_answer_context_used', 'local_ai_runner_response_retained', 'local_ai_runner_dispatch_attempted', 'local_ai_runner_request_sent', 'local_ai_runner_parse_attempted'].includes(key)) return normalized === 'no';
@@ -39,6 +40,26 @@ function pickWorkbenchTruth(key, defaultValue, ...candidates) {
   if (meaningful !== undefined && meaningful !== null && String(meaningful).trim() !== '') return meaningful;
   const present = candidates.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
   return present !== undefined ? present : defaultValue;
+}
+
+
+function buildBuilderMeshMetadataFromProjection(mesh = {}, source = 'none') {
+  const projection = mesh && typeof mesh === 'object' ? mesh : {};
+  const present = Object.keys(projection).length > 0;
+  const joinList = (value) => Array.isArray(value) ? value.join(' | ') : asText(value, 'none');
+  return {
+    builder_mesh_status: projection.builderMeshStatus || 'unavailable',
+    builder_mesh_recommended_builder: projection.recommendedBuilder || 'hold',
+    builder_mesh_reason: projection.recommendedBuilderReason || projection.codexReason || 'Operator clarification is required before routing.',
+    builder_mesh_task_kind: projection.taskKind || 'unknown',
+    builder_mesh_openclaw_eligible: projection.openClawEligible === true ? 'yes' : 'no',
+    builder_mesh_local_ai_eligible: projection.localAiEligible === true ? 'yes' : 'no',
+    builder_mesh_codex_eligible: projection.codexEligible === true ? 'yes' : 'no',
+    builder_mesh_required_proof: joinList(projection.requiredProof || projection.proofRequiredBeforeMerge || []),
+    builder_mesh_missing_proof: joinList(projection.missingProof || []),
+    builder_mesh_next_best_action: projection.nextBestAction || 'Hold for operator clarification.',
+    builder_mesh_projection_source: projection.builderMeshProjectionSource || (present ? source : 'none'),
+  };
 }
 
 function buildWorkbenchMetadataFromProjection(workbench = {}, source = 'none') {
@@ -168,6 +189,19 @@ function buildWorkbenchMetadataFromProjection(workbench = {}, source = 'none') {
   };
 }
 
+
+function resolveLiveBuilderMeshProjection(runtimeStatus = {}) {
+  const candidates = [
+    ['runtimeStatus.operatorReliefProjection.builderMeshProjection', runtimeStatus?.operatorReliefProjection?.builderMeshProjection],
+    ['runtimeStatus.runtimeContext.operatorReliefProjection.builderMeshProjection', runtimeStatus?.runtimeContext?.operatorReliefProjection?.builderMeshProjection],
+    ['runtimeStatus.missionState.operatorReliefProjection.builderMeshProjection', runtimeStatus?.missionState?.operatorReliefProjection?.builderMeshProjection],
+    ['runtimeStatus.inputMissionState.operatorReliefProjection.builderMeshProjection', runtimeStatus?.inputMissionState?.operatorReliefProjection?.builderMeshProjection],
+    ['runtimeStatus.builderMeshProjection', runtimeStatus?.builderMeshProjection],
+  ];
+  const found = candidates.find(([, value]) => value && typeof value === 'object' && Object.keys(value).length > 0);
+  return found ? { source: found[0], projection: found[1] } : { source: 'none', projection: {} };
+}
+
 function resolveLiveBuilderWorkbenchProjection(runtimeStatus = {}) {
   const candidates = [
     ['runtimeStatus.operatorReliefProjection.builderMeshProjection.builderWorkbenchProjection', runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection],
@@ -183,7 +217,20 @@ function resolveLiveBuilderWorkbenchProjection(runtimeStatus = {}) {
 function resolveBuilderWorkbenchSupportMetadata(executionMetadata = {}, runtimeStatus = {}) {
   const live = resolveLiveBuilderWorkbenchProjection(runtimeStatus);
   const liveMetadata = buildWorkbenchMetadataFromProjection(live.projection, live.source);
+  const liveMesh = resolveLiveBuilderMeshProjection(runtimeStatus);
+  const liveMeshMetadata = buildBuilderMeshMetadataFromProjection(liveMesh.projection, liveMesh.source);
   const fields = [
+    ['builder_mesh_status', 'unavailable'],
+    ['builder_mesh_recommended_builder', 'hold'],
+    ['builder_mesh_reason', 'Operator clarification is required before routing.'],
+    ['builder_mesh_task_kind', 'unknown'],
+    ['builder_mesh_openclaw_eligible', 'no'],
+    ['builder_mesh_local_ai_eligible', 'no'],
+    ['builder_mesh_codex_eligible', 'no'],
+    ['builder_mesh_required_proof', 'none'],
+    ['builder_mesh_missing_proof', 'none'],
+    ['builder_mesh_next_best_action', 'Hold for operator clarification.'],
+    ['builder_mesh_projection_source', 'none'],
     ['builder_workbench_status', 'unavailable'],
     ['builder_workbench_local_ai_review_result_present', 'no'],
     ['local_ai_runner_status', 'idle'],
@@ -307,7 +354,7 @@ function resolveBuilderWorkbenchSupportMetadata(executionMetadata = {}, runtimeS
   ];
   return Object.fromEntries(fields.map(([key, fallback]) => [
     key,
-    pickWorkbenchTruth(key, fallback, executionMetadata?.[key], liveMetadata[key]),
+    pickWorkbenchTruth(key, fallback, executionMetadata?.[key], liveMetadata[key], liveMeshMetadata[key]),
   ]));
 }
 
@@ -2786,6 +2833,17 @@ export function buildSupportSnapshot({
     `OpenClaw Patch Planner Codex Fallback Needed: ${asText(builderWorkbenchSupportMetadata.openclaw_patch_planner_codex_fallback_needed, 'unknown')}`,
     `OpenClaw Patch Planner Trusted For Patch: ${asText(builderWorkbenchSupportMetadata.openclaw_patch_planner_trusted_for_patch, 'no')}`,
     `OpenClaw Patch Planner Next Operator Action: ${asText(builderWorkbenchSupportMetadata.openclaw_patch_planner_next_operator_action, 'Copy the OpenClaw Patch Planner Prompt and run it externally/read-only.')}`,
+    `Builder Mesh Status: ${asText(builderWorkbenchSupportMetadata.builder_mesh_status, 'unavailable')}`,
+    `Builder Mesh Recommended Builder: ${asText(builderWorkbenchSupportMetadata.builder_mesh_recommended_builder, 'hold')}`,
+    `Builder Mesh Reason: ${asText(builderWorkbenchSupportMetadata.builder_mesh_reason, 'Operator clarification is required before routing.')}`,
+    `Builder Mesh Task Kind: ${asText(builderWorkbenchSupportMetadata.builder_mesh_task_kind, 'unknown')}`,
+    `Builder Mesh OpenClaw Eligible: ${asText(builderWorkbenchSupportMetadata.builder_mesh_openclaw_eligible, 'no')}`,
+    `Builder Mesh Local AI Eligible: ${asText(builderWorkbenchSupportMetadata.builder_mesh_local_ai_eligible, 'no')}`,
+    `Builder Mesh Codex Eligible: ${asText(builderWorkbenchSupportMetadata.builder_mesh_codex_eligible, 'no')}`,
+    `Builder Mesh Required Proof: ${asText(builderWorkbenchSupportMetadata.builder_mesh_required_proof, 'none')}`,
+    `Builder Mesh Missing Proof: ${asText(builderWorkbenchSupportMetadata.builder_mesh_missing_proof, 'none')}`,
+    `Builder Mesh Next Best Action: ${asText(builderWorkbenchSupportMetadata.builder_mesh_next_best_action, 'Hold for operator clarification.')}`,
+    `Builder Mesh Projection Source: ${asText(builderWorkbenchSupportMetadata.builder_mesh_projection_source, 'none')}`,
     `OpenClaw Source Pack Runner Status: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_runner_status, 'idle')}`,
     `OpenClaw Source Pack Route: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_route, 'stephanos-scout / llama3.2 CLI')}`,
     `OpenClaw Source Pack Model: ${asText(builderWorkbenchSupportMetadata.openclaw_source_pack_model, 'ollama/llama3.2:3b')}`,
