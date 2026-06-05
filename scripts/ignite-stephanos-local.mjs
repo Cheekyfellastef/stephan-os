@@ -1,10 +1,16 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
-import { buildOpenClawWorkspaceHygieneProjection, isSanctionedOpenClawWorkspacePath } from '../shared/agents/openClawWorkspaceHygiene.mjs';
+import {
+  OPENCLAW_WORKSPACE_DIRT_PATHS,
+  buildOpenClawWorkspaceHygieneProjection,
+  isOpenClawWorkspaceDirtPath,
+  isSanctionedOpenClawWorkspacePath,
+  resolveOpenClawWorkspaceRepairPath,
+} from '../shared/agents/openClawWorkspaceHygiene.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -416,6 +422,55 @@ export function evaluateGitStatusForIgnition(statusOutput) {
   return { entries, approvedEntries, runtimeStateEntries, transientRootDataEntries, dependencyEntries, forbiddenOrUnknownEntries, meaningfulEntries };
 }
 
+
+function isRootOpenClawWorkspaceDirtPath(path = '') {
+  const normalized = normalizeGitPath(path);
+  return !normalized.includes('/') && isOpenClawWorkspaceDirtPath(normalized);
+}
+
+function collectMovableRootOpenClawWorkspaceDirt(assessment) {
+  const paths = new Set();
+  for (const entry of assessment.entries || []) {
+    if (!entry.status.includes('?')) continue;
+    for (const path of entry.paths) {
+      if (isRootOpenClawWorkspaceDirtPath(path)) paths.add(normalizeGitPath(path));
+    }
+  }
+  return OPENCLAW_WORKSPACE_DIRT_PATHS.filter((path) => paths.has(path));
+}
+
+function uniqueDestinationPath(destinationRoot, path, pathExists) {
+  const basePath = resolve(destinationRoot, basename(path));
+  if (!pathExists(basePath)) return basePath;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return resolve(destinationRoot, `root-migration-${stamp}`, basename(path));
+}
+
+export function moveRootOpenClawWorkspaceDirt({
+  paths = [],
+  destinationRoot = resolveOpenClawWorkspaceRepairPath(),
+  pathExists = existsSync,
+  makeDir = mkdirSync,
+  movePath = renameSync,
+} = {}) {
+  const moved = [];
+  const skipped = [];
+  const normalizedPaths = [...new Set(paths.map((path) => normalizeGitPath(path)).filter(isRootOpenClawWorkspaceDirtPath))];
+  if (normalizedPaths.length === 0) return { destinationRoot, moved, skipped };
+  makeDir(destinationRoot, { recursive: true });
+  for (const path of normalizedPaths) {
+    if (!pathExists(path)) {
+      skipped.push({ path, reason: 'missing-at-repair-time' });
+      continue;
+    }
+    const destinationPath = uniqueDestinationPath(destinationRoot, path, pathExists);
+    makeDir(resolve(destinationPath, '..'), { recursive: true });
+    movePath(path, destinationPath);
+    moved.push({ path, destinationPath });
+  }
+  return { destinationRoot, moved, skipped };
+}
+
 function collectAllowlistedUntrackedPaths(statusAssessment) {
   return statusAssessment.entries
     .filter((entry) => entry.status.includes('?'))
@@ -776,9 +831,16 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
   const runtimeTargets = [...entryPaths.filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path)), ...runtimeDataPaths.filter((path) => isAllowlistedRootRuntimePath(path))];
   const sourceTargets = entryPaths.filter((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)));
   const dependencyTargets = entryPaths.filter((path) => isDependencyDirtPath(path));
-  const hardBlockTargets = [...entryPaths, ...runtimeDataPaths]
+  let hardBlockTargets = [...entryPaths, ...runtimeDataPaths]
     .filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK')
     .filter((path) => path !== 'data/' || runtimeDataPaths.some((candidate) => !isAllowlistedRootRuntimePath(candidate)));
+  const movableRootOpenClawDirt = collectMovableRootOpenClawWorkspaceDirt(assessment);
+  let openClawMoveResult = { destinationRoot: resolveOpenClawWorkspaceRepairPath(), moved: [], skipped: [] };
+  if (!dryRun && movableRootOpenClawDirt.length > 0) {
+    openClawMoveResult = moveRootOpenClawWorkspaceDirt({ paths: movableRootOpenClawDirt });
+    const movedRootPaths = new Set(openClawMoveResult.moved.map((entry) => entry.path));
+    hardBlockTargets = hardBlockTargets.filter((path) => !movedRootPaths.has(path));
+  }
 
   const trackedAuto = collectApprovedTrackedGeneratedRestorePaths(assessment);
   const trackedRuntime = assessment.runtimeStateEntries
@@ -815,6 +877,9 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     ignitionCleanlinessVerdict: blocked ? 'blocked' : 'ready',
     ignitionAutoCleaned: dryRun ? 0 : autoCleanTargets.length,
     ignitionRuntimeCleaned: dryRun ? 0 : runtimeCleaned,
+    ignitionOpenClawWorkspaceMoved: dryRun ? 0 : openClawMoveResult.moved.length,
+    ignitionOpenClawWorkspaceMoveDestination: openClawMoveResult.destinationRoot,
+    ignitionOpenClawWorkspaceMovedPaths: dryRun ? [] : openClawMoveResult.moved.map((entry) => entry.path),
     ignitionRuntimeCleanedPaths: dryRun ? [] : uniqueRuntimeTargets.slice(0, 10),
     ignitionAutoCleanedPaths: dryRun ? [] : [...new Set(autoCleanTargets)].slice(0, 10),
     ignitionSourceDirtCount: sourceTargets.length,
@@ -832,6 +897,8 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     openClawWorkspaceSanctionedAllowedPath: openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory,
     openClawWorkspaceRootDirtDetected: openClawWorkspaceHygiene.workspaceDirtDetected,
     openClawWorkspaceRootFilesStillBlockIgnition: openClawWorkspaceHygiene.workspaceBlocksIgnition,
+    openClawWorkspaceAutoMovedPaths: dryRun ? [] : openClawMoveResult.moved.map((entry) => entry.path),
+    openClawWorkspaceAutoMoveDestination: openClawMoveResult.destinationRoot,
     openClawWorkspaceMutationAuthority: openClawWorkspaceHygiene.workspaceMutationAuthority,
     openClawWorkspaceNextOperatorAction: openClawWorkspaceHygiene.workspaceNextOperatorAction,
     ignitionBlockedReason: uniqueHardBlockTargets.length > 0 ? 'Hard-block dirt detected' : (sourceTargets.length > 0 ? 'Source dirt detected' : ''),
@@ -839,9 +906,20 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     ignitionReadyToEnterCommandDeck: !blocked,
   };
   console.log(`[HOUSEKEEP] status=${JSON.stringify(status)}`);
+  if (openClawMoveResult.moved.length > 0) {
+    console.log(`[HOUSEKEEP] root OpenClaw files safely moved: ${openClawMoveResult.moved.map((entry) => entry.path).join(',')}`);
+    console.log(`[HOUSEKEEP] OpenClaw workspace destination: ${openClawMoveResult.destinationRoot}`);
+    console.log('[HOUSEKEEP] no OpenClaw memory was deleted');
+  }
   if (openClawWorkspaceHygiene.workspaceDirtDetected === 'yes') {
     console.log('[HOUSEKEEP] root OpenClaw workspace dirt detected');
-    console.log('[HOUSEKEEP] root OpenClaw files still block ignition');
+    if (openClawMoveResult.moved.length > 0) {
+      console.log(`[HOUSEKEEP] root OpenClaw files safely moved: ${openClawMoveResult.moved.map((entry) => entry.path).join(',')}`);
+      console.log(`[HOUSEKEEP] OpenClaw workspace destination: ${openClawMoveResult.destinationRoot}`);
+      console.log('[HOUSEKEEP] no OpenClaw memory was deleted');
+    } else {
+      console.log('[HOUSEKEEP] root OpenClaw files still block ignition');
+    }
     console.log(`[HOUSEKEEP] sanctioned allowed path: ${openClawWorkspaceHygiene.workspaceSafeRuntimeDirectory}`);
     console.log(`[HOUSEKEEP] copyable migration command: ${openClawWorkspaceHygiene.workspaceRecommendedMigration}`);
   }

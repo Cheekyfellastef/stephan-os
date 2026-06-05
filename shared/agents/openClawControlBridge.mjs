@@ -1,3 +1,5 @@
+import { OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY, OPENCLAW_WORKSPACE_SAFE_START_COMMAND_PREFIX } from './openClawWorkspaceHygiene.mjs';
+
 const VALID_GATEWAY_STATUSES = new Set(['unknown', 'running', 'stopped', 'unreachable']);
 const VALID_DASHBOARD_STATUSES = new Set(['unknown', 'openable', 'unavailable']);
 const VALID_PROOF_STATUSES = new Set(['unknown', 'pending', 'pass', 'fail']);
@@ -14,14 +16,15 @@ export const OPENCLAW_CONTROL_BRIDGE_DEFAULTS = Object.freeze({
   autoStart: 'forbidden',
   operatorApprovalRequired: 'yes',
   dashboardTemporaryCockpit: 'yes',
-  startGatewayCommand: 'openclaw gateway --host 127.0.0.1 --port 18789',
+  openClawWorkspacePath: OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY,
+  startGatewayCommand: `${OPENCLAW_WORKSPACE_SAFE_START_COMMAND_PREFIX} openclaw gateway --host 127.0.0.1 --port 18789`,
   stopOpenClawCommand: 'Stop the local OpenClaw Gateway from the terminal where it is running with Ctrl+C; do not install Windows auto-start or scheduled service behavior.',
   lastProofExpectedText: 'OpenClaw one-shot local route works.',
   lastProofObservedText: '',
 });
 
 export function buildOpenClawLocalScoutProofCommand({ sessionKeyPlaceholder = 'agent:stephanos-scout:proof-<fresh>' } = {}) {
-  return `openclaw agent --local --agent stephanos-scout --model ollama/llama3.2:3b --session-key ${sessionKeyPlaceholder} -m "Reply with exactly this sentence and nothing else: ${OPENCLAW_CONTROL_BRIDGE_DEFAULTS.lastProofExpectedText}"`;
+  return `${OPENCLAW_WORKSPACE_SAFE_START_COMMAND_PREFIX} openclaw agent --local --agent stephanos-scout --model ollama/llama3.2:3b --session-key ${sessionKeyPlaceholder} -m "Reply with exactly this sentence and nothing else: ${OPENCLAW_CONTROL_BRIDGE_DEFAULTS.lastProofExpectedText}"`;
 }
 
 function pickEnum(value, allowed, fallback) {
@@ -54,6 +57,7 @@ export function buildOpenClawControlBridgeProjection(input = {}) {
     dashboardUrl: String(input.dashboardUrl || OPENCLAW_CONTROL_BRIDGE_DEFAULTS.dashboardUrl).trim(),
     expectedLocalModels: asArray(input.expectedLocalModels, OPENCLAW_CONTROL_BRIDGE_DEFAULTS.expectedLocalModels),
     expectedAgents: asArray(input.expectedAgents, OPENCLAW_CONTROL_BRIDGE_DEFAULTS.expectedAgents),
+    openClawWorkspacePath: OPENCLAW_CONTROL_BRIDGE_DEFAULTS.openClawWorkspacePath,
     gatewayStatus: pickEnum(input.gatewayStatus, VALID_GATEWAY_STATUSES, OPENCLAW_CONTROL_BRIDGE_DEFAULTS.gatewayStatus),
     dashboardStatus: pickEnum(input.dashboardStatus, VALID_DASHBOARD_STATUSES, OPENCLAW_CONTROL_BRIDGE_DEFAULTS.dashboardStatus),
     localScoutProofStatus,
@@ -69,6 +73,7 @@ export function buildOpenClawControlBridgeProjection(input = {}) {
     warnings,
     isBuilder: false,
     builderWarning: 'OpenClaw is not a builder yet; it remains a read-only scout until proof and approval gates exist.',
+    workspaceLocationGuarantee: `OpenClaw commands create and enter ${OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY} before launch so runtime files never use the repo root.`,
     noAutoStartGuarantee: 'No Windows auto-start: operator starts and stops OpenClaw manually.',
   };
 }
