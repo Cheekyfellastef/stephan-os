@@ -352,3 +352,18 @@ test('protected canon: Builder Mesh V1 remains a projection and does not create 
   assert.equal((missionConsoleSource.match(/panelId="missionConsoleBuilderMeshPanel"/g) || []).length, 1);
   assert.match(missionConsoleSource, /title="Zero-Cost Builder Mesh V1"/);
 });
+
+test('protected canon: Flywheel pane uses existing pane wall without duplicating Command Deck surfaces', async () => {
+  const appSource = await read(appPath);
+  const flywheelSource = await read(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url));
+
+  assert.match(appSource, /import FlywheelPanel from '\.\/components\/FlywheelPanel\.jsx';/);
+  assert.match(appSource, /id: 'flywheelPanel'[^\n]*render: \(\) => <FlywheelPanel \/>/);
+  assert.match(appSource, /orderedPanes\.map\(\(pane\) => \{/);
+  assert.match(appSource, /<StephanosSurfacePane/);
+  assert.match(flywheelSource, /import CollapsiblePanel from '\.\/CollapsiblePanel';/);
+  assert.match(flywheelSource, /panelId="flywheelPanel"/);
+  assert.doesNotMatch(flywheelSource, /<AIConsole\b/);
+  assert.doesNotMatch(flywheelSource, /commandDeck|Command Deck/);
+  assert.doesNotMatch(flywheelSource, /createRoot|ReactDOM|BrowserRouter|HashRouter/);
+});

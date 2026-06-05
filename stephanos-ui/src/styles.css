@@ -5039,3 +5039,85 @@ pre {
   padding: 0.45rem 0.6rem;
   background: rgba(46, 204, 113, 0.12);
 }
+
+.flywheel-panel .panel-body {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.flywheel-panel__intro {
+  border: 1px solid rgba(94, 158, 236, 0.36);
+  background: rgba(6, 16, 33, 0.82);
+  border-radius: 12px;
+  padding: 0.8rem;
+}
+
+.flywheel-panel__intro p {
+  margin: 0;
+}
+
+.flywheel-panel__intro p + p {
+  margin-top: 0.45rem;
+}
+
+.flywheel-state-grid,
+.flywheel-metrics-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+}
+
+.flywheel-state-card,
+.flywheel-metric-card {
+  min-width: 0;
+  border: 1px solid rgba(71, 155, 255, 0.28);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(8, 19, 37, 0.9), rgba(4, 12, 24, 0.88));
+  padding: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.flywheel-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.55rem;
+}
+
+.flywheel-card-header h3,
+.flywheel-metric-card p {
+  margin: 0;
+}
+
+.flywheel-card-header h3 {
+  font-size: 0.98rem;
+}
+
+.flywheel-card-header span,
+.flywheel-metric-label {
+  color: #8cb9df;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.flywheel-state-card p {
+  margin: 0;
+  color: #c6d9ef;
+}
+
+.flywheel-metric-card {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.flywheel-metric-card strong {
+  color: #dff4ff;
+  font-size: 1.05rem;
+}
+
+.flywheel-metric-card p {
+  color: #a8b8d8;
+  font-size: 0.86rem;
+}

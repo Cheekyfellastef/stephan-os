@@ -11,6 +11,7 @@ import ProposalPanel from './components/ProposalPanel';
 import ActivityPanel from './components/ActivityPanel';
 import RoadmapPanel from './components/RoadmapPanel';
 import MissionDashboardPanel from './components/MissionDashboardPanel';
+import FlywheelPanel from './components/FlywheelPanel.jsx';
 import IntentEnginePanel from './components/IntentEnginePanel.jsx';
 import SimulationHistoryPanel from './components/SimulationHistoryPanel';
 import RuntimeFingerprintPanel from './components/RuntimeFingerprintPanel';
@@ -1573,6 +1574,7 @@ export default function App() {
       },
     },
     { id: 'missionFingerprintPanel', render: () => <RuntimeFingerprintPanel runtimeFingerprint={runtimeFingerprint} /> },
+    { id: 'flywheelPanel', title: 'Flywheel', className: 'pane-span-2', render: () => <FlywheelPanel /> },
     {
       id: 'missionPacketQueuePanel',
       className: 'pane-span-2',
