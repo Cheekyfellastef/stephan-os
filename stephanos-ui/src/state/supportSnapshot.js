@@ -5,6 +5,7 @@ import { parsePrReferenceFromPrompt } from './githubPrEvidenceProvider.js';
 import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
 import { diagnoseProviderDrift } from './providerRoutingTruth.js';
 import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
+import { derivePacketBayProjection } from './packetBayProjection.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -1385,6 +1386,15 @@ export function buildSupportSnapshot({
     ? runtimeStatus.lastExecutionMetadata
     : {};
   const builderWorkbenchSupportMetadata = resolveBuilderWorkbenchSupportMetadata(executionMetadata, runtimeStatus);
+  const livePacketBayProjection = runtimeStatus?.operatorReliefProjection?.packetBayProjection
+    || runtimeStatus?.runtimeContext?.operatorReliefProjection?.packetBayProjection
+    || runtimeStatus?.missionState?.operatorReliefProjection?.packetBayProjection
+    || runtimeStatus?.inputMissionState?.operatorReliefProjection?.packetBayProjection
+    || null;
+  const packetBayProjection = livePacketBayProjection && typeof livePacketBayProjection === 'object'
+    ? livePacketBayProjection
+    : derivePacketBayProjection({ builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection });
+  const packetBayFields = packetBayProjection.supportSnapshotFields || {};
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
@@ -2744,6 +2754,21 @@ export function buildSupportSnapshot({
     `Builder Mesh Metadata Source: ${asText(executionMetadata?.builder_mesh_metadata_source, 'none')}`,
     `Builder Mesh Deterministic Answer Used: ${asText(executionMetadata?.builder_mesh_deterministic_answer_used || executionMetadata?.builder_mesh_answer_used_live_projection, 'no')}`,
     `Builder Mesh Projection Drop Boundary: ${asText(executionMetadata?.builder_mesh_projection_drop_boundary, 'none')}`,
+    `Packet Bay Status: ${asText(packetBayFields.packet_bay_status, 'empty-clean')}`,
+    `Packet Inbox Count: ${asText(packetBayFields.packet_inbox_count, '0')}`,
+    `Packet Outbox Count: ${asText(packetBayFields.packet_outbox_count, '0')}`,
+    `Packet Ready To Copy Count: ${asText(packetBayFields.packet_ready_to_copy_count, '0')}`,
+    `Packet Awaiting Result Count: ${asText(packetBayFields.packet_awaiting_result_count, '0')}`,
+    `Packet Blocked Count: ${asText(packetBayFields.packet_blocked_count, '0')}`,
+    `Packet Recommended Next Action: ${asText(packetBayFields.packet_recommended_next_action, 'No packets waiting.')}`,
+    `Packet Projection Source: ${asText(packetBayFields.packet_projection_source, 'none')}`,
+    `Packet Mutation Allowed: ${asText(packetBayFields.packet_mutation_allowed, 'no')}`,
+    `Packet OpenClaw Mutation Locked: ${asText(packetBayFields.packet_openclaw_mutation_locked, 'yes')}`,
+    `Packet Codex Auto Dispatch Allowed: ${asText(packetBayFields.packet_codex_auto_dispatch_allowed, 'no')}`,
+    `Packet Latest Ready Target: ${asText(packetBayFields.packet_latest_ready_target, 'none')}`,
+    `Packet Latest Ready Kind: ${asText(packetBayFields.packet_latest_ready_kind, 'none')}`,
+    `Packet Latest Ready ID: ${asText(packetBayFields.packet_latest_ready_id, 'none')}`,
+    `Packet Missing Proof Summary: ${asText(packetBayFields.packet_missing_proof_summary, 'none')}`,
     `OpenClaw Control Bridge Status: ${asText(openClawControlBridge.bridgeStatus, 'manual-control-readonly')}`,
     `OpenClaw Gateway Target: ${asText(openClawControlBridge.gatewayTarget, 'ws://127.0.0.1:18789')}`,
     `OpenClaw Dashboard URL: ${asText(openClawControlBridge.dashboardUrl, 'http://127.0.0.1:18789/')}`,

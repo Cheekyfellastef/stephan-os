@@ -233,6 +233,7 @@ function MissionConsoleTile({
   const { copyState: openClawWorkspaceCleanupCopyState, setCopyState: setOpenClawWorkspaceCleanupCopyState } = useClipboardButtonState();
   const { copyState: githubPrInspectionPacketCopyState, setCopyState: setGithubPrInspectionPacketCopyState } = useClipboardButtonState();
   const { copyState: codexFallbackPacketCopyState, setCopyState: setCodexFallbackPacketCopyState } = useClipboardButtonState();
+  const { copyState: packetBayCopyState, setCopyState: setPacketBayCopyState } = useClipboardButtonState();
   const { copyState: localAiRunnerRawCopyState, setCopyState: setLocalAiRunnerRawCopyState } = useClipboardButtonState();
   const { copyState: perfCopyState, setCopyState: setPerfCopyState } = useClipboardButtonState();
   const [input, setInput] = useState('');
@@ -1672,6 +1673,44 @@ function MissionConsoleTile({
                 <li><strong>Blockers / warnings:</strong> {(operatorReliefProjection.builderMeshProjection?.blockers || []).length} blocker(s) · {(operatorReliefProjection.builderMeshProjection?.warnings || []).length} warning(s)</li>
                 <li><strong>Approval before mutation:</strong> {operatorReliefProjection.builderMeshProjection?.approvalRequiredBeforeMutation ? 'required' : 'not reported'}</li>
               </ul>
+              <section className="mission-console__packet-bay" data-testid="packet-inbox-outbox-bay" data-packet-bay-surface="builder-mesh">
+                <h6>Packet Inbox / Outbox V1</h6>
+                <ul className="mission-console__status-list">
+                  <li><strong>Packet Bay Status:</strong> {operatorReliefProjection.packetBayProjection?.packetBayStatus || 'empty-clean'}</li>
+                  <li><strong>Counts:</strong> Inbox {operatorReliefProjection.packetBayProjection?.counts?.inbox || 0} · Outbox {operatorReliefProjection.packetBayProjection?.counts?.outbox || 0} · Ready {operatorReliefProjection.packetBayProjection?.counts?.readyToCopy || 0} · Blocked {operatorReliefProjection.packetBayProjection?.counts?.blocked || 0}</li>
+                  <li><strong>Mutation authority:</strong> {operatorReliefProjection.packetBayProjection?.mutationAllowed ? 'allowed' : 'locked'} · OpenClaw locked {operatorReliefProjection.packetBayProjection?.openClawMutationLocked ? 'yes' : 'no'} · Codex auto-dispatch {operatorReliefProjection.packetBayProjection?.codexAutoDispatchAllowed ? 'yes' : 'no'}</li>
+                  <li><strong>Recommended next action:</strong> {operatorReliefProjection.packetBayProjection?.recommendedNextAction || operatorReliefProjection.builderMeshProjection?.nextBestAction || 'No packets waiting.'}</li>
+                </ul>
+                <div className="mission-console__packet-sections">
+                  {['inbox', 'outbox'].map((direction) => {
+                    const packets = operatorReliefProjection.packetBayProjection?.[direction] || [];
+                    return (
+                      <section key={direction} className={`mission-console__packet-section mission-console__packet-section--${direction}`} data-testid={`packet-${direction}-section`}>
+                        <h6>{direction === 'inbox' ? 'Inbox' : 'Outbox'}</h6>
+                        {packets.length === 0 ? (
+                          <p className="mission-console__helper-text">No packets waiting. Next recommended route: {operatorReliefProjection.builderMeshProjection?.recommendedBuilder || 'hold'} — {operatorReliefProjection.builderMeshProjection?.nextBestAction || 'Review Builder Mesh truth.'}</p>
+                        ) : packets.map((packet) => (
+                          <article key={packet.id} className="mission-console__packet-card" data-testid="packet-card" data-packet-id={packet.id}>
+                            <h6>{packet.title}</h6>
+                            <ul className="mission-console__status-list">
+                              <li><strong>Target / kind / status:</strong> {packet.target} · {packet.kind} · {packet.status}</li>
+                              <li><strong>Reason:</strong> {packet.reason}</li>
+                              <li><strong>Summary:</strong> {packet.summary}</li>
+                              <li><strong>Required proof:</strong> {(packet.requiredProof || []).join(' · ') || 'none'}</li>
+                              <li><strong>Missing proof:</strong> {(packet.missingProof || []).join(' · ') || 'none'}</li>
+                              <li><strong>Next action:</strong> {packet.nextAction}</li>
+                              <li><strong>Approval / mutation:</strong> {packet.approvalRequired ? 'approval required' : 'approval not reported'} · mutation {packet.mutationAllowed ? 'allowed' : 'locked'}</li>
+                            </ul>
+                            <button type="button" className={`status-panel-copy-button ${packetBayCopyState}`} onClick={() => copyToClipboard(packet.copyText || '', setPacketBayCopyState, `MissionConsoleTile.copyPacketBay.${packet.id}`)}>
+                              {packetBayCopyState === COPY_STATE.SUCCESS ? 'Packet Text Copied' : packetBayCopyState === COPY_STATE.FAILURE ? 'Copy Packet Text failed' : 'Copy Packet Text'}
+                            </button>
+                          </article>
+                        ))}
+                      </section>
+                    );
+                  })}
+                </div>
+              </section>
               <CollapsiblePanel panelId="missionConsoleBuilderWorkbenchPanel" title="Zero-Cost Builder Workbench V1" titleAs="h6" description={operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.workbenchStatus || 'ready'} isOpen={uiLayout.missionConsoleBuilderWorkbenchPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleBuilderWorkbenchPanel')}>
                 <ul className="mission-console__status-list">
                   <li><strong>Builder Workbench Status:</strong> {operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.workbenchStatus || 'unknown'}</li>
