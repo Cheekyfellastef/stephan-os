@@ -114,3 +114,16 @@ test('Zero-Cost Builder Mesh is hosted inside existing Builder Harness panel, no
   assert.match(source, /copyBuilderWorkbenchCodexFallbackPacket/);
   assert.match(source, /copyBuilderWorkbenchOperatorApprovalChecklist/);
 });
+
+test('Mission Console Packet Inbox Outbox renders empty state and ready packet card wiring', () => {
+  assert.match(source, /Packet Inbox \/ Outbox V1/);
+  assert.match(source, /data-testid="packet-inbox-outbox-bay"/);
+  assert.match(source, /data-testid={`packet-\$\{direction\}-section`}/);
+  assert.match(source, /No packets waiting\. Next recommended route:/);
+  assert.match(source, /data-testid="packet-card"/);
+  assert.match(source, /Target \/ kind \/ status:/);
+  assert.match(source, /Required proof:/);
+  assert.match(source, /Missing proof:/);
+  assert.match(source, /Copy Packet Text/);
+  assert.match(source, /MissionConsoleTile\.copyPacketBay/);
+});

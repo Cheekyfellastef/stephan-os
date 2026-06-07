@@ -367,3 +367,17 @@ test('protected canon: Flywheel pane uses existing pane wall without duplicating
   assert.doesNotMatch(flywheelSource, /commandDeck|Command Deck/);
   assert.doesNotMatch(flywheelSource, /createRoot|ReactDOM|BrowserRouter|HashRouter/);
 });
+
+test('protected canon: Packet Inbox Outbox V1 extends Builder Mesh without duplicate Mission Console or pane system', async () => {
+  const missionConsoleSource = await read(missionConsoleTilePath);
+  const packetProjectionSource = await read(new URL('../stephanos-ui/src/state/packetBayProjection.js', import.meta.url));
+  assert.match(packetProjectionSource, /export function derivePacketBayProjection/);
+  assert.match(packetProjectionSource, /mutationAllowed: false/);
+  assert.match(packetProjectionSource, /codexAutoDispatchAllowed: false/);
+  assert.match(packetProjectionSource, /openClawMutationLocked: true/);
+  assert.equal((missionConsoleSource.match(/Packet Inbox \/ Outbox V1/g) || []).length, 1);
+  assert.equal((missionConsoleSource.match(/data-testid="packet-inbox-outbox-bay"/g) || []).length, 1);
+  assert.match(missionConsoleSource, /panelId = 'missionConsolePanel'/);
+  assert.equal((missionConsoleSource.match(/panelId="missionConsoleBuilderMeshPanel"/g) || []).length, 1);
+  assert.doesNotMatch(missionConsoleSource, /missionConsolePacketBayPanel/);
+});

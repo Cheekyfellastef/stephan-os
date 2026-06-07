@@ -5121,3 +5121,30 @@ pre {
   color: #a8b8d8;
   font-size: 0.86rem;
 }
+
+.mission-console__packet-bay {
+  margin: 0.5rem 0 0.65rem;
+  padding: 0.55rem;
+  border: 1px solid rgba(118, 154, 216, 0.24);
+  border-radius: 12px;
+  background: rgba(9, 18, 34, 0.46);
+}
+
+.mission-console__packet-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.55rem;
+}
+
+.mission-console__packet-section,
+.mission-console__packet-card {
+  min-width: 0;
+  padding: 0.45rem;
+  border: 1px solid rgba(148, 180, 235, 0.18);
+  border-radius: 10px;
+  background: rgba(3, 10, 20, 0.36);
+}
+
+.mission-console__packet-card + .mission-console__packet-card {
+  margin-top: 0.45rem;
+}

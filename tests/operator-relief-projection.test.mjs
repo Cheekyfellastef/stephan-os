@@ -837,3 +837,111 @@ test('Builder Mesh V1 unknown task recommends hold/operator clarification', () =
   assert.equal(r.builderMeshProjection.recommendedBuilder, 'hold');
   assert.match(r.builderMeshProjection.recommendedBuilderReason, /operator clarification/i);
 });
+
+test('Packet Bay V1 projection returns empty clean state when no packet sources exist', async () => {
+  const { derivePacketBayProjection } = await import('../stephanos-ui/src/state/packetBayProjection.js');
+  const bay = derivePacketBayProjection({});
+  assert.equal(bay.packetBayStatus, 'empty-clean');
+  assert.equal(bay.counts.inbox, 0);
+  assert.equal(bay.counts.outbox, 0);
+  assert.equal(bay.mutationAllowed, false);
+  assert.equal(bay.openClawMutationLocked, true);
+});
+
+test('Packet Bay V1 Builder Mesh local-ai verification recommendation creates a local-ai outbox packet', async () => {
+  const { derivePacketBayProjection } = await import('../stephanos-ui/src/state/packetBayProjection.js');
+  const bay = derivePacketBayProjection({
+    builderMeshProjection: {
+      recommendedBuilder: 'local-ai',
+      recommendedBuilderReason: 'Builder Mesh recommends local-ai read-only verification.',
+      copyablePacketAvailable: true,
+      taskKind: 'verification',
+      requiredProof: ['support snapshot'],
+      missingProof: ['browser proof'],
+      nextBestAction: 'Copy Local AI Review Packet and keep it read-only.',
+    },
+  });
+  assert.equal(bay.counts.outbox, 1);
+  assert.equal(bay.outbox[0].target, 'local-ai');
+  assert.equal(bay.outbox[0].status, 'ready-to-copy');
+  assert.match(bay.outbox[0].copyText, /Local AI read-only verification/);
+});
+
+test('Packet Bay V1 OpenClaw Source Pack needs-output creates source-pack operator next-action packet', async () => {
+  const { derivePacketBayProjection } = await import('../stephanos-ui/src/state/packetBayProjection.js');
+  const bay = derivePacketBayProjection({
+    builderMeshProjection: {
+      recommendedBuilder: 'hold',
+      builderWorkbenchProjection: { openClawSourcePackRunner: { sourcePackStatus: 'needs-output', nextOperatorAction: 'Paste output and judge.' } },
+    },
+  });
+  assert.equal(bay.counts.inbox, 1);
+  assert.equal(bay.inbox[0].target, 'operator');
+  assert.equal(bay.inbox[0].kind, 'source-pack');
+  assert.equal(bay.inbox[0].mutationAllowed, false);
+});
+
+test('Packet Bay V1 keeps OpenClaw mutation locked and Codex copyable without auto-dispatch', async () => {
+  const { derivePacketBayProjection } = await import('../stephanos-ui/src/state/packetBayProjection.js');
+  const bay = derivePacketBayProjection({
+    builderMeshProjection: {
+      recommendedBuilder: 'codex',
+      copyablePacketAvailable: true,
+      taskKind: 'implementation',
+      codexReason: 'Codex fallback after operator approval.',
+      requiredProof: ['npm run stephanos:verify'],
+    },
+  });
+  assert.equal(bay.openClawMutationLocked, true);
+  assert.equal(bay.mutationAllowed, false);
+  assert.equal(bay.codexAutoDispatchAllowed, false);
+  assert.equal(bay.outbox[0].target, 'codex');
+  assert.equal(bay.outbox[0].autoDispatchAllowed, false);
+  assert.match(bay.outbox[0].copyText, /Auto-dispatch: forbidden/);
+});
+
+test('Packet Bay V1 packet IDs are stable and copy text has no placeholder leakage', async () => {
+  const { derivePacketBayProjection } = await import('../stephanos-ui/src/state/packetBayProjection.js');
+  const input = { builderMeshProjection: { recommendedBuilder: 'local-ai', copyablePacketAvailable: true, taskKind: 'proof', recommendedBuilderReason: 'same truth' } };
+  const first = derivePacketBayProjection(input);
+  const second = derivePacketBayProjection(input);
+  assert.equal(first.outbox[0].id, second.outbox[0].id);
+  assert.doesNotMatch(first.outbox[0].copyText, /<your answer>|placeholder|TODO_PLACEHOLDER/i);
+});
+
+test('Packet Bay V1 OpenClaw recommendation creates read-only openclaw outbox packet with mutation locked', async () => {
+  const { derivePacketBayProjection } = await import('../stephanos-ui/src/state/packetBayProjection.js');
+  const bay = derivePacketBayProjection({
+    builderMeshProjection: {
+      recommendedBuilder: 'openclaw',
+      recommendedBuilderReason: 'Clean bounded Source Pack proof allows read-only research/intake only.',
+      copyablePacketAvailable: true,
+      taskKind: 'research',
+      requiredProof: ['source-pack-runner-judged'],
+      builderWorkbenchProjection: { activePacketTarget: 'openclaw', activePacketType: 'openclaw-source-pack-runner' },
+    },
+  });
+  assert.equal(bay.counts.outbox, 1);
+  assert.equal(bay.outbox[0].target, 'openclaw');
+  assert.equal(bay.outbox[0].kind, 'source-pack');
+  assert.equal(bay.outbox[0].status, 'awaiting-result');
+  assert.equal(bay.outbox[0].mutationAllowed, false);
+  assert.match(bay.outbox[0].copyText, /Mutation authority|mutationAuthority/);
+});
+
+test('Packet Bay V1 operator recommendation creates inbox approval review packet', async () => {
+  const { derivePacketBayProjection } = await import('../stephanos-ui/src/state/packetBayProjection.js');
+  const bay = derivePacketBayProjection({
+    builderMeshProjection: {
+      recommendedBuilder: 'operator',
+      recommendedBuilderReason: 'High-risk work requires operator approval.',
+      copyablePacketAvailable: true,
+      missingProof: ['operator approval'],
+    },
+  });
+  assert.equal(bay.counts.inbox, 1);
+  assert.equal(bay.inbox[0].target, 'operator');
+  assert.equal(bay.inbox[0].status, 'draft');
+  assert.equal(bay.inbox[0].approvalRequired, true);
+  assert.equal(bay.inbox[0].mutationAllowed, false);
+});

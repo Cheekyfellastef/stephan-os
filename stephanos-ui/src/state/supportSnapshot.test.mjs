@@ -4125,3 +4125,46 @@ test('buildSupportSnapshot exposes Builder Mesh V1 proof-aware routing fields fr
   assert.match(snapshot, /Builder Mesh Next Best Action: Copy the OpenClaw Source Pack Runner Packet and keep the route read-only\./);
   assert.match(snapshot, /Builder Mesh Projection Source: operator-relief-existing-truth-v1/);
 });
+
+test('buildSupportSnapshot exposes Packet Bay fields from live projection', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjection: {
+        packetBayProjection: {
+          supportSnapshotFields: {
+            packet_bay_status: 'active',
+            packet_inbox_count: '1',
+            packet_outbox_count: '2',
+            packet_ready_to_copy_count: '1',
+            packet_awaiting_result_count: '0',
+            packet_blocked_count: '1',
+            packet_recommended_next_action: 'Copy the local-ai packet.',
+            packet_projection_source: 'operator-relief-builder-mesh-source-truth-v1',
+            packet_mutation_allowed: 'no',
+            packet_openclaw_mutation_locked: 'yes',
+            packet_codex_auto_dispatch_allowed: 'no',
+            packet_latest_ready_target: 'local-ai',
+            packet_latest_ready_kind: 'proof',
+            packet_latest_ready_id: 'packet-outbox-local-ai-proof-builder-mesh-local-ai-recommendation-same-truth',
+            packet_missing_proof_summary: 'browser proof',
+          },
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /Packet Bay Status: active/);
+  assert.match(snapshot, /Packet Inbox Count: 1/);
+  assert.match(snapshot, /Packet Outbox Count: 2/);
+  assert.match(snapshot, /Packet Ready To Copy Count: 1/);
+  assert.match(snapshot, /Packet Awaiting Result Count: 0/);
+  assert.match(snapshot, /Packet Blocked Count: 1/);
+  assert.match(snapshot, /Packet Recommended Next Action: Copy the local-ai packet\./);
+  assert.match(snapshot, /Packet Projection Source: operator-relief-builder-mesh-source-truth-v1/);
+  assert.match(snapshot, /Packet Mutation Allowed: no/);
+  assert.match(snapshot, /Packet OpenClaw Mutation Locked: yes/);
+  assert.match(snapshot, /Packet Codex Auto Dispatch Allowed: no/);
+  assert.match(snapshot, /Packet Latest Ready Target: local-ai/);
+  assert.match(snapshot, /Packet Latest Ready Kind: proof/);
+  assert.match(snapshot, /Packet Latest Ready ID: packet-outbox-local-ai-proof-builder-mesh-local-ai-recommendation-same-truth/);
+  assert.match(snapshot, /Packet Missing Proof Summary: browser proof/);
+});
