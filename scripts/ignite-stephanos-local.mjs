@@ -423,9 +423,13 @@ export function evaluateGitStatusForIgnition(statusOutput) {
 }
 
 
+function normalizeRootCandidatePath(path = '') {
+  return normalizeGitPath(path).replace(/\\/g, '/').replace(/\/+$/g, '');
+}
+
 function isRootOpenClawWorkspaceDirtPath(path = '') {
-  const normalized = normalizeGitPath(path);
-  return !normalized.includes('/') && isOpenClawWorkspaceDirtPath(normalized);
+  const normalized = normalizeRootCandidatePath(path);
+  return normalized.length > 0 && !normalized.includes('/') && isOpenClawWorkspaceDirtPath(normalized);
 }
 
 function collectMovableRootOpenClawWorkspaceDirt(assessment) {
@@ -433,17 +437,26 @@ function collectMovableRootOpenClawWorkspaceDirt(assessment) {
   for (const entry of assessment.entries || []) {
     if (!entry.status.includes('?')) continue;
     for (const path of entry.paths) {
-      if (isRootOpenClawWorkspaceDirtPath(path)) paths.add(normalizeGitPath(path));
+      if (isRootOpenClawWorkspaceDirtPath(path)) paths.add(normalizeRootCandidatePath(path));
     }
   }
   return OPENCLAW_WORKSPACE_DIRT_PATHS.filter((path) => paths.has(path));
 }
 
-function uniqueDestinationPath(destinationRoot, path, pathExists) {
-  const basePath = resolve(destinationRoot, basename(path));
+function formatMigrationStamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function uniqueMigrationDirectory(destinationRoot, pathExists, now = () => new Date()) {
+  const stamp = formatMigrationStamp(now());
+  const basePath = resolve(destinationRoot, `root-migration-${stamp}`);
   if (!pathExists(basePath)) return basePath;
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  return resolve(destinationRoot, `root-migration-${stamp}`, basename(path));
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${basePath}-${index}`;
+    if (!pathExists(candidate)) return candidate;
+  }
+  throw new Error(`unable to allocate unique OpenClaw workspace migration directory under ${destinationRoot}`);
 }
 
 export function moveRootOpenClawWorkspaceDirt({
@@ -452,23 +465,25 @@ export function moveRootOpenClawWorkspaceDirt({
   pathExists = existsSync,
   makeDir = mkdirSync,
   movePath = renameSync,
+  now = () => new Date(),
 } = {}) {
   const moved = [];
   const skipped = [];
-  const normalizedPaths = [...new Set(paths.map((path) => normalizeGitPath(path)).filter(isRootOpenClawWorkspaceDirtPath))];
-  if (normalizedPaths.length === 0) return { destinationRoot, moved, skipped };
+  const normalizedPaths = [...new Set(paths.map((path) => normalizeRootCandidatePath(path)).filter(isRootOpenClawWorkspaceDirtPath))];
+  if (normalizedPaths.length === 0) return { destinationRoot, migrationDirectory: null, moved, skipped };
   makeDir(destinationRoot, { recursive: true });
+  const migrationDirectory = uniqueMigrationDirectory(destinationRoot, pathExists, now);
+  makeDir(migrationDirectory, { recursive: true });
   for (const path of normalizedPaths) {
     if (!pathExists(path)) {
       skipped.push({ path, reason: 'missing-at-repair-time' });
       continue;
     }
-    const destinationPath = uniqueDestinationPath(destinationRoot, path, pathExists);
-    makeDir(resolve(destinationPath, '..'), { recursive: true });
+    const destinationPath = resolve(migrationDirectory, basename(path));
     movePath(path, destinationPath);
     moved.push({ path, destinationPath });
   }
-  return { destinationRoot, moved, skipped };
+  return { destinationRoot: migrationDirectory, workspaceRoot: destinationRoot, migrationDirectory, moved, skipped };
 }
 
 function collectAllowlistedUntrackedPaths(statusAssessment) {
@@ -809,7 +824,7 @@ function runGitPullPreflight() {
   return runGitPullPreflightWithDeps();
 }
 
-export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, captureStepFn = runStepCapture, runStepFn = runStep } = {}) {
+export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
   const capture = captureStepFn('git-status', 'git', ['status', '--porcelain']);
   const assessment = evaluateGitStatusForIgnition(capture.stdout);
   const runtimeDataListing = captureStepFn('git-untracked-data', 'git', ['ls-files', '--others', '--exclude-standard', '--', 'data']);
@@ -835,11 +850,11 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     .filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK')
     .filter((path) => path !== 'data/' || runtimeDataPaths.some((candidate) => !isAllowlistedRootRuntimePath(candidate)));
   const movableRootOpenClawDirt = collectMovableRootOpenClawWorkspaceDirt(assessment);
-  let openClawMoveResult = { destinationRoot: resolveOpenClawWorkspaceRepairPath(), moved: [], skipped: [] };
+  let openClawMoveResult = { destinationRoot: resolveOpenClawWorkspaceRepairPath(), migrationDirectory: null, moved: [], skipped: [] };
   if (!dryRun && movableRootOpenClawDirt.length > 0) {
-    openClawMoveResult = moveRootOpenClawWorkspaceDirt({ paths: movableRootOpenClawDirt });
-    const movedRootPaths = new Set(openClawMoveResult.moved.map((entry) => entry.path));
-    hardBlockTargets = hardBlockTargets.filter((path) => !movedRootPaths.has(path));
+    openClawMoveResult = moveRootOpenClawWorkspaceDirtFn({ paths: movableRootOpenClawDirt });
+    const movedRootPaths = new Set(openClawMoveResult.moved.map((entry) => normalizeRootCandidatePath(entry.path)));
+    hardBlockTargets = hardBlockTargets.filter((path) => !movedRootPaths.has(normalizeRootCandidatePath(path)));
   }
 
   const trackedAuto = collectApprovedTrackedGeneratedRestorePaths(assessment);

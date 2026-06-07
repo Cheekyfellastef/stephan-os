@@ -393,23 +393,116 @@ test('housekeep dry-run classifies known OpenClaw workspace dirt without weakeni
 
 
 
-test('housekeep repair preserves and moves root OpenClaw workspace dirt without deletion', () => {
-  const existing = new Set(['.openclaw', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt']);
+test('housekeep repair preserves and moves root OpenClaw workspace dirt directories and files without deletion', () => {
+  const existing = new Set(['.openclaw', 'memory', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt']);
   const madeDirs = [];
   const moved = [];
   const result = moveRootOpenClawWorkspaceDirt({
-    paths: ['.openclaw', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt', 'stephanos-ui/src/App.jsx'],
+    paths: ['.openclaw/', 'memory/', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt', 'stephanos-ui/src/App.jsx'],
     destinationRoot: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace',
     pathExists: (path) => existing.has(path),
     makeDir: (path) => madeDirs.push(path),
     movePath: (fromPath, toPath) => moved.push({ fromPath, toPath }),
+    now: () => new Date('2026-06-07T12:34:56.000Z'),
   });
 
-  assert.deepEqual(result.moved.map((entry) => entry.path), ['.openclaw', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt']);
-  assert.deepEqual(moved.map((entry) => entry.fromPath), ['.openclaw', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt']);
+  assert.equal(result.destinationRoot, resolve('C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260607-123456'));
+  assert.deepEqual(result.moved.map((entry) => entry.path), ['.openclaw', 'memory', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt']);
+  assert.deepEqual(moved.map((entry) => entry.fromPath), ['.openclaw', 'memory', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt']);
   assert.equal(moved.every((entry) => entry.toPath.includes('Stephanos-openclaw-workspace')), true);
+  assert.equal(moved.every((entry) => entry.toPath.includes('root-migration-20260607-123456')), true);
   assert.equal(moved.some((entry) => entry.fromPath.includes('stephanos-ui')), false);
-  assert.ok(madeDirs.length > 0);
+  assert.ok(madeDirs.includes('C:/Users/operator/Documents/Stephanos-openclaw-workspace'));
+  assert.ok(madeDirs.some((path) => String(path).includes('root-migration-20260607-123456')));
+});
+
+test('housekeep repair allocates a unique migration directory when the timestamp target exists', () => {
+  const moved = [];
+  const result = moveRootOpenClawWorkspaceDirt({
+    paths: ['HEARTBEAT.md'],
+    destinationRoot: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace',
+    pathExists: (path) => path === 'HEARTBEAT.md' || path.endsWith('root-migration-20260607-123456'),
+    makeDir: () => {},
+    movePath: (fromPath, toPath) => moved.push({ fromPath, toPath }),
+    now: () => new Date('2026-06-07T12:34:56.000Z'),
+  });
+
+  assert.equal(result.destinationRoot, resolve('C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260607-123456-2'));
+  assert.deepEqual(moved, [{ fromPath: 'HEARTBEAT.md', toPath: resolve('C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260607-123456-2/HEARTBEAT.md') }]);
+});
+
+test('housekeep reaches READY after auto-moving all known root OpenClaw workspace dirt', () => {
+  const logs = [];
+  const movedRequests = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return { stdout: [
+          '?? .openclaw/',
+          '?? memory/',
+          '?? COMMANDS.md',
+          '?? DREAMS.md',
+          '?? HEARTBEAT.md',
+          '?? IDENTITY.md',
+          '?? MEMORY.md',
+          '?? SOUL.md',
+          '?? TOOLS.md',
+          '?? USER.md',
+          '?? exec_output.txt',
+          '?? workspace_contents.txt',
+        ].join('\n'), stderr: '' };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: () => {},
+      moveRootOpenClawWorkspaceDirtFn: ({ paths }) => {
+        movedRequests.push(...paths);
+        return {
+          destinationRoot: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260607-123456',
+          migrationDirectory: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260607-123456',
+          moved: paths.map((path) => ({ path: path.replace(/\/+$/g, ''), destinationPath: `C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260607-123456/${path.replace(/\/+$/g, '')}` })),
+          skipped: [],
+        };
+      },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(movedRequests, ['.openclaw', 'COMMANDS.md', 'DREAMS.md', 'HEARTBEAT.md', 'IDENTITY.md', 'MEMORY.md', 'SOUL.md', 'TOOLS.md', 'USER.md', 'exec_output.txt', 'workspace_contents.txt', 'memory']);
+  assert.ok(logs.includes('[HOUSEKEEP] no OpenClaw memory was deleted'));
+  const statusLine = logs.find((line) => line.startsWith('[HOUSEKEEP] status='));
+  assert.ok(statusLine);
+  const status = JSON.parse(statusLine.replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'READY');
+  assert.equal(status.ignitionCleanlinessVerdict, 'ready');
+  assert.equal(status.ignitionHardBlockCount, 0);
+  assert.deepEqual(status.ignitionHardBlockPaths, []);
+  assert.equal(status.openClawWorkspaceHygieneStatus, 'clean');
+  assert.equal(status.openClawWorkspaceDirtDetected, 'no');
+  assert.equal(status.openClawWorkspaceRootFilesStillBlockIgnition, 'no');
+  assert.equal(status.openClawWorkspaceMutationAuthority, 'locked');
+  assert.equal(status.ignitionOpenClawWorkspaceMoveDestination, 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260607-123456');
+});
+
+test('housekeep still blocks ordinary source dirt while preserving generated dist auto-clean', () => {
+  const steps = [];
+  assert.throws(() => runIgnitionHousekeep({
+    dryRun: false,
+    compact: true,
+    captureStepFn: (label) => {
+      if (label === 'git-status') return { stdout: ' M scripts/ignite-stephanos-local.mjs\n?? apps/stephanos/dist/assets/generated.js\n', stderr: '' };
+      if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label, command, args) => steps.push({ label, command, args }),
+  }), /housekeep blocked/);
+
+  assert.deepEqual(steps, [{ label: 'git-clean-dist-untracked', command: 'git', args: ['clean', '-fd', '--', 'apps/stephanos/dist/'] }]);
 });
 
 test('housekeep allows OpenClaw files under sanctioned runtime workspace', () => {
