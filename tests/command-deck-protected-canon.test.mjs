@@ -381,3 +381,10 @@ test('protected canon: Packet Inbox Outbox V1 extends Builder Mesh without dupli
   assert.equal((missionConsoleSource.match(/panelId="missionConsoleBuilderMeshPanel"/g) || []).length, 1);
   assert.doesNotMatch(missionConsoleSource, /missionConsolePacketBayPanel/);
 });
+
+test('protected canon: Agent Reality Loop V1 stays in existing Mission Console path without duplicate dashboard', async () => {
+  const source = await read(missionConsoleTilePath);
+  assert.match(source, /data-testid="agent-reality-loop-section"/);
+  assert.match(source, /data-agent-reality-loop-surface="operator-relief"/);
+  assert.doesNotMatch(source, /AgentRealityLoopDashboard|agent-reality-loop-app/);
+});

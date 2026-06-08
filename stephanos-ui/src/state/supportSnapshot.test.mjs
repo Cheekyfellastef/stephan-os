@@ -4168,3 +4168,55 @@ test('buildSupportSnapshot exposes Packet Bay fields from live projection', () =
   assert.match(snapshot, /Packet Latest Ready ID: packet-outbox-local-ai-proof-builder-mesh-local-ai-recommendation-same-truth/);
   assert.match(snapshot, /Packet Missing Proof Summary: browser proof/);
 });
+
+test('buildSupportSnapshot exposes Agent Reality Loop V1 fields from live projection', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjection: {
+        agentRealityLoopProjection: {
+          status: 'ready',
+          phase: 'packet-ready',
+          recommendedLead: 'local-ai',
+          recommendedLeadReason: 'Packet Bay has a ready local-ai packet.',
+          nextAction: 'Copy the Local AI Review Packet.',
+          nextPacketId: 'packet-local-ai-proof',
+          nextPacketTarget: 'local-ai',
+          nextPacketKind: 'proof',
+          copyPacketsAvailable: true,
+          awaitingResultFrom: 'none',
+          expectedResultKind: 'proof',
+          missingProof: ['browser proof'],
+          blockers: [],
+          warnings: ['copy-only'],
+          operatorDecisionRequired: true,
+          mutationAllowed: false,
+          openClawMutationLocked: true,
+          codexAutoDispatchAllowed: false,
+          projectionSource: 'agent-reality-loop-v1-runtime-truth-projection',
+          confidence: 'high',
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /Agent Reality Loop Status: ready/);
+  assert.match(snapshot, /Agent Reality Loop Phase: packet-ready/);
+  assert.match(snapshot, /Agent Reality Loop Projection Available: yes/);
+  assert.match(snapshot, /Agent Reality Loop Recommended Lead: local-ai/);
+  assert.match(snapshot, /Agent Reality Loop Recommended Lead Reason: Packet Bay has a ready local-ai packet\./);
+  assert.match(snapshot, /Agent Reality Loop Next Action: Copy the Local AI Review Packet\./);
+  assert.match(snapshot, /Agent Reality Loop Next Packet ID: packet-local-ai-proof/);
+  assert.match(snapshot, /Agent Reality Loop Next Packet Target: local-ai/);
+  assert.match(snapshot, /Agent Reality Loop Next Packet Kind: proof/);
+  assert.match(snapshot, /Agent Reality Loop Copy Packets Available: yes/);
+  assert.match(snapshot, /Agent Reality Loop Awaiting Result From: none/);
+  assert.match(snapshot, /Agent Reality Loop Expected Result Kind: proof/);
+  assert.match(snapshot, /Agent Reality Loop Missing Proof Summary: browser proof/);
+  assert.match(snapshot, /Agent Reality Loop Blocker Count: 0/);
+  assert.match(snapshot, /Agent Reality Loop Warning Count: 1/);
+  assert.match(snapshot, /Agent Reality Loop Operator Decision Required: yes/);
+  assert.match(snapshot, /Agent Reality Loop Mutation Allowed: no/);
+  assert.match(snapshot, /Agent Reality Loop OpenClaw Mutation Locked: yes/);
+  assert.match(snapshot, /Agent Reality Loop Codex Auto Dispatch Allowed: no/);
+  assert.match(snapshot, /Agent Reality Loop Projection Source: agent-reality-loop-v1-runtime-truth-projection/);
+  assert.match(snapshot, /Agent Reality Loop Confidence: high/);
+});

@@ -1298,7 +1298,7 @@ function buildBuilderHarnessProjection({
   };
 }
 
-function buildAgentRealityLoopProjection({
+export function buildAgentRealityLoopProjection({
   missionState = 'active',
   missionBrainNextAction = {},
   harnessAgentProjection = {},
@@ -1307,64 +1307,227 @@ function buildAgentRealityLoopProjection({
   missionIntelligenceSummary = {},
   lessonCandidates = [],
   browserProof = {},
+  packetBayProjection = {},
+  builderMeshProjection = {},
+  builderWorkbenchProjection = {},
+  openClawSourcePackRunner = {},
+  uiRealityTruth = {},
+  openClawWorkspaceHygiene = {},
+  missionConsoleTruth = {},
+  codexDispatchTruth = {},
+  supportSnapshot = {},
 } = {}) {
-  const requiresBrowserProof = browserProof.required === true;
-  const browserProofMissing = asList(browserProof.missingItems).length > 0;
-  const verificationMissing = asList(verificationReturnIntake.missingEvidence);
-  const blockers = [...asList(agentWorkRoutingProjection.blockers), ...verificationMissing];
-  const requiredProof = Array.from(new Set([...(asList(agentWorkRoutingProjection.requiredProof)), ...(verificationMissing)]));
-  const readinessState = blockers.length > 0 || browserProofMissing ? 'blocked' : (missionState === 'merge-candidate' ? 'ready-for-operator' : 'in-progress');
-  const recommendedLead = readinessState === 'blocked'
-    ? 'hold'
-    : (agentWorkRoutingProjection.recommendedRoute === 'openclaw-research'
-      ? 'OpenClaw'
-      : ((requiresBrowserProof && browserProofMissing) ? 'OpenClaw' : 'Codex'));
-  const mergeRecommendation = (requiresBrowserProof && browserProofMissing)
-    ? 'hold-browser-proof-missing'
-    : (verificationReturnIntake.mergeRecommendation || harnessAgentProjection.mergeRecommendation || 'review-required');
-  const operatorApprovalRequired = true;
-  const protectedCanonAtRisk = asList(harnessAgentProjection.protectedCanonAtRisk);
-  const lessonCandidateRows = asList(lessonCandidates).map((candidate) => ({
-    id: candidate.id,
-    title: candidate.title,
-    approvalRequired: true,
-  }));
+  const packetBay = packetBayProjection && typeof packetBayProjection === 'object' ? packetBayProjection : {};
+  const packetCounts = packetBay.counts || {};
+  const packets = asList(packetBay.packets);
+  const readyPackets = packets.filter((packet) => packet?.status === 'ready-to-copy' && asText(packet.copyText, ''));
+  const awaitingPackets = packets.filter((packet) => packet?.status === 'awaiting-result');
+  const blockedPackets = packets.filter((packet) => packet?.status === 'blocked');
+  const localAiReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'local-ai');
+  const openClawReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'openclaw');
+  const codexReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'codex');
+  const githubReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'github');
+  const operatorReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'operator');
+  const nextPacket = localAiReadyPacket || openClawReadyPacket || codexReadyPacket || githubReadyPacket || operatorReadyPacket || readyPackets[0] || null;
+  const mesh = builderMeshProjection && typeof builderMeshProjection === 'object' ? builderMeshProjection : {};
+  const workbench = Object.keys(builderWorkbenchProjection || {}).length ? builderWorkbenchProjection : (mesh.builderWorkbenchProjection || {});
+  const sourcePack = Object.keys(openClawSourcePackRunner || {}).length ? openClawSourcePackRunner : (workbench.openClawSourcePackRunner || {});
+  const workspaceHygiene = Object.keys(openClawWorkspaceHygiene || {}).length ? openClawWorkspaceHygiene : (workbench.openClawWorkspaceHygiene || mesh.openClawWorkspaceHygiene || {});
+  const uiRealityStatus = asText(
+    uiRealityTruth.status
+      || uiRealityTruth.uiRealityStatus
+      || supportSnapshot.uiRealityStatus
+      || supportSnapshot.chatContextUiRealityStatus
+      || supportSnapshot.executionMetadata?.chat_context_ui_reality_status,
+    'unknown',
+  );
+  const sourceTruths = Array.from(new Set([
+    ...asList(packetBay.sourceTruths),
+    Object.keys(packetBay).length ? 'Packet Bay projection' : '',
+    Object.keys(mesh).length ? 'Builder Mesh projection' : '',
+    Object.keys(workbench).length ? 'Builder Workbench truth' : '',
+    Object.keys(sourcePack).length ? 'OpenClaw Source Pack Runner truth' : '',
+    Object.keys(verificationReturnIntake).length ? 'Mission Verification truth' : '',
+    Object.keys(uiRealityTruth).length || uiRealityStatus !== 'unknown' ? 'UI Reality truth' : '',
+    Object.keys(workspaceHygiene).length ? 'OpenClaw Workspace Hygiene truth' : '',
+    'OpenClaw mutation lock truth',
+    'Codex dispatch lock truth',
+  ].filter(Boolean)));
 
-  const codexPacket = {
+  const proofRequired = Array.from(new Set([
+    ...asList(packetBay.packets).flatMap((packet) => asList(packet.requiredProof)),
+    ...asList(packetBay.requiredProof),
+    ...asList(mesh.requiredProof),
+    ...asList(mesh.proofRequiredBeforeMerge),
+    ...asList(agentWorkRoutingProjection.requiredProof),
+    ...asList(harnessAgentProjection.requiredTests),
+  ])).slice(0, 18);
+  const missingProof = Array.from(new Set([
+    ...asList(packetBay.packets).flatMap((packet) => asList(packet.missingProof)),
+    ...asList(mesh.missingProof),
+    ...asList(verificationReturnIntake.missingEvidence),
+    ...asList(missionBrainNextAction.openEvidenceGaps).map((gap) => gap?.label || gap?.requiredAction || gap).filter(Boolean),
+  ])).slice(0, 18);
+  const blockers = Array.from(new Set([
+    ...asList(agentWorkRoutingProjection.blockers),
+    ...asList(mesh.blockers),
+    ...blockedPackets.map((packet) => packet.summary || packet.reason || packet.title).filter(Boolean),
+  ])).slice(0, 18);
+  const warnings = Array.from(new Set([
+    ...asList(mesh.warnings),
+    ...asList(workbench.warnings),
+  ])).slice(0, 18);
+
+  const sourcePackNeedsOutput = asText(sourcePack.sourcePackStatus, '') === 'needs-output';
+  const missionConsoleCollapsed = missionConsoleTruth.agentMissionConsoleCollapsed === true
+    || missionConsoleTruth.missionConsoleCollapsed === true
+    || missionConsoleTruth.isCollapsed === true
+    || asText(missionConsoleTruth.agentMissionConsoleState || missionConsoleTruth.missionConsoleState, '').toLowerCase() === 'collapsed'
+    || supportSnapshot.agentMissionConsoleCollapsed === true
+    || supportSnapshot.missionConsoleCollapsed === true;
+  if (sourcePackNeedsOutput && missionConsoleCollapsed) {
+    blockers.push('OpenClaw Source Pack Runner needs output, but Agent Mission Console is collapsed/unmounted.');
+    missingProof.push('OpenClaw source-pack output');
+  }
+  const workspaceDirty = workspaceHygiene.workspaceDirtDetected === 'yes'
+    || workspaceHygiene.workspaceBlocksIgnition === 'yes'
+    || Number(workspaceHygiene.workspaceDirtCount || 0) > 0;
+  if (workspaceDirty) blockers.push('OpenClaw workspace hygiene is dirty; housekeep known OpenClaw workspace paths before routing.');
+  const uiRealityNotOk = uiRealityStatus !== 'unknown' && !['ok', 'OK', 'ready', 'healthy', 'pass', 'passed'].includes(uiRealityStatus);
+  if (uiRealityNotOk) {
+    blockers.push('UI Reality is not OK; browser/UI proof must be repaired before the Agent Reality Loop can proceed.');
+    missingProof.push('browser/UI proof');
+  }
+
+  let status = sourceTruths.length <= 2 && packets.length === 0 && !Object.keys(mesh).length ? 'unavailable' : 'idle';
+  let phase = 'observe';
+  let recommendedLead = 'hold';
+  let recommendedLeadReason = 'No usable Packet Bay or Builder Mesh truth is available; holding rather than inventing state.';
+  let nextAction = 'Hold for current runtime truth; refresh Support Snapshot / Builder Mesh / Packet Bay evidence.';
+  let awaitingResultFrom = 'none';
+  let expectedResultKind = 'none';
+
+  if (awaitingPackets.length > 0) {
+    const awaiting = awaitingPackets[0];
+    status = 'awaiting-result';
+    phase = 'awaiting-result';
+    recommendedLead = asText(awaiting.target, 'operator');
+    awaitingResultFrom = asText(awaiting.target, 'unknown');
+    expectedResultKind = asText(awaiting.kind, 'result');
+    recommendedLeadReason = `Packet Bay is awaiting a ${expectedResultKind} result from ${awaitingResultFrom}.`;
+    nextAction = `Paste the ${awaitingResultFrom} result back into the Builder Workbench / Packet Bay evidence path.`;
+  } else if (blockers.length > 0) {
+    status = 'blocked';
+    phase = 'blocked';
+    recommendedLead = workspaceDirty ? 'operator' : 'hold';
+    recommendedLeadReason = workspaceDirty
+      ? 'OpenClaw workspace hygiene blocks routing and requires operator housekeeping; mutation remains locked.'
+      : 'Runtime proof blockers prevent safe routing.';
+    nextAction = workspaceDirty
+      ? asText(workspaceHygiene.workspaceNextOperatorAction || workspaceHygiene.workspaceRecommendedCleanup, 'Housekeep known OpenClaw workspace dirt, then rerun ignition/support proof.')
+      : (sourcePackNeedsOutput && missionConsoleCollapsed
+        ? 'Expand Agent Mission Console / mount Source Pack Runner, paste OpenClaw output, and run intake judgment.'
+        : (uiRealityNotOk ? 'Collect/repair browser UI Reality proof before routing an agent.' : 'Resolve blockers before copying or routing the next packet.'));
+  } else if (nextPacket) {
+    status = 'ready';
+    phase = 'packet-ready';
+    recommendedLead = asText(nextPacket.target, 'operator');
+    recommendedLeadReason = asText(nextPacket.reason, `Packet Bay has a ready-to-copy ${recommendedLead} packet.`);
+    nextAction = asText(nextPacket.nextAction, packetBay.recommendedNextAction || 'Copy the ready packet and keep mutation locked.');
+    expectedResultKind = asText(nextPacket.kind, 'result');
+  } else if (missingProof.length > 0) {
+    status = 'needs-operator-decision';
+    phase = 'judge-result';
+    recommendedLead = 'operator';
+    recommendedLeadReason = 'Required proof is missing and needs an operator decision/proof collection path.';
+    nextAction = 'Collect missing proof or choose a read-only packet route; mutation remains locked.';
+  }
+
+  if (recommendedLead === 'openclaw') {
+    recommendedLeadReason = `${recommendedLeadReason} OpenClaw is read-only only; mutation remains locked.`;
+  }
+  if (recommendedLead === 'codex') {
+    recommendedLeadReason = `${recommendedLeadReason} Codex is a copyable handoff only; auto-dispatch is forbidden.`;
+  }
+
+  const operatorDecisionRequired = status === 'needs-operator-decision' || status === 'blocked' || recommendedLead === 'operator' || missingProof.length > 0;
+  const projectionSource = packets.length || Object.keys(mesh).length ? 'agent-reality-loop-v1-runtime-truth-projection' : 'none';
+  const copyPacketsAvailable = readyPackets.length > 0;
+  const confidence = status === 'unavailable' ? 'low' : (blockers.length || missingProof.length ? 'medium' : 'high');
+
+  const legacyCodexPacket = {
     boundedFileScope: asList(harnessAgentProjection.allowedFileScopes),
     forbiddenFiles: asList(harnessAgentProjection.forbiddenFileScopes).concat(asList(harnessAgentProjection.forbiddenFiles)),
     requiredTestsBuildVerify: asList(harnessAgentProjection.requiredTests).concat(['npm run stephanos:build', 'npm run stephanos:verify']),
-    browserProofRequiredWhenUiOrRuntimeChanges: requiresBrowserProof ? 'yes' : 'no',
-    rules: [
-      'No generated dist hand edits.',
-      'Do not use git add .',
-      'Preserve protected Command Deck canon.',
-    ],
-    nextBestAction: missionBrainNextAction.nextBestAction || 'Review evidence and execute bounded patch.',
+    browserProofRequiredWhenUiOrRuntimeChanges: browserProof.required === true ? 'yes' : 'no',
+    rules: ['No generated dist hand edits.', 'Do not use git add .', 'Preserve protected Command Deck canon.'],
+    nextBestAction: nextAction,
   };
-  const openClawPacket = {
+  const legacyOpenClawPacket = {
     liveProofFirst: 'Capture Support Snapshot / UI Reality before patching.',
     classifyFailureBeforePatching: 'yes',
     noSpeculationWithoutEvidence: 'Do not speculate when Support Snapshot evidence is missing.',
     operatorApprovalRequiredBeforeBroadOrDestructiveWork: 'yes',
-    requiredProof,
+    requiredProof: proofRequired,
   };
   return {
-    status: readinessState,
-    currentMissionPhase: missionBrainNextAction.currentPhase || 'unknown',
+    status,
+    phase,
     recommendedLead,
-    nextBestAction: missionBrainNextAction.nextBestAction || missionIntelligenceSummary.nextBestAction || 'Review mission evidence',
-    readinessState,
+    recommendedLeadReason,
+    nextAction,
+    nextBestAction: nextAction,
+    nextPacketId: nextPacket?.id || 'none',
+    nextPacketTarget: nextPacket?.target || 'none',
+    nextPacketKind: nextPacket?.kind || 'none',
+    copyPacketsAvailable,
+    awaitingResultFrom,
+    expectedResultKind,
+    proofRequired,
+    requiredProof: proofRequired,
+    missingProof,
     blockers,
-    requiredProof,
-    protectedCanonAtRisk,
-    mergeRecommendation,
-    lessonCandidates: lessonCandidateRows,
-    operatorApprovalRequired,
-    copyCodexPacket: codexPacket,
-    copyOpenClawPacket: openClawPacket,
-    copyOperatorProofChecklist: requiredProof.join('\n'),
+    warnings,
+    operatorDecisionRequired,
+    operatorApprovalRequired: operatorDecisionRequired,
+    mutationAllowed: false,
+    openClawMutationLocked: true,
+    codexAutoDispatchAllowed: false,
+    sourceTruths,
+    projectionSource,
+    confidence,
+    currentMissionPhase: missionBrainNextAction.currentPhase || 'unknown',
+    readinessState: status,
+    protectedCanonAtRisk: asList(harnessAgentProjection.protectedCanonAtRisk),
+    mergeRecommendation: uiRealityNotOk || (browserProof.required === true && asList(browserProof.missingItems).length > 0) ? 'hold-browser-proof-missing' : (verificationReturnIntake.mergeRecommendation || harnessAgentProjection.mergeRecommendation || 'review-required'),
+    lessonCandidates: asList(lessonCandidates).map((candidate) => ({ id: candidate.id, title: candidate.title, approvalRequired: true })),
+    copyCodexPacket: codexReadyPacket ? { packetId: codexReadyPacket.id, copyText: codexReadyPacket.copyText, autoDispatchAllowed: false, nextBestAction: nextAction } : legacyCodexPacket,
+    copyOpenClawPacket: openClawReadyPacket ? { packetId: openClawReadyPacket.id, copyText: openClawReadyPacket.copyText, mutationAuthority: 'locked', liveProofFirst: 'Capture Support Snapshot / UI Reality before patching.' } : legacyOpenClawPacket,
+    copyOperatorProofChecklist: proofRequired.concat(missingProof.map((proof) => `MISSING: ${proof}`)).join('\n'),
     hasDuplicatePaneRisk: 'no',
+    supportSnapshotFields: {
+      agent_reality_loop_status: status,
+      agent_reality_loop_phase: phase,
+      agent_reality_loop_projection_available: projectionSource === 'none' ? 'no' : 'yes',
+      agent_reality_loop_recommended_lead: recommendedLead,
+      agent_reality_loop_recommended_lead_reason: recommendedLeadReason,
+      agent_reality_loop_next_action: nextAction,
+      agent_reality_loop_next_packet_id: nextPacket?.id || 'none',
+      agent_reality_loop_next_packet_target: nextPacket?.target || 'none',
+      agent_reality_loop_next_packet_kind: nextPacket?.kind || 'none',
+      agent_reality_loop_copy_packets_available: copyPacketsAvailable ? 'yes' : 'no',
+      agent_reality_loop_awaiting_result_from: awaitingResultFrom,
+      agent_reality_loop_expected_result_kind: expectedResultKind,
+      agent_reality_loop_missing_proof_summary: missingProof.join(' | ') || 'none',
+      agent_reality_loop_blocker_count: String(blockers.length),
+      agent_reality_loop_warning_count: String(warnings.length),
+      agent_reality_loop_operator_decision_required: operatorDecisionRequired ? 'yes' : 'no',
+      agent_reality_loop_mutation_allowed: 'no',
+      agent_reality_loop_openclaw_mutation_locked: 'yes',
+      agent_reality_loop_codex_auto_dispatch_allowed: 'no',
+      agent_reality_loop_projection_source: projectionSource,
+      agent_reality_loop_confidence: confidence,
+    },
   };
 }
 
@@ -1745,6 +1908,15 @@ export function deriveOperatorReliefProjection(models = {}) {
     missionIntelligenceSummary,
     lessonCandidates,
     browserProof: missionHandoff.browserProofChecklist,
+    packetBayProjection,
+    builderMeshProjection,
+    builderWorkbenchProjection: builderMeshProjection.builderWorkbenchProjection || {},
+    openClawSourcePackRunner: builderMeshProjection.builderWorkbenchProjection?.openClawSourcePackRunner || {},
+    uiRealityTruth: supportSnapshot.uiRealityTruth || supportSnapshot.uiRealityStatus || {},
+    openClawWorkspaceHygiene: builderMeshProjection.builderWorkbenchProjection?.openClawWorkspaceHygiene || {},
+    missionConsoleTruth: supportSnapshot.missionConsoleTruth || {},
+    codexDispatchTruth: supportSnapshot.codexDispatchTruth || {},
+    supportSnapshot,
   });
   const operatorApprovedRepairLoopProjection = buildOperatorApprovedRepairLoopProjection({
     missionRepairLoop: missionRepairLoopModel,
