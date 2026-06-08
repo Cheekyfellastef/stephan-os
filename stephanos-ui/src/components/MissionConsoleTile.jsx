@@ -1612,16 +1612,27 @@ function MissionConsoleTile({
           </button>
           </CollapsiblePanel>
           <CollapsiblePanel panelId="missionConsoleAgentRealityLoopPanel" title="Agent Reality Loop V1" isOpen={uiLayout.missionConsoleAgentRealityLoopPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleAgentRealityLoopPanel')}>
-            <ul className="mission-console__status-list">
-              <li><strong>Status:</strong> {operatorReliefProjection.agentRealityLoopProjection?.status || 'unknown'}</li>
-              <li><strong>Lead recommendation:</strong> {operatorReliefProjection.agentRealityLoopProjection?.recommendedLead || 'hold'}</li>
-              <li><strong>Next action:</strong> {operatorReliefProjection.agentRealityLoopProjection?.nextBestAction || 'Review mission evidence'}</li>
-              <li><strong>Proof required:</strong> {(operatorReliefProjection.agentRealityLoopProjection?.requiredProof || []).join(' · ') || 'none'}</li>
-              <li><strong>Merge recommendation:</strong> {operatorReliefProjection.agentRealityLoopProjection?.mergeRecommendation || 'unknown'}</li>
-            </ul>
-            <button type="button" className={`status-panel-copy-button ${codexPacketCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.agentRealityLoopProjection?.copyCodexPacket || {}, null, 2), setCodexPacketCopyState, 'MissionConsoleTile.copyAgentRealityLoopCodexPacket')}>Copy Agent Reality Loop Codex Packet</button>
-            <button type="button" className={`status-panel-copy-button ${missionHandoffCopyState}`} onClick={() => copyToClipboard(JSON.stringify(operatorReliefProjection.agentRealityLoopProjection?.copyOpenClawPacket || {}, null, 2), setMissionHandoffCopyState, 'MissionConsoleTile.copyAgentRealityLoopOpenClawPacket')}>Copy Agent Reality Loop OpenClaw Packet</button>
-            <button type="button" className={`status-panel-copy-button ${operatorChecklistCopyState}`} onClick={() => copyToClipboard(operatorReliefProjection.agentRealityLoopProjection?.copyOperatorProofChecklist || '', setOperatorChecklistCopyState, 'MissionConsoleTile.copyAgentRealityLoopOperatorChecklist')}>Copy Agent Reality Loop Operator Checklist</button>
+            <section className="mission-console__agent-reality-loop" data-testid="agent-reality-loop-section" data-agent-reality-loop-surface="operator-relief">
+              <ul className="mission-console__status-list">
+                <li><strong>Status / phase:</strong> {operatorReliefProjection.agentRealityLoopProjection?.status || 'unavailable'} · {operatorReliefProjection.agentRealityLoopProjection?.phase || 'observe'}</li>
+                <li><strong>Recommended lead:</strong> {operatorReliefProjection.agentRealityLoopProjection?.recommendedLead || 'hold'} — {operatorReliefProjection.agentRealityLoopProjection?.recommendedLeadReason || 'Hold until runtime truth is available.'}</li>
+                <li><strong>Next action:</strong> {operatorReliefProjection.agentRealityLoopProjection?.nextAction || operatorReliefProjection.agentRealityLoopProjection?.nextBestAction || 'Hold for current runtime truth.'}</li>
+                <li><strong>Next packet:</strong> {operatorReliefProjection.agentRealityLoopProjection?.nextPacketId || 'none'} · {operatorReliefProjection.agentRealityLoopProjection?.nextPacketTarget || 'none'} · {operatorReliefProjection.agentRealityLoopProjection?.nextPacketKind || 'none'}</li>
+                <li><strong>Blockers:</strong> {(operatorReliefProjection.agentRealityLoopProjection?.blockers || []).join(' · ') || 'none'}</li>
+                <li><strong>Missing proof:</strong> {(operatorReliefProjection.agentRealityLoopProjection?.missingProof || []).join(' · ') || 'none'}</li>
+                <li><strong>Operator decision required:</strong> {operatorReliefProjection.agentRealityLoopProjection?.operatorDecisionRequired ? 'yes' : 'no'}</li>
+                <li><strong>Mutation locks:</strong> mutation {operatorReliefProjection.agentRealityLoopProjection?.mutationAllowed ? 'allowed' : 'locked'} · OpenClaw locked {operatorReliefProjection.agentRealityLoopProjection?.openClawMutationLocked === false ? 'no' : 'yes'} · Codex auto-dispatch {operatorReliefProjection.agentRealityLoopProjection?.codexAutoDispatchAllowed ? 'yes' : 'no'}</li>
+              </ul>
+              {(() => {
+                const nextPacketId = operatorReliefProjection.agentRealityLoopProjection?.nextPacketId;
+                const packet = (operatorReliefProjection.packetBayProjection?.packets || []).find((candidate) => candidate.id === nextPacketId && candidate.copyText);
+                return packet ? (
+                  <button type="button" className={`status-panel-copy-button ${packetBayCopyState}`} onClick={() => copyToClipboard(packet.copyText || '', setPacketBayCopyState, `MissionConsoleTile.copyAgentRealityLoopPacket.${packet.id}`)}>
+                    {packetBayCopyState === COPY_STATE.SUCCESS ? 'Agent Reality Loop Packet Copied' : packetBayCopyState === COPY_STATE.FAILURE ? 'Copy Agent Reality Loop Packet failed' : 'Copy Agent Reality Loop Packet'}
+                  </button>
+                ) : null;
+              })()}
+            </section>
           </CollapsiblePanel>
           <CollapsiblePanel panelId="missionConsoleOperatorApprovedRepairLoopPanel" title="Operator-Approved Repair Loop V1" isOpen={uiLayout.missionConsoleOperatorApprovedRepairLoopPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleOperatorApprovedRepairLoopPanel')}>
             <ul className="mission-console__status-list">

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveOperatorReliefProjection } from '../stephanos-ui/src/state/operatorReliefProjection.js';
+import { deriveOperatorReliefProjection, buildAgentRealityLoopProjection } from '../stephanos-ui/src/state/operatorReliefProjection.js';
 
 test('Projection composes mission objective, codex delta, and test/build/verify status', () => {
   const r = deriveOperatorReliefProjection({
@@ -242,7 +242,7 @@ test('Agent Reality Loop chooses Codex for bounded code work and emits copy pack
     proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test tests/a.test.mjs'] }, mergeReadyCandidate: true }, browserChecksObserved: observed },
     supportSnapshot: { aiConsoleScrollDiagnostics: { answerPaneCount: 1, latestFinalAssistantAnswerPresent: true, requested: 'yes', requestReason: 'final-assistant-answer-rendered', targetKind: 'latest-assistant-answer-pane', targetFound: 'yes', containerFound: 'yes', containerScrollable: 'yes', scrollMethod: 'container-scroll', scrollCompleted: 'yes', skipReason: 'none', targetHasPromptRow: 'no', targetHasPendingRow: 'no', targetHasStaleRow: 'no' } },
   });
-  assert.equal(r.agentRealityLoopProjection.recommendedLead, 'Codex');
+  assert.equal(r.agentRealityLoopProjection.recommendedLead, 'codex');
   assert.equal(typeof r.agentRealityLoopProjection.copyCodexPacket.nextBestAction, 'string');
   assert.equal(r.agentRealityLoopProjection.hasDuplicatePaneRisk, 'no');
 });
@@ -252,7 +252,7 @@ test('Agent Reality Loop chooses OpenClaw for live proof and blocks merge when b
     prEvidenceModel: { changedFiles: ['stephanos-ui/src/components/MissionConsoleTile.jsx'] },
     proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test tests/a.test.mjs'] } }, browserChecksObserved: [] },
   });
-  assert.equal(r.agentRealityLoopProjection.recommendedLead, 'hold');
+  assert.equal(r.agentRealityLoopProjection.recommendedLead, 'operator');
   assert.equal(r.agentRealityLoopProjection.mergeRecommendation, 'hold-browser-proof-missing');
   assert.equal(r.agentRealityLoopProjection.operatorApprovalRequired, true);
   assert.match(r.agentRealityLoopProjection.copyOpenClawPacket.liveProofFirst, /Support Snapshot/);
@@ -944,4 +944,94 @@ test('Packet Bay V1 operator recommendation creates inbox approval review packet
   assert.equal(bay.inbox[0].status, 'draft');
   assert.equal(bay.inbox[0].approvalRequired, true);
   assert.equal(bay.inbox[0].mutationAllowed, false);
+});
+
+test('Agent Reality Loop V1 empty truth holds unavailable with mutation locked', () => {
+  const r = buildAgentRealityLoopProjection({});
+  assert.equal(r.status, 'unavailable');
+  assert.equal(r.recommendedLead, 'hold');
+  assert.equal(r.mutationAllowed, false);
+  assert.equal(r.openClawMutationLocked, true);
+  assert.equal(r.codexAutoDispatchAllowed, false);
+});
+
+test('Agent Reality Loop V1 recommends local-ai from ready Packet Bay truth', () => {
+  const r = buildAgentRealityLoopProjection({
+    packetBayProjection: {
+      packets: [{ id: 'packet-local', target: 'local-ai', kind: 'proof', status: 'ready-to-copy', copyText: 'copy me', reason: 'local-ai packet ready', nextAction: 'Copy Local AI packet.' }],
+      sourceTruths: ['Packet Bay projection'],
+    },
+    builderMeshProjection: { recommendedBuilder: 'local-ai' },
+  });
+  assert.equal(r.status, 'ready');
+  assert.equal(r.recommendedLead, 'local-ai');
+  assert.equal(r.nextPacketTarget, 'local-ai');
+  assert.equal(r.copyPacketsAvailable, true);
+});
+
+test('Agent Reality Loop V1 recommends OpenClaw read-only and locked from ready OpenClaw packet', () => {
+  const r = buildAgentRealityLoopProjection({
+    packetBayProjection: {
+      packets: [{ id: 'packet-openclaw', target: 'openclaw', kind: 'source-pack', status: 'ready-to-copy', copyText: 'copy openclaw', reason: 'openclaw packet ready', nextAction: 'Copy OpenClaw packet.' }],
+      sourceTruths: ['Packet Bay projection'],
+    },
+    builderMeshProjection: { recommendedBuilder: 'openclaw' },
+  });
+  assert.equal(r.recommendedLead, 'openclaw');
+  assert.equal(r.openClawMutationLocked, true);
+  assert.equal(r.mutationAllowed, false);
+});
+
+test('Agent Reality Loop V1 keeps Codex copyable only and auto-dispatch false', () => {
+  const r = buildAgentRealityLoopProjection({
+    packetBayProjection: {
+      packets: [{ id: 'packet-codex', target: 'codex', kind: 'repair', status: 'ready-to-copy', copyText: 'copy codex', reason: 'codex fallback packet ready', nextAction: 'Copy Codex packet.' }],
+      sourceTruths: ['Packet Bay projection'],
+    },
+    builderMeshProjection: { recommendedBuilder: 'codex' },
+  });
+  assert.equal(r.recommendedLead, 'codex');
+  assert.equal(r.codexAutoDispatchAllowed, false);
+  assert.equal(r.mutationAllowed, false);
+});
+
+test('Agent Reality Loop V1 awaiting Packet Bay result produces awaiting-result status', () => {
+  const r = buildAgentRealityLoopProjection({
+    packetBayProjection: {
+      packets: [{ id: 'packet-awaiting', target: 'local-ai', kind: 'proof', status: 'awaiting-result', reason: 'result pending' }],
+      sourceTruths: ['Packet Bay projection'],
+    },
+  });
+  assert.equal(r.status, 'awaiting-result');
+  assert.equal(r.awaitingResultFrom, 'local-ai');
+  assert.equal(r.expectedResultKind, 'proof');
+});
+
+test('Agent Reality Loop V1 Source Pack needs-output plus collapsed Mission Console blocks with mount action', () => {
+  const r = buildAgentRealityLoopProjection({
+    openClawSourcePackRunner: { sourcePackStatus: 'needs-output' },
+    missionConsoleTruth: { missionConsoleCollapsed: true },
+    builderMeshProjection: { recommendedBuilder: 'openclaw' },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.match(r.nextAction, /Expand Agent Mission Console \/ mount Source Pack Runner/);
+});
+
+test('Agent Reality Loop V1 dirty OpenClaw workspace blocks and keeps mutation locked', () => {
+  const r = buildAgentRealityLoopProjection({
+    openClawWorkspaceHygiene: { workspaceDirtDetected: 'yes', workspaceBlocksIgnition: 'yes', workspaceDirtCount: 1, workspaceNextOperatorAction: 'Housekeep OpenClaw dirt.' },
+    builderMeshProjection: { recommendedBuilder: 'openclaw' },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.openClawMutationLocked, true);
+  assert.equal(r.mutationAllowed, false);
+});
+
+test('Agent Reality Loop V1 UI Reality not OK blocks on browser proof', () => {
+  const r = buildAgentRealityLoopProjection({
+    uiRealityTruth: { status: 'BROKEN' },
+    builderMeshProjection: { recommendedBuilder: 'local-ai' },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.missingProof.includes('browser/UI proof'), true);
 });

@@ -26,9 +26,9 @@ test('Mission Console operator relief panel renders mission brain sections and c
   assert.match(source, /Mission Handoff Pack/);
   assert.match(source, /Work Routing Candidate/);
   assert.match(source, /Agent Reality Loop V1/);
-  assert.match(source, /Copy Agent Reality Loop Codex Packet/);
-  assert.match(source, /Copy Agent Reality Loop OpenClaw Packet/);
-  assert.match(source, /Copy Agent Reality Loop Operator Checklist/);
+  assert.match(source, /data-testid="agent-reality-loop-section"/);
+  assert.match(source, /Copy Agent Reality Loop Packet/);
+  assert.match(source, /copyAgentRealityLoopPacket/);
   assert.match(source, /Operator-Approved Repair Loop V1/);
   assert.match(source, /Copy OpenClaw Continuation Packet/);
   assert.match(source, /Copy Codex Continuation Packet/);
@@ -126,4 +126,16 @@ test('Mission Console Packet Inbox Outbox renders empty state and ready packet c
   assert.match(source, /Missing proof:/);
   assert.match(source, /Copy Packet Text/);
   assert.match(source, /MissionConsoleTile\.copyPacketBay/);
+});
+
+
+test('Agent Reality Loop compact section renders inside Operator Relief without duplicate dashboard', () => {
+  assert.match(source, /data-testid="agent-reality-loop-section"/);
+  assert.match(source, /data-agent-reality-loop-surface="operator-relief"/);
+  assert.match(source, /Status \/ phase:/);
+  assert.match(source, /Recommended lead:/);
+  assert.match(source, /Next packet:/);
+  assert.match(source, /Mutation locks:/);
+  assert.doesNotMatch(source, /AgentRealityLoopDashboard/);
+  assert.doesNotMatch(source, /agent-reality-loop-app/);
 });

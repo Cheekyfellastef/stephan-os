@@ -1395,6 +1395,36 @@ export function buildSupportSnapshot({
     ? livePacketBayProjection
     : derivePacketBayProjection({ builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection });
   const packetBayFields = packetBayProjection.supportSnapshotFields || {};
+  const liveAgentRealityLoopProjection = runtimeStatus?.operatorReliefProjection?.agentRealityLoopProjection
+    || runtimeStatus?.runtimeContext?.operatorReliefProjection?.agentRealityLoopProjection
+    || runtimeStatus?.missionState?.operatorReliefProjection?.agentRealityLoopProjection
+    || runtimeStatus?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection
+    || null;
+  const agentRealityLoopFields = liveAgentRealityLoopProjection && typeof liveAgentRealityLoopProjection === 'object'
+    ? (liveAgentRealityLoopProjection.supportSnapshotFields || {
+      agent_reality_loop_status: liveAgentRealityLoopProjection.status,
+      agent_reality_loop_phase: liveAgentRealityLoopProjection.phase,
+      agent_reality_loop_projection_available: liveAgentRealityLoopProjection.projectionSource && liveAgentRealityLoopProjection.projectionSource !== 'none' ? 'yes' : 'no',
+      agent_reality_loop_recommended_lead: liveAgentRealityLoopProjection.recommendedLead,
+      agent_reality_loop_recommended_lead_reason: liveAgentRealityLoopProjection.recommendedLeadReason,
+      agent_reality_loop_next_action: liveAgentRealityLoopProjection.nextAction || liveAgentRealityLoopProjection.nextBestAction,
+      agent_reality_loop_next_packet_id: liveAgentRealityLoopProjection.nextPacketId,
+      agent_reality_loop_next_packet_target: liveAgentRealityLoopProjection.nextPacketTarget,
+      agent_reality_loop_next_packet_kind: liveAgentRealityLoopProjection.nextPacketKind,
+      agent_reality_loop_copy_packets_available: liveAgentRealityLoopProjection.copyPacketsAvailable ? 'yes' : 'no',
+      agent_reality_loop_awaiting_result_from: liveAgentRealityLoopProjection.awaitingResultFrom,
+      agent_reality_loop_expected_result_kind: liveAgentRealityLoopProjection.expectedResultKind,
+      agent_reality_loop_missing_proof_summary: (liveAgentRealityLoopProjection.missingProof || []).join(' | ') || 'none',
+      agent_reality_loop_blocker_count: String((liveAgentRealityLoopProjection.blockers || []).length),
+      agent_reality_loop_warning_count: String((liveAgentRealityLoopProjection.warnings || []).length),
+      agent_reality_loop_operator_decision_required: liveAgentRealityLoopProjection.operatorDecisionRequired ? 'yes' : 'no',
+      agent_reality_loop_mutation_allowed: liveAgentRealityLoopProjection.mutationAllowed ? 'yes' : 'no',
+      agent_reality_loop_openclaw_mutation_locked: liveAgentRealityLoopProjection.openClawMutationLocked === false ? 'no' : 'yes',
+      agent_reality_loop_codex_auto_dispatch_allowed: liveAgentRealityLoopProjection.codexAutoDispatchAllowed ? 'yes' : 'no',
+      agent_reality_loop_projection_source: liveAgentRealityLoopProjection.projectionSource,
+      agent_reality_loop_confidence: liveAgentRealityLoopProjection.confidence,
+    })
+    : {};
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
@@ -1624,9 +1654,10 @@ export function buildSupportSnapshot({
   let chatContextAgentWorkRoutingContextIncluded = /\bagentWorkRouting\b/i.test(chatContextSourcesUsed) ? 'yes' : 'no';
   let normalizedChatContextSourcesUsed = chatContextSourcesUsed;
   let normalizedChatContextStatus = chatContextStatus;
-  const arlProjectionAvailable = String(executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes';
+  const arlProjectionAvailable = String(agentRealityLoopFields.agent_reality_loop_projection_available || executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes';
   const arlContextRecognized = String(executionMetadata?.agent_reality_loop_context_recognized || '').trim().toLowerCase() === 'yes';
   const arlProjectionSource = firstKnownValue([
+    agentRealityLoopFields.agent_reality_loop_projection_source,
     executionMetadata?.agent_reality_loop_projection_source_seen,
     String(executionMetadata?.operator_relief_bridge_agent_reality_loop_seen || '').trim().toLowerCase() === 'yes' ? 'operator-relief-bridge' : '',
     String(executionMetadata?.operator_relief_bridge_published || '').trim().toLowerCase() === 'yes' ? 'operator-relief-bridge' : '',
@@ -1638,7 +1669,7 @@ export function buildSupportSnapshot({
   const arlContextInjectionBlocker = arlContextInjected === 'yes'
     ? 'none'
     : (arlContextRecognized && arlProjectionAvailable ? 'projection-available-but-chat-context-injection-proof-missing' : 'none');
-  if (String(executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes'
+  if (String(agentRealityLoopFields.agent_reality_loop_projection_available || executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes'
     && normalizedChatContextStatus === 'unavailable') {
     normalizedChatContextStatus = 'degraded-with-arl';
   }
@@ -2991,13 +3022,31 @@ export function buildSupportSnapshot({
     `Agent Reality Loop Context Injected: ${asText(arlContextInjected, 'no')}`,
     `Agent Reality Loop Context Injection Blocker: ${asText(arlContextInjectionBlocker, 'none')}`,
     `ARL Projection Source: ${asText(arlProjectionSource, 'none')}`,
-    `Agent Reality Loop Projection Available: ${asText(executionMetadata?.agent_reality_loop_projection_available, 'no')}`,
-    `Agent Reality Loop Recommended Lead: ${asText(executionMetadata?.agent_reality_loop_recommended_lead, 'hold')}`,
+    `Agent Reality Loop Status: ${asText(agentRealityLoopFields.agent_reality_loop_status, 'unavailable')}`,
+    `Agent Reality Loop Phase: ${asText(agentRealityLoopFields.agent_reality_loop_phase, 'observe')}`,
+    `Agent Reality Loop Projection Available: ${asText(agentRealityLoopFields.agent_reality_loop_projection_available || executionMetadata?.agent_reality_loop_projection_available, 'no')}`,
+    `Agent Reality Loop Recommended Lead: ${asText(agentRealityLoopFields.agent_reality_loop_recommended_lead || executionMetadata?.agent_reality_loop_recommended_lead, 'hold')}`,
+    `Agent Reality Loop Recommended Lead Reason: ${asText(agentRealityLoopFields.agent_reality_loop_recommended_lead_reason, 'No Agent Reality Loop projection reason reported.')}`,
+    `Agent Reality Loop Next Action: ${asText(agentRealityLoopFields.agent_reality_loop_next_action, 'Hold for current runtime truth.')}`,
+    `Agent Reality Loop Next Packet ID: ${asText(agentRealityLoopFields.agent_reality_loop_next_packet_id, 'none')}`,
+    `Agent Reality Loop Next Packet Target: ${asText(agentRealityLoopFields.agent_reality_loop_next_packet_target, 'none')}`,
+    `Agent Reality Loop Next Packet Kind: ${asText(agentRealityLoopFields.agent_reality_loop_next_packet_kind, 'none')}`,
     `Agent Reality Loop Merge Recommendation: ${asText(executionMetadata?.agent_reality_loop_merge_recommendation, 'hold')}`,
-    `Agent Reality Loop Copy Packets Available: ${asText(executionMetadata?.agent_reality_loop_copy_packets_available, 'no')}`,
+    `Agent Reality Loop Copy Packets Available: ${asText(agentRealityLoopFields.agent_reality_loop_copy_packets_available || executionMetadata?.agent_reality_loop_copy_packets_available, 'no')}`,
+    `Agent Reality Loop Awaiting Result From: ${asText(agentRealityLoopFields.agent_reality_loop_awaiting_result_from, 'none')}`,
+    `Agent Reality Loop Expected Result Kind: ${asText(agentRealityLoopFields.agent_reality_loop_expected_result_kind, 'none')}`,
+    `Agent Reality Loop Missing Proof Summary: ${asText(agentRealityLoopFields.agent_reality_loop_missing_proof_summary, 'none')}`,
+    `Agent Reality Loop Blocker Count: ${asText(agentRealityLoopFields.agent_reality_loop_blocker_count, '0')}`,
+    `Agent Reality Loop Warning Count: ${asText(agentRealityLoopFields.agent_reality_loop_warning_count, '0')}`,
+    `Agent Reality Loop Operator Decision Required: ${asText(agentRealityLoopFields.agent_reality_loop_operator_decision_required, 'no')}`,
+    `Agent Reality Loop Mutation Allowed: ${asText(agentRealityLoopFields.agent_reality_loop_mutation_allowed, 'no')}`,
+    `Agent Reality Loop OpenClaw Mutation Locked: ${asText(agentRealityLoopFields.agent_reality_loop_openclaw_mutation_locked, 'yes')}`,
+    `Agent Reality Loop Codex Auto Dispatch Allowed: ${asText(agentRealityLoopFields.agent_reality_loop_codex_auto_dispatch_allowed, 'no')}`,
+    `Agent Reality Loop Projection Source: ${asText(agentRealityLoopFields.agent_reality_loop_projection_source || arlProjectionSource, 'none')}`,
+    `Agent Reality Loop Confidence: ${asText(agentRealityLoopFields.agent_reality_loop_confidence, 'low')}`,
     `Agent Reality Loop Availability Blocker: ${asText(
       executionMetadata?.agent_reality_loop_availability_blocker,
-      String(executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes'
+      String(agentRealityLoopFields.agent_reality_loop_projection_available || executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes'
         ? 'none'
         : 'projection-missing-from-command-deck-path',
     )}`,
