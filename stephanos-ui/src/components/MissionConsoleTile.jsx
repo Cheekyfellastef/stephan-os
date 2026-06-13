@@ -1674,6 +1674,24 @@ function MissionConsoleTile({
           </CollapsiblePanel>
           <CollapsiblePanel panelId="missionConsoleBuilderHarnessPanel" title="OpenClaw Builder Harness V1" isOpen={uiLayout.missionConsoleBuilderHarnessPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleBuilderHarnessPanel')}>
             <CollapsiblePanel panelId="missionConsoleBuilderMeshPanel" title="Zero-Cost Builder Mesh V1" titleAs="h5" description={operatorReliefProjection.builderMeshProjection?.recommendedBuilder || 'routing pending'} isOpen={uiLayout.missionConsoleBuilderMeshPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleBuilderMeshPanel')}>
+              <section className="mission-console__project-awareness-strip" data-testid="project-awareness-active-mission-strip" data-project-awareness-surface="builder-mesh">
+                <h6>Project Awareness / Active Mission</h6>
+                {operatorReliefProjection.projectAwarenessProjection?.status === 'unavailable' ? (
+                  <p className="mission-console__helper-text">Project Awareness unavailable; no approved active mission or runtime packet truth is available yet.</p>
+                ) : null}
+                {operatorReliefProjection.projectAwarenessProjection?.status === 'degraded' ? (
+                  <p className="mission-console__helper-text">No approved active mission stored; deriving current mission from runtime packet truth.</p>
+                ) : null}
+                <ul className="mission-console__status-list">
+                  <li><strong>Mission:</strong> {operatorReliefProjection.projectAwarenessProjection?.title || 'unknown'}</li>
+                  <li><strong>Phase / confidence:</strong> {operatorReliefProjection.projectAwarenessProjection?.phase || 'unknown'} · {operatorReliefProjection.projectAwarenessProjection?.confidence || 'low'}</li>
+                  <li><strong>Current focus:</strong> {operatorReliefProjection.projectAwarenessProjection?.currentFocus || 'unknown'}</li>
+                  <li><strong>Next best action:</strong> {operatorReliefProjection.projectAwarenessProjection?.nextBestAction || 'unknown'}</li>
+                  <li><strong>Recommended route:</strong> {operatorReliefProjection.projectAwarenessProjection?.recommendedRoute || 'hold'} · {operatorReliefProjection.projectAwarenessProjection?.recommendedRouteReason || 'unknown'}</li>
+                  <li><strong>Missing proof count:</strong> {(operatorReliefProjection.projectAwarenessProjection?.missingProof || []).length}</li>
+                  <li><strong>Rehydration source:</strong> {operatorReliefProjection.projectAwarenessProjection?.rehydrationSource || 'none'}</li>
+                </ul>
+              </section>
               <ul className="mission-console__status-list">
                 <li><strong>Builder mesh status:</strong> {operatorReliefProjection.builderMeshProjection?.builderMeshStatus || 'unknown'}</li>
                 <li><strong>Recommended builder:</strong> {operatorReliefProjection.builderMeshProjection?.recommendedBuilder || 'hold'}</li>
@@ -1705,6 +1723,7 @@ function MissionConsoleTile({
                             <h6>{packet.title}</h6>
                             <ul className="mission-console__status-list">
                               <li><strong>Target / kind / status:</strong> {packet.target} · {packet.kind} · {packet.status}</li>
+                              <li><strong>Mission context:</strong> {operatorReliefProjection.projectAwarenessProjection?.title || 'unknown'} · {operatorReliefProjection.projectAwarenessProjection?.currentFocus || 'unknown'}</li>
                               <li><strong>Reason:</strong> {packet.reason}</li>
                               <li><strong>Summary:</strong> {packet.summary}</li>
                               <li><strong>Required proof:</strong> {(packet.requiredProof || []).join(' · ') || 'none'}</li>

@@ -6,6 +6,7 @@ import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
 import { diagnoseProviderDrift } from './providerRoutingTruth.js';
 import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
 import { derivePacketBayProjection } from './packetBayProjection.js';
+import { buildProjectAwarenessProjection, projectAwarenessSupportSnapshotFields } from './projectAwarenessProjection.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -662,7 +663,9 @@ function normalizeProjectAwarenessProjection({
     .filter((item) => item && item !== 'none');
   const hasMeaningfulField = Boolean(
     sources.length
+    || asKnown(metadata?.project_awareness_current_mission)
     || asKnown(metadata?.project_awareness_next_best_action)
+    || asKnown(metadata?.project_awareness_recommended_route)
     || asKnown(metadata?.project_awareness_operator_workflow_preference)
     || asKnown(metadata?.project_awareness_codex_role)
     || asKnown(metadata?.project_awareness_openclaw_role),
@@ -691,6 +694,7 @@ function normalizeProjectAwarenessProjection({
   }
   return {
     projectAwarenessStatus,
+    projectAwarenessSourcesUsed: sources.length ? sources.join('|') : 'none',
     chatContextPackStatus,
     chatContextMissionState,
     chatContextSourcesUsed: sourceSet.size > 0 ? Array.from(sourceSet).join('|') : 'none',
@@ -1425,6 +1429,26 @@ export function buildSupportSnapshot({
       agent_reality_loop_confidence: liveAgentRealityLoopProjection.confidence,
     })
     : {};
+  const liveProjectAwarenessProjection = runtimeStatus?.operatorReliefProjection?.projectAwarenessProjection
+    || runtimeStatus?.runtimeContext?.operatorReliefProjection?.projectAwarenessProjection
+    || runtimeStatus?.missionState?.operatorReliefProjection?.projectAwarenessProjection
+    || runtimeStatus?.inputMissionState?.operatorReliefProjection?.projectAwarenessProjection
+    || null;
+  const projectAwarenessRuntimeProjection = liveProjectAwarenessProjection && typeof liveProjectAwarenessProjection === 'object'
+    ? liveProjectAwarenessProjection
+    : buildProjectAwarenessProjection({
+      activeMission: runtimeStatus?.activeMission || runtimeStatus?.missionState?.activeMission || {},
+      builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection,
+      packetBayProjection,
+      agentRealityLoopProjection: liveAgentRealityLoopProjection || {},
+      missionVerification: runtimeStatus?.missionVerification || {},
+      uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' },
+      supportSnapshot: runtimeStatus || {},
+    });
+  const projectAwarenessFields = projectAwarenessSupportSnapshotFields(
+    projectAwarenessRuntimeProjection,
+    executionMetadata?.project_awareness_prompt_injected || 'no',
+  );
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
@@ -1756,25 +1780,28 @@ export function buildSupportSnapshot({
   const commandPipelineLastInputRestoreAvailable = executionMetadata?.command_pipeline_last_input_restore_available || 'yes';
 
 
-  const activeMissionStatus = executionMetadata?.chat_context_active_mission_status || 'unknown';
-  const activeMissionId = executionMetadata?.chat_context_active_mission_id || 'unknown';
-  const activeMissionTitle = executionMetadata?.chat_context_active_mission_title || 'unknown';
-  const activeMissionPhase = executionMetadata?.chat_context_active_mission_phase || 'unknown';
-  const activeMissionCurrentFocus = executionMetadata?.chat_context_active_mission_current_focus || 'unknown';
-  const activeMissionNextStep = executionMetadata?.chat_context_active_mission_next_step || 'unknown';
-  const activeMissionProofState = executionMetadata?.chat_context_active_mission_proof_state || 'unknown';
-  const activeMissionRelatedSystems = executionMetadata?.chat_context_active_mission_related_systems || 'none';
-  const activeMissionRehydrated = executionMetadata?.chat_context_active_mission_rehydrated || 'no';
+  const activeMissionStatus = executionMetadata?.chat_context_active_mission_status || (projectAwarenessRuntimeProjection.status !== 'unavailable' ? projectAwarenessRuntimeProjection.status : 'unknown');
+  const activeMissionId = executionMetadata?.chat_context_active_mission_id || projectAwarenessRuntimeProjection.missionId || 'unknown';
+  const activeMissionTitle = executionMetadata?.chat_context_active_mission_title || projectAwarenessRuntimeProjection.title || 'unknown';
+  const activeMissionPhase = executionMetadata?.chat_context_active_mission_phase || projectAwarenessRuntimeProjection.phase || 'unknown';
+  const activeMissionCurrentFocus = executionMetadata?.chat_context_active_mission_current_focus || projectAwarenessRuntimeProjection.currentFocus || 'unknown';
+  const activeMissionNextStep = executionMetadata?.chat_context_active_mission_next_step || projectAwarenessRuntimeProjection.nextBestAction || 'unknown';
+  const activeMissionProofState = executionMetadata?.chat_context_active_mission_proof_state || (projectAwarenessRuntimeProjection.missingProof?.length ? 'proof-missing' : 'unknown');
+  const activeMissionRelatedSystems = executionMetadata?.chat_context_active_mission_related_systems || (projectAwarenessRuntimeProjection.affectedSubsystems || []).join('|') || 'none';
+  const activeMissionRehydrated = executionMetadata?.chat_context_active_mission_rehydrated || (projectAwarenessRuntimeProjection.rehydrated ? 'yes' : 'no');
   const activeMissionStorageKey = executionMetadata?.chat_context_active_mission_storage_key || 'stephanos.active.mission.v1';
   const activeMissionRawTranscriptStored = executionMetadata?.chat_context_active_mission_raw_transcript_stored || 'no';
-  const projectAwarenessPackStatus = projectAwarenessProjection.projectAwarenessStatus || executionMetadata?.project_awareness_pack_status || 'unavailable';
-  const projectAwarenessSourcesUsed = executionMetadata?.project_awareness_sources_used || 'none';
-  const projectAwarenessCurrentMission = executionMetadata?.project_awareness_current_mission || 'unknown';
-  const projectAwarenessNextBestAction = executionMetadata?.project_awareness_next_best_action || 'unknown';
+  const rawProjectAwarenessPackStatus = executionMetadata?.project_awareness_pack_status || '';
+  const projectAwarenessPackStatus = rawProjectAwarenessPackStatus === 'unavailable' && projectAwarenessProjection.projectAwarenessStatus && projectAwarenessProjection.projectAwarenessStatus !== 'unavailable'
+    ? projectAwarenessProjection.projectAwarenessStatus
+    : (rawProjectAwarenessPackStatus || projectAwarenessFields.project_awareness_pack_status || projectAwarenessProjection.projectAwarenessStatus || 'unavailable');
+  const projectAwarenessSourcesUsed = executionMetadata?.project_awareness_sources_used || projectAwarenessFields.project_awareness_sources_used || 'none';
+  const projectAwarenessCurrentMission = executionMetadata?.project_awareness_current_mission || projectAwarenessFields.project_awareness_current_mission || 'unknown';
+  const projectAwarenessNextBestAction = executionMetadata?.project_awareness_next_best_action || projectAwarenessFields.project_awareness_next_best_action || 'unknown';
   const projectAwarenessOperatorWorkflowPreference = executionMetadata?.project_awareness_operator_workflow_preference || 'unknown';
   const projectAwarenessCodexRole = executionMetadata?.project_awareness_codex_role || 'unknown';
   const projectAwarenessOpenClawRole = executionMetadata?.project_awareness_openclaw_role || 'unknown';
-  const projectAwarenessWarningCount = executionMetadata?.project_awareness_warning_count ?? 0;
+  const projectAwarenessWarningCount = executionMetadata?.project_awareness_warning_count ?? projectAwarenessFields.project_awareness_warning_count ?? 0;
   const retrievalQueryText = String(executionMetadata?.retrieval_query || executionMetadata?.prompt || '').trim();
   const promptInjectionMarker = '[Project Awareness Context: bounded truth for mission-planning only]';
   const hasPromptInjectionMarker = retrievalQueryText.includes(promptInjectionMarker);
@@ -3003,7 +3030,22 @@ export function buildSupportSnapshot({
     `Active Mission Storage Key: ${asText(activeMissionStorageKey, 'stephanos.active.mission.v1')}`,
     `Active Mission Raw Transcript Stored: ${asText(activeMissionRawTranscriptStored, 'no')}`,
     `Project Awareness Pack Status: ${asText(projectAwarenessPackStatus, 'unavailable')}`,
+    `Project Awareness Projection Source: ${asText(projectAwarenessFields.project_awareness_projection_source, 'none')}`,
     `Project Awareness Sources Used: ${asText(projectAwarenessSourcesUsed, 'none')}`,
+    `Project Awareness Mission ID: ${asText(projectAwarenessFields.project_awareness_mission_id, 'unknown')}`,
+    `Project Awareness Mission Phase: ${asText(projectAwarenessFields.project_awareness_mission_phase, 'unknown')}`,
+    `Project Awareness Current Focus: ${asText(projectAwarenessFields.project_awareness_current_focus, 'unknown')}`,
+    `Project Awareness Recommended Route: ${asText(projectAwarenessFields.project_awareness_recommended_route, 'hold')}`,
+    `Project Awareness Recommended Route Reason: ${asText(projectAwarenessFields.project_awareness_recommended_route_reason, 'unknown')}`,
+    `Project Awareness Confidence: ${asText(projectAwarenessFields.project_awareness_confidence, 'low')}`,
+    `Project Awareness Rehydrated: ${asText(projectAwarenessFields.project_awareness_rehydrated, 'no')}`,
+    `Project Awareness Rehydration Source: ${asText(projectAwarenessFields.project_awareness_rehydration_source, 'none')}`,
+    `Project Awareness Prompt Injectable: ${asText(projectAwarenessFields.project_awareness_prompt_injectable, 'no')}`,
+    `Project Awareness Proved Systems: ${asText(projectAwarenessFields.project_awareness_proved_systems, 'none')}`,
+    `Project Awareness Affected Subsystems: ${asText(projectAwarenessFields.project_awareness_affected_subsystems, 'none')}`,
+    `Project Awareness Missing Proof Summary: ${asText(projectAwarenessFields.project_awareness_missing_proof_summary, 'none')}`,
+    `Project Awareness Blocker Count: ${asText(projectAwarenessFields.project_awareness_blocker_count, '0')}`,
+    `Project Awareness Operator Decision Required: ${asText(projectAwarenessFields.project_awareness_operator_decision_required, 'no')}`,
     `Project Awareness Current Mission: ${asText(projectAwarenessCurrentMission, 'unknown')}`,
     `Project Awareness Next Best Action: ${asText(projectAwarenessNextBestAction, 'unknown')}`,
     `Project Awareness Operator Workflow Preference: ${asText(projectAwarenessOperatorWorkflowPreference, 'unknown')}`,
@@ -3018,8 +3060,8 @@ export function buildSupportSnapshot({
     `Work Routing Prompt Block Length: ${asText(workRoutingPromptBlockLength, '0')}`,
     `Work Routing Prompt Sources: ${asText(workRoutingPromptSources, 'none')}`,
     `Agent Reality Loop Context Recognized: ${asText(executionMetadata?.agent_reality_loop_context_recognized, 'no')}`,
-    `Agent Reality Loop Context Source: ${asText(executionMetadata?.agent_reality_loop_context_source, 'none')}`,
-    `Agent Reality Loop Context Injected: ${asText(arlContextInjected, 'no')}`,
+    `Agent Reality Loop Context Source: ${asText(agentRealityLoopFields.agent_reality_loop_context_source || executionMetadata?.agent_reality_loop_context_source, 'none')}`,
+    `Agent Reality Loop Context Injected: ${asText(agentRealityLoopFields.agent_reality_loop_context_injected || arlContextInjected, 'no')}`,
     `Agent Reality Loop Context Injection Blocker: ${asText(arlContextInjectionBlocker, 'none')}`,
     `ARL Projection Source: ${asText(arlProjectionSource, 'none')}`,
     `Agent Reality Loop Status: ${asText(agentRealityLoopFields.agent_reality_loop_status, 'unavailable')}`,
