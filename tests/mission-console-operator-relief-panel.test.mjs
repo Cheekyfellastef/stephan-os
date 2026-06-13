@@ -139,3 +139,11 @@ test('Agent Reality Loop compact section renders inside Operator Relief without 
   assert.doesNotMatch(source, /AgentRealityLoopDashboard/);
   assert.doesNotMatch(source, /agent-reality-loop-app/);
 });
+
+test('Project Awareness strip renders inside existing Builder Mesh surface without duplicate dashboard', () => {
+  assert.match(source, /data-testid="project-awareness-active-mission-strip"/);
+  assert.match(source, /Project Awareness \/ Active Mission/);
+  assert.match(source, /data-project-awareness-surface="builder-mesh"/);
+  assert.match(source, /No approved active mission stored; deriving current mission from runtime packet truth\./);
+  assert.doesNotMatch(source, /ProjectAwarenessDashboard/);
+});

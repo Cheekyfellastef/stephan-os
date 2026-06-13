@@ -239,6 +239,10 @@ function buildProjectAwarenessPromptContext(chatContextPack = null, prompt = '')
     return { block: '', injected: 'no', sources: [], missionPlanningContextUsed: 'no' };
   }
   const projectAwareness = chatContextPack?.contextForPrompt?.projectAwareness || chatContextPack?.compactSummary?.projectAwareness || {};
+  if (projectAwareness.promptInjectable === true && projectAwareness.promptBlock) {
+    const sources = Array.isArray(projectAwareness.sourcesUsed) ? projectAwareness.sourcesUsed.filter(Boolean) : ['projectAwareness'];
+    return { block: String(projectAwareness.promptBlock).slice(0, 1400), injected: 'yes', sources, missionPlanningContextUsed: 'yes' };
+  }
   const missionAgentRealityLoopProjection = chatContextPack?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection
     || chatContextPack?.inputMissionState?.agentRealityLoopProjection
     || {};
@@ -314,8 +318,13 @@ function buildWorkRoutingPromptContext(chatContextPack = null, prompt = '', mode
   const packetAvailability = coBuilderLoop?.packetAvailability || {};
   const hasAnyContext = Object.keys(agentWorkRouting).length > 0 || Object.keys(coBuilderLoop).length > 0;
   const packStatus = hasAnyContext ? 'degraded' : 'unavailable';
+  const projectAwareness = chatContextPack?.contextForPrompt?.projectAwareness || chatContextPack?.compactSummary?.projectAwareness || {};
+  if (projectAwareness.status && projectAwareness.status !== 'unavailable') sources.push('projectAwareness');
   const blockLines = [
     '[Work Routing Context: bounded truth for Codex/OpenClaw task assignment only]',
+    `- project awareness mission: ${projectAwareness.currentMissionSummary || 'unknown'}`,
+    `- project awareness focus: ${projectAwareness.currentFocus || 'unknown'}`,
+    `- project awareness missing proof: ${Array.isArray(projectAwareness.missingProof) && projectAwareness.missingProof.length ? projectAwareness.missingProof.slice(0, 5).join(' | ') : 'none'}`,
     `- recommended route: ${agentWorkRouting.recommendedRoute || 'unknown'}`,
     `- recommended next worker: ${coBuilderLoop.recommendedNextWorker || 'hold'}`,
     `- codex readiness: ${agentWorkRouting.codexReady || 'unknown'}`,
@@ -352,7 +361,9 @@ export function normalizeProjectAwarenessMetadata({
     || 'unknown';
   const sources = Array.isArray(projectAwareness.sourcesUsed) ? projectAwareness.sourcesUsed.filter(Boolean) : [];
   const hasMeaningfulField = Boolean(
-    toTruthyValue(projectAwareness.nextBestAction)
+    toTruthyValue(projectAwareness.currentMissionSummary)
+    || toTruthyValue(projectAwareness.nextBestAction)
+    || toTruthyValue(projectAwareness.recommendedRoute)
     || toTruthyValue(projectAwareness.operatorWorkflowPreference)
     || toTruthyValue(projectAwareness.codexRole)
     || toTruthyValue(projectAwareness.openClawRole)
@@ -647,12 +658,12 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     chat_context_provider_next_actions: providerNextActions.length ? providerNextActions.slice(0, 3).join(' | ') : 'none',
     chat_context_provider_proof_state: providerProofState ? JSON.stringify(providerProofState) : 'unknown',
     chat_context_provider_canon_links_count: providerCanonLinksCount,
-    chat_context_active_mission_status: activeMission?.activeMissionTitle && activeMission?.activeMissionTitle !== 'unknown' ? 'active' : 'unknown',
-    chat_context_active_mission_id: activeMission?.activeMissionId || 'unknown',
-    chat_context_active_mission_title: activeMission?.activeMissionTitle || 'unknown',
-    chat_context_active_mission_phase: activeMission?.canonicalMissionPhase || 'unknown',
-    chat_context_active_mission_current_focus: chatContextPack?.inputMissionState?.activeMission?.currentFocus || 'unknown',
-    chat_context_active_mission_next_step: activeMission?.missionNextAction || 'unknown',
+    chat_context_active_mission_status: activeMission?.activeMissionTitle && activeMission?.activeMissionTitle !== 'unknown' ? 'active' : (projectAwarenessTruth.projectAwarenessStatus !== 'unavailable' ? projectAwarenessTruth.projectAwarenessStatus : 'unknown'),
+    chat_context_active_mission_id: activeMission?.activeMissionId || projectAwareness.missionId || 'unknown',
+    chat_context_active_mission_title: activeMission?.activeMissionTitle || projectAwarenessTruth.projectAwarenessCurrentMission || 'unknown',
+    chat_context_active_mission_phase: activeMission?.canonicalMissionPhase || projectAwareness.phase || 'unknown',
+    chat_context_active_mission_current_focus: chatContextPack?.inputMissionState?.activeMission?.currentFocus || projectAwareness.currentFocus || 'unknown',
+    chat_context_active_mission_next_step: activeMission?.missionNextAction || projectAwarenessTruth.projectAwarenessNextAction || 'unknown',
     chat_context_active_mission_proof_state: chatContextPack?.inputMissionState?.activeMission?.proofState || 'unknown',
     chat_context_active_mission_related_systems: Array.isArray(chatContextPack?.inputMissionState?.activeMission?.relatedSystems) ? chatContextPack.inputMissionState.activeMission.relatedSystems.join('|') : 'none',
     chat_context_active_mission_rehydrated: activeMission?.activeMissionRehydrated || 'no',
@@ -662,6 +673,21 @@ export function buildChatContextExecutionMetadata(chatContextPack = null) {
     project_awareness_sources_used: projectAwarenessTruth.projectAwarenessSourcesUsed.length ? projectAwarenessTruth.projectAwarenessSourcesUsed.join('|') : 'none',
     project_awareness_current_mission: projectAwarenessTruth.projectAwarenessCurrentMission || 'unknown',
     project_awareness_next_best_action: projectAwarenessTruth.projectAwarenessNextAction || 'unknown',
+    project_awareness_projection_source: projectAwareness.projectionSource || 'none',
+    project_awareness_mission_id: projectAwareness.missionId || 'unknown',
+    project_awareness_mission_phase: projectAwareness.phase || 'unknown',
+    project_awareness_current_focus: projectAwareness.currentFocus || 'unknown',
+    project_awareness_recommended_route: projectAwareness.recommendedRoute || 'hold',
+    project_awareness_recommended_route_reason: projectAwareness.recommendedRouteReason || 'unknown',
+    project_awareness_confidence: projectAwareness.confidence || 'low',
+    project_awareness_rehydrated: projectAwareness.rehydrationSource && projectAwareness.rehydrationSource !== 'none' ? 'yes' : 'no',
+    project_awareness_rehydration_source: projectAwareness.rehydrationSource || 'none',
+    project_awareness_prompt_injectable: projectAwareness.promptInjectable ? 'yes' : 'no',
+    project_awareness_proved_systems: Array.isArray(projectAwareness.provedSystems) ? projectAwareness.provedSystems.join('|') : 'none',
+    project_awareness_affected_subsystems: Array.isArray(projectAwareness.affectedSubsystems) ? projectAwareness.affectedSubsystems.join('|') : 'none',
+    project_awareness_missing_proof_summary: Array.isArray(projectAwareness.missingProof) ? projectAwareness.missingProof.join(' | ') : 'none',
+    project_awareness_blocker_count: Array.isArray(projectAwareness.blockers) ? projectAwareness.blockers.length : 0,
+    project_awareness_operator_decision_required: projectAwareness.operatorDecisionRequired ? 'yes' : 'no',
     project_awareness_operator_workflow_preference: projectAwarenessTruth.projectAwarenessWorkflowPreference || 'unknown',
     project_awareness_codex_role: projectAwarenessTruth.projectAwarenessCodexRole || 'unknown',
     project_awareness_openclaw_role: projectAwarenessTruth.projectAwarenessOpenClawRole || 'unknown',

@@ -4220,3 +4220,27 @@ test('buildSupportSnapshot exposes Agent Reality Loop V1 fields from live projec
   assert.match(snapshot, /Agent Reality Loop Projection Source: agent-reality-loop-v1-runtime-truth-projection/);
   assert.match(snapshot, /Agent Reality Loop Confidence: high/);
 });
+
+test('Support Snapshot exposes Project Awareness Active Mission Rehydration fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      appLaunchState: 'ready',
+      operatorReliefProjection: {
+        builderMeshProjection: { builderMeshStatus: 'ready-read-only', recommendedBuilder: 'local-ai', recommendedBuilderReason: 'local proof review', nextBestAction: 'Copy local-ai proof packet.' },
+        packetBayProjection: { packetBayStatus: 'active', counts: { inbox: 1, outbox: 1, readyToCopy: 1 }, packets: [{ id: 'p1', target: 'local-ai', kind: 'proof', status: 'ready-to-copy', copyText: 'proof', requiredProof: ['browser proof'], missingProof: ['browser proof'] }] },
+        agentRealityLoopProjection: { status: 'blocked', phase: 'blocked', recommendedLead: 'hold', missingProof: ['browser proof'], projectionSource: 'agent-reality-loop-v1-runtime-truth-projection' },
+        projectAwarenessProjection: { status: 'degraded', missionId: 'derived-runtime-mission', title: 'Stephanos Mission Stack Verification', phase: 'verification', currentFocus: 'Verify proof packet.', nextBestAction: 'Resolve proof blockers: browser proof', recommendedRoute: 'local-ai', recommendedRouteReason: 'Builder Mesh recommends local-ai read-only verification/review.', sourceSummary: ['Packet Bay projection','Agent Reality Loop projection','Builder Mesh projection'], provedSystems: ['Builder Mesh','Packet Bay'], affectedSubsystems: ['builder-mesh','packet-bay'], missingProof: ['browser proof'], blockers: [], warnings: [], confidence: 'medium', rehydrated: true, rehydrationSource: 'derived-runtime-packet-truth', promptInjectable: true, promptBlock: 'bounded' },
+      },
+      lastExecutionMetadata: {},
+    },
+    routeTruthView: {}, runtimeSessionTruth: {}, runtimeRouteTruth: {}, runtimeReachabilityTruth: {}, runtimeProviderTruth: {}, runtimeDiagnosticsTruth: {}, runtimeContext: {}, safeApiStatus: {}, statusSummary: {}, uiReality: { severity: 'OK' },
+  });
+  assert.match(snapshot, /Project Awareness Pack Status: degraded/);
+  assert.match(snapshot, /Project Awareness Projection Source:/);
+  assert.match(snapshot, /Project Awareness Mission ID: derived-runtime-mission/);
+  assert.match(snapshot, /Project Awareness Mission Phase: verification/);
+  assert.match(snapshot, /Project Awareness Current Focus: Verify proof packet\./);
+  assert.match(snapshot, /Project Awareness Recommended Route: local-ai/);
+  assert.match(snapshot, /Project Awareness Missing Proof Summary: browser proof/);
+  assert.match(snapshot, /Agent Reality Loop Context Source:/);
+});

@@ -1,6 +1,7 @@
 import { buildContextProviderSnapshot } from './contextProviderRegistry.js';
 import { buildGithubPrEvidenceProvider } from './githubPrEvidenceProvider.js';
 import { detectOperatorExplanationIntent } from './operatorExplanationProjection.js';
+import { buildProjectAwarenessProjection } from './projectAwarenessProjection.js';
 
 const CHAT_CONTEXT_VERSION = 'v1';
 
@@ -167,6 +168,18 @@ function pickResponseMode(msg = '') {
 }
 
 function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}, proofState = {}, operatorProfile = {} } = {}) {
+  const existingProjection = missionState?.operatorReliefProjection?.projectAwarenessProjection || missionState?.projectAwarenessProjection || null;
+  const projection = existingProjection || buildProjectAwarenessProjection({
+    activeMission: missionState?.activeMission || {},
+    builderMeshProjection: missionState?.operatorReliefProjection?.builderMeshProjection || missionState?.builderMeshProjection || {},
+    packetBayProjection: missionState?.operatorReliefProjection?.packetBayProjection || missionState?.packetBayProjection || {},
+    agentRealityLoopProjection: missionState?.operatorReliefProjection?.agentRealityLoopProjection || missionState?.agentRealityLoopProjection || {},
+    builderWorkbenchProjection: missionState?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection || {},
+    missionVerification: missionState?.operatorReliefProjection?.verificationReturnIntake || {},
+    operatorProfile,
+    missionIntelligence,
+    supportSnapshot: missionState?.supportSnapshot || {},
+  });
   const sourcesUsed = [];
   if (missionState && Object.keys(missionState).length) sourcesUsed.push('missionState');
   if (missionIntelligence && Object.keys(missionIntelligence).length) sourcesUsed.push('missionIntelligence');
@@ -192,19 +205,29 @@ function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}
   const hasMissionState = missionState && Object.keys(missionState).length > 0;
   const hasHarness = Boolean(missionState?.operatorReliefProjection?.harnessAgentProjection || missionState?.harnessAgentProjection);
   return {
-    status: hasMissionIntelligence && hasHarness ? 'available' : (hasMissionState ? 'degraded' : 'unavailable'),
-    sourcesUsed,
+    status: projection.status === 'active' ? 'available' : (projection.status || (hasMissionIntelligence && hasHarness ? 'available' : (hasMissionState ? 'degraded' : 'unavailable'))),
+    sourcesUsed: projection.sourceSummary?.length ? projection.sourceSummary : sourcesUsed,
     projectNorthStar: 'Stephanos OS is being built into an operator-relief AI cockpit where the user remains the intent engine while Stephanos, Codex, OpenClaw, and assistant intelligence handle increasing amounts of planning, proof, orchestration, coding, and housework under approval gates.',
     operatorWorkflowPreference: missionIntelligence.operatorWorkflowPreference || 'Operator prefers main-first/main-only simplicity for now. Avoid branch-management-heavy workflows until Stephanos/OpenClaw can handle branch creation, PR hygiene, merge/rebase/conflict management, and proof collection automatically.',
-    currentMissionSummary: missionIntelligence.currentMissionSummary || missionState?.activeMission?.summary || 'unknown',
+    currentMissionSummary: projection.title || missionIntelligence.currentMissionSummary || missionState?.activeMission?.summary || 'unknown',
     missionIntelligenceSummary: missionIntelligence.missionIntelligenceStatus || 'unknown',
     harnessAgentSummary: missionState?.operatorReliefProjection?.harnessAgentProjection?.harnessVersion || missionState?.harnessAgentProjection?.harnessVersion || 'unavailable',
     protectedCanonSummary: missionIntelligence.protectedCanonSummary || 'Preserve launcher/runtime separation and protected command deck canon boundaries.',
-    currentProofState: missionIntelligence.proofRequiredSummary || proofState?.buildVerifyStatus || 'unknown',
-    currentBlockers: Array.isArray(missionIntelligence.currentBlockers) ? missionIntelligence.currentBlockers : [],
+    currentProofState: projection.missingProof?.length ? 'proof-missing' : (missionIntelligence.proofRequiredSummary || proofState?.buildVerifyStatus || 'unknown'),
+    currentBlockers: projection.blockers?.length ? projection.blockers : (Array.isArray(missionIntelligence.currentBlockers) ? missionIntelligence.currentBlockers : []),
     codexRole: 'Codex executes bounded implementation/proof work under approval gates; no autonomous execution or merge authority.',
     openClawRole: 'OpenClaw supports orchestration/research/proof under approval gates without bypassing operator merge authority.',
-    nextBestAction: missionIntelligence.nextBestAction || 'Integrate Mission Brain, Harness, proof, and canon context into the existing Chat Context Pack path.',
+    nextBestAction: projection.nextBestAction || missionIntelligence.nextBestAction || 'Integrate Mission Brain, Harness, proof, and canon context into the existing Chat Context Pack path.',
+    missionId: projection.missionId || 'unknown',
+    phase: projection.phase || 'unknown',
+    currentFocus: projection.currentFocus || 'unknown',
+    recommendedRoute: projection.recommendedRoute || 'hold',
+    recommendedRouteReason: projection.recommendedRouteReason || 'unknown',
+    confidence: projection.confidence || 'low',
+    rehydrationSource: projection.rehydrationSource || 'none',
+    missingProof: projection.missingProof || [],
+    promptInjectable: projection.promptInjectable === true,
+    promptBlock: projection.promptBlock || '',
     agentRealityLoopV1Summary: 'Agent Reality Loop V1 is a read-only coordination/proof projection in Mission Brain / Operator Relief that routes work between Codex, OpenClaw, operator, or hold; exposes required proof; blocks merge when proof is missing; and proposes lesson candidates for operator approval.',
     agentRealityLoopProjectionStatus: agentRealityLoopProjection.status || agentRealityLoopProjection.loopStatus || (Object.keys(agentRealityLoopProjection).length ? 'available' : 'unavailable'),
     agentRealityLoopProjectionSource,

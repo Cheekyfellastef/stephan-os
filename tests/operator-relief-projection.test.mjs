@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deriveOperatorReliefProjection, buildAgentRealityLoopProjection } from '../stephanos-ui/src/state/operatorReliefProjection.js';
+import { buildProjectAwarenessProjection } from '../stephanos-ui/src/state/projectAwarenessProjection.js';
 
 test('Projection composes mission objective, codex delta, and test/build/verify status', () => {
   const r = deriveOperatorReliefProjection({
@@ -1034,4 +1035,67 @@ test('Agent Reality Loop V1 UI Reality not OK blocks on browser proof', () => {
   });
   assert.equal(r.status, 'blocked');
   assert.equal(r.missingProof.includes('browser/UI proof'), true);
+});
+
+test('Project Awareness derives degraded mission from Packet Bay, ARL, and Builder Mesh when no active mission storage exists', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: { uiRealityStatus: 'OK' },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true } } },
+  });
+  assert.notEqual(r.projectAwarenessProjection.status, 'unavailable');
+  assert.equal(r.projectAwarenessProjection.missionId, 'derived-runtime-mission');
+  assert.equal(r.projectAwarenessProjection.rehydrationSource, 'derived-runtime-packet-truth');
+  assert.match(r.projectAwarenessProjection.title, /Stephanos Mission Stack Verification|Mission/);
+  assert.equal(r.projectAwarenessProjection.durableWriteAllowed, false);
+});
+
+test('Project Awareness local-ai proof packet sets verification phase and recommends local-ai read-only review', () => {
+  const r = buildProjectAwarenessProjection({
+    packetBayProjection: { packets: [{ id: 'p1', target: 'local-ai', kind: 'proof', status: 'ready-to-copy', copyText: 'proof' }] },
+    builderMeshProjection: { recommendedBuilder: 'local-ai', recommendedBuilderReason: 'Builder Mesh recommends local-ai read-only verification/review.', nextBestAction: 'Copy local-ai proof packet.' },
+    agentRealityLoopProjection: { projectionSource: 'agent-reality-loop-v1-runtime-truth-projection' },
+    supportSnapshot: { uiRealityStatus: 'OK' },
+  });
+  assert.equal(r.phase, 'verification');
+  assert.equal(r.recommendedRoute, 'local-ai');
+  assert.match(r.recommendedRouteReason, /local-ai read-only verification\/review/);
+});
+
+test('Project Awareness surfaces ARL missing proof and never emits merge-ready wording while verification is pending', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: { uiRealityStatus: 'OK' },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: false, verifyRun: false } } },
+  });
+  assert.ok(r.projectAwarenessProjection.missingProof.length > 0);
+  assert.match(r.projectAwarenessProjection.nextBestAction, /Resolve proof blockers|Review Project Awareness|proof/i);
+  assert.doesNotMatch(`${r.projectAwarenessProjection.nextBestAction} ${r.projectAwarenessProjection.recommendedRouteReason}`, /merge-ready/i);
+});
+
+test('Project Awareness blocks on dirty OpenClaw workspace and UI Reality failures', () => {
+  const dirty = buildProjectAwarenessProjection({
+    packetBayProjection: { packetBayStatus: 'active' },
+    openClawWorkspaceHygiene: { workspaceDirtDetected: 'yes', workspaceDirtCount: 2, workspaceBlocksIgnition: 'yes' },
+    supportSnapshot: { uiRealityStatus: 'OK' },
+  });
+  assert.equal(dirty.status, 'blocked');
+  assert.match(dirty.nextBestAction, /Housekeep OpenClaw workspace/);
+  const uiFail = buildProjectAwarenessProjection({ packetBayProjection: { packetBayStatus: 'active' }, uiRealityTruth: { status: 'FAIL' } });
+  assert.equal(uiFail.status, 'blocked');
+  assert.ok(uiFail.missingProof.includes('browser/UI proof'));
+});
+
+test('Project Awareness prompt block is bounded, source-backed, and weak truth is not injectable', () => {
+  const r = deriveOperatorReliefProjection({ supportSnapshot: { uiRealityStatus: 'OK' } });
+  assert.equal(r.projectAwarenessProjection.promptInjectable, true);
+  assert.ok(r.projectAwarenessProjection.promptBlock.length > 0 && r.projectAwarenessProjection.promptBlock.length <= 1400);
+  assert.doesNotMatch(r.projectAwarenessProjection.promptBlock, /Support Snapshot proof:/i);
+  const weak = buildAgentRealityLoopProjection({});
+  assert.equal(weak.projectAwarenessContextInjected, 'no');
+});
+
+test('Agent Reality Loop receives Project Awareness context source when projection exists', () => {
+  const r = deriveOperatorReliefProjection({ supportSnapshot: { uiRealityStatus: 'OK' } });
+  assert.equal(r.agentRealityLoopProjection.projectAwarenessContextInjected, 'yes');
+  assert.equal(r.agentRealityLoopProjection.supportSnapshotFields.agent_reality_loop_context_injected, 'yes');
+  assert.notEqual(r.agentRealityLoopProjection.supportSnapshotFields.agent_reality_loop_context_source, 'none');
 });

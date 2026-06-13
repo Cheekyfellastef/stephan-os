@@ -388,3 +388,11 @@ test('protected canon: Agent Reality Loop V1 stays in existing Mission Console p
   assert.match(source, /data-agent-reality-loop-surface="operator-relief"/);
   assert.doesNotMatch(source, /AgentRealityLoopDashboard|agent-reality-loop-app/);
 });
+
+test('protected canon: Project Awareness strip extends Builder Mesh without duplicate pane or Command Deck replacement', async () => {
+  const missionConsoleSource = await read(missionConsoleTilePath);
+  assert.match(missionConsoleSource, /data-testid="project-awareness-active-mission-strip"/);
+  assert.match(missionConsoleSource, /data-project-awareness-surface="builder-mesh"/);
+  assert.match(missionConsoleSource, /panelId="missionConsoleBuilderMeshPanel" title="Zero-Cost Builder Mesh V1"/);
+  assert.doesNotMatch(missionConsoleSource, /ProjectAwarenessDashboard|projectAwarenessPanel/);
+});
