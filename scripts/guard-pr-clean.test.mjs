@@ -114,8 +114,36 @@ test('guard fails closed when strict mode cannot resolve origin/main', () => wit
   commitFile(dir, 'scripts/source.mjs', 'export const ok = true;\n');
   const result = runGuard(dir);
   assert.equal(result.ok, false);
-  assert.match(result.output, /origin\/main cannot be resolved/);
-  assert.match(result.output, /fails closed/);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_STRICT_VERDICT=FAIL_REMOTE_UNAVAILABLE/);
+  assert.match(result.output, /Strict PR proof unavailable/);
+  assert.doesNotMatch(result.output, /source dirty/i);
+}));
+
+test('local fallback passes clean tree when remote proof is unavailable and reports honest diff base', () => withRepo({ withOriginMain: false }, (dir) => {
+  commitFile(dir, 'scripts/source.mjs', 'export const ok = true;\n');
+  const result = runGuard(dir, '--local');
+  assert.equal(result.ok, true, result.output);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_LOCAL_VERDICT=PASS_LOCAL_CLEAN_REMOTE_UNAVAILABLE/);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_DIFF_BASE=merge-base main\.\.\.HEAD/);
+  assert.doesNotMatch(result.output, /strict PR proof passed/i);
+}));
+
+test('local fallback uses HEAD~1 honestly without labelling it strict proof', () => withRepo({ withOriginMain: false }, (dir) => {
+  run('git', ['branch', '-D', 'main'], dir);
+  commitFile(dir, 'scripts/source.mjs', 'export const ok = true;\n');
+  const result = runGuard(dir, '--local');
+  assert.equal(result.ok, true, result.output);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_DIFF_BASE=HEAD~1\.\.HEAD/);
+  assert.doesNotMatch(result.output, /PASS_STRICT_REMOTE_PROOF/);
+}));
+
+test('local fallback fails when source dirt remains', () => withRepo({ withOriginMain: false }, (dir) => {
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  writeFileSync(join(dir, 'scripts/source-dirt.mjs'), 'export const dirty = true;\n');
+  const result = runGuard(dir, '--local');
+  assert.equal(result.ok, false);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_LOCAL_VERDICT=FAIL_DIRTY/);
+  assert.match(result.output, /changed\/untracked file remains/);
 }));
 
 test('local fallback catches staged, unstaged, and untracked forbidden files', () => withRepo({}, (dir) => {
@@ -139,10 +167,26 @@ test('local fallback catches staged, unstaged, and untracked forbidden files', (
   assert.match(result.output, /node_modules\/pkg\/index\.js/);
 }));
 
+test('local fallback classifies generated dist and root OpenClaw workspace dirt', () => withRepo({ withOriginMain: false }, (dir) => {
+  mkdirSync(join(dir, 'apps/stephanos/dist'), { recursive: true });
+  writeFileSync(join(dir, 'apps/stephanos/dist/index.html'), '<html></html>\n');
+  let result = runGuard(dir, '--local');
+  assert.equal(result.ok, false);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_LOCAL_VERDICT=FAIL_GENERATED_DIST/);
+
+  rmSync(join(dir, 'apps'), { recursive: true, force: true });
+  mkdirSync(join(dir, '.openclaw'), { recursive: true });
+  writeFileSync(join(dir, '.openclaw/session.json'), '{}\n');
+  result = runGuard(dir, '--local');
+  assert.equal(result.ok, false);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_LOCAL_VERDICT=FAIL_OPENCLAW_ROOT_DIRT/);
+}));
+
 test('clean source-only PR passes strict mode', () => withRepo({}, (dir) => {
   commitFile(dir, 'scripts/source-only.mjs', 'export const sourceOnly = true;\n');
   const result = runGuard(dir);
   assert.equal(result.ok, true, result.output);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_STRICT_VERDICT=PASS_STRICT_REMOTE_PROOF/);
   assert.match(result.output, /OK: strict PR proof passed/);
   assert.match(result.output, /scripts\/source-only\.mjs/);
 }));
