@@ -4357,3 +4357,41 @@ test('buildSupportSnapshot exposes Mission Evidence Context V1B fields', () => {
   assert.match(snapshot, /Agent Reality Loop Evidence Trusted For Merge: no/);
   assert.match(snapshot, /Packet Bay Evidence Packet Count: 3/);
 });
+
+test('support snapshot derives Packet Bay evidence fields from live packetBayProjection rebuilt with Mission Evidence Context', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjection: {
+        packetBayProjection: { packets: [], evidencePacketCount: 0, supportSnapshotFields: { packet_bay_status: 'empty-clean', packet_bay_evidence_packet_count: '0' } },
+        missionEvidenceLedgerProjection: {
+          status: 'blocked',
+          missionId: 'derived-runtime-mission',
+          missionPhase: 'verification',
+          completeness: 'blocked',
+          entryCount: 8,
+          blockerCount: 2,
+          warningCount: 6,
+          pendingReviewCount: 8,
+          latestEvent: 'pr-evidence-missing',
+          nextRequiredEvidence: 'local-ai-route-proof-needed',
+          nextAction: 'Collect local AI route proof.',
+          missingProofSummary: 'local-ai-route-proof-needed | missing-browser-proof | pr-evidence-missing',
+          projectionSource: 'mission-evidence-ledger-v1a-runtime-truth-projection',
+          trustedForMerge: false,
+          trustedForCanon: false,
+          durableWriteAllowed: false,
+          mutationAllowed: false,
+          openClawMutationLocked: true,
+          codexAutoDispatchAllowed: false,
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /Packet Bay Evidence Packet Count: 3/);
+  assert.match(snapshot, /Packet Bay Evidence Review Packet Ready: yes/);
+  assert.match(snapshot, /Packet Bay Browser Proof Packet Ready: yes/);
+  assert.match(snapshot, /Packet Bay PR Evidence Packet Ready: yes/);
+  assert.match(snapshot, /Packet Mutation Allowed: no/);
+  assert.match(snapshot, /Packet OpenClaw Mutation Locked: yes/);
+  assert.match(snapshot, /Packet Codex Auto Dispatch Allowed: no/);
+});

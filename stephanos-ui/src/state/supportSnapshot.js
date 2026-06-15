@@ -1464,10 +1464,10 @@ export function buildSupportSnapshot({
     || runtimeStatus?.missionState?.operatorReliefProjection?.packetBayProjection
     || runtimeStatus?.inputMissionState?.operatorReliefProjection?.packetBayProjection
     || null;
-  const packetBayProjection = livePacketBayProjection && typeof livePacketBayProjection === 'object'
+  let packetBayProjection = livePacketBayProjection && typeof livePacketBayProjection === 'object'
     ? livePacketBayProjection
     : derivePacketBayProjection({ builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection });
-  const packetBayFields = packetBayProjection.supportSnapshotFields || {};
+  let packetBayFields = packetBayProjection.supportSnapshotFields || {};
   const liveAgentRealityLoopProjection = runtimeStatus?.operatorReliefProjection?.agentRealityLoopProjection
     || runtimeStatus?.runtimeContext?.operatorReliefProjection?.agentRealityLoopProjection
     || runtimeStatus?.missionState?.operatorReliefProjection?.agentRealityLoopProjection
@@ -1524,6 +1524,7 @@ export function buildSupportSnapshot({
     || runtimeStatus?.inputMissionState?.operatorReliefProjection?.missionEvidenceLedgerProjection
     || missionEvidenceLedgerProjectionFromRuntimeFields(runtimeStatus)
     || null;
+  const hasLiveMissionEvidenceLedgerProjection = Boolean(liveMissionEvidenceLedgerProjection && typeof liveMissionEvidenceLedgerProjection === 'object');
   const missionEvidenceLedgerProjection = liveMissionEvidenceLedgerProjection && typeof liveMissionEvidenceLedgerProjection === 'object'
     ? liveMissionEvidenceLedgerProjection
     : deriveMissionEvidenceLedgerProjection({
@@ -1540,6 +1541,14 @@ export function buildSupportSnapshot({
     });
   const missionEvidenceContextSummary = deriveMissionEvidenceContextSummary(missionEvidenceLedgerProjection);
   const missionEvidenceLedgerFields = missionEvidenceLedgerSupportSnapshotFields(missionEvidenceLedgerProjection);
+  if (hasLiveMissionEvidenceLedgerProjection && missionEvidenceContextSummary.available && Number(packetBayProjection.evidencePacketCount || 0) === 0) {
+    packetBayProjection = derivePacketBayProjection({
+      builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection,
+      missionEvidenceLedgerProjection,
+      missionEvidenceContextSummary,
+    });
+    packetBayFields = packetBayProjection.supportSnapshotFields || {};
+  }
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
