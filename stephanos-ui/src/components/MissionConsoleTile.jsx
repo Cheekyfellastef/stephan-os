@@ -105,7 +105,6 @@ const DEFAULT_MISSION_CONSOLE_SECTION_ORDER = Object.freeze([
   'missionConsoleAgentAssignmentMatrixPanel',
   'missionConsoleRoutingReadinessPanel',
   'missionConsolePrEvidencePanel',
-  'missionConsoleEvidenceLedgerPanel',
   'missionConsoleMissionIntelligencePanel',
   'missionConsoleRealityUpgradePanel',
   'missionConsoleConversationWorkspacePanel',
@@ -713,13 +712,30 @@ function MissionConsoleTile({
       memoryLibrarianConflictCount: String(memoryLibrarian.counts.conflicts || 0),
       memoryLibrarianSavedCount: String(memoryLibrarian.counts.saved || 0),
       memoryLibrarianRejectedCount: String(memoryLibrarian.counts.rejected || 0),
-      missionEvidenceLedgerEntryCount: String(missionEvidenceLedger.summary.ledgerEntryCount || 0),
-      missionEvidenceLedgerWarningCount: String(missionEvidenceLedger.summary.warningCount || 0),
-      missionEvidenceLedgerBlockerCount: String(missionEvidenceLedger.summary.blockerCount || 0),
-      missionEvidenceLedgerPendingReviewCount: String(missionEvidenceLedger.summary.pendingOperatorReviewCount || 0),
-      missionEvidenceCompleteness: missionEvidenceLedger.summary.evidenceCompleteness || 'low',
-      missionEvidenceLatestEvent: missionEvidenceLedger.summary.latestEventType || 'none',
-      missionEvidenceNextRequired: missionEvidenceLedger.summary.nextRequiredEvidence || 'none',
+      missionEvidenceLedgerStatus: operatorReliefProjection?.missionEvidenceLedgerProjection?.status || 'unavailable',
+      missionEvidenceLedgerMissionId: operatorReliefProjection?.missionEvidenceLedgerProjection?.missionId || 'mission-unknown',
+      missionEvidenceLedgerMissionTitle: operatorReliefProjection?.missionEvidenceLedgerProjection?.missionTitle || 'unknown',
+      missionEvidenceLedgerMissionPhase: operatorReliefProjection?.missionEvidenceLedgerProjection?.missionPhase || 'unknown',
+      missionEvidenceLedgerEntryCount: String(operatorReliefProjection?.missionEvidenceLedgerProjection?.entryCount ?? missionEvidenceLedger.summary.ledgerEntryCount ?? 0),
+      missionEvidenceLedgerProofEntryCount: String(operatorReliefProjection?.missionEvidenceLedgerProjection?.proofEntryCount ?? 0),
+      missionEvidenceLedgerWarningCount: String(operatorReliefProjection?.missionEvidenceLedgerProjection?.warningCount ?? missionEvidenceLedger.summary.warningCount ?? 0),
+      missionEvidenceLedgerBlockerCount: String(operatorReliefProjection?.missionEvidenceLedgerProjection?.blockerCount ?? missionEvidenceLedger.summary.blockerCount ?? 0),
+      missionEvidenceLedgerPendingReviewCount: String(operatorReliefProjection?.missionEvidenceLedgerProjection?.pendingReviewCount ?? missionEvidenceLedger.summary.pendingOperatorReviewCount ?? 0),
+      missionEvidenceCompleteness: operatorReliefProjection?.missionEvidenceLedgerProjection?.completeness || missionEvidenceLedger.summary.evidenceCompleteness || 'low',
+      missionEvidenceLatestEvent: operatorReliefProjection?.missionEvidenceLedgerProjection?.latestEvent || missionEvidenceLedger.summary.latestEventType || 'none',
+      missionEvidenceNextRequired: operatorReliefProjection?.missionEvidenceLedgerProjection?.nextRequiredEvidence || missionEvidenceLedger.summary.nextRequiredEvidence || 'none',
+      missionEvidenceLedgerNextAction: operatorReliefProjection?.missionEvidenceLedgerProjection?.nextAction || 'Review mission evidence projection.',
+      missionEvidenceLedgerProjectionSource: operatorReliefProjection?.missionEvidenceLedgerProjection?.projectionSource || 'none',
+      missionEvidenceLedgerConfidence: operatorReliefProjection?.missionEvidenceLedgerProjection?.confidence || 'low',
+      missionEvidenceLedgerDurableWriteAllowed: operatorReliefProjection?.missionEvidenceLedgerProjection?.durableWriteAllowed ? 'yes' : 'no',
+      missionEvidenceLedgerOperatorApprovalRequiredForWrite: operatorReliefProjection?.missionEvidenceLedgerProjection?.operatorApprovalRequiredForWrite ? 'yes' : 'no',
+      missionEvidenceLedgerMutationAllowed: operatorReliefProjection?.missionEvidenceLedgerProjection?.mutationAllowed ? 'yes' : 'no',
+      missionEvidenceLedgerOpenClawMutationLocked: operatorReliefProjection?.missionEvidenceLedgerProjection?.openClawMutationLocked === false ? 'no' : 'yes',
+      missionEvidenceLedgerCodexAutoDispatchAllowed: operatorReliefProjection?.missionEvidenceLedgerProjection?.codexAutoDispatchAllowed ? 'yes' : 'no',
+      missionEvidenceLedgerTopEntrySummary: (operatorReliefProjection?.missionEvidenceLedgerProjection?.topEntries || []).map((entry) => `${entry.type}: ${entry.summary}`).join(' | ') || 'none',
+      missionEvidenceLedgerMissingProofSummary: operatorReliefProjection?.missionEvidenceLedgerProjection?.missingProofSummary || 'none',
+      missionEvidenceLedgerTrustedForMerge: operatorReliefProjection?.missionEvidenceLedgerProjection?.trustedForMerge ? 'yes' : 'no',
+      missionEvidenceLedgerTrustedForCanon: operatorReliefProjection?.missionEvidenceLedgerProjection?.trustedForCanon ? 'yes' : 'no',
       agentAssignmentCount: String(agentAssignmentMatrix.summary.assignmentCount || 0),
       agentAssignmentActiveRoles: String(agentAssignmentMatrix.summary.activeRoleCount || 0),
       agentAssignmentLeadRole: agentAssignmentMatrix.summary.recommendedLeadRole || 'operator',
@@ -739,7 +755,7 @@ function MissionConsoleTile({
       missionRoutingWarningCount: String((missionRoutingReadiness.warnings || []).length || 0),
       missionRoutingNextAction: missionRoutingReadiness.nextAction || 'Await operator decision.',
     };
-  }, [agentAssignmentMatrix.summary, intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending, missionRoutingReadiness]);
+  }, [agentAssignmentMatrix.summary, intentToBuild, memoryLibrarian.counts, missionEvidenceLedger.summary, operatorReliefProjection?.missionEvidenceLedgerProjection, verificationReturnAdjudication.capabilityGapPending, verificationReturnAdjudication.lessonCandidatePending, missionRoutingReadiness]);
   useEffect(() => {
     const signature = [
       intentToBuildUpdateProjection.latestMissionId,
@@ -1702,6 +1718,18 @@ function MissionConsoleTile({
                 <li><strong>Blockers / warnings:</strong> {(operatorReliefProjection.builderMeshProjection?.blockers || []).length} blocker(s) · {(operatorReliefProjection.builderMeshProjection?.warnings || []).length} warning(s)</li>
                 <li><strong>Approval before mutation:</strong> {operatorReliefProjection.builderMeshProjection?.approvalRequiredBeforeMutation ? 'required' : 'not reported'}</li>
               </ul>
+              <h6>Mission Evidence Ledger V1A</h6>
+              <ul className="mission-console__status-list" aria-label="Mission Evidence Ledger compact summary">
+                <li><strong>Status / completeness:</strong> {operatorReliefProjection.missionEvidenceLedgerProjection?.status || 'unavailable'} · {operatorReliefProjection.missionEvidenceLedgerProjection?.completeness || 'unavailable'}</li>
+                <li><strong>Entries / blockers:</strong> {operatorReliefProjection.missionEvidenceLedgerProjection?.entryCount || 0} · {operatorReliefProjection.missionEvidenceLedgerProjection?.blockerCount || 0}</li>
+                <li><strong>Latest event:</strong> {operatorReliefProjection.missionEvidenceLedgerProjection?.latestEvent || 'none'}</li>
+                <li><strong>Next required evidence:</strong> {operatorReliefProjection.missionEvidenceLedgerProjection?.nextRequiredEvidence || 'runtime-truth'}</li>
+                <li><strong>Durable write / approval:</strong> {operatorReliefProjection.missionEvidenceLedgerProjection?.durableWriteAllowed ? 'enabled' : 'disabled'} · {operatorReliefProjection.missionEvidenceLedgerProjection?.operatorApprovalRequiredForWrite ? 'approval required' : 'approval not reported'}</li>
+                {(operatorReliefProjection.missionEvidenceLedgerProjection?.topEntries || []).slice(0, 3).map((entry) => (
+                  <li key={entry.id} className="compact-feed-row"><strong>{entry.type}:</strong> {entry.summary}</li>
+                ))}
+                {(operatorReliefProjection.missionEvidenceLedgerProjection?.topEntries || []).length === 0 ? <li className="compact-feed-row compact-feed-row--empty"><strong>empty:</strong> No mission evidence entries projected yet.</li> : null}
+              </ul>
               <section className="mission-console__packet-bay" data-testid="packet-inbox-outbox-bay" data-packet-bay-surface="builder-mesh">
                 <h6>Packet Inbox / Outbox V1</h6>
                 <ul className="mission-console__status-list">
@@ -2493,43 +2521,6 @@ function MissionConsoleTile({
         )}
         </CollapsiblePanel>
       </section>
-      <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleEvidenceLedgerPanel')}>
-        <CollapsiblePanel panelId="missionConsoleEvidenceLedgerPanel" title="Mission Evidence Ledger" isOpen={uiLayout.missionConsoleEvidenceLedgerPanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleEvidenceLedgerPanel')} actions={getMissionConsoleMoveControls('missionConsoleEvidenceLedgerPanel')}>
-
-        <ul className="mission-console__status-list">
-          <li><strong>evidence completeness:</strong> {missionEvidenceLedger.summary.evidenceCompleteness}</li>
-          <li><strong>latest event:</strong> {missionEvidenceLedger.summary.latestEventType}</li>
-          <li><strong>warnings / blockers:</strong> {missionEvidenceLedger.summary.warningCount} / {missionEvidenceLedger.summary.blockerCount}</li>
-          <li><strong>pending operator review:</strong> {missionEvidenceLedger.summary.pendingOperatorReviewCount}</li>
-          <li><strong>next required evidence:</strong> {missionEvidenceLedger.summary.nextRequiredEvidence}</li>
-          <li><strong>readiness narrative:</strong> {missionEvidenceLedger.summary.missionReadyNarrative}</li>
-        </ul>
-        <ul className="mission-console__status-list compact-feed-list" aria-label="Mission Evidence Ledger compact event rows">
-          {(missionEvidenceLedger.entries || []).slice(0, 6).map((entry) => (
-            <li key={entry.entryId} className="compact-feed-row"><time>{entry.timestamp || entry.createdAt || 'pending'}</time><span className={`status-chip status-${String(entry.severity || entry.status || 'info').toLowerCase()}`}>{entry.eventType}</span><p>{entry.summary}</p></li>
-          ))}
-          {(missionEvidenceLedger.entries || []).length === 0 ? <li className="compact-feed-row compact-feed-row--empty"><time>idle</time><span className="status-chip status-info">empty</span><p>No recent activity</p></li> : null}
-        </ul>
-
-        <h5>PR Evidence Intake</h5>
-        {!intentToBuild?.missionSpec?.prEvidenceIntake || intentToBuild?.missionSpec?.prEvidenceIntake?.normalizedStatus === 'no_pr_evidence' ? (
-          <p>No PR evidence supplied yet.</p>
-        ) : (
-          <ul>
-            <li><strong>normalized status:</strong> {intentToBuild.missionSpec.prEvidenceIntake.normalizedStatus}</li>
-            <li><strong>PR:</strong> #{intentToBuild.missionSpec.prEvidenceIntake.prNumber || 'n/a'} {intentToBuild.missionSpec.prEvidenceIntake.prTitle || ''} {intentToBuild.missionSpec.prEvidenceIntake.prUrl || ''}</li>
-            <li><strong>branch:</strong> {intentToBuild.missionSpec.prEvidenceIntake.prBranch || 'unknown'} {' → '} {intentToBuild.missionSpec.prEvidenceIntake.baseBranch || 'unknown'}</li>
-            <li><strong>changed files:</strong> {intentToBuild.missionSpec.prEvidenceIntake.changedFileCount || 0}</li>
-            <li><strong>checks:</strong> {intentToBuild.missionSpec.prEvidenceIntake.checksStatus || 'unknown'} (required: {intentToBuild.missionSpec.prEvidenceIntake.requiredChecksStatus || 'unknown'})</li>
-            <li><strong>auto-merge:</strong> {intentToBuild.missionSpec.prEvidenceIntake.autoMergeState || 'unknown'}</li>
-            <li><strong>merged:</strong> {intentToBuild.missionSpec.prEvidenceIntake.merged ? 'yes' : 'no'} by {intentToBuild.missionSpec.prEvidenceIntake.mergedBy || 'unknown'} at {intentToBuild.missionSpec.prEvidenceIntake.mergedAt || 'n/a'}</li>
-            <li><strong>codex task:</strong> {intentToBuild.missionSpec.prEvidenceIntake.codexTaskId || 'n/a'} {intentToBuild.missionSpec.prEvidenceIntake.codexTaskUrl || ''}</li>
-            <li><strong>warnings:</strong> {(intentToBuild.missionSpec.prEvidenceIntake.evidenceWarnings || []).join(' | ') || 'none'}</li>
-          </ul>
-        )}
-        </CollapsiblePanel>
-      </section>
-
       <section className="mission-console-section" style={getMissionConsoleSectionOrderStyle('missionConsoleMissionIntelligencePanel')}>
         <CollapsiblePanel panelId="missionConsoleMissionIntelligencePanel" title="Mission Intelligence Brief" isOpen={uiLayout.missionConsoleMissionIntelligencePanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleMissionIntelligencePanel')} actions={getMissionConsoleMoveControls('missionConsoleMissionIntelligencePanel')}>
 
