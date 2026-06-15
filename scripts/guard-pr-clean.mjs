@@ -43,6 +43,9 @@ const protectedCommandDeckFiles = [
 ];
 const proofSignals = [
   'tests/command-deck-protected-canon.test.mjs',
+  'tests/evidence-return-intake.test.mjs',
+  'tests/mission-console-operator-relief-panel.test.mjs',
+  'stephanos-ui/src/state/supportSnapshot.test.mjs',
   'stephanos-ui/src/components/AIConsole.render.test.mjs',
   'playwright.config',
   '.spec.',
