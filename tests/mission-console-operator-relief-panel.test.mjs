@@ -147,3 +147,9 @@ test('Project Awareness strip renders inside existing Builder Mesh surface witho
   assert.match(source, /No approved active mission stored; deriving current mission from runtime packet truth\./);
   assert.doesNotMatch(source, /ProjectAwarenessDashboard/);
 });
+
+test('Evidence Return Intake renders inside existing Builder Workbench surface', () => {
+  assert.match(source, /data-testid="evidence-return-intake-section"/);
+  assert.match(source, /data-testid="builder-workbench-evidence-return-intake"/);
+  assert.match(source, /Classify Evidence Return/);
+});

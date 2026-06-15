@@ -8,6 +8,7 @@ import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/ope
 import { derivePacketBayProjection } from './packetBayProjection.js';
 import { buildProjectAwarenessProjection, projectAwarenessSupportSnapshotFields } from './projectAwarenessProjection.js';
 import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
+import { deriveEvidenceReturnIntakeProjection } from './evidenceReturnIntakeModel.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -203,6 +204,38 @@ function resolveLiveBuilderMeshProjection(runtimeStatus = {}) {
   ];
   const found = candidates.find(([, value]) => value && typeof value === 'object' && Object.keys(value).length > 0);
   return found ? { source: found[0], projection: found[1] } : { source: 'none', projection: {} };
+}
+
+
+function evidenceReturnIntakeSupportSnapshotFields(projection = {}) {
+  const intake = projection && typeof projection === 'object' ? projection : {};
+  return {
+    evidenceReturnIntakeStatus: intake.status || 'unavailable',
+    evidenceReturnIntakeAvailable: intake.intakeAvailable ? 'yes' : 'no',
+    evidenceReturnIntakeSource: intake.intakeSource || 'none',
+    evidenceReturnIntakeRelatedPacketId: intake.relatedPacketId || 'none',
+    evidenceReturnIntakeRelatedMissionId: intake.relatedMissionId || 'mission-unknown',
+    evidenceReturnIntakeRelatedEvidenceType: intake.relatedEvidenceType || 'none',
+    evidenceReturnIntakeParsedResultPresent: intake.parsedResultPresent ? 'yes' : 'no',
+    evidenceReturnIntakeParsedResultStatus: intake.parsedResultStatus || 'unknown',
+    evidenceReturnIntakeProofObservedCount: String(intake.proofObservedCount ?? 0),
+    evidenceReturnIntakeProofFailedCount: String(intake.proofFailedCount ?? 0),
+    evidenceReturnIntakeProofPendingReviewCount: String(intake.proofPendingReviewCount ?? 0),
+    evidenceReturnIntakeProofBlockedCount: String(intake.proofBlockedCount ?? 0),
+    evidenceReturnIntakeMissingProofResolved: intake.missingProofResolved ? 'yes' : 'no',
+    evidenceReturnIntakeRemainingMissingProofSummary: intake.remainingMissingProofSummary || 'none',
+    evidenceReturnIntakeTrustedForMerge: intake.trustedForMerge ? 'yes' : 'no',
+    evidenceReturnIntakeTrustedForCanon: intake.trustedForCanon ? 'yes' : 'no',
+    evidenceReturnIntakeRecommendedNextAction: intake.recommendedNextAction || 'Paste returned proof and classify/review.',
+    evidenceReturnIntakeMutationAllowed: intake.mutationAllowed ? 'yes' : 'no',
+    evidenceReturnIntakeDurableWriteAllowed: intake.durableWriteAllowed ? 'yes' : 'no',
+    evidenceReturnIntakeOperatorApprovalRequiredForWrite: intake.operatorApprovalRequiredForWrite === false ? 'no' : 'yes',
+    evidenceReturnIntakeOpenClawMutationLocked: intake.openClawMutationLocked === false ? 'no' : 'yes',
+    evidenceReturnIntakeCodexAutoDispatchAllowed: intake.codexAutoDispatchAllowed ? 'yes' : 'no',
+    evidenceReturnIntakeConfidence: intake.confidence || 'low',
+    evidenceReturnIntakeWarningCount: String((intake.warnings || []).length),
+    evidenceReturnIntakeSummary: intake.summary || 'Evidence Return Intake unavailable.',
+  };
 }
 
 function missionEvidenceLedgerSupportSnapshotFields(projection = {}) {
@@ -1541,6 +1574,9 @@ export function buildSupportSnapshot({
     });
   const missionEvidenceContextSummary = deriveMissionEvidenceContextSummary(missionEvidenceLedgerProjection);
   const missionEvidenceLedgerFields = missionEvidenceLedgerSupportSnapshotFields(missionEvidenceLedgerProjection);
+  const liveEvidenceReturnIntakeProjection = runtimeStatus?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.runtimeContext?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.missionState?.operatorReliefProjection?.evidenceReturnIntakeProjection || null;
+  const evidenceReturnIntakeProjection = liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? liveEvidenceReturnIntakeProjection : deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary, packetBayProjection, builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
+  const evidenceReturnIntakeFields = evidenceReturnIntakeSupportSnapshotFields(evidenceReturnIntakeProjection);
   if (hasLiveMissionEvidenceLedgerProjection && missionEvidenceContextSummary.available && Number(packetBayProjection.evidencePacketCount || 0) === 0) {
     packetBayProjection = derivePacketBayProjection({
       builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection,
@@ -2872,6 +2908,31 @@ export function buildSupportSnapshot({
     `Mission Evidence Ledger Missing Proof Summary: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerMissingProofSummary, 'none')}`,
     `Mission Evidence Ledger Trusted For Merge: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerTrustedForMerge, 'no')}`,
     `Mission Evidence Ledger Trusted For Canon: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerTrustedForCanon, 'no')}`,
+    `Evidence Return Intake Status: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeStatus, 'unavailable')}`,
+    `Evidence Return Intake Available: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeAvailable, 'no')}`,
+    `Evidence Return Intake Source: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeSource, 'none')}`,
+    `Evidence Return Intake Related Packet ID: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeRelatedPacketId, 'none')}`,
+    `Evidence Return Intake Related Mission ID: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeRelatedMissionId, 'mission-unknown')}`,
+    `Evidence Return Intake Related Evidence Type: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeRelatedEvidenceType, 'none')}`,
+    `Evidence Return Intake Parsed Result Present: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeParsedResultPresent, 'no')}`,
+    `Evidence Return Intake Parsed Result Status: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeParsedResultStatus, 'unknown')}`,
+    `Evidence Return Intake Proof Observed Count: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeProofObservedCount, '0')}`,
+    `Evidence Return Intake Proof Failed Count: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeProofFailedCount, '0')}`,
+    `Evidence Return Intake Proof Pending Review Count: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeProofPendingReviewCount, '0')}`,
+    `Evidence Return Intake Proof Blocked Count: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeProofBlockedCount, '0')}`,
+    `Evidence Return Intake Missing Proof Resolved: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeMissingProofResolved, 'no')}`,
+    `Evidence Return Intake Remaining Missing Proof Summary: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeRemainingMissingProofSummary, 'none')}`,
+    `Evidence Return Intake Trusted For Merge: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeTrustedForMerge, 'no')}`,
+    `Evidence Return Intake Trusted For Canon: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeTrustedForCanon, 'no')}`,
+    `Evidence Return Intake Recommended Next Action: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeRecommendedNextAction, 'Paste returned proof and classify/review.')}`,
+    `Evidence Return Intake Mutation Allowed: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeMutationAllowed, 'no')}`,
+    `Evidence Return Intake Durable Write Allowed: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeDurableWriteAllowed, 'no')}`,
+    `Evidence Return Intake Operator Approval Required For Write: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeOperatorApprovalRequiredForWrite, 'yes')}`,
+    `Evidence Return Intake OpenClaw Mutation Locked: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeOpenClawMutationLocked, 'yes')}`,
+    `Evidence Return Intake Codex Auto Dispatch Allowed: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeCodexAutoDispatchAllowed, 'no')}`,
+    `Evidence Return Intake Confidence: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeConfidence, 'low')}`,
+    `Evidence Return Intake Warning Count: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeWarningCount, '0')}`,
+    `Evidence Return Intake Summary: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeSummary, 'Evidence Return Intake unavailable.')}`,
     `Mission Evidence Context Available: ${missionEvidenceContextSummary.available ? 'yes' : 'no'}`,
     `Mission Evidence Context Source: ${asText(missionEvidenceContextSummary.source, 'none')}`,
     `Mission Evidence Context Injected: ${asText(executionMetadata?.mission_evidence_context_injected, 'no')}`,

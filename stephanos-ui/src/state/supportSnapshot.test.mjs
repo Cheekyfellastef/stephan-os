@@ -4395,3 +4395,12 @@ test('support snapshot derives Packet Bay evidence fields from live packetBayPro
   assert.match(snapshot, /Packet OpenClaw Mutation Locked: yes/);
   assert.match(snapshot, /Packet Codex Auto Dispatch Allowed: no/);
 });
+
+test('Support Snapshot exposes Evidence Return Intake fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { operatorReliefProjection: { evidenceReturnIntakeProjection: { status: 'parsed', intakeAvailable: true, intakeSource: 'operator-paste', relatedPacketId: 'packet-browser-proof-checklist-operator-v1b', relatedMissionId: 'derived-runtime-mission', relatedEvidenceType: 'browser-proof', parsedResultPresent: true, parsedResultStatus: 'observed', proofObservedCount: 1, proofFailedCount: 0, proofPendingReviewCount: 0, proofBlockedCount: 0, missingProofResolved: true, trustedForMerge: false, trustedForCanon: false, recommendedNextAction: 'Review observed proof candidate.', mutationAllowed: false, durableWriteAllowed: false, operatorApprovalRequiredForWrite: true, openClawMutationLocked: true, codexAutoDispatchAllowed: false, confidence: 'high', warnings: [], summary: 'Evidence return classified as observed.' } } }, routeTruthView: {}, runtimeContext: {}, safeApiStatus: {}, statusSummary: {} });
+  assert.match(snapshot, /Evidence Return Intake Status: parsed/);
+  assert.match(snapshot, /Evidence Return Intake Available: yes/);
+  assert.match(snapshot, /Evidence Return Intake Related Packet ID: packet-browser-proof-checklist-operator-v1b/);
+  assert.match(snapshot, /Evidence Return Intake Durable Write Allowed: no/);
+  assert.match(snapshot, /Evidence Return Intake Codex Auto Dispatch Allowed: no/);
+});
