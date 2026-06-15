@@ -1330,12 +1330,12 @@ export function buildAgentRealityLoopProjection({
   const awaitingPackets = packets.filter((packet) => packet?.status === 'awaiting-result');
   const blockedPackets = packets.filter((packet) => packet?.status === 'blocked');
   const nonEvidenceReadyPackets = readyPackets.filter((packet) => packet.createdFrom !== 'mission-evidence-context-v1b');
-  const localAiReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'local-ai') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'local-ai');
-  const openClawReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'openclaw') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'openclaw');
-  const codexReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'codex') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'codex');
-  const githubReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'github') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'github');
-  const operatorReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'operator') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'operator');
-  const nextPacket = localAiReadyPacket || openClawReadyPacket || codexReadyPacket || githubReadyPacket || operatorReadyPacket || readyPackets[0] || null;
+  const localAiReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'local-ai');
+  const openClawReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'openclaw');
+  const codexReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'codex');
+  const githubReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'github');
+  const operatorReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'operator');
+  const nextPacket = localAiReadyPacket || openClawReadyPacket || codexReadyPacket || githubReadyPacket || operatorReadyPacket || null;
   const mesh = builderMeshProjection && typeof builderMeshProjection === 'object' ? builderMeshProjection : {};
   const workbench = Object.keys(builderWorkbenchProjection || {}).length ? builderWorkbenchProjection : (mesh.builderWorkbenchProjection || {});
   const sourcePack = Object.keys(openClawSourcePackRunner || {}).length ? openClawSourcePackRunner : (workbench.openClawSourcePackRunner || {});
@@ -1921,6 +1921,8 @@ export function deriveOperatorReliefProjection(models = {}) {
     supportSnapshot,
     missionBrainNextAction,
     agentWorkRoutingProjection,
+    missionEvidenceLedgerProjection: preliminaryMissionEvidenceLedgerProjection,
+    missionEvidenceContextSummary: preliminaryMissionEvidenceContextSummary,
   });
   const builderHarnessProjection = buildBuilderHarnessProjection({
     missionIntelligenceSummary,
