@@ -149,7 +149,33 @@ test('Project Awareness strip renders inside existing Builder Mesh surface witho
 });
 
 test('Evidence Return Intake renders inside existing Builder Workbench surface', () => {
+  assert.match(source, /panelId="missionConsoleBuilderWorkbenchPanel" title="Zero-Cost Builder Workbench V1"/);
   assert.match(source, /data-testid="evidence-return-intake-section"/);
   assert.match(source, /data-testid="builder-workbench-evidence-return-intake"/);
+  assert.match(source, /Evidence Return Intake V1/);
+  assert.match(source, /Status:<\/strong>/);
+  assert.match(source, /Related packet:<\/strong>/);
+  assert.match(source, /Proof counts:<\/strong>/);
+  assert.match(source, /Remaining missing proof:<\/strong>/);
   assert.match(source, /Classify Evidence Return/);
+  assert.match(source, /No ledger write, mutation, OpenClaw start, or Codex auto-dispatch is allowed\./);
+  assert.match(source, /Safety locks:<\/strong>.*mutation.*durable write.*OpenClaw.*Codex auto-dispatch/);
+  assert.doesNotMatch(source, /EvidenceReturnIntakePane/);
+  assert.doesNotMatch(source, /EvidenceReturnIntakeDashboard/);
+  assert.doesNotMatch(source, /panelId="missionConsoleEvidenceReturnIntakePanel"/);
+});
+
+test('Evidence Return Intake control is only exposed through existing Mission Console Builder Workbench path', () => {
+  assert.equal((source.match(/data-testid="builder-workbench-evidence-return-intake"/g) || []).length, 1);
+  assert.equal((source.match(/Classify Evidence Return/g) || []).length, 1);
+  assert.match(source, /Operator Relief v2 · Mission Brain/);
+  assert.match(source, /OpenClaw Builder Harness V1/);
+  assert.match(source, /Zero-Cost Builder Mesh V1/);
+  assert.match(source, /Packet Inbox \/ Outbox V1/);
+  assert.match(source, /Mission Evidence Ledger V1A/);
+  assert.match(source, /Project Awareness \/ Active Mission/);
+  assert.match(source, /Agent Reality Loop V1/);
+  assert.match(source, /<CollapsiblePanel/);
+  assert.match(source, /<AIConsole/);
+  assert.doesNotMatch(source, /DuplicateMissionConsole/);
 });

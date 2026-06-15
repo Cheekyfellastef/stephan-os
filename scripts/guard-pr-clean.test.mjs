@@ -190,3 +190,28 @@ test('clean source-only PR passes strict mode', () => withRepo({}, (dir) => {
   assert.match(result.output, /OK: strict PR proof passed/);
   assert.match(result.output, /scripts\/source-only\.mjs/);
 }));
+
+test('protected Mission Console changes require matching Evidence Return Intake UI proof files', () => withRepo({}, (dir) => {
+  commitFile(dir, 'stephanos-ui/src/components/MissionConsoleTile.jsx', 'export const changed = true;\n');
+  let result = runGuard(dir);
+  assert.equal(result.ok, false);
+  assert.match(result.output, /Protected Command Deck files changed without UI proof updates/);
+
+  commitFile(dir, 'tests/mission-console-operator-relief-panel.test.mjs', 'export const uiProof = true;\n');
+  result = runGuard(dir);
+  assert.equal(result.ok, true, result.output);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_STRICT_VERDICT=PASS_STRICT_REMOTE_PROOF/);
+}));
+
+test('protected support snapshot changes accept Evidence Return Intake and Support Snapshot proof files', () => withRepo({}, (dir) => {
+  commitFile(dir, 'stephanos-ui/src/state/supportSnapshot.js', 'export const changed = true;\n');
+  let result = runGuard(dir);
+  assert.equal(result.ok, false);
+  assert.match(result.output, /Protected Command Deck files changed without UI proof updates/);
+
+  commitFile(dir, 'tests/evidence-return-intake.test.mjs', 'export const modelProof = true;\n');
+  commitFile(dir, 'stephanos-ui/src/state/supportSnapshot.test.mjs', 'export const snapshotProof = true;\n');
+  result = runGuard(dir);
+  assert.equal(result.ok, true, result.output);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_STRICT_VERDICT=PASS_STRICT_REMOTE_PROOF/);
+}));
