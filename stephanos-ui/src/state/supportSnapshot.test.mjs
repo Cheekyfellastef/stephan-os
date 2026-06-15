@@ -4251,3 +4251,88 @@ test('Support Snapshot exposes Project Awareness Active Mission Rehydration fiel
   assert.match(snapshot, /Project Awareness Missing Proof Summary: browser proof/);
   assert.match(snapshot, /Agent Reality Loop Context Source:/);
 });
+
+test('Support Snapshot derives Mission Evidence Ledger from live Operator Relief bridge truth', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      appLaunchState: 'ready',
+      uiRealityStatus: 'OK',
+      operatorReliefProjection: {
+        builderMeshProjection: {
+          builderMeshStatus: 'ready-read-only',
+          recommendedBuilder: 'local-ai',
+          recommendedBuilderReason: 'local proof review',
+          nextBestAction: 'Copy local-ai proof packet.',
+          builderWorkbenchProjection: {
+            openClawWorkspaceHygiene: { status: 'clean', workspaceMutationAuthority: 'locked' },
+            openClawSourcePackRunner: { sourcePackStatus: 'needs-output' },
+          },
+        },
+        packetBayProjection: {
+          packetBayStatus: 'active',
+          projectionSource: 'operator-relief-builder-mesh-source-truth-v1',
+          counts: { inbox: 1, outbox: 1, readyToCopy: 1 },
+          packets: [{ id: 'packet-outbox-local-ai-proof-builder-mesh-local-ai-recommendation-same-truth', target: 'local-ai', kind: 'proof', status: 'ready', readyToCopy: true, missingProof: ['browser proof'] }],
+          supportSnapshotFields: {
+            packet_bay_status: 'active',
+            packet_inbox_count: '1',
+            packet_outbox_count: '1',
+            packet_ready_to_copy_count: '1',
+            packet_projection_source: 'operator-relief-builder-mesh-source-truth-v1',
+          },
+        },
+        agentRealityLoopProjection: {
+          status: 'blocked',
+          phase: 'blocked',
+          blockers: ['browser proof missing'],
+          missingProof: ['browser proof'],
+          mutationAllowed: false,
+          openClawMutationLocked: true,
+          codexAutoDispatchAllowed: false,
+          projectionSource: 'agent-reality-loop-v1-runtime-truth-projection',
+          supportSnapshotFields: {
+            agent_reality_loop_status: 'blocked',
+            agent_reality_loop_projection_available: 'yes',
+            agent_reality_loop_context_injected: 'yes',
+            agent_reality_loop_context_source: 'derived-runtime-truth',
+          },
+        },
+        projectAwarenessProjection: {
+          status: 'blocked',
+          missionId: 'derived-runtime-mission',
+          title: 'Stephanos Mission Stack Verification',
+          phase: 'verification',
+          currentFocus: 'Verify proof packet.',
+          nextBestAction: 'Resolve proof blockers.',
+          recommendedRoute: 'local-ai',
+          recommendedRouteReason: 'Builder Mesh recommends local-ai read-only verification/review.',
+          missingProof: ['build proof', 'verify proof', 'browser proof'],
+          blockers: ['proof missing'],
+          projectionSource: 'derived-runtime-truth',
+          confidence: 'medium',
+          rehydrated: true,
+          rehydrationSource: 'derived-runtime-truth',
+        },
+      },
+      lastExecutionMetadata: {},
+    },
+    routeTruthView: {}, runtimeSessionTruth: {}, runtimeRouteTruth: {}, runtimeReachabilityTruth: {}, runtimeProviderTruth: {}, runtimeDiagnosticsTruth: {}, runtimeContext: {}, safeApiStatus: {}, statusSummary: {},
+  });
+  assert.match(snapshot, /Packet Bay Status: active/);
+  assert.match(snapshot, /Project Awareness Pack Status: blocked/);
+  assert.match(snapshot, /Agent Reality Loop Projection Available: yes/);
+  assert.doesNotMatch(snapshot, /Mission Evidence Ledger Status: unavailable/);
+  assert.match(snapshot, /Mission Evidence Ledger Status: blocked/);
+  assert.match(snapshot, /Mission Evidence Ledger Mission ID: derived-runtime-mission/);
+  assert.match(snapshot, /Mission Evidence Ledger Mission Phase: verification/);
+  assert.match(snapshot, /Mission Evidence Ledger Entry Count: (?:[1-9]|\d{2,})/);
+  assert.match(snapshot, /Mission Evidence Ledger Latest Event: pr-evidence-missing/);
+  assert.match(snapshot, /Mission Evidence Ledger Next Required: local-ai-route-proof-needed/);
+  assert.match(snapshot, /Mission Evidence Ledger Projection Source: mission-evidence-ledger-v1a-runtime-truth-projection/);
+  assert.match(snapshot, /Mission Evidence Ledger Durable Write Allowed: no/);
+  assert.match(snapshot, /Mission Evidence Ledger Mutation Allowed: no/);
+  assert.match(snapshot, /Mission Evidence Ledger OpenClaw Mutation Locked: yes/);
+  assert.match(snapshot, /Mission Evidence Ledger Codex Auto Dispatch Allowed: no/);
+  assert.match(snapshot, /Mission Evidence Ledger Trusted For Merge: no/);
+  assert.match(snapshot, /Mission Evidence Ledger Trusted For Canon: no/);
+});
