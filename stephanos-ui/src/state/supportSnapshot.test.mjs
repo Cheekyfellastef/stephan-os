@@ -2252,8 +2252,15 @@ test('support snapshot projects memory librarian counts', () => {
 test('support snapshot projects mission evidence ledger fields', () => {
   const snapshot = buildSupportSnapshot({ runtimeStatus: { missionEvidenceLedgerEntryCount: '9', missionEvidenceLedgerWarningCount: '2', missionEvidenceLedgerBlockerCount: '1', missionEvidenceLedgerPendingReviewCount: '3', missionEvidenceCompleteness: 'partial', missionEvidenceLatestEvent: 'verification_judged', missionEvidenceNextRequired: 'operator_decision_required' } });
   assert.match(snapshot, /Mission Evidence Ledger Entry Count: 9/);
-  assert.match(snapshot, /Mission Evidence Completeness: partial/);
-  assert.match(snapshot, /Mission Evidence Next Required: operator_decision_required/);
+  assert.match(snapshot, /Mission Evidence Ledger Completeness: partial/);
+  assert.match(snapshot, /Mission Evidence Ledger Next Required: operator_decision_required/);
+  assert.match(snapshot, /Mission Evidence Ledger Durable Write Allowed: no/);
+  assert.match(snapshot, /Mission Evidence Ledger Operator Approval Required For Write: yes/);
+  assert.match(snapshot, /Mission Evidence Ledger Mutation Allowed: no/);
+  assert.match(snapshot, /Mission Evidence Ledger OpenClaw Mutation Locked: yes/);
+  assert.match(snapshot, /Mission Evidence Ledger Codex Auto Dispatch Allowed: no/);
+  assert.match(snapshot, /Mission Evidence Ledger Trusted For Merge: no/);
+  assert.match(snapshot, /Mission Evidence Ledger Trusted For Canon: no/);
 });
 
 test('support snapshot projects mission command packet fields', () => {
