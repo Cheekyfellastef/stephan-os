@@ -319,6 +319,8 @@ function MissionConsoleTile({
     localAiRunnerParseAttempted: 'no',
     localAiRunnerParseResultStatus: 'empty',
     localAiRunnerRawResponse: '',
+    evidenceReturnIntakeText: '',
+    evidenceReturnIntakeClassifiedAt: '',
   }));
   const [showBuilderWorkbenchVerdict, setShowBuilderWorkbenchVerdict] = useState(false);
   const openClawSourcePackTextTextareaRef = useRef(null);
@@ -1843,6 +1845,21 @@ function MissionConsoleTile({
                   {openClawWorkspaceCleanupCopyState === COPY_STATE.SUCCESS ? 'OpenClaw Workspace Cleanup Command Copied' : openClawWorkspaceCleanupCopyState === COPY_STATE.FAILURE ? 'Copy OpenClaw Workspace Cleanup failed' : 'Copy OpenClaw Workspace Cleanup Command'}
                 </button>
                 <label className="mission-console__field-label builder-workbench-field-label">Paste Local AI Review Result<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--local-ai" data-testid="builder-workbench-local-ai-review-result" value={builderWorkbenchInput.localAiReviewText} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'local-ai-review', localAiReviewText: event.target.value }))} placeholder="Paste local AI read-only review output here." /></label>
+                <div className="builder-workbench-output-card" data-testid="evidence-return-intake-section">
+                  <strong>Evidence Return Intake V1</strong>
+                  <p className="mission-console__helper-text">Runtime-only classification for returned proof packets. No ledger write, mutation, OpenClaw start, or Codex auto-dispatch is allowed.</p>
+                  <label className="mission-console__field-label builder-workbench-field-label">Paste Evidence Return Result<textarea className="builder-workbench-result-textarea builder-workbench-result-textarea--evidence-return" data-testid="builder-workbench-evidence-return-intake" value={builderWorkbenchInput.evidenceReturnIntakeText} onChange={(event) => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'evidence-return-intake', evidenceReturnIntakeText: event.target.value }))} placeholder="Paste local AI/browser/PR/build/verify/source-pack proof return here." /></label>
+                  <button type="button" className="status-panel-copy-button" onClick={() => setBuilderWorkbenchInput((prev) => ({ ...prev, activePacketType: 'evidence-return-intake', evidenceReturnIntakeClassifiedAt: new Date().toISOString() }))}>Classify Evidence Return</button>
+                  <ul className="mission-console__status-list">
+                    <li><strong>Status:</strong> {operatorReliefProjection.evidenceReturnIntakeProjection?.status || 'idle'} · <strong>source:</strong> {operatorReliefProjection.evidenceReturnIntakeProjection?.intakeSource || 'none'}</li>
+                    <li><strong>Related packet:</strong> {operatorReliefProjection.evidenceReturnIntakeProjection?.relatedPacketId || 'none'} · <strong>result:</strong> {operatorReliefProjection.evidenceReturnIntakeProjection?.parsedResultStatus || 'unknown'}</li>
+                    <li><strong>Proof counts:</strong> observed {operatorReliefProjection.evidenceReturnIntakeProjection?.proofObservedCount ?? 0} · failed {operatorReliefProjection.evidenceReturnIntakeProjection?.proofFailedCount ?? 0} · pending {operatorReliefProjection.evidenceReturnIntakeProjection?.proofPendingReviewCount ?? 0} · blocked {operatorReliefProjection.evidenceReturnIntakeProjection?.proofBlockedCount ?? 0}</li>
+                    <li><strong>Remaining missing proof:</strong> {operatorReliefProjection.evidenceReturnIntakeProjection?.remainingMissingProofSummary || 'none'}</li>
+                    <li><strong>Trusted:</strong> merge {operatorReliefProjection.evidenceReturnIntakeProjection?.trustedForMerge ? 'yes' : 'no'} · canon {operatorReliefProjection.evidenceReturnIntakeProjection?.trustedForCanon ? 'yes' : 'no'}</li>
+                    <li><strong>Safety locks:</strong> mutation {operatorReliefProjection.evidenceReturnIntakeProjection?.mutationAllowed ? 'yes' : 'no'} · durable write {operatorReliefProjection.evidenceReturnIntakeProjection?.durableWriteAllowed ? 'yes' : 'no'} · OpenClaw {operatorReliefProjection.evidenceReturnIntakeProjection?.openClawMutationLocked === false ? 'unlocked' : 'locked'} · Codex auto-dispatch {operatorReliefProjection.evidenceReturnIntakeProjection?.codexAutoDispatchAllowed ? 'yes' : 'no'}</li>
+                    <li><strong>Next action:</strong> {operatorReliefProjection.evidenceReturnIntakeProjection?.recommendedNextAction || 'Paste returned proof and classify/review.'}</li>
+                  </ul>
+                </div>
 
                 <CollapsiblePanel panelId="missionConsoleOpenClawWebResearchIntakePanel" title="OpenClaw Web Research Intake V1" titleAs="h6" description={operatorReliefProjection.builderMeshProjection?.builderWorkbenchProjection?.openClawWebResearchIntake?.status || 'idle'} isOpen={uiLayout.missionConsoleOpenClawWebResearchIntakePanel !== false} onToggle={() => dispatchPanelToggle('missionConsoleOpenClawWebResearchIntakePanel')}>
                   <p className="mission-console__helper-text">OpenClaw is research-only here. Pasted results are heuristic intake only and are not trusted for canon until operator review.</p>
