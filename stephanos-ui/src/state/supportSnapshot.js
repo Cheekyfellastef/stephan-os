@@ -7,6 +7,7 @@ import { diagnoseProviderDrift } from './providerRoutingTruth.js';
 import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
 import { derivePacketBayProjection } from './packetBayProjection.js';
 import { buildProjectAwarenessProjection, projectAwarenessSupportSnapshotFields } from './projectAwarenessProjection.js';
+import { deriveMissionEvidenceLedgerProjection } from './missionEvidenceLedgerModel.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -202,6 +203,74 @@ function resolveLiveBuilderMeshProjection(runtimeStatus = {}) {
   ];
   const found = candidates.find(([, value]) => value && typeof value === 'object' && Object.keys(value).length > 0);
   return found ? { source: found[0], projection: found[1] } : { source: 'none', projection: {} };
+}
+
+function missionEvidenceLedgerSupportSnapshotFields(projection = {}) {
+  const ledger = projection && typeof projection === 'object' ? projection : {};
+  const topEntrySummary = Array.isArray(ledger.topEntries)
+    ? ledger.topEntries.map((entry) => `${entry.type || entry.eventType || 'entry'}: ${entry.summary || 'no summary'}`).filter(Boolean).join(' | ')
+    : '';
+  return {
+    missionEvidenceLedgerStatus: ledger.status || 'unavailable',
+    missionEvidenceLedgerMissionId: ledger.missionId || 'mission-unknown',
+    missionEvidenceLedgerMissionTitle: ledger.missionTitle || 'unknown',
+    missionEvidenceLedgerMissionPhase: ledger.missionPhase || 'unknown',
+    missionEvidenceCompleteness: ledger.completeness || 'low',
+    missionEvidenceLedgerEntryCount: String(ledger.entryCount ?? 0),
+    missionEvidenceLedgerProofEntryCount: String(ledger.proofEntryCount ?? 0),
+    missionEvidenceLedgerWarningCount: String(ledger.warningCount ?? 0),
+    missionEvidenceLedgerBlockerCount: String(ledger.blockerCount ?? 0),
+    missionEvidenceLedgerPendingReviewCount: String(ledger.pendingReviewCount ?? 0),
+    missionEvidenceLatestEvent: ledger.latestEvent || 'none',
+    missionEvidenceNextRequired: ledger.nextRequiredEvidence || 'none',
+    missionEvidenceLedgerNextAction: ledger.nextAction || 'not reported',
+    missionEvidenceLedgerProjectionSource: ledger.projectionSource || 'none',
+    missionEvidenceLedgerConfidence: ledger.confidence || 'low',
+    missionEvidenceLedgerDurableWriteAllowed: ledger.durableWriteAllowed ? 'yes' : 'no',
+    missionEvidenceLedgerOperatorApprovalRequiredForWrite: ledger.operatorApprovalRequiredForWrite === false ? 'no' : 'yes',
+    missionEvidenceLedgerMutationAllowed: ledger.mutationAllowed ? 'yes' : 'no',
+    missionEvidenceLedgerOpenClawMutationLocked: ledger.openClawMutationLocked === false ? 'no' : 'yes',
+    missionEvidenceLedgerCodexAutoDispatchAllowed: ledger.codexAutoDispatchAllowed ? 'yes' : 'no',
+    missionEvidenceLedgerTopEntrySummary: topEntrySummary || 'none',
+    missionEvidenceLedgerMissingProofSummary: ledger.missingProofSummary || 'none',
+    missionEvidenceLedgerTrustedForMerge: ledger.trustedForMerge ? 'yes' : 'no',
+    missionEvidenceLedgerTrustedForCanon: ledger.trustedForCanon ? 'yes' : 'no',
+  };
+}
+
+function missionEvidenceLedgerProjectionFromRuntimeFields(runtimeStatus = {}) {
+  const status = asText(runtimeStatus?.missionEvidenceLedgerStatus, '');
+  const source = asText(runtimeStatus?.missionEvidenceLedgerProjectionSource, '');
+  const entryCount = Number(runtimeStatus?.missionEvidenceLedgerEntryCount || 0);
+  if (status === 'unavailable' || (!status && !source && entryCount === 0)) return null;
+  return {
+    status: status || (entryCount > 0 ? 'active' : 'unavailable'),
+    missionId: runtimeStatus?.missionEvidenceLedgerMissionId,
+    missionTitle: runtimeStatus?.missionEvidenceLedgerMissionTitle,
+    missionPhase: runtimeStatus?.missionEvidenceLedgerMissionPhase,
+    completeness: runtimeStatus?.missionEvidenceCompleteness,
+    entryCount,
+    proofEntryCount: Number(runtimeStatus?.missionEvidenceLedgerProofEntryCount || 0),
+    warningCount: Number(runtimeStatus?.missionEvidenceLedgerWarningCount || 0),
+    blockerCount: Number(runtimeStatus?.missionEvidenceLedgerBlockerCount || 0),
+    pendingReviewCount: Number(runtimeStatus?.missionEvidenceLedgerPendingReviewCount || 0),
+    latestEvent: runtimeStatus?.missionEvidenceLatestEvent,
+    nextRequiredEvidence: runtimeStatus?.missionEvidenceNextRequired,
+    nextAction: runtimeStatus?.missionEvidenceLedgerNextAction,
+    projectionSource: source || 'runtime-status-mission-evidence-ledger-fields',
+    confidence: runtimeStatus?.missionEvidenceLedgerConfidence,
+    durableWriteAllowed: String(runtimeStatus?.missionEvidenceLedgerDurableWriteAllowed || '').toLowerCase() === 'yes',
+    operatorApprovalRequiredForWrite: String(runtimeStatus?.missionEvidenceLedgerOperatorApprovalRequiredForWrite || 'yes').toLowerCase() !== 'no',
+    mutationAllowed: String(runtimeStatus?.missionEvidenceLedgerMutationAllowed || '').toLowerCase() === 'yes',
+    openClawMutationLocked: String(runtimeStatus?.missionEvidenceLedgerOpenClawMutationLocked || 'yes').toLowerCase() !== 'no',
+    codexAutoDispatchAllowed: String(runtimeStatus?.missionEvidenceLedgerCodexAutoDispatchAllowed || '').toLowerCase() === 'yes',
+    trustedForMerge: String(runtimeStatus?.missionEvidenceLedgerTrustedForMerge || '').toLowerCase() === 'yes',
+    trustedForCanon: String(runtimeStatus?.missionEvidenceLedgerTrustedForCanon || '').toLowerCase() === 'yes',
+    missingProofSummary: runtimeStatus?.missionEvidenceLedgerMissingProofSummary,
+    topEntries: runtimeStatus?.missionEvidenceLedgerTopEntrySummary && runtimeStatus.missionEvidenceLedgerTopEntrySummary !== 'none'
+      ? [{ type: 'runtime-field', summary: runtimeStatus.missionEvidenceLedgerTopEntrySummary }]
+      : [],
+  };
 }
 
 function resolveLiveBuilderWorkbenchProjection(runtimeStatus = {}) {
@@ -1449,6 +1518,27 @@ export function buildSupportSnapshot({
     projectAwarenessRuntimeProjection,
     executionMetadata?.project_awareness_prompt_injected || 'no',
   );
+  const liveMissionEvidenceLedgerProjection = runtimeStatus?.operatorReliefProjection?.missionEvidenceLedgerProjection
+    || runtimeStatus?.runtimeContext?.operatorReliefProjection?.missionEvidenceLedgerProjection
+    || runtimeStatus?.missionState?.operatorReliefProjection?.missionEvidenceLedgerProjection
+    || runtimeStatus?.inputMissionState?.operatorReliefProjection?.missionEvidenceLedgerProjection
+    || missionEvidenceLedgerProjectionFromRuntimeFields(runtimeStatus)
+    || null;
+  const missionEvidenceLedgerProjection = liveMissionEvidenceLedgerProjection && typeof liveMissionEvidenceLedgerProjection === 'object'
+    ? liveMissionEvidenceLedgerProjection
+    : deriveMissionEvidenceLedgerProjection({
+      projectAwarenessProjection: projectAwarenessRuntimeProjection,
+      agentRealityLoopProjection: liveAgentRealityLoopProjection || {},
+      packetBayProjection,
+      builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection,
+      builderWorkbenchProjection: resolveLiveBuilderWorkbenchProjection(runtimeStatus).projection,
+      openClawSourcePackRunner: resolveLiveBuilderWorkbenchProjection(runtimeStatus).projection?.openClawSourcePackRunner || {},
+      openClawWorkspaceHygiene: resolveLiveBuilderWorkbenchProjection(runtimeStatus).projection?.openClawWorkspaceHygiene || {},
+      missionVerification: runtimeStatus?.missionVerification || {},
+      prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {},
+      uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' },
+    });
+  const missionEvidenceLedgerFields = missionEvidenceLedgerSupportSnapshotFields(missionEvidenceLedgerProjection);
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
@@ -2748,30 +2838,30 @@ export function buildSupportSnapshot({
     `Memory Librarian Conflict Count: ${asText(runtimeStatus?.memoryLibrarianConflictCount, '0')}`,
     `Memory Librarian Saved Count: ${asText(runtimeStatus?.memoryLibrarianSavedCount, '0')}`,
     `Memory Librarian Rejected Count: ${asText(runtimeStatus?.memoryLibrarianRejectedCount, '0')}`,
-    `Mission Evidence Ledger Status: ${asText(runtimeStatus?.missionEvidenceLedgerStatus, 'unavailable')}`,
-    `Mission Evidence Ledger Mission ID: ${asText(runtimeStatus?.missionEvidenceLedgerMissionId, 'mission-unknown')}`,
-    `Mission Evidence Ledger Mission Title: ${asText(runtimeStatus?.missionEvidenceLedgerMissionTitle, 'unknown')}`,
-    `Mission Evidence Ledger Mission Phase: ${asText(runtimeStatus?.missionEvidenceLedgerMissionPhase, 'unknown')}`,
-    `Mission Evidence Ledger Completeness: ${asText(runtimeStatus?.missionEvidenceCompleteness, 'low')}`,
-    `Mission Evidence Ledger Entry Count: ${asText(runtimeStatus?.missionEvidenceLedgerEntryCount, '0')}`,
-    `Mission Evidence Ledger Proof Entry Count: ${asText(runtimeStatus?.missionEvidenceLedgerProofEntryCount, '0')}`,
-    `Mission Evidence Ledger Warning Count: ${asText(runtimeStatus?.missionEvidenceLedgerWarningCount, '0')}`,
-    `Mission Evidence Ledger Blocker Count: ${asText(runtimeStatus?.missionEvidenceLedgerBlockerCount, '0')}`,
-    `Mission Evidence Ledger Pending Review Count: ${asText(runtimeStatus?.missionEvidenceLedgerPendingReviewCount, '0')}`,
-    `Mission Evidence Ledger Latest Event: ${asText(runtimeStatus?.missionEvidenceLatestEvent, 'none')}`,
-    `Mission Evidence Ledger Next Required: ${asText(runtimeStatus?.missionEvidenceNextRequired, 'none')}`,
-    `Mission Evidence Ledger Next Action: ${asText(runtimeStatus?.missionEvidenceLedgerNextAction, 'not reported')}`,
-    `Mission Evidence Ledger Projection Source: ${asText(runtimeStatus?.missionEvidenceLedgerProjectionSource, 'none')}`,
-    `Mission Evidence Ledger Confidence: ${asText(runtimeStatus?.missionEvidenceLedgerConfidence, 'low')}`,
-    `Mission Evidence Ledger Durable Write Allowed: ${asText(runtimeStatus?.missionEvidenceLedgerDurableWriteAllowed, 'no')}`,
-    `Mission Evidence Ledger Operator Approval Required For Write: ${asText(runtimeStatus?.missionEvidenceLedgerOperatorApprovalRequiredForWrite, 'yes')}`,
-    `Mission Evidence Ledger Mutation Allowed: ${asText(runtimeStatus?.missionEvidenceLedgerMutationAllowed, 'no')}`,
-    `Mission Evidence Ledger OpenClaw Mutation Locked: ${asText(runtimeStatus?.missionEvidenceLedgerOpenClawMutationLocked, 'yes')}`,
-    `Mission Evidence Ledger Codex Auto Dispatch Allowed: ${asText(runtimeStatus?.missionEvidenceLedgerCodexAutoDispatchAllowed, 'no')}`,
-    `Mission Evidence Ledger Top Entry Summary: ${asText(runtimeStatus?.missionEvidenceLedgerTopEntrySummary, 'none')}`,
-    `Mission Evidence Ledger Missing Proof Summary: ${asText(runtimeStatus?.missionEvidenceLedgerMissingProofSummary, 'none')}`,
-    `Mission Evidence Ledger Trusted For Merge: ${asText(runtimeStatus?.missionEvidenceLedgerTrustedForMerge, 'no')}`,
-    `Mission Evidence Ledger Trusted For Canon: ${asText(runtimeStatus?.missionEvidenceLedgerTrustedForCanon, 'no')}`,
+    `Mission Evidence Ledger Status: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerStatus, 'unavailable')}`,
+    `Mission Evidence Ledger Mission ID: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerMissionId, 'mission-unknown')}`,
+    `Mission Evidence Ledger Mission Title: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerMissionTitle, 'unknown')}`,
+    `Mission Evidence Ledger Mission Phase: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerMissionPhase, 'unknown')}`,
+    `Mission Evidence Ledger Completeness: ${asText(missionEvidenceLedgerFields.missionEvidenceCompleteness, 'low')}`,
+    `Mission Evidence Ledger Entry Count: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerEntryCount, '0')}`,
+    `Mission Evidence Ledger Proof Entry Count: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerProofEntryCount, '0')}`,
+    `Mission Evidence Ledger Warning Count: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerWarningCount, '0')}`,
+    `Mission Evidence Ledger Blocker Count: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerBlockerCount, '0')}`,
+    `Mission Evidence Ledger Pending Review Count: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerPendingReviewCount, '0')}`,
+    `Mission Evidence Ledger Latest Event: ${asText(missionEvidenceLedgerFields.missionEvidenceLatestEvent, 'none')}`,
+    `Mission Evidence Ledger Next Required: ${asText(missionEvidenceLedgerFields.missionEvidenceNextRequired, 'none')}`,
+    `Mission Evidence Ledger Next Action: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerNextAction, 'not reported')}`,
+    `Mission Evidence Ledger Projection Source: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerProjectionSource, 'none')}`,
+    `Mission Evidence Ledger Confidence: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerConfidence, 'low')}`,
+    `Mission Evidence Ledger Durable Write Allowed: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerDurableWriteAllowed, 'no')}`,
+    `Mission Evidence Ledger Operator Approval Required For Write: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerOperatorApprovalRequiredForWrite, 'yes')}`,
+    `Mission Evidence Ledger Mutation Allowed: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerMutationAllowed, 'no')}`,
+    `Mission Evidence Ledger OpenClaw Mutation Locked: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerOpenClawMutationLocked, 'yes')}`,
+    `Mission Evidence Ledger Codex Auto Dispatch Allowed: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerCodexAutoDispatchAllowed, 'no')}`,
+    `Mission Evidence Ledger Top Entry Summary: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerTopEntrySummary, 'none')}`,
+    `Mission Evidence Ledger Missing Proof Summary: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerMissingProofSummary, 'none')}`,
+    `Mission Evidence Ledger Trusted For Merge: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerTrustedForMerge, 'no')}`,
+    `Mission Evidence Ledger Trusted For Canon: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerTrustedForCanon, 'no')}`,
     `Mission Command Packet Version: ${asText(runtimeStatus?.missionCommandPacketVersion, 'v1')}`,
     `Mission Command Packet Created: ${asText(runtimeStatus?.missionCommandPacketCreated, 'n/a')}`,
     `Mission Command Packet Included Systems: ${asText(runtimeStatus?.missionCommandPacketIncludedSystems, 'none')}`,

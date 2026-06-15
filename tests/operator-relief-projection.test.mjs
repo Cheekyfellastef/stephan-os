@@ -1099,3 +1099,24 @@ test('Agent Reality Loop receives Project Awareness context source when projecti
   assert.equal(r.agentRealityLoopProjection.supportSnapshotFields.agent_reality_loop_context_injected, 'yes');
   assert.notEqual(r.agentRealityLoopProjection.supportSnapshotFields.agent_reality_loop_context_source, 'none');
 });
+
+test('Operator Relief projection includes Mission Evidence Ledger from live Project Awareness, ARL, Packet Bay, and Builder Mesh truth', () => {
+  const r = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      uiRealityStatus: 'OK',
+      builderMeshTaskKind: 'read-only',
+      localAiConnected: true,
+    },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: false, verifyRun: false } } },
+  });
+  assert.ok(r.missionEvidenceLedgerProjection);
+  assert.notEqual(r.missionEvidenceLedgerProjection.status, 'unavailable');
+  assert.equal(r.missionEvidenceLedgerProjection.missionId, 'derived-runtime-mission');
+  assert.equal(r.missionEvidenceLedgerProjection.missionPhase, 'verification');
+  assert.ok(r.missionEvidenceLedgerProjection.entryCount > 0);
+  assert.equal(r.missionEvidenceLedgerProjection.projectionSource, 'mission-evidence-ledger-v1a-runtime-truth-projection');
+  assert.equal(r.missionEvidenceLedgerProjection.durableWriteAllowed, false);
+  assert.equal(r.missionEvidenceLedgerProjection.mutationAllowed, false);
+  assert.equal(r.missionEvidenceLedgerProjection.openClawMutationLocked, true);
+  assert.equal(r.missionEvidenceLedgerProjection.codexAutoDispatchAllowed, false);
+});
