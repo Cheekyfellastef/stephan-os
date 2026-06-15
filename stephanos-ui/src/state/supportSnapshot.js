@@ -7,7 +7,7 @@ import { diagnoseProviderDrift } from './providerRoutingTruth.js';
 import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
 import { derivePacketBayProjection } from './packetBayProjection.js';
 import { buildProjectAwarenessProjection, projectAwarenessSupportSnapshotFields } from './projectAwarenessProjection.js';
-import { deriveMissionEvidenceLedgerProjection } from './missionEvidenceLedgerModel.js';
+import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -1538,6 +1538,7 @@ export function buildSupportSnapshot({
       prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {},
       uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' },
     });
+  const missionEvidenceContextSummary = deriveMissionEvidenceContextSummary(missionEvidenceLedgerProjection);
   const missionEvidenceLedgerFields = missionEvidenceLedgerSupportSnapshotFields(missionEvidenceLedgerProjection);
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
@@ -2862,6 +2863,14 @@ export function buildSupportSnapshot({
     `Mission Evidence Ledger Missing Proof Summary: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerMissingProofSummary, 'none')}`,
     `Mission Evidence Ledger Trusted For Merge: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerTrustedForMerge, 'no')}`,
     `Mission Evidence Ledger Trusted For Canon: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerTrustedForCanon, 'no')}`,
+    `Mission Evidence Context Available: ${missionEvidenceContextSummary.available ? 'yes' : 'no'}`,
+    `Mission Evidence Context Source: ${asText(missionEvidenceContextSummary.source, 'none')}`,
+    `Mission Evidence Context Injected: ${asText(executionMetadata?.mission_evidence_context_injected, 'no')}`,
+    `Mission Evidence Context Prompt Block Length: ${String(missionEvidenceContextSummary.promptBlockLength || 0)}`,
+    `Mission Evidence Context Next Required: ${asText(missionEvidenceContextSummary.nextRequiredEvidence, 'none')}`,
+    `Mission Evidence Context Missing Proof Summary: ${asText(missionEvidenceContextSummary.missingProofSummary, 'none')}`,
+    `Mission Evidence Context Trusted For Merge: ${missionEvidenceContextSummary.trustedForMerge ? 'yes' : 'no'}`,
+    `Mission Evidence Context Trusted For Canon: ${missionEvidenceContextSummary.trustedForCanon ? 'yes' : 'no'}`,
     `Mission Command Packet Version: ${asText(runtimeStatus?.missionCommandPacketVersion, 'v1')}`,
     `Mission Command Packet Created: ${asText(runtimeStatus?.missionCommandPacketCreated, 'n/a')}`,
     `Mission Command Packet Included Systems: ${asText(runtimeStatus?.missionCommandPacketIncludedSystems, 'none')}`,
@@ -2934,6 +2943,10 @@ export function buildSupportSnapshot({
     `Packet Latest Ready Kind: ${asText(packetBayFields.packet_latest_ready_kind, 'none')}`,
     `Packet Latest Ready ID: ${asText(packetBayFields.packet_latest_ready_id, 'none')}`,
     `Packet Missing Proof Summary: ${asText(packetBayFields.packet_missing_proof_summary, 'none')}`,
+    `Packet Bay Evidence Packet Count: ${asText(packetBayFields.packet_bay_evidence_packet_count, packetBayProjection.evidencePacketCount ?? '0')}`,
+    `Packet Bay Evidence Review Packet Ready: ${asText(packetBayFields.packet_bay_evidence_review_packet_ready, packetBayProjection.evidenceReviewPacketReady ? 'yes' : 'no')}`,
+    `Packet Bay Browser Proof Packet Ready: ${asText(packetBayFields.packet_bay_browser_proof_packet_ready, packetBayProjection.browserProofPacketReady ? 'yes' : 'no')}`,
+    `Packet Bay PR Evidence Packet Ready: ${asText(packetBayFields.packet_bay_pr_evidence_packet_ready, packetBayProjection.prEvidencePacketReady ? 'yes' : 'no')}`,
     `OpenClaw Control Bridge Status: ${asText(openClawControlBridge.bridgeStatus, 'manual-control-readonly')}`,
     `OpenClaw Gateway Target: ${asText(openClawControlBridge.gatewayTarget, 'ws://127.0.0.1:18789')}`,
     `OpenClaw Dashboard URL: ${asText(openClawControlBridge.dashboardUrl, 'http://127.0.0.1:18789/')}`,
@@ -3153,6 +3166,10 @@ export function buildSupportSnapshot({
     `Project Awareness Missing Proof Summary: ${asText(projectAwarenessFields.project_awareness_missing_proof_summary, 'none')}`,
     `Project Awareness Blocker Count: ${asText(projectAwarenessFields.project_awareness_blocker_count, '0')}`,
     `Project Awareness Operator Decision Required: ${asText(projectAwarenessFields.project_awareness_operator_decision_required, 'no')}`,
+    `Project Awareness Evidence Completeness: ${asText(projectAwarenessFields.project_awareness_evidence_completeness, 'unavailable')}`,
+    `Project Awareness Evidence Next Required: ${asText(projectAwarenessFields.project_awareness_evidence_next_required, 'none')}`,
+    `Project Awareness Evidence Missing Proof Summary: ${asText(projectAwarenessFields.project_awareness_evidence_missing_proof_summary, 'none')}`,
+    `Project Awareness Evidence Context Source: ${asText(projectAwarenessFields.project_awareness_evidence_context_source, 'none')}`,
     `Project Awareness Current Mission: ${asText(projectAwarenessCurrentMission, 'unknown')}`,
     `Project Awareness Next Best Action: ${asText(projectAwarenessNextBestAction, 'unknown')}`,
     `Project Awareness Operator Workflow Preference: ${asText(projectAwarenessOperatorWorkflowPreference, 'unknown')}`,
@@ -3193,6 +3210,11 @@ export function buildSupportSnapshot({
     `Agent Reality Loop Codex Auto Dispatch Allowed: ${asText(agentRealityLoopFields.agent_reality_loop_codex_auto_dispatch_allowed, 'no')}`,
     `Agent Reality Loop Projection Source: ${asText(agentRealityLoopFields.agent_reality_loop_projection_source || arlProjectionSource, 'none')}`,
     `Agent Reality Loop Confidence: ${asText(agentRealityLoopFields.agent_reality_loop_confidence, 'low')}`,
+    `Agent Reality Loop Evidence Context Source: ${asText(agentRealityLoopFields.agent_reality_loop_evidence_context_source, 'none')}`,
+    `Agent Reality Loop Evidence Next Required: ${asText(agentRealityLoopFields.agent_reality_loop_evidence_next_required, 'none')}`,
+    `Agent Reality Loop Evidence Missing Proof Summary: ${asText(agentRealityLoopFields.agent_reality_loop_evidence_missing_proof_summary, 'none')}`,
+    `Agent Reality Loop Evidence Trusted For Merge: ${asText(agentRealityLoopFields.agent_reality_loop_evidence_trusted_for_merge, 'no')}`,
+    `Agent Reality Loop Evidence Trusted For Canon: ${asText(agentRealityLoopFields.agent_reality_loop_evidence_trusted_for_canon, 'no')}`,
     `Agent Reality Loop Availability Blocker: ${asText(
       executionMetadata?.agent_reality_loop_availability_blocker,
       String(agentRealityLoopFields.agent_reality_loop_projection_available || executionMetadata?.agent_reality_loop_projection_available || '').trim().toLowerCase() === 'yes'

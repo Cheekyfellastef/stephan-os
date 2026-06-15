@@ -17,3 +17,15 @@ test('Chat Context does not inject Project Awareness source into unrelated casua
   assert.equal(pack.compactSummary.contextSourcesUsed.includes('projectAwareness'), false);
   assert.equal(pack.compactSummary.projectAwareness.status, 'unavailable');
 });
+
+test('Chat Context injects Mission Evidence Context for proof prompts and excludes casual prompts', () => {
+  const ledger = { status: 'blocked', missionId: 'derived-runtime-mission', missionPhase: 'verification', completeness: 'blocked', entryCount: 8, blockerCount: 2, warningCount: 6, pendingReviewCount: 8, latestEvent: 'pr-evidence-missing', nextRequiredEvidence: 'local-ai-route-proof-needed', nextAction: 'Collect local-ai-route-proof-needed.', missingProofSummary: 'local-ai-route-proof-needed | missing-build-proof | missing-verify-proof | missing-browser-proof | pr-evidence-missing', projectionSource: 'mission-evidence-ledger-v1a-runtime-truth-projection', trustedForMerge: false, trustedForCanon: false, durableWriteAllowed: false, mutationAllowed: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false, topEntries: [] };
+  const missionState = { operatorReliefProjection: { missionEvidenceLedgerProjection: ledger } };
+  const proofPack = buildChatContextPack({ operatorMessage: 'what proof is missing?', missionState });
+  assert.equal(proofPack.contextForPrompt.missionEvidenceContextInjected, 'yes');
+  assert.ok(proofPack.compactSummary.contextSourcesUsed.includes('missionEvidenceContext'));
+  assert.equal(proofPack.contextForPrompt.missionEvidenceContext.nextRequiredEvidence, 'local-ai-route-proof-needed');
+  const casualPack = buildChatContextPack({ operatorMessage: 'tell me a short joke', missionState });
+  assert.equal(casualPack.contextForPrompt.missionEvidenceContextInjected, 'no');
+  assert.equal(casualPack.compactSummary.contextSourcesUsed.includes('missionEvidenceContext'), false);
+});

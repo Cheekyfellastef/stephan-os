@@ -70,6 +70,61 @@ const EVIDENCE_SAFETY_DEFAULTS = Object.freeze({
   trustedForCanon: false,
 });
 
+
+const MAX_EVIDENCE_CONTEXT_PROMPT_LENGTH = 1200;
+
+function boolNo(value) { return value === true ? 'yes' : 'no'; }
+function boundedJoin(values = [], limit = 6) {
+  return Array.from(new Set((Array.isArray(values) ? values : String(values || '').split('|')).map((item) => asText(item, '')).filter(Boolean))).slice(0, limit).join(' | ') || 'none';
+}
+
+export function deriveMissionEvidenceContextSummary(ledgerProjection = {}) {
+  const ledger = ledgerProjection && typeof ledgerProjection === 'object' ? ledgerProjection : {};
+  const available = Boolean(ledger.status && ledger.status !== 'unavailable' && (Number(ledger.entryCount || 0) > 0 || ledger.projectionSource));
+  const topEntrySummary = Array.isArray(ledger.topEntries)
+    ? ledger.topEntries.slice(0, 3).map((entry) => `${entry.type || entry.eventType || 'entry'}: ${entry.summary || 'no summary'}`).join(' | ')
+    : asText(ledger.topEntrySummary, 'none');
+  const missingProofSummary = boundedJoin(ledger.missingProofSummary || [], 8);
+  const trustedForMerge = ledger.trustedForMerge === true;
+  const trustedForCanon = ledger.trustedForCanon === true;
+  const durableWriteAllowed = ledger.durableWriteAllowed === true;
+  const mutationAllowed = ledger.mutationAllowed === true;
+  const openClawMutationLocked = ledger.openClawMutationLocked !== false;
+  const codexAutoDispatchAllowed = ledger.codexAutoDispatchAllowed === true;
+  const lines = available ? [
+    '[Mission Evidence Context: compact V1B summary]',
+    `status=${asText(ledger.status, 'unknown')}; mission=${asText(ledger.missionId, 'mission-unknown')}; phase=${asText(ledger.missionPhase, 'unknown')}; completeness=${asText(ledger.completeness, 'unknown')}`,
+    `counts: entries=${Number(ledger.entryCount || 0)}, blockers=${Number(ledger.blockerCount || 0)}, warnings=${Number(ledger.warningCount || 0)}, pendingReview=${Number(ledger.pendingReviewCount || 0)}`,
+    `latest=${asText(ledger.latestEvent, 'none')}; nextRequired=${asText(ledger.nextRequiredEvidence, 'none')}`,
+    `missingProof=${missingProofSummary}`,
+    `nextAction=${asText(ledger.nextAction, 'Review evidence and keep mutation disabled.')}`,
+    `trustedForMerge=${boolNo(trustedForMerge)}; trustedForCanon=${boolNo(trustedForCanon)}`,
+    `safety: durableWriteAllowed=${boolNo(durableWriteAllowed)}; mutationAllowed=${boolNo(mutationAllowed)}; openClawMutationLocked=${boolNo(openClawMutationLocked)}; codexAutoDispatchAllowed=${boolNo(codexAutoDispatchAllowed)}`,
+    'Do not claim ready for merge or canon unless trust fields are yes; mutation remains disabled for build/work-routing context.',
+  ] : [];
+  const promptBlock = lines.join('\n').slice(0, MAX_EVIDENCE_CONTEXT_PROMPT_LENGTH);
+  return {
+    available,
+    status: asText(ledger.status, 'unavailable'),
+    missionId: asText(ledger.missionId, 'mission-unknown'),
+    missionPhase: asText(ledger.missionPhase, 'unknown'),
+    completeness: asText(ledger.completeness, 'unavailable'),
+    entryCount: Number(ledger.entryCount || 0),
+    blockerCount: Number(ledger.blockerCount || 0),
+    warningCount: Number(ledger.warningCount || 0),
+    pendingReviewCount: Number(ledger.pendingReviewCount || 0),
+    latestEvent: asText(ledger.latestEvent, 'none'),
+    nextRequiredEvidence: asText(ledger.nextRequiredEvidence, 'none'),
+    nextAction: asText(ledger.nextAction, 'not reported'),
+    missingProofSummary,
+    topEntrySummary: topEntrySummary || 'none',
+    trustedForMerge, trustedForCanon, durableWriteAllowed, mutationAllowed, openClawMutationLocked, codexAutoDispatchAllowed,
+    promptBlock,
+    promptBlockLength: promptBlock.length,
+    source: asText(ledger.projectionSource, 'none'),
+  };
+}
+
 function stableEvidenceId(type, sourceSystem, missionId, relatedId = '') {
   return [type, sourceSystem, missionId || 'mission-unknown', relatedId || 'mission'].map((part) => String(part || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown').join('__');
 }

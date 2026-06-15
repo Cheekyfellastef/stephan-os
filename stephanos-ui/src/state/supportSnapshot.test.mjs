@@ -4336,3 +4336,24 @@ test('Support Snapshot derives Mission Evidence Ledger from live Operator Relief
   assert.match(snapshot, /Mission Evidence Ledger Trusted For Merge: no/);
   assert.match(snapshot, /Mission Evidence Ledger Trusted For Canon: no/);
 });
+
+test('buildSupportSnapshot exposes Mission Evidence Context V1B fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: {
+    appLaunchState: 'ready',
+    operatorReliefProjection: {
+      packetBayProjection: {
+        packets: [], counts: {}, supportSnapshotFields: {
+          packet_bay_status: 'active', packet_bay_evidence_packet_count: '3', packet_bay_evidence_review_packet_ready: 'yes', packet_bay_browser_proof_packet_ready: 'yes', packet_bay_pr_evidence_packet_ready: 'yes', packet_mutation_allowed: 'no', packet_openclaw_mutation_locked: 'yes', packet_codex_auto_dispatch_allowed: 'no',
+        },
+      },
+      projectAwarenessProjection: { status: 'blocked', title: 'Mission', missionId: 'derived-runtime-mission', phase: 'verification', evidenceCompleteness: 'blocked', evidenceNextRequired: 'local-ai-route-proof-needed', evidenceMissingProofSummary: 'missing-browser-proof', evidenceContextSource: 'mission-evidence-ledger-v1a-runtime-truth-projection' },
+      agentRealityLoopProjection: { supportSnapshotFields: { agent_reality_loop_projection_available: 'yes', agent_reality_loop_mutation_allowed: 'no', agent_reality_loop_openclaw_mutation_locked: 'yes', agent_reality_loop_codex_auto_dispatch_allowed: 'no', agent_reality_loop_evidence_context_source: 'mission-evidence-ledger-v1a-runtime-truth-projection', agent_reality_loop_evidence_next_required: 'local-ai-route-proof-needed', agent_reality_loop_evidence_missing_proof_summary: 'missing-browser-proof', agent_reality_loop_evidence_trusted_for_merge: 'no', agent_reality_loop_evidence_trusted_for_canon: 'no' } },
+      missionEvidenceLedgerProjection: { status: 'blocked', missionId: 'derived-runtime-mission', missionPhase: 'verification', completeness: 'blocked', entryCount: 8, blockerCount: 2, warningCount: 6, pendingReviewCount: 8, latestEvent: 'pr-evidence-missing', nextRequiredEvidence: 'local-ai-route-proof-needed', nextAction: 'Collect local-ai-route-proof-needed.', missingProofSummary: 'missing-browser-proof', projectionSource: 'mission-evidence-ledger-v1a-runtime-truth-projection', trustedForMerge: false, trustedForCanon: false, durableWriteAllowed: false, mutationAllowed: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false },
+    },
+  } });
+  assert.match(snapshot, /Mission Evidence Context Available: yes/);
+  assert.match(snapshot, /Mission Evidence Context Next Required: local-ai-route-proof-needed/);
+  assert.match(snapshot, /Project Awareness Evidence Next Required: local-ai-route-proof-needed/);
+  assert.match(snapshot, /Agent Reality Loop Evidence Trusted For Merge: no/);
+  assert.match(snapshot, /Packet Bay Evidence Packet Count: 3/);
+});

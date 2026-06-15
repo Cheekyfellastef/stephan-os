@@ -1,3 +1,5 @@
+import { deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
+
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -89,7 +91,7 @@ function makePacket(input = {}) {
   return { ...packet, id: input.id || stablePacketId(packet) };
 }
 
-export function derivePacketBayProjection({ builderMeshProjection = {}, supportSnapshot = {}, missionBrainNextAction = {}, agentWorkRoutingProjection = {} } = {}) {
+export function derivePacketBayProjection({ builderMeshProjection = {}, supportSnapshot = {}, missionBrainNextAction = {}, agentWorkRoutingProjection = {}, missionEvidenceLedgerProjection = {}, missionEvidenceContextSummary = null } = {}) {
   const packets = [];
   const mesh = builderMeshProjection && typeof builderMeshProjection === 'object' ? builderMeshProjection : {};
   const workbench = mesh.builderWorkbenchProjection || {};
@@ -105,8 +107,91 @@ export function derivePacketBayProjection({ builderMeshProjection = {}, supportS
   ])).slice(0, 12);
   const recommendedBuilder = asText(mesh.recommendedBuilder, 'hold');
   const nextAction = asText(mesh.nextBestAction || missionBrainNextAction.nextBestAction, 'No packets waiting. Review Builder Mesh for the next recommended route.');
+  const evidenceContext = missionEvidenceContextSummary || deriveMissionEvidenceContextSummary(missionEvidenceLedgerProjection);
+  const evidenceMissingProof = evidenceContext.available ? String(evidenceContext.missingProofSummary || 'none').split('|').map((item) => asText(item, '')).filter(Boolean) : [];
   const sourceTruths = ['Builder Mesh projection', 'Operator Relief projection'];
   if (Object.keys(workbench).length) sourceTruths.push('Builder Workbench projection');
+  if (evidenceContext.available) sourceTruths.push('Mission Evidence Context V1B');
+
+  if (evidenceContext.available) {
+    if (evidenceContext.nextRequiredEvidence && evidenceContext.nextRequiredEvidence !== 'none') {
+      packets.push(makePacket({
+        id: 'packet-evidence-review-local-ai-proof-v1b',
+        title: 'Evidence Review Packet',
+        direction: 'outbox',
+        target: 'local-ai',
+        kind: 'proof',
+        status: 'ready-to-copy',
+        summary: 'Ask local AI to review compact evidence gaps and produce a bounded proof plan.',
+        reason: `Mission Evidence Ledger next required evidence: ${evidenceContext.nextRequiredEvidence}.`,
+        requiredProof: [evidenceContext.nextRequiredEvidence],
+        missingProof: evidenceMissingProof,
+        mutationAllowed: false,
+        autoDispatchAllowed: false,
+        copyText: cleanCopyText([
+          'Stephanos Packet: Evidence Review Packet',
+          'Target: local-ai. Read-only proof planning only.',
+          `Mission: ${evidenceContext.missionId} (${evidenceContext.missionPhase})`,
+          `Evidence completeness: ${evidenceContext.completeness}`,
+          `Next required evidence: ${evidenceContext.nextRequiredEvidence}`,
+          `Missing proof: ${evidenceContext.missingProofSummary}`,
+          'Produce a bounded proof plan: commands/checks, browser proof needs, PR evidence needed, risks.',
+          'Do not mutate files. Do not dispatch Codex/OpenClaw. Mutation authority: locked.',
+        ]),
+        sourceTruths,
+        createdFrom: 'mission-evidence-context-v1b',
+        nextAction: 'Copy Evidence Review Packet to local AI; paste back bounded proof plan only.',
+      }));
+    }
+    const browserGaps = evidenceMissingProof.filter((item) => /browser|ui/i.test(item));
+    packets.push(makePacket({
+      id: 'packet-browser-proof-checklist-operator-v1b',
+      title: 'Browser Proof Checklist Packet',
+      direction: 'outbox',
+      target: 'operator',
+      kind: 'browser-proof',
+      status: browserGaps.length ? 'operator-action' : 'ready-to-copy',
+      summary: 'Operator checklist for current browser proof gaps.',
+      reason: 'Mission Evidence Context V1B exposes browser/UI proof needs without starting a browser.',
+      requiredProof: browserGaps.length ? browserGaps : ['Confirm browser proof gaps are closed'],
+      missingProof: browserGaps,
+      mutationAllowed: false,
+      autoDispatchAllowed: false,
+      copyText: cleanCopyText([
+        'Stephanos Packet: Browser Proof Checklist',
+        `Current browser/UI proof gaps: ${browserGaps.join(' | ') || 'none reported by compact ledger summary'}`,
+        'Manual checklist: Support Snapshot fields visible; evidence packet count non-zero; Project Awareness/ARL/Packet Bay visible; no duplicate pane/dashboard; Command Deck composer/input/execute visible; no red console errors.',
+        'Do not fake browser proof. Do not mutate runtime/project files.',
+      ]),
+      sourceTruths,
+      createdFrom: 'mission-evidence-context-v1b',
+      nextAction: 'Collect browser proof manually or report browser unavailable exactly.',
+    }));
+    packets.push(makePacket({
+      id: 'packet-pr-evidence-collection-v1b',
+      title: 'PR Evidence Collection Packet',
+      direction: 'outbox',
+      target: 'operator',
+      kind: 'pr-evidence',
+      status: 'operator-action',
+      summary: 'Request PR/commit/check evidence without enabling live fetch automatically.',
+      reason: 'Mission Evidence Context V1B keeps PR evidence collection operator-gated.',
+      requiredProof: ['PR URL/number', 'commit/head SHA', 'check results', 'diff range evidence'],
+      missingProof: evidenceMissingProof.filter((item) => /pr|check|build|verify/i.test(item)),
+      mutationAllowed: false,
+      autoDispatchAllowed: false,
+      copyText: cleanCopyText([
+        'Stephanos Packet: PR Evidence Collection',
+        'Provide PR/commit/check evidence manually or via approved read-only fetch. Do not enable live fetch automatically.',
+        `Missing proof: ${evidenceContext.missingProofSummary}`,
+        'Needed: PR identifier, branch/head SHA, checks/build/verify status, diff range, browser proof status.',
+        'Mutation authority: locked. Auto-dispatch: forbidden.',
+      ]),
+      sourceTruths,
+      createdFrom: 'mission-evidence-context-v1b',
+      nextAction: 'Collect PR evidence; keep live fetch and merge actions approval-gated.',
+    }));
+  }
 
   if (recommendedBuilder === 'local-ai' && mesh.copyablePacketAvailable !== false) {
     packets.push(makePacket({
@@ -281,6 +366,8 @@ export function derivePacketBayProjection({ builderMeshProjection = {}, supportS
     }));
   }
 
+  packets.sort((a, b) => (a.createdFrom === 'mission-evidence-context-v1b') - (b.createdFrom === 'mission-evidence-context-v1b'));
+
   const inbox = packets.filter((packet) => packet.direction === 'inbox');
   const outbox = packets.filter((packet) => packet.direction === 'outbox');
   const ready = packets.filter((packet) => packet.status === 'ready-to-copy');
@@ -288,6 +375,10 @@ export function derivePacketBayProjection({ builderMeshProjection = {}, supportS
   const blocked = packets.filter((packet) => packet.status === 'blocked');
   const latestReady = ready[0] || null;
   const missingProofSummary = Array.from(new Set(packets.flatMap((packet) => packet.missingProof))).join(' | ') || 'none';
+  const evidencePackets = packets.filter((packet) => packet.createdFrom === 'mission-evidence-context-v1b');
+  const evidenceReviewPacketReady = packets.some((packet) => packet.id === 'packet-evidence-review-local-ai-proof-v1b' && packet.status === 'ready-to-copy');
+  const browserProofPacketReady = packets.some((packet) => packet.id === 'packet-browser-proof-checklist-operator-v1b' && ['ready-to-copy', 'operator-action'].includes(packet.status));
+  const prEvidencePacketReady = packets.some((packet) => packet.id === 'packet-pr-evidence-collection-v1b' && ['ready-to-copy', 'operator-action', 'blocked'].includes(packet.status));
 
   return {
     packetBayStatus: packets.length ? 'active' : 'empty-clean',
@@ -310,6 +401,10 @@ export function derivePacketBayProjection({ builderMeshProjection = {}, supportS
     latestReadyKind: latestReady?.kind || 'none',
     latestReadyId: latestReady?.id || 'none',
     missingProofSummary,
+    evidencePacketCount: evidencePackets.length,
+    evidenceReviewPacketReady,
+    browserProofPacketReady,
+    prEvidencePacketReady,
     sourceTruths: Array.from(new Set(packets.flatMap((packet) => packet.sourceTruths))),
     emptyState: `No packets waiting. Next recommended route: ${recommendedBuilder}. ${nextAction}`,
     supportSnapshotFields: {
@@ -328,6 +423,10 @@ export function derivePacketBayProjection({ builderMeshProjection = {}, supportS
       packet_latest_ready_kind: latestReady?.kind || 'none',
       packet_latest_ready_id: latestReady?.id || 'none',
       packet_missing_proof_summary: missingProofSummary,
+      packet_bay_evidence_packet_count: String(evidencePackets.length),
+      packet_bay_evidence_review_packet_ready: evidenceReviewPacketReady ? 'yes' : 'no',
+      packet_bay_browser_proof_packet_ready: browserProofPacketReady ? 'yes' : 'no',
+      packet_bay_pr_evidence_packet_ready: prEvidencePacketReady ? 'yes' : 'no',
     },
   };
 }

@@ -1120,3 +1120,59 @@ test('Operator Relief projection includes Mission Evidence Ledger from live Proj
   assert.equal(r.missionEvidenceLedgerProjection.openClawMutationLocked, true);
   assert.equal(r.missionEvidenceLedgerProjection.codexAutoDispatchAllowed, false);
 });
+
+test('Mission Evidence Context V1B derives compact bounded summary from V1A ledger and preserves safety locks', async () => {
+  const { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } = await import('../stephanos-ui/src/state/missionEvidenceLedgerModel.js');
+  const ledger = deriveMissionEvidenceLedgerProjection({
+    projectAwarenessProjection: { status: 'blocked', missionId: 'derived-runtime-mission', phase: 'verification', blockers: ['proof missing'] },
+    builderMeshProjection: { recommendedBuilder: 'local-ai' },
+    missionVerification: {},
+    prEvidence: { status: 'disabled' },
+  });
+  const summary = deriveMissionEvidenceContextSummary(ledger);
+  assert.equal(summary.available, true);
+  assert.equal(summary.nextRequiredEvidence, ledger.nextRequiredEvidence);
+  assert.equal(summary.trustedForMerge, false);
+  assert.equal(summary.trustedForCanon, false);
+  assert.equal(summary.mutationAllowed, false);
+  assert.equal(summary.openClawMutationLocked, true);
+  assert.equal(summary.codexAutoDispatchAllowed, false);
+  assert.ok(summary.promptBlockLength <= 1200);
+  assert.doesNotMatch(summary.promptBlock, /Support Snapshot|\{\s*"|merge-ready|canon-ready/);
+  assert.match(summary.promptBlock, /mutation remains disabled/i);
+});
+
+test('Mission Evidence Context V1B feeds Project Awareness and Agent Reality Loop summaries', async () => {
+  const { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } = await import('../stephanos-ui/src/state/missionEvidenceLedgerModel.js');
+  const { buildProjectAwarenessProjection } = await import('../stephanos-ui/src/state/projectAwarenessProjection.js');
+  const ledger = deriveMissionEvidenceLedgerProjection({ builderMeshProjection: { recommendedBuilder: 'local-ai' }, missionVerification: {}, prEvidence: { status: 'disabled' } });
+  const evidence = deriveMissionEvidenceContextSummary(ledger);
+  const pa = buildProjectAwarenessProjection({ builderMeshProjection: { recommendedBuilder: 'local-ai' }, packetBayProjection: { packets: [] }, missionEvidenceContextSummary: evidence });
+  assert.equal(pa.evidenceCompleteness, evidence.completeness);
+  assert.equal(pa.evidenceNextRequired, evidence.nextRequiredEvidence);
+  assert.match(pa.evidenceMissingProofSummary, /missing-build-proof|local-ai-route-proof-needed/);
+  const { buildAgentRealityLoopProjection } = await import('../stephanos-ui/src/state/operatorReliefProjection.js');
+  const arl = buildAgentRealityLoopProjection({ packetBayProjection: { packets: [] }, builderMeshProjection: { recommendedBuilder: 'local-ai' }, missionEvidenceContextSummary: evidence });
+  assert.equal(arl.evidenceContextSource, evidence.source);
+  assert.equal(arl.evidenceNextRequired, evidence.nextRequiredEvidence);
+  assert.equal(arl.mutationAllowed, false);
+  assert.equal(arl.openClawMutationLocked, true);
+  assert.equal(arl.codexAutoDispatchAllowed, false);
+});
+
+test('Packet Bay V1B creates deterministic evidence handoff packets without regressing existing packet IDs', async () => {
+  const { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } = await import('../stephanos-ui/src/state/missionEvidenceLedgerModel.js');
+  const { derivePacketBayProjection } = await import('../stephanos-ui/src/state/packetBayProjection.js');
+  const ledger = deriveMissionEvidenceLedgerProjection({ builderMeshProjection: { recommendedBuilder: 'local-ai' }, missionVerification: {}, prEvidence: { status: 'disabled' } });
+  const evidence = deriveMissionEvidenceContextSummary(ledger);
+  const bay = derivePacketBayProjection({ builderMeshProjection: { recommendedBuilder: 'local-ai', copyablePacketAvailable: true }, missionEvidenceContextSummary: evidence });
+  const ids = bay.packets.map((packet) => packet.id);
+  assert.ok(ids.includes('packet-evidence-review-local-ai-proof-v1b'));
+  assert.ok(ids.includes('packet-browser-proof-checklist-operator-v1b'));
+  assert.ok(ids.includes('packet-pr-evidence-collection-v1b'));
+  assert.ok(ids.some((id) => id.startsWith('packet-outbox-local-ai-proof-builder-mesh-local-ai-recommendation')));
+  assert.equal(bay.evidencePacketCount, 3);
+  assert.equal(bay.mutationAllowed, false);
+  assert.equal(bay.openClawMutationLocked, true);
+  assert.equal(bay.codexAutoDispatchAllowed, false);
+});

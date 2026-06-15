@@ -4,7 +4,7 @@ import { buildOpenClawWorkspaceHygieneProjection } from '../../../shared/agents/
 import { OPENCLAW_SOURCE_PACK_CLI_PROMPT, OPENCLAW_SOURCE_PACK_MODEL, OPENCLAW_SOURCE_PACK_ROUTE, OPENCLAW_SOURCE_PACK_TEMPLATE, buildOpenClawSourcePackRunnerProjection, isOpenClawSourcePackRouteEligible } from '../../../shared/agents/openClawSourcePackRunner.mjs';
 import { derivePacketBayProjection } from './packetBayProjection.js';
 import { buildProjectAwarenessProjection } from './projectAwarenessProjection.js';
-import { deriveMissionEvidenceLedgerProjection } from './missionEvidenceLedgerModel.js';
+import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -1319,18 +1319,22 @@ export function buildAgentRealityLoopProjection({
   codexDispatchTruth = {},
   supportSnapshot = {},
   projectAwarenessProjection = {},
+  missionEvidenceContextSummary = {},
 } = {}) {
   const packetBay = packetBayProjection && typeof packetBayProjection === 'object' ? packetBayProjection : {};
+  const evidenceContext = missionEvidenceContextSummary && typeof missionEvidenceContextSummary === 'object' ? missionEvidenceContextSummary : {};
+  const evidenceAvailable = evidenceContext.available === true;
   const packetCounts = packetBay.counts || {};
   const packets = asList(packetBay.packets);
   const readyPackets = packets.filter((packet) => packet?.status === 'ready-to-copy' && asText(packet.copyText, ''));
   const awaitingPackets = packets.filter((packet) => packet?.status === 'awaiting-result');
   const blockedPackets = packets.filter((packet) => packet?.status === 'blocked');
-  const localAiReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'local-ai');
-  const openClawReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'openclaw');
-  const codexReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'codex');
-  const githubReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'github');
-  const operatorReadyPacket = readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'operator');
+  const nonEvidenceReadyPackets = readyPackets.filter((packet) => packet.createdFrom !== 'mission-evidence-context-v1b');
+  const localAiReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'local-ai') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'local-ai');
+  const openClawReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'openclaw') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'openclaw');
+  const codexReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'codex') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'codex');
+  const githubReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'github') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'github');
+  const operatorReadyPacket = nonEvidenceReadyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'operator') || readyPackets.find((packet) => asText(packet.target, '').toLowerCase() === 'operator');
   const nextPacket = localAiReadyPacket || openClawReadyPacket || codexReadyPacket || githubReadyPacket || operatorReadyPacket || readyPackets[0] || null;
   const mesh = builderMeshProjection && typeof builderMeshProjection === 'object' ? builderMeshProjection : {};
   const workbench = Object.keys(builderWorkbenchProjection || {}).length ? builderWorkbenchProjection : (mesh.builderWorkbenchProjection || {});
@@ -1356,6 +1360,7 @@ export function buildAgentRealityLoopProjection({
     'OpenClaw mutation lock truth',
     'Codex dispatch lock truth',
     Object.keys(projectAwarenessProjection || {}).length ? 'Project Awareness projection' : '',
+    evidenceAvailable ? 'Mission Evidence Context V1B' : '',
   ].filter(Boolean)));
 
   const proofRequired = Array.from(new Set([
@@ -1371,6 +1376,7 @@ export function buildAgentRealityLoopProjection({
     ...asList(mesh.missingProof),
     ...asList(verificationReturnIntake.missingEvidence),
     ...asList(missionBrainNextAction.openEvidenceGaps).map((gap) => gap?.label || gap?.requiredAction || gap).filter(Boolean),
+    ...(evidenceAvailable && evidenceContext.missingProofSummary !== 'none' ? String(evidenceContext.missingProofSummary).split('|').map((item) => asText(item, '')).filter(Boolean) : []),
   ])).slice(0, 18);
   const blockers = Array.from(new Set([
     ...asList(agentWorkRoutingProjection.blockers),
@@ -1511,6 +1517,11 @@ export function buildAgentRealityLoopProjection({
     hasDuplicatePaneRisk: 'no',
     projectAwarenessContextSource: Object.keys(projectAwarenessProjection || {}).length ? (projectAwarenessProjection.projectionSource || 'project-awareness') : 'none',
     projectAwarenessContextInjected: Object.keys(projectAwarenessProjection || {}).length ? 'yes' : 'no',
+    evidenceContextSource: evidenceAvailable ? evidenceContext.source : 'none',
+    evidenceNextRequired: evidenceAvailable ? evidenceContext.nextRequiredEvidence : 'none',
+    evidenceMissingProofSummary: evidenceAvailable ? evidenceContext.missingProofSummary : 'none',
+    evidenceTrustedForMerge: evidenceAvailable && evidenceContext.trustedForMerge === true,
+    evidenceTrustedForCanon: evidenceAvailable && evidenceContext.trustedForCanon === true,
     supportSnapshotFields: {
       agent_reality_loop_status: status,
       agent_reality_loop_phase: phase,
@@ -1535,6 +1546,11 @@ export function buildAgentRealityLoopProjection({
       agent_reality_loop_confidence: confidence,
       agent_reality_loop_context_source: Object.keys(projectAwarenessProjection || {}).length ? (projectAwarenessProjection.projectionSource || 'project-awareness') : 'none',
       agent_reality_loop_context_injected: Object.keys(projectAwarenessProjection || {}).length ? 'yes' : 'no',
+      agent_reality_loop_evidence_context_source: evidenceAvailable ? evidenceContext.source : 'none',
+      agent_reality_loop_evidence_next_required: evidenceAvailable ? evidenceContext.nextRequiredEvidence : 'none',
+      agent_reality_loop_evidence_missing_proof_summary: evidenceAvailable ? evidenceContext.missingProofSummary : 'none',
+      agent_reality_loop_evidence_trusted_for_merge: evidenceAvailable && evidenceContext.trustedForMerge === true ? 'yes' : 'no',
+      agent_reality_loop_evidence_trusted_for_canon: evidenceAvailable && evidenceContext.trustedForCanon === true ? 'yes' : 'no',
     },
   };
 }
@@ -1890,6 +1906,16 @@ export function deriveOperatorReliefProjection(models = {}) {
     browserProof: missionHandoff.browserProofChecklist,
     builderWorkbenchInput: supportSnapshot.builderWorkbenchInput || models.builderWorkbenchInput || {},
   });
+  const preliminaryMissionEvidenceLedgerProjection = deriveMissionEvidenceLedgerProjection({
+    builderMeshProjection,
+    builderWorkbenchProjection: builderMeshProjection.builderWorkbenchProjection || {},
+    openClawSourcePackRunner: builderMeshProjection.builderWorkbenchProjection?.openClawSourcePackRunner || {},
+    openClawWorkspaceHygiene: builderMeshProjection.builderWorkbenchProjection?.openClawWorkspaceHygiene || {},
+    missionVerification: verificationReturnIntake,
+    prEvidence: prEvidenceModel,
+    uiRealityTruth: supportSnapshot.uiRealityTruth || { status: supportSnapshot.uiRealityStatus },
+  });
+  const preliminaryMissionEvidenceContextSummary = deriveMissionEvidenceContextSummary(preliminaryMissionEvidenceLedgerProjection);
   const packetBayProjection = derivePacketBayProjection({
     builderMeshProjection,
     supportSnapshot,
@@ -1925,6 +1951,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     missionConsoleTruth: supportSnapshot.missionConsoleTruth || {},
     codexDispatchTruth: supportSnapshot.codexDispatchTruth || {},
     supportSnapshot,
+    missionEvidenceContextSummary: preliminaryMissionEvidenceContextSummary,
   });
   const projectAwarenessProjection = buildProjectAwarenessProjection({
     activeMission: supportSnapshot.activeMission || models.activeMission || {},
@@ -1942,6 +1969,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     operatorProfile: supportSnapshot.operatorProfile || models.operatorProfile || {},
     missionIntelligence: missionIntelligenceSummary,
     supportSnapshot,
+    missionEvidenceContextSummary: preliminaryMissionEvidenceContextSummary,
   });
   agentRealityLoopProjection = {
     ...agentRealityLoopProjection,

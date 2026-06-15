@@ -2,6 +2,7 @@ import { buildContextProviderSnapshot } from './contextProviderRegistry.js';
 import { buildGithubPrEvidenceProvider } from './githubPrEvidenceProvider.js';
 import { detectOperatorExplanationIntent } from './operatorExplanationProjection.js';
 import { buildProjectAwarenessProjection } from './projectAwarenessProjection.js';
+import { deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
 
 const CHAT_CONTEXT_VERSION = 'v1';
 
@@ -74,7 +75,7 @@ export const INTENT_RULES = [
   {
     id: 'mission-planning',
     responseMode: 'mission-planning',
-    pattern: /\bwhat should we build next\b|\bbuild next\b|\bmission plan\b|\bmission planning\b|\bcurrent main mission\b|\bnext best action\b|\bwhat should we do next\b|\breduce operator complexity\b|\bcan (codex|openclaw) help\b/,
+    pattern: /\bwhat should we build next\b|\bbuild next\b|\bmission plan\b|\bmission planning\b|\bcurrent main mission\b|\bnext best action\b|\bwhat should we do next\b|\bwhat next\b|\bgive me the prompt\b|\bproof\b|\bverification\b|\bmerge safety\b|\breduce operator complexity\b|\bcan (codex|openclaw) help\b/,
   },
   {
     id: 'architecture-guidance',
@@ -167,7 +168,7 @@ function pickResponseMode(msg = '') {
   return classifyIntent(msg).responseMode;
 }
 
-function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}, proofState = {}, operatorProfile = {} } = {}) {
+function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}, proofState = {}, operatorProfile = {}, missionEvidenceContextSummary = {} } = {}) {
   const existingProjection = missionState?.operatorReliefProjection?.projectAwarenessProjection || missionState?.projectAwarenessProjection || null;
   const projection = existingProjection || buildProjectAwarenessProjection({
     activeMission: missionState?.activeMission || {},
@@ -179,6 +180,7 @@ function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}
     operatorProfile,
     missionIntelligence,
     supportSnapshot: missionState?.supportSnapshot || {},
+    missionEvidenceContextSummary,
   });
   const sourcesUsed = [];
   if (missionState && Object.keys(missionState).length) sourcesUsed.push('missionState');
@@ -228,6 +230,10 @@ function buildProjectAwarenessPack({ missionState = {}, missionIntelligence = {}
     missingProof: projection.missingProof || [],
     promptInjectable: projection.promptInjectable === true,
     promptBlock: projection.promptBlock || '',
+    evidenceCompleteness: projection.evidenceCompleteness || missionEvidenceContextSummary.completeness || 'unavailable',
+    evidenceNextRequired: projection.evidenceNextRequired || missionEvidenceContextSummary.nextRequiredEvidence || 'none',
+    evidenceMissingProofSummary: projection.evidenceMissingProofSummary || missionEvidenceContextSummary.missingProofSummary || 'none',
+    evidenceContextSource: projection.evidenceContextSource || missionEvidenceContextSummary.source || 'none',
     agentRealityLoopV1Summary: 'Agent Reality Loop V1 is a read-only coordination/proof projection in Mission Brain / Operator Relief that routes work between Codex, OpenClaw, operator, or hold; exposes required proof; blocks merge when proof is missing; and proposes lesson candidates for operator approval.',
     agentRealityLoopProjectionStatus: agentRealityLoopProjection.status || agentRealityLoopProjection.loopStatus || (Object.keys(agentRealityLoopProjection).length ? 'available' : 'unavailable'),
     agentRealityLoopProjectionSource,
@@ -390,7 +396,11 @@ export function buildChatContextPack(input = {}) {
       finalOperatorDecisionNeeded: coBuilderLoop.finalOperatorDecisionNeeded || 'approve | hold | copy packet',
     } : undefined,
   };
-  const projectAwareness = buildProjectAwarenessPack({ missionState, missionIntelligence, proofState: contextProviderProofState, operatorProfile: input.operatorProfile || {} });
+  const missionEvidenceLedgerProjection = missionState?.operatorReliefProjection?.missionEvidenceLedgerProjection || missionState?.missionEvidenceLedgerProjection || {};
+  const missionEvidenceContextSummary = deriveMissionEvidenceContextSummary(missionEvidenceLedgerProjection);
+  const evidenceContextEligible = ['mission-planning', 'work-routing', 'workbench-routing', 'merge-decision', 'codex-prompt'].includes(responseMode) || /\b(proof|verification|merge safety|what next|give me the prompt)\b/i.test(operatorMessage);
+  const missionEvidenceContextInjected = evidenceContextEligible && missionEvidenceContextSummary.available ? 'yes' : 'no';
+  const projectAwareness = buildProjectAwarenessPack({ missionState, missionIntelligence, proofState: contextProviderProofState, operatorProfile: input.operatorProfile || {}, missionEvidenceContextSummary });
 
   const compactSummary = {
     status: warnings.length > 0 && !operatorMessage ? 'warning' : 'active',
@@ -413,6 +423,8 @@ export function buildChatContextPack(input = {}) {
     warnings,
     missionIntelligence: boundedMissionIntelligenceContext,
     projectAwareness,
+    missionEvidenceContext: missionEvidenceContextInjected === 'yes' ? missionEvidenceContextSummary : { available: false, source: missionEvidenceContextSummary.source || 'none' },
+    missionEvidenceContextInjected,
     agentRealityLoopProjection: agentRealityLoopTask ? agentRealityLoopProjection : undefined,
     agentRealityLoopProjectionSource: agentRealityLoopTask ? agentRealityLoopProjectionSource : 'none',
     agentRealityLoopContextInjected: agentRealityLoopTask && Object.keys(agentRealityLoopProjection).length ? 'yes' : 'no',
@@ -429,12 +441,14 @@ export function buildChatContextPack(input = {}) {
         ? ['missionIntelligence']
         : []),
       ...(projectAwareness.status !== 'unavailable' ? ['projectAwareness'] : []),
+      ...(missionEvidenceContextInjected === 'yes' ? ['missionEvidenceContext'] : []),
       ...(missionPlanningTask ? ['agentWorkRouting', 'coBuilderLoop', 'builderMesh'] : []),
     ].filter((key) => key === 'missionIntelligence'
       || key === 'projectAwareness'
       || key === 'agentWorkRouting'
       || key === 'coBuilderLoop'
       || key === 'builderMesh'
+      || key === 'missionEvidenceContext'
       || (input[key] && typeof input[key] === 'object')),
     uiRealityStatusAtBuild: String(uiReality.severity || 'UNKNOWN'),
     missionStateAtBuild: boundedMissionIntelligenceContext.missionSummary !== 'unknown' ? 'known' : String(missionState.mode || missionState.status || 'unknown'),
@@ -541,6 +555,8 @@ export function buildChatContextPack(input = {}) {
       operatorProfileLine: providerSummaries?.operatorProfile?.known === 'yes' ? `Operator profile indicates the operator's name is ${providerSummaries.operatorProfile.operatorName}. Use this if asked about the operator's name.` : 'Operator profile does not include a known operator name yet.',
       missionIntelligence: boundedMissionIntelligenceContext,
       projectAwareness,
+      missionEvidenceContext: missionEvidenceContextInjected === 'yes' ? missionEvidenceContextSummary : { available: false, source: missionEvidenceContextSummary.source || 'none' },
+      missionEvidenceContextInjected,
     },
     classifierDebug: {
       classifierFunctionSource: intent.classifierFunctionSource,
