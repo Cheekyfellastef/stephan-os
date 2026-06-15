@@ -35,6 +35,7 @@ export function buildProjectAwarenessProjection({
   operatorProfile = {},
   missionIntelligence = {},
   supportSnapshot = {},
+  missionEvidenceContextSummary = {},
   now = new Date(),
 } = {}) {
   const active = activeMission && typeof activeMission === 'object' ? activeMission : {};
@@ -45,6 +46,8 @@ export function buildProjectAwarenessProjection({
   const sourcePack = Object.keys(openClawSourcePackRunner || {}).length ? openClawSourcePackRunner : (workbench.openClawSourcePackRunner || {});
   const hygiene = Object.keys(openClawWorkspaceHygiene || {}).length ? openClawWorkspaceHygiene : (workbench.openClawWorkspaceHygiene || mesh.openClawWorkspaceHygiene || {});
   const verification = missionVerification && typeof missionVerification === 'object' ? missionVerification : {};
+  const evidenceContext = missionEvidenceContextSummary && typeof missionEvidenceContextSummary === 'object' ? missionEvidenceContextSummary : {};
+  const evidenceAvailable = evidenceContext.available === true;
   const packets = Array.isArray(packetBay.packets) ? packetBay.packets.filter((packet) => packet && typeof packet === 'object') : [];
   const readyPackets = packets.filter((packet) => packet?.status === 'ready-to-copy');
   const localAiProofPacket = readyPackets.find((packet) => text(packet?.target).toLowerCase() === 'local-ai' && text(packet?.kind).toLowerCase().includes('proof'));
@@ -61,6 +64,7 @@ export function buildProjectAwarenessProjection({
     sourceName('UI Reality truth', Object.keys(uiRealityTruth || {}).length || known(supportSnapshot.uiRealityStatus)),
     sourceName('OpenClaw Workspace Hygiene truth', Object.keys(hygiene).length),
     sourceName('Operator Profile truth', Object.keys(operatorProfile || {}).length),
+    sourceName('Mission Evidence Context V1B', evidenceAvailable),
   ].filter(Boolean), 18);
 
   const storedTitle = known(active.title) || known(active.activeMissionTitle);
@@ -91,6 +95,9 @@ export function buildProjectAwarenessProjection({
   if (workspaceDirty) blockers.push('OpenClaw workspace hygiene is dirty; run housekeep before routing.');
   const uiStatus = known(uiRealityTruth.status) || known(uiRealityTruth.uiRealityStatus) || known(supportSnapshot.uiRealityStatus) || known(supportSnapshot.chatContextUiRealityStatus);
   if (uiStatus && !isUiOk(uiStatus)) { blockers.push('UI Reality is not OK; browser/UI proof is required.'); missingProof.push('browser/UI proof'); }
+  if (evidenceAvailable && evidenceContext.missingProofSummary && evidenceContext.missingProofSummary !== 'none') {
+    missingProof.push(...String(evidenceContext.missingProofSummary).split('|').map((item) => text(item, '')).filter(Boolean));
+  }
   missingProof = uniq(missingProof, 18);
   const verificationPending = ['pending', 'not_ready', 'insufficient_evidence', 'proof-pending', 'technically-clean-but-proof-pending'].includes(text(verification.proofStatus || verification.readinessLevel || verification.returnStatus || verification.missionVerificationProofStatus, '').toLowerCase());
   if (verificationPending && !missingProof.some((item) => /mission verification/i.test(item))) missingProof.push('Mission Verification proof pending');
@@ -125,6 +132,8 @@ export function buildProjectAwarenessProjection({
     `- next best action: ${nextBestAction}`,
     `- recommended route: ${recommendedRoute}`,
     `- route reason: ${recommendedRouteReason}`,
+    `- evidence completeness: ${evidenceAvailable ? evidenceContext.completeness : 'unknown'}`,
+    `- evidence next required: ${evidenceAvailable ? evidenceContext.nextRequiredEvidence : 'none'}`,
     `- missing proof: ${missingProof.slice(0, 5).join(' | ') || 'none'}`,
     `- sources: ${sourceSummary.slice(0, 8).join('|') || 'none'}`,
     '- safety: no auto-dispatch, no OpenClaw mutation, no durable mission write without operator approval.',
@@ -138,6 +147,10 @@ export function buildProjectAwarenessProjection({
     confidence, rehydrated, rehydrationSource,
     updatedAt: now instanceof Date ? now.toISOString() : text(now, new Date().toISOString()),
     durableWriteAllowed: false,
+    evidenceCompleteness: evidenceAvailable ? evidenceContext.completeness : 'unavailable',
+    evidenceNextRequired: evidenceAvailable ? evidenceContext.nextRequiredEvidence : 'none',
+    evidenceMissingProofSummary: evidenceAvailable ? evidenceContext.missingProofSummary : 'none',
+    evidenceContextSource: evidenceAvailable ? evidenceContext.source : 'none',
   };
 }
 
@@ -166,5 +179,9 @@ export function projectAwarenessSupportSnapshotFields(projection = {}, promptInj
     project_awareness_blocker_count: String(list(p.blockers).length),
     project_awareness_warning_count: String(list(p.warnings).length),
     project_awareness_operator_decision_required: p.operatorDecisionRequired ? 'yes' : 'no',
+    project_awareness_evidence_completeness: p.evidenceCompleteness || 'unavailable',
+    project_awareness_evidence_next_required: p.evidenceNextRequired || 'none',
+    project_awareness_evidence_missing_proof_summary: p.evidenceMissingProofSummary || 'none',
+    project_awareness_evidence_context_source: p.evidenceContextSource || 'none',
   };
 }
