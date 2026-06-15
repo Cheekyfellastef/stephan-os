@@ -3,10 +3,21 @@ import { existsSync, readFileSync } from 'node:fs';
 
 const STRICT_BASE = 'origin/main';
 const STRICT_RANGE = `${STRICT_BASE}...HEAD`;
+const VERDICTS = {
+  strictPass: 'PASS_STRICT_REMOTE_PROOF',
+  strictRemoteUnavailable: 'FAIL_REMOTE_UNAVAILABLE',
+  localPassRemoteUnavailable: 'PASS_LOCAL_CLEAN_REMOTE_UNAVAILABLE',
+  failDirty: 'FAIL_DIRTY',
+  failGeneratedDist: 'FAIL_GENERATED_DIST',
+  failOpenClawRootDirt: 'FAIL_OPENCLAW_ROOT_DIRT',
+  failProtectedCanon: 'FAIL_PROTECTED_CANON',
+  failUnknown: 'FAIL_UNKNOWN',
+};
 
 const forbiddenMatchers = [
   { reason: 'generated dist: apps/stephanos/dist/**', test: (f) => f.startsWith('apps/stephanos/dist/') },
   { reason: 'generated dist: stephanos-ui/dist/**', test: (f) => f.startsWith('stephanos-ui/dist/') },
+  { reason: 'OpenClaw root workspace dirt', test: (f) => f === '.openclaw' || f.startsWith('.openclaw/') || f === 'memory' || f.startsWith('memory/') || ['COMMANDS.md', 'DREAMS.md', 'HEARTBEAT.md', 'IDENTITY.md', 'MEMORY.md', 'SOUL.md', 'TOOLS.md', 'USER.md', 'exec_output.txt', 'workspace_contents.txt'].includes(f) },
   { reason: 'dependency artifact: node_modules/**', test: (f) => f.includes('/node_modules/') || f.startsWith('node_modules/') },
   { reason: 'runtime/generated data: data/**', test: (f) => f.startsWith('data/') },
   { reason: 'runtime/generated data: stephanos-server/data/**', test: (f) => f.startsWith('stephanos-server/data/') },
@@ -63,8 +74,22 @@ function resolveRef(ref = STRICT_BASE) {
 }
 
 function strictProofStatus() {
-  const commit = resolveRef(STRICT_BASE);
-  return commit ? { available: true, ref: STRICT_BASE, commit } : { available: false, ref: STRICT_BASE };
+  const originMainCommit = resolveRef(STRICT_BASE);
+  if (originMainCommit) return { available: true, ref: STRICT_BASE, commit: originMainCommit, range: STRICT_RANGE, source: 'origin-main' };
+
+  const upstream = tryGit(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+  const upstreamRef = upstream.ok ? upstream.stdout.trim() : '';
+  if (upstreamRef && upstreamRef !== '@{u}') {
+    const upstreamCommit = resolveRef(upstreamRef);
+    if (upstreamCommit) return { available: true, ref: upstreamRef, commit: upstreamCommit, range: `${upstreamRef}...HEAD`, source: 'upstream-tracking-branch' };
+  }
+
+  return {
+    available: false,
+    ref: STRICT_BASE,
+    upstreamRef,
+    reason: upstream.ok ? 'origin/main and upstream tracking branch cannot be resolved' : 'origin/main cannot be resolved and current branch has no upstream tracking branch',
+  };
 }
 
 function changedFilesForRange(range = STRICT_RANGE) {
@@ -80,6 +105,17 @@ function changedFilesForLocal() {
   const unstaged = lines(runGit(['diff', '--name-only', '--diff-filter=ACMR']));
   const untracked = lines(runGit(['ls-files', '--others', '--exclude-standard']));
   return { staged, unstaged, untracked };
+}
+
+function resolveLocalFallbackDiffBase() {
+  const mainBase = tryGit(['merge-base', 'HEAD', 'main']);
+  const baseSha = mainBase.ok ? mainBase.stdout.trim() : '';
+  if (baseSha) return { label: 'merge-base main...HEAD', range: `${baseSha}...HEAD`, available: true, strict: false };
+
+  const headParent = resolveRef('HEAD~1');
+  if (headParent) return { label: 'HEAD~1..HEAD', range: 'HEAD~1..HEAD', available: true, strict: false };
+
+  return { label: 'unavailable', range: '', available: false, strict: false };
 }
 
 function binaryFilesFromNumstatRows(rows) {
@@ -160,52 +196,80 @@ function printOffenders(offenders) {
   }
 }
 
+function classifyOffenders(offenders) {
+  if (offenders.some((offender) => /generated dist/i.test(offender.reason))) return VERDICTS.failGeneratedDist;
+  if (offenders.some((offender) => /OpenClaw root workspace dirt/i.test(offender.reason))) return VERDICTS.failOpenClawRootDirt;
+  if (offenders.some((offender) => /Protected Command Deck/i.test(offender.reason))) return VERDICTS.failProtectedCanon;
+  if (offenders.length > 0) return VERDICTS.failDirty;
+  return VERDICTS.failUnknown;
+}
+
 export function analyzeStrictPr() {
   const proof = strictProofStatus();
   if (!proof.available) {
     return {
       mode: 'strict',
       proof,
+      diffBase: { label: 'unavailable', range: STRICT_RANGE, available: false, strict: true },
       changedFiles: [],
       allowedFiles: [],
-      offenders: [{ surface: 'strict PR proof', file: STRICT_BASE, reason: 'origin/main cannot be resolved; strict PR mode fails closed' }],
+      offenders: [],
+      verdict: VERDICTS.strictRemoteUnavailable,
     };
   }
 
-  const changedFiles = unique(changedFilesForRange());
-  const numstatRows = numstatRowsForRange();
+  const changedFiles = unique(changedFilesForRange(proof.range));
+  const numstatRows = numstatRowsForRange(proof.range);
   const offenders = [
-    ...artifactOffenders(changedFiles, STRICT_RANGE),
-    ...binaryOffenders(binaryFilesFromNumstatRows(numstatRows), STRICT_RANGE),
-    ...commandDeckProofOffenders(changedFiles, STRICT_RANGE),
+    ...artifactOffenders(changedFiles, proof.range),
+    ...binaryOffenders(binaryFilesFromNumstatRows(numstatRows), proof.range),
+    ...commandDeckProofOffenders(changedFiles, proof.range),
   ];
-  return { mode: 'strict', proof, changedFiles, allowedFiles: allowedFiles(changedFiles), offenders };
+  return {
+    mode: 'strict',
+    proof,
+    diffBase: { label: proof.range, range: proof.range, available: true, strict: true },
+    changedFiles,
+    allowedFiles: allowedFiles(changedFiles),
+    offenders,
+    verdict: offenders.length > 0 ? classifyOffenders(offenders) : VERDICTS.strictPass,
+  };
 }
 
 export function analyzeLocalFallback() {
   const local = changedFilesForLocal();
   const allFiles = unique([...local.staged, ...local.unstaged, ...local.untracked]);
+  const fallbackDiff = resolveLocalFallbackDiffBase();
+  const fallbackFiles = fallbackDiff.available ? unique(changedFilesForRange(fallbackDiff.range)) : [];
   const offenders = [
+    ...allFiles.map((file) => ({ surface: 'local working tree', file, reason: 'changed/untracked file remains after expected cleanup' })),
     ...artifactOffenders(local.staged, 'staged'),
     ...artifactOffenders(local.unstaged, 'unstaged'),
     ...artifactOffenders(local.untracked, 'untracked'),
     ...binaryOffenders(localBinaryFiles(local), 'local working tree'),
     ...commandDeckProofOffenders(allFiles, 'local working tree'),
   ];
+  if (!fallbackDiff.available) {
+    offenders.push({ surface: 'local fallback diff', file: 'HEAD', reason: 'local fallback diff base unavailable' });
+  }
   return {
     mode: 'local',
     proof: strictProofStatus(),
+    diffBase: fallbackDiff,
+    fallbackFiles,
     changedFiles: allFiles,
     allowedFiles: allowedFiles(allFiles),
     offenders,
     local,
+    verdict: offenders.length > 0 ? classifyOffenders(offenders) : VERDICTS.localPassRemoteUnavailable,
   };
 }
 
-function exitForAnalysis(analysis, { successMessage, unavailableMessage }) {
-  if (analysis.proof && !analysis.proof.available && unavailableMessage) {
-    console.error(unavailableMessage);
-  }
+function exitForAnalysis(analysis, { successMessage, unavailableMessage, verdictPrefix }) {
+  if (verdictPrefix) console.log(`${verdictPrefix}=${analysis.verdict}`);
+  if (analysis.diffBase) console.log(`STEPHANOS_PR_CLEAN_DIFF_BASE=${analysis.diffBase.label}`);
+  if (analysis.proof && !analysis.proof.available && unavailableMessage) console.error(unavailableMessage);
+  if (analysis.verdict === VERDICTS.strictRemoteUnavailable) process.exit(1);
   if (analysis.offenders.length > 0) {
     console.error(`[stephanos:guard:pr-clean] FAILED (${analysis.mode} mode).`);
     printOffenders(analysis.offenders);
@@ -216,11 +280,12 @@ function exitForAnalysis(analysis, { successMessage, unavailableMessage }) {
 
 function runStrictMode() {
   const analysis = analyzeStrictPr();
-  formatList('[stephanos:guard:pr-clean] Changed files in origin/main...HEAD:', analysis.changedFiles);
+  formatList(`[stephanos:guard:pr-clean] Changed files in ${analysis.diffBase.label}:`, analysis.changedFiles);
   formatList('[stephanos:guard:pr-clean] Allowed changed files:', analysis.allowedFiles);
   exitForAnalysis(analysis, {
-    successMessage: '[stephanos:guard:pr-clean] OK: strict PR proof passed for origin/main...HEAD.',
-    unavailableMessage: '[stephanos:guard:pr-clean] Strict PR proof unavailable: origin/main cannot be resolved.',
+    successMessage: `[stephanos:guard:pr-clean] OK: strict PR proof passed for ${analysis.diffBase.label}.`,
+    unavailableMessage: `[stephanos:guard:pr-clean] Strict PR proof unavailable: ${analysis.proof.reason}.`,
+    verdictPrefix: 'STEPHANOS_PR_CLEAN_STRICT_VERDICT',
   });
 }
 
@@ -229,10 +294,12 @@ function runLocalMode() {
   formatList('[stephanos:guard:pr-clean:local] Local changed/untracked files:', analysis.changedFiles);
   formatList('[stephanos:guard:pr-clean:local] Locally allowed source files:', analysis.allowedFiles);
   if (!analysis.proof.available) {
-    console.error('[stephanos:guard:pr-clean:local] Strict PR proof unavailable: origin/main cannot be resolved. Local fallback is not PR-clean proof.');
+    console.error(`[stephanos:guard:pr-clean:local] Strict PR proof unavailable: ${analysis.proof.reason}. Local fallback is not strict PR proof.`);
   }
+  formatList(`[stephanos:guard:pr-clean:local] Fallback diff files in ${analysis.diffBase.label}:`, analysis.fallbackFiles);
   exitForAnalysis(analysis, {
-    successMessage: '[stephanos:guard:pr-clean:local] OK: local fallback found no forbidden staged/unstaged/untracked files. Strict PR proof not claimed.',
+    successMessage: '[stephanos:guard:pr-clean:local] OK: local clean fallback passed. Strict remote PR proof not claimed.',
+    verdictPrefix: 'STEPHANOS_PR_CLEAN_LOCAL_VERDICT',
   });
 }
 
@@ -248,6 +315,7 @@ function runPrepareMode() {
   const offenders = [...local.offenders, ...strict.offenders];
   if (!strict.proof.available) {
     console.error('[stephanos:pr:prepare] Strict PR proof is required but unavailable: origin/main cannot be resolved.');
+    process.exit(1);
   }
   if (offenders.length > 0) {
     console.error('[stephanos:pr:prepare] FAILED: PR candidate is not source-only clean.');
