@@ -216,12 +216,17 @@ test('Mission Console registration callback identity is App bridge sourced and o
   assert.match(source, /onMissionConsoleInstanceRegistration = null/);
   assert.match(source, /registrationCallbackSource = 'unwired'/);
   assert.match(source, /registrationCallbackIdentity = 'unwired'/);
-  assert.match(source, /try \{\n\s+onMissionConsoleInstanceRegistration\(\{ \.\.\.registrationPayload \}\);\n\s+registrationCallbackInvokedRef\.current = 'yes';/);
+  assert.match(source, /setRegistrationTraceState\(\{ callbackInvoked: 'no', callbackCallAttempted: 'yes'/);
+  assert.match(source, /const callbackResult = onMissionConsoleInstanceRegistration\(\{ \.\.\.registrationPayload \}\);\n\s+const callbackReturnType = callbackResult === null \? 'null' : typeof callbackResult;\n\s+registrationCallbackInvokedRef\.current = 'yes';/);
+  assert.match(source, /setRegistrationTraceState\(\{ callbackInvoked: 'yes', callbackCallAttempted: 'yes', callbackReturned: 'yes'/);
   assert.match(source, /catch \(error\) \{\n\s+registrationCallbackInvokedRef\.current = 'no';\n\s+registrationDropBoundaryRef\.current = 'callback-threw';/);
   assert.match(appSource, /registrationCallbackSource: 'app-bridge'/);
   assert.match(appSource, /registrationCallbackPanelId: panelId/);
   assert.match(appSource, /const registrationCallbackIdentity = `app-bridge:\$\{panelId\}:\$\{sourceSurface\}`;/);
+  assert.match(appSource, /appHandlerEntered: 'yes'/);
+  assert.match(appSource, /appHandlerEnteredAt: enteredAt/);
   assert.match(appSource, /receivedPanelId: metadata\?\.panelId \|\| panelId/);
   assert.match(appSource, /receivedSourceSurface: metadata\?\.sourceSurface \|\| sourceSurface/);
+  assert.match(appSource, /receivedCallbackIdentity/);
   assert.match(appSource, /publishOperatorReliefProjectionBridge\(operatorReliefProjectionRef\.current, \{/);
 });

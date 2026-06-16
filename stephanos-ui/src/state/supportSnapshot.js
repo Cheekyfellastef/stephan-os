@@ -796,6 +796,10 @@ function sampleLiveMissionConsoleComponentTrace() {
     registrationEffectSeen: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-effect-seen', 'no'),
     registrationCallbackPropPresent: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-prop-present', 'no'),
     registrationCallbackInvoked: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-invoked', 'no'),
+    registrationCallbackCallAttempted: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-call-attempted', 'no'),
+    registrationCallbackReturned: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-returned', 'no'),
+    registrationCallbackReturnType: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-return-type', 'unknown'),
+    registrationCallbackError: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-error', 'none'),
     registrationDropBoundary: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-drop-boundary', 'visible-surface-not-missionconsoletile'),
     registrationCallbackSource: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-source', 'unknown'),
     registrationCallbackPanelId: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-panel-id', 'unknown'),
@@ -991,8 +995,17 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     registrationCallbackInvoked: useLiveDiagnostics
       ? (selected?.registrationCallbackInvoked || 'no')
       : (executionMetadata?.mission_console_registration_callback_seen || 'no'),
+    appHandlerEntered: useLiveDiagnostics
+      ? (selected?.appHandlerEntered || selected?.registrationAppHandlerSeen || 'no')
+      : (executionMetadata?.mission_console_registration_app_handler_seen || 'no'),
+    appHandlerEnteredAt: useLiveDiagnostics
+      ? (selected?.appHandlerEnteredAt || 'unknown')
+      : (executionMetadata?.mission_console_registration_app_handler_entered_at || 'unknown'),
+    receivedCallbackIdentity: useLiveDiagnostics
+      ? (selected?.receivedCallbackIdentity || selected?.registrationCallbackIdentity || 'unknown')
+      : (executionMetadata?.mission_console_registration_received_callback_identity || 'unknown'),
     registrationAppHandlerSeen: useLiveDiagnostics
-      ? (selected?.registrationAppHandlerSeen || 'no')
+      ? (selected?.registrationAppHandlerSeen || selected?.appHandlerEntered || 'no')
       : (executionMetadata?.mission_console_registration_app_handler_seen || 'no'),
     registrationStoreWriteAttempted: useLiveDiagnostics
       ? (selected?.registrationStoreWriteAttempted || 'no')
@@ -1033,6 +1046,10 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     componentEffectSeen: asText(uiRealityComponentTrace?.registrationEffectSeen, useLiveDiagnostics ? (selected?.registrationEffectSeen || 'no') : (executionMetadata?.mission_console_component_effect_seen || 'no')),
     componentCallbackPropPresent: asText(uiRealityComponentTrace?.registrationCallbackPropPresent, useLiveDiagnostics ? (selected?.registrationCallbackPropPresent || 'no') : (executionMetadata?.mission_console_component_callback_prop_present || 'no')),
     componentCallbackInvoked: asText(uiRealityComponentTrace?.registrationCallbackInvoked, useLiveDiagnostics ? (selected?.registrationCallbackInvoked || 'no') : (executionMetadata?.mission_console_component_callback_invoked || 'no')),
+    componentCallbackCallAttempted: asText(uiRealityComponentTrace?.registrationCallbackCallAttempted, useLiveDiagnostics ? (selected?.registrationCallbackCallAttempted || 'no') : (executionMetadata?.mission_console_component_callback_call_attempted || 'no')),
+    componentCallbackReturned: asText(uiRealityComponentTrace?.registrationCallbackReturned, useLiveDiagnostics ? (selected?.registrationCallbackReturned || 'no') : (executionMetadata?.mission_console_component_callback_returned || 'no')),
+    componentCallbackReturnType: asText(uiRealityComponentTrace?.registrationCallbackReturnType, useLiveDiagnostics ? (selected?.registrationCallbackReturnType || 'unknown') : (executionMetadata?.mission_console_component_callback_return_type || 'unknown')),
+    componentCallbackError: asText(uiRealityComponentTrace?.registrationCallbackError, useLiveDiagnostics ? (selected?.registrationCallbackError || 'none') : (executionMetadata?.mission_console_component_callback_error || 'none')),
     registrationDropBoundary: useLiveDiagnostics
       ? (selected?.registrationDropBoundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected')
       : (executionMetadata?.mission_console_registration_drop_boundary || executionMetadata?.operator_relief_bridge_drop_boundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected'),
@@ -3418,12 +3435,19 @@ export function buildSupportSnapshot({
     `Mission Console Component Effect Seen: ${asText(missionConsoleDiagnostics?.componentEffectSeen, 'no')}`,
     `Mission Console Component Callback Prop Present: ${asText(missionConsoleDiagnostics?.componentCallbackPropPresent, 'no')}`,
     `Mission Console Component Callback Invoked: ${asText(missionConsoleDiagnostics?.componentCallbackInvoked, 'no')}`,
+    `Mission Console Component Callback Call Attempted: ${asText(missionConsoleDiagnostics?.componentCallbackCallAttempted, 'no')}`,
+    `Mission Console Component Callback Returned: ${asText(missionConsoleDiagnostics?.componentCallbackReturned, 'no')}`,
+    `Mission Console Component Callback Return Type: ${asText(missionConsoleDiagnostics?.componentCallbackReturnType, 'unknown')}`,
+    `Mission Console Component Callback Error: ${asText(missionConsoleDiagnostics?.componentCallbackError, 'none')}`,
     `Mission Console Registration Callback Seen: ${asText(missionConsoleDiagnostics?.callbackSeen, 'no')}`,
     `Mission Console Registration Effect Seen: ${asText(missionConsoleDiagnostics?.registrationEffectSeen, 'no')}`,
     `Mission Console Registration Effect Panel ID: ${asText(missionConsoleDiagnostics?.registrationEffectPanelId, 'unknown')}`,
     `Mission Console Registration Callback Prop Present: ${asText(missionConsoleDiagnostics?.registrationCallbackPropPresent, 'no')}`,
     `Mission Console Registration Callback Invoked: ${asText(missionConsoleDiagnostics?.registrationCallbackInvoked, 'no')}`,
     `Mission Console Registration App Handler Seen: ${asText(missionConsoleDiagnostics?.registrationAppHandlerSeen, 'no')}`,
+    `Mission Console Registration App Handler Entered: ${asText(missionConsoleDiagnostics?.appHandlerEntered, 'no')}`,
+    `Mission Console Registration App Handler Entered At: ${asText(missionConsoleDiagnostics?.appHandlerEnteredAt, 'unknown')}`,
+    `Mission Console Registration Received Callback Identity: ${asText(missionConsoleDiagnostics?.receivedCallbackIdentity, 'unknown')}`,
     `Mission Console Registration Store Write Attempted: ${asText(missionConsoleDiagnostics?.registrationStoreWriteAttempted, 'no')}`,
     `Mission Console Registration Store Write Accepted: ${asText(missionConsoleDiagnostics?.registrationStoreWriteAccepted, 'no')}`,
     `Mission Console Registration Received Panel ID: ${asText(missionConsoleDiagnostics?.registrationReceivedPanelId, 'unknown')}`,

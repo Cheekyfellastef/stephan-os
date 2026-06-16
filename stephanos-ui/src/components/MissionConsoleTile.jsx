@@ -163,6 +163,10 @@ function MissionConsoleTile({
   const registrationDropBoundaryRef = useRef('effect-not-fired');
   const [registrationTraceState, setRegistrationTraceState] = useState({
     callbackInvoked: 'no',
+    callbackCallAttempted: 'no',
+    callbackReturned: 'no',
+    callbackReturnType: 'unknown',
+    callbackError: 'none',
     dropBoundary: 'effect-not-fired',
   });
   recordPerfCounter('render', 'MissionConsoleTile');
@@ -178,7 +182,7 @@ function MissionConsoleTile({
   useEffect(() => {
     const callbackPresent = typeof onMissionConsoleInstanceRegistration === 'function';
     registrationDropBoundaryRef.current = callbackPresent ? 'none' : 'missing-prop';
-    setRegistrationTraceState({ callbackInvoked: 'no', dropBoundary: registrationDropBoundaryRef.current });
+    setRegistrationTraceState({ callbackInvoked: 'no', callbackCallAttempted: 'no', callbackReturned: 'no', callbackReturnType: 'unknown', callbackError: 'none', dropBoundary: registrationDropBoundaryRef.current });
     if (!callbackPresent) {
       if (typeof onOperatorReliefProjectionUpdate === 'function') {
         onOperatorReliefProjectionUpdate(null, {
@@ -188,6 +192,10 @@ function MissionConsoleTile({
           effectPanelId: panelId,
           callbackPropPresent: 'no',
           callbackInvoked: 'no',
+          callbackCallAttempted: 'no',
+          callbackReturned: 'no',
+          callbackReturnType: 'unknown',
+          callbackError: 'none',
           dropBoundary: 'missing-prop',
         },
         });
@@ -208,6 +216,10 @@ function MissionConsoleTile({
         effectPanelId: panelId,
         callbackPropPresent: 'yes',
         callbackInvoked: 'pending',
+        callbackCallAttempted: 'pending',
+        callbackReturned: 'pending',
+        callbackReturnType: 'pending',
+        callbackError: 'none',
         dropBoundary: 'none',
         registrationCallbackSource,
         registrationCallbackPanelId,
@@ -215,13 +227,15 @@ function MissionConsoleTile({
       },
     };
     try {
-      onMissionConsoleInstanceRegistration({ ...registrationPayload });
+      setRegistrationTraceState({ callbackInvoked: 'no', callbackCallAttempted: 'yes', callbackReturned: 'no', callbackReturnType: 'pending', callbackError: 'none', dropBoundary: 'none' });
+      const callbackResult = onMissionConsoleInstanceRegistration({ ...registrationPayload });
+      const callbackReturnType = callbackResult === null ? 'null' : typeof callbackResult;
       registrationCallbackInvokedRef.current = 'yes';
-      setRegistrationTraceState({ callbackInvoked: 'yes', dropBoundary: 'none' });
+      setRegistrationTraceState({ callbackInvoked: 'yes', callbackCallAttempted: 'yes', callbackReturned: 'yes', callbackReturnType, callbackError: 'none', dropBoundary: 'none' });
     } catch (error) {
       registrationCallbackInvokedRef.current = 'no';
       registrationDropBoundaryRef.current = 'callback-threw';
-      setRegistrationTraceState({ callbackInvoked: 'no', dropBoundary: 'callback-threw' });
+      setRegistrationTraceState({ callbackInvoked: 'no', callbackCallAttempted: 'yes', callbackReturned: 'no', callbackReturnType: 'threw', callbackError: error?.message || String(error), dropBoundary: 'callback-threw' });
       throw error;
     }
   }, [forcePanelOpen, onMissionConsoleInstanceRegistration, onOperatorReliefProjectionUpdate, panelId, registrationCallbackIdentity, registrationCallbackPanelId, registrationCallbackSource, uiLayout]);
@@ -1454,6 +1468,10 @@ function MissionConsoleTile({
       data-mission-console-registration-effect-seen="yes"
       data-mission-console-registration-callback-prop-present={typeof onMissionConsoleInstanceRegistration === 'function' ? 'yes' : 'no'}
       data-mission-console-registration-callback-invoked={registrationTraceState.callbackInvoked}
+      data-mission-console-registration-callback-call-attempted={registrationTraceState.callbackCallAttempted}
+      data-mission-console-registration-callback-returned={registrationTraceState.callbackReturned}
+      data-mission-console-registration-callback-return-type={registrationTraceState.callbackReturnType}
+      data-mission-console-registration-callback-error={registrationTraceState.callbackError}
       data-mission-console-registration-drop-boundary={registrationTraceState.dropBoundary}
       data-mission-console-registration-callback-source={registrationCallbackSource}
       data-mission-console-registration-callback-panel-id={registrationCallbackPanelId}

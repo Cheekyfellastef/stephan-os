@@ -150,7 +150,7 @@ test('App operator relief projection handler records source surface and bridge d
 test('createMissionConsoleTileBridgeProps does not register mission console instances during render', async () => {
   const appSource = await fs.readFile(appPath, 'utf8');
   const start = appSource.indexOf('const createMissionConsoleTileBridgeProps = useCallback((panelId, options = {}) => {');
-  const end = appSource.indexOf('}, [handleOperatorReliefProjectionUpdate, registerMissionConsoleBridgeInstance]);', start);
+  const end = appSource.indexOf('}, [handleOperatorReliefProjectionUpdate, publishOperatorReliefProjectionBridge, registerMissionConsoleBridgeInstance]);', start);
   const createBody = start >= 0 && end > start ? appSource.slice(start, end) : '';
   assert.equal(createBody.includes('onMissionConsoleInstanceRegistration'), true);
 });
@@ -172,9 +172,10 @@ test('App bridge registration publishes diagnostics even before Operator Relief 
   assert.match(appSource, /const nextProjection = projection \|\| null;/);
   assert.match(appSource, /published: nextProjection \? 'yes' : 'no'/);
   assert.match(appSource, /missionConsoleInstanceCount: instanceIds\.length/);
-  assert.match(appSource, /registrationAppHandlerSeen: missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| 'no'/);
-  assert.match(appSource, /registrationStoreWriteAttempted: 'yes'/);
-  assert.match(appSource, /registrationStoreWriteAccepted: 'yes'/);
+  assert.match(appSource, /appHandlerEntered: missionConsoleRegistrationTraceRef\.current\.appHandlerEntered \|\| missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| 'no'/);
+  assert.match(appSource, /registrationAppHandlerSeen: missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| missionConsoleRegistrationTraceRef\.current\.appHandlerEntered \|\| 'no'/);
+  assert.match(appSource, /registrationStoreWriteAttempted: missionConsoleRegistrationTraceRef\.current\.storeWriteAttempted \|\| 'yes'/);
+  assert.match(appSource, /registrationStoreWriteAccepted: missionConsoleRegistrationTraceRef\.current\.storeWriteAccepted \|\| 'yes'/);
   assert.match(appSource, /missionConsoleBridgeParityBlocker: missingBridgeCallbackIds\.length > 0 \? 'missing-bridge-callback' : \(instanceIds\.length <= 0 \? 'instance-not-registered' : \(nextProjection \? 'none' : 'projection-not-published'\)\)/);
   assert.match(appSource, /publishOperatorReliefProjectionBridge\(operatorReliefProjectionRef\.current, \{/);
   const aiStoreSource = await fs.readFile(aiStorePath, 'utf8');
