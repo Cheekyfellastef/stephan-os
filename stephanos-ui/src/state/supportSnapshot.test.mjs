@@ -2369,11 +2369,32 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
           missionConsoleBridgeCapableInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
           missionConsoleVisibleInstancePublished: 'yes',
           missionConsoleBridgeParityStatus: 'OK',
+          appBridgeHandlerOwnerId: 'app-bridge-registry:live-vite-shell',
+          missionConsoleBridgeInstancesRefOwnerId: 'app-bridge-registry:live-vite-shell',
+          publishOperatorReliefProjectionBridgeOwnerId: 'app-bridge-registry:live-vite-shell',
+          operatorReliefBridgeDiagnosticsStoreOwnerId: 'app-bridge-registry:live-vite-shell',
+          operatorReliefBridgeDiagnosticsStoreSourceId: 'app.setOperatorReliefProjectionBridge',
+          publisherRegistryOwnerId: 'app-bridge-registry:live-vite-shell',
+          publisherRegistryInstanceCount: 2,
+          publisherRegistryInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
+          registrationDiagnosticsStamp: 3,
         },
       },
     },
   });
   assert.match(snapshot, /Mission Console Diagnostics Source: live-operator-relief-bridge/);
+  assert.match(snapshot, /Mission Console Registration Diagnostics Source: runtimeContext.operatorReliefBridgeDiagnostics/);
+  assert.match(snapshot, /Mission Console Registration Diagnostics Stamp: 3/);
+  assert.match(snapshot, /Mission Console Registration Diagnostics Owner ID: app-bridge-registry:live-vite-shell/);
+  assert.match(snapshot, /Support Snapshot Diagnostics Source ID: runtimeContext.operatorReliefBridgeDiagnostics/);
+  assert.match(snapshot, /App Bridge Handler Owner ID: app-bridge-registry:live-vite-shell/);
+  assert.match(snapshot, /Mission Console Bridge Instances Ref Owner ID: app-bridge-registry:live-vite-shell/);
+  assert.match(snapshot, /Publish Operator Relief Projection Bridge Owner ID: app-bridge-registry:live-vite-shell/);
+  assert.match(snapshot, /Operator Relief Bridge Diagnostics Store Owner ID: app-bridge-registry:live-vite-shell/);
+  assert.match(snapshot, /Operator Relief Bridge Diagnostics Store Source ID: app.setOperatorReliefProjectionBridge/);
+  assert.match(snapshot, /Mission Console Publisher Registry Owner ID: app-bridge-registry:live-vite-shell/);
+  assert.match(snapshot, /Mission Console Publisher Registry Instance Count: 2/);
+  assert.match(snapshot, /Mission Console Publisher Registry Instance IDs: aiCoreMissionConsolePanel\|missionConsolePanel/);
   assert.match(snapshot, /Mission Console Registration Callback Seen: yes/);
   assert.match(snapshot, /Mission Console Registration Effect Seen: yes/);
   assert.match(snapshot, /Mission Console Registration Callback Prop Present: yes/);

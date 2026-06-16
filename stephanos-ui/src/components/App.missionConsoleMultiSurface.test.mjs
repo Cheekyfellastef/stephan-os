@@ -172,6 +172,10 @@ test('App bridge registration publishes diagnostics even before Operator Relief 
   assert.match(appSource, /const nextProjection = projection \|\| null;/);
   assert.match(appSource, /published: nextProjection \? 'yes' : 'no'/);
   assert.match(appSource, /missionConsoleInstanceCount: instanceIds\.length/);
+  assert.match(appSource, /missionConsoleBridgeInstancesRefOwnerId: bridgeRegistryOwnerId/);
+  assert.match(appSource, /publishOperatorReliefProjectionBridgeOwnerId: bridgeRegistryOwnerId/);
+  assert.match(appSource, /operatorReliefBridgeDiagnosticsStoreOwnerId: bridgeRegistryOwnerId/);
+  assert.match(appSource, /publisherRegistryInstanceCount: instanceIds\.length/);
   assert.match(appSource, /appHandlerEntered: missionConsoleRegistrationTraceRef\.current\.appHandlerEntered \|\| missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| 'no'/);
   assert.match(appSource, /registrationAppHandlerSeen: missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| missionConsoleRegistrationTraceRef\.current\.appHandlerEntered \|\| 'no'/);
   assert.match(appSource, /registrationStoreWriteAttempted: missionConsoleRegistrationTraceRef\.current\.storeWriteAttempted \|\| 'yes'/);
@@ -182,6 +186,8 @@ test('App bridge registration publishes diagnostics even before Operator Relief 
   assert.match(appSource, /publishOperatorReliefProjectionBridge\(operatorReliefProjectionRef\.current, \{/);
   assert.match(appSource, /const registrationCommitted = missionConsoleBridgeInstancesRef\.current\?\.\[panelId\]\?\.instanceId === receivedInstanceId/);
   assert.match(appSource, /sideEffectStatus: registrationCommitted \? 'committed' : 'pending'/);
+  assert.match(appSource, /registeredInstanceCount: receiptRegistryKeys\.length/);
+  assert.match(appSource, /registryOwnerId: missionConsoleBridgeOwnerIdRef\.current/);
   const aiStoreSource = await fs.readFile(aiStorePath, 'utf8');
   assert.match(aiStoreSource, /runtimeContextSeen: operatorReliefProjectionBridge\?\.diagnostics \? 'yes' : 'no'/);
   assert.match(aiStoreSource, /previousHasRegisteredInstances && !nextHasRegisteredInstances && previousStamp >= nextStamp/);
@@ -193,6 +199,9 @@ test('MissionConsoleTile mount telemetry remains mount scoped and registration i
   assert.match(missionConsoleSource, /recordPerfCounter\('surface_mount', 'MissionConsoleTile\.mount'\)/);
   assert.match(missionConsoleSource, /\}, \[\]\);/);
   assert.match(missionConsoleSource, /onMissionConsoleInstanceRegistration\(\{/);
+  assert.match(missionConsoleSource, /data-mission-console-registration-callback-return-side-effect-status/);
+  assert.match(missionConsoleSource, /data-mission-console-registration-callback-return-registered-instance-count/);
+  assert.match(missionConsoleSource, /data-mission-console-registration-callback-return-diagnostics-stamp/);
   assert.match(missionConsoleSource, /callbackPropPresent: 'yes'/);
   assert.match(missionConsoleSource, /dropBoundary: 'none'/);
 });
