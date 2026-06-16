@@ -917,8 +917,12 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     : {};
   const liveCount = Number(liveDiagnostics?.missionConsoleInstanceCount);
   const liveHasInstances = Number.isFinite(liveCount) && liveCount > 0;
+  const liveRegistrationStamp = Number(liveDiagnostics?.registrationDiagnosticsStamp || 0);
+  const liveHasRegistrationDiagnostics = liveRegistrationStamp > 0
+    || liveDiagnostics?.appHandlerEntered === 'yes'
+    || liveDiagnostics?.registrationAppHandlerSeen === 'yes';
   const liveHasCanonicalBridge = Object.keys(liveDiagnostics).length > 0
-    && (liveDiagnostics?.published === 'yes' || liveHasInstances || Array.isArray(liveDiagnostics?.projectionKeysSeen));
+    && (liveDiagnostics?.published === 'yes' || liveHasInstances || liveHasRegistrationDiagnostics || Array.isArray(liveDiagnostics?.projectionKeysSeen));
   const executionCount = Number(executionMetadata?.mission_console_instance_count);
   const executionHasInstances = Number.isFinite(executionCount) && executionCount > 0;
   const useLiveDiagnostics = liveHasCanonicalBridge;
@@ -961,6 +965,12 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     operatorReliefBridgeLastUpdatedAt: useLiveDiagnostics
       ? (selected?.lastUpdatedAt || executionMetadata?.operator_relief_bridge_last_updated_at || 'unknown')
       : (executionMetadata?.operator_relief_bridge_last_updated_at || 'unknown'),
+    registrationDiagnosticsStamp: useLiveDiagnostics
+      ? (selected?.registrationDiagnosticsStamp || '0')
+      : (executionMetadata?.mission_console_registration_diagnostics_stamp || '0'),
+    registrationDiagnosticsLastUpdatedAt: useLiveDiagnostics
+      ? (selected?.registrationDiagnosticsLastUpdatedAt || 'unknown')
+      : (executionMetadata?.mission_console_registration_diagnostics_last_updated_at || 'unknown'),
     missionConsoleInstanceCount: Number.isFinite(selectedCount) ? String(selectedCount) : String(executionMetadata?.mission_console_instance_count || 0),
     missionConsoleInstanceIds: useLiveDiagnostics
       ? (Array.isArray(selected?.missionConsoleInstanceIds) ? selected.missionConsoleInstanceIds.join('|') : (executionMetadata?.mission_console_instance_ids || 'none'))

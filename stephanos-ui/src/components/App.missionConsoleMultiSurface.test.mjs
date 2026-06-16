@@ -176,10 +176,13 @@ test('App bridge registration publishes diagnostics even before Operator Relief 
   assert.match(appSource, /registrationAppHandlerSeen: missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| missionConsoleRegistrationTraceRef\.current\.appHandlerEntered \|\| 'no'/);
   assert.match(appSource, /registrationStoreWriteAttempted: missionConsoleRegistrationTraceRef\.current\.storeWriteAttempted \|\| 'yes'/);
   assert.match(appSource, /registrationStoreWriteAccepted: missionConsoleRegistrationTraceRef\.current\.storeWriteAccepted \|\| 'yes'/);
+  assert.match(appSource, /registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef\.current/);
+  assert.match(appSource, /missionConsoleRegistrationDiagnosticsStampRef\.current \+= 1/);
   assert.match(appSource, /missionConsoleBridgeParityBlocker: missingBridgeCallbackIds\.length > 0 \? 'missing-bridge-callback' : \(instanceIds\.length <= 0 \? 'instance-not-registered' : \(nextProjection \? 'none' : 'projection-not-published'\)\)/);
   assert.match(appSource, /publishOperatorReliefProjectionBridge\(operatorReliefProjectionRef\.current, \{/);
   const aiStoreSource = await fs.readFile(aiStorePath, 'utf8');
   assert.match(aiStoreSource, /runtimeContextSeen: operatorReliefProjectionBridge\?\.diagnostics \? 'yes' : 'no'/);
+  assert.match(aiStoreSource, /previousHasRegisteredInstances && !nextHasRegisteredInstances && previousStamp > nextStamp/);
 });
 
 test('MissionConsoleTile mount telemetry remains mount scoped and registration is emitted from separate effect', async () => {

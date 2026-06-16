@@ -267,6 +267,7 @@ export default function App() {
   const operatorReliefProjectionRef = useRef(null);
   const missionConsoleBridgeInstancesRef = useRef({});
   const missionConsoleBridgeLastPublisherRef = useRef({ panelId: '', sourceSurface: '' });
+  const missionConsoleRegistrationDiagnosticsStampRef = useRef(0);
   const missionConsoleRegistrationTraceRef = useRef({
     effectSeen: 'no',
     effectPanelId: 'unknown',
@@ -346,6 +347,8 @@ export default function App() {
       registrationCallbackPanelId: missionConsoleRegistrationTraceRef.current.registrationCallbackPanelId || 'unknown',
       registrationCallbackIdentity: missionConsoleRegistrationTraceRef.current.registrationCallbackIdentity || 'unknown',
       registrationDropBoundary: missionConsoleRegistrationTraceRef.current.dropBoundary || 'none',
+      registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef.current,
+      registrationDiagnosticsLastUpdatedAt: missionConsoleRegistrationTraceRef.current.registrationDiagnosticsLastUpdatedAt || 'unknown',
     };
     const nextDiagnosticsSignature = JSON.stringify(baseDiagnostics);
     if (operatorReliefBridgePublishedAtRef.current === nextDiagnosticsSignature) {
@@ -377,6 +380,7 @@ export default function App() {
       [key]: nextEntry,
     };
     const trace = metadata?.registrationTrace && typeof metadata.registrationTrace === 'object' ? metadata.registrationTrace : {};
+    missionConsoleRegistrationDiagnosticsStampRef.current += 1;
     missionConsoleRegistrationTraceRef.current = {
       ...missionConsoleRegistrationTraceRef.current,
       effectSeen: trace.effectSeen || 'yes',
@@ -396,6 +400,8 @@ export default function App() {
       storeWriteAttempted: 'yes',
       storeWriteAccepted: 'yes',
       dropBoundary: trace.dropBoundary || 'none',
+      registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef.current,
+      registrationDiagnosticsLastUpdatedAt: new Date().toISOString(),
     };
     publishOperatorReliefProjectionBridge(operatorReliefProjectionRef.current, {
       panelId: key,
@@ -428,6 +434,7 @@ export default function App() {
         const receivedPanelId = metadata?.panelId || panelId;
         const receivedSourceSurface = metadata?.sourceSurface || sourceSurface;
         const receivedInstanceId = metadata?.instanceId || metadata?.panelId || panelId;
+        missionConsoleRegistrationDiagnosticsStampRef.current += 1;
         missionConsoleRegistrationTraceRef.current = {
           ...missionConsoleRegistrationTraceRef.current,
           appHandlerSeen: 'yes',
@@ -447,6 +454,8 @@ export default function App() {
           storeWriteAttempted: 'no',
           storeWriteAccepted: 'no',
           dropBoundary: registrationTrace.dropBoundary || 'app-handler-entered',
+          registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef.current,
+          registrationDiagnosticsLastUpdatedAt: enteredAt,
         };
         publishOperatorReliefProjectionBridge(operatorReliefProjectionRef.current, { panelId, sourceSurface });
         missionConsoleRegistrationTraceRef.current = {

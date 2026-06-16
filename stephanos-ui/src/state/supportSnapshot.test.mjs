@@ -2435,6 +2435,43 @@ test('support snapshot reports registered mission console instance while project
   assert.match(snapshot, /Mission Console Bridge Parity Blocker: projection-not-published/);
 });
 
+test('support snapshot prefers stamped live registration diagnostics over stale final execution metadata', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        mission_console_registration_app_handler_seen: 'no',
+        mission_console_registration_received_callback_identity: 'unknown',
+        mission_console_instance_count: '0',
+        operator_relief_bridge_published: 'no',
+      },
+      runtimeContext: {
+        operatorReliefBridgeDiagnostics: {
+          published: 'no',
+          storeUpdated: 'yes',
+          runtimeContextSeen: 'yes',
+          appHandlerEntered: 'yes',
+          registrationAppHandlerSeen: 'yes',
+          registrationStoreWriteAttempted: 'yes',
+          registrationStoreWriteAccepted: 'yes',
+          receivedCallbackIdentity: 'app-bridge:aiCoreMissionConsolePanel:aiCoreMissionConsolePanel',
+          registrationReceivedPanelId: 'aiCoreMissionConsolePanel',
+          registrationReceivedSourceSurface: 'aiCoreMissionConsolePanel',
+          registrationReceivedInstanceId: 'aiCoreMissionConsolePanel',
+          missionConsoleInstanceCount: 0,
+          projectionKeysSeen: [],
+          registrationDiagnosticsStamp: 2,
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /Mission Console Diagnostics Source: live-operator-relief-bridge/);
+  assert.match(snapshot, /Mission Console Registration App Handler Entered: yes/);
+  assert.match(snapshot, /Mission Console Registration Received Callback Identity: app-bridge:aiCoreMissionConsolePanel:aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Registration Store Write Attempted: yes/);
+  assert.match(snapshot, /Mission Console Instance Count: 0/);
+  assert.match(snapshot, /Operator Relief Bridge Published: no/);
+});
+
 test('support snapshot does not allow final execution metadata zero defaults to overwrite live mission console diagnostics', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
