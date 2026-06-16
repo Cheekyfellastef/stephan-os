@@ -330,6 +330,12 @@ export default function App() {
       registrationAppHandlerSeen: missionConsoleRegistrationTraceRef.current.appHandlerSeen || 'no',
       registrationStoreWriteAttempted: 'yes',
       registrationStoreWriteAccepted: 'yes',
+      registrationReceivedPanelId: missionConsoleRegistrationTraceRef.current.receivedPanelId || 'unknown',
+      registrationReceivedSourceSurface: missionConsoleRegistrationTraceRef.current.receivedSourceSurface || 'unknown',
+      registrationReceivedInstanceId: missionConsoleRegistrationTraceRef.current.receivedInstanceId || 'unknown',
+      registrationCallbackSource: missionConsoleRegistrationTraceRef.current.registrationCallbackSource || 'unknown',
+      registrationCallbackPanelId: missionConsoleRegistrationTraceRef.current.registrationCallbackPanelId || 'unknown',
+      registrationCallbackIdentity: missionConsoleRegistrationTraceRef.current.registrationCallbackIdentity || 'unknown',
       registrationDropBoundary: missionConsoleRegistrationTraceRef.current.dropBoundary || 'none',
     };
     const nextDiagnosticsSignature = JSON.stringify(baseDiagnostics);
@@ -367,8 +373,14 @@ export default function App() {
       effectSeen: trace.effectSeen || 'yes',
       effectPanelId: trace.effectPanelId || key,
       callbackPropPresent: trace.callbackPropPresent || 'yes',
-      callbackInvoked: trace.callbackInvoked || 'yes',
+      callbackInvoked: trace.callbackInvoked === 'pending' ? 'yes' : (trace.callbackInvoked || 'yes'),
       appHandlerSeen: 'yes',
+      receivedPanelId: metadata.receivedPanelId || metadata.panelId || key,
+      receivedSourceSurface: metadata.receivedSourceSurface || metadata.sourceSurface || key,
+      receivedInstanceId: metadata.instanceId || key,
+      registrationCallbackSource: trace.registrationCallbackSource || metadata.registrationCallbackSource || 'unknown',
+      registrationCallbackPanelId: trace.registrationCallbackPanelId || metadata.registrationCallbackPanelId || key,
+      registrationCallbackIdentity: trace.registrationCallbackIdentity || metadata.registrationCallbackIdentity || 'unknown',
       storeWriteAttempted: 'yes',
       storeWriteAccepted: 'yes',
       dropBoundary: trace.dropBoundary || 'none',
@@ -391,17 +403,30 @@ export default function App() {
   }, [publishOperatorReliefProjectionBridge]);
   const createMissionConsoleTileBridgeProps = useCallback((panelId, options = {}) => {
     const sourceSurface = options?.sourceSurface || panelId || 'unknown';
+    const registrationCallbackIdentity = `app-bridge:${panelId}:${sourceSurface}`;
     return {
       panelId,
+      registrationCallbackSource: 'app-bridge',
+      registrationCallbackPanelId: panelId,
+      registrationCallbackIdentity,
       onMissionConsoleInstanceRegistration: (metadata = {}) => {
+        const registrationTrace = metadata?.registrationTrace || {};
         missionConsoleRegistrationTraceRef.current = {
           ...missionConsoleRegistrationTraceRef.current,
           appHandlerSeen: 'yes',
-          effectSeen: metadata?.registrationTrace?.effectSeen || 'yes',
-          effectPanelId: metadata?.registrationTrace?.effectPanelId || panelId,
-          callbackPropPresent: metadata?.registrationTrace?.callbackPropPresent || 'yes',
-          callbackInvoked: metadata?.registrationTrace?.callbackInvoked || 'yes',
-          dropBoundary: metadata?.registrationTrace?.dropBoundary || 'none',
+          receivedPanelId: metadata?.panelId || panelId,
+          receivedSourceSurface: metadata?.sourceSurface || sourceSurface,
+          receivedInstanceId: metadata?.instanceId || metadata?.panelId || panelId,
+          registrationCallbackSource: registrationTrace.registrationCallbackSource || metadata?.registrationCallbackSource || 'unknown',
+          registrationCallbackPanelId: registrationTrace.registrationCallbackPanelId || metadata?.registrationCallbackPanelId || 'unknown',
+          registrationCallbackIdentity: registrationTrace.registrationCallbackIdentity || metadata?.registrationCallbackIdentity || 'unknown',
+          effectSeen: registrationTrace.effectSeen || 'yes',
+          effectPanelId: registrationTrace.effectPanelId || panelId,
+          callbackPropPresent: registrationTrace.callbackPropPresent || 'yes',
+          callbackInvoked: registrationTrace.callbackInvoked === 'pending' ? 'yes' : (registrationTrace.callbackInvoked || 'yes'),
+          storeWriteAttempted: 'yes',
+          storeWriteAccepted: 'yes',
+          dropBoundary: registrationTrace.dropBoundary || 'none',
         };
         registerMissionConsoleBridgeInstance(panelId, {
           sourceSurface,
@@ -409,6 +434,11 @@ export default function App() {
           visible: options?.visible === true || metadata?.visible === true,
           collapsed: options?.collapsed === true || metadata?.collapsed === true,
           hasBridgeCallback: metadata?.hasBridgeCallback !== false,
+          receivedPanelId: metadata?.panelId || panelId,
+          receivedSourceSurface: metadata?.sourceSurface || sourceSurface,
+          registrationCallbackSource: metadata?.registrationCallbackSource,
+          registrationCallbackPanelId: metadata?.registrationCallbackPanelId,
+          registrationCallbackIdentity: metadata?.registrationCallbackIdentity,
           registrationTrace: metadata?.registrationTrace || {},
         });
       },

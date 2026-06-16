@@ -148,8 +148,11 @@ function MissionConsoleTile({
   emergencyReleaseOllamaLoad = null,
   orchestrationTruth = null,
   agentTaskProjection = null,
-  onMissionConsoleInstanceRegistration = () => {},
-  onOperatorReliefProjectionUpdate = () => {},
+  onMissionConsoleInstanceRegistration = null,
+  onOperatorReliefProjectionUpdate = null,
+  registrationCallbackSource = 'unwired',
+  registrationCallbackPanelId = 'missionConsolePanel',
+  registrationCallbackIdentity = 'unwired',
   forcePanelOpen = false,
   panelId = 'missionConsolePanel',
   panelTitle = 'Agent Mission Console',
@@ -177,7 +180,8 @@ function MissionConsoleTile({
     registrationDropBoundaryRef.current = callbackPresent ? 'none' : 'missing-prop';
     setRegistrationTraceState({ callbackInvoked: 'no', dropBoundary: registrationDropBoundaryRef.current });
     if (!callbackPresent) {
-      onOperatorReliefProjectionUpdate(null, {
+      if (typeof onOperatorReliefProjectionUpdate === 'function') {
+        onOperatorReliefProjectionUpdate(null, {
         sourceSurface: panelId,
         registrationTrace: {
           effectSeen: 'yes',
@@ -186,14 +190,16 @@ function MissionConsoleTile({
           callbackInvoked: 'no',
           dropBoundary: 'missing-prop',
         },
-      });
+        });
+      }
       return;
     }
-    registrationCallbackInvokedRef.current = 'yes';
-    setRegistrationTraceState({ callbackInvoked: 'yes', dropBoundary: 'none' });
-    onMissionConsoleInstanceRegistration({
+    const registrationPayload = {
       panelId,
       sourceSurface: panelId,
+      registrationCallbackSource,
+      registrationCallbackPanelId,
+      registrationCallbackIdentity,
       visible: forcePanelOpen ? true : uiLayout?.[panelId] !== false,
       collapsed: forcePanelOpen ? false : uiLayout?.[panelId] === false,
       hasBridgeCallback: typeof onOperatorReliefProjectionUpdate === 'function',
@@ -201,11 +207,24 @@ function MissionConsoleTile({
         effectSeen: 'yes',
         effectPanelId: panelId,
         callbackPropPresent: 'yes',
-        callbackInvoked: 'yes',
+        callbackInvoked: 'pending',
         dropBoundary: 'none',
+        registrationCallbackSource,
+        registrationCallbackPanelId,
+        registrationCallbackIdentity,
       },
-    });
-  }, [forcePanelOpen, onMissionConsoleInstanceRegistration, onOperatorReliefProjectionUpdate, panelId, uiLayout]);
+    };
+    try {
+      onMissionConsoleInstanceRegistration({ ...registrationPayload });
+      registrationCallbackInvokedRef.current = 'yes';
+      setRegistrationTraceState({ callbackInvoked: 'yes', dropBoundary: 'none' });
+    } catch (error) {
+      registrationCallbackInvokedRef.current = 'no';
+      registrationDropBoundaryRef.current = 'callback-threw';
+      setRegistrationTraceState({ callbackInvoked: 'no', dropBoundary: 'callback-threw' });
+      throw error;
+    }
+  }, [forcePanelOpen, onMissionConsoleInstanceRegistration, onOperatorReliefProjectionUpdate, panelId, registrationCallbackIdentity, registrationCallbackPanelId, registrationCallbackSource, uiLayout]);
   recordMissionConsoleRenderReasons({
     uiLayout, runtimeStatusModel, finalRouteTruth, finalAgentView, branchName,
     onOpenClawIntegrationUpdate, onIntentToBuildUpdate, onMissionBridgeUpdate,
@@ -1436,6 +1455,9 @@ function MissionConsoleTile({
       data-mission-console-registration-callback-prop-present={typeof onMissionConsoleInstanceRegistration === 'function' ? 'yes' : 'no'}
       data-mission-console-registration-callback-invoked={registrationTraceState.callbackInvoked}
       data-mission-console-registration-drop-boundary={registrationTraceState.dropBoundary}
+      data-mission-console-registration-callback-source={registrationCallbackSource}
+      data-mission-console-registration-callback-panel-id={registrationCallbackPanelId}
+      data-mission-console-registration-callback-identity={registrationCallbackIdentity}
     >
       <div data-testid="mission-console-inner-command-deck">
       <MissionCommandDeck

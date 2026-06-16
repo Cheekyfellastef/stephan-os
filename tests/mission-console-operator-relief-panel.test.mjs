@@ -211,3 +211,17 @@ test('Evidence Return Intake control is only exposed through existing Mission Co
   assert.match(source, /<AIConsole/);
   assert.doesNotMatch(source, /DuplicateMissionConsole/);
 });
+
+test('Mission Console registration callback identity is App bridge sourced and only marked invoked after call', () => {
+  assert.match(source, /onMissionConsoleInstanceRegistration = null/);
+  assert.match(source, /registrationCallbackSource = 'unwired'/);
+  assert.match(source, /registrationCallbackIdentity = 'unwired'/);
+  assert.match(source, /try \{\n\s+onMissionConsoleInstanceRegistration\(\{ \.\.\.registrationPayload \}\);\n\s+registrationCallbackInvokedRef\.current = 'yes';/);
+  assert.match(source, /catch \(error\) \{\n\s+registrationCallbackInvokedRef\.current = 'no';\n\s+registrationDropBoundaryRef\.current = 'callback-threw';/);
+  assert.match(appSource, /registrationCallbackSource: 'app-bridge'/);
+  assert.match(appSource, /registrationCallbackPanelId: panelId/);
+  assert.match(appSource, /const registrationCallbackIdentity = `app-bridge:\$\{panelId\}:\$\{sourceSurface\}`;/);
+  assert.match(appSource, /receivedPanelId: metadata\?\.panelId \|\| panelId/);
+  assert.match(appSource, /receivedSourceSurface: metadata\?\.sourceSurface \|\| sourceSurface/);
+  assert.match(appSource, /publishOperatorReliefProjectionBridge\(operatorReliefProjectionRef\.current, \{/);
+});

@@ -2356,6 +2356,12 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
           registrationAppHandlerSeen: 'yes',
           registrationStoreWriteAttempted: 'yes',
           registrationStoreWriteAccepted: 'yes',
+          registrationReceivedPanelId: 'aiCoreMissionConsolePanel',
+          registrationReceivedSourceSurface: 'aiCoreMissionConsolePanel',
+          registrationReceivedInstanceId: 'aiCoreMissionConsolePanel',
+          registrationCallbackSource: 'app-bridge',
+          registrationCallbackPanelId: 'aiCoreMissionConsolePanel',
+          registrationCallbackIdentity: 'app-bridge:aiCoreMissionConsolePanel:aiCoreMissionConsolePanel',
           registrationDropBoundary: 'none',
           missionConsoleInstanceCount: 2,
           missionConsoleInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
@@ -2375,6 +2381,11 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
   assert.match(snapshot, /Mission Console Registration App Handler Seen: yes/);
   assert.match(snapshot, /Mission Console Registration Store Write Attempted: yes/);
   assert.match(snapshot, /Mission Console Registration Store Write Accepted: yes/);
+  assert.match(snapshot, /Mission Console Registration Received Panel ID: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Registration Received Source Surface: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Registration Callback Source: app-bridge/);
+  assert.match(snapshot, /Mission Console Registration Callback Panel ID: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Registration Callback Identity: app-bridge:aiCoreMissionConsolePanel:aiCoreMissionConsolePanel/);
   assert.match(snapshot, /Mission Console Registration Store Updated: yes/);
   assert.match(snapshot, /Mission Console Registration RuntimeContext Seen: yes/);
   assert.match(snapshot, /Mission Console Instance Count: 2/);
