@@ -1996,6 +1996,62 @@ test('buildSupportSnapshot reports mission bridge diagnostics fields', () => {
   assert.match(snapshot, /Mission Bridge Mission Packet From Operator Intent: yes/);
 });
 
+test('support snapshot prefers runtime stamped publisher diagnostics for canonical mission console counts', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      runtimeContext: {
+        operatorReliefBridgeDiagnostics: {
+          registrationDiagnosticsStamp: 7,
+          appBridgeHandlerOwnerId: 'app-bridge-registry:live-vite-shell',
+          missionConsoleBridgeInstancesRefOwnerId: 'app-bridge-registry:live-vite-shell',
+          publishOperatorReliefProjectionBridgeOwnerId: 'app-bridge-registry:live-vite-shell',
+          operatorReliefBridgeDiagnosticsStoreOwnerId: 'app-bridge-registry:live-vite-shell',
+          operatorReliefBridgeDiagnosticsStoreSourceId: 'app.setOperatorReliefProjectionBridge',
+          publisherRegistryOwnerId: 'app-bridge-registry:live-vite-shell',
+          publisherRegistryInstanceCount: 1,
+          publisherRegistryInstanceIds: ['aiCoreMissionConsolePanel'],
+          publisherSource: 'app-bridge-registration',
+          missionConsoleInstanceCount: 1,
+          missionConsoleInstanceIds: ['aiCoreMissionConsolePanel'],
+          visibleInstancePublished: 'yes',
+          bridgeParityBlocker: 'projection-not-published',
+          runtimeContextSeen: 'yes',
+          published: 'no',
+          projectionKeysSeen: [],
+        },
+        uiReality: {
+          aiCoreMissionConsole: {
+            componentTrace: {
+              source: 'live-marker',
+              registrationCallbackReturnRegisteredInstanceCount: '9',
+            },
+          },
+        },
+      },
+      lastExecutionMetadata: {
+        mission_console_instance_count: '0',
+        mission_console_publisher_registry_instance_count: '0',
+      },
+    },
+  });
+
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Present: yes/);
+  assert.match(snapshot, /Mission Console Runtime Publisher Registry Count: 1/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Stamp: 7/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Source ID: runtimeContext\.operatorReliefBridgeDiagnostics/);
+  assert.match(snapshot, /Mission Console Publisher Registry Owner ID: app-bridge-registry:live-vite-shell/);
+  assert.match(snapshot, /Mission Console Publisher Registry Instance Count: 1/);
+  assert.match(snapshot, /Mission Console Publisher Registry Instance IDs: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Publisher Source: app-bridge-registration/);
+  assert.match(snapshot, /Mission Console Instance Count: 1/);
+  assert.match(snapshot, /Mission Console Instance IDs: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Visible Instance Published: yes/);
+  assert.match(snapshot, /Mission Console Registration RuntimeContext Seen: yes/);
+  assert.match(snapshot, /Operator Relief Bridge Published: no/);
+  assert.match(snapshot, /Operator Relief Bridge Projection Keys Seen: none/);
+  assert.doesNotMatch(snapshot, /Mission Console Instance Count: 9/);
+});
+
 test('support snapshot reflects mission packet generation from submitted operator intent', () => {
   const missionBridgeTruth = processMissionBridgeIntent({
     operatorIntent: 'Repair mission bridge activation and runtime truth gating.',
