@@ -457,7 +457,6 @@ export default function App() {
           registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef.current,
           registrationDiagnosticsLastUpdatedAt: enteredAt,
         };
-        publishOperatorReliefProjectionBridge(operatorReliefProjectionRef.current, { panelId, sourceSurface });
         missionConsoleRegistrationTraceRef.current = {
           ...missionConsoleRegistrationTraceRef.current,
           storeWriteAttempted: 'yes',
@@ -470,11 +469,14 @@ export default function App() {
           hasBridgeCallback: metadata?.hasBridgeCallback !== false,
           receivedPanelId,
           receivedSourceSurface,
-          registrationCallbackSource: metadata?.registrationCallbackSource,
-          registrationCallbackPanelId: metadata?.registrationCallbackPanelId,
-          registrationCallbackIdentity: metadata?.registrationCallbackIdentity,
+          registrationCallbackSource: metadata?.registrationCallbackSource || registrationTrace.registrationCallbackSource || 'app-bridge',
+          registrationCallbackPanelId: metadata?.registrationCallbackPanelId || registrationTrace.registrationCallbackPanelId || panelId,
+          registrationCallbackIdentity: metadata?.registrationCallbackIdentity || receivedCallbackIdentity,
           registrationTrace: metadata?.registrationTrace || {},
         });
+        const registrationCommitted = missionConsoleBridgeInstancesRef.current?.[panelId]?.instanceId === receivedInstanceId
+          && missionConsoleRegistrationTraceRef.current.storeWriteAccepted === 'yes'
+          && missionConsoleRegistrationTraceRef.current.receivedCallbackIdentity === receivedCallbackIdentity;
         return {
           handled: true,
           handler: 'app-bridge',
@@ -482,6 +484,7 @@ export default function App() {
           sourceSurface: receivedSourceSurface,
           instanceId: receivedInstanceId,
           callbackIdentity: receivedCallbackIdentity,
+          sideEffectStatus: registrationCommitted ? 'committed' : 'pending',
           appHandlerEnteredAt: enteredAt,
         };
       },
