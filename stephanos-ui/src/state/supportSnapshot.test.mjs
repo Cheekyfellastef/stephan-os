@@ -3402,7 +3402,7 @@ test('support snapshot copy-time sampler overrides stale cached missing MissionC
         },
       },
     });
-    assert.match(snapshot, /Mission Console Component Trace Source: dom/);
+    assert.match(snapshot, /Mission Console Component Trace Source: live-dom/);
     assert.match(snapshot, /Mission Console Visible Component Is MissionConsoleTile: yes/);
     assert.match(snapshot, /Mission Console Visible Component Panel ID: aiCoreMissionConsolePanel/);
     assert.match(snapshot, /Mission Console Component Effect Seen: yes/);
@@ -3410,6 +3410,79 @@ test('support snapshot copy-time sampler overrides stale cached missing MissionC
     assert.match(snapshot, /Mission Console Component Callback Invoked: yes/);
     assert.match(snapshot, /Mission Console Registration Drop Boundary: none/);
     assert.match(snapshot, /Mission Console Instance Count: 0/);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
+
+test('support snapshot live MissionConsoleTile sampler selects visible aiCore panel wrapper over collapsed wrapper', () => {
+  const previousDocument = globalThis.document;
+  const markerFor = (panelId, callback = 'yes') => ({
+    getAttribute(name) {
+      return {
+        'data-mission-console-component': 'MissionConsoleTile',
+        'data-mission-console-panel-id': panelId,
+        'data-mission-console-registration-callback-prop-present': callback,
+      }[name] || '';
+    },
+  });
+  const collapsedMarker = markerFor('missionConsolePanel', 'no');
+  const visibleMarker = markerFor('aiCoreMissionConsolePanel', 'yes');
+  const makeWrapper = ({ panelId, visible, marker }) => ({
+    style: visible ? {} : { display: 'none' },
+    getClientRects: () => (visible ? [{ width: 100, height: 100 }] : []),
+    getAttribute(name) {
+      return {
+        'data-panel-id': panelId,
+        'data-testid': 'ai-core-mission-console',
+      }[name] || '';
+    },
+    querySelector(selector) {
+      return selector === '[data-mission-console-component="MissionConsoleTile"]' ? marker : null;
+    },
+    querySelectorAll(selector) {
+      return selector === '[data-mission-console-component="MissionConsoleTile"]' ? [marker] : [];
+    },
+    contains(node) { return node === marker; },
+  });
+  const collapsedWrapper = makeWrapper({ panelId: 'missionConsolePanel', visible: false, marker: collapsedMarker });
+  const visibleWrapper = makeWrapper({ panelId: 'aiCoreMissionConsolePanel', visible: true, marker: visibleMarker });
+  globalThis.document = {
+    querySelector(selector) {
+      if (selector === '[data-testid="ai-core-mission-console"]') return collapsedWrapper;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === '[data-testid="ai-core-mission-console"]') return [collapsedWrapper, visibleWrapper];
+      return [];
+    },
+  };
+  try {
+    const snapshot = buildSupportSnapshot({
+      runtimeStatus: {
+        lastExecutionMetadata: {
+          mission_console_component_trace_source: 'final-execution-metadata',
+          mission_console_visible_component_is_missionconsoletile: 'no',
+          operator_relief_bridge_published: 'no',
+        },
+      },
+    });
+    assert.match(snapshot, /Mission Console Component Trace Source: live-dom/);
+    assert.match(snapshot, /Mission Console Visible Component Is MissionConsoleTile: yes/);
+    assert.match(snapshot, /Mission Console Visible Component Panel ID: aiCoreMissionConsolePanel/);
+    assert.match(snapshot, /Mission Console Component Callback Prop Present: yes/);
+    assert.match(snapshot, /Mission Console Registration Callback Seen: no/);
+    assert.match(snapshot, /Operator Relief Bridge Published: no/);
+    assert.match(snapshot, /Mission Console AI Core Wrapper Count: 2/);
+    assert.match(snapshot, /Mission Console AI Core Visible Wrapper Count: 1/);
+    assert.match(snapshot, /Mission Console Marker Count By Wrapper: 0:missionConsolePanel:hidden:1\|1:aiCoreMissionConsolePanel:visible:1/);
+    assert.match(snapshot, /Mission Console Selected Wrapper Index: 1/);
+    assert.match(snapshot, /Mission Console Selected Wrapper Reason: visible-ai-core-panel/);
+    assert.match(snapshot, /Mission Console Selected Marker Panel ID: aiCoreMissionConsolePanel/);
+    assert.match(snapshot, /Mission Console Selected Marker Callback Present: yes/);
+    assert.match(snapshot, /Mission Console Selector Miss Reason: none/);
   } finally {
     if (previousDocument === undefined) delete globalThis.document;
     else globalThis.document = previousDocument;

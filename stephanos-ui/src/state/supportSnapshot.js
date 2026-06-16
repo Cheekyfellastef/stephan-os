@@ -712,25 +712,99 @@ function deriveCommandDeckProof({ aiConsoleAnswerScroll = {}, commandDeckLocalRe
   };
 }
 
+function isElementHiddenForMissionConsoleSample(node) {
+  if (!node) return true;
+  const attr = (name) => (typeof node.getAttribute === 'function' ? String(node.getAttribute(name) || '').trim().toLowerCase() : '');
+  if (attr('hidden') === 'true' || attr('aria-hidden') === 'true' || attr('data-collapsed') === 'true') return true;
+  const style = node.style || {};
+  if (String(style.display || '').toLowerCase() === 'none' || String(style.visibility || '').toLowerCase() === 'hidden') return true;
+  if (typeof node.getClientRects === 'function') {
+    try {
+      const rects = node.getClientRects();
+      if (rects && rects.length === 0) return true;
+    } catch {}
+  }
+  return false;
+}
+
+function collectMissionConsoleNodes(root, selector) {
+  if (!root) return [];
+  if (typeof root.querySelectorAll === 'function') {
+    try { return Array.from(root.querySelectorAll(selector) || []); } catch { return []; }
+  }
+  if (typeof root.querySelector === 'function') {
+    const node = root.querySelector(selector);
+    return node ? [node] : [];
+  }
+  return [];
+}
+
+function getMissionConsoleNodeAttr(node, name, fallback = '') {
+  return typeof node?.getAttribute === 'function' ? (node.getAttribute(name) || fallback) : fallback;
+}
+
 function sampleLiveMissionConsoleComponentTrace() {
   const doc = getDocument();
   if (!doc?.querySelector) return null;
-  const aiCoreNode = doc.querySelector('[data-testid="ai-core-mission-console"]');
-  const aiCorePane = doc.querySelector('[data-pane-id="aiCoreMissionConsolePanel"]');
-  const marker = aiCoreNode?.querySelector?.('[data-mission-console-component="MissionConsoleTile"]')
-    || aiCorePane?.querySelector?.('[data-mission-console-component="MissionConsoleTile"]')
+  const wrapperSelector = '[data-testid="ai-core-mission-console"]';
+  const markerSelector = '[data-mission-console-component="MissionConsoleTile"]';
+  const aiCoreNodes = collectMissionConsoleNodes(doc, wrapperSelector);
+  const wrapperFacts = aiCoreNodes.map((node, index) => {
+    const markers = collectMissionConsoleNodes(node, markerSelector);
+    const panelId = getMissionConsoleNodeAttr(node, 'data-panel-id', getMissionConsoleNodeAttr(node, 'data-pane-id', 'unknown'));
+    const hidden = isElementHiddenForMissionConsoleSample(node);
+    return { node, index, markers, panelId, visible: !hidden };
+  });
+  const visibleWrappers = wrapperFacts.filter((fact) => fact.visible);
+  const canonicalVisibleWrapper = visibleWrappers.find((fact) => fact.panelId === 'aiCoreMissionConsolePanel' && fact.markers.length > 0)
+    || visibleWrappers.find((fact) => fact.panelId === 'aiCoreMissionConsolePanel')
+    || wrapperFacts.find((fact) => fact.panelId === 'aiCoreMissionConsolePanel' && fact.markers.length > 0)
+    || wrapperFacts.find((fact) => fact.markers.length > 0)
+    || wrapperFacts[0]
     || null;
+  const selectedMarker = canonicalVisibleWrapper?.markers?.[0] || null;
+  const aiCorePane = selectedMarker ? null : doc.querySelector('[data-pane-id="aiCoreMissionConsolePanel"]');
+  const paneMarker = selectedMarker ? null : aiCorePane?.querySelector?.(markerSelector);
+  const marker = selectedMarker || paneMarker || null;
+  const markerPanelId = getMissionConsoleNodeAttr(marker, 'data-mission-console-panel-id', 'unknown');
+  const wrapperMarkerCounts = wrapperFacts.map((fact) => `${fact.index}:${fact.panelId}:${fact.visible ? 'visible' : 'hidden'}:${fact.markers.length}`).join('|') || 'none';
+  const selectedWrapperIndex = canonicalVisibleWrapper ? String(canonicalVisibleWrapper.index) : 'none';
+  const selectedWrapperReason = canonicalVisibleWrapper
+    ? (canonicalVisibleWrapper.visible && canonicalVisibleWrapper.panelId === 'aiCoreMissionConsolePanel' ? 'visible-ai-core-panel'
+      : canonicalVisibleWrapper.visible ? 'visible-ai-core-wrapper'
+      : canonicalVisibleWrapper.markers.length > 0 ? 'hidden-wrapper-with-marker-fallback'
+      : 'first-wrapper-fallback')
+    : (paneMarker ? 'pane-fallback' : 'none');
   if (!marker) {
-    return { source: 'missing', selectorPathChecked: '[data-testid="ai-core-mission-console"] [data-mission-console-component="MissionConsoleTile"] | [data-pane-id="aiCoreMissionConsolePanel"] [data-mission-console-component="MissionConsoleTile"]' };
+    return {
+      source: 'missing',
+      selectorPathChecked: `${wrapperSelector} ${markerSelector} | [data-pane-id="aiCoreMissionConsolePanel"] ${markerSelector}`,
+      aiCoreWrapperCount: String(aiCoreNodes.length),
+      aiCoreVisibleWrapperCount: String(visibleWrappers.length),
+      markerCountByWrapper: wrapperMarkerCounts,
+      selectedWrapperIndex,
+      selectedWrapperReason,
+      selectorMissReason: aiCoreNodes.length === 0 ? 'ai-core-wrapper-missing' : 'missionconsoletile-marker-missing-under-selected-wrapper',
+    };
   }
+  const markerInsideAiCoreWrapper = canonicalVisibleWrapper?.node?.contains?.(marker) || selectedMarker === marker;
   return {
-    source: aiCoreNode?.contains?.(marker) ? 'dom' : 'pane-fallback',
-    isMissionConsoleTile: marker.getAttribute('data-mission-console-component') === 'MissionConsoleTile' ? 'yes' : 'no',
-    panelId: marker.getAttribute('data-mission-console-panel-id') || 'unknown',
-    registrationEffectSeen: marker.getAttribute('data-mission-console-registration-effect-seen') || 'no',
-    registrationCallbackPropPresent: marker.getAttribute('data-mission-console-registration-callback-prop-present') || 'no',
-    registrationCallbackInvoked: marker.getAttribute('data-mission-console-registration-callback-invoked') || 'no',
-    registrationDropBoundary: marker.getAttribute('data-mission-console-registration-drop-boundary') || 'visible-surface-not-missionconsoletile',
+    source: markerInsideAiCoreWrapper ? 'live-dom' : 'pane-fallback',
+    selectorPathChecked: markerInsideAiCoreWrapper ? `${wrapperSelector} ${markerSelector}` : `[data-pane-id="aiCoreMissionConsolePanel"] ${markerSelector}`,
+    isMissionConsoleTile: getMissionConsoleNodeAttr(marker, 'data-mission-console-component') === 'MissionConsoleTile' ? 'yes' : 'no',
+    panelId: markerPanelId,
+    registrationEffectSeen: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-effect-seen', 'no'),
+    registrationCallbackPropPresent: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-prop-present', 'no'),
+    registrationCallbackInvoked: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-invoked', 'no'),
+    registrationDropBoundary: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-drop-boundary', 'visible-surface-not-missionconsoletile'),
+    aiCoreWrapperCount: String(aiCoreNodes.length),
+    aiCoreVisibleWrapperCount: String(visibleWrappers.length),
+    markerCountByWrapper: wrapperMarkerCounts,
+    selectedWrapperIndex,
+    selectedWrapperReason,
+    selectedMarkerPanelId: markerPanelId,
+    selectedMarkerCallbackPresent: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-prop-present', 'no'),
+    selectorMissReason: 'none',
   };
 }
 
@@ -925,6 +999,14 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
       : (executionMetadata?.mission_console_registration_store_write_accepted || 'no'),
     componentTraceSource,
     componentTraceSelectorChecked: asText(liveDomComponentTrace?.selectorPathChecked || uiRealityComponentTrace?.selectorPathChecked, 'n/a'),
+    aiCoreWrapperCount: asText(liveDomComponentTrace?.aiCoreWrapperCount || uiRealityComponentTrace?.aiCoreWrapperCount, 'unknown'),
+    aiCoreVisibleWrapperCount: asText(liveDomComponentTrace?.aiCoreVisibleWrapperCount || uiRealityComponentTrace?.aiCoreVisibleWrapperCount, 'unknown'),
+    markerCountByWrapper: asText(liveDomComponentTrace?.markerCountByWrapper || uiRealityComponentTrace?.markerCountByWrapper, 'none'),
+    selectedWrapperIndex: asText(liveDomComponentTrace?.selectedWrapperIndex || uiRealityComponentTrace?.selectedWrapperIndex, 'none'),
+    selectedWrapperReason: asText(liveDomComponentTrace?.selectedWrapperReason || uiRealityComponentTrace?.selectedWrapperReason, 'none'),
+    selectedMarkerPanelId: asText(liveDomComponentTrace?.selectedMarkerPanelId || uiRealityComponentTrace?.selectedMarkerPanelId, 'unknown'),
+    selectedMarkerCallbackPresent: asText(liveDomComponentTrace?.selectedMarkerCallbackPresent || uiRealityComponentTrace?.selectedMarkerCallbackPresent, 'no'),
+    selectorMissReason: asText(liveDomComponentTrace?.selectorMissReason || uiRealityComponentTrace?.selectorMissReason, 'none'),
     visibleComponentIsMissionConsoleTile: asText(uiRealityComponentTrace?.isMissionConsoleTile, useLiveDiagnostics ? 'yes' : (executionMetadata?.mission_console_visible_component_is_missionconsoletile || 'no')),
     visibleComponentPanelId: asText(uiRealityComponentTrace?.panelId, useLiveDiagnostics ? (selected?.registrationEffectPanelId || selected?.missionConsoleVisibleInstanceId || 'unknown') : (executionMetadata?.mission_console_visible_component_panel_id || 'unknown')),
     componentEffectSeen: asText(uiRealityComponentTrace?.registrationEffectSeen, useLiveDiagnostics ? (selected?.registrationEffectSeen || 'no') : (executionMetadata?.mission_console_component_effect_seen || 'no')),
@@ -3302,6 +3384,14 @@ export function buildSupportSnapshot({
     `Mission Console Diagnostics Source: ${asText(missionConsoleDiagnostics?.source, 'missing')}`,
     `Mission Console Component Trace Source: ${asText(missionConsoleDiagnostics?.componentTraceSource, 'missing')}`,
     `Mission Console Component Trace Selector Checked: ${asText(missionConsoleDiagnostics?.componentTraceSelectorChecked, 'n/a')}`,
+    `Mission Console AI Core Wrapper Count: ${asText(missionConsoleDiagnostics?.aiCoreWrapperCount, 'unknown')}`,
+    `Mission Console AI Core Visible Wrapper Count: ${asText(missionConsoleDiagnostics?.aiCoreVisibleWrapperCount, 'unknown')}`,
+    `Mission Console Marker Count By Wrapper: ${asText(missionConsoleDiagnostics?.markerCountByWrapper, 'none')}`,
+    `Mission Console Selected Wrapper Index: ${asText(missionConsoleDiagnostics?.selectedWrapperIndex, 'none')}`,
+    `Mission Console Selected Wrapper Reason: ${asText(missionConsoleDiagnostics?.selectedWrapperReason, 'none')}`,
+    `Mission Console Selected Marker Panel ID: ${asText(missionConsoleDiagnostics?.selectedMarkerPanelId, 'unknown')}`,
+    `Mission Console Selected Marker Callback Present: ${asText(missionConsoleDiagnostics?.selectedMarkerCallbackPresent, 'no')}`,
+    `Mission Console Selector Miss Reason: ${asText(missionConsoleDiagnostics?.selectorMissReason, 'none')}`,
     `Mission Console Visible Component Is MissionConsoleTile: ${asText(missionConsoleDiagnostics?.visibleComponentIsMissionConsoleTile, 'no')}`,
     `Mission Console Visible Component Panel ID: ${asText(missionConsoleDiagnostics?.visibleComponentPanelId, 'unknown')}`,
     `Mission Console Component Effect Seen: ${asText(missionConsoleDiagnostics?.componentEffectSeen, 'no')}`,
