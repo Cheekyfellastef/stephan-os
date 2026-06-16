@@ -805,6 +805,11 @@ function sampleLiveMissionConsoleComponentTrace() {
     registrationCallbackReturnSourceSurface: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-return-source-surface', 'unknown'),
     registrationCallbackReturnInstanceId: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-return-instance-id', 'unknown'),
     registrationCallbackReturnIdentity: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-return-identity', 'unknown'),
+    registrationCallbackReturnSideEffectStatus: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-return-side-effect-status', 'unknown'),
+    registrationCallbackReturnRegisteredInstanceSeen: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-return-registered-instance-seen', 'no'),
+    registrationCallbackReturnRegisteredInstanceCount: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-return-registered-instance-count', '0'),
+    registrationCallbackReturnDiagnosticsStamp: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-return-diagnostics-stamp', '0'),
+    registrationCallbackReturnRegistryOwnerId: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-return-registry-owner-id', 'unknown'),
     registrationCallbackError: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-error', 'none'),
     registrationDropBoundary: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-drop-boundary', 'visible-surface-not-missionconsoletile'),
     registrationCallbackSource: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-source', 'unknown'),
@@ -934,9 +939,14 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     uiRealityComponentTrace?.source,
     useLiveDiagnostics ? 'runtime-context' : (executionMetadata?.mission_console_component_trace_source || 'missing'),
   );
+  const liveMarkerStamp = Number(uiRealityComponentTrace?.registrationCallbackReturnDiagnosticsStamp || 0);
+  const executionRegistrationStamp = Number(executionMetadata?.mission_console_registration_diagnostics_stamp || 0);
+  const registrationDiagnosticsSource = useLiveDiagnostics
+    ? 'runtimeContext.operatorReliefBridgeDiagnostics'
+    : (liveMarkerStamp > executionRegistrationStamp ? 'live-marker' : (Object.keys(executionMetadata).length ? 'final-execution-metadata' : 'missing'));
   const source = Object.keys(liveDiagnostics).length
-    ? (useLiveDiagnostics ? 'live-operator-relief-bridge' : 'final-execution-metadata')
-    : (Object.keys(executionMetadata).length ? 'final-execution-metadata' : 'missing');
+    ? (useLiveDiagnostics ? 'live-operator-relief-bridge' : registrationDiagnosticsSource)
+    : (Object.keys(executionMetadata).length ? registrationDiagnosticsSource : 'missing');
   const selected = useLiveDiagnostics ? liveDiagnostics : {};
   const selectedCount = useLiveDiagnostics ? liveCount : executionCount;
   return {
@@ -965,9 +975,14 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     operatorReliefBridgeLastUpdatedAt: useLiveDiagnostics
       ? (selected?.lastUpdatedAt || executionMetadata?.operator_relief_bridge_last_updated_at || 'unknown')
       : (executionMetadata?.operator_relief_bridge_last_updated_at || 'unknown'),
+    registrationDiagnosticsSource,
     registrationDiagnosticsStamp: useLiveDiagnostics
       ? (selected?.registrationDiagnosticsStamp || '0')
-      : (executionMetadata?.mission_console_registration_diagnostics_stamp || '0'),
+      : (liveMarkerStamp > executionRegistrationStamp ? (uiRealityComponentTrace?.registrationCallbackReturnDiagnosticsStamp || '0') : (executionMetadata?.mission_console_registration_diagnostics_stamp || '0')),
+    registrationDiagnosticsOwnerId: useLiveDiagnostics
+      ? (selected?.operatorReliefBridgeDiagnosticsStoreOwnerId || selected?.missionConsoleBridgeInstancesRefOwnerId || selected?.publisherRegistryOwnerId || 'unknown')
+      : (liveMarkerStamp > executionRegistrationStamp ? (uiRealityComponentTrace?.registrationCallbackReturnRegistryOwnerId || 'unknown') : (executionMetadata?.mission_console_registration_diagnostics_owner_id || 'unknown')),
+    supportSnapshotDiagnosticsSourceId: useLiveDiagnostics ? 'runtimeContext.operatorReliefBridgeDiagnostics' : registrationDiagnosticsSource,
     registrationDiagnosticsLastUpdatedAt: useLiveDiagnostics
       ? (selected?.registrationDiagnosticsLastUpdatedAt || 'unknown')
       : (executionMetadata?.mission_console_registration_diagnostics_last_updated_at || 'unknown'),
@@ -1071,6 +1086,19 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     componentCallbackReturnSourceSurface: asText(uiRealityComponentTrace?.registrationCallbackReturnSourceSurface, useLiveDiagnostics ? (selected?.registrationCallbackReturnSourceSurface || 'unknown') : (executionMetadata?.mission_console_component_callback_return_source_surface || 'unknown')),
     componentCallbackReturnInstanceId: asText(uiRealityComponentTrace?.registrationCallbackReturnInstanceId, useLiveDiagnostics ? (selected?.registrationCallbackReturnInstanceId || 'unknown') : (executionMetadata?.mission_console_component_callback_return_instance_id || 'unknown')),
     componentCallbackReturnIdentity: asText(uiRealityComponentTrace?.registrationCallbackReturnIdentity, useLiveDiagnostics ? (selected?.registrationCallbackReturnIdentity || 'unknown') : (executionMetadata?.mission_console_component_callback_return_identity || 'unknown')),
+    componentCallbackReturnSideEffectStatus: asText(uiRealityComponentTrace?.registrationCallbackReturnSideEffectStatus, useLiveDiagnostics ? (selected?.registrationCallbackReturnSideEffectStatus || 'unknown') : (executionMetadata?.mission_console_component_callback_return_side_effect_status || 'unknown')),
+    componentCallbackReturnRegisteredInstanceSeen: asText(uiRealityComponentTrace?.registrationCallbackReturnRegisteredInstanceSeen, useLiveDiagnostics ? (selected?.registrationCallbackReturnRegisteredInstanceSeen || 'no') : (executionMetadata?.mission_console_component_callback_return_registered_instance_seen || 'no')),
+    componentCallbackReturnRegisteredInstanceCount: asText(uiRealityComponentTrace?.registrationCallbackReturnRegisteredInstanceCount, useLiveDiagnostics ? (selected?.registrationCallbackReturnRegisteredInstanceCount || '0') : (executionMetadata?.mission_console_component_callback_return_registered_instance_count || '0')),
+    componentCallbackReturnDiagnosticsStamp: asText(uiRealityComponentTrace?.registrationCallbackReturnDiagnosticsStamp, useLiveDiagnostics ? (selected?.registrationCallbackReturnDiagnosticsStamp || selected?.registrationDiagnosticsStamp || '0') : (executionMetadata?.mission_console_component_callback_return_diagnostics_stamp || '0')),
+    componentCallbackReturnRegistryOwnerId: asText(uiRealityComponentTrace?.registrationCallbackReturnRegistryOwnerId, useLiveDiagnostics ? (selected?.registrationCallbackReturnRegistryOwnerId || selected?.missionConsoleBridgeInstancesRefOwnerId || 'unknown') : (executionMetadata?.mission_console_component_callback_return_registry_owner_id || 'unknown')),
+    appBridgeHandlerOwnerId: useLiveDiagnostics ? (selected?.appBridgeHandlerOwnerId || 'unknown') : (executionMetadata?.mission_console_app_bridge_handler_owner_id || 'unknown'),
+    missionConsoleBridgeInstancesRefOwnerId: useLiveDiagnostics ? (selected?.missionConsoleBridgeInstancesRefOwnerId || 'unknown') : (executionMetadata?.mission_console_bridge_instances_ref_owner_id || 'unknown'),
+    publishOperatorReliefProjectionBridgeOwnerId: useLiveDiagnostics ? (selected?.publishOperatorReliefProjectionBridgeOwnerId || 'unknown') : (executionMetadata?.mission_console_publish_operator_relief_projection_bridge_owner_id || 'unknown'),
+    operatorReliefBridgeDiagnosticsStoreOwnerId: useLiveDiagnostics ? (selected?.operatorReliefBridgeDiagnosticsStoreOwnerId || 'unknown') : (executionMetadata?.operator_relief_bridge_diagnostics_store_owner_id || 'unknown'),
+    operatorReliefBridgeDiagnosticsStoreSourceId: useLiveDiagnostics ? (selected?.operatorReliefBridgeDiagnosticsStoreSourceId || 'unknown') : (executionMetadata?.operator_relief_bridge_diagnostics_store_source_id || 'unknown'),
+    publisherRegistryOwnerId: useLiveDiagnostics ? (selected?.publisherRegistryOwnerId || 'unknown') : (executionMetadata?.mission_console_publisher_registry_owner_id || 'unknown'),
+    publisherRegistryInstanceCount: useLiveDiagnostics ? String(selected?.publisherRegistryInstanceCount ?? selected?.missionConsoleInstanceCount ?? '0') : (executionMetadata?.mission_console_publisher_registry_instance_count || '0'),
+    publisherRegistryInstanceIds: useLiveDiagnostics ? (Array.isArray(selected?.publisherRegistryInstanceIds) ? selected.publisherRegistryInstanceIds.join('|') : 'none') : (executionMetadata?.mission_console_publisher_registry_instance_ids || 'none'),
     componentCallbackError: asText(uiRealityComponentTrace?.registrationCallbackError, useLiveDiagnostics ? (selected?.registrationCallbackError || 'none') : (executionMetadata?.mission_console_component_callback_error || 'none')),
     registrationDropBoundary: useLiveDiagnostics
       ? (selected?.registrationDropBoundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected')
@@ -3442,6 +3470,18 @@ export function buildSupportSnapshot({
         : 'projection-missing-from-command-deck-path',
     )}`,
     `Mission Console Diagnostics Source: ${asText(missionConsoleDiagnostics?.source, 'missing')}`,
+    `Mission Console Registration Diagnostics Source: ${asText(missionConsoleDiagnostics?.registrationDiagnosticsSource, 'missing')}`,
+    `Mission Console Registration Diagnostics Stamp: ${asText(missionConsoleDiagnostics?.registrationDiagnosticsStamp, '0')}`,
+    `Mission Console Registration Diagnostics Owner ID: ${asText(missionConsoleDiagnostics?.registrationDiagnosticsOwnerId, 'unknown')}`,
+    `Support Snapshot Diagnostics Source ID: ${asText(missionConsoleDiagnostics?.supportSnapshotDiagnosticsSourceId, 'missing')}`,
+    `App Bridge Handler Owner ID: ${asText(missionConsoleDiagnostics?.appBridgeHandlerOwnerId, 'unknown')}`,
+    `Mission Console Bridge Instances Ref Owner ID: ${asText(missionConsoleDiagnostics?.missionConsoleBridgeInstancesRefOwnerId, 'unknown')}`,
+    `Publish Operator Relief Projection Bridge Owner ID: ${asText(missionConsoleDiagnostics?.publishOperatorReliefProjectionBridgeOwnerId, 'unknown')}`,
+    `Operator Relief Bridge Diagnostics Store Owner ID: ${asText(missionConsoleDiagnostics?.operatorReliefBridgeDiagnosticsStoreOwnerId, 'unknown')}`,
+    `Operator Relief Bridge Diagnostics Store Source ID: ${asText(missionConsoleDiagnostics?.operatorReliefBridgeDiagnosticsStoreSourceId, 'unknown')}`,
+    `Mission Console Publisher Registry Owner ID: ${asText(missionConsoleDiagnostics?.publisherRegistryOwnerId, 'unknown')}`,
+    `Mission Console Publisher Registry Instance Count: ${asText(missionConsoleDiagnostics?.publisherRegistryInstanceCount, '0')}`,
+    `Mission Console Publisher Registry Instance IDs: ${asText(missionConsoleDiagnostics?.publisherRegistryInstanceIds, 'none')}`,
     `Mission Console Component Trace Source: ${asText(missionConsoleDiagnostics?.componentTraceSource, 'missing')}`,
     `Mission Console Component Trace Selector Checked: ${asText(missionConsoleDiagnostics?.componentTraceSelectorChecked, 'n/a')}`,
     `Mission Console AI Core Wrapper Count: ${asText(missionConsoleDiagnostics?.aiCoreWrapperCount, 'unknown')}`,
@@ -3466,6 +3506,11 @@ export function buildSupportSnapshot({
     `Mission Console Component Callback Return Source Surface: ${asText(missionConsoleDiagnostics?.componentCallbackReturnSourceSurface, 'unknown')}`,
     `Mission Console Component Callback Return Instance ID: ${asText(missionConsoleDiagnostics?.componentCallbackReturnInstanceId, 'unknown')}`,
     `Mission Console Component Callback Return Identity: ${asText(missionConsoleDiagnostics?.componentCallbackReturnIdentity, 'unknown')}`,
+    `Mission Console Component Callback Return Side Effect Status: ${asText(missionConsoleDiagnostics?.componentCallbackReturnSideEffectStatus, 'unknown')}`,
+    `Mission Console Component Callback Return Registered Instance Seen: ${asText(missionConsoleDiagnostics?.componentCallbackReturnRegisteredInstanceSeen, 'no')}`,
+    `Mission Console Component Callback Return Registered Instance Count: ${asText(missionConsoleDiagnostics?.componentCallbackReturnRegisteredInstanceCount, '0')}`,
+    `Mission Console Component Callback Return Diagnostics Stamp: ${asText(missionConsoleDiagnostics?.componentCallbackReturnDiagnosticsStamp, '0')}`,
+    `Mission Console Component Callback Return Registry Owner ID: ${asText(missionConsoleDiagnostics?.componentCallbackReturnRegistryOwnerId, 'unknown')}`,
     `Mission Console Component Callback Error: ${asText(missionConsoleDiagnostics?.componentCallbackError, 'none')}`,
     `Mission Console Registration Callback Seen: ${asText(missionConsoleDiagnostics?.callbackSeen, 'no')}`,
     `Mission Console Registration Effect Seen: ${asText(missionConsoleDiagnostics?.registrationEffectSeen, 'no')}`,

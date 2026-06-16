@@ -265,6 +265,7 @@ export default function App() {
   const operatorReliefProjectionSignatureRef = useRef('');
   const operatorReliefBridgePublishedAtRef = useRef('');
   const operatorReliefProjectionRef = useRef(null);
+  const missionConsoleBridgeOwnerIdRef = useRef(`app-bridge-registry:${STEPHANOS_UI_RUNTIME_ID || 'runtime-unknown'}`);
   const missionConsoleBridgeInstancesRef = useRef({});
   const missionConsoleBridgeLastPublisherRef = useRef({ panelId: '', sourceSurface: '' });
   const missionConsoleRegistrationDiagnosticsStampRef = useRef(0);
@@ -285,7 +286,9 @@ export default function App() {
     const nextProjection = projection || null;
     const sourceSurface = typeof options?.sourceSurface === 'string' && options.sourceSurface ? options.sourceSurface : 'unknown';
     const publisherPanelId = options?.panelId || sourceSurface;
-    const bridgeInstances = Object.values(missionConsoleBridgeInstancesRef.current || {});
+    const bridgeRegistryOwnerId = missionConsoleBridgeOwnerIdRef.current;
+    const bridgeRegistry = missionConsoleBridgeInstancesRef.current || {};
+    const bridgeInstances = Object.values(bridgeRegistry);
     const instanceIds = bridgeInstances.map((entry) => entry.panelId);
     const visibleInstance = bridgeInstances.find((entry) => entry.visible && entry.collapsed !== true) || null;
     const publishingInstance = bridgeInstances.find((entry) => entry.panelId === publisherPanelId) || null;
@@ -307,6 +310,14 @@ export default function App() {
       published: nextProjection ? 'yes' : 'no',
       sourceSurface,
       sourcePanelId: publisherPanelId,
+      appBridgeHandlerOwnerId: bridgeRegistryOwnerId,
+      missionConsoleBridgeInstancesRefOwnerId: bridgeRegistryOwnerId,
+      publishOperatorReliefProjectionBridgeOwnerId: bridgeRegistryOwnerId,
+      operatorReliefBridgeDiagnosticsStoreOwnerId: bridgeRegistryOwnerId,
+      operatorReliefBridgeDiagnosticsStoreSourceId: 'app.setOperatorReliefProjectionBridge',
+      publisherRegistryOwnerId: bridgeRegistryOwnerId,
+      publisherRegistryInstanceCount: instanceIds.length,
+      publisherRegistryInstanceIds: instanceIds,
       missionConsoleInstanceCount: instanceIds.length,
       missionConsoleInstanceIds: instanceIds,
       missionConsoleVisibleInstanceId: visibleInstance?.panelId || '',
@@ -349,6 +360,8 @@ export default function App() {
       registrationDropBoundary: missionConsoleRegistrationTraceRef.current.dropBoundary || 'none',
       registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef.current,
       registrationDiagnosticsLastUpdatedAt: missionConsoleRegistrationTraceRef.current.registrationDiagnosticsLastUpdatedAt || 'unknown',
+      operatorReliefBridgeDiagnosticsWriteAttempted: 'yes',
+      operatorReliefBridgeDiagnosticsWriteAccepted: 'yes',
     };
     const nextDiagnosticsSignature = JSON.stringify(baseDiagnostics);
     if (operatorReliefBridgePublishedAtRef.current === nextDiagnosticsSignature) {
@@ -474,6 +487,9 @@ export default function App() {
           registrationCallbackIdentity: metadata?.registrationCallbackIdentity || receivedCallbackIdentity,
           registrationTrace: metadata?.registrationTrace || {},
         });
+        const receiptRegistry = missionConsoleBridgeInstancesRef.current || {};
+        const receiptRegistryKeys = Object.keys(receiptRegistry);
+        const receiptRegistryInstanceIds = Object.values(receiptRegistry).map((entry) => entry?.instanceId || entry?.panelId).filter(Boolean);
         const registrationCommitted = missionConsoleBridgeInstancesRef.current?.[panelId]?.instanceId === receivedInstanceId
           && missionConsoleRegistrationTraceRef.current.storeWriteAccepted === 'yes'
           && missionConsoleRegistrationTraceRef.current.receivedCallbackIdentity === receivedCallbackIdentity;
@@ -485,6 +501,12 @@ export default function App() {
           instanceId: receivedInstanceId,
           callbackIdentity: receivedCallbackIdentity,
           sideEffectStatus: registrationCommitted ? 'committed' : 'pending',
+          registeredInstanceSeen: registrationCommitted ? 'yes' : 'no',
+          registeredInstanceCount: receiptRegistryKeys.length,
+          registeredInstanceIds: receiptRegistryInstanceIds,
+          diagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef.current,
+          registryOwnerId: missionConsoleBridgeOwnerIdRef.current,
+          appBridgeHandlerOwnerId: missionConsoleBridgeOwnerIdRef.current,
           appHandlerEnteredAt: enteredAt,
         };
       },

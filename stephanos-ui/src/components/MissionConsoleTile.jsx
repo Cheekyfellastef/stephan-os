@@ -172,6 +172,11 @@ function MissionConsoleTile({
     callbackReturnSourceSurface: 'unknown',
     callbackReturnInstanceId: 'unknown',
     callbackReturnIdentity: 'unknown',
+    callbackReturnSideEffectStatus: 'unknown',
+    callbackReturnRegisteredInstanceSeen: 'no',
+    callbackReturnRegisteredInstanceCount: '0',
+    callbackReturnDiagnosticsStamp: '0',
+    callbackReturnRegistryOwnerId: 'unknown',
     callbackError: 'none',
     dropBoundary: 'effect-not-fired',
   });
@@ -186,6 +191,11 @@ function MissionConsoleTile({
     callbackReturnSourceSurface: 'unknown',
     callbackReturnInstanceId: 'unknown',
     callbackReturnIdentity: 'unknown',
+    callbackReturnSideEffectStatus: 'unknown',
+    callbackReturnRegisteredInstanceSeen: 'no',
+    callbackReturnRegisteredInstanceCount: '0',
+    callbackReturnDiagnosticsStamp: '0',
+    callbackReturnRegistryOwnerId: 'unknown',
     callbackError: 'none',
     dropBoundary: 'effect-not-fired',
     ...overrides,
@@ -266,6 +276,11 @@ function MissionConsoleTile({
         callbackReturnSourceSurface: callbackReceipt?.sourceSurface || 'unknown',
         callbackReturnInstanceId: callbackReceipt?.instanceId || 'unknown',
         callbackReturnIdentity: callbackReceipt?.callbackIdentity || 'unknown',
+        callbackReturnSideEffectStatus: callbackReceipt?.sideEffectStatus || 'unknown',
+        callbackReturnRegisteredInstanceSeen: callbackReceipt?.registeredInstanceSeen || 'no',
+        callbackReturnRegisteredInstanceCount: String(callbackReceipt?.registeredInstanceCount ?? '0'),
+        callbackReturnDiagnosticsStamp: String(callbackReceipt?.diagnosticsStamp ?? '0'),
+        callbackReturnRegistryOwnerId: callbackReceipt?.registryOwnerId || 'unknown',
         callbackError: 'none',
         dropBoundary: 'none',
       }));
@@ -1514,6 +1529,11 @@ function MissionConsoleTile({
       data-mission-console-registration-callback-return-source-surface={registrationTraceState.callbackReturnSourceSurface}
       data-mission-console-registration-callback-return-instance-id={registrationTraceState.callbackReturnInstanceId}
       data-mission-console-registration-callback-return-identity={registrationTraceState.callbackReturnIdentity}
+      data-mission-console-registration-callback-return-side-effect-status={registrationTraceState.callbackReturnSideEffectStatus}
+      data-mission-console-registration-callback-return-registered-instance-seen={registrationTraceState.callbackReturnRegisteredInstanceSeen}
+      data-mission-console-registration-callback-return-registered-instance-count={registrationTraceState.callbackReturnRegisteredInstanceCount}
+      data-mission-console-registration-callback-return-diagnostics-stamp={registrationTraceState.callbackReturnDiagnosticsStamp}
+      data-mission-console-registration-callback-return-registry-owner-id={registrationTraceState.callbackReturnRegistryOwnerId}
       data-mission-console-registration-callback-error={registrationTraceState.callbackError}
       data-mission-console-registration-drop-boundary={registrationTraceState.dropBoundary}
       data-mission-console-registration-callback-source={registrationCallbackSource}
