@@ -425,14 +425,17 @@ export default function App() {
         const registrationTrace = metadata?.registrationTrace || {};
         const enteredAt = new Date().toISOString();
         const receivedCallbackIdentity = registrationTrace.registrationCallbackIdentity || metadata?.registrationCallbackIdentity || registrationCallbackIdentity;
+        const receivedPanelId = metadata?.panelId || panelId;
+        const receivedSourceSurface = metadata?.sourceSurface || sourceSurface;
+        const receivedInstanceId = metadata?.instanceId || metadata?.panelId || panelId;
         missionConsoleRegistrationTraceRef.current = {
           ...missionConsoleRegistrationTraceRef.current,
           appHandlerSeen: 'yes',
           appHandlerEntered: 'yes',
           appHandlerEnteredAt: enteredAt,
-          receivedPanelId: metadata?.panelId || panelId,
-          receivedSourceSurface: metadata?.sourceSurface || sourceSurface,
-          receivedInstanceId: metadata?.instanceId || metadata?.panelId || panelId,
+          receivedPanelId,
+          receivedSourceSurface,
+          receivedInstanceId,
           receivedCallbackIdentity,
           registrationCallbackSource: registrationTrace.registrationCallbackSource || metadata?.registrationCallbackSource || 'unknown',
           registrationCallbackPanelId: registrationTrace.registrationCallbackPanelId || metadata?.registrationCallbackPanelId || 'unknown',
@@ -452,17 +455,26 @@ export default function App() {
         };
         registerMissionConsoleBridgeInstance(panelId, {
           sourceSurface,
-          instanceId: metadata?.instanceId || metadata?.panelId || panelId,
+          instanceId: receivedInstanceId,
           visible: options?.visible === true || metadata?.visible === true,
           collapsed: options?.collapsed === true || metadata?.collapsed === true,
           hasBridgeCallback: metadata?.hasBridgeCallback !== false,
-          receivedPanelId: metadata?.panelId || panelId,
-          receivedSourceSurface: metadata?.sourceSurface || sourceSurface,
+          receivedPanelId,
+          receivedSourceSurface,
           registrationCallbackSource: metadata?.registrationCallbackSource,
           registrationCallbackPanelId: metadata?.registrationCallbackPanelId,
           registrationCallbackIdentity: metadata?.registrationCallbackIdentity,
           registrationTrace: metadata?.registrationTrace || {},
         });
+        return {
+          handled: true,
+          handler: 'app-bridge',
+          panelId: receivedPanelId,
+          sourceSurface: receivedSourceSurface,
+          instanceId: receivedInstanceId,
+          callbackIdentity: receivedCallbackIdentity,
+          appHandlerEnteredAt: enteredAt,
+        };
       },
       onOperatorReliefProjectionUpdate: (projection, callbackOptions = {}) => {
         missionConsoleRegistrationTraceRef.current = {
