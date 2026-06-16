@@ -309,6 +309,7 @@ export default function App() {
       openClawSourcePackDiagnostics,
     }) : '';
     const baseDiagnostics = {
+      runtimeDiagnosticsPresent: 'yes',
       published: nextProjection ? 'yes' : 'no',
       sourceSurface,
       sourcePanelId: publisherPanelId,
