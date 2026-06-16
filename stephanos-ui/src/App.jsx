@@ -273,6 +273,9 @@ export default function App() {
     callbackPropPresent: 'no',
     callbackInvoked: 'no',
     appHandlerSeen: 'no',
+    appHandlerEntered: 'no',
+    appHandlerEnteredAt: 'unknown',
+    receivedCallbackIdentity: 'unknown',
     storeWriteAttempted: 'no',
     storeWriteAccepted: 'no',
     dropBoundary: 'effect-not-fired',
@@ -327,9 +330,15 @@ export default function App() {
       registrationEffectPanelId: missionConsoleRegistrationTraceRef.current.effectPanelId || 'unknown',
       registrationCallbackPropPresent: missionConsoleRegistrationTraceRef.current.callbackPropPresent || 'no',
       registrationCallbackInvoked: missionConsoleRegistrationTraceRef.current.callbackInvoked || 'no',
-      registrationAppHandlerSeen: missionConsoleRegistrationTraceRef.current.appHandlerSeen || 'no',
-      registrationStoreWriteAttempted: 'yes',
-      registrationStoreWriteAccepted: 'yes',
+      appHandlerEntered: missionConsoleRegistrationTraceRef.current.appHandlerEntered || missionConsoleRegistrationTraceRef.current.appHandlerSeen || 'no',
+      appHandlerEnteredAt: missionConsoleRegistrationTraceRef.current.appHandlerEnteredAt || 'unknown',
+      receivedPanelId: missionConsoleRegistrationTraceRef.current.receivedPanelId || 'unknown',
+      receivedSourceSurface: missionConsoleRegistrationTraceRef.current.receivedSourceSurface || 'unknown',
+      receivedInstanceId: missionConsoleRegistrationTraceRef.current.receivedInstanceId || 'unknown',
+      receivedCallbackIdentity: missionConsoleRegistrationTraceRef.current.receivedCallbackIdentity || missionConsoleRegistrationTraceRef.current.registrationCallbackIdentity || 'unknown',
+      registrationAppHandlerSeen: missionConsoleRegistrationTraceRef.current.appHandlerSeen || missionConsoleRegistrationTraceRef.current.appHandlerEntered || 'no',
+      registrationStoreWriteAttempted: missionConsoleRegistrationTraceRef.current.storeWriteAttempted || 'yes',
+      registrationStoreWriteAccepted: missionConsoleRegistrationTraceRef.current.storeWriteAccepted || 'yes',
       registrationReceivedPanelId: missionConsoleRegistrationTraceRef.current.receivedPanelId || 'unknown',
       registrationReceivedSourceSurface: missionConsoleRegistrationTraceRef.current.receivedSourceSurface || 'unknown',
       registrationReceivedInstanceId: missionConsoleRegistrationTraceRef.current.receivedInstanceId || 'unknown',
@@ -375,6 +384,9 @@ export default function App() {
       callbackPropPresent: trace.callbackPropPresent || 'yes',
       callbackInvoked: trace.callbackInvoked === 'pending' ? 'yes' : (trace.callbackInvoked || 'yes'),
       appHandlerSeen: 'yes',
+      appHandlerEntered: 'yes',
+      appHandlerEnteredAt: missionConsoleRegistrationTraceRef.current.appHandlerEnteredAt || new Date().toISOString(),
+      receivedCallbackIdentity: trace.registrationCallbackIdentity || metadata.registrationCallbackIdentity || 'unknown',
       receivedPanelId: metadata.receivedPanelId || metadata.panelId || key,
       receivedSourceSurface: metadata.receivedSourceSurface || metadata.sourceSurface || key,
       receivedInstanceId: metadata.instanceId || key,
@@ -411,22 +423,32 @@ export default function App() {
       registrationCallbackIdentity,
       onMissionConsoleInstanceRegistration: (metadata = {}) => {
         const registrationTrace = metadata?.registrationTrace || {};
+        const enteredAt = new Date().toISOString();
+        const receivedCallbackIdentity = registrationTrace.registrationCallbackIdentity || metadata?.registrationCallbackIdentity || registrationCallbackIdentity;
         missionConsoleRegistrationTraceRef.current = {
           ...missionConsoleRegistrationTraceRef.current,
           appHandlerSeen: 'yes',
+          appHandlerEntered: 'yes',
+          appHandlerEnteredAt: enteredAt,
           receivedPanelId: metadata?.panelId || panelId,
           receivedSourceSurface: metadata?.sourceSurface || sourceSurface,
           receivedInstanceId: metadata?.instanceId || metadata?.panelId || panelId,
+          receivedCallbackIdentity,
           registrationCallbackSource: registrationTrace.registrationCallbackSource || metadata?.registrationCallbackSource || 'unknown',
           registrationCallbackPanelId: registrationTrace.registrationCallbackPanelId || metadata?.registrationCallbackPanelId || 'unknown',
-          registrationCallbackIdentity: registrationTrace.registrationCallbackIdentity || metadata?.registrationCallbackIdentity || 'unknown',
+          registrationCallbackIdentity: receivedCallbackIdentity,
           effectSeen: registrationTrace.effectSeen || 'yes',
           effectPanelId: registrationTrace.effectPanelId || panelId,
           callbackPropPresent: registrationTrace.callbackPropPresent || 'yes',
           callbackInvoked: registrationTrace.callbackInvoked === 'pending' ? 'yes' : (registrationTrace.callbackInvoked || 'yes'),
+          storeWriteAttempted: 'no',
+          storeWriteAccepted: 'no',
+          dropBoundary: registrationTrace.dropBoundary || 'app-handler-entered',
+        };
+        publishOperatorReliefProjectionBridge(operatorReliefProjectionRef.current, { panelId, sourceSurface });
+        missionConsoleRegistrationTraceRef.current = {
+          ...missionConsoleRegistrationTraceRef.current,
           storeWriteAttempted: 'yes',
-          storeWriteAccepted: 'yes',
-          dropBoundary: registrationTrace.dropBoundary || 'none',
         };
         registerMissionConsoleBridgeInstance(panelId, {
           sourceSurface,
@@ -450,7 +472,7 @@ export default function App() {
         handleOperatorReliefProjectionUpdate(projection, { ...callbackOptions, panelId, sourceSurface });
       },
     };
-  }, [handleOperatorReliefProjectionUpdate, registerMissionConsoleBridgeInstance]);
+  }, [handleOperatorReliefProjectionUpdate, publishOperatorReliefProjectionBridge, registerMissionConsoleBridgeInstance]);
   recordPerfCounter('hook.App.useDebugConsole.render_or_call', 'called');
   useDebugConsole();
   const startupStageRef = useRef(new Set());
