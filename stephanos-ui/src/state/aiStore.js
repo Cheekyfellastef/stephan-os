@@ -1135,7 +1135,35 @@ export function AIStoreProvider({ children }) {
     activeProviderConfigAdjusted: false,
   });
   const [lastExecutionMetadata, setLastExecutionMetadata] = useState(null);
-  const [operatorReliefProjectionBridge, setOperatorReliefProjectionBridge] = useState(null);
+  const [operatorReliefProjectionBridge, setOperatorReliefProjectionBridgeState] = useState(null);
+
+  const setOperatorReliefProjectionBridge = useCallback((nextBridge) => {
+    setOperatorReliefProjectionBridgeState((previousBridge) => {
+      const nextValue = typeof nextBridge === 'function' ? nextBridge(previousBridge) : nextBridge;
+      const previousDiagnostics = previousBridge?.diagnostics && typeof previousBridge.diagnostics === 'object'
+        ? previousBridge.diagnostics
+        : {};
+      const nextDiagnostics = nextValue?.diagnostics && typeof nextValue.diagnostics === 'object'
+        ? nextValue.diagnostics
+        : {};
+      const previousStamp = Number(previousDiagnostics.registrationDiagnosticsStamp || 0);
+      const nextStamp = Number(nextDiagnostics.registrationDiagnosticsStamp || 0);
+      const previousInstanceCount = Number(previousDiagnostics.missionConsoleInstanceCount || 0);
+      const nextInstanceCount = Number(nextDiagnostics.missionConsoleInstanceCount || 0);
+      const previousHasRegisteredInstances = Number.isFinite(previousInstanceCount) && previousInstanceCount > 0;
+      const nextHasRegisteredInstances = Number.isFinite(nextInstanceCount) && nextInstanceCount > 0;
+      if (previousHasRegisteredInstances && !nextHasRegisteredInstances && previousStamp > nextStamp) {
+        return {
+          ...(nextValue || {}),
+          diagnostics: {
+            ...nextDiagnostics,
+            ...previousDiagnostics,
+          },
+        };
+      }
+      return nextValue;
+    });
+  }, []);
   const [uiDiagnostics, setUiDiagnostics] = useState({
     appRootRendered: false,
     aiConsoleRendered: false,
