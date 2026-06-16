@@ -797,6 +797,9 @@ function sampleLiveMissionConsoleComponentTrace() {
     registrationCallbackPropPresent: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-prop-present', 'no'),
     registrationCallbackInvoked: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-invoked', 'no'),
     registrationDropBoundary: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-drop-boundary', 'visible-surface-not-missionconsoletile'),
+    registrationCallbackSource: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-source', 'unknown'),
+    registrationCallbackPanelId: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-panel-id', 'unknown'),
+    registrationCallbackIdentity: getMissionConsoleNodeAttr(marker, 'data-mission-console-registration-callback-identity', 'unknown'),
     aiCoreWrapperCount: String(aiCoreNodes.length),
     aiCoreVisibleWrapperCount: String(visibleWrappers.length),
     markerCountByWrapper: wrapperMarkerCounts,
@@ -997,6 +1000,24 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     registrationStoreWriteAccepted: useLiveDiagnostics
       ? (selected?.registrationStoreWriteAccepted || 'no')
       : (executionMetadata?.mission_console_registration_store_write_accepted || 'no'),
+    registrationReceivedPanelId: useLiveDiagnostics
+      ? (selected?.registrationReceivedPanelId || 'unknown')
+      : (executionMetadata?.mission_console_registration_received_panel_id || 'unknown'),
+    registrationReceivedSourceSurface: useLiveDiagnostics
+      ? (selected?.registrationReceivedSourceSurface || 'unknown')
+      : (executionMetadata?.mission_console_registration_received_source_surface || 'unknown'),
+    registrationReceivedInstanceId: useLiveDiagnostics
+      ? (selected?.registrationReceivedInstanceId || 'unknown')
+      : (executionMetadata?.mission_console_registration_received_instance_id || 'unknown'),
+    registrationCallbackSource: useLiveDiagnostics
+      ? (selected?.registrationCallbackSource || uiRealityComponentTrace?.registrationCallbackSource || 'unknown')
+      : (executionMetadata?.mission_console_registration_callback_source || uiRealityComponentTrace?.registrationCallbackSource || 'unknown'),
+    registrationCallbackPanelId: useLiveDiagnostics
+      ? (selected?.registrationCallbackPanelId || uiRealityComponentTrace?.registrationCallbackPanelId || 'unknown')
+      : (executionMetadata?.mission_console_registration_callback_panel_id || uiRealityComponentTrace?.registrationCallbackPanelId || 'unknown'),
+    registrationCallbackIdentity: useLiveDiagnostics
+      ? (selected?.registrationCallbackIdentity || uiRealityComponentTrace?.registrationCallbackIdentity || 'unknown')
+      : (executionMetadata?.mission_console_registration_callback_identity || uiRealityComponentTrace?.registrationCallbackIdentity || 'unknown'),
     componentTraceSource,
     componentTraceSelectorChecked: asText(liveDomComponentTrace?.selectorPathChecked || uiRealityComponentTrace?.selectorPathChecked, 'n/a'),
     aiCoreWrapperCount: asText(liveDomComponentTrace?.aiCoreWrapperCount || uiRealityComponentTrace?.aiCoreWrapperCount, 'unknown'),
@@ -3405,6 +3426,12 @@ export function buildSupportSnapshot({
     `Mission Console Registration App Handler Seen: ${asText(missionConsoleDiagnostics?.registrationAppHandlerSeen, 'no')}`,
     `Mission Console Registration Store Write Attempted: ${asText(missionConsoleDiagnostics?.registrationStoreWriteAttempted, 'no')}`,
     `Mission Console Registration Store Write Accepted: ${asText(missionConsoleDiagnostics?.registrationStoreWriteAccepted, 'no')}`,
+    `Mission Console Registration Received Panel ID: ${asText(missionConsoleDiagnostics?.registrationReceivedPanelId, 'unknown')}`,
+    `Mission Console Registration Received Source Surface: ${asText(missionConsoleDiagnostics?.registrationReceivedSourceSurface, 'unknown')}`,
+    `Mission Console Registration Received Instance ID: ${asText(missionConsoleDiagnostics?.registrationReceivedInstanceId, 'unknown')}`,
+    `Mission Console Registration Callback Source: ${asText(missionConsoleDiagnostics?.registrationCallbackSource, 'unknown')}`,
+    `Mission Console Registration Callback Panel ID: ${asText(missionConsoleDiagnostics?.registrationCallbackPanelId, 'unknown')}`,
+    `Mission Console Registration Callback Identity: ${asText(missionConsoleDiagnostics?.registrationCallbackIdentity, 'unknown')}`,
     `Mission Console Registration Store Updated: ${asText(missionConsoleDiagnostics?.storeUpdated, 'no')}`,
     `Mission Console Registration RuntimeContext Seen: ${asText(missionConsoleDiagnostics?.runtimeContextSeen, 'no')}`,
     `Operator Relief Bridge Published: ${asText(missionConsoleDiagnostics?.operatorReliefBridgePublished, 'no')}`,
