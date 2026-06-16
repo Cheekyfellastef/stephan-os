@@ -1430,17 +1430,13 @@ function MissionConsoleTile({
       isOpen={missionConsolePanelOpen}
       onToggle={handleMissionConsolePanelToggle}
       testIdBase="pane-agent-mission-console"
+      data-mission-console-component="MissionConsoleTile"
+      data-mission-console-panel-id={panelId}
+      data-mission-console-registration-effect-seen="yes"
+      data-mission-console-registration-callback-prop-present={typeof onMissionConsoleInstanceRegistration === 'function' ? 'yes' : 'no'}
+      data-mission-console-registration-callback-invoked={registrationTraceState.callbackInvoked}
+      data-mission-console-registration-drop-boundary={registrationTraceState.dropBoundary}
     >
-      <span
-        data-mission-console-component="MissionConsoleTile"
-        data-mission-console-panel-id={panelId}
-        data-mission-console-registration-effect-seen="yes"
-        data-mission-console-registration-callback-prop-present={typeof onMissionConsoleInstanceRegistration === 'function' ? 'yes' : 'no'}
-        data-mission-console-registration-callback-invoked={registrationTraceState.callbackInvoked}
-        data-mission-console-registration-drop-boundary={registrationTraceState.dropBoundary}
-        hidden
-        aria-hidden="true"
-      />
       <div data-testid="mission-console-inner-command-deck">
       <MissionCommandDeck
         missionRoutingReadiness={missionRoutingReadiness}

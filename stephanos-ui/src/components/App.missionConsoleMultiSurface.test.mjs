@@ -107,21 +107,32 @@ test('rendered App path keeps ai-core mission console in aiCoreMissionConsolePan
   assert.equal(uiReality.uiRealityAiCoreMissionConsoleInsideAgentMissionConsole, 'no');
 });
 
-test('visible ai-core mission console DOM path exposes MissionConsoleTile trace attributes on rendered CollapsiblePanel root', async () => {
+test('rendered App DOM nests MissionConsoleTile marker under visible ai-core wrapper', async () => {
   const { renderApp } = await importBundledModule(
     path.join(srcRoot, 'test/renderAppEntry.jsx'),
     {},
     'app-ai-core-pane-trace-attrs',
   );
   const html = renderApp();
-  const markerIndex = html.indexOf('data-testid="ai-core-mission-console"');
-  assert.notEqual(markerIndex, -1);
-  const missionTileIndex = html.indexOf('data-mission-console-component="MissionConsoleTile"', markerIndex);
-  assert.notEqual(missionTileIndex, -1);
-  assert.match(html.slice(missionTileIndex, missionTileIndex + 600), /data-mission-console-panel-id="aiCoreMissionConsolePanel"/);
-  assert.match(html.slice(missionTileIndex, missionTileIndex + 600), /data-mission-console-registration-effect-seen="yes"/);
-  assert.match(html.slice(missionTileIndex, missionTileIndex + 600), /data-mission-console-registration-callback-prop-present="yes"/);
-  assert.match(html.slice(missionTileIndex, missionTileIndex + 700), /data-mission-console-registration-drop-boundary="(none|effect-not-fired)"/);
+  const aiCoreWrapper = html.match(/<div[^>]*data-testid="ai-core-mission-console"[^>]*>[\s\S]*?<section[^>]*data-mission-console-component="MissionConsoleTile"[^>]*>/);
+  assert.ok(aiCoreWrapper, 'expected [data-testid="ai-core-mission-console"] [data-mission-console-component="MissionConsoleTile"] in rendered App output');
+  assert.match(aiCoreWrapper[0], /data-panel-id="aiCoreMissionConsolePanel"/);
+  assert.match(aiCoreWrapper[0], /data-mission-console-panel-id="aiCoreMissionConsolePanel"/);
+  assert.match(aiCoreWrapper[0], /data-mission-console-registration-effect-seen="yes"/);
+  assert.match(aiCoreWrapper[0], /data-mission-console-registration-callback-prop-present="yes"/);
+  assert.match(aiCoreWrapper[0], /data-mission-console-registration-drop-boundary="(none|effect-not-fired)"/);
+});
+
+test('rendered App DOM keeps MissionConsoleTile marker on dedicated mission console path', async () => {
+  const { renderApp } = await importBundledModule(
+    path.join(srcRoot, 'test/renderAppEntry.jsx'),
+    {},
+    'app-dedicated-mission-console-trace-attrs',
+  );
+  const html = renderApp();
+  const dedicatedWrapper = html.match(/<div[^>]*data-testid="dedicated-mission-console"[^>]*>[\s\S]*?<section[^>]*data-mission-console-component="MissionConsoleTile"[^>]*>/);
+  assert.ok(dedicatedWrapper, 'expected dedicated mission console wrapper to contain MissionConsoleTile marker');
+  assert.match(dedicatedWrapper[0], /data-mission-console-panel-id="missionConsolePanel"/);
 });
 
 
@@ -129,7 +140,7 @@ test('App operator relief projection handler records source surface and bridge d
   const appSource = await fs.readFile(appPath, 'utf8');
   assert.match(appSource, /const handleOperatorReliefProjectionUpdate = useCallback\(\(projection, options = \{\}\) => \{/);
   assert.match(appSource, /const sourceSurface = typeof options\?\.sourceSurface === 'string' && options\.sourceSurface \? options\.sourceSurface : 'unknown';/);
-  assert.match(appSource, /const nextSignature = JSON\.stringify\(\{ sourceSurface, projection: nextProjection \}\);/);
+  assert.match(appSource, /const nextSignature = JSON\.stringify\(\{ sourceSurface, projection: nextProjection, instances: missionConsoleBridgeInstancesRef\.current \}\);/);
   assert.match(appSource, /sourceSurface,/);
   assert.match(appSource, /createMissionConsoleTileBridgeProps\(/);
 });
