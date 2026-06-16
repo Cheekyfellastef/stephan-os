@@ -94,6 +94,26 @@ test('Mission Console bridge registration is wired through both canonical surfac
   assert.match(appSource, /missionConsoleBridgeParityStatus: missingBridgeCallbackIds\.length === 0 && instanceIds\.length > 0 && nextProjection \? 'OK'/);
 });
 
+test('AI Core Mission Console App wrappers contain canonical MissionConsoleTile child marker registration path', () => {
+  const aiCoreWrapperPattern = /<div data-testid="ai-core-mission-console"[\s\S]*?<MissionConsoleTile[\s\S]*?\/>(?:\s*<\/div>)?/g;
+  const aiCoreWrappers = [...appSource.matchAll(aiCoreWrapperPattern)].map((match) => match[0]);
+
+  assert.ok(aiCoreWrappers.length > 0, 'App must render at least one visible ai-core-mission-console wrapper');
+
+  for (const wrapper of aiCoreWrappers) {
+    assert.match(wrapper, /data-panel-id="aiCoreMissionConsolePanel"/);
+    assert.match(wrapper, /<MissionConsoleTile/);
+    assert.match(wrapper, /createMissionConsoleTileBridgeProps\('aiCoreMissionConsolePanel'/);
+    assert.match(wrapper, /sourceSurface: 'aiCoreMissionConsolePanel'/);
+  }
+
+  assert.match(source, /data-mission-console-component="MissionConsoleTile"/);
+  assert.match(source, /data-mission-console-panel-id=\{panelId\}/);
+  assert.match(source, /data-mission-console-registration-callback-prop-present=\{typeof onMissionConsoleInstanceRegistration === 'function' \? 'yes' : 'no'\}/);
+  assert.match(source, /onMissionConsoleInstanceRegistration\(\{/);
+});
+
+
 test('Zero-Cost Builder Mesh is hosted inside existing Builder Harness panel, not a duplicate top-level pane', () => {
   assert.match(source, /panelId="missionConsoleBuilderHarnessPanel" title="OpenClaw Builder Harness V1"/);
   assert.match(source, /panelId="missionConsoleBuilderMeshPanel" title="Zero-Cost Builder Mesh V1"/);
