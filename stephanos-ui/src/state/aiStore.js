@@ -1148,8 +1148,8 @@ export function AIStoreProvider({ children }) {
         : {};
       const previousStamp = Number(previousDiagnostics.registrationDiagnosticsStamp || 0);
       const nextStamp = Number(nextDiagnostics.registrationDiagnosticsStamp || 0);
-      const previousInstanceCount = Number(previousDiagnostics.missionConsoleInstanceCount || 0);
-      const nextInstanceCount = Number(nextDiagnostics.missionConsoleInstanceCount || 0);
+      const previousInstanceCount = Number(previousDiagnostics.publisherRegistryInstanceCount ?? previousDiagnostics.missionConsoleInstanceCount ?? 0);
+      const nextInstanceCount = Number(nextDiagnostics.publisherRegistryInstanceCount ?? nextDiagnostics.missionConsoleInstanceCount ?? 0);
       const previousHasRegisteredInstances = Number.isFinite(previousInstanceCount) && previousInstanceCount > 0;
       const nextHasRegisteredInstances = Number.isFinite(nextInstanceCount) && nextInstanceCount > 0;
       if (previousHasRegisteredInstances && !nextHasRegisteredInstances && previousStamp >= nextStamp) {
