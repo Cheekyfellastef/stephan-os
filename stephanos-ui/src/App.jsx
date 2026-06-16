@@ -351,14 +351,12 @@ export default function App() {
     const key = typeof panelId === 'string' && panelId ? panelId : 'unknown';
     const nextEntry = {
       panelId: key,
+      instanceId: metadata.instanceId || key,
       sourceSurface: metadata.sourceSurface || key,
       visible: metadata.visible === true,
       collapsed: metadata.collapsed === true,
       hasBridgeCallback: metadata.hasBridgeCallback !== false,
     };
-    const previousEntry = missionConsoleBridgeInstancesRef.current?.[key] || null;
-    const previousSignature = previousEntry ? JSON.stringify(previousEntry) : '';
-    const nextSignature = JSON.stringify(nextEntry);
     missionConsoleBridgeInstancesRef.current = {
       ...missionConsoleBridgeInstancesRef.current,
       [key]: nextEntry,
@@ -375,12 +373,10 @@ export default function App() {
       storeWriteAccepted: 'yes',
       dropBoundary: trace.dropBoundary || 'none',
     };
-    if (previousSignature !== nextSignature || operatorReliefProjectionRef.current) {
-      publishOperatorReliefProjectionBridge(operatorReliefProjectionRef.current, {
-        panelId: key,
-        sourceSurface: metadata.sourceSurface || key,
-      });
-    }
+    publishOperatorReliefProjectionBridge(operatorReliefProjectionRef.current, {
+      panelId: key,
+      sourceSurface: metadata.sourceSurface || key,
+    });
   }, [publishOperatorReliefProjectionBridge]);
   const handleOperatorReliefProjectionUpdate = useCallback((projection, options = {}) => {
     const nextProjection = projection || null;
@@ -409,8 +405,9 @@ export default function App() {
         };
         registerMissionConsoleBridgeInstance(panelId, {
           sourceSurface,
-          visible: metadata?.visible === true,
-          collapsed: metadata?.collapsed === true,
+          instanceId: metadata?.instanceId || metadata?.panelId || panelId,
+          visible: options?.visible === true || metadata?.visible === true,
+          collapsed: options?.collapsed === true || metadata?.collapsed === true,
           hasBridgeCallback: metadata?.hasBridgeCallback !== false,
           registrationTrace: metadata?.registrationTrace || {},
         });
