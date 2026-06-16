@@ -2323,7 +2323,7 @@ test('support snapshot reports mission console bridge parity blocker as projecti
   assert.match(snapshot, /Mission Console Bridge Parity Blocker: visible-instance-not-published/);
 });
 
-test('support snapshot reports mission console bridge parity blocker as projection-not-published when no instances are registered yet', () => {
+test('support snapshot reports mission console bridge parity blocker as instance-not-registered when no instances are registered yet', () => {
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
       lastExecutionMetadata: {
@@ -2333,7 +2333,7 @@ test('support snapshot reports mission console bridge parity blocker as projecti
     },
   });
   assert.match(snapshot, /Mission Console Instance Count: 0/);
-  assert.match(snapshot, /Mission Console Bridge Parity Blocker: projection-not-published/);
+  assert.match(snapshot, /Mission Console Bridge Parity Blocker: instance-not-registered/);
 });
 
 test('support snapshot prefers live operator relief bridge diagnostics when final execution metadata is stale', () => {
@@ -2379,6 +2379,49 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
   assert.match(snapshot, /Mission Console Registration RuntimeContext Seen: yes/);
   assert.match(snapshot, /Mission Console Instance Count: 2/);
   assert.match(snapshot, /Mission Console Visible Instance ID: aiCoreMissionConsolePanel/);
+});
+
+
+test('support snapshot reports registered mission console instance while projection is missing', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      runtimeContext: {
+        operatorReliefBridgeDiagnostics: {
+          published: 'no',
+          storeUpdated: 'yes',
+          runtimeContextSeen: 'yes',
+          registrationEffectSeen: 'yes',
+          registrationEffectPanelId: 'aiCoreMissionConsolePanel',
+          registrationCallbackPropPresent: 'yes',
+          registrationCallbackInvoked: 'yes',
+          registrationAppHandlerSeen: 'yes',
+          registrationStoreWriteAttempted: 'yes',
+          registrationStoreWriteAccepted: 'yes',
+          registrationDropBoundary: 'none',
+          missionConsoleInstanceCount: 1,
+          missionConsoleInstanceIds: ['aiCoreMissionConsolePanel'],
+          missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel',
+          missionConsoleBridgeCapableInstanceIds: ['aiCoreMissionConsolePanel'],
+          missionConsoleVisibleInstancePublished: 'yes',
+          missionConsoleBridgeParityStatus: 'WARN',
+          missionConsoleBridgeParityBlocker: 'projection-not-published',
+          projectionKeysSeen: [],
+        },
+      },
+    },
+  });
+  assert.match(snapshot, /Mission Console Registration App Handler Seen: yes/);
+  assert.match(snapshot, /Mission Console Registration Store Write Attempted: yes/);
+  assert.match(snapshot, /Mission Console Registration Store Write Accepted: yes/);
+  assert.match(snapshot, /Mission Console Registration Store Updated: yes/);
+  assert.match(snapshot, /Mission Console Registration RuntimeContext Seen: yes/);
+  assert.match(snapshot, /Mission Console Instance Count: 1/);
+  assert.match(snapshot, /Mission Console Visible Instance ID: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Visible Instance Published: yes/);
+  assert.match(snapshot, /Operator Relief Bridge Published: no/);
+  assert.match(snapshot, /Operator Relief Bridge Projection Keys Seen: none/);
+  assert.match(snapshot, /Mission Console Bridge Parity Status: WARN/);
+  assert.match(snapshot, /Mission Console Bridge Parity Blocker: projection-not-published/);
 });
 
 test('support snapshot does not allow final execution metadata zero defaults to overwrite live mission console diagnostics', () => {
