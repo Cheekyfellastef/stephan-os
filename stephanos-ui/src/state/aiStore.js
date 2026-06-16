@@ -1153,6 +1153,7 @@ export function AIStoreProvider({ children }) {
       const previousHasRegisteredInstances = Number.isFinite(previousInstanceCount) && previousInstanceCount > 0;
       const nextHasRegisteredInstances = Number.isFinite(nextInstanceCount) && nextInstanceCount > 0;
       const requiredPublisherDiagnosticFields = [
+        'runtimeDiagnosticsPresent',
         'appBridgeHandlerOwnerId',
         'missionConsoleBridgeInstancesRefOwnerId',
         'publishOperatorReliefProjectionBridgeOwnerId',

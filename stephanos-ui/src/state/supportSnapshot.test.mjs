@@ -2001,6 +2001,7 @@ test('support snapshot prefers runtime stamped publisher diagnostics for canonic
     runtimeStatus: {
       runtimeContext: {
         operatorReliefBridgeDiagnostics: {
+          runtimeDiagnosticsPresent: 'yes',
           registrationDiagnosticsStamp: 7,
           appBridgeHandlerOwnerId: 'app-bridge-registry:live-vite-shell',
           missionConsoleBridgeInstancesRefOwnerId: 'app-bridge-registry:live-vite-shell',
@@ -2050,6 +2051,37 @@ test('support snapshot prefers runtime stamped publisher diagnostics for canonic
   assert.match(snapshot, /Operator Relief Bridge Published: no/);
   assert.match(snapshot, /Operator Relief Bridge Projection Keys Seen: none/);
   assert.doesNotMatch(snapshot, /Mission Console Instance Count: 9/);
+});
+
+test('support snapshot reports missing runtime bridge diagnostics without receipt-faking canonical counts', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      runtimeContext: {
+        uiReality: {
+          aiCoreMissionConsole: {
+            componentTrace: {
+              source: 'live-marker',
+              registrationCallbackReturnRegisteredInstanceCount: '9',
+            },
+          },
+        },
+      },
+      lastExecutionMetadata: {
+        mission_console_instance_count: '0',
+        operator_relief_bridge_published: 'no',
+      },
+    },
+  });
+
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Present: no/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Keys: none/);
+  assert.match(snapshot, /Mission Console Runtime Publisher Registry Count: 0/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Source ID: missing/);
+  assert.match(snapshot, /Operator Relief Bridge Drop Boundary: runtime-context-missing-bridge-diagnostics/);
+  assert.match(snapshot, /Mission Console Instance Count: 0/);
+  assert.doesNotMatch(snapshot, /Mission Console Instance Count: 9/);
+  assert.match(snapshot, /Operator Relief Bridge Published: no/);
+  assert.match(snapshot, /Operator Relief Bridge Projection Keys Seen: none/);
 });
 
 test('support snapshot reflects mission packet generation from submitted operator intent', () => {

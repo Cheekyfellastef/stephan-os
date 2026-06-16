@@ -170,6 +170,7 @@ test('visible aiCore MissionConsoleTile path passes onMissionConsoleInstanceRegi
 test('App bridge registration publishes diagnostics even before Operator Relief projection exists', async () => {
   const appSource = await fs.readFile(appPath, 'utf8');
   assert.match(appSource, /const nextProjection = projection \|\| null;/);
+  assert.match(appSource, /runtimeDiagnosticsPresent: 'yes'/);
   assert.match(appSource, /published: nextProjection \? 'yes' : 'no'/);
   assert.match(appSource, /missionConsoleInstanceCount: instanceIds\.length/);
   assert.match(appSource, /missionConsoleBridgeInstancesRefOwnerId: bridgeRegistryOwnerId/);
@@ -195,6 +196,8 @@ test('App bridge registration publishes diagnostics even before Operator Relief 
   assert.match(appSource, /registeredInstanceCount: receiptRegistryKeys\.length/);
   assert.match(appSource, /registryOwnerId: missionConsoleBridgeOwnerIdRef\.current/);
   const aiStoreSource = await fs.readFile(aiStorePath, 'utf8');
+  assert.match(aiStoreSource, /operatorReliefBridgeDiagnostics: \{/);
+  assert.match(aiStoreSource, /\.\.\.\(operatorReliefProjectionBridge\?\.diagnostics \|\| \{\}\)/);
   assert.match(aiStoreSource, /runtimeContextSeen: operatorReliefProjectionBridge\?\.diagnostics \? 'yes' : 'no'/);
   assert.match(aiStoreSource, /previousDiagnostics\.publisherRegistryInstanceCount \?\? previousDiagnostics\.missionConsoleInstanceCount/);
   assert.match(aiStoreSource, /previousHasRegisteredInstances && !nextHasRegisteredInstances && previousStamp >= nextStamp/);
