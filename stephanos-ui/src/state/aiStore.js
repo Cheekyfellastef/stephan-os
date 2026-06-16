@@ -1152,12 +1152,44 @@ export function AIStoreProvider({ children }) {
       const nextInstanceCount = Number(nextDiagnostics.publisherRegistryInstanceCount ?? nextDiagnostics.missionConsoleInstanceCount ?? 0);
       const previousHasRegisteredInstances = Number.isFinite(previousInstanceCount) && previousInstanceCount > 0;
       const nextHasRegisteredInstances = Number.isFinite(nextInstanceCount) && nextInstanceCount > 0;
+      const requiredPublisherDiagnosticFields = [
+        'appBridgeHandlerOwnerId',
+        'missionConsoleBridgeInstancesRefOwnerId',
+        'publishOperatorReliefProjectionBridgeOwnerId',
+        'operatorReliefBridgeDiagnosticsStoreOwnerId',
+        'operatorReliefBridgeDiagnosticsStoreSourceId',
+        'publisherRegistryOwnerId',
+        'publisherRegistryInstanceCount',
+        'publisherRegistryInstanceIds',
+        'publisherSource',
+        'missionConsoleInstanceCount',
+        'missionConsoleInstanceIds',
+        'visibleInstancePublished',
+        'bridgeParityBlocker',
+      ];
+      const restoredDiagnostics = {};
+      for (const field of requiredPublisherDiagnosticFields) {
+        if (nextDiagnostics[field] === undefined && previousDiagnostics[field] !== undefined) {
+          restoredDiagnostics[field] = previousDiagnostics[field];
+        }
+      }
       if (previousHasRegisteredInstances && !nextHasRegisteredInstances && previousStamp >= nextStamp) {
         return {
           ...(nextValue || {}),
           diagnostics: {
             ...nextDiagnostics,
             ...previousDiagnostics,
+            operatorReliefBridgeDiagnosticsDropBoundary: 'publisher-built-not-stored',
+          },
+        };
+      }
+      if (Object.keys(restoredDiagnostics).length > 0) {
+        return {
+          ...(nextValue || {}),
+          diagnostics: {
+            ...nextDiagnostics,
+            ...restoredDiagnostics,
+            operatorReliefBridgeDiagnosticsDropBoundary: 'store-dropped-fields',
           },
         };
       }

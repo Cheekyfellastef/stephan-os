@@ -92,6 +92,8 @@ test('Mission Console bridge registration is wired through both canonical surfac
   assert.match(appSource, /setOperatorReliefProjectionBridge\(\{/);
   assert.match(appSource, /operatorReliefProjectionRef\.current/);
   assert.match(appSource, /missionConsoleBridgeParityStatus: missingBridgeCallbackIds\.length === 0 && instanceIds\.length > 0 && nextProjection \? 'OK'/);
+  assert.match(appSource, /visibleInstancePublished: visibleInstancePublished \? 'yes' : 'no'/);
+  assert.match(appSource, /bridgeParityBlocker: missingBridgeCallbackIds\.length > 0 \? 'missing-bridge-callback'/);
 });
 
 test('AI Core Mission Console App wrappers contain canonical MissionConsoleTile child marker registration path', () => {

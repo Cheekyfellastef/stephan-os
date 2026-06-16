@@ -931,6 +931,7 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     && typeof runtimeStatus.runtimeContext.operatorReliefBridgeDiagnostics === 'object'
     ? runtimeStatus.runtimeContext.operatorReliefBridgeDiagnostics
     : {};
+  const liveDiagnosticKeys = Object.keys(liveDiagnostics);
   const livePublisherInstanceIds = normalizeMissionConsoleIdList(liveDiagnostics?.publisherRegistryInstanceIds);
   const livePublisherCount = Number(liveDiagnostics?.publisherRegistryInstanceCount);
   const liveCount = livePublisherInstanceIds.length > 0
@@ -938,6 +939,10 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     : (Number.isFinite(livePublisherCount) ? livePublisherCount : Number(liveDiagnostics?.missionConsoleInstanceCount));
   const liveHasInstances = Number.isFinite(liveCount) && liveCount > 0;
   const liveRegistrationStamp = Number(liveDiagnostics?.registrationDiagnosticsStamp || 0);
+  const liveHasStampedPublisherDiagnostics = liveRegistrationStamp > 0
+    && liveDiagnostics?.publisherRegistryOwnerId
+    && liveDiagnostics?.publisherSource
+    && liveHasInstances;
   const liveHasRegistrationDiagnostics = liveRegistrationStamp > 0
     || liveDiagnostics?.appHandlerEntered === 'yes'
     || liveDiagnostics?.registrationAppHandlerSeen === 'yes';
@@ -945,7 +950,7 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     && (liveDiagnostics?.published === 'yes' || liveHasInstances || liveHasRegistrationDiagnostics || Array.isArray(liveDiagnostics?.projectionKeysSeen));
   const executionCount = Number(executionMetadata?.mission_console_instance_count);
   const executionHasInstances = Number.isFinite(executionCount) && executionCount > 0;
-  const useLiveDiagnostics = liveHasCanonicalBridge;
+  const useLiveDiagnostics = liveHasStampedPublisherDiagnostics || liveHasCanonicalBridge;
   const liveDomComponentTrace = sampleLiveMissionConsoleComponentTrace() || {};
   const uiRealityComponentTrace = Object.keys(liveDomComponentTrace).length && liveDomComponentTrace.source !== 'missing'
     ? liveDomComponentTrace
@@ -998,6 +1003,11 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     registrationDiagnosticsOwnerId: useLiveDiagnostics
       ? (selected?.operatorReliefBridgeDiagnosticsStoreOwnerId || selected?.missionConsoleBridgeInstancesRefOwnerId || selected?.publisherRegistryOwnerId || 'unknown')
       : (liveMarkerStamp > executionRegistrationStamp ? (uiRealityComponentTrace?.registrationCallbackReturnRegistryOwnerId || 'unknown') : (executionMetadata?.mission_console_registration_diagnostics_owner_id || 'unknown')),
+    runtimeDiagnosticsPresent: liveDiagnosticKeys.length > 0 ? 'yes' : 'no',
+    runtimeDiagnosticsKeys: liveDiagnosticKeys.length ? liveDiagnosticKeys.sort().join('|') : 'none',
+    runtimePublisherRegistryCount: liveHasStampedPublisherDiagnostics ? String(liveCount) : '0',
+    runtimeDiagnosticsStamp: liveRegistrationStamp ? String(liveRegistrationStamp) : '0',
+    runtimeDiagnosticsSourceId: liveDiagnosticKeys.length ? 'runtimeContext.operatorReliefBridgeDiagnostics' : 'missing',
     supportSnapshotDiagnosticsSourceId: useLiveDiagnostics ? 'runtimeContext.operatorReliefBridgeDiagnostics' : registrationDiagnosticsSource,
     registrationDiagnosticsLastUpdatedAt: useLiveDiagnostics
       ? (selected?.registrationDiagnosticsLastUpdatedAt || 'unknown')
@@ -1022,13 +1032,13 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
       ? (selected?.missionConsoleLastPublishingSourceSurface || executionMetadata?.mission_console_last_publishing_source_surface || 'unknown')
       : (executionMetadata?.mission_console_last_publishing_source_surface || 'unknown'),
     missionConsoleVisibleInstancePublished: useLiveDiagnostics
-      ? (selected?.missionConsoleVisibleInstancePublished || executionMetadata?.mission_console_visible_instance_published || 'no')
+      ? (selected?.visibleInstancePublished || selected?.missionConsoleVisibleInstancePublished || executionMetadata?.mission_console_visible_instance_published || 'no')
       : (executionMetadata?.mission_console_visible_instance_published || 'no'),
     missionConsoleBridgeParityStatus: useLiveDiagnostics
       ? (selected?.missionConsoleBridgeParityStatus || executionMetadata?.mission_console_bridge_parity_status || 'WARN')
       : (executionMetadata?.mission_console_bridge_parity_status || 'WARN'),
     missionConsoleBridgeParityBlocker: useLiveDiagnostics
-      ? (selected?.missionConsoleBridgeParityBlocker || executionMetadata?.mission_console_bridge_parity_blocker || '')
+      ? (selected?.bridgeParityBlocker || selected?.missionConsoleBridgeParityBlocker || executionMetadata?.mission_console_bridge_parity_blocker || '')
       : (executionMetadata?.mission_console_bridge_parity_blocker || ''),
     registrationEffectSeen: useLiveDiagnostics
       ? (selected?.registrationEffectSeen || 'no')
@@ -1118,8 +1128,8 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     publisherSource: useLiveDiagnostics ? (selected?.publisherSource || 'unknown') : (executionMetadata?.mission_console_publisher_source || 'unknown'),
     componentCallbackError: asText(uiRealityComponentTrace?.registrationCallbackError, useLiveDiagnostics ? (selected?.registrationCallbackError || 'none') : (executionMetadata?.mission_console_component_callback_error || 'none')),
     registrationDropBoundary: useLiveDiagnostics
-      ? (selected?.registrationDropBoundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected')
-      : (executionMetadata?.mission_console_registration_drop_boundary || executionMetadata?.operator_relief_bridge_drop_boundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected'),
+      ? (selected?.operatorReliefBridgeDiagnosticsDropBoundary || selected?.registrationDropBoundary || uiRealityComponentTrace?.registrationDropBoundary || 'none')
+      : (uiRealityComponentTrace?.registrationDropBoundary || executionMetadata?.mission_console_registration_drop_boundary || executionMetadata?.operator_relief_bridge_drop_boundary || (liveDiagnosticKeys.length <= 0 ? 'runtime-context-missing-bridge-diagnostics' : (liveHasInstances && !liveHasStampedPublisherDiagnostics ? 'support-snapshot-read-wrong-path' : 'runtime-context-not-injected'))),
   };
 }
 
@@ -3491,6 +3501,11 @@ export function buildSupportSnapshot({
     `Mission Console Registration Diagnostics Stamp: ${asText(missionConsoleDiagnostics?.registrationDiagnosticsStamp, '0')}`,
     `Mission Console Registration Diagnostics Owner ID: ${asText(missionConsoleDiagnostics?.registrationDiagnosticsOwnerId, 'unknown')}`,
     `Support Snapshot Diagnostics Source ID: ${asText(missionConsoleDiagnostics?.supportSnapshotDiagnosticsSourceId, 'missing')}`,
+    `Mission Console Runtime Diagnostics Present: ${asText(missionConsoleDiagnostics?.runtimeDiagnosticsPresent, 'no')}`,
+    `Mission Console Runtime Diagnostics Keys: ${asText(missionConsoleDiagnostics?.runtimeDiagnosticsKeys, 'none')}`,
+    `Mission Console Runtime Publisher Registry Count: ${asText(missionConsoleDiagnostics?.runtimePublisherRegistryCount, '0')}`,
+    `Mission Console Runtime Diagnostics Stamp: ${asText(missionConsoleDiagnostics?.runtimeDiagnosticsStamp, '0')}`,
+    `Mission Console Runtime Diagnostics Source ID: ${asText(missionConsoleDiagnostics?.runtimeDiagnosticsSourceId, 'missing')}`,
     `App Bridge Handler Owner ID: ${asText(missionConsoleDiagnostics?.appBridgeHandlerOwnerId, 'unknown')}`,
     `Mission Console Bridge Instances Ref Owner ID: ${asText(missionConsoleDiagnostics?.missionConsoleBridgeInstancesRefOwnerId, 'unknown')}`,
     `Publish Operator Relief Projection Bridge Owner ID: ${asText(missionConsoleDiagnostics?.publishOperatorReliefProjectionBridgeOwnerId, 'unknown')}`,
