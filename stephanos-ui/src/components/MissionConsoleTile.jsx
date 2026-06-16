@@ -166,8 +166,29 @@ function MissionConsoleTile({
     callbackCallAttempted: 'no',
     callbackReturned: 'no',
     callbackReturnType: 'unknown',
+    callbackReturnHandled: 'no',
+    callbackReturnHandler: 'unknown',
+    callbackReturnPanelId: 'unknown',
+    callbackReturnSourceSurface: 'unknown',
+    callbackReturnInstanceId: 'unknown',
+    callbackReturnIdentity: 'unknown',
     callbackError: 'none',
     dropBoundary: 'effect-not-fired',
+  });
+  const createRegistrationTraceState = (overrides = {}) => ({
+    callbackInvoked: 'no',
+    callbackCallAttempted: 'no',
+    callbackReturned: 'no',
+    callbackReturnType: 'unknown',
+    callbackReturnHandled: 'no',
+    callbackReturnHandler: 'unknown',
+    callbackReturnPanelId: 'unknown',
+    callbackReturnSourceSurface: 'unknown',
+    callbackReturnInstanceId: 'unknown',
+    callbackReturnIdentity: 'unknown',
+    callbackError: 'none',
+    dropBoundary: 'effect-not-fired',
+    ...overrides,
   });
   recordPerfCounter('render', 'MissionConsoleTile');
   useEffect(() => {
@@ -182,7 +203,7 @@ function MissionConsoleTile({
   useEffect(() => {
     const callbackPresent = typeof onMissionConsoleInstanceRegistration === 'function';
     registrationDropBoundaryRef.current = callbackPresent ? 'none' : 'missing-prop';
-    setRegistrationTraceState({ callbackInvoked: 'no', callbackCallAttempted: 'no', callbackReturned: 'no', callbackReturnType: 'unknown', callbackError: 'none', dropBoundary: registrationDropBoundaryRef.current });
+    setRegistrationTraceState(createRegistrationTraceState({ dropBoundary: registrationDropBoundaryRef.current }));
     if (!callbackPresent) {
       if (typeof onOperatorReliefProjectionUpdate === 'function') {
         onOperatorReliefProjectionUpdate(null, {
@@ -227,15 +248,31 @@ function MissionConsoleTile({
       },
     };
     try {
-      setRegistrationTraceState({ callbackInvoked: 'no', callbackCallAttempted: 'yes', callbackReturned: 'no', callbackReturnType: 'pending', callbackError: 'none', dropBoundary: 'none' });
+      setRegistrationTraceState(createRegistrationTraceState({ callbackCallAttempted: 'yes', callbackReturnType: 'pending', dropBoundary: 'none' }));
       const callbackResult = onMissionConsoleInstanceRegistration({ ...registrationPayload });
       const callbackReturnType = callbackResult === null ? 'null' : typeof callbackResult;
+      const callbackReceipt = callbackResult && typeof callbackResult === 'object' && callbackResult.handled === true && callbackResult.handler === 'app-bridge'
+        ? callbackResult
+        : null;
       registrationCallbackInvokedRef.current = 'yes';
-      setRegistrationTraceState({ callbackInvoked: 'yes', callbackCallAttempted: 'yes', callbackReturned: 'yes', callbackReturnType, callbackError: 'none', dropBoundary: 'none' });
+      setRegistrationTraceState(createRegistrationTraceState({
+        callbackInvoked: 'yes',
+        callbackCallAttempted: 'yes',
+        callbackReturned: 'yes',
+        callbackReturnType,
+        callbackReturnHandled: callbackReceipt ? 'yes' : 'no',
+        callbackReturnHandler: callbackReceipt?.handler || 'unknown',
+        callbackReturnPanelId: callbackReceipt?.panelId || 'unknown',
+        callbackReturnSourceSurface: callbackReceipt?.sourceSurface || 'unknown',
+        callbackReturnInstanceId: callbackReceipt?.instanceId || 'unknown',
+        callbackReturnIdentity: callbackReceipt?.callbackIdentity || 'unknown',
+        callbackError: 'none',
+        dropBoundary: 'none',
+      }));
     } catch (error) {
       registrationCallbackInvokedRef.current = 'no';
       registrationDropBoundaryRef.current = 'callback-threw';
-      setRegistrationTraceState({ callbackInvoked: 'no', callbackCallAttempted: 'yes', callbackReturned: 'no', callbackReturnType: 'threw', callbackError: error?.message || String(error), dropBoundary: 'callback-threw' });
+      setRegistrationTraceState(createRegistrationTraceState({ callbackCallAttempted: 'yes', callbackReturnType: 'threw', callbackError: error?.message || String(error), dropBoundary: 'callback-threw' }));
       throw error;
     }
   }, [forcePanelOpen, onMissionConsoleInstanceRegistration, onOperatorReliefProjectionUpdate, panelId, registrationCallbackIdentity, registrationCallbackPanelId, registrationCallbackSource, uiLayout]);
@@ -1471,6 +1508,12 @@ function MissionConsoleTile({
       data-mission-console-registration-callback-call-attempted={registrationTraceState.callbackCallAttempted}
       data-mission-console-registration-callback-returned={registrationTraceState.callbackReturned}
       data-mission-console-registration-callback-return-type={registrationTraceState.callbackReturnType}
+      data-mission-console-registration-callback-return-handled={registrationTraceState.callbackReturnHandled}
+      data-mission-console-registration-callback-return-handler={registrationTraceState.callbackReturnHandler}
+      data-mission-console-registration-callback-return-panel-id={registrationTraceState.callbackReturnPanelId}
+      data-mission-console-registration-callback-return-source-surface={registrationTraceState.callbackReturnSourceSurface}
+      data-mission-console-registration-callback-return-instance-id={registrationTraceState.callbackReturnInstanceId}
+      data-mission-console-registration-callback-return-identity={registrationTraceState.callbackReturnIdentity}
       data-mission-console-registration-callback-error={registrationTraceState.callbackError}
       data-mission-console-registration-drop-boundary={registrationTraceState.dropBoundary}
       data-mission-console-registration-callback-source={registrationCallbackSource}
