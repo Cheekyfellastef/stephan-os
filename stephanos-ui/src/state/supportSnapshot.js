@@ -830,14 +830,19 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     : {};
   const liveCount = Number(liveDiagnostics?.missionConsoleInstanceCount);
   const liveHasInstances = Number.isFinite(liveCount) && liveCount > 0;
+  const liveHasCanonicalBridge = Object.keys(liveDiagnostics).length > 0
+    && (liveDiagnostics?.published === 'yes' || liveHasInstances || Array.isArray(liveDiagnostics?.projectionKeysSeen));
   const executionCount = Number(executionMetadata?.mission_console_instance_count);
   const executionHasInstances = Number.isFinite(executionCount) && executionCount > 0;
-  const useLiveDiagnostics = liveHasInstances || !executionHasInstances;
+  const useLiveDiagnostics = liveHasCanonicalBridge;
   const liveDomComponentTrace = sampleLiveMissionConsoleComponentTrace() || {};
   const uiRealityComponentTrace = Object.keys(liveDomComponentTrace).length && liveDomComponentTrace.source !== 'missing'
     ? liveDomComponentTrace
     : (runtimeStatus?.runtimeContext?.uiReality?.aiCoreMissionConsole?.componentTrace || {});
-  const componentTraceSource = asText(uiRealityComponentTrace?.source, executionMetadata?.mission_console_component_trace_source || 'missing');
+  const componentTraceSource = asText(
+    uiRealityComponentTrace?.source,
+    useLiveDiagnostics ? 'runtime-context' : (executionMetadata?.mission_console_component_trace_source || 'missing'),
+  );
   const source = Object.keys(liveDiagnostics).length
     ? (useLiveDiagnostics ? 'live-operator-relief-bridge' : 'final-execution-metadata')
     : (Object.keys(executionMetadata).length ? 'final-execution-metadata' : 'missing');
@@ -894,6 +899,9 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     missionConsoleBridgeParityStatus: useLiveDiagnostics
       ? (selected?.missionConsoleBridgeParityStatus || executionMetadata?.mission_console_bridge_parity_status || 'WARN')
       : (executionMetadata?.mission_console_bridge_parity_status || 'WARN'),
+    missionConsoleBridgeParityBlocker: useLiveDiagnostics
+      ? (selected?.missionConsoleBridgeParityBlocker || executionMetadata?.mission_console_bridge_parity_blocker || '')
+      : (executionMetadata?.mission_console_bridge_parity_blocker || ''),
     registrationEffectSeen: useLiveDiagnostics
       ? (selected?.registrationEffectSeen || 'no')
       : (executionMetadata?.mission_console_registration_effect_seen || 'no'),
@@ -917,11 +925,11 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
       : (executionMetadata?.mission_console_registration_store_write_accepted || 'no'),
     componentTraceSource,
     componentTraceSelectorChecked: asText(liveDomComponentTrace?.selectorPathChecked || uiRealityComponentTrace?.selectorPathChecked, 'n/a'),
-    visibleComponentIsMissionConsoleTile: asText(uiRealityComponentTrace?.isMissionConsoleTile, executionMetadata?.mission_console_visible_component_is_missionconsoletile || 'no'),
-    visibleComponentPanelId: asText(uiRealityComponentTrace?.panelId, executionMetadata?.mission_console_visible_component_panel_id || 'unknown'),
-    componentEffectSeen: asText(uiRealityComponentTrace?.registrationEffectSeen, executionMetadata?.mission_console_component_effect_seen || 'no'),
-    componentCallbackPropPresent: asText(uiRealityComponentTrace?.registrationCallbackPropPresent, executionMetadata?.mission_console_component_callback_prop_present || 'no'),
-    componentCallbackInvoked: asText(uiRealityComponentTrace?.registrationCallbackInvoked, executionMetadata?.mission_console_component_callback_invoked || 'no'),
+    visibleComponentIsMissionConsoleTile: asText(uiRealityComponentTrace?.isMissionConsoleTile, useLiveDiagnostics ? 'yes' : (executionMetadata?.mission_console_visible_component_is_missionconsoletile || 'no')),
+    visibleComponentPanelId: asText(uiRealityComponentTrace?.panelId, useLiveDiagnostics ? (selected?.registrationEffectPanelId || selected?.missionConsoleVisibleInstanceId || 'unknown') : (executionMetadata?.mission_console_visible_component_panel_id || 'unknown')),
+    componentEffectSeen: asText(uiRealityComponentTrace?.registrationEffectSeen, useLiveDiagnostics ? (selected?.registrationEffectSeen || 'no') : (executionMetadata?.mission_console_component_effect_seen || 'no')),
+    componentCallbackPropPresent: asText(uiRealityComponentTrace?.registrationCallbackPropPresent, useLiveDiagnostics ? (selected?.registrationCallbackPropPresent || 'no') : (executionMetadata?.mission_console_component_callback_prop_present || 'no')),
+    componentCallbackInvoked: asText(uiRealityComponentTrace?.registrationCallbackInvoked, useLiveDiagnostics ? (selected?.registrationCallbackInvoked || 'no') : (executionMetadata?.mission_console_component_callback_invoked || 'no')),
     registrationDropBoundary: useLiveDiagnostics
       ? (selected?.registrationDropBoundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected')
       : (executionMetadata?.mission_console_registration_drop_boundary || executionMetadata?.operator_relief_bridge_drop_boundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected'),
@@ -3333,6 +3341,7 @@ export function buildSupportSnapshot({
       mission_console_instance_count: missionConsoleDiagnostics?.missionConsoleInstanceCount,
       mission_console_visible_instance_published: missionConsoleDiagnostics?.missionConsoleVisibleInstancePublished,
       operator_relief_bridge_published: missionConsoleDiagnostics?.operatorReliefBridgePublished,
+      mission_console_bridge_parity_blocker: missionConsoleDiagnostics?.missionConsoleBridgeParityBlocker,
     })}`,
     `Operator Approved Repair Loop Status: ${asText(executionMetadata?.operator_approved_repair_loop_status, 'inactive')}`,
     `Operator Approved Repair Loop Mission: ${asText(executionMetadata?.operator_approved_repair_loop_mission, 'none')}`,

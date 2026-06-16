@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../stephanos-ui/src/components/MissionConsoleTile.jsx', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../stephanos-ui/src/App.jsx', import.meta.url), 'utf8');
 
 test('Mission Console operator relief panel renders mission brain sections and copy controls', () => {
   assert.match(source, /Operator Relief v2 · Mission Brain/);
@@ -80,6 +81,17 @@ test('Mission Console publishes operator relief projection bridge payload with s
   assert.match(source, /const nextSignature = JSON\.stringify\(nextProjection\);/);
   assert.match(source, /onOperatorReliefProjectionUpdate\(nextProjection, \{ sourceSurface: panelId \}\);/);
   assert.match(source, /\}, \[onOperatorReliefProjectionUpdate, operatorReliefProjection, panelId\]\);/);
+});
+
+test('Mission Console bridge registration is wired through both canonical surfaces', () => {
+  assert.match(source, /onMissionConsoleInstanceRegistration\(\{/);
+  assert.match(source, /registrationTrace:\s*\{/);
+  assert.match(appSource, /createMissionConsoleTileBridgeProps\('aiCoreMissionConsolePanel'/);
+  assert.match(appSource, /createMissionConsoleTileBridgeProps\('missionConsolePanel'/);
+  assert.match(appSource, /onMissionConsoleInstanceRegistration:\s*\(metadata = \{\}\) => \{/);
+  assert.match(appSource, /setOperatorReliefProjectionBridge\(\{/);
+  assert.match(appSource, /operatorReliefProjectionRef\.current/);
+  assert.match(appSource, /missionConsoleBridgeParityStatus: missingBridgeCallbackIds\.length === 0 && instanceIds\.length > 0 && nextProjection \? 'OK'/);
 });
 
 test('Zero-Cost Builder Mesh is hosted inside existing Builder Harness panel, not a duplicate top-level pane', () => {
