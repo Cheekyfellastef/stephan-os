@@ -1195,7 +1195,7 @@ export function AIStoreProvider({ children }) {
       operatorReliefBridgeDiagnostics: {
         ...(apiStatus?.runtimeContext?.operatorReliefBridgeDiagnostics || {}),
         ...(operatorReliefProjectionBridge?.diagnostics || {}),
-        runtimeContextSeen: operatorReliefProjectionBridge?.projection ? 'yes' : 'no',
+        runtimeContextSeen: operatorReliefProjectionBridge?.diagnostics ? 'yes' : 'no',
       },
       surfaceAwareness: {
         ...surfaceAwareness,

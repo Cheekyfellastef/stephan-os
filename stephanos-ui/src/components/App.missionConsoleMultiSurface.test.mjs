@@ -8,6 +8,7 @@ import { deriveUiRealityStatus } from '../state/uiRealityStatus.js';
 const componentsDir = path.resolve(path.dirname(new URL(import.meta.url).pathname));
 const appPath = path.join(componentsDir, '../App.jsx');
 const missionConsolePath = path.join(componentsDir, 'MissionConsoleTile.jsx');
+const aiStorePath = path.join(componentsDir, '../state/aiStore.js');
 
 test('mission console can render in both landing tile and Stephanos AI Core surface from canonical component path', async () => {
   const appSource = await fs.readFile(appPath, 'utf8');
@@ -163,6 +164,21 @@ test('visible aiCore MissionConsoleTile path passes onMissionConsoleInstanceRegi
   assert.match(appSource, /onMissionConsoleInstanceRegistration: \(metadata = \{\}\) => \{/);
   assert.match(appSource, /registrationTrace/);
   assert.match(appSource, /setOperatorReliefProjectionBridge\(\{/);
+});
+
+
+test('App bridge registration publishes diagnostics even before Operator Relief projection exists', async () => {
+  const appSource = await fs.readFile(appPath, 'utf8');
+  assert.match(appSource, /const nextProjection = projection \|\| null;/);
+  assert.match(appSource, /published: nextProjection \? 'yes' : 'no'/);
+  assert.match(appSource, /missionConsoleInstanceCount: instanceIds\.length/);
+  assert.match(appSource, /registrationAppHandlerSeen: missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| 'no'/);
+  assert.match(appSource, /registrationStoreWriteAttempted: 'yes'/);
+  assert.match(appSource, /registrationStoreWriteAccepted: 'yes'/);
+  assert.match(appSource, /missionConsoleBridgeParityBlocker: missingBridgeCallbackIds\.length > 0 \? 'missing-bridge-callback' : \(instanceIds\.length <= 0 \? 'instance-not-registered' : \(nextProjection \? 'none' : 'projection-not-published'\)\)/);
+  assert.match(appSource, /publishOperatorReliefProjectionBridge\(operatorReliefProjectionRef\.current, \{/);
+  const aiStoreSource = await fs.readFile(aiStorePath, 'utf8');
+  assert.match(aiStoreSource, /runtimeContextSeen: operatorReliefProjectionBridge\?\.diagnostics \? 'yes' : 'no'/);
 });
 
 test('MissionConsoleTile mount telemetry remains mount scoped and registration is emitted from separate effect', async () => {

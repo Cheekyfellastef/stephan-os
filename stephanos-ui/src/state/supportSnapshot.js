@@ -891,7 +891,7 @@ function deriveMissionConsoleBridgeParityBlocker(executionMetadata = {}) {
   const instanceCount = Number.parseInt(asText(executionMetadata?.mission_console_instance_count, '0'), 10);
   const visiblePublished = String(executionMetadata?.mission_console_visible_instance_published || '').trim().toLowerCase();
   const bridgePublished = String(executionMetadata?.operator_relief_bridge_published || '').trim().toLowerCase();
-  if (Number.isFinite(instanceCount) && instanceCount <= 0) return 'projection-not-published';
+  if (Number.isFinite(instanceCount) && instanceCount <= 0) return 'instance-not-registered';
   if (visiblePublished === 'no') return 'visible-instance-not-published';
   if (bridgePublished === 'no') return 'projection-not-published';
   return 'bridge-instance-diagnostics-unavailable';
