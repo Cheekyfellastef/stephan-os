@@ -1152,7 +1152,7 @@ export function AIStoreProvider({ children }) {
       const nextInstanceCount = Number(nextDiagnostics.missionConsoleInstanceCount || 0);
       const previousHasRegisteredInstances = Number.isFinite(previousInstanceCount) && previousInstanceCount > 0;
       const nextHasRegisteredInstances = Number.isFinite(nextInstanceCount) && nextInstanceCount > 0;
-      if (previousHasRegisteredInstances && !nextHasRegisteredInstances && previousStamp > nextStamp) {
+      if (previousHasRegisteredInstances && !nextHasRegisteredInstances && previousStamp >= nextStamp) {
         return {
           ...(nextValue || {}),
           diagnostics: {
