@@ -176,6 +176,8 @@ test('App bridge registration publishes diagnostics even before Operator Relief 
   assert.match(appSource, /publishOperatorReliefProjectionBridgeOwnerId: bridgeRegistryOwnerId/);
   assert.match(appSource, /operatorReliefBridgeDiagnosticsStoreOwnerId: bridgeRegistryOwnerId/);
   assert.match(appSource, /publisherRegistryInstanceCount: instanceIds\.length/);
+  assert.match(appSource, /publisherRegistryInstanceIds: instanceIds/);
+  assert.match(appSource, /publisherSource: options\?\.publisherSource \|\| 'unknown'/);
   assert.match(appSource, /appHandlerEntered: missionConsoleRegistrationTraceRef\.current\.appHandlerEntered \|\| missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| 'no'/);
   assert.match(appSource, /registrationAppHandlerSeen: missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| missionConsoleRegistrationTraceRef\.current\.appHandlerEntered \|\| 'no'/);
   assert.match(appSource, /registrationStoreWriteAttempted: missionConsoleRegistrationTraceRef\.current\.storeWriteAttempted \|\| 'yes'/);
@@ -183,13 +185,18 @@ test('App bridge registration publishes diagnostics even before Operator Relief 
   assert.match(appSource, /registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef\.current/);
   assert.match(appSource, /missionConsoleRegistrationDiagnosticsStampRef\.current \+= 1/);
   assert.match(appSource, /missionConsoleBridgeParityBlocker: missingBridgeCallbackIds\.length > 0 \? 'missing-bridge-callback' : \(instanceIds\.length <= 0 \? 'instance-not-registered' : \(nextProjection \? 'none' : 'projection-not-published'\)\)/);
+  assert.match(appSource, /const publisherRegistryRead = missionConsoleBridgeInstancesRef\.current \|\| \{\}/);
   assert.match(appSource, /publishOperatorReliefProjectionBridge\(operatorReliefProjectionRef\.current, \{/);
+  assert.match(appSource, /publisherRegistry: publisherRegistryRead/);
+  assert.match(appSource, /publisherRegistryOwnerId: missionConsoleBridgeOwnerIdRef\.current/);
+  assert.match(appSource, /publisherSource: 'app-bridge-registration'/);
   assert.match(appSource, /const registrationCommitted = missionConsoleBridgeInstancesRef\.current\?\.\[panelId\]\?\.instanceId === receivedInstanceId/);
   assert.match(appSource, /sideEffectStatus: registrationCommitted \? 'committed' : 'pending'/);
   assert.match(appSource, /registeredInstanceCount: receiptRegistryKeys\.length/);
   assert.match(appSource, /registryOwnerId: missionConsoleBridgeOwnerIdRef\.current/);
   const aiStoreSource = await fs.readFile(aiStorePath, 'utf8');
   assert.match(aiStoreSource, /runtimeContextSeen: operatorReliefProjectionBridge\?\.diagnostics \? 'yes' : 'no'/);
+  assert.match(aiStoreSource, /previousDiagnostics\.publisherRegistryInstanceCount \?\? previousDiagnostics\.missionConsoleInstanceCount/);
   assert.match(aiStoreSource, /previousHasRegisteredInstances && !nextHasRegisteredInstances && previousStamp >= nextStamp/);
 });
 

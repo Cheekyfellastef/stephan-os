@@ -286,10 +286,12 @@ export default function App() {
     const nextProjection = projection || null;
     const sourceSurface = typeof options?.sourceSurface === 'string' && options.sourceSurface ? options.sourceSurface : 'unknown';
     const publisherPanelId = options?.panelId || sourceSurface;
-    const bridgeRegistryOwnerId = missionConsoleBridgeOwnerIdRef.current;
-    const bridgeRegistry = missionConsoleBridgeInstancesRef.current || {};
+    const bridgeRegistryOwnerId = options?.publisherRegistryOwnerId || missionConsoleBridgeOwnerIdRef.current;
+    const bridgeRegistry = options?.publisherRegistry && typeof options.publisherRegistry === 'object'
+      ? options.publisherRegistry
+      : (missionConsoleBridgeInstancesRef.current || {});
     const bridgeInstances = Object.values(bridgeRegistry);
-    const instanceIds = bridgeInstances.map((entry) => entry.panelId);
+    const instanceIds = bridgeInstances.map((entry) => entry?.panelId || entry?.instanceId).filter(Boolean);
     const visibleInstance = bridgeInstances.find((entry) => entry.visible && entry.collapsed !== true) || null;
     const publishingInstance = bridgeInstances.find((entry) => entry.panelId === publisherPanelId) || null;
     const bridgeCapableInstanceIds = bridgeInstances.filter((entry) => entry.hasBridgeCallback).map((entry) => entry.panelId);
@@ -318,6 +320,8 @@ export default function App() {
       publisherRegistryOwnerId: bridgeRegistryOwnerId,
       publisherRegistryInstanceCount: instanceIds.length,
       publisherRegistryInstanceIds: instanceIds,
+      publisherSource: options?.publisherSource || 'unknown',
+      registrationDiagnosticsStamp: options?.registrationDiagnosticsStamp || missionConsoleRegistrationDiagnosticsStampRef.current,
       missionConsoleInstanceCount: instanceIds.length,
       missionConsoleInstanceIds: instanceIds,
       missionConsoleVisibleInstanceId: visibleInstance?.panelId || '',
@@ -358,7 +362,6 @@ export default function App() {
       registrationCallbackPanelId: missionConsoleRegistrationTraceRef.current.registrationCallbackPanelId || 'unknown',
       registrationCallbackIdentity: missionConsoleRegistrationTraceRef.current.registrationCallbackIdentity || 'unknown',
       registrationDropBoundary: missionConsoleRegistrationTraceRef.current.dropBoundary || 'none',
-      registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef.current,
       registrationDiagnosticsLastUpdatedAt: missionConsoleRegistrationTraceRef.current.registrationDiagnosticsLastUpdatedAt || 'unknown',
       operatorReliefBridgeDiagnosticsWriteAttempted: 'yes',
       operatorReliefBridgeDiagnosticsWriteAccepted: 'yes',
@@ -416,9 +419,14 @@ export default function App() {
       registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef.current,
       registrationDiagnosticsLastUpdatedAt: new Date().toISOString(),
     };
+    const publisherRegistryRead = missionConsoleBridgeInstancesRef.current || {};
     publishOperatorReliefProjectionBridge(operatorReliefProjectionRef.current, {
       panelId: key,
       sourceSurface: metadata.sourceSurface || key,
+      publisherRegistry: publisherRegistryRead,
+      publisherRegistryOwnerId: missionConsoleBridgeOwnerIdRef.current,
+      publisherSource: 'app-bridge-registration',
+      registrationDiagnosticsStamp: missionConsoleRegistrationDiagnosticsStampRef.current,
     });
   }, [publishOperatorReliefProjectionBridge]);
   const handleOperatorReliefProjectionUpdate = useCallback((projection, options = {}) => {

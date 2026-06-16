@@ -915,12 +915,27 @@ function deriveMissionConsoleBridgeParityBlocker(executionMetadata = {}) {
   return 'bridge-instance-diagnostics-unavailable';
 }
 
+
+function normalizeMissionConsoleIdList(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry || '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string' && value.trim() && value.trim() !== 'none') {
+    return value.split('|').map((entry) => entry.trim()).filter(Boolean);
+  }
+  return [];
+}
+
 function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadata = {}) {
   const liveDiagnostics = runtimeStatus?.runtimeContext?.operatorReliefBridgeDiagnostics
     && typeof runtimeStatus.runtimeContext.operatorReliefBridgeDiagnostics === 'object'
     ? runtimeStatus.runtimeContext.operatorReliefBridgeDiagnostics
     : {};
-  const liveCount = Number(liveDiagnostics?.missionConsoleInstanceCount);
+  const livePublisherInstanceIds = normalizeMissionConsoleIdList(liveDiagnostics?.publisherRegistryInstanceIds);
+  const livePublisherCount = Number(liveDiagnostics?.publisherRegistryInstanceCount);
+  const liveCount = livePublisherInstanceIds.length > 0
+    ? livePublisherInstanceIds.length
+    : (Number.isFinite(livePublisherCount) ? livePublisherCount : Number(liveDiagnostics?.missionConsoleInstanceCount));
   const liveHasInstances = Number.isFinite(liveCount) && liveCount > 0;
   const liveRegistrationStamp = Number(liveDiagnostics?.registrationDiagnosticsStamp || 0);
   const liveHasRegistrationDiagnostics = liveRegistrationStamp > 0
@@ -948,6 +963,7 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     ? (useLiveDiagnostics ? 'live-operator-relief-bridge' : registrationDiagnosticsSource)
     : (Object.keys(executionMetadata).length ? registrationDiagnosticsSource : 'missing');
   const selected = useLiveDiagnostics ? liveDiagnostics : {};
+  const selectedPublisherInstanceIds = useLiveDiagnostics ? normalizeMissionConsoleIdList(selected?.publisherRegistryInstanceIds) : [];
   const selectedCount = useLiveDiagnostics ? liveCount : executionCount;
   return {
     source,
@@ -988,7 +1004,7 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
       : (executionMetadata?.mission_console_registration_diagnostics_last_updated_at || 'unknown'),
     missionConsoleInstanceCount: Number.isFinite(selectedCount) ? String(selectedCount) : String(executionMetadata?.mission_console_instance_count || 0),
     missionConsoleInstanceIds: useLiveDiagnostics
-      ? (Array.isArray(selected?.missionConsoleInstanceIds) ? selected.missionConsoleInstanceIds.join('|') : (executionMetadata?.mission_console_instance_ids || 'none'))
+      ? (selectedPublisherInstanceIds.length ? selectedPublisherInstanceIds.join('|') : (Array.isArray(selected?.missionConsoleInstanceIds) ? selected.missionConsoleInstanceIds.join('|') : (executionMetadata?.mission_console_instance_ids || 'none')))
       : (executionMetadata?.mission_console_instance_ids || 'none'),
     missionConsoleVisibleInstanceId: useLiveDiagnostics
       ? (selected?.missionConsoleVisibleInstanceId || executionMetadata?.mission_console_visible_instance_id || 'unknown')
@@ -1097,8 +1113,9 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     operatorReliefBridgeDiagnosticsStoreOwnerId: useLiveDiagnostics ? (selected?.operatorReliefBridgeDiagnosticsStoreOwnerId || 'unknown') : (executionMetadata?.operator_relief_bridge_diagnostics_store_owner_id || 'unknown'),
     operatorReliefBridgeDiagnosticsStoreSourceId: useLiveDiagnostics ? (selected?.operatorReliefBridgeDiagnosticsStoreSourceId || 'unknown') : (executionMetadata?.operator_relief_bridge_diagnostics_store_source_id || 'unknown'),
     publisherRegistryOwnerId: useLiveDiagnostics ? (selected?.publisherRegistryOwnerId || 'unknown') : (executionMetadata?.mission_console_publisher_registry_owner_id || 'unknown'),
-    publisherRegistryInstanceCount: useLiveDiagnostics ? String(selected?.publisherRegistryInstanceCount ?? selected?.missionConsoleInstanceCount ?? '0') : (executionMetadata?.mission_console_publisher_registry_instance_count || '0'),
-    publisherRegistryInstanceIds: useLiveDiagnostics ? (Array.isArray(selected?.publisherRegistryInstanceIds) ? selected.publisherRegistryInstanceIds.join('|') : 'none') : (executionMetadata?.mission_console_publisher_registry_instance_ids || 'none'),
+    publisherRegistryInstanceCount: useLiveDiagnostics ? String(selectedPublisherInstanceIds.length || selected?.publisherRegistryInstanceCount || selected?.missionConsoleInstanceCount || '0') : (executionMetadata?.mission_console_publisher_registry_instance_count || '0'),
+    publisherRegistryInstanceIds: useLiveDiagnostics ? (selectedPublisherInstanceIds.length ? selectedPublisherInstanceIds.join('|') : 'none') : (executionMetadata?.mission_console_publisher_registry_instance_ids || 'none'),
+    publisherSource: useLiveDiagnostics ? (selected?.publisherSource || 'unknown') : (executionMetadata?.mission_console_publisher_source || 'unknown'),
     componentCallbackError: asText(uiRealityComponentTrace?.registrationCallbackError, useLiveDiagnostics ? (selected?.registrationCallbackError || 'none') : (executionMetadata?.mission_console_component_callback_error || 'none')),
     registrationDropBoundary: useLiveDiagnostics
       ? (selected?.registrationDropBoundary || uiRealityComponentTrace?.registrationDropBoundary || 'runtime-context-not-injected')
@@ -3482,6 +3499,7 @@ export function buildSupportSnapshot({
     `Mission Console Publisher Registry Owner ID: ${asText(missionConsoleDiagnostics?.publisherRegistryOwnerId, 'unknown')}`,
     `Mission Console Publisher Registry Instance Count: ${asText(missionConsoleDiagnostics?.publisherRegistryInstanceCount, '0')}`,
     `Mission Console Publisher Registry Instance IDs: ${asText(missionConsoleDiagnostics?.publisherRegistryInstanceIds, 'none')}`,
+    `Mission Console Publisher Source: ${asText(missionConsoleDiagnostics?.publisherSource, 'unknown')}`,
     `Mission Console Component Trace Source: ${asText(missionConsoleDiagnostics?.componentTraceSource, 'missing')}`,
     `Mission Console Component Trace Selector Checked: ${asText(missionConsoleDiagnostics?.componentTraceSelectorChecked, 'n/a')}`,
     `Mission Console AI Core Wrapper Count: ${asText(missionConsoleDiagnostics?.aiCoreWrapperCount, 'unknown')}`,

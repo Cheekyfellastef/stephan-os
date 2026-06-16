@@ -2377,6 +2377,7 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
           publisherRegistryOwnerId: 'app-bridge-registry:live-vite-shell',
           publisherRegistryInstanceCount: 2,
           publisherRegistryInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
+          publisherSource: 'app-bridge-registration',
           registrationDiagnosticsStamp: 3,
         },
       },
@@ -2395,6 +2396,7 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
   assert.match(snapshot, /Mission Console Publisher Registry Owner ID: app-bridge-registry:live-vite-shell/);
   assert.match(snapshot, /Mission Console Publisher Registry Instance Count: 2/);
   assert.match(snapshot, /Mission Console Publisher Registry Instance IDs: aiCoreMissionConsolePanel\|missionConsolePanel/);
+  assert.match(snapshot, /Mission Console Publisher Source: app-bridge-registration/);
   assert.match(snapshot, /Mission Console Registration Callback Seen: yes/);
   assert.match(snapshot, /Mission Console Registration Effect Seen: yes/);
   assert.match(snapshot, /Mission Console Registration Callback Prop Present: yes/);
