@@ -28,7 +28,7 @@ export function removeAcceptedMissionProof(values = [], reconciliation = {}) {
 
 export function reconciledMissionMissingProof(values = [], reconciliation = {}) {
   const remaining = asList(reconciliation?.remainingMissingItems);
-  if (reconciliation?.missionConsoleBridgeProofAccepted === true && reconciliation?.status === 'active' && remaining.length > 0) return remaining;
+  if (reconciliation?.status === 'active' && remaining.length > 0 && (reconciliation?.missionConsoleBridgeProofAccepted === true || reconciliation?.evidenceIntakeAcceptedProof === true)) return remaining;
   return removeAcceptedMissionProof(values, reconciliation);
 }
 
@@ -69,6 +69,7 @@ export function buildMissionProofReconciliation({ missionConsoleDiagnostics = {}
     remainingMissingItems,
     remainingMissingCount: remainingMissingItems.length,
     nextBestAction: remainingMissingItems.length ? `Collect ${remainingMissingItems[0]}.` : 'Review reconciliation proof; merge readiness still requires explicit PR/build/verify/browser evidence.',
+    evidenceIntakeAcceptedProof: intakeAcceptedItems.length > 0,
     missionConsoleBridgeProofAccepted,
     missionConsoleBridgeProofSource: missionConsoleBridgeProofAccepted ? 'support-snapshot-runtime-diagnostics' : 'not-accepted',
   };

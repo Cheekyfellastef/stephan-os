@@ -627,6 +627,12 @@ function sampleLiveCommandDeckProof(preferredAssistantAnswerId = '', finalAssist
   const composer = root.querySelector('[data-testid="command-deck-composer"]');
   const input = root.querySelector('[data-testid="command-deck-input"]');
   const execute = root.querySelector('[data-testid="command-deck-execute"]');
+  const inputVisible = computeNodeVisibilityProof(input, { root }).visible === 'yes';
+  const executeVisible = computeNodeVisibilityProof(execute, { root }).visible === 'yes';
+  const inputScrollHeight = Number(input?.scrollHeight || 0);
+  const inputClientHeight = Number(input?.clientHeight || 0);
+  const inputLarge = inputScrollHeight > 160 || String(input?.value || '').length > 600 || String(input?.dataset?.largeInputFixture || '').toLowerCase() === 'true';
+  const inputAutoResizeEnabled = String(input?.dataset?.autoResize || '').toLowerCase() === 'true';
   const finalAssistantSelector = '[data-answer-role="assistant"][data-answer-final="true"][data-assistant-answer-id]';
   const answers = Array.from(queryRoot.querySelectorAll(finalAssistantSelector));
   const preferred = preferredAssistantAnswerId
@@ -647,6 +653,13 @@ function sampleLiveCommandDeckProof(preferredAssistantAnswerId = '', finalAssist
     composerFound: elementExists(composer) ? 'yes' : 'no',
     inputFound: elementExists(input) ? 'yes' : 'no',
     executeFound: elementExists(execute) ? 'yes' : 'no',
+    commandDeckInputAutoResizeEnabled: inputAutoResizeEnabled ? 'yes' : 'no',
+    commandDeckInputScrollHeight: String(inputScrollHeight),
+    commandDeckInputClientHeight: String(inputClientHeight),
+    commandDeckInputCanScroll: inputScrollHeight > inputClientHeight ? 'yes' : 'no',
+    commandDeckExecuteButtonVisible: executeVisible ? 'yes' : 'no',
+    commandDeckExecuteVisibleWithLargeInput: inputLarge ? (executeVisible ? 'yes' : 'no') : 'not-large',
+    commandDeckLargePasteUsabilityStatus: inputAutoResizeEnabled && inputVisible && executeVisible && inputScrollHeight > 0 && inputClientHeight > 0 && (!inputLarge || executeVisible) ? 'OK' : 'fail',
     answerPaneCount: String(answers.length),
     latestAnswerFound: elementExists(latest) ? 'yes' : 'no',
     latestFinalAssistantCardFound: elementExists(latest) ? 'yes' : 'no',
@@ -1764,6 +1777,12 @@ export function buildSupportSnapshot({
     : {};
   const builderWorkbenchSupportMetadata = resolveBuilderWorkbenchSupportMetadata(executionMetadata, runtimeStatus);
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
+  const commandDeckMetadataAcceptedProofItems = String(executionMetadata?.command_deck_universal_intake_accepted_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
+  const commandDeckMetadataRejectedProofItems = String(executionMetadata?.command_deck_universal_intake_rejected_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
+  const commandDeckMetadataRoutedToEvidence = String(executionMetadata?.command_deck_universal_intake_routed_to || '').includes('evidence-return-intake');
+  const commandDeckMetadataProofProjection = commandDeckMetadataRoutedToEvidence
+    ? { acceptedProofItems: commandDeckMetadataAcceptedProofItems, rejectedProofItems: commandDeckMetadataRejectedProofItems }
+    : {};
   let missionProofReconciliation = buildMissionProofReconciliation({
     missionConsoleDiagnostics,
     supportSnapshot: runtimeStatus || {},
@@ -1771,6 +1790,7 @@ export function buildSupportSnapshot({
     prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {},
     uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' },
     openClawSourcePackRunner: resolveLiveBuilderWorkbenchProjection(runtimeStatus).projection?.openClawSourcePackRunner || {},
+    evidenceReturnIntakeProjection: commandDeckMetadataProofProjection,
   });
   const livePacketBayProjection = runtimeStatus?.operatorReliefProjection?.packetBayProjection
     || runtimeStatus?.runtimeContext?.operatorReliefProjection?.packetBayProjection
@@ -1850,7 +1870,7 @@ export function buildSupportSnapshot({
       ...projectAwarenessRuntimeProjection,
       rawLegacyMissingProof: projectAwarenessRuntimeProjection.rawLegacyMissingProof || projectAwarenessRuntimeProjection.missingProof,
       missingProof: reconciledMissionMissingProof(projectAwarenessRuntimeProjection.missingProof || [], missionProofReconciliation),
-      nextBestAction: missionProofReconciliation?.missionConsoleBridgeProofAccepted === true && missionProofReconciliation?.remainingMissingItems?.length
+      nextBestAction: missionProofReconciliation?.evidenceIntakeAcceptedProof === true && missionProofReconciliation?.remainingMissingItems?.length
         ? missionProofReconciliation.nextBestAction
         : projectAwarenessRuntimeProjection.nextBestAction,
     },
@@ -1883,16 +1903,23 @@ export function buildSupportSnapshot({
     ...missionEvidenceLedgerProjection,
     rawLegacyMissingProof: missionEvidenceLedgerProjection.rawLegacyMissingProof || missionEvidenceLedgerProjection.missingProofSummary,
     missingProofSummary: reconciledMissionMissingProof(missionEvidenceLedgerProjection.rawLegacyMissingProof || missionEvidenceLedgerProjection.missingProofSummary || [], missionProofReconciliation).join(' | ') || 'none',
-    nextRequiredEvidence: missionProofReconciliation?.missionConsoleBridgeProofAccepted === true
+    nextRequiredEvidence: (missionProofReconciliation?.evidenceIntakeAcceptedProof === true || (missionProofReconciliation?.missionConsoleBridgeProofAccepted === true && missionEvidenceLedgerProjection.nextRequiredEvidence !== 'local-ai-route-proof-needed'))
       ? (missionProofReconciliation?.remainingMissingItems?.[0] || missionEvidenceLedgerProjection.nextRequiredEvidence)
       : missionEvidenceLedgerProjection.nextRequiredEvidence,
-    nextAction: missionProofReconciliation?.missionConsoleBridgeProofAccepted === true && missionProofReconciliation?.remainingMissingItems?.length
+    nextAction: (missionProofReconciliation?.evidenceIntakeAcceptedProof === true || (missionProofReconciliation?.missionConsoleBridgeProofAccepted === true && missionEvidenceLedgerProjection.nextRequiredEvidence !== 'local-ai-route-proof-needed')) && missionProofReconciliation?.remainingMissingItems?.length
       ? missionProofReconciliation.nextBestAction
       : missionEvidenceLedgerProjection.nextAction,
   });
   const liveEvidenceReturnIntakeProjection = runtimeStatus?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.runtimeContext?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.missionState?.operatorReliefProjection?.evidenceReturnIntakeProjection || null;
   const commandDeckUniversalIntakeText = executionMetadata?.command_deck_universal_intake_echo && executionMetadata.command_deck_universal_intake_echo !== 'none' ? executionMetadata.command_deck_universal_intake_echo : '';
-  const evidenceReturnIntakeProjection = liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? liveEvidenceReturnIntakeProjection : deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary, packetBayProjection, missionProofReconciliation, operatorPastedIntakeText: commandDeckUniversalIntakeText, builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
+  const derivedEvidenceReturnIntakeProjection = liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? liveEvidenceReturnIntakeProjection : deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary, packetBayProjection, missionProofReconciliation, operatorPastedIntakeText: commandDeckUniversalIntakeText, builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
+  const evidenceReturnIntakeProjection = commandDeckMetadataRoutedToEvidence && commandDeckMetadataAcceptedProofItems.length > 0
+    ? {
+      ...derivedEvidenceReturnIntakeProjection,
+      acceptedProofItems: Array.from(new Set([...(derivedEvidenceReturnIntakeProjection.acceptedProofItems || []), ...commandDeckMetadataAcceptedProofItems])),
+      rejectedProofItems: Array.from(new Set([...(derivedEvidenceReturnIntakeProjection.rejectedProofItems || []), ...commandDeckMetadataRejectedProofItems])),
+    }
+    : derivedEvidenceReturnIntakeProjection;
   missionProofReconciliation = buildMissionProofReconciliation({
     missionConsoleDiagnostics,
     supportSnapshot: runtimeStatus || {},
@@ -1902,6 +1929,24 @@ export function buildSupportSnapshot({
     openClawSourcePackRunner: resolveLiveBuilderWorkbenchProjection(runtimeStatus).projection?.openClawSourcePackRunner || {},
     evidenceReturnIntakeProjection,
   });
+  packetBayFields = {
+    ...packetBayFields,
+    packet_missing_proof_summary: reconciledMissionMissingProof(packetBayFields.packet_raw_legacy_missing_proof_summary || packetBayProjection.rawLegacyMissingProofSummary || packetBayProjection.missingProofSummary || packetBayProjection.supportSnapshotFields?.packet_missing_proof_summary || [], missionProofReconciliation).join(' | ') || 'none',
+  };
+  agentRealityLoopFields = {
+    ...agentRealityLoopFields,
+    agent_reality_loop_missing_proof_summary: reconciledMissionMissingProof(agentRealityLoopFields.agent_reality_loop_raw_legacy_missing_proof_summary || agentRealityLoopFields.agent_reality_loop_missing_proof_summary || [], missionProofReconciliation).join(' | ') || 'none',
+  };
+  const reconciledProjectAwarenessFields = projectAwarenessSupportSnapshotFields(
+    {
+      ...projectAwarenessRuntimeProjection,
+      rawLegacyMissingProof: projectAwarenessRuntimeProjection.rawLegacyMissingProof || projectAwarenessRuntimeProjection.missingProof,
+      missingProof: reconciledMissionMissingProof(projectAwarenessRuntimeProjection.rawLegacyMissingProof || projectAwarenessRuntimeProjection.missingProof || [], missionProofReconciliation),
+      nextBestAction: missionProofReconciliation?.remainingMissingItems?.length ? missionProofReconciliation.nextBestAction : projectAwarenessRuntimeProjection.nextBestAction,
+    },
+    executionMetadata?.project_awareness_prompt_injected || 'no',
+  );
+  Object.assign(projectAwarenessFields, reconciledProjectAwarenessFields);
   const missionProofReconciliationFields = missionProofReconciliationSupportSnapshotFields(missionProofReconciliation);
   const evidenceReturnIntakeFields = evidenceReturnIntakeSupportSnapshotFields(liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? evidenceReturnIntakeProjection : {
     ...evidenceReturnIntakeProjection,
@@ -1930,6 +1975,8 @@ export function buildSupportSnapshot({
     ? globalThis.window.__STEPHANOS_COMMAND_DECK_LOCAL_REVEAL__
     : null;
   const commandDeckProof = deriveCommandDeckProof({ aiConsoleAnswerScroll, commandDeckLocalReveal, executionMetadata });
+  const commandDeckLiveDiagnostics = commandDeckProof.live?.source === 'live-dom' ? commandDeckProof.live : {};
+  const commandDeckDiagnostics = { ...aiConsoleAnswerScroll, ...commandDeckLiveDiagnostics };
   const commandDeckFallbackRoot = commandDeckProof.live?.root || null;
   const commandDeckFallbackAnswers = commandDeckFallbackRoot ? Array.from(commandDeckFallbackRoot.querySelectorAll('[data-answer-role="assistant"][data-answer-final="true"]')) : [];
   const commandDeckFallbackLatestAnswer = commandDeckProof.live?.latestAnswerFound === 'yes' ? { getAttribute: (name) => (name === 'data-assistant-answer-id' ? commandDeckProof.live.latestAnswerId : '') } : null;
@@ -3895,13 +3942,13 @@ export function buildSupportSnapshot({
     `Command Deck Composer Bottom Within View: ${asText(aiConsoleAnswerScroll?.commandDeckComposerBottomWithinView, 'unknown')}`,
     `Command Deck Input Found: ${asText(aiConsoleAnswerScroll?.commandDeckInputFound, 'unknown')}`,
     `Command Deck Input Visible: ${asText(aiConsoleAnswerScroll?.commandDeckInputVisible, 'unknown')}`,
-    `Command Deck Input Auto Resize Enabled: ${asText(aiConsoleAnswerScroll?.commandDeckInputAutoResizeEnabled, 'unknown')}`,
-    `Command Deck Input Scroll Height: ${asText(aiConsoleAnswerScroll?.commandDeckInputScrollHeight, '0')}`,
-    `Command Deck Input Client Height: ${asText(aiConsoleAnswerScroll?.commandDeckInputClientHeight, '0')}`,
-    `Command Deck Input Can Scroll: ${asText(aiConsoleAnswerScroll?.commandDeckInputCanScroll, 'unknown')}`,
-    `Command Deck Execute Button Visible: ${asText(aiConsoleAnswerScroll?.commandDeckExecuteButtonVisible, 'unknown')}`,
-    `Command Deck Execute Visible With Large Input: ${asText(aiConsoleAnswerScroll?.commandDeckExecuteVisibleWithLargeInput, 'unknown')}`,
-    `Command Deck Large Paste Usability Status: ${asText(aiConsoleAnswerScroll?.commandDeckLargePasteUsabilityStatus, 'unknown')}`,
+    `Command Deck Input Auto Resize Enabled: ${asText(commandDeckDiagnostics?.commandDeckInputAutoResizeEnabled, 'unknown')}`,
+    `Command Deck Input Scroll Height: ${asText(commandDeckDiagnostics?.commandDeckInputScrollHeight, '0')}`,
+    `Command Deck Input Client Height: ${asText(commandDeckDiagnostics?.commandDeckInputClientHeight, '0')}`,
+    `Command Deck Input Can Scroll: ${asText(commandDeckDiagnostics?.commandDeckInputCanScroll, 'unknown')}`,
+    `Command Deck Execute Button Visible: ${asText(commandDeckDiagnostics?.commandDeckExecuteButtonVisible, 'unknown')}`,
+    `Command Deck Execute Visible With Large Input: ${asText(commandDeckDiagnostics?.commandDeckExecuteVisibleWithLargeInput, 'unknown')}`,
+    `Command Deck Large Paste Usability Status: ${asText(commandDeckDiagnostics?.commandDeckLargePasteUsabilityStatus, 'unknown')}`,
     `Command Deck Pane Client Height: ${asText(aiConsoleAnswerScroll?.commandDeckPaneClientHeight, '0')}`,
     `Command Deck Body Client Height: ${asText(aiConsoleAnswerScroll?.commandDeckBodyClientHeight, '0')}`,
     `Command Deck Body Scroll Height: ${asText(aiConsoleAnswerScroll?.commandDeckBodyScrollHeight, '0')}`,

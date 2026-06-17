@@ -4011,8 +4011,8 @@ function createCommandDeckNode({
     querySelector(selector) {
       if (selector.includes('command-deck-answer-history')) return history;
       if (selector === '[data-testid="command-deck-composer"]') return { clientHeight: 44, getBoundingClientRect: () => ({ top: 260, bottom: 304, width: 320, height: 44 }) };
-      if (selector === '[data-testid="command-deck-input"]') return { clientHeight: 32, getBoundingClientRect: () => ({ top: 264, bottom: 296, width: 220, height: 32 }) };
-      if (selector === '[data-testid="command-deck-execute"]') return { clientHeight: 32, getBoundingClientRect: () => ({ top: 264, bottom: 296, width: 80, height: 32 }) };
+      if (selector === '[data-testid="command-deck-input"]') return { value: 'large paste fixture '.repeat(80), dataset: { autoResize: 'true', largeInputFixture: 'true' }, clientHeight: 144, scrollHeight: 280, parentElement: root, hidden: false, getBoundingClientRect: () => ({ top: 264, bottom: 408, left: 0, right: 220, width: 220, height: 144 }), getAttribute() { return ''; }, closest() { return root; } };
+      if (selector === '[data-testid="command-deck-execute"]') return { clientHeight: 32, scrollHeight: 32, parentElement: root, hidden: false, getBoundingClientRect: () => ({ top: 412, bottom: 444, left: 0, right: 80, width: 80, height: 32 }), getAttribute() { return ''; }, closest() { return root; } };
       return null;
     },
     querySelectorAll(selector) { return selector.includes('data-answer-role') ? [latest] : []; },
@@ -4942,8 +4942,22 @@ test('buildSupportSnapshot exposes Command Deck Universal Intake echoes and cano
       command_deck_universal_intake_echo_present: 'yes',
       command_deck_universal_intake_echo_length: '68',
       command_deck_universal_intake_confidence: 'high',
+      command_deck_universal_intake_accepted_proof_items: 'build-proof',
       command_deck_universal_intake_echo: 'npm run stephanos:build completed successfully with exit code 0.',
     },
+
+    runtimeContext: { operatorReliefBridgeDiagnostics: {
+      projectionKeysSeen: ['missionProofReconciliation'],
+      publisherRegistryInstanceIds: ['aiCoreMissionConsolePanel'],
+      publisherRegistryInstanceCount: 1,
+      registrationDiagnosticsStamp: 1,
+      publisherRegistryOwnerId: 'owner',
+      publisherSource: 'MissionConsoleTile',
+      missionConsoleBridgeParityStatus: 'OK',
+      missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel',
+      missionConsoleBridgeCapableInstanceIds: ['aiCoreMissionConsolePanel'],
+      published: 'yes',
+    } },
     operatorReliefProjection: {
       missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] },
       missionEvidenceContextSummary: { missingProofSummary: 'missing-build-proof|missing-verify-proof|missing-browser-proof|pr-evidence-missing|source-pack-output-missing' },
@@ -4956,6 +4970,64 @@ test('buildSupportSnapshot exposes Command Deck Universal Intake echoes and cano
   assert.match(snapshot, /Command Deck Universal Intake Routed To: evidence-return-intake\|evidence-intake-automation/);
   assert.match(snapshot, /Command Deck Universal Intake Accepted Proof Items: build-proof/);
   assert.match(snapshot, /Evidence Intake Echo Present: yes/);
-  assert.match(snapshot, /Evidence Intake Remaining Missing Items: (mission-console-bridge\|)?verify-proof\|browser-proof-checklist\|pr-evidence\|source-pack-output/);
+  assert.match(snapshot, /Evidence Intake Accepted Proof Items: build-proof/);
+  assert.match(snapshot, /Mission Proof Remaining Missing Items: verify-proof\|browser-proof-checklist\|pr-evidence\|source-pack-output/);
+  assert.match(snapshot, /Mission Proof Next Best Action: Collect verify-proof\./);
+  assert.doesNotMatch(snapshot, /Mission Evidence Ledger Missing Proof Summary: .*build-proof/);
+  assert.doesNotMatch(snapshot, /Packet Missing Proof Summary: .*build-proof/);
+  assert.doesNotMatch(snapshot, /Project Awareness Missing Proof Summary: .*build-proof/);
+  assert.doesNotMatch(snapshot, /Agent Reality Loop Missing Proof Summary: .*build-proof/);
   assert.match(snapshot, /Evidence Return Intake Trusted For Merge: no/);
+});
+
+
+test('support snapshot live Command Deck path propagates accepted build proof and large paste diagnostics', () => {
+  const nodes = createCommandDeckNode({ answerText: 'Build passed with proof.', answerHeight: 64, historyHeight: 320, rootHeight: 560 });
+  const snapshot = withCommandDeckDocument(nodes, () => buildSupportSnapshot({ runtimeStatus: {
+    lastExecutionMetadata: {
+      command_deck_universal_intake_status: 'classified',
+      command_deck_universal_intake_last_kinds: 'codex-result|build-proof',
+      command_deck_universal_intake_routed_to: 'evidence-return-intake|evidence-intake-automation',
+      command_deck_universal_intake_accepted_proof_items: 'build-proof',
+      command_deck_universal_intake_confidence: 'high',
+      command_deck_universal_intake_echo_present: 'yes',
+      command_deck_universal_intake_echo: 'npm run stephanos:build completed successfully with exit code 0.',
+    },
+    uiDiagnostics: { aiConsoleAnswerScroll: { commandDeckInputAutoResizeEnabled: 'unknown', commandDeckInputScrollHeight: 0, commandDeckInputClientHeight: 0, commandDeckExecuteVisibleWithLargeInput: 'unknown' } },
+    runtimeContext: { operatorReliefBridgeDiagnostics: {
+      projectionKeysSeen: ['missionProofReconciliation'],
+      publisherRegistryInstanceIds: ['aiCoreMissionConsolePanel'],
+      publisherRegistryInstanceCount: 1,
+      registrationDiagnosticsStamp: 1,
+      publisherRegistryOwnerId: 'owner',
+      publisherSource: 'MissionConsoleTile',
+      missionConsoleBridgeParityStatus: 'OK',
+      missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel',
+      missionConsoleBridgeCapableInstanceIds: ['aiCoreMissionConsolePanel'],
+      published: 'yes',
+    } },
+    operatorReliefProjection: {
+      missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] },
+      missionEvidenceLedgerProjection: { status: 'blocked', blockerCount: 1, missingProofSummary: 'build-proof | verify-proof | browser-proof-checklist | pr-evidence | source-pack-output' },
+      packetBayProjection: { missingProofSummary: 'build-proof | verify-proof | browser-proof-checklist | pr-evidence | source-pack-output', packets: [] },
+      projectAwarenessProjection: { missingProof: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], nextBestAction: 'Collect build-proof.' },
+      agentRealityLoopProjection: { missingProof: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], supportSnapshotFields: { agent_reality_loop_missing_proof_summary: 'build-proof | verify-proof | browser-proof-checklist | pr-evidence | source-pack-output' } },
+    },
+  }, routeTruthView: {}, runtimeContext: {}, safeApiStatus: {}, statusSummary: {} }));
+  assert.match(snapshot, /Command Deck Render Proof Source: live-dom/);
+  assert.match(snapshot, /Evidence Intake Accepted Proof Items: build-proof/);
+  assert.match(snapshot, /Mission Proof Remaining Missing Items: verify-proof\|browser-proof-checklist\|pr-evidence\|source-pack-output/);
+  assert.match(snapshot, /Mission Proof Next Best Action: Collect verify-proof\./);
+  assert.doesNotMatch(snapshot, /Mission Evidence Ledger Missing Proof Summary: .*build-proof/);
+  assert.doesNotMatch(snapshot, /Packet Missing Proof Summary: .*build-proof/);
+  assert.doesNotMatch(snapshot, /Project Awareness Missing Proof Summary: .*build-proof/);
+  assert.doesNotMatch(snapshot, /Agent Reality Loop Missing Proof Summary: .*build-proof/);
+  assert.match(snapshot, /Mission Evidence Ledger Trusted For Merge: no/);
+  assert.match(snapshot, /Agent Reality Loop Merge Recommendation: hold/);
+  assert.match(snapshot, /Command Deck Input Auto Resize Enabled: yes/);
+  assert.match(snapshot, /Command Deck Input Scroll Height: 280/);
+  assert.match(snapshot, /Command Deck Input Client Height: 144/);
+  assert.match(snapshot, /Command Deck Execute Button Visible: yes/);
+  assert.match(snapshot, /Command Deck Execute Visible With Large Input: yes/);
+  assert.match(snapshot, /Command Deck Large Paste Usability Status: OK/);
 });
