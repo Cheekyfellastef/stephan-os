@@ -943,17 +943,15 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
   const runtimeContextAliasPresent = runtimeContextAliasKeys.length > 0;
   const runtimeStatusAliasPresent = runtimeStatusAliasKeys.length > 0;
   let runtimeDiagnosticsDropBoundary = 'none';
-  if (!storeDiagnosticsPresent) {
-    runtimeDiagnosticsDropBoundary = 'store-diagnostics-missing';
-  } else if (!runtimeContextAliasPresent) {
-    runtimeDiagnosticsDropBoundary = 'runtime-context-alias-missing';
+  if (!runtimeContextAliasPresent) {
+    runtimeDiagnosticsDropBoundary = storeDiagnosticsPresent ? 'runtime-context-alias-missing' : 'runtime-context-missing-bridge-diagnostics';
   } else if (!runtimeStatusAliasPresent) {
     runtimeDiagnosticsDropBoundary = 'runtime-status-alias-missing';
-  } else if (storeDiagnostics.registrationDiagnosticsStamp
+  } else if (storeDiagnosticsPresent && storeDiagnostics.registrationDiagnosticsStamp
     && runtimeContextAlias.registrationDiagnosticsStamp
     && Number(runtimeContextAlias.registrationDiagnosticsStamp) < Number(storeDiagnostics.registrationDiagnosticsStamp)) {
     runtimeDiagnosticsDropBoundary = 'runtime-context-stale-before-store-write';
-  } else if (storeDiagnostics.publisherRegistryOwnerId
+  } else if (storeDiagnosticsPresent && storeDiagnostics.publisherRegistryOwnerId
     && runtimeContextAlias.publisherRegistryOwnerId
     && storeDiagnostics.publisherRegistryOwnerId !== runtimeContextAlias.publisherRegistryOwnerId) {
     runtimeDiagnosticsDropBoundary = 'support-snapshot-wrong-runtime-object';
@@ -997,6 +995,30 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
   const selected = useLiveDiagnostics ? liveDiagnostics : {};
   const selectedPublisherInstanceIds = useLiveDiagnostics ? normalizeMissionConsoleIdList(selected?.publisherRegistryInstanceIds) : [];
   const selectedCount = useLiveDiagnostics ? liveCount : executionCount;
+  const selectedBridgeCapableInstanceIds = useLiveDiagnostics ? normalizeMissionConsoleIdList(selected?.missionConsoleBridgeCapableInstanceIds) : [];
+  const selectedMarkerPanelId = asText(liveDomComponentTrace?.selectedMarkerPanelId || uiRealityComponentTrace?.selectedMarkerPanelId, 'unknown');
+  const canonicalVisibleInstanceId = useLiveDiagnostics
+    ? firstKnownValue([
+      selectedMarkerPanelId,
+      selected?.missionConsoleVisibleInstanceId,
+      executionMetadata?.mission_console_visible_instance_id,
+    ], 'unknown')
+    : (executionMetadata?.mission_console_visible_instance_id || 'unknown');
+  const visibleInstanceIsRegistered = selectedPublisherInstanceIds.includes(canonicalVisibleInstanceId)
+    || normalizeMissionConsoleIdList(selected?.missionConsoleInstanceIds).includes(canonicalVisibleInstanceId);
+  const visibleInstanceIsBridgeCapable = selectedBridgeCapableInstanceIds.length <= 0
+    ? visibleInstanceIsRegistered
+    : selectedBridgeCapableInstanceIds.includes(canonicalVisibleInstanceId);
+  const canonicalVisibleInstancePublished = useLiveDiagnostics
+    ? (visibleInstanceIsRegistered && visibleInstanceIsBridgeCapable ? 'yes' : (selected?.visibleInstancePublished || selected?.missionConsoleVisibleInstancePublished || executionMetadata?.mission_console_visible_instance_published || 'no'))
+    : (executionMetadata?.mission_console_visible_instance_published || 'no');
+  const runtimePathValid = runtimeContextAliasPresent
+    && liveHasInstances
+    && liveRegistrationStamp > 0
+    && (selected?.missionConsoleBridgeParityStatus === 'OK' || selected?.bridgeParityBlocker === 'none' || selected?.missionConsoleBridgeParityBlocker === 'none');
+  if (runtimePathValid) {
+    runtimeDiagnosticsDropBoundary = 'none';
+  }
   return {
     source,
     callbackSeen: useLiveDiagnostics
@@ -1030,7 +1052,8 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     registrationDiagnosticsOwnerId: useLiveDiagnostics
       ? (selected?.operatorReliefBridgeDiagnosticsStoreOwnerId || selected?.missionConsoleBridgeInstancesRefOwnerId || selected?.publisherRegistryOwnerId || 'unknown')
       : (liveMarkerStamp > executionRegistrationStamp ? (uiRealityComponentTrace?.registrationCallbackReturnRegistryOwnerId || 'unknown') : (executionMetadata?.mission_console_registration_diagnostics_owner_id || 'unknown')),
-    storeBridgeDiagnosticsPresent: storeDiagnosticsPresent ? 'yes' : 'no',
+    storeBridgeDiagnosticsPresent: (storeDiagnosticsPresent || runtimeContextAliasPresent) ? 'yes' : 'no',
+    rawStoreBridgeDiagnosticsPresent: storeDiagnosticsPresent ? 'yes' : 'no',
     storeBridgeDiagnosticsKeys: storeDiagnosticKeys.length ? storeDiagnosticKeys.sort().join('|') : 'none',
     storeBridgeDiagnosticsStamp: storeDiagnostics?.registrationDiagnosticsStamp ? String(storeDiagnostics.registrationDiagnosticsStamp) : '0',
     runtimeContextBridgeAliasPresent: runtimeContextAliasPresent ? 'yes' : 'no',
@@ -1051,11 +1074,9 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     missionConsoleInstanceIds: useLiveDiagnostics
       ? (selectedPublisherInstanceIds.length ? selectedPublisherInstanceIds.join('|') : (Array.isArray(selected?.missionConsoleInstanceIds) ? selected.missionConsoleInstanceIds.join('|') : (executionMetadata?.mission_console_instance_ids || 'none')))
       : (executionMetadata?.mission_console_instance_ids || 'none'),
-    missionConsoleVisibleInstanceId: useLiveDiagnostics
-      ? (selected?.missionConsoleVisibleInstanceId || executionMetadata?.mission_console_visible_instance_id || 'unknown')
-      : (executionMetadata?.mission_console_visible_instance_id || 'unknown'),
+    missionConsoleVisibleInstanceId: canonicalVisibleInstanceId,
     missionConsoleBridgeCapableInstanceIds: useLiveDiagnostics
-      ? (Array.isArray(selected?.missionConsoleBridgeCapableInstanceIds) ? selected.missionConsoleBridgeCapableInstanceIds.join('|') : (executionMetadata?.mission_console_bridge_capable_instance_ids || 'none'))
+      ? (selectedBridgeCapableInstanceIds.length ? selectedBridgeCapableInstanceIds.join('|') : (executionMetadata?.mission_console_bridge_capable_instance_ids || 'none'))
       : (executionMetadata?.mission_console_bridge_capable_instance_ids || 'none'),
     missionConsoleInstancesMissingBridgeCallback: useLiveDiagnostics
       ? (Array.isArray(selected?.missionConsoleInstancesMissingBridgeCallback) ? selected.missionConsoleInstancesMissingBridgeCallback.join('|') : (executionMetadata?.mission_console_instances_missing_bridge_callback || 'none'))
@@ -1066,9 +1087,7 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     missionConsoleLastPublishingSourceSurface: useLiveDiagnostics
       ? (selected?.missionConsoleLastPublishingSourceSurface || executionMetadata?.mission_console_last_publishing_source_surface || 'unknown')
       : (executionMetadata?.mission_console_last_publishing_source_surface || 'unknown'),
-    missionConsoleVisibleInstancePublished: useLiveDiagnostics
-      ? (selected?.visibleInstancePublished || selected?.missionConsoleVisibleInstancePublished || executionMetadata?.mission_console_visible_instance_published || 'no')
-      : (executionMetadata?.mission_console_visible_instance_published || 'no'),
+    missionConsoleVisibleInstancePublished: canonicalVisibleInstancePublished,
     missionConsoleBridgeParityStatus: useLiveDiagnostics
       ? (selected?.missionConsoleBridgeParityStatus || executionMetadata?.mission_console_bridge_parity_status || 'WARN')
       : (executionMetadata?.mission_console_bridge_parity_status || 'WARN'),
@@ -1160,7 +1179,7 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     publisherRegistryOwnerId: useLiveDiagnostics ? (selected?.publisherRegistryOwnerId || 'unknown') : (executionMetadata?.mission_console_publisher_registry_owner_id || 'unknown'),
     publisherRegistryInstanceCount: useLiveDiagnostics ? String(selectedPublisherInstanceIds.length || selected?.publisherRegistryInstanceCount || selected?.missionConsoleInstanceCount || '0') : (executionMetadata?.mission_console_publisher_registry_instance_count || '0'),
     publisherRegistryInstanceIds: useLiveDiagnostics ? (selectedPublisherInstanceIds.length ? selectedPublisherInstanceIds.join('|') : 'none') : (executionMetadata?.mission_console_publisher_registry_instance_ids || 'none'),
-    publisherSource: useLiveDiagnostics ? (selected?.publisherSource || 'unknown') : (executionMetadata?.mission_console_publisher_source || 'unknown'),
+    publisherSource: useLiveDiagnostics ? firstKnownValue([selected?.publisherSource, executionMetadata?.mission_console_publisher_source], 'unknown') : (executionMetadata?.mission_console_publisher_source || 'unknown'),
     componentCallbackError: asText(uiRealityComponentTrace?.registrationCallbackError, useLiveDiagnostics ? (selected?.registrationCallbackError || 'none') : (executionMetadata?.mission_console_component_callback_error || 'none')),
     registrationDropBoundary: useLiveDiagnostics
       ? (selected?.operatorReliefBridgeDiagnosticsDropBoundary || selected?.registrationDropBoundary || uiRealityComponentTrace?.registrationDropBoundary || 'none')

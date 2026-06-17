@@ -2000,6 +2000,13 @@ test('support snapshot prefers runtime stamped publisher diagnostics for canonic
   const snapshot = buildSupportSnapshot({
     runtimeStatus: {
       runtimeContext: {
+        uiReality: {
+          aiCoreMissionConsole: {
+            componentTrace: {
+              selectedMarkerPanelId: 'aiCoreMissionConsolePanel',
+            },
+          },
+        },
         operatorReliefBridgeDiagnostics: {
           runtimeDiagnosticsPresent: 'yes',
           registrationDiagnosticsStamp: 7,
@@ -2036,7 +2043,7 @@ test('support snapshot prefers runtime stamped publisher diagnostics for canonic
     },
   });
 
-  assert.match(snapshot, /Mission Console Store Bridge Diagnostics Present: no/);
+  assert.match(snapshot, /Mission Console Store Bridge Diagnostics Present: yes/);
   assert.match(snapshot, /Mission Console Runtime Context Bridge Alias Present: yes/);
   assert.match(snapshot, /Mission Console Runtime Status Bridge Alias Present: yes/);
   assert.match(snapshot, /Mission Console Runtime Diagnostics Present: yes/);
@@ -2079,12 +2086,12 @@ test('support snapshot reports missing runtime bridge diagnostics without receip
   assert.match(snapshot, /Mission Console Store Bridge Diagnostics Present: no/);
   assert.match(snapshot, /Mission Console Runtime Context Bridge Alias Present: no/);
   assert.match(snapshot, /Mission Console Runtime Status Bridge Alias Present: no/);
-  assert.match(snapshot, /Mission Console Runtime Diagnostics Drop Boundary: store-diagnostics-missing/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Drop Boundary: runtime-context-missing-bridge-diagnostics/);
   assert.match(snapshot, /Mission Console Runtime Diagnostics Present: no/);
   assert.match(snapshot, /Mission Console Runtime Diagnostics Keys: none/);
   assert.match(snapshot, /Mission Console Runtime Publisher Registry Count: 0/);
   assert.match(snapshot, /Mission Console Runtime Diagnostics Source ID: missing/);
-  assert.match(snapshot, /Operator Relief Bridge Drop Boundary: store-diagnostics-missing/);
+  assert.match(snapshot, /Operator Relief Bridge Drop Boundary: runtime-context-missing-bridge-diagnostics/);
   assert.match(snapshot, /Mission Console Instance Count: 0/);
   assert.doesNotMatch(snapshot, /Mission Console Instance Count: 9/);
   assert.match(snapshot, /Operator Relief Bridge Published: no/);
@@ -2494,6 +2501,13 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
         operator_relief_bridge_published: 'no',
       },
       runtimeContext: {
+        uiReality: {
+          aiCoreMissionConsole: {
+            componentTrace: {
+              selectedMarkerPanelId: 'aiCoreMissionConsolePanel',
+            },
+          },
+        },
         operatorReliefBridgeDiagnostics: {
           published: 'yes',
           storeUpdated: 'yes',
@@ -2517,7 +2531,12 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
           missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel',
           missionConsoleBridgeCapableInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
           missionConsoleVisibleInstancePublished: 'yes',
+          missionConsoleLastPublishingInstanceId: 'missionConsolePanel',
           missionConsoleBridgeParityStatus: 'OK',
+          missionConsoleBridgeParityBlocker: 'none',
+          bridgeParityBlocker: 'none',
+          projectionKeysSeen: ['agentRealityLoopProjection', 'builderMeshProjection'],
+          agentRealityLoopSeen: true,
           appBridgeHandlerOwnerId: 'app-bridge-registry:live-vite-shell',
           missionConsoleBridgeInstancesRefOwnerId: 'app-bridge-registry:live-vite-shell',
           publishOperatorReliefProjectionBridgeOwnerId: 'app-bridge-registry:live-vite-shell',
@@ -2537,6 +2556,9 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
   assert.match(snapshot, /Mission Console Registration Diagnostics Stamp: 3/);
   assert.match(snapshot, /Mission Console Registration Diagnostics Owner ID: app-bridge-registry:live-vite-shell/);
   assert.match(snapshot, /Support Snapshot Diagnostics Source ID: runtimeContext.operatorReliefBridgeDiagnostics/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Present: yes/);
+  assert.match(snapshot, /Mission Console Runtime Publisher Registry Count: 2/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Drop Boundary: none/);
   assert.match(snapshot, /App Bridge Handler Owner ID: app-bridge-registry:live-vite-shell/);
   assert.match(snapshot, /Mission Console Bridge Instances Ref Owner ID: app-bridge-registry:live-vite-shell/);
   assert.match(snapshot, /Publish Operator Relief Projection Bridge Owner ID: app-bridge-registry:live-vite-shell/);
@@ -2561,7 +2583,16 @@ test('support snapshot prefers live operator relief bridge diagnostics when fina
   assert.match(snapshot, /Mission Console Registration Store Updated: yes/);
   assert.match(snapshot, /Mission Console Registration RuntimeContext Seen: yes/);
   assert.match(snapshot, /Mission Console Instance Count: 2/);
+  assert.match(snapshot, /Mission Console Instance IDs: aiCoreMissionConsolePanel\|missionConsolePanel/);
+  assert.match(snapshot, /Mission Console Selected Marker Panel ID: aiCoreMissionConsolePanel/);
   assert.match(snapshot, /Mission Console Visible Instance ID: aiCoreMissionConsolePanel/);
+  assert.match(snapshot, /Mission Console Visible Instance Published: yes/);
+  assert.match(snapshot, /Mission Console Last Publishing Instance ID: missionConsolePanel/);
+  assert.match(snapshot, /Mission Console Bridge Parity Status: OK/);
+  assert.match(snapshot, /Mission Console Bridge Parity Blocker: none/);
+  assert.match(snapshot, /Operator Relief Bridge Published: yes/);
+  assert.match(snapshot, /Operator Relief Bridge Projection Keys Seen: agentRealityLoopProjection\|builderMeshProjection/);
+  assert.match(snapshot, /Operator Relief Bridge Agent Reality Loop Seen: yes/);
 });
 
 
@@ -2656,6 +2687,13 @@ test('support snapshot does not allow final execution metadata zero defaults to 
         operator_relief_bridge_published: 'no',
       },
       runtimeContext: {
+        uiReality: {
+          aiCoreMissionConsole: {
+            componentTrace: {
+              selectedMarkerPanelId: 'aiCoreMissionConsolePanel',
+            },
+          },
+        },
         operatorReliefBridgeDiagnostics: {
           published: 'yes',
           storeUpdated: 'yes',
