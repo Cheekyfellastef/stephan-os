@@ -9,7 +9,7 @@ import { derivePacketBayProjection } from './packetBayProjection.js';
 import { buildProjectAwarenessProjection, projectAwarenessSupportSnapshotFields } from './projectAwarenessProjection.js';
 import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
 import { deriveEvidenceReturnIntakeProjection } from './evidenceReturnIntakeModel.js';
-import { buildMissionProofReconciliation, missionProofReconciliationSupportSnapshotFields } from './missionProofReconciliation.js';
+import { buildMissionProofReconciliation, missionProofReconciliationSupportSnapshotFields, reconciledMissionMissingProof } from './missionProofReconciliation.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -1769,8 +1769,12 @@ export function buildSupportSnapshot({
     || null;
   let packetBayProjection = livePacketBayProjection && typeof livePacketBayProjection === 'object'
     ? livePacketBayProjection
-    : derivePacketBayProjection({ builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection });
-  let packetBayFields = packetBayProjection.supportSnapshotFields || {};
+    : derivePacketBayProjection({ builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection, missionProofReconciliation });
+  let packetBayFields = {
+    ...(packetBayProjection.supportSnapshotFields || {}),
+    packet_missing_proof_summary: reconciledMissionMissingProof(packetBayProjection.rawLegacyMissingProofSummary || packetBayProjection.missingProofSummary || packetBayProjection.supportSnapshotFields?.packet_missing_proof_summary || [], missionProofReconciliation).join(' | ') || 'none',
+    packet_raw_legacy_missing_proof_summary: packetBayProjection.rawLegacyMissingProofSummary || packetBayProjection.missingProofSummary || packetBayProjection.supportSnapshotFields?.packet_missing_proof_summary || 'none',
+  };
   const liveAgentRealityLoopProjection = runtimeStatus?.operatorReliefProjection?.agentRealityLoopProjection
     || runtimeStatus?.runtimeContext?.operatorReliefProjection?.agentRealityLoopProjection
     || runtimeStatus?.missionState?.operatorReliefProjection?.agentRealityLoopProjection
@@ -1790,7 +1794,7 @@ export function buildSupportSnapshot({
       agent_reality_loop_copy_packets_available: liveAgentRealityLoopProjection.copyPacketsAvailable ? 'yes' : 'no',
       agent_reality_loop_awaiting_result_from: liveAgentRealityLoopProjection.awaitingResultFrom,
       agent_reality_loop_expected_result_kind: liveAgentRealityLoopProjection.expectedResultKind,
-      agent_reality_loop_missing_proof_summary: (liveAgentRealityLoopProjection.missingProof || []).join(' | ') || 'none',
+      agent_reality_loop_missing_proof_summary: reconciledMissionMissingProof(liveAgentRealityLoopProjection.missingProof || [], missionProofReconciliation).join(' | ') || 'none',
       agent_reality_loop_blocker_count: String((liveAgentRealityLoopProjection.blockers || []).length),
       agent_reality_loop_warning_count: String((liveAgentRealityLoopProjection.warnings || []).length),
       agent_reality_loop_operator_decision_required: liveAgentRealityLoopProjection.operatorDecisionRequired ? 'yes' : 'no',
@@ -1819,7 +1823,14 @@ export function buildSupportSnapshot({
       missionProofReconciliation,
     });
   const projectAwarenessFields = projectAwarenessSupportSnapshotFields(
-    projectAwarenessRuntimeProjection,
+    {
+      ...projectAwarenessRuntimeProjection,
+      rawLegacyMissingProof: projectAwarenessRuntimeProjection.rawLegacyMissingProof || projectAwarenessRuntimeProjection.missingProof,
+      missingProof: reconciledMissionMissingProof(projectAwarenessRuntimeProjection.missingProof || [], missionProofReconciliation),
+      nextBestAction: missionProofReconciliation?.missionConsoleBridgeProofAccepted === true && missionProofReconciliation?.remainingMissingItems?.length
+        ? missionProofReconciliation.nextBestAction
+        : projectAwarenessRuntimeProjection.nextBestAction,
+    },
     executionMetadata?.project_awareness_prompt_injected || 'no',
   );
   const liveMissionEvidenceLedgerProjection = runtimeStatus?.operatorReliefProjection?.missionEvidenceLedgerProjection
@@ -1845,7 +1856,17 @@ export function buildSupportSnapshot({
       missionProofReconciliation,
     });
   const missionEvidenceContextSummary = deriveMissionEvidenceContextSummary(missionEvidenceLedgerProjection);
-  const missionEvidenceLedgerFields = missionEvidenceLedgerSupportSnapshotFields(missionEvidenceLedgerProjection);
+  const missionEvidenceLedgerFields = missionEvidenceLedgerSupportSnapshotFields({
+    ...missionEvidenceLedgerProjection,
+    rawLegacyMissingProof: missionEvidenceLedgerProjection.rawLegacyMissingProof || missionEvidenceLedgerProjection.missingProofSummary,
+    missingProofSummary: reconciledMissionMissingProof(missionEvidenceLedgerProjection.rawLegacyMissingProof || missionEvidenceLedgerProjection.missingProofSummary || [], missionProofReconciliation).join(' | ') || 'none',
+    nextRequiredEvidence: missionProofReconciliation?.missionConsoleBridgeProofAccepted === true
+      ? (missionProofReconciliation?.remainingMissingItems?.[0] || missionEvidenceLedgerProjection.nextRequiredEvidence)
+      : missionEvidenceLedgerProjection.nextRequiredEvidence,
+    nextAction: missionProofReconciliation?.missionConsoleBridgeProofAccepted === true && missionProofReconciliation?.remainingMissingItems?.length
+      ? missionProofReconciliation.nextBestAction
+      : missionEvidenceLedgerProjection.nextAction,
+  });
   const liveEvidenceReturnIntakeProjection = runtimeStatus?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.runtimeContext?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.missionState?.operatorReliefProjection?.evidenceReturnIntakeProjection || null;
   const evidenceReturnIntakeProjection = liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? liveEvidenceReturnIntakeProjection : deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary, packetBayProjection, builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
   const evidenceReturnIntakeFields = evidenceReturnIntakeSupportSnapshotFields(evidenceReturnIntakeProjection);
@@ -1854,8 +1875,13 @@ export function buildSupportSnapshot({
       builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection,
       missionEvidenceLedgerProjection,
       missionEvidenceContextSummary,
+      missionProofReconciliation,
     });
-    packetBayFields = packetBayProjection.supportSnapshotFields || {};
+    packetBayFields = {
+      ...(packetBayProjection.supportSnapshotFields || {}),
+      packet_missing_proof_summary: reconciledMissionMissingProof(packetBayProjection.rawLegacyMissingProofSummary || packetBayProjection.missingProofSummary || packetBayProjection.supportSnapshotFields?.packet_missing_proof_summary || [], missionProofReconciliation).join(' | ') || 'none',
+      packet_raw_legacy_missing_proof_summary: packetBayProjection.rawLegacyMissingProofSummary || packetBayProjection.missingProofSummary || packetBayProjection.supportSnapshotFields?.packet_missing_proof_summary || 'none',
+    };
   }
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'

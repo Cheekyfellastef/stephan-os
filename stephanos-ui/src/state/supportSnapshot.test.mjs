@@ -4821,6 +4821,37 @@ test('Support Snapshot accepts Mission Console bridge proof without completing u
       missionVerification: {},
       prEvidence: { status: 'unknown' },
       uiRealityStatus: 'UNKNOWN',
+      operatorReliefProjection: {
+        agentRealityLoopProjection: {
+          status: 'needs-operator-decision',
+          phase: 'judge-result',
+          projectionSource: 'agent-reality-loop-v1-runtime-truth-projection',
+          missingProof: ['Mission Console opens from landing tile', 'Operator Relief panel visible', 'build-proof'],
+        },
+        projectAwarenessProjection: {
+          status: 'degraded',
+          projectionSource: 'derived-runtime-truth',
+          title: 'Stephanos Mission Stack Verification',
+          missionId: 'derived-runtime-mission',
+          phase: 'verification',
+          missingProof: ['idle state renders', 'active/fixture state renders', 'verify-proof'],
+          nextBestAction: 'Resolve legacy browser proof blockers.',
+        },
+        missionEvidenceLedgerProjection: {
+          status: 'active',
+          missionId: 'derived-runtime-mission',
+          missionTitle: 'Stephanos Mission Stack Verification',
+          missionPhase: 'verification',
+          missingProofSummary: 'mission-console-bridge | browser proof gaps visible | pr-evidence',
+          nextRequiredEvidence: 'mission-console-bridge',
+          nextAction: 'Collect mission-console-bridge.',
+        },
+        packetBayProjection: {
+          packetBayStatus: 'active',
+          missingProofSummary: 'repair prompt visible/copyable | source-pack-output',
+          supportSnapshotFields: { packet_bay_status: 'active', packet_missing_proof_summary: 'repair prompt visible/copyable | source-pack-output' },
+        },
+      },
     },
   });
   assert.match(snapshot, /Mission Console Bridge Parity Status: OK/);
@@ -4831,4 +4862,15 @@ test('Support Snapshot accepts Mission Console bridge proof without completing u
   assert.doesNotMatch(snapshot, /Mission Proof Remaining Missing Items: .*mission-console-bridge/);
   assert.match(snapshot, /Mission Proof Remaining Missing Items: build-proof\|verify-proof\|browser-proof-checklist\|pr-evidence/);
   assert.match(snapshot, /Mission Proof Next Best Action: Collect build-proof\./);
+  assert.match(snapshot, /Agent Reality Loop Missing Proof Summary: build-proof \| verify-proof \| browser-proof-checklist \| pr-evidence/);
+  assert.doesNotMatch(snapshot, /Agent Reality Loop Missing Proof Summary: .*Mission Console opens from landing tile/);
+  assert.match(snapshot, /Project Awareness Missing Proof Summary: build-proof \| verify-proof \| browser-proof-checklist \| pr-evidence/);
+  assert.doesNotMatch(snapshot, /Project Awareness Missing Proof Summary: .*idle state renders/);
+  assert.match(snapshot, /Mission Evidence Ledger Missing Proof Summary: build-proof \| verify-proof \| browser-proof-checklist \| pr-evidence/);
+  assert.doesNotMatch(snapshot, /Mission Evidence Ledger Missing Proof Summary: .*mission-console-bridge/);
+  assert.match(snapshot, /Packet Missing Proof Summary: build-proof \| verify-proof \| browser-proof-checklist \| pr-evidence/);
+  assert.doesNotMatch(snapshot, /Packet Missing Proof Summary: .*repair prompt visible\/copyable/);
+  assert.match(snapshot, /Project Awareness Next Best Action: Collect build-proof\./);
+  assert.match(snapshot, /Mission Evidence Ledger Next Required: build-proof/);
+  assert.match(snapshot, /Mission Evidence Ledger Trusted For Merge: no/);
 });

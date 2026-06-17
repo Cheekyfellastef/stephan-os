@@ -1,4 +1,4 @@
-import { removeAcceptedMissionProof } from './missionProofReconciliation.js';
+import { reconciledMissionMissingProof } from './missionProofReconciliation.js';
 
 const MAX_PROMPT_BLOCK_LENGTH = 1400;
 const KNOWN = new Set(['', 'unknown', 'none', 'n/a', 'null', 'undefined']);
@@ -91,7 +91,8 @@ export function buildProjectAwarenessProjection({
     ...(Object.keys(mesh).length ? ['builder-mesh'] : []),
   ]);
   const requiredProof = uniq([...list(packetBay.requiredProof), ...packets.flatMap((p) => list(p?.requiredProof)), ...list(mesh.requiredProof), ...list(mesh.proofRequiredBeforeMerge), ...list(arl.requiredProof), ...list(verification.requiredProof)]);
-  let missingProof = uniq([...list(arl.missingProof), ...list(verification.missingEvidence), ...list(mesh.missingProof), ...packets.flatMap((p) => list(p?.missingProof))], 18);
+  const rawLegacyMissingProof = uniq([...list(arl.missingProof), ...list(verification.missingEvidence), ...list(mesh.missingProof), ...packets.flatMap((p) => list(p?.missingProof))], 18);
+  let missingProof = rawLegacyMissingProof.slice();
   const blockers = uniq([...list(arl.blockers), ...list(mesh.blockers), ...list(verification.blockers)], 18);
   const warnings = uniq([...list(mesh.warnings), ...list(workbench.warnings), ...list(verification.warnings)], 18);
   const workspaceDirty = hygiene.workspaceDirtDetected === 'yes' || hygiene.workspaceBlocksIgnition === 'yes' || Number(hygiene.workspaceDirtCount || 0) > 0;
@@ -101,7 +102,7 @@ export function buildProjectAwarenessProjection({
   if (evidenceAvailable && evidenceContext.missingProofSummary && evidenceContext.missingProofSummary !== 'none') {
     missingProof.push(...String(evidenceContext.missingProofSummary).split('|').map((item) => text(item, '')).filter(Boolean));
   }
-  missingProof = uniq(removeAcceptedMissionProof(missingProof, missionProofReconciliation), 18);
+  missingProof = uniq(reconciledMissionMissingProof(missingProof, missionProofReconciliation), 18);
   const verificationPending = ['pending', 'not_ready', 'insufficient_evidence', 'proof-pending', 'technically-clean-but-proof-pending'].includes(text(verification.proofStatus || verification.readinessLevel || verification.returnStatus || verification.missionVerificationProofStatus, '').toLowerCase());
   if (verificationPending && !missingProof.some((item) => /mission verification/i.test(item))) missingProof.push('Mission Verification proof pending');
 
@@ -144,7 +145,7 @@ export function buildProjectAwarenessProjection({
   const promptBlock = promptInjectable ? promptLines.join('\n').slice(0, MAX_PROMPT_BLOCK_LENGTH) : '';
   return {
     status, missionId, title, phase, currentFocus, nextBestAction, recommendedRoute, recommendedRouteReason,
-    sourceSummary, provedSystems, affectedSubsystems, requiredProof, missingProof, blockers: uniq(blockers, 18), warnings,
+    sourceSummary, provedSystems, affectedSubsystems, requiredProof, missingProof, rawLegacyMissingProof, blockers: uniq(blockers, 18), warnings,
     operatorDecisionRequired, promptInjectable, promptBlock,
     projectionSource: storedTitle ? 'active-mission-storage+runtime-truth' : (hasRuntimeTruth ? 'derived-runtime-truth' : 'none'),
     confidence, rehydrated, rehydrationSource,

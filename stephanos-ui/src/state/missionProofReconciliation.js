@@ -26,6 +26,12 @@ export function removeAcceptedMissionProof(values = [], reconciliation = {}) {
   return list.map((item) => asText(item)).filter(Boolean).filter((item) => !isMissionConsoleBridgeProofLabel(item));
 }
 
+export function reconciledMissionMissingProof(values = [], reconciliation = {}) {
+  const remaining = asList(reconciliation?.remainingMissingItems);
+  if (reconciliation?.missionConsoleBridgeProofAccepted === true && reconciliation?.status === 'active' && remaining.length > 0) return remaining;
+  return removeAcceptedMissionProof(values, reconciliation);
+}
+
 export function buildMissionProofReconciliation({ missionConsoleDiagnostics = {}, supportSnapshot = {}, missionVerification = {}, prEvidence = {}, openClawSourcePackRunner = {}, uiRealityTruth = {} } = {}) {
   const diagnostics = missionConsoleDiagnostics && typeof missionConsoleDiagnostics === 'object' ? missionConsoleDiagnostics : {};
   const projectionKeys = asList(diagnostics.operatorReliefBridgeProjectionKeysSeen || diagnostics.projectionKeysSeen || supportSnapshot.operatorReliefBridgeProjectionKeysSeen);

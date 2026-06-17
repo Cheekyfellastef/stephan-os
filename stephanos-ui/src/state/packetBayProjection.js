@@ -1,4 +1,5 @@
 import { deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
+import { reconciledMissionMissingProof } from './missionProofReconciliation.js';
 
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -91,7 +92,7 @@ function makePacket(input = {}) {
   return { ...packet, id: input.id || stablePacketId(packet) };
 }
 
-export function derivePacketBayProjection({ builderMeshProjection = {}, supportSnapshot = {}, missionBrainNextAction = {}, agentWorkRoutingProjection = {}, missionEvidenceLedgerProjection = {}, missionEvidenceContextSummary = null } = {}) {
+export function derivePacketBayProjection({ builderMeshProjection = {}, supportSnapshot = {}, missionBrainNextAction = {}, agentWorkRoutingProjection = {}, missionEvidenceLedgerProjection = {}, missionEvidenceContextSummary = null, missionProofReconciliation = {} } = {}) {
   const packets = [];
   const mesh = builderMeshProjection && typeof builderMeshProjection === 'object' ? builderMeshProjection : {};
   const workbench = mesh.builderWorkbenchProjection || {};
@@ -374,7 +375,10 @@ export function derivePacketBayProjection({ builderMeshProjection = {}, supportS
   const awaiting = packets.filter((packet) => packet.status === 'awaiting-result');
   const blocked = packets.filter((packet) => packet.status === 'blocked');
   const latestReady = ready[0] || null;
-  const missingProofSummary = Array.from(new Set(packets.flatMap((packet) => packet.missingProof))).join(' | ') || 'none';
+  const rawLegacyMissingProof = Array.from(new Set(packets.flatMap((packet) => packet.missingProof)));
+  const reconciledMissingProof = reconciledMissionMissingProof(rawLegacyMissingProof, missionProofReconciliation);
+  const missingProofSummary = reconciledMissingProof.join(' | ') || 'none';
+  const rawLegacyMissingProofSummary = rawLegacyMissingProof.join(' | ') || 'none';
   const evidencePackets = packets.filter((packet) => packet.createdFrom === 'mission-evidence-context-v1b');
   const evidenceReviewPacketReady = packets.some((packet) => packet.id === 'packet-evidence-review-local-ai-proof-v1b' && packet.status === 'ready-to-copy');
   const browserProofPacketReady = packets.some((packet) => packet.id === 'packet-browser-proof-checklist-operator-v1b' && ['ready-to-copy', 'operator-action'].includes(packet.status));
@@ -401,6 +405,7 @@ export function derivePacketBayProjection({ builderMeshProjection = {}, supportS
     latestReadyKind: latestReady?.kind || 'none',
     latestReadyId: latestReady?.id || 'none',
     missingProofSummary,
+    rawLegacyMissingProofSummary,
     evidencePacketCount: evidencePackets.length,
     evidenceReviewPacketReady,
     browserProofPacketReady,
@@ -423,6 +428,7 @@ export function derivePacketBayProjection({ builderMeshProjection = {}, supportS
       packet_latest_ready_kind: latestReady?.kind || 'none',
       packet_latest_ready_id: latestReady?.id || 'none',
       packet_missing_proof_summary: missingProofSummary,
+      packet_raw_legacy_missing_proof_summary: rawLegacyMissingProofSummary,
       packet_bay_evidence_packet_count: String(evidencePackets.length),
       packet_bay_evidence_review_packet_ready: evidenceReviewPacketReady ? 'yes' : 'no',
       packet_bay_browser_proof_packet_ready: browserProofPacketReady ? 'yes' : 'no',
