@@ -511,12 +511,15 @@ function persistBridgeMemoryToDurableStore(bridgeMemory, { sessionKind = '' } = 
 }
 
 function normalizeUiLayout(value = {}) {
-  return Object.fromEntries(
-    Object.entries(DEFAULT_UI_LAYOUT).map(([key, defaultValue]) => [
-      key,
-      defaultValue ? value[key] !== false : value[key] === true,
-    ]),
-  );
+  return {
+    ...Object.fromEntries(
+      Object.entries(DEFAULT_UI_LAYOUT).map(([key, defaultValue]) => [
+        key,
+        defaultValue ? value[key] !== false : value[key] === true,
+      ]),
+    ),
+    commandDeck: true,
+  };
 }
 
 function normalizeOperatorPaneOrder(value = [], requiredPaneOrder = DEFAULT_OPERATOR_PANE_ORDER) {
@@ -540,6 +543,9 @@ function normalizeOperatorPaneOrder(value = [], requiredPaneOrder = DEFAULT_OPER
       normalized.push(paneId);
     }
   });
+  if (seen.has('commandDeck')) {
+    return ['commandDeck', ...normalized.filter((paneId) => paneId !== 'commandDeck')];
+  }
   return normalized;
 }
 
@@ -1622,6 +1628,9 @@ export function AIStoreProvider({ children }) {
 
   const setPanelState = useCallback((panelId, isOpen, source = 'unknown') => {
     if (!(panelId in DEFAULT_UI_LAYOUT)) return;
+    if (panelId === 'commandDeck') {
+      isOpen = true;
+    }
 
     setUiLayout((prev) => {
       const resolvedOpen = typeof isOpen === 'function' ? isOpen(prev[panelId]) : isOpen;

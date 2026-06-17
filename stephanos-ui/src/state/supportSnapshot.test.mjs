@@ -4093,6 +4093,49 @@ test('support snapshot live sampler cannot report missing final card when matchi
   assert.match(snapshot, /Latest Assistant Answer DOM Found: yes/);
 });
 
+
+test('support snapshot proves visible mounted Command Deck while Universal Intake stays idle and merge readiness stays hold', () => {
+  const nodes = createCommandDeckNode({ answerId: 'universal-intake-visible', answerText: 'ready' });
+  const snapshot = withCommandDeckDocument(nodes, () => buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        command_deck_universal_intake_status: 'idle',
+        agent_reality_loop_merge_recommendation: 'hold',
+      },
+    },
+    uiReality: {
+      paneShells: [
+        { panelId: 'commandDeck', title: 'Command Deck', bodyVisible: true },
+        { panelId: 'aiCoreMissionConsolePanel', title: 'AI Core Mission Console', bodyVisible: true },
+      ],
+      renderedPaneOrder: ['commandDeck', 'aiCoreMissionConsolePanel'],
+      domPaneOrder: ['commandDeck', 'aiCoreMissionConsolePanel'],
+      panesMissingCollapseControls: [],
+      panesMissingMoveControls: [],
+      moveControlGroups: [],
+      totalFirstClassPanes: 2,
+      orphanMoveControlCount: 0,
+      arrangeMode: false,
+      aiCoreMissionConsole: { configured: true, rendered: true, visible: true, panelId: 'aiCoreMissionConsolePanel', domParentPaneId: 'aiCoreMissionConsolePanel' },
+      dedicatedMissionConsole: { rendered: true, visible: true },
+      agentMissionConsoleNestedOperationalPanes: [],
+      agentMissionConsoleCollapse: { bodyVisibleWhenCollapsed: false },
+      copyButtons: [],
+      canonicalCopyControls: [],
+    },
+  }));
+  assert.match(snapshot, /UI Reality AI Chat Command Deck Visible: yes/);
+  assert.match(snapshot, /UI Reality AI Chat Command Deck Placement Status: OK/);
+  assert.match(snapshot, /Command Deck Render Proof Source: live-dom/);
+  assert.match(snapshot, /History Container Found: yes/);
+  assert.match(snapshot, /Composer Found: yes/);
+  assert.match(snapshot, /Input Found: yes/);
+  assert.match(snapshot, /Execute Found: yes/);
+  assert.match(snapshot, /Command Deck Universal Intake Status: idle/);
+  assert.match(snapshot, /Mission Evidence Ledger Trusted For Merge: no/);
+  assert.match(snapshot, /Agent Reality Loop Merge Recommendation: hold/);
+});
+
 test('support snapshot live sampler reports explicit zero-height visibility blocker', () => {
   const nodes = createCommandDeckNode({ answerId: 'zero-height-final-card', answerText: '4', answerHeight: 0 });
   const snapshot = withCommandDeckDocument(nodes, () => buildSupportSnapshot({
