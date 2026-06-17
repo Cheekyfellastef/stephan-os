@@ -27,10 +27,17 @@ test('reconciliation avoids duplicate missionConsolePanel entries', () => {
 });
 
 
-test('uiLayout forces missionConsolePanel open when persisted pane order omitted it', () => {
+test('uiLayout forces protected AI Core intake panes open when persisted pane order omitted them', () => {
   assert.match(source, /shouldForceMissionConsoleOpen = !persistedPaneOrderIncludesPane\(persistedSession, 'missionConsolePanel'\)/m);
   assert.match(source, /shouldForceAiCoreMissionConsoleOpen = !persistedPaneOrderIncludesPane\(persistedSession, 'aiCoreMissionConsolePanel'\)/m);
   assert.match(source, /aiCoreMissionConsolePanel: true/m);
+  assert.match(source, /commandDeck: true/m);
+  assert.match(source, /function normalizeUiLayout[\s\S]*commandDeck: true/m);
+  assert.match(source, /if \(panelId === 'commandDeck'\) \{[\s\S]*isOpen = true/m);
+});
+
+test('persisted pane order reconciliation keeps commandDeck at the top for Universal Intake reachability', () => {
+  assert.match(source, /return \['commandDeck', \.\.\.normalized\.filter\(\(paneId\) => paneId !== 'commandDeck'\)\]/m);
 });
 
 test('DEFAULT_UI_LAYOUT registers compact Mission Console activity feed panel ids', () => {
