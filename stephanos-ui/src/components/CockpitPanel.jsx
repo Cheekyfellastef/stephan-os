@@ -3,6 +3,8 @@ import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import { buildCockpitModel, CONNECTIONS, COCKPIT_VIEWBOX, NODE_LAYOUT } from '../state/cockpitTruthModel.js';
+import { buildCockpitProjection } from '../state/cockpitProjection.js';
+import CockpitDetailView from './CockpitDetailView.jsx';
 import { RECENT_ACTIVITY_WINDOW_MS } from '../state/continuityLoopSnapshot.js';
 import CollapsiblePanel from './CollapsiblePanel';
 
@@ -29,6 +31,8 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
 
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
+
+  const cockpitProjection = useMemo(() => buildCockpitProjection({ runtimeStatusModel: runtimeStatus }), [runtimeStatus]);
 
   const cockpitModel = useMemo(() => {
     if (!shouldRenderCockpit) {
@@ -131,6 +135,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       {!shouldRenderCockpit ? <p className="muted">Cockpit rendering pauses when the panel or page is hidden.</p> : null}
       {shouldRenderCockpit ? (
         <div className="cockpit-shell">
+        <CockpitDetailView projection={cockpitProjection} />
         <svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos routing truth cockpit">
           {CONNECTIONS.map((connection) => {
             const from = NODE_LAYOUT[connection.from];

@@ -3,6 +3,7 @@ import { publishTileContextSnapshot } from '../../shared/runtime/tileContextRegi
 import { STEPHANOS_LAW_IDS } from '../../shared/runtime/stephanosLaws.mjs';
 import { withCommandDeckDestination } from '../../shared/runtime/commandDeckDestination.mjs';
 import { buildStephanosTileTruthProjection } from './stephanosTileTruthProjection.mjs';
+import { buildCockpitProjection, renderCockpitSummaryMarkup } from '../../shared/runtime/cockpitProjection.mjs';
 import { buildMusicLandingSummaryLines } from '../../apps/music-tile/data/musicTasteSummary.js';
 
 
@@ -469,8 +470,10 @@ function createProjectRegistryRenderSignature(projects, options = {}) {
     };
   });
 
+  const stephanosProject = safeProjects.find((candidate) => isStephanosProject(candidate)) || {};
   return JSON.stringify({
     enableSecondaryStatusSurfaces: options?.enableSecondaryStatusSurfaces === true,
+    cockpitProjection: buildCockpitProjection({ runtimeStatusModel: stephanosProject.runtimeStatusModel || {}, project: stephanosProject }),
     projects: renderState,
   });
 }
@@ -495,6 +498,9 @@ export function renderProjectRegistry(projects, context, options = {}) {
     renderLauncherStatusStrip(projects, context);
     renderMobileCompanionDeck(projects, context);
   }
+
+  const stephanosProjectForCockpit = (Array.isArray(projects) ? projects : []).map(normaliseProject).find((candidate) => isStephanosProject(candidate)) || {};
+  const canonicalCockpitProjection = buildCockpitProjection({ runtimeStatusModel: stephanosProjectForCockpit.runtimeStatusModel || {}, project: stephanosProjectForCockpit });
 
   projects.forEach((project) => {
     const safeProject = normaliseProject(project);
@@ -531,12 +537,13 @@ export function renderProjectRegistry(projects, context, options = {}) {
       ? `${runtimeSummary || ''}${runtimeSummary ? ' · ' : ''}${safeProject.runtimeStatusModel.preferredTarget}${forensicBoundary ? ` · forensic=${forensicBoundary}` : ''}`
       : `${runtimeSummary || ''}${forensicBoundary ? `${runtimeSummary ? ' · ' : ''}forensic=${forensicBoundary}` : ''}`;
     const musicLandingLines = safeProject.id === 'music-tile' ? buildMusicLandingSummaryLines() : null;
+    const isCockpitShortcut = safeProject.id === 'cockpit' || String(safeProject.name || '').trim().toLowerCase() === 'cockpit';
     const runtimeDetail = isStephanos
       ? stephanosTruth?.summary || compatibilityRuntimeDetail
-      : (musicLandingLines ? musicLandingLines.join(' · ') : compatibilityRuntimeDetail);
+      : (musicLandingLines ? musicLandingLines.join(' · ') : (isCockpitShortcut ? canonicalCockpitProjection.nextBestAction : compatibilityRuntimeDetail));
     const launcherDescription = safeProject.id === 'music-tile'
       ? buildMusicLandingSummaryLines()[0]
-      : String(safeProject.launcherDescription || '').trim();
+      : (isCockpitShortcut ? 'Shortcut to the canonical expanded Stephanos cockpit pane.' : String(safeProject.launcherDescription || '').trim());
     const badgeMarkup = safeProject.launcherBadges.length > 0
       ? `<div class="app-tile-badges">${safeProject.launcherBadges.map((badge) => `<span class="app-tile-badge">${badge}</span>`).join('')}</div>`
       : '';
@@ -549,9 +556,11 @@ export function renderProjectRegistry(projects, context, options = {}) {
         ? `<div class="app-tile-issue">${stephanosTruth.diagnosticLabel}</div><div class="app-tile-detail">${runtimeDetail}</div>`
         : (musicLandingLines
           ? `<div class="app-tile-detail">${musicLandingLines.slice(1).map((line) => `<div>${line}</div>`).join('')}</div>`
-          : runtimeDetail
-            ? `<div class="app-tile-detail">${runtimeDetail}</div>`
-            : '');
+          : isCockpitShortcut
+            ? `<div class="app-tile-detail">${renderCockpitSummaryMarkup(canonicalCockpitProjection)}</div>`
+            : runtimeDetail
+              ? `<div class="app-tile-detail">${runtimeDetail}</div>`
+              : '');
 
     tile.innerHTML = `
       <div style="font-size:36px;">${safeProject.icon}</div>
