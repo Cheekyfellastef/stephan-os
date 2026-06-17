@@ -40,7 +40,7 @@ function deriveCockpitDomProof(projection = {}) {
   const fallback = {
     landingPresent: 'no', landingExpected: 'unknown', landingMountStatus: 'unknown', landingProjectionSource: canonicalSource, landingRenderSignature: expectedSignature,
     expandedPresent: 'no', expandedExpected: 'unknown', expandedMountStatus: 'unknown', expandedProjectionSource: canonicalSource, expandedRenderSignature: expectedSignature,
-    surfaceDriftDetected: 'unknown', surfaceDriftReason: 'live-dom-unavailable', operatorVisualPresent: 'no', operatorVisualPosition: 'unknown', operatorPrimaryVisualLabel: 'unknown', operatorFirstContentBlockKind: 'unknown', operatorFirstContentBlockLabel: 'unknown', landingFirstContentBlockKind: 'unknown', landingPrimaryVisualPosition: 'unknown', expandedFirstContentBlockKind: 'unknown', expandedPrimaryVisualPosition: 'unknown', cockpitVisualLayoutVerdict: 'UNKNOWN', cockpitVisualLayoutFailureReason: 'live-dom-unavailable', landingTileTextDensity: 'unknown', landingTileTextBloatDetected: 'unknown', landingTileVisibleDetailFieldCount: '0', landingTileShortcutRolePreserved: 'unknown', landingVisualPresent: 'no', landingVisualPosition: 'unknown', expandedVisualPresent: 'no', expandedVisualPosition: 'unknown', visualProjectionSource: canonicalSource, visualTextDriftDetected: 'unknown', visualTextDriftReason: 'live-dom-unavailable',
+    surfaceDriftDetected: 'unknown', surfaceDriftReason: 'live-dom-unavailable', operatorVisualPresent: 'no', operatorPrimaryDashboardPresent: 'no', operatorVisualPosition: 'unknown', operatorPrimaryDashboardPosition: 'unknown', operatorPrimaryVisualLabel: 'unknown', operatorFirstContentBlockKind: 'unknown', operatorFirstContentBlockLabel: 'unknown', landingFirstContentBlockKind: 'unknown', landingPrimaryVisualPosition: 'unknown', expandedFirstContentBlockKind: 'unknown', expandedPrimaryVisualPosition: 'unknown', cockpitVisualLayoutVerdict: 'UNKNOWN', cockpitVisualLayoutFailureReason: 'live-dom-unavailable', landingTileTextDensity: 'unknown', landingTileTextBloatDetected: 'unknown', landingTileVisibleDetailFieldCount: '0', landingTileShortcutRolePreserved: 'unknown', landingVisualPresent: 'no', landingVisualPosition: 'unknown', expandedVisualPresent: 'no', expandedVisualPosition: 'unknown', visualProjectionSource: canonicalSource, visualTextDriftDetected: 'unknown', visualTextDriftReason: 'live-dom-unavailable', operatorCockpitLayoutDensity: 'unknown', operatorCockpitEmptySpaceWarning: 'unknown', expandedDetailGridPresent: 'no', expandedDetailCardCount: '0', expandedProofChipsPresent: 'no', expandedCollapsedEmptyFieldsCount: '0', expandedDebugCollapsedByDefault: 'unknown', expandedLayoutDensityVerdict: 'UNKNOWN', expandedLayoutDensityFailureReason: 'live-dom-unavailable', expandedSummaryReadoutPosition: 'unknown', expandedDetailTextPosition: 'unknown', expandedRouteTopologyPosition: 'unknown', cockpitVisualHierarchyVerdict: 'UNKNOWN', cockpitVisualHierarchyFailureReason: 'live-dom-unavailable',
     animationEnabled: 'yes', animationMode: 'subtle', animatedElements: 'status-orb|proof-strip|next-action-beacon|lock-chips', animationTruthImpact: 'none', reducedMotionRespected: 'yes',
   };
   if (!doc?.querySelector) return fallback;
@@ -56,20 +56,38 @@ function deriveCockpitDomProof(projection = {}) {
   const expandedSig = read(expanded, 'data-cockpit-render-signature', expectedSignature);
   const landingSource = read(landing, 'data-cockpit-projection-source', canonicalSource);
   const expandedSource = read(expanded, 'data-cockpit-projection-source', canonicalSource);
-  const landingVisual = landing?.querySelector?.('[data-cockpit-block="primary-visual"]') || landing?.querySelector?.('[data-cockpit-visual="true"]') || null;
-  const expandedVisual = expanded?.querySelector?.('[data-cockpit-block="primary-visual"]') || expanded?.querySelector?.('[data-cockpit-visual="true"]') || null;
+  const landingVisual = landing?.querySelector?.('[data-cockpit-block="shortcut-visual"], [data-cockpit-visual="true"]') || null;
+  const expandedVisual = expanded?.querySelector?.('[data-cockpit-block="primary-dashboard"]') || null;
   const landingTextNode = landing?.querySelector?.('[data-cockpit-text="true"]') || null;
-  const expandedText = expanded?.querySelector?.('[data-cockpit-text="true"]') || null;
-  const blockKind = (node) => { const block = read(node, 'data-cockpit-block', 'unknown'); return block === 'primary-visual' ? 'visual' : (block.includes('text') ? 'text' : block); };
+  const expandedText = expanded?.querySelector?.('[data-cockpit-block="detail-grid"]') || expanded?.querySelector?.('[data-cockpit-text="true"]') || null;
+  const expandedSummary = expanded?.querySelector?.('[data-cockpit-block="summary-readout"]') || null;
+  const expandedGrid = expanded?.querySelector?.('[data-cockpit-block="detail-grid"]') || null;
+  const expandedRoute = expanded?.querySelector?.('[data-cockpit-block="route-topology"]') || null;
+  const expandedDebug = expanded?.querySelector?.('[data-cockpit-block="debug-drilldown"]') || null;
+  const blockKind = (node) => read(node, 'data-cockpit-block', 'unknown');
   const firstBlock = (root) => Array.from(root?.querySelectorAll?.('[data-cockpit-block]') || []).find(visible) || null;
   const label = (node) => asText(node?.getAttribute?.('aria-label') || node?.querySelector?.('h3,h4,strong')?.textContent || node?.textContent, 'unknown').slice(0, 80);
-  const position = (visual, text) => visual && text && visual.compareDocumentPosition ? ((visual.compareDocumentPosition(text) & (globalThis.Node?.DOCUMENT_POSITION_FOLLOWING || 4)) ? 'before-text' : 'after-text') : (visual ? 'before-text' : 'unknown');
+  const position = (a, b, before = 'before-text', after = 'after-text') => a && b && a.compareDocumentPosition ? ((a.compareDocumentPosition(b) & (globalThis.Node?.DOCUMENT_POSITION_FOLLOWING || 4)) ? before : after) : (a ? before : 'unknown');
   const landingFirst = firstBlock(landing);
   const expandedFirst = firstBlock(expanded);
   const landingDetailCount = Number(read(landing, 'data-cockpit-visible-detail-field-count', String(landing?.querySelectorAll?.('[data-cockpit-text-current-status],[data-cockpit-text-next-action],[data-cockpit-text-merge-safety],[data-cockpit-text-openclaw-lock]')?.length || 0)));
   const landingText = asText(landing?.textContent, '');
   const bloatDetected = landingDetailCount > 1 || landingText.length > 220 || /Next best action|Accepted Proof|Merge safety|OpenClaw \/ Codex|proof-collection-packet/i.test(landingText);
   const landingDensity = landing ? (bloatDetected ? 'verbose' : 'compact') : 'unknown';
+
+  const dashboardFirst = expanded && blockKind(expandedFirst) === 'primary-dashboard';
+  const summaryBeforeDashboard = expandedSummary && expandedVisual && position(expandedSummary, expandedVisual, 'before-primary-dashboard', 'after-primary-dashboard') === 'before-primary-dashboard';
+  const detailBeforeDashboard = expandedGrid && expandedVisual && position(expandedGrid, expandedVisual, 'before-primary-dashboard', 'after-primary-dashboard') === 'before-primary-dashboard';
+  const routeFirstRouting = expandedRoute && blockKind(expandedFirst) === 'route-topology' && read(expandedRoute, 'data-cockpit-kind') === 'routing';
+  const hierarchyReason = !expandedVisual ? 'primary-dashboard-missing' : summaryBeforeDashboard ? 'summary-readout-before-primary-dashboard' : detailBeforeDashboard ? 'detail-text-before-primary-dashboard' : routeFirstRouting ? 'route-topology-not-primary-dashboard' : !dashboardFirst ? 'primary-dashboard-not-first-substantial-block' : 'none';
+  const cardCount = Number(read(expandedGrid, 'data-cockpit-card-count', String(expanded?.querySelectorAll?.('[data-cockpit-block="detail-card"]')?.length || 0)));
+  const proofChipsPresent = expanded?.querySelector?.('[data-cockpit-block="proof-chip-list"]') ? 'yes' : 'no';
+  const emptyCollapsedCount = expanded?.querySelectorAll?.('[data-cockpit-empty-field-collapsed="yes"]')?.length || 0;
+  const density = expandedGrid && cardCount >= 6 && proofChipsPresent === 'yes' ? 'compact' : (expandedGrid ? 'loose' : 'unknown');
+  const emptyWarning = density === 'compact' && read(expandedGrid, 'data-cockpit-empty-space-warning', 'no') === 'no' ? 'no' : 'yes';
+  const densityVerdict = density === 'compact' && emptyWarning === 'no' ? 'OK' : (density === 'unknown' ? 'FAIL' : 'WARN');
+  const densityReason = densityVerdict === 'OK' ? 'none' : 'cockpit-detail-layout-too-sparse';
+
   const mounted = [[landing, landingSig, landingSource], [expanded, expandedSig, expandedSource]].filter(([node]) => !!node);
   const signatureMismatch = mounted.length > 1 && new Set(mounted.map(([, sig]) => sig)).size > 1;
   const sourceMismatch = mounted.some(([, , source]) => source !== canonicalSource);
@@ -100,7 +118,7 @@ function deriveCockpitDomProof(projection = {}) {
     landingPresent: landing ? 'yes' : 'no', landingExpected, landingMountStatus: mountStatus(landing, landingExpected, 'not-mounted-current-route'), landingProjectionSource: landingSource, landingRenderSignature: landingSig,
     expandedPresent: expanded ? 'yes' : 'no', expandedExpected, expandedMountStatus: mountStatus(expanded, expandedExpected, 'not-mounted-inactive-pane'), expandedProjectionSource: expandedSource, expandedRenderSignature: expandedSig,
     surfaceDriftDetected: surfaceDrift, surfaceDriftReason: surfaceReason,
-    operatorVisualPresent: landingVisual || expandedVisual ? 'yes' : 'no', operatorVisualPosition: (position(landingVisual, landingTextNode) === 'before-text' || position(expandedVisual, expandedText) === 'before-text') ? 'before-text' : 'unknown', operatorPrimaryVisualLabel: label(expandedVisual || landingVisual), operatorFirstContentBlockKind: blockKind(expandedFirst || landingFirst), operatorFirstContentBlockLabel: label(expandedFirst || landingFirst), landingFirstContentBlockKind: blockKind(landingFirst), landingPrimaryVisualPosition: position(landingVisual, landingTextNode), expandedFirstContentBlockKind: blockKind(expandedFirst), expandedPrimaryVisualPosition: position(expandedVisual, expandedText), cockpitVisualLayoutVerdict: expanded && blockKind(expandedFirst) !== 'visual' ? 'FAIL' : 'OK', cockpitVisualLayoutFailureReason: expanded && blockKind(expandedFirst) !== 'visual' ? 'expanded-primary-visual-not-first-dom-block' : 'none', landingTileTextDensity: landingDensity, landingTileTextBloatDetected: bloatDetected ? 'yes' : 'no', landingTileVisibleDetailFieldCount: String(landingDetailCount), landingTileShortcutRolePreserved: !landing || read(landing, 'data-cockpit-shortcut-role', 'missing') === 'preserved' ? 'yes' : 'no',
+    operatorVisualPresent: landingVisual || expandedVisual ? 'yes' : 'no', operatorPrimaryDashboardPresent: expandedVisual ? 'yes' : 'no', operatorVisualPosition: (position(landingVisual, landingTextNode) === 'before-text' || position(expandedVisual, expandedText) === 'before-text') ? 'before-text' : 'unknown', operatorPrimaryDashboardPosition: expandedVisual ? (dashboardFirst ? 'before-summary-and-text' : 'after-text') : 'missing', operatorPrimaryVisualLabel: label(expandedVisual || landingVisual), operatorFirstContentBlockKind: blockKind(expandedFirst || landingFirst), operatorFirstContentBlockLabel: label(expandedFirst || landingFirst), landingFirstContentBlockKind: blockKind(landingFirst), landingPrimaryVisualPosition: position(landingVisual, landingTextNode), expandedFirstContentBlockKind: blockKind(expandedFirst), expandedPrimaryVisualPosition: expandedVisual ? (dashboardFirst ? 'before-summary-and-text' : position(expandedVisual, expandedText)) : 'missing', expandedSummaryReadoutPosition: position(expandedSummary, expandedVisual, 'before-primary-dashboard', 'after-primary-dashboard'), expandedDetailTextPosition: position(expandedGrid, expandedVisual, 'before-primary-dashboard', 'after-primary-dashboard'), expandedRouteTopologyPosition: position(expandedRoute, expandedGrid, 'before-detail-grid', 'after-cockpit-truth-blocks'), cockpitVisualLayoutVerdict: hierarchyReason === 'none' ? 'OK' : 'FAIL', cockpitVisualLayoutFailureReason: hierarchyReason, cockpitVisualHierarchyVerdict: hierarchyReason === 'none' ? 'OK' : 'FAIL', cockpitVisualHierarchyFailureReason: hierarchyReason, operatorCockpitLayoutDensity: density, operatorCockpitEmptySpaceWarning: emptyWarning, expandedDetailGridPresent: expandedGrid ? 'yes' : 'no', expandedDetailCardCount: String(cardCount), expandedProofChipsPresent: proofChipsPresent, expandedCollapsedEmptyFieldsCount: String(emptyCollapsedCount), expandedDebugCollapsedByDefault: expandedDebug && !expandedDebug.open ? 'yes' : (expandedDebug ? 'no' : 'unknown'), expandedLayoutDensityVerdict: densityVerdict, expandedLayoutDensityFailureReason: densityReason, landingTileTextDensity: landingDensity, landingTileTextBloatDetected: bloatDetected ? 'yes' : 'no', landingTileVisibleDetailFieldCount: String(landingDetailCount), landingTileShortcutRolePreserved: !landing || read(landing, 'data-cockpit-shortcut-role', 'missing') === 'preserved' ? 'yes' : 'no',
     landingVisualPresent: landingVisual ? 'yes' : 'no', landingVisualPosition: position(landingVisual, landingTextNode), expandedVisualPresent: expandedVisual ? 'yes' : 'no', expandedVisualPosition: position(expandedVisual, expandedText), visualProjectionSource: canonicalSource,
     visualTextDriftDetected: driftReasons.length ? 'yes' : 'no', visualTextDriftReason: driftReasons.length ? driftReasons.join('|') : 'none',
     animationEnabled: read(animationNode, 'data-cockpit-animation-enabled', 'yes'), animationMode: read(animationNode, 'data-cockpit-animation-mode', 'subtle'), animatedElements: read(animationNode, 'data-cockpit-animated-elements', 'status-orb|proof-strip|next-action-beacon|lock-chips'), animationTruthImpact: read(animationNode, 'data-cockpit-animation-truth-impact', 'none'), reducedMotionRespected: read(animationNode, 'data-cockpit-reduced-motion-respected', 'yes'),
@@ -2913,13 +2931,33 @@ export function buildSupportSnapshot({
     `Cockpit Surface Drift Reason: ${cockpitDomProof.surfaceDriftDetected === 'unknown' ? 'live-dom-unavailable; canonical projection signature=' + operatorCockpitRenderSignature : cockpitDomProof.surfaceDriftReason}`,
     `Operator Cockpit Visual Present: ${cockpitDomProof.operatorVisualPresent === 'no' ? 'yes' : cockpitDomProof.operatorVisualPresent}`,
     `Operator Cockpit Primary Visual Present: ${cockpitDomProof.operatorVisualPresent === 'no' ? 'yes' : cockpitDomProof.operatorVisualPresent}`,
+    `Operator Cockpit Primary Dashboard Present: ${cockpitDomProof.operatorPrimaryDashboardPresent}`,
+    `Operator Cockpit Primary Dashboard Position: ${cockpitDomProof.operatorPrimaryDashboardPosition}`,
     `Operator Cockpit Primary Visual Label: ${cockpitDomProof.operatorPrimaryVisualLabel}`,
     `Operator Cockpit First Content Block Kind: ${cockpitDomProof.operatorFirstContentBlockKind}`,
+    `Operator Cockpit First Substantial Block Kind: ${cockpitDomProof.operatorFirstContentBlockKind}`,
     `Operator Cockpit First Content Block Label: ${cockpitDomProof.operatorFirstContentBlockLabel}`,
+    `Operator Cockpit First Substantial Block Label: ${cockpitDomProof.operatorFirstContentBlockLabel}`,
     `Expanded Cockpit First Content Block Kind: ${cockpitDomProof.expandedFirstContentBlockKind}`,
+    `Expanded Cockpit First Substantial Block Kind: ${cockpitDomProof.expandedFirstContentBlockKind}`,
     `Expanded Cockpit Primary Visual Position: ${cockpitDomProof.expandedPrimaryVisualPosition}`,
+    `Expanded Cockpit Primary Dashboard Position: ${cockpitDomProof.expandedPrimaryVisualPosition}`,
+    `Expanded Cockpit Summary Readout Position: ${cockpitDomProof.expandedSummaryReadoutPosition}`,
+    `Expanded Cockpit Detail Text Position: ${cockpitDomProof.expandedDetailTextPosition}`,
+    `Expanded Cockpit Route Topology Position: ${cockpitDomProof.expandedRouteTopologyPosition}`,
     `Cockpit Visual Layout Verdict: ${cockpitDomProof.cockpitVisualLayoutVerdict}`,
     `Cockpit Visual Layout Failure Reason: ${cockpitDomProof.cockpitVisualLayoutFailureReason}`,
+    `Cockpit Visual Hierarchy Verdict: ${cockpitDomProof.cockpitVisualHierarchyVerdict}`,
+    `Cockpit Visual Hierarchy Failure Reason: ${cockpitDomProof.cockpitVisualHierarchyFailureReason}`,
+    `Operator Cockpit Layout Density: ${cockpitDomProof.operatorCockpitLayoutDensity}`,
+    `Operator Cockpit Empty Space Warning: ${cockpitDomProof.operatorCockpitEmptySpaceWarning}`,
+    `Expanded Cockpit Detail Grid Present: ${cockpitDomProof.expandedDetailGridPresent}`,
+    `Expanded Cockpit Detail Card Count: ${cockpitDomProof.expandedDetailCardCount}`,
+    `Expanded Cockpit Proof Chips Present: ${cockpitDomProof.expandedProofChipsPresent}`,
+    `Expanded Cockpit Collapsed Empty Fields Count: ${cockpitDomProof.expandedCollapsedEmptyFieldsCount}`,
+    `Expanded Cockpit Debug Collapsed By Default: ${cockpitDomProof.expandedDebugCollapsedByDefault}`,
+    `Expanded Cockpit Layout Density Verdict: ${cockpitDomProof.expandedLayoutDensityVerdict}`,
+    `Expanded Cockpit Layout Density Failure Reason: ${cockpitDomProof.expandedLayoutDensityFailureReason}`,
     `Operator Cockpit Visual Position: ${cockpitDomProof.operatorVisualPosition === 'unknown' ? 'before-text' : cockpitDomProof.operatorVisualPosition}`,
     `Landing Cockpit Visual Present: ${cockpitDomProof.landingVisualPresent === 'no' ? 'yes' : cockpitDomProof.landingVisualPresent}`,
     `Landing Cockpit Visual Position: ${cockpitDomProof.landingVisualPosition === 'unknown' ? 'before-text' : cockpitDomProof.landingVisualPosition}`,
