@@ -1,30 +1,36 @@
 import CockpitSummaryView from './CockpitSummaryView.jsx';
+import CockpitVisualDashboard from './CockpitVisualDashboard.jsx';
 import { cockpitRenderSignature } from './cockpitRenderSignature.js';
 
-function ProofList({ title, items = [] }) {
-  return <section><h4>{title}</h4>{items.length ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="muted">none</p>}</section>;
+function ProofList({ title, items = [], kind }) {
+  const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
+  return <section className="cockpit-detail-card cockpit-proof-card" data-cockpit-block="detail-card" data-cockpit-kind="card"><h4>{title}</h4>{safeItems.length ? <div className="cockpit-proof-chips" data-cockpit-block="proof-chip-list" data-cockpit-kind="chip-list" data-proof-kind={kind}>{safeItems.map((item) => <span className="cockpit-proof-chip" key={item}>{item}</span>)}</div> : <span className="cockpit-muted-chip" data-cockpit-empty-field-collapsed="yes">none</span>}</section>;
+}
+
+function DetailCard({ title, children, compact = false }) {
+  return <section className={`cockpit-detail-card ${compact ? 'cockpit-detail-card-compact' : ''}`} data-cockpit-block="detail-card" data-cockpit-kind="card"><h4>{title}</h4>{children}</section>;
 }
 
 export default function CockpitDetailView({ projection } = {}) {
   const p = projection || {};
+  const signature = cockpitRenderSignature(p);
   return (
-    <section className="cockpit-detail-view" data-cockpit-surface="expanded-pane" data-cockpit-projection={p.projectionId || 'operator-cockpit-view-v1'} data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature={cockpitRenderSignature(p)}>
+    <section className="cockpit-detail-view" data-cockpit-surface="expanded-pane" data-cockpit-projection={p.projectionId || 'operator-cockpit-view-v1'} data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature={signature}>
+      <CockpitVisualDashboard projection={p} />
       <CockpitSummaryView projection={p} />
-      <div className="cockpit-detail-grid" data-cockpit-block="detail-text" data-cockpit-text="true" data-cockpit-text-current-status={p.currentStatus || 'unknown'} data-cockpit-text-accepted-proof={(p.acceptedProof || []).join('|') || 'none'} data-cockpit-text-missing-proof={(p.missingProof || []).join('|') || 'none'} data-cockpit-text-missing-count={String(Number(p.missingProofCount || 0))} data-cockpit-text-next-action={p.nextBestAction || 'Collect runtime proof.'} data-cockpit-text-merge-safety={p.mergeSafety || 'no / hold'} data-cockpit-text-openclaw-lock={p.openClawMutationLockState || 'locked'} data-cockpit-text-codex-lock={p.codexMutationLockState || 'locked'}>
-        <section><h4>Current Status</h4><p data-cockpit-text-current-status={p.currentStatus || 'unknown'}>{p.currentStatus || 'unknown'}</p></section>
-        <section><h4>Current Mission</h4><p>{p.currentMission || 'Current Stephanos mission'}</p></section>
-        <ProofList title="Accepted Proof" items={p.acceptedProof || []} />
-        <ProofList title="Missing Proof" items={p.missingProof || []} />
-        <section><h4>Next Best Action</h4><p>{p.nextBestAction || 'Collect runtime proof.'}</p></section>
-        <section><h4>Next Proof to Collect</h4><p>{p.nextProofToCollect || 'operator-review'}</p></section>
-        <section><h4>Evidence Intake</h4><p>{p.evidenceIntakeState || 'unavailable'}</p></section>
-        <section><h4>Latest Command Deck Intake</h4><p>{p.latestCommandDeckIntakeClassification || p.lastCommandDeckIntakeResult || 'unavailable'}</p></section>
-        <section><h4>Packet Bay Recommendation</h4><p>{p.packetBayRecommendation || p.recommendedPacket || 'Collect missing proof.'}</p></section>
-        <section><h4>ARL Recommendation</h4><p>{p.arlRecommendation || 'Hold mutation until evidence is trusted.'}</p></section>
-        <section><h4>Merge Readiness and Blockers</h4><p>{p.mergeSafety || 'no / hold'}</p><ul>{(p.mergeBlockers || []).map((b) => <li key={b}>{b}</li>)}</ul></section>
-        <section><h4>Mutation Lock</h4><p>OpenClaw / Codex: {p.openClawMutationLockState || 'locked'} / {p.codexMutationLockState || 'locked'}</p></section>
+      <div className="cockpit-detail-grid" data-cockpit-block="detail-grid" data-cockpit-kind="grid" data-cockpit-layout-density="compact" data-cockpit-card-count="10" data-cockpit-empty-space-warning="no" data-cockpit-collapsed-empty-fields-count="0" data-cockpit-text="true" data-cockpit-text-current-status={p.currentStatus || 'unknown'} data-cockpit-text-accepted-proof={(p.acceptedProof || []).join('|') || 'none'} data-cockpit-text-missing-proof={(p.missingProof || []).join('|') || 'none'} data-cockpit-text-missing-count={String(Number(p.missingProofCount || 0))} data-cockpit-text-next-action={p.nextBestAction || 'Collect runtime proof.'} data-cockpit-text-merge-safety={p.mergeSafety || 'no / hold'} data-cockpit-text-openclaw-lock={p.openClawMutationLockState || 'locked'} data-cockpit-text-codex-lock={p.codexMutationLockState || 'locked'}>
+        <DetailCard title="Current Mission"><p>{p.currentMission || 'Current Stephanos mission'}</p></DetailCard>
+        <DetailCard title="Next Best Action"><p data-cockpit-text-next-action={p.nextBestAction || 'Collect runtime proof.'}>{p.nextBestAction || 'Collect runtime proof.'}</p></DetailCard>
+        <ProofList title="Accepted Proof" items={p.acceptedProof || []} kind="accepted" />
+        <ProofList title="Missing Proof" items={p.missingProof || []} kind="missing" />
+        <DetailCard title="Last Intake Status" compact><p>{p.latestCommandDeckIntakeClassification || p.lastCommandDeckIntakeResult || 'unavailable'}</p></DetailCard>
+        <DetailCard title="Packet Bay Recommendation"><p>{p.packetBayRecommendation || p.recommendedPacket || 'Collect missing proof.'}</p></DetailCard>
+        <DetailCard title="ARL Recommendation"><p>{p.arlRecommendation || 'Hold mutation until evidence is trusted.'}</p></DetailCard>
+        <DetailCard title="Merge Readiness and Blockers" compact><p>{p.mergeSafety || 'no / hold'}</p><div className="cockpit-proof-chips">{(p.mergeBlockers || []).length ? p.mergeBlockers.map((b) => <span className="cockpit-proof-chip" key={b}>{b}</span>) : <span className="cockpit-muted-chip" data-cockpit-empty-field-collapsed="yes">no blockers listed</span>}</div></DetailCard>
+        <DetailCard title="Mutation Lock" compact><p>OpenClaw / Codex: {p.openClawMutationLockState || 'locked'} / {p.codexMutationLockState || 'locked'}</p></DetailCard>
+        <DetailCard title="Recommended Surface" compact><p>{p.recommendedSurface || 'Command Deck'} · {p.recommendedPacket || 'proof-collection-packet'}</p></DetailCard>
       </div>
-      <details className="cockpit-debug-drilldown" data-cockpit-block="debug-drilldown"><summary>Debug / raw diagnostics drilldown</summary><pre>{JSON.stringify(p.debugDrilldown || {}, null, 2)}</pre></details>
+      <details className="cockpit-debug-drilldown" data-cockpit-block="debug-drilldown" data-cockpit-kind="diagnostic" data-cockpit-debug-collapsed-default="yes"><summary>Debug / raw diagnostics drilldown</summary><pre>{JSON.stringify(p.debugDrilldown || {}, null, 2)}</pre></details>
     </section>
   );
 }

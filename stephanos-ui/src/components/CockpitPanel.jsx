@@ -136,7 +136,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       {shouldRenderCockpit ? (
         <div className="cockpit-shell">
         <CockpitDetailView projection={cockpitProjection} />
-        <section className="cockpit-route-topology" data-cockpit-block="route-topology" aria-label="Route Topology"><h3>Route Topology</h3><p className="muted">Routing flow only; mission proof and merge truth remain bound to the canonical cockpit projection above.</p><svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos route topology">
+        <section className="cockpit-route-topology" data-cockpit-block="route-topology" data-cockpit-kind="routing" data-cockpit-surface="expanded-pane" data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature={cockpitProjection ? cockpitProjection.currentStatus : 'unknown'} aria-label="Route Topology"><h3>Route Topology</h3><p className="muted">Routing flow only; mission proof and merge truth remain bound to the canonical cockpit projection above.</p><svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos route topology">
           {CONNECTIONS.map((connection) => {
             const from = NODE_LAYOUT[connection.from];
             const to = NODE_LAYOUT[connection.to];

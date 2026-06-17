@@ -51,8 +51,24 @@ test('cockpit visual dashboard is projection-signed and appears before text on b
   const summary = await readFile(new URL('../stephanos-ui/src/components/CockpitSummaryView.jsx', import.meta.url), 'utf8');
   const detail = await readFile(new URL('../stephanos-ui/src/components/CockpitDetailView.jsx', import.meta.url), 'utf8');
   assert.match(commandDeck, /data-cockpit-visual="true"[\s\S]*data-cockpit-text="true"/);
-  assert.match(summary, /<CockpitVisualDashboard[\s\S]*data-cockpit-text/);
-  assert.match(detail, /<CockpitSummaryView[\s\S]*data-cockpit-text/);
+  assert.match(summary, /data-cockpit-block="summary-readout"/);
+  assert.match(detail, /<CockpitVisualDashboard[\s\S]*<CockpitSummaryView[\s\S]*data-cockpit-block="detail-grid"/);
+  assert.match(detail, /data-cockpit-block="proof-chip-list"/);
+  assert.match(detail, /data-cockpit-debug-collapsed-default="yes"/);
   assert.match(summary, /data-cockpit-projection-source="canonical cockpit projection"/);
   assert.match(detail, /data-cockpit-projection-source="canonical cockpit projection"/);
+});
+
+
+test('expanded cockpit dashboard is primary visual before compact readouts and route topology is routing-only', async () => {
+  const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  const visual = await readFile(new URL('../stephanos-ui/src/components/CockpitVisualDashboard.jsx', import.meta.url), 'utf8');
+  const detail = await readFile(new URL('../stephanos-ui/src/components/CockpitDetailView.jsx', import.meta.url), 'utf8');
+  assert.match(visual, /data-cockpit-block=\{compact \? 'shortcut-visual' : 'primary-dashboard'\}/);
+  assert.match(visual, /data-cockpit-kind="visual"/);
+  assert.match(visual, /data-cockpit-animation-truth-impact="none"/);
+  assert.ok(detail.indexOf('<CockpitVisualDashboard projection={p} />') < detail.indexOf('<CockpitSummaryView projection={p} />'));
+  assert.ok(detail.indexOf('<CockpitSummaryView projection={p} />') < detail.indexOf('data-cockpit-block="detail-grid"'));
+  assert.match(panel, /data-cockpit-block="route-topology" data-cockpit-kind="routing"/);
+  assert.ok(panel.indexOf('<CockpitDetailView projection={cockpitProjection} />') < panel.indexOf('data-cockpit-block="route-topology"'));
 });
