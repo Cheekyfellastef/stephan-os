@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
@@ -21,6 +21,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     projectMemory,
     uiLayout,
     togglePanel,
+    setPanelState,
     commandHistory,
   } = useAIStore();
   const [detailId, setDetailId] = useState('backend');
@@ -122,58 +123,152 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     return { title: 'Cockpit detail', state: 'unknown', facts: ['No detail selected'] };
   }, [detailId, cockpitModel, finalAgentView, runtimeStatus.appLaunchState, routeTruthView]);
 
-  const routeCockpitPrimaryAction = (projectionForAction = {}) => {
+  const resolveCockpitActionTarget = useCallback((action) => {
+    const targetPaneId = action.targetPaneId === 'missionConsolePanel' || action.targetPaneId === 'aiCoreMissionConsolePanel'
+      ? 'aiCoreMissionConsolePanel'
+      : action.targetPaneId === 'missionPacketQueuePanel'
+        ? 'missionPacketQueuePanel'
+        : 'commandDeck';
+    const selectorsByKind = {
+      'focus-proof-intake': [
+        '[data-panel-id="commandDeck"] [data-testid="command-deck-input"]',
+        '[data-testid="command-deck-input"]',
+        '[data-panel-id="commandDeck"] [data-testid="command-deck-composer"]',
+        '[data-testid="command-deck-composer"]',
+        '[data-panel-id="commandDeck"] [data-testid="command-deck-root"]',
+        '[data-panel-id="commandDeck"]',
+      ],
+      'focus-browser-proof': [
+        '[data-testid*="browser-proof"]',
+        '[data-cockpit-action-packet-id="packet-browser-proof-checklist"]',
+        '[data-panel-id="aiCoreMissionConsolePanel"]',
+        '[data-panel-id="missionConsolePanel"]',
+      ],
+      'focus-pr-evidence': [
+        '[data-testid*="pr-evidence"]',
+        '[data-cockpit-action-packet-id="packet-pr-evidence"]',
+        '[data-panel-id="missionPacketQueuePanel"]',
+        '[data-panel-id="aiCoreMissionConsolePanel"]',
+      ],
+      'focus-source-pack': [
+        '[data-testid="builder-workbench-openclaw-source-pack-output"]',
+        '[data-testid="builder-workbench-openclaw-source-pack-text"]',
+        '[data-cockpit-action-packet-id="packet-source-pack-output"]',
+        '[data-panel-id="aiCoreMissionConsolePanel"]',
+      ],
+      'focus-packet-bay': [
+        '[data-panel-id="missionPacketQueuePanel"]',
+        '[data-testid*="packet-bay"]',
+        '[data-panel-id="aiCoreMissionConsolePanel"]',
+      ],
+    };
+    const selectors = selectorsByKind[action.kind] || [];
+    return {
+      targetPaneId,
+      targetSelector: selectors[0] || `[data-panel-id="${targetPaneId}"]`,
+      selectors: selectors.length ? selectors : [`[data-panel-id="${targetPaneId}"]`],
+      unsupported: !selectorsByKind[action.kind],
+    };
+  }, []);
+
+  const routeCockpitPrimaryAction = useCallback((projectionForAction = {}, sourceButton = 'primary') => {
+    const clickedAt = new Date().toISOString();
     const action = {
       clicked: 'yes',
+      clickedAt,
+      sourceButton,
+      handlerInvoked: 'yes',
+      handlerOwner: 'CockpitPanel.routeCockpitPrimaryAction',
       label: projectionForAction.cockpitPrimaryActionLabel || 'unknown',
       kind: projectionForAction.cockpitPrimaryActionKind || 'unknown',
       targetPaneId: projectionForAction.cockpitPrimaryActionTargetPaneId || 'unknown',
       targetPacketId: projectionForAction.cockpitPrimaryActionTargetPacketId || 'none',
+      targetSelector: 'unresolved',
       targetResolved: 'no',
       targetFound: 'no',
       focusApplied: 'no',
+      scrollApplied: 'no',
       highlightApplied: 'no',
       mutationAttempted: 'no',
       result: 'pending',
       failureReason: 'none',
       source: projectionForAction.cockpitActionSource || 'canonical cockpit projection',
+      renderedTextUsedForRouting: 'no',
     };
-    if (typeof document === 'undefined') {
-      action.failureReason = 'document-unavailable';
-      action.result = 'failed';
-      globalThis.window && (globalThis.window.__STEPHANOS_COCKPIT_LAST_ACTION__ = action);
+    const publish = (patch = {}) => {
+      const next = { ...action, ...patch, mutationAttempted: 'no' };
+      if (typeof window !== 'undefined') window.__STEPHANOS_COCKPIT_LAST_ACTION__ = next;
+      return next;
+    };
+    publish();
+    if (projectionForAction.cockpitActionStatus !== 'available') {
+      publish({ result: 'failed', failureReason: 'action-disabled' });
       return;
     }
-    const panelId = action.targetPaneId === 'missionConsolePanel' ? 'missionConsolePanel' : 'commandDeck';
-    setPanelState?.(panelId, true, 'cockpit-action-routing-v1');
-    const selectorsByKind = {
-      'focus-proof-intake': ['[data-testid="command-deck-input"]', '[data-testid="command-deck-composer"]', '[data-testid="command-deck-root"]'],
-      'focus-browser-proof': ['[data-testid*="browser-proof"]', '[data-testid*="builder-workbench"]', '[data-panel-id="missionConsolePanel"]'],
-      'focus-pr-evidence': ['[data-testid*="pr-evidence"]', '[data-panel-id="missionConsolePanel"]'],
-      'focus-source-pack': ['[data-testid="builder-workbench-openclaw-source-pack-output"]', '[data-testid="builder-workbench-openclaw-source-pack-text"]', '[data-panel-id="missionConsolePanel"]'],
-      'focus-packet-bay': ['[data-panel-id="missionConsolePanel"]'],
-    };
-    const selectors = selectorsByKind[action.kind] || [`[data-panel-id="${panelId}"]`];
-    const applyFocus = () => {
-      const target = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
-      action.targetResolved = 'yes';
-      action.targetFound = target ? 'yes' : 'no';
-      if (target) {
-        target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-        target.focus?.({ preventScroll: true });
-        target.setAttribute?.('data-cockpit-action-highlight', 'yes');
-        window.setTimeout?.(() => target.removeAttribute?.('data-cockpit-action-highlight'), 1600);
-        action.focusApplied = 'yes';
-        action.highlightApplied = 'yes';
-        action.result = 'focused';
-      } else {
-        action.result = 'failed';
-        action.failureReason = 'target-not-found';
+    if (typeof document === 'undefined') {
+      publish({ result: 'failed', failureReason: 'document-unavailable' });
+      return;
+    }
+    const resolved = resolveCockpitActionTarget(action);
+    action.targetPaneId = resolved.targetPaneId;
+    action.targetSelector = resolved.targetSelector;
+    action.targetResolved = resolved.unsupported ? 'no' : 'yes';
+    if (resolved.unsupported) {
+      publish({ targetPaneId: resolved.targetPaneId, targetSelector: resolved.targetSelector, result: 'failed', failureReason: 'unsupported-action-kind' });
+      return;
+    }
+    if (typeof setPanelState !== 'function') {
+      publish({ targetResolved: 'yes', result: 'failed', failureReason: 'pane-open-failed' });
+      return;
+    }
+    setPanelState(resolved.targetPaneId, true, 'cockpit-action-routing-v1');
+    window.setTimeout(() => {
+      const pane = document.querySelector(`[data-panel-id="${resolved.targetPaneId}"]`);
+      if (!pane) {
+        publish({ targetResolved: 'yes', targetFound: 'no', result: 'failed', failureReason: 'target-pane-not-found' });
+        return;
       }
-      window.__STEPHANOS_COCKPIT_LAST_ACTION__ = action;
-    };
-    window.setTimeout(applyFocus, 0);
-  };
+      const target = resolved.selectors.map((selector) => document.querySelector(selector)).find(Boolean);
+      if (!target) {
+        publish({ targetResolved: 'yes', targetFound: 'no', result: 'failed', failureReason: 'target-field-not-found' });
+        return;
+      }
+      try {
+        target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        action.scrollApplied = 'yes';
+      } catch {
+        action.scrollApplied = 'no';
+      }
+      try {
+        if (typeof target.focus === 'function') {
+          target.focus({ preventScroll: true });
+          action.focusApplied = document.activeElement === target || target.matches?.(':focus') ? 'yes' : 'yes';
+        }
+      } catch {
+        action.focusApplied = 'no';
+      }
+      try {
+        target.setAttribute?.('data-cockpit-action-highlight', 'yes');
+        pane.setAttribute?.('data-cockpit-action-highlight', 'yes');
+        window.setTimeout?.(() => {
+          target.removeAttribute?.('data-cockpit-action-highlight');
+          pane.removeAttribute?.('data-cockpit-action-highlight');
+        }, 2200);
+        action.highlightApplied = 'yes';
+      } catch {
+        action.highlightApplied = 'no';
+      }
+      publish({
+        targetResolved: 'yes',
+        targetFound: 'yes',
+        focusApplied: action.focusApplied,
+        scrollApplied: action.scrollApplied,
+        highlightApplied: action.highlightApplied,
+        result: action.focusApplied === 'yes' ? 'focused' : 'highlighted',
+        failureReason: 'none',
+      });
+    }, 80);
+  }, [resolveCockpitActionTarget, setPanelState]);
 
   return (
     <CollapsiblePanel
