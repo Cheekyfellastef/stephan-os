@@ -10,7 +10,7 @@ import { buildProjectAwarenessProjection, projectAwarenessSupportSnapshotFields 
 import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
 import { deriveEvidenceReturnIntakeProjection } from './evidenceReturnIntakeModel.js';
 import { buildMissionProofReconciliation, missionProofReconciliationSupportSnapshotFields, reconciledMissionMissingProof } from './missionProofReconciliation.js';
-import { buildCockpitProjection } from './cockpitProjection.js';
+import { buildCockpitProjection, deriveCockpitActionModel } from './cockpitProjection.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -2094,6 +2094,8 @@ export function buildSupportSnapshot({
     },
   });
   const operatorCockpitProjectionSourceDisplay = 'canonical cockpit projection';
+  const cockpitActionModel = deriveCockpitActionModel(operatorCockpitProjection);
+  const lastCockpitAction = globalThis.window?.__STEPHANOS_COCKPIT_LAST_ACTION__ || {};
   const operatorCockpitRenderSignature = cockpitRenderSignature(operatorCockpitProjection);
   const cockpitDomProof = deriveCockpitDomProof(operatorCockpitProjection);
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
@@ -2911,6 +2913,25 @@ export function buildSupportSnapshot({
     `Operator Cockpit Last Intake Status: ${asText(operatorCockpitProjection.evidenceIntakeState || operatorCockpitProjection.lastCommandDeckIntakeResult, 'unavailable')}`,
     `Operator Cockpit Recommended Surface: ${asText(operatorCockpitProjection.recommendedSurface, 'Command Deck')}`,
     `Operator Cockpit Recommended Packet: ${asText(operatorCockpitProjection.recommendedPacket, 'proof-collection-packet')}`,
+    `Cockpit Action Routing Status: ${cockpitActionModel.cockpitActionStatus}`,
+    `Cockpit Primary Action Label: ${asText(cockpitActionModel.cockpitPrimaryActionLabel, 'unavailable')}`,
+    `Cockpit Primary Action Kind: ${asText(cockpitActionModel.cockpitPrimaryActionKind, 'unavailable')}`,
+    `Cockpit Primary Action Target Surface: ${asText(cockpitActionModel.cockpitPrimaryActionTargetSurface, 'unavailable')}`,
+    `Cockpit Primary Action Target Pane ID: ${asText(cockpitActionModel.cockpitPrimaryActionTargetPaneId, 'unavailable')}`,
+    `Cockpit Primary Action Target Packet ID: ${asText(cockpitActionModel.cockpitPrimaryActionTargetPacketId, 'unavailable')}`,
+    `Cockpit Primary Action Source: ${cockpitActionModel.cockpitActionSource}`,
+    `Cockpit Primary Action Mutation Allowed: ${cockpitActionModel.cockpitActionMutationAllowed}`,
+    `Cockpit Primary Action Operator Approval Required: ${cockpitActionModel.cockpitActionRequiresOperatorApproval}`,
+    `Cockpit Last Action Clicked: ${asText(lastCockpitAction.clicked, 'no')}`,
+    `Cockpit Last Action Target Resolved: ${asText(lastCockpitAction.targetResolved, 'no')}`,
+    `Cockpit Last Action Target Found: ${asText(lastCockpitAction.targetFound, 'no')}`,
+    `Cockpit Last Action Focus Applied: ${asText(lastCockpitAction.focusApplied, 'no')}`,
+    `Cockpit Last Action Highlight Applied: ${asText(lastCockpitAction.highlightApplied, 'no')}`,
+    `Cockpit Last Action Mutation Attempted: ${asText(lastCockpitAction.mutationAttempted, 'no')}`,
+    `Cockpit Last Action Result: ${asText(lastCockpitAction.result, 'not-clicked')}`,
+    `Cockpit Last Action Failure Reason: ${asText(lastCockpitAction.failureReason, 'none')}`,
+    `Cockpit Action Uses Canonical Projection: yes`,
+    `Cockpit Action Rendered Text Used For Routing: no`,
     `Landing Cockpit Tile Present: ${cockpitDomProof.landingPresent}`,
     `Landing Cockpit Tile Expected In Current Surface: ${cockpitDomProof.landingExpected}`,
     `Landing Cockpit Tile Mount Status: ${cockpitDomProof.landingMountStatus}`,
