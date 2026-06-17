@@ -100,3 +100,50 @@ test('cockpit UI routing source is explicit and landing tile remains shortcut on
   assert.match(detail, /data-testid="cockpit-primary-action"/);
   assert.doesNotMatch(tile, /cockpit-primary-action|action-routing/);
 });
+
+test('cockpit primary action button exposes DOM proof attributes and invokes canonical handler path', async () => {
+  const detail = await readFile(new URL('../stephanos-ui/src/components/CockpitDetailView.jsx', import.meta.url), 'utf8');
+  assert.match(detail, /data-cockpit-action-button="primary"/);
+  assert.match(detail, /data-cockpit-action-target-packet-id=\{p\.cockpitPrimaryActionTargetPacketId/);
+  assert.match(detail, /data-cockpit-action-source="canonical cockpit projection"/);
+  assert.match(detail, /data-cockpit-rendered-text-used-for-routing="no"/);
+  assert.match(detail, /data-cockpit-mutation-allowed="no"/);
+  assert.match(detail, /onClick=\{\(\) => onPrimaryAction\?\.\(p, 'primary'\)\}/);
+});
+
+test('cockpit action handler opens and focuses commandDeck proof intake without mutation', async () => {
+  const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  assert.match(panel, /setPanelState\(resolved\.targetPaneId, true, 'cockpit-action-routing-v1'\)/);
+  assert.match(panel, /'focus-proof-intake': \[[\s\S]*'\[data-panel-id="commandDeck"\] \[data-testid="command-deck-input"\]'/);
+  assert.match(panel, /target\.scrollIntoView\?\.\(\{ behavior: 'smooth', block: 'center' \}\)/);
+  assert.match(panel, /target\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(panel, /data-cockpit-action-highlight/);
+  assert.match(panel, /mutationAttempted: 'no'/);
+  const handlerSegment = panel.slice(panel.indexOf('const routeCockpitPrimaryAction'), panel.indexOf('return (', panel.indexOf('const routeCockpitPrimaryAction')));
+  assert.doesNotMatch(handlerSegment, /submitPrompt\(|runAiButlerAction\(|unlockOpenClaw|autoDispatch|merge\(/i);
+});
+
+test('cockpit action support snapshot records click, handler, target, scroll, highlight, and failures', async () => {
+  const snapshot = await readFile(new URL('../stephanos-ui/src/state/supportSnapshot.js', import.meta.url), 'utf8');
+  for (const label of [
+    'Cockpit Last Action Clicked At:',
+    'Cockpit Last Action Source Button:',
+    'Cockpit Last Action Handler Invoked:',
+    'Cockpit Last Action Handler Owner:',
+    'Cockpit Last Action Target Pane ID:',
+    'Cockpit Last Action Target Selector:',
+    'Cockpit Last Action Scroll Applied:',
+    'Cockpit Last Action Mutation Attempted:',
+    'Cockpit Last Action Failure Reason:',
+  ]) {
+    assert.match(snapshot, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
+test('cockpit resolver records unsupported and missing target failure reasons', async () => {
+  const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  assert.match(panel, /failureReason: 'unsupported-action-kind'/);
+  assert.match(panel, /failureReason: 'target-pane-not-found'/);
+  assert.match(panel, /failureReason: 'target-field-not-found'/);
+  assert.match(panel, /failureReason: 'pane-open-failed'/);
+});
