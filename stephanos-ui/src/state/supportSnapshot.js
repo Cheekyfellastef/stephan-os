@@ -9,6 +9,7 @@ import { derivePacketBayProjection } from './packetBayProjection.js';
 import { buildProjectAwarenessProjection, projectAwarenessSupportSnapshotFields } from './projectAwarenessProjection.js';
 import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
 import { deriveEvidenceReturnIntakeProjection } from './evidenceReturnIntakeModel.js';
+import { buildMissionProofReconciliation, missionProofReconciliationSupportSnapshotFields } from './missionProofReconciliation.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -1751,6 +1752,16 @@ export function buildSupportSnapshot({
     ? runtimeStatus.lastExecutionMetadata
     : {};
   const builderWorkbenchSupportMetadata = resolveBuilderWorkbenchSupportMetadata(executionMetadata, runtimeStatus);
+  const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
+  const missionProofReconciliation = buildMissionProofReconciliation({
+    missionConsoleDiagnostics,
+    supportSnapshot: runtimeStatus || {},
+    missionVerification: runtimeStatus?.missionVerification || {},
+    prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {},
+    uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' },
+    openClawSourcePackRunner: resolveLiveBuilderWorkbenchProjection(runtimeStatus).projection?.openClawSourcePackRunner || {},
+  });
+  const missionProofReconciliationFields = missionProofReconciliationSupportSnapshotFields(missionProofReconciliation);
   const livePacketBayProjection = runtimeStatus?.operatorReliefProjection?.packetBayProjection
     || runtimeStatus?.runtimeContext?.operatorReliefProjection?.packetBayProjection
     || runtimeStatus?.missionState?.operatorReliefProjection?.packetBayProjection
@@ -1805,6 +1816,7 @@ export function buildSupportSnapshot({
       missionVerification: runtimeStatus?.missionVerification || {},
       uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' },
       supportSnapshot: runtimeStatus || {},
+      missionProofReconciliation,
     });
   const projectAwarenessFields = projectAwarenessSupportSnapshotFields(
     projectAwarenessRuntimeProjection,
@@ -1830,6 +1842,7 @@ export function buildSupportSnapshot({
       missionVerification: runtimeStatus?.missionVerification || {},
       prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {},
       uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' },
+      missionProofReconciliation,
     });
   const missionEvidenceContextSummary = deriveMissionEvidenceContextSummary(missionEvidenceLedgerProjection);
   const missionEvidenceLedgerFields = missionEvidenceLedgerSupportSnapshotFields(missionEvidenceLedgerProjection);
@@ -1845,7 +1858,6 @@ export function buildSupportSnapshot({
     packetBayFields = packetBayProjection.supportSnapshotFields || {};
   }
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
-  const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
     ? runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll
     : {};
@@ -3550,6 +3562,14 @@ export function buildSupportSnapshot({
         ? 'none'
         : 'projection-missing-from-command-deck-path',
     )}`,
+    `Mission Proof Reconciliation Status: ${asText(missionProofReconciliationFields.mission_proof_reconciliation_status, 'unavailable')}`,
+    `Mission Proof Accepted Count: ${asText(missionProofReconciliationFields.mission_proof_accepted_count, '0')}`,
+    `Mission Proof Accepted Items: ${asText(missionProofReconciliationFields.mission_proof_accepted_items, 'none')}`,
+    `Mission Proof Remaining Missing Count: ${asText(missionProofReconciliationFields.mission_proof_remaining_missing_count, '0')}`,
+    `Mission Proof Remaining Missing Items: ${asText(missionProofReconciliationFields.mission_proof_remaining_missing_items, 'none')}`,
+    `Mission Proof Next Best Action: ${asText(missionProofReconciliationFields.mission_proof_next_best_action, 'Collect runtime proof.')}`,
+    `Mission Console Bridge Proof Accepted: ${asText(missionProofReconciliationFields.mission_console_bridge_proof_accepted, 'no')}`,
+    `Mission Console Bridge Proof Source: ${asText(missionProofReconciliationFields.mission_console_bridge_proof_source, 'none')}`,
     `Mission Console Diagnostics Source: ${asText(missionConsoleDiagnostics?.source, 'missing')}`,
     `Mission Console Registration Diagnostics Source: ${asText(missionConsoleDiagnostics?.registrationDiagnosticsSource, 'missing')}`,
     `Mission Console Registration Diagnostics Stamp: ${asText(missionConsoleDiagnostics?.registrationDiagnosticsStamp, '0')}`,

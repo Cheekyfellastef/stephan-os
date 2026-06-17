@@ -1,3 +1,5 @@
+import { removeAcceptedMissionProof } from './missionProofReconciliation.js';
+
 export const MISSION_EVIDENCE_EVENT_TYPES = Object.freeze([
   'intent_captured','mission_spec_generated','memory_context_applied','architecture_context_applied','openclaw_delegation_previewed','finish_authority_assessed','codex_handoff_generated','pr_evidence_parsed','verification_return_received','verification_judged','task_finisher_planned','memory_librarian_candidates_created','proof_of_done_pending','operator_decision_required','codex_pr_repair_contract_created','codex_pr_repair_blocked','codex_pr_repair_pushed','codex_pr_remote_checks_green','codex_pr_remote_checks_failed','codex_pr_repair_complete','manual_emergency_intervention_required',
 ]);
@@ -160,6 +162,7 @@ export function deriveMissionEvidenceLedgerProjection(input = {}) {
   const verification = input.missionVerification || input.verificationReturnIntake || {};
   const prEvidence = input.prEvidence || input.prEvidenceModel || {};
   const uiReality = input.uiRealityTruth || input.uiReality || {};
+  const missionProofReconciliation = input.missionProofReconciliation || {};
   const missionId = asText(projectAwareness.missionId || input.missionId, 'mission-unknown');
   const missionTitle = asText(projectAwareness.title || projectAwareness.missionTitle || input.missionTitle, 'unknown');
   const missionPhase = asText(projectAwareness.phase || projectAwareness.missionPhase || input.missionPhase, 'unknown');
@@ -172,6 +175,7 @@ export function deriveMissionEvidenceLedgerProjection(input = {}) {
     return { status: 'unavailable', missionId, missionTitle, missionPhase, completeness: 'unavailable', entryCount: 0, proofEntryCount: 0, warningCount: 0, blockerCount: 0, pendingReviewCount: 0, latestEvent: 'none', nextRequiredEvidence: 'runtime-truth', nextAction: 'Wait for runtime truth projections before deriving mission evidence.', projectionSource: 'mission-evidence-ledger-v1a-runtime-truth-projection', confidence: 'low', ...EVIDENCE_SAFETY_DEFAULTS, missingProofSummary: 'runtime truth', topEntries: [], entries: [] };
   }
 
+  if (missionProofReconciliation.missionConsoleBridgeProofAccepted === true) add({ type: 'mission-console-bridge-accepted', sourceSystem: 'mission-proof-reconciliation', severity: 'info', status: 'observed', proof: true, summary: 'Mission Console bridge proof accepted from runtime Support Snapshot diagnostics.' });
   if (projectAwareness.status === 'blocked' || (projectAwareness.blockers || []).length) add({ type: 'mission-state-blocker', sourceSystem: 'project-awareness', severity: 'blocker', status: 'blocked', pendingReview: true, summary: 'Project Awareness reports blocked mission state.' });
   if (agentRealityLoop.status === 'blocked' || (agentRealityLoop.blockers || []).length) add({ type: 'arl-blocker', sourceSystem: 'agent-reality-loop', severity: 'blocker', status: 'blocked', pendingReview: true, summary: 'Agent Reality Loop is blocked.' });
   (packetBay.packets || []).filter((p) => p.status === 'ready' || p.readyToCopy).forEach((p) => add({ type: 'packet-ready', sourceSystem: 'packet-bay', relatedId: p.id, severity: 'info', status: 'observed', proof: true, summary: `Packet ready for ${p.target || p.packetTarget || 'operator route'}.` }));
@@ -190,6 +194,6 @@ export function deriveMissionEvidenceLedgerProjection(input = {}) {
   const blockerCount = entries.filter((entry) => entry.severity === 'blocker' || entry.status === 'blocked').length;
   const warningCount = entries.filter((entry) => entry.severity === 'warning').length;
   const pendingReviewCount = entries.filter((entry) => entry.pendingReview).length;
-  const missingProof = entries.filter((entry) => entry.status === 'missing' || entry.status === 'pending').map((entry) => entry.type);
+  const missingProof = removeAcceptedMissionProof(entries.filter((entry) => entry.status === 'missing' || entry.status === 'pending').map((entry) => entry.type), missionProofReconciliation);
   return { status: blockerCount ? 'blocked' : (entries.length ? 'active' : 'empty'), missionId, missionTitle, missionPhase, completeness: blockerCount ? 'blocked' : (missingProof.length ? 'low' : 'partial'), entryCount: entries.length, proofEntryCount, warningCount, blockerCount, pendingReviewCount, latestEvent: entries.at(-1)?.type || 'none', nextRequiredEvidence: missingProof[0] || 'operator-review', nextAction: missingProof.length ? `Collect ${missingProof[0]}.` : 'Review projected mission evidence; durable writes remain disabled.', projectionSource: 'mission-evidence-ledger-v1a-runtime-truth-projection', confidence: entries.length ? 'medium' : 'low', ...EVIDENCE_SAFETY_DEFAULTS, missingProofSummary: missingProof.join(' | ') || 'none', topEntries: entries.slice(0, 3), entries };
 }
