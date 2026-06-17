@@ -11,11 +11,29 @@ const PACKET_IDS = [
   'packet-browser-proof-checklist-operator-v1b',
   'packet-pr-evidence-collection-v1b',
 ];
-const FAIL_RE = /\b(fail(?:ed|ure)?|error|red console|exception|blocked|blocker|missing proof|proof missing|not reachable|unavailable|timeout|failed checks?)\b/i;
+const FAIL_RE = /\b(fail(?:ed|ure)?|error|red console|exception|blocked|blocker|missing proof|proof missing|not reachable|unavailable|timeout|failed checks?|exited with code [1-9])\b/i;
 const TEMPLATE_RE = /<\s*(?:your|insert|todo|response|answer)[^>]*>|\{\{[^}]+\}\}|TODO_PLACEHOLDER|your question or action request|say next|as a language model/i;
 
 function finding(type, status, summary, confidence = 'medium') {
   return { evidenceType: type, status, summary, confidence };
+}
+
+const PROOF_TYPE_TO_ITEM = {
+  build: 'build-proof',
+  verify: 'verify-proof',
+  'browser-proof': 'browser-proof-checklist',
+  'pr-evidence': 'pr-evidence',
+  'source-pack': 'source-pack-output',
+};
+
+function proofItems(findings, status) {
+  return Array.from(new Set(findings
+    .filter((item) => item.status === status && PROOF_TYPE_TO_ITEM[item.evidenceType])
+    .map((item) => PROOF_TYPE_TO_ITEM[item.evidenceType])));
+}
+
+function nextMissingAction(items = []) {
+  return items.length ? `Collect ${items[0]}.` : 'Review reconciliation proof; merge readiness still requires explicit PR/build/verify/browser/source-pack evidence.';
 }
 
 function inferPacketId(text, packetBayProjection = {}) {
@@ -44,28 +62,29 @@ function parseFindings(text) {
   const lower = text.toLowerCase();
   const normalizedForFailure = text.replace(/no red console errors?/ig, 'console-clean').replace(/no errors?/ig, 'clean');
   const hasFail = FAIL_RE.test(normalizedForFailure);
-  if (/source[_ -]?pack|source pack|stephanos_handoff_packet|useful_facts/.test(lower)) {
-    findings.push(finding('source-pack', (TEMPLATE_RE.test(text) || /stale/.test(lower)) ? 'blocked' : (hasFail ? 'failed' : 'observed'), TEMPLATE_RE.test(text) ? 'Source Pack return includes template/stale leakage.' : 'Source Pack bounded return candidate is present.', TEMPLATE_RE.test(text) ? 'high' : 'medium'));
+  if (/source[_ -]?pack|source pack|source-bounded|source bounded|stephanos_handoff_packet|useful_facts|useful facts/.test(lower)) {
+    const useful = /source[_ -]?pack|stephanos_handoff_packet|useful_facts|useful facts|source[- ]bounded:\s*(yes|true)|source bounded\s+(yes|present)/i.test(text);
+    findings.push(finding('source-pack', (TEMPLATE_RE.test(text) || /stale/.test(lower)) ? 'blocked' : (hasFail ? 'failed' : (useful ? 'observed' : 'pending-review')), TEMPLATE_RE.test(text) ? 'Source Pack return includes template/stale leakage.' : 'Source Pack bounded return candidate is present.', useful && !TEMPLATE_RE.test(text) ? 'high' : 'medium'));
   }
-  if (/npm run [\w:-]*build|build\s*(pass(?:ed)?|success|ok)|stephanos:build[^\n]*(pass|success|0)/i.test(text)) {
+  if (/npm run\s+stephanos:build|npm run [\w:-]*build|build\s*(pass(?:ed)?|success|ok|completed)|stephanos:build[^\n]*(pass|passed|success|completed|code 0|0)/i.test(text)) {
     findings.push(finding('build', hasFail ? 'failed' : 'observed', 'Explicit build proof text is present.', 'high'));
   }
-  if (/npm run [\w:-]*verify|verify\s*(pass(?:ed)?|success|ok)|stephanos:verify[^\n]*(pass|success|0)/i.test(text)) {
+  if (/npm run\s+stephanos:verify|npm run [\w:-]*verify|verify\s*(pass(?:ed)?|success|ok|completed)|stephanos:verify[^\n]*(pass|passed|success|completed|code 0|0)/i.test(text)) {
     findings.push(finding('verify', hasFail ? 'failed' : 'observed', 'Explicit verify proof text is present.', 'high'));
   }
-  if (/browser proof|browser checklist|ui reality|command deck|console errors?|red console/i.test(text)) {
-    const status = /red console|console errors?:?\s*(yes|present)|error/i.test(normalizedForFailure) ? 'failed' : (/pass|observed|visible|ok|no red console errors/i.test(text) ? 'observed' : 'pending-review');
+  if (/browser proof|browser checklist|browser-proof-checklist|ui reality|visible ui proof|accepted browser proof|command deck|console errors?|red console/i.test(text)) {
+    const status = /red console|console errors?:?\s*(yes|present)|error/i.test(normalizedForFailure) ? 'failed' : (/pass|observed|visible|ok|no red console errors|accepted browser proof|visible ui proof/i.test(text) ? 'observed' : 'pending-review');
     findings.push(finding('browser-proof', status, 'Browser proof checklist return candidate is present.', status === 'observed' ? 'high' : 'medium'));
   }
-  if (/pull request|\bpr\s*#?\d+|https:\/\/github\.com\/[^\s]+\/pull\/\d+|commit\s+[a-f0-9]{7,40}|check status|checks?:\s*(pass|success|green)|merged:\s*(yes|true)/i.test(text)) {
-    const observed = /(\bpr\s*#?\d+|pull\/\d+|commit\s+[a-f0-9]{7,40}|checks?:\s*(pass|success|green)|check status:\s*(pass|success|green)|merged:\s*(yes|true))/i.test(text);
+  if (/pull request|pr evidence|github pr evidence|changed files|\bpr\s*#?\d+|https:\/\/github\.com\/[^\s]+\/pull\/\d+|commit\s+[a-f0-9]{7,40}|check status|checks?:\s*(pass|success|green)|merged:?\s*(yes|true)/i.test(text)) {
+    const observed = /(\bpr\s*#?\d+|pull\/\d+|commit\s+[a-f0-9]{7,40}|changed files?:\s*\S+|checks?:\s*(pass|success|green)|check status:\s*(pass|success|green)|merged:?\s*(yes|true))/i.test(text);
     findings.push(finding('pr-evidence', hasFail ? 'failed' : (observed ? 'observed' : 'pending-review'), observed ? 'PR/check evidence includes explicit identifier or status.' : 'PR evidence lacks explicit identifier/status.', observed ? 'high' : 'low'));
   }
   if (/local ai|read-only review|evidence review packet/i.test(text) && findings.length === 0) {
     findings.push(finding('local-ai-review', 'pending-review', 'Local AI review text is advisory until explicit proof is present.', 'medium'));
   }
   if (hasFail && findings.length === 0) findings.push(finding('unknown', /blocked|missing proof|not reachable|unavailable/i.test(text) ? 'blocked' : 'failed', 'Failure/blocking language is present.', 'medium'));
-  if (text && findings.length === 0) findings.push(finding('unknown', 'pending-review', 'Pasted evidence return is ambiguous and needs operator review.', 'low'));
+  if (text && findings.length === 0) findings.push(finding('rejected/noise', 'failed', 'Pasted evidence return has no recognized proof markers.', 'low'));
   return findings;
 }
 
@@ -74,7 +93,7 @@ export function deriveEvidenceReturnIntakeProjection(input = {}) {
   const text = asText(input.operatorPastedIntakeText || input.intakeText || workbench.evidenceReturnIntakeText || workbench.localAiReviewText || '', '');
   const intakeAvailable = true;
   if (!text) return {
-    status: 'idle', intakeAvailable, intakeSource: 'none', relatedPacketId: 'none', relatedMissionId: input.missionEvidenceLedgerProjection?.missionId || 'mission-unknown', relatedEvidenceType: 'none', parsedResultPresent: false, parsedResultStatus: 'unknown', proofObservedCount: 0, proofFailedCount: 0, proofPendingReviewCount: 0, proofBlockedCount: 0, missingProofResolved: false, remainingMissingProofSummary: input.missionEvidenceContextSummary?.missingProofSummary || input.missionEvidenceLedgerProjection?.missingProofSummary || 'none', trustedForMerge: false, trustedForCanon: false, recommendedNextAction: 'Paste returned proof into the existing Builder Workbench Evidence Return Intake field, then classify/review.', mutationAllowed: false, durableWriteAllowed: false, operatorApprovalRequiredForWrite: true, openClawMutationLocked: true, codexAutoDispatchAllowed: false, confidence: 'low', warnings: [], parsedFindings: [], summary: 'Evidence Return Intake is idle; no proof has been observed.' };
+    status: 'idle', intakeAvailable, intakeSource: 'none', rawIntakeText: '', relatedPacketId: 'none', relatedMissionId: input.missionEvidenceLedgerProjection?.missionId || 'mission-unknown', relatedEvidenceType: 'none', parsedResultPresent: false, parsedResultStatus: 'unknown', proofObservedCount: 0, classifiedProofCount: 0, acceptedProofItems: [], rejectedProofItems: [], proofFailedCount: 0, proofPendingReviewCount: 0, proofBlockedCount: 0, missingProofResolved: false, remainingMissingProofItems: asList(input.missionProofReconciliation?.remainingMissingItems), remainingMissingProofSummary: input.missionEvidenceContextSummary?.missingProofSummary || input.missionEvidenceLedgerProjection?.missingProofSummary || 'none', trustedForMerge: false, trustedForCanon: false, recommendedNextAction: 'Paste returned proof into the existing Builder Workbench Evidence Return Intake field, then classify/review.', mutationAllowed: false, durableWriteAllowed: false, operatorApprovalRequiredForWrite: true, openClawMutationLocked: true, codexAutoDispatchAllowed: false, confidence: 'low', warnings: [], parsedFindings: [], summary: 'Evidence Return Intake is idle; no proof has been observed.' };
   const parsedFindings = parseFindings(text);
   const count = (status) => parsedFindings.filter((item) => item.status === status).length;
   const proofObservedCount = count('observed');
@@ -84,6 +103,10 @@ export function deriveEvidenceReturnIntakeProjection(input = {}) {
   const parsedResultStatus = proofBlockedCount ? 'blocked' : (proofFailedCount ? 'failed' : (proofObservedCount && !proofPendingReviewCount ? 'observed' : (proofPendingReviewCount ? 'pending-review' : 'unknown')));
   const status = parsedResultStatus === 'observed' ? 'parsed' : parsedResultStatus;
   const observedTypes = parsedFindings.filter((item) => item.status === 'observed').map((item) => item.evidenceType);
+  const acceptedProofItems = proofItems(parsedFindings, 'observed');
+  const rejectedProofItems = Array.from(new Set([...proofItems(parsedFindings, 'failed'), ...proofItems(parsedFindings, 'blocked'), ...(parsedFindings.some((item) => item.evidenceType === 'rejected/noise') ? ['rejected/noise'] : [])]));
+  const baseRemaining = asList(input.missionProofReconciliation?.remainingMissingItems || input.missionEvidenceContextSummary?.missingProofSummary || input.missionEvidenceLedgerProjection?.missingProofSummary);
+  const remainingMissingProofItems = baseRemaining.filter((item) => !acceptedProofItems.includes(item));
   const blockersRemain = Number(input.missionEvidenceLedgerProjection?.blockerCount || 0) > 0 || /blocked/i.test(asText(input.missionEvidenceLedgerProjection?.status, ''));
   const trustedForMerge = false && observedTypes.includes('build') && observedTypes.includes('verify') && !blockersRemain;
   const trustedForCanon = /canon proof:\s*(pass|observed|yes)|protected-canon proof:\s*(pass|observed|yes)/i.test(text);
@@ -92,7 +115,7 @@ export function deriveEvidenceReturnIntakeProjection(input = {}) {
   if (proofPendingReviewCount) warnings.push('Ambiguous/advisory proof remains pending operator review.');
   if (trustedForCanon) warnings.push('Canon trust marker found; operator review is still required before any durable write.');
   return {
-    status, intakeAvailable, intakeSource: sourceFromText(text), relatedPacketId: inferPacketId(text, input.packetBayProjection), relatedMissionId: input.missionEvidenceLedgerProjection?.missionId || input.projectAwarenessProjection?.missionId || 'derived-runtime-mission', relatedEvidenceType: observedTypes[0] || parsedFindings[0]?.evidenceType || 'unknown', parsedResultPresent: true, parsedResultStatus, proofObservedCount, proofFailedCount, proofPendingReviewCount, proofBlockedCount, missingProofResolved: proofObservedCount > 0 && !proofFailedCount && !proofBlockedCount, remainingMissingProofSummary: input.missionEvidenceContextSummary?.missingProofSummary || input.missionEvidenceLedgerProjection?.missingProofSummary || 'pending operator review', trustedForMerge, trustedForCanon: false, recommendedNextAction: parsedResultStatus === 'observed' ? 'Review observed proof candidate; operator approval is required before any durable ledger write or merge claim.' : 'Collect explicit build/verify/browser/PR evidence and keep intake pending review.', mutationAllowed: false, durableWriteAllowed: false, operatorApprovalRequiredForWrite: true, openClawMutationLocked: true, codexAutoDispatchAllowed: false, confidence: parsedFindings.some((item) => item.confidence === 'high') ? 'high' : (parsedFindings.some((item) => item.confidence === 'medium') ? 'medium' : 'low'), warnings, parsedFindings, summary: `Evidence return classified as ${parsedResultStatus}; observed ${proofObservedCount}, failed ${proofFailedCount}, pending ${proofPendingReviewCount}, blocked ${proofBlockedCount}.`,
+    status, intakeAvailable, intakeSource: sourceFromText(text), rawIntakeText: text, classifiedProofCount: parsedFindings.length, acceptedProofItems, rejectedProofItems, remainingMissingProofItems, lastClassifiedSource: sourceFromText(text), relatedPacketId: inferPacketId(text, input.packetBayProjection), relatedMissionId: input.missionEvidenceLedgerProjection?.missionId || input.projectAwarenessProjection?.missionId || 'derived-runtime-mission', relatedEvidenceType: observedTypes[0] || parsedFindings[0]?.evidenceType || 'unknown', parsedResultPresent: true, parsedResultStatus, proofObservedCount, proofFailedCount, proofPendingReviewCount, proofBlockedCount, missingProofResolved: proofObservedCount > 0 && !proofFailedCount && !proofBlockedCount, remainingMissingProofSummary: remainingMissingProofItems.join(' | ') || 'none', trustedForMerge, trustedForCanon: false, recommendedNextAction: parsedResultStatus === 'observed' ? nextMissingAction(remainingMissingProofItems) : 'Collect explicit build/verify/browser/PR/source-pack evidence and keep intake pending review.', mutationAllowed: false, durableWriteAllowed: false, operatorApprovalRequiredForWrite: true, openClawMutationLocked: true, codexAutoDispatchAllowed: false, confidence: parsedFindings.some((item) => item.confidence === 'high') ? 'high' : (parsedFindings.some((item) => item.confidence === 'medium') ? 'medium' : 'low'), warnings, parsedFindings, summary: `Evidence return classified as ${parsedResultStatus}; observed ${proofObservedCount}, failed ${proofFailedCount}, pending ${proofPendingReviewCount}, blocked ${proofBlockedCount}.`,
   };
 }
 
