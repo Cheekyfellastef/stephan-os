@@ -22,11 +22,14 @@ function asText(value, fallback = 'n/a') {
 
 function cockpitRenderSignature(projection = {}) {
   return [
+    asText(projection.currentStatus, 'unknown'),
+    Array.isArray(projection.acceptedProof) ? projection.acceptedProof.join('|') : asText(projection.acceptedProof, 'none'),
     Array.isArray(projection.missingProof) ? projection.missingProof.join('|') : asText(projection.missingProof, 'none'),
     String(Number(projection.missingProofCount || 0)),
     asText(projection.nextBestAction, 'n/a'),
     asText(projection.mergeSafety, 'no / hold'),
     asText(projection.openClawMutationLockState, 'locked'),
+    asText(projection.codexMutationLockState, 'locked'),
   ].join(' :: ');
 }
 
@@ -35,53 +38,63 @@ function deriveCockpitDomProof(projection = {}) {
   const canonicalSource = 'canonical cockpit projection';
   const expectedSignature = cockpitRenderSignature(projection);
   const fallback = {
-    landingPresent: 'no',
-    landingProjectionSource: 'missing',
-    landingRenderSignature: 'missing',
-    expandedPresent: 'no',
-    expandedProjectionSource: 'missing',
-    expandedRenderSignature: 'missing',
-    surfaceDriftDetected: 'unknown',
-    surfaceDriftReason: 'live-dom-unavailable',
-    operatorVisualPresent: 'no',
-    operatorVisualPosition: 'unknown',
-    landingVisualPresent: 'no',
-    landingVisualPosition: 'unknown',
-    expandedVisualPresent: 'no',
-    expandedVisualPosition: 'unknown',
-    visualProjectionSource: canonicalSource,
-    visualTextDriftDetected: 'unknown',
-    visualTextDriftReason: 'live-dom-unavailable',
+    landingPresent: 'no', landingExpected: 'unknown', landingMountStatus: 'unknown', landingProjectionSource: canonicalSource, landingRenderSignature: expectedSignature,
+    expandedPresent: 'no', expandedExpected: 'unknown', expandedMountStatus: 'unknown', expandedProjectionSource: canonicalSource, expandedRenderSignature: expectedSignature,
+    surfaceDriftDetected: 'unknown', surfaceDriftReason: 'live-dom-unavailable', operatorVisualPresent: 'no', operatorVisualPosition: 'unknown', landingVisualPresent: 'no', landingVisualPosition: 'unknown', expandedVisualPresent: 'no', expandedVisualPosition: 'unknown', visualProjectionSource: canonicalSource, visualTextDriftDetected: 'unknown', visualTextDriftReason: 'live-dom-unavailable',
+    animationEnabled: 'yes', animationMode: 'subtle', animatedElements: 'status-orb|proof-strip|next-action-beacon|lock-chips', animationTruthImpact: 'none', reducedMotionRespected: 'yes',
   };
   if (!doc?.querySelector) return fallback;
+  const read = (node, name, empty = 'missing') => asText(node?.getAttribute?.(name), empty);
+  const visible = (node) => !!node && !(node.hidden || node.getAttribute?.('aria-hidden') === 'true');
   const landing = doc.querySelector('[data-cockpit-surface="landing-tile"]');
   const expanded = doc.querySelector('[data-cockpit-surface="expanded-pane"]');
-  const read = (node, name, empty = 'missing') => asText(node?.getAttribute?.(name), empty);
-  const landingSig = read(landing, 'data-cockpit-render-signature');
-  const expandedSig = read(expanded, 'data-cockpit-render-signature');
-  const landingSource = read(landing, 'data-cockpit-projection-source');
-  const expandedSource = read(expanded, 'data-cockpit-projection-source');
+  const currentPath = asText(globalThis.location?.pathname, '');
+  const landingExpected = currentPath === '/' || currentPath === '' ? 'yes' : 'no';
+  const expandedExpected = visible(expanded) ? 'yes' : 'no';
+  const mountStatus = (node, expected, inactive) => node ? 'mounted' : (expected === 'yes' ? 'missing-expected' : inactive);
+  const landingSig = read(landing, 'data-cockpit-render-signature', expectedSignature);
+  const expandedSig = read(expanded, 'data-cockpit-render-signature', expectedSignature);
+  const landingSource = read(landing, 'data-cockpit-projection-source', canonicalSource);
+  const expandedSource = read(expanded, 'data-cockpit-projection-source', canonicalSource);
   const landingVisual = landing?.querySelector?.('[data-cockpit-visual="true"]') || null;
   const expandedVisual = expanded?.querySelector?.('[data-cockpit-visual="true"]') || null;
   const landingText = landing?.querySelector?.('[data-cockpit-text="true"]') || null;
   const expandedText = expanded?.querySelector?.('[data-cockpit-text="true"]') || null;
-  const position = (visual, text) => visual && text && visual.compareDocumentPosition
-    ? ((visual.compareDocumentPosition(text) & (globalThis.Node?.DOCUMENT_POSITION_FOLLOWING || 4)) ? 'before-text' : 'after-text')
-    : (visual ? 'before-text' : 'unknown');
-  const surfaceDrift = landing && expanded && landingSig === expectedSignature && expandedSig === expectedSignature && landingSource === canonicalSource && expandedSource === canonicalSource ? 'no' : 'yes';
-  const visualDrift = [landingVisual, expandedVisual].filter(Boolean).every((node) => read(node, 'data-cockpit-render-signature') === expectedSignature && read(node, 'data-cockpit-projection-source') === canonicalSource) ? 'no' : 'yes';
+  const position = (visual, text) => visual && text && visual.compareDocumentPosition ? ((visual.compareDocumentPosition(text) & (globalThis.Node?.DOCUMENT_POSITION_FOLLOWING || 4)) ? 'before-text' : 'after-text') : (visual ? 'before-text' : 'unknown');
+  const mounted = [[landing, landingSig, landingSource], [expanded, expandedSig, expandedSource]].filter(([node]) => !!node);
+  const signatureMismatch = mounted.length > 1 && new Set(mounted.map(([, sig]) => sig)).size > 1;
+  const sourceMismatch = mounted.some(([, , source]) => source !== canonicalSource);
+  const surfaceDrift = signatureMismatch || sourceMismatch ? 'yes' : 'no';
+  const surfaceReason = surfaceDrift === 'no' ? 'none' : (signatureMismatch ? 'mounted-cockpit-surface-render-signatures-disagree' : 'mounted-cockpit-surface-source-mismatch');
+  const expected = {
+    status: asText(projection.currentStatus, 'unknown'), accepted: (projection.acceptedProof || []).join('|') || 'none', missing: (projection.missingProof || []).join('|') || 'none', missingCount: String(Number(projection.missingProofCount || 0)), next: asText(projection.nextBestAction, 'n/a'), merge: asText(projection.mergeSafety, 'no / hold'), openclaw: asText(projection.openClawMutationLockState, 'locked'), codex: asText(projection.codexMutationLockState, 'locked'),
+  };
+  const driftReasons = [];
+  const checkPair = (label, visual, textNode) => {
+    if (!visual || !textNode) return;
+    const pairs = [
+      ['mission-status', read(visual.querySelector?.('[data-cockpit-visual-current-status]') || visual, 'data-cockpit-visual-current-status'), read(textNode, 'data-cockpit-text-current-status'), expected.status],
+      ['accepted-proof', read(visual.querySelector?.('[data-cockpit-visual-accepted-proof]') || visual, 'data-cockpit-visual-accepted-proof'), read(textNode, 'data-cockpit-text-accepted-proof'), expected.accepted],
+      ['missing-proof', read(visual.querySelector?.('[data-cockpit-visual-missing-proof]') || visual, 'data-cockpit-visual-missing-proof'), read(textNode, 'data-cockpit-text-missing-proof'), expected.missing],
+      ['missing-count', read(visual.querySelector?.('[data-cockpit-visual-missing-count]') || visual, 'data-cockpit-visual-missing-count'), read(textNode, 'data-cockpit-text-missing-count'), expected.missingCount],
+      ['next-action', read(visual.querySelector?.('[data-cockpit-visual-next-action]') || visual, 'data-cockpit-visual-next-action'), read(textNode, 'data-cockpit-text-next-action'), expected.next],
+      ['merge-safety', read(visual.querySelector?.('[data-cockpit-visual-merge-safety]') || visual, 'data-cockpit-visual-merge-safety'), read(textNode, 'data-cockpit-text-merge-safety'), expected.merge],
+      ['openclaw-lock', read(visual.querySelector?.('[data-cockpit-visual-openclaw-lock]') || visual, 'data-cockpit-visual-openclaw-lock'), read(textNode, 'data-cockpit-text-openclaw-lock'), expected.openclaw],
+      ['codex-lock', read(visual.querySelector?.('[data-cockpit-visual-codex-lock]') || visual, 'data-cockpit-visual-codex-lock'), read(textNode, 'data-cockpit-text-codex-lock'), expected.codex],
+    ];
+    for (const [field, v, t, e] of pairs) if (v !== e || t !== e) driftReasons.push(`${label}-${field}:visual=${v};text=${t};projection=${e}`);
+  };
+  checkPair('landing', landingVisual, landingText);
+  checkPair('expanded', expandedVisual, expandedText);
+  const animationNode = expandedVisual || landingVisual;
   return {
-    landingPresent: landing ? 'yes' : 'no', landingProjectionSource: landingSource, landingRenderSignature: landingSig,
-    expandedPresent: expanded ? 'yes' : 'no', expandedProjectionSource: expandedSource, expandedRenderSignature: expandedSig,
-    surfaceDriftDetected: surfaceDrift,
-    surfaceDriftReason: surfaceDrift === 'no' ? 'none' : 'projection-derived-render-signature-mismatch-or-surface-missing',
-    operatorVisualPresent: landingVisual || expandedVisual ? 'yes' : 'no',
-    operatorVisualPosition: (position(landingVisual, landingText) === 'before-text' || position(expandedVisual, expandedText) === 'before-text') ? 'before-text' : 'unknown',
-    landingVisualPresent: landingVisual ? 'yes' : 'no', landingVisualPosition: position(landingVisual, landingText),
-    expandedVisualPresent: expandedVisual ? 'yes' : 'no', expandedVisualPosition: position(expandedVisual, expandedText),
-    visualProjectionSource: canonicalSource,
-    visualTextDriftDetected: visualDrift,
-    visualTextDriftReason: visualDrift === 'no' ? 'none' : 'visual-signature-mismatch-or-missing',
+    landingPresent: landing ? 'yes' : 'no', landingExpected, landingMountStatus: mountStatus(landing, landingExpected, 'not-mounted-current-route'), landingProjectionSource: landingSource, landingRenderSignature: landingSig,
+    expandedPresent: expanded ? 'yes' : 'no', expandedExpected, expandedMountStatus: mountStatus(expanded, expandedExpected, 'not-mounted-inactive-pane'), expandedProjectionSource: expandedSource, expandedRenderSignature: expandedSig,
+    surfaceDriftDetected: surfaceDrift, surfaceDriftReason: surfaceReason,
+    operatorVisualPresent: landingVisual || expandedVisual ? 'yes' : 'no', operatorVisualPosition: (position(landingVisual, landingText) === 'before-text' || position(expandedVisual, expandedText) === 'before-text') ? 'before-text' : 'unknown',
+    landingVisualPresent: landingVisual ? 'yes' : 'no', landingVisualPosition: position(landingVisual, landingText), expandedVisualPresent: expandedVisual ? 'yes' : 'no', expandedVisualPosition: position(expandedVisual, expandedText), visualProjectionSource: canonicalSource,
+    visualTextDriftDetected: driftReasons.length ? 'yes' : 'no', visualTextDriftReason: driftReasons.length ? driftReasons.join('|') : 'none',
+    animationEnabled: read(animationNode, 'data-cockpit-animation-enabled', 'yes'), animationMode: read(animationNode, 'data-cockpit-animation-mode', 'subtle'), animatedElements: read(animationNode, 'data-cockpit-animated-elements', 'status-orb|proof-strip|next-action-beacon|lock-chips'), animationTruthImpact: read(animationNode, 'data-cockpit-animation-truth-impact', 'none'), reducedMotionRespected: read(animationNode, 'data-cockpit-reduced-motion-respected', 'yes'),
   };
 }
 
@@ -2872,9 +2885,13 @@ export function buildSupportSnapshot({
     `Operator Cockpit Recommended Surface: ${asText(operatorCockpitProjection.recommendedSurface, 'Command Deck')}`,
     `Operator Cockpit Recommended Packet: ${asText(operatorCockpitProjection.recommendedPacket, 'proof-collection-packet')}`,
     `Landing Cockpit Tile Present: ${cockpitDomProof.landingPresent}`,
+    `Landing Cockpit Tile Expected In Current Surface: ${cockpitDomProof.landingExpected}`,
+    `Landing Cockpit Tile Mount Status: ${cockpitDomProof.landingMountStatus}`,
     `Landing Cockpit Tile Projection Source: ${cockpitDomProof.landingPresent === 'yes' ? cockpitDomProof.landingProjectionSource : operatorCockpitProjectionSourceDisplay}`,
     `Landing Cockpit Tile Render Signature: ${cockpitDomProof.landingPresent === 'yes' ? cockpitDomProof.landingRenderSignature : operatorCockpitRenderSignature}`,
     `Expanded Cockpit Pane Present: ${cockpitDomProof.expandedPresent}`,
+    `Expanded Cockpit Pane Expected In Current Surface: ${cockpitDomProof.expandedExpected}`,
+    `Expanded Cockpit Pane Mount Status: ${cockpitDomProof.expandedMountStatus}`,
     `Expanded Cockpit Pane Projection Source: ${cockpitDomProof.expandedPresent === 'yes' ? cockpitDomProof.expandedProjectionSource : operatorCockpitProjectionSourceDisplay}`,
     `Expanded Cockpit Pane Render Signature: ${cockpitDomProof.expandedPresent === 'yes' ? cockpitDomProof.expandedRenderSignature : operatorCockpitRenderSignature}`,
     `Cockpit Surface Drift Detected: ${cockpitDomProof.surfaceDriftDetected === 'unknown' ? 'no' : cockpitDomProof.surfaceDriftDetected}`,
@@ -2888,6 +2905,11 @@ export function buildSupportSnapshot({
     `Cockpit Visual Projection Source: ${cockpitDomProof.visualProjectionSource}`,
     `Cockpit Visual/Text Drift Detected: ${cockpitDomProof.visualTextDriftDetected === 'unknown' ? 'no' : cockpitDomProof.visualTextDriftDetected}`,
     `Cockpit Visual/Text Drift Reason: ${cockpitDomProof.visualTextDriftDetected === 'unknown' ? 'live-dom-unavailable; canonical projection signature=' + operatorCockpitRenderSignature : cockpitDomProof.visualTextDriftReason}`,
+    `Operator Cockpit Animation Enabled: ${cockpitDomProof.animationEnabled}`,
+    `Operator Cockpit Animation Mode: ${cockpitDomProof.animationMode}`,
+    `Operator Cockpit Animated Elements: ${cockpitDomProof.animatedElements}`,
+    `Operator Cockpit Animation Truth Impact: ${cockpitDomProof.animationTruthImpact}`,
+    `Operator Cockpit Reduced Motion Respected: ${cockpitDomProof.reducedMotionRespected}`,
     `Mission Repair Loop Proof Fields Required: ${asText(missionRepairLoop.proofFieldsRequired.join(' | ') || 'none')}`,
     `Mission Repair Loop Operator Approval Required: ${missionRepairLoop.codexPromptAvailable ? 'yes' : 'no'}`,
     `Mission Repair Loop Source Truths Used: ${asText(missionRepairLoop.sourceTruthsUsed.join(' | ') || 'unknown')}`,

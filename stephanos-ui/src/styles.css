@@ -5177,3 +5177,29 @@ pre {
 .proof-missing { color: #ffa657; }
 .cockpit-next-beacon { border: 1px solid rgba(255,214,10,.35); color: #ffd60a; }
 .cockpit-pointer { color: #a5d6ff; }
+
+/* Operator Cockpit canonical visual dashboard: animation is CSS-only and truth-neutral. */
+.cockpit-visual-dashboard {
+  position: relative;
+  overflow: hidden;
+}
+.cockpit-visual-dashboard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 0%, rgba(125, 211, 252, 0.08) 45%, transparent 70%);
+  transform: translateX(-100%);
+  animation: cockpitDashboardSweep 7s ease-in-out infinite;
+  pointer-events: none;
+}
+.cockpit-visual-orb { animation: cockpitStatusBreath 3.8s ease-in-out infinite; }
+.cockpit-next-beacon { animation: cockpitBeaconPulse 2.8s ease-in-out infinite; }
+.cockpit-lock-chip { box-shadow: 0 0 14px rgba(126, 231, 135, 0.16); }
+@keyframes cockpitDashboardSweep { 0%, 20% { transform: translateX(-100%); } 55%, 100% { transform: translateX(100%); } }
+@keyframes cockpitStatusBreath { 0%, 100% { box-shadow: 0 0 12px rgba(126, 231, 135, 0.18); } 50% { box-shadow: 0 0 24px rgba(126, 231, 135, 0.32); } }
+@keyframes cockpitBeaconPulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.18); } }
+@media (prefers-reduced-motion: reduce) {
+  .cockpit-visual-dashboard::after,
+  .cockpit-visual-orb,
+  .cockpit-next-beacon { animation: none; }
+}
