@@ -4,9 +4,14 @@ function asText(value, fallback = '') {
   return out || fallback;
 }
 
+const PROOF_ORDER = ['mission-console-bridge','build-proof','verify-proof','browser-proof-checklist','pr-evidence','source-pack-output'];
 function asList(value) {
   if (Array.isArray(value)) return value.map((item) => asText(item)).filter(Boolean);
   return String(value || '').split('|').map((item) => asText(item)).filter(Boolean);
+}
+function orderedProofItems(items = []) {
+  const set = new Set(asList(items).filter((item) => item !== 'none'));
+  return [...PROOF_ORDER.filter((item) => set.has(item)), ...Array.from(set).filter((item) => !PROOF_ORDER.includes(item)).sort()];
 }
 
 function yes(value) { return asText(value).toLowerCase() === 'yes' || value === true; }
@@ -43,8 +48,14 @@ export function buildMissionProofReconciliation({ missionConsoleDiagnostics = {}
   const operatorReliefBridgePublished = yes(diagnostics.operatorReliefBridgePublished || supportSnapshot.operatorReliefBridgePublished);
   const projectionKeysNonEmpty = projectionKeys.length > 0 && projectionKeys.join('|').toLowerCase() !== 'none';
   const missionConsoleBridgeProofAccepted = bridgeParityOk && runtimeDiagnosticsPresent && dropBoundaryNone && instanceCount >= 1 && visibleInstancePublished && operatorReliefBridgePublished && projectionKeysNonEmpty;
-  const intakeAcceptedItems = asList(evidenceReturnIntakeProjection?.acceptedProofItems);
-  const intakeRejectedItems = asList(evidenceReturnIntakeProjection?.rejectedProofItems);
+  const intakeAcceptedItems = orderedProofItems([
+    ...asList(evidenceReturnIntakeProjection?.cumulativeAcceptedProofItems),
+    ...asList(evidenceReturnIntakeProjection?.acceptedProofItems),
+  ]);
+  const intakeRejectedItems = orderedProofItems([
+    ...asList(evidenceReturnIntakeProjection?.cumulativeRejectedProofItems),
+    ...asList(evidenceReturnIntakeProjection?.rejectedProofItems),
+  ]);
   const intakeAccepts = (item) => intakeAcceptedItems.includes(item) && !intakeRejectedItems.includes(item);
   const acceptedItems = missionConsoleBridgeProofAccepted ? ['mission-console-bridge'] : [];
   const missing = [];
@@ -64,8 +75,8 @@ export function buildMissionProofReconciliation({ missionConsoleDiagnostics = {}
   const remainingMissingItems = Array.from(new Set(missing));
   return {
     status: missionConsoleBridgeProofAccepted || remainingMissingItems.length ? 'active' : 'ready',
-    acceptedItems: Array.from(new Set(acceptedItems)),
-    acceptedCount: Array.from(new Set(acceptedItems)).length,
+    acceptedItems: orderedProofItems(acceptedItems),
+    acceptedCount: orderedProofItems(acceptedItems).length,
     remainingMissingItems,
     remainingMissingCount: remainingMissingItems.length,
     nextBestAction: remainingMissingItems.length ? `Collect ${remainingMissingItems[0]}.` : 'Review reconciliation proof; merge readiness still requires explicit PR/build/verify/browser evidence.',

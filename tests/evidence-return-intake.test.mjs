@@ -188,3 +188,56 @@ test('Command Deck accepted build proof propagates into mission proof reconcilia
   assert.equal(projection.missionEvidenceLedgerProjection.missingProofSummary.includes('build-proof'), false);
   assert.equal(projection.packetBayProjection.missingProofSummary.includes('build-proof'), false);
 });
+
+test('Command Deck proof session accumulates accepted proof in canonical order and supersedes same-category rejection', () => {
+  const failedBuild = routeCommandDeckUniversalIntake({
+    text: 'npm run stephanos:build failed with exit code 1',
+    evidenceContext: { ...base, missionProofReconciliation: { remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] } },
+  });
+  assert.deepEqual(failedBuild.cumulativeAcceptedProofItems, []);
+  assert.deepEqual(failedBuild.cumulativeRejectedProofItems, ['build-proof']);
+
+  const acceptedBuild = routeCommandDeckUniversalIntake({
+    text: 'npm run stephanos:build completed successfully with exit code 0',
+    evidenceContext: { ...base, cumulativeRejectedProofItems: failedBuild.cumulativeRejectedProofItems, missionProofReconciliation: { remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] } },
+  });
+  assert.deepEqual(acceptedBuild.cumulativeAcceptedProofItems, ['build-proof']);
+  assert.deepEqual(acceptedBuild.cumulativeRejectedProofItems, []);
+
+  const acceptedVerify = routeCommandDeckUniversalIntake({
+    text: 'npm run stephanos:verify completed successfully with exit code 0',
+    evidenceContext: { ...base, cumulativeAcceptedProofItems: acceptedBuild.cumulativeAcceptedProofItems, missionProofReconciliation: { remainingMissingItems: ['verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] } },
+  });
+  assert.deepEqual(acceptedVerify.cumulativeAcceptedProofItems, ['build-proof', 'verify-proof']);
+  assert.deepEqual(acceptedVerify.cumulativeRejectedProofItems, []);
+});
+
+test('Mission reconciliation consumes cumulative Command Deck proof and keeps merge hold after build plus verify', () => {
+  const projection = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      executionMetadata: {
+        command_deck_universal_intake_status: 'classified',
+        command_deck_universal_intake_routed_to: 'evidence-return-intake|evidence-intake-automation',
+        command_deck_universal_intake_accepted_proof_items: 'verify-proof',
+        command_deck_cumulative_accepted_proof_items: 'build-proof|verify-proof',
+        command_deck_cumulative_rejected_proof_items: 'none',
+        command_deck_universal_intake_echo: 'npm run stephanos:verify completed successfully with exit code 0.',
+      },
+      missionConsoleDiagnostics: {
+        operatorReliefBridgeProjectionKeysSeen: ['missionProofReconciliation'],
+        missionConsoleInstanceCount: 1,
+        missionConsoleBridgeParityStatus: 'OK',
+        runtimeDiagnosticsPresent: 'yes',
+        runtimeDiagnosticsDropBoundary: 'none',
+        missionConsoleVisibleInstancePublished: 'yes',
+        operatorReliefBridgePublished: 'yes',
+      },
+    },
+  });
+  assert.deepEqual(projection.missionProofReconciliation.acceptedItems, ['mission-console-bridge', 'build-proof', 'verify-proof']);
+  assert.deepEqual(projection.missionProofReconciliation.remainingMissingItems, ['browser-proof-checklist', 'pr-evidence', 'source-pack-output']);
+  assert.equal(projection.missionProofReconciliation.nextBestAction, 'Collect browser-proof-checklist.');
+  assert.equal(projection.evidenceReturnIntakeProjection.trustedForMerge, false);
+  assert.equal(projection.evidenceReturnIntakeProjection.codexAutoDispatchAllowed, false);
+  assert.equal(projection.evidenceReturnIntakeProjection.openClawMutationLocked, true);
+});

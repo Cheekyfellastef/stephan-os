@@ -47,7 +47,7 @@ import { buildActiveMissionState, persistActiveMissionState, readActiveMissionSt
 import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachPrEvidenceToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
 import { buildAnswerDeliveryTruth } from '../state/answerDeliveryTruth.js';
 import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
-import { routeCommandDeckUniversalIntake } from '../state/commandDeckUniversalIntake.js';
+import { mergeProofSession, routeCommandDeckUniversalIntake } from '../state/commandDeckUniversalIntake.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
@@ -4031,8 +4031,17 @@ export function useAIConsole() {
         missionEvidenceLedgerProjection: runtimeStatusModel?.operatorReliefProjection?.missionEvidenceLedgerProjection || {},
         missionEvidenceContextSummary: runtimeStatusModel?.operatorReliefProjection?.missionEvidenceContextSummary || {},
         packetBayProjection: runtimeStatusModel?.operatorReliefProjection?.packetBayProjection || {},
+        cumulativeAcceptedProofItems: lastExecutionMetadata?.command_deck_cumulative_accepted_proof_items || lastExecutionMetadata?.command_deck_proof_session_accepted_items || '',
+        cumulativeRejectedProofItems: lastExecutionMetadata?.command_deck_cumulative_rejected_proof_items || lastExecutionMetadata?.command_deck_proof_session_rejected_items || '',
       },
     });
+    const cumulativeProofSession = mergeProofSession({
+      previousAccepted: lastExecutionMetadata?.command_deck_cumulative_accepted_proof_items || lastExecutionMetadata?.command_deck_proof_session_accepted_items || '',
+      previousRejected: lastExecutionMetadata?.command_deck_cumulative_rejected_proof_items || lastExecutionMetadata?.command_deck_proof_session_rejected_items || '',
+      latestAccepted: commandDeckUniversalIntake.acceptedProofItems || [],
+      latestRejected: commandDeckUniversalIntake.rejectedProofItems || [],
+    });
+    const proofSessionId = lastExecutionMetadata?.command_deck_proof_session_id || runtimeStatusModel?.missionProofReconciliation?.missionId || runtimeStatusModel?.operatorReliefProjection?.projectAwarenessProjection?.missionId || 'runtime-proof-session';
     const commandDeckIntakeMetadata = {
       command_deck_universal_intake_status: commandDeckUniversalIntake.status || 'idle',
       command_deck_universal_intake_last_kind: commandDeckUniversalIntake.lastKind || 'unknown/noise',
@@ -4040,6 +4049,13 @@ export function useAIConsole() {
       command_deck_universal_intake_routed_to: (commandDeckUniversalIntake.routedTo || []).join('|') || 'assistant-direct-chat',
       command_deck_universal_intake_accepted_proof_items: (commandDeckUniversalIntake.acceptedProofItems || []).join('|') || 'none',
       command_deck_universal_intake_rejected_proof_items: (commandDeckUniversalIntake.rejectedProofItems || []).join('|') || 'none',
+      command_deck_proof_session_id: proofSessionId,
+      command_deck_latest_accepted_proof_items: (commandDeckUniversalIntake.acceptedProofItems || []).join('|') || 'none',
+      command_deck_latest_rejected_proof_items: (commandDeckUniversalIntake.rejectedProofItems || []).join('|') || 'none',
+      command_deck_cumulative_accepted_proof_items: cumulativeProofSession.acceptedProofItems.join('|') || 'none',
+      command_deck_cumulative_rejected_proof_items: cumulativeProofSession.rejectedProofItems.join('|') || 'none',
+      command_deck_proof_accumulation_source: 'last-execution-metadata',
+      command_deck_proof_accumulation_status: 'cumulative-union',
       command_deck_universal_intake_echo_present: commandDeckUniversalIntake.echo ? 'yes' : 'no',
       command_deck_universal_intake_echo_length: String(commandDeckUniversalIntake.echoLength || 0),
       command_deck_universal_intake_confidence: commandDeckUniversalIntake.confidence || 'low',
@@ -4064,7 +4080,22 @@ export function useAIConsole() {
         'Operator action required: review the routed echo and continue with the next missing proof.',
       ].join('\n');
       appendLocalOperatorEntry(answer);
-      return;
+      const acceptedUniversalIntake = (commandDeckUniversalIntake.acceptedProofItems || []).length > 0 || commandDeckUniversalIntake.status === 'classified';
+      const clearedAt = new Date().toISOString();
+      setLastExecutionMetadata((prev = {}) => ({
+        ...prev,
+        ...commandDeckIntakeMetadata,
+        command_pipeline_last_submit_accepted: acceptedUniversalIntake ? 'yes' : 'no',
+        command_pipeline_last_submit_attempted: 'yes',
+        command_pipeline_last_input_cleared: acceptedUniversalIntake ? 'yes' : 'no',
+        command_pipeline_last_input_restore_available: 'yes',
+        command_deck_input_value_length_after_submit: acceptedUniversalIntake ? '0' : String(prompt.length),
+        command_deck_input_visible_value_empty_after_submit: acceptedUniversalIntake ? 'yes' : 'no',
+        command_deck_last_cleared_submit_kind: acceptedUniversalIntake ? 'universal-intake-proof' : 'none',
+        command_deck_last_cleared_at: acceptedUniversalIntake ? clearedAt : 'none',
+        command_deck_last_clear_reason: acceptedUniversalIntake ? 'accepted-universal-intake' : 'not-cleared',
+      }));
+      return { submitAccepted: acceptedUniversalIntake, inputCleared: acceptedUniversalIntake, restoreInput: true };
     }
 
     if (normalizedPrompt === 'what do you remember?' || normalizedPrompt === 'what do you remember') {
@@ -5239,7 +5270,7 @@ export function useAIConsole() {
       finalExecutionMetadata.command_pipeline_last_failure_reason = data.success ? 'none' : (data.error_code || data.error || 'unknown');
       finalExecutionMetadata.command_pipeline_last_finalization_path = lastFinalizationPath;
       finalExecutionMetadata.command_pipeline_last_input_cleared = submitAccepted ? 'yes' : 'no';
-      finalExecutionMetadata.command_pipeline_last_input_restore_available = submitAccepted ? 'no' : 'yes';
+      finalExecutionMetadata.command_pipeline_last_input_restore_available = submitAccepted ? 'yes' : 'yes';
       finalExecutionMetadata.execute_stage_last_reached = executeStageLastReached;
       finalExecutionMetadata.execute_phase = executePhase;
       finalExecutionMetadata.execute_phase_failure = executePhaseFailure;

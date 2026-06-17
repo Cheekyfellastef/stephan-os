@@ -1,11 +1,25 @@
 import { deriveEvidenceReturnIntakeProjection } from './evidenceReturnIntakeModel.js';
 
 const ECHO_LIMIT = 360;
-const PROOF_KINDS = new Set(['build-proof','verify-proof','browser-proof-checklist','pr-evidence','source-pack-output']);
+export const COMMAND_DECK_PROOF_ORDER = ['mission-console-bridge','build-proof','verify-proof','browser-proof-checklist','pr-evidence','source-pack-output'];
+const PROOF_KINDS = new Set(COMMAND_DECK_PROOF_ORDER.filter((item) => item !== 'mission-console-bridge'));
 
 function textOf(value) { return String(value ?? '').trim(); }
 function boundedEcho(text) { const value = textOf(text); return value.length > ECHO_LIMIT ? `${value.slice(0, ECHO_LIMIT)}…` : value; }
 function uniq(items) { return Array.from(new Set(items.filter(Boolean))); }
+export function orderProofItems(items = []) {
+  const values = uniq((Array.isArray(items) ? items : String(items || '').split('|')).map(textOf).filter((item) => item && item !== 'none'));
+  const known = COMMAND_DECK_PROOF_ORDER.filter((item) => values.includes(item));
+  const extra = values.filter((item) => !COMMAND_DECK_PROOF_ORDER.includes(item)).sort();
+  return [...known, ...extra];
+}
+export function mergeProofSession({ previousAccepted = [], previousRejected = [], latestAccepted = [], latestRejected = [] } = {}) {
+  const accepted = orderProofItems([...orderProofItems(previousAccepted), ...orderProofItems(latestAccepted)]);
+  const latestAcceptedSet = new Set(orderProofItems(latestAccepted));
+  const rejected = orderProofItems([...orderProofItems(previousRejected), ...orderProofItems(latestRejected)])
+    .filter((item) => !latestAcceptedSet.has(item));
+  return { acceptedProofItems: accepted, rejectedProofItems: rejected };
+}
 function hasSuccess(text) { return /\b(pass(?:ed)?|success(?:ful(?:ly)?)?|completed successfully|exit code 0|code 0|green|clean|ok)\b/i.test(text); }
 function hasFailure(text) { return /\b(fail(?:ed|ure)?|error|exit code [1-9]|exited with code [1-9]|red console|blocked|timeout)\b/i.test(text.replace(/no red console errors?/ig, 'console-clean').replace(/no errors?/ig, 'clean')); }
 
@@ -54,11 +68,19 @@ export function routeCommandDeckUniversalIntake({ text = '', evidenceContext = {
   if (classification.kinds.includes('source-pack-output')) routedTo.push('packet-bay-source-pack-intake');
   if (classification.kinds.includes('operator-approval') || classification.kinds.includes('operator-hold')) routedTo.push('operator-decision-queue');
   if (!routedTo.length) routedTo.push('assistant-direct-chat');
+  const cumulative = mergeProofSession({
+    previousAccepted: evidenceContext.cumulativeAcceptedProofItems || evidenceContext.acceptedProofItems || [],
+    previousRejected: evidenceContext.cumulativeRejectedProofItems || evidenceContext.rejectedProofItems || [],
+    latestAccepted: evidenceReturnIntakeProjection?.acceptedProofItems || [],
+    latestRejected: evidenceReturnIntakeProjection?.rejectedProofItems || [],
+  });
   return {
     ...classification,
     routedTo: uniq(routedTo),
     acceptedProofItems: evidenceReturnIntakeProjection?.acceptedProofItems || [],
     rejectedProofItems: evidenceReturnIntakeProjection?.rejectedProofItems || [],
+    cumulativeAcceptedProofItems: cumulative.acceptedProofItems,
+    cumulativeRejectedProofItems: cumulative.rejectedProofItems,
     nextAction: evidenceReturnIntakeProjection?.recommendedNextAction || (classification.kinds.includes('direct-chat') ? 'Answer operator normally.' : 'Review classified intake and take the next approved operator action.'),
     evidenceReturnIntakeProjection,
     mergeReadinessChanged: 'no',

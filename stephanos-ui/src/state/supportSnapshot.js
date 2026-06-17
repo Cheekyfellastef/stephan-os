@@ -1885,9 +1885,11 @@ export function buildSupportSnapshot({
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
   const commandDeckMetadataAcceptedProofItems = String(executionMetadata?.command_deck_universal_intake_accepted_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
   const commandDeckMetadataRejectedProofItems = String(executionMetadata?.command_deck_universal_intake_rejected_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
+  const commandDeckCumulativeAcceptedProofItems = String(executionMetadata?.command_deck_cumulative_accepted_proof_items || executionMetadata?.command_deck_proof_session_accepted_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
+  const commandDeckCumulativeRejectedProofItems = String(executionMetadata?.command_deck_cumulative_rejected_proof_items || executionMetadata?.command_deck_proof_session_rejected_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
   const commandDeckMetadataRoutedToEvidence = String(executionMetadata?.command_deck_universal_intake_routed_to || '').includes('evidence-return-intake');
   const commandDeckMetadataProofProjection = commandDeckMetadataRoutedToEvidence
-    ? { acceptedProofItems: commandDeckMetadataAcceptedProofItems, rejectedProofItems: commandDeckMetadataRejectedProofItems }
+    ? { acceptedProofItems: commandDeckMetadataAcceptedProofItems, rejectedProofItems: commandDeckMetadataRejectedProofItems, cumulativeAcceptedProofItems: commandDeckCumulativeAcceptedProofItems, cumulativeRejectedProofItems: commandDeckCumulativeRejectedProofItems }
     : {};
   let missionProofReconciliation = buildMissionProofReconciliation({
     missionConsoleDiagnostics,
@@ -2024,6 +2026,8 @@ export function buildSupportSnapshot({
       ...derivedEvidenceReturnIntakeProjection,
       acceptedProofItems: Array.from(new Set([...(derivedEvidenceReturnIntakeProjection.acceptedProofItems || []), ...commandDeckMetadataAcceptedProofItems])),
       rejectedProofItems: Array.from(new Set([...(derivedEvidenceReturnIntakeProjection.rejectedProofItems || []), ...commandDeckMetadataRejectedProofItems])),
+      cumulativeAcceptedProofItems: commandDeckCumulativeAcceptedProofItems,
+      cumulativeRejectedProofItems: commandDeckCumulativeRejectedProofItems,
     }
     : derivedEvidenceReturnIntakeProjection;
   missionProofReconciliation = buildMissionProofReconciliation({
@@ -3539,6 +3543,18 @@ export function buildSupportSnapshot({
     `Command Deck Universal Intake Echo Length: ${asText(executionMetadata?.command_deck_universal_intake_echo_length, '0')}`,
     `Command Deck Universal Intake Confidence: ${asText(executionMetadata?.command_deck_universal_intake_confidence, 'low')}`,
     `Command Deck Universal Intake Next Action: ${asText(executionMetadata?.command_deck_universal_intake_next_action || evidenceReturnIntakeFields.evidenceIntakeNextBestAction, 'Answer operator normally.')}`,
+    `Command Deck Proof Session ID: ${asText(executionMetadata?.command_deck_proof_session_id, 'runtime-proof-session')}`,
+    `Command Deck Cumulative Accepted Proof Items: ${asText(executionMetadata?.command_deck_cumulative_accepted_proof_items, (evidenceReturnIntakeProjection.cumulativeAcceptedProofItems || []).join('|') || 'none')}`,
+    `Command Deck Cumulative Rejected Proof Items: ${asText(executionMetadata?.command_deck_cumulative_rejected_proof_items, (evidenceReturnIntakeProjection.cumulativeRejectedProofItems || []).join('|') || 'none')}`,
+    `Command Deck Latest Accepted Proof Items: ${asText(executionMetadata?.command_deck_latest_accepted_proof_items || executionMetadata?.command_deck_universal_intake_accepted_proof_items, 'none')}`,
+    `Command Deck Latest Rejected Proof Items: ${asText(executionMetadata?.command_deck_latest_rejected_proof_items || executionMetadata?.command_deck_universal_intake_rejected_proof_items, 'none')}`,
+    `Command Deck Proof Accumulation Source: ${asText(executionMetadata?.command_deck_proof_accumulation_source, 'last-execution-metadata')}`,
+    `Command Deck Proof Accumulation Status: ${asText(executionMetadata?.command_deck_proof_accumulation_status, 'cumulative-union')}`,
+    `Command Deck Input Value Length After Submit: ${asText(executionMetadata?.command_deck_input_value_length_after_submit, 'unknown')}`,
+    `Command Deck Input Visible Value Empty After Submit: ${asText(executionMetadata?.command_deck_input_visible_value_empty_after_submit, 'unknown')}`,
+    `Command Deck Last Cleared Submit Kind: ${asText(executionMetadata?.command_deck_last_cleared_submit_kind, 'none')}`,
+    `Command Deck Last Cleared At: ${asText(executionMetadata?.command_deck_last_cleared_at, 'none')}`,
+    `Command Deck Last Clear Reason: ${asText(executionMetadata?.command_deck_last_clear_reason, 'none')}`,
     `Evidence Intake Echo Present: ${asText(executionMetadata?.evidence_intake_echo_present || evidenceReturnIntakeFields.evidenceIntakeEchoPresent, 'no')}`,
     `Evidence Intake Echo Source: ${asText(executionMetadata?.evidence_intake_echo_source || evidenceReturnIntakeFields.evidenceIntakeEchoSource, 'none')}`,
     `Evidence Intake Echo Classified Items: ${asText(executionMetadata?.evidence_intake_echo_classified_items || evidenceReturnIntakeFields.evidenceIntakeEchoClassifiedItems, 'none')}`,

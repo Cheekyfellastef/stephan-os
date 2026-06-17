@@ -1913,8 +1913,10 @@ export function deriveOperatorReliefProjection(models = {}) {
   });
   const commandDeckAcceptedProofItems = String(supportSnapshot.executionMetadata?.command_deck_universal_intake_accepted_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
   const commandDeckRejectedProofItems = String(supportSnapshot.executionMetadata?.command_deck_universal_intake_rejected_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
+  const commandDeckCumulativeAcceptedProofItems = String(supportSnapshot.executionMetadata?.command_deck_cumulative_accepted_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
+  const commandDeckCumulativeRejectedProofItems = String(supportSnapshot.executionMetadata?.command_deck_cumulative_rejected_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
   const commandDeckRoutedToEvidence = String(supportSnapshot.executionMetadata?.command_deck_universal_intake_routed_to || '').includes('evidence-return-intake');
-  const commandDeckEvidenceProofProjection = commandDeckRoutedToEvidence ? { acceptedProofItems: commandDeckAcceptedProofItems, rejectedProofItems: commandDeckRejectedProofItems } : {};
+  const commandDeckEvidenceProofProjection = commandDeckRoutedToEvidence ? { acceptedProofItems: commandDeckAcceptedProofItems, rejectedProofItems: commandDeckRejectedProofItems, cumulativeAcceptedProofItems: commandDeckCumulativeAcceptedProofItems, cumulativeRejectedProofItems: commandDeckCumulativeRejectedProofItems } : {};
   const missionProofReconciliation = buildMissionProofReconciliation({
     missionConsoleDiagnostics: supportSnapshot.missionConsoleDiagnostics || supportSnapshot.runtimeContext?.operatorReliefBridgeDiagnostics || {},
     supportSnapshot,
