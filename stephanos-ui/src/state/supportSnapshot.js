@@ -927,10 +927,37 @@ function normalizeMissionConsoleIdList(value) {
 }
 
 function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadata = {}) {
-  const liveDiagnostics = runtimeStatus?.runtimeContext?.operatorReliefBridgeDiagnostics
+  const storeDiagnostics = runtimeStatus?.operatorReliefProjectionBridge?.diagnostics
+    && typeof runtimeStatus.operatorReliefProjectionBridge.diagnostics === 'object'
+    ? runtimeStatus.operatorReliefProjectionBridge.diagnostics
+    : {};
+  const runtimeContextAlias = runtimeStatus?.runtimeContext?.operatorReliefBridgeDiagnostics
     && typeof runtimeStatus.runtimeContext.operatorReliefBridgeDiagnostics === 'object'
     ? runtimeStatus.runtimeContext.operatorReliefBridgeDiagnostics
     : {};
+  const liveDiagnostics = runtimeContextAlias;
+  const storeDiagnosticKeys = Object.keys(storeDiagnostics);
+  const runtimeContextAliasKeys = Object.keys(runtimeContextAlias);
+  const runtimeStatusAliasKeys = runtimeContextAliasKeys;
+  const storeDiagnosticsPresent = storeDiagnosticKeys.length > 0;
+  const runtimeContextAliasPresent = runtimeContextAliasKeys.length > 0;
+  const runtimeStatusAliasPresent = runtimeStatusAliasKeys.length > 0;
+  let runtimeDiagnosticsDropBoundary = 'none';
+  if (!storeDiagnosticsPresent) {
+    runtimeDiagnosticsDropBoundary = 'store-diagnostics-missing';
+  } else if (!runtimeContextAliasPresent) {
+    runtimeDiagnosticsDropBoundary = 'runtime-context-alias-missing';
+  } else if (!runtimeStatusAliasPresent) {
+    runtimeDiagnosticsDropBoundary = 'runtime-status-alias-missing';
+  } else if (storeDiagnostics.registrationDiagnosticsStamp
+    && runtimeContextAlias.registrationDiagnosticsStamp
+    && Number(runtimeContextAlias.registrationDiagnosticsStamp) < Number(storeDiagnostics.registrationDiagnosticsStamp)) {
+    runtimeDiagnosticsDropBoundary = 'runtime-context-stale-before-store-write';
+  } else if (storeDiagnostics.publisherRegistryOwnerId
+    && runtimeContextAlias.publisherRegistryOwnerId
+    && storeDiagnostics.publisherRegistryOwnerId !== runtimeContextAlias.publisherRegistryOwnerId) {
+    runtimeDiagnosticsDropBoundary = 'support-snapshot-wrong-runtime-object';
+  }
   const liveDiagnosticKeys = Object.keys(liveDiagnostics);
   const livePublisherInstanceIds = normalizeMissionConsoleIdList(liveDiagnostics?.publisherRegistryInstanceIds);
   const livePublisherCount = Number(liveDiagnostics?.publisherRegistryInstanceCount);
@@ -1003,6 +1030,14 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     registrationDiagnosticsOwnerId: useLiveDiagnostics
       ? (selected?.operatorReliefBridgeDiagnosticsStoreOwnerId || selected?.missionConsoleBridgeInstancesRefOwnerId || selected?.publisherRegistryOwnerId || 'unknown')
       : (liveMarkerStamp > executionRegistrationStamp ? (uiRealityComponentTrace?.registrationCallbackReturnRegistryOwnerId || 'unknown') : (executionMetadata?.mission_console_registration_diagnostics_owner_id || 'unknown')),
+    storeBridgeDiagnosticsPresent: storeDiagnosticsPresent ? 'yes' : 'no',
+    storeBridgeDiagnosticsKeys: storeDiagnosticKeys.length ? storeDiagnosticKeys.sort().join('|') : 'none',
+    storeBridgeDiagnosticsStamp: storeDiagnostics?.registrationDiagnosticsStamp ? String(storeDiagnostics.registrationDiagnosticsStamp) : '0',
+    runtimeContextBridgeAliasPresent: runtimeContextAliasPresent ? 'yes' : 'no',
+    runtimeContextBridgeAliasKeys: runtimeContextAliasKeys.length ? runtimeContextAliasKeys.sort().join('|') : 'none',
+    runtimeStatusBridgeAliasPresent: runtimeStatusAliasPresent ? 'yes' : 'no',
+    runtimeStatusBridgeAliasKeys: runtimeStatusAliasKeys.length ? runtimeStatusAliasKeys.sort().join('|') : 'none',
+    runtimeDiagnosticsDropBoundary,
     runtimeDiagnosticsPresent: liveDiagnosticKeys.length > 0 ? 'yes' : 'no',
     runtimeDiagnosticsKeys: liveDiagnosticKeys.length ? liveDiagnosticKeys.sort().join('|') : 'none',
     runtimePublisherRegistryCount: liveHasStampedPublisherDiagnostics ? String(liveCount) : '0',
@@ -1129,7 +1164,7 @@ function normalizeMissionConsoleDiagnostics(runtimeStatus = {}, executionMetadat
     componentCallbackError: asText(uiRealityComponentTrace?.registrationCallbackError, useLiveDiagnostics ? (selected?.registrationCallbackError || 'none') : (executionMetadata?.mission_console_component_callback_error || 'none')),
     registrationDropBoundary: useLiveDiagnostics
       ? (selected?.operatorReliefBridgeDiagnosticsDropBoundary || selected?.registrationDropBoundary || uiRealityComponentTrace?.registrationDropBoundary || 'none')
-      : (uiRealityComponentTrace?.registrationDropBoundary || executionMetadata?.mission_console_registration_drop_boundary || executionMetadata?.operator_relief_bridge_drop_boundary || (liveDiagnosticKeys.length <= 0 ? 'runtime-context-missing-bridge-diagnostics' : (liveHasInstances && !liveHasStampedPublisherDiagnostics ? 'support-snapshot-read-wrong-path' : 'runtime-context-not-injected'))),
+      : (uiRealityComponentTrace?.registrationDropBoundary || executionMetadata?.mission_console_registration_drop_boundary || executionMetadata?.operator_relief_bridge_drop_boundary || runtimeDiagnosticsDropBoundary || (liveDiagnosticKeys.length <= 0 ? 'runtime-context-missing-bridge-diagnostics' : (liveHasInstances && !liveHasStampedPublisherDiagnostics ? 'support-snapshot-read-wrong-path' : 'runtime-context-not-injected'))),
   };
 }
 
@@ -3501,6 +3536,14 @@ export function buildSupportSnapshot({
     `Mission Console Registration Diagnostics Stamp: ${asText(missionConsoleDiagnostics?.registrationDiagnosticsStamp, '0')}`,
     `Mission Console Registration Diagnostics Owner ID: ${asText(missionConsoleDiagnostics?.registrationDiagnosticsOwnerId, 'unknown')}`,
     `Support Snapshot Diagnostics Source ID: ${asText(missionConsoleDiagnostics?.supportSnapshotDiagnosticsSourceId, 'missing')}`,
+    `Mission Console Store Bridge Diagnostics Present: ${asText(missionConsoleDiagnostics?.storeBridgeDiagnosticsPresent, 'no')}`,
+    `Mission Console Store Bridge Diagnostics Keys: ${asText(missionConsoleDiagnostics?.storeBridgeDiagnosticsKeys, 'none')}`,
+    `Mission Console Store Bridge Diagnostics Stamp: ${asText(missionConsoleDiagnostics?.storeBridgeDiagnosticsStamp, '0')}`,
+    `Mission Console Runtime Context Bridge Alias Present: ${asText(missionConsoleDiagnostics?.runtimeContextBridgeAliasPresent, 'no')}`,
+    `Mission Console Runtime Context Bridge Alias Keys: ${asText(missionConsoleDiagnostics?.runtimeContextBridgeAliasKeys, 'none')}`,
+    `Mission Console Runtime Status Bridge Alias Present: ${asText(missionConsoleDiagnostics?.runtimeStatusBridgeAliasPresent, 'no')}`,
+    `Mission Console Runtime Status Bridge Alias Keys: ${asText(missionConsoleDiagnostics?.runtimeStatusBridgeAliasKeys, 'none')}`,
+    `Mission Console Runtime Diagnostics Drop Boundary: ${asText(missionConsoleDiagnostics?.runtimeDiagnosticsDropBoundary, 'none')}`,
     `Mission Console Runtime Diagnostics Present: ${asText(missionConsoleDiagnostics?.runtimeDiagnosticsPresent, 'no')}`,
     `Mission Console Runtime Diagnostics Keys: ${asText(missionConsoleDiagnostics?.runtimeDiagnosticsKeys, 'none')}`,
     `Mission Console Runtime Publisher Registry Count: ${asText(missionConsoleDiagnostics?.runtimePublisherRegistryCount, '0')}`,

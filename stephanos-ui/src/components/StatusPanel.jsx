@@ -111,6 +111,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
     uiDiagnostics,
     lastExecutionMetadata,
     runtimeStatusModel,
+    operatorReliefProjectionBridge,
     uiLayout,
     togglePanel,
     workingMemory,
@@ -319,6 +320,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
     runtimeStatus: {
       ...runtimeStatus,
       lastExecutionMetadata: lastExecutionMetadata && typeof lastExecutionMetadata === 'object' ? lastExecutionMetadata : {},
+      operatorReliefProjectionBridge,
       providerSelectionSource,
       activeProviderConfigSource: getActiveProviderConfigSource(),
       devMode,

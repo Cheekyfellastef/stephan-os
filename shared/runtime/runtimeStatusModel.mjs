@@ -1175,6 +1175,10 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
   const surfaceRoutingBiasHint = String(surfaceAwareness.effectiveSurfaceExperience?.resolvedRoutingBiasHint || 'auto');
   const providerExecutionIntent = normalizeProviderExecutionIntent(runtimeContext);
   const operatorReliefProjection = normalizeOperatorReliefProjection(runtimeContext);
+  const operatorReliefBridgeDiagnostics = runtimeContext?.operatorReliefBridgeDiagnostics
+    && typeof runtimeContext.operatorReliefBridgeDiagnostics === 'object'
+    ? { ...runtimeContext.operatorReliefBridgeDiagnostics }
+    : null;
   return {
     frontendOrigin,
     apiBaseUrl,
@@ -1235,6 +1239,7 @@ export function normalizeRuntimeContext(runtimeContext = {}, { backendAvailable 
       ? runtimeContext.hostedCloudConfig
       : {},
     ...(operatorReliefProjection ? { operatorReliefProjection } : {}),
+    ...(operatorReliefBridgeDiagnostics ? { operatorReliefBridgeDiagnostics } : {}),
   };
 }
 
