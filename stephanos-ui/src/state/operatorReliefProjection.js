@@ -6,7 +6,7 @@ import { derivePacketBayProjection } from './packetBayProjection.js';
 import { buildProjectAwarenessProjection } from './projectAwarenessProjection.js';
 import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
 import { deriveEvidenceReturnIntakeProjection } from './evidenceReturnIntakeModel.js';
-import { buildMissionProofReconciliation, removeAcceptedMissionProof } from './missionProofReconciliation.js';
+import { buildMissionProofReconciliation, reconciledMissionMissingProof } from './missionProofReconciliation.js';
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -1374,14 +1374,14 @@ export function buildAgentRealityLoopProjection({
     ...asList(agentWorkRoutingProjection.requiredProof),
     ...asList(harnessAgentProjection.requiredTests),
   ])).slice(0, 18);
-  let missingProof = Array.from(new Set([
+  const rawLegacyMissingProof = Array.from(new Set([
     ...asList(packetBay.packets).flatMap((packet) => asList(packet.missingProof)),
     ...asList(mesh.missingProof),
     ...asList(verificationReturnIntake.missingEvidence),
     ...asList(missionBrainNextAction.openEvidenceGaps).map((gap) => gap?.label || gap?.requiredAction || gap).filter(Boolean),
     ...(evidenceAvailable && evidenceContext.missingProofSummary !== 'none' ? String(evidenceContext.missingProofSummary).split('|').map((item) => asText(item, '')).filter(Boolean) : []),
   ])).slice(0, 18);
-  missingProof = removeAcceptedMissionProof(missingProof, missionProofReconciliation).slice(0, 18);
+  let missingProof = reconciledMissionMissingProof(rawLegacyMissingProof, missionProofReconciliation).slice(0, 18);
   const blockers = Array.from(new Set([
     ...asList(agentWorkRoutingProjection.blockers),
     ...asList(mesh.blockers),
@@ -1500,6 +1500,7 @@ export function buildAgentRealityLoopProjection({
     proofRequired,
     requiredProof: proofRequired,
     missingProof,
+    rawLegacyMissingProof,
     blockers,
     warnings,
     operatorDecisionRequired,
@@ -1936,6 +1937,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     agentWorkRoutingProjection,
     missionEvidenceLedgerProjection: preliminaryMissionEvidenceLedgerProjection,
     missionEvidenceContextSummary: preliminaryMissionEvidenceContextSummary,
+    missionProofReconciliation,
   });
   const evidenceReturnIntakeProjection = deriveEvidenceReturnIntakeProjection({
     missionEvidenceLedgerProjection: preliminaryMissionEvidenceLedgerProjection,
