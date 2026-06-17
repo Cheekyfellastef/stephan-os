@@ -6,7 +6,7 @@ function yes(v) { return v === true || text(v).toLowerCase() === 'yes'; }
 function firstObject(...values) { return values.find((v) => v && typeof v === 'object') || {}; }
 
 export const COCKPIT_PROJECTION_FIELDS = Object.freeze([
-  'currentMission','currentStatus','acceptedProof','missingProof','missingProofCount','nextBestAction','mergeSafety','whoShouldActNext','recommendedPacket','recommendedSurface','openClawMutationLockState','codexMutationLockState','lastCommandDeckIntakeResult','evidenceIntakeState','latestCommandDeckIntakeClassification','packetBayRecommendation','arlRecommendation','mergeReadiness','mergeBlockers','nextProofToCollect','debugDrilldown'
+  'currentMission','currentStatus','acceptedProof','missingProof','missingProofCount','cockpitActionStatus','cockpitPrimaryActionLabel','cockpitPrimaryActionTargetSurface','cockpitPrimaryActionTargetPaneId','cockpitPrimaryActionTargetPacketId','cockpitPrimaryActionKind','cockpitPrimaryActionReason','cockpitSecondaryActions','cockpitActionMutationAllowed','cockpitActionRequiresOperatorApproval','cockpitActionSource','nextBestAction','mergeSafety','whoShouldActNext','recommendedPacket','recommendedSurface','openClawMutationLockState','codexMutationLockState','lastCommandDeckIntakeResult','evidenceIntakeState','latestCommandDeckIntakeClassification','packetBayRecommendation','arlRecommendation','mergeReadiness','mergeBlockers','nextProofToCollect','debugDrilldown'
 ]);
 
 export function buildCockpitProjection(input = {}) {
@@ -30,6 +30,12 @@ export function buildCockpitProjection(input = {}) {
   const mergeSafe = ['merge-candidate', 'ready', 'safe', 'already-merged'].includes(mergeReadiness) && missingProof.length === 0 && (ledger.trustedForMerge === true || yes(runtime.trustedForMerge));
   const openClawLocked = arl.openClawMutationLocked !== false && ledger.openClawMutationLocked !== false && !yes(runtime.openClawMutationAllowed);
   const intakeClass = text(runtime.commandDeckUniversalIntake?.classification || evidenceIntake.classification || evidenceIntake.intent || runtime.lastCommandDeckIntakeClassification, 'unavailable');
+
+  const actionModel = deriveCockpitActionModel({
+    projectionSource: 'canonical-cockpit-projection-runtime-truth-v1',
+    missingProof, nextProofToCollect, nextBestAction: text(reconciliation.nextBestAction || ledger.nextAction || (missingProof.length ? `Collect ${nextProofToCollect}.` : ''), missingProof.length ? `Collect ${nextProofToCollect}.` : 'Review evidence and hold for operator merge decision.'),
+    mergeSafety: mergeSafe ? 'yes / candidate' : 'no / hold', recommendedPacket: text(packetBay.recommendedPacketId || packetBay.recommendedPacket || packetBay.nextPacketId || 'proof-collection-packet'), recommendedSurface: text(packetBay.recommendedSurface || builderMesh.recommendedSurface || 'Command Deck'), packetBayRecommendation: text(packetBay.nextAction || packetBay.recommendation || 'Collect missing proof through Packet Bay.'), lastCommandDeckIntakeResult: text(evidenceIntake.result || evidenceIntake.status || runtime.lastCommandDeckIntakeResult || 'unavailable'), evidenceIntakeState: text(evidenceIntake.status || evidenceIntake.intakeStatus || 'unavailable'), openClawMutationLockState: openClawLocked ? 'locked' : 'unlocked', codexMutationLockState: ledger.codexAutoDispatchAllowed === true ? 'dispatch-allowed' : 'locked',
+  });
 
   return {
     projectionId: 'operator-cockpit-view-v1',
@@ -56,8 +62,37 @@ export function buildCockpitProjection(input = {}) {
     arlRecommendation: text(arl.nextAction || arl.recommendation || arl.mergeRecommendation || 'Hold mutation until evidence is trusted.'),
     uiRealityState: text(uiReality.status || 'unavailable'),
     builderMeshRecommendation: text(builderMesh.nextBestAction || builderMesh.recommendedBuilder || 'Review Builder Mesh truth.'),
+    ...actionModel,
     debugDrilldown: { ledgerSource: text(ledger.projectionSource, 'none'), reconciliationStatus: text(reconciliation.status, 'unavailable'), rawDiagnosticsAvailable: true },
   };
+}
+
+export function deriveCockpitActionModel(projection = {}) {
+  const p = projection?.projectionSource ? projection : buildCockpitProjection(projection);
+  const missing = unique(p.missingProof).map(normProof);
+  const firstMissing = normProof(p.nextProofToCollect || missing[0] || '');
+  const recommendedPacket = text(p.recommendedPacket, 'proof-collection-packet');
+  const base = {
+    cockpitActionStatus: 'available',
+    cockpitPrimaryActionLabel: 'Open proof intake',
+    cockpitPrimaryActionTargetSurface: text(p.recommendedSurface, 'Command Deck'),
+    cockpitPrimaryActionTargetPaneId: 'commandDeck',
+    cockpitPrimaryActionTargetPacketId: recommendedPacket,
+    cockpitPrimaryActionKind: 'focus-proof-intake',
+    cockpitPrimaryActionReason: `Derived from canonical cockpit projection: ${text(p.nextBestAction, 'collect proof')}`,
+    cockpitSecondaryActions: [],
+    cockpitActionMutationAllowed: 'no',
+    cockpitActionRequiresOperatorApproval: 'yes',
+    cockpitActionSource: 'canonical cockpit projection',
+  };
+  const setProof = (proof) => ({ ...base, cockpitPrimaryActionLabel: `Collect ${proof}`, cockpitPrimaryActionTargetSurface: 'Command Deck / Evidence Return Intake', cockpitPrimaryActionTargetPaneId: 'commandDeck', cockpitPrimaryActionTargetPacketId: `packet-${proof}`, cockpitPrimaryActionKind: 'focus-proof-intake', cockpitPrimaryActionReason: `Missing proof ${proof} is next in canonical cockpit projection.` });
+  if (firstMissing === 'build-proof') return setProof('build-proof');
+  if (firstMissing === 'verify-proof') return setProof('verify-proof');
+  if (firstMissing === 'browser-proof-checklist') return { ...base, cockpitPrimaryActionLabel: 'Collect browser proof', cockpitPrimaryActionTargetSurface: 'Browser Proof checklist', cockpitPrimaryActionTargetPaneId: 'missionConsolePanel', cockpitPrimaryActionTargetPacketId: 'packet-browser-proof-checklist', cockpitPrimaryActionKind: 'focus-browser-proof', cockpitPrimaryActionReason: 'Browser proof checklist is next in canonical cockpit projection.' };
+  if (firstMissing === 'pr-evidence') return { ...base, cockpitPrimaryActionLabel: 'Collect PR evidence', cockpitPrimaryActionTargetSurface: 'PR Evidence / Packet Bay', cockpitPrimaryActionTargetPaneId: 'missionConsolePanel', cockpitPrimaryActionTargetPacketId: 'packet-pr-evidence', cockpitPrimaryActionKind: 'focus-pr-evidence', cockpitPrimaryActionReason: 'PR evidence is next in canonical cockpit projection.' };
+  if (firstMissing === 'source-pack-output') return { ...base, cockpitPrimaryActionLabel: 'Collect source-pack output', cockpitPrimaryActionTargetSurface: 'Source Pack / Builder Workbench', cockpitPrimaryActionTargetPaneId: 'missionConsolePanel', cockpitPrimaryActionTargetPacketId: 'packet-source-pack-output', cockpitPrimaryActionKind: 'focus-source-pack', cockpitPrimaryActionReason: 'Source Pack output is next in canonical cockpit projection.' };
+  if (String(p.mergeSafety || '').toLowerCase().includes('hold')) return { ...base, cockpitPrimaryActionLabel: 'Review proof blockers', cockpitPrimaryActionKind: 'focus-proof-intake', cockpitPrimaryActionReason: 'Merge is hold; cockpit routing never exposes merge as a primary action.' };
+  return { ...base, cockpitPrimaryActionLabel: 'Review evidence packets', cockpitPrimaryActionTargetSurface: 'Packet Bay', cockpitPrimaryActionTargetPaneId: 'missionConsolePanel', cockpitPrimaryActionKind: 'focus-packet-bay' };
 }
 
 export function cockpitRenderSignature(projection = {}) {

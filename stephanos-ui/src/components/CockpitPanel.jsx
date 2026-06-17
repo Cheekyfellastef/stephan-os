@@ -122,6 +122,59 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     return { title: 'Cockpit detail', state: 'unknown', facts: ['No detail selected'] };
   }, [detailId, cockpitModel, finalAgentView, runtimeStatus.appLaunchState, routeTruthView]);
 
+  const routeCockpitPrimaryAction = (projectionForAction = {}) => {
+    const action = {
+      clicked: 'yes',
+      label: projectionForAction.cockpitPrimaryActionLabel || 'unknown',
+      kind: projectionForAction.cockpitPrimaryActionKind || 'unknown',
+      targetPaneId: projectionForAction.cockpitPrimaryActionTargetPaneId || 'unknown',
+      targetPacketId: projectionForAction.cockpitPrimaryActionTargetPacketId || 'none',
+      targetResolved: 'no',
+      targetFound: 'no',
+      focusApplied: 'no',
+      highlightApplied: 'no',
+      mutationAttempted: 'no',
+      result: 'pending',
+      failureReason: 'none',
+      source: projectionForAction.cockpitActionSource || 'canonical cockpit projection',
+    };
+    if (typeof document === 'undefined') {
+      action.failureReason = 'document-unavailable';
+      action.result = 'failed';
+      globalThis.window && (globalThis.window.__STEPHANOS_COCKPIT_LAST_ACTION__ = action);
+      return;
+    }
+    const panelId = action.targetPaneId === 'missionConsolePanel' ? 'missionConsolePanel' : 'commandDeck';
+    setPanelState?.(panelId, true, 'cockpit-action-routing-v1');
+    const selectorsByKind = {
+      'focus-proof-intake': ['[data-testid="command-deck-input"]', '[data-testid="command-deck-composer"]', '[data-testid="command-deck-root"]'],
+      'focus-browser-proof': ['[data-testid*="browser-proof"]', '[data-testid*="builder-workbench"]', '[data-panel-id="missionConsolePanel"]'],
+      'focus-pr-evidence': ['[data-testid*="pr-evidence"]', '[data-panel-id="missionConsolePanel"]'],
+      'focus-source-pack': ['[data-testid="builder-workbench-openclaw-source-pack-output"]', '[data-testid="builder-workbench-openclaw-source-pack-text"]', '[data-panel-id="missionConsolePanel"]'],
+      'focus-packet-bay': ['[data-panel-id="missionConsolePanel"]'],
+    };
+    const selectors = selectorsByKind[action.kind] || [`[data-panel-id="${panelId}"]`];
+    const applyFocus = () => {
+      const target = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
+      action.targetResolved = 'yes';
+      action.targetFound = target ? 'yes' : 'no';
+      if (target) {
+        target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        target.focus?.({ preventScroll: true });
+        target.setAttribute?.('data-cockpit-action-highlight', 'yes');
+        window.setTimeout?.(() => target.removeAttribute?.('data-cockpit-action-highlight'), 1600);
+        action.focusApplied = 'yes';
+        action.highlightApplied = 'yes';
+        action.result = 'focused';
+      } else {
+        action.result = 'failed';
+        action.failureReason = 'target-not-found';
+      }
+      window.__STEPHANOS_COCKPIT_LAST_ACTION__ = action;
+    };
+    window.setTimeout(applyFocus, 0);
+  };
+
   return (
     <CollapsiblePanel
       as="aside"
@@ -135,7 +188,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       {!shouldRenderCockpit ? <p className="muted">Cockpit rendering pauses when the panel or page is hidden.</p> : null}
       {shouldRenderCockpit ? (
         <div className="cockpit-shell">
-        <CockpitDetailView projection={cockpitProjection} />
+        <CockpitDetailView projection={cockpitProjection} onPrimaryAction={routeCockpitPrimaryAction} />
         <section className="cockpit-route-topology" data-cockpit-block="route-topology" data-cockpit-kind="routing" data-cockpit-surface="expanded-pane" data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature={cockpitProjection ? cockpitProjection.currentStatus : 'unknown'} aria-label="Route Topology"><h3>Route Topology</h3><p className="muted">Routing flow only; mission proof and merge truth remain bound to the canonical cockpit projection above.</p><svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos route topology">
           {CONNECTIONS.map((connection) => {
             const from = NODE_LAYOUT[connection.from];

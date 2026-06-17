@@ -72,3 +72,31 @@ test('expanded cockpit dashboard is primary visual before compact readouts and r
   assert.match(panel, /data-cockpit-block="route-topology" data-cockpit-kind="routing"/);
   assert.ok(panel.indexOf('<CockpitDetailView projection={cockpitProjection} />') < panel.indexOf('data-cockpit-block="route-topology"'));
 });
+
+test('cockpit action model routes canonical missing build proof without mutation or rendered text', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { remainingMissingItems: ['build-proof', 'verify-proof'] } } });
+  assert.equal(p.cockpitActionSource, 'canonical cockpit projection');
+  assert.equal(p.cockpitPrimaryActionLabel, 'Collect build-proof');
+  assert.equal(p.cockpitPrimaryActionKind, 'focus-proof-intake');
+  assert.equal(p.cockpitActionMutationAllowed, 'no');
+});
+
+test('cockpit action model advances to verify proof after build proof accepted', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof'], remainingMissingItems: ['verify-proof', 'browser-proof-checklist'] } } });
+  assert.equal(p.cockpitPrimaryActionLabel, 'Collect verify-proof');
+  assert.equal(p.cockpitPrimaryActionKind, 'focus-proof-intake');
+});
+
+test('cockpit action model never exposes merge as primary during merge hold', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { prEvidenceMergeReadiness: 'hold', missionProofReconciliation: { remainingMissingItems: [] } } });
+  assert.doesNotMatch(p.cockpitPrimaryActionLabel, /merge/i);
+  assert.equal(p.cockpitActionMutationAllowed, 'no');
+});
+
+test('cockpit UI routing source is explicit and landing tile remains shortcut only', async () => {
+  const detail = await readFile(new URL('../stephanos-ui/src/components/CockpitDetailView.jsx', import.meta.url), 'utf8');
+  const tile = await readFile(new URL('../stephanos-ui/src/components/CockpitTile.jsx', import.meta.url), 'utf8');
+  assert.match(detail, /data-cockpit-rendered-text-used-for-routing="no"/);
+  assert.match(detail, /data-testid="cockpit-primary-action"/);
+  assert.doesNotMatch(tile, /cockpit-primary-action|action-routing/);
+});
