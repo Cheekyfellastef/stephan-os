@@ -44,7 +44,24 @@ export default function AIConsole({
   const [perfCopyMessage, setPerfCopyMessage] = useState('');
   const [codexDispatchCopyState, setCodexDispatchCopyState] = useState('idle');
   const [composerContractFailure, setComposerContractFailure] = useState(false);
+  const [inputResizeTick, setInputResizeTick] = useState(0);
+  const inputResizeSignatureRef = useRef('');
   const lastHistoryRenderKeyRef = useRef('');
+  const resizeCommandDeckInput = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const maxHeight = Math.max(160, Math.round((typeof window !== 'undefined' ? window.innerHeight : 800) * 0.42));
+    const nextHeight = Math.min(el.scrollHeight || 0, maxHeight);
+    if (nextHeight > 0) el.style.height = `${nextHeight}px`;
+    el.style.overflowY = (el.scrollHeight || 0) > maxHeight ? 'auto' : 'hidden';
+    const signature = `${el.scrollHeight || 0}:${el.clientHeight || 0}:${el.style.overflowY}`;
+    if (inputResizeSignatureRef.current !== signature) {
+      inputResizeSignatureRef.current = signature;
+      setInputResizeTick((tick) => tick + 1);
+    }
+  };
+
   const {
     isBusy,
     apiStatus,
@@ -565,7 +582,13 @@ export default function AIConsole({
         commandDeckComposerBottomWithinView: composerBottomWithinView ? 'yes' : 'no',
         commandDeckInputFound: inputEl ? 'yes' : 'no',
         commandDeckInputVisible: isElementActuallyVisible(inputEl) && inputVisible ? 'yes' : 'no',
+        commandDeckInputAutoResizeEnabled: inputEl?.dataset?.autoResize === 'true' ? 'yes' : 'no',
+        commandDeckInputScrollHeight: inputEl?.scrollHeight ?? 0,
+        commandDeckInputClientHeight: inputEl?.clientHeight ?? 0,
+        commandDeckInputCanScroll: inputEl && (inputEl.scrollHeight || 0) > (inputEl.clientHeight || 0) ? 'yes' : 'no',
         commandDeckExecuteButtonVisible: isElementActuallyVisible(executeButtonEl) && executeVisible ? 'yes' : 'no',
+        commandDeckExecuteVisibleWithLargeInput: inputEl && (inputEl.scrollHeight || 0) > 160 ? (isElementActuallyVisible(executeButtonEl) && executeVisible ? 'yes' : 'no') : 'not-large',
+        commandDeckLargePasteUsabilityStatus: inputEl?.dataset?.autoResize === 'true' && executeVisible ? 'pass' : 'fail',
         commandDeckPaneClientHeight: viewPaneEl?.clientHeight ?? 0,
         commandDeckBodyClientHeight: visibleDeckRoot?.clientHeight ?? 0,
         commandDeckBodyScrollHeight: visibleDeckRoot?.scrollHeight ?? 0,
@@ -615,6 +638,7 @@ export default function AIConsole({
         commandDeckCopyButtonsReachable: containerScrollable ? 'yes' : 'unknown',
         commandDeckSubmissionSource: String(lastExecutionMetadata?.submission_console || lastExecutionMetadata?.command_envelope_submission_source || 'unknown').trim() || 'unknown',
         commandDeckSurfaceOwnerKey: resolveOwnerKey(),
+        commandDeckInputResizeTick: inputResizeTick,
         ...buildOwnershipProjection(),
         ...overrides,
       };
@@ -1079,12 +1103,15 @@ export default function AIConsole({
         ) : null}
         <form ref={composerRef} className="command-form mission-console-input paneFormLayout mission-console__composer" data-testid="command-deck-composer" onSubmit={onSubmit}>
           <div className="mission-console__input-row">
-            <input
-              className="paneInput paneControl"
+            <textarea
+              className="paneInput paneControl mission-console__prompt-textarea"
               data-testid="command-deck-input"
+              data-auto-resize="true"
               ref={inputRef}
+              rows={1}
               value={input}
-              onChange={(event) => setInput(event.target.value)}
+              onChange={(event) => { setInput(event.target.value); (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : setTimeout)(resizeCommandDeckInput); }}
+              onInput={resizeCommandDeckInput}
               placeholder="Enter command or prompt..."
               disabled={isBusy}
             />

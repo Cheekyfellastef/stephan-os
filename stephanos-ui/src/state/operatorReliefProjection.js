@@ -1911,6 +1911,10 @@ export function deriveOperatorReliefProjection(models = {}) {
     browserProof: missionHandoff.browserProofChecklist,
     builderWorkbenchInput: supportSnapshot.builderWorkbenchInput || models.builderWorkbenchInput || {},
   });
+  const commandDeckAcceptedProofItems = String(supportSnapshot.executionMetadata?.command_deck_universal_intake_accepted_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
+  const commandDeckRejectedProofItems = String(supportSnapshot.executionMetadata?.command_deck_universal_intake_rejected_proof_items || '').split('|').map((item) => asText(item)).filter((item) => item && item !== 'none');
+  const commandDeckRoutedToEvidence = String(supportSnapshot.executionMetadata?.command_deck_universal_intake_routed_to || '').includes('evidence-return-intake');
+  const commandDeckEvidenceProofProjection = commandDeckRoutedToEvidence ? { acceptedProofItems: commandDeckAcceptedProofItems, rejectedProofItems: commandDeckRejectedProofItems } : {};
   const missionProofReconciliation = buildMissionProofReconciliation({
     missionConsoleDiagnostics: supportSnapshot.missionConsoleDiagnostics || supportSnapshot.runtimeContext?.operatorReliefBridgeDiagnostics || {},
     supportSnapshot,
@@ -1918,6 +1922,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     prEvidence: prEvidenceModel,
     uiRealityTruth: supportSnapshot.uiRealityTruth || { status: supportSnapshot.uiRealityStatus },
     openClawSourcePackRunner: builderMeshProjection.builderWorkbenchProjection?.openClawSourcePackRunner || {},
+    evidenceReturnIntakeProjection: commandDeckEvidenceProofProjection,
   });
   const preliminaryMissionEvidenceLedgerProjection = deriveMissionEvidenceLedgerProjection({
     builderMeshProjection,
@@ -1939,6 +1944,11 @@ export function deriveOperatorReliefProjection(models = {}) {
     missionEvidenceContextSummary: preliminaryMissionEvidenceContextSummary,
     missionProofReconciliation,
   });
+  const commandDeckAcceptedProofText = commandDeckAcceptedProofItems.join('|');
+  const commandDeckEchoText = String(supportSnapshot.executionMetadata?.command_deck_universal_intake_echo || '').trim();
+  const commandDeckEvidenceIntakeText = commandDeckRoutedToEvidence && commandDeckAcceptedProofText && commandDeckAcceptedProofText !== 'none'
+    ? commandDeckEchoText
+    : '';
   const evidenceReturnIntakeProjection = deriveEvidenceReturnIntakeProjection({
     missionEvidenceLedgerProjection: preliminaryMissionEvidenceLedgerProjection,
     missionEvidenceContextSummary: preliminaryMissionEvidenceContextSummary,
@@ -1949,6 +1959,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     prEvidence: prEvidenceModel,
     missionVerification: verificationReturnIntake,
     builderWorkbenchInput: supportSnapshot.builderWorkbenchInput || models.builderWorkbenchInput || {},
+    operatorPastedIntakeText: commandDeckEvidenceIntakeText,
   });
   packetBayProjection = {
     ...packetBayProjection,

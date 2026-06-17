@@ -5148,3 +5148,16 @@ pre {
 .mission-console__packet-card + .mission-console__packet-card {
   margin-top: 0.45rem;
 }
+
+.mission-console__prompt-textarea {
+  min-height: 2.5rem;
+  max-height: clamp(12rem, 42vh, 24rem);
+  line-height: 1.45;
+  overflow-y: hidden;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+.mission-console__input-row {
+  align-items: stretch;
+}
