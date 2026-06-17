@@ -296,10 +296,14 @@ export default function App() {
     const publishingInstance = bridgeInstances.find((entry) => entry.panelId === publisherPanelId) || null;
     const bridgeCapableInstanceIds = bridgeInstances.filter((entry) => entry.hasBridgeCallback).map((entry) => entry.panelId);
     const missingBridgeCallbackIds = bridgeInstances.filter((entry) => !entry.hasBridgeCallback).map((entry) => entry.panelId);
+    const visibleInstanceBridgeCapable = Boolean(visibleInstance?.hasBridgeCallback);
     const visibleInstancePublished = Boolean(
-      (visibleInstance && visibleInstance.panelId === publisherPanelId)
+      (visibleInstance && visibleInstanceBridgeCapable)
+      || (visibleInstance && visibleInstance.panelId === publisherPanelId)
       || (publishingInstance?.visible && publishingInstance.collapsed !== true),
     );
+    const publisherSource = options?.publisherSource
+      || (missionConsoleRegistrationDiagnosticsStampRef.current > 0 ? 'app-bridge-registration' : 'unknown');
     const builderWorkbenchProjection = nextProjection?.builderMeshProjection?.builderWorkbenchProjection || null;
     const openClawSourcePackRunner = builderWorkbenchProjection?.openClawSourcePackRunner || null;
     const openClawSourcePackDiagnostics = builderWorkbenchProjection?.openClawSourcePackDiagnostics || openClawSourcePackRunner?.diagnostics || null;
@@ -321,7 +325,7 @@ export default function App() {
       publisherRegistryOwnerId: bridgeRegistryOwnerId,
       publisherRegistryInstanceCount: instanceIds.length,
       publisherRegistryInstanceIds: instanceIds,
-      publisherSource: options?.publisherSource || 'unknown',
+      publisherSource,
       registrationDiagnosticsStamp: options?.registrationDiagnosticsStamp || missionConsoleRegistrationDiagnosticsStampRef.current,
       missionConsoleInstanceCount: instanceIds.length,
       missionConsoleInstanceIds: instanceIds,

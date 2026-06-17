@@ -178,7 +178,7 @@ test('App bridge registration publishes diagnostics even before Operator Relief 
   assert.match(appSource, /operatorReliefBridgeDiagnosticsStoreOwnerId: bridgeRegistryOwnerId/);
   assert.match(appSource, /publisherRegistryInstanceCount: instanceIds\.length/);
   assert.match(appSource, /publisherRegistryInstanceIds: instanceIds/);
-  assert.match(appSource, /publisherSource: options\?\.publisherSource \|\| 'unknown'/);
+  assert.match(appSource, /const publisherSource = options\?\.publisherSource/);
   assert.match(appSource, /appHandlerEntered: missionConsoleRegistrationTraceRef\.current\.appHandlerEntered \|\| missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| 'no'/);
   assert.match(appSource, /registrationAppHandlerSeen: missionConsoleRegistrationTraceRef\.current\.appHandlerSeen \|\| missionConsoleRegistrationTraceRef\.current\.appHandlerEntered \|\| 'no'/);
   assert.match(appSource, /registrationStoreWriteAttempted: missionConsoleRegistrationTraceRef\.current\.storeWriteAttempted \|\| 'yes'/);
