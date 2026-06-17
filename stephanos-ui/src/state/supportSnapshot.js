@@ -234,6 +234,14 @@ function evidenceReturnIntakeSupportSnapshotFields(projection = {}) {
     evidenceReturnIntakeOpenClawMutationLocked: intake.openClawMutationLocked === false ? 'no' : 'yes',
     evidenceReturnIntakeCodexAutoDispatchAllowed: intake.codexAutoDispatchAllowed ? 'yes' : 'no',
     evidenceReturnIntakeConfidence: intake.confidence || 'low',
+    evidenceIntakeAutomationStatus: intake.status || 'idle',
+    evidenceIntakeClassifiedProofCount: String(intake.classifiedProofCount ?? intake.proofObservedCount ?? 0),
+    evidenceIntakeAcceptedProofItems: (intake.acceptedProofItems || []).join('|') || 'none',
+    evidenceIntakeRejectedProofItems: (intake.rejectedProofItems || []).join('|') || 'none',
+    evidenceIntakeClassificationConfidence: intake.confidence || 'low',
+    evidenceIntakeLastClassifiedSource: intake.lastClassifiedSource || intake.intakeSource || 'none',
+    evidenceIntakeRemainingMissingItems: (intake.remainingMissingProofItems || []).join('|') || intake.remainingMissingProofSummary || 'none',
+    evidenceIntakeNextBestAction: intake.recommendedNextAction || 'Paste returned proof into Evidence Return Intake.',
     evidenceReturnIntakeWarningCount: String((intake.warnings || []).length),
     evidenceReturnIntakeSummary: intake.summary || 'Evidence Return Intake unavailable.',
   };
@@ -1753,7 +1761,7 @@ export function buildSupportSnapshot({
     : {};
   const builderWorkbenchSupportMetadata = resolveBuilderWorkbenchSupportMetadata(executionMetadata, runtimeStatus);
   const missionConsoleDiagnostics = normalizeMissionConsoleDiagnostics(runtimeStatus, executionMetadata);
-  const missionProofReconciliation = buildMissionProofReconciliation({
+  let missionProofReconciliation = buildMissionProofReconciliation({
     missionConsoleDiagnostics,
     supportSnapshot: runtimeStatus || {},
     missionVerification: runtimeStatus?.missionVerification || {},
@@ -1761,7 +1769,6 @@ export function buildSupportSnapshot({
     uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' },
     openClawSourcePackRunner: resolveLiveBuilderWorkbenchProjection(runtimeStatus).projection?.openClawSourcePackRunner || {},
   });
-  const missionProofReconciliationFields = missionProofReconciliationSupportSnapshotFields(missionProofReconciliation);
   const livePacketBayProjection = runtimeStatus?.operatorReliefProjection?.packetBayProjection
     || runtimeStatus?.runtimeContext?.operatorReliefProjection?.packetBayProjection
     || runtimeStatus?.missionState?.operatorReliefProjection?.packetBayProjection
@@ -1881,8 +1888,23 @@ export function buildSupportSnapshot({
       : missionEvidenceLedgerProjection.nextAction,
   });
   const liveEvidenceReturnIntakeProjection = runtimeStatus?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.runtimeContext?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.missionState?.operatorReliefProjection?.evidenceReturnIntakeProjection || null;
-  const evidenceReturnIntakeProjection = liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? liveEvidenceReturnIntakeProjection : deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary, packetBayProjection, builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
-  const evidenceReturnIntakeFields = evidenceReturnIntakeSupportSnapshotFields(evidenceReturnIntakeProjection);
+  const evidenceReturnIntakeProjection = liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? liveEvidenceReturnIntakeProjection : deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary, packetBayProjection, missionProofReconciliation, builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
+  missionProofReconciliation = buildMissionProofReconciliation({
+    missionConsoleDiagnostics,
+    supportSnapshot: runtimeStatus || {},
+    missionVerification: runtimeStatus?.missionVerification || {},
+    prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {},
+    uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' },
+    openClawSourcePackRunner: resolveLiveBuilderWorkbenchProjection(runtimeStatus).projection?.openClawSourcePackRunner || {},
+    evidenceReturnIntakeProjection,
+  });
+  const missionProofReconciliationFields = missionProofReconciliationSupportSnapshotFields(missionProofReconciliation);
+  const evidenceReturnIntakeFields = evidenceReturnIntakeSupportSnapshotFields(liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? evidenceReturnIntakeProjection : {
+    ...evidenceReturnIntakeProjection,
+    remainingMissingProofItems: missionProofReconciliation.remainingMissingItems || evidenceReturnIntakeProjection.remainingMissingProofItems,
+    remainingMissingProofSummary: (missionProofReconciliation.remainingMissingItems || []).join(' | ') || evidenceReturnIntakeProjection.remainingMissingProofSummary || 'none',
+    recommendedNextAction: missionProofReconciliation.nextBestAction || evidenceReturnIntakeProjection.recommendedNextAction,
+  });
   if (hasLiveMissionEvidenceLedgerProjection && missionEvidenceContextSummary.available && Number(packetBayProjection.evidencePacketCount || 0) === 0) {
     packetBayProjection = derivePacketBayProjection({
       builderMeshProjection: resolveLiveBuilderMeshProjection(runtimeStatus).projection,
@@ -3218,6 +3240,14 @@ export function buildSupportSnapshot({
     `Mission Evidence Ledger Missing Proof Summary: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerMissingProofSummary, 'none')}`,
     `Mission Evidence Ledger Trusted For Merge: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerTrustedForMerge, 'no')}`,
     `Mission Evidence Ledger Trusted For Canon: ${asText(missionEvidenceLedgerFields.missionEvidenceLedgerTrustedForCanon, 'no')}`,
+    `Evidence Intake Automation Status: ${asText(evidenceReturnIntakeFields.evidenceIntakeAutomationStatus, 'idle')}`,
+    `Evidence Intake Classified Proof Count: ${asText(evidenceReturnIntakeFields.evidenceIntakeClassifiedProofCount, '0')}`,
+    `Evidence Intake Accepted Proof Items: ${asText(evidenceReturnIntakeFields.evidenceIntakeAcceptedProofItems, 'none')}`,
+    `Evidence Intake Rejected Proof Items: ${asText(evidenceReturnIntakeFields.evidenceIntakeRejectedProofItems, 'none')}`,
+    `Evidence Intake Classification Confidence: ${asText(evidenceReturnIntakeFields.evidenceIntakeClassificationConfidence, 'low')}`,
+    `Evidence Intake Last Classified Source: ${asText(evidenceReturnIntakeFields.evidenceIntakeLastClassifiedSource, 'none')}`,
+    `Evidence Intake Remaining Missing Items: ${asText(evidenceReturnIntakeFields.evidenceIntakeRemainingMissingItems, 'none')}`,
+    `Evidence Intake Next Best Action: ${asText(evidenceReturnIntakeFields.evidenceIntakeNextBestAction, 'Paste returned proof into Evidence Return Intake.')}`,
     `Evidence Return Intake Status: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeStatus, 'unavailable')}`,
     `Evidence Return Intake Available: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeAvailable, 'no')}`,
     `Evidence Return Intake Source: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeSource, 'none')}`,

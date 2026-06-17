@@ -96,3 +96,28 @@ test('Packet Bay evidence packet IDs remain stable', () => {
   assert.ok(bay.packets.some((p) => p.id === 'packet-browser-proof-checklist-operator-v1b'));
   assert.ok(bay.packets.some((p) => p.id === 'packet-pr-evidence-collection-v1b'));
 });
+
+test('Evidence Intake Automation accepts only successful reconciled proof items', () => {
+  const r = deriveEvidenceReturnIntakeProjection({
+    ...base,
+    missionProofReconciliation: { remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] },
+    intakeText: 'npm run stephanos:build completed successfully with exit code 0',
+  });
+  assert.deepEqual(r.acceptedProofItems, ['build-proof']);
+  assert.deepEqual(r.rejectedProofItems, []);
+  assert.equal(r.remainingMissingProofSummary, 'verify-proof | browser-proof-checklist | pr-evidence | source-pack-output');
+  assert.equal(r.recommendedNextAction, 'Collect verify-proof.');
+  assert.equal(r.trustedForMerge, false);
+});
+
+test('Evidence Intake Automation rejects failed build proof and keeps it missing', () => {
+  const r = deriveEvidenceReturnIntakeProjection({
+    ...base,
+    missionProofReconciliation: { remainingMissingItems: ['build-proof', 'verify-proof'] },
+    intakeText: 'npm run stephanos:build failed with exit code 1',
+  });
+  assert.deepEqual(r.acceptedProofItems, []);
+  assert.deepEqual(r.rejectedProofItems, ['build-proof']);
+  assert.equal(r.remainingMissingProofSummary, 'build-proof | verify-proof');
+  assert.equal(r.trustedForMerge, false);
+});
