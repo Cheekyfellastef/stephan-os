@@ -4820,13 +4820,21 @@ test('Support Snapshot accepts Mission Console bridge proof without completing u
       },
       missionVerification: {},
       prEvidence: { status: 'unknown' },
+      lastExecutionMetadata: { agent_reality_loop_merge_recommendation: 'hold' },
       uiRealityStatus: 'UNKNOWN',
       operatorReliefProjection: {
         agentRealityLoopProjection: {
-          status: 'needs-operator-decision',
+          status: 'blocked',
           phase: 'judge-result',
           projectionSource: 'agent-reality-loop-v1-runtime-truth-projection',
           missingProof: ['Mission Console opens from landing tile', 'Operator Relief panel visible', 'build-proof'],
+          supportSnapshotFields: {
+            agent_reality_loop_status: 'blocked',
+            agent_reality_loop_recommended_lead: 'hold',
+            agent_reality_loop_missing_proof_summary: 'build evidence missing | verify evidence missing | browser proof missing for UI mission | Mission Console opens from landing tile | Operator Relief panel visible | idle state renders | active/fixture state renders | merge safety verdict visible | browser proof gaps visible | repair prompt visible/copyable | no red console errors | no broken chevron/collapse | OpenClaw source-pack output | local-ai-route-proof-needed | missing-build-proof | missing-verify-proof | missing-browser-proof | source-pack-output-missing',
+            agent_reality_loop_mutation_allowed: 'no',
+            agent_reality_loop_openclaw_mutation_locked: 'yes',
+          },
         },
         projectAwarenessProjection: {
           status: 'degraded',
@@ -4862,8 +4870,14 @@ test('Support Snapshot accepts Mission Console bridge proof without completing u
   assert.doesNotMatch(snapshot, /Mission Proof Remaining Missing Items: .*mission-console-bridge/);
   assert.match(snapshot, /Mission Proof Remaining Missing Items: build-proof\|verify-proof\|browser-proof-checklist\|pr-evidence/);
   assert.match(snapshot, /Mission Proof Next Best Action: Collect build-proof\./);
+  assert.match(snapshot, /Agent Reality Loop Status: blocked/);
+  assert.match(snapshot, /Agent Reality Loop Recommended Lead: hold/);
+  assert.match(snapshot, /Agent Reality Loop Merge Recommendation: hold/);
+  assert.match(snapshot, /Agent Reality Loop Mutation Allowed: no/);
   assert.match(snapshot, /Agent Reality Loop Missing Proof Summary: build-proof \| verify-proof \| browser-proof-checklist \| pr-evidence/);
   assert.doesNotMatch(snapshot, /Agent Reality Loop Missing Proof Summary: .*Mission Console opens from landing tile/);
+  assert.match(snapshot, /Agent Reality Loop Raw Legacy Missing Proof Summary: .*Mission Console opens from landing tile/);
+  assert.match(snapshot, /Agent Reality Loop Raw Legacy Missing Proof Summary: .*idle state renders/);
   assert.match(snapshot, /Project Awareness Missing Proof Summary: build-proof \| verify-proof \| browser-proof-checklist \| pr-evidence/);
   assert.doesNotMatch(snapshot, /Project Awareness Missing Proof Summary: .*idle state renders/);
   assert.match(snapshot, /Mission Evidence Ledger Missing Proof Summary: build-proof \| verify-proof \| browser-proof-checklist \| pr-evidence/);

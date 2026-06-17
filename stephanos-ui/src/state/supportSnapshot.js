@@ -1780,7 +1780,7 @@ export function buildSupportSnapshot({
     || runtimeStatus?.missionState?.operatorReliefProjection?.agentRealityLoopProjection
     || runtimeStatus?.inputMissionState?.operatorReliefProjection?.agentRealityLoopProjection
     || null;
-  const agentRealityLoopFields = liveAgentRealityLoopProjection && typeof liveAgentRealityLoopProjection === 'object'
+  let agentRealityLoopFields = liveAgentRealityLoopProjection && typeof liveAgentRealityLoopProjection === 'object'
     ? (liveAgentRealityLoopProjection.supportSnapshotFields || {
       agent_reality_loop_status: liveAgentRealityLoopProjection.status,
       agent_reality_loop_phase: liveAgentRealityLoopProjection.phase,
@@ -1805,6 +1805,19 @@ export function buildSupportSnapshot({
       agent_reality_loop_confidence: liveAgentRealityLoopProjection.confidence,
     })
     : {};
+  const agentRealityLoopRawLegacyMissingProofSummary = agentRealityLoopFields.agent_reality_loop_raw_legacy_missing_proof_summary
+    || agentRealityLoopFields.agent_reality_loop_missing_proof_summary
+    || liveAgentRealityLoopProjection?.rawLegacyMissingProofSummary
+    || liveAgentRealityLoopProjection?.missingProofSummary
+    || liveAgentRealityLoopProjection?.missingProof
+    || 'none';
+  agentRealityLoopFields = {
+    ...agentRealityLoopFields,
+    agent_reality_loop_missing_proof_summary: reconciledMissionMissingProof(agentRealityLoopRawLegacyMissingProofSummary, missionProofReconciliation).join(' | ') || 'none',
+    agent_reality_loop_raw_legacy_missing_proof_summary: Array.isArray(agentRealityLoopRawLegacyMissingProofSummary)
+      ? agentRealityLoopRawLegacyMissingProofSummary.join(' | ') || 'none'
+      : asText(agentRealityLoopRawLegacyMissingProofSummary, 'none'),
+  };
   const liveProjectAwarenessProjection = runtimeStatus?.operatorReliefProjection?.projectAwarenessProjection
     || runtimeStatus?.runtimeContext?.operatorReliefProjection?.projectAwarenessProjection
     || runtimeStatus?.missionState?.operatorReliefProjection?.projectAwarenessProjection
@@ -3569,6 +3582,7 @@ export function buildSupportSnapshot({
     `Agent Reality Loop Awaiting Result From: ${asText(agentRealityLoopFields.agent_reality_loop_awaiting_result_from, 'none')}`,
     `Agent Reality Loop Expected Result Kind: ${asText(agentRealityLoopFields.agent_reality_loop_expected_result_kind, 'none')}`,
     `Agent Reality Loop Missing Proof Summary: ${asText(agentRealityLoopFields.agent_reality_loop_missing_proof_summary, 'none')}`,
+    `Agent Reality Loop Raw Legacy Missing Proof Summary: ${asText(agentRealityLoopFields.agent_reality_loop_raw_legacy_missing_proof_summary, 'none')}`,
     `Agent Reality Loop Blocker Count: ${asText(agentRealityLoopFields.agent_reality_loop_blocker_count, '0')}`,
     `Agent Reality Loop Warning Count: ${asText(agentRealityLoopFields.agent_reality_loop_warning_count, '0')}`,
     `Agent Reality Loop Operator Decision Required: ${asText(agentRealityLoopFields.agent_reality_loop_operator_decision_required, 'no')}`,
