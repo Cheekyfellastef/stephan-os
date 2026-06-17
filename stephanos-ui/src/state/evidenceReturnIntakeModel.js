@@ -3,7 +3,23 @@ function asText(value, fallback = '') {
   const text = String(value).trim();
   return text || fallback;
 }
-function asList(value) { return Array.isArray(value) ? value.filter(Boolean) : []; }
+function canonicalProofLabel(value = '') {
+  const text = String(value || '').trim();
+  const map = {
+    'local-ai-route-proof-needed': 'build-proof',
+    'missing-build-proof': 'build-proof',
+    'missing-verify-proof': 'verify-proof',
+    'missing-browser-proof': 'browser-proof-checklist',
+    'source-pack-output-missing': 'source-pack-output',
+    'pr-evidence-missing': 'pr-evidence',
+  };
+  return map[text] || text;
+}
+function asList(value) {
+  if (Array.isArray(value)) return value.map(canonicalProofLabel).filter(Boolean);
+  if (typeof value === 'string') return value.split(/[|,]/).map(canonicalProofLabel).map((item) => item.trim()).filter((item) => item && item !== 'none');
+  return [];
+}
 function yes(value) { return String(value || '').trim().toLowerCase() === 'yes' || value === true; }
 
 const PACKET_IDS = [
