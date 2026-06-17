@@ -588,7 +588,7 @@ export default function AIConsole({
         commandDeckInputCanScroll: inputEl && (inputEl.scrollHeight || 0) > (inputEl.clientHeight || 0) ? 'yes' : 'no',
         commandDeckExecuteButtonVisible: isElementActuallyVisible(executeButtonEl) && executeVisible ? 'yes' : 'no',
         commandDeckExecuteVisibleWithLargeInput: inputEl && (inputEl.scrollHeight || 0) > 160 ? (isElementActuallyVisible(executeButtonEl) && executeVisible ? 'yes' : 'no') : 'not-large',
-        commandDeckLargePasteUsabilityStatus: inputEl?.dataset?.autoResize === 'true' && executeVisible ? 'pass' : 'fail',
+        commandDeckLargePasteUsabilityStatus: inputEl?.dataset?.autoResize === 'true' && inputEl && (inputEl.scrollHeight || 0) > 0 && (inputEl.clientHeight || 0) > 0 && executeVisible ? 'OK' : 'fail',
         commandDeckPaneClientHeight: viewPaneEl?.clientHeight ?? 0,
         commandDeckBodyClientHeight: visibleDeckRoot?.clientHeight ?? 0,
         commandDeckBodyScrollHeight: visibleDeckRoot?.scrollHeight ?? 0,
