@@ -1,3 +1,5 @@
+import { removeAcceptedMissionProof } from './missionProofReconciliation.js';
+
 const MAX_PROMPT_BLOCK_LENGTH = 1400;
 const KNOWN = new Set(['', 'unknown', 'none', 'n/a', 'null', 'undefined']);
 
@@ -36,6 +38,7 @@ export function buildProjectAwarenessProjection({
   missionIntelligence = {},
   supportSnapshot = {},
   missionEvidenceContextSummary = {},
+  missionProofReconciliation = {},
   now = new Date(),
 } = {}) {
   const active = activeMission && typeof activeMission === 'object' ? activeMission : {};
@@ -98,7 +101,7 @@ export function buildProjectAwarenessProjection({
   if (evidenceAvailable && evidenceContext.missingProofSummary && evidenceContext.missingProofSummary !== 'none') {
     missingProof.push(...String(evidenceContext.missingProofSummary).split('|').map((item) => text(item, '')).filter(Boolean));
   }
-  missingProof = uniq(missingProof, 18);
+  missingProof = uniq(removeAcceptedMissionProof(missingProof, missionProofReconciliation), 18);
   const verificationPending = ['pending', 'not_ready', 'insufficient_evidence', 'proof-pending', 'technically-clean-but-proof-pending'].includes(text(verification.proofStatus || verification.readinessLevel || verification.returnStatus || verification.missionVerificationProofStatus, '').toLowerCase());
   if (verificationPending && !missingProof.some((item) => /mission verification/i.test(item))) missingProof.push('Mission Verification proof pending');
 

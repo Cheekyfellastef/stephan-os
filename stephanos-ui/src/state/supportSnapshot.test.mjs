@@ -4790,3 +4790,45 @@ test('Support Snapshot exposes Evidence Return Intake fields', () => {
   assert.match(snapshot, /Evidence Return Intake Codex Auto Dispatch Allowed: no/);
   assert.match(snapshot, /Evidence Return Intake Summary: Evidence return classified as observed\./);
 });
+
+test('Support Snapshot accepts Mission Console bridge proof without completing unrelated proof gaps', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      runtimeContext: {
+        operatorReliefBridgeDiagnostics: {
+          published: 'yes',
+          storeUpdated: 'yes',
+          runtimeContextSeen: 'yes',
+          registrationDiagnosticsStamp: 8,
+          runtimeDiagnosticsPresent: 'yes',
+          runtimeDiagnosticsDropBoundary: 'none',
+          runtimeContextBridgeAliasPresent: 'yes',
+          runtimeStatusBridgeAliasPresent: 'yes',
+          storeBridgeDiagnosticsPresent: 'yes',
+          publisherRegistryInstanceCount: 2,
+          publisherRegistryInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
+          missionConsoleInstanceCount: 2,
+          missionConsoleInstanceIds: ['aiCoreMissionConsolePanel', 'missionConsolePanel'],
+          missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel',
+          missionConsoleVisibleInstancePublished: 'yes',
+          projectionKeysSeen: ['agentRealityLoopProjection', 'builderMeshProjection'],
+          agentRealityLoopSeen: true,
+          missionConsoleBridgeParityStatus: 'OK',
+          missionConsoleBridgeParityBlocker: 'none',
+          bridgeParityBlocker: 'none',
+        },
+      },
+      missionVerification: {},
+      prEvidence: { status: 'unknown' },
+      uiRealityStatus: 'UNKNOWN',
+    },
+  });
+  assert.match(snapshot, /Mission Console Bridge Parity Status: OK/);
+  assert.match(snapshot, /Mission Console Bridge Proof Accepted: yes/);
+  assert.match(snapshot, /Mission Console Bridge Proof Source: support-snapshot-runtime-diagnostics/);
+  assert.match(snapshot, /Mission Proof Reconciliation Status: active/);
+  assert.match(snapshot, /Mission Proof Accepted Items: mission-console-bridge/);
+  assert.doesNotMatch(snapshot, /Mission Proof Remaining Missing Items: .*mission-console-bridge/);
+  assert.match(snapshot, /Mission Proof Remaining Missing Items: build-proof\|verify-proof\|browser-proof-checklist\|pr-evidence/);
+  assert.match(snapshot, /Mission Proof Next Best Action: Collect build-proof\./);
+});

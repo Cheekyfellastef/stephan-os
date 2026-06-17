@@ -6,6 +6,7 @@ import { derivePacketBayProjection } from './packetBayProjection.js';
 import { buildProjectAwarenessProjection } from './projectAwarenessProjection.js';
 import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
 import { deriveEvidenceReturnIntakeProjection } from './evidenceReturnIntakeModel.js';
+import { buildMissionProofReconciliation, removeAcceptedMissionProof } from './missionProofReconciliation.js';
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
@@ -1321,6 +1322,7 @@ export function buildAgentRealityLoopProjection({
   supportSnapshot = {},
   projectAwarenessProjection = {},
   missionEvidenceContextSummary = {},
+  missionProofReconciliation = {},
 } = {}) {
   const packetBay = packetBayProjection && typeof packetBayProjection === 'object' ? packetBayProjection : {};
   const evidenceContext = missionEvidenceContextSummary && typeof missionEvidenceContextSummary === 'object' ? missionEvidenceContextSummary : {};
@@ -1372,13 +1374,14 @@ export function buildAgentRealityLoopProjection({
     ...asList(agentWorkRoutingProjection.requiredProof),
     ...asList(harnessAgentProjection.requiredTests),
   ])).slice(0, 18);
-  const missingProof = Array.from(new Set([
+  let missingProof = Array.from(new Set([
     ...asList(packetBay.packets).flatMap((packet) => asList(packet.missingProof)),
     ...asList(mesh.missingProof),
     ...asList(verificationReturnIntake.missingEvidence),
     ...asList(missionBrainNextAction.openEvidenceGaps).map((gap) => gap?.label || gap?.requiredAction || gap).filter(Boolean),
     ...(evidenceAvailable && evidenceContext.missingProofSummary !== 'none' ? String(evidenceContext.missingProofSummary).split('|').map((item) => asText(item, '')).filter(Boolean) : []),
   ])).slice(0, 18);
+  missingProof = removeAcceptedMissionProof(missingProof, missionProofReconciliation).slice(0, 18);
   const blockers = Array.from(new Set([
     ...asList(agentWorkRoutingProjection.blockers),
     ...asList(mesh.blockers),
@@ -1907,6 +1910,14 @@ export function deriveOperatorReliefProjection(models = {}) {
     browserProof: missionHandoff.browserProofChecklist,
     builderWorkbenchInput: supportSnapshot.builderWorkbenchInput || models.builderWorkbenchInput || {},
   });
+  const missionProofReconciliation = buildMissionProofReconciliation({
+    missionConsoleDiagnostics: supportSnapshot.missionConsoleDiagnostics || supportSnapshot.runtimeContext?.operatorReliefBridgeDiagnostics || {},
+    supportSnapshot,
+    missionVerification: verificationReturnIntake,
+    prEvidence: prEvidenceModel,
+    uiRealityTruth: supportSnapshot.uiRealityTruth || { status: supportSnapshot.uiRealityStatus },
+    openClawSourcePackRunner: builderMeshProjection.builderWorkbenchProjection?.openClawSourcePackRunner || {},
+  });
   const preliminaryMissionEvidenceLedgerProjection = deriveMissionEvidenceLedgerProjection({
     builderMeshProjection,
     builderWorkbenchProjection: builderMeshProjection.builderWorkbenchProjection || {},
@@ -1915,6 +1926,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     missionVerification: verificationReturnIntake,
     prEvidence: prEvidenceModel,
     uiRealityTruth: supportSnapshot.uiRealityTruth || { status: supportSnapshot.uiRealityStatus },
+    missionProofReconciliation,
   });
   const preliminaryMissionEvidenceContextSummary = deriveMissionEvidenceContextSummary(preliminaryMissionEvidenceLedgerProjection);
   let packetBayProjection = derivePacketBayProjection({
@@ -1971,6 +1983,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     codexDispatchTruth: supportSnapshot.codexDispatchTruth || {},
     supportSnapshot,
     missionEvidenceContextSummary: preliminaryMissionEvidenceContextSummary,
+    missionProofReconciliation,
   });
   const projectAwarenessProjection = buildProjectAwarenessProjection({
     activeMission: supportSnapshot.activeMission || models.activeMission || {},
@@ -1989,6 +2002,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     missionIntelligence: missionIntelligenceSummary,
     supportSnapshot,
     missionEvidenceContextSummary: preliminaryMissionEvidenceContextSummary,
+    missionProofReconciliation,
   });
   agentRealityLoopProjection = {
     ...agentRealityLoopProjection,
@@ -2011,6 +2025,7 @@ export function deriveOperatorReliefProjection(models = {}) {
     missionVerification: verificationReturnIntake,
     prEvidence: prEvidenceModel,
     uiRealityTruth: supportSnapshot.uiRealityTruth || { status: supportSnapshot.uiRealityStatus },
+    missionProofReconciliation,
   });
   const operatorApprovedRepairLoopProjection = buildOperatorApprovedRepairLoopProjection({
     missionRepairLoop: missionRepairLoopModel,
@@ -2022,5 +2037,5 @@ export function deriveOperatorReliefProjection(models = {}) {
   });
 
   return { status: missionState,
-    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection, missionIntelligenceSummary, coBuilderLoopProjection, builderMeshProjection, packetBayProjection, builderHarnessProjection, agentRealityLoopProjection, projectAwarenessProjection, missionEvidenceLedgerProjection, evidenceReturnIntakeProjection, operatorApprovedRepairLoopProjection };
+    harnessVersion: HARNESS_AGENT_VERSION, mission: { title: missionHandoff.title, objective: missionHandoff.objective, currentPhase: asText(taskFinisherModel.finishPlanStatus, 'draft') }, codex: { prTitle: asText(prEvidenceModel.prTitle, 'unknown'), branch: asText(prEvidenceModel.branch || prEvidenceModel.prBranch, 'unknown'), deltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.') }, tests: { required: testsRequired, passed: testsPassed, failed: parsed.hasFailure ? 1 : 0, buildPassed: parsed.buildRun === true, verifyPassed: parsed.verifyRun === true }, browserProof: missionHandoff.browserProofChecklist, runtimeEvidence, mergeSafety: { verdict: missionState === 'needs-build' || missionState === 'needs-verify' ? 'needs-tests' : (missionState === 'needs-browser-proof' ? 'needs-browser-proof' : (verification.mergeReadyCandidate ? 'safe-to-merge' : 'not-safe')), requiredApprovals: ['Operator approval required for merge.'] }, evidenceGaps, nextBestAction, nextActions: actions, repairPrompt: { ...missionHandoff.repairPrompt, prompt: missionHandoff.repairPrompt.body }, operatorDecisionQueue: operatorDecisionQueueV2, operatorDecision: { required: true, options: ['approve-merge','request-repair','reject','defer','promote-lesson'], recommendedOption: missionState === 'merge-candidate' ? 'approve-merge' : 'request-repair' }, lessonCandidates, missionHandoff, missionTitle: missionHandoff.title, missionObjective: missionHandoff.objective, codexDeltaSummary: asText(prEvidenceModel.prTitle || missionEvidenceLedgerModel?.summary?.missionReadyNarrative, 'Codex delta pending PR evidence.'), missionBrainNextAction, agentWorkRoutingProjection, verificationReturnIntake, missionApprovalQueue, topProblemsProjection, harnessAgentProjection, missionIntelligenceSummary, coBuilderLoopProjection, builderMeshProjection, packetBayProjection, builderHarnessProjection, agentRealityLoopProjection, projectAwarenessProjection, missionEvidenceLedgerProjection, missionProofReconciliation, evidenceReturnIntakeProjection, operatorApprovedRepairLoopProjection };
 }
