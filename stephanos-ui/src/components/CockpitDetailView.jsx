@@ -7,9 +7,9 @@ function ProofList({ title, items = [] }) {
 export default function CockpitDetailView({ projection } = {}) {
   const p = projection || {};
   return (
-    <section className="cockpit-detail-view" data-cockpit-projection={p.projectionId || 'operator-cockpit-view-v1'}>
+    <section className="cockpit-detail-view" data-cockpit-surface="expanded-pane" data-cockpit-projection={p.projectionId || 'operator-cockpit-view-v1'} data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature={[Array.isArray(p.missingProof) ? p.missingProof.join('|') : String(p.missingProof || 'none'), String(Number(p.missingProofCount || 0)), String(p.nextBestAction || 'n/a'), String(p.mergeSafety || 'no / hold'), String(p.openClawMutationLockState || 'locked')].join(' :: ')}>
       <CockpitSummaryView projection={p} />
-      <div className="cockpit-detail-grid">
+      <div className="cockpit-detail-grid" data-cockpit-text="true">
         <section><h4>Current Mission</h4><p>{p.currentMission || 'Current Stephanos mission'}</p></section>
         <ProofList title="Accepted Proof" items={p.acceptedProof || []} />
         <ProofList title="Missing Proof" items={p.missingProof || []} />

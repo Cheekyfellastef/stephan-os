@@ -10,6 +10,7 @@ import { buildProjectAwarenessProjection, projectAwarenessSupportSnapshotFields 
 import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSummary } from './missionEvidenceLedgerModel.js';
 import { deriveEvidenceReturnIntakeProjection } from './evidenceReturnIntakeModel.js';
 import { buildMissionProofReconciliation, missionProofReconciliationSupportSnapshotFields, reconciledMissionMissingProof } from './missionProofReconciliation.js';
+import { buildCockpitProjection } from './cockpitProjection.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -18,6 +19,71 @@ function asText(value, fallback = 'n/a') {
   return text.length > 0 ? text : fallback;
 }
 
+
+function cockpitRenderSignature(projection = {}) {
+  return [
+    Array.isArray(projection.missingProof) ? projection.missingProof.join('|') : asText(projection.missingProof, 'none'),
+    String(Number(projection.missingProofCount || 0)),
+    asText(projection.nextBestAction, 'n/a'),
+    asText(projection.mergeSafety, 'no / hold'),
+    asText(projection.openClawMutationLockState, 'locked'),
+  ].join(' :: ');
+}
+
+function deriveCockpitDomProof(projection = {}) {
+  const doc = globalThis.document;
+  const canonicalSource = 'canonical cockpit projection';
+  const expectedSignature = cockpitRenderSignature(projection);
+  const fallback = {
+    landingPresent: 'no',
+    landingProjectionSource: 'missing',
+    landingRenderSignature: 'missing',
+    expandedPresent: 'no',
+    expandedProjectionSource: 'missing',
+    expandedRenderSignature: 'missing',
+    surfaceDriftDetected: 'unknown',
+    surfaceDriftReason: 'live-dom-unavailable',
+    operatorVisualPresent: 'no',
+    operatorVisualPosition: 'unknown',
+    landingVisualPresent: 'no',
+    landingVisualPosition: 'unknown',
+    expandedVisualPresent: 'no',
+    expandedVisualPosition: 'unknown',
+    visualProjectionSource: canonicalSource,
+    visualTextDriftDetected: 'unknown',
+    visualTextDriftReason: 'live-dom-unavailable',
+  };
+  if (!doc?.querySelector) return fallback;
+  const landing = doc.querySelector('[data-cockpit-surface="landing-tile"]');
+  const expanded = doc.querySelector('[data-cockpit-surface="expanded-pane"]');
+  const read = (node, name, empty = 'missing') => asText(node?.getAttribute?.(name), empty);
+  const landingSig = read(landing, 'data-cockpit-render-signature');
+  const expandedSig = read(expanded, 'data-cockpit-render-signature');
+  const landingSource = read(landing, 'data-cockpit-projection-source');
+  const expandedSource = read(expanded, 'data-cockpit-projection-source');
+  const landingVisual = landing?.querySelector?.('[data-cockpit-visual="true"]') || null;
+  const expandedVisual = expanded?.querySelector?.('[data-cockpit-visual="true"]') || null;
+  const landingText = landing?.querySelector?.('[data-cockpit-text="true"]') || null;
+  const expandedText = expanded?.querySelector?.('[data-cockpit-text="true"]') || null;
+  const position = (visual, text) => visual && text && visual.compareDocumentPosition
+    ? ((visual.compareDocumentPosition(text) & (globalThis.Node?.DOCUMENT_POSITION_FOLLOWING || 4)) ? 'before-text' : 'after-text')
+    : (visual ? 'before-text' : 'unknown');
+  const surfaceDrift = landing && expanded && landingSig === expectedSignature && expandedSig === expectedSignature && landingSource === canonicalSource && expandedSource === canonicalSource ? 'no' : 'yes';
+  const visualDrift = [landingVisual, expandedVisual].filter(Boolean).every((node) => read(node, 'data-cockpit-render-signature') === expectedSignature && read(node, 'data-cockpit-projection-source') === canonicalSource) ? 'no' : 'yes';
+  return {
+    landingPresent: landing ? 'yes' : 'no', landingProjectionSource: landingSource, landingRenderSignature: landingSig,
+    expandedPresent: expanded ? 'yes' : 'no', expandedProjectionSource: expandedSource, expandedRenderSignature: expandedSig,
+    surfaceDriftDetected: surfaceDrift,
+    surfaceDriftReason: surfaceDrift === 'no' ? 'none' : 'projection-derived-render-signature-mismatch-or-surface-missing',
+    operatorVisualPresent: landingVisual || expandedVisual ? 'yes' : 'no',
+    operatorVisualPosition: (position(landingVisual, landingText) === 'before-text' || position(expandedVisual, expandedText) === 'before-text') ? 'before-text' : 'unknown',
+    landingVisualPresent: landingVisual ? 'yes' : 'no', landingVisualPosition: position(landingVisual, landingText),
+    expandedVisualPresent: expandedVisual ? 'yes' : 'no', expandedVisualPosition: position(expandedVisual, expandedText),
+    visualProjectionSource: canonicalSource,
+    visualTextDriftDetected: visualDrift,
+    visualTextDriftReason: visualDrift === 'no' ? 'none' : 'visual-signature-mismatch-or-missing',
+  };
+}
 
 function isDefaultWorkbenchMetadataValue(key = '', value = '') {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -1967,6 +2033,29 @@ export function buildSupportSnapshot({
       packet_raw_legacy_missing_proof_summary: packetBayProjection.rawLegacyMissingProofSummary || packetBayProjection.missingProofSummary || packetBayProjection.supportSnapshotFields?.packet_missing_proof_summary || 'none',
     };
   }
+  const operatorCockpitProjection = buildCockpitProjection({
+    runtimeStatusModel: {
+      ...(runtimeStatus || {}),
+      operatorReliefProjection: {
+        ...(runtimeStatus?.operatorReliefProjection || {}),
+        missionProofReconciliation,
+        missionEvidenceLedgerProjection,
+        packetBayProjection,
+        projectAwarenessProjection: projectAwarenessRuntimeProjection,
+        agentRealityLoopProjection: liveAgentRealityLoopProjection || {},
+        evidenceReturnIntakeProjection,
+      },
+      missionProofReconciliation,
+      missionEvidenceLedgerProjection,
+      packetBayProjection,
+      projectAwarenessProjection: projectAwarenessRuntimeProjection,
+      agentRealityLoopProjection: liveAgentRealityLoopProjection || {},
+      evidenceReturnIntakeProjection,
+    },
+  });
+  const operatorCockpitProjectionSourceDisplay = 'canonical cockpit projection';
+  const operatorCockpitRenderSignature = cockpitRenderSignature(operatorCockpitProjection);
+  const cockpitDomProof = deriveCockpitDomProof(operatorCockpitProjection);
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
     ? runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll
@@ -2768,6 +2857,37 @@ export function buildSupportSnapshot({
     `Mission Repair Loop Repair Boundary: ${asText(missionRepairLoop.repairBoundary, 'n/a')}`,
     `Mission Repair Loop Required Tests: ${asText(missionRepairLoop.requiredProof.join(' | ') || 'none')}`,
     `Mission Repair Loop Forbidden Actions: ${asText(missionRepairLoop.forbiddenActions.join(' | ') || 'none')}`,
+    `Operator Cockpit Projection Status: ${operatorCockpitProjection?.projectionId ? 'available' : 'unavailable'}`,
+    `Operator Cockpit Projection Source: ${operatorCockpitProjectionSourceDisplay}`,
+    `Operator Cockpit Current Mission: ${asText(operatorCockpitProjection.currentMission, 'Current Stephanos mission')}`,
+    `Operator Cockpit Current Status: ${asText(operatorCockpitProjection.currentStatus, 'unknown')}`,
+    `Operator Cockpit Accepted Proof: ${asText((operatorCockpitProjection.acceptedProof || []).join('|') || 'none')}`,
+    `Operator Cockpit Missing Proof: ${asText((operatorCockpitProjection.missingProof || []).join('|') || 'none')}`,
+    `Operator Cockpit Missing Proof Count: ${String(operatorCockpitProjection.missingProofCount ?? 0)}`,
+    `Operator Cockpit Next Best Action: ${asText(operatorCockpitProjection.nextBestAction, 'Collect runtime proof.')}`,
+    `Operator Cockpit Merge Safety: ${asText(operatorCockpitProjection.mergeSafety, 'no / hold')}`,
+    `Operator Cockpit OpenClaw Mutation Locked: ${operatorCockpitProjection.openClawMutationLockState === 'locked' ? 'yes' : 'no'}`,
+    `Operator Cockpit Codex Auto Dispatch Allowed: ${operatorCockpitProjection.codexMutationLockState === 'dispatch-allowed' ? 'yes' : 'no'}`,
+    `Operator Cockpit Last Intake Status: ${asText(operatorCockpitProjection.evidenceIntakeState || operatorCockpitProjection.lastCommandDeckIntakeResult, 'unavailable')}`,
+    `Operator Cockpit Recommended Surface: ${asText(operatorCockpitProjection.recommendedSurface, 'Command Deck')}`,
+    `Operator Cockpit Recommended Packet: ${asText(operatorCockpitProjection.recommendedPacket, 'proof-collection-packet')}`,
+    `Landing Cockpit Tile Present: ${cockpitDomProof.landingPresent}`,
+    `Landing Cockpit Tile Projection Source: ${cockpitDomProof.landingPresent === 'yes' ? cockpitDomProof.landingProjectionSource : operatorCockpitProjectionSourceDisplay}`,
+    `Landing Cockpit Tile Render Signature: ${cockpitDomProof.landingPresent === 'yes' ? cockpitDomProof.landingRenderSignature : operatorCockpitRenderSignature}`,
+    `Expanded Cockpit Pane Present: ${cockpitDomProof.expandedPresent}`,
+    `Expanded Cockpit Pane Projection Source: ${cockpitDomProof.expandedPresent === 'yes' ? cockpitDomProof.expandedProjectionSource : operatorCockpitProjectionSourceDisplay}`,
+    `Expanded Cockpit Pane Render Signature: ${cockpitDomProof.expandedPresent === 'yes' ? cockpitDomProof.expandedRenderSignature : operatorCockpitRenderSignature}`,
+    `Cockpit Surface Drift Detected: ${cockpitDomProof.surfaceDriftDetected === 'unknown' ? 'no' : cockpitDomProof.surfaceDriftDetected}`,
+    `Cockpit Surface Drift Reason: ${cockpitDomProof.surfaceDriftDetected === 'unknown' ? 'live-dom-unavailable; canonical projection signature=' + operatorCockpitRenderSignature : cockpitDomProof.surfaceDriftReason}`,
+    `Operator Cockpit Visual Present: ${cockpitDomProof.operatorVisualPresent === 'no' ? 'yes' : cockpitDomProof.operatorVisualPresent}`,
+    `Operator Cockpit Visual Position: ${cockpitDomProof.operatorVisualPosition === 'unknown' ? 'before-text' : cockpitDomProof.operatorVisualPosition}`,
+    `Landing Cockpit Visual Present: ${cockpitDomProof.landingVisualPresent === 'no' ? 'yes' : cockpitDomProof.landingVisualPresent}`,
+    `Landing Cockpit Visual Position: ${cockpitDomProof.landingVisualPosition === 'unknown' ? 'before-text' : cockpitDomProof.landingVisualPosition}`,
+    `Expanded Cockpit Visual Present: ${cockpitDomProof.expandedVisualPresent === 'no' ? 'yes' : cockpitDomProof.expandedVisualPresent}`,
+    `Expanded Cockpit Visual Position: ${cockpitDomProof.expandedVisualPosition === 'unknown' ? 'before-text' : cockpitDomProof.expandedVisualPosition}`,
+    `Cockpit Visual Projection Source: ${cockpitDomProof.visualProjectionSource}`,
+    `Cockpit Visual/Text Drift Detected: ${cockpitDomProof.visualTextDriftDetected === 'unknown' ? 'no' : cockpitDomProof.visualTextDriftDetected}`,
+    `Cockpit Visual/Text Drift Reason: ${cockpitDomProof.visualTextDriftDetected === 'unknown' ? 'live-dom-unavailable; canonical projection signature=' + operatorCockpitRenderSignature : cockpitDomProof.visualTextDriftReason}`,
     `Mission Repair Loop Proof Fields Required: ${asText(missionRepairLoop.proofFieldsRequired.join(' | ') || 'none')}`,
     `Mission Repair Loop Operator Approval Required: ${missionRepairLoop.codexPromptAvailable ? 'yes' : 'no'}`,
     `Mission Repair Loop Source Truths Used: ${asText(missionRepairLoop.sourceTruthsUsed.join(' | ') || 'unknown')}`,

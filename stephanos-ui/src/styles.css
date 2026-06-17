@@ -5161,3 +5161,19 @@ pre {
 .mission-console__input-row {
   align-items: stretch;
 }
+
+.cockpit-visual-dashboard {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(88, 166, 255, 0.35);
+  border-radius: 16px;
+  background: radial-gradient(circle at 18% 20%, rgba(88,166,255,0.24), transparent 32%), linear-gradient(135deg, rgba(13,17,23,0.92), rgba(22,27,34,0.82));
+}
+.cockpit-visual-orb { display: flex; align-items: center; justify-content: center; min-height: 56px; border-radius: 999px; border: 1px solid rgba(126,231,135,0.45); color: #7ee787; text-transform: uppercase; letter-spacing: .08em; font-size: .78rem; }
+.cockpit-visual-proof-strip, .cockpit-visual-indicators { display: flex; flex-wrap: wrap; gap: .4rem; }
+.cockpit-chip, .proof-accepted, .proof-missing, .cockpit-next-beacon, .cockpit-pointer { border-radius: 999px; padding: .25rem .5rem; background: rgba(255,255,255,.08); }
+.proof-accepted { color: #7ee787; }
+.proof-missing { color: #ffa657; }
+.cockpit-next-beacon { border: 1px solid rgba(255,214,10,.35); color: #ffd60a; }
+.cockpit-pointer { color: #a5d6ff; }

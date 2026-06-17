@@ -5031,3 +5031,36 @@ test('support snapshot live Command Deck path propagates accepted build proof an
   assert.match(snapshot, /Command Deck Execute Visible With Large Input: yes/);
   assert.match(snapshot, /Command Deck Large Paste Usability Status: OK/);
 });
+
+test('Support Snapshot exposes canonical cockpit projection, drift, and visual proof fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: {
+    lastExecutionMetadata: {
+      command_deck_universal_intake_status: 'classified',
+      command_deck_universal_intake_last_kinds: 'codex-result|build-proof',
+      command_deck_universal_intake_routed_to: 'evidence-return-intake|evidence-intake-automation',
+      command_deck_universal_intake_accepted_proof_items: 'build-proof',
+    },
+    runtimeContext: { operatorReliefBridgeDiagnostics: { projectionKeysSeen: ['missionProofReconciliation'], publisherRegistryInstanceIds: ['aiCoreMissionConsolePanel'], publisherRegistryInstanceCount: 1, publisherRegistryOwnerId: 'owner', publisherSource: 'MissionConsoleTile', missionConsoleBridgeParityStatus: 'OK', missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel', missionConsoleBridgeCapableInstanceIds: ['aiCoreMissionConsolePanel'], published: 'yes' } },
+    operatorReliefProjection: {
+      missionProofReconciliation: { acceptedItems: ['mission-console-bridge', 'build-proof'], remainingMissingItems: ['verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], nextBestAction: 'Collect verify-proof.' },
+      projectAwarenessProjection: { title: 'Operator Cockpit View V1', status: 'active' },
+      missionEvidenceLedgerProjection: { trustedForMerge: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false },
+      packetBayProjection: { recommendedPacketId: 'proof-collection-packet', recommendedSurface: 'Command Deck' },
+      agentRealityLoopProjection: { mergeRecommendation: 'hold', openClawMutationLocked: true, codexAutoDispatchAllowed: false },
+    },
+  }, routeTruthView: {}, runtimeContext: {}, safeApiStatus: {}, statusSummary: {} });
+  assert.match(snapshot, /Operator Cockpit Projection Status: available/);
+  assert.match(snapshot, /Operator Cockpit Projection Source: canonical cockpit projection/);
+  assert.match(snapshot, /Operator Cockpit Missing Proof Count: 4/);
+  assert.match(snapshot, /Operator Cockpit Missing Proof: verify-proof\|browser-proof-checklist\|pr-evidence\|source-pack-output/);
+  assert.match(snapshot, /Operator Cockpit Next Best Action: Collect verify-proof\./);
+  assert.match(snapshot, /Operator Cockpit Merge Safety: no \/ hold/);
+  assert.match(snapshot, /Operator Cockpit OpenClaw Mutation Locked: yes/);
+  assert.match(snapshot, /Landing Cockpit Tile Projection Source: canonical cockpit projection/);
+  assert.match(snapshot, /Expanded Cockpit Pane Projection Source: canonical cockpit projection/);
+  assert.match(snapshot, /Cockpit Surface Drift Detected: no/);
+  assert.match(snapshot, /Operator Cockpit Visual Present: yes/);
+  assert.match(snapshot, /Landing Cockpit Visual Position: before-text/);
+  assert.match(snapshot, /Expanded Cockpit Visual Position: before-text/);
+  assert.match(snapshot, /Cockpit Visual\/Text Drift Detected: no/);
+});
