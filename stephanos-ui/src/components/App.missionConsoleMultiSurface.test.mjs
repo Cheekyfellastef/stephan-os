@@ -222,3 +222,10 @@ test('App UI reality no longer treats canonical Mission Console sections as defe
   assert.equal(source.includes('missionConsoleCanonicalSectionPaneIds'), true);
   assert.equal(source.includes('missionConsoleSectionOrder: safePaneLayout.missionConsoleSectionOrder || []'), true);
 });
+
+
+test('normalizeRuntimeContext preserves operator relief bridge diagnostics for live runtime status hydration', async () => {
+  const source = await fs.readFile(path.resolve(componentsDir, '../../../shared/runtime/runtimeStatusModel.mjs'), 'utf8');
+  assert.match(source, /operatorReliefBridgeDiagnostics = runtimeContext\?\.operatorReliefBridgeDiagnostics/);
+  assert.match(source, /\.\.\(operatorReliefBridgeDiagnostics \? \{ operatorReliefBridgeDiagnostics \} : \{\}\)/);
+});

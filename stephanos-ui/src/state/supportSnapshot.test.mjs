@@ -2036,6 +2036,9 @@ test('support snapshot prefers runtime stamped publisher diagnostics for canonic
     },
   });
 
+  assert.match(snapshot, /Mission Console Store Bridge Diagnostics Present: no/);
+  assert.match(snapshot, /Mission Console Runtime Context Bridge Alias Present: yes/);
+  assert.match(snapshot, /Mission Console Runtime Status Bridge Alias Present: yes/);
   assert.match(snapshot, /Mission Console Runtime Diagnostics Present: yes/);
   assert.match(snapshot, /Mission Console Runtime Publisher Registry Count: 1/);
   assert.match(snapshot, /Mission Console Runtime Diagnostics Stamp: 7/);
@@ -2073,15 +2076,73 @@ test('support snapshot reports missing runtime bridge diagnostics without receip
     },
   });
 
+  assert.match(snapshot, /Mission Console Store Bridge Diagnostics Present: no/);
+  assert.match(snapshot, /Mission Console Runtime Context Bridge Alias Present: no/);
+  assert.match(snapshot, /Mission Console Runtime Status Bridge Alias Present: no/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Drop Boundary: store-diagnostics-missing/);
   assert.match(snapshot, /Mission Console Runtime Diagnostics Present: no/);
   assert.match(snapshot, /Mission Console Runtime Diagnostics Keys: none/);
   assert.match(snapshot, /Mission Console Runtime Publisher Registry Count: 0/);
   assert.match(snapshot, /Mission Console Runtime Diagnostics Source ID: missing/);
-  assert.match(snapshot, /Operator Relief Bridge Drop Boundary: runtime-context-missing-bridge-diagnostics/);
+  assert.match(snapshot, /Operator Relief Bridge Drop Boundary: store-diagnostics-missing/);
   assert.match(snapshot, /Mission Console Instance Count: 0/);
   assert.doesNotMatch(snapshot, /Mission Console Instance Count: 9/);
   assert.match(snapshot, /Operator Relief Bridge Published: no/);
   assert.match(snapshot, /Operator Relief Bridge Projection Keys Seen: none/);
+});
+
+test('support snapshot proves store diagnostics and runtime alias hydration boundaries', () => {
+  const diagnostics = {
+    registrationDiagnosticsStamp: 8,
+    publisherRegistryOwnerId: 'app-bridge-registry:live-vite-shell',
+    publisherRegistryInstanceCount: 1,
+    publisherRegistryInstanceIds: ['aiCoreMissionConsolePanel'],
+    publisherSource: 'app-bridge-registration',
+    missionConsoleInstanceCount: 1,
+    visibleInstancePublished: 'yes',
+    runtimeContextSeen: 'yes',
+    published: 'no',
+    projectionKeysSeen: [],
+  };
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjectionBridge: { diagnostics },
+      runtimeContext: { operatorReliefBridgeDiagnostics: diagnostics },
+      lastExecutionMetadata: { mission_console_instance_count: '9' },
+    },
+  });
+
+  assert.match(snapshot, /Mission Console Store Bridge Diagnostics Present: yes/);
+  assert.match(snapshot, /Mission Console Store Bridge Diagnostics Stamp: 8/);
+  assert.match(snapshot, /Mission Console Runtime Context Bridge Alias Present: yes/);
+  assert.match(snapshot, /Mission Console Runtime Status Bridge Alias Present: yes/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Drop Boundary: none/);
+  assert.match(snapshot, /Mission Console Instance Count: 1/);
+  assert.doesNotMatch(snapshot, /Mission Console Instance Count: 9/);
+  assert.match(snapshot, /Operator Relief Bridge Published: no/);
+  assert.match(snapshot, /Operator Relief Bridge Projection Keys Seen: none/);
+});
+
+test('support snapshot reports runtime context alias missing when store has bridge diagnostics', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      operatorReliefProjectionBridge: {
+        diagnostics: {
+          registrationDiagnosticsStamp: 8,
+          publisherRegistryOwnerId: 'app-bridge-registry:live-vite-shell',
+          publisherRegistryInstanceCount: 1,
+        },
+      },
+      runtimeContext: {},
+    },
+  });
+
+  assert.match(snapshot, /Mission Console Store Bridge Diagnostics Present: yes/);
+  assert.match(snapshot, /Mission Console Runtime Context Bridge Alias Present: no/);
+  assert.match(snapshot, /Mission Console Runtime Status Bridge Alias Present: no/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Drop Boundary: runtime-context-alias-missing/);
+  assert.match(snapshot, /Mission Console Runtime Diagnostics Present: no/);
+  assert.match(snapshot, /Mission Console Instance Count: 0/);
 });
 
 test('support snapshot reflects mission packet generation from submitted operator intent', () => {
