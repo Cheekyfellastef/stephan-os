@@ -156,3 +156,35 @@ test('Command Deck Universal Intake supports multi-kind Codex result, browser ch
   assert.ok(classifyCommandDeckUniversalIntake('SOURCE_PACK_STATUS complete\nUSEFUL_FACTS: x').kinds.includes('source-pack-output'));
   assert.ok(routeCommandDeckUniversalIntake({ text: '/mission Implement a better proof loop' }).routedTo.includes('mission-intent-draft'));
 });
+
+import { deriveOperatorReliefProjection } from '../stephanos-ui/src/state/operatorReliefProjection.js';
+
+test('Command Deck accepted build proof propagates into mission proof reconciliation and summaries', () => {
+  const projection = deriveOperatorReliefProjection({
+    supportSnapshot: {
+      executionMetadata: {
+        command_deck_universal_intake_status: 'classified',
+        command_deck_universal_intake_routed_to: 'evidence-return-intake|evidence-intake-automation',
+        command_deck_universal_intake_accepted_proof_items: 'build-proof',
+        command_deck_universal_intake_rejected_proof_items: 'none',
+        command_deck_universal_intake_echo: 'npm run stephanos:build completed successfully with exit code 0.',
+      },
+      missionConsoleDiagnostics: {
+        operatorReliefBridgeProjectionKeysSeen: ['missionProofReconciliation'],
+        missionConsoleInstanceCount: 1,
+        missionConsoleBridgeParityStatus: 'OK',
+        runtimeDiagnosticsPresent: 'yes',
+        runtimeDiagnosticsDropBoundary: 'none',
+        missionConsoleVisibleInstancePublished: 'yes',
+        operatorReliefBridgePublished: 'yes',
+      },
+    },
+  });
+  assert.ok(projection.missionProofReconciliation.acceptedItems.includes('build-proof'));
+  assert.equal(projection.missionProofReconciliation.remainingMissingItems.includes('build-proof'), false);
+  assert.equal(projection.missionProofReconciliation.nextBestAction, 'Collect verify-proof.');
+  assert.deepEqual(projection.evidenceReturnIntakeProjection.acceptedProofItems, ['build-proof']);
+  assert.equal(projection.evidenceReturnIntakeProjection.trustedForMerge, false);
+  assert.equal(projection.missionEvidenceLedgerProjection.missingProofSummary.includes('build-proof'), false);
+  assert.equal(projection.packetBayProjection.missingProofSummary.includes('build-proof'), false);
+});
