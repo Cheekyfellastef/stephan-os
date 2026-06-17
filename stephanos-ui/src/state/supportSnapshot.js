@@ -242,6 +242,9 @@ function evidenceReturnIntakeSupportSnapshotFields(projection = {}) {
     evidenceIntakeLastClassifiedSource: intake.lastClassifiedSource || intake.intakeSource || 'none',
     evidenceIntakeRemainingMissingItems: (intake.remainingMissingProofItems || []).join('|') || intake.remainingMissingProofSummary || 'none',
     evidenceIntakeNextBestAction: intake.recommendedNextAction || 'Paste returned proof into Evidence Return Intake.',
+    evidenceIntakeEchoPresent: intake.rawIntakeText ? 'yes' : 'no',
+    evidenceIntakeEchoSource: intake.rawIntakeText ? (intake.intakeSource || 'operator-paste') : 'none',
+    evidenceIntakeEchoClassifiedItems: (intake.parsedFindings || []).map((item) => `${item.evidenceType}:${item.status}`).join('|') || 'none',
     evidenceReturnIntakeWarningCount: String((intake.warnings || []).length),
     evidenceReturnIntakeSummary: intake.summary || 'Evidence Return Intake unavailable.',
   };
@@ -1888,7 +1891,8 @@ export function buildSupportSnapshot({
       : missionEvidenceLedgerProjection.nextAction,
   });
   const liveEvidenceReturnIntakeProjection = runtimeStatus?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.runtimeContext?.operatorReliefProjection?.evidenceReturnIntakeProjection || runtimeStatus?.missionState?.operatorReliefProjection?.evidenceReturnIntakeProjection || null;
-  const evidenceReturnIntakeProjection = liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? liveEvidenceReturnIntakeProjection : deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary, packetBayProjection, missionProofReconciliation, builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
+  const commandDeckUniversalIntakeText = executionMetadata?.command_deck_universal_intake_echo && executionMetadata.command_deck_universal_intake_echo !== 'none' ? executionMetadata.command_deck_universal_intake_echo : '';
+  const evidenceReturnIntakeProjection = liveEvidenceReturnIntakeProjection && typeof liveEvidenceReturnIntakeProjection === 'object' ? liveEvidenceReturnIntakeProjection : deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary, packetBayProjection, missionProofReconciliation, operatorPastedIntakeText: commandDeckUniversalIntakeText, builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
   missionProofReconciliation = buildMissionProofReconciliation({
     missionConsoleDiagnostics,
     supportSnapshot: runtimeStatus || {},
@@ -3247,6 +3251,22 @@ export function buildSupportSnapshot({
     `Evidence Intake Classification Confidence: ${asText(evidenceReturnIntakeFields.evidenceIntakeClassificationConfidence, 'low')}`,
     `Evidence Intake Last Classified Source: ${asText(evidenceReturnIntakeFields.evidenceIntakeLastClassifiedSource, 'none')}`,
     `Evidence Intake Remaining Missing Items: ${asText(evidenceReturnIntakeFields.evidenceIntakeRemainingMissingItems, 'none')}`,
+    `Command Deck Universal Intake Status: ${asText(executionMetadata?.command_deck_universal_intake_status, 'idle')}`,
+    `Command Deck Universal Intake Last Kind: ${asText(executionMetadata?.command_deck_universal_intake_last_kind, 'none')}`,
+    `Command Deck Universal Intake Last Kinds: ${asText(executionMetadata?.command_deck_universal_intake_last_kinds, 'none')}`,
+    `Command Deck Universal Intake Routed To: ${asText(executionMetadata?.command_deck_universal_intake_routed_to, 'none')}`,
+    `Command Deck Universal Intake Accepted Proof Items: ${asText(executionMetadata?.command_deck_universal_intake_accepted_proof_items || evidenceReturnIntakeFields.evidenceIntakeAcceptedProofItems, 'none')}`,
+    `Command Deck Universal Intake Rejected Proof Items: ${asText(executionMetadata?.command_deck_universal_intake_rejected_proof_items || evidenceReturnIntakeFields.evidenceIntakeRejectedProofItems, 'none')}`,
+    `Command Deck Universal Intake Echo Present: ${asText(executionMetadata?.command_deck_universal_intake_echo_present, 'no')}`,
+    `Command Deck Universal Intake Echo Length: ${asText(executionMetadata?.command_deck_universal_intake_echo_length, '0')}`,
+    `Command Deck Universal Intake Confidence: ${asText(executionMetadata?.command_deck_universal_intake_confidence, 'low')}`,
+    `Command Deck Universal Intake Next Action: ${asText(executionMetadata?.command_deck_universal_intake_next_action || evidenceReturnIntakeFields.evidenceIntakeNextBestAction, 'Answer operator normally.')}`,
+    `Evidence Intake Echo Present: ${asText(executionMetadata?.evidence_intake_echo_present || evidenceReturnIntakeFields.evidenceIntakeEchoPresent, 'no')}`,
+    `Evidence Intake Echo Source: ${asText(executionMetadata?.evidence_intake_echo_source || evidenceReturnIntakeFields.evidenceIntakeEchoSource, 'none')}`,
+    `Evidence Intake Echo Classified Items: ${asText(executionMetadata?.evidence_intake_echo_classified_items || evidenceReturnIntakeFields.evidenceIntakeEchoClassifiedItems, 'none')}`,
+    `Mission Intent Echo Present: ${asText(executionMetadata?.mission_intent_echo_present, 'no')}`,
+    `Mission Intent Echo Source: ${asText(executionMetadata?.mission_intent_echo_source, 'none')}`,
+    `Source Pack / Packet Bay Echo: ${asText(executionMetadata?.source_pack_packet_bay_echo_present, 'no')}`,
     `Evidence Intake Next Best Action: ${asText(evidenceReturnIntakeFields.evidenceIntakeNextBestAction, 'Paste returned proof into Evidence Return Intake.')}`,
     `Evidence Return Intake Status: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeStatus, 'unavailable')}`,
     `Evidence Return Intake Available: ${asText(evidenceReturnIntakeFields.evidenceReturnIntakeAvailable, 'no')}`,

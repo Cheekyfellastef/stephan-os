@@ -4888,3 +4888,31 @@ test('Support Snapshot accepts Mission Console bridge proof without completing u
   assert.match(snapshot, /Mission Evidence Ledger Next Required: build-proof/);
   assert.match(snapshot, /Mission Evidence Ledger Trusted For Merge: no/);
 });
+
+test('buildSupportSnapshot exposes Command Deck Universal Intake echoes and canonical remaining proof labels', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: {
+    lastExecutionMetadata: {
+      command_deck_universal_intake_status: 'classified',
+      command_deck_universal_intake_last_kind: 'build-proof',
+      command_deck_universal_intake_last_kinds: 'build-proof',
+      command_deck_universal_intake_routed_to: 'evidence-return-intake|evidence-intake-automation',
+      command_deck_universal_intake_echo_present: 'yes',
+      command_deck_universal_intake_echo_length: '68',
+      command_deck_universal_intake_confidence: 'high',
+      command_deck_universal_intake_echo: 'npm run stephanos:build completed successfully with exit code 0.',
+    },
+    operatorReliefProjection: {
+      missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] },
+      missionEvidenceContextSummary: { missingProofSummary: 'missing-build-proof|missing-verify-proof|missing-browser-proof|pr-evidence-missing|source-pack-output-missing' },
+      missionEvidenceLedgerProjection: { status: 'blocked', blockerCount: 1, missingProofSummary: 'missing-build-proof' },
+      packetBayProjection: { packets: [] },
+    },
+  }, routeTruthView: {}, runtimeContext: {}, safeApiStatus: {}, statusSummary: {} });
+  assert.match(snapshot, /Command Deck Universal Intake Status: classified/);
+  assert.match(snapshot, /Command Deck Universal Intake Last Kinds: build-proof/);
+  assert.match(snapshot, /Command Deck Universal Intake Routed To: evidence-return-intake\|evidence-intake-automation/);
+  assert.match(snapshot, /Command Deck Universal Intake Accepted Proof Items: build-proof/);
+  assert.match(snapshot, /Evidence Intake Echo Present: yes/);
+  assert.match(snapshot, /Evidence Intake Remaining Missing Items: (mission-console-bridge\|)?verify-proof\|browser-proof-checklist\|pr-evidence\|source-pack-output/);
+  assert.match(snapshot, /Evidence Return Intake Trusted For Merge: no/);
+});

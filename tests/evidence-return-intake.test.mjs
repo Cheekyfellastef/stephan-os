@@ -121,3 +121,38 @@ test('Evidence Intake Automation rejects failed build proof and keeps it missing
   assert.equal(r.remainingMissingProofSummary, 'build-proof | verify-proof');
   assert.equal(r.trustedForMerge, false);
 });
+
+import { classifyCommandDeckUniversalIntake, routeCommandDeckUniversalIntake } from '../stephanos-ui/src/state/commandDeckUniversalIntake.js';
+
+test('Command Deck Universal Intake classifies and routes build proof without merge readiness', () => {
+  const routed = routeCommandDeckUniversalIntake({
+    text: 'npm run stephanos:build completed successfully with exit code 0.\nGenerated dist artifacts were not committed.\nFinal git status --short --branch was clean.',
+    evidenceContext: { ...base, missionProofReconciliation: { remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] } },
+  });
+  assert.ok(routed.kinds.includes('build-proof'));
+  assert.ok(routed.routedTo.includes('evidence-return-intake'));
+  assert.deepEqual(routed.acceptedProofItems, ['build-proof']);
+  assert.deepEqual(routed.rejectedProofItems, []);
+  assert.equal(routed.evidenceReturnIntakeProjection.remainingMissingProofSummary, 'verify-proof | browser-proof-checklist | pr-evidence | source-pack-output');
+  assert.equal(routed.mergeReadinessChanged, 'no');
+});
+
+test('Command Deck Universal Intake rejects failed build proof and preserves direct chat fallback', () => {
+  const failed = routeCommandDeckUniversalIntake({ text: 'npm run stephanos:build failed with exit code 1', evidenceContext: { ...base, missionProofReconciliation: { remainingMissingItems: ['build-proof', 'verify-proof'] } } });
+  assert.deepEqual(failed.acceptedProofItems, []);
+  assert.deepEqual(failed.rejectedProofItems, ['build-proof']);
+  assert.equal(failed.evidenceReturnIntakeProjection.remainingMissingProofSummary, 'build-proof | verify-proof');
+  const chat = classifyCommandDeckUniversalIntake('What is the next best action?');
+  assert.deepEqual(chat.kinds, ['direct-chat']);
+});
+
+test('Command Deck Universal Intake supports multi-kind Codex result, browser checklist, PR, source-pack, and mission intent', () => {
+  const multi = classifyCommandDeckUniversalIntake('Codex summary\nTesting: npm run stephanos:build pass\nnpm run stephanos:verify success');
+  assert.ok(multi.kinds.includes('codex-result'));
+  assert.ok(multi.kinds.includes('build-proof'));
+  assert.ok(multi.kinds.includes('verify-proof'));
+  assert.ok(classifyCommandDeckUniversalIntake('Browser proof checklist: Command Deck visible and no red console errors pass').kinds.includes('browser-proof-checklist'));
+  assert.ok(classifyCommandDeckUniversalIntake('PR #42 checks: pass commit abcdef1').kinds.includes('pr-evidence'));
+  assert.ok(classifyCommandDeckUniversalIntake('SOURCE_PACK_STATUS complete\nUSEFUL_FACTS: x').kinds.includes('source-pack-output'));
+  assert.ok(routeCommandDeckUniversalIntake({ text: '/mission Implement a better proof loop' }).routedTo.includes('mission-intent-draft'));
+});

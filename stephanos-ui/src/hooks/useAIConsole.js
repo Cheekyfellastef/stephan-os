@@ -47,6 +47,7 @@ import { buildActiveMissionState, persistActiveMissionState, readActiveMissionSt
 import { attachChatContextToEnvelope, attachExecutionMetadataToEnvelope, attachPrEvidenceToEnvelope, attachProviderRequestToEnvelope, createCommandEnvelope, projectEnvelopeToExecutionMetadata } from '../state/commandEnvelope.js';
 import { buildAnswerDeliveryTruth } from '../state/answerDeliveryTruth.js';
 import { buildOpenClawControlBridgeProjection } from '../../../shared/agents/openClawControlBridge.mjs';
+import { routeCommandDeckUniversalIntake } from '../state/commandDeckUniversalIntake.js';
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
@@ -4022,6 +4023,49 @@ export function useAIConsole() {
     // 10) request dispatch gate -> 11) backend target selection -> 12) /api/ai/chat dispatch
     // 13) provider selection/execution -> 14) final metadata normalization
     // 15) Support Snapshot projection -> 16) bottom/status widget projection.
+
+    const commandDeckUniversalIntake = routeCommandDeckUniversalIntake({
+      text: prompt,
+      evidenceContext: {
+        missionProofReconciliation: runtimeStatusModel?.missionProofReconciliation || runtimeStatusModel?.operatorReliefProjection?.missionProofReconciliation || {},
+        missionEvidenceLedgerProjection: runtimeStatusModel?.operatorReliefProjection?.missionEvidenceLedgerProjection || {},
+        missionEvidenceContextSummary: runtimeStatusModel?.operatorReliefProjection?.missionEvidenceContextSummary || {},
+        packetBayProjection: runtimeStatusModel?.operatorReliefProjection?.packetBayProjection || {},
+      },
+    });
+    const commandDeckIntakeMetadata = {
+      command_deck_universal_intake_status: commandDeckUniversalIntake.status || 'idle',
+      command_deck_universal_intake_last_kind: commandDeckUniversalIntake.lastKind || 'unknown/noise',
+      command_deck_universal_intake_last_kinds: (commandDeckUniversalIntake.kinds || []).join('|') || 'unknown/noise',
+      command_deck_universal_intake_routed_to: (commandDeckUniversalIntake.routedTo || []).join('|') || 'assistant-direct-chat',
+      command_deck_universal_intake_accepted_proof_items: (commandDeckUniversalIntake.acceptedProofItems || []).join('|') || 'none',
+      command_deck_universal_intake_rejected_proof_items: (commandDeckUniversalIntake.rejectedProofItems || []).join('|') || 'none',
+      command_deck_universal_intake_echo_present: commandDeckUniversalIntake.echo ? 'yes' : 'no',
+      command_deck_universal_intake_echo_length: String(commandDeckUniversalIntake.echoLength || 0),
+      command_deck_universal_intake_confidence: commandDeckUniversalIntake.confidence || 'low',
+      command_deck_universal_intake_next_action: commandDeckUniversalIntake.nextAction || 'Answer operator normally.',
+      command_deck_universal_intake_echo: commandDeckUniversalIntake.echo || 'none',
+      evidence_intake_echo_present: commandDeckUniversalIntake.routedTo?.includes('evidence-return-intake') ? 'yes' : 'no',
+      evidence_intake_echo_source: commandDeckUniversalIntake.routedTo?.includes('evidence-return-intake') ? 'command-deck-universal-intake' : 'none',
+      evidence_intake_echo_classified_items: (commandDeckUniversalIntake.evidenceReturnIntakeProjection?.parsedFindings || []).map((item) => `${item.evidenceType}:${item.status}`).join('|') || 'none',
+      mission_intent_echo_present: commandDeckUniversalIntake.routedTo?.includes('mission-intent-draft') ? 'yes' : 'no',
+      mission_intent_echo_source: commandDeckUniversalIntake.routedTo?.includes('mission-intent-draft') ? 'command-deck-universal-intake' : 'none',
+      source_pack_packet_bay_echo_present: commandDeckUniversalIntake.routedTo?.includes('packet-bay-source-pack-intake') ? 'yes' : 'no',
+    };
+    setLastExecutionMetadata((prev = {}) => ({ ...prev, ...commandDeckIntakeMetadata }));
+    if (!commandDeckUniversalIntake.kinds?.includes('direct-chat')) {
+      const evidence = commandDeckUniversalIntake.evidenceReturnIntakeProjection;
+      const answer = [
+        `Command Deck Intake Classification: ${(commandDeckUniversalIntake.kinds || []).join(', ') || 'unknown/noise'}.`,
+        `Command Deck Intake Routed To: ${(commandDeckUniversalIntake.routedTo || []).join(', ') || 'assistant-direct-chat'}.`,
+        `Evidence Intake accepted: ${(commandDeckUniversalIntake.acceptedProofItems || []).join(', ') || 'none'}; rejected: ${(commandDeckUniversalIntake.rejectedProofItems || []).join(', ') || 'none'}.`,
+        `Next missing proof/action: ${evidence?.recommendedNextAction || commandDeckUniversalIntake.nextAction}`,
+        'Merge readiness changed: no. Stephanos remains hold/not-ready until all required proof is explicit.',
+        'Operator action required: review the routed echo and continue with the next missing proof.',
+      ].join('\n');
+      appendLocalOperatorEntry(answer);
+      return;
+    }
 
     if (normalizedPrompt === 'what do you remember?' || normalizedPrompt === 'what do you remember') {
       const explanation = explainMemoryToOperator({ mode: 'summary' });
