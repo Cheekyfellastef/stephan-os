@@ -9,6 +9,7 @@ export default function CockpitVisualDashboard({ projection, compact = false } =
   return (
     <section
       className={`cockpit-visual-dashboard ${compact ? 'cockpit-visual-compact' : ''}`}
+      data-cockpit-block="primary-visual"
       data-cockpit-visual="true"
       data-cockpit-projection-source="canonical cockpit projection"
       data-cockpit-render-signature={renderSignature}
