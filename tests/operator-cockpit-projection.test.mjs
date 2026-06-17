@@ -45,3 +45,14 @@ test('cockpit-specific proof and merge truth are centralized in projection', asy
     assert.doesNotMatch(source, /remainingMissingItems|trustedForMerge|mergeReadiness\s*=|missingProof\s*=/);
   }
 });
+
+test('cockpit visual dashboard is projection-signed and appears before text on both surfaces', async () => {
+  const commandDeck = await readFile(new URL('../shared/runtime/cockpitProjection.mjs', import.meta.url), 'utf8');
+  const summary = await readFile(new URL('../stephanos-ui/src/components/CockpitSummaryView.jsx', import.meta.url), 'utf8');
+  const detail = await readFile(new URL('../stephanos-ui/src/components/CockpitDetailView.jsx', import.meta.url), 'utf8');
+  assert.match(commandDeck, /data-cockpit-visual="true"[\s\S]*data-cockpit-text="true"/);
+  assert.match(summary, /<CockpitVisualDashboard[\s\S]*data-cockpit-text/);
+  assert.match(detail, /<CockpitSummaryView[\s\S]*data-cockpit-text/);
+  assert.match(summary, /data-cockpit-projection-source="canonical cockpit projection"/);
+  assert.match(detail, /data-cockpit-projection-source="canonical cockpit projection"/);
+});
