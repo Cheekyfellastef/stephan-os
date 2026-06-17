@@ -35,7 +35,7 @@ export function buildCockpitProjection(input = {}) {
     projectionId: 'operator-cockpit-view-v1',
     projectionSource: 'canonical-cockpit-projection-runtime-truth-v1',
     currentMission: text(awareness.title || awareness.missionTitle || ledger.missionTitle || runtime.currentMission, 'Current Stephanos mission'),
-    currentStatus: text(awareness.status || ledger.status || arl.status || 'monitoring'),
+    currentStatus: text(awareness.status || ledger.status || arl.status || (missingProof.length ? 'blocked' : 'ready')),
     acceptedProof,
     missingProof,
     missingProofCount: missingProof.length,
@@ -60,9 +60,22 @@ export function buildCockpitProjection(input = {}) {
   };
 }
 
+export function cockpitRenderSignature(projection = {}) {
+  return [
+    text(projection.currentStatus, 'unknown'),
+    Array.isArray(projection.acceptedProof) ? projection.acceptedProof.join('|') : text(projection.acceptedProof, 'none'),
+    Array.isArray(projection.missingProof) ? projection.missingProof.join('|') : text(projection.missingProof, 'none'),
+    String(Number(projection.missingProofCount || 0)),
+    text(projection.nextBestAction, 'n/a'),
+    text(projection.mergeSafety, 'no / hold'),
+    text(projection.openClawMutationLockState, 'locked'),
+    text(projection.codexMutationLockState, 'locked'),
+  ].join(' :: ');
+}
+
 export function renderCockpitSummaryMarkup(projection = {}) {
   const p = projection?.projectionSource ? projection : buildCockpitProjection(projection);
   const escape = (v) => String(v ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const signature = [Array.isArray(p.missingProof) ? p.missingProof.join('|') : String(p.missingProof || 'none'), String(Number(p.missingProofCount || 0)), String(p.nextBestAction || 'n/a'), String(p.mergeSafety || 'no / hold'), String(p.openClawMutationLockState || 'locked')].join(' :: ');
-  return `<div class="cockpit-summary-view cockpit-summary-compact" data-cockpit-surface="landing-tile" data-cockpit-projection="operator-cockpit-view-v1" data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature="${escape(signature)}"><section class="cockpit-visual-dashboard cockpit-visual-compact" data-cockpit-visual="true" data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature="${escape(signature)}"><div class="cockpit-visual-orb"><span>${escape(p.currentStatus)}</span></div><div class="cockpit-visual-proof-strip"><span class="proof-accepted">✓ ${(p.acceptedProof || []).length}</span><span class="proof-missing">! ${p.missingProofCount}</span></div><div class="cockpit-visual-indicators"><span class="cockpit-chip">Merge: ${escape(p.mergeSafety)}</span><span class="cockpit-chip">OpenClaw: ${escape(p.openClawMutationLockState)}</span></div><div class="cockpit-next-beacon">Next: ${escape(p.nextBestAction)}</div><div class="cockpit-pointer">${escape(p.recommendedSurface)} · ${escape(p.recommendedPacket)}</div></section><div data-cockpit-text="true"><strong>Mission status:</strong> ${escape(p.currentStatus)}</div><div><strong>Next best action:</strong> ${escape(p.nextBestAction)}</div><div><strong>Missing proof:</strong> ${p.missingProofCount}</div><div><strong>Merge safety:</strong> ${escape(p.mergeSafety)}</div></div>`;
+  const signature = cockpitRenderSignature(p);
+  return `<div class="cockpit-summary-view cockpit-summary-compact" data-cockpit-surface="landing-tile" data-cockpit-projection="operator-cockpit-view-v1" data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature="${escape(signature)}"><section class="cockpit-visual-dashboard cockpit-visual-compact" data-cockpit-visual="true" data-cockpit-animation-enabled="yes" data-cockpit-animation-mode="subtle" data-cockpit-animated-elements="status-orb|proof-strip|next-action-beacon|lock-chips" data-cockpit-animation-truth-impact="none" data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature="${escape(signature)}"><div class="cockpit-visual-orb" data-cockpit-visual-current-status="${escape(p.currentStatus)}"><span>${escape(p.currentStatus)}</span></div><div class="cockpit-visual-proof-strip" data-cockpit-visual-accepted-proof="${escape((p.acceptedProof || []).join('|') || 'none')}" data-cockpit-visual-missing-proof="${escape((p.missingProof || []).join('|') || 'none')}" data-cockpit-visual-missing-count="${escape(p.missingProofCount)}"><span class="proof-accepted">✓ ${(p.acceptedProof || []).length}</span><span class="proof-missing">! ${p.missingProofCount}</span></div><div class="cockpit-visual-indicators"><span class="cockpit-chip">Merge: ${escape(p.mergeSafety)}</span><span class="cockpit-chip">OpenClaw: ${escape(p.openClawMutationLockState)}</span></div><div class="cockpit-next-beacon" data-cockpit-visual-next-action="${escape(p.nextBestAction)}">Next: ${escape(p.nextBestAction)}</div><div class="cockpit-pointer">${escape(p.recommendedSurface)} · ${escape(p.recommendedPacket)}</div></section><div data-cockpit-text="true"><strong>Mission status:</strong> ${escape(p.currentStatus)}</div><div><strong>Next best action:</strong> ${escape(p.nextBestAction)}</div><div><strong>Missing proof:</strong> ${p.missingProofCount}</div><div><strong>Merge safety:</strong> ${escape(p.mergeSafety)}</div></div>`;
 }

@@ -136,7 +136,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       {shouldRenderCockpit ? (
         <div className="cockpit-shell">
         <CockpitDetailView projection={cockpitProjection} />
-        <svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos routing truth cockpit">
+        <section className="cockpit-route-topology" aria-label="Route Topology"><h3>Route Topology</h3><p className="muted">Routing flow only; mission proof and merge truth remain bound to the canonical cockpit projection above.</p><svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos route topology">
           {CONNECTIONS.map((connection) => {
             const from = NODE_LAYOUT[connection.from];
             const to = NODE_LAYOUT[connection.to];
@@ -187,6 +187,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
           })}
         </svg>
 
+        </section>
         <section className={`cockpit-detail ${stateClassName(detail.state)}`} aria-live="polite">
           <h3>{detail.title}</h3>
           <p>State: <strong>{detail.state}</strong></p>
