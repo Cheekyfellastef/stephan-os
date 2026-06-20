@@ -5099,3 +5099,26 @@ test('Support Snapshot exposes Operator Proof Concierge contradiction diagnostic
   assert.match(snapshot, /Operator Cockpit Missing Proof:/);
   assert.match(snapshot, /Operator Cockpit Next Best Action:/);
 });
+
+test('support snapshot exposes Command Deck diagnostic proof-state review fields', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      lastExecutionMetadata: {
+        command_deck_last_diagnostic_packet_detected: 'yes',
+        command_deck_last_diagnostic_packet_kind: 'proof-state-diagnostic/operator-proof-concierge',
+        command_deck_last_diagnostic_routed_to: 'proof-state-review',
+        command_deck_last_diagnostic_response_generated: 'yes',
+        command_deck_last_diagnostic_active_contradiction: 'no',
+        command_deck_last_diagnostic_next_action: 'Copy build-proof packet from Operator Proof Concierge.',
+        command_deck_last_diagnostic_mutated_proof_state: 'no',
+      },
+    },
+  });
+  assert.match(snapshot, /Command Deck Last Diagnostic Packet Detected: yes/);
+  assert.match(snapshot, /Command Deck Last Diagnostic Packet Kind: proof-state-diagnostic\/operator-proof-concierge/);
+  assert.match(snapshot, /Command Deck Last Diagnostic Routed To: proof-state-review/);
+  assert.match(snapshot, /Command Deck Last Diagnostic Response Generated: yes/);
+  assert.match(snapshot, /Command Deck Last Diagnostic Active Contradiction: no/);
+  assert.match(snapshot, /Command Deck Last Diagnostic Next Action: Copy build-proof packet from Operator Proof Concierge\./);
+  assert.match(snapshot, /Command Deck Last Diagnostic Mutated Proof State: no/);
+});

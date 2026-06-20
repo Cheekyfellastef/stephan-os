@@ -4072,11 +4072,18 @@ export function useAIConsole() {
       mission_intent_echo_present: commandDeckUniversalIntake.routedTo?.includes('mission-intent-draft') ? 'yes' : 'no',
       mission_intent_echo_source: commandDeckUniversalIntake.routedTo?.includes('mission-intent-draft') ? 'command-deck-universal-intake' : 'none',
       source_pack_packet_bay_echo_present: commandDeckUniversalIntake.routedTo?.includes('packet-bay-source-pack-intake') ? 'yes' : 'no',
+      command_deck_last_diagnostic_packet_detected: commandDeckUniversalIntake.diagnosticProjection?.detected ? 'yes' : 'no',
+      command_deck_last_diagnostic_packet_kind: commandDeckUniversalIntake.diagnosticProjection?.kind || 'none',
+      command_deck_last_diagnostic_routed_to: commandDeckUniversalIntake.diagnosticProjection?.routedTo || 'none',
+      command_deck_last_diagnostic_response_generated: commandDeckUniversalIntake.diagnosticProjection?.responseGenerated ? 'yes' : 'no',
+      command_deck_last_diagnostic_active_contradiction: commandDeckUniversalIntake.diagnosticProjection?.activeContradiction || 'no',
+      command_deck_last_diagnostic_next_action: commandDeckUniversalIntake.diagnosticProjection?.nextAction || 'none',
+      command_deck_last_diagnostic_mutated_proof_state: commandDeckUniversalIntake.diagnosticProjection?.mutatedProofState || 'no',
     };
     setLastExecutionMetadata((prev = {}) => ({ ...prev, ...commandDeckIntakeMetadata }));
     if (!commandDeckUniversalIntake.kinds?.includes('direct-chat')) {
       const evidence = commandDeckUniversalIntake.evidenceReturnIntakeProjection;
-      const answer = [
+      const answer = commandDeckUniversalIntake.diagnosticProjection?.assistantResponse || [
         `Command Deck Intake Classification: ${(commandDeckUniversalIntake.kinds || []).join(', ') || 'unknown/noise'}.`,
         `Command Deck Intake Routed To: ${(commandDeckUniversalIntake.routedTo || []).join(', ') || 'assistant-direct-chat'}.`,
         `Evidence Intake accepted: ${(commandDeckUniversalIntake.acceptedProofItems || []).join(', ') || 'none'}; rejected: ${(commandDeckUniversalIntake.rejectedProofItems || []).join(', ') || 'none'}.`,
@@ -4085,7 +4092,7 @@ export function useAIConsole() {
         'Operator action required: review the routed echo and continue with the next missing proof.',
       ].join('\n');
       appendLocalOperatorEntry(answer);
-      const acceptedUniversalIntake = (commandDeckUniversalIntake.acceptedProofItems || []).length > 0 || commandDeckUniversalIntake.status === 'classified';
+      const acceptedUniversalIntake = commandDeckUniversalIntake.diagnosticProjection ? true : ((commandDeckUniversalIntake.acceptedProofItems || []).length > 0 || commandDeckUniversalIntake.status === 'classified');
       const clearedAt = new Date().toISOString();
       setLastExecutionMetadata((prev = {}) => ({
         ...prev,
@@ -4096,9 +4103,9 @@ export function useAIConsole() {
         command_pipeline_last_input_restore_available: 'yes',
         command_deck_input_value_length_after_submit: acceptedUniversalIntake ? '0' : String(prompt.length),
         command_deck_input_visible_value_empty_after_submit: acceptedUniversalIntake ? 'yes' : 'no',
-        command_deck_last_cleared_submit_kind: acceptedUniversalIntake ? 'universal-intake-proof' : 'none',
+        command_deck_last_cleared_submit_kind: acceptedUniversalIntake ? (commandDeckUniversalIntake.diagnosticProjection ? 'diagnostic-proof-state-review' : 'universal-intake-proof') : 'none',
         command_deck_last_cleared_at: acceptedUniversalIntake ? clearedAt : 'none',
-        command_deck_last_clear_reason: acceptedUniversalIntake ? 'accepted-universal-intake' : 'not-cleared',
+        command_deck_last_clear_reason: acceptedUniversalIntake ? (commandDeckUniversalIntake.diagnosticProjection ? 'diagnostic-reviewed-non-mutating' : 'accepted-universal-intake') : 'not-cleared',
       }));
       return { submitAccepted: acceptedUniversalIntake, inputCleared: acceptedUniversalIntake, restoreInput: true };
     }
