@@ -201,9 +201,36 @@ test('Operator Proof Concierge generates source-pack packet after PR evidence', 
   assert.match(p.operatorProofConcierge.packetText, /Final clean git status/);
 });
 
+
+
+test('Operator Proof Concierge generates diagnostic packet when merge hold has no missing proof', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], remainingMissingItems: [] }, missionEvidenceLedgerProjection: { trustedForMerge: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false }, prEvidenceModel: { mergeReadiness: 'hold' } } });
+  assert.equal(p.operatorProofConcierge.status, 'blocked');
+  assert.equal(p.operatorProofConcierge.nextProof, 'proof-state-reconciliation');
+  assert.equal(p.operatorProofConcierge.nextActionLabel, 'Copy proof-state diagnostic packet');
+  assert.equal(p.operatorProofConcierge.copyPacketAvailable, 'yes');
+  assert.equal(p.operatorProofConcierge.packetKind, 'proof-state-reconciliation');
+  assert.equal(p.operatorProofConcierge.proofStateContradictionDetected, 'yes');
+  assert.match(p.operatorProofConcierge.packetText, /Merge is hold but missing proof is none; reconcile mission proof state, merge blockers, PR evidence, and source-pack output\./);
+  assert.equal(p.mergeSafety, 'no / hold');
+  assert.equal(p.openClawMutationLockState, 'locked');
+  assert.equal(p.codexMutationLockState, 'locked');
+});
+
+test('Operator Proof Concierge can complete with no packet when no missing proof and merge is ready', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], remainingMissingItems: [] }, missionEvidenceLedgerProjection: { trustedForMerge: true, openClawMutationLocked: true, codexAutoDispatchAllowed: false }, prEvidenceModel: { mergeReadiness: 'ready' } } });
+  assert.equal(p.operatorProofConcierge.status, 'complete');
+  assert.equal(p.operatorProofConcierge.nextProof, 'none');
+  assert.equal(p.operatorProofConcierge.copyPacketAvailable, 'no');
+  assert.equal(p.operatorProofConcierge.packetText, '');
+  assert.equal(p.operatorProofConcierge.proofStateContradictionDetected, 'no');
+  assert.equal(p.mergeSafety, 'yes / candidate');
+});
+
 test('Operator Proof Concierge routing and copy affordance are operator-assist only', async () => {
   const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
   assert.match(panel, /data-testid="operator-proof-concierge-copy"/);
+  assert.match(panel, /operatorProofConcierge\.copyPacketAvailable === 'yes' \? <textarea/);
   assert.match(panel, /writeTextToClipboard\(packetText\)/);
   assert.match(panel, /setConciergeCopyState\(success \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
   const handler = panel.slice(panel.indexOf('const handleCopyConciergePacket'), panel.indexOf('return (', panel.indexOf('const handleCopyConciergePacket')));
@@ -221,6 +248,8 @@ test('Operator Proof Concierge support snapshot exposes safety and packet fields
     'Operator Proof Concierge Copy Packet Available:',
     'Operator Proof Concierge Packet Kind:',
     'Operator Proof Concierge Packet Length:',
+    'Operator Proof Concierge Proof State Contradiction Detected:',
+    'Operator Proof Concierge Contradiction Reason:',
     'Operator Proof Concierge Uses Canonical Proof State:',
     'Operator Proof Concierge Mutation Allowed:',
     'Operator Proof Concierge Codex Auto Dispatch Allowed:',

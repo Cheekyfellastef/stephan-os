@@ -323,7 +323,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
             <li><strong>OpenClaw mutation locked:</strong> {cockpitProjection.operatorProofConcierge.openClawMutationLocked}</li>
             <li><strong>Codex auto-dispatch allowed:</strong> {cockpitProjection.operatorProofConcierge.codexAutoDispatchAllowed}</li>
           </ul>
-          <textarea readOnly data-testid="operator-proof-concierge-packet" value={cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text" />
+          {cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? <textarea readOnly data-testid="operator-proof-concierge-packet" value={cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text" /> : <p className="muted" data-testid="operator-proof-concierge-no-packet">No proof packet is available.</p>}
           <button type="button" data-testid="operator-proof-concierge-copy" className={`status-panel-copy-button ${conciergeCopyState}`} onClick={handleCopyConciergePacket} disabled={cockpitProjection.operatorProofConcierge.copyPacketAvailable !== 'yes'}>
             {conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.nextActionLabel}
           </button>

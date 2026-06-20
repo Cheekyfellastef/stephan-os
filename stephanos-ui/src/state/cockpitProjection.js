@@ -63,8 +63,21 @@ Provide:
 - Tests/build/verify summary:
 - Guard/pr-clean result:
 - Final clean git status:`;
+  if (target === 'proof-state-reconciliation') return `Proof-state diagnostic packet.
+
+Contradiction detected:
+- Merge is hold but missing proof is none; reconcile mission proof state, merge blockers, PR evidence, and source-pack output.
+
+Operator diagnostic checklist:
+- Compare Mission Proof Accepted Items against required proof order.
+- Compare Mission Proof Remaining Missing Items against Operator Cockpit Missing Proof.
+- Inspect merge blockers, PR evidence status, and source-pack-output status.
+- Keep merge readiness as no / hold until the contradiction is reconciled.
+- Do not auto-submit, auto-run commands, dispatch Codex, or unlock OpenClaw.`;
   return '';
 }
+
+function mergeIsHold(value) { return String(value || '').toLowerCase().includes('hold') || String(value || '').toLowerCase().includes('no'); }
 
 export function buildOperatorProofConciergeProjection(input = {}) {
   const reconciliation = firstObject(input.missionProofReconciliation, input.reconciliation);
@@ -72,19 +85,23 @@ export function buildOperatorProofConciergeProjection(input = {}) {
   const missing = unique(reconciliation.remainingMissingItems || reconciliation.missingProof || input.missingProof).map(normProof).filter(Boolean);
   const missingSet = new Set(missing);
   const nextProof = PROOF_ORDER.find((proof) => missingSet.has(proof)) || missing[0] || '';
-  const packetText = proofPacketFor(nextProof);
   const mergeSafety = input.mergeSafety || 'no / hold';
+  const contradictionDetected = !nextProof && missing.length === 0 && mergeIsHold(mergeSafety);
+  const effectiveNextProof = contradictionDetected ? 'proof-state-reconciliation' : nextProof;
+  const packetText = proofPacketFor(effectiveNextProof);
   const openClawLocked = input.openClawMutationLockState === 'locked' || input.openClawMutationLocked !== false;
   const codexAllowed = input.codexAutoDispatchAllowed === true || input.codexMutationLockState === 'dispatch-allowed';
   return {
-    status: nextProof ? 'available' : 'blocked',
-    nextProof: nextProof || 'none',
-    nextActionLabel: nextProof ? (nextProof === 'browser-proof-checklist' ? 'Copy browser proof checklist' : `Copy ${nextProof} packet`) : 'Review proof state',
-    whyThisProofIsNeeded: nextProof ? `${nextProof} is the next missing proof in canonical Mission Proof Reconciliation order.` : 'No missing proof target is available from canonical Mission Proof Reconciliation.',
+    status: nextProof ? 'available' : (contradictionDetected ? 'blocked' : 'complete'),
+    nextProof: effectiveNextProof || 'none',
+    nextActionLabel: nextProof ? (nextProof === 'browser-proof-checklist' ? 'Copy browser proof checklist' : nextProof === 'pr-evidence' ? 'Copy PR evidence packet' : nextProof === 'source-pack-output' ? 'Copy source-pack output packet' : `Copy ${nextProof} packet`) : (contradictionDetected ? 'Copy proof-state diagnostic packet' : 'Review proof state'),
+    whyThisProofIsNeeded: nextProof ? `${nextProof} is the next missing proof in canonical Mission Proof Reconciliation order.` : (contradictionDetected ? 'Merge is hold but canonical Mission Proof Reconciliation reports no remaining missing proof; diagnostic reconciliation is required.' : 'No missing proof target is available from canonical Mission Proof Reconciliation.'),
     copyPacketAvailable: packetText ? 'yes' : 'no',
-    packetKind: nextProof || 'none',
+    packetKind: effectiveNextProof || 'none',
     packetText,
     packetLength: String(packetText.length),
+    proofStateContradictionDetected: contradictionDetected ? 'yes' : 'no',
+    contradictionReason: contradictionDetected ? 'Merge is hold but missing proof is none; reconcile mission proof state, merge blockers, PR evidence, and source-pack output.' : 'none',
     usesCanonicalProofState: 'yes',
     mutationAllowed: 'no',
     codexAutoDispatchAllowed: codexAllowed ? 'yes' : 'no',
@@ -122,7 +139,7 @@ export function buildCockpitProjection(input = {}) {
   const openClawLocked = arl.openClawMutationLocked !== false && ledger.openClawMutationLocked !== false && !yes(runtime.openClawMutationAllowed);
   const intakeClass = text(runtime.commandDeckUniversalIntake?.classification || evidenceIntake.classification || evidenceIntake.intent || runtime.lastCommandDeckIntakeClassification, 'unavailable');
 
-  const conciergeProjection = buildOperatorProofConciergeProjection({ missionProofReconciliation: reconciliation, mergeSafety: mergeSafe ? 'yes / candidate' : 'no / hold', openClawMutationLockState: openClawLocked ? 'locked' : 'unlocked', codexMutationLockState: ledger.codexAutoDispatchAllowed === true ? 'dispatch-allowed' : 'locked' });
+  const conciergeProjection = buildOperatorProofConciergeProjection({ missionProofReconciliation: { ...reconciliation, remainingMissingItems: missingProof }, mergeSafety: mergeSafe ? 'yes / candidate' : 'no / hold', openClawMutationLockState: openClawLocked ? 'locked' : 'unlocked', codexMutationLockState: ledger.codexAutoDispatchAllowed === true ? 'dispatch-allowed' : 'locked' });
 
   const actionModel = deriveCockpitActionModel({
     projectionSource: 'canonical-cockpit-projection-runtime-truth-v1',
