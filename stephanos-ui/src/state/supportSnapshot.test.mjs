@@ -5111,6 +5111,13 @@ test('support snapshot exposes Command Deck diagnostic proof-state review fields
         command_deck_last_diagnostic_active_contradiction: 'no',
         command_deck_last_diagnostic_next_action: 'Copy build-proof packet from Operator Proof Concierge.',
         command_deck_last_diagnostic_mutated_proof_state: 'no',
+        command_deck_executive_voice_status: 'available',
+        command_deck_executive_voice_response_generated: 'yes',
+        command_deck_executive_voice_response_kind: 'diagnostic-stale',
+        command_deck_executive_voice_next_move: 'Use Operator Proof Concierge to copy the build-proof packet, paste it here, and Execute.',
+        command_deck_executive_voice_safety_summary_present: 'yes',
+        command_deck_executive_voice_uses_canonical_state: 'yes',
+        command_deck_executive_voice_mutation_allowed: 'no',
       },
     },
   });
@@ -5121,4 +5128,11 @@ test('support snapshot exposes Command Deck diagnostic proof-state review fields
   assert.match(snapshot, /Command Deck Last Diagnostic Active Contradiction: no/);
   assert.match(snapshot, /Command Deck Last Diagnostic Next Action: Copy build-proof packet from Operator Proof Concierge\./);
   assert.match(snapshot, /Command Deck Last Diagnostic Mutated Proof State: no/);
+  assert.match(snapshot, /Command Deck Executive Voice Status: available/);
+  assert.match(snapshot, /Command Deck Executive Voice Response Generated: yes/);
+  assert.match(snapshot, /Command Deck Executive Voice Response Kind: diagnostic-stale/);
+  assert.match(snapshot, /Command Deck Executive Voice Next Move: Use Operator Proof Concierge to copy the build-proof packet, paste it here, and Execute\./);
+  assert.match(snapshot, /Command Deck Executive Voice Safety Summary Present: yes/);
+  assert.match(snapshot, /Command Deck Executive Voice Uses Canonical State: yes/);
+  assert.match(snapshot, /Command Deck Executive Voice Mutation Allowed: no/);
 });

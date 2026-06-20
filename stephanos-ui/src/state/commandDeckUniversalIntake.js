@@ -4,6 +4,40 @@ const ECHO_LIMIT = 360;
 export const COMMAND_DECK_PROOF_ORDER = ['mission-console-bridge','build-proof','verify-proof','browser-proof-checklist','pr-evidence','source-pack-output'];
 const PROOF_KINDS = new Set(COMMAND_DECK_PROOF_ORDER.filter((item) => item !== 'mission-console-bridge'));
 
+const REPAIR_PROMPT = '/repair Reconcile Operator Proof Concierge proof-state contradiction: merge is hold, missing proof is none, and no next proof exists. Preserve proof safety, keep OpenClaw locked, keep Codex auto-dispatch disabled, and do not mark merge ready.';
+
+function safetySummary() {
+  return 'No commands were run, no proof was fabricated, Codex was not dispatched, OpenClaw remained locked, and merge readiness remains hold.';
+}
+
+export function buildMissionExecutiveVoice({ kind = 'proof-next-action', proofState = {}, evidenceProjection = null, acceptedProofItems = [], rejectedProofItems = [], cumulativeAcceptedProofItems = [] } = {}) {
+  const accepted = orderProofItems(proofState.accepted || cumulativeAcceptedProofItems || acceptedProofItems);
+  const remaining = orderProofItems(proofState.remaining || evidenceProjection?.remainingMissingProofItems || []);
+  const next = proofState.next || remaining[0] || 'none';
+  const lines = [];
+  let nextMove = 'Review classified intake and take the next approved operator action.';
+  if (kind === 'diagnostic-active-contradiction') {
+    nextMove = 'Send a bounded Codex repair to reconcile Mission Proof Remaining Missing Items, Operator Cockpit Missing Proof, PR evidence, and source-pack-output.';
+    lines.push('I reviewed the proof-state diagnostic packet.', '', 'The proof engine and merge gate disagree: merge is held, but no missing proof is listed. I am keeping merge locked.', '', 'Why it matters:', 'Until that state is reconciled, I cannot honestly choose the next proof packet or advance merge readiness.', '', 'Best next move:', nextMove, '', 'Prepared repair request:', REPAIR_PROMPT, '', 'Safety:', safetySummary());
+  } else if (kind === 'diagnostic-stale') {
+    nextMove = `Use Operator Proof Concierge to copy the ${next} packet, paste it here, and Execute.`;
+    lines.push('I reviewed the proof-state diagnostic packet.', '', `The packet described a contradiction, but the live canonical state has a valid next move: ${next} is missing.`, '', 'Best next move:', nextMove, '', 'Prepared packet is available in Operator Proof Concierge.', '', 'Safety:', safetySummary());
+  } else if (kind === 'proof-accepted') {
+    const latest = orderProofItems(acceptedProofItems)[0] || 'proof';
+    nextMove = next && next !== 'none' ? `Use Operator Proof Concierge to copy the ${next} packet.` : 'Review merge readiness only after canonical gates say ready.';
+    lines.push(`I accepted ${latest} and kept merge locked.`, '', 'Mission progress:', `Accepted proof is now ${accepted.join('|') || latest}.`, `Next missing proof is ${next}.`, '', 'Best next move:', nextMove, '', 'Safety:', safetySummary());
+  } else if (kind === 'proof-rejected') {
+    const latest = orderProofItems(rejectedProofItems)[0] || evidenceProjection?.relatedEvidenceType || 'proof';
+    const reason = evidenceProjection?.warnings?.[0] || evidenceProjection?.browserProofRejectionReason || 'the pasted return did not satisfy a canonical proof marker';
+    nextMove = latest === 'browser-proof-checklist' ? 'Use the browser-proof checklist from Operator Proof Concierge and include the observed pass/fail details.' : `Use Operator Proof Concierge to copy the ${next} packet with explicit pass/fail details.`;
+    lines.push(`I could not accept ${latest} because ${reason}.`, '', 'What stayed safe:', 'Previously accepted proof remains intact. Merge remains held. OpenClaw remains locked.', '', 'Best next move:', nextMove, '', 'Safety:', safetySummary());
+  } else {
+    nextMove = next && next !== 'none' ? `Use Operator Proof Concierge to copy the ${next} packet.` : 'Review canonical proof state before advancing merge readiness.';
+    lines.push('I reviewed the Command Deck intake.', '', `Best next move: ${nextMove}`, '', 'Safety:', safetySummary());
+  }
+  return { available: true, responseGenerated: true, kind, nextMove, safetySummaryPresent: true, usesCanonicalState: true, mutationAllowed: false, text: lines.join('\n') };
+}
+
 function textOf(value) { return String(value ?? '').trim(); }
 function boundedEcho(text) { const value = textOf(text); return value.length > ECHO_LIMIT ? `${value.slice(0, ECHO_LIMIT)}…` : value; }
 function uniq(items) { return Array.from(new Set(items.filter(Boolean))); }
@@ -50,31 +84,29 @@ function currentProofState(evidenceContext = {}) {
 }
 export function buildProofStateDiagnosticResponse({ text = '', evidenceContext = {} } = {}) {
   const state = currentProofState(evidenceContext);
-  const missing = state.remaining.join('|') || 'none';
-  const accepted = state.accepted.join('|') || 'none';
   const stale = /contradiction detected:/i.test(text) && !state.activeContradiction;
-  const lines = [
-    'Stephanos reviewed the proof-state diagnostic packet.',
-    '',
-    'Current canonical proof state:',
-    `- Accepted proof: ${accepted}`,
-    `- Missing proof: ${missing}`,
-    `- Merge safety: ${state.mergeSafety || 'no / hold'}`,
-    '- OpenClaw mutation: locked',
-    '- Codex auto-dispatch: disabled',
-    '',
-    'Interpretation:',
-  ];
-  if (state.activeContradiction) {
-    lines.push('An active contradiction exists: merge safety is hold, missing proof is none, and no next proof exists. This needs a repair/diagnostic Codex packet before merge readiness can move. Merge remains hold.');
-    lines.push('', 'Copyable repair prompt:', '/repair Reconcile Operator Proof Concierge proof-state contradiction: merge is hold, missing proof is none, and no next proof exists. Preserve proof safety, keep OpenClaw locked, keep Codex auto-dispatch disabled, and do not mark merge ready.');
-  } else {
-    lines.push(stale ? 'The diagnostic packet described a contradiction, but current canonical proof state is not contradictory.' : 'There is no active contradiction now.');
-    lines.push(`The live canonical proof state says the next missing item is ${state.next}.`);
-  }
-  lines.push('', 'Safety:', 'No commands were run, no proof was fabricated, Codex was not dispatched, OpenClaw remained locked, and merge readiness remains hold.', '', `Next operator action: ${state.activeContradiction ? 'Copy the repair prompt above into Command Deck for a bounded repair request.' : `Use Operator Proof Concierge to copy the ${state.next} packet, paste it here, and press Execute.`}`);
+  const executiveVoice = buildMissionExecutiveVoice({ kind: state.activeContradiction ? 'diagnostic-active-contradiction' : 'diagnostic-stale', proofState: state });
   return {
-    detected: true, kind: 'proof-state-diagnostic/operator-proof-concierge', routedTo: 'proof-state-review', responseGenerated: true, activeContradiction: state.activeContradiction ? 'yes' : 'no', nextAction: state.activeContradiction ? 'Copy repair prompt for bounded diagnostic repair.' : `Copy ${state.next} packet from Operator Proof Concierge.`, mutatedProofState: 'no', assistantResponse: lines.join('\n'), currentProofState: state,
+    detected: true,
+    kind: 'proof-state-diagnostic/operator-proof-concierge',
+    routedTo: 'proof-state-review',
+    responseGenerated: true,
+    activeContradiction: state.activeContradiction ? 'yes' : 'no',
+    nextAction: executiveVoice.nextMove,
+    mutatedProofState: 'no',
+    assistantResponse: executiveVoice.text,
+    currentProofState: state,
+    staleDiagnostic: stale ? 'yes' : 'no',
+    debugPayload: {
+      acceptedProof: state.accepted.join('|') || 'none',
+      missingProof: state.remaining.join('|') || 'none',
+      nextProof: state.next,
+      mergeSafety: state.mergeSafety || 'no / hold',
+      openClawMutationLocked: 'yes',
+      codexAutoDispatchAllowed: 'no',
+      mutationAllowed: 'no',
+    },
+    executiveVoice,
   };
 }
 
@@ -135,6 +167,14 @@ export function routeCommandDeckUniversalIntake({ text = '', evidenceContext = {
     latestAccepted: evidenceReturnIntakeProjection?.acceptedProofItems || [],
     latestRejected: evidenceReturnIntakeProjection?.rejectedProofItems || [],
   });
+  const executiveVoice = diagnosticProjection?.executiveVoice || (evidenceReturnIntakeProjection ? buildMissionExecutiveVoice({
+    kind: (evidenceReturnIntakeProjection.acceptedProofItems || []).length ? 'proof-accepted' : ((evidenceReturnIntakeProjection.rejectedProofItems || []).length ? 'proof-rejected' : 'proof-next-action'),
+    proofState: currentProofState({ ...evidenceContext, missionProofReconciliation: { ...(evidenceContext.missionProofReconciliation || {}), acceptedItems: cumulative.acceptedProofItems, remainingMissingItems: evidenceReturnIntakeProjection.remainingMissingProofItems || [] } }),
+    evidenceProjection: evidenceReturnIntakeProjection,
+    acceptedProofItems: evidenceReturnIntakeProjection.acceptedProofItems || [],
+    rejectedProofItems: evidenceReturnIntakeProjection.rejectedProofItems || [],
+    cumulativeAcceptedProofItems: cumulative.acceptedProofItems,
+  }) : null);
   return {
     ...classification,
     routedTo: uniq(routedTo),
@@ -142,9 +182,10 @@ export function routeCommandDeckUniversalIntake({ text = '', evidenceContext = {
     rejectedProofItems: evidenceReturnIntakeProjection?.rejectedProofItems || [],
     cumulativeAcceptedProofItems: cumulative.acceptedProofItems,
     cumulativeRejectedProofItems: cumulative.rejectedProofItems,
-    nextAction: diagnosticProjection?.nextAction || evidenceReturnIntakeProjection?.recommendedNextAction || (classification.kinds.includes('direct-chat') ? 'Answer operator normally.' : 'Review classified intake and take the next approved operator action.'),
+    nextAction: executiveVoice?.nextMove || diagnosticProjection?.nextAction || evidenceReturnIntakeProjection?.recommendedNextAction || (classification.kinds.includes('direct-chat') ? 'Answer operator normally.' : 'Review classified intake and take the next approved operator action.'),
     evidenceReturnIntakeProjection,
     diagnosticProjection,
+    executiveVoice,
     mergeReadinessChanged: 'no',
     mutationAllowed: false,
     codexAutoDispatchAllowed: false,

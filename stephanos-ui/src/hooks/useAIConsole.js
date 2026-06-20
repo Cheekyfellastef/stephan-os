@@ -4079,11 +4079,18 @@ export function useAIConsole() {
       command_deck_last_diagnostic_active_contradiction: commandDeckUniversalIntake.diagnosticProjection?.activeContradiction || 'no',
       command_deck_last_diagnostic_next_action: commandDeckUniversalIntake.diagnosticProjection?.nextAction || 'none',
       command_deck_last_diagnostic_mutated_proof_state: commandDeckUniversalIntake.diagnosticProjection?.mutatedProofState || 'no',
+      command_deck_executive_voice_status: commandDeckUniversalIntake.executiveVoice?.available ? 'available' : 'unavailable',
+      command_deck_executive_voice_response_generated: commandDeckUniversalIntake.executiveVoice?.responseGenerated ? 'yes' : 'no',
+      command_deck_executive_voice_response_kind: commandDeckUniversalIntake.executiveVoice?.kind || 'none',
+      command_deck_executive_voice_next_move: commandDeckUniversalIntake.executiveVoice?.nextMove || 'none',
+      command_deck_executive_voice_safety_summary_present: commandDeckUniversalIntake.executiveVoice?.safetySummaryPresent ? 'yes' : 'no',
+      command_deck_executive_voice_uses_canonical_state: commandDeckUniversalIntake.executiveVoice?.usesCanonicalState ? 'yes' : 'no',
+      command_deck_executive_voice_mutation_allowed: commandDeckUniversalIntake.executiveVoice?.mutationAllowed ? 'yes' : 'no',
     };
     setLastExecutionMetadata((prev = {}) => ({ ...prev, ...commandDeckIntakeMetadata }));
     if (!commandDeckUniversalIntake.kinds?.includes('direct-chat')) {
       const evidence = commandDeckUniversalIntake.evidenceReturnIntakeProjection;
-      const answer = commandDeckUniversalIntake.diagnosticProjection?.assistantResponse || [
+      const answer = commandDeckUniversalIntake.executiveVoice?.text || commandDeckUniversalIntake.diagnosticProjection?.assistantResponse || [
         `Command Deck Intake Classification: ${(commandDeckUniversalIntake.kinds || []).join(', ') || 'unknown/noise'}.`,
         `Command Deck Intake Routed To: ${(commandDeckUniversalIntake.routedTo || []).join(', ') || 'assistant-direct-chat'}.`,
         `Evidence Intake accepted: ${(commandDeckUniversalIntake.acceptedProofItems || []).join(', ') || 'none'}; rejected: ${(commandDeckUniversalIntake.rejectedProofItems || []).join(', ') || 'none'}.`,

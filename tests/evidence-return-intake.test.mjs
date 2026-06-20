@@ -135,6 +135,9 @@ test('Command Deck Universal Intake classifies and routes build proof without me
   assert.deepEqual(routed.rejectedProofItems, []);
   assert.equal(routed.evidenceReturnIntakeProjection.remainingMissingProofSummary, 'verify-proof | browser-proof-checklist | pr-evidence | source-pack-output');
   assert.equal(routed.mergeReadinessChanged, 'no');
+  assert.equal(routed.executiveVoice.kind, 'proof-accepted');
+  assert.match(routed.executiveVoice.text, /I accepted build-proof and kept merge locked/);
+  assert.match(routed.executiveVoice.text, /Next missing proof is verify-proof/);
 });
 
 test('Command Deck Universal Intake rejects failed build proof and preserves direct chat fallback', () => {
@@ -142,6 +145,9 @@ test('Command Deck Universal Intake rejects failed build proof and preserves dir
   assert.deepEqual(failed.acceptedProofItems, []);
   assert.deepEqual(failed.rejectedProofItems, ['build-proof']);
   assert.equal(failed.evidenceReturnIntakeProjection.remainingMissingProofSummary, 'build-proof | verify-proof');
+  assert.equal(failed.executiveVoice.kind, 'proof-rejected');
+  assert.match(failed.executiveVoice.text, /I could not accept build-proof/);
+  assert.match(failed.executiveVoice.text, /Previously accepted proof remains intact/);
   const chat = classifyCommandDeckUniversalIntake('What is the next best action?');
   assert.deepEqual(chat.kinds, ['direct-chat']);
 });
@@ -323,9 +329,10 @@ Operator diagnostic checklist:
   assert.deepEqual(routed.cumulativeRejectedProofItems, ['browser-proof-checklist']);
   assert.equal(routed.evidenceReturnIntakeProjection, null);
   assert.equal(routed.diagnosticProjection.activeContradiction, 'no');
-  assert.match(routed.diagnosticProjection.assistantResponse, /current canonical proof state/i);
-  assert.match(routed.diagnosticProjection.assistantResponse, /current canonical proof state is not contradictory/i);
-  assert.match(routed.diagnosticProjection.assistantResponse, /next missing item is browser-proof-checklist/i);
+  assert.equal(routed.executiveVoice.kind, 'diagnostic-stale');
+  assert.match(routed.diagnosticProjection.assistantResponse, /I reviewed the proof-state diagnostic packet/i);
+  assert.match(routed.diagnosticProjection.assistantResponse, /live canonical state has a valid next move: browser-proof-checklist is missing/i);
+  assert.doesNotMatch(routed.diagnosticProjection.assistantResponse.split('\n').slice(0, 4).join('\n'), /Current canonical proof state:/i);
   assert.match(routed.diagnosticProjection.assistantResponse, /No commands were run/);
   assert.equal(routed.mutationAllowed, false);
   assert.equal(routed.codexAutoDispatchAllowed, false);
@@ -343,10 +350,11 @@ test('Operator Proof Concierge active contradiction response explains conflict a
     },
   });
   assert.equal(routed.diagnosticProjection.activeContradiction, 'yes');
-  assert.match(routed.diagnosticProjection.assistantResponse, /active contradiction exists/i);
-  assert.match(routed.diagnosticProjection.assistantResponse, /merge safety is hold, missing proof is none, and no next proof exists/i);
-  assert.match(routed.diagnosticProjection.assistantResponse, /Merge remains hold/i);
-  assert.match(routed.diagnosticProjection.assistantResponse, /Copyable repair prompt:/);
+  assert.equal(routed.executiveVoice.kind, 'diagnostic-active-contradiction');
+  assert.match(routed.diagnosticProjection.assistantResponse, /proof engine and merge gate disagree/i);
+  assert.match(routed.diagnosticProjection.assistantResponse, /I am keeping merge locked/i);
+  assert.match(routed.diagnosticProjection.assistantResponse, /Prepared repair request:/);
+  assert.match(routed.diagnosticProjection.assistantResponse, /No commands were run/);
   assert.deepEqual(routed.acceptedProofItems, []);
   assert.deepEqual(routed.rejectedProofItems, []);
   assert.equal(routed.codexAutoDispatchAllowed, false);
