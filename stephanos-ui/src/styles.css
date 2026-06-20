@@ -5381,20 +5381,13 @@ pre {
   gap: 0.58rem;
   min-width: 0;
   padding: 0.85rem;
-  border: 1px solid rgba(112, 181, 255, 0.26);
+  border: 1px solid color-mix(in srgb, var(--cockpit-state-color, #58a6ff) 34%, transparent);
   border-radius: 16px;
-  background: linear-gradient(145deg, rgba(8, 18, 34, 0.92), rgba(3, 8, 18, 0.88));
+  background:
+    linear-gradient(145deg, rgba(8, 18, 34, 0.92), rgba(3, 8, 18, 0.88)),
+    linear-gradient(90deg, color-mix(in srgb, var(--cockpit-state-color, #58a6ff) 10%, transparent), transparent 42%);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
   overflow: hidden;
-}
-
-.cockpit-vl-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--cockpit-state-color, #58a6ff);
-  opacity: 0.85;
 }
 
 .cockpit-vl-card-header,

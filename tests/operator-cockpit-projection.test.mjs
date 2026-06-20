@@ -73,6 +73,13 @@ test('expanded cockpit dashboard is primary visual before compact readouts and r
   assert.ok(panel.indexOf('<CockpitDetailView projection={cockpitProjection} />') < panel.indexOf('data-cockpit-block="route-topology"'));
 });
 
+test('cockpit visual language cards use a uniform border without a left rail accent', async () => {
+  const styles = await readFile(new URL('../stephanos-ui/src/styles.css', import.meta.url), 'utf8');
+  assert.match(styles, /\.cockpit-vl-card\s*\{[\s\S]*border:\s*1px solid color-mix/);
+  assert.doesNotMatch(styles, /\.cockpit-vl-card::before/);
+  assert.doesNotMatch(styles, /\.cockpit-vl-card\s*\{[\s\S]*border-left:/);
+});
+
 test('cockpit action model routes canonical missing build proof without mutation or rendered text', () => {
   const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { remainingMissingItems: ['build-proof', 'verify-proof'] } } });
   assert.equal(p.cockpitActionSource, 'canonical cockpit projection');
