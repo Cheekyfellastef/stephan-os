@@ -2107,6 +2107,8 @@ export function buildSupportSnapshot({
   const lastCockpitAction = globalThis.window?.__STEPHANOS_COCKPIT_LAST_ACTION__ || {};
   const operatorCockpitRenderSignature = cockpitRenderSignature(operatorCockpitProjection);
   const cockpitDomProof = deriveCockpitDomProof(operatorCockpitProjection);
+  const operatorProofConcierge = operatorCockpitProjection.operatorProofConcierge || {};
+  const operatorProofConciergeLastCopy = globalThis.window?.__STEPHANOS_OPERATOR_PROOF_CONCIERGE_LAST_COPY__ || operatorProofConcierge.lastCopyResult || 'none';
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
     ? runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll
@@ -2922,6 +2924,19 @@ export function buildSupportSnapshot({
     `Operator Cockpit Last Intake Status: ${asText(operatorCockpitProjection.evidenceIntakeState || operatorCockpitProjection.lastCommandDeckIntakeResult, 'unavailable')}`,
     `Operator Cockpit Recommended Surface: ${asText(operatorCockpitProjection.recommendedSurface, 'Command Deck')}`,
     `Operator Cockpit Recommended Packet: ${asText(operatorCockpitProjection.recommendedPacket, 'proof-collection-packet')}`,
+    `Operator Proof Concierge Status: ${asText(operatorProofConcierge.status, 'unavailable')}`,
+    `Operator Proof Concierge Next Proof: ${asText(operatorProofConcierge.nextProof, 'none')}`,
+    `Operator Proof Concierge Next Action Label: ${asText(operatorProofConcierge.nextActionLabel, 'Review proof state')}`,
+    `Operator Proof Concierge Why: ${asText(operatorProofConcierge.whyThisProofIsNeeded, 'n/a')}`,
+    `Operator Proof Concierge Copy Packet Available: ${asText(operatorProofConcierge.copyPacketAvailable, 'no')}`,
+    `Operator Proof Concierge Packet Kind: ${asText(operatorProofConcierge.packetKind, 'none')}`,
+    `Operator Proof Concierge Packet Length: ${asText(operatorProofConcierge.packetLength, '0')}`,
+    `Operator Proof Concierge Uses Canonical Proof State: ${asText(operatorProofConcierge.usesCanonicalProofState, 'yes')}`,
+    `Operator Proof Concierge Mutation Allowed: ${asText(operatorProofConcierge.mutationAllowed, 'no')}`,
+    `Operator Proof Concierge Codex Auto Dispatch Allowed: ${asText(operatorProofConcierge.codexAutoDispatchAllowed, 'no')}`,
+    `Operator Proof Concierge OpenClaw Mutation Locked: ${asText(operatorProofConcierge.openClawMutationLocked, 'yes')}`,
+    `Operator Proof Concierge Merge Safety: ${asText(operatorProofConcierge.mergeSafety, 'no / hold')}`,
+    `Operator Proof Concierge Last Copy Result: ${asText(operatorProofConciergeLastCopy, 'none')}`,
     `Cockpit Action Routing Status: ${cockpitActionModel.cockpitActionStatus}`,
     `Cockpit Primary Action Label: ${asText(cockpitActionModel.cockpitPrimaryActionLabel, 'unavailable')}`,
     `Cockpit Primary Action Kind: ${asText(cockpitActionModel.cockpitPrimaryActionKind, 'unavailable')}`,

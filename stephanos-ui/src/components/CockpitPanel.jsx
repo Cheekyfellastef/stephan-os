@@ -4,6 +4,9 @@ import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
 import { buildCockpitModel, CONNECTIONS, COCKPIT_VIEWBOX, NODE_LAYOUT } from '../state/cockpitTruthModel.js';
 import { buildCockpitProjection } from '../state/cockpitProjection.js';
+import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
+import { writeTextToClipboard } from '../utils/clipboardCopy';
+import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 import CockpitDetailView from './CockpitDetailView.jsx';
 import { RECENT_ACTIVITY_WINDOW_MS } from '../state/continuityLoopSnapshot.js';
 import CollapsiblePanel from './CollapsiblePanel';
@@ -27,6 +30,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const [detailId, setDetailId] = useState('backend');
   const [isPageVisible, setIsPageVisible] = useState(() => (typeof document === 'undefined' ? true : document.visibilityState === 'visible'));
   const [activityExpiryTick, setActivityExpiryTick] = useState(0);
+  const { copyState: conciergeCopyState, setCopyState: setConciergeCopyState } = useClipboardButtonState();
   const isOpen = forceOpen ? true : uiLayout.cockpitPanel !== false;
   const shouldRenderCockpit = isOpen && isPageVisible;
 
@@ -130,6 +134,13 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
         ? 'missionPacketQueuePanel'
         : 'commandDeck';
     const selectorsByKind = {
+      'focus-concierge-packet': [
+        '[data-testid="operator-proof-concierge-copy"]',
+        '[data-cockpit-action-packet-id="packet-browser-proof-checklist"]',
+        '[data-cockpit-action-packet-id="packet-pr-evidence"]',
+        '[data-cockpit-action-packet-id="packet-source-pack-output"]',
+        '[data-testid="operator-proof-concierge"]',
+      ],
       'focus-proof-intake': [
         '[data-panel-id="commandDeck"] [data-testid="command-deck-input"]',
         '[data-testid="command-deck-input"]',
@@ -270,6 +281,22 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     }, 80);
   }, [resolveCockpitActionTarget, setPanelState]);
 
+
+  const handleCopyConciergePacket = useCallback(async () => {
+    const packetText = cockpitProjection?.operatorProofConcierge?.packetText || '';
+    if (!packetText) {
+      setConciergeCopyState(COPY_STATE.FAILURE);
+      return;
+    }
+    const result = await writeTextToClipboard(packetText);
+    const success = result.ok === true;
+    setConciergeCopyState(success ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+    if (typeof window !== 'undefined') {
+      window.__STEPHANOS_OPERATOR_PROOF_CONCIERGE_LAST_COPY__ = success ? 'success' : 'failure';
+    }
+    recordCopyFeedbackEvent({ source: 'OperatorProofConcierge.copyPacket', success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind: cockpitProjection?.operatorProofConcierge?.packetKind || 'proof-packet', reason: result.reason || 'unknown', method: result.method || 'unknown' });
+  }, [cockpitProjection, setConciergeCopyState]);
+
   return (
     <CollapsiblePanel
       as="aside"
@@ -284,6 +311,25 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       {shouldRenderCockpit ? (
         <div className="cockpit-shell">
         <CockpitDetailView projection={cockpitProjection} onPrimaryAction={routeCockpitPrimaryAction} />
+
+        <section className="operator-proof-concierge" data-testid="operator-proof-concierge" data-cockpit-block="operator-proof-concierge" data-cockpit-kind="operator-assist" data-cockpit-action-packet-id={cockpitProjection.operatorProofConcierge.packetKind === 'none' ? 'none' : `packet-${cockpitProjection.operatorProofConcierge.packetKind}`}>
+          <h3>Operator Proof Concierge</h3>
+          <p className="muted">Prepares the next exact proof packet from canonical Mission Proof Reconciliation. It copies only; it never submits, runs commands, dispatches Codex, or unlocks OpenClaw.</p>
+          <ul>
+            <li><strong>Status:</strong> {cockpitProjection.operatorProofConcierge.status}</li>
+            <li><strong>Next proof:</strong> {cockpitProjection.operatorProofConcierge.nextProof}</li>
+            <li><strong>Why:</strong> {cockpitProjection.operatorProofConcierge.whyThisProofIsNeeded}</li>
+            <li><strong>Merge safety:</strong> {cockpitProjection.operatorProofConcierge.mergeSafety}</li>
+            <li><strong>OpenClaw mutation locked:</strong> {cockpitProjection.operatorProofConcierge.openClawMutationLocked}</li>
+            <li><strong>Codex auto-dispatch allowed:</strong> {cockpitProjection.operatorProofConcierge.codexAutoDispatchAllowed}</li>
+          </ul>
+          <textarea readOnly data-testid="operator-proof-concierge-packet" value={cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text" />
+          <button type="button" data-testid="operator-proof-concierge-copy" className={`status-panel-copy-button ${conciergeCopyState}`} onClick={handleCopyConciergePacket} disabled={cockpitProjection.operatorProofConcierge.copyPacketAvailable !== 'yes'}>
+            {conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.nextActionLabel}
+          </button>
+          <p role="status" aria-live="polite">{conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied to clipboard.' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>
+        </section>
+
         <section className="cockpit-route-topology" data-cockpit-block="route-topology" data-cockpit-kind="routing" data-cockpit-surface="expanded-pane" data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature={cockpitProjection ? cockpitProjection.currentStatus : 'unknown'} aria-label="Route Topology"><h3>Route Topology</h3><p className="muted">Routing flow only; mission proof and merge truth remain bound to the canonical cockpit projection above.</p><svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos route topology">
           {CONNECTIONS.map((connection) => {
             const from = NODE_LAYOUT[connection.from];
