@@ -5088,3 +5088,14 @@ test('support snapshot exposes browser proof accepted-with-caveat intake status 
   assert.match(snapshot, /Mission Proof Remaining Missing Items: pr-evidence\|source-pack-output/);
   assert.match(snapshot, /Mission Proof Next Best Action: Collect pr-evidence\./);
 });
+
+test('Support Snapshot exposes Operator Proof Concierge contradiction diagnostic fields', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: {} });
+  assert.match(snapshot, /Operator Proof Concierge Proof State Contradiction Detected:/);
+  assert.match(snapshot, /Operator Proof Concierge Contradiction Reason:/);
+  assert.match(snapshot, /Mission Proof Accepted Items:/);
+  assert.match(snapshot, /Mission Proof Remaining Missing Items:/);
+  assert.match(snapshot, /Mission Proof Next Best Action:/);
+  assert.match(snapshot, /Operator Cockpit Missing Proof:/);
+  assert.match(snapshot, /Operator Cockpit Next Best Action:/);
+});

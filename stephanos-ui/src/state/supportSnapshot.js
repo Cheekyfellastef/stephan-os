@@ -2931,6 +2931,8 @@ export function buildSupportSnapshot({
     `Operator Proof Concierge Copy Packet Available: ${asText(operatorProofConcierge.copyPacketAvailable, 'no')}`,
     `Operator Proof Concierge Packet Kind: ${asText(operatorProofConcierge.packetKind, 'none')}`,
     `Operator Proof Concierge Packet Length: ${asText(operatorProofConcierge.packetLength, '0')}`,
+    `Operator Proof Concierge Proof State Contradiction Detected: ${asText(operatorProofConcierge.proofStateContradictionDetected, 'no')}`,
+    `Operator Proof Concierge Contradiction Reason: ${asText(operatorProofConcierge.contradictionReason, 'none')}`,
     `Operator Proof Concierge Uses Canonical Proof State: ${asText(operatorProofConcierge.usesCanonicalProofState, 'yes')}`,
     `Operator Proof Concierge Mutation Allowed: ${asText(operatorProofConcierge.mutationAllowed, 'no')}`,
     `Operator Proof Concierge Codex Auto Dispatch Allowed: ${asText(operatorProofConcierge.codexAutoDispatchAllowed, 'no')}`,
