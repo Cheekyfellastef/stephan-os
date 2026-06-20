@@ -241,3 +241,52 @@ test('Mission reconciliation consumes cumulative Command Deck proof and keeps me
   assert.equal(projection.evidenceReturnIntakeProjection.codexAutoDispatchAllowed, false);
   assert.equal(projection.evidenceReturnIntakeProjection.openClawMutationLocked, true);
 });
+
+test('rejected browser proof does not wipe cumulative accepted build and verify in mission reconciliation', async () => {
+  const { deriveOperatorReliefProjection } = await import('../stephanos-ui/src/state/operatorReliefProjection.js');
+  const projection = deriveOperatorReliefProjection({ supportSnapshot: { executionMetadata: {
+    command_deck_universal_intake_status: 'classified',
+    command_deck_universal_intake_routed_to: 'evidence-return-intake|evidence-intake-automation',
+    command_deck_universal_intake_rejected_proof_items: 'browser-proof-checklist',
+    command_deck_cumulative_accepted_proof_items: 'build-proof|verify-proof',
+    command_deck_cumulative_rejected_proof_items: 'browser-proof-checklist',
+  }, missionConsoleDiagnostics: {
+    operatorReliefBridgeProjectionKeysSeen: ['missionProofReconciliation'], missionConsoleInstanceCount: 1, missionConsoleBridgeParityStatus: 'OK', runtimeDiagnosticsPresent: 'yes', runtimeDiagnosticsDropBoundary: 'none', missionConsoleVisibleInstancePublished: 'yes', operatorReliefBridgePublished: 'yes',
+  } } });
+  assert.deepEqual(projection.missionProofReconciliation.acceptedItems, ['mission-console-bridge', 'build-proof', 'verify-proof']);
+  assert.deepEqual(projection.missionProofReconciliation.remainingMissingItems, ['browser-proof-checklist', 'pr-evidence', 'source-pack-output']);
+  assert.equal(projection.missionProofReconciliation.nextBestAction, 'Collect browser-proof-checklist.');
+  assert.equal(projection.evidenceReturnIntakeProjection.codexAutoDispatchAllowed, false);
+  assert.equal(projection.evidenceReturnIntakeProjection.openClawMutationLocked, true);
+});
+
+test('manual browser proof with accepted-with-known-drift caveat is accepted with caveat and advances missing proof', () => {
+  const text = `Browser proof accepted: cockpit pane opens/remains visible, primary dashboard visible, Command Deck submit lifecycle works, input clears after accepted proof, submitted proof remains visible in history/echo, action routing focuses Command Deck, no command auto-run, no Codex auto-dispatch, OpenClaw remained locked, merge remained no / hold, no red runtime error overlay, no obvious broken pane/collapse behaviour. Known caveat: cockpit visual/text drift caveat accepted-with-known-drift non-blocking caveat preserved.`;
+  const r = deriveEvidenceReturnIntakeProjection({ ...base, intakeText: text, missionProofReconciliation: { remainingMissingItems: ['browser-proof-checklist', 'pr-evidence', 'source-pack-output'] } });
+  assert.deepEqual(r.acceptedProofItems, ['browser-proof-checklist']);
+  assert.deepEqual(r.rejectedProofItems, []);
+  assert.equal(r.browserProofIntakeStatus, 'accepted');
+  assert.equal(r.browserProofKnownCaveatPresent, true);
+  assert.equal(r.browserProofCaveatBlocking, false);
+  assert.equal(r.browserProofAcceptedWithCaveat, true);
+  assert.equal(r.browserProofRejectionReason, 'none');
+  assert.equal(r.remainingMissingProofSummary, 'pr-evidence | source-pack-output');
+});
+
+test('explicit blocking browser proof language rejects browser proof', () => {
+  const r = deriveEvidenceReturnIntakeProjection({ ...base, intakeText: 'Browser proof failed: pane did not open and command auto-ran.', missionProofReconciliation: { remainingMissingItems: ['browser-proof-checklist', 'pr-evidence'] } });
+  assert.deepEqual(r.acceptedProofItems, []);
+  assert.deepEqual(r.rejectedProofItems, ['browser-proof-checklist']);
+  assert.equal(r.browserProofIntakeStatus, 'rejected');
+  assert.notEqual(r.browserProofRejectionReason, 'none');
+});
+
+test('same-category later accepted browser proof supersedes prior browser rejection and keeps merge hold', async () => {
+  const { routeCommandDeckUniversalIntake } = await import('../stephanos-ui/src/state/commandDeckUniversalIntake.js');
+  const r = routeCommandDeckUniversalIntake({ text: 'Browser proof accepted with caveat: command deck visible, no command auto-run, no Codex auto-dispatch, OpenClaw remained locked, merge remained hold, no red runtime error overlay. known caveat accepted-with-known-drift non-blocking caveat preserved.', evidenceContext: { ...base, cumulativeAcceptedProofItems: ['build-proof', 'verify-proof'], cumulativeRejectedProofItems: ['browser-proof-checklist'], missionProofReconciliation: { remainingMissingItems: ['browser-proof-checklist', 'pr-evidence', 'source-pack-output'] } } });
+  assert.deepEqual(r.cumulativeAcceptedProofItems, ['build-proof', 'verify-proof', 'browser-proof-checklist']);
+  assert.deepEqual(r.cumulativeRejectedProofItems, []);
+  assert.equal(r.mergeReadinessChanged, 'no');
+  assert.equal(r.codexAutoDispatchAllowed, false);
+  assert.equal(r.openClawMutationLocked, true);
+});
