@@ -32,6 +32,8 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const [activityExpiryTick, setActivityExpiryTick] = useState(0);
   const { copyState: conciergeCopyState, setCopyState: setConciergeCopyState } = useClipboardButtonState();
   const { copyState: plannerCopyState, setCopyState: setPlannerCopyState } = useClipboardButtonState();
+  const { copyState: missionCopyState, setCopyState: setMissionCopyState } = useClipboardButtonState();
+  const { copyState: researchCopyState, setCopyState: setResearchCopyState } = useClipboardButtonState();
   const isOpen = forceOpen ? true : uiLayout.cockpitPanel !== false;
   const shouldRenderCockpit = isOpen && isPageVisible;
 
@@ -298,6 +300,26 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     recordCopyFeedbackEvent({ source: 'MissionExecutivePlanner.copyPacket', success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind: cockpitProjection?.missionExecutivePlan?.missionExecutivePlannerPacketKind || 'planner-packet', reason: result.reason || 'unknown', method: result.method || 'unknown' });
   }, [cockpitProjection, setPlannerCopyState]);
 
+  const handleCopyCompiledMissionPacket = useCallback(async () => {
+    const packetText = cockpitProjection?.missionCompiler?.packetText || '';
+    if (!packetText) { setMissionCopyState(COPY_STATE.FAILURE); return; }
+    const result = await writeTextToClipboard(packetText);
+    const success = result.ok === true;
+    setMissionCopyState(success ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+    if (typeof window !== 'undefined') window.__STEPHANOS_MISSION_COMPILER_LAST_COPY__ = success ? 'success' : 'failure';
+    recordCopyFeedbackEvent({ source: 'MissionCompiler.copyPacket', success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind: cockpitProjection?.missionCompiler?.packetKind || 'mission-packet', reason: result.reason || 'unknown', method: result.method || 'unknown' });
+  }, [cockpitProjection, setMissionCopyState]);
+
+  const handleCopyResearchPacket = useCallback(async () => {
+    const packetText = cockpitProjection?.realityResearchBrief?.researchPacketText || '';
+    if (!packetText) { setResearchCopyState(COPY_STATE.FAILURE); return; }
+    const result = await writeTextToClipboard(packetText);
+    const success = result.ok === true;
+    setResearchCopyState(success ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+    if (typeof window !== 'undefined') window.__STEPHANOS_REALITY_RESEARCH_BRIEF_LAST_COPY__ = success ? 'success' : 'failure';
+    recordCopyFeedbackEvent({ source: 'RealityResearchBrief.copyPacket', success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind: cockpitProjection?.realityResearchBrief?.researchPacketKind || 'research-packet', reason: result.reason || 'unknown', method: result.method || 'unknown' });
+  }, [cockpitProjection, setResearchCopyState]);
+
   const handleCopyConciergePacket = useCallback(async () => {
     const packetText = cockpitProjection?.operatorProofConcierge?.packetText || '';
     if (!packetText) {
@@ -327,6 +349,39 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       {shouldRenderCockpit ? (
         <div className="cockpit-shell">
         <CockpitDetailView projection={cockpitProjection} onPrimaryAction={routeCockpitPrimaryAction} />
+
+        <section className="intent-frame-card" data-testid="command-deck-intent-frame" data-intent-mutation-allowed="no" data-intent-auto-browse="no" data-intent-codex-auto-dispatch="no" data-intent-openclaw-locked="yes">
+          <h3>Intent Frame</h3>
+          <p className="muted">Command Deck Intent Intake V1 uses raw chat text plus canonical state for planning only; it never executes, browses, dispatches Codex, unlocks OpenClaw, or changes merge readiness.</p>
+          <ul>
+            <li><strong>What I think you want:</strong> {cockpitProjection.intentIntake?.intentSummary || 'unavailable'}</li>
+            <li><strong>Target system:</strong> {(cockpitProjection.intentIntake?.targetSubsystems || []).join(', ') || 'unavailable'}</li>
+            <li><strong>Recommended route:</strong> {cockpitProjection.intentIntake?.nextRecommendedLayer || 'hold'}</li>
+            <li><strong>Approval required:</strong> {cockpitProjection.intentIntake?.approvalRequired || 'yes'}</li>
+          </ul>
+        </section>
+
+        <section className="compiled-mission-card" data-testid="mission-compiler-card" data-mission-mutation-allowed="no" data-mission-auto-submit="no" data-mission-command-auto-run="no" data-mission-codex-auto-dispatch="no" data-mission-openclaw-locked="yes">
+          <h3>Compiled Mission</h3>
+          <ul>
+            <li><strong>Objective:</strong> {cockpitProjection.missionCompiler?.missionObjective || 'unavailable'}</li>
+            <li><strong>Acceptance criteria:</strong> {(cockpitProjection.missionCompiler?.acceptanceCriteria || []).join(' | ') || 'unavailable'}</li>
+            <li><strong>Packet available:</strong> {cockpitProjection.missionCompiler?.packetAvailable || 'no'}</li>
+          </ul>
+          {cockpitProjection.missionCompiler?.packetAvailable === 'yes' ? <button type="button" data-testid="mission-compiler-copy" className={`status-panel-copy-button ${missionCopyState}`} onClick={handleCopyCompiledMissionPacket}>{missionCopyState === COPY_STATE.SUCCESS ? 'Mission packet copied' : missionCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy mission packet'}</button> : null}
+          <p role="status" aria-live="polite">{missionCopyState === COPY_STATE.SUCCESS ? 'Mission packet copied to clipboard.' : missionCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>
+        </section>
+
+        <section className="reality-research-brief-card" data-testid="reality-research-brief-card" data-research-mutation-allowed="no" data-research-auto-browse="no" data-research-can-use-web="approval-required" data-research-codex-auto-dispatch="no" data-research-openclaw-locked="yes">
+          <h3>Reality Research Brief</h3>
+          <ul>
+            <li><strong>Research question:</strong> {cockpitProjection.realityResearchBrief?.researchQuestion || 'unavailable'}</li>
+            <li><strong>Why it helps:</strong> {cockpitProjection.realityResearchBrief?.whyResearchHelps || 'unavailable'}</li>
+            <li><strong>Approval required:</strong> {cockpitProjection.realityResearchBrief?.approvalRequired || 'yes'}</li>
+          </ul>
+          {cockpitProjection.realityResearchBrief?.researchPacketAvailable === 'yes' ? <button type="button" data-testid="reality-research-brief-copy" className={`status-panel-copy-button ${researchCopyState}`} onClick={handleCopyResearchPacket}>{researchCopyState === COPY_STATE.SUCCESS ? 'Research packet copied' : researchCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy research packet'}</button> : <p className="muted">No research packet is available until intent asks for research.</p>}
+          <p role="status" aria-live="polite">{researchCopyState === COPY_STATE.SUCCESS ? 'Research packet copied to clipboard.' : researchCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>
+        </section>
 
         <section className="mission-executive-next-move-card" data-testid="mission-executive-next-move-card" data-cockpit-block="mission-executive-planner" data-cockpit-kind="canonical-next-move" data-cockpit-projection-source="canonical cockpit projection" data-planner-mutation-allowed="no" data-planner-auto-submit="no" data-planner-command-auto-run="no" data-planner-codex-auto-dispatch="no" data-planner-openclaw-locked={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerOpenClawMutationLocked || 'yes'}>
           <h3>Next Move Card</h3>
