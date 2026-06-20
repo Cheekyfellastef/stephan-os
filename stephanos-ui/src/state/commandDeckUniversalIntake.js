@@ -54,7 +54,7 @@ export function mergeProofSession({ previousAccepted = [], previousRejected = []
     .filter((item) => !acceptedSet.has(item));
   return { acceptedProofItems: accepted, rejectedProofItems: rejected };
 }
-function hasSuccess(text) { return /\b(pass(?:ed)?|success(?:ful(?:ly)?)?|completed successfully|exit code 0|code 0|green|clean|ok)\b/i.test(text); }
+function hasSuccess(text) { return /\b(pass(?:ed)?|success(?:ful(?:ly)?)?|completed successfully|completed manually|observed|exit code 0|code 0|green|clean|ok)\b/i.test(text); }
 function hasFailure(text) { return /\b(fail(?:ed|ure)?|error|exit code [1-9]|exited with code [1-9]|red console|blocked|timeout)\b/i.test(text.replace(/no red console errors?/ig, 'console-clean').replace(/no errors?/ig, 'clean')); }
 function detectOperatorProofConciergeDiagnostic(inputText = '') {
   const text = textOf(inputText);
@@ -134,8 +134,8 @@ export function classifyCommandDeckUniversalIntake(inputText = '') {
   if (/codex|changed files|summary|testing|git status|npm run|node --test|implementation/i.test(text) && /(summary|testing|changed files|npm run|node --test|build|verify|proof)/i.test(text)) kinds.push('codex-result');
   if (/local ai|read-only review|local model|ollama review/i.test(text)) kinds.push('local-ai-result');
   if (/openclaw|source[_ -]?pack|stephanos_handoff_packet|useful_facts/i.test(text)) kinds.push(/openclaw/i.test(text) ? 'openclaw-result' : 'source-pack-output');
-  if (/npm run\s+stephanos:build|stephanos:build|\bbuild\b/i.test(text) && (hasSuccess(text) || hasFailure(text))) kinds.push('build-proof');
-  if (/npm run\s+stephanos:verify|stephanos:verify|\bverify\b/i.test(text) && (hasSuccess(text) || hasFailure(text))) kinds.push('verify-proof');
+  if (/packet kind\s*[:=]\s*build-proof|proof item\s*[:=]\s*build-proof|npm run\s+stephanos:build|stephanos:build|\bbuild\b/i.test(text) && (hasSuccess(text) || hasFailure(text))) kinds.push('build-proof');
+  if (/packet kind\s*[:=]\s*verify-proof|proof item\s*[:=]\s*verify-proof|npm run\s+stephanos:verify|stephanos:verify|\bverify\b/i.test(text) && (hasSuccess(text) || hasFailure(text))) kinds.push('verify-proof');
   if (/browser proof|browser checklist|browser-proof-checklist|ui reality|command deck visible|console errors?|red console/i.test(text)) kinds.push('browser-proof-checklist');
   if (/pr evidence|pull request|\bpr\s*#?\d+|github\.com\/[^\s]+\/pull\/\d+|commit\s+[a-f0-9]{7,40}|checks?:\s*(pass|success|green|fail)/i.test(text)) kinds.push('pr-evidence');
   if (/source[_ -]?pack|source pack|source-bounded|source bounded|stephanos_handoff_packet|useful_facts|useful facts/i.test(text)) kinds.push('source-pack-output');

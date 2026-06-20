@@ -102,10 +102,10 @@ function parseFindings(text) {
     const useful = /source[_ -]?pack|stephanos_handoff_packet|useful_facts|useful facts|source[- ]bounded:\s*(yes|true)|source bounded\s+(yes|present)/i.test(text);
     findings.push(finding('source-pack', (TEMPLATE_RE.test(text) || /stale/.test(lower)) ? 'blocked' : (hasFail ? 'failed' : (useful ? 'observed' : 'pending-review')), TEMPLATE_RE.test(text) ? 'Source Pack return includes template/stale leakage.' : 'Source Pack bounded return candidate is present.', useful && !TEMPLATE_RE.test(text) ? 'high' : 'medium'));
   }
-  if (/npm run\s+stephanos:build|npm run [\w:-]*build|build\s*(pass(?:ed)?|success|ok|completed)|stephanos:build[^\n]*(pass|passed|success|completed|code 0|0)/i.test(text)) {
+  if (/packet kind\s*[:=]\s*build-proof|proof item\s*[:=]\s*build-proof|npm run\s+stephanos:build|npm run [\w:-]*build|build\s*(pass(?:ed)?|success|ok|completed)|stephanos:build[^\n]*(pass|passed|success|completed|code 0|0)/i.test(text)) {
     findings.push(finding('build', hasFail ? 'failed' : 'observed', 'Explicit build proof text is present.', 'high'));
   }
-  if (/npm run\s+stephanos:verify|npm run [\w:-]*verify|verify\s*(pass(?:ed)?|success|ok|completed)|stephanos:verify[^\n]*(pass|passed|success|completed|code 0|0)/i.test(text)) {
+  if (/packet kind\s*[:=]\s*verify-proof|proof item\s*[:=]\s*verify-proof|npm run\s+stephanos:verify|npm run [\w:-]*verify|verify\s*(pass(?:ed)?|success|ok|completed)|stephanos:verify[^\n]*(pass|passed|success|completed|code 0|0)/i.test(text)) {
     findings.push(finding('verify', hasFail ? 'failed' : 'observed', 'Explicit verify proof text is present.', 'high'));
   }
   if (/browser proof|browser checklist|browser-proof-checklist|ui reality|visible ui proof|accepted browser proof|command deck|console errors?|red console/i.test(text)) {
