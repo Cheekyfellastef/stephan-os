@@ -325,7 +325,7 @@ Operator diagnostic checklist:
   assert.equal(routed.kinds.includes('source-pack-output'), false);
   assert.deepEqual(routed.acceptedProofItems, []);
   assert.deepEqual(routed.rejectedProofItems, []);
-  assert.deepEqual(routed.cumulativeAcceptedProofItems, ['build-proof', 'verify-proof']);
+  assert.deepEqual(routed.cumulativeAcceptedProofItems, ['mission-console-bridge', 'build-proof', 'verify-proof']);
   assert.deepEqual(routed.cumulativeRejectedProofItems, ['browser-proof-checklist']);
   assert.equal(routed.evidenceReturnIntakeProjection, null);
   assert.equal(routed.diagnosticProjection.activeContradiction, 'no');
@@ -360,4 +360,46 @@ test('Operator Proof Concierge active contradiction response explains conflict a
   assert.equal(routed.codexAutoDispatchAllowed, false);
   assert.equal(routed.openClawMutationLocked, true);
   assert.equal(routed.mergeReadinessChanged, 'no');
+});
+
+test('Command Deck cumulative proof preserves canonical bridge when build proof follows diagnostics', () => {
+  const base = {
+    missionProofReconciliation: {
+      acceptedItems: ['mission-console-bridge'],
+      remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'],
+    },
+    mergeSafety: 'no / hold',
+  };
+  const diagnostic = routeCommandDeckUniversalIntake({
+    text: 'Operator Context Diagnostic Packet V1\nStatus: missing-context\nSafety: no automatic browsing, no Codex dispatch, OpenClaw locked, merge remains hold.',
+    evidenceContext: base,
+  });
+  assert.deepEqual(diagnostic.cumulativeAcceptedProofItems, ['mission-console-bridge']);
+  assert.equal(diagnostic.acceptedProofItems.length, 0);
+  const build = routeCommandDeckUniversalIntake({
+    text: 'Build proof completed manually. Command run: npm run stephanos:build. Result: pass. Exit code 0. Generated dist not committed: yes.',
+    evidenceContext: { ...base, cumulativeAcceptedProofItems: diagnostic.cumulativeAcceptedProofItems },
+  });
+  assert.deepEqual(build.acceptedProofItems, ['build-proof']);
+  assert.deepEqual(build.cumulativeAcceptedProofItems, ['mission-console-bridge', 'build-proof']);
+});
+
+test('Command Deck proof-state diagnostic preserves canonical bridge and prior build proof', () => {
+  const routed = routeCommandDeckUniversalIntake({
+    text: 'Proof-state diagnostic packet. Contradiction detected: merge is hold but missing proof is none.',
+    evidenceContext: {
+      cumulativeAcceptedProofItems: ['build-proof'],
+      missionProofReconciliation: {
+        acceptedItems: ['mission-console-bridge'],
+        remainingMissingItems: ['verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'],
+      },
+      mergeSafety: 'no / hold',
+    },
+  });
+  assert.deepEqual(routed.acceptedProofItems, []);
+  assert.deepEqual(routed.cumulativeAcceptedProofItems, ['mission-console-bridge', 'build-proof']);
+  assert.equal(routed.diagnosticProjection.currentProofState.accepted.join('|'), 'mission-console-bridge');
+  assert.equal(routed.mutationAllowed, false);
+  assert.equal(routed.codexAutoDispatchAllowed, false);
+  assert.equal(routed.openClawMutationLocked, true);
 });

@@ -4035,8 +4035,12 @@ export function useAIConsole() {
         cumulativeRejectedProofItems: lastExecutionMetadata?.command_deck_cumulative_rejected_proof_items || lastExecutionMetadata?.command_deck_proof_session_rejected_items || '',
       },
     });
+    const canonicalAcceptedProofSeed = runtimeStatusModel?.missionProofReconciliation?.acceptedItems || runtimeStatusModel?.operatorReliefProjection?.missionProofReconciliation?.acceptedItems || runtimeStatusModel?.operatorReliefProjection?.missionProofReconciliation?.acceptedProof || [];
     const cumulativeProofSession = mergeProofSession({
-      previousAccepted: lastExecutionMetadata?.command_deck_cumulative_accepted_proof_items || lastExecutionMetadata?.command_deck_proof_session_accepted_items || '',
+      previousAccepted: [
+        ...(Array.isArray(canonicalAcceptedProofSeed) ? canonicalAcceptedProofSeed : String(canonicalAcceptedProofSeed || '').split('|')),
+        ...(String(lastExecutionMetadata?.command_deck_cumulative_accepted_proof_items || lastExecutionMetadata?.command_deck_proof_session_accepted_items || '').split('|')),
+      ],
       previousRejected: lastExecutionMetadata?.command_deck_cumulative_rejected_proof_items || lastExecutionMetadata?.command_deck_proof_session_rejected_items || '',
       latestAccepted: commandDeckUniversalIntake.acceptedProofItems || [],
       latestRejected: commandDeckUniversalIntake.rejectedProofItems || [],

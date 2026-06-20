@@ -361,6 +361,21 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
           </ul>
         </section>
 
+        <section className="operator-context-model-card" data-testid="operator-context-model-card" data-context-model="operator-context-model-v1" data-context-mutation-allowed="no" data-context-auto-browse="no" data-context-codex-auto-dispatch="no" data-context-openclaw-locked="yes" data-context-merge-safety="no / hold">
+          <h3>Operator Context Model V1</h3>
+          <p className="muted">Canonical read-only context for Mission Compiler and Mission Executive Planner. Missing or contradictory context yields a diagnostic packet instead of guessing.</p>
+          <ul>
+            <li><strong>Stephan role:</strong> {(cockpitProjection.operatorContextModel?.stephanRole || []).join(', ') || 'diagnostic required'}</li>
+            <li><strong>Direction:</strong> {(cockpitProjection.operatorContextModel?.projectDirection || []).join(', ') || 'diagnostic required'}</li>
+            <li><strong>Guardrails:</strong> {(cockpitProjection.operatorContextModel?.guardrails || []).join(', ') || 'diagnostic required'}</li>
+            <li><strong>Preferences:</strong> {(cockpitProjection.operatorContextModel?.preferences || []).join(', ') || 'diagnostic required'}</li>
+            <li><strong>Strategy:</strong> {(cockpitProjection.operatorContextModel?.strategy || []).join(', ') || 'diagnostic required'}</li>
+            <li><strong>Research stance:</strong> {(cockpitProjection.operatorContextModel?.researchStance || []).join(', ') || 'diagnostic required'}</li>
+            <li><strong>Status:</strong> {cockpitProjection.operatorContextModel?.status || 'diagnostic-required'} · <strong>Approval:</strong> {cockpitProjection.operatorContextModel?.approvalRequired || 'yes'}</li>
+          </ul>
+          {cockpitProjection.operatorContextModel?.diagnosticPacketAvailable === 'yes' ? <textarea readOnly data-testid="operator-context-diagnostic-packet" value={cockpitProjection.operatorContextModel.diagnosticPacketText} aria-label="Operator Context diagnostic packet" /> : null}
+        </section>
+
         <section className="compiled-mission-card" data-testid="mission-compiler-card" data-mission-mutation-allowed="no" data-mission-auto-submit="no" data-mission-command-auto-run="no" data-mission-codex-auto-dispatch="no" data-mission-openclaw-locked="yes">
           <h3>Compiled Mission</h3>
           <ul>
