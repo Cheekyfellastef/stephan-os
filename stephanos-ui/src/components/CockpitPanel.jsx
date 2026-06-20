@@ -10,6 +10,7 @@ import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 import CockpitDetailView from './CockpitDetailView.jsx';
 import { RECENT_ACTIVITY_WINDOW_MS } from '../state/continuityLoopSnapshot.js';
 import CollapsiblePanel from './CollapsiblePanel';
+import { CockpitCard, CockpitField, CockpitSafetyLockStrip } from './CockpitVisualLanguage.jsx';
 
 function stateClassName(state) {
   return `truth-${state}`;
@@ -350,87 +351,71 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
         <div className="cockpit-shell">
         <CockpitDetailView projection={cockpitProjection} onPrimaryAction={routeCockpitPrimaryAction} />
 
-        <section className="intent-frame-card" data-testid="command-deck-intent-frame" data-intent-mutation-allowed="no" data-intent-auto-browse="no" data-intent-codex-auto-dispatch="no" data-intent-openclaw-locked="yes">
-          <h3>Intent Frame</h3>
-          <p className="muted">Command Deck Intent Intake V1 uses raw chat text plus canonical state for planning only; it never executes, browses, dispatches Codex, unlocks OpenClaw, or changes merge readiness.</p>
-          <ul>
-            <li><strong>What I think you want:</strong> {cockpitProjection.intentIntake?.intentSummary || 'unavailable'}</li>
-            <li><strong>Target system:</strong> {(cockpitProjection.intentIntake?.targetSubsystems || []).join(', ') || 'unavailable'}</li>
-            <li><strong>Recommended route:</strong> {cockpitProjection.intentIntake?.nextRecommendedLayer || 'hold'}</li>
-            <li><strong>Approval required:</strong> {cockpitProjection.intentIntake?.approvalRequired || 'yes'}</li>
-          </ul>
-        </section>
+        <div className="cockpit-mission-stack" data-cockpit-block="mission-stack" data-cockpit-kind="visual-language-v1" data-cockpit-layout-density="compact" data-cockpit-debug-collapsed-default="yes">
+          <CockpitCard
+            title="Intent Frame"
+            className="intent-frame-card"
+            eyebrow="Intent"
+            cardType="canonical-truth"
+            tone="approval"
+            summary={cockpitProjection.intentIntake?.intentSummary || 'Clarify operator intent before any action.'}
+            status={{ label: 'Approval', value: cockpitProjection.intentIntake?.approvalRequired || 'yes', tone: 'approval' }}
+            chips={[{ label: 'Route', value: cockpitProjection.intentIntake?.nextRecommendedLayer || 'hold', tone: 'waiting' }, { label: 'Browse', value: 'no', tone: 'locked' }]}
+            data-testid="command-deck-intent-frame"
+            data-intent-mutation-allowed="no"
+            data-intent-auto-browse="no"
+            data-intent-codex-auto-dispatch="no"
+            data-intent-openclaw-locked="yes"
+          >
+            <ul className="cockpit-field-list">
+              <CockpitField label="Target system" value={(cockpitProjection.intentIntake?.targetSubsystems || []).join(', ') || 'unavailable'} />
+              <CockpitField label="Recommended route" value={cockpitProjection.intentIntake?.nextRecommendedLayer || 'hold'} />
+            </ul>
+          </CockpitCard>
 
-        <section className="operator-context-model-card" data-testid="operator-context-model-card" data-context-model="operator-context-model-v1" data-context-mutation-allowed="no" data-context-auto-browse="no" data-context-codex-auto-dispatch="no" data-context-openclaw-locked="yes" data-context-merge-safety="no / hold">
-          <h3>Operator Context Model V1</h3>
-          <p className="muted">Canonical read-only context for Mission Compiler and Mission Executive Planner. Missing or contradictory context yields a diagnostic packet instead of guessing.</p>
-          <ul>
-            <li><strong>Stephan role:</strong> {(cockpitProjection.operatorContextModel?.stephanRole || []).join(', ') || 'diagnostic required'}</li>
-            <li><strong>Direction:</strong> {(cockpitProjection.operatorContextModel?.projectDirection || []).join(', ') || 'diagnostic required'}</li>
-            <li><strong>Guardrails:</strong> {(cockpitProjection.operatorContextModel?.guardrails || []).join(', ') || 'diagnostic required'}</li>
-            <li><strong>Preferences:</strong> {(cockpitProjection.operatorContextModel?.preferences || []).join(', ') || 'diagnostic required'}</li>
-            <li><strong>Strategy:</strong> {(cockpitProjection.operatorContextModel?.strategy || []).join(', ') || 'diagnostic required'}</li>
-            <li><strong>Research stance:</strong> {(cockpitProjection.operatorContextModel?.researchStance || []).join(', ') || 'diagnostic required'}</li>
-            <li><strong>Status:</strong> {cockpitProjection.operatorContextModel?.status || 'diagnostic-required'} · <strong>Approval:</strong> {cockpitProjection.operatorContextModel?.approvalRequired || 'yes'}</li>
-          </ul>
-          {cockpitProjection.operatorContextModel?.diagnosticPacketAvailable === 'yes' ? <textarea readOnly data-testid="operator-context-diagnostic-packet" value={cockpitProjection.operatorContextModel.diagnosticPacketText} aria-label="Operator Context diagnostic packet" /> : null}
-        </section>
+          <CockpitCard
+            title="Operator Context Model V1"
+            className="operator-context-model-card"
+            eyebrow="Context"
+            cardType="context"
+            tone={cockpitProjection.operatorContextModel?.diagnosticPacketAvailable === 'yes' ? 'warning' : 'healthy'}
+            summary="Canonical read-only context for Mission Compiler and Mission Executive Planner; missing or contradictory context emits diagnostics instead of guesses."
+            status={{ label: 'Status', value: cockpitProjection.operatorContextModel?.status || 'diagnostic-required', tone: cockpitProjection.operatorContextModel?.diagnosticPacketAvailable === 'yes' ? 'warning' : 'healthy' }}
+            data-testid="operator-context-model-card"
+            data-context-model="operator-context-model-v1"
+            data-context-mutation-allowed="no"
+            data-context-auto-browse="no"
+            data-context-codex-auto-dispatch="no"
+            data-context-openclaw-locked="yes"
+            data-context-merge-safety="no / hold"
+          >
+            <ul className="cockpit-field-list cockpit-field-list-two">
+              <CockpitField label="Stephan role" value={(cockpitProjection.operatorContextModel?.stephanRole || []).join(', ') || 'diagnostic required'} />
+              <CockpitField label="Direction" value={(cockpitProjection.operatorContextModel?.projectDirection || []).join(', ') || 'diagnostic required'} />
+              <CockpitField label="Guardrails" value={(cockpitProjection.operatorContextModel?.guardrails || []).join(', ') || 'diagnostic required'} />
+              <CockpitField label="Research stance" value={(cockpitProjection.operatorContextModel?.researchStance || []).join(', ') || 'diagnostic required'} />
+            </ul>
+            {cockpitProjection.operatorContextModel?.diagnosticPacketAvailable === 'yes' ? <details className="cockpit-debug-drilldown" data-cockpit-debug-collapsed-default="yes"><summary>Diagnostic packet</summary><textarea readOnly data-testid="operator-context-diagnostic-packet" value={cockpitProjection.operatorContextModel.diagnosticPacketText} aria-label="Operator Context diagnostic packet" /></details> : null}
+          </CockpitCard>
 
-        <section className="compiled-mission-card" data-testid="mission-compiler-card" data-mission-mutation-allowed="no" data-mission-auto-submit="no" data-mission-command-auto-run="no" data-mission-codex-auto-dispatch="no" data-mission-openclaw-locked="yes">
-          <h3>Compiled Mission</h3>
-          <ul>
-            <li><strong>Objective:</strong> {cockpitProjection.missionCompiler?.missionObjective || 'unavailable'}</li>
-            <li><strong>Acceptance criteria:</strong> {(cockpitProjection.missionCompiler?.acceptanceCriteria || []).join(' | ') || 'unavailable'}</li>
-            <li><strong>Packet available:</strong> {cockpitProjection.missionCompiler?.packetAvailable || 'no'}</li>
-          </ul>
-          {cockpitProjection.missionCompiler?.packetAvailable === 'yes' ? <button type="button" data-testid="mission-compiler-copy" className={`status-panel-copy-button ${missionCopyState}`} onClick={handleCopyCompiledMissionPacket}>{missionCopyState === COPY_STATE.SUCCESS ? 'Mission packet copied' : missionCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy mission packet'}</button> : null}
-          <p role="status" aria-live="polite">{missionCopyState === COPY_STATE.SUCCESS ? 'Mission packet copied to clipboard.' : missionCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>
-        </section>
+          <CockpitCard className="compiled-mission-card" title="Mission Compiler" eyebrow="Packet" cardType="packet" tone={cockpitProjection.missionCompiler?.packetAvailable === 'yes' ? 'packet' : 'waiting'} summary={cockpitProjection.missionCompiler?.missionObjective || 'Mission objective unavailable.'} status={{ label: 'Packet', value: cockpitProjection.missionCompiler?.packetAvailable || 'no', tone: cockpitProjection.missionCompiler?.packetAvailable === 'yes' ? 'packet' : 'waiting' }} data-testid="mission-compiler-card" data-mission-mutation-allowed="no" data-mission-auto-submit="no" data-mission-command-auto-run="no" data-mission-codex-auto-dispatch="no" data-mission-openclaw-locked="yes" actions={cockpitProjection.missionCompiler?.packetAvailable === 'yes' ? <button type="button" data-testid="mission-compiler-copy" className={`status-panel-copy-button ${missionCopyState}`} onClick={handleCopyCompiledMissionPacket}>{missionCopyState === COPY_STATE.SUCCESS ? 'Mission packet copied' : missionCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy mission packet'}</button> : null} footer={<p role="status" aria-live="polite">{missionCopyState === COPY_STATE.SUCCESS ? 'Mission packet copied to clipboard.' : missionCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>}>
+            <ul className="cockpit-field-list"><CockpitField label="Acceptance criteria" value={(cockpitProjection.missionCompiler?.acceptanceCriteria || []).join(' | ') || 'unavailable'} /></ul>
+          </CockpitCard>
 
-        <section className="reality-research-brief-card" data-testid="reality-research-brief-card" data-research-mutation-allowed="no" data-research-auto-browse="no" data-research-can-use-web="approval-required" data-research-codex-auto-dispatch="no" data-research-openclaw-locked="yes">
-          <h3>Reality Research Brief</h3>
-          <ul>
-            <li><strong>Research question:</strong> {cockpitProjection.realityResearchBrief?.researchQuestion || 'unavailable'}</li>
-            <li><strong>Why it helps:</strong> {cockpitProjection.realityResearchBrief?.whyResearchHelps || 'unavailable'}</li>
-            <li><strong>Approval required:</strong> {cockpitProjection.realityResearchBrief?.approvalRequired || 'yes'}</li>
-          </ul>
-          {cockpitProjection.realityResearchBrief?.researchPacketAvailable === 'yes' ? <button type="button" data-testid="reality-research-brief-copy" className={`status-panel-copy-button ${researchCopyState}`} onClick={handleCopyResearchPacket}>{researchCopyState === COPY_STATE.SUCCESS ? 'Research packet copied' : researchCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy research packet'}</button> : <p className="muted">No research packet is available until intent asks for research.</p>}
-          <p role="status" aria-live="polite">{researchCopyState === COPY_STATE.SUCCESS ? 'Research packet copied to clipboard.' : researchCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>
-        </section>
+          <CockpitCard className="reality-research-brief-card" title="Reality Research Brief" eyebrow="Research" cardType="proof" tone="approval" summary={cockpitProjection.realityResearchBrief?.researchQuestion || 'No research question is active.'} status={{ label: 'Approval', value: cockpitProjection.realityResearchBrief?.approvalRequired || 'yes', tone: 'approval' }} data-testid="reality-research-brief-card" data-research-mutation-allowed="no" data-research-auto-browse="no" data-research-can-use-web="approval-required" data-research-codex-auto-dispatch="no" data-research-openclaw-locked="yes" actions={cockpitProjection.realityResearchBrief?.researchPacketAvailable === 'yes' ? <button type="button" data-testid="reality-research-brief-copy" className={`status-panel-copy-button ${researchCopyState}`} onClick={handleCopyResearchPacket}>{researchCopyState === COPY_STATE.SUCCESS ? 'Research packet copied' : researchCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy research packet'}</button> : <p className="muted">No research packet is available until intent asks for research.</p>} footer={<p role="status" aria-live="polite">{researchCopyState === COPY_STATE.SUCCESS ? 'Research packet copied to clipboard.' : researchCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>}>
+            <ul className="cockpit-field-list"><CockpitField label="Why it helps" value={cockpitProjection.realityResearchBrief?.whyResearchHelps || 'unavailable'} /></ul>
+          </CockpitCard>
 
-        <section className="mission-executive-next-move-card" data-testid="mission-executive-next-move-card" data-cockpit-block="mission-executive-planner" data-cockpit-kind="canonical-next-move" data-cockpit-projection-source="canonical cockpit projection" data-planner-mutation-allowed="no" data-planner-auto-submit="no" data-planner-command-auto-run="no" data-planner-codex-auto-dispatch="no" data-planner-openclaw-locked={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerOpenClawMutationLocked || 'yes'}>
-          <h3>Next Move Card</h3>
-          <p className="muted">Mission Executive Planner V1 derives this live plan from canonical mission proof, cockpit, concierge, merge safety, OpenClaw, and Codex dispatch truth. It copies only; it never submits, runs commands, dispatches Codex, or unlocks OpenClaw.</p>
-          <ul>
-            <li><strong>Current blocker:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerCurrentBlocker || 'unavailable'}</li>
-            <li><strong>Why it matters:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerWhyItMatters || 'unavailable'}</li>
-            <li><strong>Recommended move:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerRecommendedMove || 'Hold'}</li>
-            <li><strong>Route:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerRecommendedRoute || 'hold'}</li>
-            <li><strong>Approval required:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerApprovalRequired || 'yes'}</li>
-            <li><strong>Expected outcome:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerExpectedOutcome || 'unavailable'}</li>
-            <li><strong>Safety locks:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerSafetySummary || 'Mutation no; OpenClaw locked; Codex auto-dispatch disabled; merge hold.'}</li>
-          </ul>
-          {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerPacketAvailable === 'yes' ? <button type="button" data-testid="mission-executive-planner-copy" className={`status-panel-copy-button ${plannerCopyState}`} onClick={handleCopyPlannerPacket}>{plannerCopyState === COPY_STATE.SUCCESS ? 'Next move packet copied' : plannerCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy packet'}</button> : <p className="muted" data-testid="mission-executive-planner-no-packet">No packet is available.</p>}
-          <p role="status" aria-live="polite">{plannerCopyState === COPY_STATE.SUCCESS ? 'Next move packet copied to clipboard.' : plannerCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>
-        </section>
+          <CockpitCard className="mission-executive-next-move-card" title="Next Move Card" eyebrow="Planner" cardType="next-move" tone="waiting" summary={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerRecommendedMove || 'Hold'} status={{ label: 'Approval', value: cockpitProjection.missionExecutivePlan?.missionExecutivePlannerApprovalRequired || 'yes', tone: 'approval' }} data-testid="mission-executive-next-move-card" data-cockpit-block="mission-executive-planner" data-cockpit-kind="canonical-next-move" data-cockpit-projection-source="canonical cockpit projection" data-planner-mutation-allowed="no" data-planner-auto-submit="no" data-planner-command-auto-run="no" data-planner-codex-auto-dispatch="no" data-planner-openclaw-locked={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerOpenClawMutationLocked || 'yes'} actions={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerPacketAvailable === 'yes' ? <button type="button" data-testid="mission-executive-planner-copy" className={`status-panel-copy-button ${plannerCopyState}`} onClick={handleCopyPlannerPacket}>{plannerCopyState === COPY_STATE.SUCCESS ? 'Next move packet copied' : plannerCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy packet'}</button> : <p className="muted" data-testid="mission-executive-planner-no-packet">No packet is available.</p>} footer={<><CockpitSafetyLockStrip openClaw={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerOpenClawMutationLocked || 'yes'} codex="no" mutation="no" merge="hold" /><p role="status" aria-live="polite">{plannerCopyState === COPY_STATE.SUCCESS ? 'Next move packet copied to clipboard.' : plannerCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p></>}>
+            <ul className="cockpit-field-list cockpit-field-list-two"><CockpitField label="Current blocker" value={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerCurrentBlocker || 'unavailable'} /><CockpitField label="Route" value={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerRecommendedRoute || 'hold'} /><CockpitField label="Expected outcome" value={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerExpectedOutcome || 'unavailable'} /><CockpitField label="Safety locks" value={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerSafetySummary || 'Mutation no; OpenClaw locked; Codex auto-dispatch disabled; merge hold.'} /></ul>
+          </CockpitCard>
 
-        <section className="operator-proof-concierge" data-testid="operator-proof-concierge" data-cockpit-block="operator-proof-concierge" data-cockpit-kind="operator-assist" data-cockpit-action-packet-id={cockpitProjection.operatorProofConcierge.packetKind === 'none' ? 'none' : `packet-${cockpitProjection.operatorProofConcierge.packetKind}`}>
-          <h3>Operator Proof Concierge</h3>
-          <p className="muted">Prepares the next exact proof packet from canonical Mission Proof Reconciliation. It copies only; it never submits, runs commands, dispatches Codex, or unlocks OpenClaw.</p>
-          <ul>
-            <li><strong>Status:</strong> {cockpitProjection.operatorProofConcierge.status}</li>
-            <li><strong>Next proof:</strong> {cockpitProjection.operatorProofConcierge.nextProof}</li>
-            <li><strong>Why:</strong> {cockpitProjection.operatorProofConcierge.whyThisProofIsNeeded}</li>
-            <li><strong>Merge safety:</strong> {cockpitProjection.operatorProofConcierge.mergeSafety}</li>
-            <li><strong>OpenClaw mutation locked:</strong> {cockpitProjection.operatorProofConcierge.openClawMutationLocked}</li>
-            <li><strong>Codex auto-dispatch allowed:</strong> {cockpitProjection.operatorProofConcierge.codexAutoDispatchAllowed}</li>
-          </ul>
-          {cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? <textarea readOnly data-testid="operator-proof-concierge-packet" value={cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text" /> : <p className="muted" data-testid="operator-proof-concierge-no-packet">No proof packet is available.</p>}
-          <button type="button" data-testid="operator-proof-concierge-copy" className={`status-panel-copy-button ${conciergeCopyState}`} onClick={handleCopyConciergePacket} disabled={cockpitProjection.operatorProofConcierge.copyPacketAvailable !== 'yes'}>
-            {conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.nextActionLabel}
-          </button>
-          <p role="status" aria-live="polite">{conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied to clipboard.' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>
-        </section>
+          <CockpitCard className="operator-proof-concierge" title="Operator Proof Concierge" eyebrow="Proof" cardType="proof" tone={cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? 'packet' : 'blocked'} summary={cockpitProjection.operatorProofConcierge.whyThisProofIsNeeded} status={{ label: 'Status', value: cockpitProjection.operatorProofConcierge.status, tone: cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? 'packet' : 'blocked' }} data-testid="operator-proof-concierge" data-cockpit-block="operator-proof-concierge" data-cockpit-kind="operator-assist" data-cockpit-action-packet-id={cockpitProjection.operatorProofConcierge.packetKind === 'none' ? 'none' : `packet-${cockpitProjection.operatorProofConcierge.packetKind}`} actions={<button type="button" data-testid="operator-proof-concierge-copy" className={`status-panel-copy-button ${conciergeCopyState}`} onClick={handleCopyConciergePacket} disabled={cockpitProjection.operatorProofConcierge.copyPacketAvailable !== 'yes'}>{conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.nextActionLabel}</button>} footer={<><CockpitSafetyLockStrip openClaw={cockpitProjection.operatorProofConcierge.openClawMutationLocked} codex={cockpitProjection.operatorProofConcierge.codexAutoDispatchAllowed} mutation="no" merge={cockpitProjection.operatorProofConcierge.mergeSafety} /><p role="status" aria-live="polite">{conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied to clipboard.' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p></>}>
+            <ul className="cockpit-field-list cockpit-field-list-two"><CockpitField label="Next proof" value={cockpitProjection.operatorProofConcierge.nextProof} /><CockpitField label="Merge safety" value={cockpitProjection.operatorProofConcierge.mergeSafety} /></ul>
+            {cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? <textarea readOnly data-testid="operator-proof-concierge-packet" value={cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text" className="cockpit-visually-hidden-packet" /> : null}
+            {cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? <details className="cockpit-debug-drilldown" data-cockpit-debug-collapsed-default="yes"><summary>Packet text</summary><textarea readOnly value={cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text expanded" /></details> : <p className="muted" data-testid="operator-proof-concierge-no-packet">No proof packet is available.</p>}
+          </CockpitCard>
+        </div>
 
         <section className="cockpit-route-topology" data-cockpit-block="route-topology" data-cockpit-kind="routing" data-cockpit-surface="expanded-pane" data-cockpit-projection-source="canonical cockpit projection" data-cockpit-render-signature={cockpitProjection ? cockpitProjection.currentStatus : 'unknown'} aria-label="Route Topology"><h3>Route Topology</h3><p className="muted">Routing flow only; mission proof and merge truth remain bound to the canonical cockpit projection above.</p><svg className="cockpit-grid" viewBox={COCKPIT_VIEWBOX} role="img" aria-label="Stephanos route topology">
           {CONNECTIONS.map((connection) => {

@@ -5366,3 +5366,118 @@ pre {
   margin: 0.6rem 0;
   resize: vertical;
 }
+
+/* Stephanos Visual Language V1: shared pane/card conventions, truth-neutral motion. */
+.cockpit-mission-stack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.cockpit-vl-card {
+  position: relative;
+  display: grid;
+  gap: 0.58rem;
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid rgba(112, 181, 255, 0.26);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(8, 18, 34, 0.92), rgba(3, 8, 18, 0.88));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.cockpit-vl-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--cockpit-state-color, #58a6ff);
+  opacity: 0.85;
+}
+
+.cockpit-vl-card-header,
+.cockpit-vl-chip-row,
+.cockpit-vl-actions,
+.cockpit-safety-lock-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.cockpit-vl-card-header { justify-content: space-between; }
+.cockpit-vl-card h3 { margin: 0; font-size: 0.98rem; line-height: 1.2; }
+.cockpit-vl-eyebrow { display: block; color: #8bb8de; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.12rem; }
+.cockpit-vl-summary { margin: 0; color: #d7e8f8; line-height: 1.42; }
+.cockpit-vl-body { min-width: 0; }
+.cockpit-vl-footer p { margin: 0.25rem 0 0; }
+
+.cockpit-field-list {
+  display: grid;
+  gap: 0.42rem;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.cockpit-field-list-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cockpit-field {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+  padding: 0.5rem;
+  border: 1px solid rgba(139, 184, 222, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.cockpit-field span { color: #91a8bc; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.cockpit-field strong { overflow-wrap: anywhere; line-height: 1.32; }
+
+.cockpit-status-chip strong { text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.68rem; }
+.cockpit-tone-healthy { --cockpit-state-color: #7ee787; }
+.cockpit-tone-waiting { --cockpit-state-color: #ffd60a; }
+.cockpit-tone-approval { --cockpit-state-color: #d2a8ff; }
+.cockpit-tone-packet { --cockpit-state-color: #79c0ff; }
+.cockpit-tone-warning { --cockpit-state-color: #ffa657; }
+.cockpit-tone-blocked { --cockpit-state-color: #ff7b72; }
+.cockpit-tone-locked { --cockpit-state-color: #8b949e; }
+.cockpit-tone-info { --cockpit-state-color: #58a6ff; }
+
+.cockpit-vl-card.cockpit-tone-healthy,
+.cockpit-vl-card.cockpit-tone-packet { animation: cockpitCardReady 4.8s ease-in-out infinite; }
+.cockpit-vl-card.cockpit-tone-waiting,
+.cockpit-vl-card.cockpit-tone-approval { animation: cockpitCardWaiting 5.6s ease-in-out infinite; }
+.cockpit-vl-card.cockpit-tone-warning,
+.cockpit-vl-card.cockpit-tone-blocked { animation: cockpitCardCaution 3.8s ease-in-out infinite; }
+
+.cockpit-vl-card textarea {
+  width: 100%;
+  min-height: 9rem;
+  margin-top: 0.5rem;
+  resize: vertical;
+}
+
+@keyframes cockpitCardReady { 0%, 100% { border-color: rgba(126, 231, 135, 0.22); } 50% { border-color: rgba(126, 231, 135, 0.42); } }
+@keyframes cockpitCardWaiting { 0%, 100% { border-color: rgba(210, 168, 255, 0.20); } 50% { border-color: rgba(255, 214, 10, 0.38); } }
+@keyframes cockpitCardCaution { 0%, 100% { border-color: rgba(255, 166, 87, 0.24); } 50% { border-color: rgba(255, 123, 114, 0.48); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .cockpit-vl-card { animation: none !important; }
+}
+
+@media (max-width: 900px) {
+  .cockpit-mission-stack,
+  .cockpit-field-list-two { grid-template-columns: 1fr; }
+}
+.cockpit-visually-hidden-packet {
+  position: absolute;
+  width: 1px !important;
+  height: 1px !important;
+  min-height: 1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+}
