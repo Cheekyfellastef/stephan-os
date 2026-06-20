@@ -5064,3 +5064,27 @@ test('Support Snapshot exposes canonical cockpit projection, drift, and visual p
   assert.match(snapshot, /Expanded Cockpit Visual Position: before-text/);
   assert.match(snapshot, /Cockpit Visual\/Text Drift Detected: no/);
 });
+
+test('support snapshot exposes browser proof accepted-with-caveat intake status and cumulative propagation after rejection', () => {
+  const snapshot = buildSupportSnapshot({ runtimeStatus: { lastExecutionMetadata: {
+    command_deck_universal_intake_status: 'classified',
+    command_deck_universal_intake_last_kinds: 'browser-proof-checklist',
+    command_deck_universal_intake_routed_to: 'evidence-return-intake|evidence-intake-automation',
+    command_deck_universal_intake_accepted_proof_items: 'browser-proof-checklist',
+    command_deck_cumulative_accepted_proof_items: 'build-proof|verify-proof|browser-proof-checklist',
+    command_deck_cumulative_rejected_proof_items: 'none',
+    browser_proof_intake_status: 'accepted',
+    browser_proof_known_caveat_present: 'yes',
+    browser_proof_caveat_blocking: 'no',
+    browser_proof_rejection_reason: 'none',
+    browser_proof_accepted_with_caveat: 'yes',
+  }, runtimeContext: { operatorReliefBridgeDiagnostics: { projectionKeysSeen: ['missionProofReconciliation'], publisherRegistryInstanceIds: ['aiCoreMissionConsolePanel'], publisherRegistryInstanceCount: 1, publisherRegistryOwnerId: 'owner', publisherSource: 'MissionConsoleTile', missionConsoleBridgeParityStatus: 'OK', missionConsoleVisibleInstanceId: 'aiCoreMissionConsolePanel', missionConsoleBridgeCapableInstanceIds: ['aiCoreMissionConsolePanel'], published: 'yes' } }, operatorReliefProjection: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] }, missionEvidenceLedgerProjection: { status: 'blocked', blockerCount: 1, missingProofSummary: 'build-proof | verify-proof | browser-proof-checklist | pr-evidence | source-pack-output', trustedForMerge: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false }, packetBayProjection: { packets: [] } } }, routeTruthView: {}, runtimeContext: {}, safeApiStatus: {}, statusSummary: {} });
+  assert.match(snapshot, /Browser Proof Intake Status: accepted/);
+  assert.match(snapshot, /Browser Proof Known Caveat Present: yes/);
+  assert.match(snapshot, /Browser Proof Caveat Blocking: no/);
+  assert.match(snapshot, /Browser Proof Accepted With Caveat: yes/);
+  assert.match(snapshot, /Browser Proof Rejection Reason: none/);
+  assert.match(snapshot, /Mission Proof Accepted Items: mission-console-bridge\|build-proof\|verify-proof\|browser-proof-checklist/);
+  assert.match(snapshot, /Mission Proof Remaining Missing Items: pr-evidence\|source-pack-output/);
+  assert.match(snapshot, /Mission Proof Next Best Action: Collect pr-evidence\./);
+});

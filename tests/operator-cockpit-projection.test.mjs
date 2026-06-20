@@ -147,3 +147,20 @@ test('cockpit resolver records unsupported and missing target failure reasons', 
   assert.match(panel, /failureReason: 'target-field-not-found'/);
   assert.match(panel, /failureReason: 'pane-open-failed'/);
 });
+
+test('cockpit projection uses cumulative mission proof after rejected browser proof', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { operatorReliefProjection: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge', 'build-proof', 'verify-proof'], remainingMissingItems: ['browser-proof-checklist', 'pr-evidence', 'source-pack-output'], nextBestAction: 'Collect browser-proof-checklist.' }, missionEvidenceLedgerProjection: { trustedForMerge: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false }, agentRealityLoopProjection: { mergeRecommendation: 'hold', openClawMutationLocked: true } } } });
+  assert.deepEqual(p.acceptedProof, ['mission-console-bridge', 'build-proof', 'verify-proof']);
+  assert.deepEqual(p.missingProof, ['browser-proof-checklist', 'pr-evidence', 'source-pack-output']);
+  assert.equal(p.nextBestAction, 'Collect browser-proof-checklist.');
+  assert.equal(p.cockpitPrimaryActionLabel, 'Collect browser proof');
+  assert.equal(p.mergeSafety, 'no / hold');
+});
+
+test('cockpit action advances to PR evidence after accepted browser proof while merge stays hold', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { operatorReliefProjection: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge', 'build-proof', 'verify-proof', 'browser-proof-checklist'], remainingMissingItems: ['pr-evidence', 'source-pack-output'], nextBestAction: 'Collect pr-evidence.' }, missionEvidenceLedgerProjection: { trustedForMerge: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false }, agentRealityLoopProjection: { mergeRecommendation: 'hold', openClawMutationLocked: true } } } });
+  assert.equal(p.cockpitPrimaryActionLabel, 'Collect PR evidence');
+  assert.deepEqual(p.missingProof, ['pr-evidence', 'source-pack-output']);
+  assert.equal(p.mergeSafety, 'no / hold');
+  assert.equal(p.openClawMutationLockState, 'locked');
+});

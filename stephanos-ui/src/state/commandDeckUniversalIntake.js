@@ -15,9 +15,9 @@ export function orderProofItems(items = []) {
 }
 export function mergeProofSession({ previousAccepted = [], previousRejected = [], latestAccepted = [], latestRejected = [] } = {}) {
   const accepted = orderProofItems([...orderProofItems(previousAccepted), ...orderProofItems(latestAccepted)]);
-  const latestAcceptedSet = new Set(orderProofItems(latestAccepted));
+  const acceptedSet = new Set(accepted);
   const rejected = orderProofItems([...orderProofItems(previousRejected), ...orderProofItems(latestRejected)])
-    .filter((item) => !latestAcceptedSet.has(item));
+    .filter((item) => !acceptedSet.has(item));
   return { acceptedProofItems: accepted, rejectedProofItems: rejected };
 }
 function hasSuccess(text) { return /\b(pass(?:ed)?|success(?:ful(?:ly)?)?|completed successfully|exit code 0|code 0|green|clean|ok)\b/i.test(text); }
