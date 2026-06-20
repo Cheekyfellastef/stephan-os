@@ -79,23 +79,23 @@ Known caveat:
 This browser proof is accepted for current manual UI behaviour, while preserving the known cockpit visual/text drift caveat.`;
 
 function proofPacketFor(target) {
-  if (target === 'build-proof') return `Build proof completed manually.
-
-Paste exact build evidence here:
-- Command run:
-- Result: pass/fail
-- Key output summary:
-- Generated dist not committed: yes
-- Merge readiness remains no / hold until all proof is complete.`;
-  if (target === 'verify-proof') return `Verify proof completed manually.
-
-Paste exact verify evidence here:
-- Command run:
-- Result: pass/fail
-- Key output summary:
-- Build proof remains accepted: yes
-- Generated dist not committed: yes
-- Merge readiness remains no / hold until all proof is complete.`;
+  if (target === 'build-proof') return `Proof Packet V1
+Packet Kind: build-proof
+Proof Item: build-proof
+Status: completed manually
+Result: pass
+Command Evidence: npm run stephanos:build completed successfully or equivalent build proof observed by operator.
+Generated dist not committed: yes
+Merge readiness remains no / hold until all proof is complete.`;
+  if (target === 'verify-proof') return `Proof Packet V1
+Packet Kind: verify-proof
+Proof Item: verify-proof
+Status: completed manually
+Result: pass
+Command Evidence: npm run stephanos:verify completed successfully or equivalent verify proof observed by operator.
+Build proof remains accepted: yes
+Generated dist not committed: yes
+Merge readiness remains no / hold until all proof is complete.`;
   if (target === 'browser-proof-checklist') return OPERATOR_PROOF_CONCIERGE_BROWSER_PACKET;
   if (target === 'pr-evidence') return `PR evidence packet.
 

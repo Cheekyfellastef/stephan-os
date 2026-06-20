@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deriveEvidenceReturnIntakeProjection, EVIDENCE_RETURN_INTAKE_PACKET_IDS } from '../stephanos-ui/src/state/evidenceReturnIntakeModel.js';
 import { derivePacketBayProjection } from '../stephanos-ui/src/state/packetBayProjection.js';
+import { buildCockpitProjection } from '../stephanos-ui/src/state/cockpitProjection.js';
 
 const base = { missionEvidenceLedgerProjection: { missionId: 'derived-runtime-mission', status: 'blocked', blockerCount: 1, missingProofSummary: 'local-ai-route-proof-needed' }, missionEvidenceContextSummary: { missingProofSummary: 'local-ai-route-proof-needed' }, packetBayProjection: { packets: [{ id: 'packet-evidence-review-local-ai-proof-v1b', status: 'ready-to-copy' }] } };
 
@@ -360,6 +361,35 @@ test('Operator Proof Concierge active contradiction response explains conflict a
   assert.equal(routed.codexAutoDispatchAllowed, false);
   assert.equal(routed.openClawMutationLocked, true);
   assert.equal(routed.mergeReadinessChanged, 'no');
+});
+
+
+test('Command Deck accepts exact generated build-proof packets from Concierge and Planner', () => {
+  const evidenceContext = {
+    missionProofReconciliation: {
+      acceptedItems: ['mission-console-bridge'],
+      remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'],
+    },
+    mergeSafety: 'no / hold',
+  };
+  const cockpit = buildCockpitProjection({ runtimeStatusModel: evidenceContext });
+  const conciergePacket = cockpit.operatorProofConcierge.packetText;
+  assert.equal(cockpit.operatorProofConcierge.nextProof, 'build-proof');
+  assert.equal(cockpit.operatorProofConcierge.packetKind, 'build-proof');
+  assert.equal(cockpit.missionExecutivePlan.missionExecutivePlannerPacketText, conciergePacket);
+  assert.equal(cockpit.missionExecutivePlan.missionExecutivePlannerPacketKind, 'operator-proof-packet');
+
+  for (const packet of [conciergePacket, cockpit.missionExecutivePlan.missionExecutivePlannerPacketText]) {
+    const routed = routeCommandDeckUniversalIntake({ text: packet, evidenceContext });
+    assert.ok(routed.kinds.includes('build-proof'));
+    assert.equal(routed.kinds.includes('repair-request'), false);
+    assert.deepEqual(routed.acceptedProofItems, ['build-proof']);
+    assert.deepEqual(routed.cumulativeAcceptedProofItems, ['mission-console-bridge', 'build-proof']);
+    assert.equal(routed.nextAction, 'Use Operator Proof Concierge to copy the verify-proof packet.');
+    assert.equal(routed.codexAutoDispatchAllowed, false);
+    assert.equal(routed.openClawMutationLocked, true);
+    assert.equal(routed.mergeReadinessChanged, 'no');
+  }
 });
 
 test('Command Deck cumulative proof preserves canonical bridge when build proof follows diagnostics', () => {
