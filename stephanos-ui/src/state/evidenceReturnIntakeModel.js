@@ -96,7 +96,11 @@ function sourceFromText(text) {
 function parseFindings(text) {
   const findings = [];
   const lower = text.toLowerCase();
-  const normalizedForFailure = text.replace(/no red console errors?/ig, 'console-clean').replace(/no errors?/ig, 'clean');
+  const normalizedForFailure = text
+    .replace(/no red console errors?/ig, 'console-clean')
+    .replace(/no errors?/ig, 'clean')
+    .replace(/merge is hold but missing proof is none/ig, 'proof-state-diagnostic-note')
+    .replace(/diagnostic note from previous state:[^\n]*/ig, 'diagnostic-note');
   const hasFail = FAIL_RE.test(normalizedForFailure);
   if (/source[_ -]?pack|source pack|source-bounded|source bounded|stephanos_handoff_packet|useful_facts|useful facts/.test(lower)) {
     const useful = /source[_ -]?pack|stephanos_handoff_packet|useful_facts|useful facts|source[- ]bounded:\s*(yes|true)|source bounded\s+(yes|present)/i.test(text);

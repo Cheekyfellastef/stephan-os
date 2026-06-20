@@ -136,7 +136,8 @@ const CODEX_REPAIR_PACKET = `/repair Reconcile Operator Proof Concierge proof-st
 function packetKindForProof(proof) {
   if (proof === 'pr-evidence') return 'pr-evidence';
   if (proof === 'source-pack-output') return 'source-pack-output';
-  if (proof) return 'operator-proof-packet';
+  if (proof === 'proof-state-reconciliation') return 'proof-state-diagnostic';
+  if (proof) return proof;
   return 'none';
 }
 

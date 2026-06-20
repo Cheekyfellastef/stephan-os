@@ -377,7 +377,7 @@ test('Command Deck accepts exact generated build-proof packets from Concierge an
   assert.equal(cockpit.operatorProofConcierge.nextProof, 'build-proof');
   assert.equal(cockpit.operatorProofConcierge.packetKind, 'build-proof');
   assert.equal(cockpit.missionExecutivePlan.missionExecutivePlannerPacketText, conciergePacket);
-  assert.equal(cockpit.missionExecutivePlan.missionExecutivePlannerPacketKind, 'operator-proof-packet');
+  assert.equal(cockpit.missionExecutivePlan.missionExecutivePlannerPacketKind, 'build-proof');
 
   for (const packet of [conciergePacket, cockpit.missionExecutivePlan.missionExecutivePlannerPacketText]) {
     const routed = routeCommandDeckUniversalIntake({ text: packet, evidenceContext });
@@ -390,6 +390,30 @@ test('Command Deck accepts exact generated build-proof packets from Concierge an
     assert.equal(routed.openClawMutationLocked, true);
     assert.equal(routed.mergeReadinessChanged, 'no');
   }
+});
+
+
+test('Command Deck does not let stale diagnostic wording override explicit build-proof packets', () => {
+  const evidenceContext = {
+    missionProofReconciliation: {
+      acceptedItems: ['mission-console-bridge'],
+      remainingMissingItems: ['build-proof', 'verify-proof'],
+    },
+    mergeSafety: 'no / hold',
+  };
+  const packet = `Proof Packet V1
+Packet Kind: build-proof
+Proof Item: build-proof
+Status: completed manually
+Result: pass
+Command Evidence: npm run stephanos:build completed successfully.
+Diagnostic note from previous state: merge is hold but missing proof is none.
+Generated dist not committed: yes`;
+  const routed = routeCommandDeckUniversalIntake({ text: packet, evidenceContext });
+  assert.ok(routed.kinds.includes('build-proof'));
+  assert.equal(routed.kinds.includes('operator-proof-concierge-diagnostic'), false);
+  assert.deepEqual(routed.acceptedProofItems, ['build-proof']);
+  assert.deepEqual(routed.cumulativeAcceptedProofItems, ['mission-console-bridge', 'build-proof']);
 });
 
 test('Command Deck cumulative proof preserves canonical bridge when build proof follows diagnostics', () => {

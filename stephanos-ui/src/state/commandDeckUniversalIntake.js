@@ -59,12 +59,15 @@ function hasFailure(text) { return /\b(fail(?:ed|ure)?|error|exit code [1-9]|exi
 function detectOperatorProofConciergeDiagnostic(inputText = '') {
   const text = textOf(inputText);
   if (!text) return false;
-  return /proof-state diagnostic packet\./i.test(text)
-    || /contradiction detected:/i.test(text)
-    || /operator diagnostic checklist:/i.test(text)
-    || /merge is hold but missing proof is none/i.test(text)
-    || /packet kind\s*[:=]\s*proof-state-diagnostic/i.test(text)
-    || /packetKind\s*[:=]\s*proof-state-diagnostic/i.test(text);
+  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
+  const hasValidProofPacketKind = /packet kind\s*[:=]\s*(build-proof|verify-proof|browser-proof-checklist|pr-evidence|source-pack-output)/i.test(text)
+    || /proof item\s*[:=]\s*(build-proof|verify-proof|browser-proof-checklist|pr-evidence|source-pack-output)/i.test(text);
+  const explicitDiagnosticKind = /packet kind\s*[:=]\s*proof-state-(diagnostic|reconciliation)/i.test(text)
+    || /packetKind\s*[:=]\s*proof-state-(diagnostic|reconciliation)/i.test(text);
+  const explicitDiagnosticHeader = /^(proof-state diagnostic packet|operator proof concierge diagnostic packet|proof state diagnostic packet)/i.test(firstLine);
+  const explicitDiagnosticBody = /contradiction detected:/i.test(text) && (/operator diagnostic checklist:/i.test(text) || /merge is hold but missing proof is none/i.test(text));
+  if (hasValidProofPacketKind && !explicitDiagnosticKind && !explicitDiagnosticHeader) return false;
+  return explicitDiagnosticKind || explicitDiagnosticHeader || explicitDiagnosticBody;
 }
 function splitProofItems(value) {
   return (Array.isArray(value) ? value : String(value || '').split(/[|,]/)).map(textOf).filter((item) => item && item !== 'none');

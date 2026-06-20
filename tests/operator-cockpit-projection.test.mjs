@@ -254,6 +254,8 @@ test('Operator Proof Concierge support snapshot exposes safety and packet fields
     'Operator Proof Concierge Why:',
     'Operator Proof Concierge Copy Packet Available:',
     'Operator Proof Concierge Packet Kind:',
+    'Last Copied Concierge Payload Kind:',
+    'Last Copied Concierge First-Line Marker:',
     'Operator Proof Concierge Packet Length:',
     'Operator Proof Concierge Proof State Contradiction Detected:',
     'Operator Proof Concierge Contradiction Reason:',
@@ -285,7 +287,7 @@ test('Mission Executive Planner routes missing proof through Proof Concierge car
     assert.equal(p.missionExecutivePlan.missionExecutivePlannerStatus, 'available');
     assert.equal(p.missionExecutivePlan.missionExecutivePlannerBlockerKind, 'missing-proof');
     assert.equal(p.missionExecutivePlan.missionExecutivePlannerRecommendedRoute, 'proof-concierge');
-    assert.equal(p.missionExecutivePlan.missionExecutivePlannerPacketKind, 'operator-proof-packet');
+    assert.equal(p.missionExecutivePlan.missionExecutivePlannerPacketKind, proof);
     assert.match(p.missionExecutivePlan.missionExecutivePlannerPacketText, pattern);
   }
 });
