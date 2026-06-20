@@ -290,3 +290,66 @@ test('same-category later accepted browser proof supersedes prior browser reject
   assert.equal(r.codexAutoDispatchAllowed, false);
   assert.equal(r.openClawMutationLocked, true);
 });
+
+test('Operator Proof Concierge proof-state diagnostic routes to proof-state-review without evidence mutation', () => {
+  const packet = `Proof-state diagnostic packet.
+
+Contradiction detected:
+- Merge is hold but missing proof is none; reconcile mission proof state, merge blockers, PR evidence, and source-pack output.
+
+Operator diagnostic checklist:
+- Keep merge readiness as no / hold.`;
+  const routed = routeCommandDeckUniversalIntake({
+    text: packet,
+    evidenceContext: {
+      ...base,
+      cumulativeAcceptedProofItems: ['build-proof', 'verify-proof'],
+      cumulativeRejectedProofItems: ['browser-proof-checklist'],
+      missionProofReconciliation: {
+        acceptedItems: ['mission-console-bridge', 'build-proof', 'verify-proof'],
+        remainingMissingItems: ['browser-proof-checklist', 'pr-evidence', 'source-pack-output'],
+      },
+    },
+  });
+  assert.deepEqual(routed.kinds, ['operator-proof-concierge-diagnostic', 'proof-state-review', 'operator-guidance', 'operator-hold']);
+  assert.ok(routed.routedTo.includes('proof-state-review'));
+  assert.equal(routed.routedTo.includes('evidence-return-intake'), false);
+  assert.equal(routed.routedTo.includes('packet-bay-source-pack-intake'), false);
+  assert.equal(routed.kinds.includes('pr-evidence'), false);
+  assert.equal(routed.kinds.includes('source-pack-output'), false);
+  assert.deepEqual(routed.acceptedProofItems, []);
+  assert.deepEqual(routed.rejectedProofItems, []);
+  assert.deepEqual(routed.cumulativeAcceptedProofItems, ['build-proof', 'verify-proof']);
+  assert.deepEqual(routed.cumulativeRejectedProofItems, ['browser-proof-checklist']);
+  assert.equal(routed.evidenceReturnIntakeProjection, null);
+  assert.equal(routed.diagnosticProjection.activeContradiction, 'no');
+  assert.match(routed.diagnosticProjection.assistantResponse, /current canonical proof state/i);
+  assert.match(routed.diagnosticProjection.assistantResponse, /current canonical proof state is not contradictory/i);
+  assert.match(routed.diagnosticProjection.assistantResponse, /next missing item is browser-proof-checklist/i);
+  assert.match(routed.diagnosticProjection.assistantResponse, /No commands were run/);
+  assert.equal(routed.mutationAllowed, false);
+  assert.equal(routed.codexAutoDispatchAllowed, false);
+  assert.equal(routed.openClawMutationLocked, true);
+  assert.equal(routed.mergeReadinessChanged, 'no');
+});
+
+test('Operator Proof Concierge active contradiction response explains conflict and keeps safety gates closed', () => {
+  const routed = routeCommandDeckUniversalIntake({
+    text: 'packet kind: proof-state-diagnostic\nMerge is hold but missing proof is none',
+    evidenceContext: {
+      ...base,
+      missionProofReconciliation: { acceptedItems: ['mission-console-bridge', 'build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], remainingMissingItems: [] },
+      mergeSafety: 'no / hold',
+    },
+  });
+  assert.equal(routed.diagnosticProjection.activeContradiction, 'yes');
+  assert.match(routed.diagnosticProjection.assistantResponse, /active contradiction exists/i);
+  assert.match(routed.diagnosticProjection.assistantResponse, /merge safety is hold, missing proof is none, and no next proof exists/i);
+  assert.match(routed.diagnosticProjection.assistantResponse, /Merge remains hold/i);
+  assert.match(routed.diagnosticProjection.assistantResponse, /Copyable repair prompt:/);
+  assert.deepEqual(routed.acceptedProofItems, []);
+  assert.deepEqual(routed.rejectedProofItems, []);
+  assert.equal(routed.codexAutoDispatchAllowed, false);
+  assert.equal(routed.openClawMutationLocked, true);
+  assert.equal(routed.mergeReadinessChanged, 'no');
+});
