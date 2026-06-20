@@ -69,6 +69,10 @@ function detectOperatorProofConciergeDiagnostic(inputText = '') {
 function splitProofItems(value) {
   return (Array.isArray(value) ? value : String(value || '').split(/[|,]/)).map(textOf).filter((item) => item && item !== 'none');
 }
+function canonicalAcceptedProofItems(evidenceContext = {}) {
+  const reconciliation = evidenceContext.missionProofReconciliation || {};
+  return orderProofItems(splitProofItems(reconciliation.acceptedItems || reconciliation.acceptedProof));
+}
 function mergeSafetyIsHold(value) {
   const lower = textOf(value).toLowerCase();
   return lower.includes('hold') || lower === 'no' || lower.includes('no /');
@@ -162,7 +166,10 @@ export function routeCommandDeckUniversalIntake({ text = '', evidenceContext = {
   if (classification.kinds.includes('operator-approval') || classification.kinds.includes('operator-hold')) routedTo.push('operator-decision-queue');
   if (!routedTo.length) routedTo.push('assistant-direct-chat');
   const cumulative = mergeProofSession({
-    previousAccepted: evidenceContext.cumulativeAcceptedProofItems || evidenceContext.acceptedProofItems || [],
+    previousAccepted: [
+      ...canonicalAcceptedProofItems(evidenceContext),
+      ...orderProofItems(evidenceContext.cumulativeAcceptedProofItems || evidenceContext.acceptedProofItems || []),
+    ],
     previousRejected: evidenceContext.cumulativeRejectedProofItems || evidenceContext.rejectedProofItems || [],
     latestAccepted: evidenceReturnIntakeProjection?.acceptedProofItems || [],
     latestRejected: evidenceReturnIntakeProjection?.rejectedProofItems || [],

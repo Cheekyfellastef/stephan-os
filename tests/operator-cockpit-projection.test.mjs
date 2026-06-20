@@ -412,3 +412,52 @@ test('Support Snapshot exposes Intent Intake Mission Compiler and Reality Resear
     'Intent Intake Status:', 'Intent Intake Summary:', 'Intent Intake Desired Outcome:', 'Intent Intake Target Subsystems:', 'Intent Intake Proposed Mission Type:', 'Intent Intake Risk Level:', 'Intent Intake Needs Codex:', 'Intent Intake Needs OpenClaw:', 'Intent Intake Needs Internet Research:', 'Intent Intake Approval Required:', 'Intent Intake Confidence:', 'Mission Compiler Status:', 'Mission Compiler Objective:', 'Mission Compiler Suggested Route:', 'Mission Compiler Packet Available:', 'Mission Compiler Packet Kind:', 'Mission Compiler Packet Length:', 'Mission Compiler Approval Required:', 'Mission Compiler Expected Outcome:', 'Reality Research Status:', 'Reality Research Question:', 'Reality Research Why:', 'Reality Research Approval Required:', 'Reality Research Packet Available:', 'Reality Research Packet Kind:', 'Reality Research Packet Length:', 'Reality Research Citation Required:', 'Reality Research Can Use Web:', 'Reality Research Mutation Allowed:', 'Reality Research Codex Auto Dispatch Allowed:', 'Reality Research OpenClaw Mutation Locked:'
   ]) assert.match(snapshot, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
+
+test('Operator Context Model V1 detects durable approved operating context', () => {
+  const p = buildCockpitProjection({ rawChatText: 'one-off prompt' });
+  assert.equal(p.operatorContextModel.status, 'available');
+  assert.deepEqual(p.operatorContextModel.stephanRole, ['intent engine', 'approval authority', 'judgment layer']);
+  assert.ok(p.operatorContextModel.guardrails.includes('no auto-dispatch'));
+  assert.ok(p.operatorContextModel.preferences.includes('copyable packets'));
+  assert.equal(p.operatorContextModel.automaticBrowsingAllowed, 'no');
+  assert.equal(p.operatorContextModel.codexAutoDispatchAllowed, 'no');
+  assert.equal(p.operatorContextModel.openClawMutationLocked, 'yes');
+  assert.equal(p.operatorContextModel.mergeSafety, 'no / hold');
+  assert.equal(p.operatorContextModel.durableMemoryWriteAllowed, 'no');
+});
+
+test('Operator Context Model V1 produces diagnostic packet for missing context', () => {
+  const p = buildCockpitProjection({ useDefaultOperatorContext: false, operatorContextModel: { stephanRole: ['intent engine'] } });
+  assert.equal(p.operatorContextModel.status, 'diagnostic-required');
+  assert.equal(p.operatorContextModel.diagnosticPacketAvailable, 'yes');
+  assert.match(p.operatorContextModel.diagnosticPacketText, /Missing fields: projectDirection, guardrails, preferences, strategy, researchStance/);
+  assert.equal(p.missionCompiler.packetKind, 'operator-context-diagnostic');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerBlockerKind, 'operator-context-diagnostic');
+});
+
+test('Operator Context Model V1 produces diagnostic packet for contradictory context', () => {
+  const p = buildCockpitProjection({ useDefaultOperatorContext: false, operatorContextModel: { stephanRole: ['intent engine'], projectDirection: ['reduce proof work'], guardrails: ['allow auto-dispatch', 'OpenClaw unlocked', 'merge ready'], preferences: ['copyable packets'], strategy: ['Stephanos + OpenClaw + Codex flywheel'], researchStance: ['paid APIs', 'automatic browsing'] } });
+  assert.equal(p.operatorContextModel.status, 'diagnostic-required');
+  assert.equal(p.operatorContextModel.contradictionDetected, 'yes');
+  assert.match(p.operatorContextModel.diagnosticPacketText, /Contradictions:/);
+  assert.equal(p.realityResearchBrief.realityResearchStatus, 'diagnostic-required');
+});
+
+test('Operator Context Model V1 regression keeps dispatch mutation and merge locks closed', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionEvidenceLedgerProjection: { trustedForMerge: true, codexAutoDispatchAllowed: true, openClawMutationLocked: false }, prEvidenceModel: { mergeReadiness: 'ready' }, openClawMutationAllowed: 'yes' } });
+  assert.equal(p.operatorContextModel.codexAutoDispatchAllowed, 'no');
+  assert.equal(p.operatorContextModel.mutationAllowed, 'no');
+  assert.equal(p.operatorContextModel.openClawMutationLocked, 'yes');
+  assert.equal(p.operatorContextModel.mergeSafety, 'no / hold');
+  assert.equal(p.missionCompiler.codexAutoDispatchAllowed, 'no');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerCodexAutoDispatchAllowed, 'no');
+});
+
+test('Operator Context Model V1 is visible in Cockpit source and Support Snapshot', async () => {
+  const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  const snapshotSource = await readFile(new URL('../stephanos-ui/src/state/supportSnapshot.js', import.meta.url), 'utf8');
+  assert.match(panel, /data-testid="operator-context-model-card"/);
+  assert.match(panel, /Mission Compiler and Mission Executive Planner/);
+  assert.match(snapshotSource, /Operator Context Model Status:/);
+  assert.match(snapshotSource, /Operator Context Model Automatic Browsing Allowed:/);
+});

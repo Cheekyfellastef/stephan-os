@@ -4,6 +4,58 @@ function unique(v) { return Array.from(new Set(list(v))); }
 function normProof(v) { return text(v).replace(/^missing-/, '').replace(/-missing$/, '').replace(/^browser-proof$/, 'browser-proof-checklist').replace(/^build$/, 'build-proof').replace(/^verify$/, 'verify-proof'); }
 function yes(v) { return v === true || text(v).toLowerCase() === 'yes'; }
 
+
+const OPERATOR_CONTEXT_REQUIRED_FIELDS = Object.freeze(['stephanRole', 'projectDirection', 'guardrails', 'preferences', 'strategy', 'researchStance']);
+const DEFAULT_OPERATOR_CONTEXT_MODEL = Object.freeze({
+  stephanRole: ['intent engine', 'approval authority', 'judgment layer'],
+  projectDirection: ['move Stephanos up the stack', 'reduce manual proof work'],
+  guardrails: ['zero-cost', 'local-first', 'no auto-dispatch', 'OpenClaw locked', 'merge safety hold'],
+  preferences: ['copyable packets', 'concise next moves', 'no click-monkey work'],
+  strategy: ['Stephanos + OpenClaw + Codex flywheel'],
+  researchStance: ['useful', 'approval-gated', 'cited', 'zero-cost', 'privacy-preserving'],
+});
+
+function normalizeContextList(value) { return unique(Array.isArray(value) ? value : String(value || '').split(/[|,;]/)).map((x) => x.toLowerCase()); }
+function contextHas(listValue, needle) { return normalizeContextList(listValue).some((x) => x.includes(needle)); }
+function hasExplicitOperatorContextInput(input = {}) { return Boolean(input.operatorContextModel || input.operatorContext || input.runtimeStatusModel?.operatorContextModel || input.runtimeStatus?.operatorContextModel || input.project?.operatorContextModel); }
+
+export function buildOperatorContextModel(input = {}) {
+  const provided = firstObject(input.operatorContextModel, input.operatorContext, input.runtimeStatusModel?.operatorContextModel, input.runtimeStatus?.operatorContextModel, input.project?.operatorContextModel);
+  const useDefaults = input.useDefaultOperatorContext !== false && !hasExplicitOperatorContextInput(input);
+  const source = useDefaults ? DEFAULT_OPERATOR_CONTEXT_MODEL : provided;
+  const missing = OPERATOR_CONTEXT_REQUIRED_FIELDS.filter((field) => !list(source[field]).length);
+  const contradictions = [];
+  if (contextHas(source.guardrails, 'auto-dispatch') && (contextHas(source.guardrails, 'allow auto-dispatch') || contextHas(source.guardrails, 'auto-dispatch allowed'))) contradictions.push('guardrails contradict no auto-dispatch');
+  if (contextHas(source.guardrails, 'openclaw unlocked') || contextHas(source.guardrails, 'unlock openclaw')) contradictions.push('guardrails contradict OpenClaw locked');
+  if (contextHas(source.guardrails, 'merge ready') || contextHas(source.guardrails, 'merge unlock')) contradictions.push('guardrails contradict merge safety hold');
+  if (contextHas(source.researchStance, 'automatic browsing') || contextHas(source.researchStance, 'uncited') || contextHas(source.researchStance, 'paid api')) contradictions.push('research stance contradicts approval-gated cited zero-cost research');
+  const diagnosticNeeded = missing.length > 0 || contradictions.length > 0;
+  const diagnosticPacketText = diagnosticNeeded ? `Operator Context Diagnostic Packet V1\n\nStatus: ${missing.length ? 'missing-context' : 'contradictory-context'}\nMissing fields: ${missing.join(', ') || 'none'}\nContradictions: ${contradictions.join('; ') || 'none'}\nRequired action: operator approves or corrects durable context before Stephanos uses it for mission compilation.\nSafety: no automatic browsing, no Codex dispatch, no OpenClaw unlock, no paid APIs, no persistent memory write, merge remains hold.` : '';
+  return {
+    projectionId: 'operator-context-model-v1',
+    projectionSource: 'canonical-operator-context-model-v1',
+    status: diagnosticNeeded ? 'diagnostic-required' : 'available',
+    stephanRole: list(source.stephanRole),
+    projectDirection: list(source.projectDirection),
+    guardrails: list(source.guardrails),
+    preferences: list(source.preferences),
+    strategy: list(source.strategy),
+    researchStance: list(source.researchStance),
+    approvalRequired: 'yes',
+    durableMemoryWriteAllowed: 'no',
+    mutationAllowed: 'no',
+    automaticBrowsingAllowed: 'no',
+    codexAutoDispatchAllowed: 'no',
+    openClawMutationLocked: 'yes',
+    mergeSafety: 'no / hold',
+    diagnosticPacketAvailable: diagnosticNeeded ? 'yes' : 'no',
+    diagnosticPacketText,
+    missingFields: missing,
+    contradictionDetected: contradictions.length ? 'yes' : 'no',
+    contradictions,
+  };
+}
+
 const PROOF_ORDER = Object.freeze(['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output']);
 
 export const OPERATOR_PROOF_CONCIERGE_BROWSER_PACKET = `Browser proof checklist completed manually.
@@ -100,6 +152,8 @@ export function buildMissionExecutivePlan(input = {}) {
   const concierge = cockpit.operatorProofConcierge || {};
   const missing = unique(cockpit.missingProof).map(normProof);
   const nextProof = normProof(concierge.nextProof || cockpit.nextProofToCollect || missing[0] || '');
+  const operatorContext = input.operatorContextModel || {};
+  const contextDiagnostic = operatorContext.status === 'diagnostic-required';
   const contradiction = concierge.proofStateContradictionDetected === 'yes';
   const mergeSafety = text(concierge.mergeSafety || cockpit.mergeSafety, 'no / hold');
   const openClawLocked = concierge.openClawMutationLocked === 'yes' || cockpit.openClawMutationLockState === 'locked';
@@ -126,6 +180,7 @@ export function buildMissionExecutivePlan(input = {}) {
     missionExecutivePlannerMergeSafety: mergeSafety,
     missionExecutivePlannerLastCopyResult: text(input.lastCopyResult || concierge.lastCopyResult, 'none'),
   };
+  if (contextDiagnostic) return { ...base, missionExecutivePlannerStatus: 'blocked', missionExecutivePlannerCurrentBlocker: 'Operator Context Model is missing or contradictory.', missionExecutivePlannerBlockerKind: 'operator-context-diagnostic', missionExecutivePlannerWhyItMatters: 'Mission planning must use durable approved operator context instead of guessing from one chat message.', missionExecutivePlannerRecommendedMove: 'Copy Operator Context diagnostic packet', missionExecutivePlannerRecommendedRoute: 'operator', missionExecutivePlannerApprovalRequired: 'yes', missionExecutivePlannerPacketAvailable: 'yes', missionExecutivePlannerPacketKind: 'operator-context-diagnostic', missionExecutivePlannerPacketText: operatorContext.diagnosticPacketText || '', missionExecutivePlannerExpectedOutcome: 'Operator approves or corrects context model before mission compilation.', missionExecutivePlannerExpectedNextProof: 'operator-context-approval', missionExecutivePlannerFallbackIfBlocked: 'Hold all research, dispatch, OpenClaw, and merge movement.' };
   if (contradiction) return { ...base, missionExecutivePlannerStatus: 'blocked', missionExecutivePlannerCurrentBlocker: 'Merge is hold, missing proof is none, and no next proof exists.', missionExecutivePlannerBlockerKind: 'proof-state-contradiction', missionExecutivePlannerWhyItMatters: 'Merge safety cannot advance while canonical proof state disagrees with merge readiness; explicit repair is required before readiness can be trusted.', missionExecutivePlannerRecommendedMove: 'Send bounded Codex repair', missionExecutivePlannerRecommendedRoute: 'codex', missionExecutivePlannerApprovalRequired: 'yes', missionExecutivePlannerPacketAvailable: 'yes', missionExecutivePlannerPacketKind: 'codex-repair-request', missionExecutivePlannerPacketText: CODEX_REPAIR_PACKET, missionExecutivePlannerExpectedOutcome: 'Mission Proof Remaining Missing Items and Operator Cockpit Missing Proof agree, or merge blockers are explicitly listed.', missionExecutivePlannerExpectedNextProof: 'proof-state-reconciliation', missionExecutivePlannerFallbackIfBlocked: 'Hold merge and keep diagnostic packet available.' };
   if (missing.length) {
     const proof = normProof(nextProof || missing[0]);
@@ -202,25 +257,27 @@ export function buildCommandDeckIntentIntake(input = {}) {
   return { intentIntakeStatus: c.status, intentSummary: c.summary, operatorDesiredOutcome: c.desired, targetSubsystems: c.subsystems, proposedMissionType: c.type, riskLevel: c.risk, needsCodex: c.codex, needsOpenClaw: c.openclaw, needsInternetResearch: c.research, researchReason: c.reason, approvalRequired: 'yes', safetyConstraints: ['no command execution', 'no automatic browsing', 'no Codex auto-dispatch', 'no OpenClaw unlock', 'no merge readiness mutation', 'copy-only packets'], confidence: c.confidence, nextRecommendedLayer: c.next, usesRawChatText: raw ? 'yes' : 'no', usesCanonicalState: 'yes', rawChatText: raw, vagueIntent: c.vague ? 'yes' : 'no' };
 }
 
-export function buildRealityResearchBrief(intent = {}) {
-  const needs = intent.needsInternetResearch === 'yes';
-  const question = needs ? `What current external tools, docs, capabilities, constraints, or examples could inform: ${intent.intentSummary}` : 'No approved external research question is required yet.';
+export function buildRealityResearchBrief(intent = {}, operatorContextModel = buildOperatorContextModel()) {
+  const contextDiagnostic = operatorContextModel.status === 'diagnostic-required';
+  const needs = intent.needsInternetResearch === 'yes' && !contextDiagnostic;
+  const question = contextDiagnostic ? 'Operator context diagnostic must be resolved before research planning.' : (needs ? `What current external tools, docs, capabilities, constraints, or examples could inform: ${intent.intentSummary}` : 'No approved external research question is required yet.');
   const packet = needs ? `Reality Research Brief V1 (approval required)\n\nResearch question: ${question}\nWhy it helps: ${intent.researchReason}\nScope: official/primary technical sources, current tool/docs landscape, project-relevant examples.\nDisallowed: paid APIs, background surveillance, identity profiling, uncited claims, raw web dumps.\nOutput: bounded cited brief with freshness notes.\nSafety: no mutation, no auto-browse from Command Deck, no Codex dispatch, OpenClaw locked.` : '';
-  return { realityResearchStatus: needs ? 'approval-required' : 'available', researchQuestion: question, whyResearchHelps: needs ? intent.researchReason : 'Research is optional and must be explicitly approved.', researchScope: needs ? 'bounded-current-external-context' : 'none', allowedSources: 'official/primary sources preferred; reputable public sources if needed', disallowedSources: 'paid APIs; private personal data; background surveillance; uncited factual claims; raw web dumps', privacyNotes: 'No identity profiling beyond operator-approved project context.', zeroCostGuardrail: 'No paid APIs unless explicitly approved.', approvalRequired: 'yes', researchPacketAvailable: needs ? 'yes' : 'no', researchPacketKind: needs ? 'approval-gated-research-request' : 'none', researchPacketText: packet, expectedOutput: needs ? 'Bounded cited research brief with freshness notes.' : 'Operator approves research or continues without it.', citationRequired: 'yes', freshnessRequired: needs ? 'yes' : 'no', canUseWeb: 'approval-required', canStoreFindings: 'approval-required', mutationAllowed: 'no', codexAutoDispatchAllowed: 'no', openClawMutationLocked: 'yes' };
+  return { realityResearchStatus: contextDiagnostic ? 'diagnostic-required' : (needs ? 'approval-required' : 'available'), researchQuestion: question, whyResearchHelps: needs ? intent.researchReason : 'Research is optional and must be explicitly approved.', researchScope: needs ? 'bounded-current-external-context' : 'none', allowedSources: 'official/primary sources preferred; reputable public sources if needed', disallowedSources: 'paid APIs; private personal data; background surveillance; uncited factual claims; raw web dumps', privacyNotes: 'No identity profiling beyond operator-approved project context.', zeroCostGuardrail: 'No paid APIs unless explicitly approved.', approvalRequired: 'yes', researchPacketAvailable: needs ? 'yes' : 'no', researchPacketKind: contextDiagnostic ? 'operator-context-diagnostic' : (needs ? 'approval-gated-research-request' : 'none'), researchPacketText: contextDiagnostic ? operatorContextModel.diagnosticPacketText : packet, expectedOutput: needs ? 'Bounded cited research brief with freshness notes.' : 'Operator approves research or continues without it.', citationRequired: 'yes', freshnessRequired: needs ? 'yes' : 'no', canUseWeb: 'approval-required', canStoreFindings: 'approval-required', mutationAllowed: 'no', codexAutoDispatchAllowed: 'no', openClawMutationLocked: 'yes', operatorContextStatus: operatorContextModel.status, operatorContextReadOnly: 'yes' };
 }
 
-export function buildMissionCompilerPacket(intent = {}, researchBrief = buildRealityResearchBrief(intent)) {
-  const vague = intent.vagueIntent === 'yes';
+export function buildMissionCompilerPacket(intent = {}, researchBrief = buildRealityResearchBrief(intent), operatorContextModel = buildOperatorContextModel()) {
+  const contextDiagnostic = operatorContextModel.status === 'diagnostic-required';
+  const vague = intent.vagueIntent === 'yes' || contextDiagnostic;
   const route = vague ? 'operator' : (intent.needsInternetResearch === 'yes' ? 'research-first' : (intent.needsCodex === 'yes' ? 'codex' : intent.needsOpenClaw === 'yes' ? 'openclaw' : 'operator'));
-  const objective = vague ? `Clarify intent before action: ${intent.intentSummary}` : intent.operatorDesiredOutcome;
-  const packet = vague ? `Clarifying Mission Frame (approval required)\n\nWhat Stephanos thinks you want: ${intent.intentSummary}\nBounded interpretations:\n1. Improve executive planning surfaces.\n2. Reduce manual proof/research work with copy-only packets.\n3. Prepare a Codex implementation prompt.\nRecommended default: ${intent.proposedMissionType}.\nApproval required before implementation, research, dispatch, or mutation.` : `${route === 'research-first' ? 'Research-first' : 'Codex'} Mission Packet (approval required)\n\nObjective: ${objective}\nWhy: ${intent.intentSummary}\nTarget subsystems: ${(intent.targetSubsystems || []).join(', ')}\nConstraints: no auto-submit, no command auto-run, no auto-browse, no Codex auto-dispatch, OpenClaw locked, merge hold.\nAcceptance criteria: deterministic projection exists; copy-only packets; support snapshot fields exposed; tests prove safety locks.\nRequired proof: tests/build/verify plus browser proof for UI changes.\nExpected outcome: ${objective}`;
-  return { missionCompilerStatus: 'available', missionObjective: objective, missionWhy: intent.intentSummary, targetSubsystems: intent.targetSubsystems || [], constraints: intent.safetyConstraints || [], safetyLocks: ['Mutation no', 'Codex auto-dispatch no', 'OpenClaw mutation locked yes', 'Merge safety hold'], acceptanceCriteria: vague ? ['Operator selects bounded interpretation before action.'] : ['Packet is bounded and copy-only.', 'Approval gate remains required.', 'Safety locks remain closed.'], requiredProof: ['unit tests', 'support snapshot proof', 'UI/browser proof if visible UI changes'], suggestedRoute: route, approvalRequired: 'yes', packetAvailable: 'yes', packetKind: vague ? 'clarifying-mission-frame' : (route === 'research-first' ? 'research-first-mission' : 'codex-mission-packet'), packetText: packet, expectedOutcome: vague ? 'Clarified operator approval.' : objective, fallbackIfBlocked: 'Hold and ask operator for approval or clarification.', mutationAllowed: 'no', codexAutoDispatchAllowed: 'no', openClawMutationLocked: 'yes', mergeSafety: 'no / hold', researchBrief };
+  const objective = contextDiagnostic ? 'Resolve Operator Context Model diagnostic before mission action.' : (vague ? `Clarify intent before action: ${intent.intentSummary}` : intent.operatorDesiredOutcome);
+  const packet = vague ? `Clarifying Mission Frame (approval required)\n\nWhat Stephanos thinks you want: ${contextDiagnostic ? operatorContextModel.diagnosticPacketText : intent.intentSummary}\nBounded interpretations:\n1. Improve executive planning surfaces.\n2. Reduce manual proof/research work with copy-only packets.\n3. Prepare a Codex implementation prompt.\nRecommended default: ${intent.proposedMissionType}.\nApproval required before implementation, research, dispatch, or mutation.` : `${route === 'research-first' ? 'Research-first' : 'Codex'} Mission Packet (approval required)\n\nObjective: ${objective}\nWhy: ${intent.intentSummary}\nTarget subsystems: ${(intent.targetSubsystems || []).join(', ')}\nConstraints: no auto-submit, no command auto-run, no auto-browse, no Codex auto-dispatch, OpenClaw locked, merge hold.\nAcceptance criteria: deterministic projection exists; copy-only packets; support snapshot fields exposed; tests prove safety locks.\nRequired proof: tests/build/verify plus browser proof for UI changes.\nExpected outcome: ${objective}`;
+  return { missionCompilerStatus: 'available', missionObjective: objective, missionWhy: intent.intentSummary, targetSubsystems: intent.targetSubsystems || [], constraints: intent.safetyConstraints || [], safetyLocks: ['Mutation no', 'Codex auto-dispatch no', 'OpenClaw mutation locked yes', 'Merge safety hold'], acceptanceCriteria: vague ? ['Operator selects bounded interpretation before action.'] : ['Packet is bounded and copy-only.', 'Approval gate remains required.', 'Safety locks remain closed.'], requiredProof: ['unit tests', 'support snapshot proof', 'UI/browser proof if visible UI changes'], suggestedRoute: route, approvalRequired: 'yes', packetAvailable: 'yes', packetKind: contextDiagnostic ? 'operator-context-diagnostic' : (vague ? 'clarifying-mission-frame' : (route === 'research-first' ? 'research-first-mission' : 'codex-mission-packet')), packetText: packet, expectedOutcome: vague ? 'Clarified operator approval.' : objective, fallbackIfBlocked: 'Hold and ask operator for approval or clarification.', mutationAllowed: 'no', codexAutoDispatchAllowed: 'no', openClawMutationLocked: 'yes', mergeSafety: 'no / hold', researchBrief, operatorContextStatus: operatorContextModel.status, operatorContextReadOnly: 'yes' };
 }
 
 function firstObject(...values) { return values.find((v) => v && typeof v === 'object') || {}; }
 
 export const COCKPIT_PROJECTION_FIELDS = Object.freeze([
-  'currentMission','currentStatus','operatorProofConcierge','intentIntake','missionCompiler','realityResearchBrief','missionExecutivePlan','acceptedProof','missingProof','missingProofCount','cockpitActionStatus','cockpitPrimaryActionLabel','cockpitPrimaryActionTargetSurface','cockpitPrimaryActionTargetPaneId','cockpitPrimaryActionTargetPacketId','cockpitPrimaryActionKind','cockpitPrimaryActionReason','cockpitSecondaryActions','cockpitActionMutationAllowed','cockpitActionRequiresOperatorApproval','cockpitActionSource','nextBestAction','mergeSafety','whoShouldActNext','recommendedPacket','recommendedSurface','openClawMutationLockState','codexMutationLockState','lastCommandDeckIntakeResult','evidenceIntakeState','latestCommandDeckIntakeClassification','packetBayRecommendation','arlRecommendation','mergeReadiness','mergeBlockers','nextProofToCollect','debugDrilldown'
+  'currentMission','currentStatus','operatorContextModel','operatorProofConcierge','intentIntake','missionCompiler','realityResearchBrief','missionExecutivePlan','acceptedProof','missingProof','missingProofCount','cockpitActionStatus','cockpitPrimaryActionLabel','cockpitPrimaryActionTargetSurface','cockpitPrimaryActionTargetPaneId','cockpitPrimaryActionTargetPacketId','cockpitPrimaryActionKind','cockpitPrimaryActionReason','cockpitSecondaryActions','cockpitActionMutationAllowed','cockpitActionRequiresOperatorApproval','cockpitActionSource','nextBestAction','mergeSafety','whoShouldActNext','recommendedPacket','recommendedSurface','openClawMutationLockState','codexMutationLockState','lastCommandDeckIntakeResult','evidenceIntakeState','latestCommandDeckIntakeClassification','packetBayRecommendation','arlRecommendation','mergeReadiness','mergeBlockers','nextProofToCollect','debugDrilldown'
 ]);
 
 export function buildCockpitProjection(input = {}) {
@@ -235,9 +292,10 @@ export function buildCockpitProjection(input = {}) {
   const evidenceIntake = firstObject(runtime.commandDeckUniversalIntake?.evidenceReturnIntakeProjection, runtime.evidenceReturnIntakeProjection, input.evidenceReturnIntakeProjection);
   const uiReality = firstObject(runtime.uiRealityTruth, relief.uiRealityTruth, input.uiRealityTruth);
   const prEvidence = firstObject(runtime.prEvidenceModel, runtime.githubPrEvidence, input.prEvidenceModel);
+  const operatorContextModel = buildOperatorContextModel({ ...input, runtimeStatusModel: runtime });
   const intentIntake = buildCommandDeckIntentIntake({ ...input, commandHistory: input.commandHistory || runtime.commandHistory || input.project?.commandHistory });
-  const realityResearchBrief = buildRealityResearchBrief(intentIntake);
-  const missionCompiler = buildMissionCompilerPacket(intentIntake, realityResearchBrief);
+  const realityResearchBrief = buildRealityResearchBrief(intentIntake, operatorContextModel);
+  const missionCompiler = buildMissionCompilerPacket(intentIntake, realityResearchBrief, operatorContextModel);
 
   const acceptedProof = unique(reconciliation.acceptedItems || reconciliation.acceptedProof || ledger.acceptedProof).map(normProof);
   const missingSource = reconciliation.remainingMissingItems || reconciliation.missingProof || ledger.missingProof || ledger.missingProofSummary || arl.missingProof || arl.supportSnapshotFields?.agent_reality_loop_missing_proof_summary || packetBay.missingProof;
@@ -250,7 +308,7 @@ export function buildCockpitProjection(input = {}) {
 
   const conciergeProjection = buildOperatorProofConciergeProjection({ missionProofReconciliation: { ...reconciliation, remainingMissingItems: missingProof }, mergeSafety: mergeSafe ? 'yes / candidate' : 'no / hold', openClawMutationLockState: openClawLocked ? 'locked' : 'unlocked', codexMutationLockState: ledger.codexAutoDispatchAllowed === true ? 'dispatch-allowed' : 'locked' });
 
-  const missionExecutivePlan = buildMissionExecutivePlan({ projectionSource: 'canonical-cockpit-projection-runtime-truth-v1', operatorProofConcierge: conciergeProjection, missingProof, nextProofToCollect, mergeSafety: mergeSafe ? 'yes / candidate' : 'no / hold', openClawMutationLockState: openClawLocked ? 'locked' : 'unlocked', codexMutationLockState: ledger.codexAutoDispatchAllowed === true ? 'dispatch-allowed' : 'locked' });
+  const missionExecutivePlan = buildMissionExecutivePlan({ operatorContextModel, projectionSource: 'canonical-cockpit-projection-runtime-truth-v1', operatorProofConcierge: conciergeProjection, missingProof, nextProofToCollect, mergeSafety: mergeSafe ? 'yes / candidate' : 'no / hold', openClawMutationLockState: openClawLocked ? 'locked' : 'unlocked', codexMutationLockState: ledger.codexAutoDispatchAllowed === true ? 'dispatch-allowed' : 'locked' });
 
   const actionModel = deriveCockpitActionModel({
     projectionSource: 'canonical-cockpit-projection-runtime-truth-v1',
@@ -263,6 +321,7 @@ export function buildCockpitProjection(input = {}) {
     projectionSource: 'canonical-cockpit-projection-runtime-truth-v1',
     currentMission: text(awareness.title || awareness.missionTitle || ledger.missionTitle || runtime.currentMission, 'Current Stephanos mission'),
     currentStatus: text(awareness.status || ledger.status || arl.status || (missingProof.length ? 'blocked' : 'ready')),
+    operatorContextModel,
     operatorProofConcierge: conciergeProjection,
     intentIntake,
     missionCompiler,
@@ -289,7 +348,7 @@ export function buildCockpitProjection(input = {}) {
     uiRealityState: text(uiReality.status || 'unavailable'),
     builderMeshRecommendation: text(builderMesh.nextBestAction || builderMesh.recommendedBuilder || 'Review Builder Mesh truth.'),
     ...actionModel,
-    debugDrilldown: { ledgerSource: text(ledger.projectionSource, 'none'), reconciliationStatus: text(reconciliation.status, 'unavailable'), rawDiagnosticsAvailable: true },
+    debugDrilldown: { ledgerSource: text(ledger.projectionSource, 'none'), reconciliationStatus: text(reconciliation.status, 'unavailable'), operatorContextStatus: operatorContextModel.status, rawDiagnosticsAvailable: true },
   };
 }
 
