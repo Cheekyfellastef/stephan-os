@@ -337,3 +337,78 @@ test('Mission Executive Planner Support Snapshot exposes planner fields', async 
     'Mission Executive Planner Last Copy Result:',
   ]) assert.match(snapshot, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
+
+test('Command Deck Intent Intake detects broad natural operator intent', () => {
+  const p = buildCockpitProjection({ rawChatText: 'Keep me as intent engine, approval, and judgment layer. Move me up the stack.' });
+  assert.equal(p.intentIntake.intentIntakeStatus, 'detected');
+  assert.equal(p.intentIntake.proposedMissionType, 'executive-orchestration');
+  assert.equal(p.intentIntake.needsCodex, 'yes');
+  assert.equal(p.intentIntake.approvalRequired, 'yes');
+  assert.equal(p.intentIntake.usesRawChatText, 'yes');
+  assert.equal(p.intentIntake.usesCanonicalState, 'yes');
+});
+
+test('move me up the stack maps to executive orchestration mission', () => {
+  const p = buildCockpitProjection({ rawChatText: 'Move me up the stack so I only act as intent engine, approval authority, and judgment layer.' });
+  assert.equal(p.intentIntake.proposedMissionType, 'executive-orchestration');
+  assert.match(p.intentIntake.intentSummary, /up-stack/);
+  assert.equal(p.missionCompiler.suggestedRoute, 'codex');
+  assert.match(p.missionCompiler.packetText, /Objective:/);
+  assert.equal(p.missionCompiler.mutationAllowed, 'no');
+});
+
+test('make Stephanos feel more alive maps to executive voice planner intent layer', () => {
+  const p = buildCockpitProjection({ rawChatText: 'Make Stephanos feel more alive.' });
+  assert.equal(p.intentIntake.proposedMissionType, 'experience-intelligence');
+  assert.deepEqual(p.intentIntake.targetSubsystems, ['Mission Executive Voice', 'Mission Executive Planner', 'Command Deck Intent Intake']);
+});
+
+test('use internet research maps to approval-gated Reality Research Brief', () => {
+  const p = buildCockpitProjection({ rawChatText: 'Use internet research to understand reality better.' });
+  assert.equal(p.intentIntake.needsInternetResearch, 'yes');
+  assert.equal(p.intentIntake.nextRecommendedLayer, 'research-brief');
+  assert.equal(p.realityResearchBrief.realityResearchStatus, 'approval-required');
+  assert.equal(p.realityResearchBrief.canUseWeb, 'approval-required');
+  assert.equal(p.realityResearchBrief.researchPacketAvailable, 'yes');
+  assert.match(p.realityResearchBrief.researchPacketText, /no auto-browse/i);
+});
+
+test('vague intent produces clarification mission frame instead of action', () => {
+  const p = buildCockpitProjection({ rawChatText: 'Build the next system.' });
+  assert.equal(p.intentIntake.vagueIntent, 'yes');
+  assert.equal(p.missionCompiler.packetKind, 'clarifying-mission-frame');
+  assert.equal(p.missionCompiler.suggestedRoute, 'operator');
+  assert.match(p.missionCompiler.packetText, /Bounded interpretations/);
+});
+
+test('Mission Compiler and Reality Research safety locks block mutation dispatch and browsing', () => {
+  const p = buildCockpitProjection({ rawChatText: 'Research what tools exist for this and prepare the Codex prompt.' });
+  assert.equal(p.missionCompiler.codexAutoDispatchAllowed, 'no');
+  assert.equal(p.missionCompiler.openClawMutationLocked, 'yes');
+  assert.equal(p.missionCompiler.mergeSafety, 'no / hold');
+  assert.equal(p.realityResearchBrief.mutationAllowed, 'no');
+  assert.equal(p.realityResearchBrief.codexAutoDispatchAllowed, 'no');
+  assert.equal(p.realityResearchBrief.openClawMutationLocked, 'yes');
+});
+
+test('Intent/Mission/Research UI copy controls are copy-only and expose no auto-submit paths', async () => {
+  const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  assert.match(panel, /data-testid="command-deck-intent-frame"/);
+  assert.match(panel, /data-testid="mission-compiler-copy"/);
+  assert.match(panel, /data-testid="reality-research-brief-copy"/);
+  assert.match(panel, /MissionCompiler\.copyPacket/);
+  assert.match(panel, /RealityResearchBrief\.copyPacket/);
+  const missionHandler = panel.slice(panel.indexOf('const handleCopyCompiledMissionPacket'), panel.indexOf('const handleCopyResearchPacket'));
+  const researchHandler = panel.slice(panel.indexOf('const handleCopyResearchPacket'), panel.indexOf('const handleCopyConciergePacket'));
+  for (const handler of [missionHandler, researchHandler]) {
+    assert.match(handler, /writeTextToClipboard\(packetText\)/);
+    assert.doesNotMatch(handler, /submitPrompt|Execute|runAiButlerAction|autoDispatch|unlockOpenClaw|setPanelState|merge\(|fetch\(|browse/i);
+  }
+});
+
+test('Support Snapshot exposes Intent Intake Mission Compiler and Reality Research fields', async () => {
+  const snapshot = await readFile(new URL('../stephanos-ui/src/state/supportSnapshot.js', import.meta.url), 'utf8');
+  for (const label of [
+    'Intent Intake Status:', 'Intent Intake Summary:', 'Intent Intake Desired Outcome:', 'Intent Intake Target Subsystems:', 'Intent Intake Proposed Mission Type:', 'Intent Intake Risk Level:', 'Intent Intake Needs Codex:', 'Intent Intake Needs OpenClaw:', 'Intent Intake Needs Internet Research:', 'Intent Intake Approval Required:', 'Intent Intake Confidence:', 'Mission Compiler Status:', 'Mission Compiler Objective:', 'Mission Compiler Suggested Route:', 'Mission Compiler Packet Available:', 'Mission Compiler Packet Kind:', 'Mission Compiler Packet Length:', 'Mission Compiler Approval Required:', 'Mission Compiler Expected Outcome:', 'Reality Research Status:', 'Reality Research Question:', 'Reality Research Why:', 'Reality Research Approval Required:', 'Reality Research Packet Available:', 'Reality Research Packet Kind:', 'Reality Research Packet Length:', 'Reality Research Citation Required:', 'Reality Research Can Use Web:', 'Reality Research Mutation Allowed:', 'Reality Research Codex Auto Dispatch Allowed:', 'Reality Research OpenClaw Mutation Locked:'
+  ]) assert.match(snapshot, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});
