@@ -258,3 +258,82 @@ test('Operator Proof Concierge support snapshot exposes safety and packet fields
     'Operator Proof Concierge Last Copy Result:',
   ]) assert.match(snapshot, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
+
+test('Mission Executive Planner creates Codex repair card for proof-state contradiction', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], remainingMissingItems: [] }, missionEvidenceLedgerProjection: { trustedForMerge: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false }, prEvidenceModel: { mergeReadiness: 'hold' } } });
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerStatus, 'blocked');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerBlockerKind, 'proof-state-contradiction');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerRecommendedRoute, 'codex');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerPacketKind, 'codex-repair-request');
+  assert.match(p.missionExecutivePlan.missionExecutivePlannerPacketText, /^\/repair Reconcile Operator Proof Concierge proof-state contradiction/);
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerMutationAllowed, 'no');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerCodexAutoDispatchAllowed, 'no');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerOpenClawMutationLocked, 'yes');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerMergeSafety, 'no / hold');
+});
+
+test('Mission Executive Planner routes missing proof through Proof Concierge cards', () => {
+  for (const [proof, pattern] of [['build-proof', /Build proof completed manually/], ['verify-proof', /Verify proof completed manually/], ['browser-proof-checklist', /known cockpit visual\/text drift caveat|visual\/text readouts may still drift/]]) {
+    const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { remainingMissingItems: [proof] } } });
+    assert.equal(p.missionExecutivePlan.missionExecutivePlannerStatus, 'available');
+    assert.equal(p.missionExecutivePlan.missionExecutivePlannerBlockerKind, 'missing-proof');
+    assert.equal(p.missionExecutivePlan.missionExecutivePlannerRecommendedRoute, 'proof-concierge');
+    assert.equal(p.missionExecutivePlan.missionExecutivePlannerPacketKind, 'operator-proof-packet');
+    assert.match(p.missionExecutivePlan.missionExecutivePlannerPacketText, pattern);
+  }
+});
+
+test('Mission Executive Planner routes PR evidence and source-pack output gaps', () => {
+  const pr = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { remainingMissingItems: ['pr-evidence', 'source-pack-output'] } } });
+  assert.equal(pr.missionExecutivePlan.missionExecutivePlannerBlockerKind, 'pr-evidence-missing');
+  assert.equal(pr.missionExecutivePlan.missionExecutivePlannerPacketKind, 'pr-evidence');
+  assert.equal(pr.missionExecutivePlan.missionExecutivePlannerExpectedOutcome, 'PR evidence accepted, source-pack-output becomes next.');
+  const source = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { remainingMissingItems: ['source-pack-output'] } } });
+  assert.equal(source.missionExecutivePlan.missionExecutivePlannerBlockerKind, 'source-pack-output-missing');
+  assert.equal(source.missionExecutivePlan.missionExecutivePlannerPacketKind, 'source-pack-output');
+  assert.equal(source.missionExecutivePlan.missionExecutivePlannerExpectedOutcome, 'source-pack accepted, merge readiness can be evaluated.');
+});
+
+test('Mission Executive Planner complete proof state creates operator merge-review card', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { remainingMissingItems: [] }, missionEvidenceLedgerProjection: { trustedForMerge: true, openClawMutationLocked: true, codexAutoDispatchAllowed: false }, prEvidenceModel: { mergeReadiness: 'ready' } } });
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerStatus, 'complete');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerRecommendedRoute, 'operator');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerApprovalRequired, 'yes');
+  assert.equal(p.missionExecutivePlan.missionExecutivePlannerMutationAllowed, 'no');
+});
+
+test('Mission Executive Planner UI and copy remain copy-only with no commands or dispatch', async () => {
+  const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  assert.match(panel, /data-testid="mission-executive-next-move-card"/);
+  assert.match(panel, /MissionExecutivePlanner\.copyPacket/);
+  assert.match(panel, /window\.__STEPHANOS_MISSION_EXECUTIVE_PLANNER_LAST_COPY__/);
+  const handler = panel.slice(panel.indexOf('const handleCopyPlannerPacket'), panel.indexOf('const handleCopyConciergePacket'));
+  assert.match(handler, /writeTextToClipboard\(packetText\)/);
+  assert.doesNotMatch(handler, /submitPrompt|Execute|runAiButlerAction|autoDispatch|unlockOpenClaw|setPanelState|merge\(/i);
+});
+
+test('Mission Executive Planner Support Snapshot exposes planner fields', async () => {
+  const snapshot = await readFile(new URL('../stephanos-ui/src/state/supportSnapshot.js', import.meta.url), 'utf8');
+  for (const label of [
+    'Mission Executive Planner Status:',
+    'Mission Executive Planner Current Blocker:',
+    'Mission Executive Planner Blocker Kind:',
+    'Mission Executive Planner Why It Matters:',
+    'Mission Executive Planner Recommended Move:',
+    'Mission Executive Planner Recommended Route:',
+    'Mission Executive Planner Approval Required:',
+    'Mission Executive Planner Packet Available:',
+    'Mission Executive Planner Packet Kind:',
+    'Mission Executive Planner Packet Length:',
+    'Mission Executive Planner Expected Outcome:',
+    'Mission Executive Planner Expected Next Proof:',
+    'Mission Executive Planner Fallback If Blocked:',
+    'Mission Executive Planner Safety Summary Present:',
+    'Mission Executive Planner Uses Canonical State:',
+    'Mission Executive Planner Mutation Allowed:',
+    'Mission Executive Planner Codex Auto Dispatch Allowed:',
+    'Mission Executive Planner OpenClaw Mutation Locked:',
+    'Mission Executive Planner Merge Safety:',
+    'Mission Executive Planner Last Copy Result:',
+  ]) assert.match(snapshot, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});

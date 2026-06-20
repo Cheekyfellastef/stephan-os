@@ -31,6 +31,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const [isPageVisible, setIsPageVisible] = useState(() => (typeof document === 'undefined' ? true : document.visibilityState === 'visible'));
   const [activityExpiryTick, setActivityExpiryTick] = useState(0);
   const { copyState: conciergeCopyState, setCopyState: setConciergeCopyState } = useClipboardButtonState();
+  const { copyState: plannerCopyState, setCopyState: setPlannerCopyState } = useClipboardButtonState();
   const isOpen = forceOpen ? true : uiLayout.cockpitPanel !== false;
   const shouldRenderCockpit = isOpen && isPageVisible;
 
@@ -282,6 +283,21 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   }, [resolveCockpitActionTarget, setPanelState]);
 
 
+  const handleCopyPlannerPacket = useCallback(async () => {
+    const packetText = cockpitProjection?.missionExecutivePlan?.missionExecutivePlannerPacketText || '';
+    if (!packetText) {
+      setPlannerCopyState(COPY_STATE.FAILURE);
+      return;
+    }
+    const result = await writeTextToClipboard(packetText);
+    const success = result.ok === true;
+    setPlannerCopyState(success ? COPY_STATE.SUCCESS : COPY_STATE.FAILURE);
+    if (typeof window !== 'undefined') {
+      window.__STEPHANOS_MISSION_EXECUTIVE_PLANNER_LAST_COPY__ = success ? 'success' : 'failure';
+    }
+    recordCopyFeedbackEvent({ source: 'MissionExecutivePlanner.copyPacket', success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind: cockpitProjection?.missionExecutivePlan?.missionExecutivePlannerPacketKind || 'planner-packet', reason: result.reason || 'unknown', method: result.method || 'unknown' });
+  }, [cockpitProjection, setPlannerCopyState]);
+
   const handleCopyConciergePacket = useCallback(async () => {
     const packetText = cockpitProjection?.operatorProofConcierge?.packetText || '';
     if (!packetText) {
@@ -311,6 +327,22 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       {shouldRenderCockpit ? (
         <div className="cockpit-shell">
         <CockpitDetailView projection={cockpitProjection} onPrimaryAction={routeCockpitPrimaryAction} />
+
+        <section className="mission-executive-next-move-card" data-testid="mission-executive-next-move-card" data-cockpit-block="mission-executive-planner" data-cockpit-kind="canonical-next-move" data-cockpit-projection-source="canonical cockpit projection" data-planner-mutation-allowed="no" data-planner-auto-submit="no" data-planner-command-auto-run="no" data-planner-codex-auto-dispatch="no" data-planner-openclaw-locked={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerOpenClawMutationLocked || 'yes'}>
+          <h3>Next Move Card</h3>
+          <p className="muted">Mission Executive Planner V1 derives this live plan from canonical mission proof, cockpit, concierge, merge safety, OpenClaw, and Codex dispatch truth. It copies only; it never submits, runs commands, dispatches Codex, or unlocks OpenClaw.</p>
+          <ul>
+            <li><strong>Current blocker:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerCurrentBlocker || 'unavailable'}</li>
+            <li><strong>Why it matters:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerWhyItMatters || 'unavailable'}</li>
+            <li><strong>Recommended move:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerRecommendedMove || 'Hold'}</li>
+            <li><strong>Route:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerRecommendedRoute || 'hold'}</li>
+            <li><strong>Approval required:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerApprovalRequired || 'yes'}</li>
+            <li><strong>Expected outcome:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerExpectedOutcome || 'unavailable'}</li>
+            <li><strong>Safety locks:</strong> {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerSafetySummary || 'Mutation no; OpenClaw locked; Codex auto-dispatch disabled; merge hold.'}</li>
+          </ul>
+          {cockpitProjection.missionExecutivePlan?.missionExecutivePlannerPacketAvailable === 'yes' ? <button type="button" data-testid="mission-executive-planner-copy" className={`status-panel-copy-button ${plannerCopyState}`} onClick={handleCopyPlannerPacket}>{plannerCopyState === COPY_STATE.SUCCESS ? 'Next move packet copied' : plannerCopyState === COPY_STATE.FAILURE ? 'Copy failed' : 'Copy packet'}</button> : <p className="muted" data-testid="mission-executive-planner-no-packet">No packet is available.</p>}
+          <p role="status" aria-live="polite">{plannerCopyState === COPY_STATE.SUCCESS ? 'Next move packet copied to clipboard.' : plannerCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p>
+        </section>
 
         <section className="operator-proof-concierge" data-testid="operator-proof-concierge" data-cockpit-block="operator-proof-concierge" data-cockpit-kind="operator-assist" data-cockpit-action-packet-id={cockpitProjection.operatorProofConcierge.packetKind === 'none' ? 'none' : `packet-${cockpitProjection.operatorProofConcierge.packetKind}`}>
           <h3>Operator Proof Concierge</h3>
