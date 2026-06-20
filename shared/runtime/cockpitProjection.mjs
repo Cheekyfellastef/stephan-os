@@ -3,10 +3,101 @@ function list(v) { return Array.isArray(v) ? v.map((x) => text(x)).filter(Boolea
 function unique(v) { return Array.from(new Set(list(v))); }
 function normProof(v) { return text(v).replace(/^missing-/, '').replace(/-missing$/, '').replace(/^browser-proof$/, 'browser-proof-checklist').replace(/^build$/, 'build-proof').replace(/^verify$/, 'verify-proof'); }
 function yes(v) { return v === true || text(v).toLowerCase() === 'yes'; }
+
+const PROOF_ORDER = Object.freeze(['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output']);
+
+export const OPERATOR_PROOF_CONCIERGE_BROWSER_PACKET = `Browser proof checklist completed manually.
+
+Observed in live browser:
+- Cockpit pane opens and remains visible.
+- Cockpit primary dashboard is visible.
+- Command Deck proof submit lifecycle works: Execute clears the input field after accepted proof.
+- Submitted proof remains visible in Command Deck answer history/echo.
+- Cockpit Action Routing focuses the correct target safely.
+- No command was auto-run by cockpit routing.
+- No Codex auto-dispatch occurred.
+- OpenClaw mutation remained locked.
+- Merge readiness remained no / hold.
+- No obvious broken collapse/pane behaviour was visible.
+- No red runtime error overlay was visible.
+
+Known caveat:
+- Expanded Cockpit visual/text readouts may still drift from canonical projection values, but cockpit/action routing uses canonical projection and not rendered text.
+
+This browser proof is accepted for current manual UI behaviour, while preserving the known cockpit visual/text drift caveat.`;
+
+function proofPacketFor(target) {
+  if (target === 'build-proof') return `Build proof completed manually.
+
+Paste exact build evidence here:
+- Command run:
+- Result: pass/fail
+- Key output summary:
+- Generated dist not committed: yes
+- Merge readiness remains no / hold until all proof is complete.`;
+  if (target === 'verify-proof') return `Verify proof completed manually.
+
+Paste exact verify evidence here:
+- Command run:
+- Result: pass/fail
+- Key output summary:
+- Build proof remains accepted: yes
+- Generated dist not committed: yes
+- Merge readiness remains no / hold until all proof is complete.`;
+  if (target === 'browser-proof-checklist') return OPERATOR_PROOF_CONCIERGE_BROWSER_PACKET;
+  if (target === 'pr-evidence') return `PR evidence packet.
+
+Provide:
+- PR URL or PR number if available:
+- Branch/commit evidence:
+- Clean status evidence:
+- Guard verdict:
+- No generated dist committed: yes/no
+- Merge still held until source-pack-output exists: yes`;
+  if (target === 'source-pack-output') return `Source-pack proof packet.
+
+Provide:
+- Changed files summary:
+- Committed source-only proof:
+- Generated dist excluded proof:
+- Tests/build/verify summary:
+- Guard/pr-clean result:
+- Final clean git status:`;
+  return '';
+}
+
+export function buildOperatorProofConciergeProjection(input = {}) {
+  const reconciliation = firstObject(input.missionProofReconciliation, input.reconciliation);
+  const accepted = unique(reconciliation.acceptedItems || reconciliation.acceptedProof || input.acceptedProof).map(normProof);
+  const missing = unique(reconciliation.remainingMissingItems || reconciliation.missingProof || input.missingProof).map(normProof).filter(Boolean);
+  const missingSet = new Set(missing);
+  const nextProof = PROOF_ORDER.find((proof) => missingSet.has(proof)) || missing[0] || '';
+  const packetText = proofPacketFor(nextProof);
+  const mergeSafety = input.mergeSafety || 'no / hold';
+  const openClawLocked = input.openClawMutationLockState === 'locked' || input.openClawMutationLocked !== false;
+  const codexAllowed = input.codexAutoDispatchAllowed === true || input.codexMutationLockState === 'dispatch-allowed';
+  return {
+    status: nextProof ? 'available' : 'blocked',
+    nextProof: nextProof || 'none',
+    nextActionLabel: nextProof ? (nextProof === 'browser-proof-checklist' ? 'Copy browser proof checklist' : `Copy ${nextProof} packet`) : 'Review proof state',
+    whyThisProofIsNeeded: nextProof ? `${nextProof} is the next missing proof in canonical Mission Proof Reconciliation order.` : 'No missing proof target is available from canonical Mission Proof Reconciliation.',
+    copyPacketAvailable: packetText ? 'yes' : 'no',
+    packetKind: nextProof || 'none',
+    packetText,
+    packetLength: String(packetText.length),
+    usesCanonicalProofState: 'yes',
+    mutationAllowed: 'no',
+    codexAutoDispatchAllowed: codexAllowed ? 'yes' : 'no',
+    openClawMutationLocked: openClawLocked ? 'yes' : 'no',
+    mergeSafety,
+    lastCopyResult: text(input.lastCopyResult, 'none'),
+  };
+}
+
 function firstObject(...values) { return values.find((v) => v && typeof v === 'object') || {}; }
 
 export const COCKPIT_PROJECTION_FIELDS = Object.freeze([
-  'currentMission','currentStatus','acceptedProof','missingProof','missingProofCount','cockpitActionStatus','cockpitPrimaryActionLabel','cockpitPrimaryActionTargetSurface','cockpitPrimaryActionTargetPaneId','cockpitPrimaryActionTargetPacketId','cockpitPrimaryActionKind','cockpitPrimaryActionReason','cockpitSecondaryActions','cockpitActionMutationAllowed','cockpitActionRequiresOperatorApproval','cockpitActionSource','nextBestAction','mergeSafety','whoShouldActNext','recommendedPacket','recommendedSurface','openClawMutationLockState','codexMutationLockState','lastCommandDeckIntakeResult','evidenceIntakeState','latestCommandDeckIntakeClassification','packetBayRecommendation','arlRecommendation','mergeReadiness','mergeBlockers','nextProofToCollect','debugDrilldown'
+  'currentMission','currentStatus','operatorProofConcierge','acceptedProof','missingProof','missingProofCount','cockpitActionStatus','cockpitPrimaryActionLabel','cockpitPrimaryActionTargetSurface','cockpitPrimaryActionTargetPaneId','cockpitPrimaryActionTargetPacketId','cockpitPrimaryActionKind','cockpitPrimaryActionReason','cockpitSecondaryActions','cockpitActionMutationAllowed','cockpitActionRequiresOperatorApproval','cockpitActionSource','nextBestAction','mergeSafety','whoShouldActNext','recommendedPacket','recommendedSurface','openClawMutationLockState','codexMutationLockState','lastCommandDeckIntakeResult','evidenceIntakeState','latestCommandDeckIntakeClassification','packetBayRecommendation','arlRecommendation','mergeReadiness','mergeBlockers','nextProofToCollect','debugDrilldown'
 ]);
 
 export function buildCockpitProjection(input = {}) {
@@ -31,6 +122,8 @@ export function buildCockpitProjection(input = {}) {
   const openClawLocked = arl.openClawMutationLocked !== false && ledger.openClawMutationLocked !== false && !yes(runtime.openClawMutationAllowed);
   const intakeClass = text(runtime.commandDeckUniversalIntake?.classification || evidenceIntake.classification || evidenceIntake.intent || runtime.lastCommandDeckIntakeClassification, 'unavailable');
 
+  const conciergeProjection = buildOperatorProofConciergeProjection({ missionProofReconciliation: reconciliation, mergeSafety: mergeSafe ? 'yes / candidate' : 'no / hold', openClawMutationLockState: openClawLocked ? 'locked' : 'unlocked', codexMutationLockState: ledger.codexAutoDispatchAllowed === true ? 'dispatch-allowed' : 'locked' });
+
   const actionModel = deriveCockpitActionModel({
     projectionSource: 'canonical-cockpit-projection-runtime-truth-v1',
     missingProof, nextProofToCollect, nextBestAction: text(reconciliation.nextBestAction || ledger.nextAction || (missingProof.length ? `Collect ${nextProofToCollect}.` : ''), missingProof.length ? `Collect ${nextProofToCollect}.` : 'Review evidence and hold for operator merge decision.'),
@@ -42,6 +135,7 @@ export function buildCockpitProjection(input = {}) {
     projectionSource: 'canonical-cockpit-projection-runtime-truth-v1',
     currentMission: text(awareness.title || awareness.missionTitle || ledger.missionTitle || runtime.currentMission, 'Current Stephanos mission'),
     currentStatus: text(awareness.status || ledger.status || arl.status || (missingProof.length ? 'blocked' : 'ready')),
+    operatorProofConcierge: conciergeProjection,
     acceptedProof,
     missingProof,
     missingProofCount: missingProof.length,
@@ -88,9 +182,9 @@ export function deriveCockpitActionModel(projection = {}) {
   const setProof = (proof) => ({ ...base, cockpitPrimaryActionLabel: `Collect ${proof}`, cockpitPrimaryActionTargetSurface: 'Command Deck / Evidence Return Intake', cockpitPrimaryActionTargetPaneId: 'commandDeck', cockpitPrimaryActionTargetPacketId: `packet-${proof}`, cockpitPrimaryActionKind: 'focus-proof-intake', cockpitPrimaryActionReason: `Missing proof ${proof} is next in canonical cockpit projection.` });
   if (firstMissing === 'build-proof') return setProof('build-proof');
   if (firstMissing === 'verify-proof') return setProof('verify-proof');
-  if (firstMissing === 'browser-proof-checklist') return { ...base, cockpitPrimaryActionLabel: 'Collect browser proof', cockpitPrimaryActionTargetSurface: 'Browser Proof checklist', cockpitPrimaryActionTargetPaneId: 'missionConsolePanel', cockpitPrimaryActionTargetPacketId: 'packet-browser-proof-checklist', cockpitPrimaryActionKind: 'focus-browser-proof', cockpitPrimaryActionReason: 'Browser proof checklist is next in canonical cockpit projection.' };
-  if (firstMissing === 'pr-evidence') return { ...base, cockpitPrimaryActionLabel: 'Collect PR evidence', cockpitPrimaryActionTargetSurface: 'PR Evidence / Packet Bay', cockpitPrimaryActionTargetPaneId: 'missionConsolePanel', cockpitPrimaryActionTargetPacketId: 'packet-pr-evidence', cockpitPrimaryActionKind: 'focus-pr-evidence', cockpitPrimaryActionReason: 'PR evidence is next in canonical cockpit projection.' };
-  if (firstMissing === 'source-pack-output') return { ...base, cockpitPrimaryActionLabel: 'Collect source-pack output', cockpitPrimaryActionTargetSurface: 'Source Pack / Builder Workbench', cockpitPrimaryActionTargetPaneId: 'missionConsolePanel', cockpitPrimaryActionTargetPacketId: 'packet-source-pack-output', cockpitPrimaryActionKind: 'focus-source-pack', cockpitPrimaryActionReason: 'Source Pack output is next in canonical cockpit projection.' };
+  if (firstMissing === 'browser-proof-checklist') return { ...base, cockpitPrimaryActionLabel: 'Copy browser proof checklist', cockpitPrimaryActionTargetPacketId: 'packet-browser-proof-checklist', cockpitPrimaryActionKind: 'focus-concierge-packet', cockpitPrimaryActionTargetSurface: 'Operator Proof Concierge', cockpitPrimaryActionReason: 'Browser proof checklist packet is next in canonical proof concierge projection.' };
+  if (firstMissing === 'pr-evidence') return { ...base, cockpitPrimaryActionLabel: 'Copy PR evidence packet', cockpitPrimaryActionTargetPacketId: 'packet-pr-evidence', cockpitPrimaryActionKind: 'focus-concierge-packet', cockpitPrimaryActionTargetSurface: 'Operator Proof Concierge', cockpitPrimaryActionReason: 'PR evidence packet is next in canonical proof concierge projection.' };
+  if (firstMissing === 'source-pack-output') return { ...base, cockpitPrimaryActionLabel: 'Copy source-pack output packet', cockpitPrimaryActionTargetPacketId: 'packet-source-pack-output', cockpitPrimaryActionKind: 'focus-concierge-packet', cockpitPrimaryActionTargetSurface: 'Operator Proof Concierge', cockpitPrimaryActionReason: 'Source-pack packet is next in canonical proof concierge projection.' };
   if (String(p.mergeSafety || '').toLowerCase().includes('hold')) return { ...base, cockpitPrimaryActionLabel: 'Review proof blockers', cockpitPrimaryActionKind: 'focus-proof-intake', cockpitPrimaryActionReason: 'Merge is hold; cockpit routing never exposes merge as a primary action.' };
   return { ...base, cockpitPrimaryActionLabel: 'Review evidence packets', cockpitPrimaryActionTargetSurface: 'Packet Bay', cockpitPrimaryActionTargetPaneId: 'missionConsolePanel', cockpitPrimaryActionKind: 'focus-packet-bay' };
 }

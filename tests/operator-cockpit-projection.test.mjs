@@ -153,14 +153,79 @@ test('cockpit projection uses cumulative mission proof after rejected browser pr
   assert.deepEqual(p.acceptedProof, ['mission-console-bridge', 'build-proof', 'verify-proof']);
   assert.deepEqual(p.missingProof, ['browser-proof-checklist', 'pr-evidence', 'source-pack-output']);
   assert.equal(p.nextBestAction, 'Collect browser-proof-checklist.');
-  assert.equal(p.cockpitPrimaryActionLabel, 'Collect browser proof');
+  assert.equal(p.cockpitPrimaryActionLabel, 'Copy browser proof checklist');
   assert.equal(p.mergeSafety, 'no / hold');
 });
 
 test('cockpit action advances to PR evidence after accepted browser proof while merge stays hold', () => {
   const p = buildCockpitProjection({ runtimeStatusModel: { operatorReliefProjection: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge', 'build-proof', 'verify-proof', 'browser-proof-checklist'], remainingMissingItems: ['pr-evidence', 'source-pack-output'], nextBestAction: 'Collect pr-evidence.' }, missionEvidenceLedgerProjection: { trustedForMerge: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false }, agentRealityLoopProjection: { mergeRecommendation: 'hold', openClawMutationLocked: true } } } });
-  assert.equal(p.cockpitPrimaryActionLabel, 'Collect PR evidence');
+  assert.equal(p.cockpitPrimaryActionLabel, 'Copy PR evidence packet');
   assert.deepEqual(p.missingProof, ['pr-evidence', 'source-pack-output']);
   assert.equal(p.mergeSafety, 'no / hold');
   assert.equal(p.openClawMutationLockState, 'locked');
+});
+
+test('Operator Proof Concierge reads canonical Mission Proof Reconciliation and generates build packet', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof'] } } });
+  assert.equal(p.operatorProofConcierge.usesCanonicalProofState, 'yes');
+  assert.equal(p.operatorProofConcierge.nextProof, 'build-proof');
+  assert.match(p.operatorProofConcierge.packetText, /Build proof completed manually/);
+  assert.equal(p.operatorProofConcierge.mutationAllowed, 'no');
+});
+
+test('Operator Proof Concierge generates verify packet after build proof', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof'], remainingMissingItems: ['verify-proof', 'browser-proof-checklist'] } } });
+  assert.equal(p.operatorProofConcierge.nextProof, 'verify-proof');
+  assert.match(p.operatorProofConcierge.packetText, /Verify proof completed manually/);
+});
+
+test('Operator Proof Concierge generates browser checklist with known drift caveat after build and verify', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof', 'verify-proof'], remainingMissingItems: ['browser-proof-checklist', 'pr-evidence', 'source-pack-output'] } } });
+  assert.equal(p.operatorProofConcierge.nextProof, 'browser-proof-checklist');
+  assert.match(p.operatorProofConcierge.packetText, /Browser proof checklist completed manually/);
+  assert.match(p.operatorProofConcierge.packetText, /visual\/text readouts may still drift/);
+  assert.equal(p.operatorProofConcierge.mergeSafety, 'no / hold');
+});
+
+test('Operator Proof Concierge generates PR evidence packet after browser proof', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof', 'verify-proof', 'browser-proof-checklist'], remainingMissingItems: ['pr-evidence', 'source-pack-output'] } } });
+  assert.equal(p.operatorProofConcierge.nextProof, 'pr-evidence');
+  assert.match(p.operatorProofConcierge.packetText, /PR URL or PR number/);
+  assert.match(p.operatorProofConcierge.packetText, /Merge still held until source-pack-output exists/);
+});
+
+test('Operator Proof Concierge generates source-pack packet after PR evidence', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence'], remainingMissingItems: ['source-pack-output'] } } });
+  assert.equal(p.operatorProofConcierge.nextProof, 'source-pack-output');
+  assert.match(p.operatorProofConcierge.packetText, /Changed files summary/);
+  assert.match(p.operatorProofConcierge.packetText, /Final clean git status/);
+});
+
+test('Operator Proof Concierge routing and copy affordance are operator-assist only', async () => {
+  const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  assert.match(panel, /data-testid="operator-proof-concierge-copy"/);
+  assert.match(panel, /writeTextToClipboard\(packetText\)/);
+  assert.match(panel, /setConciergeCopyState\(success \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
+  const handler = panel.slice(panel.indexOf('const handleCopyConciergePacket'), panel.indexOf('return (', panel.indexOf('const handleCopyConciergePacket')));
+  assert.doesNotMatch(handler, /submitPrompt|Execute|runAiButlerAction|autoDispatch|unlockOpenClaw|setPanelState|merge/i);
+  assert.match(panel, /'focus-concierge-packet': \[/);
+});
+
+test('Operator Proof Concierge support snapshot exposes safety and packet fields', async () => {
+  const snapshot = await readFile(new URL('../stephanos-ui/src/state/supportSnapshot.js', import.meta.url), 'utf8');
+  for (const label of [
+    'Operator Proof Concierge Status:',
+    'Operator Proof Concierge Next Proof:',
+    'Operator Proof Concierge Next Action Label:',
+    'Operator Proof Concierge Why:',
+    'Operator Proof Concierge Copy Packet Available:',
+    'Operator Proof Concierge Packet Kind:',
+    'Operator Proof Concierge Packet Length:',
+    'Operator Proof Concierge Uses Canonical Proof State:',
+    'Operator Proof Concierge Mutation Allowed:',
+    'Operator Proof Concierge Codex Auto Dispatch Allowed:',
+    'Operator Proof Concierge OpenClaw Mutation Locked:',
+    'Operator Proof Concierge Merge Safety:',
+    'Operator Proof Concierge Last Copy Result:',
+  ]) assert.match(snapshot, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
