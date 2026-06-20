@@ -2108,6 +2108,8 @@ export function buildSupportSnapshot({
   const operatorCockpitRenderSignature = cockpitRenderSignature(operatorCockpitProjection);
   const cockpitDomProof = deriveCockpitDomProof(operatorCockpitProjection);
   const operatorProofConcierge = operatorCockpitProjection.operatorProofConcierge || {};
+  const missionExecutivePlan = operatorCockpitProjection.missionExecutivePlan || {};
+  const missionExecutivePlannerLastCopy = globalThis.window?.__STEPHANOS_MISSION_EXECUTIVE_PLANNER_LAST_COPY__ || missionExecutivePlan.missionExecutivePlannerLastCopyResult || 'none';
   const operatorProofConciergeLastCopy = globalThis.window?.__STEPHANOS_OPERATOR_PROOF_CONCIERGE_LAST_COPY__ || operatorProofConcierge.lastCopyResult || 'none';
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
@@ -2939,6 +2941,26 @@ export function buildSupportSnapshot({
     `Operator Proof Concierge OpenClaw Mutation Locked: ${asText(operatorProofConcierge.openClawMutationLocked, 'yes')}`,
     `Operator Proof Concierge Merge Safety: ${asText(operatorProofConcierge.mergeSafety, 'no / hold')}`,
     `Operator Proof Concierge Last Copy Result: ${asText(operatorProofConciergeLastCopy, 'none')}`,
+    `Mission Executive Planner Status: ${asText(missionExecutivePlan.missionExecutivePlannerStatus, 'unavailable')}`,
+    `Mission Executive Planner Current Blocker: ${asText(missionExecutivePlan.missionExecutivePlannerCurrentBlocker, 'unknown')}`,
+    `Mission Executive Planner Blocker Kind: ${asText(missionExecutivePlan.missionExecutivePlannerBlockerKind, 'unknown')}`,
+    `Mission Executive Planner Why It Matters: ${asText(missionExecutivePlan.missionExecutivePlannerWhyItMatters, 'unknown')}`,
+    `Mission Executive Planner Recommended Move: ${asText(missionExecutivePlan.missionExecutivePlannerRecommendedMove, 'Hold')}`,
+    `Mission Executive Planner Recommended Route: ${asText(missionExecutivePlan.missionExecutivePlannerRecommendedRoute, 'hold')}`,
+    `Mission Executive Planner Approval Required: ${asText(missionExecutivePlan.missionExecutivePlannerApprovalRequired, 'yes')}`,
+    `Mission Executive Planner Packet Available: ${asText(missionExecutivePlan.missionExecutivePlannerPacketAvailable, 'no')}`,
+    `Mission Executive Planner Packet Kind: ${asText(missionExecutivePlan.missionExecutivePlannerPacketKind, 'none')}`,
+    `Mission Executive Planner Packet Length: ${String((missionExecutivePlan.missionExecutivePlannerPacketText || '').length)}`,
+    `Mission Executive Planner Expected Outcome: ${asText(missionExecutivePlan.missionExecutivePlannerExpectedOutcome, 'unknown')}`,
+    `Mission Executive Planner Expected Next Proof: ${asText(missionExecutivePlan.missionExecutivePlannerExpectedNextProof, 'none')}`,
+    `Mission Executive Planner Fallback If Blocked: ${asText(missionExecutivePlan.missionExecutivePlannerFallbackIfBlocked, 'Hold merge.')}`,
+    `Mission Executive Planner Safety Summary Present: ${missionExecutivePlan.missionExecutivePlannerSafetySummary ? 'yes' : 'no'}`,
+    `Mission Executive Planner Uses Canonical State: ${asText(missionExecutivePlan.missionExecutivePlannerUsesCanonicalState, 'yes')}`,
+    `Mission Executive Planner Mutation Allowed: ${asText(missionExecutivePlan.missionExecutivePlannerMutationAllowed, 'no')}`,
+    `Mission Executive Planner Codex Auto Dispatch Allowed: ${asText(missionExecutivePlan.missionExecutivePlannerCodexAutoDispatchAllowed, 'no')}`,
+    `Mission Executive Planner OpenClaw Mutation Locked: ${asText(missionExecutivePlan.missionExecutivePlannerOpenClawMutationLocked, 'yes')}`,
+    `Mission Executive Planner Merge Safety: ${asText(missionExecutivePlan.missionExecutivePlannerMergeSafety, 'no / hold')}`,
+    `Mission Executive Planner Last Copy Result: ${asText(missionExecutivePlannerLastCopy, 'none')}`,
     `Cockpit Action Routing Status: ${cockpitActionModel.cockpitActionStatus}`,
     `Cockpit Primary Action Label: ${asText(cockpitActionModel.cockpitPrimaryActionLabel, 'unavailable')}`,
     `Cockpit Primary Action Kind: ${asText(cockpitActionModel.cockpitPrimaryActionKind, 'unavailable')}`,

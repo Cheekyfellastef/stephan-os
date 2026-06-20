@@ -79,6 +79,63 @@ Operator diagnostic checklist:
 
 function mergeIsHold(value) { return String(value || '').toLowerCase().includes('hold') || String(value || '').toLowerCase().includes('no'); }
 
+const CODEX_REPAIR_PACKET = `/repair Reconcile Operator Proof Concierge proof-state contradiction: merge is hold, missing proof is none, and no next proof exists. Preserve proof safety, keep OpenClaw locked, keep Codex auto-dispatch disabled, and do not mark merge ready.`;
+
+function packetKindForProof(proof) {
+  if (proof === 'pr-evidence') return 'pr-evidence';
+  if (proof === 'source-pack-output') return 'source-pack-output';
+  if (proof) return 'operator-proof-packet';
+  return 'none';
+}
+
+function expectedOutcomeForProof(proof) {
+  if (proof === 'pr-evidence') return 'PR evidence accepted, source-pack-output becomes next.';
+  if (proof === 'source-pack-output') return 'source-pack accepted, merge readiness can be evaluated.';
+  if (proof) return 'Command Deck accepts/rejects proof and advances next proof.';
+  return 'Operator reviews canonical merge decision without automatic mutation.';
+}
+
+export function buildMissionExecutivePlan(input = {}) {
+  const cockpit = input.projectionSource === 'canonical-cockpit-projection-runtime-truth-v1' ? input : buildCockpitProjection(input);
+  const concierge = cockpit.operatorProofConcierge || {};
+  const missing = unique(cockpit.missingProof).map(normProof);
+  const nextProof = normProof(concierge.nextProof || cockpit.nextProofToCollect || missing[0] || '');
+  const contradiction = concierge.proofStateContradictionDetected === 'yes';
+  const mergeSafety = text(concierge.mergeSafety || cockpit.mergeSafety, 'no / hold');
+  const openClawLocked = concierge.openClawMutationLocked === 'yes' || cockpit.openClawMutationLockState === 'locked';
+  const codexAllowed = concierge.codexAutoDispatchAllowed === 'yes' || cockpit.codexMutationLockState === 'dispatch-allowed';
+  const base = {
+    missionExecutivePlannerStatus: 'unavailable',
+    missionExecutivePlannerCurrentBlocker: 'Canonical mission state unavailable.',
+    missionExecutivePlannerBlockerKind: 'unavailable',
+    missionExecutivePlannerWhyItMatters: 'Stephanos cannot safely recommend mission movement without canonical proof state.',
+    missionExecutivePlannerRecommendedMove: 'Hold and inspect canonical mission state.',
+    missionExecutivePlannerRecommendedRoute: 'hold',
+    missionExecutivePlannerApprovalRequired: 'yes',
+    missionExecutivePlannerPacketAvailable: 'no',
+    missionExecutivePlannerPacketKind: 'none',
+    missionExecutivePlannerPacketText: '',
+    missionExecutivePlannerExpectedOutcome: 'Canonical state becomes available.',
+    missionExecutivePlannerExpectedNextProof: nextProof || 'none',
+    missionExecutivePlannerFallbackIfBlocked: 'Hold merge and keep diagnostic packet available.',
+    missionExecutivePlannerSafetySummary: `Mutation no; Codex auto-dispatch ${codexAllowed ? 'allowed by source' : 'disabled'}; OpenClaw ${openClawLocked ? 'locked' : 'unlocked by source'}; merge safety ${mergeSafety}.`,
+    missionExecutivePlannerUsesCanonicalState: 'yes',
+    missionExecutivePlannerMutationAllowed: 'no',
+    missionExecutivePlannerCodexAutoDispatchAllowed: 'no',
+    missionExecutivePlannerOpenClawMutationLocked: openClawLocked ? 'yes' : 'no',
+    missionExecutivePlannerMergeSafety: mergeSafety,
+    missionExecutivePlannerLastCopyResult: text(input.lastCopyResult || concierge.lastCopyResult, 'none'),
+  };
+  if (contradiction) return { ...base, missionExecutivePlannerStatus: 'blocked', missionExecutivePlannerCurrentBlocker: 'Merge is hold, missing proof is none, and no next proof exists.', missionExecutivePlannerBlockerKind: 'proof-state-contradiction', missionExecutivePlannerWhyItMatters: 'Merge safety cannot advance while canonical proof state disagrees with merge readiness; explicit repair is required before readiness can be trusted.', missionExecutivePlannerRecommendedMove: 'Send bounded Codex repair', missionExecutivePlannerRecommendedRoute: 'codex', missionExecutivePlannerApprovalRequired: 'yes', missionExecutivePlannerPacketAvailable: 'yes', missionExecutivePlannerPacketKind: 'codex-repair-request', missionExecutivePlannerPacketText: CODEX_REPAIR_PACKET, missionExecutivePlannerExpectedOutcome: 'Mission Proof Remaining Missing Items and Operator Cockpit Missing Proof agree, or merge blockers are explicitly listed.', missionExecutivePlannerExpectedNextProof: 'proof-state-reconciliation', missionExecutivePlannerFallbackIfBlocked: 'Hold merge and keep diagnostic packet available.' };
+  if (missing.length) {
+    const proof = normProof(nextProof || missing[0]);
+    return { ...base, missionExecutivePlannerStatus: 'available', missionExecutivePlannerCurrentBlocker: `${proof} is missing.`, missionExecutivePlannerBlockerKind: proof === 'pr-evidence' ? 'pr-evidence-missing' : proof === 'source-pack-output' ? 'source-pack-output-missing' : 'missing-proof', missionExecutivePlannerWhyItMatters: `${proof} is required before Stephanos can evaluate merge readiness from complete proof.`, missionExecutivePlannerRecommendedMove: concierge.nextActionLabel || `Copy ${proof} packet`, missionExecutivePlannerRecommendedRoute: 'proof-concierge', missionExecutivePlannerApprovalRequired: 'yes', missionExecutivePlannerPacketAvailable: concierge.copyPacketAvailable === 'yes' ? 'yes' : 'no', missionExecutivePlannerPacketKind: packetKindForProof(proof), missionExecutivePlannerPacketText: concierge.packetText || proofPacketFor(proof), missionExecutivePlannerExpectedOutcome: expectedOutcomeForProof(proof), missionExecutivePlannerExpectedNextProof: proof, missionExecutivePlannerFallbackIfBlocked: 'Copy diagnostic packet.' };
+  }
+  if (!mergeIsHold(mergeSafety)) return { ...base, missionExecutivePlannerStatus: 'complete', missionExecutivePlannerCurrentBlocker: 'No missing proof; merge candidate requires operator judgment.', missionExecutivePlannerBlockerKind: 'operator-merge-review', missionExecutivePlannerWhyItMatters: 'Stephanos may prepare the decision, but the operator remains merge approval authority.', missionExecutivePlannerRecommendedMove: 'Operator review merge decision', missionExecutivePlannerRecommendedRoute: 'operator', missionExecutivePlannerApprovalRequired: 'yes', missionExecutivePlannerExpectedOutcome: 'Operator approves or rejects merge through canonical merge flow.', missionExecutivePlannerExpectedNextProof: 'operator-merge-decision', missionExecutivePlannerFallbackIfBlocked: 'Hold merge until operator review is complete.' };
+  return { ...base, missionExecutivePlannerStatus: 'blocked', missionExecutivePlannerCurrentBlocker: 'Merge is still hold with no explicit missing proof listed.', missionExecutivePlannerBlockerKind: 'merge-hold', missionExecutivePlannerRecommendedMove: 'Review proof blockers', missionExecutivePlannerRecommendedRoute: 'command-deck' };
+}
+
+
 export function buildOperatorProofConciergeProjection(input = {}) {
   const reconciliation = firstObject(input.missionProofReconciliation, input.reconciliation);
   const accepted = unique(reconciliation.acceptedItems || reconciliation.acceptedProof || input.acceptedProof).map(normProof);
@@ -114,7 +171,7 @@ export function buildOperatorProofConciergeProjection(input = {}) {
 function firstObject(...values) { return values.find((v) => v && typeof v === 'object') || {}; }
 
 export const COCKPIT_PROJECTION_FIELDS = Object.freeze([
-  'currentMission','currentStatus','operatorProofConcierge','acceptedProof','missingProof','missingProofCount','cockpitActionStatus','cockpitPrimaryActionLabel','cockpitPrimaryActionTargetSurface','cockpitPrimaryActionTargetPaneId','cockpitPrimaryActionTargetPacketId','cockpitPrimaryActionKind','cockpitPrimaryActionReason','cockpitSecondaryActions','cockpitActionMutationAllowed','cockpitActionRequiresOperatorApproval','cockpitActionSource','nextBestAction','mergeSafety','whoShouldActNext','recommendedPacket','recommendedSurface','openClawMutationLockState','codexMutationLockState','lastCommandDeckIntakeResult','evidenceIntakeState','latestCommandDeckIntakeClassification','packetBayRecommendation','arlRecommendation','mergeReadiness','mergeBlockers','nextProofToCollect','debugDrilldown'
+  'currentMission','currentStatus','operatorProofConcierge','missionExecutivePlan','acceptedProof','missingProof','missingProofCount','cockpitActionStatus','cockpitPrimaryActionLabel','cockpitPrimaryActionTargetSurface','cockpitPrimaryActionTargetPaneId','cockpitPrimaryActionTargetPacketId','cockpitPrimaryActionKind','cockpitPrimaryActionReason','cockpitSecondaryActions','cockpitActionMutationAllowed','cockpitActionRequiresOperatorApproval','cockpitActionSource','nextBestAction','mergeSafety','whoShouldActNext','recommendedPacket','recommendedSurface','openClawMutationLockState','codexMutationLockState','lastCommandDeckIntakeResult','evidenceIntakeState','latestCommandDeckIntakeClassification','packetBayRecommendation','arlRecommendation','mergeReadiness','mergeBlockers','nextProofToCollect','debugDrilldown'
 ]);
 
 export function buildCockpitProjection(input = {}) {
@@ -141,6 +198,8 @@ export function buildCockpitProjection(input = {}) {
 
   const conciergeProjection = buildOperatorProofConciergeProjection({ missionProofReconciliation: { ...reconciliation, remainingMissingItems: missingProof }, mergeSafety: mergeSafe ? 'yes / candidate' : 'no / hold', openClawMutationLockState: openClawLocked ? 'locked' : 'unlocked', codexMutationLockState: ledger.codexAutoDispatchAllowed === true ? 'dispatch-allowed' : 'locked' });
 
+  const missionExecutivePlan = buildMissionExecutivePlan({ projectionSource: 'canonical-cockpit-projection-runtime-truth-v1', operatorProofConcierge: conciergeProjection, missingProof, nextProofToCollect, mergeSafety: mergeSafe ? 'yes / candidate' : 'no / hold', openClawMutationLockState: openClawLocked ? 'locked' : 'unlocked', codexMutationLockState: ledger.codexAutoDispatchAllowed === true ? 'dispatch-allowed' : 'locked' });
+
   const actionModel = deriveCockpitActionModel({
     projectionSource: 'canonical-cockpit-projection-runtime-truth-v1',
     missingProof, nextProofToCollect, nextBestAction: text(reconciliation.nextBestAction || ledger.nextAction || (missingProof.length ? `Collect ${nextProofToCollect}.` : ''), missingProof.length ? `Collect ${nextProofToCollect}.` : 'Review evidence and hold for operator merge decision.'),
@@ -153,6 +212,7 @@ export function buildCockpitProjection(input = {}) {
     currentMission: text(awareness.title || awareness.missionTitle || ledger.missionTitle || runtime.currentMission, 'Current Stephanos mission'),
     currentStatus: text(awareness.status || ledger.status || arl.status || (missingProof.length ? 'blocked' : 'ready')),
     operatorProofConcierge: conciergeProjection,
+    missionExecutivePlan,
     acceptedProof,
     missingProof,
     missingProofCount: missingProof.length,
