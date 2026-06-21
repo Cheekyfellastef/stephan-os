@@ -2948,6 +2948,8 @@ export function buildSupportSnapshot({
     `Operator Proof Concierge Why: ${asText(operatorProofConcierge.whyThisProofIsNeeded, 'n/a')}`,
     `Operator Proof Concierge Copy Packet Available: ${asText(operatorProofConcierge.copyPacketAvailable, 'no')}`,
     `Operator Proof Concierge Packet Kind: ${asText(operatorProofConcierge.packetKind, 'none')}`,
+    `Operator Proof Concierge Visible Primary Button Label: ${asText(operatorProofConcierge.visiblePrimaryButtonLabel || operatorProofConcierge.copyPacket?.label || operatorProofConcierge.nextActionLabel, 'Review proof state')}`,
+    `Operator Proof Concierge Visible Primary Button Source: ${asText(operatorProofConcierge.visiblePrimaryButtonSource || operatorProofConcierge.copyPacket?.source, 'none')}`,
     `Last Copied Concierge Payload Kind: ${asText(lastConciergeCopyEvent?.payloadKind, 'none')}`,
     `Last Copied Concierge First-Line Marker: ${asText(lastConciergeCopyEvent?.payloadFirstLine, 'none')}`,
     `Operator Proof Concierge Packet Length: ${asText(operatorProofConcierge.packetLength, '0')}`,

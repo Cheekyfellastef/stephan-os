@@ -268,6 +268,8 @@ test('Operator Proof Concierge support snapshot exposes safety and packet fields
     'Operator Proof Concierge Why:',
     'Operator Proof Concierge Copy Packet Available:',
     'Operator Proof Concierge Packet Kind:',
+    'Operator Proof Concierge Visible Primary Button Label:',
+    'Operator Proof Concierge Visible Primary Button Source:',
     'Last Copied Concierge Payload Kind:',
     'Last Copied Concierge First-Line Marker:',
     'Operator Proof Concierge Packet Length:',
