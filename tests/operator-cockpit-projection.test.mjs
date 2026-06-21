@@ -285,7 +285,7 @@ test('Operator Proof Concierge build-proof copy payload marker is explicit Proof
 test('Operator Proof Concierge routing and copy affordance are operator-assist only', async () => {
   const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
   assert.match(panel, /data-testid="operator-proof-concierge-primary-copy"/);
-  assert.match(panel, /operatorProofConcierge\.copyPacket \? <textarea/);
+  assert.match(panel, /primaryProofCopyPacket \? <textarea/);
   assert.match(panel, /writeTextToClipboard\(packetText\)/);
   assert.match(panel, /setCopyState\(success \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
   assert.match(panel, /payloadFirstLine = packetText\.split/);
