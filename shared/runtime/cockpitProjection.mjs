@@ -209,17 +209,36 @@ export function buildOperatorProofConciergeProjection(input = {}) {
   const contradictionDetected = !nextProof && missing.length === 0 && mergeIsHold(mergeSafety);
   const effectiveNextProof = contradictionDetected ? 'proof-state-reconciliation' : nextProof;
   const packetText = proofPacketFor(effectiveNextProof);
+  const actionLabel = nextProof ? (nextProof === 'browser-proof-checklist' ? 'Copy browser proof checklist' : nextProof === 'pr-evidence' ? 'Copy PR evidence packet' : nextProof === 'source-pack-output' ? 'Copy source-pack output packet' : `Copy ${nextProof} packet`) : (contradictionDetected ? 'Copy proof-state diagnostic packet' : 'Review proof state');
+  const packetKind = effectiveNextProof || 'none';
+  const diagnosticPacketText = proofPacketFor('proof-state-reconciliation');
+  const diagnosticPacket = {
+    available: diagnosticPacketText ? 'yes' : 'no',
+    label: 'Copy proof-state diagnostic packet',
+    packetKind: 'proof-state-diagnostic',
+    packetText: diagnosticPacketText,
+    source: 'OperatorProofConcierge.copyDiagnosticPacket',
+  };
+  const primaryPacket = {
+    available: packetText ? 'yes' : 'no',
+    label: actionLabel,
+    packetKind,
+    packetText,
+    source: contradictionDetected ? 'OperatorProofConcierge.copyDiagnosticPacket' : 'OperatorProofConcierge.copyPacket',
+  };
   const openClawLocked = input.openClawMutationLockState === 'locked' || input.openClawMutationLocked !== false;
   const codexAllowed = input.codexAutoDispatchAllowed === true || input.codexMutationLockState === 'dispatch-allowed';
   return {
     status: nextProof ? 'available' : (contradictionDetected ? 'blocked' : 'complete'),
     nextProof: effectiveNextProof || 'none',
-    nextActionLabel: nextProof ? (nextProof === 'browser-proof-checklist' ? 'Copy browser proof checklist' : nextProof === 'pr-evidence' ? 'Copy PR evidence packet' : nextProof === 'source-pack-output' ? 'Copy source-pack output packet' : `Copy ${nextProof} packet`) : (contradictionDetected ? 'Copy proof-state diagnostic packet' : 'Review proof state'),
+    nextActionLabel: actionLabel,
     whyThisProofIsNeeded: nextProof ? `${nextProof} is the next missing proof in canonical Mission Proof Reconciliation order.` : (contradictionDetected ? 'Merge is hold but canonical Mission Proof Reconciliation reports no remaining missing proof; diagnostic reconciliation is required.' : 'No missing proof target is available from canonical Mission Proof Reconciliation.'),
     copyPacketAvailable: packetText ? 'yes' : 'no',
-    packetKind: effectiveNextProof || 'none',
+    packetKind,
     packetText,
     packetLength: String(packetText.length),
+    copyPacket: primaryPacket,
+    copyDiagnosticPacket: diagnosticPacket,
     proofStateContradictionDetected: contradictionDetected ? 'yes' : 'no',
     contradictionReason: contradictionDetected ? 'Merge is hold but missing proof is none; reconcile mission proof state, merge blockers, PR evidence, and source-pack output.' : 'none',
     usesCanonicalProofState: 'yes',

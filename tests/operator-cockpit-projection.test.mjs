@@ -250,7 +250,7 @@ test('Operator Proof Concierge routing and copy affordance are operator-assist o
   assert.match(panel, /data-testid="operator-proof-concierge-copy"/);
   assert.match(panel, /operatorProofConcierge\.copyPacketAvailable === 'yes' \? <textarea/);
   assert.match(panel, /writeTextToClipboard\(packetText\)/);
-  assert.match(panel, /setConciergeCopyState\(success \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
+  assert.match(panel, /setCopyState\(success \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
   assert.match(panel, /payloadFirstLine = packetText\.split/);
   assert.match(panel, /OperatorProofConcierge\.copyDiagnosticPacket/);
   assert.match(panel, /OperatorProofConcierge\.copyPacket/);
