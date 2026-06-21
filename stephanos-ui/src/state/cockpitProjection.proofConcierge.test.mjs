@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { buildCockpitProjection } from './cockpitProjection.js';
 
 test('operator-facing Proof Concierge uses canonical build-proof when stale reconciliation is empty but missing proof sources include build-proof', () => {
@@ -61,8 +62,9 @@ test('CockpitPanel visible Concierge primary button is wired to canonical Concie
   assert.match(source, /data-concierge-button-role="primary-proof-copy"/);
   assert.match(source, /buttonRole: 'primary-proof-copy'/);
   assert.match(source, /buttonTestId: 'operator-proof-concierge-primary-copy'/);
-  assert.match(source, /source: 'OperatorProofConcierge\.copyPacket'/);
-  assert.match(source, /cockpitProjection\.operatorProofConcierge\.copyPacket\?\.label/);
+  assert.match(source, /const source = packet\?\.source \|\| 'OperatorProofConcierge\.copyPacket'/);
+  assert.match(source, /const primaryProofCopyPacket = operatorProofConcierge\.copyPacket/);
+  assert.match(source, /data-concierge-visible-primary-button-label=\{primaryProofCopyPacket\?\.label/);
   assert.match(source, /data-concierge-visible-primary-button-label=/);
   assert.match(source, /data-concierge-visible-primary-button-source=/);
   assert.match(source, /data-proof-concierge-render-source="cockpit-canonical-copy-packet"/);
@@ -72,4 +74,28 @@ test('CockpitPanel visible Concierge primary button is wired to canonical Concie
   assert.doesNotMatch(source, /operator-proof-concierge-diagnostic-drilldown/);
   assert.doesNotMatch(source, /Diagnostics\/details — diagnostic packet/);
   assert.doesNotMatch(source, /Copy proof-state diagnostic packet<\/button>/);
+});
+
+
+test('built Proof Concierge primary button path cannot reference diagnostic packet fields', () => {
+  const distIndexPath = resolve(process.cwd(), 'apps/stephanos/dist/index.html');
+  assert.equal(existsSync(distIndexPath), true, 'expected built Stephanos dist index to exist');
+  const indexHtml = readFileSync(distIndexPath, 'utf8');
+  const scriptMatches = [...indexHtml.matchAll(/<script\b[^>]+src=["']([^"']+\.js)["'][^>]*><\/script>/g)];
+  assert.notEqual(scriptMatches.length, 0, 'expected built Stephanos dist JS asset references');
+
+  const jsContents = scriptMatches.map((match) => {
+    const src = match[1].replace(/^\.\//, '');
+    return readFileSync(resolve(process.cwd(), 'apps/stephanos/dist', src), 'utf8');
+  });
+  const bundle = jsContents.find((content) => content.includes('operator-proof-concierge-primary-copy')) || '';
+  assert.match(bundle, /operator-proof-concierge-primary-copy/);
+
+  const renderAnchor = bundle.indexOf('data-proof-concierge-primary-source');
+  assert.notEqual(renderAnchor, -1, 'expected built primary Concierge render source anchor');
+  const buttonIndex = bundle.indexOf('operator-proof-concierge-primary-copy', renderAnchor);
+  assert.notEqual(buttonIndex, -1, 'expected built visible primary Concierge button after render source anchor');
+  const primaryButtonPath = bundle.slice(Math.max(0, renderAnchor - 1000), buttonIndex + 3000);
+  assert.doesNotMatch(primaryButtonPath, /OperatorProofConcierge\.copyDiagnosticPacket|Copy proof-state diagnostic packet|proof-state-reconciliation|copyDiagnosticPacket/);
+  assert.match(primaryButtonPath, /OperatorProofConcierge\.copyPacket|copyPacket/);
 });
