@@ -214,7 +214,7 @@ export function buildOperatorProofConciergeProjection(input = {}) {
   const diagnosticPacketText = proofPacketFor('proof-state-reconciliation');
   const diagnosticPacket = {
     available: diagnosticPacketText ? 'yes' : 'no',
-    label: 'Copy proof-state diagnostic packet',
+    label: 'Copy diagnostic packet',
     packetKind: 'proof-state-diagnostic',
     packetText: diagnosticPacketText,
     source: 'OperatorProofConcierge.copyDiagnosticPacket',
@@ -238,6 +238,8 @@ export function buildOperatorProofConciergeProjection(input = {}) {
     packetText,
     packetLength: String(packetText.length),
     copyPacket: primaryPacket,
+    visiblePrimaryButtonLabel: primaryPacket.label,
+    visiblePrimaryButtonSource: primaryPacket.source,
     copyDiagnosticPacket: diagnosticPacket,
     proofStateContradictionDetected: contradictionDetected ? 'yes' : 'no',
     contradictionReason: contradictionDetected ? 'Merge is hold but missing proof is none; reconcile mission proof state, merge blockers, PR evidence, and source-pack output.' : 'none',

@@ -5093,6 +5093,8 @@ test('Support Snapshot exposes Operator Proof Concierge contradiction diagnostic
   const snapshot = buildSupportSnapshot({ runtimeStatus: {} });
   assert.match(snapshot, /Operator Proof Concierge Proof State Contradiction Detected:/);
   assert.match(snapshot, /Operator Proof Concierge Contradiction Reason:/);
+  assert.match(snapshot, /Operator Proof Concierge Visible Primary Button Label:/);
+  assert.match(snapshot, /Operator Proof Concierge Visible Primary Button Source:/);
   assert.match(snapshot, /Mission Proof Accepted Items:/);
   assert.match(snapshot, /Mission Proof Remaining Missing Items:/);
   assert.match(snapshot, /Mission Proof Next Best Action:/);
