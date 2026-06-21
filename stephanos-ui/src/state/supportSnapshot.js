@@ -2111,7 +2111,7 @@ export function buildSupportSnapshot({
   const missionExecutivePlan = operatorCockpitProjection.missionExecutivePlan || {};
   const missionExecutivePlannerLastCopy = globalThis.window?.__STEPHANOS_MISSION_EXECUTIVE_PLANNER_LAST_COPY__ || missionExecutivePlan.missionExecutivePlannerLastCopyResult || 'none';
   const operatorProofConciergeLastCopy = globalThis.window?.__STEPHANOS_OPERATOR_PROOF_CONCIERGE_LAST_COPY__ || operatorProofConcierge.lastCopyResult || 'none';
-  const lastCopyEvent = uiRealityStatus?.lastCopyEvent || globalThis.window?.__STEPHANOS_PANE_DIAGNOSTICS__?.lastCopyEvent || null;
+  const lastCopyEvent = globalThis.window?.__STEPHANOS_PANE_DIAGNOSTICS__?.lastCopyEvent || null;
   const lastConciergeCopyEvent = lastCopyEvent && String(lastCopyEvent.source || '').startsWith('OperatorProofConcierge.') ? lastCopyEvent : null;
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
