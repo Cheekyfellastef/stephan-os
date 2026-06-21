@@ -99,3 +99,40 @@ test('built Proof Concierge primary button path cannot reference diagnostic pack
   assert.doesNotMatch(primaryButtonPath, /OperatorProofConcierge\.copyDiagnosticPacket|Copy proof-state diagnostic packet|proof-state-reconciliation|copyDiagnosticPacket/);
   assert.match(primaryButtonPath, /OperatorProofConcierge\.copyPacket|copyPacket/);
 });
+
+test('Proof Concierge canonical projection can replace stale diagnostic state on rerender', () => {
+  const staleDiagnosticProjection = buildCockpitProjection({
+    runtimeStatusModel: {
+      missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: [] },
+    },
+  });
+  assert.equal(staleDiagnosticProjection.operatorProofConcierge.nextProof, 'proof-state-reconciliation');
+  assert.equal(staleDiagnosticProjection.operatorProofConcierge.copyPacket.source, 'OperatorProofConcierge.copyDiagnosticPacket');
+
+  const canonicalBuildProjection = buildCockpitProjection({
+    runtimeStatusModel: {
+      missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: [] },
+      missionEvidenceLedgerProjection: {
+        acceptedProof: ['mission-console-bridge'],
+        missingProof: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'],
+      },
+    },
+  });
+
+  const renderedNextProof = canonicalBuildProjection.operatorProofConcierge.nextProof;
+  const renderedCopyLabel = canonicalBuildProjection.operatorProofConcierge.copyPacket.label;
+  const renderedCopySource = canonicalBuildProjection.operatorProofConcierge.copyPacket.source;
+  assert.equal(renderedNextProof, 'build-proof');
+  assert.equal(renderedCopyLabel, 'Copy build-proof packet');
+  assert.equal(renderedCopySource, 'OperatorProofConcierge.copyPacket');
+});
+
+test('CockpitPanel emits Proof Concierge lifecycle trace fields without local packet state overwrite', () => {
+  const source = readFileSync(new URL('../components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  assert.match(source, /data-proof-concierge-initial-render-next-proof=\{proofConciergeInitialNextProof\}/);
+  assert.match(source, /data-proof-concierge-initial-render-copy-label=\{proofConciergeInitialCopyLabel\}/);
+  assert.match(source, /data-proof-concierge-post-hydration-current-dom-next-proof=\{proofConciergeLifecycleTrace\.currentDomNextProof\}/);
+  assert.match(source, /data-proof-concierge-post-hydration-current-dom-copy-label=\{proofConciergeLifecycleTrace\.currentDomCopyLabel\}/);
+  assert.match(source, /data-proof-concierge-last-writer-source=\{proofConciergeLastWriterSource\}/);
+  assert.doesNotMatch(source, /useState\([^\)]*(copyPacket|primaryProofCopyPacket|copyDiagnosticPacket|proof-state-reconciliation)/);
+});

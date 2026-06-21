@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 export function CockpitStatusChip({ label, value, tone = 'info', className = '', ...props }) {
   return <span className={`cockpit-chip cockpit-status-chip cockpit-tone-${tone} ${className}`.trim()} data-cockpit-status-tone={tone} {...props}><strong>{label}</strong>{value ? <span>{value}</span> : null}</span>;
 }
@@ -6,9 +7,9 @@ export function CockpitField({ label, value }) {
   return <li className="cockpit-field"><span>{label}</span><strong>{value || 'unavailable'}</strong></li>;
 }
 
-export function CockpitCard({ title, eyebrow, summary, tone = 'info', cardType = 'context', status, chips = [], children, actions = null, footer = null, className = '', ...props }) {
+export const CockpitCard = forwardRef(function CockpitCard({ title, eyebrow, summary, tone = 'info', cardType = 'context', status, chips = [], children, actions = null, footer = null, className = '', ...props }, ref) {
   return (
-    <section className={`cockpit-vl-card cockpit-vl-card-${cardType} cockpit-tone-${tone} ${className}`.trim()} data-cockpit-card-type={cardType} data-cockpit-state={tone} {...props}>
+    <section ref={ref} className={`cockpit-vl-card cockpit-vl-card-${cardType} cockpit-tone-${tone} ${className}`.trim()} data-cockpit-card-type={cardType} data-cockpit-state={tone} {...props}>
       <div className="cockpit-vl-card-header">
         <div>
           {eyebrow ? <span className="cockpit-vl-eyebrow">{eyebrow}</span> : null}
@@ -23,7 +24,7 @@ export function CockpitCard({ title, eyebrow, summary, tone = 'info', cardType =
       {footer ? <div className="cockpit-vl-footer">{footer}</div> : null}
     </section>
   );
-}
+});
 
 export function CockpitSafetyLockStrip({ openClaw = 'locked', codex = 'no', mutation = 'no', merge = 'hold' }) {
   return <div className="cockpit-safety-lock-strip" data-cockpit-lock-strip="visible"><CockpitStatusChip label="OpenClaw" value={openClaw} tone="locked" /><CockpitStatusChip label="Codex dispatch" value={codex} tone="locked" /><CockpitStatusChip label="Mutation" value={mutation} tone="locked" /><CockpitStatusChip label="Merge" value={merge} tone="warning" /></div>;
