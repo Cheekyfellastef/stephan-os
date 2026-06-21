@@ -333,7 +333,10 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     if (typeof window !== 'undefined') {
       window.__STEPHANOS_OPERATOR_PROOF_CONCIERGE_LAST_COPY__ = success ? 'success' : 'failure';
     }
-    recordCopyFeedbackEvent({ source: 'OperatorProofConcierge.copyPacket', success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind: cockpitProjection?.operatorProofConcierge?.packetKind || 'proof-packet', reason: result.reason || 'unknown', method: result.method || 'unknown' });
+    const payloadKind = cockpitProjection?.operatorProofConcierge?.packetKind || 'proof-packet';
+    const payloadFirstLine = packetText.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || 'none';
+    const source = payloadKind === 'proof-state-reconciliation' || payloadKind === 'proof-state-diagnostic' ? 'OperatorProofConcierge.copyDiagnosticPacket' : 'OperatorProofConcierge.copyPacket';
+    recordCopyFeedbackEvent({ source, success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind, payloadFirstLine, reason: result.reason || 'unknown', method: result.method || 'unknown' });
   }, [cockpitProjection, setConciergeCopyState]);
 
   return (

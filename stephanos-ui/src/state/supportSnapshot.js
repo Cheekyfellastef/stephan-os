@@ -2111,6 +2111,8 @@ export function buildSupportSnapshot({
   const missionExecutivePlan = operatorCockpitProjection.missionExecutivePlan || {};
   const missionExecutivePlannerLastCopy = globalThis.window?.__STEPHANOS_MISSION_EXECUTIVE_PLANNER_LAST_COPY__ || missionExecutivePlan.missionExecutivePlannerLastCopyResult || 'none';
   const operatorProofConciergeLastCopy = globalThis.window?.__STEPHANOS_OPERATOR_PROOF_CONCIERGE_LAST_COPY__ || operatorProofConcierge.lastCopyResult || 'none';
+  const lastCopyEvent = globalThis.window?.__STEPHANOS_PANE_DIAGNOSTICS__?.lastCopyEvent || null;
+  const lastConciergeCopyEvent = lastCopyEvent && String(lastCopyEvent.source || '').startsWith('OperatorProofConcierge.') ? lastCopyEvent : null;
   const openClawControlBridge = buildOpenClawControlBridgeProjection(runtimeStatus?.openClawControlBridge || runtimeStatus?.agentTaskProjection?.operatorSurface?.openClawControlBridge || {});
   const aiConsoleAnswerScroll = runtimeStatus?.uiDiagnostics?.aiConsoleAnswerScroll && typeof runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll === 'object'
     ? runtimeStatus.uiDiagnostics.aiConsoleAnswerScroll
@@ -2946,6 +2948,8 @@ export function buildSupportSnapshot({
     `Operator Proof Concierge Why: ${asText(operatorProofConcierge.whyThisProofIsNeeded, 'n/a')}`,
     `Operator Proof Concierge Copy Packet Available: ${asText(operatorProofConcierge.copyPacketAvailable, 'no')}`,
     `Operator Proof Concierge Packet Kind: ${asText(operatorProofConcierge.packetKind, 'none')}`,
+    `Last Copied Concierge Payload Kind: ${asText(lastConciergeCopyEvent?.payloadKind, 'none')}`,
+    `Last Copied Concierge First-Line Marker: ${asText(lastConciergeCopyEvent?.payloadFirstLine, 'none')}`,
     `Operator Proof Concierge Packet Length: ${asText(operatorProofConcierge.packetLength, '0')}`,
     `Operator Proof Concierge Proof State Contradiction Detected: ${asText(operatorProofConcierge.proofStateContradictionDetected, 'no')}`,
     `Operator Proof Concierge Contradiction Reason: ${asText(operatorProofConcierge.contradictionReason, 'none')}`,

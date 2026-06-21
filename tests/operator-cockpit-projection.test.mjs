@@ -176,14 +176,14 @@ test('Operator Proof Concierge reads canonical Mission Proof Reconciliation and 
   const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof'] } } });
   assert.equal(p.operatorProofConcierge.usesCanonicalProofState, 'yes');
   assert.equal(p.operatorProofConcierge.nextProof, 'build-proof');
-  assert.match(p.operatorProofConcierge.packetText, /Build proof completed manually/);
+  assert.match(p.operatorProofConcierge.packetText, /Packet Kind: build-proof/);
   assert.equal(p.operatorProofConcierge.mutationAllowed, 'no');
 });
 
 test('Operator Proof Concierge generates verify packet after build proof', () => {
   const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof'], remainingMissingItems: ['verify-proof', 'browser-proof-checklist'] } } });
   assert.equal(p.operatorProofConcierge.nextProof, 'verify-proof');
-  assert.match(p.operatorProofConcierge.packetText, /Verify proof completed manually/);
+  assert.match(p.operatorProofConcierge.packetText, /Packet Kind: verify-proof/);
 });
 
 test('Operator Proof Concierge generates browser checklist with known drift caveat after build and verify', () => {
@@ -234,12 +234,26 @@ test('Operator Proof Concierge can complete with no packet when no missing proof
   assert.equal(p.mergeSafety, 'yes / candidate');
 });
 
+
+test('Operator Proof Concierge build-proof copy payload marker is explicit Proof Packet V1', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof'] }, mergeSafety: 'no / hold' } });
+  const firstLine = p.operatorProofConcierge.packetText.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  assert.equal(p.operatorProofConcierge.nextProof, 'build-proof');
+  assert.equal(p.operatorProofConcierge.packetKind, 'build-proof');
+  assert.equal(firstLine, 'Proof Packet V1');
+  assert.match(p.operatorProofConcierge.packetText, /Packet Kind: build-proof/);
+  assert.doesNotMatch(p.operatorProofConcierge.packetText, /proof-state diagnostic packet|operator diagnostic checklist|contradiction detected/i);
+});
+
 test('Operator Proof Concierge routing and copy affordance are operator-assist only', async () => {
   const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
   assert.match(panel, /data-testid="operator-proof-concierge-copy"/);
   assert.match(panel, /operatorProofConcierge\.copyPacketAvailable === 'yes' \? <textarea/);
   assert.match(panel, /writeTextToClipboard\(packetText\)/);
   assert.match(panel, /setConciergeCopyState\(success \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
+  assert.match(panel, /payloadFirstLine = packetText\.split/);
+  assert.match(panel, /OperatorProofConcierge\.copyDiagnosticPacket/);
+  assert.match(panel, /OperatorProofConcierge\.copyPacket/);
   const handler = panel.slice(panel.indexOf('const handleCopyConciergePacket'), panel.indexOf('return (', panel.indexOf('const handleCopyConciergePacket')));
   assert.doesNotMatch(handler, /submitPrompt|Execute|runAiButlerAction|autoDispatch|unlockOpenClaw|setPanelState|merge/i);
   assert.match(panel, /'focus-concierge-packet': \[/);
@@ -254,6 +268,8 @@ test('Operator Proof Concierge support snapshot exposes safety and packet fields
     'Operator Proof Concierge Why:',
     'Operator Proof Concierge Copy Packet Available:',
     'Operator Proof Concierge Packet Kind:',
+    'Last Copied Concierge Payload Kind:',
+    'Last Copied Concierge First-Line Marker:',
     'Operator Proof Concierge Packet Length:',
     'Operator Proof Concierge Proof State Contradiction Detected:',
     'Operator Proof Concierge Contradiction Reason:',
@@ -280,12 +296,12 @@ test('Mission Executive Planner creates Codex repair card for proof-state contra
 });
 
 test('Mission Executive Planner routes missing proof through Proof Concierge cards', () => {
-  for (const [proof, pattern] of [['build-proof', /Build proof completed manually/], ['verify-proof', /Verify proof completed manually/], ['browser-proof-checklist', /known cockpit visual\/text drift caveat|visual\/text readouts may still drift/]]) {
+  for (const [proof, pattern] of [['build-proof', /Packet Kind: build-proof/], ['verify-proof', /Packet Kind: verify-proof/], ['browser-proof-checklist', /known cockpit visual\/text drift caveat|visual\/text readouts may still drift/]]) {
     const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { remainingMissingItems: [proof] } } });
     assert.equal(p.missionExecutivePlan.missionExecutivePlannerStatus, 'available');
     assert.equal(p.missionExecutivePlan.missionExecutivePlannerBlockerKind, 'missing-proof');
     assert.equal(p.missionExecutivePlan.missionExecutivePlannerRecommendedRoute, 'proof-concierge');
-    assert.equal(p.missionExecutivePlan.missionExecutivePlannerPacketKind, 'operator-proof-packet');
+    assert.equal(p.missionExecutivePlan.missionExecutivePlannerPacketKind, proof);
     assert.match(p.missionExecutivePlan.missionExecutivePlannerPacketText, pattern);
   }
 });
