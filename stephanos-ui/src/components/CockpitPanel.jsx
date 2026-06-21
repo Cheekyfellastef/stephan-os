@@ -16,7 +16,19 @@ function stateClassName(state) {
   return `truth-${state}`;
 }
 
-export default function CockpitPanel({ forceOpen = false, standalone = false, telemetryEntries = [], finalAgentView = null } = {}) {
+export function shouldRenderOperatorProofConciergeDiagnostic(operatorProofConcierge = {}) {
+  const canonicalPrimaryKind = operatorProofConcierge.copyPacket?.packetKind || operatorProofConcierge.packetKind || 'none';
+  const canonicalPrimaryAvailable = operatorProofConcierge.copyPacketAvailable === 'yes' && canonicalPrimaryKind !== 'none' && canonicalPrimaryKind !== 'proof-state-reconciliation' && canonicalPrimaryKind !== 'proof-state-diagnostic';
+  if (canonicalPrimaryAvailable) {
+    return false;
+  }
+  return operatorProofConcierge.proofStateContradictionDetected === 'yes'
+    && operatorProofConcierge.nextProof === 'proof-state-reconciliation'
+    && (operatorProofConcierge.packetKind === 'proof-state-reconciliation' || operatorProofConcierge.packetKind === 'proof-state-diagnostic')
+    && operatorProofConcierge.copyDiagnosticPacket?.available === 'yes';
+}
+
+export default function CockpitPanel({ forceOpen = false, standalone = false, telemetryEntries = [], finalAgentView = null, cockpitProjectionOverride = null } = {}) {
   const {
     runtimeStatusModel,
     apiStatus,
@@ -42,7 +54,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
 
-  const cockpitProjection = useMemo(() => buildCockpitProjection({ runtimeStatusModel: runtimeStatus }), [runtimeStatus]);
+  const cockpitProjection = useMemo(() => cockpitProjectionOverride || buildCockpitProjection({ runtimeStatusModel: runtimeStatus }), [cockpitProjectionOverride, runtimeStatus]);
 
   const cockpitModel = useMemo(() => {
     if (!shouldRenderCockpit) {
@@ -439,7 +451,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
             <ul className="cockpit-field-list cockpit-field-list-two"><CockpitField label="Next proof" value={cockpitProjection.operatorProofConcierge.nextProof} /><CockpitField label="Merge safety" value={cockpitProjection.operatorProofConcierge.mergeSafety} /></ul>
             {cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? <textarea readOnly data-testid="operator-proof-concierge-packet" value={cockpitProjection.operatorProofConcierge.copyPacket?.packetText || cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text" className="cockpit-visually-hidden-packet" /> : null}
             {cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? <details className="cockpit-debug-drilldown" data-cockpit-debug-collapsed-default="yes"><summary>Packet text</summary><textarea readOnly value={cockpitProjection.operatorProofConcierge.copyPacket?.packetText || cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text expanded" /></details> : <p className="muted" data-testid="operator-proof-concierge-no-packet">No proof packet is available.</p>}
-            {cockpitProjection.operatorProofConcierge.proofStateContradictionDetected === 'yes' && cockpitProjection.operatorProofConcierge.copyDiagnosticPacket?.available === 'yes' ? <details className="cockpit-debug-drilldown" data-cockpit-debug-collapsed-default="yes" data-testid="operator-proof-concierge-diagnostic-drilldown"><summary>Diagnostics/details — diagnostic packet</summary><button type="button" data-testid="operator-proof-concierge-diagnostic-copy" data-concierge-button-role="diagnostic-copy" className={`status-panel-copy-button ${conciergeDiagnosticCopyState}`} onClick={handleCopyConciergeDiagnosticPacket}>{conciergeDiagnosticCopyState === COPY_STATE.SUCCESS ? 'Diagnostic packet copied' : conciergeDiagnosticCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.copyDiagnosticPacket.label}</button><textarea readOnly value={cockpitProjection.operatorProofConcierge.copyDiagnosticPacket.packetText} aria-label="Operator Proof Concierge diagnostic packet text" /></details> : null}
+            {shouldRenderOperatorProofConciergeDiagnostic(cockpitProjection.operatorProofConcierge) ? <details className="cockpit-debug-drilldown" data-cockpit-debug-collapsed-default="yes" data-testid="operator-proof-concierge-diagnostic-drilldown"><summary>Diagnostics/details — diagnostic packet</summary><button type="button" data-testid="operator-proof-concierge-diagnostic-copy" data-concierge-button-role="diagnostic-copy" className={`status-panel-copy-button ${conciergeDiagnosticCopyState}`} onClick={handleCopyConciergeDiagnosticPacket}>{conciergeDiagnosticCopyState === COPY_STATE.SUCCESS ? 'Diagnostic packet copied' : conciergeDiagnosticCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.copyDiagnosticPacket.label}</button><textarea readOnly value={cockpitProjection.operatorProofConcierge.copyDiagnosticPacket.packetText} aria-label="Operator Proof Concierge diagnostic packet text" /></details> : null}
           </CockpitCard>
         </div>
 
