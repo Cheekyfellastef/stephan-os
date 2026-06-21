@@ -2952,6 +2952,8 @@ export function buildSupportSnapshot({
     `Operator Proof Concierge Visible Primary Button Source: ${asText(operatorProofConcierge.visiblePrimaryButtonSource || operatorProofConcierge.copyPacket?.source, 'none')}`,
     `Last Copied Concierge Payload Kind: ${asText(lastConciergeCopyEvent?.payloadKind, 'none')}`,
     `Last Copied Concierge First-Line Marker: ${asText(lastConciergeCopyEvent?.payloadFirstLine, 'none')}`,
+    `Last clicked Concierge button role: ${asText(lastConciergeCopyEvent?.buttonRole, 'none')}`,
+    `Last clicked Concierge button testid: ${asText(lastConciergeCopyEvent?.buttonTestId, 'none')}`,
     `Operator Proof Concierge Packet Length: ${asText(operatorProofConcierge.packetLength, '0')}`,
     `Operator Proof Concierge Proof State Contradiction Detected: ${asText(operatorProofConcierge.proofStateContradictionDetected, 'no')}`,
     `Operator Proof Concierge Contradiction Reason: ${asText(operatorProofConcierge.contradictionReason, 'none')}`,

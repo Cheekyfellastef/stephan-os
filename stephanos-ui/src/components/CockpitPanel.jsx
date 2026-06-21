@@ -140,7 +140,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
         : 'commandDeck';
     const selectorsByKind = {
       'focus-concierge-packet': [
-        '[data-testid="operator-proof-concierge-copy"]',
+        '[data-testid="operator-proof-concierge-primary-copy" data-concierge-button-role="primary-proof-copy"]',
         '[data-cockpit-action-packet-id="packet-browser-proof-checklist"]',
         '[data-cockpit-action-packet-id="packet-pr-evidence"]',
         '[data-cockpit-action-packet-id="packet-source-pack-output"]',
@@ -322,7 +322,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     recordCopyFeedbackEvent({ source: 'RealityResearchBrief.copyPacket', success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind: cockpitProjection?.realityResearchBrief?.researchPacketKind || 'research-packet', reason: result.reason || 'unknown', method: result.method || 'unknown' });
   }, [cockpitProjection, setResearchCopyState]);
 
-  const copyConciergePacket = useCallback(async ({ packet, setCopyState }) => {
+  const copyConciergePacket = useCallback(async ({ packet, setCopyState, buttonRole = 'unknown', buttonTestId = 'unknown' }) => {
     const packetText = packet?.packetText || '';
     if (!packetText) {
       setCopyState(COPY_STATE.FAILURE);
@@ -337,7 +337,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     const payloadKind = packet?.packetKind || 'proof-packet';
     const payloadFirstLine = packetText.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || 'none';
     const source = packet?.source || 'OperatorProofConcierge.copyPacket';
-    recordCopyFeedbackEvent({ source, success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind, payloadFirstLine, reason: result.reason || 'unknown', method: result.method || 'unknown' });
+    recordCopyFeedbackEvent({ source, success, visualState: success ? 'success' : 'failure', greenConfirmed: success, payloadKind, payloadFirstLine, buttonRole, buttonTestId, reason: result.reason || 'unknown', method: result.method || 'unknown' });
   }, []);
 
   const handleCopyConciergePacket = useCallback(async () => {
@@ -345,14 +345,20 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     const packet = concierge.copyPacket || {
       packetText: concierge.packetText || '',
       packetKind: concierge.packetKind || 'proof-packet',
-      source: concierge.proofStateContradictionDetected === 'yes' ? 'OperatorProofConcierge.copyDiagnosticPacket' : 'OperatorProofConcierge.copyPacket',
+      source: 'OperatorProofConcierge.copyPacket',
     };
-    await copyConciergePacket({ packet, setCopyState: setConciergeCopyState });
+    await copyConciergePacket({ packet, setCopyState: setConciergeCopyState, buttonRole: 'primary-proof-copy', buttonTestId: 'operator-proof-concierge-primary-copy' });
   }, [cockpitProjection, copyConciergePacket, setConciergeCopyState]);
 
-  const handleCopyConciergeDiagnosticPacket = useCallback(async () => {
-    const packet = cockpitProjection?.operatorProofConcierge?.copyDiagnosticPacket || {};
-    await copyConciergePacket({ packet, setCopyState: setConciergeDiagnosticCopyState });
+  const handleCopyConciergeDiagnosticPacket = useCallback(async (event) => {
+    const concierge = cockpitProjection?.operatorProofConcierge || {};
+    const detailsExpanded = event?.currentTarget?.closest?.('details')?.open === true;
+    if (concierge.proofStateContradictionDetected !== 'yes' || detailsExpanded !== true) {
+      setConciergeDiagnosticCopyState(COPY_STATE.FAILURE);
+      return;
+    }
+    const packet = concierge.copyDiagnosticPacket || { source: 'OperatorProofConcierge.copyDiagnosticPacket' };
+    await copyConciergePacket({ packet, setCopyState: setConciergeDiagnosticCopyState, buttonRole: 'diagnostic-copy', buttonTestId: 'operator-proof-concierge-diagnostic-copy' });
   }, [cockpitProjection, copyConciergePacket, setConciergeDiagnosticCopyState]);
 
   return (
@@ -429,11 +435,11 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
             <ul className="cockpit-field-list cockpit-field-list-two"><CockpitField label="Current blocker" value={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerCurrentBlocker || 'unavailable'} /><CockpitField label="Route" value={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerRecommendedRoute || 'hold'} /><CockpitField label="Expected outcome" value={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerExpectedOutcome || 'unavailable'} /><CockpitField label="Safety locks" value={cockpitProjection.missionExecutivePlan?.missionExecutivePlannerSafetySummary || 'Mutation no; OpenClaw locked; Codex auto-dispatch disabled; merge hold.'} /></ul>
           </CockpitCard>
 
-          <CockpitCard className="operator-proof-concierge" title="Operator Proof Concierge" eyebrow="Proof" cardType="proof" tone={cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? 'packet' : 'blocked'} summary={cockpitProjection.operatorProofConcierge.whyThisProofIsNeeded} status={{ label: 'Status', value: cockpitProjection.operatorProofConcierge.status, tone: cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? 'packet' : 'blocked' }} data-testid="operator-proof-concierge" data-cockpit-block="operator-proof-concierge" data-cockpit-kind="operator-assist" data-cockpit-action-packet-id={cockpitProjection.operatorProofConcierge.packetKind === 'none' ? 'none' : `packet-${cockpitProjection.operatorProofConcierge.packetKind}`} actions={<button type="button" data-testid="operator-proof-concierge-copy" data-concierge-visible-primary-button-label={cockpitProjection.operatorProofConcierge.visiblePrimaryButtonLabel || cockpitProjection.operatorProofConcierge.copyPacket?.label || cockpitProjection.operatorProofConcierge.nextActionLabel} data-concierge-visible-primary-button-source={cockpitProjection.operatorProofConcierge.visiblePrimaryButtonSource || cockpitProjection.operatorProofConcierge.copyPacket?.source || 'none'} className={`status-panel-copy-button ${conciergeCopyState}`} onClick={handleCopyConciergePacket} disabled={cockpitProjection.operatorProofConcierge.copyPacketAvailable !== 'yes'}>{conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.copyPacket?.label || cockpitProjection.operatorProofConcierge.nextActionLabel}</button>} footer={<><CockpitSafetyLockStrip openClaw={cockpitProjection.operatorProofConcierge.openClawMutationLocked} codex={cockpitProjection.operatorProofConcierge.codexAutoDispatchAllowed} mutation="no" merge={cockpitProjection.operatorProofConcierge.mergeSafety} /><p role="status" aria-live="polite">{conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied to clipboard.' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p></>}>
+          <CockpitCard className="operator-proof-concierge" title="Operator Proof Concierge" eyebrow="Proof" cardType="proof" tone={cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? 'packet' : 'blocked'} summary={cockpitProjection.operatorProofConcierge.whyThisProofIsNeeded} status={{ label: 'Status', value: cockpitProjection.operatorProofConcierge.status, tone: cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? 'packet' : 'blocked' }} data-testid="operator-proof-concierge" data-cockpit-block="operator-proof-concierge" data-cockpit-kind="operator-assist" data-cockpit-action-packet-id={cockpitProjection.operatorProofConcierge.packetKind === 'none' ? 'none' : `packet-${cockpitProjection.operatorProofConcierge.packetKind}`} actions={<button type="button" data-testid="operator-proof-concierge-primary-copy" data-concierge-button-role="primary-proof-copy" data-concierge-visible-primary-button-label={cockpitProjection.operatorProofConcierge.visiblePrimaryButtonLabel || cockpitProjection.operatorProofConcierge.copyPacket?.label || cockpitProjection.operatorProofConcierge.nextActionLabel} data-concierge-visible-primary-button-source={cockpitProjection.operatorProofConcierge.visiblePrimaryButtonSource || cockpitProjection.operatorProofConcierge.copyPacket?.source || 'none'} className={`status-panel-copy-button ${conciergeCopyState}`} onClick={handleCopyConciergePacket} disabled={cockpitProjection.operatorProofConcierge.copyPacketAvailable !== 'yes'}>{conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.copyPacket?.label || cockpitProjection.operatorProofConcierge.nextActionLabel}</button>} footer={<><CockpitSafetyLockStrip openClaw={cockpitProjection.operatorProofConcierge.openClawMutationLocked} codex={cockpitProjection.operatorProofConcierge.codexAutoDispatchAllowed} mutation="no" merge={cockpitProjection.operatorProofConcierge.mergeSafety} /><p role="status" aria-live="polite">{conciergeCopyState === COPY_STATE.SUCCESS ? 'Proof packet copied to clipboard.' : conciergeCopyState === COPY_STATE.FAILURE ? 'Copy failed. Clipboard unavailable.' : ''}</p></>}>
             <ul className="cockpit-field-list cockpit-field-list-two"><CockpitField label="Next proof" value={cockpitProjection.operatorProofConcierge.nextProof} /><CockpitField label="Merge safety" value={cockpitProjection.operatorProofConcierge.mergeSafety} /></ul>
             {cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? <textarea readOnly data-testid="operator-proof-concierge-packet" value={cockpitProjection.operatorProofConcierge.copyPacket?.packetText || cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text" className="cockpit-visually-hidden-packet" /> : null}
             {cockpitProjection.operatorProofConcierge.copyPacketAvailable === 'yes' ? <details className="cockpit-debug-drilldown" data-cockpit-debug-collapsed-default="yes"><summary>Packet text</summary><textarea readOnly value={cockpitProjection.operatorProofConcierge.copyPacket?.packetText || cockpitProjection.operatorProofConcierge.packetText} aria-label="Operator Proof Concierge packet text expanded" /></details> : <p className="muted" data-testid="operator-proof-concierge-no-packet">No proof packet is available.</p>}
-            {cockpitProjection.operatorProofConcierge.copyDiagnosticPacket?.available === 'yes' ? <details className="cockpit-debug-drilldown" data-cockpit-debug-collapsed-default="yes" data-testid="operator-proof-concierge-diagnostic-drilldown"><summary>Diagnostics/details — diagnostic packet</summary><button type="button" data-testid="operator-proof-concierge-diagnostic-copy" className={`status-panel-copy-button ${conciergeDiagnosticCopyState}`} onClick={handleCopyConciergeDiagnosticPacket}>{conciergeDiagnosticCopyState === COPY_STATE.SUCCESS ? 'Diagnostic packet copied' : conciergeDiagnosticCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.copyDiagnosticPacket.label}</button><textarea readOnly value={cockpitProjection.operatorProofConcierge.copyDiagnosticPacket.packetText} aria-label="Operator Proof Concierge diagnostic packet text" /></details> : null}
+            {cockpitProjection.operatorProofConcierge.proofStateContradictionDetected === 'yes' && cockpitProjection.operatorProofConcierge.copyDiagnosticPacket?.available === 'yes' ? <details className="cockpit-debug-drilldown" data-cockpit-debug-collapsed-default="yes" data-testid="operator-proof-concierge-diagnostic-drilldown"><summary>Diagnostics/details — diagnostic packet</summary><button type="button" data-testid="operator-proof-concierge-diagnostic-copy" data-concierge-button-role="diagnostic-copy" className={`status-panel-copy-button ${conciergeDiagnosticCopyState}`} onClick={handleCopyConciergeDiagnosticPacket}>{conciergeDiagnosticCopyState === COPY_STATE.SUCCESS ? 'Diagnostic packet copied' : conciergeDiagnosticCopyState === COPY_STATE.FAILURE ? 'Copy failed' : cockpitProjection.operatorProofConcierge.copyDiagnosticPacket.label}</button><textarea readOnly value={cockpitProjection.operatorProofConcierge.copyDiagnosticPacket.packetText} aria-label="Operator Proof Concierge diagnostic packet text" /></details> : null}
           </CockpitCard>
         </div>
 
