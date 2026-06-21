@@ -242,7 +242,8 @@ test('Operator Proof Concierge render branch prefers canonical missing build pro
   const cardStart = panel.indexOf('<CockpitCard className="operator-proof-concierge"');
   const card = panel.slice(cardStart, panel.indexOf('</CockpitCard>', cardStart));
   assert.match(card, /data-testid="operator-proof-concierge-primary-copy"/);
-  assert.match(card, /shouldRenderOperatorProofConciergeDiagnostic\(cockpitProjection\.operatorProofConcierge\)/);
+  assert.match(card, /data-proof-concierge-render-source="cockpit-canonical-copy-packet"/);
+  assert.match(card, /data-proof-concierge-primary-source="OperatorProofConcierge.copyPacket"/);
   assert.doesNotMatch(card, /Copy proof-state diagnostic packet/);
 });
 
@@ -288,7 +289,7 @@ test('Operator Proof Concierge routing and copy affordance are operator-assist o
   assert.match(panel, /writeTextToClipboard\(packetText\)/);
   assert.match(panel, /setCopyState\(success \? COPY_STATE\.SUCCESS : COPY_STATE\.FAILURE\)/);
   assert.match(panel, /payloadFirstLine = packetText\.split/);
-  assert.match(panel, /OperatorProofConcierge\.copyDiagnosticPacket/);
+  assert.doesNotMatch(panel, /OperatorProofConcierge\.copyDiagnosticPacket/);
   assert.match(panel, /OperatorProofConcierge\.copyPacket/);
   const handler = panel.slice(panel.indexOf('const handleCopyConciergePacket'), panel.indexOf('return (', panel.indexOf('const handleCopyConciergePacket')));
   assert.doesNotMatch(handler, /submitPrompt|Execute|runAiButlerAction|autoDispatch|unlockOpenClaw|setPanelState|merge/i);

@@ -65,11 +65,11 @@ test('CockpitPanel visible Concierge primary button is wired to canonical Concie
   assert.match(source, /cockpitProjection\.operatorProofConcierge\.copyPacket\?\.label/);
   assert.match(source, /data-concierge-visible-primary-button-label=/);
   assert.match(source, /data-concierge-visible-primary-button-source=/);
-  assert.match(source, /shouldRenderOperatorProofConciergeDiagnostic\(cockpitProjection\.operatorProofConcierge\) \? <details/);
-  assert.match(source, /canonicalPrimaryAvailable/);
-  assert.match(source, /detailsExpanded !== true/);
-  assert.match(source, /data-concierge-button-role="diagnostic-copy"/);
-  assert.match(source, /data-cockpit-debug-collapsed-default="yes" data-testid="operator-proof-concierge-diagnostic-drilldown"/);
-  assert.match(source, /Diagnostics\/details — diagnostic packet/);
+  assert.match(source, /data-proof-concierge-render-source="cockpit-canonical-copy-packet"/);
+  assert.match(source, /data-proof-concierge-primary-source="OperatorProofConcierge.copyPacket"/);
+  assert.match(source, /Proof packet unavailable/);
+  assert.doesNotMatch(source, /data-concierge-button-role="diagnostic-copy"/);
+  assert.doesNotMatch(source, /operator-proof-concierge-diagnostic-drilldown/);
+  assert.doesNotMatch(source, /Diagnostics\/details — diagnostic packet/);
   assert.doesNotMatch(source, /Copy proof-state diagnostic packet<\/button>/);
 });
