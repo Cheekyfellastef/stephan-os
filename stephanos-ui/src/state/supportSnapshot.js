@@ -125,6 +125,42 @@ function deriveCockpitDomProof(projection = {}) {
   };
 }
 
+
+function deriveProofConciergeDomProof(projection = {}) {
+  const doc = globalThis.document;
+  const fallback = {
+    textPresent: 'no', nextProofText: 'unknown', primaryButtonText: 'unknown', primaryButtonTestId: 'unknown', primaryButtonSourceAttr: 'unknown', diagnosticButtonPresent: 'no', diagnosticButtonText: 'none', domProjectionDriftDetected: 'unknown', domProjectionDriftReason: 'live-dom-unavailable',
+  };
+  if (!doc?.querySelector) return fallback;
+  const card = doc.querySelector('[data-testid="operator-proof-concierge"]');
+  const text = (node, fallbackValue = 'unknown') => asText(node?.textContent, fallbackValue);
+  const attr = (node, name, fallbackValue = 'unknown') => asText(node?.getAttribute?.(name), fallbackValue);
+  const button = card?.querySelector?.('[data-testid="operator-proof-concierge-primary-copy"], [data-concierge-button-role="primary-proof-copy"]') || null;
+  const diagnosticButton = card?.querySelector?.('[data-concierge-button-role="diagnostic-copy"], [data-testid="operator-proof-concierge-diagnostic-copy"], [data-testid="operator-proof-concierge-diagnostic-drilldown"]') || null;
+  const nextProofNode = card?.querySelector?.('[data-testid="operator-proof-concierge-next-proof"], [data-proof-concierge-field="next-proof"]') || null;
+  const nextProofText = text(nextProofNode?.querySelector?.('strong') || nextProofNode, card ? 'missing' : 'unknown');
+  const primaryButtonText = text(button, card ? 'missing' : 'unknown');
+  const expectedNextProof = asText(projection.operatorProofConcierge?.canonicalNextProof || projection.operatorProofConcierge?.nextProof, 'none');
+  const expectedButtonText = asText(projection.operatorProofConcierge?.canonicalCopyLabel || projection.operatorProofConcierge?.copyPacket?.label || projection.operatorProofConcierge?.visiblePrimaryButtonLabel || projection.operatorProofConcierge?.nextActionLabel, 'none');
+  const drift = [];
+  if (!card) drift.push('card:missing');
+  else {
+    if (nextProofText !== expectedNextProof) drift.push(`next-proof-text:dom=${nextProofText};projection=${expectedNextProof}`);
+    if (primaryButtonText !== expectedButtonText) drift.push(`primary-button-text:dom=${primaryButtonText};projection=${expectedButtonText}`);
+  }
+  return {
+    textPresent: card && text(card, '').length > 0 ? 'yes' : 'no',
+    nextProofText,
+    primaryButtonText,
+    primaryButtonTestId: attr(button, 'data-testid', button ? 'missing' : 'none'),
+    primaryButtonSourceAttr: attr(button, 'data-concierge-visible-primary-button-source', button ? 'missing' : 'none'),
+    diagnosticButtonPresent: diagnosticButton ? 'yes' : 'no',
+    diagnosticButtonText: diagnosticButton ? text(diagnosticButton, 'missing') : 'none',
+    domProjectionDriftDetected: drift.length ? 'yes' : 'no',
+    domProjectionDriftReason: drift.length ? drift.join('|') : 'none',
+  };
+}
+
 function isDefaultWorkbenchMetadataValue(key = '', value = '') {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (!normalized) return true;
@@ -2108,6 +2144,7 @@ export function buildSupportSnapshot({
   const operatorCockpitRenderSignature = cockpitRenderSignature(operatorCockpitProjection);
   const cockpitDomProof = deriveCockpitDomProof(operatorCockpitProjection);
   const operatorProofConcierge = operatorCockpitProjection.operatorProofConcierge || {};
+  const proofConciergeDomProof = deriveProofConciergeDomProof(operatorCockpitProjection);
   const missionExecutivePlan = operatorCockpitProjection.missionExecutivePlan || {};
   const missionExecutivePlannerLastCopy = globalThis.window?.__STEPHANOS_MISSION_EXECUTIVE_PLANNER_LAST_COPY__ || missionExecutivePlan.missionExecutivePlannerLastCopyResult || 'none';
   const operatorProofConciergeLastCopy = globalThis.window?.__STEPHANOS_OPERATOR_PROOF_CONCIERGE_LAST_COPY__ || operatorProofConcierge.lastCopyResult || 'none';
@@ -2958,6 +2995,15 @@ export function buildSupportSnapshot({
     `Proof Concierge Canonical Next Proof: ${asText(operatorProofConcierge.canonicalNextProof, 'none')}`,
     `Proof Concierge Canonical Copy Label: ${asText(operatorProofConcierge.canonicalCopyLabel, 'none')}`,
     `Proof Concierge Render/Canonical Drift Detected: ${asText(operatorProofConcierge.renderCanonicalDriftDetected, 'no')}`,
+    `Proof Concierge DOM Text Present: ${asText(proofConciergeDomProof.textPresent, 'no')}`,
+    `Proof Concierge DOM Next Proof Text: ${asText(proofConciergeDomProof.nextProofText, 'unknown')}`,
+    `Proof Concierge DOM Primary Button Text: ${asText(proofConciergeDomProof.primaryButtonText, 'unknown')}`,
+    `Proof Concierge DOM Primary Button Test ID: ${asText(proofConciergeDomProof.primaryButtonTestId, 'unknown')}`,
+    `Proof Concierge DOM Primary Button Source Attr: ${asText(proofConciergeDomProof.primaryButtonSourceAttr, 'unknown')}`,
+    `Proof Concierge DOM Diagnostic Button Present: ${asText(proofConciergeDomProof.diagnosticButtonPresent, 'no')}`,
+    `Proof Concierge DOM Diagnostic Button Text: ${asText(proofConciergeDomProof.diagnosticButtonText, 'none')}`,
+    `Proof Concierge DOM/Projection Drift Detected: ${asText(proofConciergeDomProof.domProjectionDriftDetected, 'unknown')}`,
+    `Proof Concierge DOM/Projection Drift Reason: ${asText(proofConciergeDomProof.domProjectionDriftReason, 'unknown')}`,
     `Last Copied Concierge Payload Kind: ${asText(lastConciergeCopyEvent?.payloadKind, 'none')}`,
     `Last Copied Concierge First-Line Marker: ${asText(lastConciergeCopyEvent?.payloadFirstLine, 'none')}`,
     `Last clicked Concierge button role: ${asText(lastConciergeCopyEvent?.buttonRole, 'none')}`,
