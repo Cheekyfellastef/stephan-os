@@ -5188,6 +5188,62 @@ test('Support Snapshot reads Operator Proof Concierge visible DOM text and confi
   }
 });
 
+
+test('Support Snapshot reports Proof Concierge cockpit clone parity across multiple visible instances', () => {
+  const previousDocument = globalThis.document;
+  const makeCard = (instanceId, paneId, component) => {
+    const button = { textContent: 'Copy build-proof packet', getAttribute(name) { if (name === 'data-testid') return 'operator-proof-concierge-primary-copy'; if (name === 'data-concierge-visible-primary-button-source') return 'OperatorProofConcierge.copyPacket'; return null; }, querySelector() { return null; } };
+    const strong = { textContent: 'build-proof', getAttribute() { return null; }, querySelector() { return null; } };
+    const next = { textContent: 'Next proof build-proof', getAttribute() { return null; }, querySelector(selector) { return selector === 'strong' ? strong : null; } };
+    return {
+      textContent: 'Operator Proof Concierge Next proof build-proof Copy build-proof packet',
+      hidden: false,
+      getAttribute(name) {
+        if (name === 'data-proof-concierge-instance-id') return instanceId;
+        if (name === 'data-proof-concierge-pane-id') return paneId;
+        if (name === 'data-proof-concierge-source-component') return component;
+        if (name === 'data-proof-concierge-source-projection-key') return 'operatorProofConcierge.copyPacket';
+        if (name === 'data-proof-concierge-instance-visible') return 'yes';
+        if (name === 'data-testid') return 'operator-proof-concierge';
+        return null;
+      },
+      querySelector(selector) { if (selector.includes('primary-copy') || selector.includes('primary-proof-copy')) return button; if (selector.includes('next-proof')) return next; return null; },
+    };
+  };
+  const cards = [makeCard('landing-shortcut-proof-concierge', 'landing', 'CockpitTile.ProofConciergeShortcut'), makeCard('cockpit-panel-proof-concierge', 'cockpitPanel', 'CockpitPanel.OperatorProofConcierge'), makeCard('ai-core-proof-concierge', 'aiCorePane', 'AICoreCockpitCard.OperatorProofConcierge')];
+  globalThis.document = { querySelector(selector) { return selector === '[data-testid="operator-proof-concierge"]' ? cards[0] : null; }, querySelectorAll(selector) { return selector.includes('operator-proof-concierge') || selector.includes('data-proof-concierge-instance') ? cards : []; } };
+  try {
+    const snapshot = buildSupportSnapshot({ runtimeStatus: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof'] } } });
+    assert.match(snapshot, /Proof Concierge Cockpit Clone Count: 3/);
+    assert.match(snapshot, /Proof Concierge Cockpit Clone Parity Status: OK/);
+    assert.match(snapshot, /Proof Concierge Visible Instance IDs: landing-shortcut-proof-concierge\|cockpit-panel-proof-concierge\|ai-core-proof-concierge/);
+    assert.match(snapshot, /Proof Concierge DOM\/Projection Drift Detected: no/);
+    assert.match(snapshot, /Proof Concierge Diagnostic Copy Button Present In Cockpit Cards: no/);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
+test('Support Snapshot fails clone parity when a visible cockpit clone renders diagnostic proof copy while build proof is missing', () => {
+  const previousDocument = globalThis.document;
+  const canonicalButton = { textContent: 'Copy build-proof packet', getAttribute(name) { if (name === 'data-testid') return 'operator-proof-concierge-primary-copy'; if (name === 'data-concierge-visible-primary-button-source') return 'OperatorProofConcierge.copyPacket'; return null; }, querySelector() { return null; } };
+  const diagnosticButton = { textContent: 'Copy proof-state diagnostic packet', getAttribute(name) { if (name === 'data-testid') return 'operator-proof-concierge-primary-copy'; if (name === 'data-concierge-visible-primary-button-source') return 'OperatorProofConcierge.copyDiagnosticPacket'; return null; }, querySelector() { return null; } };
+  const makeNext = (value) => ({ textContent: `Next proof ${value}`, getAttribute() { return null; }, querySelector(selector) { return selector === 'strong' ? { textContent: value, getAttribute() { return null; }, querySelector() { return null; } } : null; } });
+  const makeCard = (id, button, next) => ({ textContent: `Operator Proof Concierge Next proof ${next} ${button.textContent}`, hidden: false, getAttribute(name) { if (name === 'data-proof-concierge-instance-id') return id; if (name === 'data-proof-concierge-pane-id') return id.includes('legacy') ? 'operatorReliefPane' : 'cockpitPanel'; if (name === 'data-proof-concierge-source-component') return id.includes('legacy') ? 'OperatorReliefLegacyCockpitCard' : 'CockpitPanel.OperatorProofConcierge'; if (name === 'data-proof-concierge-source-projection-key') return id.includes('legacy') ? 'operatorProofConcierge.copyDiagnosticPacket' : 'operatorProofConcierge.copyPacket'; if (name === 'data-proof-concierge-instance-visible') return 'yes'; return null; }, querySelector(selector) { if (selector.includes('primary-copy') || selector.includes('primary-proof-copy') || selector.includes('copyDiagnosticPacket')) return button; if (selector.includes('diagnostic-copy') && button === diagnosticButton) return button; if (selector.includes('next-proof')) return makeNext(next); return null; } });
+  const cards = [makeCard('cockpit-panel-proof-concierge', canonicalButton, 'build-proof'), makeCard('legacy-proof-concierge', diagnosticButton, 'proof-state-reconciliation')];
+  globalThis.document = { querySelector(selector) { return selector === '[data-testid="operator-proof-concierge"]' ? cards[0] : null; }, querySelectorAll(selector) { return selector.includes('operator-proof-concierge') || selector.includes('data-proof-concierge-instance') ? cards : []; } };
+  try {
+    const snapshot = buildSupportSnapshot({ runtimeStatus: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof'] } } });
+    assert.match(snapshot, /Proof Concierge Cockpit Clone Count: 2/);
+    assert.match(snapshot, /Proof Concierge Cockpit Clone Parity Status: FAIL/);
+    assert.match(snapshot, /Proof Concierge Diagnostic Copy Button Present In Cockpit Cards: yes/);
+    assert.match(snapshot, /Proof Concierge DOM\/Projection Drift Reason: .*legacy-proof-concierge:next-proof-text:dom=proof-state-reconciliation;projection=build-proof/);
+    assert.match(snapshot, /Proof Concierge DOM\/Projection Drift Reason: .*diagnostic-copy-visible:legacy-proof-concierge/);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
 test('Support Snapshot detects Operator Proof Concierge DOM projection drift and names failing fields', () => {
   const previousDocument = globalThis.document;
   const button = { textContent: 'Copy proof-state diagnostic packet', getAttribute(name) { return name === 'data-testid' ? 'operator-proof-concierge-primary-copy' : name === 'data-concierge-visible-primary-button-source' ? 'OperatorProofConcierge.copyDiagnosticPacket' : null; }, querySelector() { return null; } };

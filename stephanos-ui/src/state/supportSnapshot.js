@@ -130,34 +130,74 @@ function deriveProofConciergeDomProof(projection = {}) {
   const doc = globalThis.document;
   const fallback = {
     textPresent: 'no', nextProofText: 'unknown', primaryButtonText: 'unknown', primaryButtonTestId: 'unknown', primaryButtonSourceAttr: 'unknown', diagnosticButtonPresent: 'no', diagnosticButtonText: 'none', domProjectionDriftDetected: 'unknown', domProjectionDriftReason: 'live-dom-unavailable',
+    cloneCount: '0', cloneParityStatus: 'UNKNOWN', sampledInstanceId: 'none', sampledPaneId: 'none', sampledSourceComponent: 'none', sampledSourceProjectionKey: 'none', visibleInstanceIds: 'none', cloneTrace: 'none', diagnosticCopyButtonPresentInCockpitCards: 'unknown', operatorFacingDiagnosticCopyPresent: 'unknown', visibleInstanceCanonicalActionStatus: 'unknown', sampledInstanceIsCanonical: 'unknown', sampledInstanceVisible: 'unknown', visibleInstanceDriftDetected: 'unknown', visibleInstanceDriftReason: 'live-dom-unavailable',
   };
   if (!doc?.querySelector) return fallback;
-  const card = doc.querySelector('[data-testid="operator-proof-concierge"]');
   const text = (node, fallbackValue = 'unknown') => asText(node?.textContent, fallbackValue);
   const attr = (node, name, fallbackValue = 'unknown') => asText(node?.getAttribute?.(name), fallbackValue);
-  const button = card?.querySelector?.('[data-testid="operator-proof-concierge-primary-copy"], [data-concierge-button-role="primary-proof-copy"]') || null;
-  const diagnosticButton = card?.querySelector?.('[data-concierge-button-role="diagnostic-copy"], [data-testid="operator-proof-concierge-diagnostic-copy"], [data-testid="operator-proof-concierge-diagnostic-drilldown"]') || null;
-  const nextProofNode = card?.querySelector?.('[data-testid="operator-proof-concierge-next-proof"], [data-proof-concierge-field="next-proof"]') || null;
-  const nextProofText = text(nextProofNode?.querySelector?.('strong') || nextProofNode, card ? 'missing' : 'unknown');
-  const primaryButtonText = text(button, card ? 'missing' : 'unknown');
+  const visible = (node) => !!node && !(node.hidden || node.getAttribute?.('aria-hidden') === 'true') && attr(node, 'data-proof-concierge-instance-visible', 'yes') !== 'no';
+  const queryAll = (selector) => Array.from(doc.querySelectorAll?.(selector) || []);
+  const cards = queryAll('[data-testid="operator-proof-concierge"], [data-proof-concierge-instance="yes"]');
+  const legacyCard = !cards.length ? doc.querySelector('[data-testid="operator-proof-concierge"]') : null;
+  if (legacyCard) cards.push(legacyCard);
   const expectedNextProof = asText(projection.operatorProofConcierge?.canonicalNextProof || projection.operatorProofConcierge?.nextProof, 'none');
   const expectedButtonText = asText(projection.operatorProofConcierge?.canonicalCopyLabel || projection.operatorProofConcierge?.copyPacket?.label || projection.operatorProofConcierge?.visiblePrimaryButtonLabel || projection.operatorProofConcierge?.nextActionLabel, 'none');
-  const drift = [];
-  if (!card) drift.push('card:missing');
-  else {
+  const expectedButtonSource = asText(projection.operatorProofConcierge?.copyPacket?.source || projection.operatorProofConcierge?.visiblePrimaryButtonSource, 'OperatorProofConcierge.copyPacket');
+  const inspect = (card, index) => {
+    const button = card?.querySelector?.('[data-testid="operator-proof-concierge-primary-copy"], [data-concierge-button-role="primary-proof-copy"]') || null;
+    const diagnosticButton = card?.querySelector?.('[data-concierge-button-role="diagnostic-copy"], [data-testid="operator-proof-concierge-diagnostic-copy"], [data-testid="operator-proof-concierge-diagnostic-drilldown"]') || null;
+    const nextProofNode = card?.querySelector?.('[data-testid="operator-proof-concierge-next-proof"], [data-proof-concierge-field="next-proof"]') || null;
+    const nextProofText = text(nextProofNode?.querySelector?.('strong') || nextProofNode, card ? 'missing' : 'unknown');
+    const primaryButtonText = button ? text(button, 'missing') : 'none';
+    const primaryButtonSourceAttr = attr(button, 'data-concierge-visible-primary-button-source', button ? 'missing' : 'none');
+    const instanceId = attr(card, 'data-proof-concierge-instance-id', `legacy-${index + 1}`);
+    const paneId = attr(card, 'data-proof-concierge-pane-id', attr(card, 'data-cockpit-surface', 'unknown'));
+    const sourceComponent = attr(card, 'data-proof-concierge-source-component', attr(card, 'data-proof-concierge-render-owner', 'unknown'));
+    const sourceProjectionKey = attr(card, 'data-proof-concierge-source-projection-key', 'operatorProofConcierge.copyPacket');
+    const isCanonical = sourceProjectionKey === 'operatorProofConcierge.copyPacket' && primaryButtonSourceAttr !== 'OperatorProofConcierge.copyDiagnosticPacket';
+    const isVisible = visible(card);
+    const drift = [];
     if (nextProofText !== expectedNextProof) drift.push(`next-proof-text:dom=${nextProofText};projection=${expectedNextProof}`);
-    if (primaryButtonText !== expectedButtonText) drift.push(`primary-button-text:dom=${primaryButtonText};projection=${expectedButtonText}`);
-  }
+    if (button && primaryButtonText !== expectedButtonText) drift.push(`primary-button-text:dom=${primaryButtonText};projection=${expectedButtonText}`);
+    if (button && primaryButtonSourceAttr !== expectedButtonSource) drift.push(`primary-button-source:dom=${primaryButtonSourceAttr};projection=${expectedButtonSource}`);
+    if (isVisible && !button && sourceProjectionKey === 'operatorProofConcierge.copyPacket') drift.push('primary-button:missing-on-canonical-instance');
+    return { card, button, diagnosticButton, nextProofText, primaryButtonText, primaryButtonTestId: attr(button, 'data-testid', button ? 'missing' : 'none'), primaryButtonSourceAttr, instanceId, paneId, sourceComponent, sourceProjectionKey, isCanonical, isVisible, drift };
+  };
+  const instances = cards.map(inspect);
+  const visibleInstances = instances.filter((i) => i.isVisible);
+  const sampled = visibleInstances[0] || instances[0] || null;
+  const drift = [];
+  if (!sampled) drift.push('card:missing');
+  for (const i of visibleInstances) drift.push(...i.drift.map((reason) => `${i.instanceId}:${reason}`));
+  const diagnosticVisible = visibleInstances.filter((i) => i.diagnosticButton || i.primaryButtonSourceAttr === 'OperatorProofConcierge.copyDiagnosticPacket' || /proof-state diagnostic|proof-state-reconciliation/i.test(`${i.primaryButtonText} ${i.nextProofText}`));
+  if (diagnosticVisible.length) drift.push(`diagnostic-copy-visible:${diagnosticVisible.map((i) => i.instanceId).join(',')}`);
+  const trace = instances.map((i) => `${i.instanceId}{pane=${i.paneId};component=${i.sourceComponent};projection=${i.sourceProjectionKey};next=${i.nextProofText};button=${i.primaryButtonText};source=${i.primaryButtonSourceAttr};visible=${i.isVisible ? 'yes' : 'no'}}`).join(' | ') || 'none';
+  const cloneParityOk = visibleInstances.length > 0 && drift.length === 0 && diagnosticVisible.length === 0;
   return {
-    textPresent: card && text(card, '').length > 0 ? 'yes' : 'no',
-    nextProofText,
-    primaryButtonText,
-    primaryButtonTestId: attr(button, 'data-testid', button ? 'missing' : 'none'),
-    primaryButtonSourceAttr: attr(button, 'data-concierge-visible-primary-button-source', button ? 'missing' : 'none'),
-    diagnosticButtonPresent: diagnosticButton ? 'yes' : 'no',
-    diagnosticButtonText: diagnosticButton ? text(diagnosticButton, 'missing') : 'none',
+    textPresent: sampled && text(sampled.card, '').length > 0 ? 'yes' : 'no',
+    nextProofText: sampled?.nextProofText || 'unknown',
+    primaryButtonText: sampled?.primaryButtonText || 'unknown',
+    primaryButtonTestId: sampled?.primaryButtonTestId || 'unknown',
+    primaryButtonSourceAttr: sampled?.primaryButtonSourceAttr || 'unknown',
+    diagnosticButtonPresent: sampled?.diagnosticButton ? 'yes' : 'no',
+    diagnosticButtonText: sampled?.diagnosticButton ? text(sampled.diagnosticButton, 'missing') : 'none',
     domProjectionDriftDetected: drift.length ? 'yes' : 'no',
     domProjectionDriftReason: drift.length ? drift.join('|') : 'none',
+    cloneCount: String(instances.length),
+    cloneParityStatus: cloneParityOk ? 'OK' : (instances.length ? 'FAIL' : 'UNKNOWN'),
+    sampledInstanceId: sampled?.instanceId || 'none',
+    sampledPaneId: sampled?.paneId || 'none',
+    sampledSourceComponent: sampled?.sourceComponent || 'none',
+    sampledSourceProjectionKey: sampled?.sourceProjectionKey || 'none',
+    visibleInstanceIds: visibleInstances.map((i) => i.instanceId).join('|') || 'none',
+    cloneTrace: trace,
+    diagnosticCopyButtonPresentInCockpitCards: diagnosticVisible.length ? 'yes' : 'no',
+    operatorFacingDiagnosticCopyPresent: diagnosticVisible.length ? 'yes' : 'no',
+    visibleInstanceCanonicalActionStatus: visibleInstances.every((i) => i.isCanonical || !i.button) ? 'OK' : 'FAIL',
+    sampledInstanceIsCanonical: sampled?.isCanonical ? 'yes' : 'no',
+    sampledInstanceVisible: sampled?.isVisible ? 'yes' : 'no',
+    visibleInstanceDriftDetected: drift.length ? 'yes' : 'no',
+    visibleInstanceDriftReason: drift.length ? drift.join('|') : 'none',
   };
 }
 
@@ -2995,6 +3035,21 @@ export function buildSupportSnapshot({
     `Proof Concierge Canonical Next Proof: ${asText(operatorProofConcierge.canonicalNextProof, 'none')}`,
     `Proof Concierge Canonical Copy Label: ${asText(operatorProofConcierge.canonicalCopyLabel, 'none')}`,
     `Proof Concierge Render/Canonical Drift Detected: ${asText(operatorProofConcierge.renderCanonicalDriftDetected, 'no')}`,
+    `Proof Concierge Cockpit Clone Count: ${asText(proofConciergeDomProof.cloneCount, '0')}`,
+    `Proof Concierge Cockpit Clone Parity Status: ${asText(proofConciergeDomProof.cloneParityStatus, 'UNKNOWN')}`,
+    `Proof Concierge Sampled Instance ID: ${asText(proofConciergeDomProof.sampledInstanceId, 'none')}`,
+    `Proof Concierge Sampled Pane ID: ${asText(proofConciergeDomProof.sampledPaneId, 'none')}`,
+    `Proof Concierge Sampled Source Component: ${asText(proofConciergeDomProof.sampledSourceComponent, 'none')}`,
+    `Proof Concierge Sampled Source Projection Key: ${asText(proofConciergeDomProof.sampledSourceProjectionKey, 'none')}`,
+    `Proof Concierge Visible Instance IDs: ${asText(proofConciergeDomProof.visibleInstanceIds, 'none')}`,
+    `Proof Concierge Clone Trace: ${asText(proofConciergeDomProof.cloneTrace, 'none')}`,
+    `Proof Concierge Diagnostic Copy Button Present In Cockpit Cards: ${asText(proofConciergeDomProof.diagnosticCopyButtonPresentInCockpitCards, 'unknown')}`,
+    `Proof Concierge Operator-Facing Diagnostic Copy Present: ${asText(proofConciergeDomProof.operatorFacingDiagnosticCopyPresent, 'unknown')}`,
+    `Proof Concierge Visible Instance Canonical Action Status: ${asText(proofConciergeDomProof.visibleInstanceCanonicalActionStatus, 'unknown')}`,
+    `Proof Concierge Sampled Instance Is Canonical: ${asText(proofConciergeDomProof.sampledInstanceIsCanonical, 'unknown')}`,
+    `Proof Concierge Sampled Instance Visible: ${asText(proofConciergeDomProof.sampledInstanceVisible, 'unknown')}`,
+    `Proof Concierge Visible Instance Drift Detected: ${asText(proofConciergeDomProof.visibleInstanceDriftDetected, 'unknown')}`,
+    `Proof Concierge Visible Instance Drift Reason: ${asText(proofConciergeDomProof.visibleInstanceDriftReason, 'unknown')}`,
     `Proof Concierge DOM Text Present: ${asText(proofConciergeDomProof.textPresent, 'no')}`,
     `Proof Concierge DOM Next Proof Text: ${asText(proofConciergeDomProof.nextProofText, 'unknown')}`,
     `Proof Concierge DOM Primary Button Text: ${asText(proofConciergeDomProof.primaryButtonText, 'unknown')}`,
