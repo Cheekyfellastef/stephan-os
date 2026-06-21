@@ -5146,3 +5146,61 @@ test('support snapshot exposes Command Deck diagnostic proof-state review fields
   assert.match(snapshot, /Command Deck Executive Voice Uses Canonical State: yes/);
   assert.match(snapshot, /Command Deck Executive Voice Mutation Allowed: no/);
 });
+
+test('Support Snapshot reads Operator Proof Concierge visible DOM text and confirms projection match', () => {
+  const previousDocument = globalThis.document;
+  const button = {
+    textContent: 'Copy build-proof packet',
+    getAttribute(name) {
+      if (name === 'data-testid') return 'operator-proof-concierge-primary-copy';
+      if (name === 'data-concierge-visible-primary-button-source') return 'OperatorProofConcierge.copyPacket';
+      return null;
+    },
+    querySelector() { return null; },
+  };
+  const nextProofStrong = { textContent: 'build-proof', getAttribute() { return null; }, querySelector() { return null; } };
+  const nextProof = {
+    textContent: 'Next proof build-proof',
+    getAttribute(name) { return name === 'data-testid' ? 'operator-proof-concierge-next-proof' : null; },
+    querySelector(selector) { return selector === 'strong' ? nextProofStrong : null; },
+  };
+  const card = {
+    textContent: 'Operator Proof Concierge Next proof build-proof Copy build-proof packet',
+    getAttribute(name) { return name === 'data-testid' ? 'operator-proof-concierge' : null; },
+    querySelector(selector) {
+      if (selector.includes('operator-proof-concierge-primary-copy') || selector.includes('primary-proof-copy')) return button;
+      if (selector.includes('operator-proof-concierge-next-proof') || selector.includes('next-proof')) return nextProof;
+      return null;
+    },
+  };
+  globalThis.document = { querySelector(selector) { return selector === '[data-testid="operator-proof-concierge"]' ? card : null; } };
+  try {
+    const snapshot = buildSupportSnapshot({ runtimeStatus: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof'] } } });
+    assert.match(snapshot, /Proof Concierge DOM Text Present: yes/);
+    assert.match(snapshot, /Proof Concierge DOM Next Proof Text: build-proof/);
+    assert.match(snapshot, /Proof Concierge DOM Primary Button Text: Copy build-proof packet/);
+    assert.match(snapshot, /Proof Concierge DOM Primary Button Test ID: operator-proof-concierge-primary-copy/);
+    assert.match(snapshot, /Proof Concierge DOM Primary Button Source Attr: OperatorProofConcierge\.copyPacket/);
+    assert.match(snapshot, /Proof Concierge DOM Diagnostic Button Present: no/);
+    assert.match(snapshot, /Proof Concierge DOM\/Projection Drift Detected: no/);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
+test('Support Snapshot detects Operator Proof Concierge DOM projection drift and names failing fields', () => {
+  const previousDocument = globalThis.document;
+  const button = { textContent: 'Copy proof-state diagnostic packet', getAttribute(name) { return name === 'data-testid' ? 'operator-proof-concierge-primary-copy' : name === 'data-concierge-visible-primary-button-source' ? 'OperatorProofConcierge.copyDiagnosticPacket' : null; }, querySelector() { return null; } };
+  const nextProofStrong = { textContent: 'proof-state-reconciliation', getAttribute() { return null; }, querySelector() { return null; } };
+  const nextProof = { textContent: 'Next proof proof-state-reconciliation', getAttribute() { return null; }, querySelector(selector) { return selector === 'strong' ? nextProofStrong : null; } };
+  const card = { textContent: 'Operator Proof Concierge Next proof proof-state-reconciliation Copy proof-state diagnostic packet', getAttribute() { return null; }, querySelector(selector) { if (selector.includes('primary-copy') || selector.includes('primary-proof-copy')) return button; if (selector.includes('next-proof')) return nextProof; return null; } };
+  globalThis.document = { querySelector(selector) { return selector === '[data-testid="operator-proof-concierge"]' ? card : null; } };
+  try {
+    const snapshot = buildSupportSnapshot({ runtimeStatus: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof'] } } });
+    assert.match(snapshot, /Proof Concierge DOM\/Projection Drift Detected: yes/);
+    assert.match(snapshot, /Proof Concierge DOM\/Projection Drift Reason: .*next-proof-text:dom=proof-state-reconciliation;projection=build-proof/);
+    assert.match(snapshot, /Proof Concierge DOM\/Projection Drift Reason: .*primary-button-text:dom=Copy proof-state diagnostic packet;projection=Copy build-proof packet/);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
