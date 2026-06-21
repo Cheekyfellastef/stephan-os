@@ -2,6 +2,13 @@ function text(v, f = '') { const s = String(v ?? '').trim(); return s || f; }
 function list(v) { return Array.isArray(v) ? v.map((x) => text(x)).filter(Boolean) : String(v || '').split('|').map((x) => text(x)).filter(Boolean); }
 function unique(v) { return Array.from(new Set(list(v))); }
 function normProof(v) { return text(v).replace(/^missing-/, '').replace(/-missing$/, '').replace(/^browser-proof$/, 'browser-proof-checklist').replace(/^build$/, 'build-proof').replace(/^verify$/, 'verify-proof'); }
+function firstNonEmptyList(...values) {
+  for (const value of values) {
+    const normalized = unique(value).map(normProof).filter(Boolean);
+    if (normalized.length) return normalized;
+  }
+  return [];
+}
 function yes(v) { return v === true || text(v).toLowerCase() === 'yes'; }
 
 
@@ -194,8 +201,8 @@ export function buildMissionExecutivePlan(input = {}) {
 
 export function buildOperatorProofConciergeProjection(input = {}) {
   const reconciliation = firstObject(input.missionProofReconciliation, input.reconciliation);
-  const accepted = unique(reconciliation.acceptedItems || reconciliation.acceptedProof || input.acceptedProof).map(normProof);
-  const missing = unique(reconciliation.remainingMissingItems || reconciliation.missingProof || input.missingProof).map(normProof).filter(Boolean);
+  const accepted = firstNonEmptyList(reconciliation.acceptedItems, reconciliation.acceptedProof, input.acceptedProof);
+  const missing = firstNonEmptyList(reconciliation.remainingMissingItems, reconciliation.missingProof, input.missingProof);
   const missingSet = new Set(missing);
   const nextProof = PROOF_ORDER.find((proof) => missingSet.has(proof)) || missing[0] || '';
   const mergeSafety = input.mergeSafety || 'no / hold';
@@ -298,9 +305,16 @@ export function buildCockpitProjection(input = {}) {
   const realityResearchBrief = buildRealityResearchBrief(intentIntake, operatorContextModel);
   const missionCompiler = buildMissionCompilerPacket(intentIntake, realityResearchBrief, operatorContextModel);
 
-  const acceptedProof = unique(reconciliation.acceptedItems || reconciliation.acceptedProof || ledger.acceptedProof).map(normProof);
-  const missingSource = reconciliation.remainingMissingItems || reconciliation.missingProof || ledger.missingProof || ledger.missingProofSummary || arl.missingProof || arl.supportSnapshotFields?.agent_reality_loop_missing_proof_summary || packetBay.missingProof;
-  const missingProof = unique(missingSource).map(normProof).filter(Boolean);
+  const acceptedProof = firstNonEmptyList(reconciliation.acceptedItems, reconciliation.acceptedProof, ledger.acceptedProof);
+  const missingProof = firstNonEmptyList(
+    reconciliation.remainingMissingItems,
+    reconciliation.missingProof,
+    ledger.missingProof,
+    ledger.missingProofSummary,
+    arl.missingProof,
+    arl.supportSnapshotFields?.agent_reality_loop_missing_proof_summary,
+    packetBay.missingProof,
+  );
   const nextProofToCollect = missingProof[0] || text(ledger.nextRequiredEvidence, 'operator-review');
   const mergeReadiness = text(prEvidence.mergeReadiness || runtime.prEvidenceMergeReadiness || arl.mergeRecommendation || ledger.mergeReadiness, 'hold').toLowerCase();
   const mergeSafe = ['merge-candidate', 'ready', 'safe', 'already-merged'].includes(mergeReadiness) && missingProof.length === 0 && (ledger.trustedForMerge === true || yes(runtime.trustedForMerge));
