@@ -66,3 +66,65 @@ test('CockpitPanel rendered Operator Proof Concierge shows build-proof primary p
     await server.close();
   }
 });
+
+
+test('CockpitPanel Operator Proof Concierge ignores stale diagnostic projection fields in a mixed input', async () => {
+  installBrowserStubs();
+  const server = await createServer({ root: 'stephanos-ui', logLevel: 'silent', server: { middlewareMode: true }, appType: 'custom' });
+  try {
+    const { default: CockpitPanel } = await server.ssrLoadModule('/src/components/CockpitPanel.jsx');
+    const { AIStoreProvider } = await server.ssrLoadModule('/src/state/aiStore.js');
+    const { buildCockpitProjection } = await server.ssrLoadModule('/src/state/cockpitProjection.js');
+    const cockpitProjectionOverride = buildCockpitProjection({
+      runtimeStatusModel: {
+        mergeSafety: 'no / hold',
+        missionProofReconciliation: {
+          acceptedItems: ['mission-console-bridge'],
+          remainingMissingItems: ['build-proof', 'verify-proof'],
+        },
+      },
+    });
+
+    cockpitProjectionOverride.operatorProofConcierge = {
+      ...cockpitProjectionOverride.operatorProofConcierge,
+      nextProof: 'build-proof',
+      packetText: 'Proof-state diagnostic packet.\nPacket Kind: proof-state-reconciliation',
+      renderedNextProof: 'proof-state-reconciliation',
+      renderedCopyLabel: 'Copy proof-state diagnostic packet',
+      visiblePrimaryButtonLabel: 'Copy proof-state diagnostic packet',
+      visiblePrimaryButtonSource: 'OperatorProofConcierge.copyDiagnosticPacket',
+      copyDiagnosticPacket: {
+        available: 'yes',
+        label: 'Copy proof-state diagnostic packet',
+        packetKind: 'proof-state-diagnostic',
+        payload: 'Proof-state diagnostic packet.\nPacket Kind: proof-state-reconciliation',
+        packetText: 'Proof-state diagnostic packet.\nPacket Kind: proof-state-reconciliation',
+        source: 'OperatorProofConcierge.copyDiagnosticPacket',
+      },
+      copyPacket: {
+        ...cockpitProjectionOverride.operatorProofConcierge.copyPacket,
+        label: 'Copy build-proof packet',
+        source: 'OperatorProofConcierge.copyPacket',
+        payload: cockpitProjectionOverride.operatorProofConcierge.copyPacket.payload,
+      },
+    };
+
+    const html = renderToStaticMarkup(React.createElement(
+      AIStoreProvider,
+      null,
+      React.createElement(CockpitPanel, { forceOpen: true, standalone: true, cockpitProjectionOverride }),
+    ));
+
+    const cardStart = html.indexOf('data-proof-concierge-instance-id="cockpit-panel-proof-concierge"');
+    assert.notEqual(cardStart, -1);
+    const card = html.slice(cardStart, html.indexOf('cockpit-route-topology', cardStart));
+    assert.match(card, /Next proof[\s\S]*build-proof/);
+    assert.match(card, /Copy build-proof packet/);
+    assert.match(card, /data-concierge-visible-primary-button-source="OperatorProofConcierge.copyPacket"/);
+    assert.doesNotMatch(card, /proof-state-reconciliation/);
+    assert.doesNotMatch(card, /Copy proof-state diagnostic packet/);
+    assert.doesNotMatch(card, /OperatorProofConcierge\.copyDiagnosticPacket/);
+  } finally {
+    await server.close();
+  }
+});

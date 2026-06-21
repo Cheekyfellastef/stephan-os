@@ -227,6 +227,7 @@ export function buildOperatorProofConciergeProjection(input = {}) {
     label: actionLabel,
     packetKind,
     packetText,
+    payload: packetText,
     source: contradictionDetected ? 'OperatorProofConcierge.copyDiagnosticPacket' : 'OperatorProofConcierge.copyPacket',
   };
   const openClawLocked = input.openClawMutationLockState === 'locked' || input.openClawMutationLocked !== false;
