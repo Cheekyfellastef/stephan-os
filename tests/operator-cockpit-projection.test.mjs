@@ -242,7 +242,7 @@ test('Operator Proof Concierge render branch prefers canonical missing build pro
   const cardStart = panel.indexOf('<CockpitCard className="operator-proof-concierge"');
   const card = panel.slice(cardStart, panel.indexOf('</CockpitCard>', cardStart));
   assert.match(card, /data-testid="operator-proof-concierge-primary-copy"/);
-  assert.match(card, /proofStateContradictionDetected === 'yes'/);
+  assert.match(card, /shouldRenderOperatorProofConciergeDiagnostic\(cockpitProjection\.operatorProofConcierge\)/);
   assert.doesNotMatch(card, /Copy proof-state diagnostic packet/);
 });
 
