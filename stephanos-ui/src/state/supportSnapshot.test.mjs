@@ -5095,6 +5095,14 @@ test('Support Snapshot exposes Operator Proof Concierge contradiction diagnostic
   assert.match(snapshot, /Operator Proof Concierge Contradiction Reason:/);
   assert.match(snapshot, /Operator Proof Concierge Visible Primary Button Label:/);
   assert.match(snapshot, /Operator Proof Concierge Visible Primary Button Source:/);
+  assert.match(snapshot, /Proof Concierge Render Owner:/);
+  assert.match(snapshot, /Proof Concierge Render Source File:/);
+  assert.match(snapshot, /Proof Concierge Render Branch:/);
+  assert.match(snapshot, /Proof Concierge Rendered Next Proof:/);
+  assert.match(snapshot, /Proof Concierge Rendered Copy Label:/);
+  assert.match(snapshot, /Proof Concierge Canonical Next Proof:/);
+  assert.match(snapshot, /Proof Concierge Canonical Copy Label:/);
+  assert.match(snapshot, /Proof Concierge Render\/Canonical Drift Detected:/);
   assert.match(snapshot, /Mission Proof Accepted Items:/);
   assert.match(snapshot, /Mission Proof Remaining Missing Items:/);
   assert.match(snapshot, /Mission Proof Next Best Action:/);

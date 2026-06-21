@@ -211,6 +211,9 @@ export function buildOperatorProofConciergeProjection(input = {}) {
   const packetText = proofPacketFor(effectiveNextProof);
   const actionLabel = nextProof ? (nextProof === 'browser-proof-checklist' ? 'Copy browser proof checklist' : nextProof === 'pr-evidence' ? 'Copy PR evidence packet' : nextProof === 'source-pack-output' ? 'Copy source-pack output packet' : `Copy ${nextProof} packet`) : (contradictionDetected ? 'Copy proof-state diagnostic packet' : 'Review proof state');
   const packetKind = effectiveNextProof || 'none';
+  const canonicalNextProof = nextProof || 'none';
+  const canonicalCopyLabel = nextProof ? actionLabel : 'Review proof state';
+  const renderBranch = contradictionDetected ? 'proof-state-diagnostic' : (nextProof ? 'canonical-copy-packet' : 'no-proof-packet');
   const diagnosticPacketText = proofPacketFor('proof-state-reconciliation');
   const diagnosticPacket = {
     available: contradictionDetected && diagnosticPacketText ? 'yes' : 'no',
@@ -240,6 +243,14 @@ export function buildOperatorProofConciergeProjection(input = {}) {
     copyPacket: primaryPacket,
     visiblePrimaryButtonLabel: primaryPacket.label,
     visiblePrimaryButtonSource: primaryPacket.source,
+    renderOwner: 'CockpitPanel.OperatorProofConcierge',
+    renderSourceFile: 'stephanos-ui/src/components/CockpitPanel.jsx',
+    renderBranch,
+    renderedNextProof: effectiveNextProof || 'none',
+    renderedCopyLabel: primaryPacket.label,
+    canonicalNextProof,
+    canonicalCopyLabel,
+    renderCanonicalDriftDetected: (effectiveNextProof || 'none') !== canonicalNextProof || primaryPacket.label !== canonicalCopyLabel ? 'yes' : 'no',
     copyDiagnosticPacket: diagnosticPacket,
     proofStateContradictionDetected: contradictionDetected ? 'yes' : 'no',
     contradictionReason: contradictionDetected ? 'Merge is hold but missing proof is none; reconcile mission proof state, merge blockers, PR evidence, and source-pack output.' : 'none',
