@@ -210,6 +210,42 @@ test('Operator Proof Concierge generates source-pack packet after PR evidence', 
 
 
 
+
+test('Operator Proof Concierge render branch prefers canonical missing build proof over stale empty reconciliation', async () => {
+  const p = buildCockpitProjection({
+    runtimeStatusModel: {
+      missionProofReconciliation: {
+        acceptedItems: ['mission-console-bridge'],
+        remainingMissingItems: [],
+      },
+      operatorReliefProjection: {
+        missionProofReconciliation: {
+          acceptedItems: ['mission-console-bridge'],
+          remainingMissingItems: ['build-proof', 'verify-proof'],
+        },
+        missionEvidenceLedgerProjection: { trustedForMerge: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false },
+        agentRealityLoopProjection: { mergeRecommendation: 'hold', openClawMutationLocked: true },
+      },
+      prEvidenceModel: { mergeReadiness: 'hold' },
+    },
+  });
+
+  assert.equal(p.operatorProofConcierge.proofStateContradictionDetected, 'no');
+  assert.equal(p.operatorProofConcierge.nextProof, 'build-proof');
+  assert.equal(p.operatorProofConcierge.visiblePrimaryButtonLabel, 'Copy build-proof packet');
+  assert.equal(p.operatorProofConcierge.visiblePrimaryButtonSource, 'OperatorProofConcierge.copyPacket');
+  assert.equal(p.operatorProofConcierge.copyPacket.packetKind, 'build-proof');
+  assert.equal(p.operatorProofConcierge.copyDiagnosticPacket.available, 'no');
+  assert.doesNotMatch(p.operatorProofConcierge.packetText, /Proof-state diagnostic packet|proof-state-reconciliation|Copy proof-state diagnostic packet/i);
+
+  const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  const cardStart = panel.indexOf('<CockpitCard className="operator-proof-concierge"');
+  const card = panel.slice(cardStart, panel.indexOf('</CockpitCard>', cardStart));
+  assert.match(card, /data-testid="operator-proof-concierge-primary-copy"/);
+  assert.match(card, /proofStateContradictionDetected === 'yes'/);
+  assert.doesNotMatch(card, /Copy proof-state diagnostic packet/);
+});
+
 test('Operator Proof Concierge generates diagnostic packet when merge hold has no missing proof', () => {
   const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], remainingMissingItems: [] }, missionEvidenceLedgerProjection: { trustedForMerge: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false }, prEvidenceModel: { mergeReadiness: 'hold' } } });
   assert.equal(p.operatorProofConcierge.status, 'blocked');

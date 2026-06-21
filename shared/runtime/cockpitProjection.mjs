@@ -305,6 +305,15 @@ export function buildMissionCompilerPacket(intent = {}, researchBrief = buildRea
 
 function firstObject(...values) { return values.find((v) => v && typeof v === 'object') || {}; }
 
+function proofListFrom(reconciliation = {}) {
+  return firstNonEmptyList(reconciliation.remainingMissingItems, reconciliation.missingProof);
+}
+
+function selectMissionProofReconciliation(...values) {
+  const candidates = values.filter((v) => v && typeof v === 'object');
+  return candidates.find((candidate) => proofListFrom(candidate).length > 0) || candidates[0] || {};
+}
+
 export const COCKPIT_PROJECTION_FIELDS = Object.freeze([
   'currentMission','currentStatus','operatorContextModel','operatorProofConcierge','intentIntake','missionCompiler','realityResearchBrief','missionExecutivePlan','acceptedProof','missingProof','missingProofCount','cockpitActionStatus','cockpitPrimaryActionLabel','cockpitPrimaryActionTargetSurface','cockpitPrimaryActionTargetPaneId','cockpitPrimaryActionTargetPacketId','cockpitPrimaryActionKind','cockpitPrimaryActionReason','cockpitSecondaryActions','cockpitActionMutationAllowed','cockpitActionRequiresOperatorApproval','cockpitActionSource','nextBestAction','mergeSafety','whoShouldActNext','recommendedPacket','recommendedSurface','openClawMutationLockState','codexMutationLockState','lastCommandDeckIntakeResult','evidenceIntakeState','latestCommandDeckIntakeClassification','packetBayRecommendation','arlRecommendation','mergeReadiness','mergeBlockers','nextProofToCollect','debugDrilldown'
 ]);
@@ -312,7 +321,7 @@ export const COCKPIT_PROJECTION_FIELDS = Object.freeze([
 export function buildCockpitProjection(input = {}) {
   const runtime = input.runtimeStatusModel || input.runtimeStatus || input.project?.runtimeStatusModel || {};
   const relief = firstObject(runtime.operatorReliefProjection, input.operatorReliefProjection);
-  const reconciliation = firstObject(runtime.missionProofReconciliation, relief.missionProofReconciliation, input.missionProofReconciliation);
+  const reconciliation = selectMissionProofReconciliation(runtime.missionProofReconciliation, relief.missionProofReconciliation, input.missionProofReconciliation);
   const ledger = firstObject(runtime.missionEvidenceLedgerProjection, relief.missionEvidenceLedgerProjection, input.missionEvidenceLedgerProjection);
   const awareness = firstObject(runtime.projectAwarenessProjection, relief.projectAwarenessProjection, input.projectAwarenessProjection);
   const arl = firstObject(runtime.agentRealityLoopProjection, relief.agentRealityLoopProjection, input.agentRealityLoopProjection);
