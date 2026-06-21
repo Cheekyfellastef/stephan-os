@@ -52,6 +52,11 @@ test('CockpitPanel rendered Operator Proof Concierge shows build-proof primary p
     assert.match(card, /Copy build-proof packet/);
     assert.match(card, /data-concierge-visible-primary-button-label="Copy build-proof packet"/);
     assert.match(card, /data-concierge-visible-primary-button-source="OperatorProofConcierge.copyPacket"/);
+    assert.match(card, /data-proof-concierge-render-owner="CockpitPanel\.OperatorProofConcierge"/);
+    assert.match(card, /data-proof-concierge-render-source-file="stephanos-ui\/src\/components\/CockpitPanel\.jsx"/);
+    assert.match(card, /data-proof-concierge-render-branch="canonical-copy-packet"/);
+    assert.match(card, /data-proof-concierge-next-proof-rendered="build-proof"/);
+    assert.match(card, /data-proof-concierge-copy-label-rendered="Copy build-proof packet"/);
     assert.match(card, /data-proof-concierge-render-source="cockpit-canonical-copy-packet"/);
     assert.match(card, /data-proof-concierge-primary-source="OperatorProofConcierge.copyPacket"/);
     assert.doesNotMatch(card, /Copy proof-state diagnostic packet/);
