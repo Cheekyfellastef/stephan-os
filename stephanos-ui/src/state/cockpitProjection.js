@@ -213,7 +213,7 @@ export function buildOperatorProofConciergeProjection(input = {}) {
   const packetKind = effectiveNextProof || 'none';
   const diagnosticPacketText = proofPacketFor('proof-state-reconciliation');
   const diagnosticPacket = {
-    available: diagnosticPacketText ? 'yes' : 'no',
+    available: contradictionDetected && diagnosticPacketText ? 'yes' : 'no',
     label: 'Copy diagnostic packet',
     packetKind: 'proof-state-diagnostic',
     packetText: diagnosticPacketText,

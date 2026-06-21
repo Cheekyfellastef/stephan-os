@@ -30,6 +30,7 @@ test('operator-facing Proof Concierge uses canonical build-proof when stale reco
   assert.equal(projection.operatorProofConcierge.visiblePrimaryButtonLabel, 'Copy build-proof packet');
   assert.equal(projection.operatorProofConcierge.visiblePrimaryButtonSource, 'OperatorProofConcierge.copyPacket');
   assert.equal(projection.operatorProofConcierge.copyDiagnosticPacket.label, 'Copy diagnostic packet');
+  assert.equal(projection.operatorProofConcierge.copyDiagnosticPacket.available, 'no');
 });
 
 test('Proof Concierge diagnostic primary action is not shown when contradiction is false', () => {
@@ -50,16 +51,23 @@ test('Proof Concierge diagnostic primary action is not shown when contradiction 
   assert.equal(projection.operatorProofConcierge.visiblePrimaryButtonLabel, 'Copy build-proof packet');
   assert.equal(projection.operatorProofConcierge.visiblePrimaryButtonSource, 'OperatorProofConcierge.copyPacket');
   assert.notEqual(projection.operatorProofConcierge.copyDiagnosticPacket.source, projection.operatorProofConcierge.visiblePrimaryButtonSource);
+  assert.equal(projection.operatorProofConcierge.copyDiagnosticPacket.available, 'no');
 });
 
 test('CockpitPanel visible Concierge primary button is wired to canonical Concierge projection copy action', () => {
   const source = readFileSync(new URL('../components/CockpitPanel.jsx', import.meta.url), 'utf8');
-  assert.match(source, /data-testid="operator-proof-concierge-copy"/);
+  assert.match(source, /data-testid="operator-proof-concierge-primary-copy"/);
   assert.match(source, /onClick=\{handleCopyConciergePacket\}/);
+  assert.match(source, /data-concierge-button-role="primary-proof-copy"/);
+  assert.match(source, /buttonRole: 'primary-proof-copy'/);
+  assert.match(source, /buttonTestId: 'operator-proof-concierge-primary-copy'/);
+  assert.match(source, /source: 'OperatorProofConcierge\.copyPacket'/);
   assert.match(source, /cockpitProjection\.operatorProofConcierge\.copyPacket\?\.label/);
   assert.match(source, /data-concierge-visible-primary-button-label=/);
   assert.match(source, /data-concierge-visible-primary-button-source=/);
-  assert.match(source, /copyDiagnosticPacket\?\.available === 'yes' \? <details/);
+  assert.match(source, /proofStateContradictionDetected === 'yes' && cockpitProjection\.operatorProofConcierge\.copyDiagnosticPacket\?\.available === 'yes' \? <details/);
+  assert.match(source, /detailsExpanded !== true/);
+  assert.match(source, /data-concierge-button-role="diagnostic-copy"/);
   assert.match(source, /data-cockpit-debug-collapsed-default="yes" data-testid="operator-proof-concierge-diagnostic-drilldown"/);
   assert.match(source, /Diagnostics\/details — diagnostic packet/);
   assert.doesNotMatch(source, /Copy proof-state diagnostic packet<\/button>/);
