@@ -6,17 +6,22 @@ import {
   autoPublishDistWithDeps,
   canAutoPublishDist,
   checkpointAndRemoveTransientRootData,
+  captureDivergenceRecoveryPacket,
   classifyIgnitionDirtPath,
   classifyPublicationTruth,
+  classifySourceUpdateTruth,
   collectApprovedTrackedGeneratedRestorePaths,
   collectRuntimeStatePaths,
+  evaluateDistFreshnessAgainstOrigin,
   evaluateGitPublicationTruthWithDeps,
   evaluateGitStatusForIgnition,
+  ensureLocalStaticServerRestartWithDeps,
   isGitWorkingTreeClean,
   isMainModule,
   moveRootOpenClawWorkspaceDirt,
   resolveIgnitionMode,
   runGitPullPreflightWithDeps,
+  runApprovedLocalMergeRecoveryWithDeps,
   resolveStepExecution,
   runIgnitionHousekeep,
   shouldAutoPublishDist,
@@ -94,6 +99,8 @@ test('preflight housekeeping works without shell cp on Windows-style environment
       if (label === 'git-branch') return { stdout: 'main\n', stderr: '' };
       if (label === 'git-upstream') return { stdout: 'origin/main\n', stderr: '' };
       if (label === 'git-ahead-behind') return { stdout: '0\t0\n', stderr: '' };
+      if (label === 'git-current-commit') return { stdout: 'abc1234\n', stderr: '' };
+      if (label === 'git-origin-main-commit') return { stdout: 'abc1234\n', stderr: '' };
       throw new Error(`unexpected capture label: ${label}`);
     },
     runStepFn: (label, command) => {
@@ -111,6 +118,309 @@ test('preflight housekeeping works without shell cp on Windows-style environment
   assert.ok(steps.some((step) => step.label === 'git-pull-ff-only'));
   assert.ok(steps.every((step) => step.command !== 'cp'));
   assert.ok(steps.every((step) => step.command !== 'rm'));
+});
+
+test('source update truth blocks ff-only divergent branches with repair packet', () => {
+  const status = classifySourceUpdateTruth({
+    currentCommit: 'local123',
+    originMainCommit: 'remote456',
+    aheadCount: 1,
+    behindCount: 1,
+    upstreamBranch: 'origin/main',
+  });
+
+  assert.equal(status.ignitionStatus, 'BLOCKED');
+  assert.equal(status.reason, 'ff-only-divergence');
+  assert.equal(status.currentCommit, 'local123');
+  assert.equal(status.originMainCommit, 'remote456');
+  assert.equal(status.safetyLocks.autoMerge, false);
+  assert.equal(status.safetyLocks.codexAutoDispatch, false);
+  assert.match(status.nextSafeAction, /--approve-local-merge/);
+});
+
+test('dist freshness blocks served dist built from older commit than origin/main', () => {
+  const status = evaluateDistFreshnessAgainstOrigin({
+    distMetadata: {
+      gitCommit: 'old111',
+      sourceFingerprint: 'fingerprint-1',
+      buildTimestamp: '2026-06-22T00:00:00.000Z',
+    },
+    currentCommit: 'old111',
+    originMainCommit: 'new222',
+  });
+
+  assert.equal(status.ignitionStatus, 'BLOCKED');
+  assert.equal(status.reason, 'dist-built-from-commit-older-than-origin-main');
+  assert.equal(status.servedCommit, 'old111');
+  assert.equal(status.expectedSourceCommit, 'new222');
+  assert.match(status.nextSafeAction, /Fast-forward to origin\/main/);
+});
+
+test('build verify success status keeps safety locks closed and recommends serving current dist', () => {
+  const status = evaluateDistFreshnessAgainstOrigin({
+    distMetadata: {
+      gitCommit: 'abc1234',
+      sourceFingerprint: 'fingerprint-current',
+      buildTimestamp: '2026-06-22T00:00:00.000Z',
+    },
+    currentCommit: 'abc1234',
+    originMainCommit: 'abc1234',
+  });
+
+  assert.equal(status.ignitionStatus, 'READY');
+  assert.equal(status.reason, 'dist-source-commit-current');
+  assert.equal(status.servedCommit, 'abc1234');
+  assert.equal(status.expectedSourceCommit, 'abc1234');
+  assert.equal(status.sourceFingerprint, 'fingerprint-current');
+  assert.match(status.nextSafeAction, /serve may continue after verify/);
+});
+
+test('default divergence stops with recovery packet listing local and remote commits', () => {
+  const packet = captureDivergenceRecoveryPacket({
+    currentCommit: 'local999',
+    originMainCommit: 'remote888',
+    captureStep: (label) => {
+      if (label === 'git-local-only-commits') return { stdout: 'aaa111 Refresh dist\n', stderr: '' };
+      if (label === 'git-remote-only-commits') return { stdout: 'bbb222 Fix source\n', stderr: '' };
+      if (label === 'git-local-only-paths') return { stdout: 'apps/stephanos/dist/index.html\napps/stephanos/dist/stephanos-build.json\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+  });
+
+  assert.equal(packet.ignitionStatus, 'BLOCKED');
+  assert.equal(packet.reason, 'ff-only-divergence');
+  assert.equal(packet.currentCommit, 'local999');
+  assert.equal(packet.originMainCommit, 'remote888');
+  assert.deepEqual(packet.localOnlyCommits, ['aaa111 Refresh dist']);
+  assert.deepEqual(packet.remoteOnlyCommits, ['bbb222 Fix source']);
+  assert.equal(packet.localOnlyDistOnly, true);
+  assert.match(packet.nextSafeAction, /--approve-local-merge/);
+});
+
+test('approved local merge succeeds when local-only commits are generated dist only', () => {
+  const steps = [];
+  const result = runApprovedLocalMergeRecoveryWithDeps({
+    currentCommit: 'local999',
+    originMainCommit: 'remote888',
+    captureStep: (label) => {
+      if (label === 'git-local-only-commits') return { stdout: 'aaa111 Refresh dist\n', stderr: '' };
+      if (label === 'git-remote-only-commits') return { stdout: 'bbb222 Fix source\n', stderr: '' };
+      if (label === 'git-local-only-paths') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      if (label === 'git-staged-after-regenerated-dist') return { stdout: 'apps/stephanos/dist/index.html\napps/stephanos/dist/stephanos-build.json\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label, command, commandArgs) => {
+      steps.push({ label, command, commandArgs });
+    },
+    removePath: (path) => steps.push({ label: 'remove-generated-dist', command: 'fs.rm', commandArgs: [path] }),
+  });
+
+  assert.equal(result.ignitionStatus, 'READY');
+  assert.equal(result.recoveryApplied, true);
+  assert.equal(result.restartRequired, true);
+  assert.ok(steps.some((step) => step.label === 'git-merge-origin-main-approved'));
+  assert.ok(steps.some((step) => step.label === 'build-approved-local-merge'));
+  assert.ok(steps.some((step) => step.label === 'verify-approved-local-merge'));
+  assert.ok(steps.some((step) => step.label === 'git-commit-regenerated-dist'));
+});
+
+test('approved local merge refuses non-dist local-only changes', () => {
+  assert.throws(
+    () => runApprovedLocalMergeRecoveryWithDeps({
+      currentCommit: 'local999',
+      originMainCommit: 'remote888',
+      captureStep: (label) => {
+        if (label === 'git-local-only-commits') return { stdout: 'aaa111 Change source\n', stderr: '' };
+        if (label === 'git-remote-only-commits') return { stdout: 'bbb222 Fix source\n', stderr: '' };
+        if (label === 'git-local-only-paths') return { stdout: 'stephanos-ui/src/App.jsx\napps/stephanos/dist/index.html\n', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: () => {
+        throw new Error('mutation should not run');
+      },
+    }),
+    /local-only commits to touch only apps\/stephanos\/dist/
+  );
+});
+
+test('generated dist conflict is resolved by rebuild instead of hand edit', () => {
+  const steps = [];
+  runApprovedLocalMergeRecoveryWithDeps({
+    currentCommit: 'local999',
+    originMainCommit: 'remote888',
+    captureStep: (label) => {
+      if (label === 'git-local-only-commits') return { stdout: 'aaa111 Refresh dist\n', stderr: '' };
+      if (label === 'git-remote-only-commits') return { stdout: 'bbb222 Fix source\n', stderr: '' };
+      if (label === 'git-local-only-paths') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      if (label === 'git-unmerged-conflict-paths') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      if (label === 'git-staged-after-regenerated-dist') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label, command, commandArgs) => {
+      steps.push({ label, command, commandArgs });
+      if (label === 'git-merge-origin-main-approved') {
+        throw new Error('merge conflict');
+      }
+    },
+    removePath: (path) => steps.push({ label: 'remove-generated-dist', command: 'fs.rm', commandArgs: [path] }),
+  });
+
+  assert.ok(steps.some((step) => step.label === 'remove-generated-dist' && step.commandArgs[0] === 'apps/stephanos/dist'));
+  assert.ok(steps.some((step) => step.label === 'build-approved-local-merge'));
+  assert.ok(steps.every((step) => step.label !== 'manual-edit-conflict'));
+});
+
+test('static server restart reports start when 4173 server is not running', async () => {
+  const logs = [];
+  const report = await ensureLocalStaticServerRestartWithDeps({
+    expectedMetadata: {
+      runtimeMarker: 'marker-current',
+      gitCommit: 'abc1234',
+      buildTimestamp: '2026-06-22T00:00:00.000Z',
+      sourceFingerprint: 'fingerprint-current',
+    },
+    fetchFn: async () => {
+      throw new Error('not running');
+    },
+    log: (message) => logs.push(message),
+  });
+
+  assert.equal(report.previousServerStatus, 'not-running');
+  assert.equal(report.serverStopped, false);
+  assert.equal(report.serverStarted, true);
+  assert.equal(report.servedUrl, 'http://127.0.0.1:4173/');
+  assert.match(logs.join('\n'), /static-server-restart/);
+});
+
+test('static server restart stops old dist server before start handoff', async () => {
+  const calls = [];
+  const report = await ensureLocalStaticServerRestartWithDeps({
+    expectedMetadata: {
+      runtimeMarker: 'marker-current',
+      gitCommit: 'new222',
+      buildTimestamp: '2026-06-22T00:00:00.000Z',
+      sourceFingerprint: 'fingerprint-current',
+    },
+    fetchFn: async (url, options = {}) => {
+      calls.push({ url: String(url), method: options.method || 'GET' });
+      if (String(url).includes('/__stephanos/health')) {
+        return {
+          ok: true,
+          json: async () => ({
+            runtimeMarker: 'marker-old',
+            gitCommit: 'old111',
+            buildTimestamp: '2026-06-21T00:00:00.000Z',
+            sourceFingerprint: 'fingerprint-old',
+          }),
+        };
+      }
+      return { ok: true, status: 202, json: async () => ({ accepted: true }) };
+    },
+    log: () => {},
+  });
+
+  assert.equal(report.previousServerStatus, 'running');
+  assert.equal(report.serverStopped, true);
+  assert.equal(report.serverStarted, true);
+  assert.equal(report.servedCommit, 'old111');
+  assert.equal(report.servedRuntimeMatchesExpectedDistMetadata, false);
+  assert.ok(calls.some((call) => call.method === 'POST' && call.url.includes('/__stephanos/restart')));
+});
+
+test('static server restart failure returns blocked repair packet behavior', async () => {
+  await assert.rejects(
+    () => ensureLocalStaticServerRestartWithDeps({
+      expectedMetadata: {
+        runtimeMarker: 'marker-current',
+        gitCommit: 'new222',
+        buildTimestamp: '2026-06-22T00:00:00.000Z',
+        sourceFingerprint: 'fingerprint-current',
+      },
+      fetchFn: async (url) => {
+        if (String(url).includes('/__stephanos/health')) {
+          return {
+            ok: true,
+            json: async () => ({
+              runtimeMarker: 'marker-old',
+              gitCommit: 'old111',
+              buildTimestamp: '2026-06-21T00:00:00.000Z',
+              sourceFingerprint: 'fingerprint-old',
+            }),
+          };
+        }
+        return { ok: false, status: 500 };
+      },
+      log: () => {},
+    }),
+    /static-server-restart-failed/
+  );
+});
+
+test('served metadata mismatch blocks with repair packet when post-start verification runs', async () => {
+  let healthCalls = 0;
+  await assert.rejects(
+    () => ensureLocalStaticServerRestartWithDeps({
+      expectedMetadata: {
+        runtimeMarker: 'marker-current',
+        gitCommit: 'new222',
+        buildTimestamp: '2026-06-22T00:00:00.000Z',
+        sourceFingerprint: 'fingerprint-current',
+      },
+      verifyServedAfterStart: true,
+      fetchFn: async (url) => {
+        if (String(url).includes('/__stephanos/health')) {
+          healthCalls += 1;
+          return {
+            ok: true,
+            json: async () => ({
+              runtimeMarker: 'marker-old',
+              gitCommit: 'old111',
+              buildTimestamp: '2026-06-21T00:00:00.000Z',
+              sourceFingerprint: 'fingerprint-old',
+            }),
+          };
+        }
+        return { ok: true, status: 202 };
+      },
+      log: () => {},
+    }),
+    /served-runtime-metadata-mismatch/
+  );
+
+  assert.equal(healthCalls, 2);
+});
+
+test('approved local merge recovery still hands off to static server restart helper', async () => {
+  const steps = [];
+  const recovery = runApprovedLocalMergeRecoveryWithDeps({
+    currentCommit: 'local999',
+    originMainCommit: 'remote888',
+    captureStep: (label) => {
+      if (label === 'git-local-only-commits') return { stdout: 'aaa111 Refresh dist\n', stderr: '' };
+      if (label === 'git-remote-only-commits') return { stdout: 'bbb222 Fix source\n', stderr: '' };
+      if (label === 'git-local-only-paths') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      if (label === 'git-staged-after-regenerated-dist') return { stdout: 'apps/stephanos/dist/index.html\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label) => steps.push(label),
+  });
+  const restart = await ensureLocalStaticServerRestartWithDeps({
+    expectedMetadata: {
+      runtimeMarker: 'marker-current',
+      gitCommit: 'new222',
+      buildTimestamp: '2026-06-22T00:00:00.000Z',
+      sourceFingerprint: 'fingerprint-current',
+    },
+    fetchFn: async () => {
+      throw new Error('not running');
+    },
+    log: () => {},
+  });
+
+  assert.equal(recovery.recoveryApplied, true);
+  assert.equal(recovery.restartRequired, true);
+  assert.equal(restart.serverStarted, true);
+  assert.ok(steps.includes('verify-approved-local-merge'));
 });
 
 test('server runtime data path is classified as runtime-state not transient root data', () => {

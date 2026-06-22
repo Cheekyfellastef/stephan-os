@@ -192,6 +192,7 @@ function buildHealthPayload() {
     runtimeMarker: buildMetadata?.runtimeMarker || null,
     gitCommit: buildMetadata?.gitCommit || null,
     buildTimestamp: buildMetadata?.buildTimestamp || null,
+    sourceFingerprint: buildMetadata?.sourceFingerprint || null,
     launcherStatus: readRuntimeStatus(),
     ignitionRestart: {
       supported: ignitionRestartState.supported,
