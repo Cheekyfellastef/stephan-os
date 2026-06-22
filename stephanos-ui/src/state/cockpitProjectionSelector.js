@@ -38,6 +38,16 @@ export function buildCanonicalCockpitProjectionRuntimeStatus(runtimeStatus = {})
   const evidenceReturnIntakeProjection = firstObject(runtimeStatus?.operatorReliefProjection?.evidenceReturnIntakeProjection, runtimeStatus?.runtimeContext?.operatorReliefProjection?.evidenceReturnIntakeProjection, runtimeStatus?.missionState?.operatorReliefProjection?.evidenceReturnIntakeProjection)
     || deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary: deriveMissionEvidenceContextSummary(missionEvidenceLedgerProjection), packetBayProjection, missionProofReconciliation, operatorPastedIntakeText: executionMetadata?.command_deck_universal_intake_echo || '', builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
   missionProofReconciliation = buildMissionProofReconciliation({ missionConsoleDiagnostics, supportSnapshot: runtimeStatus || {}, missionVerification: runtimeStatus?.missionVerification || {}, prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {}, uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' }, openClawSourcePackRunner: liveBuilderWorkbench(runtimeStatus)?.openClawSourcePackRunner || {}, evidenceReturnIntakeProjection });
+  const providedReconciliation = firstObject(runtimeStatus?.operatorReliefProjection?.missionProofReconciliation, runtimeStatus?.missionProofReconciliation);
+  if (Array.isArray(providedReconciliation?.remainingMissingItems) && providedReconciliation.remainingMissingItems.length > 0) {
+    missionProofReconciliation = {
+      ...missionProofReconciliation,
+      ...providedReconciliation,
+      acceptedItems: providedReconciliation.acceptedItems || missionProofReconciliation.acceptedItems,
+      remainingMissingItems: providedReconciliation.remainingMissingItems,
+      nextBestAction: providedReconciliation.nextBestAction || missionProofReconciliation.nextBestAction,
+    };
+  }
   return {
     ...(runtimeStatus || {}),
     operatorReliefProjection: { ...(runtimeStatus?.operatorReliefProjection || {}), missionProofReconciliation, missionEvidenceLedgerProjection, packetBayProjection, projectAwarenessProjection, agentRealityLoopProjection, evidenceReturnIntakeProjection },
