@@ -543,3 +543,35 @@ test('CockpitPanel runtime dependencies include proof signature and do not rely 
   assert.match(store, /operatorReliefProjectionProofSignature/);
   assert.match(store, /operatorReliefProjectionBridge,\s*\n\s*operatorReliefProjectionProofSignature/);
 });
+
+test('Cockpit selector uses post-submit command deck proof metadata over stale runtime reconciliation', async () => {
+  const { buildCanonicalCockpitProjectionRuntimeStatus } = await import('../stephanos-ui/src/state/cockpitProjectionSelector.js');
+  const canonicalRuntime = buildCanonicalCockpitProjectionRuntimeStatus({
+    missionConsoleDiagnostics: {
+      operatorReliefBridgeProjectionKeysSeen: ['missionProofReconciliation'],
+      missionConsoleInstanceCount: 1,
+      missionConsoleBridgeParityStatus: 'OK',
+      runtimeDiagnosticsPresent: 'yes',
+      runtimeDiagnosticsDropBoundary: 'none',
+      missionConsoleVisibleInstancePublished: 'yes',
+      operatorReliefBridgePublished: 'yes',
+    },
+    missionProofReconciliation: {
+      acceptedItems: ['mission-console-bridge'],
+      remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'],
+    },
+    runtimeContext: {
+      lastExecutionMetadata: {
+        command_deck_universal_intake_routed_to: 'evidence-return-intake',
+        command_deck_universal_intake_accepted_proof_items: 'build-proof',
+        command_deck_cumulative_accepted_proof_items: 'mission-console-bridge|build-proof',
+      },
+    },
+  });
+  const p = buildCockpitProjection({ runtimeStatusModel: canonicalRuntime });
+  assert.deepEqual(canonicalRuntime.missionProofReconciliation.acceptedItems, ['mission-console-bridge', 'build-proof']);
+  assert.deepEqual(canonicalRuntime.missionProofReconciliation.remainingMissingItems, ['verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output']);
+  assert.equal(p.operatorProofConcierge.nextProof, 'verify-proof');
+  assert.equal(p.operatorProofConcierge.visiblePrimaryButtonLabel, 'Copy verify-proof packet');
+  assert.match(p.operatorProofConcierge.proofSignature, /mission-console-bridge\|build-proof :: verify-proof\|browser-proof-checklist\|pr-evidence\|source-pack-output :: verify-proof/);
+});

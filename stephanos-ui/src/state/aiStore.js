@@ -114,6 +114,17 @@ import {
 
 const AIStoreContext = createContext(null);
 
+function executionMetadataProofSignature(metadata = {}) {
+  if (!metadata || typeof metadata !== 'object') return 'none';
+  return [
+    metadata.command_deck_universal_intake_routed_to,
+    metadata.command_deck_universal_intake_accepted_proof_items,
+    metadata.command_deck_universal_intake_rejected_proof_items,
+    metadata.command_deck_cumulative_accepted_proof_items || metadata.command_deck_proof_session_accepted_items,
+    metadata.command_deck_cumulative_rejected_proof_items || metadata.command_deck_proof_session_rejected_items,
+  ].map((value) => String(value || 'none').trim() || 'none').join(' :: ');
+}
+
 function listProofSignature(value) {
   if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean).join('|') || 'none';
   return String(value || '').split('|').map((item) => item.trim()).filter(Boolean).join('|') || 'none';
@@ -1260,6 +1271,7 @@ export function AIStoreProvider({ children }) {
     operatorReliefProjectionBridge?.projection,
     apiStatus?.runtimeContext?.operatorReliefProjection,
   );
+  const commandDeckProofMetadataSignature = executionMetadataProofSignature(lastExecutionMetadata);
   const runtimeStatusModel = useMemo(() => runStartupStage('runtimeStatusModel initialization', () => ensureRuntimeStatusModel(createRuntimeStatusModel({
     appId: 'stephanos',
     appName: 'Stephanos Mission Console',
@@ -1307,6 +1319,7 @@ export function AIStoreProvider({ children }) {
         lastUpdatedAt: hostedIdeaStagingQueue?.lastUpdatedAt || '',
       },
       hostedCloudConfig: normalizeHostedCloudCognitionSettings(hostedCloudCognition),
+      lastExecutionMetadata: lastExecutionMetadata || null,
     },
     activeProviderHint: lastExecutionMetadata?.actual_provider_used || '',
   })), { sourceFunction: 'AIStoreProvider.runtimeStatusModel.useMemo' }), [
@@ -1318,6 +1331,7 @@ export function AIStoreProvider({ children }) {
     fallbackEnabled,
     fallbackOrder,
     lastExecutionMetadata?.actual_provider_used,
+    commandDeckProofMetadataSignature,
     provider,
     providerHealth,
     routeMode,
@@ -1333,6 +1347,7 @@ export function AIStoreProvider({ children }) {
     hostedIdeaStagingQueue,
     hostedCloudCognition,
     operatorReliefProjectionBridge,
+    operatorReliefProjectionProofSignature,
   ]);
   const bridgeValidationTruth = useMemo(() => resolveBridgeValidationTruth({
     runtimeStatusModel,
