@@ -131,6 +131,7 @@ function deriveProofConciergeDomProof(projection = {}) {
   const fallback = {
     textPresent: 'no', nextProofText: 'unknown', primaryButtonText: 'unknown', primaryButtonTestId: 'unknown', primaryButtonSourceAttr: 'unknown', diagnosticButtonPresent: 'no', diagnosticButtonText: 'none', domProjectionDriftDetected: 'unknown', domProjectionDriftReason: 'live-dom-unavailable',
     cloneCount: '0', cloneParityStatus: 'UNKNOWN', sampledInstanceId: 'none', sampledPaneId: 'none', sampledSourceComponent: 'none', sampledSourceProjectionKey: 'none', visibleInstanceIds: 'none', cloneTrace: 'none', diagnosticCopyButtonPresentInCockpitCards: 'unknown', operatorFacingDiagnosticCopyPresent: 'unknown', visibleInstanceCanonicalActionStatus: 'unknown', sampledInstanceIsCanonical: 'unknown', sampledInstanceVisible: 'unknown', visibleInstanceDriftDetected: 'unknown', visibleInstanceDriftReason: 'live-dom-unavailable',
+    initialRenderNextProof: 'unknown', initialRenderCopyLabel: 'unknown', postHydrationCurrentDomNextProof: 'unknown', postHydrationCurrentDomCopyLabel: 'unknown', lastWriterSource: 'unknown',
   };
   if (!doc?.querySelector) return fallback;
   const text = (node, fallbackValue = 'unknown') => asText(node?.textContent, fallbackValue);
@@ -154,6 +155,11 @@ function deriveProofConciergeDomProof(projection = {}) {
     const paneId = attr(card, 'data-proof-concierge-pane-id', attr(card, 'data-cockpit-surface', 'unknown'));
     const sourceComponent = attr(card, 'data-proof-concierge-source-component', attr(card, 'data-proof-concierge-render-owner', 'unknown'));
     const sourceProjectionKey = attr(card, 'data-proof-concierge-source-projection-key', 'operatorProofConcierge.copyPacket');
+    const initialRenderNextProof = attr(card, 'data-proof-concierge-initial-render-next-proof', 'unknown');
+    const initialRenderCopyLabel = attr(card, 'data-proof-concierge-initial-render-copy-label', 'unknown');
+    const postHydrationCurrentDomNextProof = attr(card, 'data-proof-concierge-post-hydration-current-dom-next-proof', 'unknown');
+    const postHydrationCurrentDomCopyLabel = attr(card, 'data-proof-concierge-post-hydration-current-dom-copy-label', 'unknown');
+    const lastWriterSource = attr(card, 'data-proof-concierge-last-writer-source', 'unknown');
     const isCanonical = sourceProjectionKey === 'operatorProofConcierge.copyPacket' && primaryButtonSourceAttr !== 'OperatorProofConcierge.copyDiagnosticPacket';
     const isVisible = visible(card);
     const drift = [];
@@ -161,7 +167,7 @@ function deriveProofConciergeDomProof(projection = {}) {
     if (button && primaryButtonText !== expectedButtonText) drift.push(`primary-button-text:dom=${primaryButtonText};projection=${expectedButtonText}`);
     if (button && primaryButtonSourceAttr !== expectedButtonSource) drift.push(`primary-button-source:dom=${primaryButtonSourceAttr};projection=${expectedButtonSource}`);
     if (isVisible && !button && sourceProjectionKey === 'operatorProofConcierge.copyPacket') drift.push('primary-button:missing-on-canonical-instance');
-    return { card, button, diagnosticButton, nextProofText, primaryButtonText, primaryButtonTestId: attr(button, 'data-testid', button ? 'missing' : 'none'), primaryButtonSourceAttr, instanceId, paneId, sourceComponent, sourceProjectionKey, isCanonical, isVisible, drift };
+    return { card, button, diagnosticButton, nextProofText, primaryButtonText, primaryButtonTestId: attr(button, 'data-testid', button ? 'missing' : 'none'), primaryButtonSourceAttr, instanceId, paneId, sourceComponent, sourceProjectionKey, initialRenderNextProof, initialRenderCopyLabel, postHydrationCurrentDomNextProof, postHydrationCurrentDomCopyLabel, lastWriterSource, isCanonical, isVisible, drift };
   };
   const instances = cards.map(inspect);
   const visibleInstances = instances.filter((i) => i.isVisible);
@@ -179,6 +185,11 @@ function deriveProofConciergeDomProof(projection = {}) {
     primaryButtonText: sampled?.primaryButtonText || 'unknown',
     primaryButtonTestId: sampled?.primaryButtonTestId || 'unknown',
     primaryButtonSourceAttr: sampled?.primaryButtonSourceAttr || 'unknown',
+    initialRenderNextProof: sampled?.initialRenderNextProof || 'unknown',
+    initialRenderCopyLabel: sampled?.initialRenderCopyLabel || 'unknown',
+    postHydrationCurrentDomNextProof: sampled?.postHydrationCurrentDomNextProof || 'unknown',
+    postHydrationCurrentDomCopyLabel: sampled?.postHydrationCurrentDomCopyLabel || 'unknown',
+    lastWriterSource: sampled?.lastWriterSource || 'unknown',
     diagnosticButtonPresent: sampled?.diagnosticButton ? 'yes' : 'no',
     diagnosticButtonText: sampled?.diagnosticButton ? text(sampled.diagnosticButton, 'missing') : 'none',
     domProjectionDriftDetected: drift.length ? 'yes' : 'no',
@@ -3055,6 +3066,11 @@ export function buildSupportSnapshot({
     `Proof Concierge DOM Primary Button Text: ${asText(proofConciergeDomProof.primaryButtonText, 'unknown')}`,
     `Proof Concierge DOM Primary Button Test ID: ${asText(proofConciergeDomProof.primaryButtonTestId, 'unknown')}`,
     `Proof Concierge DOM Primary Button Source Attr: ${asText(proofConciergeDomProof.primaryButtonSourceAttr, 'unknown')}`,
+    `Proof Concierge Initial Render Next Proof: ${asText(proofConciergeDomProof.initialRenderNextProof, 'unknown')}`,
+    `Proof Concierge Initial Render Copy Label: ${asText(proofConciergeDomProof.initialRenderCopyLabel, 'unknown')}`,
+    `Proof Concierge Post-Hydration Current DOM Next Proof: ${asText(proofConciergeDomProof.postHydrationCurrentDomNextProof, 'unknown')}`,
+    `Proof Concierge Post-Hydration Current DOM Copy Label: ${asText(proofConciergeDomProof.postHydrationCurrentDomCopyLabel, 'unknown')}`,
+    `Proof Concierge Last Writer Source: ${asText(proofConciergeDomProof.lastWriterSource, 'unknown')}`,
     `Proof Concierge DOM Diagnostic Button Present: ${asText(proofConciergeDomProof.diagnosticButtonPresent, 'no')}`,
     `Proof Concierge DOM Diagnostic Button Text: ${asText(proofConciergeDomProof.diagnosticButtonText, 'none')}`,
     `Proof Concierge DOM/Projection Drift Detected: ${asText(proofConciergeDomProof.domProjectionDriftDetected, 'unknown')}`,
