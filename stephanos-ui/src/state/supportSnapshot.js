@@ -11,6 +11,7 @@ import { deriveMissionEvidenceLedgerProjection, deriveMissionEvidenceContextSumm
 import { deriveEvidenceReturnIntakeProjection } from './evidenceReturnIntakeModel.js';
 import { buildMissionProofReconciliation, missionProofReconciliationSupportSnapshotFields, reconciledMissionMissingProof } from './missionProofReconciliation.js';
 import { buildCockpitProjection, deriveCockpitActionModel } from './cockpitProjection.js';
+import { buildCanonicalCockpitProjectionRuntimeStatus } from './cockpitProjectionSelector.js';
 const BACKEND_HEALTH_FRESHNESS_MS = 30_000;
 
 function asText(value, fallback = 'n/a') {
@@ -131,7 +132,7 @@ function deriveProofConciergeDomProof(projection = {}) {
   const fallback = {
     textPresent: 'no', nextProofText: 'unknown', primaryButtonText: 'unknown', primaryButtonTestId: 'unknown', primaryButtonSourceAttr: 'unknown', diagnosticButtonPresent: 'no', diagnosticButtonText: 'none', domProjectionDriftDetected: 'unknown', domProjectionDriftReason: 'live-dom-unavailable',
     cloneCount: '0', cloneParityStatus: 'UNKNOWN', sampledInstanceId: 'none', sampledPaneId: 'none', sampledSourceComponent: 'none', sampledSourceProjectionKey: 'none', visibleInstanceIds: 'none', cloneTrace: 'none', diagnosticCopyButtonPresentInCockpitCards: 'unknown', operatorFacingDiagnosticCopyPresent: 'unknown', visibleInstanceCanonicalActionStatus: 'unknown', sampledInstanceIsCanonical: 'unknown', sampledInstanceVisible: 'unknown', visibleInstanceDriftDetected: 'unknown', visibleInstanceDriftReason: 'live-dom-unavailable',
-    initialRenderNextProof: 'unknown', initialRenderCopyLabel: 'unknown', postHydrationCurrentDomNextProof: 'unknown', postHydrationCurrentDomCopyLabel: 'unknown', lastWriterSource: 'unknown',
+    initialRenderNextProof: 'unknown', initialRenderCopyLabel: 'unknown', postHydrationCurrentDomNextProof: 'unknown', postHydrationCurrentDomCopyLabel: 'unknown', lastWriterSource: 'unknown', renderInputNextProof: 'unknown', renderInputCopyPacketLabel: 'unknown', renderInputCopyPacketSource: 'unknown', renderInputCopyPacketPayloadFirstLine: 'unknown', renderInputProofStateContradictionDetected: 'unknown', renderInputSourceProjectionKey: 'unknown', renderInputProofSignature: 'unknown',
   };
   if (!doc?.querySelector) return fallback;
   const text = (node, fallbackValue = 'unknown') => asText(node?.textContent, fallbackValue);
@@ -160,6 +161,13 @@ function deriveProofConciergeDomProof(projection = {}) {
     const postHydrationCurrentDomNextProof = attr(card, 'data-proof-concierge-post-hydration-current-dom-next-proof', 'unknown');
     const postHydrationCurrentDomCopyLabel = attr(card, 'data-proof-concierge-post-hydration-current-dom-copy-label', 'unknown');
     const lastWriterSource = attr(card, 'data-proof-concierge-last-writer-source', 'unknown');
+    const renderInputNextProof = attr(card, 'data-proof-concierge-render-input-next-proof', 'unknown');
+    const renderInputCopyPacketLabel = attr(card, 'data-proof-concierge-render-input-copy-packet-label', 'unknown');
+    const renderInputCopyPacketSource = attr(card, 'data-proof-concierge-render-input-copy-packet-source', 'unknown');
+    const renderInputCopyPacketPayloadFirstLine = attr(card, 'data-proof-concierge-render-input-copy-packet-payload-first-line', 'unknown');
+    const renderInputProofStateContradictionDetected = attr(card, 'data-proof-concierge-render-input-proof-state-contradiction-detected', 'unknown');
+    const renderInputSourceProjectionKey = attr(card, 'data-proof-concierge-render-input-source-projection-key', 'unknown');
+    const renderInputProofSignature = attr(card, 'data-proof-concierge-render-input-proof-signature', 'unknown');
     const isCanonical = sourceProjectionKey === 'operatorProofConcierge.copyPacket' && primaryButtonSourceAttr !== 'OperatorProofConcierge.copyDiagnosticPacket';
     const isVisible = visible(card);
     const drift = [];
@@ -167,7 +175,7 @@ function deriveProofConciergeDomProof(projection = {}) {
     if (button && primaryButtonText !== expectedButtonText) drift.push(`primary-button-text:dom=${primaryButtonText};projection=${expectedButtonText}`);
     if (button && primaryButtonSourceAttr !== expectedButtonSource) drift.push(`primary-button-source:dom=${primaryButtonSourceAttr};projection=${expectedButtonSource}`);
     if (isVisible && !button && sourceProjectionKey === 'operatorProofConcierge.copyPacket') drift.push('primary-button:missing-on-canonical-instance');
-    return { card, button, diagnosticButton, nextProofText, primaryButtonText, primaryButtonTestId: attr(button, 'data-testid', button ? 'missing' : 'none'), primaryButtonSourceAttr, instanceId, paneId, sourceComponent, sourceProjectionKey, initialRenderNextProof, initialRenderCopyLabel, postHydrationCurrentDomNextProof, postHydrationCurrentDomCopyLabel, lastWriterSource, isCanonical, isVisible, drift };
+    return { card, button, diagnosticButton, nextProofText, primaryButtonText, primaryButtonTestId: attr(button, 'data-testid', button ? 'missing' : 'none'), primaryButtonSourceAttr, instanceId, paneId, sourceComponent, sourceProjectionKey, initialRenderNextProof, initialRenderCopyLabel, postHydrationCurrentDomNextProof, postHydrationCurrentDomCopyLabel, lastWriterSource, renderInputNextProof, renderInputCopyPacketLabel, renderInputCopyPacketSource, renderInputCopyPacketPayloadFirstLine, renderInputProofStateContradictionDetected, renderInputSourceProjectionKey, renderInputProofSignature, isCanonical, isVisible, drift };
   };
   const instances = cards.map(inspect);
   const visibleInstances = instances.filter((i) => i.isVisible);
@@ -190,6 +198,13 @@ function deriveProofConciergeDomProof(projection = {}) {
     postHydrationCurrentDomNextProof: sampled?.postHydrationCurrentDomNextProof || 'unknown',
     postHydrationCurrentDomCopyLabel: sampled?.postHydrationCurrentDomCopyLabel || 'unknown',
     lastWriterSource: sampled?.lastWriterSource || 'unknown',
+    renderInputNextProof: sampled?.renderInputNextProof || 'unknown',
+    renderInputCopyPacketLabel: sampled?.renderInputCopyPacketLabel || 'unknown',
+    renderInputCopyPacketSource: sampled?.renderInputCopyPacketSource || 'unknown',
+    renderInputCopyPacketPayloadFirstLine: sampled?.renderInputCopyPacketPayloadFirstLine || 'unknown',
+    renderInputProofStateContradictionDetected: sampled?.renderInputProofStateContradictionDetected || 'unknown',
+    renderInputSourceProjectionKey: sampled?.renderInputSourceProjectionKey || 'unknown',
+    renderInputProofSignature: sampled?.renderInputProofSignature || 'unknown',
     diagnosticButtonPresent: sampled?.diagnosticButton ? 'yes' : 'no',
     diagnosticButtonText: sampled?.diagnosticButton ? text(sampled.diagnosticButton, 'missing') : 'none',
     domProjectionDriftDetected: drift.length ? 'yes' : 'no',
@@ -2169,18 +2184,10 @@ export function buildSupportSnapshot({
       packet_raw_legacy_missing_proof_summary: packetBayProjection.rawLegacyMissingProofSummary || packetBayProjection.missingProofSummary || packetBayProjection.supportSnapshotFields?.packet_missing_proof_summary || 'none',
     };
   }
-  const operatorCockpitProjection = buildCockpitProjection({
-    runtimeStatusModel: {
-      ...(runtimeStatus || {}),
-      operatorReliefProjection: {
-        ...(runtimeStatus?.operatorReliefProjection || {}),
-        missionProofReconciliation,
-        missionEvidenceLedgerProjection,
-        packetBayProjection,
-        projectAwarenessProjection: projectAwarenessRuntimeProjection,
-        agentRealityLoopProjection: liveAgentRealityLoopProjection || {},
-        evidenceReturnIntakeProjection,
-      },
+  const canonicalCockpitRuntimeStatus = buildCanonicalCockpitProjectionRuntimeStatus({
+    ...(runtimeStatus || {}),
+    operatorReliefProjection: {
+      ...(runtimeStatus?.operatorReliefProjection || {}),
       missionProofReconciliation,
       missionEvidenceLedgerProjection,
       packetBayProjection,
@@ -2188,6 +2195,15 @@ export function buildSupportSnapshot({
       agentRealityLoopProjection: liveAgentRealityLoopProjection || {},
       evidenceReturnIntakeProjection,
     },
+    missionProofReconciliation,
+    missionEvidenceLedgerProjection,
+    packetBayProjection,
+    projectAwarenessProjection: projectAwarenessRuntimeProjection,
+    agentRealityLoopProjection: liveAgentRealityLoopProjection || {},
+    evidenceReturnIntakeProjection,
+  });
+  const operatorCockpitProjection = buildCockpitProjection({
+    runtimeStatusModel: canonicalCockpitRuntimeStatus,
   });
   const operatorCockpitProjectionSourceDisplay = 'canonical cockpit projection';
   const cockpitActionModel = deriveCockpitActionModel(operatorCockpitProjection);
@@ -3071,6 +3087,13 @@ export function buildSupportSnapshot({
     `Proof Concierge Post-Hydration Current DOM Next Proof: ${asText(proofConciergeDomProof.postHydrationCurrentDomNextProof, 'unknown')}`,
     `Proof Concierge Post-Hydration Current DOM Copy Label: ${asText(proofConciergeDomProof.postHydrationCurrentDomCopyLabel, 'unknown')}`,
     `Proof Concierge Last Writer Source: ${asText(proofConciergeDomProof.lastWriterSource, 'unknown')}`,
+    `Proof Concierge Render Input Next Proof: ${asText(proofConciergeDomProof.renderInputNextProof, 'unknown')}`,
+    `Proof Concierge Render Input Copy Packet Label: ${asText(proofConciergeDomProof.renderInputCopyPacketLabel, 'unknown')}`,
+    `Proof Concierge Render Input Copy Packet Source: ${asText(proofConciergeDomProof.renderInputCopyPacketSource, 'unknown')}`,
+    `Proof Concierge Render Input Copy Packet Payload First Line: ${asText(proofConciergeDomProof.renderInputCopyPacketPayloadFirstLine, 'unknown')}`,
+    `Proof Concierge Render Input Proof State Contradiction Detected: ${asText(proofConciergeDomProof.renderInputProofStateContradictionDetected, 'unknown')}`,
+    `Proof Concierge Render Input Source Projection Key: ${asText(proofConciergeDomProof.renderInputSourceProjectionKey, 'unknown')}`,
+    `Proof Concierge Render Input Proof Signature: ${asText(proofConciergeDomProof.renderInputProofSignature, 'unknown')}`,
     `Proof Concierge DOM Diagnostic Button Present: ${asText(proofConciergeDomProof.diagnosticButtonPresent, 'no')}`,
     `Proof Concierge DOM Diagnostic Button Text: ${asText(proofConciergeDomProof.diagnosticButtonText, 'none')}`,
     `Proof Concierge DOM/Projection Drift Detected: ${asText(proofConciergeDomProof.domProjectionDriftDetected, 'unknown')}`,

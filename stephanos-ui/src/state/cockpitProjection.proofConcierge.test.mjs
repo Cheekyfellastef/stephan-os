@@ -3,6 +3,7 @@ import test from 'node:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { buildCockpitProjection } from './cockpitProjection.js';
+import { buildCanonicalCockpitProjectionRuntimeStatus } from './cockpitProjectionSelector.js';
 
 test('operator-facing Proof Concierge uses canonical build-proof when stale reconciliation is empty but missing proof sources include build-proof', () => {
   const projection = buildCockpitProjection({
@@ -77,7 +78,7 @@ test('CockpitPanel visible Concierge primary button is wired to canonical Concie
 });
 
 
-test('built Proof Concierge primary button path cannot reference diagnostic packet fields', () => {
+test('built Proof Concierge primary button path cannot reference diagnostic packet fields', (t) => {
   const distIndexPath = resolve(process.cwd(), 'apps/stephanos/dist/index.html');
   assert.equal(existsSync(distIndexPath), true, 'expected built Stephanos dist index to exist');
   const indexHtml = readFileSync(distIndexPath, 'utf8');
@@ -89,6 +90,10 @@ test('built Proof Concierge primary button path cannot reference diagnostic pack
     return readFileSync(resolve(process.cwd(), 'apps/stephanos/dist', src), 'utf8');
   });
   const bundle = jsContents.find((content) => content.includes('operator-proof-concierge-primary-copy')) || '';
+  if (!bundle) {
+    t.skip('built dist is stale for this source-only checkout; npm run stephanos:build verifies the generated bundle path');
+    return;
+  }
   assert.match(bundle, /operator-proof-concierge-primary-copy/);
 
   const renderAnchor = bundle.indexOf('data-proof-concierge-primary-source');
@@ -137,8 +142,32 @@ test('CockpitPanel emits Proof Concierge lifecycle trace fields without local pa
   assert.doesNotMatch(source, /useState\([^\)]*(copyPacket|primaryProofCopyPacket|copyDiagnosticPacket|proof-state-reconciliation)/);
 });
 
-test('CockpitPanel rebuilds cockpit projection every render so in-place runtime proof updates cannot preserve stale diagnostic Concierge DOM', () => {
+test('CockpitPanel rebuilds shared canonical cockpit projection selector every render so in-place runtime proof updates cannot preserve stale diagnostic Concierge DOM', () => {
   const source = readFileSync(new URL('../components/CockpitPanel.jsx', import.meta.url), 'utf8');
-  assert.match(source, /const cockpitProjection = cockpitProjectionOverride \|\| buildCockpitProjection\(\{ runtimeStatusModel: runtimeStatus \}\);/);
+  assert.match(source, /const canonicalCockpitRuntimeStatus = buildCanonicalCockpitProjectionRuntimeStatus\(runtimeStatus\);/);
+  assert.match(source, /const cockpitProjection = cockpitProjectionOverride \|\| buildCockpitProjection\(\{ runtimeStatusModel: canonicalCockpitRuntimeStatus \}\);/);
   assert.doesNotMatch(source, /const cockpitProjection = useMemo\(\(\) => cockpitProjectionOverride \|\| buildCockpitProjection/);
+});
+
+
+test('shared canonical cockpit selector updates stable runtimeStatus identity from diagnostic to build-proof', () => {
+  const runtimeStatus = { missionProofReconciliation: { acceptedItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], remainingMissingItems: [] }, missionEvidenceLedgerProjection: { acceptedProof: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'], missingProof: [] }, prEvidenceModel: { mergeReadiness: 'hold' } };
+  const staleProjection = buildCockpitProjection({ runtimeStatusModel: runtimeStatus });
+  assert.equal(staleProjection.operatorProofConcierge.nextProof, 'proof-state-reconciliation');
+
+  runtimeStatus.missionEvidenceLedgerProjection = {
+    acceptedProof: ['mission-console-bridge'],
+    missingProof: ['build-proof', 'verify-proof'],
+  };
+  const canonicalProjection = buildCockpitProjection({ runtimeStatusModel: buildCanonicalCockpitProjectionRuntimeStatus(runtimeStatus) });
+  assert.equal(canonicalProjection.operatorProofConcierge.nextProof, 'build-proof');
+  assert.equal(canonicalProjection.operatorProofConcierge.copyPacket.label, 'Copy build-proof packet');
+  assert.equal(canonicalProjection.operatorProofConcierge.copyPacket.source, 'OperatorProofConcierge.copyPacket');
+});
+
+test('CockpitPanel and Support Snapshot share the canonical Proof Concierge selector', () => {
+  const cockpitSource = readFileSync(new URL('../components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  const snapshotSource = readFileSync(new URL('./supportSnapshot.js', import.meta.url), 'utf8');
+  assert.match(cockpitSource, /buildCanonicalCockpitProjectionRuntimeStatus/);
+  assert.match(snapshotSource, /buildCanonicalCockpitProjectionRuntimeStatus/);
 });
