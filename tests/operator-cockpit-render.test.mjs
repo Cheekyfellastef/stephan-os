@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import React from '../stephanos-ui/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../stephanos-ui/node_modules/react-dom/server.node.js';
 import { createServer } from '../stephanos-ui/node_modules/vite/dist/node/index.js';
+import { chromium } from '../node_modules/playwright/index.mjs';
 
 function installBrowserStubs() {
   globalThis.window = globalThis.window || {
@@ -166,6 +167,46 @@ test('CockpitPanel rendered Operator Proof Concierge advances visible card to ve
     assert.doesNotMatch(card, /Copy build-proof packet/);
     assert.doesNotMatch(card, /data-cockpit-action-packet-id="packet-build-proof"/);
   } finally {
+    await server.close();
+  }
+});
+
+test('mounted CockpitPanel Proof Concierge advances from build-proof to verify-proof after live proof metadata update', async (t) => {
+  const server = await createServer({ root: 'stephanos-ui', logLevel: 'silent', server: { host: '127.0.0.1', port: 0 }, appType: 'spa' });
+  await server.listen();
+  let browser = null;
+  try {
+    try {
+      browser = await chromium.launch({ headless: true });
+    } catch (error) {
+      if (/Executable doesn't exist|browser executable/i.test(String(error?.message || error))) {
+        t.skip('Playwright browser executable is not installed in this environment.');
+        return;
+      }
+      throw error;
+    }
+    const address = server.httpServer.address();
+    const port = typeof address === 'object' && address ? address.port : 5173;
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${port}/src/test/cockpitLiveProofHarness.html`);
+    await page.waitForSelector('[data-testid="operator-proof-concierge-primary-copy"][data-concierge-visible-primary-button-label="Copy build-proof packet"]');
+    const firstCardHandle = await page.locator('[data-testid="operator-proof-concierge"]').elementHandle();
+    assert.ok(firstCardHandle);
+    assert.equal(await page.locator('[data-testid="operator-proof-concierge-next-proof"] strong').textContent(), 'build-proof');
+    assert.equal(await page.locator('[data-testid="operator-proof-concierge-primary-copy"]').textContent(), 'Copy build-proof packet');
+
+    await page.evaluate(() => window.__acceptBuildProof());
+    await page.waitForSelector('[data-testid="operator-proof-concierge-primary-copy"][data-concierge-visible-primary-button-label="Copy verify-proof packet"]');
+
+    const secondCardHandle = await page.locator('[data-testid="operator-proof-concierge"]').elementHandle();
+    assert.strictEqual(await firstCardHandle.evaluate((node, second) => node === second, secondCardHandle), true);
+    assert.equal(await page.locator('[data-testid="operator-proof-concierge-next-proof"] strong').textContent(), 'verify-proof');
+    assert.equal(await page.locator('[data-testid="operator-proof-concierge-primary-copy"]').textContent(), 'Copy verify-proof packet');
+    assert.equal(await page.locator('[data-testid="operator-proof-concierge-primary-copy"]').getAttribute('data-concierge-visible-primary-button-source'), 'OperatorProofConcierge.copyPacket');
+    assert.equal(await page.locator('[data-testid="operator-proof-concierge"]').getAttribute('data-proof-concierge-render-input-next-proof'), 'verify-proof');
+    assert.equal(await page.locator('[data-testid="operator-proof-concierge"]').getAttribute('data-proof-concierge-render-input-copy-packet-label'), 'Copy verify-proof packet');
+  } finally {
+    if (browser) await browser.close();
     await server.close();
   }
 });
