@@ -7,23 +7,29 @@ import { buildMissionProofReconciliation } from './missionProofReconciliation.js
 function firstObject(...values) { return values.find((v) => v && typeof v === 'object') || null; }
 function liveBuilderMesh(runtimeStatus = {}) { return firstObject(runtimeStatus.operatorReliefProjection?.builderMeshProjection, runtimeStatus.runtimeContext?.operatorReliefProjection?.builderMeshProjection, runtimeStatus.missionState?.operatorReliefProjection?.builderMeshProjection, runtimeStatus.inputMissionState?.operatorReliefProjection?.builderMeshProjection) || {}; }
 function liveBuilderWorkbench(runtimeStatus = {}) { return firstObject(runtimeStatus.builderWorkbenchProjection, runtimeStatus.operatorReliefProjection?.builderWorkbenchProjection, runtimeStatus.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection, runtimeStatus.runtimeContext?.operatorReliefProjection?.builderWorkbenchProjection, runtimeStatus.missionState?.operatorReliefProjection?.builderWorkbenchProjection, runtimeStatus.inputMissionState?.operatorReliefProjection?.builderWorkbenchProjection) || {}; }
-function splitProof(value = '') { return String(value || '').split('|').map((item) => String(item).trim()).filter((item) => item && item !== 'none'); }
+function splitProof(value = '') {
+  const items = Array.isArray(value) ? value : String(value || '').split('|');
+  return items.map((item) => String(item).trim()).filter((item) => item && item !== 'none');
+}
 
 export function buildCanonicalCockpitProjectionRuntimeStatus(runtimeStatus = {}) {
   const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
     ? runtimeStatus.lastExecutionMetadata
     : (runtimeStatus?.runtimeContext?.lastExecutionMetadata && typeof runtimeStatus.runtimeContext.lastExecutionMetadata === 'object' ? runtimeStatus.runtimeContext.lastExecutionMetadata : {});
-  const missionConsoleDiagnostics = runtimeStatus?.missionConsoleDiagnostics || runtimeStatus?.operatorReliefProjection?.missionConsoleDiagnostics || {};
+  const missionConsoleDiagnostics = runtimeStatus?.missionConsoleDiagnostics || runtimeStatus?.runtimeContext?.operatorReliefBridgeDiagnostics || runtimeStatus?.operatorReliefProjection?.missionConsoleDiagnostics || {};
   const commandDeckMetadataRoutedToEvidence = String(executionMetadata?.command_deck_universal_intake_routed_to || '').includes('evidence-return-intake');
   const commandDeckMetadataAcceptedProofItems = splitProof(executionMetadata?.command_deck_universal_intake_accepted_proof_items);
   const commandDeckMetadataRejectedProofItems = splitProof(executionMetadata?.command_deck_universal_intake_rejected_proof_items);
   const commandDeckCumulativeAcceptedProofItems = splitProof(executionMetadata?.command_deck_cumulative_accepted_proof_items || executionMetadata?.command_deck_proof_session_accepted_items);
   const commandDeckCumulativeRejectedProofItems = splitProof(executionMetadata?.command_deck_cumulative_rejected_proof_items || executionMetadata?.command_deck_proof_session_rejected_items);
-  const commandDeckAcceptedProofChanged = commandDeckMetadataRoutedToEvidence && (commandDeckMetadataAcceptedProofItems.length > 0 || commandDeckCumulativeAcceptedProofItems.length > 0 || commandDeckMetadataRejectedProofItems.length > 0 || commandDeckCumulativeRejectedProofItems.length > 0);
-  const commandDeckMetadataProofProjection = commandDeckMetadataRoutedToEvidence ? {
-    acceptedProofItems: commandDeckMetadataAcceptedProofItems,
+  const providedProofReconciliationSeed = firstObject(runtimeStatus?.operatorReliefProjection?.missionProofReconciliation, runtimeStatus?.missionProofReconciliation);
+  const preservedAcceptedProofSeed = splitProof(providedProofReconciliationSeed?.acceptedItems || providedProofReconciliationSeed?.acceptedProof).filter((item) => item === 'mission-console-bridge');
+  const commandDeckProofMetadataPresent = commandDeckMetadataAcceptedProofItems.length > 0 || commandDeckCumulativeAcceptedProofItems.length > 0 || commandDeckMetadataRejectedProofItems.length > 0 || commandDeckCumulativeRejectedProofItems.length > 0;
+  const commandDeckAcceptedProofChanged = (commandDeckMetadataRoutedToEvidence || commandDeckProofMetadataPresent) && commandDeckProofMetadataPresent;
+  const commandDeckMetadataProofProjection = commandDeckAcceptedProofChanged ? {
+    acceptedProofItems: Array.from(new Set([...preservedAcceptedProofSeed, ...commandDeckMetadataAcceptedProofItems])),
     rejectedProofItems: commandDeckMetadataRejectedProofItems,
-    cumulativeAcceptedProofItems: commandDeckCumulativeAcceptedProofItems,
+    cumulativeAcceptedProofItems: commandDeckCumulativeAcceptedProofItems.length ? commandDeckCumulativeAcceptedProofItems : preservedAcceptedProofSeed,
     cumulativeRejectedProofItems: commandDeckCumulativeRejectedProofItems,
   } : {};
   let missionProofReconciliation = buildMissionProofReconciliation({
@@ -49,11 +55,26 @@ export function buildCanonicalCockpitProjectionRuntimeStatus(runtimeStatus = {})
       ...derivedEvidenceReturnIntakeProjection,
       acceptedProofItems: Array.from(new Set([...(derivedEvidenceReturnIntakeProjection.acceptedProofItems || []), ...commandDeckMetadataAcceptedProofItems])),
       rejectedProofItems: Array.from(new Set([...(derivedEvidenceReturnIntakeProjection.rejectedProofItems || []), ...commandDeckMetadataRejectedProofItems])),
-      cumulativeAcceptedProofItems: commandDeckCumulativeAcceptedProofItems,
+      cumulativeAcceptedProofItems: commandDeckCumulativeAcceptedProofItems.length ? commandDeckCumulativeAcceptedProofItems : preservedAcceptedProofSeed,
       cumulativeRejectedProofItems: commandDeckCumulativeRejectedProofItems,
     }
     : derivedEvidenceReturnIntakeProjection;
   missionProofReconciliation = buildMissionProofReconciliation({ missionConsoleDiagnostics, supportSnapshot: runtimeStatus || {}, missionVerification: runtimeStatus?.missionVerification || {}, prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {}, uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' }, openClawSourcePackRunner: liveBuilderWorkbench(runtimeStatus)?.openClawSourcePackRunner || {}, evidenceReturnIntakeProjection });
+  if (commandDeckAcceptedProofChanged && preservedAcceptedProofSeed.includes('mission-console-bridge')) {
+    const acceptedSet = new Set([...(missionProofReconciliation.acceptedItems || []), 'mission-console-bridge']);
+    const acceptedItems = ['mission-console-bridge', 'build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'].filter((item) => acceptedSet.has(item));
+    const remainingMissingItems = (missionProofReconciliation.remainingMissingItems || []).filter((item) => item !== 'mission-console-bridge');
+    missionProofReconciliation = {
+      ...missionProofReconciliation,
+      acceptedItems,
+      acceptedCount: acceptedItems.length,
+      remainingMissingItems,
+      remainingMissingCount: remainingMissingItems.length,
+      nextBestAction: remainingMissingItems.length ? `Collect ${remainingMissingItems[0]}.` : missionProofReconciliation.nextBestAction,
+      missionConsoleBridgeProofAccepted: true,
+      missionConsoleBridgeProofSource: missionProofReconciliation.missionConsoleBridgeProofSource === 'support-snapshot-runtime-diagnostics' ? missionProofReconciliation.missionConsoleBridgeProofSource : 'preserved-canonical-reconciliation',
+    };
+  }
   const providedReconciliation = firstObject(runtimeStatus?.operatorReliefProjection?.missionProofReconciliation, runtimeStatus?.missionProofReconciliation);
   if (!commandDeckAcceptedProofChanged && Array.isArray(providedReconciliation?.remainingMissingItems) && providedReconciliation.remainingMissingItems.length > 0) {
     missionProofReconciliation = {

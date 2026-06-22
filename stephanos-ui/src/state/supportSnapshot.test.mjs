@@ -5260,3 +5260,32 @@ test('Support Snapshot detects Operator Proof Concierge DOM projection drift and
     globalThis.document = previousDocument;
   }
 });
+
+test('Support Snapshot and Cockpit projection share canonical proof concierge input after Command Deck proof acceptance', () => {
+  const runtimeStatus = {
+    lastExecutionMetadata: {
+      command_deck_universal_intake_accepted_proof_items: 'build-proof',
+      command_deck_cumulative_accepted_proof_items: 'mission-console-bridge|build-proof',
+    },
+    missionConsoleDiagnostics: {
+      operatorReliefBridgeProjectionKeysSeen: ['missionProofReconciliation'],
+      missionConsoleInstanceCount: 1,
+      missionConsoleBridgeParityStatus: 'OK',
+      runtimeDiagnosticsPresent: 'yes',
+      runtimeDiagnosticsDropBoundary: 'none',
+      missionConsoleVisibleInstancePublished: 'yes',
+      operatorReliefBridgePublished: 'yes',
+    },
+    missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] },
+    operatorReliefProjection: {
+      missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] },
+    },
+  };
+  const snapshot = buildSupportSnapshot({ runtimeStatus, routeTruthView: {}, runtimeContext: {}, safeApiStatus: {}, statusSummary: {} });
+  assert.match(snapshot, /Operator Cockpit Accepted Proof: mission-console-bridge\|build-proof/);
+  assert.match(snapshot, /Operator Cockpit Missing Proof: verify-proof\|browser-proof-checklist\|pr-evidence\|source-pack-output/);
+  assert.match(snapshot, /Operator Proof Concierge Next Proof: verify-proof/);
+  assert.match(snapshot, /Operator Proof Concierge Visible Primary Button Label: Copy verify-proof packet/);
+  assert.match(snapshot, /Proof Concierge Rendered Next Proof: verify-proof/);
+  assert.doesNotMatch(snapshot, /Operator Proof Concierge Next Proof: build-proof/);
+});
