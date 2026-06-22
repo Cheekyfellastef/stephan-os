@@ -48,6 +48,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     togglePanel,
     setPanelState,
     commandHistory,
+    lastExecutionMetadata,
   } = useAIStore();
   const [detailId, setDetailId] = useState('backend');
   const [isPageVisible, setIsPageVisible] = useState(() => (typeof document === 'undefined' ? true : document.visibilityState === 'visible'));
@@ -61,7 +62,20 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const isOpen = forceOpen ? true : uiLayout.cockpitPanel !== false;
   const shouldRenderCockpit = isOpen && isPageVisible;
 
-  const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+  const runtimeStatus = useMemo(() => {
+    const ensuredRuntimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
+    if (!lastExecutionMetadata || typeof lastExecutionMetadata !== 'object') {
+      return ensuredRuntimeStatus;
+    }
+    return ensureRuntimeStatusModel({
+      ...ensuredRuntimeStatus,
+      lastExecutionMetadata,
+      runtimeContext: {
+        ...(ensuredRuntimeStatus.runtimeContext || {}),
+        lastExecutionMetadata,
+      },
+    });
+  }, [runtimeStatusModel, lastExecutionMetadata]);
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
 
   const canonicalCockpitRuntimeStatus = buildCanonicalCockpitProjectionRuntimeStatus(runtimeStatus);
