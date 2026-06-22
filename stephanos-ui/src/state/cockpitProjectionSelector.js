@@ -10,14 +10,21 @@ function liveBuilderWorkbench(runtimeStatus = {}) { return firstObject(runtimeSt
 function splitProof(value = '') { return String(value || '').split('|').map((item) => String(item).trim()).filter((item) => item && item !== 'none'); }
 
 export function buildCanonicalCockpitProjectionRuntimeStatus(runtimeStatus = {}) {
-  const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object' ? runtimeStatus.lastExecutionMetadata : {};
+  const executionMetadata = runtimeStatus?.lastExecutionMetadata && typeof runtimeStatus.lastExecutionMetadata === 'object'
+    ? runtimeStatus.lastExecutionMetadata
+    : (runtimeStatus?.runtimeContext?.lastExecutionMetadata && typeof runtimeStatus.runtimeContext.lastExecutionMetadata === 'object' ? runtimeStatus.runtimeContext.lastExecutionMetadata : {});
   const missionConsoleDiagnostics = runtimeStatus?.missionConsoleDiagnostics || runtimeStatus?.operatorReliefProjection?.missionConsoleDiagnostics || {};
   const commandDeckMetadataRoutedToEvidence = String(executionMetadata?.command_deck_universal_intake_routed_to || '').includes('evidence-return-intake');
+  const commandDeckMetadataAcceptedProofItems = splitProof(executionMetadata?.command_deck_universal_intake_accepted_proof_items);
+  const commandDeckMetadataRejectedProofItems = splitProof(executionMetadata?.command_deck_universal_intake_rejected_proof_items);
+  const commandDeckCumulativeAcceptedProofItems = splitProof(executionMetadata?.command_deck_cumulative_accepted_proof_items || executionMetadata?.command_deck_proof_session_accepted_items);
+  const commandDeckCumulativeRejectedProofItems = splitProof(executionMetadata?.command_deck_cumulative_rejected_proof_items || executionMetadata?.command_deck_proof_session_rejected_items);
+  const commandDeckAcceptedProofChanged = commandDeckMetadataRoutedToEvidence && (commandDeckMetadataAcceptedProofItems.length > 0 || commandDeckCumulativeAcceptedProofItems.length > 0 || commandDeckMetadataRejectedProofItems.length > 0 || commandDeckCumulativeRejectedProofItems.length > 0);
   const commandDeckMetadataProofProjection = commandDeckMetadataRoutedToEvidence ? {
-    acceptedProofItems: splitProof(executionMetadata?.command_deck_universal_intake_accepted_proof_items),
-    rejectedProofItems: splitProof(executionMetadata?.command_deck_universal_intake_rejected_proof_items),
-    cumulativeAcceptedProofItems: splitProof(executionMetadata?.command_deck_cumulative_accepted_proof_items || executionMetadata?.command_deck_proof_session_accepted_items),
-    cumulativeRejectedProofItems: splitProof(executionMetadata?.command_deck_cumulative_rejected_proof_items || executionMetadata?.command_deck_proof_session_rejected_items),
+    acceptedProofItems: commandDeckMetadataAcceptedProofItems,
+    rejectedProofItems: commandDeckMetadataRejectedProofItems,
+    cumulativeAcceptedProofItems: commandDeckCumulativeAcceptedProofItems,
+    cumulativeRejectedProofItems: commandDeckCumulativeRejectedProofItems,
   } : {};
   let missionProofReconciliation = buildMissionProofReconciliation({
     missionConsoleDiagnostics,
@@ -35,11 +42,20 @@ export function buildCanonicalCockpitProjectionRuntimeStatus(runtimeStatus = {})
     || buildProjectAwarenessProjection({ activeMission: runtimeStatus?.activeMission || runtimeStatus?.missionState?.activeMission || {}, builderMeshProjection: liveBuilderMesh(runtimeStatus), packetBayProjection, agentRealityLoopProjection, missionVerification: runtimeStatus?.missionVerification || {}, uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' }, supportSnapshot: runtimeStatus || {}, missionProofReconciliation });
   const missionEvidenceLedgerProjection = firstObject(runtimeStatus?.missionEvidenceLedgerProjection, runtimeStatus?.operatorReliefProjection?.missionEvidenceLedgerProjection, runtimeStatus?.runtimeContext?.operatorReliefProjection?.missionEvidenceLedgerProjection, runtimeStatus?.missionState?.operatorReliefProjection?.missionEvidenceLedgerProjection, runtimeStatus?.inputMissionState?.operatorReliefProjection?.missionEvidenceLedgerProjection)
     || deriveMissionEvidenceLedgerProjection({ projectAwarenessProjection, agentRealityLoopProjection, packetBayProjection, builderMeshProjection: liveBuilderMesh(runtimeStatus), builderWorkbenchProjection: liveBuilderWorkbench(runtimeStatus), openClawSourcePackRunner: liveBuilderWorkbench(runtimeStatus)?.openClawSourcePackRunner || {}, openClawWorkspaceHygiene: liveBuilderWorkbench(runtimeStatus)?.openClawWorkspaceHygiene || {}, missionVerification: runtimeStatus?.missionVerification || {}, prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {}, uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' }, missionProofReconciliation });
-  const evidenceReturnIntakeProjection = firstObject(runtimeStatus?.operatorReliefProjection?.evidenceReturnIntakeProjection, runtimeStatus?.runtimeContext?.operatorReliefProjection?.evidenceReturnIntakeProjection, runtimeStatus?.missionState?.operatorReliefProjection?.evidenceReturnIntakeProjection)
+  const derivedEvidenceReturnIntakeProjection = firstObject(runtimeStatus?.operatorReliefProjection?.evidenceReturnIntakeProjection, runtimeStatus?.runtimeContext?.operatorReliefProjection?.evidenceReturnIntakeProjection, runtimeStatus?.missionState?.operatorReliefProjection?.evidenceReturnIntakeProjection)
     || deriveEvidenceReturnIntakeProjection({ missionEvidenceLedgerProjection, missionEvidenceContextSummary: deriveMissionEvidenceContextSummary(missionEvidenceLedgerProjection), packetBayProjection, missionProofReconciliation, operatorPastedIntakeText: executionMetadata?.command_deck_universal_intake_echo || '', builderWorkbenchInput: runtimeStatus?.builderWorkbenchInput || runtimeStatus?.operatorReliefProjection?.builderMeshProjection?.builderWorkbenchProjection?.builderWorkbenchInput || {} });
+  const evidenceReturnIntakeProjection = commandDeckAcceptedProofChanged
+    ? {
+      ...derivedEvidenceReturnIntakeProjection,
+      acceptedProofItems: Array.from(new Set([...(derivedEvidenceReturnIntakeProjection.acceptedProofItems || []), ...commandDeckMetadataAcceptedProofItems])),
+      rejectedProofItems: Array.from(new Set([...(derivedEvidenceReturnIntakeProjection.rejectedProofItems || []), ...commandDeckMetadataRejectedProofItems])),
+      cumulativeAcceptedProofItems: commandDeckCumulativeAcceptedProofItems,
+      cumulativeRejectedProofItems: commandDeckCumulativeRejectedProofItems,
+    }
+    : derivedEvidenceReturnIntakeProjection;
   missionProofReconciliation = buildMissionProofReconciliation({ missionConsoleDiagnostics, supportSnapshot: runtimeStatus || {}, missionVerification: runtimeStatus?.missionVerification || {}, prEvidence: runtimeStatus?.prEvidence || runtimeStatus?.prEvidenceModel || {}, uiRealityTruth: { status: runtimeStatus?.uiRealityStatus || runtimeStatus?.chatContextUiRealityStatus || '' }, openClawSourcePackRunner: liveBuilderWorkbench(runtimeStatus)?.openClawSourcePackRunner || {}, evidenceReturnIntakeProjection });
   const providedReconciliation = firstObject(runtimeStatus?.operatorReliefProjection?.missionProofReconciliation, runtimeStatus?.missionProofReconciliation);
-  if (Array.isArray(providedReconciliation?.remainingMissingItems) && providedReconciliation.remainingMissingItems.length > 0) {
+  if (!commandDeckAcceptedProofChanged && Array.isArray(providedReconciliation?.remainingMissingItems) && providedReconciliation.remainingMissingItems.length > 0) {
     missionProofReconciliation = {
       ...missionProofReconciliation,
       ...providedReconciliation,
