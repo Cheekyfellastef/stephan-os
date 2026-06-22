@@ -113,6 +113,24 @@ import {
 } from './deluxeMemorySystem.js';
 
 const AIStoreContext = createContext(null);
+
+function listProofSignature(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean).join('|') || 'none';
+  return String(value || '').split('|').map((item) => item.trim()).filter(Boolean).join('|') || 'none';
+}
+
+function operatorReliefProofStateSignature(...sources) {
+  const reconciliation = sources.map((source) => source?.missionProofReconciliation || source?.operatorReliefProjection?.missionProofReconciliation).find((value) => value && typeof value === 'object') || {};
+  const concierge = sources.map((source) => source?.operatorProofConcierge || source?.operatorReliefProjection?.operatorProofConcierge).find((value) => value && typeof value === 'object') || {};
+  const accepted = listProofSignature(reconciliation.acceptedItems || reconciliation.acceptedProof || concierge.acceptedItems || concierge.acceptedProof);
+  const missing = listProofSignature(reconciliation.remainingMissingItems || reconciliation.missingProof || concierge.remainingMissingItems || concierge.missingProof);
+  const nextProof = String(concierge.nextProof || reconciliation.nextProof || reconciliation.nextBestAction || 'none').trim() || 'none';
+  const packet = concierge.copyPacket || {};
+  const packetKind = String(concierge.packetKind || packet.packetKind || 'none').trim() || 'none';
+  const packetSource = String(concierge.visiblePrimaryButtonSource || packet.source || 'none').trim() || 'none';
+  return [accepted, missing, nextProof, packetKind, packetSource].join(' :: ');
+}
+
 const DEFAULT_UI_LAYOUT = {
   providerControlsPanel: true,
   homeBridgePanel: true,
@@ -1238,6 +1256,10 @@ export function AIStoreProvider({ children }) {
     autoRevalidation: bridgeAutoRevalidation,
     bridgeMemoryPersistence,
   }), [apiStatus?.runtimeContext?.homeNodeBridge, bridgeMemory, bridgeMemoryPersistence, bridgeMemoryRehydrated, bridgeTransportPreferences, bridgeAutoRevalidation]);
+  const operatorReliefProjectionProofSignature = operatorReliefProofStateSignature(
+    operatorReliefProjectionBridge?.projection,
+    apiStatus?.runtimeContext?.operatorReliefProjection,
+  );
   const runtimeStatusModel = useMemo(() => runStartupStage('runtimeStatusModel initialization', () => ensureRuntimeStatusModel(createRuntimeStatusModel({
     appId: 'stephanos',
     appName: 'Stephanos Mission Console',
@@ -2820,6 +2842,8 @@ export function AIStoreProvider({ children }) {
     bridgeAutoRevalidation?.state,
     bridgeMemoryHydrationPending,
     revalidateRememberedBridge,
+    operatorReliefProjectionBridge,
+    operatorReliefProjectionProofSignature,
   ]);
   const value = useMemo(() => ({
     commandHistory,

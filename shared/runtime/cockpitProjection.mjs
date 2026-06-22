@@ -214,7 +214,7 @@ export function buildOperatorProofConciergeProjection(input = {}) {
   const canonicalNextProof = nextProof || 'none';
   const canonicalCopyLabel = nextProof ? actionLabel : 'Review proof state';
   const renderBranch = contradictionDetected ? 'proof-state-diagnostic' : (nextProof ? 'canonical-copy-packet' : 'no-proof-packet');
-  const proofSignature = [accepted.join('|') || 'none', missing.join('|') || 'none', nextProof || 'none', reconciliation.proofReconciliationStamp || reconciliation.stamp || input.proofReconciliationStamp || 'unstamped'].join(' :: ');
+  const proofReconciliationStamp = reconciliation.proofReconciliationStamp || reconciliation.stamp || input.proofReconciliationStamp || 'unstamped';
   const diagnosticPacketText = proofPacketFor('proof-state-reconciliation');
   const diagnosticPacket = {
     available: contradictionDetected && diagnosticPacketText ? 'yes' : 'no',
@@ -231,6 +231,7 @@ export function buildOperatorProofConciergeProjection(input = {}) {
     payload: packetText,
     source: contradictionDetected ? 'OperatorProofConcierge.copyDiagnosticPacket' : 'OperatorProofConcierge.copyPacket',
   };
+  const proofSignature = [accepted.join('|') || 'none', missing.join('|') || 'none', effectiveNextProof || nextProof || 'none', primaryPacket.packetKind || 'none', primaryPacket.source || 'none', proofReconciliationStamp].join(' :: ');
   const openClawLocked = input.openClawMutationLockState === 'locked' || input.openClawMutationLocked !== false;
   const codexAllowed = input.codexAutoDispatchAllowed === true || input.codexMutationLockState === 'dispatch-allowed';
   return {
