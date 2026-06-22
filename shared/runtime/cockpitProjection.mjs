@@ -214,6 +214,7 @@ export function buildOperatorProofConciergeProjection(input = {}) {
   const canonicalNextProof = nextProof || 'none';
   const canonicalCopyLabel = nextProof ? actionLabel : 'Review proof state';
   const renderBranch = contradictionDetected ? 'proof-state-diagnostic' : (nextProof ? 'canonical-copy-packet' : 'no-proof-packet');
+  const proofSignature = [accepted.join('|') || 'none', missing.join('|') || 'none', nextProof || 'none', reconciliation.proofReconciliationStamp || reconciliation.stamp || input.proofReconciliationStamp || 'unstamped'].join(' :: ');
   const diagnosticPacketText = proofPacketFor('proof-state-reconciliation');
   const diagnosticPacket = {
     available: contradictionDetected && diagnosticPacketText ? 'yes' : 'no',
@@ -251,6 +252,8 @@ export function buildOperatorProofConciergeProjection(input = {}) {
     renderedCopyLabel: primaryPacket.label,
     canonicalNextProof,
     canonicalCopyLabel,
+    proofSignature,
+    canonicalProofSignature: proofSignature,
     renderCanonicalDriftDetected: (effectiveNextProof || 'none') !== canonicalNextProof || primaryPacket.label !== canonicalCopyLabel ? 'yes' : 'no',
     copyDiagnosticPacket: diagnosticPacket,
     proofStateContradictionDetected: contradictionDetected ? 'yes' : 'no',
