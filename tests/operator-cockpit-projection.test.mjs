@@ -575,3 +575,25 @@ test('Cockpit selector uses post-submit command deck proof metadata over stale r
   assert.equal(p.operatorProofConcierge.visiblePrimaryButtonLabel, 'Copy verify-proof packet');
   assert.match(p.operatorProofConcierge.proofSignature, /mission-console-bridge\|build-proof :: verify-proof\|browser-proof-checklist\|pr-evidence\|source-pack-output :: verify-proof/);
 });
+
+test('Cockpit selector preserves Command Deck proof-only metadata when runtime object identity stays stable', async () => {
+  const { buildCanonicalCockpitProjectionRuntimeStatus } = await import('../stephanos-ui/src/state/cockpitProjectionSelector.js');
+  const stableRuntimeStatus = {
+    missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] },
+    operatorReliefProjection: {
+      missionProofReconciliation: { acceptedItems: ['mission-console-bridge'], remainingMissingItems: ['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] },
+    },
+    lastExecutionMetadata: {},
+  };
+  const staleProjection = buildCockpitProjection({ runtimeStatusModel: buildCanonicalCockpitProjectionRuntimeStatus(stableRuntimeStatus) });
+  assert.equal(staleProjection.operatorProofConcierge.nextProof, 'build-proof');
+
+  stableRuntimeStatus.lastExecutionMetadata.command_deck_universal_intake_accepted_proof_items = 'build-proof';
+  stableRuntimeStatus.lastExecutionMetadata.command_deck_cumulative_accepted_proof_items = 'mission-console-bridge|build-proof';
+  const canonicalRuntime = buildCanonicalCockpitProjectionRuntimeStatus(stableRuntimeStatus);
+  const p = buildCockpitProjection({ runtimeStatusModel: canonicalRuntime });
+  assert.deepEqual(canonicalRuntime.missionProofReconciliation.acceptedItems, ['mission-console-bridge', 'build-proof']);
+  assert.deepEqual(canonicalRuntime.missionProofReconciliation.remainingMissingItems, ['verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output']);
+  assert.equal(p.operatorProofConcierge.nextProof, 'verify-proof');
+  assert.equal(p.operatorProofConcierge.visiblePrimaryButtonLabel, 'Copy verify-proof packet');
+});
