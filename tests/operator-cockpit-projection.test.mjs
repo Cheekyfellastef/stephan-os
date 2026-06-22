@@ -525,3 +525,21 @@ test('Operator Context Model V1 is visible in Cockpit source and Support Snapsho
   assert.match(snapshotSource, /Operator Context Model Status:/);
   assert.match(snapshotSource, /Operator Context Model Automatic Browsing Allowed:/);
 });
+
+test('Operator Proof Concierge proof signature tracks accepted/missing/next proof and packet identity', () => {
+  const p = buildCockpitProjection({ runtimeStatusModel: { missionProofReconciliation: { acceptedItems: ['mission-console-bridge', 'build-proof'], remainingMissingItems: ['verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output'] } } });
+  assert.equal(p.operatorProofConcierge.nextProof, 'verify-proof');
+  assert.equal(p.operatorProofConcierge.copyPacket.packetKind, 'verify-proof');
+  assert.equal(p.operatorProofConcierge.copyPacket.source, 'OperatorProofConcierge.copyPacket');
+  assert.match(p.operatorProofConcierge.proofSignature, /mission-console-bridge\|build-proof :: verify-proof\|browser-proof-checklist\|pr-evidence\|source-pack-output :: verify-proof :: verify-proof :: OperatorProofConcierge\.copyPacket/);
+});
+
+test('CockpitPanel runtime dependencies include proof signature and do not rely on runtimeStatus object identity', async () => {
+  const panel = await readFile(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  const store = await readFile(new URL('../stephanos-ui/src/state/aiStore.js', import.meta.url), 'utf8');
+  assert.match(panel, /proofSignature:\s*operatorProofConcierge\.proofSignature/);
+  assert.match(panel, /proofConciergeRenderProofSignature/);
+  assert.match(store, /operatorReliefProofStateSignature/);
+  assert.match(store, /operatorReliefProjectionProofSignature/);
+  assert.match(store, /operatorReliefProjectionBridge,\s*\n\s*operatorReliefProjectionProofSignature/);
+});
