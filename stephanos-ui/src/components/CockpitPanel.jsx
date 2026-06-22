@@ -58,7 +58,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const runtimeStatus = ensureRuntimeStatusModel(runtimeStatusModel);
   const routeTruthView = buildFinalRouteTruthView(runtimeStatus);
 
-  const cockpitProjection = useMemo(() => cockpitProjectionOverride || buildCockpitProjection({ runtimeStatusModel: runtimeStatus }), [cockpitProjectionOverride, runtimeStatus]);
+  const cockpitProjection = cockpitProjectionOverride || buildCockpitProjection({ runtimeStatusModel: runtimeStatus });
 
   const cockpitModel = useMemo(() => {
     if (!shouldRenderCockpit) {

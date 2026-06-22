@@ -136,3 +136,9 @@ test('CockpitPanel emits Proof Concierge lifecycle trace fields without local pa
   assert.match(source, /data-proof-concierge-last-writer-source=\{proofConciergeLastWriterSource\}/);
   assert.doesNotMatch(source, /useState\([^\)]*(copyPacket|primaryProofCopyPacket|copyDiagnosticPacket|proof-state-reconciliation)/);
 });
+
+test('CockpitPanel rebuilds cockpit projection every render so in-place runtime proof updates cannot preserve stale diagnostic Concierge DOM', () => {
+  const source = readFileSync(new URL('../components/CockpitPanel.jsx', import.meta.url), 'utf8');
+  assert.match(source, /const cockpitProjection = cockpitProjectionOverride \|\| buildCockpitProjection\(\{ runtimeStatusModel: runtimeStatus \}\);/);
+  assert.doesNotMatch(source, /const cockpitProjection = useMemo\(\(\) => cockpitProjectionOverride \|\| buildCockpitProjection/);
+});
