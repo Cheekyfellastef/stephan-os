@@ -309,6 +309,358 @@ function shouldRequirePublishedHead(argvArgs = args) {
   return argvArgs.has('--require-published-head');
 }
 
+export function createIgnitionRepairPacket({
+  reason,
+  currentCommit = 'unknown',
+  originMainCommit = 'unknown',
+  servedCommit = 'unknown',
+  expectedSourceCommit = 'unknown',
+  sourceFingerprint = 'unknown',
+  buildTimestamp = 'unknown',
+  localOnlyCommits = [],
+  remoteOnlyCommits = [],
+  localOnlyPaths = [],
+  localOnlyDistOnly = false,
+  nextSafeAction = 'Stop ignition and ask the operator to approve the next source-control action.',
+} = {}) {
+  return {
+    ignitionStatus: 'BLOCKED',
+    statusPanel: 'source-update-safety',
+    reason,
+    currentCommit,
+    originMainCommit,
+    servedCommit,
+    expectedSourceCommit,
+    sourceFingerprint,
+    buildTimestamp,
+    localOnlyCommits,
+    remoteOnlyCommits,
+    localOnlyPaths,
+    localOnlyDistOnly,
+    safetyLocks: {
+      autoMerge: false,
+      autoPush: false,
+      codexAutoDispatch: false,
+      openClawUnlock: false,
+      mergeReadyFlip: false,
+    },
+    nextSafeAction,
+  };
+}
+
+export function classifySourceUpdateTruth({
+  currentCommit = '',
+  originMainCommit = '',
+  localOnlyCommits = [],
+  remoteOnlyCommits = [],
+  localOnlyPaths = [],
+  aheadCount = 0,
+  behindCount = 0,
+  detachedHead = false,
+  hasUpstream = true,
+  upstreamBranch = 'origin/main',
+} = {}) {
+  if (detachedHead) {
+    return createIgnitionRepairPacket({
+      reason: 'detached-head',
+      currentCommit,
+      originMainCommit,
+      nextSafeAction: 'Checkout a tracking branch before ignition updates source or rebuilds dist.',
+    });
+  }
+
+  if (!hasUpstream) {
+    return createIgnitionRepairPacket({
+      reason: 'missing-upstream',
+      currentCommit,
+      originMainCommit,
+      nextSafeAction: 'Current branch has no upstream tracking branch. Configure an upstream tracking branch before ignition updates source or rebuilds dist.',
+    });
+  }
+
+  if (aheadCount > 0 && behindCount > 0) {
+    return createIgnitionRepairPacket({
+      reason: 'ff-only-divergence',
+      currentCommit,
+      originMainCommit,
+      localOnlyCommits,
+      remoteOnlyCommits,
+      localOnlyPaths,
+      localOnlyDistOnly: localOnlyPaths.length > 0 && localOnlyPaths.every((path) => isApprovedGeneratedDistPath(path)),
+      nextSafeAction: `Review the recovery packet. If local-only commits are generated dist only, rerun npm run stephanos:ignite -- --approve-local-merge to merge ${upstreamBranch || 'origin/main'}, regenerate dist, verify, and commit generated output.`,
+    });
+  }
+
+  if (behindCount > 0) {
+    return {
+      ignitionStatus: 'READY',
+      statusPanel: 'source-update-safety',
+      reason: 'safe-fast-forward-required',
+      currentCommit,
+      originMainCommit,
+      nextSafeAction: 'Run git pull --ff-only, then rebuild and verify before serving.',
+    };
+  }
+
+  return {
+    ignitionStatus: 'READY',
+    statusPanel: 'source-update-safety',
+    reason: aheadCount > 0 ? 'local-ahead-origin' : 'source-current',
+    currentCommit,
+    originMainCommit,
+    nextSafeAction: aheadCount > 0
+      ? 'Local commits are ahead of origin/main; do not silently treat them as remote truth.'
+      : 'Source commit matches tracked remote truth; build and verify may continue.',
+  };
+}
+
+export function evaluateDistFreshnessAgainstOrigin({ distMetadata = {}, currentCommit = '', originMainCommit = '' } = {}) {
+  const servedCommit = String(distMetadata?.gitCommit || '').trim();
+  const expectedSourceCommit = String(originMainCommit || currentCommit || '').trim();
+  if (!servedCommit) {
+    return createIgnitionRepairPacket({
+      reason: 'dist-metadata-missing-served-commit',
+      currentCommit,
+      originMainCommit,
+      servedCommit: 'missing',
+      expectedSourceCommit,
+      sourceFingerprint: distMetadata?.sourceFingerprint || 'unknown',
+      buildTimestamp: distMetadata?.buildTimestamp || 'unknown',
+      nextSafeAction: 'Run npm run stephanos:build && npm run stephanos:verify before serving localhost.',
+    });
+  }
+  if (originMainCommit && servedCommit !== originMainCommit) {
+    return createIgnitionRepairPacket({
+      reason: 'dist-built-from-commit-older-than-origin-main',
+      currentCommit,
+      originMainCommit,
+      servedCommit,
+      expectedSourceCommit,
+      sourceFingerprint: distMetadata?.sourceFingerprint || 'unknown',
+      buildTimestamp: distMetadata?.buildTimestamp || 'unknown',
+      nextSafeAction: 'Fast-forward to origin/main, rebuild with npm run stephanos:build, verify with npm run stephanos:verify, then restart the 4173 server.',
+    });
+  }
+  return {
+    ignitionStatus: 'READY',
+    statusPanel: 'source-update-safety',
+    reason: 'dist-source-commit-current',
+    currentCommit,
+    originMainCommit,
+    servedCommit,
+    expectedSourceCommit,
+    sourceFingerprint: distMetadata?.sourceFingerprint || 'unknown',
+    buildTimestamp: distMetadata?.buildTimestamp || 'unknown',
+    nextSafeAction: 'Dist commit matches expected source commit; serve may continue after verify.',
+  };
+}
+
+function splitLines(value = '') {
+  return String(value || '').split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+export function buildDivergenceRecoveryPacket({
+  currentCommit = 'unknown',
+  originMainCommit = 'unknown',
+  localOnlyCommits = [],
+  remoteOnlyCommits = [],
+  localOnlyPaths = [],
+} = {}) {
+  return createIgnitionRepairPacket({
+    reason: 'ff-only-divergence',
+    currentCommit,
+    originMainCommit,
+    localOnlyCommits,
+    remoteOnlyCommits,
+    localOnlyPaths,
+    localOnlyDistOnly: localOnlyPaths.length > 0 && localOnlyPaths.every((path) => isApprovedGeneratedDistPath(path)),
+    nextSafeAction: 'If local-only commits touch only apps/stephanos/dist/**, rerun npm run stephanos:ignite -- --approve-local-merge. Otherwise, stop and request an operator-approved source merge/rebase plan.',
+  });
+}
+
+export function captureDivergenceRecoveryPacket({ captureStep = runStepCapture, currentCommit = 'unknown', originMainCommit = 'unknown' } = {}) {
+  const localOnlyCommits = splitLines(captureStep('git-local-only-commits', 'git', ['log', '--oneline', 'origin/main..HEAD']).stdout);
+  const remoteOnlyCommits = splitLines(captureStep('git-remote-only-commits', 'git', ['log', '--oneline', 'HEAD..origin/main']).stdout);
+  const localOnlyPaths = splitLines(captureStep('git-local-only-paths', 'git', ['diff', '--name-only', 'origin/main..HEAD']).stdout);
+  return buildDivergenceRecoveryPacket({
+    currentCommit,
+    originMainCommit,
+    localOnlyCommits,
+    remoteOnlyCommits,
+    localOnlyPaths,
+  });
+}
+
+export function shouldApproveLocalMerge(argvArgs = args) {
+  return argvArgs.has('--approve-local-merge');
+}
+
+export function runApprovedLocalMergeRecoveryWithDeps({
+  captureStep = runStepCapture,
+  runStepFn = runStep,
+  removePath = (targetPath) => rmSync(targetPath, { recursive: true, force: true }),
+  currentCommit = 'unknown',
+  originMainCommit = 'unknown',
+} = {}) {
+  const recoveryPacket = captureDivergenceRecoveryPacket({ captureStep, currentCommit, originMainCommit });
+  console.log(`[IGNITION] approved-local-merge-recovery=${JSON.stringify(recoveryPacket)}`);
+  if (!recoveryPacket.localOnlyDistOnly) {
+    throw new Error(`blocked for safety: approved local merge requires local-only commits to touch only ${APPROVED_GENERATED_DIST_PREFIX} (${recoveryPacket.localOnlyPaths.join(',') || 'no local-only paths'}).`);
+  }
+
+  runStepFn('git-fetch-approved-local-merge', 'git', ['fetch', '--prune', '--tags', 'origin']);
+  try {
+    runStepFn('git-merge-origin-main-approved', 'git', ['merge', '--no-edit', 'origin/main']);
+  } catch (error) {
+    const conflictPaths = splitLines(captureStep('git-unmerged-conflict-paths', 'git', ['diff', '--name-only', '--diff-filter=U']).stdout);
+    const nonDistConflicts = conflictPaths.filter((path) => !isApprovedGeneratedDistPath(path));
+    if (conflictPaths.length === 0 || nonDistConflicts.length > 0) {
+      throw new Error(`blocked for safety: approved local merge encountered non-dist conflicts (${nonDistConflicts.join(',') || 'unknown conflict set'}). Resolve manually; original merge error: ${error.message}`);
+    }
+    console.log(`[IGNITION] generated dist conflicts detected; resolving by deleting and regenerating ${APPROVED_GENERATED_DIST_PREFIX}`);
+    removePath(APPROVED_GENERATED_DIST_PREFIX.slice(0, -1));
+    runStepFn('git-add-dist-conflict-removal', 'git', ['add', '--all', '--', APPROVED_GENERATED_DIST_PREFIX]);
+  }
+
+  runStepFn('build-approved-local-merge', npmCommand, ['run', 'stephanos:build']);
+  runStepFn('verify-approved-local-merge', npmCommand, ['run', 'stephanos:verify']);
+  runStepFn('git-add-regenerated-dist', 'git', ['add', '--all', '--', APPROVED_GENERATED_DIST_PREFIX]);
+  const stagedPaths = splitLines(captureStep('git-staged-after-regenerated-dist', 'git', ['diff', '--cached', '--name-only']).stdout);
+  const unsafeStagedPaths = stagedPaths.filter((path) => !isApprovedGeneratedDistPath(path));
+  if (unsafeStagedPaths.length > 0) {
+    throw new Error(`blocked for safety: approved local merge staged non-dist paths (${unsafeStagedPaths.join(',')}).`);
+  }
+  if (stagedPaths.length > 0) {
+    runStepFn('git-commit-regenerated-dist', 'git', ['commit', '-m', 'Regenerate Stephanos dist after approved local merge']);
+  }
+  console.log('[IGNITION] approved local merge recovery complete; 4173 server restart/hard refresh is required for served runtime convergence.');
+  return {
+    ...recoveryPacket,
+    ignitionStatus: 'READY',
+    recoveryApplied: true,
+    restartRequired: true,
+    nextSafeAction: 'Restart or let ignition restart the 4173 static server, then hard-refresh the browser and compare footer commit/build timestamp against source truth.',
+  };
+}
+
+export async function ensureLocalStaticServerRestartWithDeps({
+  expectedMetadata,
+  port = 4173,
+  fetchFn = globalThis.fetch,
+  log = (message) => console.log(message),
+  verifyServedAfterStart = false,
+} = {}) {
+  const servedUrl = `http://127.0.0.1:${port}/`;
+  const healthUrl = `${servedUrl}__stephanos/health`;
+  const restartUrl = `${servedUrl}__stephanos/restart`;
+  const expectedRuntimeMarker = expectedMetadata?.runtimeMarker || '';
+  const expectedCommit = expectedMetadata?.gitCommit || '';
+  const expectedBuildTimestamp = expectedMetadata?.buildTimestamp || '';
+  const expectedSourceFingerprint = expectedMetadata?.sourceFingerprint || '';
+  const report = {
+    previousServerStatus: 'not-running',
+    serverStopped: false,
+    serverStarted: false,
+    servedUrl,
+    servedCommit: null,
+    servedBuildTimestamp: null,
+    servedSourceFingerprint: null,
+    servedRuntimeMatchesExpectedDistMetadata: false,
+    restartRequired: false,
+    operatorBrowserAction: 'Hard-refresh browser after the 4173 server restart completes.',
+  };
+
+  let previousHealth = null;
+  try {
+    const healthResponse = await fetchFn(healthUrl, { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
+    if (healthResponse?.ok) {
+      previousHealth = await healthResponse.json();
+      report.previousServerStatus = 'running';
+      report.servedCommit = previousHealth?.gitCommit || null;
+      report.servedBuildTimestamp = previousHealth?.buildTimestamp || null;
+      report.servedSourceFingerprint = previousHealth?.sourceFingerprint || null;
+      report.servedRuntimeMatchesExpectedDistMetadata = Boolean(expectedRuntimeMarker) && previousHealth?.runtimeMarker === expectedRuntimeMarker;
+    } else {
+      report.previousServerStatus = `unhealthy:${healthResponse?.status || 'unknown'}`;
+    }
+  } catch {
+    report.previousServerStatus = 'not-running';
+  }
+
+  if (report.previousServerStatus === 'running') {
+    try {
+      const restartResponse = await fetchFn(restartUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'ignition',
+          reason: 'post-build-static-server-restart',
+          expectedRuntimeMarker,
+          expectedCommit,
+          expectedBuildTimestamp,
+          expectedSourceFingerprint,
+        }),
+      });
+      if (!restartResponse?.ok && restartResponse?.status !== 202) {
+        throw new Error(`restart endpoint returned ${restartResponse?.status || 'unknown'}`);
+      }
+      report.serverStopped = true;
+    } catch (error) {
+      const packet = createIgnitionRepairPacket({
+        reason: 'static-server-restart-failed',
+        servedCommit: report.servedCommit || 'unknown',
+        expectedSourceCommit: expectedCommit || 'unknown',
+        sourceFingerprint: expectedSourceFingerprint || 'unknown',
+        buildTimestamp: expectedBuildTimestamp || 'unknown',
+        nextSafeAction: `Stop the existing 4173 server manually, then rerun npm run stephanos:ignite. Restart failure: ${error.message}`,
+      });
+      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
+      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
+    }
+  }
+
+  report.serverStarted = true;
+  report.restartRequired = true;
+  if (verifyServedAfterStart) {
+    let servedHealth = null;
+    try {
+      const servedResponse = await fetchFn(healthUrl, { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
+      if (!servedResponse?.ok) {
+        throw new Error(`health endpoint returned ${servedResponse?.status || 'unknown'}`);
+      }
+      servedHealth = await servedResponse.json();
+    } catch (error) {
+      const packet = createIgnitionRepairPacket({
+        reason: 'static-server-start-verification-failed',
+        expectedSourceCommit: expectedCommit || 'unknown',
+        sourceFingerprint: expectedSourceFingerprint || 'unknown',
+        buildTimestamp: expectedBuildTimestamp || 'unknown',
+        nextSafeAction: `Restart the 4173 server manually and rerun the localhost health/source-truth probes. Verification failure: ${error.message}`,
+      });
+      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
+      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
+    }
+    report.servedCommit = servedHealth?.gitCommit || null;
+    report.servedBuildTimestamp = servedHealth?.buildTimestamp || null;
+    report.servedSourceFingerprint = servedHealth?.sourceFingerprint || null;
+    report.servedRuntimeMatchesExpectedDistMetadata = Boolean(expectedRuntimeMarker) && servedHealth?.runtimeMarker === expectedRuntimeMarker;
+    if (!report.servedRuntimeMatchesExpectedDistMetadata) {
+      const packet = createIgnitionRepairPacket({
+        reason: 'served-runtime-metadata-mismatch',
+        servedCommit: report.servedCommit || 'unknown',
+        expectedSourceCommit: expectedCommit || 'unknown',
+        sourceFingerprint: expectedSourceFingerprint || 'unknown',
+        buildTimestamp: expectedBuildTimestamp || 'unknown',
+        nextSafeAction: 'Stop the stale 4173 server, restart ignition, and hard-refresh the browser only after served metadata matches dist.',
+      });
+      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
+      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
+    }
+  }
+  log(`[IGNITION] static-server-restart=${JSON.stringify(report)}`);
+  return report;
+}
+
 const APPROVED_GENERATED_DIST_PREFIX = 'apps/stephanos/dist/';
 const RUNTIME_MEMORY_PATH = 'stephanos-server/data/memory/durable-memory.json';
 const ROOT_TRANSIENT_DATA_PREFIX = 'data/';
@@ -778,6 +1130,56 @@ export function runGitPullPreflightWithDeps({
 
   const prePullPublicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
   reportPublicationParity(prePullPublicationTruth, { label: 'publication parity (pre-pull)' });
+  let currentCommit = 'unknown';
+  try {
+    currentCommit = normalizeCaptureStdout(captureStep('git-current-commit', 'git', ['rev-parse', '--short', 'HEAD']));
+  } catch {
+    currentCommit = 'unknown';
+  }
+  let originMainCommit = 'unknown';
+  try {
+    originMainCommit = normalizeCaptureStdout(captureStep('git-origin-main-commit', 'git', ['rev-parse', '--short', 'origin/main']));
+  } catch {
+    try {
+      originMainCommit = normalizeCaptureStdout(captureStep('git-upstream-commit', 'git', ['rev-parse', '--short', '@{u}']));
+    } catch {
+      originMainCommit = 'unknown';
+    }
+  }
+  const divergencePacket = prePullPublicationTruth.aheadCount > 0 && prePullPublicationTruth.behindCount > 0
+    ? captureDivergenceRecoveryPacket({ captureStep, currentCommit, originMainCommit })
+    : null;
+  const sourceUpdateTruth = classifySourceUpdateTruth({
+    currentCommit,
+    originMainCommit,
+    localOnlyCommits: divergencePacket?.localOnlyCommits || [],
+    remoteOnlyCommits: divergencePacket?.remoteOnlyCommits || [],
+    localOnlyPaths: divergencePacket?.localOnlyPaths || [],
+    aheadCount: prePullPublicationTruth.aheadCount,
+    behindCount: prePullPublicationTruth.behindCount,
+    detachedHead: prePullPublicationTruth.detachedHead,
+    hasUpstream: prePullPublicationTruth.hasUpstream,
+    upstreamBranch: prePullPublicationTruth.upstreamBranch,
+  });
+  console.log(`[IGNITION] source-update-status=${JSON.stringify(sourceUpdateTruth)}`);
+  if (sourceUpdateTruth.ignitionStatus === 'BLOCKED') {
+    if (sourceUpdateTruth.reason === 'ff-only-divergence') {
+      console.error(`[IGNITION] recovery-packet=${JSON.stringify(sourceUpdateTruth)}`);
+      if (shouldApproveLocalMerge(argvArgs)) {
+        const recoveryResult = runApprovedLocalMergeRecoveryWithDeps({
+          captureStep,
+          runStepFn,
+          currentCommit,
+          originMainCommit,
+        });
+        console.log(`[IGNITION] recovery-result=${JSON.stringify(recoveryResult)}`);
+        return evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
+      }
+    }
+    console.error('[IGNITION] source update blocked before build');
+    console.error(`[IGNITION] repair-packet=${JSON.stringify(sourceUpdateTruth)}`);
+    throw new Error(`blocked for safety: ${sourceUpdateTruth.reason}. ${sourceUpdateTruth.nextSafeAction}`);
+  }
 
   if (shouldRequirePublishedHead(argvArgs) && !prePullPublicationTruth.headPublished) {
     console.error('[IGNITION] publication parity blocked by --require-published-head');
@@ -1071,6 +1473,14 @@ export async function run() {
     if (probe.mismatches?.length) {
       console.error(`[IGNITION PREFLIGHT] launcher source mismatches=${probe.mismatches.join(', ')}`);
     }
+    try {
+      const restartReport = await ensureLocalStaticServerRestartWithDeps({
+        expectedMetadata: preflightState.expectedMetadata,
+      });
+      console.error(`[IGNITION PREFLIGHT] stale server restart requested=${JSON.stringify(restartReport)}`);
+    } catch (error) {
+      console.error(`[IGNITION PREFLIGHT] stale server restart failed: ${error.message}`);
+    }
     process.exit(1);
     return;
   }
@@ -1163,10 +1573,50 @@ export async function run() {
     runServe: async () => {
       console.log('[IGNITION] launch continuing');
       const refreshedState = readLocalBuildState();
+      const servedCommit = refreshedState.distMetadata?.gitCommit || 'missing';
+      const sourceFingerprint = refreshedState.distMetadata?.sourceFingerprint || refreshedState.expectedMetadata?.sourceFingerprint || 'missing';
+      const buildTimestamp = refreshedState.distMetadata?.buildTimestamp || 'missing';
+      const currentCommit = normalizeCaptureStdout(runStepCapture('git-current-commit-pre-serve', 'git', ['rev-parse', '--short', 'HEAD']));
+      let originMainCommit = currentCommit;
+      try {
+        originMainCommit = normalizeCaptureStdout(runStepCapture('git-origin-main-commit-pre-serve', 'git', ['rev-parse', '--short', 'origin/main']));
+      } catch {
+        originMainCommit = currentCommit;
+      }
+      const expectedSourceCommit = publicationTruth?.aheadCount > 0 && publicationTruth?.behindCount === 0
+        ? currentCommit
+        : originMainCommit;
+      const distFreshness = evaluateDistFreshnessAgainstOrigin({
+        distMetadata: refreshedState.distMetadata,
+        currentCommit,
+        originMainCommit: expectedSourceCommit,
+      });
+      console.log(`[IGNITION] runtime-footer-truth=${JSON.stringify({
+        servedCommit,
+        expectedSourceCommit,
+        originMainCommit,
+        buildTimestamp,
+        sourceFingerprint,
+      })}`);
+      console.log(`[IGNITION] dist-freshness-status=${JSON.stringify(distFreshness)}`);
+      if (distFreshness.ignitionStatus === 'BLOCKED') {
+        console.error('[IGNITION] stale dist blocked before serve');
+        console.error(`[IGNITION] repair-packet=${JSON.stringify(distFreshness)}`);
+        throw new Error(`blocked for safety: ${distFreshness.reason}. ${distFreshness.nextSafeAction}`);
+      }
+      const restartReport = await ensureLocalStaticServerRestartWithDeps({
+        expectedMetadata: refreshedState.distMetadata || refreshedState.expectedMetadata,
+      });
       const finalStatus = {
         ignitionMode,
         IgnitionCleanlinessVerdict: verifyResult === 'passed' ? 'READY' : 'HELD',
         PRGuardStatus: ignitionMode === 'PR_CLEAN_ROOM' ? 'enforced' : 'not-applicable',
+        servedCommit,
+        expectedSourceCommit,
+        originMainCommit,
+        buildTimestamp,
+        sourceFingerprint,
+        staticServerRestart: restartReport,
         StartupDecision: 'START',
       };
       console.log(`[IGNITION] status-report=${JSON.stringify(finalStatus)}`);
