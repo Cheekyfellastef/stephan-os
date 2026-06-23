@@ -43,7 +43,8 @@
     "stephanos:ignite:housekeep": "node scripts/ignite-stephanos-local.mjs --mode=housekeep",
     "stephanos:ignite:housekeep:dry-run": "node scripts/ignite-stephanos-local.mjs --mode=housekeep-dry-run",
     "stephanos:guard:pr-clean:local": "node scripts/guard-pr-clean.mjs --local",
-    "stephanos:pr:prepare": "node scripts/guard-pr-clean.mjs --prepare"
+    "stephanos:pr:prepare": "node scripts/guard-pr-clean.mjs --prepare",
+    "stephanos:browser-proof": "node scripts/browser-proof-runner.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
