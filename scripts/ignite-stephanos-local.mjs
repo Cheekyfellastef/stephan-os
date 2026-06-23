@@ -16,6 +16,7 @@ import {
   DEFAULT_OPENCLAW_SERVICE_NAME,
   buildOpenClawStartupRecoveryPacket,
   classifyOpenClawReadiness,
+  createOpenClawStandaloneDiscoveryPacket,
 } from '../shared/agents/openClawStartupRecovery.mjs';
 
 const args = new Set(process.argv.slice(2));
@@ -1318,6 +1319,38 @@ export async function probeOpenClawEndpoint({ endpoints = DEFAULT_OPENCLAW_ENDPO
   return { reachable: false, status: 'unreachable-or-unknown', identityVerified: false, connectionStatus: 'unknown' };
 }
 
+function parseJsonArrayLine(value = '') {
+  const parsed = parseJsonLine(value);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === 'object') return [parsed];
+  return [];
+}
+
+export function discoverOpenClawStandaloneIdentityWithDeps({ captureStep = runStepCapture, platform = process.platform, env = process.env } = {}) {
+  if (platform !== 'win32') {
+    return createOpenClawStandaloneDiscoveryPacket();
+  }
+  let candidateServices = [];
+  let candidateProcesses = [];
+  let candidatePorts = [];
+  try {
+    const result = captureStep('openclaw-standalone-service-discovery', 'powershell.exe', ['-NoProfile', '-Command', "Get-Service | Where-Object { $_.Name -match 'OpenClaw|openclaw' -or $_.DisplayName -match 'OpenClaw|openclaw' } | Select-Object Name,DisplayName,Status,ServiceType | ConvertTo-Json -Compress"]);
+    candidateServices = parseJsonArrayLine(result.stdout).map((service) => ({ name: service.Name || service.name || '', displayName: service.DisplayName || service.displayName || '', status: String(service.Status || service.status || 'unknown'), serviceType: String(service.ServiceType || service.serviceType || 'unknown') }));
+  } catch {}
+  try {
+    const result = captureStep('openclaw-standalone-process-discovery', 'powershell.exe', ['-NoProfile', '-Command', "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'OpenClaw|openclaw' -or $_.CommandLine -match 'OpenClaw|openclaw' } | Select-Object ProcessId,Name,CommandLine,ExecutablePath | ConvertTo-Json -Compress"]);
+    candidateProcesses = parseJsonArrayLine(result.stdout).map((processEntry) => ({ pid: processEntry.ProcessId || processEntry.pid || null, name: processEntry.Name || processEntry.name || '', commandLine: processEntry.CommandLine || processEntry.commandLine || '', executablePath: processEntry.ExecutablePath || processEntry.executablePath || '' }));
+  } catch {}
+  try {
+    const result = captureStep('openclaw-standalone-port-discovery', 'powershell.exe', ['-NoProfile', '-Command', "$pids=(Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'OpenClaw|openclaw' -or $_.CommandLine -match 'OpenClaw|openclaw' }).ProcessId; Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $pids -contains $_.OwningProcess } | Select-Object LocalAddress,LocalPort,OwningProcess,State | ConvertTo-Json -Compress"]);
+    candidatePorts = parseJsonArrayLine(result.stdout).map((port) => ({ localAddress: port.LocalAddress || port.localAddress || '', localPort: port.LocalPort || port.localPort || null, owningProcess: port.OwningProcess || port.owningProcess || null, state: String(port.State || port.state || 'unknown') }));
+  } catch {}
+  const configuredLaunchTargets = ['OPENCLAW_PATH', 'OPENCLAW_COMMAND', 'OPENCLAW_LAUNCH_COMMAND', 'STEPHANOS_OPENCLAW_PATH', 'STEPHANOS_OPENCLAW_COMMAND']
+    .filter((key) => typeof env[key] === 'string' && env[key].trim())
+    .map((key) => ({ source: `env:${key}`, value: env[key].trim() }));
+  return createOpenClawStandaloneDiscoveryPacket({ candidateServices, candidateProcesses, candidatePorts, configuredLaunchTargets });
+}
+
 export function probeOpenClawProcessWithDeps({ captureStep = runStepCapture, platform = process.platform, serviceName = DEFAULT_OPENCLAW_SERVICE_NAME } = {}) {
   if (platform !== 'win32') {
     return { process: { running: false, name: 'unsupported-platform' }, service: { running: false, name: serviceName, state: 'unsupported-platform' }, portOwner: { present: false, verified: false } };
@@ -1344,6 +1377,8 @@ export function probeOpenClawProcessWithDeps({ captureStep = runStepCapture, pla
 }
 
 export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep = runStepCapture, runStepFn = runStep, fetchFn = globalThis.fetch, argvArgs = args, platform = process.platform, log = (message) => console.log(message) } = {}) {
+  const discovery = discoverOpenClawStandaloneIdentityWithDeps({ captureStep, platform });
+  log(`[IGNITION] openclaw-standalone-discovery=${JSON.stringify(discovery)}`);
   const base = probeOpenClawProcessWithDeps({ captureStep, platform });
   const endpoint = await probeOpenClawEndpoint({ fetchFn });
   let readiness = { ...base, endpoint };

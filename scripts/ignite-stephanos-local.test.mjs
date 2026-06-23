@@ -13,6 +13,7 @@ import {
   collectApprovedTrackedGeneratedRestorePaths,
   collectRuntimeStatePaths,
   evaluateDistFreshnessAgainstOrigin,
+  discoverOpenClawStandaloneIdentityWithDeps,
   evaluateOpenClawStartupConnectRecoveryWithDeps,
   evaluateGitPublicationTruthWithDeps,
   evaluateGitStatusForIgnition,
@@ -97,6 +98,47 @@ test('OpenClaw unknown process or port owner blocks restart', () => {
   const unknownOwner = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw', exists: true, verified: true }, endpoint: { reachable: false }, portOwner: { present: true, verified: false, name: 'other.exe' } });
   assert.equal(unknownOwner.reason, 'port-owner-not-clearly-openclaw');
   assert.equal(unknownOwner.desktopApproval, null);
+});
+
+
+test('OpenClaw Standalone Discovery V1 reports adapter-only without restart target', () => {
+  const calls = [];
+  const captureStep = (label) => {
+    calls.push(label);
+    if (label === 'openclaw-standalone-service-discovery') return { stdout: '[]', stderr: '' };
+    if (label === 'openclaw-standalone-process-discovery') return { stdout: '{"ProcessId":123,"Name":"node.exe","CommandLine":"node.exe scripts/openclaw-readonly-adapter-stub.mjs","ExecutablePath":"C:\\node.exe"}', stderr: '' };
+    if (label === 'openclaw-standalone-port-discovery') return { stdout: '[]', stderr: '' };
+    return { stdout: '', stderr: '' };
+  };
+  const packet = discoverOpenClawStandaloneIdentityWithDeps({ captureStep, platform: 'win32', env: {} });
+  assert.equal(packet.packetType, 'openclaw-standalone-discovery-v1');
+  assert.equal(packet.discoveryMode, 'read-only');
+  assert.equal(packet.adapterOnly, 'yes');
+  assert.deepEqual(packet.candidateProcesses, []);
+  assert.equal(packet.verifiedStandaloneIdentity, 'no');
+  assert.equal(packet.verifiedRestartTarget, 'none');
+  assert.match(packet.recommendedOperatorAction, /Start OpenClaw Standalone manually/i);
+  assert.equal(packet.forbiddenActions.includes('no restart approval button'), true);
+  assert.deepEqual(calls, ['openclaw-standalone-service-discovery', 'openclaw-standalone-process-discovery', 'openclaw-standalone-port-discovery']);
+});
+
+test('OpenClaw Standalone Discovery V1 reports standalone candidates without approval', () => {
+  const captureStep = (label) => {
+    if (label === 'openclaw-standalone-service-discovery') return { stdout: '{"Name":"OpenClawStandalone","DisplayName":"OpenClaw Standalone","Status":4,"ServiceType":16}', stderr: '' };
+    if (label === 'openclaw-standalone-process-discovery') return { stdout: '[{"ProcessId":42,"Name":"OpenClaw.exe","CommandLine":"C:/OpenClaw/OpenClaw.exe","ExecutablePath":"C:/OpenClaw/OpenClaw.exe"},{"ProcessId":123,"Name":"node.exe","CommandLine":"node.exe scripts/openclaw-readonly-adapter-stub.mjs"}]', stderr: '' };
+    if (label === 'openclaw-standalone-port-discovery') return { stdout: '{"LocalAddress":"127.0.0.1","LocalPort":8791,"OwningProcess":42,"State":"Listen"}', stderr: '' };
+    return { stdout: '', stderr: '' };
+  };
+  const packet = discoverOpenClawStandaloneIdentityWithDeps({ captureStep, platform: 'win32', env: { OPENCLAW_COMMAND: 'C:/OpenClaw/OpenClaw.exe' } });
+  assert.equal(packet.adapterOnly, 'no');
+  assert.equal(packet.candidateServices.length, 1);
+  assert.equal(packet.candidateProcesses.length, 1);
+  assert.equal(packet.candidateProcesses[0].name, 'OpenClaw.exe');
+  assert.equal(packet.candidatePorts[0].localPort, 8791);
+  assert.equal(packet.configuredLaunchTargets[0].source, 'env:OPENCLAW_COMMAND');
+  assert.equal(packet.verifiedStandaloneIdentity, 'no');
+  assert.equal(packet.verifiedRestartTarget, 'none');
+  assert.match(packet.recommendedOperatorAction, /add explicit identity rules/i);
 });
 
 test('OpenClaw adapter stub without Windows service blocks restart approval', async () => {
