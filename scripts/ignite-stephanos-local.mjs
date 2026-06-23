@@ -17,6 +17,7 @@ import {
   buildOpenClawStartupRecoveryPacket,
   classifyOpenClawReadiness,
   createOpenClawStandaloneDiscoveryPacket,
+  findVerifiedOpenClawStandaloneGatewayCandidate,
 } from '../shared/agents/openClawStartupRecovery.mjs';
 
 const args = new Set(process.argv.slice(2));
@@ -1376,15 +1377,34 @@ export function probeOpenClawProcessWithDeps({ captureStep = runStepCapture, pla
   return { process, service, portOwner: { present: serviceIdentityOwnsProcess, verified: serviceIdentityOwnsProcess } };
 }
 
+export function buildOpenClawReadinessEndpoints({ discovery = {}, defaultEndpoints = DEFAULT_OPENCLAW_ENDPOINTS } = {}) {
+  const gatewayCandidate = findVerifiedOpenClawStandaloneGatewayCandidate(discovery);
+  if (!gatewayCandidate?.candidatePort) {
+    return { endpoints: defaultEndpoints, gatewayCandidate };
+  }
+  const gatewayEndpoints = [
+    `http://127.0.0.1:${gatewayCandidate.candidatePort}/health`,
+    `http://127.0.0.1:${gatewayCandidate.candidatePort}/status`,
+  ];
+  return { endpoints: [...gatewayEndpoints, ...defaultEndpoints], gatewayCandidate };
+}
+
 export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep = runStepCapture, runStepFn = runStep, fetchFn = globalThis.fetch, argvArgs = args, platform = process.platform, log = (message) => console.log(message) } = {}) {
   const discovery = discoverOpenClawStandaloneIdentityWithDeps({ captureStep, platform });
   log(`[IGNITION] openclaw-standalone-discovery=${JSON.stringify(discovery)}`);
+  const { endpoints, gatewayCandidate } = buildOpenClawReadinessEndpoints({ discovery });
   const base = probeOpenClawProcessWithDeps({ captureStep, platform });
-  const endpoint = await probeOpenClawEndpoint({ fetchFn });
-  let readiness = { ...base, endpoint };
+  const endpoint = await probeOpenClawEndpoint({ endpoints, fetchFn });
+  let readiness = { ...base, endpoint, standaloneGatewayCandidate: gatewayCandidate, candidatePort: gatewayCandidate?.candidatePort || null, selectedReadinessEndpoint: endpoint.url || null, adapterOnly: gatewayCandidate?.verified === true ? 'no' : undefined, restartCommandAllowed: false, safeRestartTarget: 'none' };
   let packet = buildOpenClawStartupRecoveryPacket(readiness);
   const classification = classifyOpenClawReadiness(readiness);
-  log(`[IGNITION] openclaw-startup-readiness=${JSON.stringify({ state: classification.state, healthy: classification.healthy, readiness })}`);
+  const readinessIdentity = classification.state === 'openclaw-standalone-gateway'
+    ? 'standalone-gateway'
+    : classification.state === 'openclaw-standalone-gateway-candidate'
+      ? 'standalone-gateway-candidate'
+      : readiness.endpoint?.identity || null;
+  readiness = { ...readiness, identity: readinessIdentity };
+  log(`[IGNITION] openclaw-startup-readiness=${JSON.stringify({ state: classification.state, healthy: classification.healthy, candidatePort: readiness.candidatePort, selectedReadinessEndpoint: readiness.selectedReadinessEndpoint, identity: readiness.identity, endpointIdentity: readiness.endpoint?.identity || null, connectionVerdict: classification.state, adapterOnly: readiness.adapterOnly || (classification.state === 'openclaw-adapter-only' ? 'yes' : 'no'), restartCommandAllowed: false, readiness })}`);
   if (!packet) return { healthy: true, state: classification.state, readiness };
   log(`[IGNITION] openclaw-recovery-packet=${JSON.stringify(packet)}`);
 
@@ -1399,7 +1419,8 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
   runStepFn('openclaw-service-stop-approved', 'sc.exe', ['stop', DEFAULT_OPENCLAW_SERVICE_NAME]);
   runStepFn('openclaw-service-start-approved', 'sc.exe', ['start', DEFAULT_OPENCLAW_SERVICE_NAME]);
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 2500));
-  readiness = { ...probeOpenClawProcessWithDeps({ captureStep, platform }), endpoint: await probeOpenClawEndpoint({ fetchFn }) };
+  const recoveryEndpoint = await probeOpenClawEndpoint({ endpoints, fetchFn });
+  readiness = { ...probeOpenClawProcessWithDeps({ captureStep, platform }), endpoint: recoveryEndpoint, standaloneGatewayCandidate: gatewayCandidate, candidatePort: gatewayCandidate?.candidatePort || null, selectedReadinessEndpoint: recoveryEndpoint.url || null, adapterOnly: gatewayCandidate?.verified === true ? 'no' : undefined, restartCommandAllowed: false, safeRestartTarget: 'none' };
   packet = buildOpenClawStartupRecoveryPacket(readiness);
   if (packet) {
     log(`[IGNITION] openclaw-recovery-result=${JSON.stringify(packet)}`);
