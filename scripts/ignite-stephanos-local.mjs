@@ -1398,13 +1398,13 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
   let readiness = { ...base, endpoint, standaloneGatewayCandidate: gatewayCandidate, candidatePort: gatewayCandidate?.candidatePort || null, selectedReadinessEndpoint: endpoint.url || null, adapterOnly: gatewayCandidate?.verified === true ? 'no' : undefined, restartCommandAllowed: false, safeRestartTarget: 'none' };
   let packet = buildOpenClawStartupRecoveryPacket(readiness);
   const classification = classifyOpenClawReadiness(readiness);
-  const readinessIdentity = classification.state === 'openclaw-standalone-gateway'
+  const readinessIdentity = classification.state === 'openclaw-standalone-gateway-live' || classification.state === 'openclaw-standalone-gateway'
     ? 'standalone-gateway'
     : classification.state === 'openclaw-standalone-gateway-candidate'
       ? 'standalone-gateway-candidate'
       : readiness.endpoint?.identity || null;
-  readiness = { ...readiness, identity: readinessIdentity };
-  log(`[IGNITION] openclaw-startup-readiness=${JSON.stringify({ state: classification.state, healthy: classification.healthy, candidatePort: readiness.candidatePort, selectedReadinessEndpoint: readiness.selectedReadinessEndpoint, identity: readiness.identity, endpointIdentity: readiness.endpoint?.identity || null, connectionVerdict: classification.state, adapterOnly: readiness.adapterOnly || (classification.state === 'openclaw-adapter-only' ? 'yes' : 'no'), restartCommandAllowed: false, readiness })}`);
+  readiness = { ...readiness, identity: readinessIdentity, endpointIdentityVerified: classification.endpointIdentityVerified === true || readiness.endpoint?.identityVerified === true, connectionVerdict: classification.connectionVerdict || classification.state, openClawExecutionAllowed: false, mutationAllowed: false, restartCommandAllowed: false, safeRestartTarget: classification.safeRestartTarget || 'none' };
+  log(`[IGNITION] openclaw-startup-readiness=${JSON.stringify({ state: classification.state, healthy: classification.healthy, candidatePort: readiness.candidatePort, selectedReadinessEndpoint: readiness.selectedReadinessEndpoint, identity: readiness.identity, endpointIdentity: readiness.endpoint?.identity || null, connectionVerdict: classification.connectionVerdict || classification.state, openClawExecutionAllowed: false, mutationAllowed: false, safeRestartTarget: readiness.safeRestartTarget, adapterOnly: readiness.adapterOnly || (classification.state === 'openclaw-adapter-only' ? 'yes' : 'no'), restartCommandAllowed: false, readiness })}`);
   if (!packet) return { healthy: true, state: classification.state, readiness };
   log(`[IGNITION] openclaw-recovery-packet=${JSON.stringify(packet)}`);
 
