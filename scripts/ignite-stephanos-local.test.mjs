@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import {
   autoPublishDistWithDeps,
+  buildOpenClawReadinessEndpoints,
   canAutoPublishDist,
   checkpointAndRemoveTransientRootData,
   captureDivergenceRecoveryPacket,
@@ -139,6 +140,65 @@ test('OpenClaw Standalone Discovery V1 reports standalone candidates without app
   assert.equal(packet.verifiedStandaloneIdentity, 'no');
   assert.equal(packet.verifiedRestartTarget, 'none');
   assert.match(packet.recommendedOperatorAction, /add explicit identity rules/i);
+});
+
+test('OpenClaw readiness probes discovered standalone gateway port before readonly adapter', async () => {
+  const calls = [];
+  const captureStep = (label) => {
+    if (label === 'openclaw-standalone-service-discovery') return { stdout: '[]', stderr: '' };
+    if (label === 'openclaw-standalone-process-discovery') return { stdout: '[{"ProcessId":8640,"Name":"node.exe","CommandLine":"node.exe C:/Users/Stephan/AppData/Roaming/npm/node_modules/openclaw/openclaw.mjs gateway run --force","ExecutablePath":"C:/Program Files/nodejs/node.exe"},{"ProcessId":123,"Name":"node.exe","CommandLine":"node.exe scripts/openclaw-readonly-adapter-stub.mjs"}]', stderr: '' };
+    if (label === 'openclaw-standalone-port-discovery') return { stdout: '{"LocalAddress":"127.0.0.1","LocalPort":18789,"OwningProcess":8640,"State":"Listen"}', stderr: '' };
+    if (label === 'openclaw-service-query') return { stdout: '', stderr: 'OpenService FAILED 1060: The specified service does not exist as an installed service.' };
+    if (label === 'openclaw-process-query') return { stdout: '{"Name":"node.exe","CommandLine":"node.exe scripts/openclaw-readonly-adapter-stub.mjs"}', stderr: '' };
+    return { stdout: '', stderr: '' };
+  };
+  const fetchFn = async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, text: async () => '{"service":"OpenClaw","connectionStatus":"healthy"}' };
+  };
+  const result = await evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep, fetchFn, platform: 'win32', log: () => {} });
+  assert.equal(calls[0], 'http://127.0.0.1:18789/health');
+  assert.equal(calls.includes('http://127.0.0.1:8790/health'), false);
+  assert.equal(result.state, 'openclaw-standalone-gateway');
+  assert.equal(result.readiness.candidatePort, 18789);
+  assert.equal(result.readiness.adapterOnly, 'no');
+  assert.equal(result.readiness.restartCommandAllowed, false);
+});
+
+test('OpenClaw real gateway candidate present is not classified adapter-only', () => {
+  const discovery = {
+    candidateProcesses: [{ pid: 8640, name: 'node.exe', commandLine: 'node.exe C:/Users/Stephan/AppData/Roaming/npm/node_modules/openclaw/openclaw.mjs gateway run --force' }],
+    candidatePorts: [{ localAddress: '127.0.0.1', localPort: 18789, owningProcess: 8640, state: 'Listen' }],
+  };
+  const { endpoints, gatewayCandidate } = buildOpenClawReadinessEndpoints({ discovery });
+  assert.equal(gatewayCandidate.verified, true);
+  assert.equal(gatewayCandidate.candidatePort, 18789);
+  assert.equal(endpoints[0], 'http://127.0.0.1:18789/health');
+  const classification = classifyOpenClawReadiness({
+    process: { running: true, name: 'node.exe', commandLine: 'node.exe scripts/openclaw-readonly-adapter-stub.mjs' },
+    service: { running: false, exists: false },
+    endpoint: { reachable: true, identity: 'unknown', identityVerified: false },
+    standaloneGatewayCandidate: gatewayCandidate,
+  });
+  assert.equal(classification.state, 'openclaw-standalone-gateway-candidate');
+  assert.notEqual(classification.state, 'openclaw-adapter-only');
+});
+
+test('OpenClaw gateway candidate with unknown identity blocks as standalone-gateway-candidate with safety locks closed', () => {
+  const packet = buildOpenClawStartupRecoveryPacket({
+    process: { running: true, name: 'node.exe', commandLine: 'node.exe scripts/openclaw-readonly-adapter-stub.mjs' },
+    service: { running: false, exists: false },
+    endpoint: { reachable: true, identity: 'gateway', identityVerified: false, connectionStatus: 'unknown' },
+    standaloneGatewayCandidate: { verified: true, candidatePort: 18789 },
+    candidatePort: 18789,
+    adapterOnly: 'no',
+    restartCommandAllowed: false,
+  });
+  assert.equal(packet.connectionVerdict, 'openclaw-standalone-gateway-candidate');
+  assert.equal(packet.desktopApproval, null);
+  assert.equal(packet.safetyLocks.openClawMutation, 'locked');
+  assert.equal(packet.safetyLocks.codexAutoDispatch, 'disabled');
+  assert.equal(packet.safetyLocks.mergeSafety, 'no / hold');
 });
 
 test('OpenClaw adapter stub without Windows service blocks restart approval', async () => {
