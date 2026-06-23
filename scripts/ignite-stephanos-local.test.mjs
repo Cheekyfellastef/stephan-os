@@ -154,12 +154,18 @@ test('OpenClaw readiness probes discovered standalone gateway port before readon
   };
   const fetchFn = async (url) => {
     calls.push(url);
-    return { ok: true, status: 200, text: async () => '{"service":"OpenClaw","connectionStatus":"healthy"}' };
+    return { ok: true, status: 200, text: async () => '{"ok":true,"status":"live"}' };
   };
   const result = await evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep, fetchFn, platform: 'win32', log: () => {} });
   assert.equal(calls[0], 'http://127.0.0.1:18789/health');
   assert.equal(calls.includes('http://127.0.0.1:8790/health'), false);
-  assert.equal(result.state, 'openclaw-standalone-gateway');
+  assert.equal(result.state, 'openclaw-standalone-gateway-live');
+  assert.equal(result.readiness.identity, 'standalone-gateway');
+  assert.equal(result.readiness.connectionVerdict, 'openclaw-standalone-gateway-live');
+  assert.equal(result.readiness.endpointIdentityVerified, true);
+  assert.equal(result.readiness.openClawExecutionAllowed, false);
+  assert.equal(result.readiness.mutationAllowed, false);
+  assert.equal(result.readiness.safeRestartTarget, 'none');
   assert.equal(result.readiness.candidatePort, 18789);
   assert.equal(result.readiness.adapterOnly, 'no');
   assert.equal(result.readiness.restartCommandAllowed, false);
@@ -182,6 +188,37 @@ test('OpenClaw real gateway candidate present is not classified adapter-only', (
   });
   assert.equal(classification.state, 'openclaw-standalone-gateway-candidate');
   assert.notEqual(classification.state, 'openclaw-adapter-only');
+});
+
+
+test('OpenClaw standalone gateway health without matching process owner remains blocked', () => {
+  const classification = classifyOpenClawReadiness({
+    process: { running: true, name: 'node.exe', commandLine: 'node.exe scripts/openclaw-readonly-adapter-stub.mjs' },
+    service: { running: false, exists: false },
+    endpoint: { reachable: true, httpStatus: 200, body: '{"ok":true,"status":"live"}', identityVerified: false, connectionStatus: 'live' },
+    standaloneGatewayCandidate: null,
+  });
+  assert.equal(classification.state, 'openclaw-adapter-only');
+  assert.equal(classification.healthy, false);
+});
+
+test('OpenClaw standalone gateway process without owned port remains identity unclear when health is reachable', () => {
+  const discovery = {
+    candidateProcesses: [{ pid: 8640, name: 'node.exe', commandLine: 'node.exe C:/Users/Stephan/AppData/Roaming/npm/node_modules/openclaw/openclaw.mjs gateway run --force' }],
+    candidatePorts: [],
+  };
+  const { gatewayCandidate } = buildOpenClawReadinessEndpoints({ discovery });
+  assert.equal(gatewayCandidate, null);
+  const packet = buildOpenClawStartupRecoveryPacket({
+    process: { running: true, name: 'node.exe', commandLine: 'node.exe C:/Users/Stephan/AppData/Roaming/npm/node_modules/openclaw/openclaw.mjs gateway run --force' },
+    service: { running: false, exists: false },
+    endpoint: { reachable: true, httpStatus: 200, body: '{"ok":true,"status":"live"}', identityVerified: false, connectionStatus: 'live' },
+    standaloneGatewayCandidate: { verified: true, candidatePort: null },
+    adapterOnly: 'no',
+    restartCommandAllowed: false,
+  });
+  assert.equal(packet.reason, 'standalone-gateway-identity-unclear');
+  assert.equal(packet.desktopApproval, null);
 });
 
 test('OpenClaw gateway candidate with unknown identity blocks as standalone-gateway-candidate with safety locks closed', () => {
