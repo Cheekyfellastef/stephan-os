@@ -11,6 +11,15 @@ export const DEFAULT_OPENCLAW_SERVICE_NAME = 'OpenClaw';
 export const DEFAULT_OPENCLAW_ENDPOINTS = ['http://127.0.0.1:8790/health', 'http://127.0.0.1:8790/status'];
 
 function includesOpenClaw(value = '') { return /openclaw/i.test(String(value || '')); }
+function isVerifiedOpenClawService(service = {}) {
+  return service.exists === true && service.verified === true && service.name === DEFAULT_OPENCLAW_SERVICE_NAME;
+}
+function isReadonlyAdapterProcess(process = {}) {
+  return /node(?:\.exe)?$/i.test(String(process.name || '').trim()) && /scripts[\\/]openclaw-readonly-adapter-stub\.mjs/i.test(String(process.commandLine || ''));
+}
+function isPortOwnerVerified(portOwner = {}) {
+  return portOwner.present === true && portOwner.verified === true;
+}
 
 export function createOpenClawStartupRecoveryPacket({
   reason = 'unknown', processState = 'unknown', serviceState = 'unknown', endpointStatus = 'unknown',
@@ -37,19 +46,22 @@ export function createOpenClawStartupRecoveryPacket({
 }
 
 export function classifyOpenClawReadiness({ process = {}, service = {}, endpoint = {}, portOwner = {} } = {}) {
-  const processRunning = process.running === true || service.running === true;
-  const processKnown = includesOpenClaw(process.name) || includesOpenClaw(process.commandLine) || includesOpenClaw(service.name) || includesOpenClaw(service.displayName);
-  const ownerKnown = portOwner.verified === true || portOwner.present !== true || includesOpenClaw(portOwner.name) || includesOpenClaw(portOwner.commandLine);
+  const serviceVerified = isVerifiedOpenClawService(service);
+  const serviceRunning = serviceVerified && service.running === true;
+  const adapterOnly = isReadonlyAdapterProcess(process) && !serviceVerified;
   const endpointReachable = endpoint.reachable === true;
   const identityVerified = endpoint.identityVerified === true || includesOpenClaw(endpoint.identity) || includesOpenClaw(endpoint.body);
+  const portOwnerVerified = isPortOwnerVerified(portOwner);
   const connected = endpoint.connectionStatus === 'healthy' || endpoint.connected === true || endpoint.health === 'healthy';
 
-  if (!processRunning) return { state: 'not-running', healthy: false, safeRestartEligible: false, blockReason: 'openclaw-not-running' };
-  if (!processKnown) return { state: 'unknown-owner-unsafe', healthy: false, safeRestartEligible: false, blockReason: 'process-service-identity-unknown' };
-  if (!ownerKnown) return { state: 'unknown-owner-unsafe', healthy: false, safeRestartEligible: false, blockReason: 'port-owner-not-clearly-openclaw' };
-  if (endpointReachable && !identityVerified) return { state: 'unknown-owner-unsafe', healthy: false, safeRestartEligible: false, blockReason: 'endpoint-identity-not-verified' };
-  if (endpointReachable && identityVerified && connected) return { state: 'connected-healthy', healthy: true, safeRestartEligible: false, blockReason: '' };
-  return { state: 'running-not-connected', healthy: false, safeRestartEligible: true, blockReason: 'openclaw-running-but-not-connected' };
+  if (adapterOnly) return { state: 'openclaw-adapter-only', healthy: false, safeRestartEligible: false, blockReason: 'openclaw-adapter-only' };
+  if (service.exists === false || service.running === false) return { state: 'openclaw-service-missing', healthy: false, safeRestartEligible: false, blockReason: 'openclaw-service-missing' };
+  if (!serviceVerified) return { state: 'openclaw-unknown-owner', healthy: false, safeRestartEligible: false, blockReason: 'openclaw-service-identity-not-verified' };
+  if (!serviceRunning) return { state: 'openclaw-service-missing', healthy: false, safeRestartEligible: false, blockReason: 'openclaw-service-not-running' };
+  if (!portOwnerVerified) return { state: 'openclaw-unknown-owner', healthy: false, safeRestartEligible: false, blockReason: 'port-owner-not-clearly-openclaw' };
+  if (endpointReachable && !identityVerified) return { state: 'openclaw-unknown-owner', healthy: false, safeRestartEligible: false, blockReason: 'endpoint-identity-not-verified' };
+  if (endpointReachable && identityVerified && connected) return { state: 'openclaw-service-running-connected', healthy: true, safeRestartEligible: false, blockReason: '' };
+  return { state: 'openclaw-service-running-not-connected', healthy: false, safeRestartEligible: true, blockReason: 'openclaw-service-running-not-connected' };
 }
 
 export function buildOpenClawStartupRecoveryPacket(readiness = {}) {
@@ -65,10 +77,12 @@ export function buildOpenClawStartupRecoveryPacket(readiness = {}) {
     endpointStatus,
     connectionVerdict: classification.state,
     identityVerified: readiness.endpoint?.identityVerified === true || includesOpenClaw(readiness.endpoint?.identity) || includesOpenClaw(readiness.endpoint?.body),
-    portOwnerVerified: readiness.portOwner?.verified === true || readiness.portOwner?.present !== true || includesOpenClaw(readiness.portOwner?.name) || includesOpenClaw(readiness.portOwner?.commandLine),
-    recommendedRestartAction: classification.safeRestartEligible
-      ? 'OpenClaw appears to have started on power-up but failed readiness. After desktop approval, restart only the known local OpenClaw service/process, wait briefly, and re-check readiness.'
-      : 'Stop ignition. Do not restart until OpenClaw process/service identity and endpoint ownership are verified.',
+    portOwnerVerified: isPortOwnerVerified(readiness.portOwner),
+    recommendedRestartAction: classification.state === 'openclaw-adapter-only'
+      ? 'OpenClaw Windows service was not found; only the readonly adapter is running. Start/restart OpenClaw Standalone manually or configure the service identity.'
+      : classification.safeRestartEligible
+        ? 'OpenClaw verified Windows service is running but not connected. After desktop approval, restart exactly the verified OpenClaw service, wait briefly, and re-check readiness.'
+        : 'Stop ignition. Do not restart until OpenClaw Windows service identity and endpoint ownership are verified.',
     restartEligible: classification.safeRestartEligible,
     details: readiness,
   });

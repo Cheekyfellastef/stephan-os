@@ -68,15 +68,15 @@ test('stephanos debug gate defaults to off and enables via --debug or STEPHANOS_
 });
 
 test('OpenClaw healthy startup readiness continues ignition', () => {
-  const readiness = { process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw' }, endpoint: { reachable: true, identity: 'OpenClaw', identityVerified: true, connectionStatus: 'healthy' }, portOwner: { present: true, verified: true } };
-  assert.equal(classifyOpenClawReadiness(readiness).state, 'connected-healthy');
+  const readiness = { process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw', exists: true, verified: true }, endpoint: { reachable: true, identity: 'OpenClaw', identityVerified: true, connectionStatus: 'healthy' }, portOwner: { present: true, verified: true } };
+  assert.equal(classifyOpenClawReadiness(readiness).state, 'openclaw-service-running-connected');
   assert.equal(buildOpenClawStartupRecoveryPacket(readiness), null);
 });
 
 test('OpenClaw not running reports not-running recovery packet with safety locks closed', () => {
   const packet = buildOpenClawStartupRecoveryPacket({ process: { running: false }, service: { running: false }, endpoint: { reachable: false }, portOwner: { present: false } });
-  assert.equal(packet.connectionVerdict, 'not-running');
-  assert.equal(packet.reason, 'openclaw-not-running');
+  assert.equal(packet.connectionVerdict, 'openclaw-service-missing');
+  assert.equal(packet.reason, 'openclaw-service-missing');
   assert.equal(packet.safetyLocks.openClawMutation, 'locked');
   assert.equal(packet.safetyLocks.codexAutoDispatch, 'disabled');
   assert.equal(packet.safetyLocks.mergeSafety, 'no / hold');
@@ -84,19 +84,46 @@ test('OpenClaw not running reports not-running recovery packet with safety locks
 });
 
 test('OpenClaw running but not connected reports approval-gated restart packet', () => {
-  const packet = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw', state: 'running' }, endpoint: { reachable: true, identity: 'OpenClaw', identityVerified: true, connectionStatus: 'unhealthy' }, portOwner: { present: true, verified: true } });
-  assert.equal(packet.connectionVerdict, 'running-not-connected');
+  const packet = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw', state: 'running', exists: true, verified: true }, endpoint: { reachable: true, identity: 'OpenClaw', identityVerified: true, connectionStatus: 'unhealthy' }, portOwner: { present: true, verified: true } });
+  assert.equal(packet.connectionVerdict, 'openclaw-service-running-not-connected');
   assert.equal(packet.desktopApproval.buttonLabel, 'Restart OpenClaw service');
-  assert.match(packet.recommendedRestartAction, /started on power-up but failed readiness/i);
+  assert.match(packet.recommendedRestartAction, /verified Windows service is running but not connected/i);
 });
 
 test('OpenClaw unknown process or port owner blocks restart', () => {
   const unknownProcess = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'node.exe' }, service: { running: true, name: 'Unknown' }, endpoint: { reachable: false }, portOwner: { present: false } });
-  assert.equal(unknownProcess.connectionVerdict, 'unknown-owner-unsafe');
+  assert.equal(unknownProcess.connectionVerdict, 'openclaw-unknown-owner');
   assert.equal(unknownProcess.desktopApproval, null);
-  const unknownOwner = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw' }, endpoint: { reachable: false }, portOwner: { present: true, verified: false, name: 'other.exe' } });
+  const unknownOwner = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw', exists: true, verified: true }, endpoint: { reachable: false }, portOwner: { present: true, verified: false, name: 'other.exe' } });
   assert.equal(unknownOwner.reason, 'port-owner-not-clearly-openclaw');
   assert.equal(unknownOwner.desktopApproval, null);
+});
+
+test('OpenClaw adapter stub without Windows service blocks restart approval', async () => {
+  const calls = [];
+  const captureStep = (label) => {
+    calls.push(label);
+    if (label === 'openclaw-service-query') return { stdout: '', stderr: 'OpenService FAILED 1060: The specified service does not exist as an installed service.' };
+    if (label === 'openclaw-process-query') return { stdout: '{"Name":"node.exe","CommandLine":"node.exe scripts/openclaw-readonly-adapter-stub.mjs"}', stderr: '' };
+    return { stdout: '', stderr: '' };
+  };
+  const fetchFn = async () => ({ ok: true, status: 200, text: async () => '{"service":"openclaw-readonly-adapter-stub","status":"healthy"}' });
+  await assert.rejects(
+    evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep, fetchFn, platform: 'win32', argvArgs: ['--approve-openclaw-service-restart'], runStepFn: (label) => calls.push(label), log: () => {} }),
+    /openclaw-adapter-only/,
+  );
+  assert.equal(calls.includes('openclaw-service-stop-approved'), false);
+  const packet = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'node.exe', commandLine: 'node.exe scripts/openclaw-readonly-adapter-stub.mjs' }, service: { running: false, name: 'OpenClaw', exists: false, verified: false }, endpoint: { reachable: true, identity: 'openclaw-readonly-adapter-stub', identityVerified: true }, portOwner: { present: false, verified: false } });
+  assert.equal(packet.connectionVerdict, 'openclaw-adapter-only');
+  assert.equal(packet.desktopApproval, null);
+  assert.match(packet.recommendedRestartAction, /only the readonly adapter is running/);
+});
+
+test('OpenClaw portOwnerVerified is false when port owner details are absent or unverified', () => {
+  const absent = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw', exists: true, verified: true }, endpoint: { reachable: false }, portOwner: { present: false, verified: false } });
+  const unverified = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw', exists: true, verified: true }, endpoint: { reachable: false }, portOwner: { present: true, verified: false, name: 'OpenClaw.exe' } });
+  assert.equal(absent.portOwnerVerified, false);
+  assert.equal(unverified.portOwnerVerified, false);
 });
 
 test('OpenClaw approved restart stops starts rechecks and continues only when healthy', async () => {

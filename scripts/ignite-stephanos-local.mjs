@@ -1322,12 +1322,14 @@ export function probeOpenClawProcessWithDeps({ captureStep = runStepCapture, pla
   if (platform !== 'win32') {
     return { process: { running: false, name: 'unsupported-platform' }, service: { running: false, name: serviceName, state: 'unsupported-platform' }, portOwner: { present: false, verified: false } };
   }
-  let service = { running: false, name: serviceName, state: 'unknown' };
+  let service = { running: false, name: serviceName, state: 'unknown', exists: false, verified: false };
   try {
     const result = captureStep('openclaw-service-query', 'sc.exe', ['query', serviceName]);
-    service = { running: /STATE\s*:\s*\d+\s+RUNNING/i.test(result.stdout), name: serviceName, displayName: serviceName, state: /RUNNING/i.test(result.stdout) ? 'running' : 'not-running' };
+    const serviceExists = !/OpenService\s+FAILED\s+1060|does not exist as an installed service/i.test(`${result.stdout || ''} ${result.stderr || ''}`);
+    const running = serviceExists && /STATE\s*:\s*\d+\s+RUNNING/i.test(result.stdout);
+    service = { running, name: serviceName, displayName: serviceName, state: running ? 'running' : (serviceExists ? 'not-running' : 'missing'), exists: serviceExists, verified: serviceExists && serviceName === DEFAULT_OPENCLAW_SERVICE_NAME };
   } catch {
-    service = { running: false, name: serviceName, state: 'not-running-or-unknown' };
+    service = { running: false, name: serviceName, state: 'missing', exists: false, verified: false };
   }
   let process = { running: service.running, name: serviceName, commandLine: '' };
   try {
@@ -1337,7 +1339,8 @@ export function probeOpenClawProcessWithDeps({ captureStep = runStepCapture, pla
   } catch {
     process = { running: service.running, name: serviceName, commandLine: '' };
   }
-  return { process, service, portOwner: { present: false, verified: false } };
+  const serviceIdentityOwnsProcess = service.exists === true && service.verified === true && process.running === true && /openclaw/i.test(`${process.name || ''} ${process.commandLine || ''}`) && !/openclaw-readonly-adapter-stub\.mjs/i.test(String(process.commandLine || ''));
+  return { process, service, portOwner: { present: serviceIdentityOwnsProcess, verified: serviceIdentityOwnsProcess } };
 }
 
 export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep = runStepCapture, runStepFn = runStep, fetchFn = globalThis.fetch, argvArgs = args, platform = process.platform, log = (message) => console.log(message) } = {}) {
@@ -1353,6 +1356,10 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
   const argSet = argvArgs instanceof Set ? argvArgs : new Set(Array.from(argvArgs || []));
   if (!packet.desktopApproval || !argSet.has(OPENCLAW_STARTUP_RESTART_FLAG)) {
     throw new Error(`blocked for safety: ${packet.reason}. ${packet.recommendedRestartAction} CLI approval path: npm run stephanos:ignite -- ${OPENCLAW_STARTUP_RESTART_FLAG}`);
+  }
+  const approvedClassification = classifyOpenClawReadiness(readiness);
+  if (approvedClassification.state !== 'openclaw-service-running-not-connected' || packet.desktopApproval?.buttonLabel !== 'Restart OpenClaw service') {
+    throw new Error(`blocked for safety: OpenClaw service identity is not verified for approved restart (${packet.reason}).`);
   }
   runStepFn('openclaw-service-stop-approved', 'sc.exe', ['stop', DEFAULT_OPENCLAW_SERVICE_NAME]);
   runStepFn('openclaw-service-start-approved', 'sc.exe', ['start', DEFAULT_OPENCLAW_SERVICE_NAME]);
