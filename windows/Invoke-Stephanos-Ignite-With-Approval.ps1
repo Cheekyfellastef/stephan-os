@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $normalIgniteCommand = 'npm run stephanos:ignite'
 $approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'
+$sourceMergeCheckCommand = 'git merge --no-commit --no-ff origin/main'
 $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stephanos-ignite-{0}.log" -f ([guid]::NewGuid().ToString('N')))
 
 function Write-IgniteApprovalLog([string]$Message) {
@@ -41,14 +42,64 @@ function Test-GeneratedDistRecoveryAvailable($Packet) {
     -and $Packet.nextSafeAction -match '--approve-local-merge'
 }
 
+function New-SourceMergeRepairPacket($Packet, [string]$Phase, [string[]]$ConflictedPaths = @(), [string]$Note = '') {
+  return [pscustomobject]@{
+    type = 'source-merge-repair-packet'
+    phase = $Phase
+    note = $Note
+    currentCommit = $Packet.currentCommit
+    originMainCommit = $Packet.originMainCommit
+    localOnlyDistOnly = $Packet.localOnlyDistOnly
+    localOnlyCommits = $Packet.localOnlyCommits
+    remoteOnlyCommits = $Packet.remoteOnlyCommits
+    localOnlyPaths = $Packet.localOnlyPaths
+    conflictedPaths = $ConflictedPaths
+    requiredManualBoundary = 'Review source divergence and resolve/approve source merge separately; generated-dist recovery remains unavailable.'
+    forbiddenAutomation = @('no generated-dist recovery approval', 'no auto-commit before Complete source merge approval', 'no auto-resolve conflicts', 'no auto-push', 'no OpenClaw unlock', 'no Codex auto-dispatch', 'no merge-ready flip')
+  }
+}
+
+function Format-SourceDivergenceDetails($Packet) {
+  $repairPacket = New-SourceMergeRepairPacket -Packet $Packet -Phase 'source-divergence-detected' -Note 'Local-only paths include source or non-generated-dist files.'
+  return @"
+Stephanos desktop Ignite detected source divergence.
+
+Generated-dist local recovery is BLOCKED because localOnlyDistOnly=false.
+This popup will not offer Approve local recovery for source divergence.
+
+Source-divergence assistance available:
+- View source divergence details
+- Copy source merge repair packet
+- Start approved source merge check (trial merge only after this explicit click)
+
+Source merge safeguards:
+- trial check command: $sourceMergeCheckCommand
+- conflicts are inspected immediately
+- conflicts abort the trial merge and emit a repair packet
+- no source merge is committed before a second explicit Complete source merge approval
+- no source conflicts are auto-resolved
+- no auto-push
+- no OpenClaw unlock
+- no Codex auto-dispatch
+- no merge-ready flip
+
+Repair packet:
+$($repairPacket | ConvertTo-Json -Depth 8)
+"@
+}
+
 function Format-ApprovalPacketText($Packet, [bool]$ApprovalAvailable) {
+  if (-not $ApprovalAvailable -and $Packet.localOnlyDistOnly -ne $true) {
+    return Format-SourceDivergenceDetails -Packet $Packet
+  }
+
   $localCount = Get-ArrayCount $Packet.localOnlyCommits
   $remoteCount = Get-ArrayCount $Packet.remoteOnlyCommits
   $distOnlyText = if ($Packet.localOnlyDistOnly -eq $true) { 'YES — local-only paths are apps/stephanos/dist/** only' } else { 'NO — local-only paths are not generated-dist-only' }
   $status = if ($ApprovalAvailable) { 'APPROVAL AVAILABLE: generated-dist-only local recovery packet passed launcher safety precheck.' } else { 'BLOCKED: generated-dist-only approval is not available for this repair packet.' }
 
   return @"
-Stephanos desktop Ignite detected a source divergence.
+Stephanos desktop Ignite detected a generated-dist divergence.
 
 $status
 
@@ -72,17 +123,62 @@ $($Packet | ConvertTo-Json -Depth 8)
 "@
 }
 
+function Copy-TextToClipboard([string]$Text) {
+  [System.Windows.Forms.Clipboard]::SetText($Text)
+}
+
+function Show-SourceMergeCompletionApproval($Packet) {
+  $message = @"
+Approved source merge check found no conflicts.
+
+Second approval required: Complete source merge will create the pending merge commit locally.
+
+It will not push, unlock OpenClaw, dispatch Codex, or mark merge readiness.
+"@
+  $result = [System.Windows.Forms.MessageBox]::Show($message, 'Complete source merge approval', 'OKCancel', 'Warning')
+  return $result -eq [System.Windows.Forms.DialogResult]::OK
+}
+
+function Invoke-ApprovedSourceMergeCheck($Packet) {
+  Write-IgniteApprovalLog "operator approved source merge check; running trial merge: $sourceMergeCheckCommand"
+  & git merge --no-commit --no-ff origin/main
+  $mergeExitCode = $LASTEXITCODE
+  $conflictedPaths = @(& git diff --name-only --diff-filter=U)
+
+  if ($mergeExitCode -ne 0 -or (Get-ArrayCount $conflictedPaths) -gt 0) {
+    $repairPacket = New-SourceMergeRepairPacket -Packet $Packet -Phase 'source-merge-conflicts' -ConflictedPaths $conflictedPaths -Note 'Trial source merge found conflicts and was aborted without auto-resolution.'
+    Write-IgniteApprovalLog 'source merge check found conflicts; aborting trial merge.'
+    & git merge --abort 2>$null
+    Write-Host "[IGNITION] source-merge-repair-packet=$($repairPacket | ConvertTo-Json -Depth 8 -Compress)"
+    [System.Windows.Forms.MessageBox]::Show(($repairPacket | ConvertTo-Json -Depth 8), 'Source merge conflicts - repair packet', 'OK', 'Error') | Out-Null
+    return 1
+  }
+
+  Write-IgniteApprovalLog 'source merge check found no conflicts; requesting second approval before commit.'
+  if (-not (Show-SourceMergeCompletionApproval -Packet $Packet)) {
+    Write-IgniteApprovalLog 'operator declined Complete source merge; aborting uncommitted trial merge.'
+    & git merge --abort 2>$null
+    return 1
+  }
+
+  Write-IgniteApprovalLog 'operator approved Complete source merge; committing local merge without push or unlock side effects.'
+  & git commit -m 'Merge origin/main after approved source merge check'
+  return $LASTEXITCODE
+}
+
 function Show-IgniteRecoveryPopup($Packet) {
   $approvalAvailable = Test-GeneratedDistRecoveryAvailable $Packet
+  $sourceDivergence = -not $approvalAvailable -and $Packet.localOnlyDistOnly -ne $true
   $message = Format-ApprovalPacketText -Packet $Packet -ApprovalAvailable $approvalAvailable
+  $sourceRepairPacketText = if ($sourceDivergence) { (New-SourceMergeRepairPacket -Packet $Packet -Phase 'source-divergence-detected' -Note 'Copy packet requested by operator.' | ConvertTo-Json -Depth 8) } else { $message }
 
   try {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = if ($approvalAvailable) { 'Stephanos Ignite generated-dist recovery approval' } else { 'Stephanos Ignite recovery blocked' }
-    $form.Size = New-Object System.Drawing.Size(760, 560)
+    $form.Text = if ($approvalAvailable) { 'Stephanos Ignite generated-dist recovery approval' } elseif ($sourceDivergence) { 'Stephanos Ignite source divergence assistance' } else { 'Stephanos Ignite recovery blocked' }
+    $form.Size = New-Object System.Drawing.Size(780, 600)
     $form.StartPosition = 'CenterScreen'
     $form.TopMost = $true
 
@@ -93,34 +189,62 @@ function Show-IgniteRecoveryPopup($Packet) {
     $textBox.WordWrap = $false
     $textBox.Font = New-Object System.Drawing.Font('Consolas', 10)
     $textBox.Text = $message
-    $textBox.SetBounds(12, 12, 720, 440)
+    $textBox.SetBounds(12, 12, 740, 460)
     $form.Controls.Add($textBox)
 
     if ($approvalAvailable) {
       $approveButton = New-Object System.Windows.Forms.Button
       $approveButton.Text = 'Approve local recovery'
-      $approveButton.SetBounds(392, 468, 160, 32)
+      $approveButton.SetBounds(392, 492, 160, 32)
       $approveButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
       $form.AcceptButton = $approveButton
       $form.Controls.Add($approveButton)
     }
+    elseif ($sourceDivergence) {
+      $detailsButton = New-Object System.Windows.Forms.Button
+      $detailsButton.Text = 'View source divergence details'
+      $detailsButton.SetBounds(12, 492, 190, 32)
+      $detailsButton.Add_Click({ [System.Windows.Forms.MessageBox]::Show($message, 'Source divergence details', 'OK', 'Information') | Out-Null })
+      $form.Controls.Add($detailsButton)
+
+      $copyButton = New-Object System.Windows.Forms.Button
+      $copyButton.Text = 'Copy source merge repair packet'
+      $copyButton.SetBounds(214, 492, 210, 32)
+      $copyButton.Add_Click({ Copy-TextToClipboard -Text $sourceRepairPacketText; $copyButton.Text = 'Copied repair packet' })
+      $form.Controls.Add($copyButton)
+
+      $checkButton = New-Object System.Windows.Forms.Button
+      $checkButton.Text = 'Start approved source merge check'
+      $checkButton.SetBounds(436, 492, 220, 32)
+      $checkButton.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+      $form.Controls.Add($checkButton)
+    }
 
     $cancelButton = New-Object System.Windows.Forms.Button
     $cancelButton.Text = 'Cancel / stop'
-    $cancelButton.SetBounds(568, 468, 120, 32)
+    $cancelButton.SetBounds(666, 492, 90, 32)
     $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $form.CancelButton = $cancelButton
     $form.Controls.Add($cancelButton)
 
     $result = $form.ShowDialog()
-    return $approvalAvailable -and $result -eq [System.Windows.Forms.DialogResult]::OK
+    if ($approvalAvailable -and $result -eq [System.Windows.Forms.DialogResult]::OK) { return 'generated-dist-recovery' }
+    if ($sourceDivergence -and $result -eq [System.Windows.Forms.DialogResult]::Yes) { return 'source-merge-check' }
+    return 'cancel'
   }
   catch {
     Write-IgniteApprovalLog "popup unavailable: $($_.Exception.Message)"
     Write-Host $message
     Write-Host ''
-    Write-Host "Popup failed. To approve generated-dist-only recovery manually, run: $approvedIgniteCommand" -ForegroundColor Yellow
-    return $false
+    if ($approvalAvailable) {
+      Write-Host "Popup failed. To approve generated-dist-only recovery manually, run: $approvedIgniteCommand" -ForegroundColor Yellow
+    }
+    elseif ($sourceDivergence) {
+      Write-Host "Popup failed. Source divergence repair packet emitted; do not run generated-dist recovery for source divergence." -ForegroundColor Yellow
+      $compactSourceRepairPacketText = $sourceRepairPacketText -replace '`r?`n', ''
+      Write-Host "[IGNITION] source-merge-repair-packet=$compactSourceRepairPacketText"
+    }
+    return 'cancel'
   }
 }
 
@@ -140,9 +264,12 @@ if ($null -eq $packet -or $packet.reason -ne 'ff-only-divergence') {
   exit $normalExitCode
 }
 
-$approved = Show-IgniteRecoveryPopup -Packet $packet
-if (-not $approved) {
-  Write-IgniteApprovalLog 'operator cancelled or approval unavailable; recovery command was not run.'
+$approvalAction = Show-IgniteRecoveryPopup -Packet $packet
+if ($approvalAction -eq 'source-merge-check') {
+  exit (Invoke-ApprovedSourceMergeCheck -Packet $packet)
+}
+if ($approvalAction -ne 'generated-dist-recovery') {
+  Write-IgniteApprovalLog 'operator cancelled or approval unavailable; no generated-dist recovery or source merge completion was run.'
   Write-Host 'Repair packet remains above for review. Press Enter to keep this window open and stop.'
   Read-Host | Out-Null
   exit $normalExitCode
