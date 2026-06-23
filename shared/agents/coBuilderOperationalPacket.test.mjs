@@ -19,7 +19,7 @@ const base = {
   agentWorkRoutingProjection: { requiredProof: ['focused test output'], requiredTests: ['npm run stephanos:verify'] },
   verificationReturnIntake: {
     missingEvidence: [],
-    suppliedEvidence: [{ requirement: 'focused test output', status: 'verified' }],
+    suppliedEvidence: [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 }],
   },
 };
 
@@ -80,6 +80,27 @@ test('forbidden paths cannot enter allowedFiles and defaults include generated r
   }
 });
 
+
+test('canonical path validation rejects backslash generated runtime absolute UNC and traversal variants', () => {
+  const forbiddenVariants = [
+    'apps\\stephanos\\dist\\index.js',
+    'stephanos-server\\data\\memory.json',
+    'data\\runtime.json',
+    'C:\\Users\\Stephan\\secret.txt',
+    '\\\\server\\share\\file.js',
+    '..\\outside.js',
+    '../outside.js',
+  ];
+  const packet = buildCoBuilderOperationalPacket({
+    ...base,
+    harnessAgentProjection: { ...base.harnessAgentProjection, allowedFileScopes: ['shared/agents/**', ...forbiddenVariants] },
+  });
+  assert.deepEqual(packet.allowedFiles, ['shared/agents/**']);
+  for (const forbidden of ['apps/stephanos/dist/index.js', 'stephanos-server/data/memory.json', 'data/runtime.json', 'C:/Users/Stephan/secret.txt', '//server/share/file.js', '../outside.js']) {
+    assert.ok(packet.forbiddenFiles.includes(forbidden), `missing forbidden normalized path: ${forbidden}`);
+  }
+});
+
 test('required evidence definitions alone cannot produce a passing verdict', () => {
   const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [] } });
   assert.equal(packet.finalVerdict, 'BLOCKED');
@@ -89,21 +110,29 @@ test('required evidence definitions alone cannot produce a passing verdict', () 
 });
 
 test('missing unknown or unverified evidence cannot produce a passing verdict', () => {
-  for (const suppliedEvidence of [[], ['focused test output'], [{ requirement: 'focused test output', status: 'unknown' }], [{ requirement: 'focused test output', verified: false }]]) {
+  for (const suppliedEvidence of [[], ['focused test output'], [{ requirement: 'focused test output', status: 'verified' }], [{ requirement: 'focused test output', verified: true }], [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true }], [{ label: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 }], [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, sha256: 'ABC' }], [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, commandOutputHash: 'f'.repeat(63) }], [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0.5 }], [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, receiptPath: '../receipt.json' }]]) {
     const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence } });
     assert.equal(packet.finalVerdict, 'BLOCKED');
     assert.equal(packet.evidenceSatisfied, false);
   }
-  const missing = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: ['browser proof missing'], suppliedEvidence: [{ requirement: 'focused test output', status: 'verified' }] } });
+  const missing = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: ['browser proof missing'], suppliedEvidence: [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 }] } });
   assert.equal(missing.finalVerdict, 'BLOCKED');
   assert.match(missing.blockingReasons.join(' '), /missing/i);
 });
 
-test('verified supplied evidence can produce a passing verdict', () => {
-  const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'focused test output', status: 'verified' }] } });
-  assert.equal(packet.finalVerdict, 'READY_FOR_OPERATOR_APPROVAL');
-  assert.equal(packet.evidenceSatisfied, true);
-  assert.deepEqual(packet.unsatisfiedEvidence, []);
+test('valid hash exit-code and receipt-path evidence can satisfy matching requirements', () => {
+  const validEvidence = [
+    { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, sha256: 'a'.repeat(64) },
+    { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, commandOutputHash: 'f'.repeat(64) },
+    { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 },
+    { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, receiptPath: 'tmp/receipts/focused-test.json' },
+  ];
+  for (const evidence of validEvidence) {
+    const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [evidence] } });
+    assert.equal(packet.finalVerdict, 'READY_FOR_OPERATOR_APPROVAL');
+    assert.equal(packet.evidenceSatisfied, true);
+    assert.deepEqual(packet.unsatisfiedEvidence, []);
+  }
 });
 
 test('missing empty placeholder or unresolved mission id blocks safely', () => {

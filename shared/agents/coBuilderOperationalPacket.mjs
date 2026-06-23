@@ -21,6 +21,8 @@ export const DEFAULT_OPERATIONAL_FORBIDDEN_FILES = Object.freeze([
 ]);
 
 const SECRET_OR_GENERATED_PATTERN = /(^|\/)(apps\/stephanos\/dist|stephanos-server\/data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
+const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-z]:\//i;
+const LOWERCASE_SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -47,9 +49,20 @@ function clampRound(value) {
   return Math.min(Math.floor(parsed), MAX_REPAIR_ROUNDS);
 }
 
+function normalizePacketPath(path) {
+  return asText(path, '').replace(/\\/g, '/');
+}
+
+function isAbsoluteOrTraversalPath(path) {
+  const text = normalizePacketPath(path);
+  if (!text) return true;
+  if (text.startsWith('/') || text.startsWith('//') || WINDOWS_ABSOLUTE_PATH_PATTERN.test(text)) return true;
+  return text.split('/').some((part) => part === '..');
+}
+
 function includesForbiddenPath(path) {
-  const text = asText(path, '');
-  return !text || SECRET_OR_GENERATED_PATTERN.test(text) || /secret|token/i.test(text);
+  const text = normalizePacketPath(path);
+  return !text || isAbsoluteOrTraversalPath(text) || SECRET_OR_GENERATED_PATTERN.test(text) || /secret|token/i.test(text);
 }
 
 function normalizeEvidenceToken(value) {
@@ -72,11 +85,30 @@ function collectSuppliedEvidence({ verificationReturnIntake = {}, supportSnapsho
   ];
 }
 
+function validLowercaseHash(value) {
+  const text = asText(value, '');
+  return LOWERCASE_SHA256_PATTERN.test(text);
+}
+
+function validReceiptPath(value) {
+  const text = normalizePacketPath(value);
+  return Boolean(text) && !isAbsoluteOrTraversalPath(text);
+}
+
+function evidenceHasDeterministicReceipt(item) {
+  if (validLowercaseHash(item.sha256)) return true;
+  if (validLowercaseHash(item.commandOutputHash)) return true;
+  if (Number.isInteger(item.exitCode)) return true;
+  return validReceiptPath(item.receiptPath);
+}
+
 function evidenceItemVerified(item) {
-  if (typeof item === 'string') return false;
-  if (!item || typeof item !== 'object') return false;
-  const status = asText(item.status || item.verificationStatus || item.verdict, '').toLowerCase();
-  return item.verified === true || item.supplied === true && item.accepted === true || ['verified', 'accepted', 'passed', 'complete'].includes(status);
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  return asText(item.requirement, '')
+    && asText(item.source, '')
+    && asText(item.evidenceType, '')
+    && item.verified === true
+    && evidenceHasDeterministicReceipt(item);
 }
 
 function evidenceItemText(item) {
@@ -114,8 +146,9 @@ export function buildCoBuilderOperationalPacket({
   supportSnapshot = {},
 } = {}) {
   const rawAllowedFiles = uniqueList(harnessAgentProjection.allowedFileScopes || agentWorkRoutingProjection.allowedFiles || []);
-  const allowedFiles = rawAllowedFiles.filter((path) => !includesForbiddenPath(path));
-  const forbiddenFiles = uniqueList([...DEFAULT_OPERATIONAL_FORBIDDEN_FILES, ...asList(harnessAgentProjection.forbiddenFileScopes), ...asList(harnessAgentProjection.forbiddenFiles), ...rawAllowedFiles.filter(includesForbiddenPath)]);
+  const normalizedAllowedFileCandidates = rawAllowedFiles.map(normalizePacketPath);
+  const allowedFiles = normalizedAllowedFileCandidates.filter((path) => !includesForbiddenPath(path));
+  const forbiddenFiles = uniqueList([...DEFAULT_OPERATIONAL_FORBIDDEN_FILES, ...asList(harnessAgentProjection.forbiddenFileScopes).map(normalizePacketPath), ...asList(harnessAgentProjection.forbiddenFiles).map(normalizePacketPath), ...normalizedAllowedFileCandidates.filter(includesForbiddenPath)]);
   const requiredEvidence = uniqueList([
     ...asList(agentWorkRoutingProjection.requiredProof),
     ...asList(missionBrainNextAction.proofRequiredBeforeMerge),
@@ -131,8 +164,8 @@ export function buildCoBuilderOperationalPacket({
   const blockingReasons = [];
   const missionKind = inferMissionKind({ operatorIntent, missionBrainNextAction, supportSnapshot });
   const sensitive = asText(harnessAgentProjection.generatedArtifactRisk, '').toLowerCase() === 'yes'
-    || forbiddenFiles.some((path) => rawAllowedFiles.includes(path))
-    || rawAllowedFiles.some(includesForbiddenPath)
+    || forbiddenFiles.some((path) => normalizedAllowedFileCandidates.includes(path))
+    || normalizedAllowedFileCandidates.some(includesForbiddenPath)
     || /secret|token|env|generated|dist|runtime data|merge|deploy|permission|policy/i.test([operatorIntent, intendedOutcome].join(' '));
 
   if (isPlaceholderMissionId(resolvedMissionId)) blockingReasons.push('Mission id is missing, placeholder, or unresolved.');
