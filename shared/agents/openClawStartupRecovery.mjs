@@ -21,6 +21,46 @@ function isPortOwnerVerified(portOwner = {}) {
   return portOwner.present === true && portOwner.verified === true;
 }
 
+
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') return [value];
+  return [];
+}
+
+function isReadonlyAdapterCandidate(candidate = {}) {
+  return /scripts[\\/]openclaw-readonly-adapter-stub\.mjs/i.test(String(candidate.commandLine || candidate.CommandLine || ''));
+}
+
+export function createOpenClawStandaloneDiscoveryPacket({
+  candidateServices = [], candidateProcesses = [], candidatePorts = [], configuredLaunchTargets = [],
+} = {}) {
+  const services = asArray(candidateServices);
+  const processes = asArray(candidateProcesses).filter((candidate) => !isReadonlyAdapterCandidate(candidate));
+  const ports = asArray(candidatePorts);
+  const launchTargets = asArray(configuredLaunchTargets);
+  const adapterOnly = services.length === 0 && processes.length === 0 && ports.length === 0 && launchTargets.length === 0 ? 'yes' : 'no';
+  const verifiedStandaloneIdentity = 'no';
+  const verifiedRestartTarget = 'none';
+  const recommendedOperatorAction = adapterOnly === 'yes'
+    ? 'Only the readonly adapter is proven. Start OpenClaw Standalone manually or configure its service/path identity; do not restart from Ignite.'
+    : 'Review OpenClaw Standalone candidates and add explicit identity rules before any restart target can be approved.';
+  return {
+    packetType: 'openclaw-standalone-discovery-v1',
+    discoveryMode: 'read-only',
+    adapterOnly,
+    candidateServices: services,
+    candidateProcesses: processes,
+    candidatePorts: ports,
+    configuredLaunchTargets: launchTargets,
+    verifiedStandaloneIdentity,
+    verifiedRestartTarget,
+    recommendedOperatorAction,
+    safetyLocks: { ...OPENCLAW_STARTUP_SAFETY_LOCKS },
+    forbiddenActions: ['no restart', 'no restart approval button', 'no OpenClaw task execution', 'no OpenClaw mutation command', 'no Codex dispatch', 'no merge readiness change'],
+  };
+}
+
 export function createOpenClawStartupRecoveryPacket({
   reason = 'unknown', processState = 'unknown', serviceState = 'unknown', endpointStatus = 'unknown',
   connectionVerdict = 'unknown', identityVerified = false, portOwnerVerified = false,
