@@ -21,6 +21,42 @@ function isPortOwnerVerified(portOwner = {}) {
   return portOwner.present === true && portOwner.verified === true;
 }
 
+function isStandaloneGatewayProcess(process = {}) {
+  const commandLine = String(process.commandLine || process.CommandLine || '');
+  return /node(?:\.exe)?/i.test(String(process.name || process.Name || commandLine || ''))
+    && /openclaw\.mjs/i.test(commandLine)
+    && /\bgateway\s+run\b/i.test(commandLine);
+}
+
+export function findVerifiedOpenClawStandaloneGatewayCandidate(discovery = {}) {
+  const processes = asArray(discovery.candidateProcesses);
+  const ports = asArray(discovery.candidatePorts);
+  for (const processEntry of processes) {
+    if (!isStandaloneGatewayProcess(processEntry)) continue;
+    const pid = Number(processEntry.pid || processEntry.ProcessId || processEntry.processId || 0);
+    const port = ports.find((candidatePort) => {
+      const owner = Number(candidatePort.owningProcess || candidatePort.OwningProcess || 0);
+      const localAddress = String(candidatePort.localAddress || candidatePort.LocalAddress || '');
+      const localPort = Number(candidatePort.localPort || candidatePort.LocalPort || 0);
+      return pid > 0
+        && owner === pid
+        && localPort > 0
+        && /^(127\.0\.0\.1|localhost|::1|0\.0\.0\.0|\*)$/i.test(localAddress || '127.0.0.1');
+    });
+    if (port) {
+      return {
+        verified: true,
+        identity: 'standalone-gateway-candidate',
+        pid,
+        process: processEntry,
+        port,
+        candidatePort: Number(port.localPort || port.LocalPort),
+      };
+    }
+  }
+  return null;
+}
+
 
 function asArray(value) {
   if (Array.isArray(value)) return value;
@@ -85,7 +121,7 @@ export function createOpenClawStartupRecoveryPacket({
   };
 }
 
-export function classifyOpenClawReadiness({ process = {}, service = {}, endpoint = {}, portOwner = {} } = {}) {
+export function classifyOpenClawReadiness({ process = {}, service = {}, endpoint = {}, portOwner = {}, standaloneGatewayCandidate = null } = {}) {
   const serviceVerified = isVerifiedOpenClawService(service);
   const serviceRunning = serviceVerified && service.running === true;
   const adapterOnly = isReadonlyAdapterProcess(process) && !serviceVerified;
@@ -93,6 +129,10 @@ export function classifyOpenClawReadiness({ process = {}, service = {}, endpoint
   const identityVerified = endpoint.identityVerified === true || includesOpenClaw(endpoint.identity) || includesOpenClaw(endpoint.body);
   const portOwnerVerified = isPortOwnerVerified(portOwner);
   const connected = endpoint.connectionStatus === 'healthy' || endpoint.connected === true || endpoint.health === 'healthy';
+  const gatewayCandidateVerified = standaloneGatewayCandidate?.verified === true;
+
+  if (gatewayCandidateVerified && endpointReachable && identityVerified) return { state: 'openclaw-standalone-gateway', healthy: connected || endpointReachable, safeRestartEligible: false, blockReason: '', safeRestartTarget: 'none', restartCommandAllowed: false };
+  if (gatewayCandidateVerified) return { state: 'openclaw-standalone-gateway-candidate', healthy: false, safeRestartEligible: false, blockReason: endpointReachable ? 'standalone-gateway-identity-unclear' : 'standalone-gateway-health-unreachable', safeRestartTarget: 'none', restartCommandAllowed: false };
 
   if (adapterOnly) return { state: 'openclaw-adapter-only', healthy: false, safeRestartEligible: false, blockReason: 'openclaw-adapter-only' };
   if (service.exists === false || service.running === false) return { state: 'openclaw-service-missing', healthy: false, safeRestartEligible: false, blockReason: 'openclaw-service-missing' };
@@ -118,12 +158,14 @@ export function buildOpenClawStartupRecoveryPacket(readiness = {}) {
     connectionVerdict: classification.state,
     identityVerified: readiness.endpoint?.identityVerified === true || includesOpenClaw(readiness.endpoint?.identity) || includesOpenClaw(readiness.endpoint?.body),
     portOwnerVerified: isPortOwnerVerified(readiness.portOwner),
-    recommendedRestartAction: classification.state === 'openclaw-adapter-only'
-      ? 'OpenClaw Windows service was not found; only the readonly adapter is running. Start/restart OpenClaw Standalone manually or configure the service identity.'
-      : classification.safeRestartEligible
+    recommendedRestartAction: classification.state === 'openclaw-standalone-gateway-candidate'
+      ? 'OpenClaw Standalone gateway candidate has a verified process-owned localhost port, but readiness cannot verify endpoint identity yet. Keep restart and mutation unavailable; inspect the discovery packet and strengthen identity rules.'
+      : classification.state === 'openclaw-adapter-only'
+        ? 'OpenClaw Windows service was not found; only the readonly adapter is running. Start/restart OpenClaw Standalone manually or configure the service identity.'
+        : classification.safeRestartEligible
         ? 'OpenClaw verified Windows service is running but not connected. After desktop approval, restart exactly the verified OpenClaw service, wait briefly, and re-check readiness.'
         : 'Stop ignition. Do not restart until OpenClaw Windows service identity and endpoint ownership are verified.',
-    restartEligible: classification.safeRestartEligible,
+    restartEligible: classification.safeRestartEligible && classification.restartCommandAllowed !== false,
     details: readiness,
   });
 }
