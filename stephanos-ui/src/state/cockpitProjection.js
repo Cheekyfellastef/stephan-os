@@ -65,7 +65,18 @@ export function buildOperatorContextModel(input = {}) {
 
 const PROOF_ORDER = Object.freeze(['build-proof', 'verify-proof', 'browser-proof-checklist', 'pr-evidence', 'source-pack-output']);
 
-export const OPERATOR_PROOF_CONCIERGE_BROWSER_PACKET = `Browser proof checklist completed manually.
+export const OPERATOR_PROOF_CONCIERGE_BROWSER_PACKET = `Browser Proof Runner V1 (local-first, approval-gated).
+
+Run locally from the operator desktop when Proof Concierge Next proof is browser-proof-checklist:
+- npm run stephanos:browser-proof
+
+Copy the generated browser-proof-checklist packet into Command Deck. The runner checks the local 4173 runtime, footer Git Commit, UI Build Timestamp, source fingerprint/runtime marker when available, Proof Concierge DOM next proof and primary button text, visible Concierge drift, clone parity, diagnostic copy presence, console error count, and screenshot evidence when browser automation is available.
+
+Fallback: if automation is unavailable, paste the generated Browser Proof Repair Packet instead of blank evidence.
+
+Manual acceptance remains allowed only when runner output is unavailable and the operator explicitly verifies the checklist.
+
+Browser proof checklist completed manually.
 
 Observed in live browser:
 - Cockpit pane opens and remains visible.
@@ -223,6 +234,19 @@ export function buildOperatorProofConciergeProjection(input = {}) {
     packetText: diagnosticPacketText,
     source: 'OperatorProofConcierge.copyDiagnosticPacket',
   };
+  const browserProofRunnerPacket = effectiveNextProof === 'browser-proof-checklist' ? {
+    available: 'yes',
+    label: 'Run Browser Proof Runner V1',
+    packetKind: 'browser-proof-checklist',
+    command: 'npm run stephanos:browser-proof',
+    runtimeUrl: 'http://127.0.0.1:4173/',
+    copyTarget: 'Command Deck browser-proof-checklist evidence',
+    source: 'OperatorProofConcierge.browserProofRunnerV1',
+    mutationAllowed: 'no',
+    codexAutoDispatchAllowed: 'no',
+    openClawMutationLocked: 'yes',
+    mergeSafety: 'no / hold',
+  } : { available: 'no' };
   const primaryPacket = {
     available: packetText ? 'yes' : 'no',
     label: actionLabel,
@@ -244,6 +268,7 @@ export function buildOperatorProofConciergeProjection(input = {}) {
     packetText,
     packetLength: String(packetText.length),
     copyPacket: primaryPacket,
+    browserProofRunnerPacket,
     visiblePrimaryButtonLabel: primaryPacket.label,
     visiblePrimaryButtonSource: primaryPacket.source,
     renderOwner: 'CockpitPanel.OperatorProofConcierge',
