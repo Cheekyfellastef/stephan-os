@@ -32,7 +32,10 @@ function ConvertFrom-RepairPacketLine([string[]]$Lines) {
 function Test-OpenClawRestartAvailable($Packet) {
   if ($null -eq $Packet) { return $false }
   return $Packet.packetType -eq 'openclaw-startup-connect-recovery-v1' `
-    -and $Packet.connectionVerdict -eq 'running-not-connected' `
+    -and $Packet.connectionVerdict -eq 'openclaw-service-running-not-connected' `
+    -and $Packet.details.service.exists -eq $true `
+    -and $Packet.details.service.verified -eq $true `
+    -and $Packet.details.service.name -eq 'OpenClaw' `
     -and $Packet.endpointIdentityVerified -eq $true `
     -and $Packet.portOwnerVerified -eq $true `
     -and $Packet.desktopApproval.buttonLabel -eq 'Restart OpenClaw service'
@@ -40,6 +43,9 @@ function Test-OpenClawRestartAvailable($Packet) {
 
 function Show-OpenClawRestartPopup($Packet) {
   $approvalAvailable = Test-OpenClawRestartAvailable $Packet
+  $approvedCaseText = if ($approvalAvailable) { 'Approved safe case:
+- Restart OpenClaw service' } else { 'Approved safe case:
+- unavailable; no OpenClaw service restart button is shown' }
   $message = @"
 Stephanos desktop Ignite detected OpenClaw startup connect failure.
 
@@ -51,8 +57,7 @@ Endpoint status: $($Packet.localEndpointStatus)
 Endpoint identity verified: $($Packet.endpointIdentityVerified)
 Port owner verified: $($Packet.portOwnerVerified)
 
-Approved safe case:
-- Restart OpenClaw service
+$approvedCaseText
 
 Safety locks remain closed:
 - no OpenClaw mutation
