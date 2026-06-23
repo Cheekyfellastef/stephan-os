@@ -1,7 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const DEFAULT_URL = process.env.STEPHANOS_BROWSER_PROOF_URL || 'http://127.0.0.1:4173/';
+const DEFAULT_URL = process.env.STEPHANOS_BROWSER_PROOF_URL || 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
 const OUT_DIR = resolve(process.cwd(), 'tmp/browser-proof');
 
 function stamp() { return new Date().toISOString(); }
@@ -42,7 +43,7 @@ export function evaluateBrowserProofResult(result = {}) {
 export function buildBrowserProofPacket(result = {}) {
   const verdict = evaluateBrowserProofResult(result);
   const repair = result.automationUnavailable || !result.browserAutomationAvailable;
-  const header = repair ? 'Browser Proof Repair Packet V1' : 'Browser Proof Checklist Packet V1';
+  const header = repair ? 'Browser Proof Repair Packet V1' : 'Browser Proof Checklist V1';
   const status = verdict.accepted ? 'accepted' : (repair ? 'repair-required' : 'blocked');
   const checks = result.checks || {};
   return [
@@ -128,15 +129,36 @@ async function collectWithBrowser(url = DEFAULT_URL) {
   } finally { if (browser) await browser.close(); }
 }
 
-async function main() {
-  const result = await collectWithBrowser(process.argv[2] || DEFAULT_URL);
+function printSinglePacket(result) {
   const packet = buildBrowserProofPacket(result);
-  mkdirSync(OUT_DIR, { recursive: true });
+  process.stdout.write(`${packet}\n`);
   const out = resolve(OUT_DIR, 'browser-proof-checklist-packet.txt');
-  writeFileSync(out, packet);
-  console.log(packet);
-  console.error(`[stephanos:browser-proof] packet written: ${out}`);
-  process.exit(evaluateBrowserProofResult(result).accepted ? 0 : 1);
+  try {
+    mkdirSync(OUT_DIR, { recursive: true });
+    writeFileSync(out, packet);
+    console.error(`[stephanos:browser-proof] packet written: ${out}`);
+  } catch (error) {
+    console.error(`[stephanos:browser-proof] packet file write unavailable: ${sanitizeAutomationUnavailable(error?.message || error)}`);
+  }
+  return evaluateBrowserProofResult(result).accepted ? 0 : 1;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+async function main() {
+  try {
+    const result = await collectWithBrowser(process.argv[2] || DEFAULT_URL);
+    process.exit(printSinglePacket(result));
+  } catch (error) {
+    const result = {
+      browserAutomationAvailable: false,
+      automationUnavailable: sanitizeAutomationUnavailable(error?.message || error),
+      url: process.argv[2] || DEFAULT_URL,
+      generatedAt: stamp(),
+      checks: { runtimeReachable: false },
+    };
+    process.exit(printSinglePacket(result));
+  }
+}
+
+const invokedPath = process.argv[1] ? resolve(process.argv[1]) : '';
+const modulePath = fileURLToPath(import.meta.url);
+if (invokedPath === modulePath) main();
