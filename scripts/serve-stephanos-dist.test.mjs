@@ -6,6 +6,7 @@ import {
   canReuseStephanosServer,
   createStephanosDistServer,
   resolveContentType,
+  startFreshServerAfterPortClose,
 } from './serve-stephanos-dist.mjs';
 import { repoRoot } from './stephanos-build-utils.mjs';
 import { createStephanosLocalUrls } from '../shared/runtime/stephanosLocalUrls.mjs';
@@ -156,6 +157,38 @@ test('existing server reuse rejects stale served script entry references even wh
     }),
     false,
   );
+});
+
+
+test('fresh restart helper starts a replacement only after the stale listener closes', async () => {
+  const calls = [];
+  const result = await startFreshServerAfterPortClose({
+    targetPort: 4173,
+    targetHost: '127.0.0.1',
+    staleServerClosed: true,
+    createServerFn: () => ({ id: 'fresh-server' }),
+    listenFn: (server) => calls.push(server.id),
+  });
+
+  assert.equal(result.started, true);
+  assert.equal(result.blocked, false);
+  assert.deepEqual(calls, ['fresh-server']);
+});
+
+test('fresh restart helper blocks without double-starting when stale listener remains open', async () => {
+  const calls = [];
+  const result = await startFreshServerAfterPortClose({
+    staleServerClosed: false,
+    createServerFn: () => {
+      throw new Error('should not create replacement while stale listener remains');
+    },
+    listenFn: () => calls.push('listen'),
+  });
+
+  assert.equal(result.started, false);
+  assert.equal(result.blocked, true);
+  assert.equal(result.reason, 'stale-server-did-not-exit');
+  assert.deepEqual(calls, []);
 });
 
 test('dist server exposes restart endpoint and reflects restart request in health payload', async (t) => {
