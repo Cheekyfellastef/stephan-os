@@ -390,6 +390,58 @@ test('served metadata mismatch blocks with repair packet when post-start verific
   assert.equal(healthCalls, 2);
 });
 
+
+test('static server restart blocks when metadata matches but module MIME checks fail', async () => {
+  const logs = [];
+  let restartCalls = 0;
+  let healthCalls = 0;
+  await assert.rejects(
+    () => ensureLocalStaticServerRestartWithDeps({
+      expectedMetadata: {
+        runtimeMarker: 'marker-current',
+        gitCommit: 'new222',
+        buildTimestamp: '2026-06-22T00:00:00.000Z',
+        sourceFingerprint: 'fingerprint-current',
+      },
+      verifyServedAfterStart: true,
+      fetchFn: async (url, options = {}) => {
+        const target = String(url);
+        if (target.includes('/__stephanos/health')) {
+          healthCalls += 1;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              runtimeMarker: 'marker-current',
+              gitCommit: 'new222',
+              buildTimestamp: '2026-06-22T00:00:00.000Z',
+              sourceFingerprint: 'fingerprint-current',
+            }),
+          };
+        }
+        if ((options.method || 'GET') === 'POST' && target.includes('/__stephanos/restart')) {
+          restartCalls += 1;
+          return { ok: true, status: 202, json: async () => ({ accepted: true }) };
+        }
+        if (target.includes('/shared/runtime/runtimeStatusModel.mjs')) {
+          return { ok: true, status: 200, headers: { get: () => 'text/javascript; charset=utf-8' } };
+        }
+        if (target.includes('/shared/runtime/stephanosLocalUrls.mjs')) {
+          return { ok: true, status: 200, headers: { get: () => 'application/octet-stream' } };
+        }
+        throw new Error(`unexpected fetch ${target}`);
+      },
+      log: (message) => logs.push(message),
+    }),
+    /served-runtime-module-mime-mismatch/,
+  );
+
+  assert.equal(restartCalls, 1);
+  assert.equal(healthCalls, 2);
+  assert.match(logs.join('\n'), /servedRuntimeMatchesExpectedDistMetadata":false/);
+  assert.match(logs.join('\n'), /served-runtime-module-mime-mismatch/);
+});
+
 test('approved local merge recovery still hands off to static server restart helper', async () => {
   const steps = [];
   const recovery = runApprovedLocalMergeRecoveryWithDeps({

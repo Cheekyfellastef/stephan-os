@@ -658,7 +658,6 @@ export function createStephanosDistServer() {
           return;
         }
         setTimeout(() => {
-          response.socket?.destroy();
           process.exit(0);
         }, 120);
       });
@@ -773,6 +772,21 @@ export function createStephanosDistServer() {
   });
 }
 
+export async function startFreshServerAfterPortClose({
+  targetPort = port,
+  targetHost = host,
+  staleServerClosed,
+  createServerFn = createStephanosDistServer,
+  listenFn = (freshServer) => freshServer.listen(targetPort, targetHost),
+} = {}) {
+  if (!staleServerClosed) {
+    return { started: false, blocked: true, reason: 'stale-server-did-not-exit' };
+  }
+  const freshServer = createServerFn();
+  listenFn(freshServer);
+  return { started: true, blocked: false, freshServer };
+}
+
 if (isMainModule) {
   const [port4173Listening, port5173Listening] = await Promise.all([
     probePortListening(4173),
@@ -823,13 +837,12 @@ if (isMainModule) {
         process.exit(1);
         return;
       }
-      const closed = await waitForPortToClose(port);
-      if (!closed) {
+      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
+      if (!freshStart.started) {
         console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
-      server.listen(port, host);
       return;
     }
 
@@ -847,13 +860,12 @@ if (isMainModule) {
         process.exit(1);
         return;
       }
-      const closed = await waitForPortToClose(port);
-      if (!closed) {
+      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
+      if (!freshStart.started) {
         console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
-      server.listen(port, host);
       return;
     }
 
@@ -870,13 +882,12 @@ if (isMainModule) {
         process.exit(1);
         return;
       }
-      const closed = await waitForPortToClose(port);
-      if (!closed) {
+      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
+      if (!freshStart.started) {
         console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
-      server.listen(port, host);
       return;
     }
 
@@ -891,13 +902,12 @@ if (isMainModule) {
         process.exit(1);
         return;
       }
-      const closed = await waitForPortToClose(port);
-      if (!closed) {
+      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
+      if (!freshStart.started) {
         console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
-      server.listen(port, host);
       return;
     }
 
@@ -913,13 +923,12 @@ if (isMainModule) {
         process.exit(1);
         return;
       }
-      const closed = await waitForPortToClose(port);
-      if (!closed) {
+      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
+      if (!freshStart.started) {
         console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
-      server.listen(port, host);
       return;
     }
 
