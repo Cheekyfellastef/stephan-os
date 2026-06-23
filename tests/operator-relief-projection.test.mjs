@@ -1182,7 +1182,7 @@ test('Co-Builder Operational Packet V1 integrates with Operator Relief without r
     intentToBuildModel: { missionSpec: { objective: 'Implement bounded source-side packet builder', repoArchitectureContext: { testsLikelyRequired: ['node --test shared/agents/coBuilderOperationalPacket.test.mjs'] } } },
     prEvidenceModel: { changedFiles: ['shared/agents/coBuilderOperationalPacket.mjs', 'tests/operator-relief-projection.test.mjs'] },
     proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test shared/agents/coBuilderOperationalPacket.test.mjs'] } }, browserChecksObserved: [] },
-    supportSnapshot: { taskKind: 'implementation' },
+    supportSnapshot: { taskKind: 'implementation', missionId: 'mission-packet-integration' },
   });
   assert.equal(r.coBuilderOperationalPacket.schemaVersion, 'co-builder-operational-packet.v1');
   assert.equal(r.coBuilderOperationalPacket.packetKind, 'stephanos.co_builder.operational_packet');

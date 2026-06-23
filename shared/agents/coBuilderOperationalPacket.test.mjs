@@ -17,7 +17,10 @@ const base = {
     browserProofRequired: false,
   },
   agentWorkRoutingProjection: { requiredProof: ['focused test output'], requiredTests: ['npm run stephanos:verify'] },
-  verificationReturnIntake: { missingEvidence: [] },
+  verificationReturnIntake: {
+    missingEvidence: [],
+    suppliedEvidence: [{ requirement: 'focused test output', status: 'verified' }],
+  },
 };
 
 test('normal implementation mission assigns Codex as sole writer and OpenClaw as verifier', () => {
@@ -77,10 +80,39 @@ test('forbidden paths cannot enter allowedFiles and defaults include generated r
   }
 });
 
-test('missing evidence cannot produce a passing verdict', () => {
-  const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: ['browser proof missing'] } });
+test('required evidence definitions alone cannot produce a passing verdict', () => {
+  const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [] } });
   assert.equal(packet.finalVerdict, 'BLOCKED');
-  assert.match(packet.blockingReasons.join(' '), /missing/i);
+  assert.deepEqual(packet.unsatisfiedEvidence, ['focused test output']);
+  assert.equal(packet.evidenceSatisfied, false);
+  assert.match(packet.blockingReasons.join(' '), /verified proof/i);
+});
+
+test('missing unknown or unverified evidence cannot produce a passing verdict', () => {
+  for (const suppliedEvidence of [[], ['focused test output'], [{ requirement: 'focused test output', status: 'unknown' }], [{ requirement: 'focused test output', verified: false }]]) {
+    const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence } });
+    assert.equal(packet.finalVerdict, 'BLOCKED');
+    assert.equal(packet.evidenceSatisfied, false);
+  }
+  const missing = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: ['browser proof missing'], suppliedEvidence: [{ requirement: 'focused test output', status: 'verified' }] } });
+  assert.equal(missing.finalVerdict, 'BLOCKED');
+  assert.match(missing.blockingReasons.join(' '), /missing/i);
+});
+
+test('verified supplied evidence can produce a passing verdict', () => {
+  const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'focused test output', status: 'verified' }] } });
+  assert.equal(packet.finalVerdict, 'READY_FOR_OPERATOR_APPROVAL');
+  assert.equal(packet.evidenceSatisfied, true);
+  assert.deepEqual(packet.unsatisfiedEvidence, []);
+});
+
+test('missing empty placeholder or unresolved mission id blocks safely', () => {
+  for (const missionId of [undefined, '', 'mission-unresolved', 'unknown', 'placeholder', 'tbd']) {
+    const packet = buildCoBuilderOperationalPacket({ ...base, missionId });
+    assert.equal(packet.finalVerdict, 'BLOCKED');
+    assert.equal(packet.activeWriter, 'none');
+    assert.match(packet.blockingReasons.join(' '), /Mission id/i);
+  }
 });
 
 test('repair rounds cannot exceed 3', () => {

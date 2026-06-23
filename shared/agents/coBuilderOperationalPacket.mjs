@@ -37,6 +37,10 @@ function uniqueList(items) {
   return [...new Set(asList(items))];
 }
 
+function asArray(value) {
+  return Array.isArray(value) ? value.filter(Boolean) : [];
+}
+
 function clampRound(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 1) return 1;
@@ -46,6 +50,45 @@ function clampRound(value) {
 function includesForbiddenPath(path) {
   const text = asText(path, '');
   return !text || SECRET_OR_GENERATED_PATTERN.test(text) || /secret|token/i.test(text);
+}
+
+function normalizeEvidenceToken(value) {
+  return asText(value, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function isPlaceholderMissionId(value) {
+  const text = asText(value, '');
+  return !text || /^(mission-unresolved|unknown|none|null|undefined|todo|tbd|placeholder|changeme)$/i.test(text);
+}
+
+function collectSuppliedEvidence({ verificationReturnIntake = {}, supportSnapshot = {}, agentWorkRoutingProjection = {} } = {}) {
+  return [
+    ...asArray(verificationReturnIntake.suppliedEvidence),
+    ...asArray(verificationReturnIntake.verifiedEvidence),
+    ...asArray(verificationReturnIntake.completedEvidence),
+    ...asArray(supportSnapshot.suppliedEvidence),
+    ...asArray(supportSnapshot.verifiedEvidence),
+    ...asArray(agentWorkRoutingProjection.suppliedEvidence),
+  ];
+}
+
+function evidenceItemVerified(item) {
+  if (typeof item === 'string') return false;
+  if (!item || typeof item !== 'object') return false;
+  const status = asText(item.status || item.verificationStatus || item.verdict, '').toLowerCase();
+  return item.verified === true || item.supplied === true && item.accepted === true || ['verified', 'accepted', 'passed', 'complete'].includes(status);
+}
+
+function evidenceItemText(item) {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return '';
+  return [item.requirement, item.id, item.label, item.name, item.summary, item.command, item.evidence].map((v) => asText(v, '')).filter(Boolean).join(' ');
+}
+
+function evidenceRequirementSatisfied(requirement, suppliedEvidence) {
+  const normalizedRequirement = normalizeEvidenceToken(requirement);
+  if (!normalizedRequirement) return false;
+  return suppliedEvidence.some((item) => evidenceItemVerified(item) && normalizeEvidenceToken(evidenceItemText(item)).includes(normalizedRequirement));
 }
 
 function inferMissionKind({ operatorIntent, missionBrainNextAction = {}, supportSnapshot = {} }) {
@@ -82,6 +125,9 @@ export function buildCoBuilderOperationalPacket({
     ...asList(harnessAgentProjection.requiredTests),
     ...asList(agentWorkRoutingProjection.requiredTests),
   ]);
+  const suppliedEvidence = collectSuppliedEvidence({ verificationReturnIntake, supportSnapshot, agentWorkRoutingProjection });
+  const unsatisfiedEvidence = requiredEvidence.filter((requirement) => !evidenceRequirementSatisfied(requirement, suppliedEvidence));
+  const resolvedMissionId = asText(missionId || supportSnapshot.missionId, 'mission-unresolved');
   const blockingReasons = [];
   const missionKind = inferMissionKind({ operatorIntent, missionBrainNextAction, supportSnapshot });
   const sensitive = asText(harnessAgentProjection.generatedArtifactRisk, '').toLowerCase() === 'yes'
@@ -89,10 +135,12 @@ export function buildCoBuilderOperationalPacket({
     || rawAllowedFiles.some(includesForbiddenPath)
     || /secret|token|env|generated|dist|runtime data|merge|deploy|permission|policy/i.test([operatorIntent, intendedOutcome].join(' '));
 
+  if (isPlaceholderMissionId(resolvedMissionId)) blockingReasons.push('Mission id is missing, placeholder, or unresolved.');
   if (!asText(operatorIntent, '')) blockingReasons.push('Operator intent is missing.');
   if (!asText(intendedOutcome || missionBrainNextAction.missionObjective || missionIntelligenceSummary.currentMissionSummary, '')) blockingReasons.push('Intended outcome is unclear.');
   if (!allowedFiles.length && missionKind === 'implementation') blockingReasons.push('Allowed source file scope is unclear.');
   if (!requiredEvidence.length) blockingReasons.push('Evidence requirements are unclear.');
+  if (requiredEvidence.length && unsatisfiedEvidence.length) blockingReasons.push('Required evidence has not been supplied as verified proof.');
   if (sensitive) blockingReasons.push('Scope touches or implies forbidden, generated, runtime, policy, merge, environment, or secret-bearing work.');
 
   const requestedRound = Number(supportSnapshot.coBuilderLoopRound || coBuilderLoopProjection.loopRound || 1) || 1;
@@ -129,12 +177,12 @@ export function buildCoBuilderOperationalPacket({
     ? ['read-source', 'edit-allowed-source-files', 'run-focused-tests', 'run-build', 'run-verify', 'report-evidence']
     : (primaryOwner === 'OpenClaw' ? ['read-only-discovery', 'live-runtime-inspection', 'browser-verification', 'report-evidence'] : []);
 
-  const finalVerdict = blocked ? 'BLOCKED' : (asList(verificationReturnIntake.missingEvidence).length ? 'BLOCKED' : 'READY_FOR_OPERATOR_APPROVAL');
+  const finalVerdict = blocked ? 'BLOCKED' : 'READY_FOR_OPERATOR_APPROVAL';
 
   return {
     schemaVersion: CO_BUILDER_OPERATIONAL_PACKET_SCHEMA_VERSION,
     packetKind: CO_BUILDER_OPERATIONAL_PACKET_KIND,
-    missionId: asText(missionId || supportSnapshot.missionId, 'mission-unresolved'),
+    missionId: resolvedMissionId,
     operatorIntent: asText(operatorIntent || missionBrainNextAction.missionObjective, ''),
     intendedOutcome: asText(intendedOutcome || missionIntelligenceSummary.nextBestAction || missionBrainNextAction.nextBestAction, ''),
     missionStatus: asText(missionStatus || missionIntelligenceSummary.missionIntelligenceStatus, 'unknown'),
@@ -146,6 +194,9 @@ export function buildCoBuilderOperationalPacket({
     allowedActions,
     disallowedActions: ['auto-dispatch', 'auto-write-outside-allowed-files', 'simultaneous-agent-writes', 'auto-approve', 'auto-merge', 'edit-generated-output', 'edit-runtime-data', 'edit-secrets'],
     requiredEvidence,
+    suppliedEvidence: suppliedEvidence.map(evidenceItemText).filter(Boolean),
+    unsatisfiedEvidence,
+    evidenceSatisfied: requiredEvidence.length > 0 && unsatisfiedEvidence.length === 0,
     requiredTests,
     browserProofRequired,
     operatorApprovalRequired: true,
