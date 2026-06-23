@@ -11,9 +11,16 @@ import {
   isSanctionedOpenClawWorkspacePath,
   resolveOpenClawWorkspaceRepairPath,
 } from '../shared/agents/openClawWorkspaceHygiene.mjs';
+import {
+  DEFAULT_OPENCLAW_ENDPOINTS,
+  DEFAULT_OPENCLAW_SERVICE_NAME,
+  buildOpenClawStartupRecoveryPacket,
+  classifyOpenClawReadiness,
+} from '../shared/agents/openClawStartupRecovery.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const OPENCLAW_STARTUP_RESTART_FLAG = '--approve-openclaw-service-restart';
 
 function formatStep(label, command, commandArgs) {
   return `[IGNITION PREFLIGHT] ${label}: ${command} ${commandArgs.join(' ')}`;
@@ -1283,6 +1290,83 @@ function runGitPullPreflight() {
   return runGitPullPreflightWithDeps();
 }
 
+function parseJsonLine(value = '') {
+  try { return JSON.parse(String(value || '').trim()); } catch { return null; }
+}
+
+export async function probeOpenClawEndpoint({ endpoints = DEFAULT_OPENCLAW_ENDPOINTS, fetchFn = globalThis.fetch } = {}) {
+  for (const url of endpoints) {
+    try {
+      const response = await fetchFn(url, { headers: { Accept: 'application/json,text/plain', 'Cache-Control': 'no-cache' } });
+      const body = await response.text();
+      const json = parseJsonLine(body);
+      const identity = json?.service || json?.name || json?.app || body.slice(0, 200);
+      const connectionStatus = json?.connectionStatus || json?.status || json?.health || (response.ok ? 'unknown' : 'unhealthy');
+      return {
+        url,
+        reachable: Boolean(response?.ok),
+        httpStatus: response?.status ?? null,
+        identity,
+        body: body.slice(0, 500),
+        identityVerified: /openclaw/i.test(String(identity || body || '')),
+        connectionStatus: /^(healthy|connected|ready)$/i.test(String(connectionStatus).trim()) ? 'healthy' : String(connectionStatus || 'unknown'),
+      };
+    } catch (error) {
+      // Try the next known local endpoint before reporting unreachable.
+    }
+  }
+  return { reachable: false, status: 'unreachable-or-unknown', identityVerified: false, connectionStatus: 'unknown' };
+}
+
+export function probeOpenClawProcessWithDeps({ captureStep = runStepCapture, platform = process.platform, serviceName = DEFAULT_OPENCLAW_SERVICE_NAME } = {}) {
+  if (platform !== 'win32') {
+    return { process: { running: false, name: 'unsupported-platform' }, service: { running: false, name: serviceName, state: 'unsupported-platform' }, portOwner: { present: false, verified: false } };
+  }
+  let service = { running: false, name: serviceName, state: 'unknown' };
+  try {
+    const result = captureStep('openclaw-service-query', 'sc.exe', ['query', serviceName]);
+    service = { running: /STATE\s*:\s*\d+\s+RUNNING/i.test(result.stdout), name: serviceName, displayName: serviceName, state: /RUNNING/i.test(result.stdout) ? 'running' : 'not-running' };
+  } catch {
+    service = { running: false, name: serviceName, state: 'not-running-or-unknown' };
+  }
+  let process = { running: service.running, name: serviceName, commandLine: '' };
+  try {
+    const result = captureStep('openclaw-process-query', 'powershell.exe', ['-NoProfile', '-Command', "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'OpenClaw|openclaw' -or $_.CommandLine -match 'OpenClaw|openclaw' } | Select-Object -First 1 Name,CommandLine | ConvertTo-Json -Compress"]);
+    const parsed = parseJsonLine(result.stdout);
+    if (parsed?.Name || parsed?.CommandLine) process = { running: true, name: parsed.Name || serviceName, commandLine: parsed.CommandLine || '' };
+  } catch {
+    process = { running: service.running, name: serviceName, commandLine: '' };
+  }
+  return { process, service, portOwner: { present: false, verified: false } };
+}
+
+export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep = runStepCapture, runStepFn = runStep, fetchFn = globalThis.fetch, argvArgs = args, platform = process.platform, log = (message) => console.log(message) } = {}) {
+  const base = probeOpenClawProcessWithDeps({ captureStep, platform });
+  const endpoint = await probeOpenClawEndpoint({ fetchFn });
+  let readiness = { ...base, endpoint };
+  let packet = buildOpenClawStartupRecoveryPacket(readiness);
+  const classification = classifyOpenClawReadiness(readiness);
+  log(`[IGNITION] openclaw-startup-readiness=${JSON.stringify({ state: classification.state, healthy: classification.healthy, readiness })}`);
+  if (!packet) return { healthy: true, state: classification.state, readiness };
+  log(`[IGNITION] openclaw-recovery-packet=${JSON.stringify(packet)}`);
+
+  const argSet = argvArgs instanceof Set ? argvArgs : new Set(Array.from(argvArgs || []));
+  if (!packet.desktopApproval || !argSet.has(OPENCLAW_STARTUP_RESTART_FLAG)) {
+    throw new Error(`blocked for safety: ${packet.reason}. ${packet.recommendedRestartAction} CLI approval path: npm run stephanos:ignite -- ${OPENCLAW_STARTUP_RESTART_FLAG}`);
+  }
+  runStepFn('openclaw-service-stop-approved', 'sc.exe', ['stop', DEFAULT_OPENCLAW_SERVICE_NAME]);
+  runStepFn('openclaw-service-start-approved', 'sc.exe', ['start', DEFAULT_OPENCLAW_SERVICE_NAME]);
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 2500));
+  readiness = { ...probeOpenClawProcessWithDeps({ captureStep, platform }), endpoint: await probeOpenClawEndpoint({ fetchFn }) };
+  packet = buildOpenClawStartupRecoveryPacket(readiness);
+  if (packet) {
+    log(`[IGNITION] openclaw-recovery-result=${JSON.stringify(packet)}`);
+    throw new Error(`blocked for safety: health remains unhealthy after approved OpenClaw restart (${packet.reason}).`);
+  }
+  log(`[IGNITION] openclaw-recovery-result=${JSON.stringify({ ignitionStatus: 'READY', connectionVerdict: 'connected-healthy' })}`);
+  return { healthy: true, state: 'connected-healthy', recoveryApplied: true, readiness };
+}
+
 export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
   const capture = captureStepFn('git-status', 'git', ['status', '--porcelain']);
   const assessment = evaluateGitStatusForIgnition(capture.stdout);
@@ -1559,6 +1643,12 @@ export async function run() {
         if (shouldRequirePublishedHead(args) && !publicationTruth.headPublished) {
           throw new Error(`blocked for safety: remote publication parity required but local HEAD is not publish-backed (${publicationTruth.publicationState}). ${publicationTruth.operatorAction}`);
         }
+      }
+
+      if (ignitionMode === 'NORMAL_IGNITION' && process.platform === 'win32') {
+        await evaluateOpenClawStartupConnectRecoveryWithDeps();
+      } else if (ignitionMode === 'NORMAL_IGNITION') {
+        console.log('[IGNITION] OpenClaw startup connect recovery skipped (non-Windows desktop service probe unavailable).');
       }
 
       console.log('[IGNITION] launcher guardrail starting');

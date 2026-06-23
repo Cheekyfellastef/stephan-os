@@ -13,6 +13,7 @@ import {
   collectApprovedTrackedGeneratedRestorePaths,
   collectRuntimeStatePaths,
   evaluateDistFreshnessAgainstOrigin,
+  evaluateOpenClawStartupConnectRecoveryWithDeps,
   evaluateGitPublicationTruthWithDeps,
   evaluateGitStatusForIgnition,
   ensureLocalStaticServerRestartWithDeps,
@@ -27,6 +28,7 @@ import {
   shouldAutoPublishDist,
   shouldAutoPull,
 } from './ignite-stephanos-local.mjs';
+import { buildOpenClawStartupRecoveryPacket, classifyOpenClawReadiness } from '../shared/agents/openClawStartupRecovery.mjs';
 import { isStephanosDebugEnabled } from './stephanos-build-utils.mjs';
 
 test('isMainModule matches direct script execution path', () => {
@@ -63,6 +65,71 @@ test('stephanos debug gate defaults to off and enables via --debug or STEPHANOS_
   assert.equal(isStephanosDebugEnabled({ argv: ['--debug'], env: {} }), true);
   assert.equal(isStephanosDebugEnabled({ argv: [], env: { STEPHANOS_DEBUG: '1' } }), true);
   assert.equal(isStephanosDebugEnabled({ argv: [], env: { STEPHANOS_DEBUG: 'true' } }), false);
+});
+
+test('OpenClaw healthy startup readiness continues ignition', () => {
+  const readiness = { process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw' }, endpoint: { reachable: true, identity: 'OpenClaw', identityVerified: true, connectionStatus: 'healthy' }, portOwner: { present: true, verified: true } };
+  assert.equal(classifyOpenClawReadiness(readiness).state, 'connected-healthy');
+  assert.equal(buildOpenClawStartupRecoveryPacket(readiness), null);
+});
+
+test('OpenClaw not running reports not-running recovery packet with safety locks closed', () => {
+  const packet = buildOpenClawStartupRecoveryPacket({ process: { running: false }, service: { running: false }, endpoint: { reachable: false }, portOwner: { present: false } });
+  assert.equal(packet.connectionVerdict, 'not-running');
+  assert.equal(packet.reason, 'openclaw-not-running');
+  assert.equal(packet.safetyLocks.openClawMutation, 'locked');
+  assert.equal(packet.safetyLocks.codexAutoDispatch, 'disabled');
+  assert.equal(packet.safetyLocks.mergeSafety, 'no / hold');
+  assert.equal(packet.desktopApproval, null);
+});
+
+test('OpenClaw running but not connected reports approval-gated restart packet', () => {
+  const packet = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw', state: 'running' }, endpoint: { reachable: true, identity: 'OpenClaw', identityVerified: true, connectionStatus: 'unhealthy' }, portOwner: { present: true, verified: true } });
+  assert.equal(packet.connectionVerdict, 'running-not-connected');
+  assert.equal(packet.desktopApproval.buttonLabel, 'Restart OpenClaw service');
+  assert.match(packet.recommendedRestartAction, /started on power-up but failed readiness/i);
+});
+
+test('OpenClaw unknown process or port owner blocks restart', () => {
+  const unknownProcess = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'node.exe' }, service: { running: true, name: 'Unknown' }, endpoint: { reachable: false }, portOwner: { present: false } });
+  assert.equal(unknownProcess.connectionVerdict, 'unknown-owner-unsafe');
+  assert.equal(unknownProcess.desktopApproval, null);
+  const unknownOwner = buildOpenClawStartupRecoveryPacket({ process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw' }, endpoint: { reachable: false }, portOwner: { present: true, verified: false, name: 'other.exe' } });
+  assert.equal(unknownOwner.reason, 'port-owner-not-clearly-openclaw');
+  assert.equal(unknownOwner.desktopApproval, null);
+});
+
+test('OpenClaw approved restart stops starts rechecks and continues only when healthy', async () => {
+  const calls = [];
+  let probeCount = 0;
+  const captureStep = (label) => {
+    calls.push(label);
+    if (label === 'openclaw-service-query') return { stdout: 'STATE              : 4  RUNNING', stderr: '' };
+    if (label === 'openclaw-process-query') return { stdout: '{"Name":"OpenClaw.exe","CommandLine":"OpenClaw Standalone"}', stderr: '' };
+    return { stdout: '', stderr: '' };
+  };
+  const fetchFn = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => (++probeCount === 1 ? '{"service":"OpenClaw","connectionStatus":"unhealthy"}' : '{"service":"OpenClaw","connectionStatus":"healthy"}'),
+  });
+  const result = await evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep, fetchFn, platform: 'win32', argvArgs: ['--approve-openclaw-service-restart'], runStepFn: (label) => calls.push(label), log: () => {} });
+  assert.equal(result.recoveryApplied, true);
+  assert.ok(calls.includes('openclaw-service-stop-approved'));
+  assert.ok(calls.includes('openclaw-service-start-approved'));
+});
+
+test('OpenClaw restart failure remains blocked with repair packet', async () => {
+  const captureStep = (label) => {
+    if (label === 'openclaw-service-query') return { stdout: 'STATE              : 4  RUNNING', stderr: '' };
+    if (label === 'openclaw-process-query') return { stdout: '{"Name":"OpenClaw.exe","CommandLine":"OpenClaw Standalone"}', stderr: '' };
+    return { stdout: '', stderr: '' };
+  };
+  const fetchFn = async () => ({ ok: true, status: 200, text: async () => '{"service":"OpenClaw","connectionStatus":"unhealthy"}' });
+  await assert.rejects(
+    evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep, fetchFn, platform: 'win32', argvArgs: ['--approve-openclaw-service-restart'], runStepFn: () => {}, log: () => {} }),
+    /health remains unhealthy/,
+  );
 });
 
 

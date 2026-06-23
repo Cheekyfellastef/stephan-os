@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $normalIgniteCommand = 'npm run stephanos:ignite'
 $approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'
+$approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-openclaw-service-restart'
 $sourceMergeCheckCommand = 'git merge --no-commit --no-ff origin/main'
 $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stephanos-ignite-{0}.log" -f ([guid]::NewGuid().ToString('N')))
 
@@ -13,18 +14,101 @@ function Write-IgniteApprovalLog([string]$Message) {
 }
 
 function ConvertFrom-RepairPacketLine([string[]]$Lines) {
-  $packetLine = @($Lines | Where-Object { $_ -match '^\[IGNITION\] (recovery-packet|repair-packet)=' } | Select-Object -Last 1)
+  $packetLine = @($Lines | Where-Object { $_ -match '^\[IGNITION\] (recovery-packet|repair-packet|openclaw-recovery-packet)=' } | Select-Object -Last 1)
   if (-not $packetLine -or -not $packetLine[0]) {
     return $null
   }
 
-  $json = $packetLine[0] -replace '^\[IGNITION\] (recovery-packet|repair-packet)=', ''
+  $json = $packetLine[0] -replace '^\[IGNITION\] (recovery-packet|repair-packet|openclaw-recovery-packet)=', ''
   try {
     return $json | ConvertFrom-Json
   }
   catch {
     Write-IgniteApprovalLog "failed to parse ignition repair packet: $($_.Exception.Message)"
     return $null
+  }
+}
+
+function Test-OpenClawRestartAvailable($Packet) {
+  if ($null -eq $Packet) { return $false }
+  return $Packet.packetType -eq 'openclaw-startup-connect-recovery-v1' `
+    -and $Packet.connectionVerdict -eq 'running-not-connected' `
+    -and $Packet.endpointIdentityVerified -eq $true `
+    -and $Packet.portOwnerVerified -eq $true `
+    -and $Packet.desktopApproval.buttonLabel -eq 'Restart OpenClaw service'
+}
+
+function Show-OpenClawRestartPopup($Packet) {
+  $approvalAvailable = Test-OpenClawRestartAvailable $Packet
+  $message = @"
+Stephanos desktop Ignite detected OpenClaw startup connect failure.
+
+OpenClaw appears to have started on power-up, but failed readiness/connection health.
+
+Connection verdict: $($Packet.connectionVerdict)
+Process/service state: $($Packet.detectedProcessState) / $($Packet.detectedServiceState)
+Endpoint status: $($Packet.localEndpointStatus)
+Endpoint identity verified: $($Packet.endpointIdentityVerified)
+Port owner verified: $($Packet.portOwnerVerified)
+
+Approved safe case:
+- Restart OpenClaw service
+
+Safety locks remain closed:
+- no OpenClaw mutation
+- no OpenClaw task execution
+- no auto-push
+- no Codex auto-dispatch
+- no merge-ready flip
+- no paid APIs
+- no persistent memory writes
+
+Recovery packet:
+$($Packet | ConvertTo-Json -Depth 8)
+"@
+  if (-not $approvalAvailable) {
+    Write-Host $message
+    Write-IgniteApprovalLog 'OpenClaw service restart approval unavailable because identity/owner/verdict is not the known safe case.'
+    return 'cancel'
+  }
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = 'Stephanos Ignite OpenClaw service restart approval'
+    $form.Size = New-Object System.Drawing.Size(780, 560)
+    $form.StartPosition = 'CenterScreen'
+    $form.TopMost = $true
+    $textBox = New-Object System.Windows.Forms.TextBox
+    $textBox.Multiline = $true
+    $textBox.ReadOnly = $true
+    $textBox.ScrollBars = 'Vertical'
+    $textBox.WordWrap = $false
+    $textBox.Font = New-Object System.Drawing.Font('Consolas', 10)
+    $textBox.Text = $message
+    $textBox.SetBounds(12, 12, 740, 420)
+    $form.Controls.Add($textBox)
+    $restartButton = New-Object System.Windows.Forms.Button
+    $restartButton.Text = 'Restart OpenClaw service'
+    $restartButton.SetBounds(392, 452, 190, 32)
+    $restartButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.AcceptButton = $restartButton
+    $form.Controls.Add($restartButton)
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = 'Cancel / stop'
+    $cancelButton.SetBounds(666, 452, 90, 32)
+    $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.CancelButton = $cancelButton
+    $form.Controls.Add($cancelButton)
+    $result = $form.ShowDialog()
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) { return 'openclaw-service-restart' }
+    return 'cancel'
+  }
+  catch {
+    Write-IgniteApprovalLog "popup unavailable: $($_.Exception.Message)"
+    Write-Host $message
+    Write-Host "Popup failed. To approve only the known local OpenClaw service restart manually, run: $approvedOpenClawRestartCommand" -ForegroundColor Yellow
+    return 'cancel'
   }
 }
 
@@ -258,6 +342,16 @@ if ($normalExitCode -eq 0) {
 
 $lines = Get-Content -Path $transcriptPath -ErrorAction SilentlyContinue
 $packet = ConvertFrom-RepairPacketLine -Lines $lines
+if ($null -ne $packet -and $packet.packetType -eq 'openclaw-startup-connect-recovery-v1') {
+  $approvalAction = Show-OpenClawRestartPopup -Packet $packet
+  if ($approvalAction -eq 'openclaw-service-restart') {
+    Write-IgniteApprovalLog "operator approved OpenClaw service restart; running: $approvedOpenClawRestartCommand"
+    & cmd.exe /d /c $approvedOpenClawRestartCommand
+    exit $LASTEXITCODE
+  }
+  Write-IgniteApprovalLog 'operator cancelled or approval unavailable; no OpenClaw service restart was run.'
+  exit $normalExitCode
+}
 if ($null -eq $packet -or $packet.reason -ne 'ff-only-divergence') {
   Write-IgniteApprovalLog "ignition failed without generated-dist divergence approval packet; no desktop recovery approval shown."
   Write-IgniteApprovalLog "manual safe command remains: $approvedIgniteCommand"
