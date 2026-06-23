@@ -543,6 +543,44 @@ export function runApprovedLocalMergeRecoveryWithDeps({
   };
 }
 
+
+async function probeIgnitionJavaScriptMime(fetchFn, url) {
+  try {
+    const response = await fetchFn(url, {
+      headers: {
+        'Cache-Control': 'no-cache',
+        Connection: 'close',
+      },
+    });
+    const contentType = String(response?.headers?.get?.('content-type') || '').toLowerCase();
+    return {
+      ok: Boolean(response?.ok) && contentType === 'text/javascript; charset=utf-8',
+      status: response?.status ?? null,
+      contentType,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: null,
+      contentType: null,
+      error: String(error?.message || error || 'mime-probe-failed'),
+    };
+  }
+}
+
+async function probeIgnitionModuleMimeChecks(fetchFn, servedUrl) {
+  const baseUrl = servedUrl.replace(/\/$/, '');
+  const [runtimeStatusModel, stephanosLocalUrls] = await Promise.all([
+    probeIgnitionJavaScriptMime(fetchFn, `${baseUrl}/shared/runtime/runtimeStatusModel.mjs`),
+    probeIgnitionJavaScriptMime(fetchFn, `${baseUrl}/shared/runtime/stephanosLocalUrls.mjs?v=ignition-mime-probe`),
+  ]);
+  return {
+    ok: runtimeStatusModel.ok && stephanosLocalUrls.ok,
+    runtimeStatusModel,
+    stephanosLocalUrls,
+  };
+}
+
 export async function ensureLocalStaticServerRestartWithDeps({
   expectedMetadata,
   port = 4173,
@@ -566,6 +604,8 @@ export async function ensureLocalStaticServerRestartWithDeps({
     servedBuildTimestamp: null,
     servedSourceFingerprint: null,
     servedRuntimeMatchesExpectedDistMetadata: false,
+    moduleMimeChecksPass: false,
+    moduleMimeChecks: null,
     restartRequired: false,
     operatorBrowserAction: 'Hard-refresh browser after the 4173 server restart completes.',
   };
@@ -579,7 +619,9 @@ export async function ensureLocalStaticServerRestartWithDeps({
       report.servedCommit = previousHealth?.gitCommit || null;
       report.servedBuildTimestamp = previousHealth?.buildTimestamp || null;
       report.servedSourceFingerprint = previousHealth?.sourceFingerprint || null;
-      report.servedRuntimeMatchesExpectedDistMetadata = Boolean(expectedRuntimeMarker) && previousHealth?.runtimeMarker === expectedRuntimeMarker;
+      // Metadata parity alone is not sufficient evidence that the static server is reusable.
+      // Keep the public success field false until post-start MIME probes pass.
+      report.servedRuntimeMatchesExpectedDistMetadata = false;
     } else {
       report.previousServerStatus = `unhealthy:${healthResponse?.status || 'unknown'}`;
     }
@@ -643,8 +685,11 @@ export async function ensureLocalStaticServerRestartWithDeps({
     report.servedCommit = servedHealth?.gitCommit || null;
     report.servedBuildTimestamp = servedHealth?.buildTimestamp || null;
     report.servedSourceFingerprint = servedHealth?.sourceFingerprint || null;
-    report.servedRuntimeMatchesExpectedDistMetadata = Boolean(expectedRuntimeMarker) && servedHealth?.runtimeMarker === expectedRuntimeMarker;
-    if (!report.servedRuntimeMatchesExpectedDistMetadata) {
+    const metadataMatchesExpected = Boolean(expectedRuntimeMarker) && servedHealth?.runtimeMarker === expectedRuntimeMarker;
+    report.moduleMimeChecks = await probeIgnitionModuleMimeChecks(fetchFn, servedUrl);
+    report.moduleMimeChecksPass = report.moduleMimeChecks.ok;
+    report.servedRuntimeMatchesExpectedDistMetadata = metadataMatchesExpected && report.moduleMimeChecksPass;
+    if (!metadataMatchesExpected) {
       const packet = createIgnitionRepairPacket({
         reason: 'served-runtime-metadata-mismatch',
         servedCommit: report.servedCommit || 'unknown',
@@ -652,6 +697,18 @@ export async function ensureLocalStaticServerRestartWithDeps({
         sourceFingerprint: expectedSourceFingerprint || 'unknown',
         buildTimestamp: expectedBuildTimestamp || 'unknown',
         nextSafeAction: 'Stop the stale 4173 server, restart ignition, and hard-refresh the browser only after served metadata matches dist.',
+      });
+      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
+      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
+    }
+    if (!report.moduleMimeChecksPass) {
+      const packet = createIgnitionRepairPacket({
+        reason: 'served-runtime-module-mime-mismatch',
+        servedCommit: report.servedCommit || 'unknown',
+        expectedSourceCommit: expectedCommit || 'unknown',
+        sourceFingerprint: expectedSourceFingerprint || 'unknown',
+        buildTimestamp: expectedBuildTimestamp || 'unknown',
+        nextSafeAction: 'Stop the stale 4173 server, restart ignition, and hard-refresh the browser only after served module MIME checks pass.',
       });
       log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
       throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
