@@ -21,6 +21,18 @@ function isPortOwnerVerified(portOwner = {}) {
   return portOwner.present === true && portOwner.verified === true;
 }
 
+function parseEndpointBodyJson(body = '') {
+  try { return JSON.parse(String(body || '').trim()); } catch { return null; }
+}
+
+function isStandaloneGatewayHealthVerified(endpoint = {}) {
+  const body = parseEndpointBodyJson(endpoint.body);
+  return endpoint.reachable === true
+    && Number(endpoint.httpStatus || 0) === 200
+    && body?.ok === true
+    && body?.status === 'live';
+}
+
 function isStandaloneGatewayProcess(process = {}) {
   const commandLine = String(process.commandLine || process.CommandLine || '');
   return /node(?:\.exe)?/i.test(String(process.name || process.Name || commandLine || ''))
@@ -126,13 +138,17 @@ export function classifyOpenClawReadiness({ process = {}, service = {}, endpoint
   const serviceRunning = serviceVerified && service.running === true;
   const adapterOnly = isReadonlyAdapterProcess(process) && !serviceVerified;
   const endpointReachable = endpoint.reachable === true;
-  const identityVerified = endpoint.identityVerified === true || includesOpenClaw(endpoint.identity) || includesOpenClaw(endpoint.body);
+  const gatewayCandidateVerified = standaloneGatewayCandidate?.verified === true && Number(standaloneGatewayCandidate?.candidatePort || 0) > 0;
+  const standaloneGatewayProcessPresent = isStandaloneGatewayProcess(process) || standaloneGatewayCandidate?.verified === true;
+  const standaloneGatewayHealthVerified = isStandaloneGatewayHealthVerified(endpoint);
+  const identityVerified = endpoint.identityVerified === true || includesOpenClaw(endpoint.identity) || includesOpenClaw(endpoint.body) || (gatewayCandidateVerified && standaloneGatewayHealthVerified);
   const portOwnerVerified = isPortOwnerVerified(portOwner);
   const connected = endpoint.connectionStatus === 'healthy' || endpoint.connected === true || endpoint.health === 'healthy';
-  const gatewayCandidateVerified = standaloneGatewayCandidate?.verified === true;
 
+  if (gatewayCandidateVerified && standaloneGatewayHealthVerified) return { state: 'openclaw-standalone-gateway-live', healthy: true, safeRestartEligible: false, blockReason: '', safeRestartTarget: 'none', restartCommandAllowed: false, endpointIdentityVerified: true, identity: 'standalone-gateway', connectionVerdict: 'openclaw-standalone-gateway-live' };
   if (gatewayCandidateVerified && endpointReachable && identityVerified) return { state: 'openclaw-standalone-gateway', healthy: connected || endpointReachable, safeRestartEligible: false, blockReason: '', safeRestartTarget: 'none', restartCommandAllowed: false };
   if (gatewayCandidateVerified) return { state: 'openclaw-standalone-gateway-candidate', healthy: false, safeRestartEligible: false, blockReason: endpointReachable ? 'standalone-gateway-identity-unclear' : 'standalone-gateway-health-unreachable', safeRestartTarget: 'none', restartCommandAllowed: false };
+  if (standaloneGatewayProcessPresent && endpointReachable) return { state: 'openclaw-standalone-gateway-candidate', healthy: false, safeRestartEligible: false, blockReason: 'standalone-gateway-identity-unclear', safeRestartTarget: 'none', restartCommandAllowed: false };
 
   if (adapterOnly) return { state: 'openclaw-adapter-only', healthy: false, safeRestartEligible: false, blockReason: 'openclaw-adapter-only' };
   if (service.exists === false || service.running === false) return { state: 'openclaw-service-missing', healthy: false, safeRestartEligible: false, blockReason: 'openclaw-service-missing' };
@@ -156,7 +172,7 @@ export function buildOpenClawStartupRecoveryPacket(readiness = {}) {
     serviceState,
     endpointStatus,
     connectionVerdict: classification.state,
-    identityVerified: readiness.endpoint?.identityVerified === true || includesOpenClaw(readiness.endpoint?.identity) || includesOpenClaw(readiness.endpoint?.body),
+    identityVerified: readiness.endpoint?.identityVerified === true || includesOpenClaw(readiness.endpoint?.identity) || includesOpenClaw(readiness.endpoint?.body) || (readiness.standaloneGatewayCandidate?.verified === true && Number(readiness.standaloneGatewayCandidate?.candidatePort || 0) > 0 && isStandaloneGatewayHealthVerified(readiness.endpoint)),
     portOwnerVerified: isPortOwnerVerified(readiness.portOwner),
     recommendedRestartAction: classification.state === 'openclaw-standalone-gateway-candidate'
       ? 'OpenClaw Standalone gateway candidate has a verified process-owned localhost port, but readiness cannot verify endpoint identity yet. Keep restart and mutation unavailable; inspect the discovery packet and strengthen identity rules.'
