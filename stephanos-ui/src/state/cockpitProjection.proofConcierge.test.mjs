@@ -171,3 +171,31 @@ test('CockpitPanel and Support Snapshot share the canonical Proof Concierge sele
   assert.match(cockpitSource, /buildCanonicalCockpitProjectionRuntimeStatus/);
   assert.match(snapshotSource, /buildCanonicalCockpitProjectionRuntimeStatus/);
 });
+
+test('Proof Concierge exposes Browser Proof Runner V1 only for browser-proof-checklist', () => {
+  const browserProjection = buildCockpitProjection({
+    runtimeStatusModel: {
+      missionProofReconciliation: {
+        acceptedItems: ['mission-console-bridge', 'build-proof', 'verify-proof'],
+        remainingMissingItems: ['browser-proof-checklist', 'pr-evidence'],
+      },
+    },
+  });
+  assert.equal(browserProjection.operatorProofConcierge.nextProof, 'browser-proof-checklist');
+  assert.equal(browserProjection.operatorProofConcierge.browserProofRunnerPacket.available, 'yes');
+  assert.equal(browserProjection.operatorProofConcierge.browserProofRunnerPacket.command, 'npm run stephanos:browser-proof');
+  assert.equal(browserProjection.operatorProofConcierge.browserProofRunnerPacket.mutationAllowed, 'no');
+  assert.equal(browserProjection.operatorProofConcierge.browserProofRunnerPacket.codexAutoDispatchAllowed, 'no');
+  assert.equal(browserProjection.operatorProofConcierge.browserProofRunnerPacket.openClawMutationLocked, 'yes');
+
+  const verifyProjection = buildCockpitProjection({
+    runtimeStatusModel: {
+      missionProofReconciliation: {
+        acceptedItems: ['mission-console-bridge', 'build-proof'],
+        remainingMissingItems: ['verify-proof', 'browser-proof-checklist'],
+      },
+    },
+  });
+  assert.equal(verifyProjection.operatorProofConcierge.nextProof, 'verify-proof');
+  assert.equal(verifyProjection.operatorProofConcierge.browserProofRunnerPacket.available, 'no');
+});
