@@ -8,15 +8,15 @@ on:
       - 'shared/agents/missionOrchestrator.test.mjs'
       - 'shared/agents/missionOrchestratorWorker.mjs'
       - 'shared/agents/missionOrchestratorWorker.test.mjs'
+      - 'shared/agents/missionOrchestratorWorkerResult.mjs'
+      - 'shared/agents/missionOrchestratorWorkerResult.test.mjs'
       - 'shared/agents/coBuilderOperationalPacket.mjs'
       - 'shared/runtime/missionOperationsProjection.mjs'
       - 'stephanos-server/services/missionOperationsService.js'
-      - 'stephanos-server/services/missionOrchestratorStore.js'
-      - 'stephanos-server/services/missionOrchestratorStore.test.js'
-      - 'stephanos-server/services/missionOrchestratorControlService.js'
-      - 'stephanos-server/services/missionOrchestratorControlService.test.js'
-      - 'stephanos-server/services/missionOrchestratorWorkerService.js'
-      - 'stephanos-server/services/missionOrchestratorWorkerService.test.js'
+      - 'stephanos-server/services/missionOrchestrator*.js'
+      - 'scripts/mission-orchestrator-worker.mjs'
+      - 'scripts/mission-orchestrator-worker.test.mjs'
+      - 'scripts/windows/*mission-orchestrator-worker*.ps1'
   workflow_dispatch:
 
 permissions:
@@ -30,19 +30,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Parse Mission Orchestrator source
+      - name: Parse Mission Orchestrator source and worker
         run: |
           node --check shared/agents/missionOrchestrator.mjs
           node --check shared/agents/missionOrchestratorWorker.mjs
+          node --check shared/agents/missionOrchestratorWorkerResult.mjs
+          node --check scripts/mission-orchestrator-worker.mjs
       - name: Parse Mission Orchestrator durable runtime services
         run: |
           node --check stephanos-server/services/missionOrchestratorStore.js
           node --check stephanos-server/services/missionOrchestratorControlService.js
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
+          node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
+      - name: Parse Windows worker scripts
+        shell: pwsh
+        run: |
+          $errors = @()
+          Get-ChildItem scripts/windows/*mission-orchestrator-worker*.ps1 | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
+            $errors += @($parseErrors)
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
       - name: Run Mission Orchestrator lifecycle and worker planner tests
-        run: node --test shared/agents/missionOrchestrator.test.mjs shared/agents/missionOrchestratorWorker.test.mjs
+        run: node --test shared/agents/missionOrchestrator.test.mjs shared/agents/missionOrchestratorWorker.test.mjs shared/agents/missionOrchestratorWorkerResult.test.mjs
       - name: Run Mission Orchestrator durable runtime and worker queue tests
-        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js
+        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js
+      - name: Run persistent worker adapter tests
+        run: node --test scripts/mission-orchestrator-worker.test.mjs
       - name: Run signed authorization and executor regressions
         run: node --test shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs
       - name: Run ownership and Mission Operations regression tests
