@@ -76,7 +76,7 @@ export async function processNextSignedOpenClawItem(options = {}) {
   try {
     const execution = await options.executeSignedOperation(claim.item.payload, claim);
     const inspection = execution.success === true ? await options.inspectSignedOperation(claim.item.payload, execution, claim) : {};
-    return applyClaimResult(claim, action, execution, inspection);
+    return await applyClaimResult(claim, action, execution, inspection);
   } catch (error) {
     return failClaim(claim, action, error);
   }
@@ -90,7 +90,7 @@ export async function processNextGitHubInspectionItem(options = {}) {
   const action = claim.item.payload;
   try {
     const inspected = await options.inspectGitHub(action, claim);
-    return applyClaimResult(claim, action, inspected.execution, inspected.inspection);
+    return await applyClaimResult(claim, action, inspected.execution, inspected.inspection);
   } catch (error) {
     return failClaim(claim, action, error);
   }
