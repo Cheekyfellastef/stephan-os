@@ -66,7 +66,7 @@ test('inspects worktree and commit truth with shell-free git argument arrays', a
 
 test('normalizes PR and check inspection into deterministic identity', async () => {
   const runCommand = (_executable, args) => {
-    if (args.includes('statusCheckRollup')) {
+    if (args.some((arg) => String(arg).includes('statusCheckRollup'))) {
       return { status: 0, stdout: JSON.stringify({ number: 1300, headRefOid: 'b'.repeat(40), mergeable: 'MERGEABLE', state: 'OPEN', statusCheckRollup: [{ name: 'Build', conclusion: 'SUCCESS', detailsUrl: 'https://example.test/check' }] }), stderr: '' };
     }
     return { status: 0, stdout: JSON.stringify({ number: 1300, url: 'https://github.com/o/r/pull/1300', headRefOid: 'b'.repeat(40), mergeable: 'MERGEABLE', state: 'OPEN' }), stderr: '' };
