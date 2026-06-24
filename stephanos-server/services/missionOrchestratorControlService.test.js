@@ -103,7 +103,7 @@ test('bounded control creates, lists, and reads missions without accepting arbit
   assert.equal(read.state.missionId, intent.missionId);
 });
 
-test('exact approval command advances once and duplicate delivery is idempotent', async () => {
+test('exact approval command advances once and the same command is retry-safe', async () => {
   const options = await roots();
   await createBoundedMission(intent, options);
   await advanceToApproval(options, intent.missionId);
@@ -116,8 +116,10 @@ test('exact approval command advances once and duplicate delivery is idempotent'
   };
   const approved = await approveBoundedMission(command, options);
   assert.equal(approved.state.currentPhase, 'MERGE_PULL_REQUEST');
-  const duplicate = await approveBoundedMission(command, options).catch((error) => error);
-  assert.match(duplicate.message, /not awaiting operator approval/i);
+  assert.equal(approved.duplicate, false);
+  const duplicate = await approveBoundedMission(command, options);
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(duplicate.state.revision, approved.state.revision);
 });
 
 test('incorrect approval is rejected before an event is appended', async () => {
@@ -133,15 +135,18 @@ test('incorrect approval is rejected before an event is appended', async () => {
   assert.equal(current.state.currentPhase, 'AWAITING_OPERATOR_APPROVAL');
 });
 
-test('cancel is bounded, idempotent by command id, and terminal missions reject further cancellation', async () => {
+test('cancel retries are idempotent while a new terminal cancellation is rejected', async () => {
   const options = await roots();
   await createBoundedMission(intent, options);
-  const cancelled = await cancelBoundedMission({
+  const command = {
     missionId: intent.missionId,
     commandId: 'operator-cancel-001',
     reason: 'Operator stopped the mission.',
-  }, options);
+  };
+  const cancelled = await cancelBoundedMission(command, options);
   assert.equal(cancelled.state.currentPhase, 'CANCELLED');
+  const duplicate = await cancelBoundedMission(command, options);
+  assert.equal(duplicate.duplicate, true);
   await assert.rejects(() => cancelBoundedMission({
     missionId: intent.missionId,
     commandId: 'operator-cancel-002',
