@@ -1,0 +1,40 @@
+name: Mission Operations Dashboard
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mission-operations-dashboard.yml'
+      - 'shared/runtime/missionOperationsProjection.mjs'
+      - 'stephanos-server/routes/mission-operations.js'
+      - 'stephanos-server/services/missionOperationsService.js'
+      - 'stephanos-server/services/missionOperationsPublicFeed.js'
+      - 'stephanos-server/server.js'
+      - 'stephanos-ui/src/components/MissionCommandDeck.jsx'
+      - 'stephanos-ui/src/components/MissionOperationsPanel.jsx'
+      - 'stephanos-ui/src/components/MissionOperationsPanel.css'
+      - 'stephanos-ui/src/state/missionOperationsClient.js'
+      - 'tests/mission-operations-dashboard.test.mjs'
+      - 'tests/mission-operations-public-feed.test.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-mission-operations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run Mission Operations tests
+        run: node --test tests/mission-operations-dashboard.test.mjs tests/mission-operations-public-feed.test.mjs
+      - name: Run canonical Mission Console integration tests
+        run: node --test tests/mission-console-operator-relief-panel.test.mjs stephanos-ui/src/components/MissionCommandDeck.render.test.mjs
+      - name: Build Stephanos UI
+        run: npm run stephanos:build
+      - name: Verify generated output matches source
+        run: npm run stephanos:verify
