@@ -4,9 +4,9 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
+import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, processNextCodexItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
 
 const intent = {
   missionId: 'worker-consumer-test', operatorIntent: 'Implement a bounded source change.',
@@ -15,6 +15,10 @@ const intent = {
   worktreePath: 'C:\\worktrees\\worker-consumer-test', allowedFiles: ['shared/agents/**'],
   requiredEvidence: ['focused test output'], requiredTests: ['node --test focused.test.mjs'],
 };
+
+function proof(requirement, id) {
+  return { receiptId: id, requirement, source: 'test-runner', evidenceType: 'command-output', verified: true, exitCode: 0 };
+}
 
 async function options() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-consumer-'));
@@ -45,6 +49,31 @@ test('consumes a signed worktree item, appends the canonical event, and archives
   assert.equal(processed.applied.state.currentPhase, 'AGENT_IMPLEMENTATION');
   assert.equal(JSON.parse(await readFile(processed.resultPath, 'utf8')).finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE');
   assert.equal((await readMissionRecord(intent.missionId, runtime)).state.git.worktreeReady, true);
+});
+
+test('consumes a Codex handoff and advances only with grounded source and evidence receipts', async () => {
+  const runtime = await options();
+  await createMissionRecord({ ...intent, missionId: 'worker-codex-test', branch: 'openclaw/worker-codex-test' }, runtime);
+  const ready = await appendMissionEvent('worker-codex-test', { eventId: 'worktree-codex-consumer-001', eventType: 'WORKTREE_READY', worktreePath: intent.worktreePath, clean: true, receipt: proof('isolated worktree', 'codex-worktree-proof') }, runtime);
+  await publishMissionWorkerAction(ready.state, runtime);
+  const processed = await processNextCodexItem({
+    ...runtime,
+    executeCodexAction: async () => ({
+      success: true,
+      resultId: 'codex-thread-1',
+      changedFiles: ['shared/agents/example.mjs'],
+      completedAt: '2026-06-24T23:04:00.000Z',
+      receipt: { ...proof('codex result', 'codex-exec-proof'), commandOutputHash: 'd'.repeat(64) },
+      evidenceReceipts: [{ ...proof('focused test output', 'codex-test-proof'), commandOutputHash: 'e'.repeat(64) }],
+    }),
+  });
+  assert.equal(processed.processed, true);
+  assert.equal(processed.applied.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(processed.result.evidenceReceiptCount, 1);
+  assert.match(processed.resultPath.replace(/\\/g, '/'), /\/completed\//);
+  const current = await readMissionRecord('worker-codex-test', runtime);
+  assert.equal(current.state.dispatch.status, 'complete');
+  assert.deepEqual(current.state.git.changedFiles, ['shared/agents/example.mjs']);
 });
 
 test('failed signed execution records a blocked mission event and archives the item as failed', async () => {
