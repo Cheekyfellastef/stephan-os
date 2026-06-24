@@ -1,6 +1,6 @@
 const ALLOWED_OPERATIONS = new Set([
   'inspect',
-  'create-branch',
+  'create-worktree',
   'commit',
   'push',
   'open-pr',
@@ -9,7 +9,7 @@ const ALLOWED_OPERATIONS = new Set([
 ]);
 
 const MUTATING_OPERATIONS = new Set([
-  'create-branch',
+  'create-worktree',
   'commit',
   'push',
   'open-pr',
@@ -48,6 +48,16 @@ function unique(values) {
   return [...new Set(values)];
 }
 
+function scopeAllowsPath(scope, path) {
+  const normalizedScope = normalizePath(scope);
+  if (normalizedScope === path) return true;
+  if (normalizedScope.endsWith('/**')) {
+    const base = normalizedScope.slice(0, -3);
+    return path === base || path.startsWith(`${base}/`);
+  }
+  return false;
+}
+
 function exactMergeApproval(prNumber, headSha) {
   return `APPROVE_OPENCLAW_SQUASH_MERGE:${prNumber}:${headSha}`;
 }
@@ -60,7 +70,9 @@ export function buildOpenClawGitHubOperation(input = {}) {
   const defaultBranch = text(input.defaultBranch) || 'main';
   const baseBranch = text(input.baseBranch) || defaultBranch;
   const branch = text(input.branch);
+  const worktreePath = text(input.worktreePath);
   const expectedHeadSha = text(input.expectedHeadSha).toLowerCase();
+  const actualHeadSha = text(input.actualHeadSha).toLowerCase();
   const prNumber = Number.isInteger(input.prNumber) ? input.prNumber : Number.parseInt(input.prNumber, 10);
   const allowedFiles = unique(list(input.allowedFiles).map(normalizePath));
   const changedFiles = unique(list(input.changedFiles).map(normalizePath));
@@ -78,13 +90,15 @@ export function buildOpenClawGitHubOperation(input = {}) {
     if (branch === defaultBranch || branch === baseBranch) blockers.push('Direct default-branch mutation is forbidden.');
   }
 
+  if (operation === 'create-worktree' && !worktreePath) blockers.push('Isolated worktree path is required.');
+
   if (operation === 'commit') {
     if (!allowedFiles.length) blockers.push('Commit requires explicit allowed files.');
     if (!changedFiles.length) blockers.push('Commit requires a non-empty changed file set.');
     if (!text(input.commitMessage)) blockers.push('Commit message is required.');
     const unsafeFiles = changedFiles.filter(isForbiddenPath);
     if (unsafeFiles.length) blockers.push(`Changed files include forbidden paths: ${unsafeFiles.join(', ')}`);
-    const outsideScope = changedFiles.filter((path) => !allowedFiles.includes(path));
+    const outsideScope = changedFiles.filter((path) => !allowedFiles.some((scope) => scopeAllowsPath(scope, path)));
     if (outsideScope.length) blockers.push(`Changed files exceed the approved scope: ${outsideScope.join(', ')}`);
   }
 
@@ -96,6 +110,7 @@ export function buildOpenClawGitHubOperation(input = {}) {
 
   if (operation === 'merge-pr') {
     if (!LOWERCASE_SHA_PATTERN.test(expectedHeadSha)) blockers.push('Exact lowercase pull request head SHA is required.');
+    if (actualHeadSha !== expectedHeadSha) blockers.push('Pull request head SHA changed or could not be verified.');
     if (input.mergeable !== true) blockers.push('Pull request must be mergeable.');
     if (!checks.length || checks.some((check) => check !== 'success')) blockers.push('Every required check must report success.');
     if (text(input.approvalToken) !== exactMergeApproval(prNumber, expectedHeadSha)) {
@@ -106,7 +121,10 @@ export function buildOpenClawGitHubOperation(input = {}) {
   const command = [];
   if (!blockers.length) {
     if (operation === 'inspect') command.push({ executable: 'git.exe', args: ['-C', repositoryRoot, 'status', '--short', '--branch'] });
-    if (operation === 'create-branch') command.push({ executable: 'git.exe', args: ['-C', repositoryRoot, 'switch', '-c', branch, baseBranch] });
+    if (operation === 'create-worktree') {
+      command.push({ executable: 'git.exe', args: ['-C', repositoryRoot, 'fetch', 'origin', baseBranch] });
+      command.push({ executable: 'git.exe', args: ['-C', repositoryRoot, 'worktree', 'add', '-b', branch, worktreePath, `origin/${baseBranch}`] });
+    }
     if (operation === 'commit') {
       command.push({ executable: 'git.exe', args: ['-C', repositoryRoot, 'add', '--', ...changedFiles] });
       command.push({ executable: 'git.exe', args: ['-C', repositoryRoot, 'commit', '-m', text(input.commitMessage)] });
@@ -136,8 +154,10 @@ export function buildOpenClawGitHubOperation(input = {}) {
     defaultBranch,
     baseBranch,
     branch,
+    worktreePath,
     prNumber: Number.isInteger(prNumber) ? prNumber : null,
     expectedHeadSha,
+    actualHeadSha,
     allowedFiles,
     changedFiles,
     operatorApprovalRequired: operation === 'merge-pr',
