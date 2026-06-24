@@ -25,6 +25,10 @@ function approvalEventId(commandId, approvalToken) {
   return `approval-${safeCommandId(commandId)}-${tokenHash}`.slice(0, 128);
 }
 
+function cancellationEventId(commandId) {
+  return `cancel-${safeCommandId(commandId)}`.slice(0, 128);
+}
+
 function boundedIntent(input = {}) {
   return {
     missionId: input.missionId,
@@ -42,6 +46,15 @@ function boundedIntent(input = {}) {
     requiredTests: input.requiredTests,
     browserProofRequired: input.browserProofRequired === true,
   };
+}
+
+function duplicateResult(current, eventId) {
+  const processed = Array.isArray(current.state.storeMetadata?.processedEventIds)
+    ? current.state.storeMetadata.processedEventIds
+    : [];
+  return processed.includes(eventId)
+    ? { state: current.state, duplicate: true, eventId, snapshot: { published: false, path: '' } }
+    : null;
 }
 
 export async function createBoundedMission(input, options = {}) {
@@ -62,8 +75,10 @@ export async function listBoundedMissions(options = {}) {
 export async function approveBoundedMission(input = {}, options = {}) {
   const missionId = text(input.missionId).toLowerCase();
   const approvalToken = text(input.approvalToken);
-  const commandId = safeCommandId(input.commandId);
+  const eventId = approvalEventId(input.commandId, approvalToken);
   const current = await readMissionRecord(missionId, options);
+  const duplicate = duplicateResult(current, eventId);
+  if (duplicate) return duplicate;
   if (current.state.currentPhase !== 'AWAITING_OPERATOR_APPROVAL') {
     throw new Error('Mission is not awaiting operator approval.');
   }
@@ -71,7 +86,7 @@ export async function approveBoundedMission(input = {}, options = {}) {
     throw new Error('Approval token does not match the exact mission pull request head.');
   }
   return appendMissionEvent(missionId, {
-    eventId: approvalEventId(commandId, approvalToken),
+    eventId,
     eventType: 'OPERATOR_APPROVAL_RECORDED',
     approvalToken,
     summary: 'Exact operator approval recorded through bounded mission control.',
@@ -80,13 +95,15 @@ export async function approveBoundedMission(input = {}, options = {}) {
 
 export async function cancelBoundedMission(input = {}, options = {}) {
   const missionId = text(input.missionId).toLowerCase();
-  const commandId = safeCommandId(input.commandId);
+  const eventId = cancellationEventId(input.commandId);
   const current = await readMissionRecord(missionId, options);
+  const duplicate = duplicateResult(current, eventId);
+  if (duplicate) return duplicate;
   if (['COMPLETE', 'CANCELLED'].includes(current.state.currentPhase)) {
     throw new Error('Terminal mission cannot be cancelled.');
   }
   return appendMissionEvent(missionId, {
-    eventId: `cancel-${commandId}`.slice(0, 128),
+    eventId,
     eventType: 'MISSION_CANCELLED',
     summary: text(input.reason, 'Mission cancelled by operator.'),
   }, options);
