@@ -69,10 +69,22 @@ $keyResult = $keyJson | ConvertFrom-Json
 Write-Output "KEY_BOOTSTRAP_VERDICT=$($keyResult.finalVerdict)"
 Write-Output "KEYS_CREATED=$($keyResult.keysCreated)"
 
-$branch = (& git.exe -C $StephanosRepositoryRoot branch --show-current 2>$null).Trim()
+$branchOutput = @(& git.exe -C $StephanosRepositoryRoot branch --show-current 2>$null)
 if ($LASTEXITCODE -ne 0) {
     throw "Current Stephanos branch could not be read."
 }
+$branch = ($branchOutput -join "").Trim()
+if ([string]::IsNullOrWhiteSpace($branch)) {
+    $branch = [string]$env:GITHUB_HEAD_REF
+}
+if ([string]::IsNullOrWhiteSpace($branch)) {
+    $headOutput = @(& git.exe -C $StephanosRepositoryRoot rev-parse --short=12 HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Detached Stephanos HEAD could not be read."
+    }
+    $branch = "detached/$((($headOutput -join '').Trim()))"
+}
+Write-Output "BRANCH_IDENTITY=$branch"
 
 $issuedAt = [DateTime]::UtcNow
 $claims = [ordered]@{
