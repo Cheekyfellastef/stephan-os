@@ -9,6 +9,8 @@ on:
       - 'shared/agents/coBuilderOperationalPacket.mjs'
       - 'shared/runtime/missionOperationsProjection.mjs'
       - 'stephanos-server/services/missionOperationsService.js'
+      - 'stephanos-server/services/missionOrchestratorStore.js'
+      - 'stephanos-server/services/missionOrchestratorStore.test.js'
   workflow_dispatch:
 
 permissions:
@@ -24,7 +26,11 @@ jobs:
           node-version: 22
       - name: Parse Mission Orchestrator source
         run: node --check shared/agents/missionOrchestrator.mjs
+      - name: Parse Mission Orchestrator durable store
+        run: node --check stephanos-server/services/missionOrchestratorStore.js
       - name: Run Mission Orchestrator lifecycle tests
         run: node --test shared/agents/missionOrchestrator.test.mjs
+      - name: Run Mission Orchestrator durable store tests
+        run: node --test stephanos-server/services/missionOrchestratorStore.test.js
       - name: Run ownership and Mission Operations regression tests
         run: node --test shared/agents/coBuilderOperationalPacket.test.mjs tests/mission-operations-dashboard.test.mjs
