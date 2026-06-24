@@ -1,0 +1,41 @@
+name: OpenClaw GitHub Operator
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/openclaw-github-operator.yml'
+      - 'package.json'
+      - 'scripts/openclaw-github-operator.mjs'
+      - 'scripts/stephanos-issue-openclaw-github-authorization.mjs'
+      - 'shared/agents/openClawGitHubAuthorization.mjs'
+      - 'shared/agents/openClawGitHubAuthorization.test.mjs'
+      - 'shared/agents/openClawGitHubExecutorPreflight.mjs'
+      - 'shared/agents/openClawGitHubExecutorPreflight.test.mjs'
+      - 'shared/agents/openClawGitHubOperator.mjs'
+      - 'shared/agents/openClawGitHubOperator.test.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run focused contract tests
+        run: node --test shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs
+
+      - name: Parse executor scripts
+        run: |
+          node --check scripts/openclaw-github-operator.mjs
+          node --check scripts/stephanos-issue-openclaw-github-authorization.mjs
