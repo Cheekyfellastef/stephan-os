@@ -6,6 +6,8 @@ on:
       - '.github/workflows/mission-orchestrator-v1.yml'
       - 'shared/agents/missionOrchestrator.mjs'
       - 'shared/agents/missionOrchestrator.test.mjs'
+      - 'shared/agents/missionOrchestratorWorker.mjs'
+      - 'shared/agents/missionOrchestratorWorker.test.mjs'
       - 'shared/agents/coBuilderOperationalPacket.mjs'
       - 'shared/runtime/missionOperationsProjection.mjs'
       - 'stephanos-server/services/missionOperationsService.js'
@@ -13,6 +15,8 @@ on:
       - 'stephanos-server/services/missionOrchestratorStore.test.js'
       - 'stephanos-server/services/missionOrchestratorControlService.js'
       - 'stephanos-server/services/missionOrchestratorControlService.test.js'
+      - 'stephanos-server/services/missionOrchestratorWorkerService.js'
+      - 'stephanos-server/services/missionOrchestratorWorkerService.test.js'
   workflow_dispatch:
 
 permissions:
@@ -27,14 +31,19 @@ jobs:
         with:
           node-version: 22
       - name: Parse Mission Orchestrator source
-        run: node --check shared/agents/missionOrchestrator.mjs
+        run: |
+          node --check shared/agents/missionOrchestrator.mjs
+          node --check shared/agents/missionOrchestratorWorker.mjs
       - name: Parse Mission Orchestrator durable runtime services
         run: |
           node --check stephanos-server/services/missionOrchestratorStore.js
           node --check stephanos-server/services/missionOrchestratorControlService.js
-      - name: Run Mission Orchestrator lifecycle tests
-        run: node --test shared/agents/missionOrchestrator.test.mjs
-      - name: Run Mission Orchestrator durable runtime tests
-        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js
+          node --check stephanos-server/services/missionOrchestratorWorkerService.js
+      - name: Run Mission Orchestrator lifecycle and worker planner tests
+        run: node --test shared/agents/missionOrchestrator.test.mjs shared/agents/missionOrchestratorWorker.test.mjs
+      - name: Run Mission Orchestrator durable runtime and worker queue tests
+        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js
+      - name: Run signed authorization and executor regressions
+        run: node --test shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs
       - name: Run ownership and Mission Operations regression tests
         run: node --test shared/agents/coBuilderOperationalPacket.test.mjs tests/mission-operations-dashboard.test.mjs
