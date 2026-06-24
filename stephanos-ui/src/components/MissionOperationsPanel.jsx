@@ -17,14 +17,42 @@ function displayElapsed(seconds) {
   return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
 }
 
+function EvidenceList({ title, items, emptyText, renderItem }) {
+  return (
+    <section className="mission-operations-evidence-group">
+      <h4>{title}</h4>
+      {items.length ? (
+        <ul className="mission-operations-evidence-list">
+          {items.map((item, index) => (
+            <li key={item.id || item.receiptId || item.approvalId || item.agentId || `${title}-${index}`}>
+              {renderItem(item)}
+            </li>
+          ))}
+        </ul>
+      ) : <div className="muted">{emptyText}</div>}
+    </section>
+  );
+}
+
 function MissionSummary({ mission }) {
   const checkSummary = `${mission.pullRequest.passingCheckCount}/${mission.pullRequest.requiredCheckCount}`;
+  const supportingAgents = mission.agent.supportingAgents || [];
+  const changedFiles = mission.git.changedFiles || [];
+  const checks = mission.pullRequest.checks || [];
+  const approvals = mission.approvals || [];
+  const receipts = mission.receipts || [];
+
   return (
     <article className="mission-operations-item" data-testid="mission-operations-item" data-mission-state={mission.mission.state}>
       <header className="mission-operations-item__header">
         <div>
           <strong>{mission.mission.title}</strong>
           <div className="muted">{mission.mission.missionId}</div>
+          {mission.mission.intendedOutcome ? (
+            <div className="mission-operations-outcome">
+              <strong>Intended outcome:</strong> {mission.mission.intendedOutcome}
+            </div>
+          ) : null}
         </div>
         <span className={`status-badge status-badge--${mission.mission.state.toLowerCase()}`}>
           {mission.mission.state}
@@ -33,23 +61,89 @@ function MissionSummary({ mission }) {
 
       <dl className="mission-operations-grid">
         <div><dt>Phase</dt><dd>{mission.mission.currentPhase}</dd></div>
-        <div><dt>Active agent</dt><dd>{mission.agent.activeAgentLabel} ({mission.agent.role})</dd></div>
+        <div><dt>Active agent</dt><dd>{mission.agent.activeAgentLabel} ({mission.agent.role}, {mission.agent.status})</dd></div>
         <div><dt>Branch</dt><dd>{mission.git.branch || 'not created'}</dd></div>
+        <div><dt>Base branch</dt><dd>{mission.git.baseBranch || 'not reported'}</dd></div>
+        <div><dt>Head SHA</dt><dd>{mission.git.headSha || 'not reported'}</dd></div>
+        <div><dt>Worktree</dt><dd>{mission.git.worktreePath || 'not reported'}</dd></div>
+        <div><dt>Changed files</dt><dd>{changedFiles.length}</dd></div>
+        <div><dt>Git clean</dt><dd>{mission.git.clean ? 'yes' : 'not proven'}</dd></div>
         <div><dt>Pull request</dt><dd>{mission.pullRequest.number ? `#${mission.pullRequest.number}` : 'not opened'}</dd></div>
+        <div><dt>PR state</dt><dd>{mission.pullRequest.state || 'not reported'}</dd></div>
+        <div><dt>Mergeable</dt><dd>{mission.pullRequest.mergeable ? 'yes' : 'not proven'}</dd></div>
         <div><dt>Checks</dt><dd>{checkSummary}</dd></div>
-        <div><dt>Elapsed</dt><dd>{displayElapsed(mission.mission.elapsedSeconds)}</dd></div>
+        <div><dt>Started</dt><dd>{displayTime(mission.mission.startedAt)}</dd></div>
         <div><dt>Updated</dt><dd>{displayTime(mission.mission.updatedAt)}</dd></div>
-        <div><dt>Receipts</dt><dd>{mission.receipts.length}</dd></div>
+        <div><dt>Elapsed</dt><dd>{displayElapsed(mission.mission.elapsedSeconds)}</dd></div>
+        <div><dt>Receipts</dt><dd>{receipts.length}</dd></div>
       </dl>
+
+      {mission.pullRequest.url ? (
+        <a className="mission-operations-pr-link" href={mission.pullRequest.url} target="_blank" rel="noreferrer">
+          Open pull request #{mission.pullRequest.number || ''}
+        </a>
+      ) : null}
 
       <div className="mission-operations-next-action">
         <strong>Next action:</strong> {mission.mission.nextAction}
       </div>
 
-      {mission.approvals.length ? (
+      <div className="mission-operations-evidence-grid">
+        <EvidenceList
+          title="Supporting agents"
+          items={supportingAgents}
+          emptyText="No supporting agent is reported."
+          renderItem={(agent) => <><strong>{agent.label}</strong> - {agent.role} / {agent.status}</>}
+        />
+        <EvidenceList
+          title="Changed files"
+          items={changedFiles.map((path) => ({ id: path, path }))}
+          emptyText="No changed files are reported."
+          renderItem={(item) => <code>{item.path}</code>}
+        />
+        <EvidenceList
+          title="Required checks"
+          items={checks}
+          emptyText="No check receipts are reported."
+          renderItem={(check) => (
+            <>
+              <strong>{check.name}</strong> - {check.status}
+              {check.completedAt ? ` / completed ${displayTime(check.completedAt)}` : ''}
+            </>
+          )}
+        />
+        <EvidenceList
+          title="Approvals"
+          items={approvals}
+          emptyText="No operator approval is currently reported."
+          renderItem={(approval) => (
+            <>
+              <strong>{approval.kind}</strong> - {approval.status}
+              {approval.requiredToken ? <><br /><code>{approval.requiredToken}</code></> : null}
+              {approval.decidedAt ? ` / decided ${displayTime(approval.decidedAt)}` : ''}
+            </>
+          )}
+        />
+        <EvidenceList
+          title="Evidence receipts"
+          items={receipts}
+          emptyText="No deterministic evidence receipt is reported."
+          renderItem={(receipt) => (
+            <>
+              <strong>{receipt.receiptType}</strong> - {receipt.status} / {receipt.source}
+              {receipt.sha256 ? <><br /><code>{receipt.sha256}</code></> : null}
+              {receipt.path ? <><br /><span>{receipt.path}</span></> : null}
+              {receipt.createdAt ? <><br /><span>{displayTime(receipt.createdAt)}</span></> : null}
+            </>
+          )}
+        />
+      </div>
+
+      {approvals.some((approval) => approval.status === 'pending') ? (
         <div className="mission-operations-alert mission-operations-alert--approval">
           <strong>Approval required:</strong>{' '}
-          {mission.approvals.map((approval) => approval.requiredToken || approval.approvalId).join(', ')}
+          {approvals.filter((approval) => approval.status === 'pending')
+            .map((approval) => approval.requiredToken || approval.approvalId).join(', ')}
         </div>
       ) : null}
 
@@ -61,7 +155,8 @@ function MissionSummary({ mission }) {
 
       {mission.warnings.length ? (
         <div className="mission-operations-alert mission-operations-alert--warning">
-          <strong>Evidence warnings:</strong> {mission.warnings.join(' | ')}</div>
+          <strong>Evidence warnings:</strong> {mission.warnings.join(' | ')}
+        </div>
       ) : null}
     </article>
   );
