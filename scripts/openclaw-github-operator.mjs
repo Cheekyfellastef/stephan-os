@@ -1,10 +1,20 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { buildOpenClawGitHubOperation } from '../shared/agents/openClawGitHubOperator.mjs';
-import { verifyOpenClawGitHubAuthorization } from '../shared/agents/openClawGitHubAuthorization.mjs';
+import {
+  completeOpenClawGitHubAuthorizationReservation,
+  reserveOpenClawGitHubAuthorization,
+  verifyOpenClawGitHubAuthorization,
+} from '../shared/agents/openClawGitHubAuthorization.mjs';
+
+let activeReservation = null;
 
 function fail(message, details = {}) {
+  if (activeReservation) {
+    completeOpenClawGitHubAuthorizationReservation(activeReservation, 'FAILED');
+    activeReservation = null;
+  }
   process.stdout.write(`${JSON.stringify({ finalVerdict: 'BLOCKED', message, ...details }, null, 2)}\n`);
   process.exit(1);
 }
@@ -42,13 +52,11 @@ let input = {
 const configuredReceiptRoot = process.env.STEPHANOS_GITHUB_AUTH_RECEIPT_DIR;
 if (!configuredReceiptRoot) fail('STEPHANOS_GITHUB_AUTH_RECEIPT_DIR is required.');
 const receiptRoot = resolve(configuredReceiptRoot);
-const receiptPath = resolve(receiptRoot, `${verification.authorizationId}.json`);
-if (existsSync(receiptPath)) {
-  fail('Stephanos GitHub authorization has already been consumed.', {
-    authorizationId: verification.authorizationId,
-    receiptPath,
-  });
+const reservation = reserveOpenClawGitHubAuthorization(receiptRoot, verification);
+if (reservation.finalVerdict !== 'AUTHORIZATION_RESERVED') {
+  fail('Stephanos GitHub authorization could not be reserved.', { reservation });
 }
+activeReservation = reservation;
 
 function run(executable, args, cwd = input.repositoryRoot) {
   return spawnSync(executable, args, {
@@ -111,18 +119,8 @@ for (const command of packet.command) {
   }
 }
 
-mkdirSync(receiptRoot, { recursive: true });
-writeFileSync(receiptPath, `${JSON.stringify({
-  schemaVersion: 'stephanos.openclaw-github-authorization-consumption.v1',
-  authorizationId: verification.authorizationId,
-  claimsSha256: verification.claimsSha256,
-  operation: packet.operation,
-  missionId: packet.missionId,
-  repository: packet.repository,
-  branch: packet.branch,
-  consumedAt: new Date().toISOString(),
-  finalVerdict: 'CONSUMED',
-}, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+completeOpenClawGitHubAuthorizationReservation(reservation, 'CONSUMED');
+activeReservation = null;
 
 process.stdout.write(`${JSON.stringify({
   finalVerdict: 'OPENCLAW_GITHUB_OPERATION_PASS',
