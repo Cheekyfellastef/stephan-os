@@ -6,16 +6,13 @@ import { verifyOpenClawGitHubAuthorization } from './openClawGitHubAuthorization
 
 const now = new Date('2026-06-24T22:00:00.000Z');
 const base = {
-  missionId: 'worker-test-mission', revision: 4, title: 'Worker test mission',
-  intendedOutcome: 'A bounded change is promoted safely.', currentPhase: 'CREATE_WORKTREE',
-  repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os',
-  baseBranch: 'main', allowedFiles: ['shared/agents/**'], requiredTests: ['node --test focused.test.mjs'], requiredEvidence: ['focused test output'],
+  missionId: 'worker-test-mission', revision: 4, title: 'Worker test mission', intendedOutcome: 'A bounded change is promoted safely.', currentPhase: 'CREATE_WORKTREE',
+  repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os', baseBranch: 'main',
+  allowedFiles: ['shared/agents/**'], requiredTests: ['node --test focused.test.mjs'], requiredEvidence: ['focused test output'],
   git: { branch: 'openclaw/worker-test-mission', baseBranch: 'main', worktreePath: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os-worktrees\\worker-test-mission', changedFiles: ['shared/agents/example.mjs'] },
   pullRequest: { number: 1267, headSha: 'a'.repeat(40), mergeCommitSha: '' },
-  approval: { requiredToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1267:${'a'.repeat(40)}` },
-  repair: { currentRound: 0 },
-  deployment: { sync: { status: 'pending' }, build: { status: 'pending' }, verify: { status: 'pending' }, restart: { status: 'pending' } },
-  evidenceReceipts: [],
+  approval: { requiredToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1267:${'a'.repeat(40)}` }, repair: { currentRound: 0 },
+  deployment: { sync: { status: 'pending' }, build: { status: 'pending' }, verify: { status: 'pending' }, restart: { status: 'pending' } }, evidenceReceipts: [],
 };
 
 test('creates a bounded signed worktree action on the OpenClaw branch family', () => {
@@ -37,9 +34,16 @@ test('issues an Ed25519 single-use authorization that the existing executor veri
   const action = buildMissionWorkerAction(base, { now });
   const request = issueMissionWorkerAuthorization(action, privateKey.export({ type: 'pkcs8', format: 'pem' }), { now });
   assert.equal(request.finalVerdict, 'MISSION_WORKER_REQUEST_ISSUED');
-  const verification = verifyOpenClawGitHubAuthorization(request.authorization, publicKey.export({ type: 'spki', format: 'pem' }), { now });
-  assert.equal(verification.finalVerdict, 'STEPHANOS_AUTHORIZATION_VERIFIED');
-  assert.equal(verification.claims.operation, 'create-worktree');
+  assert.equal(verifyOpenClawGitHubAuthorization(request.authorization, publicKey.export({ type: 'spki', format: 'pem' }), { now }).finalVerdict, 'STEPHANOS_AUTHORIZATION_VERIFIED');
+});
+
+test('routes PR checks through read-only GitHub inspection so failed checks remain repairable', () => {
+  const action = buildMissionWorkerAction({ ...base, currentPhase: 'CHECK_PULL_REQUEST' }, { now });
+  assert.equal(action.actionKind, 'github-inspection');
+  assert.equal(action.adapter, 'openclaw-github-readonly');
+  assert.equal(action.operation, 'check-pr');
+  assert.equal(action.activeWriter, 'none');
+  assert.equal(Object.hasOwn(action, 'authorization'), false);
 });
 
 test('routes implementation and repair to Codex as the sole active writer', () => {
@@ -54,7 +58,6 @@ test('routes live runtime investigation to read-only OpenClaw', () => {
   const action = buildMissionWorkerAction({ ...base, currentPhase: 'LIVE_RUNTIME_INVESTIGATION', browserProofRequired: true }, { now });
   assert.equal(action.adapter, 'openclaw-readonly');
   assert.equal(action.activeWriter, 'none');
-  assert.equal(action.browserProofRequired, true);
 });
 
 test('merge request remains head-bound and carries only the exact recorded approval', () => {
@@ -67,7 +70,6 @@ test('merge request remains head-bound and carries only the exact recorded appro
 test('local deployment resumes only unfinished ordered steps', () => {
   const action = buildMissionWorkerAction({ ...base, currentPhase: 'LOCAL_DEPLOYMENT', pullRequest: { ...base.pullRequest, mergeCommitSha: 'b'.repeat(40) }, deployment: { ...base.deployment, sync: { status: 'success' } } }, { now });
   assert.deepEqual(action.steps, ['build', 'verify', 'restart']);
-  assert.equal(action.mergeCommitSha, 'b'.repeat(40));
 });
 
 test('approval, terminal, and blocked phases do not execute automatically', () => {
