@@ -30,7 +30,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - name: Install root dependencies
+        run: npm install
+      - name: Install Stephanos UI dependencies
+        run: npm --prefix stephanos-ui install
       - name: Run Mission Operations and bridge tests
         run: node --test tests/mission-operations-dashboard.test.mjs tests/mission-operations-public-feed.test.mjs tests/openclaw-github-operator-bridge.test.mjs
       - name: Parse PowerShell bridge
