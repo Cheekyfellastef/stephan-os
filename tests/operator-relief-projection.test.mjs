@@ -1176,3 +1176,22 @@ test('Packet Bay V1B creates deterministic evidence handoff packets without regr
   assert.equal(bay.openClawMutationLocked, true);
   assert.equal(bay.codexAutoDispatchAllowed, false);
 });
+
+test('Co-Builder Operational Packet V1 integrates with Operator Relief without replacing canon surfaces', () => {
+  const r = deriveOperatorReliefProjection({
+    intentToBuildModel: { missionSpec: { objective: 'Implement bounded source-side packet builder', repoArchitectureContext: { testsLikelyRequired: ['node --test shared/agents/coBuilderOperationalPacket.test.mjs'] } } },
+    prEvidenceModel: { changedFiles: ['shared/agents/coBuilderOperationalPacket.mjs', 'tests/operator-relief-projection.test.mjs'] },
+    proofOfDoneModel: { verificationJudge: { parsed: { buildRun: true, verifyRun: true, testsRun: ['node --test shared/agents/coBuilderOperationalPacket.test.mjs'] } }, browserChecksObserved: [] },
+    supportSnapshot: { taskKind: 'implementation', missionId: 'mission-packet-integration' },
+  });
+  assert.equal(r.coBuilderOperationalPacket.schemaVersion, 'co-builder-operational-packet.v1');
+  assert.equal(r.coBuilderOperationalPacket.packetKind, 'stephanos.co_builder.operational_packet');
+  assert.equal(r.coBuilderOperationalPacket.maximumRepairRounds, 3);
+  assert.notEqual(r.coBuilderOperationalPacket.activeWriter, 'Codex+OpenClaw');
+  assert.ok(['Codex', 'none'].includes(r.coBuilderOperationalPacket.activeWriter));
+  assert.ok(r.coBuilderLoopProjection);
+  assert.ok(r.harnessAgentProjection);
+  assert.ok(r.missionIntelligenceSummary);
+  assert.ok(r.agentWorkRoutingProjection);
+  assert.equal(r.coBuilderOperationalPacket.operatorApprovalRequired, true);
+});
