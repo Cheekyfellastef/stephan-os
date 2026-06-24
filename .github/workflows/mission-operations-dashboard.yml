@@ -16,6 +16,7 @@ on:
       - 'stephanos-ui/src/components/MissionCommandDeck.jsx'
       - 'stephanos-ui/src/components/MissionOperationsPanel.jsx'
       - 'stephanos-ui/src/components/MissionOperationsPanel.css'
+      - 'stephanos-ui/src/components/MissionOperationsPanel.render.test.mjs'
       - 'stephanos-ui/src/state/missionOperationsClient.js'
       - 'tests/mission-operations-acceptance-tooling.test.mjs'
       - 'tests/mission-operations-dashboard.test.mjs'
@@ -40,6 +41,8 @@ jobs:
         run: npm --prefix stephanos-ui install
       - name: Run Mission Operations, bridge, and acceptance tests
         run: node --test tests/mission-operations-dashboard.test.mjs tests/mission-operations-public-feed.test.mjs tests/openclaw-github-operator-bridge.test.mjs tests/mission-operations-acceptance-tooling.test.mjs
+      - name: Render Mission Operations visibility contract
+        run: node --test stephanos-ui/src/components/MissionOperationsPanel.render.test.mjs
       - name: Parse PowerShell bridge and acceptance runner
         shell: pwsh
         run: |
