@@ -6,12 +6,7 @@ import { resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerServic
 
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
-  return {
-    pending: resolve(adapterRoot, 'pending'),
-    processing: resolve(adapterRoot, 'processing'),
-    completed: resolve(adapterRoot, 'completed'),
-    failed: resolve(adapterRoot, 'failed'),
-  };
+  return { pending: resolve(adapterRoot, 'pending'), processing: resolve(adapterRoot, 'processing'), completed: resolve(adapterRoot, 'completed'), failed: resolve(adapterRoot, 'failed') };
 }
 
 async function ensurePaths(paths) {
@@ -23,16 +18,13 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
   if (!root) throw new Error('Mission worker queue directory is not configured.');
   const paths = queuePaths(root, adapter);
   await ensurePaths(paths);
-  const entries = (await readdir(paths.pending, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-    .sort((left, right) => left.name.localeCompare(right.name));
+  const entries = (await readdir(paths.pending, { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith('.json')).sort((left, right) => left.name.localeCompare(right.name));
   for (const entry of entries) {
     const pendingPath = resolve(paths.pending, entry.name);
     const processingPath = resolve(paths.processing, entry.name);
     try {
       await rename(pendingPath, processingPath);
-      const item = JSON.parse(await readFile(processingPath, 'utf8'));
-      return { adapter, item, processingPath, paths };
+      return { adapter, item: JSON.parse(await readFile(processingPath, 'utf8')), processingPath, paths };
     } catch (error) {
       if (['ENOENT', 'EEXIST'].includes(error?.code)) continue;
       throw error;
@@ -50,15 +42,28 @@ async function finishClaim(claim, result, success) {
   return resultPath;
 }
 
-function actionFromQueueItem(item) {
+function signedAction(item) {
   const payload = item?.payload;
-  return {
-    actionKind: 'signed-openclaw-operation',
-    actionId: payload?.actionId || item?.actionId || '',
-    missionId: payload?.missionId || item?.missionId || '',
-    operation: payload?.operation || '',
-    receiptRequirement: payload?.receiptRequirement || `signed ${payload?.operation || 'operation'}`,
+  return { actionKind: 'signed-openclaw-operation', actionId: payload?.actionId || item?.actionId || '', missionId: payload?.missionId || item?.missionId || '', operation: payload?.operation || '', receiptRequirement: payload?.receiptRequirement || `signed ${payload?.operation || 'operation'}` };
+}
+
+async function applyClaimResult(claim, action, execution, inspection) {
+  const event = buildMissionEventFromWorkerResult(action, execution, inspection);
+  const applied = await appendMissionEvent(action.missionId, event, claim.options);
+  const result = {
+    schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId, missionId: action.missionId,
+    operation: action.operation, eventId: event.eventId, stateRevision: applied.state.revision, currentPhase: applied.state.currentPhase,
+    duplicate: applied.duplicate, execution: { success: execution.success === true, commandOutputHash: execution.commandOutputHash || '', completedAt: execution.completedAt || '' },
+    inspection, finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
   };
+  const resultPath = await finishClaim(claim, result, execution.success === true);
+  return { processed: true, claim, event, applied, result, resultPath };
+}
+
+async function failClaim(claim, action, error) {
+  const result = { schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId, missionId: action.missionId, operation: action.operation, error: error?.message || 'unknown worker error', finalVerdict: 'MISSION_WORKER_ITEM_FAILED' };
+  const resultPath = await finishClaim(claim, result, false);
+  return { processed: true, claim, error, result, resultPath };
 }
 
 export async function processNextSignedOpenClawItem(options = {}) {
@@ -66,44 +71,27 @@ export async function processNextSignedOpenClawItem(options = {}) {
   if (typeof options.inspectSignedOperation !== 'function') throw new Error('Signed OpenClaw result inspector is required.');
   const claim = await claimNextMissionWorkerItem('openclaw-signed', options);
   if (!claim) return { processed: false, reason: 'queue-empty' };
-  const action = actionFromQueueItem(claim.item);
-  let execution;
-  let inspection = {};
-  let event;
+  claim.options = options;
+  const action = signedAction(claim.item);
   try {
-    execution = await options.executeSignedOperation(claim.item.payload, claim);
-    if (execution.success === true) inspection = await options.inspectSignedOperation(claim.item.payload, execution, claim);
-    event = buildMissionEventFromWorkerResult(action, execution, inspection);
-    const applied = await appendMissionEvent(action.missionId, event, options);
-    const result = {
-      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
-      actionId: action.actionId,
-      missionId: action.missionId,
-      operation: action.operation,
-      eventId: event.eventId,
-      stateRevision: applied.state.revision,
-      currentPhase: applied.state.currentPhase,
-      duplicate: applied.duplicate,
-      execution: {
-        success: execution.success === true,
-        commandOutputHash: execution.commandOutputHash || '',
-        completedAt: execution.completedAt || '',
-      },
-      inspection,
-      finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
-    };
-    const resultPath = await finishClaim(claim, result, execution.success === true);
-    return { processed: true, claim, event, applied, result, resultPath };
+    const execution = await options.executeSignedOperation(claim.item.payload, claim);
+    const inspection = execution.success === true ? await options.inspectSignedOperation(claim.item.payload, execution, claim) : {};
+    return applyClaimResult(claim, action, execution, inspection);
   } catch (error) {
-    const result = {
-      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
-      actionId: action.actionId,
-      missionId: action.missionId,
-      operation: action.operation,
-      error: error?.message || 'unknown worker error',
-      finalVerdict: 'MISSION_WORKER_ITEM_FAILED',
-    };
-    const resultPath = await finishClaim(claim, result, false);
-    return { processed: true, claim, error, result, resultPath };
+    return failClaim(claim, action, error);
+  }
+}
+
+export async function processNextGitHubInspectionItem(options = {}) {
+  if (typeof options.inspectGitHub !== 'function') throw new Error('Read-only GitHub inspector is required.');
+  const claim = await claimNextMissionWorkerItem('openclaw-github-readonly', options);
+  if (!claim) return { processed: false, reason: 'queue-empty' };
+  claim.options = options;
+  const action = claim.item.payload;
+  try {
+    const inspected = await options.inspectGitHub(action, claim);
+    return applyClaimResult(claim, action, inspected.execution, inspected.inspection);
+  } catch (error) {
+    return failClaim(claim, action, error);
   }
 }
