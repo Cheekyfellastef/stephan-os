@@ -68,6 +68,9 @@ test('open PR uses an argument array and targets main', () => {
   const packet = buildOpenClawGitHubOperation({
     ...base,
     operation: 'open-pr',
+    allowedFiles: ['shared/agents/**'],
+    changedFiles: ['shared/agents/example.mjs'],
+    actualChangedFiles: ['shared/agents/example.mjs'],
     title: 'Add bounded GitHub operator',
     body: 'Source-only change.',
   });
@@ -75,6 +78,21 @@ test('open PR uses an argument array and targets main', () => {
   assert.deepEqual(packet.command[0].args.slice(0, 8), [
     'pr', 'create', '--repo', base.repository, '--base', 'main', '--head', base.branch,
   ]);
+});
+
+test('push and open PR block when the complete branch diff differs from signed scope', () => {
+  for (const operation of ['push', 'open-pr']) {
+    const packet = buildOpenClawGitHubOperation({
+      ...base,
+      operation,
+      allowedFiles: ['shared/agents/**'],
+      changedFiles: ['shared/agents/example.mjs'],
+      actualChangedFiles: ['shared/agents/example.mjs', 'tests/unapproved.test.mjs'],
+      title: 'Bounded PR',
+    });
+    assert.equal(packet.finalVerdict, 'BLOCKED');
+    assert.match(packet.blockers.join(' '), /do not match/i);
+  }
 });
 
 test('merge blocks failed checks stale head and missing exact approval', () => {
