@@ -1,8 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  completeOpenClawGitHubAuthorizationReservation,
   issueOpenClawGitHubAuthorization,
+  reserveOpenClawGitHubAuthorization,
   verifyOpenClawGitHubAuthorization,
 } from './openClawGitHubAuthorization.mjs';
 
@@ -77,4 +82,22 @@ test('reusable authorizations are forbidden', () => {
   const result = issueOpenClawGitHubAuthorization(claims({ singleUse: false }), privateKeyPem, { now });
   assert.equal(result.finalVerdict, 'BLOCKED');
   assert.match(result.blockers.join(' '), /single-use/i);
+});
+
+test('authorization reservation is atomic and single-use', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'stephanos-auth-'));
+  try {
+    const envelope = issueOpenClawGitHubAuthorization(claims(), privateKeyPem, { now });
+    const verification = verifyOpenClawGitHubAuthorization(envelope, publicKeyPem, { now });
+    const first = reserveOpenClawGitHubAuthorization(directory, verification, now);
+    assert.equal(first.finalVerdict, 'AUTHORIZATION_RESERVED');
+    const second = reserveOpenClawGitHubAuthorization(directory, verification, now);
+    assert.equal(second.finalVerdict, 'BLOCKED');
+    assert.match(second.blockers.join(' '), /already/i);
+    completeOpenClawGitHubAuthorizationReservation(first, 'CONSUMED', now);
+    const receipt = JSON.parse(readFileSync(first.receiptPath, 'utf8'));
+    assert.equal(receipt.finalVerdict, 'CONSUMED');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
