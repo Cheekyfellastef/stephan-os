@@ -69,6 +69,16 @@ $keyResult = $keyJson | ConvertFrom-Json
 Write-Output "KEY_BOOTSTRAP_VERDICT=$($keyResult.finalVerdict)"
 Write-Output "KEYS_CREATED=$($keyResult.keysCreated)"
 
+if ($env:OS -eq "Windows_NT") {
+    $currentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $grant = "*$currentUserSid`:(F)"
+    & icacls.exe $privateKeyPath /inheritance:r /grant:r $grant | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Private signing key ACL could not be restricted to the current Windows identity."
+    }
+    Write-Output "PRIVATE_KEY_ACL_RESTRICTED=True"
+}
+
 $branchOutput = @(& git.exe -C $StephanosRepositoryRoot branch --show-current 2>$null)
 if ($LASTEXITCODE -ne 0) {
     throw "Current Stephanos branch could not be read."
