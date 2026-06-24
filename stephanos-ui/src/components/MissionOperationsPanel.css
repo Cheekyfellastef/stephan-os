@@ -1,0 +1,203 @@
+.mission-operations-panel {
+  grid-column: 1 / -1;
+}
+
+.mission-operations-panel .panel-body {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.mission-operations-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(103, 182, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(5, 15, 30, 0.72);
+  font-size: 0.78rem;
+}
+
+.mission-operations-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.mission-operations-item {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.7rem;
+  border: 1px solid rgba(103, 182, 255, 0.24);
+  border-radius: 6px;
+  background: rgba(6, 18, 34, 0.78);
+}
+
+.mission-operations-item__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.mission-operations-outcome {
+  max-width: 72ch;
+  margin-top: 0.35rem;
+  color: #d6e9f8;
+  font-size: 0.78rem;
+}
+
+.mission-operations-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.mission-operations-grid > div {
+  min-width: 0;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid rgba(103, 182, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(3, 11, 22, 0.64);
+}
+
+.mission-operations-grid dt {
+  color: #9fd3ff;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.mission-operations-grid dd {
+  margin: 0.15rem 0 0;
+  overflow-wrap: anywhere;
+  color: #e6f4ff;
+  font-size: 0.8rem;
+}
+
+.mission-operations-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.mission-operations-evidence-group {
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid rgba(103, 182, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(3, 11, 22, 0.5);
+}
+
+.mission-operations-evidence-group:last-child {
+  grid-column: 1 / -1;
+}
+
+.mission-operations-evidence-group h4 {
+  margin: 0 0 0.4rem;
+  color: #9fd3ff;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.mission-operations-evidence-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-operations-evidence-list li {
+  min-width: 0;
+  padding-top: 0.4rem;
+  border-top: 1px solid rgba(103, 182, 255, 0.12);
+  overflow-wrap: anywhere;
+  color: #d6e9f8;
+  font-size: 0.76rem;
+}
+
+.mission-operations-evidence-list li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.mission-operations-evidence-list code {
+  color: #c9edff;
+  white-space: normal;
+}
+
+.mission-operations-pr-link {
+  width: fit-content;
+  color: #9fd3ff;
+  font-size: 0.78rem;
+}
+
+.mission-operations-next-action,
+.mission-operations-alert {
+  padding: 0.5rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.mission-operations-next-action {
+  border: 1px solid rgba(94, 191, 141, 0.32);
+  background: rgba(13, 50, 34, 0.36);
+}
+
+.mission-operations-alert--approval,
+.mission-operations-alert--warning {
+  border: 1px solid rgba(191, 165, 94, 0.45);
+  background: rgba(58, 45, 17, 0.42);
+}
+
+.mission-operations-alert--blocked {
+  border: 1px solid rgba(255, 130, 130, 0.42);
+  background: rgba(70, 18, 24, 0.42);
+}
+
+.mission-operations-panel .status-badge {
+  flex: 0 0 auto;
+  padding: 0.2rem 0.42rem;
+  border: 1px solid rgba(103, 182, 255, 0.35);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.mission-operations-panel .status-badge--blocked,
+.mission-operations-panel .status-badge--failed {
+  border-color: rgba(255, 130, 130, 0.55);
+  color: #ffd4d4;
+}
+
+.mission-operations-panel .status-badge--complete {
+  border-color: rgba(94, 191, 141, 0.55);
+  color: #cffff0;
+}
+
+@media (max-width: 900px) {
+  .mission-operations-grid,
+  .mission-operations-evidence-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .mission-operations-grid,
+  .mission-operations-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-operations-evidence-group:last-child {
+    grid-column: auto;
+  }
+
+  .mission-operations-item__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mission-operations-panel .status-badge {
+    align-self: flex-start;
+  }
+}

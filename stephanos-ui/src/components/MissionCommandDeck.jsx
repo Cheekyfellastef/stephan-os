@@ -1,4 +1,5 @@
 import CollapsiblePanel from './CollapsiblePanel';
+import MissionOperationsPanel from './MissionOperationsPanel';
 
 function statusTone(value = '') {
   const normalized = String(value).toLowerCase();
@@ -77,6 +78,12 @@ export default function MissionCommandDeck(props) {
             <Chip label="System Watcher" value={supportSnapshot?.watcherStatus || 'nominal'} />
           </div>
         </header>
+
+        <MissionOperationsPanel
+          isOpen={uiLayout.missionConsoleMissionOperationsPanel !== false}
+          onToggle={() => togglePanel('missionConsoleMissionOperationsPanel')}
+          missionId={missionCommandPacket?.missionId || ''}
+        />
 
         <article className="mission-deck-card mission-deck-grid-readiness-hero" aria-label="Mission Routing / Delegation Readiness">
           <h4>Mission Routing / Delegation Readiness</h4>

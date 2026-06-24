@@ -1,0 +1,110 @@
+name: Mission Operations Dashboard
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mission-operations-dashboard.yml'
+      - 'scripts/stephanos-bootstrap-openclaw-github-keys.mjs'
+      - 'scripts/verify-mission-operations-receipt.mjs'
+      - 'scripts/windows/invoke-openclaw-github-operator-bridge.ps1'
+      - 'scripts/windows/verify-openclaw-mission-operations-acceptance.ps1'
+      - 'shared/runtime/missionOperationsProjection.mjs'
+      - 'stephanos-server/routes/mission-operations.js'
+      - 'stephanos-server/services/missionOperationsService.js'
+      - 'stephanos-server/services/missionOperationsPublicFeed.js'
+      - 'stephanos-server/server.js'
+      - 'stephanos-ui/src/components/MissionCommandDeck.jsx'
+      - 'stephanos-ui/src/components/MissionOperationsPanel.jsx'
+      - 'stephanos-ui/src/components/MissionOperationsPanel.css'
+      - 'stephanos-ui/src/components/MissionOperationsPanel.render.test.mjs'
+      - 'stephanos-ui/src/state/missionOperationsClient.js'
+      - 'tests/mission-operations-acceptance-tooling.test.mjs'
+      - 'tests/mission-operations-dashboard.test.mjs'
+      - 'tests/mission-operations-public-feed.test.mjs'
+      - 'tests/openclaw-github-operator-bridge.test.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-mission-operations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install root dependencies
+        run: npm install
+      - name: Install Stephanos UI dependencies
+        run: npm --prefix stephanos-ui install
+      - name: Run Mission Operations, bridge, and acceptance tests
+        run: node --test tests/mission-operations-dashboard.test.mjs tests/mission-operations-public-feed.test.mjs tests/openclaw-github-operator-bridge.test.mjs tests/mission-operations-acceptance-tooling.test.mjs
+      - name: Render Mission Operations visibility contract
+        run: node --test stephanos-ui/src/components/MissionOperationsPanel.render.test.mjs
+      - name: Parse PowerShell bridge and acceptance runner
+        shell: pwsh
+        run: |
+          foreach ($path in @(
+            'scripts/windows/invoke-openclaw-github-operator-bridge.ps1',
+            'scripts/windows/verify-openclaw-mission-operations-acceptance.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $path,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -ne 0) {
+              $errors | Format-List | Out-String | Write-Error
+              exit 1
+            }
+          }
+      - name: Parse acceptance Node scripts
+        run: |
+          node --check scripts/stephanos-bootstrap-openclaw-github-keys.mjs
+          node --check scripts/verify-mission-operations-receipt.mjs
+      - name: Run canonical Mission Console integration tests
+        run: node --test tests/mission-console-operator-relief-panel.test.mjs
+      - name: Build Stephanos UI
+        run: npm run stephanos:build
+      - name: Verify generated output matches source
+        run: npm run stephanos:verify
+
+  verify-windows-openclaw-acceptance:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run signed read-only OpenClaw acceptance path
+        shell: pwsh
+        run: |
+          $missionRunnerRoot = Join-Path $env:RUNNER_TEMP 'openclaw-standalone\mission-runner'
+          $outputPath = Join-Path $env:RUNNER_TEMP 'mission-operations-acceptance-output.txt'
+          $output = @(
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+              -File 'scripts\windows\verify-openclaw-mission-operations-acceptance.ps1' `
+              -StephanosRepositoryRoot $env:GITHUB_WORKSPACE `
+              -MissionRunnerRoot $missionRunnerRoot 2>&1
+          )
+          $exitCode = $LASTEXITCODE
+          $output | Tee-Object -FilePath $outputPath
+          if ($exitCode -ne 0) {
+            throw "Signed OpenClaw acceptance path failed with exit code $exitCode."
+          }
+          if ($output -notcontains 'FINAL_VERDICT=STEPHANOS_MISSION_OPERATIONS_ACCEPTANCE_PASS') {
+            throw 'Signed OpenClaw acceptance verdict was not present.'
+          }
+      - name: Upload sanitized Mission Operations acceptance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mission-operations-windows-acceptance
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}\mission-operations-acceptance-output.txt
+            ${{ runner.temp }}\openclaw-standalone\mission-runner\proof\mission-operations\*.json
