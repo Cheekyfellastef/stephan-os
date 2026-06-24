@@ -71,6 +71,26 @@ test('collects a matching Codex result and rejects the wrong adapter', async () 
   assert.equal(collected.state.currentPhase, 'VERIFYING');
 });
 
+test('collects grounded Codex evidence in the same bounded result transition', async () => {
+  const runtime = await options();
+  const missionId = 'worker-evidence-test';
+  await createMissionRecord({ ...intent, missionId, branch: 'openclaw/worker-evidence-test' }, runtime);
+  const ready = await appendMissionEvent(missionId, { eventId: 'worktree-worker-service-003', eventType: 'WORKTREE_READY', worktreePath: intent.worktreePath, clean: true, receipt: proof('isolated worktree', 'worktree-proof-3') }, runtime);
+  const handoff = await publishMissionWorkerAction(ready.state, runtime);
+  const collected = await collectAgentWorkerResult({
+    missionId,
+    actionId: handoff.action.actionId,
+    adapter: 'codex',
+    success: true,
+    resultId: 'codex-result-2',
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('codex result', 'codex-result-proof-2'),
+    evidenceReceipts: [proof('focused test output', 'focused-test-proof')],
+  }, runtime);
+  assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(collected.state.evidenceReceipts.some((receipt) => receipt.requirement === 'focused test output'), true);
+});
+
 test('publishes at most one runnable mission action per worker tick', async () => {
   const runtime = await options();
   await createMissionRecord({ ...intent, missionId: 'worker-first', branch: 'openclaw/worker-first' }, runtime);
