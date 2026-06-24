@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import { fetchMissionOperations } from '../state/missionOperationsClient';
+import './MissionOperationsPanel.css';
 
 const REFRESH_INTERVAL_MS = 5000;
 
@@ -60,8 +61,7 @@ function MissionSummary({ mission }) {
 
       {mission.warnings.length ? (
         <div className="mission-operations-alert mission-operations-alert--warning">
-          <strong>Evidence warnings:</strong> {mission.warnings.join(' | ')}
-        </div>
+          <strong>Evidence warnings:</strong> {mission.warnings.join(' | ')}</div>
       ) : null}
     </article>
   );
