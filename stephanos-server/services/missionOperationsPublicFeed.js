@@ -11,19 +11,23 @@ function publicReceiptPath(value = '') {
   return leaf ? `receipt://${leaf}` : '';
 }
 
+function publicApproval(approval = {}) {
+  return {
+    approvalId: text(approval.approvalId),
+    kind: text(approval.kind),
+    status: text(approval.status),
+    approvalRequired: approval.status === 'pending',
+    requestedAt: text(approval.requestedAt),
+    decidedAt: text(approval.decidedAt),
+  };
+}
+
 export function resolvePublicMissionOperationsDirectory(env = process.env) {
   const configured = text(env.STEPHANOS_MISSION_OPERATIONS_DIR || env.STEPHANOS_GITHUB_AUTH_RECEIPT_DIR);
   if (configured) return resolve(configured);
   const userProfile = text(env.USERPROFILE);
   return userProfile
-    ? resolve(join(
-      userProfile,
-      'Documents',
-      'OpenClaw-Standalone',
-      'mission-runner',
-      'proof',
-      'mission-operations',
-    ))
+    ? resolve(join(userProfile, 'Documents', 'OpenClaw-Standalone', 'mission-runner', 'proof', 'mission-operations'))
     : '';
 }
 
@@ -40,6 +44,7 @@ export async function readPublicMissionOperations(options = {}) {
         ...mission.git,
         worktreePath: mission.git?.worktreePath ? 'configured-isolated-worktree' : '',
       },
+      approvals: (mission.approvals || []).map(publicApproval),
       receipts: (mission.receipts || []).map((receipt) => ({
         ...receipt,
         path: publicReceiptPath(receipt.path),
