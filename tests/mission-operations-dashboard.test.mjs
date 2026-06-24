@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildMissionOperationsProjection } from '../shared/runtime/missionOperationsProjection.mjs';
@@ -59,6 +59,21 @@ test('projection exposes complete mission, agent, Git, PR, approval, receipt, ti
   assert.equal(projection.pullRequest.requiredCheckCount, 1);
   assert.equal(projection.receipts[0].sha256, 'b'.repeat(64));
   assert.equal(projection.mission.nextAction, 'Wait for checks.');
+});
+
+test('projection rejects non-GitHub and non-HTTPS links', () => {
+  for (const prUrl of [
+    'javascript:alert(1)',
+    'http://github.com/Cheekyfellastef/stephan-os/pull/1262',
+    'https://example.com/fake-pr',
+    'not-a-url',
+  ]) {
+    const projection = buildMissionOperationsProjection({
+      missionId: 'mission-safe-url',
+      github: { prUrl },
+    }, { now });
+    assert.equal(projection.pullRequest.url, '', prUrl);
+  }
 });
 
 test('pending approval and blockers override optimistic running state', () => {
@@ -130,6 +145,50 @@ test('service adapts reservation and completion receipts for one mission', async
   feed = await readMissionOperations({ directory, now });
   assert.equal(feed.missions[0].mission.state, 'COMPLETE');
   assert.equal(feed.missions[0].receipts.some((receipt) => receipt.sha256 === 'd'.repeat(64)), true);
+});
+
+test('service preserves command receipts from repeated operations in one mission', async () => {
+  const directory = await fixtureDirectory();
+  for (const [index, hash] of ['e', 'f'].entries()) {
+    await writeFile(join(directory, `operation-${index + 1}.json`), JSON.stringify({
+      schemaVersion: 'stephanos.openclaw-github-operation-result.v1',
+      missionId: 'mission-repeat',
+      authorizationId: `authorization-repeat-${index + 1}`,
+      operation: 'inspect',
+      repository: 'Cheekyfellastef/stephan-os',
+      completedAt: `2026-06-24T18:0${index + 1}:00.000Z`,
+      executorExitCode: 0,
+      executorOutputHash: hash.repeat(64),
+      receipts: [{ executable: 'git.exe', exitCode: 0, commandOutputHash: hash.repeat(64) }],
+      finalVerdict: 'OPENCLAW_GITHUB_OPERATION_PASS',
+    }));
+  }
+  const feed = await readMissionOperations({ directory, now });
+  const hashes = feed.missions[0].receipts.map((receipt) => receipt.sha256);
+  assert.equal(hashes.includes('e'.repeat(64)), true);
+  assert.equal(hashes.includes('f'.repeat(64)), true);
+});
+
+test('service limits ingestion to the newest 500 receipt files', async () => {
+  const directory = await fixtureDirectory();
+  const baseTime = Date.parse('2026-06-24T00:00:00.000Z');
+  await Promise.all(Array.from({ length: 501 }, async (_, index) => {
+    const path = join(directory, `${String(index).padStart(3, '0')}.json`);
+    await writeFile(path, JSON.stringify({
+      schemaVersion: 'stephanos.mission-operations-snapshot.v1',
+      missionId: `mission-${String(index).padStart(3, '0')}`,
+      state: 'COMPLETE',
+      updatedAt: new Date(baseTime + index * 1000).toISOString(),
+      finalVerdict: 'PASS',
+    }));
+    const timestamp = new Date(baseTime + index * 1000);
+    await utimes(path, timestamp, timestamp);
+  }));
+
+  const feed = await readMissionOperations({ directory, now });
+  assert.equal(feed.receiptFileCount, 500);
+  assert.equal(feed.missions.some((mission) => mission.mission.missionId === 'mission-000'), false);
+  assert.equal(feed.missions.some((mission) => mission.mission.missionId === 'mission-500'), true);
 });
 
 test('service reports malformed evidence and does not fabricate missions', async () => {
