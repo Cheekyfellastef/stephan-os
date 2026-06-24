@@ -34,7 +34,7 @@ function EvidenceList({ title, items, emptyText, renderItem }) {
   );
 }
 
-function MissionSummary({ mission }) {
+export function MissionSummary({ mission }) {
   const checkSummary = `${mission.pullRequest.passingCheckCount}/${mission.pullRequest.requiredCheckCount}`;
   const supportingAgents = mission.agent.supportingAgents || [];
   const changedFiles = mission.git.changedFiles || [];
@@ -155,8 +155,7 @@ function MissionSummary({ mission }) {
 
       {mission.warnings.length ? (
         <div className="mission-operations-alert mission-operations-alert--warning">
-          <strong>Evidence warnings:</strong> {mission.warnings.join(' | ')}
-        </div>
+          <strong>Evidence warnings:</strong> {mission.warnings.join(' | ')}</div>
       ) : null}
     </article>
   );
