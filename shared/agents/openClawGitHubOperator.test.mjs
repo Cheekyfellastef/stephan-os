@@ -9,15 +9,19 @@ const base = {
   defaultBranch: 'main',
   baseBranch: 'main',
   branch: 'openclaw/github-operator-v1',
+  worktreePath: 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os-worktrees\\github-operator-v1',
 };
 
-test('creates a bounded branch command without shell interpolation', () => {
-  const packet = buildOpenClawGitHubOperation({ ...base, operation: 'create-branch' });
+test('creates an isolated worktree from origin main without shell interpolation', () => {
+  const packet = buildOpenClawGitHubOperation({ ...base, operation: 'create-worktree' });
   assert.equal(packet.finalVerdict, 'READY_TO_EXECUTE');
-  assert.deepEqual(packet.command, [{
-    executable: 'git.exe',
-    args: ['-C', base.repositoryRoot, 'switch', '-c', base.branch, 'main'],
-  }]);
+  assert.deepEqual(packet.command, [
+    { executable: 'git.exe', args: ['-C', base.repositoryRoot, 'fetch', 'origin', 'main'] },
+    {
+      executable: 'git.exe',
+      args: ['-C', base.repositoryRoot, 'worktree', 'add', '-b', base.branch, base.worktreePath, 'origin/main'],
+    },
+  ]);
 });
 
 test('blocks direct main mutation and non-openclaw branches', () => {
@@ -32,7 +36,7 @@ test('commit stages only exact approved files', () => {
   const packet = buildOpenClawGitHubOperation({
     ...base,
     operation: 'commit',
-    allowedFiles: ['shared/agents/example.mjs', 'shared/agents/example.test.mjs'],
+    allowedFiles: ['shared/agents/**'],
     changedFiles: ['shared\\agents\\example.mjs', 'shared/agents/example.test.mjs'],
     commitMessage: 'Add bounded example',
   });
@@ -76,10 +80,11 @@ test('open PR uses an argument array and targets main', () => {
 test('merge blocks failed checks stale head and missing exact approval', () => {
   const head = 'a'.repeat(40);
   const variants = [
-    { checks: ['failure'], expectedHeadSha: head, mergeable: true, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
-    { checks: ['success'], expectedHeadSha: '', mergeable: true, approvalToken: '' },
-    { checks: ['success'], expectedHeadSha: head, mergeable: false, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
-    { checks: ['success'], expectedHeadSha: head, mergeable: true, approvalToken: 'APPROVE' },
+    { checks: ['failure'], expectedHeadSha: head, actualHeadSha: head, mergeable: true, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
+    { checks: ['success'], expectedHeadSha: '', actualHeadSha: head, mergeable: true, approvalToken: '' },
+    { checks: ['success'], expectedHeadSha: head, actualHeadSha: head, mergeable: false, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
+    { checks: ['success'], expectedHeadSha: head, actualHeadSha: head, mergeable: true, approvalToken: 'APPROVE' },
+    { checks: ['success'], expectedHeadSha: head, actualHeadSha: 'c'.repeat(40), mergeable: true, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
   ];
   for (const variant of variants) {
     const packet = buildOpenClawGitHubOperation({ ...base, operation: 'merge-pr', prNumber: 1261, ...variant });
@@ -95,6 +100,7 @@ test('merge requires exact PR head approval and only emits squash merge', () => 
     operation: 'merge-pr',
     prNumber: 1261,
     expectedHeadSha: head,
+    actualHeadSha: head,
     mergeable: true,
     checks: ['success', 'success'],
     approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}`,
