@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   processNextCodexItem,
   processNextGitHubInspectionItem,
+  processNextOpenClawReadonlyItem,
   processNextSignedOpenClawItem,
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
 import { publishNextMissionWorkerAction } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
@@ -114,6 +115,8 @@ function codexOutputSchema() {
 function codexPrompt(action) {
   return [
     `Mission ID: ${action.missionId}`,
+    `Operator intent: ${action.operatorIntent || ''}`,
+    `Intended outcome: ${action.intendedOutcome || ''}`,
     `Repair round: ${Number.isInteger(action.repairRound) ? action.repairRound : 0}`,
     `Allowed source files: ${JSON.stringify(action.allowedFiles || [])}`,
     `Required tests: ${JSON.stringify(action.requiredTests || [])}`,
@@ -226,6 +229,112 @@ export async function executeCodexAction(action, claim, options = {}) {
     };
   } finally {
     await Promise.all([rm(schemaPath, { force: true }), rm(outputPath, { force: true })]);
+  }
+}
+
+function openClawPrompt(action) {
+  return [
+    'STEPHANOS MISSION ORCHESTRATOR READ-ONLY INVESTIGATION',
+    `Mission ID: ${action.missionId}`,
+    `Operator intent: ${action.operatorIntent || ''}`,
+    `Intended outcome: ${action.intendedOutcome || ''}`,
+    `Repository root: ${action.repositoryRoot || ''}`,
+    `Required evidence: ${JSON.stringify(action.requiredEvidence || [])}`,
+    `Browser proof required: ${action.browserProofRequired === true}`,
+    '',
+    'Operate read-only. Do not edit files, run mutating commands, change Git state, commit, push, open or merge pull requests, install software, broaden policy, or expose secrets.',
+    'You may inspect existing files, runtime state, browser state, and network responses only as allowed by your configured read-only tools.',
+    'Any evidence receipt must already exist under the Mission Runner proof directory. Do not invent paths, hashes, commands, screenshots, or observations.',
+    'Return exactly one JSON object and no prose with this shape:',
+    '{"success":true,"summary":"grounded summary","evidence":[{"requirement":"exact required evidence string","receiptPath":"absolute existing proof file path"}]}',
+    'Use success=false when the requested investigation cannot be grounded. Omit unsupported evidence rather than guessing.',
+  ].join('\n');
+}
+
+function openClawPayloadText(response) {
+  const payloads = Array.isArray(response?.payloads) ? response.payloads : Array.isArray(response?.result?.payloads) ? response.result.payloads : [];
+  return payloads.map((payload) => text(payload?.text)).filter(Boolean).join('\n').trim();
+}
+
+async function groundedOpenClawEvidence(action, finalOutput, options, timestamp) {
+  const env = options.env || process.env;
+  const missionRunnerRoot = text(options.missionRunnerRoot || env.STEPHANOS_MISSION_RUNNER_ROOT || (env.USERPROFILE ? resolve(env.USERPROFILE, 'Documents', 'OpenClaw-Standalone', 'mission-runner') : ''));
+  if (!missionRunnerRoot) return [];
+  const proofRoot = resolve(missionRunnerRoot, 'proof');
+  const required = new Set((action.requiredEvidence || []).map((value) => text(value)));
+  const receipts = [];
+  for (const evidence of Array.isArray(finalOutput.evidence) ? finalOutput.evidence : []) {
+    const requirement = text(evidence.requirement);
+    const receiptPath = resolve(text(evidence.receiptPath));
+    const relativePath = normalizePath(relative(proofRoot, receiptPath));
+    if (!required.has(requirement) || !relativePath || relativePath === '..' || relativePath.startsWith('../')) continue;
+    try {
+      const info = await stat(receiptPath);
+      if (!info.isFile()) continue;
+      const sha256 = createHash('sha256').update(await readFile(receiptPath)).digest('hex');
+      receipts.push({
+        receiptId: `openclaw-evidence-${createHash('sha256').update(`${requirement}\n${relativePath}\n${sha256}`).digest('hex').slice(0, 20)}`,
+        requirement,
+        source: 'openclaw-readonly-cli',
+        evidenceType: action.browserProofRequired === true ? 'browser-proof' : 'readonly-inspection',
+        verified: true,
+        sha256,
+        receiptPath: `proof/${relativePath}`,
+        createdAt: timestamp,
+      });
+    } catch {
+      // An absent or unreadable receipt is not evidence.
+    }
+  }
+  return receipts;
+}
+
+export async function executeOpenClawReadonlyAction(action, claim, options = {}) {
+  if (action?.actionKind !== 'agent-handoff' || action.adapter !== 'openclaw-readonly') throw new Error('Unsupported OpenClaw read-only worker action.');
+  const promptPath = `${claim.processingPath}.openclaw-prompt.txt`;
+  await writeFile(promptPath, openClawPrompt(action), { encoding: 'utf8', flag: 'wx' });
+  const run = options.runCommand || defaultRun;
+  const timestamp = completedAt(options);
+  try {
+    const result = run(options.openClawExecutable || process.env.STEPHANOS_OPENCLAW_EXECUTABLE || 'openclaw.cmd', [
+      'agent', '--agent', options.openClawAgent || process.env.STEPHANOS_OPENCLAW_READONLY_AGENT || 'stephanos-scout',
+      '--session-key', `orchestrator-${action.missionId}`,
+      '--message-file', promptPath,
+      '--timeout', String(options.openClawTimeoutSeconds || 600),
+      '--json',
+    ], { cwd: text(action.repositoryRoot) || undefined, env: options.env || process.env });
+    const stdout = result.stdout || '';
+    const stderr = result.stderr || '';
+    if (result.error || result.status !== 0) {
+      return { success: false, error: result.error?.message || stderr || stdout || `OpenClaw exited with code ${result.status}.`, completedAt: timestamp, changedFiles: [], evidenceReceipts: [] };
+    }
+    let response;
+    try { response = JSON.parse(stdout); }
+    catch { return { success: false, error: 'OpenClaw did not return valid JSON.', completedAt: timestamp, changedFiles: [], evidenceReceipts: [] }; }
+    let finalOutput;
+    try { finalOutput = JSON.parse(openClawPayloadText(response)); }
+    catch { return { success: false, error: 'OpenClaw did not return the required bounded JSON result.', completedAt: timestamp, changedFiles: [], evidenceReceipts: [] }; }
+    const evidenceReceipts = await groundedOpenClawEvidence(action, finalOutput, options, timestamp);
+    const success = finalOutput.success === true;
+    return {
+      success,
+      error: success ? '' : text(finalOutput.summary, 'OpenClaw could not ground the requested read-only investigation.'),
+      resultId: text(response?.meta?.runId || response?.result?.meta?.runId, action.actionId),
+      changedFiles: [],
+      completedAt: timestamp,
+      receipt: success ? {
+        receiptId: `openclaw-result-${action.actionId}`.slice(0, 128),
+        requirement: 'openclaw result',
+        source: 'openclaw-readonly-cli',
+        evidenceType: 'openclaw-agent-turn',
+        verified: true,
+        commandOutputHash: outputHash(stdout, stderr),
+        createdAt: timestamp,
+      } : undefined,
+      evidenceReceipts: success ? evidenceReceipts : [],
+    };
+  } finally {
+    await rm(promptPath, { force: true });
   }
 }
 
@@ -348,7 +457,11 @@ export async function runMissionWorkerTick(options = {}) {
     ...options,
     executeCodexAction: (action, claim) => executeCodexAction(action, claim, options),
   });
-  return { publish, consumed, inspected, codex };
+  const openclaw = await processNextOpenClawReadonlyItem({
+    ...options,
+    executeOpenClawReadonlyAction: (action, claim) => executeOpenClawReadonlyAction(action, claim, options),
+  });
+  return { publish, consumed, inspected, codex, openclaw };
 }
 
 async function main() {
