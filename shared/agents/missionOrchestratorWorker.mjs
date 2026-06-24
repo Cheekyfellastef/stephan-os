@@ -102,16 +102,22 @@ export function buildMissionWorkerAction(state, options = {}) {
   }
 
   if (['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)) {
-    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'codex'), missionId: state.missionId, actionKind: 'agent-handoff', adapter: 'codex', owner: 'codex', activeWriter: 'Codex', worktreePath: state.git?.worktreePath || '', allowedFiles: state.allowedFiles || [], requiredTests: state.requiredTests || [], requiredEvidence: state.requiredEvidence || [], repairRound: state.repair?.currentRound || 0, executable: true, blockers: [], finalVerdict: 'READY_TO_DISPATCH_CODEX' };
+    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'codex'), missionId: state.missionId, actionKind: 'agent-handoff', adapter: 'codex', owner: 'codex', activeWriter: 'Codex', operatorIntent: state.operatorIntent, intendedOutcome: state.intendedOutcome, repository: state.repository, worktreePath: state.git?.worktreePath || '', allowedFiles: state.allowedFiles || [], requiredTests: state.requiredTests || [], requiredEvidence: state.requiredEvidence || [], repairRound: state.repair?.currentRound || 0, executable: true, blockers: [], finalVerdict: 'READY_TO_DISPATCH_CODEX' };
   }
   if (state.currentPhase === 'LIVE_RUNTIME_INVESTIGATION') {
-    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'openclaw-readonly'), missionId: state.missionId, actionKind: 'agent-handoff', adapter: 'openclaw-readonly', owner: 'openclaw-standalone', activeWriter: 'none', requiredEvidence: state.requiredEvidence || [], browserProofRequired: state.browserProofRequired === true, executable: true, blockers: [], finalVerdict: 'READY_TO_DISPATCH_OPENCLAW_READONLY' };
+    return {
+      schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'openclaw-readonly'), missionId: state.missionId,
+      actionKind: 'agent-handoff', adapter: 'openclaw-readonly', owner: 'openclaw-standalone', activeWriter: 'none',
+      operatorIntent: state.operatorIntent, intendedOutcome: state.intendedOutcome, repository: state.repository,
+      repositoryRoot: state.repositoryRoot, requiredEvidence: state.requiredEvidence || [], browserProofRequired: state.browserProofRequired === true,
+      executable: true, blockers: [], finalVerdict: 'READY_TO_DISPATCH_OPENCLAW_READONLY',
+    };
   }
   if (state.currentPhase === 'VERIFYING') {
     return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'verification'), missionId: state.missionId, actionKind: 'evidence-judgment', owner: 'verification-judge', activeWriter: 'none', requiredEvidence: state.requiredEvidence || [], receipts: state.evidenceReceipts || [], executable: true, blockers: [], finalVerdict: 'READY_TO_JUDGE_EVIDENCE' };
   }
   if (state.currentPhase === 'LOCAL_DEPLOYMENT') {
-    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'local-deployment'), missionId: state.missionId, actionKind: 'local-deployment', owner: 'openclaw-standalone', activeWriter: 'none', mergeCommitSha: state.pullRequest?.mergeCommitSha || '', steps: ['sync', 'build', 'verify', 'restart'].filter((step) => state.deployment?.[step]?.status !== 'success'), executable: true, blockers: [], finalVerdict: 'READY_FOR_LOCAL_DEPLOYMENT' };
+    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'local-deployment'), missionId: state.missionId, actionKind: 'local-deployment', owner: 'openclaw-standalone', activeWriter: 'none', repository: state.repository, repositoryRoot: state.repositoryRoot, mergeCommitSha: state.pullRequest?.mergeCommitSha || '', steps: ['sync', 'build', 'verify', 'restart'].filter((step) => state.deployment?.[step]?.status !== 'success'), executable: true, blockers: [], finalVerdict: 'READY_FOR_LOCAL_DEPLOYMENT' };
   }
   return blocked(state, `Unsupported mission phase: ${text(state.currentPhase, 'unknown')}`);
 }
