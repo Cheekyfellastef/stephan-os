@@ -4,11 +4,12 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
-const repositoryRoot = new URL('..', import.meta.url);
-const bootstrapScript = new URL('../scripts/stephanos-bootstrap-openclaw-github-keys.mjs', import.meta.url);
-const verifierScript = new URL('../scripts/verify-mission-operations-receipt.mjs', import.meta.url);
-const acceptanceScript = new URL('../scripts/windows/verify-openclaw-mission-operations-acceptance.ps1', import.meta.url);
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
+const bootstrapScript = fileURLToPath(new URL('../scripts/stephanos-bootstrap-openclaw-github-keys.mjs', import.meta.url));
+const verifierScript = fileURLToPath(new URL('../scripts/verify-mission-operations-receipt.mjs', import.meta.url));
+const acceptanceScript = fileURLToPath(new URL('../scripts/windows/verify-openclaw-mission-operations-acceptance.ps1', import.meta.url));
 
 function run(script, args = []) {
   return spawnSync(process.execPath, [script, ...args], {
