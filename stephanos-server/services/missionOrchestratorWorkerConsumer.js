@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOrchestratorWorkerResult.mjs';
 import { appendMissionEvent } from './missionOrchestratorStore.js';
-import { resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
+import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
@@ -92,6 +92,53 @@ export async function processNextGitHubInspectionItem(options = {}) {
     const inspected = await options.inspectGitHub(action, claim);
     return await applyClaimResult(claim, action, inspected.execution, inspected.inspection);
   } catch (error) {
+    return failClaim(claim, action, error);
+  }
+}
+
+export async function processNextCodexItem(options = {}) {
+  if (typeof options.executeCodexAction !== 'function') throw new Error('Codex execution adapter is required.');
+  const claim = await claimNextMissionWorkerItem('codex', options);
+  if (!claim) return { processed: false, reason: 'queue-empty' };
+  claim.options = options;
+  const action = claim.item.payload;
+  try {
+    const execution = await options.executeCodexAction(action, claim);
+    const applied = await collectAgentWorkerResult({
+      missionId: action.missionId,
+      actionId: action.actionId,
+      adapter: 'codex',
+      success: execution.success === true,
+      resultId: execution.resultId || action.actionId,
+      changedFiles: execution.changedFiles || [],
+      receipt: execution.receipt,
+      evidenceReceipts: execution.evidenceReceipts || [],
+      error: execution.error || '',
+    }, options);
+    const result = {
+      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+      actionId: action.actionId,
+      missionId: action.missionId,
+      adapter: 'codex',
+      stateRevision: applied.state.revision,
+      currentPhase: applied.state.currentPhase,
+      execution: {
+        success: execution.success === true,
+        commandOutputHash: execution.receipt?.commandOutputHash || '',
+        completedAt: execution.completedAt || '',
+      },
+      changedFiles: execution.changedFiles || [],
+      evidenceReceiptCount: Array.isArray(execution.evidenceReceipts) ? execution.evidenceReceipts.length : 0,
+      finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
+    };
+    const resultPath = await finishClaim(claim, result, execution.success === true);
+    return { processed: true, claim, applied, result, resultPath };
+  } catch (error) {
+    try {
+      await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter: 'codex', success: false, error: error?.message || 'Codex execution failed.' }, options);
+    } catch {
+      // Preserve the original adapter failure in the queue result.
+    }
     return failClaim(claim, action, error);
   }
 }
