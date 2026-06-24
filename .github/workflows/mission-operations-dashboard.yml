@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/mission-operations-dashboard.yml'
+      - 'scripts/windows/invoke-openclaw-github-operator-bridge.ps1'
       - 'shared/runtime/missionOperationsProjection.mjs'
       - 'stephanos-server/routes/mission-operations.js'
       - 'stephanos-server/services/missionOperationsService.js'
@@ -15,6 +16,7 @@ on:
       - 'stephanos-ui/src/state/missionOperationsClient.js'
       - 'tests/mission-operations-dashboard.test.mjs'
       - 'tests/mission-operations-public-feed.test.mjs'
+      - 'tests/openclaw-github-operator-bridge.test.mjs'
   workflow_dispatch:
 
 permissions:
@@ -30,8 +32,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Run Mission Operations tests
-        run: node --test tests/mission-operations-dashboard.test.mjs tests/mission-operations-public-feed.test.mjs
+      - name: Run Mission Operations and bridge tests
+        run: node --test tests/mission-operations-dashboard.test.mjs tests/mission-operations-public-feed.test.mjs tests/openclaw-github-operator-bridge.test.mjs
+      - name: Parse PowerShell bridge
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            'scripts/windows/invoke-openclaw-github-operator-bridge.ps1',
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
       - name: Run canonical Mission Console integration tests
         run: node --test tests/mission-console-operator-relief-panel.test.mjs stephanos-ui/src/components/MissionCommandDeck.render.test.mjs
       - name: Build Stephanos UI
