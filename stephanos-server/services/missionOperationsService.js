@@ -34,10 +34,10 @@ function stateFromVerdict(verdict = '') {
   return 'QUEUED';
 }
 
-function normalizeCommandReceipt(receipt = {}, index = 0) {
+function normalizeCommandReceipt(receipt = {}, index = 0, receiptPrefix = 'operation') {
   const exitCode = Number.isInteger(receipt.exitCode) ? receipt.exitCode : null;
   return {
-    receiptId: `command-${index + 1}`,
+    receiptId: `${receiptPrefix}-command-${index + 1}`,
     receiptType: 'command-execution',
     source: text(receipt.executable, 'unknown-executable'),
     status: exitCode === 0 ? 'success' : 'failed',
@@ -53,6 +53,7 @@ function adaptOperationResult(document = {}, file = {}) {
   if (!missionId) return null;
   const finalVerdict = text(document.finalVerdict || packet.finalVerdict);
   const state = stateFromVerdict(finalVerdict);
+  const receiptPrefix = text(document.authorizationId || packet.authorizationId || file.name, 'operation');
   return {
     missionId,
     title: text(document.title, `OpenClaw GitHub ${text(packet.operation, 'operation')}`),
@@ -78,6 +79,10 @@ function adaptOperationResult(document = {}, file = {}) {
       worktreePath: text(packet.worktreePath),
       changedFiles: list(packet.changedFiles),
       prNumber: Number.isInteger(packet.prNumber) ? packet.prNumber : null,
+      prUrl: text(packet.prUrl),
+      prState: text(packet.prState),
+      mergeable: packet.mergeable === true,
+      clean: packet.clean === true,
       checks: list(packet.checks).map((status, index) => ({
         id: `github-check-${index + 1}`,
         name: `Required check ${index + 1}`,
@@ -96,7 +101,7 @@ function adaptOperationResult(document = {}, file = {}) {
         receiptPath: text(file.path),
         createdAt: receiptTime(document, file),
       },
-      ...list(document.receipts).map(normalizeCommandReceipt),
+      ...list(document.receipts).map((receipt, index) => normalizeCommandReceipt(receipt, index, receiptPrefix)),
     ],
   };
 }
@@ -199,16 +204,23 @@ export function resolveMissionOperationsDirectory(env = process.env) {
 
 async function readReceiptFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
-  const files = entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.json')).slice(0, MAX_RECEIPT_FILES);
-  return Promise.all(files.map(async (entry) => {
+  const candidates = entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.json'));
+  const discovered = await Promise.all(candidates.map(async (entry) => {
     const path = resolve(directory, entry.name);
     const metadata = await stat(path);
-    if (metadata.size > MAX_RECEIPT_BYTES) return { name: entry.name, path, error: 'receipt-too-large' };
+    return { entry, path, metadata };
+  }));
+  const files = discovered
+    .sort((left, right) => right.metadata.mtimeMs - left.metadata.mtimeMs)
+    .slice(0, MAX_RECEIPT_FILES);
+
+  return Promise.all(files.map(async ({ entry, path, metadata }) => {
+    if (metadata.size > MAX_RECEIPT_BYTES) return { name: entry.name, path, modifiedAt: metadata.mtime.toISOString(), error: 'receipt-too-large' };
     try {
       const content = await readFile(path, 'utf8');
       return { name: entry.name, path, modifiedAt: metadata.mtime.toISOString(), document: JSON.parse(content) };
     } catch (error) {
-      return { name: entry.name, path, error: error?.message || 'receipt-read-failed' };
+      return { name: entry.name, path, modifiedAt: metadata.mtime.toISOString(), error: error?.message || 'receipt-read-failed' };
     }
   }));
 }
