@@ -12,34 +12,52 @@ async function fixtureDirectory() {
   return mkdtemp(join(tmpdir(), 'stephanos-mission-operations-'));
 }
 
-test('projection exposes mission, agent, branch, PR, check, approval, receipt, and next-action truth', () => {
+test('projection exposes complete mission, agent, Git, PR, approval, receipt, timestamp, and next-action truth', () => {
   const projection = buildMissionOperationsProjection({
     missionId: 'mission-dashboard',
     title: 'Mission dashboard',
+    intendedOutcome: 'Expose deterministic live mission truth.',
     state: 'RUNNING',
     startedAt: '2026-06-24T18:00:00.000Z',
     updatedAt: '2026-06-24T18:09:00.000Z',
     currentPhase: 'verification',
     nextAction: 'Wait for checks.',
     activeAgent: { agentId: 'openclaw-standalone', label: 'OpenClaw Standalone', role: 'executor', status: 'active' },
+    supportingAgents: [{ agentId: 'codex', label: 'Codex', role: 'reviewer', status: 'waiting' }],
     github: {
       repository: 'Cheekyfellastef/stephan-os',
       branch: 'openclaw/mission-dashboard',
       baseBranch: 'main',
+      headSha: 'a'.repeat(40),
+      worktreePath: 'configured-isolated-worktree',
+      changedFiles: ['shared/runtime/example.mjs'],
+      clean: true,
       prNumber: 1262,
+      prUrl: 'https://github.com/Cheekyfellastef/stephan-os/pull/1262',
+      prState: 'open',
+      mergeable: true,
       checks: [{ name: 'Build', status: 'in_progress', required: true }],
     },
     approvals: [{ approvalId: 'merge', status: 'approved' }],
-    receipts: [{ receiptId: 'receipt-1', sha256: 'a'.repeat(64), status: 'RESERVED' }],
+    receipts: [{ receiptId: 'receipt-1', sha256: 'b'.repeat(64), status: 'RESERVED' }],
   }, { now });
 
   assert.equal(projection.mission.state, 'VERIFYING');
+  assert.equal(projection.mission.intendedOutcome, 'Expose deterministic live mission truth.');
+  assert.equal(projection.mission.startedAt, '2026-06-24T18:00:00.000Z');
   assert.equal(projection.agent.activeAgentId, 'openclaw-standalone');
+  assert.equal(projection.agent.supportingAgents[0].agentId, 'codex');
   assert.equal(projection.agent.simultaneousWritersAllowed, false);
   assert.equal(projection.git.branch, 'openclaw/mission-dashboard');
+  assert.equal(projection.git.baseBranch, 'main');
+  assert.equal(projection.git.headSha, 'a'.repeat(40));
+  assert.deepEqual(projection.git.changedFiles, ['shared/runtime/example.mjs']);
   assert.equal(projection.pullRequest.number, 1262);
+  assert.equal(projection.pullRequest.url, 'https://github.com/Cheekyfellastef/stephan-os/pull/1262');
+  assert.equal(projection.pullRequest.state, 'open');
+  assert.equal(projection.pullRequest.mergeable, true);
   assert.equal(projection.pullRequest.requiredCheckCount, 1);
-  assert.equal(projection.receipts[0].sha256, 'a'.repeat(64));
+  assert.equal(projection.receipts[0].sha256, 'b'.repeat(64));
   assert.equal(projection.mission.nextAction, 'Wait for checks.');
 });
 
@@ -125,14 +143,38 @@ test('service reports malformed evidence and does not fabricate missions', async
   assert.deepEqual(feed.missions, []);
 });
 
-test('Mission Operations panel is canonical, polled, and not a duplicate dashboard', async () => {
+test('Mission Operations panel visibly renders every required operational truth family', async () => {
   const source = await readFile(new URL('../stephanos-ui/src/components/MissionOperationsPanel.jsx', import.meta.url), 'utf8');
   assert.match(source, /<CollapsiblePanel/);
   assert.match(source, /panelId="missionConsoleMissionOperationsPanel"/);
   assert.match(source, /REFRESH_INTERVAL_MS = 5000/);
-  assert.match(source, /Active agent/);
-  assert.match(source, /Approval required/);
-  assert.match(source, /Evidence warnings/);
+  for (const label of [
+    'Intended outcome:',
+    'Active agent',
+    'Supporting agents',
+    'Base branch',
+    'Head SHA',
+    'Worktree',
+    'Changed files',
+    'Pull request',
+    'PR state',
+    'Mergeable',
+    'Required checks',
+    'Approvals',
+    'Evidence receipts',
+    'Started',
+    'Updated',
+    'Elapsed',
+    'Next action:',
+    'Blockers:',
+    'Evidence warnings:',
+  ]) {
+    assert.equal(source.includes(label), true, `missing visible Mission Operations label: ${label}`);
+  }
+  assert.match(source, /receipt\.sha256/);
+  assert.match(source, /receipt\.status/);
+  assert.match(source, /check\.status/);
+  assert.match(source, /approval\.status/);
   assert.doesNotMatch(source, /MissionOperationsDashboard/);
 });
 
