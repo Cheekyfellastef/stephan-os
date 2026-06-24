@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
 
 const intent = {
   missionId: 'worker-consumer-test', operatorIntent: 'Implement a bounded source change.',
@@ -59,10 +59,7 @@ test('consumes a Codex handoff and advances only with grounded source and eviden
   const processed = await processNextCodexItem({
     ...runtime,
     executeCodexAction: async () => ({
-      success: true,
-      resultId: 'codex-thread-1',
-      changedFiles: ['shared/agents/example.mjs'],
-      completedAt: '2026-06-24T23:04:00.000Z',
+      success: true, resultId: 'codex-thread-1', changedFiles: ['shared/agents/example.mjs'], completedAt: '2026-06-24T23:04:00.000Z',
       receipt: { ...proof('codex result', 'codex-exec-proof'), commandOutputHash: 'd'.repeat(64) },
       evidenceReceipts: [{ ...proof('focused test output', 'codex-test-proof'), commandOutputHash: 'e'.repeat(64) }],
     }),
@@ -74,6 +71,30 @@ test('consumes a Codex handoff and advances only with grounded source and eviden
   const current = await readMissionRecord('worker-codex-test', runtime);
   assert.equal(current.state.dispatch.status, 'complete');
   assert.deepEqual(current.state.git.changedFiles, ['shared/agents/example.mjs']);
+});
+
+test('consumes an OpenClaw read-only handoff without granting source-writer authority', async () => {
+  const runtime = await options();
+  const missionId = 'worker-openclaw-readonly-test';
+  const created = await createMissionRecord({
+    missionId, operatorIntent: 'Inspect the live runtime without mutation.', intendedOutcome: 'Ground browser runtime proof.',
+    missionKind: 'live-runtime-investigation', repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:\\repo',
+    branch: 'openclaw/worker-openclaw-readonly-test', allowedFiles: [], requiredEvidence: ['browser runtime proof'], requiredTests: [], browserProofRequired: true,
+  }, runtime);
+  assert.equal(created.state.currentPhase, 'LIVE_RUNTIME_INVESTIGATION');
+  await publishMissionWorkerAction(created.state, runtime);
+  const processed = await processNextOpenClawReadonlyItem({
+    ...runtime,
+    executeOpenClawReadonlyAction: async () => ({
+      success: true, resultId: 'openclaw-run-1', changedFiles: [], completedAt: '2026-06-24T23:05:00.000Z',
+      receipt: { ...proof('openclaw result', 'openclaw-result-proof'), commandOutputHash: 'f'.repeat(64) },
+      evidenceReceipts: [{ ...proof('browser runtime proof', 'openclaw-browser-proof'), sha256: '1'.repeat(64), receiptPath: 'proof/browser/runtime.json' }],
+    }),
+  });
+  assert.equal(processed.processed, true);
+  assert.equal(processed.applied.state.currentPhase, 'COMPLETE');
+  assert.equal(processed.applied.state.activeWriter, 'none');
+  assert.deepEqual(processed.result.changedFiles, []);
 });
 
 test('failed signed execution records a blocked mission event and archives the item as failed', async () => {
