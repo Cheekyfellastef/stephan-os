@@ -39,6 +39,13 @@
   gap: 0.75rem;
 }
 
+.mission-operations-outcome {
+  max-width: 72ch;
+  margin-top: 0.35rem;
+  color: #d6e9f8;
+  font-size: 0.78rem;
+}
+
 .mission-operations-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -65,6 +72,64 @@
   overflow-wrap: anywhere;
   color: #e6f4ff;
   font-size: 0.8rem;
+}
+
+.mission-operations-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.mission-operations-evidence-group {
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid rgba(103, 182, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(3, 11, 22, 0.5);
+}
+
+.mission-operations-evidence-group:last-child {
+  grid-column: 1 / -1;
+}
+
+.mission-operations-evidence-group h4 {
+  margin: 0 0 0.4rem;
+  color: #9fd3ff;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.mission-operations-evidence-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-operations-evidence-list li {
+  min-width: 0;
+  padding-top: 0.4rem;
+  border-top: 1px solid rgba(103, 182, 255, 0.12);
+  overflow-wrap: anywhere;
+  color: #d6e9f8;
+  font-size: 0.76rem;
+}
+
+.mission-operations-evidence-list li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.mission-operations-evidence-list code {
+  color: #c9edff;
+  white-space: normal;
+}
+
+.mission-operations-pr-link {
+  width: fit-content;
+  color: #9fd3ff;
+  font-size: 0.78rem;
 }
 
 .mission-operations-next-action,
@@ -111,14 +176,20 @@
 }
 
 @media (max-width: 900px) {
-  .mission-operations-grid {
+  .mission-operations-grid,
+  .mission-operations-evidence-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 560px) {
-  .mission-operations-grid {
+  .mission-operations-grid,
+  .mission-operations-evidence-grid {
     grid-template-columns: 1fr;
+  }
+
+  .mission-operations-evidence-group:last-child {
+    grid-column: auto;
   }
 
   .mission-operations-item__header {
