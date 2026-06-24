@@ -1,0 +1,31 @@
+name: Tailscale Connectivity
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tailscale-connectivity.yml'
+      - 'stephanos-server/config/tailscaleOrigin.js'
+      - 'stephanos-server/config/runtimeConfig.js'
+      - 'stephanos-server/server.js'
+      - 'stephanos-server/tests/tailscale-origin.test.js'
+      - 'shared/runtime/stephanosHomeNode.mjs'
+      - 'shared/runtime/stephanosHomeNode.test.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-tailscale-connectivity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Parse Tailscale origin authority
+        run: node --check stephanos-server/config/tailscaleOrigin.js
+      - name: Run Tailscale origin regression tests
+        run: node --test stephanos-server/tests/tailscale-origin.test.js
+      - name: Run backend origin and home-node regressions
+        run: node --test stephanos-server/tests/runtime-config.test.js shared/runtime/stephanosHomeNode.test.mjs

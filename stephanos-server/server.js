@@ -19,6 +19,7 @@ import {
   isAllowedPrivateFrontendOrigin,
   resolveAllowedOrigins,
 } from './config/runtimeConfig.js';
+import { isAllowedTailscaleFrontendOrigin } from './config/tailscaleOrigin.js';
 import { memoryService } from './services/memoryService.js';
 import { durableMemoryService } from './services/durableMemoryService.js';
 import { providerSecretStore } from './services/providerSecretStore.js';
@@ -39,7 +40,11 @@ app.use(
         return;
       }
 
-      if (allowedOriginsSet.has(origin) || isAllowedPrivateFrontendOrigin(origin)) {
+      if (
+        allowedOriginsSet.has(origin)
+        || isAllowedPrivateFrontendOrigin(origin)
+        || isAllowedTailscaleFrontendOrigin(origin)
+      ) {
         callback(null, true);
         return;
       }
