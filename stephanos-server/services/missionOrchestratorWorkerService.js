@@ -41,12 +41,25 @@ function adapterForAction(action) {
   return '';
 }
 
-export async function publishMissionWorkerAction(state, options = {}) {
-  if (state.dispatch?.status === 'running' && ['AGENT_IMPLEMENTATION', 'LIVE_RUNTIME_INVESTIGATION'].includes(state.currentPhase)) return { published: false, reason: 'agent-already-running', action: null, path: '' };
+async function beginRepairIfRequired(state, options) {
+  if (state.currentPhase !== 'REPAIR_REQUIRED') return { state, repairStarted: false };
+  const round = Number.isInteger(state.repair?.currentRound) ? state.repair.currentRound + 1 : 1;
+  const started = await appendMissionEvent(state.missionId, {
+    eventId: `repair-${state.missionId}-round-${round}`.slice(0, 128),
+    eventType: 'REPAIR_STARTED',
+    summary: `Bounded Codex repair round ${round} started after required check failure.`,
+  }, options);
+  return { state: started.state, repairStarted: true };
+}
+
+export async function publishMissionWorkerAction(inputState, options = {}) {
+  if (inputState.dispatch?.status === 'running' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION'].includes(inputState.currentPhase)) return { published: false, reason: 'agent-already-running', action: null, path: '' };
+  const prepared = await beginRepairIfRequired(inputState, options);
+  const state = prepared.state;
   const action = buildMissionWorkerAction(state, options);
-  if (action.executable !== true) return { published: false, reason: action.reason || action.finalVerdict, action, path: '' };
+  if (action.executable !== true) return { published: false, reason: action.reason || action.finalVerdict, action, path: '', repairStarted: prepared.repairStarted };
   const adapter = adapterForAction(action);
-  if (!adapter) return { published: false, reason: 'unsupported-worker-adapter', action, path: '' };
+  if (!adapter) return { published: false, reason: 'unsupported-worker-adapter', action, path: '', repairStarted: prepared.repairStarted };
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) throw new Error('Mission worker queue directory is not configured.');
   const paths = queuePaths(root, adapter);
@@ -56,15 +69,15 @@ export async function publishMissionWorkerAction(state, options = {}) {
     if (!options.privateKeyPem && !options.privateKeyPath) throw new Error('Mission worker authorization private key is not configured.');
     const privateKeyPem = options.privateKeyPem || await readFile(options.privateKeyPath, 'utf8');
     payload = issueMissionWorkerAuthorization(action, privateKeyPem, options);
-    if (payload.finalVerdict !== 'MISSION_WORKER_REQUEST_ISSUED') return { published: false, reason: payload.finalVerdict, action, payload, path: '' };
+    if (payload.finalVerdict !== 'MISSION_WORKER_REQUEST_ISSUED') return { published: false, reason: payload.finalVerdict, action, payload, path: '', repairStarted: prepared.repairStarted };
   }
   const path = resolve(paths.pending, `${action.actionId}.json`);
   const published = await createImmutableJson(path, { schemaVersion: 'stephanos.mission-worker-queue-item.v1', adapter, actionId: action.actionId, missionId: state.missionId, createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(), payload });
-  if (!published) return { published: false, reason: 'action-already-published', action, path };
+  if (!published) return { published: false, reason: 'action-already-published', action, path, repairStarted: prepared.repairStarted };
   if (action.actionKind === 'agent-handoff') {
     await appendMissionEvent(state.missionId, { eventId: `dispatch-${action.actionId}`.slice(0, 128), eventType: 'AGENT_DISPATCHED', agentId: action.adapter === 'codex' ? 'codex' : 'openclaw-standalone', summary: `${action.adapter} handoff published to the durable worker queue.` }, options);
   }
-  return { published: true, reason: '', action, payload, path, adapter };
+  return { published: true, reason: '', action, payload, path, adapter, repairStarted: prepared.repairStarted };
 }
 
 export async function publishNextMissionWorkerAction(options = {}) {
