@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { executeSignedOperation, inspectSignedOperation, parseBridgeOutput } from './mission-orchestrator-worker.mjs';
+import {
+  executeSignedOperation,
+  inspectGitHubAction,
+  inspectSignedOperation,
+  parseBridgeOutput,
+} from './mission-orchestrator-worker.mjs';
 
 function payload(operation, fields = {}) {
   return {
@@ -77,6 +82,41 @@ test('normalizes PR and check inspection into deterministic identity', async () 
   const checks = await inspectSignedOperation(payload('check-pr'), {}, {}, { runCommand });
   assert.equal(checks.checks[0].status, 'success');
   assert.equal(checks.headSha, 'b'.repeat(40));
+});
+
+test('read-only GitHub inspection records failed checks as successful inspection evidence', async () => {
+  let invocation;
+  const result = await inspectGitHubAction({
+    actionKind: 'github-inspection',
+    operation: 'check-pr',
+    repository: 'Cheekyfellastef/stephan-os',
+    repositoryRoot: 'C:\\worktree',
+    prNumber: 1300,
+  }, {}, {
+    now: new Date('2026-06-24T23:20:00.000Z'),
+    runCommand(executable, args, options) {
+      invocation = { executable, args, options };
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          number: 1300,
+          headRefOid: 'd'.repeat(40),
+          mergeable: 'MERGEABLE',
+          state: 'OPEN',
+          statusCheckRollup: [{ name: 'Build', conclusion: 'FAILURE', detailsUrl: 'https://example.test/check' }],
+        }),
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(invocation.executable, 'gh.exe');
+  assert.deepEqual(invocation.args.slice(0, 4), ['pr', 'view', '1300', '--repo']);
+  assert.equal(invocation.options.cwd, 'C:\\worktree');
+  assert.equal(result.execution.success, true);
+  assert.match(result.execution.commandOutputHash, /^[a-f0-9]{64}$/);
+  assert.equal(result.execution.completedAt, '2026-06-24T23:20:00.000Z');
+  assert.equal(result.inspection.checks[0].status, 'failure');
+  assert.equal(result.inspection.headSha, 'd'.repeat(40));
 });
 
 test('normalizes merged PR inspection to the exact merge commit', async () => {
