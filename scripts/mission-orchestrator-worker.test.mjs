@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  executeCodexAction,
   executeSignedOperation,
   inspectGitHubAction,
   inspectSignedOperation,
   parseBridgeOutput,
+  parseCodexJsonLines,
 } from './mission-orchestrator-worker.mjs';
 
 function payload(operation, fields = {}) {
@@ -35,6 +38,12 @@ test('parses bridge key-value output without exposing assumptions about ordering
   });
 });
 
+test('parses Codex JSONL while ignoring diagnostic lines', () => {
+  assert.deepEqual(parseCodexJsonLines('{"type":"turn.started"}\ndiagnostic\n{"type":"turn.completed"}\n'), [
+    { type: 'turn.started' }, { type: 'turn.completed' },
+  ]);
+});
+
 test('executes the bridge through an argument array and hashes its output', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mission-worker-script-'));
   const bridgePath = join(root, 'bridge.ps1');
@@ -52,6 +61,47 @@ test('executes the bridge through an argument array and hashes its output', asyn
   assert.ok(invocation.args.includes('-RequestPath'));
   assert.equal(result.success, true);
   assert.match(result.commandOutputHash, /^[a-f0-9]{64}$/);
+});
+
+test('executes Codex non-interactively and grounds changed files and test evidence', async () => {
+  const worktreePath = await mkdtemp(join(tmpdir(), 'mission-codex-worktree-'));
+  const claim = { processingPath: join(worktreePath, 'action.json') };
+  let invocation;
+  const testCommand = 'node --test shared/agents/example.test.mjs';
+  const commandEvent = { type: 'item.completed', item: { id: 'cmd-1', type: 'command_execution', command: testCommand, status: 'completed', exit_code: 0 } };
+  const result = await executeCodexAction({
+    actionKind: 'agent-handoff',
+    adapter: 'codex',
+    actionId: 'codex-action-1',
+    missionId: 'codex-worker-test',
+    worktreePath,
+    allowedFiles: ['shared/agents/**'],
+    requiredTests: [testCommand],
+    requiredEvidence: ['focused test output'],
+    repairRound: 0,
+  }, claim, {
+    now: new Date('2026-06-24T23:30:00.000Z'),
+    runCommand(executable, args, options) {
+      if (executable === 'codex.exe') {
+        invocation = { executable, args, options };
+        const outputPath = args[args.indexOf('--output-last-message') + 1];
+        writeFileSync(outputPath, JSON.stringify({ success: true, summary: 'Implemented.', evidence: [{ requirement: 'focused test output', command: testCommand }] }));
+        return { status: 0, stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'thread-123' })}\n${JSON.stringify(commandEvent)}\n`, stderr: '' };
+      }
+      if (args.includes('diff')) return { status: 0, stdout: 'shared/agents/example.mjs\n', stderr: '' };
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(invocation.executable, 'codex.exe');
+  assert.ok(invocation.args.includes('workspace-write'));
+  assert.ok(invocation.args.includes('--json'));
+  assert.equal(invocation.options.cwd, worktreePath);
+  assert.equal(result.success, true);
+  assert.equal(result.resultId, 'thread-123');
+  assert.deepEqual(result.changedFiles, ['shared/agents/example.mjs']);
+  assert.equal(result.evidenceReceipts[0].requirement, 'focused test output');
+  assert.match(result.evidenceReceipts[0].commandOutputHash, /^[a-f0-9]{64}$/);
+  assert.match(result.receipt.commandOutputHash, /^[a-f0-9]{64}$/);
 });
 
 test('inspects worktree and commit truth with shell-free git argument arrays', async () => {
