@@ -16,6 +16,19 @@ function iso(value) {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : '';
 }
 
+function githubUrl(value) {
+  const candidate = text(value);
+  if (!candidate) return '';
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === 'github.com'
+      ? parsed.toString()
+      : '';
+  } catch {
+    return '';
+  }
+}
+
 function normalizeState(value) {
   const state = text(value, 'QUEUED').toUpperCase().replace(/[\s-]+/g, '_');
   return ACTIVE_STATES.has(state) || TERMINAL_STATES.has(state) ? state : 'BLOCKED';
@@ -28,7 +41,7 @@ function normalizeCheck(check = {}) {
     name: text(check.name || check.id, 'Unknown check'),
     status,
     required: check.required !== false,
-    url: text(check.url),
+    url: githubUrl(check.url),
     startedAt: iso(check.startedAt),
     completedAt: iso(check.completedAt),
   };
@@ -138,7 +151,7 @@ export function buildMissionOperationsProjection(input = {}, options = {}) {
     },
     pullRequest: {
       number: Number.isInteger(github.prNumber) ? github.prNumber : null,
-      url: text(github.prUrl),
+      url: githubUrl(github.prUrl),
       state: text(github.prState, 'none'),
       mergeable: github.mergeable === true,
       checks,
