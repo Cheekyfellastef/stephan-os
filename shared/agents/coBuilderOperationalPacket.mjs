@@ -84,11 +84,29 @@ function isGlobalFilePattern(path) {
   return normalizePacketPath(path).startsWith('**/');
 }
 
+function isRootFilePattern(path) {
+  const text = normalizePacketPath(path);
+  return !text.includes('/') && text.includes('*');
+}
+
+function rootFilePatternMatches(path, pattern) {
+  const expression = pattern
+    .split('*')
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*');
+  return new RegExp(`^${expression}$`).test(path);
+}
+
 function scopeOverlap(left, right) {
   const leftText = normalizePacketPath(left);
   const rightText = normalizePacketPath(right);
   if (isGlobalWildcardScope(leftText)) return true;
   if (isGlobalFilePattern(rightText)) return false;
+  if (isRootFilePattern(rightText)) {
+    if (leftText.includes('/')) return false;
+    if (isRootFilePattern(leftText)) return true;
+    return rootFilePatternMatches(leftText, rightText);
+  }
   const a = globBase(leftText);
   const b = globBase(rightText);
   if (!a || !b) return true;
