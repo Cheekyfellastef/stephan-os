@@ -10,6 +10,7 @@ import localShellRouter from './routes/local-shell.js';
 import musicRouter from './routes/music.js';
 import setupRouter from './routes/setup.js';
 import githubRouter from './routes/github.js';
+import missionOperationsRouter from './routes/mission-operations.js';
 import { createLogger } from './utils/logger.js';
 import { DEFAULT_PROVIDER_KEY } from '../shared/ai/providerDefaults.mjs';
 import {
@@ -70,6 +71,7 @@ app.use('/api/local', localShellRouter);
 app.use('/api/music', musicRouter);
 app.use('/api/setup', setupRouter);
 app.use('/api/github', githubRouter);
+app.use('/api/mission-operations', missionOperationsRouter);
 
 app.use((error, _req, res, next) => {
   if (error?.message?.startsWith('CORS origin denied:')) {
