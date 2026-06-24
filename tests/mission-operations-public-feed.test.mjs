@@ -3,7 +3,21 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readPublicMissionOperations } from '../stephanos-server/services/missionOperationsPublicFeed.js';
+import {
+  readPublicMissionOperations,
+  resolvePublicMissionOperationsDirectory,
+} from '../stephanos-server/services/missionOperationsPublicFeed.js';
+
+
+test('public feed resolves the canonical Mission Runner receipt directory on Windows', () => {
+  const directory = resolvePublicMissionOperationsDirectory({
+    USERPROFILE: 'C:\\Users\\Stephan Callear',
+  });
+  assert.match(
+    directory.replace(/\\/g, '/'),
+    /Users\/Stephan Callear\/Documents\/OpenClaw-Standalone\/mission-runner\/proof\/mission-operations$/,
+  );
+});
 
 
 test('public mission feed withholds local receipt and worktree paths', async () => {
