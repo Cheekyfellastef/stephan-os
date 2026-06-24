@@ -103,5 +103,15 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const current = await readMissionRecord(missionId, options);
   if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
-  return appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+  const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
+  if (result.success === true && evidenceReceipts.length) {
+    collected = await appendMissionEvent(missionId, {
+      eventId: `evidence-${actionId}`.slice(0, 128),
+      eventType: 'EVIDENCE_RECORDED',
+      receipts: evidenceReceipts,
+      summary: `${adapter} grounded evidence collected from the durable worker queue.`,
+    }, options);
+  }
+  return collected;
 }
