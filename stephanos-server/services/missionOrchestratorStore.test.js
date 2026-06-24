@@ -182,7 +182,7 @@ test('approval event log redacts the raw token while state keeps only its hash',
   assert.equal(approved.state.currentPhase, 'MERGE_PULL_REQUEST');
   assert.match(approved.state.approval.suppliedTokenHash, /^[a-f0-9]{64}$/);
 
-  const eventLog = await readFile(approved.statePath.replace(/\.state\.json$/, '.events.ndjson'), 'utf8');
+  const eventLog = await readFile(beforeApproval.eventPath, 'utf8');
   assert.equal(eventLog.includes(approvalToken), false);
   assert.match(eventLog, /\[REDACTED\]/);
 });
