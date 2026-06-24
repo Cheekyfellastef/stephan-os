@@ -69,3 +69,39 @@ jobs:
         run: npm run stephanos:build
       - name: Verify generated output matches source
         run: npm run stephanos:verify
+
+  verify-windows-openclaw-acceptance:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run signed read-only OpenClaw acceptance path
+        shell: pwsh
+        run: |
+          $missionRunnerRoot = Join-Path $env:RUNNER_TEMP 'openclaw-standalone\mission-runner'
+          $outputPath = Join-Path $env:RUNNER_TEMP 'mission-operations-acceptance-output.txt'
+          $output = @(
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+              -File 'scripts\windows\verify-openclaw-mission-operations-acceptance.ps1' `
+              -StephanosRepositoryRoot $env:GITHUB_WORKSPACE `
+              -MissionRunnerRoot $missionRunnerRoot 2>&1
+          )
+          $exitCode = $LASTEXITCODE
+          $output | Tee-Object -FilePath $outputPath
+          if ($exitCode -ne 0) {
+            throw "Signed OpenClaw acceptance path failed with exit code $exitCode."
+          }
+          if ($output -notcontains 'FINAL_VERDICT=STEPHANOS_MISSION_OPERATIONS_ACCEPTANCE_PASS') {
+            throw 'Signed OpenClaw acceptance verdict was not present.'
+          }
+      - name: Upload sanitized Mission Operations acceptance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mission-operations-windows-acceptance
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}\mission-operations-acceptance-output.txt
+            ${{ runner.temp }}\openclaw-standalone\mission-runner\proof\mission-operations\*.json
