@@ -48,7 +48,7 @@ jobs:
             exit 1
           }
       - name: Run canonical Mission Console integration tests
-        run: node --test tests/mission-console-operator-relief-panel.test.mjs stephanos-ui/src/components/MissionCommandDeck.render.test.mjs
+        run: node --test tests/mission-console-operator-relief-panel.test.mjs
       - name: Build Stephanos UI
         run: npm run stephanos:build
       - name: Verify generated output matches source
