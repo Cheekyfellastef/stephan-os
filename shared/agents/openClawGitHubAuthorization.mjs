@@ -1,4 +1,6 @@
 import { createHash, sign, verify } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const AUTHORIZATION_SCHEMA = 'stephanos.openclaw-github-authorization.v1';
 const AUTHORIZATION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{7,127}$/;
@@ -53,9 +55,7 @@ function validateClaims(claims, now = new Date()) {
 export function issueOpenClawGitHubAuthorization(claims, privateKeyPem, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const blockers = validateClaims(claims, now);
-  if (blockers.length) {
-    return { finalVerdict: 'BLOCKED', blockers };
-  }
+  if (blockers.length) return { finalVerdict: 'BLOCKED', blockers };
   const canonical = canonicalAuthorizationClaims(claims);
   const signature = sign(null, Buffer.from(canonical, 'utf8'), privateKeyPem).toString('base64');
   return {
@@ -98,4 +98,48 @@ export function verifyOpenClawGitHubAuthorization(envelope, publicKeyPem, option
     authorizationId: text(envelope.claims?.authorizationId).toLowerCase(),
     claimsSha256: expectedHash,
   };
+}
+
+export function reserveOpenClawGitHubAuthorization(receiptRoot, verification, now = new Date()) {
+  const root = resolve(receiptRoot);
+  const receiptPath = resolve(root, `${verification.authorizationId}.json`);
+  mkdirSync(root, { recursive: true });
+  const receipt = {
+    schemaVersion: 'stephanos.openclaw-github-authorization-consumption.v1',
+    authorizationId: verification.authorizationId,
+    claimsSha256: verification.claimsSha256,
+    operation: verification.claims?.operation || '',
+    missionId: verification.claims?.missionId || '',
+    repository: verification.claims?.repository || '',
+    branch: verification.claims?.branch || '',
+    reservedAt: now.toISOString(),
+    finalVerdict: 'RESERVED',
+  };
+  try {
+    writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    return { finalVerdict: 'AUTHORIZATION_RESERVED', receiptPath, receipt };
+  } catch (error) {
+    if (error?.code === 'EEXIST') {
+      return {
+        finalVerdict: 'BLOCKED',
+        receiptPath,
+        blockers: ['Authorization has already been reserved or consumed.'],
+      };
+    }
+    return {
+      finalVerdict: 'BLOCKED',
+      receiptPath,
+      blockers: [`Authorization reservation failed: ${error?.message || 'unknown error'}`],
+    };
+  }
+}
+
+export function completeOpenClawGitHubAuthorizationReservation(reservation, finalVerdict, now = new Date()) {
+  const receipt = {
+    ...reservation.receipt,
+    completedAt: now.toISOString(),
+    finalVerdict,
+  };
+  writeFileSync(reservation.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+  return receipt;
 }
