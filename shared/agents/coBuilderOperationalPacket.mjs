@@ -6,6 +6,10 @@ export const CO_BUILDER_OPERATIONAL_PACKET_KIND = 'stephanos.co_builder.operatio
 export const DEFAULT_OPERATIONAL_FORBIDDEN_FILES = Object.freeze([
   'apps/stephanos/dist/**',
   'stephanos-server/data/**',
+  'runtime/**',
+  'runtime-data/**',
+  'root-data/**',
+  'root data/**',
   'data/**',
   'tmp/**',
   '.git/**',
@@ -20,9 +24,10 @@ export const DEFAULT_OPERATIONAL_FORBIDDEN_FILES = Object.freeze([
   '**/*token*',
 ]);
 
-const SECRET_OR_GENERATED_PATTERN = /(^|\/)(apps\/stephanos\/dist|stephanos-server\/data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
+const SECRET_OR_GENERATED_PATTERN = /(^|\/)(apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-z]:\//i;
 const LOWERCASE_SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const RECEIPT_PATH_PREFIX_PATTERN = /^(proof|proofs|receipts|evidence\/receipts)\//;
 
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -65,6 +70,29 @@ function includesForbiddenPath(path) {
   return !text || isAbsoluteOrTraversalPath(text) || SECRET_OR_GENERATED_PATTERN.test(text) || /secret|token/i.test(text);
 }
 
+function globBase(path) {
+  const text = normalizePacketPath(path).replace(/\*\*.*$/, '').replace(/\*.*$/, '');
+  return text.replace(/\/+$/, '');
+}
+
+function scopeOverlap(left, right) {
+  const a = globBase(left);
+  const b = globBase(right);
+  if (!a || !b) return true;
+  if (a === b) return true;
+  return a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
+function findAllowedForbiddenOverlaps(allowedScopes, forbiddenScopes) {
+  const overlaps = [];
+  for (const allowed of allowedScopes) {
+    for (const forbidden of forbiddenScopes) {
+      if (scopeOverlap(allowed, forbidden)) overlaps.push(`${allowed} overlaps ${forbidden}`);
+    }
+  }
+  return overlaps;
+}
+
 function normalizeEvidenceToken(value) {
   return asText(value, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -92,13 +120,13 @@ function validLowercaseHash(value) {
 
 function validReceiptPath(value) {
   const text = normalizePacketPath(value);
-  return Boolean(text) && !isAbsoluteOrTraversalPath(text);
+  return Boolean(text) && RECEIPT_PATH_PREFIX_PATTERN.test(text) && !includesForbiddenPath(text);
 }
 
 function evidenceHasDeterministicReceipt(item) {
   if (validLowercaseHash(item.sha256)) return true;
   if (validLowercaseHash(item.commandOutputHash)) return true;
-  if (Number.isInteger(item.exitCode)) return true;
+  if (Number.isInteger(item.exitCode) && item.exitCode === 0) return true;
   return validReceiptPath(item.receiptPath);
 }
 
@@ -120,7 +148,7 @@ function evidenceItemText(item) {
 function evidenceRequirementSatisfied(requirement, suppliedEvidence) {
   const normalizedRequirement = normalizeEvidenceToken(requirement);
   if (!normalizedRequirement) return false;
-  return suppliedEvidence.some((item) => evidenceItemVerified(item) && normalizeEvidenceToken(evidenceItemText(item)).includes(normalizedRequirement));
+  return suppliedEvidence.some((item) => evidenceItemVerified(item) && normalizeEvidenceToken(item.requirement) === normalizedRequirement);
 }
 
 function inferMissionKind({ operatorIntent, missionBrainNextAction = {}, supportSnapshot = {} }) {
@@ -147,8 +175,10 @@ export function buildCoBuilderOperationalPacket({
 } = {}) {
   const rawAllowedFiles = uniqueList(harnessAgentProjection.allowedFileScopes || agentWorkRoutingProjection.allowedFiles || []);
   const normalizedAllowedFileCandidates = rawAllowedFiles.map(normalizePacketPath);
+  const callerForbiddenScopes = [...asList(harnessAgentProjection.forbiddenFileScopes), ...asList(harnessAgentProjection.forbiddenFiles)].map(normalizePacketPath);
   const allowedFiles = normalizedAllowedFileCandidates.filter((path) => !includesForbiddenPath(path));
-  const forbiddenFiles = uniqueList([...DEFAULT_OPERATIONAL_FORBIDDEN_FILES, ...asList(harnessAgentProjection.forbiddenFileScopes).map(normalizePacketPath), ...asList(harnessAgentProjection.forbiddenFiles).map(normalizePacketPath), ...normalizedAllowedFileCandidates.filter(includesForbiddenPath)]);
+  const forbiddenFiles = uniqueList([...DEFAULT_OPERATIONAL_FORBIDDEN_FILES, ...callerForbiddenScopes, ...normalizedAllowedFileCandidates.filter(includesForbiddenPath)]);
+  const allowedForbiddenOverlaps = findAllowedForbiddenOverlaps(allowedFiles, callerForbiddenScopes);
   const requiredEvidence = uniqueList([
     ...asList(agentWorkRoutingProjection.requiredProof),
     ...asList(missionBrainNextAction.proofRequiredBeforeMerge),
@@ -175,6 +205,7 @@ export function buildCoBuilderOperationalPacket({
   if (!requiredEvidence.length) blockingReasons.push('Evidence requirements are unclear.');
   if (requiredEvidence.length && unsatisfiedEvidence.length) blockingReasons.push('Required evidence has not been supplied as verified proof.');
   if (sensitive) blockingReasons.push('Scope touches or implies forbidden, generated, runtime, policy, merge, environment, or secret-bearing work.');
+  if (allowedForbiddenOverlaps.length) blockingReasons.push('Allowed source scope overlaps a caller-provided forbidden scope.');
 
   const requestedRound = Number(supportSnapshot.coBuilderLoopRound || coBuilderLoopProjection.loopRound || 1) || 1;
   if (requestedRound > MAX_REPAIR_ROUNDS) blockingReasons.push('Maximum repair rounds exceeded.');
@@ -229,6 +260,7 @@ export function buildCoBuilderOperationalPacket({
     requiredEvidence,
     suppliedEvidence: suppliedEvidence.map(evidenceItemText).filter(Boolean),
     unsatisfiedEvidence,
+    scopeOverlaps: allowedForbiddenOverlaps,
     evidenceSatisfied: requiredEvidence.length > 0 && unsatisfiedEvidence.length === 0,
     requiredTests,
     browserProofRequired,

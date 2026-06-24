@@ -74,7 +74,7 @@ test('forbidden paths cannot enter allowedFiles and defaults include generated r
     harnessAgentProjection: { ...base.harnessAgentProjection, allowedFileScopes: ['shared/agents/**', 'apps/stephanos/dist/**', 'node_modules/x', '.env', 'secret.key'] },
   });
   assert.deepEqual(packet.allowedFiles, ['shared/agents/**']);
-  for (const forbidden of ['apps/stephanos/dist/**', 'stephanos-server/data/**', 'data/**', 'tmp/**', '.git/**', 'node_modules/**', '.env', '.env.*', '**/*.pem', '**/*.pfx', '**/*.key']) {
+  for (const forbidden of ['apps/stephanos/dist/**', 'stephanos-server/data/**', 'runtime/**', 'runtime-data/**', 'root-data/**', 'root data/**', 'data/**', 'tmp/**', '.git/**', 'node_modules/**', '.env', '.env.*', '**/*.pem', '**/*.pfx', '**/*.key']) {
     assert.ok(DEFAULT_OPERATIONAL_FORBIDDEN_FILES.includes(forbidden));
     assert.ok(packet.forbiddenFiles.includes(forbidden));
   }
@@ -98,6 +98,33 @@ test('canonical path validation rejects backslash generated runtime absolute UNC
   assert.deepEqual(packet.allowedFiles, ['shared/agents/**']);
   for (const forbidden of ['apps/stephanos/dist/index.js', 'stephanos-server/data/memory.json', 'data/runtime.json', 'C:/Users/Stephan/secret.txt', '//server/share/file.js', '../outside.js']) {
     assert.ok(packet.forbiddenFiles.includes(forbidden), `missing forbidden normalized path: ${forbidden}`);
+  }
+});
+
+
+test('runtime paths using forward or backslashes cannot enter allowedFiles', () => {
+  const packet = buildCoBuilderOperationalPacket({
+    ...base,
+    harnessAgentProjection: { ...base.harnessAgentProjection, allowedFileScopes: ['shared/agents/**', 'runtime/session.json', 'runtime\\session.json', 'runtime-data\\cache.json', 'root-data/state.json'] },
+  });
+  assert.deepEqual(packet.allowedFiles, ['shared/agents/**']);
+  for (const forbidden of ['runtime/session.json', 'runtime-data/cache.json', 'root-data/state.json']) {
+    assert.ok(packet.forbiddenFiles.includes(forbidden));
+  }
+});
+
+test('allowed scopes overlapping caller forbidden scopes block exact parent nested and windows variants', () => {
+  const cases = [
+    { allowedFileScopes: ['src/generated/**'], forbiddenFileScopes: ['src/generated/**'] },
+    { allowedFileScopes: ['src/**'], forbiddenFileScopes: ['src/generated/**'] },
+    { allowedFileScopes: ['src/generated/widgets/**'], forbiddenFileScopes: ['src/generated/**'] },
+    { allowedFileScopes: ['src\\**'], forbiddenFileScopes: ['src\\generated\\**'] },
+  ];
+  for (const harnessAgentProjection of cases) {
+    const packet = buildCoBuilderOperationalPacket({ ...base, harnessAgentProjection: { ...base.harnessAgentProjection, ...harnessAgentProjection } });
+    assert.equal(packet.finalVerdict, 'BLOCKED');
+    assert.match(packet.blockingReasons.join(' '), /overlaps/);
+    assert.ok(packet.scopeOverlaps.length > 0);
   }
 });
 
@@ -125,7 +152,7 @@ test('valid hash exit-code and receipt-path evidence can satisfy matching requir
     { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, sha256: 'a'.repeat(64) },
     { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, commandOutputHash: 'f'.repeat(64) },
     { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 },
-    { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, receiptPath: 'tmp/receipts/focused-test.json' },
+    { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, receiptPath: 'proof/receipts/focused-test.json' },
   ];
   for (const evidence of validEvidence) {
     const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [evidence] } });
@@ -133,6 +160,54 @@ test('valid hash exit-code and receipt-path evidence can satisfy matching requir
     assert.equal(packet.evidenceSatisfied, true);
     assert.deepEqual(packet.unsatisfiedEvidence, []);
   }
+});
+
+
+test('nonzero exit codes do not satisfy evidence requirements', () => {
+  const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 1 }] } });
+  assert.equal(packet.finalVerdict, 'BLOCKED');
+  assert.equal(packet.evidenceSatisfied, false);
+});
+
+test('evidence requirement identity must match exactly after normalization', () => {
+  const buildCannotSatisfyBuildVerification = buildCoBuilderOperationalPacket({
+    ...base,
+    agentWorkRoutingProjection: { ...base.agentWorkRoutingProjection, requiredProof: ['build verification output'] },
+    verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'build', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 }] },
+  });
+  assert.equal(buildCannotSatisfyBuildVerification.finalVerdict, 'BLOCKED');
+  assert.deepEqual(buildCannotSatisfyBuildVerification.unsatisfiedEvidence, ['build verification output']);
+
+  const buildVerificationCannotSatisfyBuild = buildCoBuilderOperationalPacket({
+    ...base,
+    agentWorkRoutingProjection: { ...base.agentWorkRoutingProjection, requiredProof: ['build'] },
+    verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'build verification output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 }] },
+  });
+  assert.equal(buildVerificationCannotSatisfyBuild.finalVerdict, 'BLOCKED');
+  assert.deepEqual(buildVerificationCannotSatisfyBuild.unsatisfiedEvidence, ['build']);
+});
+
+test('receipt paths must stay in bounded proof families and avoid forbidden roots', () => {
+  const invalidReceiptPaths = [
+    '/proof/receipts/out.json',
+    'C:\\proof\\receipts\\out.json',
+    '..\\proof\\receipts\\out.json',
+    'proof/receipts/../out.json',
+    'proof/receipts/secret.key',
+    'apps/stephanos/dist/receipt.json',
+    'runtime/receipt.json',
+    'data/receipt.json',
+    'tmp/receipt.json',
+    'node_modules/pkg/receipt.json',
+    '.git/receipt.json',
+    'misc/receipt.json',
+  ];
+  for (const receiptPath of invalidReceiptPaths) {
+    const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'receipt', verified: true, receiptPath }] } });
+    assert.equal(packet.finalVerdict, 'BLOCKED', `unexpected ready receiptPath=${receiptPath}`);
+  }
+  const valid = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'receipt', verified: true, receiptPath: 'proof/receipts/focused-test.json' }] } });
+  assert.equal(valid.finalVerdict, 'READY_FOR_OPERATOR_APPROVAL');
 });
 
 test('missing empty placeholder or unresolved mission id blocks safely', () => {
