@@ -136,6 +136,17 @@ test('Mission Operations panel is canonical, polled, and not a duplicate dashboa
   assert.doesNotMatch(source, /MissionOperationsDashboard/);
 });
 
+test('Mission Operations is integrated inside the canonical Mission Command Deck', async () => {
+  const source = await readFile(new URL('../stephanos-ui/src/components/MissionCommandDeck.jsx', import.meta.url), 'utf8');
+  const consoleSource = await readFile(new URL('../stephanos-ui/src/components/MissionConsoleTile.jsx', import.meta.url), 'utf8');
+  assert.match(source, /import MissionOperationsPanel from '\.\/MissionOperationsPanel'/);
+  assert.match(source, /<MissionOperationsPanel/);
+  assert.match(source, /missionConsoleMissionOperationsPanel/);
+  assert.match(source, /missionId=\{missionCommandPacket\?\.missionId \|\| ''\}/);
+  assert.match(consoleSource, /<MissionCommandDeck/);
+  assert.doesNotMatch(consoleSource, /MissionOperationsDashboard/);
+});
+
 test('server mounts the read-only mission operations route', async () => {
   const source = await readFile(new URL('../stephanos-server/server.js', import.meta.url), 'utf8');
   const route = await readFile(new URL('../stephanos-server/routes/mission-operations.js', import.meta.url), 'utf8');
