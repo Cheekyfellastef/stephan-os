@@ -56,7 +56,7 @@ jobs:
       - name: Run Mission Orchestrator lifecycle and worker planner tests
         run: node --test shared/agents/missionOrchestrator.test.mjs shared/agents/missionOrchestratorWorker.test.mjs shared/agents/missionOrchestratorWorkerResult.test.mjs
       - name: Run Mission Orchestrator durable runtime and worker queue tests
-        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js
+        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js
       - name: Run persistent worker adapter tests
         run: node --test scripts/mission-orchestrator-worker.test.mjs
       - name: Run signed authorization and executor regressions
