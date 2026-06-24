@@ -10,11 +10,12 @@ function text(value, fallback = '') {
 function receipt(action, execution) {
   const hash = text(execution.commandOutputHash).toLowerCase();
   if (!SHA256_PATTERN.test(hash)) throw new Error('Worker execution requires an exact lowercase command output hash.');
+  const readOnly = action.actionKind === 'github-inspection';
   return {
     receiptId: `worker-${action.actionId}`.slice(0, 128),
     requirement: action.receiptRequirement,
-    source: 'openclaw-standalone-worker',
-    evidenceType: 'signed-operation',
+    source: readOnly ? 'openclaw-github-readonly' : 'openclaw-standalone-worker',
+    evidenceType: readOnly ? 'github-inspection' : 'signed-operation',
     verified: execution.success === true,
     commandOutputHash: hash,
     createdAt: text(execution.completedAt),
@@ -23,24 +24,18 @@ function receipt(action, execution) {
 
 function checkList(value) {
   return Array.isArray(value) ? value.map((check, index) => ({
-    id: text(check.id || check.name, `check-${index + 1}`),
-    name: text(check.name || check.id, `Check ${index + 1}`),
-    status: text(check.status || check.state, 'unknown').toLowerCase(),
-    required: check.required !== false,
-    url: text(check.url),
-    completedAt: text(check.completedAt),
+    id: text(check.id || check.name, `check-${index + 1}`), name: text(check.name || check.id, `Check ${index + 1}`),
+    status: text(check.status || check.state, 'unknown').toLowerCase(), required: check.required !== false,
+    url: text(check.url), completedAt: text(check.completedAt),
   })) : [];
 }
 
 export function buildMissionEventFromWorkerResult(action, execution = {}, inspection = {}) {
-  if (action?.actionKind !== 'signed-openclaw-operation') throw new Error('Worker action is not a signed OpenClaw operation.');
+  const supportedAction = action?.actionKind === 'signed-openclaw-operation'
+    || (action?.actionKind === 'github-inspection' && action.operation === 'check-pr');
+  if (!supportedAction) throw new Error('Worker action is not a supported OpenClaw operation.');
   if (execution.success !== true) {
-    return {
-      eventId: `blocked-${action.actionId}`.slice(0, 128),
-      eventType: 'MISSION_BLOCKED',
-      reason: text(execution.error, `Signed OpenClaw ${action.operation} operation failed.`),
-      summary: `Signed OpenClaw ${action.operation} operation failed.`,
-    };
+    return { eventId: `blocked-${action.actionId}`.slice(0, 128), eventType: 'MISSION_BLOCKED', reason: text(execution.error, `OpenClaw ${action.operation} operation failed.`), summary: `OpenClaw ${action.operation} operation failed.` };
   }
   const deterministicReceipt = receipt(action, execution);
   const eventId = `worker-${action.actionId}`.slice(0, 128);
@@ -53,9 +48,7 @@ export function buildMissionEventFromWorkerResult(action, execution = {}, inspec
     if (!SHA40_PATTERN.test(commitSha) || inspection.clean !== true) throw new Error('Commit result requires an exact lowercase commit SHA and clean worktree.');
     return { eventId, eventType: 'GIT_OPERATION_COMPLETED', operation: 'commit', commitSha, clean: true, receipt: deterministicReceipt, summary: 'Signed OpenClaw commit completed.' };
   }
-  if (action.operation === 'push') {
-    return { eventId, eventType: 'GIT_OPERATION_COMPLETED', operation: 'push', success: true, receipt: deterministicReceipt, summary: 'Signed OpenClaw push completed.' };
-  }
+  if (action.operation === 'push') return { eventId, eventType: 'GIT_OPERATION_COMPLETED', operation: 'push', success: true, receipt: deterministicReceipt, summary: 'Signed OpenClaw push completed.' };
   if (action.operation === 'open-pr') {
     const prNumber = Number.parseInt(inspection.prNumber, 10);
     const headSha = text(inspection.headSha).toLowerCase();
@@ -67,12 +60,12 @@ export function buildMissionEventFromWorkerResult(action, execution = {}, inspec
     const headSha = text(inspection.headSha).toLowerCase();
     const checks = checkList(inspection.checks);
     if (!Number.isInteger(prNumber) || prNumber < 1 || !SHA40_PATTERN.test(headSha) || !checks.length) throw new Error('Pull request check result is incomplete.');
-    return { eventId, eventType: 'PULL_REQUEST_CHECKS_UPDATED', prNumber, headSha, prState: text(inspection.prState, 'open'), mergeable: inspection.mergeable === true, checks, receipt: deterministicReceipt, summary: 'Signed OpenClaw pull request checks inspected.' };
+    return { eventId, eventType: 'PULL_REQUEST_CHECKS_UPDATED', prNumber, headSha, prState: text(inspection.prState, 'open'), mergeable: inspection.mergeable === true, checks, receipt: deterministicReceipt, summary: 'Read-only OpenClaw pull request checks inspected.' };
   }
   if (action.operation === 'merge-pr') {
     const mergeCommitSha = text(inspection.mergeCommitSha).toLowerCase();
     if (!SHA40_PATTERN.test(mergeCommitSha) || inspection.prState !== 'merged') throw new Error('Merge result requires an exact merge commit SHA and merged state.');
     return { eventId, eventType: 'PULL_REQUEST_MERGED', mergeCommitSha, receipt: deterministicReceipt, summary: 'Approved signed OpenClaw squash merge completed.' };
   }
-  throw new Error(`Unsupported signed worker operation: ${text(action.operation, 'unknown')}`);
+  throw new Error(`Unsupported worker operation: ${text(action.operation, 'unknown')}`);
 }
