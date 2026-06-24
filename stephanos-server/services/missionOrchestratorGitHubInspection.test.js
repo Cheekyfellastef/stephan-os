@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { appendMissionEvent, createMissionRecord } from './missionOrchestratorStore.js';
+import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction, readMissionWorkerQueue } from './missionOrchestratorWorkerService.js';
 import { processNextGitHubInspectionItem } from './missionOrchestratorWorkerConsumer.js';
 
@@ -33,12 +33,9 @@ async function stateAtChecks(options) {
   return event('pr-inspection-001', 'PULL_REQUEST_OPENED', { prNumber: 1300, prUrl: 'https://github.com/o/r/pull/1300', headSha: 'b'.repeat(40), mergeable: true, receipt: proof('pull request creation', 'pr') });
 }
 
-test('failed PR checks are recorded as state, not treated as worker execution failure', async () => {
-  const options = await runtime();
+async function recordFailedChecks(options) {
   const atChecks = await stateAtChecks(options);
   const published = await publishMissionWorkerAction(atChecks.state, options);
-  assert.equal(published.adapter, 'openclaw-github-readonly');
-  assert.equal((await readMissionWorkerQueue(options))[0].adapter, 'openclaw-github-readonly');
   const processed = await processNextGitHubInspectionItem({
     ...options,
     inspectGitHub: async () => ({
@@ -46,7 +43,36 @@ test('failed PR checks are recorded as state, not treated as worker execution fa
       inspection: { prNumber: 1300, headSha: 'b'.repeat(40), prState: 'open', mergeable: true, checks: [{ name: 'Build', status: 'failure', required: true }] },
     }),
   });
+  return { published, processed };
+}
+
+test('failed PR checks are recorded as state, not treated as worker execution failure', async () => {
+  const options = await runtime();
+  const { published, processed } = await recordFailedChecks(options);
+  assert.equal(published.adapter, 'openclaw-github-readonly');
   assert.equal(processed.event.eventType, 'PULL_REQUEST_CHECKS_UPDATED');
   assert.equal(processed.applied.state.currentPhase, 'REPAIR_REQUIRED');
   assert.equal(processed.result.finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE');
+});
+
+test('publishing repair starts exactly one round and resets stale promotion state before Codex dispatch', async () => {
+  const options = await runtime();
+  await recordFailedChecks(options);
+  const failed = await readMissionRecord('github-inspection-test', options);
+  const repair = await publishMissionWorkerAction(failed.state, options);
+  assert.equal(repair.published, true);
+  assert.equal(repair.repairStarted, true);
+  assert.equal(repair.adapter, 'codex');
+  assert.equal(repair.action.repairRound, 1);
+  const current = await readMissionRecord('github-inspection-test', options);
+  assert.equal(current.state.repair.currentRound, 1);
+  assert.equal(current.state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(current.state.dispatch.status, 'running');
+  assert.equal(current.state.activeWriter, 'Codex');
+  assert.equal(current.state.git.commitSha, '');
+  assert.equal(current.state.git.pushed, false);
+  assert.deepEqual(current.state.pullRequest.checks, []);
+  const pending = await readMissionWorkerQueue(options);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].adapter, 'codex');
 });
