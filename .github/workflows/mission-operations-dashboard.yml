@@ -4,7 +4,10 @@ on:
   pull_request:
     paths:
       - '.github/workflows/mission-operations-dashboard.yml'
+      - 'scripts/stephanos-bootstrap-openclaw-github-keys.mjs'
+      - 'scripts/verify-mission-operations-receipt.mjs'
       - 'scripts/windows/invoke-openclaw-github-operator-bridge.ps1'
+      - 'scripts/windows/verify-openclaw-mission-operations-acceptance.ps1'
       - 'shared/runtime/missionOperationsProjection.mjs'
       - 'stephanos-server/routes/mission-operations.js'
       - 'stephanos-server/services/missionOperationsService.js'
@@ -14,6 +17,7 @@ on:
       - 'stephanos-ui/src/components/MissionOperationsPanel.jsx'
       - 'stephanos-ui/src/components/MissionOperationsPanel.css'
       - 'stephanos-ui/src/state/missionOperationsClient.js'
+      - 'tests/mission-operations-acceptance-tooling.test.mjs'
       - 'tests/mission-operations-dashboard.test.mjs'
       - 'tests/mission-operations-public-feed.test.mjs'
       - 'tests/openclaw-github-operator-bridge.test.mjs'
@@ -34,22 +38,31 @@ jobs:
         run: npm install
       - name: Install Stephanos UI dependencies
         run: npm --prefix stephanos-ui install
-      - name: Run Mission Operations and bridge tests
-        run: node --test tests/mission-operations-dashboard.test.mjs tests/mission-operations-public-feed.test.mjs tests/openclaw-github-operator-bridge.test.mjs
-      - name: Parse PowerShell bridge
+      - name: Run Mission Operations, bridge, and acceptance tests
+        run: node --test tests/mission-operations-dashboard.test.mjs tests/mission-operations-public-feed.test.mjs tests/openclaw-github-operator-bridge.test.mjs tests/mission-operations-acceptance-tooling.test.mjs
+      - name: Parse PowerShell bridge and acceptance runner
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile(
+          foreach ($path in @(
             'scripts/windows/invoke-openclaw-github-operator-bridge.ps1',
-            [ref]$tokens,
-            [ref]$errors
-          )
-          if ($errors.Count -ne 0) {
-            $errors | Format-List | Out-String | Write-Error
-            exit 1
+            'scripts/windows/verify-openclaw-mission-operations-acceptance.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $path,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -ne 0) {
+              $errors | Format-List | Out-String | Write-Error
+              exit 1
+            }
           }
+      - name: Parse acceptance Node scripts
+        run: |
+          node --check scripts/stephanos-bootstrap-openclaw-github-keys.mjs
+          node --check scripts/verify-mission-operations-receipt.mjs
       - name: Run canonical Mission Console integration tests
         run: node --test tests/mission-console-operator-relief-panel.test.mjs
       - name: Build Stephanos UI
