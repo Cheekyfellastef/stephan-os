@@ -1,10 +1,10 @@
 import express from 'express';
-import { readMissionOperations } from '../services/missionOperationsService.js';
+import { readPublicMissionOperations } from '../services/missionOperationsPublicFeed.js';
 
 const router = express.Router();
 
 router.get('/', async (req, res) => {
-  const feed = await readMissionOperations();
+  const feed = await readPublicMissionOperations();
   const requestedMissionId = String(req.query.missionId || '').trim();
   const payload = requestedMissionId
     ? {
