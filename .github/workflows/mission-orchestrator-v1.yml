@@ -21,6 +21,7 @@ on:
       - 'scripts/mission-orchestrator-finalizer-worker.mjs'
       - 'scripts/mission-orchestrator-finalizer-worker.test.mjs'
       - 'scripts/windows/*mission-orchestrator*.ps1'
+      - 'tests/mission-orchestrator-windows-acceptance.test.mjs'
   workflow_dispatch:
 
 permissions:
@@ -49,7 +50,7 @@ jobs:
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
           node --check stephanos-server/services/missionOrchestratorFinalizerConsumer.js
-      - name: Parse Windows worker and deployment scripts
+      - name: Parse Windows worker, deployment, and acceptance scripts
         shell: pwsh
         run: |
           $errors = @()
@@ -66,6 +67,8 @@ jobs:
         run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorFinalizerConsumer.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js
       - name: Run persistent worker adapter tests
         run: node --test scripts/mission-orchestrator-worker.test.mjs scripts/mission-orchestrator-finalizer-worker.test.mjs
+      - name: Run Windows acceptance contract test
+        run: node --test tests/mission-orchestrator-windows-acceptance.test.mjs
       - name: Run signed authorization and executor regressions
         run: node --test shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs
       - name: Run ownership and Mission Operations regression tests
