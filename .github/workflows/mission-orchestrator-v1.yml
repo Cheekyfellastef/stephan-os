@@ -1,0 +1,30 @@
+name: Mission Orchestrator V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mission-orchestrator-v1.yml'
+      - 'shared/agents/missionOrchestrator.mjs'
+      - 'shared/agents/missionOrchestrator.test.mjs'
+      - 'shared/agents/coBuilderOperationalPacket.mjs'
+      - 'shared/runtime/missionOperationsProjection.mjs'
+      - 'stephanos-server/services/missionOperationsService.js'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-control-plane:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Parse Mission Orchestrator source
+        run: node --check shared/agents/missionOrchestrator.mjs
+      - name: Run Mission Orchestrator lifecycle tests
+        run: node --test shared/agents/missionOrchestrator.test.mjs
+      - name: Run ownership and Mission Operations regression tests
+        run: node --test shared/agents/coBuilderOperationalPacket.test.mjs tests/mission-operations-dashboard.test.mjs
