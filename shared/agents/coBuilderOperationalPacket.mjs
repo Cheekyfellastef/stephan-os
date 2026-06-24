@@ -143,25 +143,51 @@ function evidenceHasDeterministicReceipt(item) {
   return validReceiptPath(item.receiptPath);
 }
 
-function evidenceItemVerified(item) {
-  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
-  return asText(item.requirement, '')
-    && asText(item.source, '')
-    && asText(item.evidenceType, '')
-    && item.verified === true
-    && evidenceHasDeterministicReceipt(item);
+function sanitizeEvidenceReceipt(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+  const receipt = {
+    requirement: asText(item.requirement, ''),
+    source: asText(item.source, ''),
+    evidenceType: asText(item.evidenceType, ''),
+    verified: item.verified === true,
+  };
+  if (!receipt.requirement || !receipt.source || !receipt.evidenceType || receipt.verified !== true) return null;
+
+  let hasProof = false;
+  if (validLowercaseHash(item.sha256)) {
+    receipt.sha256 = item.sha256;
+    hasProof = true;
+  }
+  if (validLowercaseHash(item.commandOutputHash)) {
+    receipt.commandOutputHash = item.commandOutputHash;
+    hasProof = true;
+  }
+  if (Number.isInteger(item.exitCode) && item.exitCode === 0) {
+    receipt.exitCode = 0;
+    hasProof = true;
+  }
+  if (validReceiptPath(item.receiptPath)) {
+    receipt.receiptPath = normalizePacketPath(item.receiptPath);
+    hasProof = true;
+  }
+  return hasProof ? receipt : null;
 }
 
-function evidenceItemText(item) {
-  if (typeof item === 'string') return item;
-  if (!item || typeof item !== 'object') return '';
-  return [item.requirement, item.id, item.label, item.name, item.summary, item.command, item.evidence].map((v) => asText(v, '')).filter(Boolean).join(' ');
+function sanitizeEvidenceReceipts(items) {
+  const accepted = [];
+  let rejectedCount = 0;
+  for (const item of items) {
+    const receipt = sanitizeEvidenceReceipt(item);
+    if (receipt) accepted.push(receipt);
+    else rejectedCount += 1;
+  }
+  return { accepted, rejectedCount };
 }
 
 function evidenceRequirementSatisfied(requirement, suppliedEvidence) {
   const normalizedRequirement = normalizeEvidenceToken(requirement);
   if (!normalizedRequirement) return false;
-  return suppliedEvidence.some((item) => evidenceItemVerified(item) && normalizeEvidenceToken(item.requirement) === normalizedRequirement);
+  return suppliedEvidence.some((item) => normalizeEvidenceToken(item.requirement) === normalizedRequirement);
 }
 
 function inferMissionKind({ operatorIntent, missionBrainNextAction = {}, supportSnapshot = {} }) {
@@ -202,7 +228,9 @@ export function buildCoBuilderOperationalPacket({
     ...asList(harnessAgentProjection.requiredTests),
     ...asList(agentWorkRoutingProjection.requiredTests),
   ]);
-  const suppliedEvidence = collectSuppliedEvidence({ verificationReturnIntake, supportSnapshot, agentWorkRoutingProjection });
+  const rawSuppliedEvidence = collectSuppliedEvidence({ verificationReturnIntake, supportSnapshot, agentWorkRoutingProjection });
+  const sanitizedEvidence = sanitizeEvidenceReceipts(rawSuppliedEvidence);
+  const suppliedEvidence = sanitizedEvidence.accepted;
   const unsatisfiedEvidence = requiredEvidence.filter((requirement) => !evidenceRequirementSatisfied(requirement, suppliedEvidence));
   const resolvedMissionId = asText(missionId || supportSnapshot.missionId, 'mission-unresolved');
   const blockingReasons = [];
@@ -272,7 +300,8 @@ export function buildCoBuilderOperationalPacket({
     allowedActions,
     disallowedActions: ['auto-dispatch', 'auto-write-outside-allowed-files', 'simultaneous-agent-writes', 'auto-approve', 'auto-merge', 'edit-generated-output', 'edit-runtime-data', 'edit-secrets'],
     requiredEvidence,
-    suppliedEvidence: suppliedEvidence.map(evidenceItemText).filter(Boolean),
+    suppliedEvidence,
+    rejectedSuppliedEvidenceCount: sanitizedEvidence.rejectedCount,
     unsatisfiedEvidence,
     scopeOverlaps: allowedForbiddenOverlaps,
     evidenceSatisfied: requiredEvidence.length > 0 && unsatisfiedEvidence.length === 0,

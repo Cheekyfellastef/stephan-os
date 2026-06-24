@@ -239,6 +239,43 @@ test('receipt paths must stay in bounded proof families and avoid forbidden root
   assert.equal(valid.finalVerdict, 'READY_FOR_OPERATOR_APPROVAL');
 });
 
+
+test('accepted supplied evidence returns only sanitized structured receipts', () => {
+  const sha = 'b'.repeat(64);
+  const hashPacket = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, sha256: sha, arbitrary: 'remove-me' }] } });
+  assert.deepEqual(hashPacket.suppliedEvidence, [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, sha256: sha }]);
+
+  const receiptPacket = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'receipt', verified: true, receiptPath: 'proof\\receipts\\focused-test.json', arbitrary: 'remove-me' }] } });
+  assert.deepEqual(receiptPacket.suppliedEvidence, [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'receipt', verified: true, receiptPath: 'proof/receipts/focused-test.json' }]);
+
+  const exitPacket = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'exit-code', verified: true, exitCode: 0, arbitrary: 'remove-me' }] } });
+  assert.deepEqual(exitPacket.suppliedEvidence, [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'exit-code', verified: true, exitCode: 0 }]);
+});
+
+test('invalid evidence is excluded from returned accepted receipts and cannot satisfy evidence', () => {
+  const packet = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [
+    { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 1, arbitrarySecret: 'do-not-return' },
+    { requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: false, exitCode: 0 },
+  ] } });
+  assert.deepEqual(packet.suppliedEvidence, []);
+  assert.equal(packet.rejectedSuppliedEvidenceCount, 2);
+  assert.equal(packet.evidenceSatisfied, false);
+  assert.equal(packet.finalVerdict, 'BLOCKED');
+});
+
+test('evidenceSatisfied cannot be true unless the matching structured receipt is returned', () => {
+  const mismatch = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'other output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 }] } });
+  assert.deepEqual(mismatch.suppliedEvidence, [{ requirement: 'other output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 }]);
+  assert.equal(mismatch.evidenceSatisfied, false);
+  assert.deepEqual(mismatch.unsatisfiedEvidence, ['focused test output']);
+  assert.equal(mismatch.finalVerdict, 'BLOCKED');
+
+  const matched = buildCoBuilderOperationalPacket({ ...base, verificationReturnIntake: { missingEvidence: [], suppliedEvidence: [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 }] } });
+  assert.deepEqual(matched.suppliedEvidence, [{ requirement: 'focused test output', source: 'node-test', evidenceType: 'test-output', verified: true, exitCode: 0 }]);
+  assert.equal(matched.evidenceSatisfied, true);
+  assert.equal(matched.finalVerdict, 'READY_FOR_OPERATOR_APPROVAL');
+});
+
 test('missing empty placeholder or unresolved mission id blocks safely', () => {
   for (const missionId of [undefined, '', 'mission-unresolved', 'unknown', 'placeholder', 'tbd']) {
     const packet = buildCoBuilderOperationalPacket({ ...base, missionId });
