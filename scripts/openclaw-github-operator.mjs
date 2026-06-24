@@ -17,6 +17,43 @@ try {
   fail('GitHub operation request could not be read.', { error: error.message });
 }
 
+function run(executable, args, cwd = input.repositoryRoot) {
+  return spawnSync(executable, args, {
+    cwd,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+  });
+}
+
+if (String(input.operation || '').toLowerCase() === 'merge-pr') {
+  const view = run('gh.exe', [
+    'pr', 'view', String(input.prNumber), '--repo', String(input.repository),
+    '--json', 'headRefOid,baseRefName,mergeable,state',
+  ]);
+  const checks = run('gh.exe', [
+    'pr', 'checks', String(input.prNumber), '--repo', String(input.repository),
+    '--json', 'state',
+  ]);
+  if (view.error || view.status !== 0 || checks.error || checks.status !== 0) {
+    fail('GitHub merge preflight could not be verified.', {
+      viewExitCode: view.status,
+      checksExitCode: checks.status,
+      viewError: view.error?.message || view.stderr || '',
+      checksError: checks.error?.message || checks.stderr || '',
+    });
+  }
+  const viewPayload = JSON.parse(view.stdout);
+  const checkPayload = JSON.parse(checks.stdout);
+  input = {
+    ...input,
+    actualHeadSha: viewPayload.headRefOid,
+    baseBranch: viewPayload.baseRefName,
+    mergeable: viewPayload.mergeable === 'MERGEABLE' && viewPayload.state === 'OPEN',
+    checks: checkPayload.map((check) => String(check.state || '').toLowerCase()),
+  };
+}
+
 const packet = buildOpenClawGitHubOperation(input);
 if (packet.finalVerdict !== 'READY_TO_EXECUTE') {
   fail('GitHub operation contract blocked execution.', { packet });
@@ -24,12 +61,7 @@ if (packet.finalVerdict !== 'READY_TO_EXECUTE') {
 
 const receipts = [];
 for (const command of packet.command) {
-  const result = spawnSync(command.executable, command.args, {
-    cwd: packet.repositoryRoot,
-    encoding: 'utf8',
-    shell: false,
-    windowsHide: true,
-  });
+  const result = run(command.executable, command.args, packet.repositoryRoot);
   receipts.push({
     executable: command.executable,
     args: command.args,
