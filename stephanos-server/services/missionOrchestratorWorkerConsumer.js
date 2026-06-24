@@ -66,6 +66,52 @@ async function failClaim(claim, action, error) {
   return { processed: true, claim, error, result, resultPath };
 }
 
+async function processAgentClaim(adapter, options, execute) {
+  const claim = await claimNextMissionWorkerItem(adapter, options);
+  if (!claim) return { processed: false, reason: 'queue-empty' };
+  claim.options = options;
+  const action = claim.item.payload;
+  try {
+    const execution = await execute(action, claim);
+    const applied = await collectAgentWorkerResult({
+      missionId: action.missionId,
+      actionId: action.actionId,
+      adapter,
+      success: execution.success === true,
+      resultId: execution.resultId || action.actionId,
+      changedFiles: execution.changedFiles || [],
+      receipt: execution.receipt,
+      evidenceReceipts: execution.evidenceReceipts || [],
+      error: execution.error || '',
+    }, options);
+    const result = {
+      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+      actionId: action.actionId,
+      missionId: action.missionId,
+      adapter,
+      stateRevision: applied.state.revision,
+      currentPhase: applied.state.currentPhase,
+      execution: {
+        success: execution.success === true,
+        commandOutputHash: execution.receipt?.commandOutputHash || '',
+        completedAt: execution.completedAt || '',
+      },
+      changedFiles: execution.changedFiles || [],
+      evidenceReceiptCount: Array.isArray(execution.evidenceReceipts) ? execution.evidenceReceipts.length : 0,
+      finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
+    };
+    const resultPath = await finishClaim(claim, result, execution.success === true);
+    return { processed: true, claim, applied, result, resultPath };
+  } catch (error) {
+    try {
+      await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, success: false, error: error?.message || `${adapter} execution failed.` }, options);
+    } catch {
+      // Preserve the original adapter failure in the queue result.
+    }
+    return failClaim(claim, action, error);
+  }
+}
+
 export async function processNextSignedOpenClawItem(options = {}) {
   if (typeof options.executeSignedOperation !== 'function') throw new Error('Signed OpenClaw executor adapter is required.');
   if (typeof options.inspectSignedOperation !== 'function') throw new Error('Signed OpenClaw result inspector is required.');
@@ -98,47 +144,10 @@ export async function processNextGitHubInspectionItem(options = {}) {
 
 export async function processNextCodexItem(options = {}) {
   if (typeof options.executeCodexAction !== 'function') throw new Error('Codex execution adapter is required.');
-  const claim = await claimNextMissionWorkerItem('codex', options);
-  if (!claim) return { processed: false, reason: 'queue-empty' };
-  claim.options = options;
-  const action = claim.item.payload;
-  try {
-    const execution = await options.executeCodexAction(action, claim);
-    const applied = await collectAgentWorkerResult({
-      missionId: action.missionId,
-      actionId: action.actionId,
-      adapter: 'codex',
-      success: execution.success === true,
-      resultId: execution.resultId || action.actionId,
-      changedFiles: execution.changedFiles || [],
-      receipt: execution.receipt,
-      evidenceReceipts: execution.evidenceReceipts || [],
-      error: execution.error || '',
-    }, options);
-    const result = {
-      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
-      actionId: action.actionId,
-      missionId: action.missionId,
-      adapter: 'codex',
-      stateRevision: applied.state.revision,
-      currentPhase: applied.state.currentPhase,
-      execution: {
-        success: execution.success === true,
-        commandOutputHash: execution.receipt?.commandOutputHash || '',
-        completedAt: execution.completedAt || '',
-      },
-      changedFiles: execution.changedFiles || [],
-      evidenceReceiptCount: Array.isArray(execution.evidenceReceipts) ? execution.evidenceReceipts.length : 0,
-      finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
-    };
-    const resultPath = await finishClaim(claim, result, execution.success === true);
-    return { processed: true, claim, applied, result, resultPath };
-  } catch (error) {
-    try {
-      await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter: 'codex', success: false, error: error?.message || 'Codex execution failed.' }, options);
-    } catch {
-      // Preserve the original adapter failure in the queue result.
-    }
-    return failClaim(claim, action, error);
-  }
+  return processAgentClaim('codex', options, options.executeCodexAction);
+}
+
+export async function processNextOpenClawReadonlyItem(options = {}) {
+  if (typeof options.executeOpenClawReadonlyAction !== 'function') throw new Error('OpenClaw read-only execution adapter is required.');
+  return processAgentClaim('openclaw-readonly', options, options.executeOpenClawReadonlyAction);
 }
