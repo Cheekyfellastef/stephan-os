@@ -48,6 +48,10 @@ function unique(values) {
   return [...new Set(values)];
 }
 
+function sorted(values) {
+  return [...values].sort((left, right) => left.localeCompare(right));
+}
+
 function scopeAllowsPath(scope, path) {
   const normalizedScope = normalizePath(scope);
   if (normalizedScope === path) return true;
@@ -76,6 +80,7 @@ export function buildOpenClawGitHubOperation(input = {}) {
   const prNumber = Number.isInteger(input.prNumber) ? input.prNumber : Number.parseInt(input.prNumber, 10);
   const allowedFiles = unique(list(input.allowedFiles).map(normalizePath));
   const changedFiles = unique(list(input.changedFiles).map(normalizePath));
+  const actualChangedFiles = unique(list(input.actualChangedFiles).map(normalizePath));
   const checks = list(input.checks).map((value) => value.toLowerCase());
   const blockers = [];
 
@@ -92,16 +97,19 @@ export function buildOpenClawGitHubOperation(input = {}) {
 
   if (operation === 'create-worktree' && !worktreePath) blockers.push('Isolated worktree path is required.');
 
-  if (operation === 'commit') {
-    if (!allowedFiles.length) blockers.push('Commit requires explicit allowed files.');
-    if (!changedFiles.length) blockers.push('Commit requires a non-empty changed file set.');
-    if (!text(input.commitMessage)) blockers.push('Commit message is required.');
+  if (['commit', 'push', 'open-pr'].includes(operation)) {
+    if (!allowedFiles.length) blockers.push(`${operation} requires explicit allowed files.`);
+    if (!changedFiles.length) blockers.push(`${operation} requires a non-empty changed file set.`);
+    if (actualChangedFiles.length && JSON.stringify(sorted(actualChangedFiles)) !== JSON.stringify(sorted(changedFiles))) {
+      blockers.push('Actual changed files do not match the signed changed file set.');
+    }
     const unsafeFiles = changedFiles.filter(isForbiddenPath);
     if (unsafeFiles.length) blockers.push(`Changed files include forbidden paths: ${unsafeFiles.join(', ')}`);
     const outsideScope = changedFiles.filter((path) => !allowedFiles.some((scope) => scopeAllowsPath(scope, path)));
     if (outsideScope.length) blockers.push(`Changed files exceed the approved scope: ${outsideScope.join(', ')}`);
   }
 
+  if (operation === 'commit' && !text(input.commitMessage)) blockers.push('Commit message is required.');
   if (operation === 'open-pr' && !text(input.title)) blockers.push('Pull request title is required.');
 
   if (operation === 'check-pr' || operation === 'merge-pr') {
@@ -160,6 +168,7 @@ export function buildOpenClawGitHubOperation(input = {}) {
     actualHeadSha,
     allowedFiles,
     changedFiles,
+    actualChangedFiles,
     operatorApprovalRequired: operation === 'merge-pr',
     approvalTokenRequired: operation === 'merge-pr' && Number.isInteger(prNumber) && LOWERCASE_SHA_PATTERN.test(expectedHeadSha)
       ? exactMergeApproval(prNumber, expectedHeadSha)
