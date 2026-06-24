@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   executeCodexAction,
+  executeOpenClawReadonlyAction,
   executeSignedOperation,
   inspectGitHubAction,
   inspectSignedOperation,
@@ -70,15 +71,9 @@ test('executes Codex non-interactively and grounds changed files and test eviden
   const testCommand = 'node --test shared/agents/example.test.mjs';
   const commandEvent = { type: 'item.completed', item: { id: 'cmd-1', type: 'command_execution', command: testCommand, status: 'completed', exit_code: 0 } };
   const result = await executeCodexAction({
-    actionKind: 'agent-handoff',
-    adapter: 'codex',
-    actionId: 'codex-action-1',
-    missionId: 'codex-worker-test',
-    worktreePath,
-    allowedFiles: ['shared/agents/**'],
-    requiredTests: [testCommand],
-    requiredEvidence: ['focused test output'],
-    repairRound: 0,
+    actionKind: 'agent-handoff', adapter: 'codex', actionId: 'codex-action-1', missionId: 'codex-worker-test',
+    operatorIntent: 'Implement the bounded source change.', intendedOutcome: 'Focused tests pass.', worktreePath,
+    allowedFiles: ['shared/agents/**'], requiredTests: [testCommand], requiredEvidence: ['focused test output'], repairRound: 0,
   }, claim, {
     now: new Date('2026-06-24T23:30:00.000Z'),
     runCommand(executable, args, options) {
@@ -104,6 +99,45 @@ test('executes Codex non-interactively and grounds changed files and test eviden
   assert.match(result.receipt.commandOutputHash, /^[a-f0-9]{64}$/);
 });
 
+test('executes OpenClaw through the read-only agent and verifies existing proof files', async () => {
+  const missionRunnerRoot = await mkdtemp(join(tmpdir(), 'mission-openclaw-runner-'));
+  const proofRoot = join(missionRunnerRoot, 'proof', 'browser');
+  await mkdir(proofRoot, { recursive: true });
+  const proofPath = join(proofRoot, 'runtime-proof.json');
+  await writeFile(proofPath, '{"status":"pass"}\n', 'utf8');
+  const claim = { processingPath: join(missionRunnerRoot, 'action.json') };
+  let invocation;
+  const result = await executeOpenClawReadonlyAction({
+    actionKind: 'agent-handoff', adapter: 'openclaw-readonly', actionId: 'openclaw-action-1', missionId: 'openclaw-worker-test',
+    operatorIntent: 'Inspect runtime behavior.', intendedOutcome: 'Produce browser proof.', repositoryRoot: missionRunnerRoot,
+    requiredEvidence: ['browser runtime proof'], browserProofRequired: true,
+  }, claim, {
+    missionRunnerRoot,
+    now: new Date('2026-06-24T23:35:00.000Z'),
+    runCommand(executable, args, options) {
+      invocation = { executable, args, options };
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          payloads: [{ text: JSON.stringify({ success: true, summary: 'Inspected.', evidence: [{ requirement: 'browser runtime proof', receiptPath: proofPath }] }) }],
+          meta: { runId: 'openclaw-run-1' },
+        }),
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(invocation.executable, 'openclaw.cmd');
+  assert.ok(invocation.args.includes('stephanos-scout'));
+  assert.ok(invocation.args.includes('--message-file'));
+  assert.ok(invocation.args.includes('--json'));
+  assert.equal(result.success, true);
+  assert.equal(result.resultId, 'openclaw-run-1');
+  assert.equal(result.changedFiles.length, 0);
+  assert.equal(result.evidenceReceipts[0].requirement, 'browser runtime proof');
+  assert.equal(result.evidenceReceipts[0].receiptPath, 'proof/browser/runtime-proof.json');
+  assert.match(result.evidenceReceipts[0].sha256, /^[a-f0-9]{64}$/);
+});
+
 test('inspects worktree and commit truth with shell-free git argument arrays', async () => {
   const calls = [];
   const runCommand = (executable, args) => {
@@ -121,9 +155,7 @@ test('inspects worktree and commit truth with shell-free git argument arrays', a
 
 test('normalizes PR and check inspection into deterministic identity', async () => {
   const runCommand = (_executable, args) => {
-    if (args.some((arg) => String(arg).includes('statusCheckRollup'))) {
-      return { status: 0, stdout: JSON.stringify({ number: 1300, headRefOid: 'b'.repeat(40), mergeable: 'MERGEABLE', state: 'OPEN', statusCheckRollup: [{ name: 'Build', conclusion: 'SUCCESS', detailsUrl: 'https://example.test/check' }] }), stderr: '' };
-    }
+    if (args.some((arg) => String(arg).includes('statusCheckRollup'))) return { status: 0, stdout: JSON.stringify({ number: 1300, headRefOid: 'b'.repeat(40), mergeable: 'MERGEABLE', state: 'OPEN', statusCheckRollup: [{ name: 'Build', conclusion: 'SUCCESS', detailsUrl: 'https://example.test/check' }] }), stderr: '' };
     return { status: 0, stdout: JSON.stringify({ number: 1300, url: 'https://github.com/o/r/pull/1300', headRefOid: 'b'.repeat(40), mergeable: 'MERGEABLE', state: 'OPEN' }), stderr: '' };
   };
   const opened = await inspectSignedOperation(payload('open-pr'), {}, {}, { runCommand });
@@ -136,27 +168,11 @@ test('normalizes PR and check inspection into deterministic identity', async () 
 
 test('read-only GitHub inspection records failed checks as successful inspection evidence', async () => {
   let invocation;
-  const result = await inspectGitHubAction({
-    actionKind: 'github-inspection',
-    operation: 'check-pr',
-    repository: 'Cheekyfellastef/stephan-os',
-    repositoryRoot: 'C:\\worktree',
-    prNumber: 1300,
-  }, {}, {
+  const result = await inspectGitHubAction({ actionKind: 'github-inspection', operation: 'check-pr', repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:\\worktree', prNumber: 1300 }, {}, {
     now: new Date('2026-06-24T23:20:00.000Z'),
     runCommand(executable, args, options) {
       invocation = { executable, args, options };
-      return {
-        status: 0,
-        stdout: JSON.stringify({
-          number: 1300,
-          headRefOid: 'd'.repeat(40),
-          mergeable: 'MERGEABLE',
-          state: 'OPEN',
-          statusCheckRollup: [{ name: 'Build', conclusion: 'FAILURE', detailsUrl: 'https://example.test/check' }],
-        }),
-        stderr: '',
-      };
+      return { status: 0, stdout: JSON.stringify({ number: 1300, headRefOid: 'd'.repeat(40), mergeable: 'MERGEABLE', state: 'OPEN', statusCheckRollup: [{ name: 'Build', conclusion: 'FAILURE', detailsUrl: 'https://example.test/check' }] }), stderr: '' };
     },
   });
   assert.equal(invocation.executable, 'gh.exe');
@@ -170,9 +186,7 @@ test('read-only GitHub inspection records failed checks as successful inspection
 });
 
 test('normalizes merged PR inspection to the exact merge commit', async () => {
-  const merged = await inspectSignedOperation(payload('merge-pr'), {}, {}, {
-    runCommand: () => ({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeCommit: { oid: 'c'.repeat(40) } }), stderr: '' }),
-  });
+  const merged = await inspectSignedOperation(payload('merge-pr'), {}, {}, { runCommand: () => ({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeCommit: { oid: 'c'.repeat(40) } }), stderr: '' }) });
   assert.equal(merged.prState, 'merged');
   assert.equal(merged.mergeCommitSha, 'c'.repeat(40));
 });
