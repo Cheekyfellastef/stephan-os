@@ -75,9 +75,22 @@ function globBase(path) {
   return text.replace(/\/+$/, '');
 }
 
+function isGlobalWildcardScope(path) {
+  const text = normalizePacketPath(path);
+  return text === '**' || text === '**/*';
+}
+
+function isGlobalFilePattern(path) {
+  return normalizePacketPath(path).startsWith('**/');
+}
+
 function scopeOverlap(left, right) {
-  const a = globBase(left);
-  const b = globBase(right);
+  const leftText = normalizePacketPath(left);
+  const rightText = normalizePacketPath(right);
+  if (isGlobalWildcardScope(leftText)) return true;
+  if (isGlobalFilePattern(rightText)) return false;
+  const a = globBase(leftText);
+  const b = globBase(rightText);
   if (!a || !b) return true;
   if (a === b) return true;
   return a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
@@ -176,9 +189,10 @@ export function buildCoBuilderOperationalPacket({
   const rawAllowedFiles = uniqueList(harnessAgentProjection.allowedFileScopes || agentWorkRoutingProjection.allowedFiles || []);
   const normalizedAllowedFileCandidates = rawAllowedFiles.map(normalizePacketPath);
   const callerForbiddenScopes = [...asList(harnessAgentProjection.forbiddenFileScopes), ...asList(harnessAgentProjection.forbiddenFiles)].map(normalizePacketPath);
+  const defaultForbiddenScopes = DEFAULT_OPERATIONAL_FORBIDDEN_FILES.map(normalizePacketPath);
   const allowedFiles = normalizedAllowedFileCandidates.filter((path) => !includesForbiddenPath(path));
-  const forbiddenFiles = uniqueList([...DEFAULT_OPERATIONAL_FORBIDDEN_FILES, ...callerForbiddenScopes, ...normalizedAllowedFileCandidates.filter(includesForbiddenPath)]);
-  const allowedForbiddenOverlaps = findAllowedForbiddenOverlaps(allowedFiles, callerForbiddenScopes);
+  const forbiddenFiles = uniqueList([...defaultForbiddenScopes, ...callerForbiddenScopes, ...normalizedAllowedFileCandidates.filter(includesForbiddenPath)]);
+  const allowedForbiddenOverlaps = findAllowedForbiddenOverlaps(allowedFiles, [...callerForbiddenScopes, ...defaultForbiddenScopes]);
   const requiredEvidence = uniqueList([
     ...asList(agentWorkRoutingProjection.requiredProof),
     ...asList(missionBrainNextAction.proofRequiredBeforeMerge),
@@ -205,7 +219,7 @@ export function buildCoBuilderOperationalPacket({
   if (!requiredEvidence.length) blockingReasons.push('Evidence requirements are unclear.');
   if (requiredEvidence.length && unsatisfiedEvidence.length) blockingReasons.push('Required evidence has not been supplied as verified proof.');
   if (sensitive) blockingReasons.push('Scope touches or implies forbidden, generated, runtime, policy, merge, environment, or secret-bearing work.');
-  if (allowedForbiddenOverlaps.length) blockingReasons.push('Allowed source scope overlaps a caller-provided forbidden scope.');
+  if (allowedForbiddenOverlaps.length) blockingReasons.push('Allowed source scope overlaps a forbidden scope.');
 
   const requestedRound = Number(supportSnapshot.coBuilderLoopRound || coBuilderLoopProjection.loopRound || 1) || 1;
   if (requestedRound > MAX_REPAIR_ROUNDS) blockingReasons.push('Maximum repair rounds exceeded.');

@@ -113,6 +113,35 @@ test('runtime paths using forward or backslashes cannot enter allowedFiles', () 
   }
 });
 
+
+test('broad allowed wildcard blocks against every default forbidden family', () => {
+  const packet = buildCoBuilderOperationalPacket({
+    ...base,
+    harnessAgentProjection: { ...base.harnessAgentProjection, allowedFileScopes: ['**'] },
+  });
+  assert.equal(packet.finalVerdict, 'BLOCKED');
+  for (const forbidden of DEFAULT_OPERATIONAL_FORBIDDEN_FILES) {
+    assert.ok(packet.scopeOverlaps.some((overlap) => overlap.endsWith(`overlaps ${forbidden}`)), `missing default overlap for ${forbidden}`);
+  }
+});
+
+test('broad default-overlapping app and server scopes block while shared scope remains safe', () => {
+  const cases = [
+    { allowed: 'apps/**', expectedOverlap: 'apps/stephanos/dist/**' },
+    { allowed: 'apps\\**', expectedOverlap: 'apps/stephanos/dist/**' },
+    { allowed: 'stephanos-server/**', expectedOverlap: 'stephanos-server/data/**' },
+    { allowed: 'stephanos-server\\**', expectedOverlap: 'stephanos-server/data/**' },
+  ];
+  for (const { allowed, expectedOverlap } of cases) {
+    const packet = buildCoBuilderOperationalPacket({ ...base, harnessAgentProjection: { ...base.harnessAgentProjection, allowedFileScopes: [allowed] } });
+    assert.equal(packet.finalVerdict, 'BLOCKED');
+    assert.ok(packet.scopeOverlaps.some((overlap) => overlap.includes(expectedOverlap)), `missing overlap for ${allowed}`);
+  }
+  const shared = buildCoBuilderOperationalPacket({ ...base, harnessAgentProjection: { ...base.harnessAgentProjection, allowedFileScopes: ['shared/**'] } });
+  assert.equal(shared.finalVerdict, 'READY_FOR_OPERATOR_APPROVAL');
+  assert.deepEqual(shared.scopeOverlaps, []);
+});
+
 test('allowed scopes overlapping caller forbidden scopes block exact parent nested and windows variants', () => {
   const cases = [
     { allowedFileScopes: ['src/generated/**'], forbiddenFileScopes: ['src/generated/**'] },
