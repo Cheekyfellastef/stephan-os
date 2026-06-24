@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { buildOpenClawGitHubOperation } from '../shared/agents/openClawGitHubOperator.mjs';
+import { evaluateGitExecutorPreflight } from '../shared/agents/openClawGitHubExecutorPreflight.mjs';
 import {
   completeOpenClawGitHubAuthorizationReservation,
   reserveOpenClawGitHubAuthorization,
@@ -65,6 +66,40 @@ function run(executable, args, cwd = input.repositoryRoot) {
     shell: false,
     windowsHide: true,
   });
+}
+
+let actualBranch = '';
+let stagedFiles = [];
+if (['commit', 'push'].includes(String(input.operation || '').toLowerCase())) {
+  const branchCheck = run('git.exe', ['-C', input.repositoryRoot, 'branch', '--show-current']);
+  actualBranch = String(branchCheck.stdout || '').trim();
+  if (branchCheck.error || branchCheck.status !== 0) {
+    fail('Git branch preflight could not be read.', {
+      exitCode: branchCheck.status,
+      error: branchCheck.error?.message || branchCheck.stderr || '',
+    });
+  }
+}
+
+if (String(input.operation || '').toLowerCase() === 'commit') {
+  const stagedCheck = run('git.exe', ['-C', input.repositoryRoot, 'diff', '--cached', '--name-only']);
+  stagedFiles = String(stagedCheck.stdout || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  if (stagedCheck.error || stagedCheck.status !== 0) {
+    fail('Git index preflight could not be read.', {
+      exitCode: stagedCheck.status,
+      error: stagedCheck.error?.message || stagedCheck.stderr || '',
+    });
+  }
+}
+
+const gitPreflight = evaluateGitExecutorPreflight({
+  operation: input.operation,
+  expectedBranch: input.branch,
+  actualBranch,
+  stagedFiles,
+});
+if (gitPreflight.finalVerdict !== 'PREFLIGHT_PASS') {
+  fail('Git executor preflight blocked execution.', { gitPreflight });
 }
 
 if (String(input.operation || '').toLowerCase() === 'merge-pr') {
