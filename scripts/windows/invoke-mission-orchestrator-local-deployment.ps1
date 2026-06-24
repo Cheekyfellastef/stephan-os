@@ -79,7 +79,7 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $repo '.git'))) { throw 'Stephanos primary repository checkout is missing.' }
     Set-Location -LiteralPath $repo
     $branch = (Invoke-Captured 'git.exe' @('-C', $repo, 'branch', '--show-current')).Trim()
-    if ($branch -ne 'main') { throw "Local deployment requires main; found $branch." }
+    if ($branch -ne 'main') { throw "Local deployment requires main; found ${branch}." }
     $statusText = Invoke-Captured 'git.exe' @('-C', $repo, 'status', '--porcelain=v1', '--untracked-files=normal')
     $runtimePaths = New-Object System.Collections.Generic.List[string]
     $generatedPaths = New-Object System.Collections.Generic.List[string]
