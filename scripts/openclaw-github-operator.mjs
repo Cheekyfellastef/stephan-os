@@ -70,7 +70,9 @@ function run(executable, args, cwd = input.repositoryRoot) {
 
 let actualBranch = '';
 let stagedFiles = [];
-if (['commit', 'push'].includes(String(input.operation || '').toLowerCase())) {
+let actualChangedFiles = [];
+const normalizedOperation = String(input.operation || '').toLowerCase();
+if (['commit', 'push', 'open-pr'].includes(normalizedOperation)) {
   const branchCheck = run('git.exe', ['-C', input.repositoryRoot, 'branch', '--show-current']);
   actualBranch = String(branchCheck.stdout || '').trim();
   if (branchCheck.error || branchCheck.status !== 0) {
@@ -81,7 +83,7 @@ if (['commit', 'push'].includes(String(input.operation || '').toLowerCase())) {
   }
 }
 
-if (String(input.operation || '').toLowerCase() === 'commit') {
+if (normalizedOperation === 'commit') {
   const stagedCheck = run('git.exe', ['-C', input.repositoryRoot, 'diff', '--cached', '--name-only']);
   stagedFiles = String(stagedCheck.stdout || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
   if (stagedCheck.error || stagedCheck.status !== 0) {
@@ -90,6 +92,40 @@ if (String(input.operation || '').toLowerCase() === 'commit') {
       error: stagedCheck.error?.message || stagedCheck.stderr || '',
     });
   }
+  const trackedCheck = run('git.exe', ['-C', input.repositoryRoot, 'diff', '--name-only', 'HEAD']);
+  const untrackedCheck = run('git.exe', ['-C', input.repositoryRoot, 'ls-files', '--others', '--exclude-standard']);
+  if (trackedCheck.error || trackedCheck.status !== 0 || untrackedCheck.error || untrackedCheck.status !== 0) {
+    fail('Git working tree preflight could not be read.', {
+      trackedExitCode: trackedCheck.status,
+      untrackedExitCode: untrackedCheck.status,
+      trackedError: trackedCheck.error?.message || trackedCheck.stderr || '',
+      untrackedError: untrackedCheck.error?.message || untrackedCheck.stderr || '',
+    });
+  }
+  actualChangedFiles = [
+    ...String(trackedCheck.stdout || '').split(/\r?\n/),
+    ...String(untrackedCheck.stdout || '').split(/\r?\n/),
+  ].map((item) => item.trim()).filter(Boolean);
+}
+
+if (['push', 'open-pr'].includes(normalizedOperation)) {
+  const fetchBase = run('git.exe', ['-C', input.repositoryRoot, 'fetch', 'origin', input.baseBranch]);
+  if (fetchBase.error || fetchBase.status !== 0) {
+    fail('Git base branch could not be refreshed.', {
+      exitCode: fetchBase.status,
+      error: fetchBase.error?.message || fetchBase.stderr || '',
+    });
+  }
+  const branchDiff = run('git.exe', [
+    '-C', input.repositoryRoot, 'diff', '--name-only', `origin/${input.baseBranch}...HEAD`,
+  ]);
+  if (branchDiff.error || branchDiff.status !== 0) {
+    fail('Git branch diff preflight could not be read.', {
+      exitCode: branchDiff.status,
+      error: branchDiff.error?.message || branchDiff.stderr || '',
+    });
+  }
+  actualChangedFiles = String(branchDiff.stdout || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 }
 
 const gitPreflight = evaluateGitExecutorPreflight({
@@ -97,10 +133,13 @@ const gitPreflight = evaluateGitExecutorPreflight({
   expectedBranch: input.branch,
   actualBranch,
   stagedFiles,
+  expectedChangedFiles: input.changedFiles,
+  actualChangedFiles,
 });
 if (gitPreflight.finalVerdict !== 'PREFLIGHT_PASS') {
   fail('Git executor preflight blocked execution.', { gitPreflight });
 }
+input = { ...input, actualChangedFiles };
 
 if (String(input.operation || '').toLowerCase() === 'merge-pr') {
   const view = run('gh.exe', [
