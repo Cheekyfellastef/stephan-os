@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { buildOpenClawGitHubOperation } from '../shared/agents/openClawGitHubOperator.mjs';
+import { verifyOpenClawGitHubAuthorization } from '../shared/agents/openClawGitHubAuthorization.mjs';
 
 function fail(message, details = {}) {
   process.stdout.write(`${JSON.stringify({ finalVerdict: 'BLOCKED', message, ...details }, null, 2)}\n`);
@@ -10,11 +12,42 @@ function fail(message, details = {}) {
 const requestPath = process.argv[2];
 if (!requestPath) fail('Usage: node scripts/openclaw-github-operator.mjs <request.json>');
 
-let input;
+let request;
 try {
-  input = JSON.parse(readFileSync(requestPath, 'utf8'));
+  request = JSON.parse(readFileSync(requestPath, 'utf8'));
 } catch (error) {
   fail('GitHub operation request could not be read.', { error: error.message });
+}
+
+const publicKeyPath = process.env.STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH;
+if (!publicKeyPath) fail('STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH is required.');
+
+let publicKeyPem;
+try {
+  publicKeyPem = readFileSync(publicKeyPath, 'utf8');
+} catch (error) {
+  fail('Stephanos GitHub authorization public key could not be read.', { error: error.message });
+}
+
+const verification = verifyOpenClawGitHubAuthorization(request.authorization, publicKeyPem);
+if (verification.finalVerdict !== 'STEPHANOS_AUTHORIZATION_VERIFIED') {
+  fail('Stephanos GitHub authorization verification failed.', { verification });
+}
+
+let input = {
+  ...verification.claims,
+  approvalToken: request.approvalToken,
+};
+
+const configuredReceiptRoot = process.env.STEPHANOS_GITHUB_AUTH_RECEIPT_DIR;
+if (!configuredReceiptRoot) fail('STEPHANOS_GITHUB_AUTH_RECEIPT_DIR is required.');
+const receiptRoot = resolve(configuredReceiptRoot);
+const receiptPath = resolve(receiptRoot, `${verification.authorizationId}.json`);
+if (existsSync(receiptPath)) {
+  fail('Stephanos GitHub authorization has already been consumed.', {
+    authorizationId: verification.authorizationId,
+    receiptPath,
+  });
 }
 
 function run(executable, args, cwd = input.repositoryRoot) {
@@ -77,6 +110,19 @@ for (const command of packet.command) {
     });
   }
 }
+
+mkdirSync(receiptRoot, { recursive: true });
+writeFileSync(receiptPath, `${JSON.stringify({
+  schemaVersion: 'stephanos.openclaw-github-authorization-consumption.v1',
+  authorizationId: verification.authorizationId,
+  claimsSha256: verification.claimsSha256,
+  operation: packet.operation,
+  missionId: packet.missionId,
+  repository: packet.repository,
+  branch: packet.branch,
+  consumedAt: new Date().toISOString(),
+  finalVerdict: 'CONSUMED',
+}, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
 
 process.stdout.write(`${JSON.stringify({
   finalVerdict: 'OPENCLAW_GITHUB_OPERATION_PASS',
