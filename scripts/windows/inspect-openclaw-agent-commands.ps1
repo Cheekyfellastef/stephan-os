@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$OpenClawStateRoot = "$env:USERPROFILE\.openclaw"
+    [string]$OpenClawStateRoot = "$env:USERPROFILE\.openclaw",
+    [string]$OutputPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,6 +10,43 @@ $targets = @('standalone', 'scout-coder')
 $allowedExtensions = @('.js', '.mjs', '.cjs', '.ts', '.json', '.json5', '.md', '.yaml', '.yml')
 $excludedNamePattern = '(?i)(secret|credential|token|auth-profile|session|transcript|history|message|log)'
 $maxFileBytes = 2MB
+
+
+function ConvertTo-PlainJsonValue {
+    param($Value)
+
+    if ($null -eq $Value) { return $null }
+
+    if ($Value -is [string] -or $Value -is [bool] -or $Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) {
+        return $Value
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $object = New-Object psobject
+        foreach ($key in $Value.Keys) {
+            Add-Member -InputObject $object -MemberType NoteProperty -Name ([string]$key) -Value (ConvertTo-PlainJsonValue -Value $Value[$key]) -Force
+        }
+        return $object
+    }
+
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        $object = New-Object psobject
+        foreach ($property in $Value.PSObject.Properties) {
+            Add-Member -InputObject $object -MemberType NoteProperty -Name ([string]$property.Name) -Value (ConvertTo-PlainJsonValue -Value $property.Value) -Force
+        }
+        return $object
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+        $array = @()
+        foreach ($item in $Value) {
+            $array += ,(ConvertTo-PlainJsonValue -Value $item)
+        }
+        return $array
+    }
+
+    return [string]$Value
+}
 
 function Invoke-CapturedCommand([string[]]$Arguments) {
     $output = @(& $script:openclaw.Source @Arguments 2>&1)
@@ -93,4 +131,15 @@ $result = [ordered]@{
     finalVerdict = if ($gateway.exitCode -eq 0) { 'OPENCLAW_AGENT_COMMAND_RUNTIME_INVENTORY_PASS' } else { 'OPENCLAW_AGENT_COMMAND_RUNTIME_INVENTORY_BLOCKED_GATEWAY' }
 }
 
-$result | ConvertTo-Json -Depth 12
+$json = (ConvertTo-PlainJsonValue -Value $result) | ConvertTo-Json -Depth 16
+if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+    $json
+} else {
+    $resolvedOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+    $outputDirectory = [System.IO.Path]::GetDirectoryName($resolvedOutputPath)
+    if (-not [string]::IsNullOrWhiteSpace($outputDirectory)) {
+        New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
+    }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($resolvedOutputPath, ($json + [Environment]::NewLine), $utf8NoBom)
+}
