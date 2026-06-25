@@ -23,7 +23,10 @@ jobs:
         with:
           node-version: 22
       - name: Run bridge and manifest tests
-        run: node --test integrations/openclaw/stephanos-whatsapp-command/**/*.test.mjs integrations/openclaw/stephanos-whatsapp-command/*.test.mjs
+        run: >-
+          node --test
+          integrations/openclaw/stephanos-whatsapp-command/lib/bridge.test.mjs
+          integrations/openclaw/stephanos-whatsapp-command/manifest.test.mjs
 
   powershell-parse:
     runs-on: windows-latest
