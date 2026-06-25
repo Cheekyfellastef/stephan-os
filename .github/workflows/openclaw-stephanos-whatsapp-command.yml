@@ -1,0 +1,46 @@
+name: OpenClaw Stephanos WhatsApp Command
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/openclaw/stephanos-whatsapp-command/**'
+      - 'scripts/windows/*openclaw-stephanos-whatsapp-command.ps1'
+      - '.github/workflows/openclaw-stephanos-whatsapp-command.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'integrations/openclaw/stephanos-whatsapp-command/**'
+      - 'scripts/windows/*openclaw-stephanos-whatsapp-command.ps1'
+      - '.github/workflows/openclaw-stephanos-whatsapp-command.yml'
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run bridge and manifest tests
+        run: node --test integrations/openclaw/stephanos-whatsapp-command/**/*.test.mjs integrations/openclaw/stephanos-whatsapp-command/*.test.mjs
+
+  powershell-parse:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse integration scripts
+        shell: powershell
+        run: |
+          $errors = @()
+          Get-ChildItem scripts/windows/*openclaw-stephanos-whatsapp-command.ps1 | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
+            $errors += @($parseErrors)
+          }
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+          Write-Output 'FINAL_VERDICT=OPENCLAW_STEPHANOS_WHATSAPP_COMMAND_POWERSHELL_PARSE_PASS'
