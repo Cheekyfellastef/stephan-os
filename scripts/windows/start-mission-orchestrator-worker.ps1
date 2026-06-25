@@ -1,11 +1,16 @@
 [CmdletBinding()]
 param(
-    [string]$StephanosRepositoryRoot = "$env:USERPROFILE\Documents\GitHub\stephan-os",
+    [string]$StephanosRepositoryRoot = "",
     [string]$MissionRunnerRoot = "$env:USERPROFILE\Documents\OpenClaw-Standalone\mission-runner"
 )
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if ([string]::IsNullOrWhiteSpace($StephanosRepositoryRoot)) {
+    $StephanosRepositoryRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
+}
 
 $repositoryRoot = [System.IO.Path]::GetFullPath($StephanosRepositoryRoot)
 $missionRunnerRoot = [System.IO.Path]::GetFullPath($MissionRunnerRoot)
