@@ -17,13 +17,13 @@ async function stateAtChecks(options) {
   const input = { missionId: 'github-inspection-test', operatorIntent: 'Implement safely.', intendedOutcome: 'Failed checks trigger repair.', missionKind: 'implementation', repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:\\repo', branch: 'openclaw/github-inspection-test', worktreePath: 'C:\\worktree', allowedFiles: ['shared/agents/**'], requiredEvidence: ['focused test output'], requiredTests: ['node --test focused.test.mjs'] };
   await createMissionRecord(input, options);
   const append = (eventId, eventType, fields) => appendMissionEvent(input.missionId, { eventId, eventType, ...fields }, options);
-  await append('worktree', 'WORKTREE_READY', { worktreePath: input.worktreePath, clean: true, receipt: proof('isolated worktree', 'worktree') });
-  await append('dispatch', 'AGENT_DISPATCHED', { agentId: 'codex' });
-  await append('result', 'AGENT_RESULT_RECEIVED', { success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result') });
-  await append('evidence', 'EVIDENCE_RECORDED', { receipts: [proof('focused test output', 'evidence')] });
-  await append('commit', 'GIT_OPERATION_COMPLETED', { operation: 'commit', commitSha: 'a'.repeat(40), clean: true, receipt: proof('signed git commit', 'commit') });
-  await append('push', 'GIT_OPERATION_COMPLETED', { operation: 'push', success: true, receipt: proof('signed git push', 'push') });
-  return append('pr', 'PULL_REQUEST_OPENED', { prNumber: 1300, prUrl: 'https://github.com/o/r/pull/1300', headSha: 'b'.repeat(40), mergeable: true, receipt: proof('pull request creation', 'pr') });
+  await append('worktree-inspection-001', 'WORKTREE_READY', { worktreePath: input.worktreePath, clean: true, receipt: proof('isolated worktree', 'worktree') });
+  await append('dispatch-inspection-001', 'AGENT_DISPATCHED', { agentId: 'codex' });
+  await append('result-inspection-001', 'AGENT_RESULT_RECEIVED', { success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result') });
+  await append('evidence-inspection-001', 'EVIDENCE_RECORDED', { receipts: [proof('focused test output', 'evidence')] });
+  await append('commit-inspection-001', 'GIT_OPERATION_COMPLETED', { operation: 'commit', commitSha: 'a'.repeat(40), clean: true, receipt: proof('signed git commit', 'commit') });
+  await append('push-inspection-001', 'GIT_OPERATION_COMPLETED', { operation: 'push', success: true, receipt: proof('signed git push', 'push') });
+  return append('pr-inspection-001', 'PULL_REQUEST_OPENED', { prNumber: 1300, prUrl: 'https://github.com/o/r/pull/1300', headSha: 'b'.repeat(40), mergeable: true, receipt: proof('pull request creation', 'pr') });
 }
 
 test('failed checks become repair state and start one bounded Codex round', async () => {
