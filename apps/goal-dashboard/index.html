@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Goal Dashboard</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #08111f;
+        --panel: rgba(13, 25, 45, 0.92);
+        --panel-soft: rgba(20, 39, 70, 0.74);
+        --line: rgba(137, 177, 255, 0.24);
+        --line-strong: rgba(137, 177, 255, 0.42);
+        --text: #edf5ff;
+        --muted: #9eb2d0;
+        --accent: #7dd3fc;
+        --good: #86efac;
+        --warn: #fde68a;
+        --unknown: #c4b5fd;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at 12% 16%, rgba(125, 211, 252, 0.18), transparent 30%),
+          radial-gradient(circle at 88% 10%, rgba(196, 181, 253, 0.15), transparent 34%),
+          linear-gradient(145deg, #04070f 0%, var(--bg) 46%, #0b1020 100%);
+        color: var(--text);
+      }
+
+      main {
+        width: min(1180px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 32px 0 48px;
+      }
+
+      .hero {
+        border: 1px solid var(--line-strong);
+        border-radius: 28px;
+        padding: 26px;
+        background: linear-gradient(140deg, rgba(14, 31, 58, 0.96), rgba(13, 22, 43, 0.84));
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+      }
+
+      .eyebrow,
+      .source-pill,
+      .badge,
+      .actor-chip {
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-size: 0.72rem;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-weight: 800;
+      }
+
+      h1 {
+        margin: 8px 0 8px;
+        font-size: clamp(2rem, 5vw, 4.2rem);
+        line-height: 0.92;
+      }
+
+      .subtitle {
+        max-width: 760px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 1rem;
+        line-height: 1.6;
+      }
+
+      .source-row,
+      .flywheel,
+      .vladder,
+      .goal-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .source-row {
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        margin-top: 22px;
+      }
+
+      .source-pill {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--muted);
+        font-weight: 750;
+      }
+
+      .source-pill strong {
+        display: block;
+        margin-top: 4px;
+        color: var(--text);
+        font-size: 0.92rem;
+        letter-spacing: 0;
+        text-transform: none;
+      }
+
+      section {
+        margin-top: 22px;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 16px;
+        margin: 0 0 12px;
+      }
+
+      .section-title h2 {
+        margin: 0;
+        font-size: 1.2rem;
+      }
+
+      .section-title span {
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .flywheel {
+        grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+      }
+
+      .actor-card,
+      .goal-card,
+      .v-card {
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: var(--panel);
+      }
+
+      .actor-card {
+        padding: 14px;
+      }
+
+      .actor-card b {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .actor-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.85rem;
+        line-height: 1.4;
+      }
+
+      .vladder {
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      }
+
+      .v-card {
+        padding: 14px;
+        min-height: 120px;
+      }
+
+      .v-card h3 {
+        margin: 8px 0 6px;
+        font-size: 0.98rem;
+      }
+
+      .v-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.84rem;
+        line-height: 1.45;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        padding: 5px 8px;
+        font-weight: 850;
+        color: var(--muted);
+      }
+
+      .badge.complete {
+        color: var(--good);
+        border-color: rgba(134, 239, 172, 0.34);
+      }
+
+      .badge.active {
+        color: var(--warn);
+        border-color: rgba(253, 230, 138, 0.34);
+      }
+
+      .badge.unknown {
+        color: var(--unknown);
+        border-color: rgba(196, 181, 253, 0.34);
+      }
+
+      .goal-grid {
+        grid-template-columns: repeat(auto-fit, minmax(275px, 1fr));
+      }
+
+      .goal-card {
+        overflow: hidden;
+      }
+
+      .goal-head {
+        padding: 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-soft);
+      }
+
+      .goal-head h3 {
+        margin: 8px 0 0;
+        font-size: 1.02rem;
+        line-height: 1.3;
+      }
+
+      .goal-body {
+        padding: 16px;
+      }
+
+      .meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .meta div {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .meta span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 4px;
+      }
+
+      .rail {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 5px;
+        margin: 10px 0 14px;
+      }
+
+      .rail i {
+        height: 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .rail i.done {
+        background: rgba(134, 239, 172, 0.38);
+        border-color: rgba(134, 239, 172, 0.52);
+      }
+
+      .rail i.now {
+        background: rgba(253, 230, 138, 0.42);
+        border-color: rgba(253, 230, 138, 0.62);
+      }
+
+      .actor-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin: 12px 0;
+      }
+
+      .actor-chip {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 5px 8px;
+        color: var(--muted);
+        font-weight: 800;
+      }
+
+      .actor-chip.current {
+        color: var(--warn);
+        border-color: rgba(253, 230, 138, 0.45);
+      }
+
+      .next-action {
+        margin: 0;
+        color: var(--text);
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+
+      .next-action span {
+        color: var(--accent);
+        font-weight: 850;
+      }
+
+      .guardrail {
+        border: 1px solid rgba(253, 230, 138, 0.28);
+        border-radius: 20px;
+        background: rgba(253, 230, 138, 0.07);
+        padding: 14px 16px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      @media (max-width: 720px) {
+        main {
+          width: min(100% - 18px, 1180px);
+          padding-top: 12px;
+        }
+
+        .hero,
+        .goal-card,
+        .v-card,
+        .actor-card {
+          border-radius: 18px;
+        }
+
+        .meta {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main data-testid="goal-dashboard-landing-tile" data-role="GOAL_DASHBOARD_LANDING_TILE">
+      <header class="hero">
+        <div class="eyebrow">GOAL_DASHBOARD_LANDING_TILE</div>
+        <h1>Goal Dashboard</h1>
+        <p class="subtitle">
+          Seeded cockpit panel for active Stephanos goals. This first tile is source-controlled static data only:
+          unknown proof stays unknown, live GitHub and automation state are not claimed until wired and proven.
+        </p>
+        <div class="source-row" aria-label="data source status">
+          <div class="source-pill">Goal data<strong>Seeded / source-controlled</strong></div>
+          <div class="source-pill">GitHub state<strong>Not live in browser</strong></div>
+          <div class="source-pill">Automation state<strong>Not live in browser</strong></div>
+          <div class="source-pill">Proof state<strong>Explicit or unknown</strong></div>
+        </div>
+      </header>
+
+      <section aria-labelledby="flywheel-title">
+        <div class="section-title">
+          <h2 id="flywheel-title">Flywheel stack</h2>
+          <span>Operator → ChatGPT → Codex → OpenClaw → Stephanos → Operator</span>
+        </div>
+        <div class="flywheel">
+          <article class="actor-card"><b>Operator</b><p>Intent, judgement, exact-head approval.</p></article>
+          <article class="actor-card"><b>ChatGPT</b><p>Strategy, architecture, goal shaping, handoff packets.</p></article>
+          <article class="actor-card"><b>Codex</b><p>Repo code builder, tests, pull request worker.</p></article>
+          <article class="actor-card"><b>OpenClaw</b><p>Local PC operator, Windows proof, WhatsApp/runtime bridge.</p></article>
+          <article class="actor-card"><b>Stephanos</b><p>Product OS, landing page, command surface.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="vladder-title">
+        <div class="section-title">
+          <h2 id="vladder-title">#1282 V-ladder</h2>
+          <span>Tile self-progress</span>
+        </div>
+        <div class="vladder">
+          <article class="v-card"><span class="badge complete">V1 complete</span><h3>Chat status board</h3><p>Chat-rendered dashboard exists with seeded goals and next milestones.</p></article>
+          <article class="v-card"><span class="badge active">V2 active</span><h3>Landing-page tile</h3><p>This static tile app is the first landing-page implementation and needs browser proof.</p></article>
+          <article class="v-card"><span class="badge active">V3 seeded</span><h3>Proof-aware progress</h3><p>Progress rails use explicit seeded proof states. Unknown proof is not upgraded.</p></article>
+          <article class="v-card"><span class="badge active">V4 seeded</span><h3>Operator next action</h3><p>Every card includes current owner, next owner, handoff state, and smallest next action.</p></article>
+          <article class="v-card"><span class="badge active">V5 seeded</span><h3>Visual progress rails</h3><p>Compact bridge-panel rails and badges render for each seeded goal.</p></article>
+          <article class="v-card"><span class="badge unknown">V6 deferred</span><h3>WhatsApp summary</h3><p>Clean handoff to #1280 unless this goal later implements real WhatsApp proof.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="goals-title">
+        <div class="section-title">
+          <h2 id="goals-title">Active seeded goals</h2>
+          <span>Current owner, next owner, handoff state</span>
+        </div>
+        <div id="goal-grid" class="goal-grid"></div>
+      </section>
+
+      <section>
+        <div class="guardrail">
+          <strong>Safety boundary:</strong> this tile does not claim live GitHub, automation, Windows, browser, or WhatsApp proof.
+          Live wiring must be added through a bounded adapter and proved before the labels change.
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const proofSteps = [
+        'goal created',
+        'automation active',
+        'design ready',
+        'draft PR opened',
+        'tests passed',
+        'runtime proof passed',
+        'browser/WhatsApp proof passed',
+        'merge-ready'
+      ];
+
+      const goals = [
+        {
+          issue: '#1278',
+          title: 'Clean /standalone /scout-coder /scout_coder wiring',
+          status: 'Active',
+          currentOwner: 'Codex',
+          nextOwner: 'OpenClaw',
+          handoffState: 'source command wiring -> local WhatsApp proof',
+          milestone: 'MILESTONE_2_COMMAND_WIRING_IMPLEMENTATION_NEEDED',
+          operatorNeeded: 'No',
+          proofIndex: 2,
+          nextAction: 'Build source-controlled command replacement, then prove real WhatsApp command behavior.'
+        },
+        {
+          issue: '#1280',
+          title: 'Make /stephanos more alive and useful over WhatsApp',
+          status: 'Active',
+          currentOwner: 'ChatGPT',
+          nextOwner: 'Codex',
+          handoffState: 'awareness contract -> implementation packet',
+          milestone: 'MILESTONE_1_STEPHANOS_ALIVE_LANE_DESIGN_READY',
+          operatorNeeded: 'No',
+          proofIndex: 2,
+          nextAction: 'Define safe awareness sources and compact /stephanos reply contract.'
+        },
+        {
+          issue: '#1281',
+          title: 'Professional PC ignition splash/autofix/boot concierge',
+          status: 'Waiting for proof',
+          currentOwner: 'OpenClaw',
+          nextOwner: 'Codex',
+          handoffState: 'Windows blocker inventory -> safe launcher implementation',
+          milestone: 'MILESTONE_1_IGNITION_BLOCKER_INVENTORY_READY',
+          operatorNeeded: 'Not yet',
+          proofIndex: 1,
+          nextAction: 'Run bounded Windows ignition inventory before building risky cleanup behavior.'
+        },
+        {
+          issue: '#1282',
+          title: 'Goal Dashboard landing-page tile',
+          status: 'Waiting for browser proof',
+          currentOwner: 'OpenClaw',
+          nextOwner: 'Operator',
+          handoffState: 'landing tile code -> local browser proof',
+          milestone: 'MILESTONE_2_GOAL_DASHBOARD_LANDING_TILE_IMPLEMENTED',
+          operatorNeeded: 'Proof only',
+          proofIndex: 4,
+          nextAction: 'Launch the Stephanos UI locally and capture DOM/browser proof that Goal Dashboard appears beside existing tiles.'
+        }
+      ];
+
+      const actorOrder = ['Operator', 'ChatGPT', 'Codex', 'OpenClaw', 'Stephanos', 'Operator'];
+      const grid = document.getElementById('goal-grid');
+
+      goals.forEach((goal) => {
+        const card = document.createElement('article');
+        card.className = 'goal-card';
+        card.setAttribute('data-issue', goal.issue);
+        card.innerHTML = `
+          <div class="goal-head">
+            <span class="badge ${goal.status.includes('Waiting') ? 'active' : 'complete'}">${goal.status}</span>
+            <h3>${goal.issue} ${goal.title}</h3>
+          </div>
+          <div class="goal-body">
+            <div class="meta">
+              <div><span>Current owner</span>${goal.currentOwner}</div>
+              <div><span>Next owner</span>${goal.nextOwner}</div>
+              <div><span>Operator needed</span>${goal.operatorNeeded}</div>
+              <div><span>Handoff</span>${goal.handoffState}</div>
+            </div>
+            <div aria-label="Proof-state rail for ${goal.issue}" class="rail">
+              ${proofSteps.map((_, index) => `<i class="${index < goal.proofIndex ? 'done' : index === goal.proofIndex ? 'now' : ''}"></i>`).join('')}
+            </div>
+            <div class="actor-strip" aria-label="Actor interaction strip">
+              ${actorOrder.map((actor) => `<span class="actor-chip ${actor === goal.currentOwner ? 'current' : ''}">${actor}</span>`).join('')}
+            </div>
+            <p class="next-action"><span>${goal.milestone}</span><br />${goal.nextAction}</p>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    </script>
+  </body>
+</html>
