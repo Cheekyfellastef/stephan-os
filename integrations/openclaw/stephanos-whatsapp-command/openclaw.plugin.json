@@ -1,0 +1,25 @@
+{
+  "id": "stephanos-whatsapp-command",
+  "name": "Stephanos WhatsApp Command",
+  "description": "Adds an authorized /stephanos command that talks only to the loopback Stephanos AI route.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "endpoint": {
+        "type": "string",
+        "default": "http://127.0.0.1:8787/api/ai/chat",
+        "description": "Loopback-only Stephanos AI endpoint."
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 120000,
+        "default": 90000
+      }
+    }
+  }
+}
