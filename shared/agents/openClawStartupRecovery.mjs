@@ -35,9 +35,13 @@ function isStandaloneGatewayHealthVerified(endpoint = {}) {
 
 function isStandaloneGatewayProcess(process = {}) {
   const commandLine = String(process.commandLine || process.CommandLine || '');
-  return /node(?:\.exe)?/i.test(String(process.name || process.Name || commandLine || ''))
-    && /openclaw\.mjs/i.test(commandLine)
-    && /\bgateway\s+run\b/i.test(commandLine);
+  const processName = String(process.name || process.Name || commandLine || '');
+  const launchedByNode = /node(?:\.exe)?/i.test(processName);
+  const knownOpenClawEntrypoint = /node_modules[\\/]openclaw[\\/](?:dist[\\/]index\.js|openclaw\.mjs)/i.test(commandLine);
+  const gatewayCommand = /\bgateway\s+run\b/i.test(commandLine)
+    || /\bgateway\b[\s\S]*\s--port\b/i.test(commandLine);
+
+  return launchedByNode && knownOpenClawEntrypoint && gatewayCommand;
 }
 
 export function findVerifiedOpenClawStandaloneGatewayCandidate(discovery = {}) {
@@ -177,7 +181,7 @@ export function buildOpenClawStartupRecoveryPacket(readiness = {}) {
     recommendedRestartAction: classification.state === 'openclaw-standalone-gateway-candidate'
       ? 'OpenClaw Standalone gateway candidate has a verified process-owned localhost port, but readiness cannot verify endpoint identity yet. Keep restart and mutation unavailable; inspect the discovery packet and strengthen identity rules.'
       : classification.state === 'openclaw-adapter-only'
-        ? 'OpenClaw Windows service was not found; only the readonly adapter is running. Start/restart OpenClaw Standalone manually or configure the service identity.'
+        ? 'OpenClaw Windows service was not found; only the readonly adapter is running. Start/restart OpenClaw Standalone manually or configure its service identity.'
         : classification.safeRestartEligible
         ? 'OpenClaw verified Windows service is running but not connected. After desktop approval, restart exactly the verified OpenClaw service, wait briefly, and re-check readiness.'
         : 'Stop ignition. Do not restart until OpenClaw Windows service identity and endpoint ownership are verified.',
