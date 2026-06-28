@@ -51,27 +51,38 @@ function Write-ProofCommentBlock {
   $domContainsStephanos = [string]$transcript.runtime.domSignals.bodyContainsStephanos
   $domContentLength = [string]$transcript.runtime.domSignals.contentLength
 
+  $comment = @"
+```text
+$marker
+PR = #1288
+EXPECTED_HEAD = $expectedHead
+ACTUAL_HEAD = $actualHead
+EXACT_HEAD_MATCHED = $exactHeadMatched
+RUNTIME_URL = $runtimeUrl
+RUNTIME_STATUS = $runtimeStatus
+RUNTIME_PASSED = $runtimePassed
+BROWSER_RUNTIME_PROOF = $browserRuntimeProof
+BROWSER_RUNTIME_DOM_PROOF = $browserRuntimeDomProof
+DOM_TITLE = $domTitle
+DOM_HAS_HTML_SHELL = $domHasHtmlShell
+DOM_CONTAINS_STEPHANOS = $domContainsStephanos
+DOM_CONTENT_LENGTH = $domContentLength
+TRANSCRIPT = tmp/stephanos-ignition/ignition-proof-runner-transcript.json
+MERGE_ALLOWED = NO
+```
+"@
+
   Write-Step "Copyable GitHub milestone/proof comment"
   Write-Host "Paste this into #1281 / PR #1288 after local proof completes:"
   Write-Host ""
-  Write-Host '```text'
-  Write-Host $marker
-  Write-Host "PR = #1288"
-  Write-Host "EXPECTED_HEAD = $expectedHead"
-  Write-Host "ACTUAL_HEAD = $actualHead"
-  Write-Host "EXACT_HEAD_MATCHED = $exactHeadMatched"
-  Write-Host "RUNTIME_URL = $runtimeUrl"
-  Write-Host "RUNTIME_STATUS = $runtimeStatus"
-  Write-Host "RUNTIME_PASSED = $runtimePassed"
-  Write-Host "BROWSER_RUNTIME_PROOF = $browserRuntimeProof"
-  Write-Host "BROWSER_RUNTIME_DOM_PROOF = $browserRuntimeDomProof"
-  Write-Host "DOM_TITLE = $domTitle"
-  Write-Host "DOM_HAS_HTML_SHELL = $domHasHtmlShell"
-  Write-Host "DOM_CONTAINS_STEPHANOS = $domContainsStephanos"
-  Write-Host "DOM_CONTENT_LENGTH = $domContentLength"
-  Write-Host "TRANSCRIPT = tmp/stephanos-ignition/ignition-proof-runner-transcript.json"
-  Write-Host "MERGE_ALLOWED = NO"
-  Write-Host '```'
+  Write-Host $comment
+
+  try {
+    Set-Clipboard -Value $comment
+    Write-Host "clipboard=proof-comment-ready"
+  } catch {
+    Write-Host "clipboard=unavailable $($_.Exception.Message)"
+  }
 }
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
