@@ -29,6 +29,39 @@ function Invoke-Checked {
   }
 }
 
+function Write-ProofCommentBlock {
+  param([string]$TranscriptPath)
+
+  if (-not (Test-Path -LiteralPath $TranscriptPath)) {
+    throw "Proof transcript was not found at $TranscriptPath"
+  }
+
+  $transcript = Get-Content -LiteralPath $TranscriptPath -Raw | ConvertFrom-Json
+  $marker = [string]$transcript.marker
+  $actualHead = [string]$transcript.exactHead.actual
+  $expectedHead = [string]$transcript.exactHead.expected
+  $exactHeadMatched = [string]$transcript.exactHead.matched
+  $runtimePassed = [string]$transcript.runtime.passed
+  $runtimeUrl = [string]$transcript.runtime.url
+  $runtimeStatus = [string]$transcript.runtime.statusCode
+
+  Write-Step "Copyable GitHub milestone/proof comment"
+  Write-Host "Paste this into #1281 / PR #1288 after local proof completes:"
+  Write-Host ""
+  Write-Host '```text'
+  Write-Host $marker
+  Write-Host "PR = #1288"
+  Write-Host "EXPECTED_HEAD = $expectedHead"
+  Write-Host "ACTUAL_HEAD = $actualHead"
+  Write-Host "EXACT_HEAD_MATCHED = $exactHeadMatched"
+  Write-Host "RUNTIME_URL = $runtimeUrl"
+  Write-Host "RUNTIME_STATUS = $runtimeStatus"
+  Write-Host "RUNTIME_PASSED = $runtimePassed"
+  Write-Host "TRANSCRIPT = tmp/stephanos-ignition/ignition-proof-runner-transcript.json"
+  Write-Host "MERGE_ALLOWED = NO"
+  Write-Host '```'
+}
+
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
@@ -91,3 +124,5 @@ Write-Step "Ignition proof transcript ready"
 Write-Host "MILESTONE_5_IGNITION_BROWSER_RUNTIME_PROOF_PASSED requires the proof runner marker above."
 Write-Host "transcript=tmp/stephanos-ignition/ignition-proof-runner-transcript.json"
 Write-Host "MERGE_ALLOWED=NO until exact-head operator approval is given."
+
+Write-ProofCommentBlock -TranscriptPath (Join-Path $RepoRoot "tmp\stephanos-ignition\ignition-proof-runner-transcript.json")
