@@ -44,6 +44,12 @@ function Write-ProofCommentBlock {
   $runtimePassed = [string]$transcript.runtime.passed
   $runtimeUrl = [string]$transcript.runtime.url
   $runtimeStatus = [string]$transcript.runtime.statusCode
+  $browserRuntimeProof = [string]$transcript.proofScope.browserRuntimeProof
+  $browserRuntimeDomProof = [string]$transcript.proofScope.browserRuntimeDomProof
+  $domTitle = [string]$transcript.runtime.domSignals.title
+  $domHasHtmlShell = [string]$transcript.runtime.domSignals.hasHtmlShell
+  $domContainsStephanos = [string]$transcript.runtime.domSignals.bodyContainsStephanos
+  $domContentLength = [string]$transcript.runtime.domSignals.contentLength
 
   Write-Step "Copyable GitHub milestone/proof comment"
   Write-Host "Paste this into #1281 / PR #1288 after local proof completes:"
@@ -57,6 +63,12 @@ function Write-ProofCommentBlock {
   Write-Host "RUNTIME_URL = $runtimeUrl"
   Write-Host "RUNTIME_STATUS = $runtimeStatus"
   Write-Host "RUNTIME_PASSED = $runtimePassed"
+  Write-Host "BROWSER_RUNTIME_PROOF = $browserRuntimeProof"
+  Write-Host "BROWSER_RUNTIME_DOM_PROOF = $browserRuntimeDomProof"
+  Write-Host "DOM_TITLE = $domTitle"
+  Write-Host "DOM_HAS_HTML_SHELL = $domHasHtmlShell"
+  Write-Host "DOM_CONTAINS_STEPHANOS = $domContainsStephanos"
+  Write-Host "DOM_CONTENT_LENGTH = $domContentLength"
   Write-Host "TRANSCRIPT = tmp/stephanos-ignition/ignition-proof-runner-transcript.json"
   Write-Host "MERGE_ALLOWED = NO"
   Write-Host '```'
