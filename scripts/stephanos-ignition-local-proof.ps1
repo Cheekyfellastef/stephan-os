@@ -111,13 +111,14 @@ Invoke-Checked "Run ignition concierge unit tests" { npm run stephanos:ignition-
 Invoke-Checked "Run ignition concierge proof mode" { npm run stephanos:ignition-concierge:proof }
 
 Write-Step "Start Stephanos through one-button concierge path"
-$launcher = Start-Process -FilePath "powershell.exe" -ArgumentList @(
+$launcher = Start-Process -FilePath "powershell.exe" -WindowStyle Minimized -ArgumentList @(
   "-NoExit",
   "-ExecutionPolicy", "Bypass",
   "-Command",
   "cd `"$RepoRoot`"; npm run stephanos"
 ) -PassThru
 Write-Host "launcherPid=$($launcher.Id)"
+Write-Host "launcherWindow=minimized-background-proof"
 
 Write-Step "Probe browser/runtime URL"
 $deadline = (Get-Date).AddSeconds($ProbeSeconds)
