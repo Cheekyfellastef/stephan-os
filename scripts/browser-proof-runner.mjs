@@ -37,14 +37,23 @@ export function evaluateBrowserProofResult(result = {}) {
   if (!ok(checks.operatorDiagnosticCopyPresent)) blocking.push('operator-facing diagnostic copy missing');
   if (Number(checks.consoleErrorCount || 0) > 0) blocking.push(`console error count ${checks.consoleErrorCount}`);
   if (result.automationUnavailable) blocking.push(`automation unavailable: ${result.automationUnavailable}`);
-  return { accepted: blocking.length === 0, blocking };
+  const observed = result.browserAutomationAvailable === true && !result.automationUnavailable && checks.runtimeReachable === true;
+  return { accepted: observed, observed, mergeReady: observed && blocking.length === 0, blocking };
+}
+
+function listSection(title, items = []) {
+  return items.length ? [title, ...items.map((item) => `- ${item}`)] : [title, '- none'];
+}
+
+function consoleErrorSummary(errors = []) {
+  return errors.slice(0, 5).map((item) => String(item || '').split('\n')[0].slice(0, 220)).filter(Boolean);
 }
 
 export function buildBrowserProofPacket(result = {}) {
   const verdict = evaluateBrowserProofResult(result);
   const repair = result.automationUnavailable || !result.browserAutomationAvailable;
   const header = repair ? 'Browser Proof Repair Packet V1' : 'Browser Proof Checklist V1';
-  const status = verdict.accepted ? 'accepted' : (repair ? 'repair-required' : 'blocked');
+  const status = repair ? 'repair-required' : (verdict.observed ? 'observed' : 'repair-required');
   const checks = result.checks || {};
   return [
     header,
@@ -69,7 +78,9 @@ export function buildBrowserProofPacket(result = {}) {
     line('- Operator-facing diagnostic copy presence', checks.operatorDiagnosticCopyPresent ? 'yes' : 'no'),
     line('- Console error count', checks.consoleErrorCount ?? 'unavailable'),
     '',
-    verdict.blocking.length ? `Blocking findings: ${verdict.blocking.join(' | ')}` : 'Blocking findings: none',
+    ...listSection('Observed caveats:', verdict.blocking),
+    ...listSection('Merge blockers:', verdict.mergeReady ? [] : verdict.blocking),
+    ...(Number(checks.consoleErrorCount || 0) > 0 ? ['Console error summary:', ...consoleErrorSummary(result.consoleErrors || checks.consoleErrors || []).map((item) => `- ${item}`)] : []),
     'Safety locks: mutation no; Codex auto-dispatch no; OpenClaw locked; merge readiness no / hold; no paid APIs; no automatic browsing beyond local Stephanos runtime URL.',
     repair ? 'Repair action: install/enable Playwright with a system Microsoft Edge channel, or run this packet again from the operator Windows desktop where Edge and the 4173 runtime are available.' : 'Next action: paste this packet into Command Deck as browser-proof-checklist evidence.',
   ].join('\n');
@@ -123,9 +134,9 @@ async function collectWithBrowser(url = DEFAULT_URL) {
     const screenshotPath = resolve(OUT_DIR, `browser-proof-${Date.now()}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     checks.consoleErrorCount = errors.length;
-    return { browserAutomationAvailable: true, localBrowserMechanism: 'Playwright Chromium using installed Microsoft Edge channel on Windows when available; no browser download requested', url, generatedAt: stamp(), screenshotPath, checks };
+    return { browserAutomationAvailable: true, localBrowserMechanism: 'Playwright Chromium using installed Microsoft Edge channel on Windows when available; no browser download requested', url, generatedAt: stamp(), screenshotPath, consoleErrors: errors, checks };
   } catch (error) {
-    return { browserAutomationAvailable: false, automationUnavailable: sanitizeAutomationUnavailable(error.message), url, generatedAt: stamp(), checks: { runtimeReachable: false, consoleErrorCount: errors.length } };
+    return { browserAutomationAvailable: false, automationUnavailable: sanitizeAutomationUnavailable(error.message), url, generatedAt: stamp(), consoleErrors: errors, checks: { runtimeReachable: false, consoleErrorCount: errors.length } };
   } finally { if (browser) await browser.close(); }
 }
 

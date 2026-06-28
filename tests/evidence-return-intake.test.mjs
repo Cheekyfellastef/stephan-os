@@ -61,6 +61,45 @@ test('browser red console/error text creates failed proof candidate', () => {
   assert.equal(r.parsedFindings[0].status, 'failed');
 });
 
+test('observed browser checklist packet with caveats is accepted as browser proof evidence', () => {
+  const packet = [
+    'Browser Proof Checklist V1',
+    'Packet Kind: browser-proof-checklist',
+    'Proof Item: browser-proof-checklist',
+    'Status: observed',
+    'Console error count: 1',
+    'Caveats:',
+    '- console error count 1',
+    'Merge blockers:',
+    '- console error count 1',
+    'Safety locks: mutation no; Codex auto-dispatch no; OpenClaw locked; merge readiness no / hold;',
+  ].join('\n');
+  const r = deriveEvidenceReturnIntakeProjection({
+    ...base,
+    missionProofReconciliation: { remainingMissingItems: ['browser-proof-checklist', 'pr-evidence'] },
+    intakeText: packet,
+  });
+  assert.equal(r.browserProofIntakeStatus, 'accepted');
+  assert.equal(r.browserProofRejectionReason, 'none');
+  assert.deepEqual(r.acceptedProofItems, ['browser-proof-checklist']);
+  assert.deepEqual(r.rejectedProofItems, []);
+  assert.equal(r.trustedForMerge, false);
+  assert.equal(r.remainingMissingProofSummary, 'pr-evidence');
+});
+
+test('browser repair packet remains rejected and repair-required', () => {
+  const r = deriveEvidenceReturnIntakeProjection({
+    ...base,
+    missionProofReconciliation: { remainingMissingItems: ['browser-proof-checklist'] },
+    intakeText: 'Browser Proof Repair Packet V1\nProof Item: browser-proof-checklist\nStatus: repair-required\nRuntime URL: http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+  });
+  assert.equal(r.browserProofIntakeStatus, 'rejected');
+  assert.equal(r.browserProofRejectionReason, 'browser-proof-repair-required');
+  assert.deepEqual(r.acceptedProofItems, []);
+  assert.deepEqual(r.rejectedProofItems, ['browser-proof-checklist']);
+  assert.equal(r.trustedForMerge, false);
+});
+
 test('PR evidence requires explicit PR/check/commit details', () => {
   assert.equal(deriveEvidenceReturnIntakeProjection({ ...base, intakeText: 'PR #42 checks: pass commit abcdef1' }).parsedResultStatus, 'observed');
   assert.equal(deriveEvidenceReturnIntakeProjection({ ...base, intakeText: 'PR evidence looks okay but no details' }).parsedResultStatus, 'pending-review');
