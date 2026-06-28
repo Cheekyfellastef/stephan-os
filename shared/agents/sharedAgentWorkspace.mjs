@@ -75,7 +75,7 @@ const PARTICIPANT_ALIASES = Object.freeze({
 
 const SAFE_TEXT_PATTERN = /^[a-z0-9][a-z0-9._:/# -]{0,240}$/i;
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
-const UNSAFE_PATH_PATTERN = /(^|\/)(\.git|node_modules|apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|data|tmp)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
+const UNSAFE_PATH_PATTERN = /(^|\/)(\.git|node_modules|apps\/stephanos\/dist|stephanos-server\/data)(\/|$)|^(runtime|runtime-data|root-data|data|tmp)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
 
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
