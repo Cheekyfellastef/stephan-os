@@ -46,6 +46,22 @@ function markerSeen(step, marker) {
   return `${step.stdout}\n${step.stderr}`.includes(marker);
 }
 
+function buildRuntimeDomSignals(body) {
+  const titleMatch = body.match(/<title[^>]*>([^<]*)<\/title>/i);
+  const title = titleMatch ? titleMatch[1].trim() : null;
+  const bodyContainsStephanos = /Stephanos|Command Deck|Galaxians|Wealth/i.test(body);
+  const hasHtmlShell = /<html[\s>]/i.test(body) && /<body[\s>]/i.test(body);
+
+  return {
+    title,
+    bodyContainsStephanos,
+    hasHtmlShell,
+    contentLength: body.length,
+    bodySample: body.replace(/\s+/g, ' ').trim().slice(0, 240),
+    passed: bodyContainsStephanos && hasHtmlShell,
+  };
+}
+
 function probeRuntime(url = DEFAULT_RUNTIME_URL) {
   return new Promise((resolveProbe) => {
     const startedAt = new Date().toISOString();
@@ -56,14 +72,17 @@ function probeRuntime(url = DEFAULT_RUNTIME_URL) {
         body += chunk;
       });
       response.on('end', () => {
+        const domSignals = buildRuntimeDomSignals(body);
+        const httpPassed = response.statusCode >= 200 && response.statusCode < 400;
         resolveProbe({
           name: 'runtime-url-probe',
           url,
           startedAt,
           finishedAt: new Date().toISOString(),
           statusCode: response.statusCode,
-          bodyContainsStephanos: /Stephanos|Command Deck|Galaxians|Wealth/i.test(body),
-          passed: response.statusCode >= 200 && response.statusCode < 400,
+          bodyContainsStephanos: domSignals.bodyContainsStephanos,
+          domSignals,
+          passed: httpPassed && domSignals.passed,
         });
       });
     });
@@ -80,6 +99,14 @@ function probeRuntime(url = DEFAULT_RUNTIME_URL) {
         finishedAt: new Date().toISOString(),
         statusCode: null,
         bodyContainsStephanos: false,
+        domSignals: {
+          title: null,
+          bodyContainsStephanos: false,
+          hasHtmlShell: false,
+          contentLength: 0,
+          bodySample: '',
+          passed: false,
+        },
         error: error.message,
         passed: false,
       });
@@ -107,6 +134,7 @@ async function main() {
     safeGeneratedDirtProof: markerSeen(steps[0], 'classifies generated dist dirt as safe'),
     unsafeDirtBlockedProof: markerSeen(steps[0], 'source dirt as approval-required') || markerSeen(steps[0], 'splash model exposes blocked panel'),
     browserRuntimeProof: runtime.passed,
+    browserRuntimeDomProof: Boolean(runtime.domSignals?.passed),
     exactHeadProof: expectedHead ? exactHeadMatched : 'not-supplied',
   };
   const passed = steps.every((step) => step.passed)
