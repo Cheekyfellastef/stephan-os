@@ -30,6 +30,22 @@ function runStep(name, command, args) {
   };
 }
 
+function runOptionalEvidence(name, command, args) {
+  const step = runStep(name, command, args);
+  return {
+    name: step.name,
+    command: step.command,
+    status: step.status,
+    error: step.error,
+    value: step.stdout.trim() || step.stderr.trim(),
+    passed: step.passed,
+  };
+}
+
+function markerSeen(step, marker) {
+  return `${step.stdout}\n${step.stderr}`.includes(marker);
+}
+
 function probeRuntime(url = DEFAULT_RUNTIME_URL) {
   return new Promise((resolveProbe) => {
     const startedAt = new Date().toISOString();
@@ -74,26 +90,54 @@ function probeRuntime(url = DEFAULT_RUNTIME_URL) {
 async function main() {
   mkdirSync(outDir, { recursive: true });
 
+  const gitHead = runOptionalEvidence('git-head', 'git', ['rev-parse', 'HEAD']);
+  const gitBranch = runOptionalEvidence('git-branch', 'git', ['branch', '--show-current']);
+  const gitStatusBefore = runOptionalEvidence('git-status-before', 'git', ['status', '--porcelain=v1']);
+  const expectedHead = process.env.STEPHANOS_IGNITION_EXPECTED_HEAD || null;
+  const exactHeadMatched = expectedHead ? gitHead.value === expectedHead : null;
+
   const steps = [
     runStep('ignition-concierge-unit-tests', npmCommand, ['run', 'stephanos:ignition-concierge:test']),
     runStep('ignition-concierge-proof-mode', npmCommand, ['run', 'stephanos:ignition-concierge:proof']),
   ];
 
   const runtime = await probeRuntime(process.env.STEPHANOS_IGNITION_RUNTIME_URL || DEFAULT_RUNTIME_URL);
-  const passed = steps.every((step) => step.passed) && runtime.passed;
+  const proofScope = {
+    cleanOrCurrentWorkspaceProof: steps[1]?.passed && markerSeen(steps[1], 'STEPHANOS_IGNITION_CONCIERGE_V1'),
+    safeGeneratedDirtProof: markerSeen(steps[0], 'classifies generated dist dirt as safe'),
+    unsafeDirtBlockedProof: markerSeen(steps[0], 'source dirt as approval-required') || markerSeen(steps[0], 'splash model exposes blocked panel'),
+    browserRuntimeProof: runtime.passed,
+    exactHeadProof: expectedHead ? exactHeadMatched : 'not-supplied',
+  };
+  const passed = steps.every((step) => step.passed)
+    && runtime.passed
+    && (!expectedHead || exactHeadMatched);
   const transcript = {
     marker: passed
       ? 'MILESTONE_5_IGNITION_BROWSER_RUNTIME_PROOF_PASSED'
       : 'MILESTONE_5_IGNITION_BROWSER_RUNTIME_PROOF_BLOCKED',
+    proofScope,
+    exactHead: {
+      expected: expectedHead,
+      actual: gitHead.value,
+      matched: exactHeadMatched,
+      branch: gitBranch.value,
+    },
     safetyBoundaries: {
       deletesSourceFiles: false,
       hidesBlockers: false,
       autoFixesUnknownDirt: false,
       merges: false,
+      exactHeadApprovalRequiredBeforeMerge: true,
     },
     operatorAction: passed
       ? 'Post this transcript to #1281 / PR #1288, then request exact-head approval before merge.'
-      : 'Start Stephanos locally with npm run stephanos, then rerun this proof runner. If runtime still fails, post the transcript as the blocker.',
+      : 'Start Stephanos locally with npm run stephanos, then rerun this proof runner. If runtime or exact-head still fails, post the transcript as the blocker.',
+    evidence: {
+      gitHead,
+      gitBranch,
+      gitStatusBefore,
+    },
     steps,
     runtime,
     transcriptPath,
