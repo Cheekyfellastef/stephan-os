@@ -165,5 +165,5 @@ if (Test-Path -LiteralPath $TranscriptPath) {
 }
 
 if ($proofExitCode -ne 0) {
-  throw "Exact-head browser/runtime proof runner failed with exit code $proofExitCode. The copyable blocker comment above is the next proof packet."
+  throw "Exact-head browser/runtime proof runner failed with exit code ${proofExitCode}. The copyable blocker comment above is the next proof packet."
 }
