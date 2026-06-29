@@ -4,7 +4,6 @@ import {
   ANSWER_MODE,
   buildProjectIntelligenceContract,
   createIdeaFlywheelTurn,
-  createKnowledgeItem,
   createProjectIntelligenceAnswer,
   createProjectKnowledgeGraph,
   searchKnowledgeGraph,
@@ -55,7 +54,7 @@ test('answer separates proven facts from hypotheses and preserves refs', () => {
   const answer = createProjectIntelligenceAnswer({
     question: 'How does Stephanos discuss ideas?',
     items: [
-      { id: 'goal-1308', kind: 'GOAL', title: 'Project Intelligence', summary: 'Grounds answers in project state.', proven: true, refs: ['#1308'] },
+      { id: 'goal-1308', kind: 'GOAL', title: 'Project Intelligence', summary: 'Grounds answers and discussions about ideas in project state.', proven: true, refs: ['#1308'] },
       { id: 'idea-flywheel', kind: 'IDEA', title: 'Idea flywheel', summary: 'Operator and Stephanos bounce ideas into source work.', proven: false },
     ],
     nextActions: ['Wire the answer layer into the AI Chat Command Deck.'],
