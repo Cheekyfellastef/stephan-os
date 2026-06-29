@@ -1,4 +1,4 @@
-export const SHARED_WORKSPACE_MISSION_ROOM_SCHEMA_VERSION = 'shared-workspace-mission-room.v2';
+﻿export const SHARED_WORKSPACE_MISSION_ROOM_SCHEMA_VERSION = 'shared-workspace-mission-room.v2';
 
 export const PARTICIPANT_ROLE = Object.freeze({
   OPERATOR: 'OPERATOR',
@@ -123,10 +123,10 @@ export function routeWorkspaceWork(input = {}) {
   const kind = objectKind(input.kind);
   const summary = text(input.summary);
   let assignedRole = PARTICIPANT_ROLE.STEPHANOS;
-  if ([WORKSPACE_OBJECT_KIND.PR, WORKSPACE_OBJECT_KIND.TASK].includes(kind) || /source slice|source|code|patch|implement|build/i.test(summary)) assignedRole = PARTICIPANT_ROLE.CODEX;
-  else if ([WORKSPACE_OBJECT_KIND.PROOF, WORKSPACE_OBJECT_KIND.EXPERIMENT].includes(kind) || /verify|proof|test|browser/i.test(summary)) assignedRole = PARTICIPANT_ROLE.VERIFIER;
-  else if (/scout|research|inspect|fallback/i.test(summary)) assignedRole = PARTICIPANT_ROLE.OPENCLAW;
   if ([WORKSPACE_OBJECT_KIND.DECISION].includes(kind) || /approve|merge/i.test(summary)) assignedRole = PARTICIPANT_ROLE.OPERATOR;
+  else if (/scout|research|inspect|fallback/i.test(summary)) assignedRole = PARTICIPANT_ROLE.OPENCLAW;
+  else if ([WORKSPACE_OBJECT_KIND.PR, WORKSPACE_OBJECT_KIND.TASK].includes(kind) || /source slice|source|code|patch|implement|build/i.test(summary)) assignedRole = PARTICIPANT_ROLE.CODEX;
+  else if ([WORKSPACE_OBJECT_KIND.PROOF, WORKSPACE_OBJECT_KIND.EXPERIMENT].includes(kind) || /verify|proof|test|browser/i.test(summary)) assignedRole = PARTICIPANT_ROLE.VERIFIER;
   return {
     schemaVersion: SHARED_WORKSPACE_MISSION_ROOM_SCHEMA_VERSION,
     kind: 'stephanos.shared_workspace.role_route',
@@ -202,3 +202,4 @@ export function validateMissionRoom(room = {}) {
     finalVerdict: errors.length === 0 ? 'SHARED_WORKSPACE_MISSION_ROOM_PASS' : 'SHARED_WORKSPACE_MISSION_ROOM_BLOCKED',
   };
 }
+
