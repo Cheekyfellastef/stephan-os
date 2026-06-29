@@ -33,7 +33,7 @@ test('contract exposes platform loop lifecycle and required snapshot fields', ()
   assert.equal(contract.finalVerdict, 'PLATFORM_LOOP_INTEGRATION_CONTRACT_READY');
 });
 
-test('healthy service and ignition state with passing proof completes the loop', () => {
+test('healthy service and ignition state with ready dispatch keeps the loop building', () => {
   const snapshot = createPlatformLoopSnapshot({
     serviceProbes: servicePass,
     ignitionRoutes: ignitionReady,
@@ -41,11 +41,12 @@ test('healthy service and ignition state with passing proof completes the loop',
     evidence: ['platform loop focused proof passed'],
   });
 
-  assert.equal(snapshot.status, PLATFORM_LOOP_STATUS.DONE);
+  assert.equal(snapshot.status, PLATFORM_LOOP_STATUS.BUILDING);
   assert.equal(snapshot.supervisor.finalVerdict, 'BATTLE_BRIDGE_SUPERVISOR_PASS');
   assert.equal(snapshot.ignition.finalVerdict, 'IGNITION_CONCIERGE_STATUS_ROUTING_PASS');
+  assert.equal(snapshot.dispatcherDecision.decision, 'DISPATCH_READY_ITEM');
   assert.equal(snapshot.verifierResult.status, 'PASS');
-  assert.equal(snapshot.finalVerdict, 'PLATFORM_LOOP_INTEGRATION_PASS');
+  assert.equal(snapshot.finalVerdict, 'PLATFORM_LOOP_INTEGRATION_ACTIVE');
 });
 
 test('failed supervisor blocks with exact next action', () => {
