@@ -50,6 +50,7 @@ function Write-ProofCommentBlock {
   $domHasHtmlShell = [string]$transcript.runtime.domSignals.hasHtmlShell
   $domContainsStephanos = [string]$transcript.runtime.domSignals.bodyContainsStephanos
   $domContentLength = [string]$transcript.runtime.domSignals.contentLength
+  $commentPath = Join-Path (Split-Path -Parent $TranscriptPath) "local-proof-github-comment.md"
 
   $comment = @"
 ```text
@@ -68,14 +69,18 @@ DOM_HAS_HTML_SHELL = $domHasHtmlShell
 DOM_CONTAINS_STEPHANOS = $domContainsStephanos
 DOM_CONTENT_LENGTH = $domContentLength
 TRANSCRIPT = tmp/stephanos-ignition/ignition-proof-runner-transcript.json
+COMMENT_ARTIFACT = tmp/stephanos-ignition/local-proof-github-comment.md
 MERGE_ALLOWED = NO
 ```
 "@
+
+  Set-Content -LiteralPath $commentPath -Value $comment -Encoding UTF8
 
   Write-Step "Copyable GitHub milestone/proof comment"
   Write-Host "Paste this into #1281 / PR #1288 after local proof completes:"
   Write-Host ""
   Write-Host $comment
+  Write-Host "commentArtifact=$commentPath"
 
   try {
     Set-Clipboard -Value $comment
