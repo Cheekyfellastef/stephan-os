@@ -41,6 +41,14 @@ function defaultForbiddenFiles() {
   ];
 }
 
+function scopeBlockers(scope = {}) {
+  if (Array.isArray(scope.errors)) return scope.errors;
+  if (Array.isArray(scope.blockers)) return scope.blockers;
+  if (Array.isArray(scope.violations)) return scope.violations;
+  if (scope.valid === false && scope.finalVerdict) return [scope.finalVerdict];
+  return [];
+}
+
 export function buildChatToPublishBridgeContract() {
   return {
     schemaVersion: CHAT_TO_PUBLISH_SCHEMA_VERSION,
@@ -104,7 +112,7 @@ export function validateChatToPublishPacket(packet = {}) {
     files: sourceFilePaths(sourceFiles),
     allowDist: packet.allowDist === true,
   });
-  if (!scope.valid) errors.push(...scope.errors);
+  errors.push(...scopeBlockers(scope));
 
   return {
     valid: errors.length === 0,
