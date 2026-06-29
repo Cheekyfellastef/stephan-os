@@ -1,4 +1,4 @@
-﻿import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -25,6 +25,7 @@ test('return conveyor exposes the required V1 states', () => {
 
 test('completed work without summary routes to summary capture', () => {
   const result = classifyReturnConveyor({ changedFiles: ['shared/agents/a.mjs'] });
+
   assert.equal(result.state, 'NEEDS_SUMMARY');
   assert.match(result.nextAction, /summary/i);
 });
@@ -97,6 +98,7 @@ test('DONE requires summary, changed files, proof, passing result, PR, exact SHA
 
 test('exact unblock action overrides normal routing into blocked state', () => {
   const result = classifyReturnConveyor({ exactUnblockAction: 'Restore the missing base branch before proof.' });
+
   assert.equal(result.state, 'BLOCKED_WITH_EXACT_UNBLOCK_ACTION');
   assert.equal(result.nextAction, 'Restore the missing base branch before proof.');
 });

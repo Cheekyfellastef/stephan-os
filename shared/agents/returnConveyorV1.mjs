@@ -1,4 +1,4 @@
-﻿const RETURN_CONVEYOR_STATES = [
+const RETURN_CONVEYOR_STATES = [
   'RECEIVED',
   'NEEDS_SUMMARY',
   'NEEDS_PROOF',
@@ -96,7 +96,9 @@ export function requiredCompletionGaps(input = {}) {
   if (!isPassingProofResult(normalized.proofResult)) gaps.push(buildBlocker('proofResult', 'Run proof and record a passing result.'));
   if (!hasPrNumber(normalized.prNumber)) gaps.push(buildBlocker('prNumber', 'Open or attach the pull request number.'));
   if (!SHA_PATTERN.test(normalized.headSha)) gaps.push(buildBlocker('headSha', 'Record the exact 40-character head SHA.'));
-  if (!SHA_PATTERN.test(normalized.completionSha)) gaps.push(buildBlocker('completionSha', 'Record the exact completion or merge SHA.'));
+  if (!SHA_PATTERN.test(normalized.completionSha)) {
+    gaps.push(buildBlocker('completionSha', 'Record the exact completion or merge SHA.'));
+  }
   if (!hasText(normalized.missionUpdate)) gaps.push(buildBlocker('missionUpdate', 'Post the mission update.'));
 
   return gaps;
@@ -115,10 +117,14 @@ export function classifyReturnConveyor(input = {}) {
     blockers.push(buildBlocker('exactUnblockAction', normalized.exactUnblockAction));
   } else if (!hasText(normalized.summary) || !normalized.changedFiles.length) {
     state = 'NEEDS_SUMMARY';
-    nextAction = !hasText(normalized.summary) ? 'Add the completed work summary.' : 'List every changed source file.';
+    nextAction = !hasText(normalized.summary)
+      ? 'Add the completed work summary.'
+      : 'List every changed source file.';
   } else if (!hasText(normalized.proofCommand) || !hasText(normalized.proofResult)) {
     state = 'NEEDS_PROOF';
-    nextAction = !hasText(normalized.proofCommand) ? 'Record and run the focused proof command.' : 'Record the proof result.';
+    nextAction = !hasText(normalized.proofCommand)
+      ? 'Record and run the focused proof command.'
+      : 'Record the proof result.';
   } else if (!isPassingProofResult(normalized.proofResult)) {
     state = 'PROOF_FAILED';
     nextAction = 'Repair the source work, rerun proof, and record a passing proof result.';
