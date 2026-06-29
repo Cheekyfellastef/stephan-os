@@ -68,7 +68,7 @@ export function createIntentPacket(input = {}) {
 }
 
 export function deriveOrchestratorState(input = {}) {
-  const returnState = input.returnState || classifyReturnConveyor(input.returnRecord || {});
+  const returnState = input.returnState || classifyReturnConveyor(input.returnRecord || input);
   if (text(input.blocker)) return ORCHESTRATOR_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION;
   if (!hasIntent(input)) return ORCHESTRATOR_STATE.WAITING_FOR_INTENT;
   if (!hasDispatchEvidence(input)) return ORCHESTRATOR_STATE.INTENT_READY;
@@ -152,7 +152,7 @@ export function validateMissionOrchestratorPacket(packet = {}) {
   if (!packet.returnState) errors.push('missing-return-state');
   if (!packet.operations) errors.push('missing-operations');
   if (packet.state === ORCHESTRATOR_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION && !text(packet.blocker)) errors.push('blocked-without-exact-unblock-action');
-  if (packet.state === ORCHESTRATOR_STATE.DONE && (packet.returnState.state !== 'DONE' || packet.operations.state !== 'DONE')) errors.push('done-without-integrated-completion');
+  if (packet.state === ORCHESTRATOR_STATE.DONE && (packet.returnState?.state !== 'DONE' || packet.operations?.state !== 'DONE')) errors.push('done-without-integrated-completion');
   if (packet.state === ORCHESTRATOR_STATE.REPAIR_REQUIRED && packet.repair?.bounded !== true) errors.push('repair-required-but-unbounded');
   if (packet.showInMissionOperations !== true) errors.push('missing-mission-operations-visibility');
   return {
