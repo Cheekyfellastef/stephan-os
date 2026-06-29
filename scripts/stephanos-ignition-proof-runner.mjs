@@ -62,6 +62,27 @@ function buildRuntimeDomSignals(body) {
   };
 }
 
+function emptyRuntimeProbe(url, error = null) {
+  return {
+    name: 'runtime-url-probe',
+    url,
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+    statusCode: null,
+    bodyContainsStephanos: false,
+    domSignals: {
+      title: null,
+      bodyContainsStephanos: false,
+      hasHtmlShell: false,
+      contentLength: 0,
+      bodySample: '',
+      passed: false,
+    },
+    error,
+    passed: false,
+  };
+}
+
 function probeRuntime(url = DEFAULT_RUNTIME_URL) {
   return new Promise((resolveProbe) => {
     const startedAt = new Date().toISOString();
@@ -92,26 +113,54 @@ function probeRuntime(url = DEFAULT_RUNTIME_URL) {
     });
 
     request.on('error', (error) => {
-      resolveProbe({
-        name: 'runtime-url-probe',
-        url,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        statusCode: null,
-        bodyContainsStephanos: false,
-        domSignals: {
-          title: null,
-          bodyContainsStephanos: false,
-          hasHtmlShell: false,
-          contentLength: 0,
-          bodySample: '',
-          passed: false,
-        },
-        error: error.message,
-        passed: false,
-      });
+      resolveProbe(emptyRuntimeProbe(url, error.message));
     });
   });
+}
+
+function buildBlockedTranscript(error, runtimeUrl = process.env.STEPHANOS_IGNITION_RUNTIME_URL || DEFAULT_RUNTIME_URL) {
+  const expectedHead = process.env.STEPHANOS_IGNITION_EXPECTED_HEAD || null;
+  const gitHead = runOptionalEvidence('git-head', 'git', ['rev-parse', 'HEAD']);
+  const gitBranch = runOptionalEvidence('git-branch', 'git', ['branch', '--show-current']);
+  const gitStatusBefore = runOptionalEvidence('git-status-before', 'git', ['status', '--porcelain=v1']);
+  const exactHeadMatched = expectedHead ? gitHead.value === expectedHead : null;
+  const runtime = emptyRuntimeProbe(runtimeUrl, 'proof runner failed before runtime probe completed');
+
+  return {
+    marker: 'MILESTONE_5_IGNITION_BROWSER_RUNTIME_PROOF_BLOCKED',
+    proofScope: {
+      cleanOrCurrentWorkspaceProof: false,
+      safeGeneratedDirtProof: false,
+      unsafeDirtBlockedProof: false,
+      browserRuntimeProof: false,
+      browserRuntimeDomProof: false,
+      exactHeadProof: expectedHead ? exactHeadMatched : 'not-supplied',
+      emergencyTranscriptProof: true,
+    },
+    exactHead: {
+      expected: expectedHead,
+      actual: gitHead.value,
+      matched: exactHeadMatched,
+      branch: gitBranch.value,
+    },
+    safetyBoundaries: {
+      deletesSourceFiles: false,
+      hidesBlockers: false,
+      autoFixesUnknownDirt: false,
+      merges: false,
+      exactHeadApprovalRequiredBeforeMerge: true,
+    },
+    operatorAction: 'Post this blocker transcript to #1281 / PR #1288. Keep the launcher window open if present, then inspect the concierge splash/support snapshot before retrying local proof.',
+    evidence: {
+      gitHead,
+      gitBranch,
+      gitStatusBefore,
+    },
+    steps: [],
+    runtime,
+    error: error.message,
+    transcriptPath,
+  };
 }
 
 async function main() {
@@ -181,12 +230,11 @@ async function main() {
 
 main().catch((error) => {
   mkdirSync(outDir, { recursive: true });
-  const transcript = {
-    marker: 'MILESTONE_5_IGNITION_BROWSER_RUNTIME_PROOF_BLOCKED',
-    error: error.message,
-    transcriptPath,
-  };
+  const transcript = buildBlockedTranscript(error);
   writeFileSync(transcriptPath, `${JSON.stringify(transcript, null, 2)}\n`, 'utf8');
   console.error(error);
+  console.log(`${transcript.marker}`);
+  console.log(`IGNITION_PROOF_TRANSCRIPT=${transcriptPath}`);
+  console.log(`operatorAction=${transcript.operatorAction}`);
   process.exitCode = 1;
 });
