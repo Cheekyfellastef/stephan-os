@@ -46,6 +46,7 @@ function Write-ProofCommentBlock {
   $runtimeStatus = [string]$transcript.runtime.statusCode
   $browserRuntimeProof = [string]$transcript.proofScope.browserRuntimeProof
   $browserRuntimeDomProof = [string]$transcript.proofScope.browserRuntimeDomProof
+  $operatorAction = [string]$transcript.operatorAction
   $domTitle = [string]$transcript.runtime.domSignals.title
   $domHasHtmlShell = [string]$transcript.runtime.domSignals.hasHtmlShell
   $domContainsStephanos = [string]$transcript.runtime.domSignals.bodyContainsStephanos
@@ -68,6 +69,7 @@ DOM_TITLE = $domTitle
 DOM_HAS_HTML_SHELL = $domHasHtmlShell
 DOM_CONTAINS_STEPHANOS = $domContainsStephanos
 DOM_CONTENT_LENGTH = $domContentLength
+OPERATOR_ACTION = $operatorAction
 TRANSCRIPT = tmp/stephanos-ignition/ignition-proof-runner-transcript.json
 COMMENT_ARTIFACT = tmp/stephanos-ignition/local-proof-github-comment.md
 MERGE_ALLOWED = NO
@@ -92,6 +94,7 @@ MERGE_ALLOWED = NO
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
+$TranscriptPath = Join-Path $RepoRoot "tmp\stephanos-ignition\ignition-proof-runner-transcript.json"
 
 Write-Step "Ignition local proof preflight"
 $currentHead = (git rev-parse HEAD).Trim()
@@ -147,11 +150,20 @@ if (-not $runtimeReady) {
   throw "Runtime proof did not become ready inside $ProbeSeconds seconds. Leave the launcher window open and inspect the concierge splash/support snapshot."
 }
 
-Invoke-Checked "Run exact-head browser/runtime proof runner" { npm run stephanos:ignition-concierge:proof-runner }
+Write-Step "Run exact-head browser/runtime proof runner"
+npm run stephanos:ignition-concierge:proof-runner
+$proofExitCode = $LASTEXITCODE
 
-Write-Step "Ignition proof transcript ready"
-Write-Host "MILESTONE_5_IGNITION_BROWSER_RUNTIME_PROOF_PASSED requires the proof runner marker above."
-Write-Host "transcript=tmp/stephanos-ignition/ignition-proof-runner-transcript.json"
-Write-Host "MERGE_ALLOWED=NO until exact-head operator approval is given."
+if (Test-Path -LiteralPath $TranscriptPath) {
+  Write-Step "Ignition proof transcript ready"
+  Write-Host "MILESTONE_5_IGNITION_BROWSER_RUNTIME_PROOF_PASSED requires the proof runner marker above."
+  Write-Host "transcript=tmp/stephanos-ignition/ignition-proof-runner-transcript.json"
+  Write-Host "MERGE_ALLOWED=NO until exact-head operator approval is given."
+  Write-ProofCommentBlock -TranscriptPath $TranscriptPath
+} else {
+  throw "Proof runner did not write transcript at $TranscriptPath"
+}
 
-Write-ProofCommentBlock -TranscriptPath (Join-Path $RepoRoot "tmp\stephanos-ignition\ignition-proof-runner-transcript.json")
+if ($proofExitCode -ne 0) {
+  throw "Exact-head browser/runtime proof runner failed with exit code $proofExitCode. The copyable blocker comment above is the next proof packet."
+}
