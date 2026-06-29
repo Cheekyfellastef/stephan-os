@@ -56,7 +56,9 @@ function Write-ProofCommentBlock {
   $comment = @"
 ```text
 $marker
+ISSUE = #1281
 PR = #1288
+POST_TARGET = #1281 and PR #1288
 EXPECTED_HEAD = $expectedHead
 ACTUAL_HEAD = $actualHead
 EXACT_HEAD_MATCHED = $exactHeadMatched
@@ -72,6 +74,7 @@ DOM_CONTENT_LENGTH = $domContentLength
 OPERATOR_ACTION = $operatorAction
 TRANSCRIPT = tmp/stephanos-ignition/ignition-proof-runner-transcript.json
 COMMENT_ARTIFACT = tmp/stephanos-ignition/local-proof-github-comment.md
+EXACT_HEAD_OPERATOR_APPROVAL_REQUIRED = YES
 MERGE_ALLOWED = NO
 ```
 "@
