@@ -14,6 +14,12 @@ const VERDICTS = {
   failUnknown: 'FAIL_UNKNOWN',
 };
 
+const KNOWN_SAFE_RUNTIME_PROOF_DIRT_PREFIXES = ['tmp/stephanos-ignition/'];
+
+function isKnownSafeRuntimeProofDirt(file) {
+  return KNOWN_SAFE_RUNTIME_PROOF_DIRT_PREFIXES.some((prefix) => file.startsWith(prefix));
+}
+
 const forbiddenMatchers = [
   { reason: 'generated dist: apps/stephanos/dist/**', test: (f) => f.startsWith('apps/stephanos/dist/') },
   { reason: 'generated dist: stephanos-ui/dist/**', test: (f) => f.startsWith('stephanos-ui/dist/') },
@@ -23,6 +29,7 @@ const forbiddenMatchers = [
   { reason: 'runtime/generated data: stephanos-server/data/**', test: (f) => f.startsWith('stephanos-server/data/') },
   { reason: 'runtime/generated data: runtime/**', test: (f) => f.startsWith('runtime/') },
   { reason: 'runtime/generated data: **/runtime-data/**', test: (f) => f.includes('/runtime-data/') || f.startsWith('runtime-data/') },
+  { reason: 'approval-required tmp artifact: tmp/**', test: (f) => f.startsWith('tmp/') && !isKnownSafeRuntimeProofDirt(f) },
   { reason: 'logs: logs/** or *.log', test: (f) => f.startsWith('logs/') || /(^|\/)logs\//i.test(f) || /(^|\/)[^/]+\.log$/i.test(f) },
   { reason: 'cache/coverage artifact', test: (f) => f.startsWith('.cache/') || f.startsWith('coverage/') || f.includes('/.cache/') || f.includes('/coverage/') },
   { reason: 'screenshot/image artifact', test: (f) => /(^|\/)(screenshots?|artifacts?)\//i.test(f) || /\.(png|jpg|jpeg|gif|webp|ico|bmp|tiff?|svg)$/i.test(f) },
@@ -150,6 +157,7 @@ function localBinaryFiles(localFiles) {
 }
 
 function forbiddenReasons(file) {
+  if (isKnownSafeRuntimeProofDirt(file)) return [];
   return forbiddenMatchers.filter((matcher) => matcher.test(file)).map((matcher) => matcher.reason);
 }
 
@@ -193,6 +201,7 @@ function formatList(title, files) {
 }
 
 function printOffenders(offenders) {
+  console.error('[stephanos:guard:pr-clean] BLOCKER TRANSCRIPT: approval-required workspace blockers remain; known safe proof dirt is limited to tmp/stephanos-ignition/.');
   console.error('[stephanos:guard:pr-clean] Offenders:');
   for (const offender of offenders) {
     console.error(`  - ${offender.file} [${offender.surface}] — ${offender.reason}`);
@@ -245,7 +254,7 @@ export function analyzeLocalFallback() {
   const fallbackDiff = resolveLocalFallbackDiffBase();
   const fallbackFiles = fallbackDiff.available ? unique(changedFilesForRange(fallbackDiff.range)) : [];
   const offenders = [
-    ...allFiles.map((file) => ({ surface: 'local working tree', file, reason: 'changed/untracked file remains after expected cleanup' })),
+    ...allFiles.filter((file) => !isKnownSafeRuntimeProofDirt(file)).map((file) => ({ surface: 'local working tree', file, reason: 'changed/untracked file remains after expected cleanup' })),
     ...artifactOffenders(local.staged, 'staged'),
     ...artifactOffenders(local.unstaged, 'unstaged'),
     ...artifactOffenders(local.untracked, 'untracked'),
