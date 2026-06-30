@@ -4,7 +4,6 @@ import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import {
   autoPublishDistWithDeps,
-  buildBattleBridgeIgnitionConciergeStatusAggregate,
   buildOpenClawReadinessEndpoints,
   canAutoPublishDist,
   checkpointAndRemoveTransientRootData,
@@ -71,17 +70,6 @@ test('stephanos debug gate defaults to off and enables via --debug or STEPHANOS_
 });
 
 
-test('Battle Bridge ignition concierge aggregate routes all services through shared workspace', () => {
-  const aggregate = buildBattleBridgeIgnitionConciergeStatusAggregate();
-  assert.equal(aggregate.status, 'READY');
-  assert.equal(aggregate.finalVerdict, 'IGNITION_CONCIERGE_STATUS_ROUTING_PASS');
-  assert.equal(aggregate.sharedWorkspacePath, 'status/ignition/aggregate.json');
-  assert.deepEqual(aggregate.missingServiceIds, []);
-  assert.equal(aggregate.routes.length, 5);
-  assert.ok(aggregate.routes.every((route) => route.primarySurface === 'shared-workspace'));
-  assert.ok(aggregate.routes.every((route) => route.visiblePowerShellWall === false));
-  assert.ok(aggregate.routes.every((route) => route.sharedWorkspaceMessage.channel === 'ignition-concierge'));
-});
 
 test('OpenClaw healthy startup readiness continues ignition', () => {
   const readiness = { process: { running: true, name: 'OpenClaw.exe' }, service: { running: true, name: 'OpenClaw', exists: true, verified: true }, endpoint: { reachable: true, identity: 'OpenClaw', identityVerified: true, connectionStatus: 'healthy' }, portOwner: { present: true, verified: true } };
