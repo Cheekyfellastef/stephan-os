@@ -96,9 +96,26 @@ test('launcher-root delegates desktop Ignite through generated-dist approval hel
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(
     script,
-    /\$launcherRootCommand = 'powershell\.exe -ExecutionPolicy Bypass -File \.\\windows\\Invoke-Stephanos-Ignite-With-Approval\.ps1'/m,
-    'desktop launcher-root must call the local approval helper instead of bypassing ignition safety',
+    /\$launcherRootCommand = 'powershell\.exe -ExecutionPolicy Bypass -File \.\\windows\\Invoke-Stephanos-Ignite-With-Approval\.ps1 -RepositoryRoot \.'/m,
+    'desktop launcher-root must call the approval helper inside the resolved PR worktree instead of bypassing ignition safety',
   );
+});
+
+test('launcher-root resolves PR worktree root before falling back to launcher script root', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\[string\]\$RepositoryRoot = ''/m, 'launcher must accept an explicit repository root for exact-head proof worktrees');
+  assert.match(script, /Resolve-LauncherRepositoryRoot[\s\S]*?\$RequestedRoot[\s\S]*?\$env:STEPHANOS_PROOF_WORKTREE_ROOT[\s\S]*?\$PWD\.Path[\s\S]*?Split-Path -Parent \$PSScriptRoot/m, 'launcher must prefer explicit/env/current PR worktree before script-root fallback');
+  assert.match(script, /scripts\/ignite-stephanos-local\.mjs[\s\S]*?windows\/Invoke-Stephanos-Ignite-With-Approval\.ps1/m, 'launcher root resolution must validate the Stephanos ignition and approval helper files');
+  assert.match(script, /Start-Process -FilePath 'powershell\.exe' -WorkingDirectory \$repoRoot/m, 'launcher must start child proof windows from the resolved repository root');
+  assert.match(script, /Set-Location '\$escapedRepoRoot'/m, 'launcher child command must set location to the resolved PR worktree root');
+});
+
+test('desktop Ignite approval helper resolves and logs PR worktree root', async () => {
+  const script = await readFile(WINDOWS_IGNITE_APPROVAL_PS1, 'utf8');
+  assert.match(script, /\[string\]\$RepositoryRoot = ''/m, 'approval helper must accept the launcher-resolved repository root');
+  assert.match(script, /Resolve-IgniteRepositoryRoot[\s\S]*?\$RequestedRoot[\s\S]*?\$env:STEPHANOS_PROOF_WORKTREE_ROOT[\s\S]*?\$PWD\.Path[\s\S]*?Split-Path -Parent \$PSScriptRoot/m, 'approval helper must prefer PR worktree inputs before script-root fallback');
+  assert.match(script, /Set-Location -LiteralPath \$repoRoot/m, 'approval helper must run npm ignition commands from the resolved PR worktree root');
+  assert.match(script, /selected repository root: \$repoRoot/m, 'approval helper must emit deterministic proof of the selected worktree root');
 });
 
 test('desktop Ignite approval helper preserves operator-gated recovery safety locks', async () => {

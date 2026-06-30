@@ -4,18 +4,42 @@ param(
   [ValidateSet('launcher-root','vite-dev')]
   [string]$Mode = 'launcher-root',
   [ValidateSet('launcher','runtime','cockpit')]
-  [string]$BootMode = 'cockpit'
+  [string]$BootMode = 'cockpit',
+  [string]$RepositoryRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+function Resolve-LauncherRepositoryRoot([string]$RequestedRoot) {
+  $candidates = @()
+  if ($RequestedRoot -and $RequestedRoot.Trim()) { $candidates += $RequestedRoot.Trim() }
+  if ($env:STEPHANOS_PROOF_WORKTREE_ROOT -and $env:STEPHANOS_PROOF_WORKTREE_ROOT.Trim()) { $candidates += $env:STEPHANOS_PROOF_WORKTREE_ROOT.Trim() }
+  if ($PWD -and $PWD.Path) { $candidates += $PWD.Path }
+  $candidates += (Split-Path -Parent $PSScriptRoot)
+
+  foreach ($candidate in $candidates) {
+    try {
+      $resolved = (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).ProviderPath
+      $packageJson = Join-Path $resolved 'package.json'
+      $igniteScript = Join-Path $resolved 'scripts/ignite-stephanos-local.mjs'
+      $approvalHelper = Join-Path $resolved 'windows/Invoke-Stephanos-Ignite-With-Approval.ps1'
+      if ((Test-Path -LiteralPath $packageJson -PathType Leaf) -and (Test-Path -LiteralPath $igniteScript -PathType Leaf) -and (Test-Path -LiteralPath $approvalHelper -PathType Leaf)) {
+        return $resolved
+      }
+    }
+    catch {}
+  }
+
+  throw 'Unable to resolve a Stephanos repository root for launcher/proof startup. Set -RepositoryRoot or STEPHANOS_PROOF_WORKTREE_ROOT to the PR worktree being proven.'
+}
+
+$repoRoot = Resolve-LauncherRepositoryRoot -RequestedRoot $RepositoryRoot
 $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
 $launcherShellUrl = 'http://127.0.0.1:4173/'
 $launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
 $launcherRuntimeStatusUrl = 'http://127.0.0.1:4173/apps/stephanos/runtime-status.json'
 $viteDevUrl = 'http://localhost:5173/'
-$launcherRootCommand = 'powershell.exe -ExecutionPolicy Bypass -File .\windows\Invoke-Stephanos-Ignite-With-Approval.ps1'
+$launcherRootCommand = 'powershell.exe -ExecutionPolicy Bypass -File .\windows\Invoke-Stephanos-Ignite-With-Approval.ps1 -RepositoryRoot .'
 $launcherRootCanonicalCommand = 'npm run stephanos:ignite'
 $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --probe-existing-server'
 
@@ -235,6 +259,7 @@ try {
   $port4173Before = Get-PortListenerSnapshot -Port 4173
   $port5173Before = Get-PortListenerSnapshot -Port 5173
 
+  Write-LiveLog "selected repository root: $repoRoot"
   Write-LiveLog "selected ignition mode: $Mode"
   Write-LiveLog "Boot mode: $resolvedBootMode"
   if ($Mode -eq 'vite-dev') {
