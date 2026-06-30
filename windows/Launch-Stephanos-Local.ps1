@@ -141,9 +141,60 @@ function Show-IgnitionSplashScreen {
   Write-LiveLog "verbose logs/status destination: $ignitionProofRoot"
 }
 
+
+function Get-LauncherChildBlocker {
+  Initialize-IgnitionProofWorkspace
+  $logRoot = Join-Path $ignitionProofRoot 'logs'
+  $childStatusCandidates = @(
+    (Join-Path $ignitionProofRoot 'launcher-status.json'),
+    (Join-Path $ignitionProofRoot 'support-snapshot.json')
+  )
+
+  foreach ($candidate in $childStatusCandidates) {
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+    try {
+      $status = Get-Content -LiteralPath $candidate -Raw -Encoding UTF8 | ConvertFrom-Json
+      foreach ($propertyName in @('blocker', 'blockers', 'failureReason', 'reason', 'nextSafeAction', 'operatorAction')) {
+        if ($status.PSObject.Properties.Name -contains $propertyName -and $status.$propertyName) {
+          $value = $status.$propertyName
+          if ($value -is [array]) { $value = [string]::Join('; ', @($value | ForEach-Object { [string]$_ })) }
+          $text = ([string]$value).Trim()
+          if ($text) { return $text }
+        }
+      }
+      if ($status.supportSnapshot -and $status.supportSnapshot.blocker) {
+        return ([string]$status.supportSnapshot.blocker).Trim()
+      }
+    }
+    catch {}
+  }
+
+  if (-not (Test-Path -LiteralPath $logRoot -PathType Container)) { return '' }
+  $logFiles = @(Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 8)
+  foreach ($logFile in $logFiles) {
+    try {
+      $content = Get-Content -LiteralPath $logFile.FullName -Raw -Encoding UTF8
+      foreach ($pattern in @(
+        'blocked for safety: current branch has no upstream tracking branch[^\r\n]*',
+        'Current branch has no upstream tracking branch[^\r\n]*',
+        'reason:\s*missing-upstream[^\r\n]*',
+        'missing-upstream[^\r\n]*'
+      )) {
+        $match = [regex]::Match($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($match.Success) { return $match.Value.Trim() }
+      }
+    }
+    catch {}
+  }
+
+  return ''
+}
+
 function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord) {
-  Write-IgnitionStatus -Phase 'blocked' -Message $Step -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.'; blocker = $Step }
-  Write-Host "[LAUNCHER LIVE] Failed step: $Step" -ForegroundColor Red
+  $childBlocker = Get-LauncherChildBlocker
+  $surfacedBlocker = if ($childBlocker) { $childBlocker } else { $Step }
+  Write-IgnitionStatus -Phase 'blocked' -Message $surfacedBlocker -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the exact child blocker in launcher-status.json/support-snapshot and the bounded ignition logs, then resolve it before retrying.'; blocker = $surfacedBlocker; supportSnapshot = [ordered]@{ blocker = $surfacedBlocker; childBlocker = $childBlocker; parentFailure = $Step } }
+  Write-Host "[LAUNCHER LIVE] Failed step: $surfacedBlocker" -ForegroundColor Red
   if ($null -ne $ErrorRecord) {
     Write-Host ($ErrorRecord | Out-String).Trim() -ForegroundColor Red
   }
