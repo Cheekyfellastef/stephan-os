@@ -42,12 +42,71 @@ $viteDevUrl = 'http://localhost:5173/'
 $launcherRootCommand = 'powershell.exe -ExecutionPolicy Bypass -File .\windows\Invoke-Stephanos-Ignite-With-Approval.ps1 -RepositoryRoot .'
 $launcherRootCanonicalCommand = 'npm run stephanos:ignite'
 $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --probe-existing-server'
+$visiblePowerShellRequired = $false
+$ignitionProofRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof'
+$ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
+$ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
+
 
 function Write-LiveLog([string]$Message) {
   Write-Host "[LAUNCHER LIVE] $Message"
 }
 
+function Initialize-IgnitionProofWorkspace {
+  New-Item -ItemType Directory -Force -Path $ignitionProofRoot | Out-Null
+  New-Item -ItemType Directory -Force -Path (Join-Path $ignitionProofRoot 'logs') | Out-Null
+}
+
+function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extra = @{}) {
+  Initialize-IgnitionProofWorkspace
+  $payload = [ordered]@{
+    phase = $Phase
+    message = $Message
+    updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    visiblePowerShellRequired = $visiblePowerShellRequired
+    primaryUi = 'splash-status-browser'
+    splashPath = $ignitionSplashPath
+    statusPath = $ignitionStatusPath
+    logRoot = (Join-Path $ignitionProofRoot 'logs')
+    nextOperatorAction = if ($Extra.ContainsKey('nextOperatorAction')) { $Extra.nextOperatorAction } else { 'Watch the Stephanos ignition splash/status screen.' }
+  }
+  foreach ($key in $Extra.Keys) { $payload[$key] = $Extra[$key] }
+  $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
+}
+
+function New-IgnitionSplashScreen {
+  Initialize-IgnitionProofWorkspace
+  $statusPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionStatusPath)
+  $logRootHtml = [System.Net.WebUtility]::HtmlEncode((Join-Path $ignitionProofRoot 'logs'))
+  $html = @"
+<!doctype html>
+<meta charset="utf-8">
+<title>Stephanos Ignition Status</title>
+<style>body{margin:0;background:#07111f;color:#e7f2ff;font-family:Segoe UI,Arial,sans-serif}main{max-width:880px;margin:8vh auto;padding:32px;border:1px solid #1e4f7a;border-radius:18px;background:#0b1728}h1{margin-top:0}.pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#0e7a4f;color:#d8fff0;font-weight:700}.muted{color:#a7bdd4}code{background:#111f33;padding:2px 6px;border-radius:6px}</style>
+<main>
+  <span class="pill">IGNITION ACTIVE</span>
+  <h1>Stephanos is starting</h1>
+  <p>The ignition button selected the splash/status screen as the operator-facing UI.</p>
+  <p class="muted">Verbose PowerShell output is bounded to logs, not shown as the primary interface.</p>
+  <p>Status: <code>$statusPathHtml</code></p>
+  <p>Logs: <code>$logRootHtml</code></p>
+  <p class="muted">If ignition blocks, this screen/status file records the exact blocker and next operator action.</p>
+</main>
+"@
+  $html | Set-Content -LiteralPath $ignitionSplashPath -Encoding UTF8
+  Write-IgnitionStatus -Phase 'splash-shown' -Message 'Stephanos ignition splash/status screen is the primary UI.'
+  return $ignitionSplashPath
+}
+
+function Show-IgnitionSplashScreen {
+  $splashPath = New-IgnitionSplashScreen
+  Start-Process -FilePath $splashPath | Out-Null
+  Write-LiveLog "ignition splash/status screen opened: $splashPath"
+  Write-LiveLog "verbose logs/status destination: $ignitionProofRoot"
+}
+
 function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord) {
+  Write-IgnitionStatus -Phase 'blocked' -Message $Step -Extra @{ nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.'; blocker = $Step }
   Write-Host "[LAUNCHER LIVE] Failed step: $Step" -ForegroundColor Red
   if ($null -ne $ErrorRecord) {
     Write-Host ($ErrorRecord | Out-String).Trim() -ForegroundColor Red
@@ -58,12 +117,17 @@ function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$Err
 }
 
 function Start-DevWindow([string]$Title, [string]$Command) {
+  Initialize-IgnitionProofWorkspace
   $escapedRepoRoot = $repoRoot.Replace("'", "''")
   $escapedTitle = $Title.Replace("'", "''")
   $escapedCommand = $Command.Replace("'", "''")
+  $safeLogName = ($Title -replace '[^A-Za-z0-9._-]', '-')
+  $stdoutLog = Join-Path $ignitionProofRoot ("logs/{0}.stdout.log" -f $safeLogName)
+  $stderrLog = Join-Path $ignitionProofRoot ("logs/{0}.stderr.log" -f $safeLogName)
   $psCommand = "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'; Set-Location '$escapedRepoRoot'; & $escapedCommand"
-  Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -ArgumentList @(
-    '-NoExit',
+  Write-IgnitionStatus -Phase 'starting-process' -Message "Starting $Title in minimized/background PowerShell with bounded log capture." -Extra @{ processTitle = $Title; stdoutLog = $stdoutLog; stderrLog = $stderrLog }
+  Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
+    '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-Command', $psCommand
   ) | Out-Null
@@ -256,6 +320,8 @@ try {
   }
   $browserTargets = @($browserSurfaces | ForEach-Object { $_.Url })
 
+  Show-IgnitionSplashScreen
+
   $port4173Before = Get-PortListenerSnapshot -Port 4173
   $port5173Before = Get-PortListenerSnapshot -Port 5173
 
@@ -327,6 +393,8 @@ try {
   else {
     $true
   }
+
+  Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready.' -Extra @{ browserTargets = $browserTargets; visiblePowerShellWallRequired = $false }
 
   Write-LiveLog 'server started'
   Write-LiveLog "manual URL(s): $([string]::Join(', ', $browserTargets))"
