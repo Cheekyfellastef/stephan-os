@@ -174,3 +174,31 @@ test('ignition failure status preserves exact blocker and next operator action',
   assert.match(script, /Write-IgnitionStatus -Phase 'blocked' -Message \$Step[\s\S]*blocker = \$Step/m, 'failure status must preserve the exact blocker message');
   assert.match(script, /nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying\.'/m, 'failure status must include operator action');
 });
+
+
+test('launcher-root splash uses detailed ignition stage model', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  for (const stage of [
+    'finding-repo',
+    'checking-workspace-dirt',
+    'classifying-safe-vs-unsafe-dirt',
+    'cleaning-generated-runtime-stoppers',
+    'checking-dependencies',
+    'checking-ports-existing-runtime',
+    'starting-local-services',
+    'opening-command-deck',
+  ]) {
+    assert.match(script, new RegExp(`id = '${stage}'`), `missing ignition stage ${stage}`);
+  }
+  assert.match(script, /ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId \$currentStage/m, 'status payload must project the detailed stage snapshot');
+  assert.match(script, /aria-label="Detailed ignition stages"/m, 'splash HTML must render detailed stages as primary browser UI');
+});
+
+test('ignition status preserves destination paths, blocker actions, and non-primary PowerShell wall truth', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\) \}/m, 'status payload must record status, splash, and log destinations');
+  assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
+  assert.match(script, /currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker/m, 'blocked status must preserve next operator action with blocker state');
+  assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
+  assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
+});
