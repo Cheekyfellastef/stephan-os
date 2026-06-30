@@ -2,90 +2,94 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
-  CODEX_DISPATCH_DECISION,
+  BLOCKED_BY_MISSING_INTEGRATION,
   buildAutomatedCodexDispatcherContract,
-  createCodexDispatchDecision,
-  createCodexDispatcherResult,
+  assessCodexIntegration,
+  createDispatcherDashboard,
+  dispatchQueuedCodexJob,
 } from './automatedCodexDispatcher.mjs';
+import { createCodexQueueRecord, transitionCodexQueueRecord } from './codexDispatchQueue.mjs';
 
-const readyItem = {
-  relatedGoal: '#1293',
-  summary: 'Dispatch queued Codex work deterministically.',
-  allowedFiles: ['shared/agents/automatedCodexDispatcher.mjs'],
-  requiredTests: ['node --test shared/agents/automatedCodexDispatcher.test.mjs'],
-  requiredEvidence: ['dispatcher tests pass'],
-};
+const job = createCodexQueueRecord({
+  issueNumber: 1293,
+  branch: 'codex/issues-1292-1293-dispatcher',
+  prompt: 'Dispatch queued Codex jobs only when the integration can really launch Codex.',
+  requestedProofCommands: ['node --test shared/agents/automatedCodexDispatcher.test.mjs'],
+});
 
-test('dispatcher contract exposes decisions and guardrails', () => {
+test('dispatcher contract consumes queue and exposes dashboard visibility', () => {
   const contract = buildAutomatedCodexDispatcherContract();
   assert.equal(contract.schemaVersion, AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION);
-  assert.equal(contract.decisions.includes('DISPATCH_READY_ITEM'), true);
-  assert.equal(contract.decisions.includes('BLOCKED_BY_METER'), true);
-  assert.equal(contract.guardrails.zeroCostDefault, true);
-  assert.equal(contract.guardrails.dispatchWhenMeterUnavailableAllowed, false);
-  assert.equal(contract.guardrails.visibleClipboardCourierRequired, false);
-  assert.equal(contract.finalVerdict, 'AUTOMATED_CODEX_DISPATCHER_CONTRACT_READY');
+  assert.equal(contract.requiredMessages.includes('codex-job-dispatched'), true);
+  assert.deepEqual(contract.dashboardFields, ['queueDepth', 'currentJob', 'lastProof', 'lastBlocker']);
+  assert.equal(contract.guardrails.fakeDispatchAllowed, false);
+  assert.equal(contract.guardrails.mergeAllowed, false);
 });
 
-test('ready valid queue item becomes dispatch claim', () => {
-  const decision = createCodexDispatchDecision({
-    queueItem: readyItem,
-    codexMeterAvailable: true,
-    decidedAtUtc: '2026-06-28T23:00:00Z',
-    claimExpiresAtUtc: '2026-06-28T23:20:00Z',
+test('integration assessment names missing automatic Codex launch capability', () => {
+  const assessment = assessCodexIntegration({ capabilities: { returnDispatchReceipt: true, returnProofMetadata: true } });
+  assert.equal(assessment.supported, false);
+  assert.deepEqual(assessment.missingCapabilities, ['launchCodexJob']);
+  assert.equal(assessment.finalVerdict, BLOCKED_BY_MISSING_INTEGRATION);
+});
+
+test('unsupported integration produces deterministic missing integration blocker and never fakes dispatch', () => {
+  const result = dispatchQueuedCodexJob({
+    queueRecord: job,
+    integration: { capabilities: { returnDispatchReceipt: true } },
+    now: '2026-06-30T00:00:00Z',
   });
 
-  assert.equal(decision.decision, CODEX_DISPATCH_DECISION.DISPATCH_READY_ITEM);
-  assert.equal(decision.dispatchClaim.status, 'CLAIMED');
-  assert.equal(decision.sharedWorkspaceMessage.eventKind, 'codex-dispatch-attempted');
-  assert.equal(decision.finalVerdict, 'CODEX_DISPATCHER_READY_TO_DISPATCH');
+  assert.equal(result.finalVerdict, BLOCKED_BY_MISSING_INTEGRATION);
+  assert.equal(result.record.status, 'blocked');
+  assert.equal(result.blockerMetadata.code, BLOCKED_BY_MISSING_INTEGRATION);
+  assert.deepEqual(result.missingCapabilities, ['launchCodexJob', 'returnProofMetadata']);
+  assert.equal(result.sharedWorkspaceMessage.eventKind, 'codex-job-blocked');
 });
 
-test('meter unavailable blocks dispatch with exact unblock action', () => {
-  const decision = createCodexDispatchDecision({
-    queueItem: readyItem,
-    codexMeterAvailable: false,
+test('supported integration dispatches queued job and records receipt plus proof metadata', () => {
+  const result = dispatchQueuedCodexJob({
+    queueRecord: job,
+    integration: {
+      capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+      dispatch: (record) => ({ receiptId: `receipt-${record.jobId}`, accepted: true }),
+    },
+    proofMetadata: { commands: job.requestedProofCommands, status: 'accepted' },
+    now: '2026-06-30T00:01:00Z',
   });
 
-  assert.equal(decision.decision, CODEX_DISPATCH_DECISION.BLOCKED_BY_METER);
-  assert.equal(decision.requiresOperator, true);
-  assert.equal(decision.dispatchClaim, null);
-  assert.equal(decision.exactUnblockAction.includes('Codex meter is unavailable'), true);
-  assert.equal(decision.finalVerdict, 'CODEX_DISPATCHER_BLOCKED');
+  assert.equal(result.finalVerdict, 'CODEX_JOB_DISPATCHED');
+  assert.equal(result.record.status, 'dispatched');
+  assert.equal(result.record.dispatchedAt, '2026-06-30T00:01:00Z');
+  assert.equal(result.dispatchReceipt.accepted, true);
+  assert.deepEqual(result.proofMetadata.commands, job.requestedProofCommands);
+  assert.equal(result.sharedWorkspaceMessage.eventKind, 'codex-job-dispatched');
 });
 
-test('missing queue item waits without inventing work', () => {
-  const decision = createCodexDispatchDecision({ queueItems: [] });
-
-  assert.equal(decision.decision, CODEX_DISPATCH_DECISION.WAIT_FOR_READY_ITEM);
-  assert.equal(decision.queueItemId, '');
-  assert.equal(decision.dispatchClaim, null);
-  assert.equal(decision.finalVerdict, 'CODEX_DISPATCHER_WAITING');
-});
-
-test('operator approval can gate dispatch before handoff', () => {
-  const decision = createCodexDispatchDecision({
-    queueItem: readyItem,
-    requireOperatorApprovalBeforeDispatch: true,
-    operatorApproved: false,
+test('approval requirements are not treated as bypassable by queue presence', () => {
+  const gated = createCodexQueueRecord({
+    ...job,
+    approvalRequirements: { requiresOperatorApprovalBeforeDispatch: true, requiresOperatorApprovalBeforeMerge: true },
+  });
+  const result = dispatchQueuedCodexJob({
+    queueRecord: gated,
+    integration: { capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true } },
   });
 
-  assert.equal(decision.decision, CODEX_DISPATCH_DECISION.BLOCKED_BY_OPERATOR_APPROVAL);
-  assert.equal(decision.requiresOperator, true);
-  assert.equal(decision.exactUnblockAction.includes('Operator must approve dispatch'), true);
+  assert.equal(result.decision, 'BLOCKED_BY_OPERATOR_APPROVAL');
+  assert.equal(result.finalVerdict, 'CODEX_DISPATCHER_BLOCKED');
 });
 
-test('dispatcher result wraps queue result and verification evidence', () => {
-  const decision = createCodexDispatchDecision({ queueItem: readyItem });
-  const result = createCodexDispatcherResult({
-    decision,
-    success: true,
-    evidence: ['node --test shared/agents/automatedCodexDispatcher.test.mjs PASS'],
-    commandOutputHash: 'c'.repeat(64),
-    proofRefs: ['proof/automated-codex-dispatcher/result.json'],
+test('dashboard reports queue depth, current job, last proof, and last blocker', () => {
+  const dispatched = transitionCodexQueueRecord(job, 'dispatched', { timestamp: '2026-06-30T00:01:00Z' }).record;
+  const proof = transitionCodexQueueRecord(dispatched, 'running', { timestamp: '2026-06-30T00:02:00Z' }).record;
+  const blocked = dispatchQueuedCodexJob({ queueRecord: job, integration: {}, now: '2026-06-30T00:03:00Z' }).record;
+  const dashboard = createDispatcherDashboard({
+    queueRecords: [job, { ...proof, resultMetadata: { proofId: 'proof-1' } }, blocked],
   });
 
-  assert.equal(result.success, true);
-  assert.equal(result.dispatchResult.verifierResult.status, 'PASS');
-  assert.equal(result.finalVerdict, 'AUTOMATED_CODEX_DISPATCHER_RESULT_PASS');
+  assert.equal(dashboard.queueDepth, 1);
+  assert.equal(dashboard.currentJob, proof.jobId);
+  assert.deepEqual(dashboard.lastProof, { proofId: 'proof-1' });
+  assert.equal(dashboard.lastBlocker.code, BLOCKED_BY_MISSING_INTEGRATION);
 });

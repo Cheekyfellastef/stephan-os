@@ -1,182 +1,176 @@
 import {
   CODEX_QUEUE_STATUS,
-  createCodexDispatchClaim,
-  createCodexDispatchResult,
-  createCodexQueueItem,
-  validateCodexQueueItem,
+  buildCodexDispatchQueueContract,
+  createCodexQueueRecord,
+  transitionCodexQueueRecord,
+  validateCodexQueueRecord,
 } from './codexDispatchQueue.mjs';
 import { createSharedWorkspaceMessage } from './sharedAgentWorkspace.mjs';
 
 export const AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION = 'automated-codex-dispatcher.v1';
+export const BLOCKED_BY_MISSING_INTEGRATION = 'BLOCKED_BY_MISSING_INTEGRATION';
 
 export const CODEX_DISPATCH_DECISION = Object.freeze({
-  DISPATCH_READY_ITEM: 'DISPATCH_READY_ITEM',
-  WAIT_FOR_READY_ITEM: 'WAIT_FOR_READY_ITEM',
-  BLOCKED_BY_METER: 'BLOCKED_BY_METER',
+  DISPATCHED: 'DISPATCHED',
+  WAITING_FOR_QUEUE: 'WAITING_FOR_QUEUE',
   BLOCKED_BY_INVALID_QUEUE_ITEM: 'BLOCKED_BY_INVALID_QUEUE_ITEM',
   BLOCKED_BY_OPERATOR_APPROVAL: 'BLOCKED_BY_OPERATOR_APPROVAL',
-  WAITING_FOR_RESULT: 'WAITING_FOR_RESULT',
-  COMPLETE: 'COMPLETE',
+  BLOCKED_BY_MISSING_INTEGRATION,
 });
 
 export const CODEX_DISPATCHER_GUARDRAILS = Object.freeze({
-  zeroCostDefault: true,
-  dispatchWhenMeterUnavailableAllowed: false,
-  dispatchInvalidQueueItemAllowed: false,
-  mergeWithoutOperatorApprovalAllowed: false,
-  arbitraryPromptMutationAllowed: false,
-  visibleClipboardCourierRequired: false,
+  arbitraryShellAllowed: false,
+  uncontrolledMutationAllowed: false,
+  dirtyMainWritesAllowed: false,
+  mergeAllowed: false,
+  branchDeletionAllowed: false,
+  hardResetAllowed: false,
+  approvalSpoofingAllowed: false,
+  approvalBypassAllowed: false,
+  fakeDispatchAllowed: false,
 });
 
-const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
-const SAFE_TEXT_PATTERN = /^[a-z0-9][a-z0-9._:/#() -]{0,240}$/i;
-const FORBIDDEN_TEXT_PATTERN = /token|secret|password|credential|private key|\.env/i;
-
-function asText(value, fallback = '') {
+function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
-  const text = String(value).trim();
-  return text || fallback;
+  const out = String(value).trim();
+  return out || fallback;
 }
 
-function safeText(value, fallback = '') {
-  const text = asText(value, fallback);
-  if (!text || FORBIDDEN_TEXT_PATTERN.test(text)) return fallback;
-  return SAFE_TEXT_PATTERN.test(text) ? text : fallback;
+function queued(records = []) {
+  return records.map(createCodexQueueRecord).find((record) => record.status === CODEX_QUEUE_STATUS.QUEUED) || null;
 }
 
-function safeId(value, fallback) {
-  const text = asText(value, fallback).toLowerCase();
-  return SAFE_ID_PATTERN.test(text) ? text : fallback;
+function eventKindFor(status) {
+  return {
+    [CODEX_QUEUE_STATUS.DISPATCHED]: 'codex-job-dispatched',
+    [CODEX_QUEUE_STATUS.RUNNING]: 'codex-job-running',
+    [CODEX_QUEUE_STATUS.WAITING_PROOF]: 'codex-job-proof',
+    [CODEX_QUEUE_STATUS.BLOCKED]: 'codex-job-blocked',
+    [CODEX_QUEUE_STATUS.SUCCEEDED]: 'codex-job-complete',
+    [CODEX_QUEUE_STATUS.FAILED]: 'codex-job-blocked',
+  }[status] || 'codex-job-created';
 }
 
-function latestReadyItem(items = []) {
-  return items.map(createCodexQueueItem).find((item) => item.status === CODEX_QUEUE_STATUS.READY) || null;
+function missingCapabilities(integration = {}) {
+  const caps = integration.capabilities || {};
+  return [
+    ['launchCodexJob', caps.launchCodexJob === true],
+    ['returnDispatchReceipt', caps.returnDispatchReceipt === true],
+    ['returnProofMetadata', caps.returnProofMetadata === true],
+  ].filter(([, ok]) => !ok).map(([name]) => name);
 }
 
 export function buildAutomatedCodexDispatcherContract() {
-  return {
+  return Object.freeze({
     schemaVersion: AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
     contractKind: 'stephanos.automated_codex_dispatcher.contract',
     decisions: Object.values(CODEX_DISPATCH_DECISION),
-    requiredDecisionFields: [
-      'schemaVersion',
-      'kind',
-      'decisionId',
-      'decision',
-      'queueItemId',
-      'summary',
-      'requiresOperator',
-      'exactUnblockAction',
-      'sharedWorkspaceMessage',
+    consumes: buildCodexDispatchQueueContract().contractKind,
+    requiredMessages: [
+      'codex-job-created',
+      'codex-job-dispatched',
+      'codex-job-running',
+      'codex-job-proof',
+      'codex-job-blocked',
+      'codex-job-complete',
     ],
+    dashboardFields: ['queueDepth', 'currentJob', 'lastProof', 'lastBlocker'],
     guardrails: { ...CODEX_DISPATCHER_GUARDRAILS },
     finalVerdict: 'AUTOMATED_CODEX_DISPATCHER_CONTRACT_READY',
-  };
-}
-
-export function createCodexDispatchDecision(input = {}) {
-  const queueItem = input.queueItem ? createCodexQueueItem(input.queueItem) : latestReadyItem(input.queueItems || []);
-  const queueValidation = queueItem ? validateCodexQueueItem(queueItem) : { valid: false, errors: ['missing-queue-item'] };
-  const meterAvailable = input.codexMeterAvailable !== false;
-  const operatorApproved = input.operatorApproved === true;
-  const activeDispatch = input.activeDispatch === true;
-  const completed = input.completed === true;
-  let decision = CODEX_DISPATCH_DECISION.WAIT_FOR_READY_ITEM;
-  let exactUnblockAction = '';
-  let requiresOperator = false;
-
-  if (completed) {
-    decision = CODEX_DISPATCH_DECISION.COMPLETE;
-  } else if (activeDispatch) {
-    decision = CODEX_DISPATCH_DECISION.WAITING_FOR_RESULT;
-  } else if (!queueItem) {
-    decision = CODEX_DISPATCH_DECISION.WAIT_FOR_READY_ITEM;
-    exactUnblockAction = 'Create a READY Codex queue item with allowed files, required tests, and required evidence.';
-  } else if (!queueValidation.valid) {
-    decision = CODEX_DISPATCH_DECISION.BLOCKED_BY_INVALID_QUEUE_ITEM;
-    exactUnblockAction = `Repair Codex queue item ${queueItem.queueItemId}: ${queueValidation.errors.join(', ')}`;
-    requiresOperator = true;
-  } else if (!meterAvailable) {
-    decision = CODEX_DISPATCH_DECISION.BLOCKED_BY_METER;
-    exactUnblockAction = 'Codex meter is unavailable. Keep item queued and do not dispatch until zero-cost/approved capacity is available.';
-    requiresOperator = true;
-  } else if (!operatorApproved && input.requireOperatorApprovalBeforeDispatch === true) {
-    decision = CODEX_DISPATCH_DECISION.BLOCKED_BY_OPERATOR_APPROVAL;
-    exactUnblockAction = `Operator must approve dispatch for ${queueItem.queueItemId}.`;
-    requiresOperator = true;
-  } else {
-    decision = CODEX_DISPATCH_DECISION.DISPATCH_READY_ITEM;
-  }
-
-  const queueItemId = queueItem?.queueItemId || '';
-  const decisionId = safeId(input.decisionId, queueItemId ? `dispatch-${queueItemId}` : 'dispatch-waiting-for-queue-item');
-  const summary = safeText(input.summary, decision === CODEX_DISPATCH_DECISION.DISPATCH_READY_ITEM
-    ? `Codex queue item ${queueItemId} is ready to dispatch.`
-    : `Codex dispatcher decision: ${decision}`);
-
-  return {
-    schemaVersion: AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
-    kind: 'stephanos.automated_codex_dispatcher.decision',
-    decisionId,
-    decision,
-    queueItemId,
-    queueItem,
-    summary,
-    requiresOperator,
-    exactUnblockAction,
-    dispatchClaim: decision === CODEX_DISPATCH_DECISION.DISPATCH_READY_ITEM
-      ? createCodexDispatchClaim(queueItem, {
-        claimedBy: 'codex-dispatcher',
-        claimedAtUtc: input.decidedAtUtc,
-        claimExpiresAtUtc: input.claimExpiresAtUtc,
-      })
-      : null,
-    sharedWorkspaceMessage: createSharedWorkspaceMessage({
-      messageId: decisionId,
-      sender: 'codex',
-      recipient: 'operator',
-      channel: 'automated-codex-dispatcher',
-      kind: decision === CODEX_DISPATCH_DECISION.DISPATCH_READY_ITEM ? 'codex-dispatch-attempted' : decision === CODEX_DISPATCH_DECISION.BLOCKED_BY_METER ? 'codex-blocked-by-meter' : 'operator-action-required',
-      severity: requiresOperator ? 'warning' : 'info',
-      correlationId: queueItem?.relatedGoal || queueItemId || decisionId,
-      relatedGoal: queueItem?.relatedGoal || '',
-      relatedPr: queueItem?.relatedPr || '',
-      summary,
-      status: decision,
-      changedFiles: queueItem?.allowedFiles?.filter((path) => !path.endsWith('/**')) || [],
-      proofRefs: ['proof/automated-codex-dispatcher-decision.json'],
-      requiresOperator,
-    }),
-    finalVerdict: decision === CODEX_DISPATCH_DECISION.DISPATCH_READY_ITEM
-      ? 'CODEX_DISPATCHER_READY_TO_DISPATCH'
-      : requiresOperator
-        ? 'CODEX_DISPATCHER_BLOCKED'
-        : 'CODEX_DISPATCHER_WAITING',
-  };
-}
-
-export function createCodexDispatcherResult(input = {}) {
-  const decision = createCodexDispatchDecision(input.decision || {});
-  const result = createCodexDispatchResult(decision.queueItem || input.queueItem || {}, {
-    success: input.success,
-    evidence: input.evidence,
-    commandOutputHash: input.commandOutputHash,
-    proofRefs: input.proofRefs,
-    reason: input.reason,
-    exactUnblockAction: input.exactUnblockAction,
-    completedAtUtc: input.completedAtUtc,
-    durationMs: input.durationMs,
   });
-
-  return {
-    schemaVersion: AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
-    kind: 'stephanos.automated_codex_dispatcher.result',
-    decisionId: decision.decisionId,
-    queueItemId: result.queueItemId,
-    success: input.success === true,
-    dispatchResult: result,
-    finalVerdict: input.success === true && result.finalVerdict === 'CODEX_DISPATCH_RESULT_PASS'
-      ? 'AUTOMATED_CODEX_DISPATCHER_RESULT_PASS'
-      : 'AUTOMATED_CODEX_DISPATCHER_RESULT_BLOCKED',
-  };
 }
+
+export function assessCodexIntegration(integration = {}) {
+  const missing = missingCapabilities(integration);
+  return Object.freeze({
+    supported: missing.length === 0,
+    missingCapabilities: missing,
+    finalVerdict: missing.length === 0 ? 'CODEX_AUTO_DISPATCH_INTEGRATION_SUPPORTED' : BLOCKED_BY_MISSING_INTEGRATION,
+  });
+}
+
+export function createCodexWorkspaceMessage(record, status, input = {}) {
+  return createSharedWorkspaceMessage({
+    messageId: `${record.jobId}-${status}`,
+    sender: 'codex',
+    recipient: 'operator',
+    channel: 'automated-codex-dispatcher',
+    kind: eventKindFor(status),
+    severity: status === CODEX_QUEUE_STATUS.BLOCKED || status === CODEX_QUEUE_STATUS.FAILED ? 'warning' : 'info',
+    correlationId: `issue-${record.issueNumber}`,
+    relatedGoal: `#${record.issueNumber}`,
+    summary: input.summary || `Codex job ${record.jobId} moved to ${status}.`,
+    status,
+    proofRefs: input.proofRefs || [`proof/${record.jobId}.json`],
+    requiresOperator: status === CODEX_QUEUE_STATUS.BLOCKED,
+  });
+}
+
+export function createDispatcherDashboard(input = {}) {
+  const records = (input.queueRecords || []).map(createCodexQueueRecord);
+  const active = records.find((record) => [CODEX_QUEUE_STATUS.DISPATCHED, CODEX_QUEUE_STATUS.RUNNING, CODEX_QUEUE_STATUS.WAITING_PROOF].includes(record.status)) || null;
+  const lastProof = records.map((record) => record.resultMetadata).filter((meta) => meta && Object.keys(meta).length).at(-1) || null;
+  const lastBlocker = records.map((record) => record.blockerMetadata).filter((meta) => meta && Object.keys(meta).length).at(-1) || null;
+  return Object.freeze({
+    schemaVersion: AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
+    kind: 'stephanos.automated_codex_dispatcher.dashboard',
+    queueDepth: records.filter((record) => record.status === CODEX_QUEUE_STATUS.QUEUED).length,
+    currentJob: active ? active.jobId : '',
+    lastProof,
+    lastBlocker,
+    finalVerdict: 'CODEX_DISPATCHER_DASHBOARD_READY',
+  });
+}
+
+export function dispatchQueuedCodexJob(input = {}) {
+  const record = input.queueRecord ? createCodexQueueRecord(input.queueRecord) : queued(input.queueRecords || []);
+  if (!record) {
+    return Object.freeze({ decision: CODEX_DISPATCH_DECISION.WAITING_FOR_QUEUE, finalVerdict: 'CODEX_DISPATCHER_WAITING' });
+  }
+  const validation = validateCodexQueueRecord(record);
+  if (!validation.valid) {
+    return Object.freeze({ decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_INVALID_QUEUE_ITEM, record, errors: validation.errors, finalVerdict: 'CODEX_DISPATCHER_BLOCKED' });
+  }
+  if (record.approvalRequirements.requiresOperatorApprovalBeforeDispatch && !record.approvalRequirements.approvalReceipt) {
+    return Object.freeze({ decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_OPERATOR_APPROVAL, record, finalVerdict: 'CODEX_DISPATCHER_BLOCKED' });
+  }
+  const integration = assessCodexIntegration(input.integration || {});
+  if (!integration.supported) {
+    const blocked = transitionCodexQueueRecord(record, CODEX_QUEUE_STATUS.BLOCKED, {
+      timestamp: input.now || 'pending',
+      reason: BLOCKED_BY_MISSING_INTEGRATION,
+      blockerMetadata: {
+        code: BLOCKED_BY_MISSING_INTEGRATION,
+        missingCapabilities: integration.missingCapabilities,
+      },
+    }).record;
+    return Object.freeze({
+      decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_MISSING_INTEGRATION,
+      record: blocked,
+      missingCapabilities: integration.missingCapabilities,
+      blockerMetadata: blocked.blockerMetadata,
+      sharedWorkspaceMessage: createCodexWorkspaceMessage(blocked, CODEX_QUEUE_STATUS.BLOCKED, { summary: `${BLOCKED_BY_MISSING_INTEGRATION}: ${integration.missingCapabilities.join(', ')}` }),
+      finalVerdict: BLOCKED_BY_MISSING_INTEGRATION,
+    });
+  }
+  const receipt = input.integration.dispatch?.(record) || input.dispatchReceipt || null;
+  if (!receipt) {
+    throw new Error('dispatcher invariant violated: supported integration must return a dispatch receipt; fake dispatch is forbidden');
+  }
+  const dispatched = transitionCodexQueueRecord(record, CODEX_QUEUE_STATUS.DISPATCHED, {
+    timestamp: input.now || 'pending',
+    reason: 'dispatch receipt recorded',
+    resultMetadata: { dispatchReceipt: receipt, proofMetadata: input.proofMetadata || null },
+  }).record;
+  return Object.freeze({
+    decision: CODEX_DISPATCH_DECISION.DISPATCHED,
+    record: dispatched,
+    dispatchReceipt: receipt,
+    proofMetadata: input.proofMetadata || null,
+    sharedWorkspaceMessage: createCodexWorkspaceMessage(dispatched, CODEX_QUEUE_STATUS.DISPATCHED),
+    finalVerdict: 'CODEX_JOB_DISPATCHED',
+  });
+}
+
+export const createCodexDispatchDecision = dispatchQueuedCodexJob;
+export const createCodexDispatcherResult = dispatchQueuedCodexJob;
