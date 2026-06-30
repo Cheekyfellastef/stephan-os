@@ -13,6 +13,7 @@ import {
   classifySourceUpdateTruth,
   collectApprovedTrackedGeneratedRestorePaths,
   collectRuntimeStatePaths,
+  createRuntimeStateCheckpoint,
   evaluateDistFreshnessAgainstOrigin,
   discoverOpenClawStandaloneIdentityWithDeps,
   evaluateOpenClawStartupConnectRecoveryWithDeps,
@@ -1324,6 +1325,28 @@ test('runtime state dirt is checkpointed and does not block launch preflight', (
       args: ['pull', '--ff-only'],
     },
   ]);
+});
+
+
+test('root tmp runtime state directory checkpoint uses recursive copy instead of copyFile', () => {
+  const calls = [];
+  const checkpoint = createRuntimeStateCheckpoint(['tmp'], {
+    now: () => new Date('2026-06-30T00:00:00.000Z'),
+    pathExists: (filePath) => filePath === 'tmp',
+    statPath: () => ({ isDirectory: () => true }),
+    makeDir: (dirPath) => calls.push(['mkdir', dirPath]),
+    copyFile: () => { throw new Error('copyFile must not be used for tmp directory checkpoints'); },
+    copyPath: (fromPath, toPath) => calls.push(['copyPath', fromPath, toPath]),
+    writeFile: (filePath, data) => calls.push(['writeFile', filePath, filePath.endsWith('manifest.json') ? JSON.parse(data).paths[0] : data]),
+  });
+
+  assert.equal(checkpoint.checkpointDir, '.stephanos/local-state-checkpoints/2026-06-30T00-00-00-000Z');
+  assert.deepEqual(calls.slice(0, 3), [
+    ['mkdir', '.stephanos/local-state-checkpoints/2026-06-30T00-00-00-000Z'],
+    ['mkdir', '.stephanos/local-state-checkpoints/2026-06-30T00-00-00-000Z'],
+    ['copyPath', 'tmp', '.stephanos/local-state-checkpoints/2026-06-30T00-00-00-000Z/tmp'],
+  ]);
+  assert.deepEqual(calls[3][2], { path: 'tmp', exists: true, kind: 'directory' });
 });
 
 test('preflight blocks meaningful dirt', () => {
