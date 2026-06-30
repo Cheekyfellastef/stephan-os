@@ -5,6 +5,10 @@ import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
 import {
+  IGNITION_STATUS,
+  aggregateIgnitionStatusRoutes,
+} from '../shared/agents/ignitionConciergeStatusRouting.mjs';
+import {
   OPENCLAW_WORKSPACE_DIRT_PATHS,
   buildOpenClawWorkspaceHygieneProjection,
   isOpenClawWorkspaceDirtPath,
@@ -23,6 +27,34 @@ import {
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const OPENCLAW_STARTUP_RESTART_FLAG = '--approve-openclaw-service-restart';
+
+
+const BATTLE_BRIDGE_IGNITION_SERVICES = Object.freeze([
+  'backend',
+  'openclaw-gateway',
+  'stephanos-ui',
+  'mission-orchestrator-worker',
+  'shared-agent-workspace',
+]);
+
+export function buildBattleBridgeIgnitionConciergeStatusAggregate({ status = IGNITION_STATUS.READY } = {}) {
+  return aggregateIgnitionStatusRoutes({
+    routes: BATTLE_BRIDGE_IGNITION_SERVICES.map((serviceId) => ({
+      serviceId,
+      status,
+      primarySurface: 'shared-workspace',
+      routeId: `battle-bridge-${serviceId}-ignition`,
+      sharedWorkspacePath: `status/ignition/${serviceId}.json`,
+      summary: `Battle Bridge ${serviceId} ignition ${String(status).toLowerCase()}`,
+      detail: 'Battle Bridge ignition proof routes through the shared workspace instead of a visible PowerShell wall.',
+      exactUnblockAction: status === IGNITION_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION
+        ? 'Run the relevant Battle Bridge repair, then rerun ignition proof.'
+        : '',
+    })),
+    sharedWorkspacePath: 'status/ignition/aggregate.json',
+    checkId: 'battle-bridge-ignition-concierge-status-routing',
+  });
+}
 
 function formatStep(label, command, commandArgs) {
   return `[IGNITION PREFLIGHT] ${label}: ${command} ${commandArgs.join(' ')}`;
@@ -1661,6 +1693,8 @@ export async function run() {
   }
   if (ignitionMode === 'NORMAL_IGNITION') {
     runIgnitionHousekeep({ dryRun: false, compact: true, debug: debugEnabled });
+    const conciergeStatus = buildBattleBridgeIgnitionConciergeStatusAggregate();
+    console.log(`[IGNITION CONCIERGE] status=${conciergeStatus.status} verdict=${conciergeStatus.finalVerdict} sharedWorkspacePath=${conciergeStatus.sharedWorkspacePath}`);
   }
   let publicationTruth = null;
 
