@@ -771,6 +771,29 @@ test('ignition status evaluator allows approved generated dist dirt', () => {
   assert.equal(isGitWorkingTreeClean(' M apps/stephanos/dist/index.html\n'), true);
 });
 
+test('ignition status evaluator reproduces Battle Bridge generated dist and root tmp status', () => {
+  const statusOutput = [
+    '?? apps/stephanos/dist/assets/index-BulfrTwk.js',
+    '?? apps/stephanos/dist/assets/index-BvpU0rmC.css',
+    '?? tmp/',
+  ].join('\n');
+  const evaluation = evaluateGitStatusForIgnition(statusOutput);
+
+  assert.deepEqual(evaluation.entries.map((entry) => [entry.rawLine, entry.category]), [
+    ['?? apps/stephanos/dist/assets/index-BulfrTwk.js', 'approved-generated-dist'],
+    ['?? apps/stephanos/dist/assets/index-BvpU0rmC.css', 'approved-generated-dist'],
+    ['?? tmp/', 'runtime-state'],
+  ]);
+  assert.deepEqual(evaluation.approvedEntries.map((entry) => entry.paths[0]), [
+    'apps/stephanos/dist/assets/index-BulfrTwk.js',
+    'apps/stephanos/dist/assets/index-BvpU0rmC.css',
+  ]);
+  assert.deepEqual(evaluation.runtimeStateEntries.map((entry) => entry.paths[0]), ['tmp/']);
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(isGitWorkingTreeClean(`${statusOutput}\n`), true);
+});
+
 test('ignition status evaluator classifies backend runtime data dirt separately', () => {
   const evaluation = evaluateGitStatusForIgnition([
     ' M stephanos-server/data/memory/durable-memory.json',
@@ -837,6 +860,7 @@ test('ignition dirt classifier maps required categories', () => {
   assert.equal(classifyIgnitionDirtPath('stephanos-server/data/memory/durable-memory.json'), 'RUNTIME_CHECKPOINT_CLEAN');
   assert.equal(classifyIgnitionDirtPath('data/activity/latest.json'), 'RUNTIME_CHECKPOINT_CLEAN');
   assert.equal(classifyIgnitionDirtPath('data/knowledge-graph/nodes.json'), 'RUNTIME_CHECKPOINT_CLEAN');
+  assert.equal(classifyIgnitionDirtPath('tmp/'), 'RUNTIME_CHECKPOINT_CLEAN');
   assert.equal(classifyIgnitionDirtPath('stephanos-ui/node_modules/foo/index.js'), 'DEPENDENCY_WARNING');
   assert.equal(classifyIgnitionDirtPath('stephanos-ui/src/App.jsx'), 'SOURCE_DIRT_APPROVAL_REQUIRED');
   assert.equal(classifyIgnitionDirtPath('package.json'), 'SOURCE_DIRT_APPROVAL_REQUIRED');
