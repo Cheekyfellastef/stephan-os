@@ -1162,12 +1162,10 @@ export function runGitPullPreflightWithDeps({
       throw new Error(`blocked for safety: runtime state checkpoint failed (${error.message}).`);
     }
 
-    if (runtimeCheckpointState?.checkpointDir) {
-      console.log('[IGNITION] runtime memory checkpointed');
+    if (!runtimeCheckpointState?.checkpointDir) {
+      throw new Error('blocked for safety: runtime state checkpoint failed (missing checkpoint directory).');
     }
-    else {
-      console.log('[IGNITION] runtime memory checkpointed');
-    }
+    console.log('[IGNITION] runtime memory checkpointed');
   }
 
   if (statusAssessment.meaningfulEntries.length > 0 && String(process.env.STEPHANOS_IGNITION_ALLOW_DIRTY_SOURCE || '') !== '1') {

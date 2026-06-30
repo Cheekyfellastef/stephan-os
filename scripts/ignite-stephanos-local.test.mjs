@@ -1382,6 +1382,27 @@ test('checkpoint failure blocks safely before pull', () => {
   );
 });
 
+test('missing runtime checkpoint directory blocks safely before pull', () => {
+  assert.throws(
+    () => runGitPullPreflightWithDeps({
+      captureStep: (label) => {
+        if (label === 'git-status') {
+          return {
+            stdout: ' M stephanos-server/data/memory/durable-memory.json\n',
+            stderr: '',
+          };
+        }
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      createCheckpoint: () => null,
+      runStepFn: () => {
+        throw new Error('should not run');
+      },
+    }),
+    /missing checkpoint directory/,
+  );
+});
+
 test('auto-publish requires explicit env flag', () => {
   assert.equal(shouldAutoPublishDist({}), false);
   assert.equal(shouldAutoPublishDist({ STEPHANOS_IGNITION_AUTOPUBLISH_DIST: '1' }), true);
