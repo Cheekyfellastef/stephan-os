@@ -730,6 +730,7 @@ export async function ensureLocalStaticServerRestartWithDeps({
 const APPROVED_GENERATED_DIST_PREFIX = 'apps/stephanos/dist/';
 const RUNTIME_MEMORY_PATH = 'stephanos-server/data/memory/durable-memory.json';
 const ROOT_TRANSIENT_DATA_PREFIX = 'data/';
+const ROOT_TRANSIENT_TMP_PATH = 'tmp/';
 const ROOT_RUNTIME_ALLOWLIST_PREFIXES = [
   'data/activity/',
   'data/knowledge-graph/',
@@ -780,6 +781,10 @@ function isTransientRootDataPath(path) {
   return path === 'data' || path.startsWith(ROOT_TRANSIENT_DATA_PREFIX);
 }
 
+function isTransientRootTmpDirectoryStatusPath(path) {
+  return path === 'tmp' || path === ROOT_TRANSIENT_TMP_PATH;
+}
+
 function isAllowlistedRootRuntimePath(path) {
   return ROOT_RUNTIME_ALLOWLIST_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
@@ -789,6 +794,7 @@ function classifyStatusEntry(entry) {
   if (entry.paths.every((path) => isSanctionedOpenClawWorkspacePath(path))) return 'openclaw-runtime-workspace';
   if (entry.paths.some((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)))) return 'meaningful-source-dirt';
   if (entry.paths.every((path) => path === RUNTIME_MEMORY_PATH)) return 'runtime-state';
+  if (entry.status.includes('?') && entry.paths.every((path) => isTransientRootTmpDirectoryStatusPath(path))) return 'runtime-state';
   if (entry.paths.every((path) => isTransientRootDataPath(path))) return 'transient-root-data';
   if (entry.paths.every((path) => isDependencyDirtPath(path))) return 'dependency-dirt';
   if (entry.paths.every((path) => isApprovedGeneratedDistPath(path))) return 'approved-generated-dist';
@@ -805,6 +811,7 @@ function classifyStatusEntry(entry) {
 export function classifyIgnitionDirtPath(path) {
   const normalized = normalizeGitPath(path);
   if (SECRETS_PATTERN.test(normalized)) return 'HARD_BLOCK';
+  if (isTransientRootTmpDirectoryStatusPath(normalized)) return 'RUNTIME_CHECKPOINT_CLEAN';
   if (normalized === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(normalized)) return 'RUNTIME_CHECKPOINT_CLEAN';
   if (isSanctionedOpenClawWorkspacePath(normalized)) return 'OPENCLAW_RUNTIME_WORKSPACE_ALLOWED';
   if (isDependencyDirtPath(normalized)) return 'DEPENDENCY_WARNING';
