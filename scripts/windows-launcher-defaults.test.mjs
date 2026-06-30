@@ -171,8 +171,9 @@ test('ignition records bounded status and log destinations in proof workspace', 
 
 test('ignition failure status preserves exact blocker and next operator action', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /Write-IgnitionStatus -Phase 'blocked' -Message \$Step[\s\S]*blocker = \$Step/m, 'failure status must preserve the exact blocker message');
-  assert.match(script, /nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying\.'/m, 'failure status must include operator action');
+  assert.match(script, /blocker = \$statusMessage/m, 'failure status must preserve the exact blocker message');
+  assert.match(script, /Write-IgnitionStatus -Phase 'blocked' -Message \$statusMessage/m, 'failure status must write the surfaced blocker as the blocked message');
+  assert.match(script, /\$nextAction = if \(\$childBlocker[\s\S]*Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying\.'/m, 'failure status must include operator action');
 });
 
 
@@ -198,7 +199,20 @@ test('ignition status preserves destination paths, blocker actions, and non-prim
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\) \}/m, 'status payload must record status, splash, and log destinations');
   assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
-  assert.match(script, /currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker/m, 'blocked status must preserve next operator action with blocker state');
+  assert.match(script, /currentStage = 'blocked'; nextOperatorAction = \$nextAction; blocker = \$statusMessage/m, 'blocked status must preserve next operator action with blocker state');
   assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
   assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
+});
+
+
+test('launcher-root surfaces child missing-upstream blocker in launcher status before runtime-status timeout', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Get-ChildIgnitionBlocker[\s\S]*reason=missing-upstream/m, 'launcher must parse missing-upstream from captured child logs');
+  assert.match(script, /repair-packet[\s\S]*source-update-status/m, 'launcher must parse source-update-status and repair packet log blocks');
+  assert.match(script, /Set or repair the branch upstream for the exact PR head[\s\S]*source-update safety remains blocked until upstream exists/m, 'missing-upstream next action must preserve source-update safety instead of bypassing it');
+  assert.match(script, /function Assert-StartedIgnitionChildrenHealthy[\s\S]*Child ignition blocked: \$\(\$blocker\.blocker\)/m, 'launcher must fail early when child ignition emits a blocker or exits with a blocker');
+  assert.match(script, /childIgnitionBlocker = \$childBlocker/m, 'blocked launcher-status/support snapshot must surface the parsed child blocker details');
+  assert.match(script, /Write-IgnitionStatus -Phase 'blocked' -Message \$statusMessage/m, 'blocked launcher-status/support snapshot must use the child blocker as the status message');
+  assert.match(script, /Child ignition blocked while waiting for \$\{StepLabel\}: \$\(\$blocker\.blocker\)/m, 'runtime-status wait must prefer the child blocker over a generic endpoint timeout');
+  assert.match(script, /Start-Process -FilePath 'powershell\.exe'[\s\S]*-WindowStyle Minimized[\s\S]*-RedirectStandardOutput \$stdoutLog[\s\S]*-PassThru/m, 'process remains minimized, logged, and tracked without a visible PowerShell wall');
 });
