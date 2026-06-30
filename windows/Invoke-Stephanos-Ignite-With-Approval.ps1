@@ -1,8 +1,33 @@
 [CmdletBinding()]
-param()
+param(
+  [string]$RepositoryRoot = ''
+)
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent $PSScriptRoot
+
+function Resolve-IgniteRepositoryRoot([string]$RequestedRoot) {
+  $candidates = @()
+  if ($RequestedRoot -and $RequestedRoot.Trim()) { $candidates += $RequestedRoot.Trim() }
+  if ($env:STEPHANOS_PROOF_WORKTREE_ROOT -and $env:STEPHANOS_PROOF_WORKTREE_ROOT.Trim()) { $candidates += $env:STEPHANOS_PROOF_WORKTREE_ROOT.Trim() }
+  if ($PWD -and $PWD.Path) { $candidates += $PWD.Path }
+  $candidates += (Split-Path -Parent $PSScriptRoot)
+
+  foreach ($candidate in $candidates) {
+    try {
+      $resolved = (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).ProviderPath
+      $packageJson = Join-Path $resolved 'package.json'
+      $igniteScript = Join-Path $resolved 'scripts/ignite-stephanos-local.mjs'
+      if ((Test-Path -LiteralPath $packageJson -PathType Leaf) -and (Test-Path -LiteralPath $igniteScript -PathType Leaf)) {
+        return $resolved
+      }
+    }
+    catch {}
+  }
+
+  throw 'Unable to resolve a Stephanos repository root for Ignite approval. Set -RepositoryRoot or STEPHANOS_PROOF_WORKTREE_ROOT to the PR worktree being proven.'
+}
+
+$repoRoot = Resolve-IgniteRepositoryRoot -RequestedRoot $RepositoryRoot
 $normalIgniteCommand = 'npm run stephanos:ignite'
 $approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'
 $approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-openclaw-service-restart'
@@ -337,7 +362,8 @@ function Show-IgniteRecoveryPopup($Packet) {
   }
 }
 
-Set-Location $repoRoot
+Set-Location -LiteralPath $repoRoot
+Write-IgniteApprovalLog "selected repository root: $repoRoot"
 Write-IgniteApprovalLog "running safe default ignition: $normalIgniteCommand"
 & cmd.exe /d /c "$normalIgniteCommand 2>&1" | Tee-Object -FilePath $transcriptPath
 $normalExitCode = $LASTEXITCODE
