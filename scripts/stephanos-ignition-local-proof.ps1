@@ -95,6 +95,49 @@ MERGE_ALLOWED = NO
   }
 }
 
+function Write-BlockedTranscript {
+  param(
+    [string]$TranscriptPath,
+    [string]$Marker,
+    [string]$ExpectedHead,
+    [string]$ActualHead,
+    [string]$RuntimeUrl,
+    [string]$RuntimeStatus,
+    [string]$OperatorAction
+  )
+
+  $transcriptDir = Split-Path -Parent $TranscriptPath
+  New-Item -ItemType Directory -Force -Path $transcriptDir | Out-Null
+
+  $blockedTranscript = [ordered]@{
+    marker = $Marker
+    exactHead = [ordered]@{
+      expected = $ExpectedHead
+      actual = $ActualHead
+      matched = ($ExpectedHead -eq $ActualHead)
+    }
+    runtime = [ordered]@{
+      passed = $false
+      url = $RuntimeUrl
+      statusCode = $RuntimeStatus
+      domSignals = [ordered]@{
+        title = ""
+        hasHtmlShell = $false
+        bodyContainsStephanos = $false
+        contentLength = 0
+      }
+    }
+    proofScope = [ordered]@{
+      browserRuntimeProof = $false
+      browserRuntimeDomProof = $false
+    }
+    operatorAction = $OperatorAction
+  }
+
+  $blockedTranscript | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $TranscriptPath -Encoding UTF8
+  Write-ProofCommentBlock -TranscriptPath $TranscriptPath
+}
+
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 $TranscriptPath = Join-Path $RepoRoot "tmp\stephanos-ignition\ignition-proof-runner-transcript.json"
@@ -134,6 +177,7 @@ Write-Host "launcherWindow=minimized-background-proof"
 Write-Step "Probe browser/runtime URL"
 $deadline = (Get-Date).AddSeconds($ProbeSeconds)
 $runtimeReady = $false
+$lastProbeError = "not-started"
 while ((Get-Date) -lt $deadline) {
   try {
     $response = Invoke-WebRequest -Uri $RuntimeUrl -UseBasicParsing -TimeoutSec 5
@@ -143,14 +187,23 @@ while ((Get-Date) -lt $deadline) {
       break
     }
   } catch {
-    Write-Host "runtimeProbe=pending $($_.Exception.Message)"
+    $lastProbeError = $_.Exception.Message
+    Write-Host "runtimeProbe=pending $lastProbeError"
     Start-Sleep -Seconds 3
   }
 }
 
 if (-not $runtimeReady) {
   Write-Host "runtimeUrl=$RuntimeUrl"
-  throw "Runtime proof did not become ready inside $ProbeSeconds seconds. Leave the launcher window open and inspect the concierge splash/support snapshot."
+  Write-BlockedTranscript `
+    -TranscriptPath $TranscriptPath `
+    -Marker "MILESTONE_5_IGNITION_BROWSER_RUNTIME_PROOF_BLOCKED" `
+    -ExpectedHead $ExpectedHead `
+    -ActualHead $currentHead `
+    -RuntimeUrl $RuntimeUrl `
+    -RuntimeStatus "probe-timeout" `
+    -OperatorAction "Runtime URL did not become ready inside $ProbeSeconds seconds. Leave the minimized launcher open and inspect the concierge splash/support snapshot. Last probe error: $lastProbeError"
+  throw "Runtime proof did not become ready inside $ProbeSeconds seconds. Copyable blocker comment was emitted from the emergency transcript."
 }
 
 Write-Step "Run exact-head browser/runtime proof runner"
