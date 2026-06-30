@@ -196,9 +196,29 @@ test('launcher-root splash uses detailed ignition stage model', async () => {
 
 test('ignition status preserves destination paths, blocker actions, and non-primary PowerShell wall truth', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\) \}/m, 'status payload must record status, splash, and log destinations');
+  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\); transcriptPath = \$ignitionTranscriptPath; supportSnapshotPath = \$ignitionSupportSnapshotPath \}/m, 'status payload must record status, splash, and log destinations');
   assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
   assert.match(script, /currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker/m, 'blocked status must preserve next operator action with blocker state');
   assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
   assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
+});
+
+
+test('professional ignition emits support snapshot and proof transcript with exact-head gate', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\$ignitionTranscriptPath = Join-Path \$ignitionProofRoot 'ignition-proof-transcript\.jsonl'/m, 'proof transcript path must be deterministic');
+  assert.match(script, /\$ignitionSupportSnapshotPath = Join-Path \$ignitionProofRoot 'support-snapshot\.json'/m, 'support snapshot path must be deterministic');
+  assert.match(script, /function Write-IgnitionTranscript[\s\S]*Add-Content -LiteralPath \$ignitionTranscriptPath/m, 'launcher must append proof transcript events');
+  assert.match(script, /function Write-IgnitionSupportSnapshot[\s\S]*schema = 'stephanos\.ignition\.support-snapshot\.v1'[\s\S]*runtimePort = 4173/m, 'launcher must emit support snapshot for local proof');
+  assert.match(script, /exactHeadApprovalRequired = \$true[\s\S]*exactHeadApprovalStatus = 'required-before-merge-proof'/m, 'exact-head approval must remain required for merge proof');
+});
+
+test('professional ignition splash refreshes real status and preserves safe autofix boundaries', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Update-IgnitionSplashScreen[\s\S]*<meta http-equiv="refresh" content="2">/m, 'splash must refresh as status changes');
+  assert.match(script, /safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'/m, 'status must encode safe autofix policy');
+  assert.match(script, /noSourceDeletion = \$true/m, 'workspace check status must explicitly forbid source deletion');
+  assert.match(script, /hiddenBlockersAllowed = \$false/m, 'classification status must not hide blockers');
+  assert.match(script, /safeAutoFixScope = 'known-generated-runtime-stoppers-only'/m, 'cleanup stage must limit safe autofix scope');
+  assert.doesNotMatch(script, /Remove-Item[\s\S]*-Recurse[\s\S]*\$repoRoot|git reset --hard|git clean -fdx/, 'launcher must not delete source or reset the worktree');
 });

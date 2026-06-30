@@ -46,6 +46,8 @@ $visiblePowerShellRequired = $false
 $ignitionProofRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof'
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
+$ignitionTranscriptPath = Join-Path $ignitionProofRoot 'ignition-proof-transcript.jsonl'
+$ignitionSupportSnapshotPath = Join-Path $ignitionProofRoot 'support-snapshot.json'
 
 $ignitionStageModel = @(
   [ordered]@{ id = 'finding-repo'; label = 'Finding repo'; detail = 'Resolve the exact Stephanos PR worktree before any process startup.' },
@@ -59,8 +61,20 @@ $ignitionStageModel = @(
 )
 
 
+function Write-IgnitionTranscript([hashtable]$Event) {
+  Initialize-IgnitionProofWorkspace
+  $record = [ordered]@{
+    timestamp = (Get-Date).ToUniversalTime().ToString('o')
+    event = if ($Event.ContainsKey('event')) { $Event.event } else { 'status' }
+    proofWorkspace = $ignitionProofRoot
+  }
+  foreach ($key in $Event.Keys) { $record[$key] = $Event[$key] }
+  Add-Content -LiteralPath $ignitionTranscriptPath -Encoding UTF8 -Value ($record | ConvertTo-Json -Depth 10 -Compress)
+}
+
 function Write-LiveLog([string]$Message) {
   Write-Host "[LAUNCHER LIVE] $Message"
+  Write-IgnitionTranscript -Event @{ event = 'launcher-log'; message = $Message }
 }
 
 function Initialize-IgnitionProofWorkspace {
@@ -74,7 +88,7 @@ function Get-IgnitionStageSnapshot([string]$CurrentStageId) {
       id = $_.id
       label = $_.label
       detail = $_.detail
-      state = if ($_.id -eq $CurrentStageId) { 'active' } else { 'pending' }
+      state = if ($_.id -eq $CurrentStageId) { 'active' } elseif ($ignitionStageModel.IndexOf($_) -lt ($ignitionStageModel | ForEach-Object { $_.id }).IndexOf($CurrentStageId)) { 'complete' } else { 'pending' }
     }
   })
 }
@@ -91,45 +105,64 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
     splashPath = $ignitionSplashPath
     statusPath = $ignitionStatusPath
     logRoot = (Join-Path $ignitionProofRoot 'logs')
+    transcriptPath = $ignitionTranscriptPath
+    supportSnapshotPath = $ignitionSupportSnapshotPath
+    exactHeadApprovalRequired = $true
+    exactHeadApprovalStatus = 'required-before-merge-proof'
+    safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'
     nextOperatorAction = if ($Extra.ContainsKey('nextOperatorAction')) { $Extra.nextOperatorAction } else { 'Watch the Stephanos ignition splash/status screen.' }
     currentStage = $currentStage
     ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $currentStage
-    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs') }
+    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs'); transcriptPath = $ignitionTranscriptPath; supportSnapshotPath = $ignitionSupportSnapshotPath }
   }
   foreach ($key in $Extra.Keys) { $payload[$key] = $Extra[$key] }
   $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
+  Write-IgnitionTranscript -Event @{ event = 'ignition-status'; phase = $Phase; message = $Message; currentStage = $currentStage; blocker = if ($Extra.ContainsKey('blocker')) { $Extra.blocker } else { '' } }
+  Update-IgnitionSplashScreen -Status $payload
+}
+
+function Update-IgnitionSplashScreen([object]$Status) {
+  Initialize-IgnitionProofWorkspace
+  $stageHtml = @($Status.ignitionStages | ForEach-Object {
+    $state = [System.Net.WebUtility]::HtmlEncode($_.state)
+    $label = [System.Net.WebUtility]::HtmlEncode($_.label)
+    $detail = [System.Net.WebUtility]::HtmlEncode($_.detail)
+    "<div class='stage stage-$state'><strong>$label</strong><span>$detail</span><em>$state</em></div>"
+  }) -join "`n"
+  $blocker = if ($Status.blocker) { [System.Net.WebUtility]::HtmlEncode($Status.blocker) } else { 'No blocker detected.' }
+  $message = [System.Net.WebUtility]::HtmlEncode($Status.message)
+  $phase = [System.Net.WebUtility]::HtmlEncode($Status.phase)
+  $next = [System.Net.WebUtility]::HtmlEncode($Status.nextOperatorAction)
+  $statusPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionStatusPath)
+  $logRootHtml = [System.Net.WebUtility]::HtmlEncode((Join-Path $ignitionProofRoot 'logs'))
+  $transcriptHtml = [System.Net.WebUtility]::HtmlEncode($ignitionTranscriptPath)
+  $snapshotHtml = [System.Net.WebUtility]::HtmlEncode($ignitionSupportSnapshotPath)
+  $json = [System.Net.WebUtility]::HtmlEncode(($Status | ConvertTo-Json -Depth 10))
+  $html = @"
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="2">
+<title>Stephanos Ignition Status</title>
+<style>body{margin:0;background:#07111f;color:#e7f2ff;font-family:Segoe UI,Arial,sans-serif}main{max-width:1080px;margin:4vh auto;padding:32px;border:1px solid #1e4f7a;border-radius:18px;background:#0b1728}h1{margin-top:0}.pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#0e7a4f;color:#d8fff0;font-weight:700}.muted{color:#a7bdd4}code,pre{background:#111f33;padding:2px 6px;border-radius:6px}.stage-grid{display:grid;gap:10px;margin:22px 0}.stage{padding:12px 14px;border:1px solid #254766;border-radius:12px;background:#0f2036}.stage strong{display:block;color:#f5fbff}.stage em{color:#9ed8ff}.stage-complete{border-color:#247a55}.stage-active{border-color:#4eb3ff;box-shadow:0 0 0 1px #4eb3ff}.blocker{border:1px solid #7a3b1e;background:#2b160f;color:#ffd9c8;padding:12px;border-radius:12px}.proof{display:grid;gap:6px}.raw{white-space:pre-wrap;max-height:280px;overflow:auto}</style>
+<main>
+  <span class="pill">$phase</span>
+  <h1>Stephanos is starting</h1>
+  <p>$message</p>
+  <p class="muted">Professional ignition is browser-first: detailed status, exact blockers, safe generated/runtime cleanup policy, and proof artifacts are visible before Stephanos opens.</p>
+  <section aria-label="Detailed ignition stages" class="stage-grid">$stageHtml</section>
+  <section class="blocker" aria-label="Blocker and operator action"><strong>Blocker:</strong> $blocker<br><strong>Next action:</strong> $next</section>
+  <section class="proof" aria-label="Support snapshot and proof transcript">
+    <p>Status: <code>$statusPathHtml</code></p><p>Logs: <code>$logRootHtml</code></p><p>Proof transcript: <code>$transcriptHtml</code></p><p>Support snapshot: <code>$snapshotHtml</code></p>
+    <p>Exact-head approval: <strong>required before merge proof</strong>. Safe auto-fix: <strong>known generated/runtime stoppers only; no source deletion; no hidden blockers</strong>.</p>
+  </section>
+  <pre class="raw" aria-label="Raw status JSON">$json</pre>
+</main>
+"@
+  $html | Set-Content -LiteralPath $ignitionSplashPath -Encoding UTF8
 }
 
 function New-IgnitionSplashScreen {
   Initialize-IgnitionProofWorkspace
-  $statusPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionStatusPath)
-  $logRootHtml = [System.Net.WebUtility]::HtmlEncode((Join-Path $ignitionProofRoot 'logs'))
-  $html = @"
-<!doctype html>
-<meta charset="utf-8">
-<title>Stephanos Ignition Status</title>
-<style>body{margin:0;background:#07111f;color:#e7f2ff;font-family:Segoe UI,Arial,sans-serif}main{max-width:960px;margin:6vh auto;padding:32px;border:1px solid #1e4f7a;border-radius:18px;background:#0b1728}h1{margin-top:0}.pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#0e7a4f;color:#d8fff0;font-weight:700}.muted{color:#a7bdd4}code{background:#111f33;padding:2px 6px;border-radius:6px}.stage-grid{display:grid;gap:10px;margin:22px 0}.stage{padding:12px 14px;border:1px solid #254766;border-radius:12px;background:#0f2036}.stage strong{display:block;color:#f5fbff}.blocker{border-color:#7a3b1e;background:#2b160f;color:#ffd9c8}</style>
-<main>
-  <span class="pill">IGNITION ACTIVE</span>
-  <h1>Stephanos is starting</h1>
-  <p>The ignition button selected the splash/status screen as the operator-facing UI.</p>
-  <p class="muted">Verbose PowerShell output is bounded to logs, not shown as the primary interface.</p>
-  <section aria-label="Detailed ignition stages" class="stage-grid">
-    <div class="stage"><strong>Finding repo</strong><span>Resolve the exact Stephanos PR worktree.</span></div>
-    <div class="stage"><strong>Checking workspace dirt</strong><span>Inspect local workspace state through canonical ignition.</span></div>
-    <div class="stage"><strong>Classifying safe vs unsafe dirt</strong><span>Separate generated/runtime cleanup from source divergence.</span></div>
-    <div class="stage"><strong>Cleaning generated/runtime stoppers</strong><span>Clean only approved generated/runtime paths; never reset source.</span></div>
-    <div class="stage"><strong>Checking dependencies</strong><span>Verify prerequisites before claiming readiness.</span></div>
-    <div class="stage"><strong>Checking ports and existing runtime</strong><span>Reuse only truth-verified runtime processes.</span></div>
-    <div class="stage"><strong>Starting local services</strong><span>Start minimized/background PowerShell processes with bounded logs.</span></div>
-    <div class="stage"><strong>Opening Command Deck</strong><span>Open browser surfaces after health proof.</span></div>
-  </section>
-  <section class="blocker" aria-label="Blocker and operator action">If blocked, status records the exact blocker plus the next operator action.</section>
-  <p>Status: <code>$statusPathHtml</code></p>
-  <p>Logs: <code>$logRootHtml</code></p>
-</main>
-"@
-  $html | Set-Content -LiteralPath $ignitionSplashPath -Encoding UTF8
   Write-IgnitionStatus -Phase 'splash-shown' -Message 'Stephanos ignition splash/status screen is the primary UI.' -Extra @{ currentStage = 'finding-repo' }
   return $ignitionSplashPath
 }
@@ -143,6 +176,7 @@ function Show-IgnitionSplashScreen {
 
 function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord) {
   Write-IgnitionStatus -Phase 'blocked' -Message $Step -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.'; blocker = $Step }
+  Write-IgnitionSupportSnapshot -Verdict 'blocked' -Extra @{ blocker = $Step; nextOperatorAction = 'Review blocker and retry after repair.' }
   Write-Host "[LAUNCHER LIVE] Failed step: $Step" -ForegroundColor Red
   if ($null -ne $ErrorRecord) {
     Write-Host ($ErrorRecord | Out-String).Trim() -ForegroundColor Red
@@ -346,6 +380,31 @@ function Open-CockpitSurface([string]$Url, [string]$Label) {
   throw "Unable to open $Label in browser for URL $Url"
 }
 
+
+function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}) {
+  Initialize-IgnitionProofWorkspace
+  $snapshot = [ordered]@{
+    schema = 'stephanos.ignition.support-snapshot.v1'
+    verdict = $Verdict
+    writtenAt = (Get-Date).ToUniversalTime().ToString('o')
+    repositoryRoot = $repoRoot
+    runtimePort = 4173
+    launcherShellUrl = $launcherShellUrl
+    runtimeUrl = $launcherRuntimeUrl
+    runtimeStatusUrl = $launcherRuntimeStatusUrl
+    exactHeadApprovalRequired = $true
+    exactHeadApprovalStatus = 'required-before-merge-proof'
+    safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'
+    statusPath = $ignitionStatusPath
+    splashPath = $ignitionSplashPath
+    transcriptPath = $ignitionTranscriptPath
+    logRoot = (Join-Path $ignitionProofRoot 'logs')
+  }
+  foreach ($key in $Extra.Keys) { $snapshot[$key] = $Extra[$key] }
+  $snapshot | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ignitionSupportSnapshotPath -Encoding UTF8
+  Write-IgnitionTranscript -Event @{ event = 'support-snapshot'; verdict = $Verdict; supportSnapshotPath = $ignitionSupportSnapshotPath }
+}
+
 try {
   $resolvedBootMode = if ($Mode -eq 'vite-dev') { 'launcher' } else { $BootMode }
   $browserSurfaces = if ($Mode -eq 'vite-dev') {
@@ -358,12 +417,16 @@ try {
 
   Show-IgnitionSplashScreen
 
+  Write-LiveLog "selected repository root: $repoRoot"
+  Write-IgnitionStatus -Phase 'checking-workspace-dirt' -Message 'Running canonical ignition workspace checks; source deletion is forbidden.' -Extra @{ currentStage = 'checking-workspace-dirt'; noSourceDeletion = $true }
+  Write-IgnitionStatus -Phase 'classifying-safe-vs-unsafe-dirt' -Message 'Classifying generated/runtime stoppers separately from source blockers; hidden blockers remain surfaced.' -Extra @{ currentStage = 'classifying-safe-vs-unsafe-dirt'; hiddenBlockersAllowed = $false }
+  Write-IgnitionStatus -Phase 'cleaning-generated-runtime-stoppers' -Message 'Safe auto-fix is limited to known generated/runtime stoppers delegated to canonical ignition.' -Extra @{ currentStage = 'cleaning-generated-runtime-stoppers'; safeAutoFixScope = 'known-generated-runtime-stoppers-only' }
+  Write-IgnitionStatus -Phase 'checking-dependencies' -Message 'Checking dependency and runtime prerequisites before startup.' -Extra @{ currentStage = 'checking-dependencies' }
   Write-IgnitionStatus -Phase 'checking-ports-existing-runtime' -Message 'Checking ports and existing runtime before startup.' -Extra @{ currentStage = 'checking-ports-existing-runtime' }
 
   $port4173Before = Get-PortListenerSnapshot -Port 4173
   $port5173Before = Get-PortListenerSnapshot -Port 5173
 
-  Write-LiveLog "selected repository root: $repoRoot"
   Write-LiveLog "selected ignition mode: $Mode"
   Write-LiveLog "Boot mode: $resolvedBootMode"
   if ($Mode -eq 'vite-dev') {
@@ -436,7 +499,8 @@ try {
 
   Write-IgnitionStatus -Phase 'opening-command-deck' -Message 'Opening Command Deck browser surfaces after readiness proof.' -Extra @{ currentStage = 'opening-command-deck'; browserTargets = $browserTargets; visiblePowerShellWallRequired = $false }
 
-  Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready.' -Extra @{ browserTargets = $browserTargets; visiblePowerShellWallRequired = $false }
+  Write-IgnitionSupportSnapshot -Verdict 'ready-for-local-proof' -Extra @{ browserTargets = $browserTargets; port4173Before = $port4173Before; port5173Before = $port5173Before }
+  Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready.' -Extra @{ browserTargets = $browserTargets; visiblePowerShellWallRequired = $false; supportSnapshotPath = $ignitionSupportSnapshotPath; transcriptPath = $ignitionTranscriptPath }
 
   Write-LiveLog 'server started'
   Write-LiveLog "manual URL(s): $([string]::Join(', ', $browserTargets))"
