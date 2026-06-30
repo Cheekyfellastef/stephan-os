@@ -787,6 +787,10 @@ function isTransientRootTmpDirectoryStatusPath(path) {
   return path === 'tmp' || path === ROOT_TRANSIENT_TMP_PATH;
 }
 
+function isCheckpointableRuntimeStatePath(path) {
+  return !isTransientRootTmpDirectoryStatusPath(path);
+}
+
 function isAllowlistedRootRuntimePath(path) {
   return ROOT_RUNTIME_ALLOWLIST_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
@@ -1001,6 +1005,7 @@ export function collectRuntimeStatePaths(statusAssessment) {
   const runtimePaths = new Set();
   for (const entry of statusAssessment.runtimeStateEntries || []) {
     for (const path of entry.paths) {
+      if (!isCheckpointableRuntimeStatePath(path)) continue;
       runtimePaths.add(path);
     }
   }
