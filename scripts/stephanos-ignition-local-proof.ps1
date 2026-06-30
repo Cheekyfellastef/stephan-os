@@ -154,7 +154,7 @@ if ($currentHead -ne $ExpectedHead) {
     -ActualHead $currentHead `
     -RuntimeUrl $RuntimeUrl `
     -RuntimeStatus "exact-head-mismatch" `
-    -OperatorAction "Exact-head guard failed. Fetch/switch PR #1288 again before running proof. Expected $ExpectedHead but local HEAD was $currentHead."
+    -OperatorAction "Exact-head guard failed. Fetch/switch PR #1288 again before running proof. Expected $ExpectedHead but local HEAD was ${currentHead}."
   throw "Exact-head guard failed. Copyable blocker comment was emitted from the emergency transcript. Fetch/switch PR #1288 again before running proof."
 }
 
@@ -175,7 +175,6 @@ Invoke-Checked "Run ignition concierge proof mode" { npm run stephanos:ignition-
 Write-Step "Start Stephanos through one-button concierge path"
 $launcher = Start-Process -FilePath "powershell.exe" -WindowStyle Minimized -ArgumentList @(
   "-NoExit",
-  "-ExecutionPolicy", "Bypass",
   "-Command",
   "cd `"$RepoRoot`"; npm run stephanos"
 ) -PassThru
@@ -210,7 +209,7 @@ if (-not $runtimeReady) {
     -ActualHead $currentHead `
     -RuntimeUrl $RuntimeUrl `
     -RuntimeStatus "probe-timeout" `
-    -OperatorAction "Runtime URL did not become ready inside $ProbeSeconds seconds. Leave the minimized launcher open and inspect the concierge splash/support snapshot. Last probe error: $lastProbeError"
+    -OperatorAction "Runtime URL did not become ready inside ${ProbeSeconds} seconds. Leave the minimized launcher open and inspect the concierge splash/support snapshot. Last probe error: $lastProbeError"
   throw "Runtime proof did not become ready inside $ProbeSeconds seconds. Copyable blocker comment was emitted from the emergency transcript."
 }
 
