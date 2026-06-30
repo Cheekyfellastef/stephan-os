@@ -1001,6 +1001,9 @@ export function collectRuntimeStatePaths(statusAssessment) {
   const runtimePaths = new Set();
   for (const entry of statusAssessment.runtimeStateEntries || []) {
     for (const path of entry.paths) {
+      if (isTransientRootTmpDirectoryStatusPath(path)) {
+        continue;
+      }
       runtimePaths.add(path);
     }
   }

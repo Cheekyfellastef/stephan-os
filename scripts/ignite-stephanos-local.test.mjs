@@ -791,6 +791,7 @@ test('ignition status evaluator reproduces Battle Bridge generated dist and root
     'apps/stephanos/dist/assets/index-BvpU0rmC.css',
   ]);
   assert.deepEqual(evaluation.runtimeStateEntries.map((entry) => entry.paths[0]), ['tmp/']);
+  assert.deepEqual(collectRuntimeStatePaths(evaluation), []);
   assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
   assert.equal(evaluation.meaningfulEntries.length, 0);
   assert.equal(isGitWorkingTreeClean(`${statusOutput}\n`), true);
