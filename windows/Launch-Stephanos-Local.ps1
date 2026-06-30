@@ -46,6 +46,7 @@ $visiblePowerShellRequired = $false
 $ignitionProofRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof'
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
+$script:startedIgnitionChildren = @()
 
 $ignitionStageModel = @(
   [ordered]@{ id = 'finding-repo'; label = 'Finding repo'; detail = 'Resolve the exact Stephanos PR worktree before any process startup.' },
@@ -142,7 +143,12 @@ function Show-IgnitionSplashScreen {
 }
 
 function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord) {
-  Write-IgnitionStatus -Phase 'blocked' -Message $Step -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.'; blocker = $Step }
+  $childBlocker = Get-ChildIgnitionBlocker
+  $statusMessage = if ($childBlocker) { $childBlocker.blocker } else { $Step }
+  $nextAction = if ($childBlocker -and $childBlocker.nextOperatorAction) { $childBlocker.nextOperatorAction } else { 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.' }
+  $extra = @{ currentStage = 'blocked'; nextOperatorAction = $nextAction; blocker = $statusMessage }
+  if ($childBlocker) { $extra.childIgnitionBlocker = $childBlocker }
+  Write-IgnitionStatus -Phase 'blocked' -Message $statusMessage -Extra $extra
   Write-Host "[LAUNCHER LIVE] Failed step: $Step" -ForegroundColor Red
   if ($null -ne $ErrorRecord) {
     Write-Host ($ErrorRecord | Out-String).Trim() -ForegroundColor Red
@@ -150,6 +156,66 @@ function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$Err
   Write-Host ''
   Read-Host 'Launcher failed. Press Enter to keep this window open and review the error'
   exit 1
+}
+
+
+function Get-ChildIgnitionBlocker {
+  Initialize-IgnitionProofWorkspace
+  $logRoot = Join-Path $ignitionProofRoot 'logs'
+  if (-not (Test-Path -LiteralPath $logRoot -PathType Container)) { return $null }
+
+  $logFiles = @(Get-ChildItem -LiteralPath $logRoot -Filter '*.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
+  foreach ($logFile in $logFiles) {
+    $lines = @(Get-Content -LiteralPath $logFile.FullName -Tail 200 -ErrorAction SilentlyContinue)
+    for ($index = $lines.Count - 1; $index -ge 0; $index--) {
+      $line = [string]$lines[$index]
+      if (-not $line.Trim()) { continue }
+
+      if ($line -match '^\[IGNITION\] (repair-packet|source-merge-repair-packet|openclaw-recovery-packet|recovery-packet|source-update-status)=(.+)$') {
+        $packetKind = $Matches[1]
+        $packetText = $Matches[2]
+        $reason = $null
+        $nextAction = 'Resolve the child ignition blocker shown in the bounded log packet, then retry Stephanos ignition.'
+        try {
+          $packet = $packetText | ConvertFrom-Json -ErrorAction Stop
+          if ($packet.reason) { $reason = [string]$packet.reason }
+          elseif ($packet.blocker) { $reason = [string]$packet.blocker }
+          elseif ($packet.status) { $reason = [string]$packet.status }
+          if ($packet.nextOperatorAction) { $nextAction = [string]$packet.nextOperatorAction }
+          elseif ($reason -eq 'missing-upstream') { $nextAction = 'Set or repair the branch upstream for the exact PR head, then rerun Stephanos ignition; source-update safety remains blocked until upstream exists.' }
+        }
+        catch {}
+        $blocker = if ($reason) { "$packetKind reason=$reason" } else { $line }
+        return [ordered]@{ blocker = $blocker; packetKind = $packetKind; rawLine = $line; sourceLog = $logFile.FullName; nextOperatorAction = $nextAction }
+      }
+
+      if ($line -match 'reason=missing-upstream') {
+        return [ordered]@{
+          blocker = $line
+          packetKind = 'child-stdout'
+          rawLine = $line
+          sourceLog = $logFile.FullName
+          nextOperatorAction = 'Set or repair the branch upstream for the exact PR head, then rerun Stephanos ignition; source-update safety remains blocked until upstream exists.'
+        }
+      }
+    }
+  }
+
+  return $null
+}
+
+function Assert-StartedIgnitionChildrenHealthy {
+  foreach ($child in @($script:startedIgnitionChildren)) {
+    $process = $child.Process
+    if ($null -ne $process -and $process.HasExited) {
+      $blocker = Get-ChildIgnitionBlocker
+      if ($blocker) { throw "Child ignition blocked: $($blocker.blocker)" }
+      throw "Child ignition process '$($child.Title)' exited before readiness proof (exitCode=$($process.ExitCode)); inspect $($child.StdoutLog) and $($child.StderrLog)"
+    }
+  }
+
+  $emittedBlocker = Get-ChildIgnitionBlocker
+  if ($emittedBlocker) { throw "Child ignition blocked: $($emittedBlocker.blocker)" }
 }
 
 function Start-DevWindow([string]$Title, [string]$Command) {
@@ -162,11 +228,12 @@ function Start-DevWindow([string]$Title, [string]$Command) {
   $stderrLog = Join-Path $ignitionProofRoot ("logs/{0}.stderr.log" -f $safeLogName)
   $psCommand = "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'; Set-Location '$escapedRepoRoot'; & $escapedCommand"
   Write-IgnitionStatus -Phase 'starting-process' -Message "Starting $Title in minimized/background PowerShell with bounded log capture." -Extra @{ processTitle = $Title; stdoutLog = $stdoutLog; stderrLog = $stderrLog }
-  Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
+  $process = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-Command', $psCommand
-  ) | Out-Null
+  )
+  $script:startedIgnitionChildren += [ordered]@{ Title = $Title; Process = $process; StdoutLog = $stdoutLog; StderrLog = $stderrLog }
 }
 
 function Test-UrlReachable([string]$Url) {
@@ -199,8 +266,12 @@ function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 12
     if (Test-UrlReachable -Url $Url) {
       return
     }
+    Assert-StartedIgnitionChildrenHealthy
     Start-Sleep -Seconds 1
   }
+
+  $blocker = Get-ChildIgnitionBlocker
+  if ($blocker) { throw "Child ignition blocked while waiting for ${StepLabel}: $($blocker.blocker)" }
 
   throw "Timed out waiting for $StepLabel at $Url"
 }
