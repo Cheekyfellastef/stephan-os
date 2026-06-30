@@ -147,7 +147,15 @@ $currentHead = (git rev-parse HEAD).Trim()
 Write-Host "expectedHead=$ExpectedHead"
 Write-Host "actualHead=$currentHead"
 if ($currentHead -ne $ExpectedHead) {
-  throw "Exact-head guard failed. Fetch/switch PR #1288 again before running proof."
+  Write-BlockedTranscript `
+    -TranscriptPath $TranscriptPath `
+    -Marker "MILESTONE_5_IGNITION_BROWSER_RUNTIME_PROOF_BLOCKED" `
+    -ExpectedHead $ExpectedHead `
+    -ActualHead $currentHead `
+    -RuntimeUrl $RuntimeUrl `
+    -RuntimeStatus "exact-head-mismatch" `
+    -OperatorAction "Exact-head guard failed. Fetch/switch PR #1288 again before running proof. Expected $ExpectedHead but local HEAD was $currentHead."
+  throw "Exact-head guard failed. Copyable blocker comment was emitted from the emergency transcript. Fetch/switch PR #1288 again before running proof."
 }
 
 Write-Step "Classify worktree dirt before any cleanup"
