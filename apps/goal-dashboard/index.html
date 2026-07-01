@@ -80,7 +80,9 @@
       .source-row,
       .flywheel,
       .vladder,
-      .goal-grid {
+      .goal-grid,
+      .concierge-grid,
+      .concierge-roadmap {
         display: grid;
         gap: 14px;
       }
@@ -136,7 +138,8 @@
 
       .actor-card,
       .goal-card,
-      .v-card {
+      .v-card,
+      .concierge-card {
         border: 1px solid var(--line);
         border-radius: 22px;
         background: var(--panel);
@@ -308,6 +311,58 @@
         font-weight: 850;
       }
 
+      .concierge-card {
+        padding: 16px;
+        background: linear-gradient(140deg, rgba(14, 31, 58, 0.96), rgba(31, 41, 75, 0.78));
+      }
+
+      .concierge-card h3 {
+        margin: 8px 0 10px;
+        font-size: 1.12rem;
+      }
+
+      .concierge-grid {
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        margin: 12px 0;
+      }
+
+      .concierge-grid div,
+      .concierge-roadmap li {
+        border: 1px solid rgba(125, 211, 252, 0.22);
+        border-radius: 16px;
+        padding: 10px;
+        background: rgba(125, 211, 252, 0.055);
+        color: var(--muted);
+        line-height: 1.35;
+      }
+
+      .concierge-grid span,
+      .concierge-roadmap span {
+        display: block;
+        color: var(--accent);
+        font-size: 0.72rem;
+        font-weight: 850;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 4px;
+      }
+
+      .concierge-roadmap {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        margin: 12px 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .concierge-warning {
+        border: 1px solid rgba(253, 230, 138, 0.28);
+        border-radius: 16px;
+        padding: 12px;
+        background: rgba(253, 230, 138, 0.07);
+        color: var(--warn);
+        line-height: 1.45;
+      }
+
       .platform-proof {
         display: grid;
         gap: 8px;
@@ -351,7 +406,8 @@
         .hero,
         .goal-card,
         .v-card,
-        .actor-card {
+        .actor-card,
+        .concierge-card {
           border-radius: 18px;
         }
 
@@ -405,6 +461,37 @@
           <article class="v-card"><span class="badge active">V5 seeded</span><h3>Visual progress rails</h3><p>Compact bridge-panel rails and badges render for each seeded goal.</p></article>
           <article class="v-card"><span class="badge unknown">V6 deferred</span><h3>WhatsApp summary</h3><p>Clean handoff to #1280 unless this goal later implements real WhatsApp proof.</p></article>
         </div>
+      </section>
+
+
+      <section aria-labelledby="concierge-title" data-testid="goal-dashboard-build-concierge">
+        <div class="section-title">
+          <h2 id="concierge-title">Build Concierge</h2>
+          <span>V2 landed · V3 next · exact-head approval required</span>
+        </div>
+        <article class="concierge-card" aria-label="Build Concierge rail">
+          <span class="badge complete">V2 landed</span>
+          <h3>Battle Bridge Build Concierge V2 operator surfaces</h3>
+          <p class="subtitle">
+            Canonical V2 status from shared/agents/battleBridgeBuildConciergeV2.mjs: Project selected PR/goal, proof readiness, command plan, dirty-tree status, approval token state, proof packet summary, merge hold state, and next operator action into Mission Operations and Goal Dashboard.
+          </p>
+          <div class="concierge-grid" aria-label="Build Concierge truth fields">
+            <div><span>V2 status</span>implemented / landed on operator surfaces</div>
+            <div><span>V3 next</span>Local Proof Runner remains planned_guarded, not live execution.</div>
+            <div><span>Exact-head approval</span>required before merge; approval must bind PR number to current head SHA.</div>
+            <div><span>Proof readiness</span>blocked_or_unknown until an isolated proof packet is actually wired and captured.</div>
+            <div><span>Merge hold</span>HELD_PENDING_PROOF_PACKET_AND_EXACT_HEAD_APPROVAL</div>
+            <div><span>No fake proof</span>GitHub proof, local proof, and browser proof are not claimed from this static page.</div>
+            <div><span>Next operator action</span>Review the V2 operator surfaces and declared proof/approval state before authorizing further automation.</div>
+          </div>
+          <ul class="concierge-roadmap" aria-label="Build Concierge canonical roadmap excerpt">
+            <li><span>V2 Operator Surfaces</span>implemented: Goal Dashboard and Mission Operations show status, proof readiness, merge hold, and next action.</li>
+            <li><span>V3 Local Proof Runner</span>planned_guarded: use isolated proof worktree and canonical proof packet before any merge claim.</li>
+          </ul>
+          <div class="concierge-warning">
+            Truth boundary: this standalone Goal Dashboard rail is static seeded visibility only. It does not wire live GitHub state, local command proof, browser proof, or approval-token validation; unknown remains unknown.
+          </div>
+        </article>
       </section>
 
       <section aria-labelledby="goals-title">
