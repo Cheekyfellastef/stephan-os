@@ -165,7 +165,9 @@ test('ignition records bounded status and log destinations in proof workspace', 
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /\$ignitionProofRoot = Join-Path \(\[System\.IO\.Path\]::GetTempPath\(\)\) 'stephanos-ignition-proof'/m, 'ignition proof workspace must be deterministic under tmp');
   assert.match(script, /\$ignitionStatusPath = Join-Path \$ignitionProofRoot 'launcher-status\.json'/m, 'status destination must be recorded');
-  assert.match(script, /logRoot = \(Join-Path \$ignitionProofRoot 'logs'\)/m, 'log root must be recorded in status payload');
+  assert.match(script, /\$launcherRunLogRoot = Join-Path \(Join-Path \$ignitionProofRoot 'logs'\) \$launcherRunId/m, 'launcher must use a per-run bounded log directory');
+  assert.match(script, /logRoot = \$launcherRunLogRoot/m, 'per-run log root must be recorded in status payload');
+  assert.match(script, /launcherRunId = \$launcherRunId/m, 'status payload must record the current launcher run identity');
   assert.match(script, /stdoutLog = \$stdoutLog; stderrLog = \$stderrLog/m, 'per-process stdout/stderr log destinations must be recorded');
 });
 
@@ -196,11 +198,24 @@ test('launcher-root splash uses detailed ignition stage model', async () => {
 
 test('ignition status preserves destination paths, blocker actions, and non-primary PowerShell wall truth', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\) \}/m, 'status payload must record status, splash, and log destinations');
+  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \$launcherRunLogRoot \}/m, 'status payload must record status, splash, and current-run log destinations');
   assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
   assert.match(script, /currentStage = 'blocked'; nextOperatorAction = 'Review the exact child blocker/m, 'blocked status must preserve next operator action with blocker state');
   assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
   assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
+});
+
+
+
+test('ignition child blocker scan is bounded to the current launcher run', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\$launcherRunId = \(\[guid\]::NewGuid\(\)\)\.ToString\('n'\)/m, 'launcher must assign a unique current-run id');
+  assert.match(script, /New-Item -ItemType Directory -Force -Path \$launcherRunLogRoot/m, 'launcher must create the current-run log directory');
+  assert.match(script, /\$logRoot = \$launcherRunLogRoot[\s\S]*?Get-ChildItem -LiteralPath \$logRoot -File -Filter '\*\.log'/m, 'child blocker log scan must only read current-run logs');
+  assert.match(script, /\$candidateItem = Get-Item[\s\S]*?LastWriteTimeUtc -lt \$launcherRunStartedAt[\s\S]*?continue/m, 'child blocker artifacts without run metadata must be rejected when older than the current launcher run');
+  assert.match(script, /if \(\$statusRunId -and \$statusRunId -ne \$launcherRunId\) \{ continue \}/m, 'child blocker artifacts with a run id must match the current launcher run');
+  assert.match(script, /\$stdoutLog = Join-Path \$launcherRunLogRoot \("\{0\}\.stdout\.log" -f \$safeLogName\)/m, 'child stdout must be redirected into the current-run log directory');
+  assert.match(script, /\$stderrLog = Join-Path \$launcherRunLogRoot \("\{0\}\.stderr\.log" -f \$safeLogName\)/m, 'child stderr must be redirected into the current-run log directory');
 });
 
 test('ignition surfaces child blocker from launcher logs before generic runtime-status timeout', async () => {

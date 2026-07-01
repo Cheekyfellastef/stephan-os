@@ -46,6 +46,9 @@ $visiblePowerShellRequired = $false
 $ignitionProofRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof'
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
+$launcherRunId = ([guid]::NewGuid()).ToString('n')
+$launcherRunStartedAt = (Get-Date).ToUniversalTime()
+$launcherRunLogRoot = Join-Path (Join-Path $ignitionProofRoot 'logs') $launcherRunId
 
 $ignitionStageModel = @(
   [ordered]@{ id = 'finding-repo'; label = 'Finding repo'; detail = 'Resolve the exact Stephanos PR worktree before any process startup.' },
@@ -66,6 +69,7 @@ function Write-LiveLog([string]$Message) {
 function Initialize-IgnitionProofWorkspace {
   New-Item -ItemType Directory -Force -Path $ignitionProofRoot | Out-Null
   New-Item -ItemType Directory -Force -Path (Join-Path $ignitionProofRoot 'logs') | Out-Null
+  New-Item -ItemType Directory -Force -Path $launcherRunLogRoot | Out-Null
 }
 
 function Get-IgnitionStageSnapshot([string]$CurrentStageId) {
@@ -90,11 +94,13 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
     primaryUi = 'splash-status-browser'
     splashPath = $ignitionSplashPath
     statusPath = $ignitionStatusPath
-    logRoot = (Join-Path $ignitionProofRoot 'logs')
+    logRoot = $launcherRunLogRoot
+    launcherRunId = $launcherRunId
+    launcherRunStartedAt = $launcherRunStartedAt.ToString('o')
     nextOperatorAction = if ($Extra.ContainsKey('nextOperatorAction')) { $Extra.nextOperatorAction } else { 'Watch the Stephanos ignition splash/status screen.' }
     currentStage = $currentStage
     ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $currentStage
-    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs') }
+    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = $launcherRunLogRoot }
   }
   foreach ($key in $Extra.Keys) { $payload[$key] = $Extra[$key] }
   $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
@@ -103,7 +109,7 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
 function New-IgnitionSplashScreen {
   Initialize-IgnitionProofWorkspace
   $statusPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionStatusPath)
-  $logRootHtml = [System.Net.WebUtility]::HtmlEncode((Join-Path $ignitionProofRoot 'logs'))
+  $logRootHtml = [System.Net.WebUtility]::HtmlEncode($launcherRunLogRoot)
   $html = @"
 <!doctype html>
 <meta charset="utf-8">
@@ -144,7 +150,7 @@ function Show-IgnitionSplashScreen {
 
 function Get-LauncherChildBlocker {
   Initialize-IgnitionProofWorkspace
-  $logRoot = Join-Path $ignitionProofRoot 'logs'
+  $logRoot = $launcherRunLogRoot
   $childStatusCandidates = @(
     (Join-Path $ignitionProofRoot 'launcher-status.json'),
     (Join-Path $ignitionProofRoot 'support-snapshot.json')
@@ -153,7 +159,13 @@ function Get-LauncherChildBlocker {
   foreach ($candidate in $childStatusCandidates) {
     if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
     try {
+      $candidateItem = Get-Item -LiteralPath $candidate -ErrorAction Stop
       $status = Get-Content -LiteralPath $candidate -Raw -Encoding UTF8 | ConvertFrom-Json
+      $statusRunId = if ($status.PSObject.Properties.Name -contains 'launcherRunId') { [string]$status.launcherRunId } else { '' }
+      $statusLogRoot = if ($status.PSObject.Properties.Name -contains 'logRoot') { [string]$status.logRoot } else { '' }
+      if ($statusRunId -and $statusRunId -ne $launcherRunId) { continue }
+      if ($statusLogRoot -and $statusLogRoot -ne $launcherRunLogRoot) { continue }
+      if ((-not $statusRunId) -and (-not $statusLogRoot) -and $candidateItem.LastWriteTimeUtc -lt $launcherRunStartedAt) { continue }
       foreach ($propertyName in @('blocker', 'blockers', 'failureReason', 'reason', 'nextSafeAction', 'operatorAction')) {
         if ($status.PSObject.Properties.Name -contains $propertyName -and $status.$propertyName) {
           $value = $status.$propertyName
@@ -209,8 +221,8 @@ function Start-DevWindow([string]$Title, [string]$Command) {
   $escapedTitle = $Title.Replace("'", "''")
   $escapedCommand = $Command.Replace("'", "''")
   $safeLogName = ($Title -replace '[^A-Za-z0-9._-]', '-')
-  $stdoutLog = Join-Path $ignitionProofRoot ("logs/{0}.stdout.log" -f $safeLogName)
-  $stderrLog = Join-Path $ignitionProofRoot ("logs/{0}.stderr.log" -f $safeLogName)
+  $stdoutLog = Join-Path $launcherRunLogRoot ("{0}.stdout.log" -f $safeLogName)
+  $stderrLog = Join-Path $launcherRunLogRoot ("{0}.stderr.log" -f $safeLogName)
   $psCommand = "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'; Set-Location '$escapedRepoRoot'; & $escapedCommand"
   Write-IgnitionStatus -Phase 'starting-process' -Message "Starting $Title in minimized/background PowerShell with bounded log capture." -Extra @{ processTitle = $Title; stdoutLog = $stdoutLog; stderrLog = $stderrLog }
   Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
