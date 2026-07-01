@@ -125,3 +125,26 @@ test('MissionSummary renders concrete mission, agent, Git, PR, check, approval, 
     await vite.close();
   }
 });
+
+
+test('Build Concierge panel renders selected candidate proof and approval truth', async () => {
+  const vite = await createServer({ root: uiRoot, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } });
+  try {
+    const { BuildConciergeSurface } = await vite.ssrLoadModule('/src/components/MissionOperationsPanel.jsx');
+    const markup = renderToStaticMarkup(React.createElement(BuildConciergeSurface, { concierge: {
+      selectedCandidate: { prNumber: 1391, title: 'Battle Bridge Build Concierge V2 Operator Surfaces', headSha: 'c'.repeat(40), proofCommands: ['npm test'], requiredApprovalToken: 'APPROVE_BATTLE_BRIDGE_EXACT_HEAD_MERGE:1391:' + 'c'.repeat(40) },
+      proofReadiness: 'ready',
+      dirtyTreeStatus: 'clean',
+      exactHeadApproval: { status: 'required', token: 'APPROVE_BATTLE_BRIDGE_EXACT_HEAD_MERGE:1391:' + 'c'.repeat(40) },
+      proofPacketSummary: { status: 'not_started', commandCount: 1 },
+      mergeHoldState: 'HELD_PENDING_PROOF_PACKET_AND_EXACT_HEAD_APPROVAL',
+      nextOperatorAction: 'Run proof-packet for PR #1391.',
+      roadmap: { activePhase: { version: 'V3', title: 'Local Proof Runner' }, phases: [{ version: 'V2', title: 'Operator Surfaces', status: 'implemented' }, { version: 'V3', title: 'Local Proof Runner', status: 'planned_guarded' }], successMarkers: ['GOAL_COMPLETE_BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP', 'NO_CLICK_MONKEY_LOOP', 'INTENT_ENGINE_APPROVAL_ONLY'] },
+    } }));
+    for (const visibleValue of ['Build Concierge', '#1391', 'Battle Bridge Build Concierge V2 Operator Surfaces', 'ready', 'clean', 'npm test', 'HELD_PENDING_PROOF_PACKET_AND_EXACT_HEAD_APPROVAL', 'Run proof-packet for PR #1391.', 'V3', 'Local Proof Runner', 'GOAL_COMPLETE_BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP']) {
+      assert.equal(markup.includes(visibleValue), true, `missing rendered value: ${visibleValue}`);
+    }
+  } finally {
+    await vite.close();
+  }
+});
