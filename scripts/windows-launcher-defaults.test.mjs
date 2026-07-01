@@ -199,7 +199,9 @@ test('ignition status preserves destination paths, blocker actions, and non-prim
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\); transcriptPath = \$ignitionTranscriptPath; supportSnapshotPath = \$ignitionSupportSnapshotPath \}/m, 'status payload must record status, splash, and log destinations');
   assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
-  assert.match(script, /currentStage = 'blocked'[\s\S]*nextOperatorAction = $nextOperatorAction[\s\S]*blocker = $surfacedBlocker/m, 'blocked status must preserve surfaced blocker state and computed next operator action');
+  assert.match(script, /currentStage = 'blocked'/m, 'blocked status must preserve blocked currentStage');
+  assert.match(script, /nextOperatorAction = \$nextOperatorAction/m, 'blocked status must project computed next operator action');
+  assert.match(script, /blocker = \$surfacedBlocker/m, 'blocked status must project surfaced blocker');
   assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
   assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
 });
