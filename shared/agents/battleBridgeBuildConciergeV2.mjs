@@ -29,7 +29,8 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
-export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v2';
+export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v3';
+export const BATTLE_BRIDGE_CONCIERGE_PREVIOUS_SCHEMA = 'stephanos.battle-bridge-build-concierge.v2';
 
 export const BATTLE_BRIDGE_BUILD_CONCIERGE_SUCCESS_MARKERS = [
   'GOAL_COMPLETE_BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP',
@@ -47,7 +48,7 @@ export const BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP = [
   {
     version: 'V3',
     title: 'Local Proof Runner',
-    status: 'planned_guarded',
+    status: 'implemented_guarded',
     intent: 'Use an isolated proof worktree for a supplied PR, run allowlisted build/test commands, clean generated artifacts, and emit a canonical proof packet; unsafe contexts return truthful blockers.',
   },
   {
@@ -88,7 +89,7 @@ export function buildConciergeRoadmap(input = {}) {
     ...phase,
     status: text(overrides[phase.version], phase.status),
   }));
-  const activePhase = phases.find((phase) => phase.status !== 'implemented') || phases[phases.length - 1];
+  const activePhase = phases.find((phase) => !['implemented', 'implemented_guarded'].includes(phase.status)) || phases[phases.length - 1];
   return {
     mission: 'Stephan is the intent engine and approval authority; Concierge plans, proves, receipts, and blocks rather than acting as an unapproved command runner.',
     activePhase,
@@ -191,6 +192,8 @@ export function buildConciergePlan(input = {}) {
     roadmap: buildConciergeRoadmap(input),
     guardrails: {
       exactHeadApprovalRequired: true,
+      neverMerge: true,
+      isolatedProofWorktreeWhereSafe: true,
       arbitraryShellAllowed: false,
       dirtyTreeAutoMutationAllowed: false,
       fakeGithubProofAllowed: false,
@@ -245,6 +248,7 @@ export function buildConciergeProofPacket(input = {}) {
   const finalVerdict = proofComplete && !blockers.length ? 'PROOF_PACKET_READY_FOR_EXACT_HEAD_APPROVAL' : 'PROOF_PACKET_BLOCKED';
   return {
     schemaVersion: `${BATTLE_BRIDGE_CONCIERGE_SCHEMA}.proof-packet`,
+    packetKind: 'canonical-battle-bridge-build-concierge-proof',
     prNumber,
     headSha,
     branch: text(candidate.branch || input.branch),
@@ -287,4 +291,26 @@ export function validateExactHeadMergeApproval({ prNumber, headSha, approvalToke
   if (text(currentHeadSha || headSha) !== text(headSha)) blockers.push('Current PR head does not match approved exact head.');
   if (text(approvalToken) !== requiredToken) blockers.push('Exact-head operator approval token is missing or stale.');
   return { requiredToken, mergeAllowed: blockers.length === 0, blockers, finalVerdict: blockers.length ? 'MERGE_BLOCKED' : 'MERGE_ALLOWED' };
+}
+
+
+export function buildConciergeProveBlocked({ plan, blockers = [], worktreePath = '', commandResults = [] } = {}) {
+  const selected = plan?.selectedCandidate || {};
+  const prNumber = Number.parseInt(selected.prNumber || plan?.prNumber, 10);
+  const headSha = text(selected.headSha || plan?.headSha);
+  return {
+    schemaVersion: `${BATTLE_BRIDGE_CONCIERGE_SCHEMA}.prove`,
+    mode: 'prove',
+    prNumber,
+    headSha,
+    worktreePath: text(worktreePath),
+    commandResults: commandResults.map((result) => ({ command: normalizeCommand(result.command), exitCode: Number(result.exitCode), evidencePath: text(result.evidencePath), blocked: result.blocked === true })),
+    generatedArtifactsClean: false,
+    mergeAllowed: false,
+    mergeHoldState: 'HELD_BLOCKED_OR_UNKNOWN',
+    exactHeadApproval: selected.requiredApprovalToken ? { status: 'blocked', token: selected.requiredApprovalToken, prNumber, headSha } : { status: 'unknown', token: '', prNumber: null, headSha: '' },
+    requiredApprovalToken: selected.requiredApprovalToken || '',
+    blockers: unique(blockers),
+    finalVerdict: 'PROVE_BLOCKED_OR_UNKNOWN',
+  };
 }
