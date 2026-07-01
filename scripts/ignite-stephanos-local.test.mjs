@@ -1650,3 +1650,33 @@ test('evaluateGitPublicationTruthWithDeps handles missing upstream as untracked 
   assert.equal(result.publicationState, 'unknown-untracked');
   assert.equal(result.headPublished, false);
 });
+
+test('dist freshness compares served commit to current HEAD before origin main', () => {
+  const featureBranchFresh = evaluateDistFreshnessAgainstOrigin({
+    distMetadata: {
+      gitCommit: 'feature123',
+      sourceFingerprint: 'fingerprint-feature',
+      buildTimestamp: '2026-07-01T10:40:49.394Z',
+    },
+    currentCommit: 'feature123',
+    originMainCommit: 'feature123',
+  });
+
+  assert.equal(featureBranchFresh.ignitionStatus, 'READY');
+  assert.equal(featureBranchFresh.expectedSourceCommit, 'feature123');
+  assert.equal(featureBranchFresh.servedCommit, 'feature123');
+
+  const staleDist = evaluateDistFreshnessAgainstOrigin({
+    distMetadata: {
+      gitCommit: 'main999',
+      sourceFingerprint: 'fingerprint-main',
+      buildTimestamp: '2026-07-01T10:40:49.394Z',
+    },
+    currentCommit: 'feature123',
+    originMainCommit: 'feature123',
+  });
+
+  assert.equal(staleDist.ignitionStatus, 'BLOCKED');
+  assert.equal(staleDist.expectedSourceCommit, 'feature123');
+  assert.equal(staleDist.servedCommit, 'main999');
+});

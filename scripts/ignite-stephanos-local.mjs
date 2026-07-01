@@ -1805,9 +1805,7 @@ export async function run() {
       } catch {
         originMainCommit = currentCommit;
       }
-      const expectedSourceCommit = publicationTruth?.aheadCount > 0 && publicationTruth?.behindCount === 0
-        ? currentCommit
-        : originMainCommit;
+      const expectedSourceCommit = currentCommit;
       const distFreshness = evaluateDistFreshnessAgainstOrigin({
         distMetadata: refreshedState.distMetadata,
         currentCommit,
