@@ -35,6 +35,45 @@ function EvidenceList({ title, items, emptyText, renderItem }) {
   );
 }
 
+export function BuildConciergeSurface({ concierge = {} }) {
+  const candidate = concierge.selectedCandidate || {};
+  const proofPacketSummary = concierge.proofPacketSummary || {};
+  const exactHeadApproval = concierge.exactHeadApproval || {};
+  const proofCommands = Array.isArray(candidate.proofCommands) ? candidate.proofCommands : [];
+  const blockers = Array.isArray(concierge.blockers) ? concierge.blockers : [];
+  const roadmap = concierge.roadmap || {};
+  const roadmapPhases = Array.isArray(roadmap.phases) ? roadmap.phases : [];
+  return (
+    <section className="mission-operations-build-concierge" aria-label="Build Concierge panel" data-testid="build-concierge-panel">
+      <h4>Build Concierge</h4>
+      <dl className="mission-operations-grid">
+        <div><dt>Selected PR/goal candidate</dt><dd>{candidate.prNumber ? `#${candidate.prNumber} ${candidate.title || ''}` : 'unknown'}</dd></div>
+        <div><dt>Candidate head</dt><dd>{candidate.headSha || 'unknown'}</dd></div>
+        <div><dt>Proof readiness</dt><dd>{concierge.proofReadiness || (concierge.canStartProof ? 'ready' : 'blocked_or_unknown')}</dd></div>
+        <div><dt>Dirty-tree status</dt><dd>{concierge.dirtyTreeStatus || 'unknown'}</dd></div>
+        <div><dt>Exact-head approval</dt><dd>{exactHeadApproval.status || 'unknown'}</dd></div>
+        <div><dt>Approval token</dt><dd><code>{exactHeadApproval.token || candidate.requiredApprovalToken || 'unknown'}</code></dd></div>
+        <div><dt>Proof packet</dt><dd>{proofPacketSummary.status || 'not_started'} · commands {proofPacketSummary.passedCommandCount ?? 0}/{proofPacketSummary.commandCount ?? proofCommands.length}</dd></div>
+        <div><dt>Merge hold state</dt><dd>{concierge.mergeHoldState || 'HELD_UNKNOWN'}</dd></div>
+      </dl>
+      <p className="mission-operations-next-action"><strong>Next operator action:</strong> {concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
+      {proofCommands.length ? (
+        <div><strong>Declared proof commands:</strong><ul className="mission-operations-evidence-list">{proofCommands.map((command) => <li key={command}><code>{command}</code></li>)}</ul></div>
+      ) : <p className="muted">Declared proof commands are unknown.</p>}
+      {roadmapPhases.length ? (
+        <div className="mission-operations-evidence-group" aria-label="Build Concierge roadmap">
+          <strong>Roadmap:</strong> {roadmap.activePhase?.version || 'unknown'} · {roadmap.activePhase?.title || 'unknown'}
+          <ul className="mission-operations-evidence-list">
+            {roadmapPhases.map((phase) => <li key={phase.version}><strong>{phase.version}</strong> {phase.title} - {phase.status}</li>)}
+          </ul>
+          {Array.isArray(roadmap.successMarkers) && roadmap.successMarkers.length ? <code>{roadmap.successMarkers.join(' · ')}</code> : null}
+        </div>
+      ) : null}
+      {blockers.length ? <div className="mission-operations-alert mission-operations-alert--blocked"><strong>Concierge blockers:</strong> {blockers.join(' | ')}</div> : null}
+    </section>
+  );
+}
+
 export function MissionSummary({ mission }) {
   const checkSummary = `${mission.pullRequest.passingCheckCount}/${mission.pullRequest.requiredCheckCount}`;
   const supportingAgents = mission.agent.supportingAgents || [];
@@ -244,6 +283,8 @@ export default function MissionOperationsPanel({ isOpen, onToggle, missionId = '
         <span><strong>Source:</strong> {feed.source || 'none'}</span>
         <span><strong>Last refresh:</strong> {displayTime(feed.generatedAt)}</span>
       </div>
+
+      <BuildConciergeSurface concierge={feed.buildConcierge || {}} />
 
       {feed.updateStatus ? (
         <div className="mission-operations-update-status" data-testid="mission-operations-update-status" data-update-status={feed.updateStatus.status}>

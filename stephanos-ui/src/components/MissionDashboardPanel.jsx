@@ -24,6 +24,7 @@ import { normalizeMissionDashboardUiState } from '../state/missionDashboardUiSta
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 import CollapsiblePanel from './CollapsiblePanel';
+import { BuildConciergeSurface } from './MissionOperationsPanel.jsx';
 
 const MISSION_RECORD_NAMESPACE = 'mission-dashboard';
 const MISSION_RECORD_ID = 'project-progress';
@@ -79,6 +80,15 @@ function deriveReadonlyEndpointSummary(summary = {}, projection = {}) {
       ? true
       : false,
   };
+}
+
+export function BuildConciergeRail({ buildConcierge = {} }) {
+  return (
+    <section className="mission-live-projection" aria-label="Build Concierge status and next-action rail" data-testid="build-concierge-rail">
+      <h3>Build Concierge Status / Next-Action Rail</h3>
+      <BuildConciergeSurface concierge={buildConcierge} />
+    </section>
+  );
 }
 
 export default function MissionDashboardPanel({
@@ -397,6 +407,8 @@ export default function MissionDashboardPanel({
       actionLadder: Array.isArray(orchestrationSelectors?.operatorActionLadder) ? orchestrationSelectors.operatorActionLadder : [],
     };
   }, [finalAgentView, finalRouteTruth?.routeKind, orchestrationSelectors?.blockageExplanation, orchestrationSelectors?.capabilityPosture, orchestrationSelectors?.currentMissionState?.intentSource, orchestrationSelectors?.currentMissionState?.missionPhase, orchestrationSelectors?.operatorActionLadder, orchestrationSelectors?.providerExecutionSummary]);
+  const buildConcierge = agentTaskProjection?.buildConcierge || orchestrationSelectors?.buildConcierge || {};
+
   const selectedMilestone = orderedMilestones.find((milestone) => milestone.id === uiState.selectedMilestoneId)
     || orderedMilestones[0]
     || null;
@@ -652,6 +664,8 @@ export default function MissionDashboardPanel({
           </section>
         ) : null}
       </section>
+      <BuildConciergeRail buildConcierge={buildConcierge} />
+
       <section className="mission-live-projection" aria-label="Agent task layer summary">
         <h3>Agent Task Layer Summary</h3>
         <ul className="compact-list">
