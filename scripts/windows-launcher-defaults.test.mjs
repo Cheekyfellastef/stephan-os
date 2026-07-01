@@ -6,6 +6,97 @@ const WINDOWS_LAUNCHER_PS1 = new URL('../windows/Launch-Stephanos-Local.ps1', im
 const WINDOWS_LAUNCHER_CMD = new URL('../windows/Launch-Stephanos-Local.cmd', import.meta.url);
 const WINDOWS_IGNITE_APPROVAL_PS1 = new URL('../windows/Invoke-Stephanos-Ignite-With-Approval.ps1', import.meta.url);
 
+
+function extractPowerShellFunction(script, functionName) {
+  const declaration = new RegExp(`function\\s+${functionName}\\b[^\\n]*\\{\\s*$`, 'm');
+  const match = declaration.exec(script);
+  assert.ok(match, `missing ${functionName} function`);
+
+  const bodyStart = match.index + match[0].length;
+  let depth = 1;
+  for (let index = bodyStart; index < script.length; index += 1) {
+    const char = script[index];
+    if (char === '{') depth += 1;
+    if (char === '}') depth -= 1;
+    if (depth === 0) return script.slice(bodyStart, index);
+  }
+
+  assert.fail(`unterminated ${functionName} function`);
+}
+
+function extractOrderedHashtableFields(source, assignmentName) {
+  const assignment = new RegExp(`${escapeRegExp(assignmentName)}\\s*=\\s*\\[ordered\\]@\\{`, 'm');
+  const match = assignment.exec(source);
+  assert.ok(match, `missing ${assignmentName} ordered hashtable`);
+
+  const tableStart = match.index + match[0].length;
+  let depth = 1;
+  for (let index = tableStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') depth -= 1;
+    if (depth === 0) return parsePowerShellHashtable(source.slice(tableStart, index));
+  }
+
+  assert.fail(`unterminated ${assignmentName} ordered hashtable`);
+}
+
+
+function extractInlineOrderedHashtableFields(source, label) {
+  const match = /^\[ordered\]@\{/.exec(source.trim());
+  assert.ok(match, `missing ${label} ordered hashtable`);
+  const tableSource = source.trim().slice(match[0].length, -1);
+  return parsePowerShellHashtable(tableSource);
+}
+
+function parsePowerShellHashtable(tableSource) {
+  const fields = {};
+  let index = 0;
+  while (index < tableSource.length) {
+    while (index < tableSource.length && /[\s;]/.test(tableSource[index])) index += 1;
+    const keyMatch = /^[A-Za-z][A-Za-z0-9_]*/.exec(tableSource.slice(index));
+    if (!keyMatch) break;
+    const key = keyMatch[0];
+    index += key.length;
+    while (index < tableSource.length && /\s/.test(tableSource[index])) index += 1;
+    assert.equal(tableSource[index], '=', `missing assignment for ${key}`);
+    index += 1;
+
+    const valueStart = index;
+    let braceDepth = 0;
+    let parenDepth = 0;
+    let quote = null;
+    while (index < tableSource.length) {
+      const char = tableSource[index];
+      if (quote) {
+        if (char === quote) quote = null;
+      } else if (char === '\'' || char === '"') {
+        quote = char;
+      } else if (char === '{') {
+        braceDepth += 1;
+      } else if (char === '}') {
+        if (braceDepth === 0) break;
+        braceDepth -= 1;
+      } else if (char === '(') {
+        parenDepth += 1;
+      } else if (char === ')') {
+        parenDepth -= 1;
+      } else if (char === ';' && braceDepth === 0 && parenDepth === 0) {
+        break;
+      } else if (char === '\n' && braceDepth === 0 && parenDepth === 0 && /^\s*[A-Za-z][A-Za-z0-9_]*\s*=/.test(tableSource.slice(index + 1))) {
+        break;
+      }
+      index += 1;
+    }
+    fields[key] = tableSource.slice(valueStart, index).trim();
+  }
+  return fields;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 test('launcher-root mode enables browser auto-open by default', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(
@@ -196,9 +287,34 @@ test('launcher-root splash uses detailed ignition stage model', async () => {
 
 test('ignition status preserves destination paths, blocker actions, and non-primary PowerShell wall truth', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\) \}/m, 'status payload must record status, splash, and log destinations');
+  const writeStatusFunction = extractPowerShellFunction(script, 'Write-IgnitionStatus');
+  const failStepFunction = extractPowerShellFunction(script, 'Fail-Step');
+
+  const statusPayloadFields = extractOrderedHashtableFields(writeStatusFunction, '$payload');
+  assert.equal(statusPayloadFields.currentStage, '$currentStage', 'status payload must project the resolved current stage');
+  assert.match(
+    statusPayloadFields.nextOperatorAction,
+    /\$Extra\.ContainsKey\('nextOperatorAction'\)[\s\S]*\$Extra\.nextOperatorAction[\s\S]*Watch the Stephanos ignition splash\/status screen\./,
+    'status payload must project explicit next operator action with the default splash/status action as fallback',
+  );
+  assert.equal(statusPayloadFields.primaryUi, "'splash-status-browser'", 'splash/status browser must remain the primary UI');
+  assert.equal(statusPayloadFields.visiblePowerShellRequired, '$visiblePowerShellRequired', 'status payload must project non-primary PowerShell wall truth');
+
+  const destinationFields = extractInlineOrderedHashtableFields(statusPayloadFields.destinations, 'destinations');
+  assert.equal(destinationFields.statusPath, '$ignitionStatusPath', 'status payload must project the status JSON destination path');
+  assert.equal(destinationFields.splashPath, '$ignitionSplashPath', 'status payload must project the splash browser destination path');
+  assert.equal(destinationFields.logRoot, "(Join-Path $ignitionProofRoot 'logs')", 'status payload must project the bounded log destination path');
+
+  assert.match(
+    writeStatusFunction,
+    /foreach\s*\(\$key\s+in\s+\$Extra\.Keys\)\s*\{\s*\$payload\[\$key\]\s*=\s*\$Extra\[\$key\]\s*\}/m,
+    'status payload must project extra fields such as blocker into the written status JSON',
+  );
+  assert.match(failStepFunction, /Write-IgnitionStatus[\s\S]*-Phase 'blocked'/m, 'blocked failures must write blocked status');
+  assert.match(failStepFunction, /currentStage\s*=\s*'blocked'/m, 'blocked failures must project currentStage');
+  assert.match(failStepFunction, /nextOperatorAction\s*=\s*'Review the exact blocker[^']*retrying\.'/m, 'blocked failures must project nextOperatorAction');
+  assert.match(failStepFunction, /blocker\s*=\s*\$Step/m, 'blocked failures must project the exact blocker');
+
   assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
-  assert.match(script, /currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker/m, 'blocked status must preserve next operator action with blocker state');
-  assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
-  assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
+  assert.match(script, /\$visiblePowerShellRequired\s*=\s*\$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
 });
