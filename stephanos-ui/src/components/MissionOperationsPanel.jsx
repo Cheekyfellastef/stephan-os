@@ -4,6 +4,7 @@ import { fetchMissionOperations } from '../state/missionOperationsClient';
 import './MissionOperationsPanel.css';
 
 const REFRESH_INTERVAL_MS = 5000;
+const UPDATE_STATUS_TRUTH_STATES = ['UPDATE_AVAILABLE', 'PULL_REQUIRED', 'REBUILD_REQUIRED', 'AUTO_UPDATE_NOT_ENABLED'];
 
 function displayTime(value) {
   const parsed = Date.parse(String(value || ''));
@@ -216,7 +217,7 @@ export default function MissionOperationsPanel({ isOpen, onToggle, missionId = '
     <CollapsiblePanel
       panelId="missionConsoleMissionOperationsPanel"
       title="Mission Operations"
-      description="Live mission, agent, Git, PR, approval, blocker, and evidence receipt truth."
+      description="Live mission, agent, Git, PR, update, approval, blocker, and evidence receipt truth."
       isOpen={isOpen}
       onToggle={onToggle}
       actions={actions}
@@ -228,6 +229,18 @@ export default function MissionOperationsPanel({ isOpen, onToggle, missionId = '
         <span><strong>Source:</strong> {feed.source || 'none'}</span>
         <span><strong>Last refresh:</strong> {displayTime(feed.generatedAt)}</span>
       </div>
+
+      {feed.updateStatus ? (
+        <div className="mission-operations-update-status" data-testid="mission-operations-update-status" data-update-status={feed.updateStatus.status}>
+          <strong>Workspace update:</strong> {feed.updateStatus.status}
+          <span>Local SHA: {feed.updateStatus.localSha || 'unknown'}</span>
+          <span>Main SHA: {feed.updateStatus.mainSha || 'unknown'}</span>
+          <span>Manual refresh required: {feed.updateStatus.manualRefreshRequired ? 'yes' : 'no'}</span>
+          <span>Auto-pull attempted: {feed.updateStatus.autoPullAttempted ? 'yes' : 'no'}</span>
+          <span>UI refresh after build: {feed.updateStatus.uiRefreshAfterBuild || 'manual-browser-refresh-required'}</span>
+          <span>Next operator action: {feed.updateStatus.nextOperatorAction || 'Refresh update status before acting.'}</span>
+        </div>
+      ) : null}
 
       {transportError ? (
         <div className="mission-operations-alert mission-operations-alert--blocked" role="alert">
