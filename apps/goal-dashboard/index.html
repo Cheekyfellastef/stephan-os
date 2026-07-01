@@ -372,8 +372,8 @@
         </p>
         <div class="source-row" aria-label="data source status">
           <div class="source-pill">Goal data<strong>Seeded / source-controlled</strong></div>
-          <div class="source-pill">GitHub state<strong>Not live in browser</strong></div>
-          <div class="source-pill">Automation state<strong>Not live in browser</strong></div>
+          <div class="source-pill">GitHub state<strong>MANUAL_REFRESH_REQUIRED</strong></div>
+          <div class="source-pill">Automation state<strong>MANUAL_REFRESH_REQUIRED</strong></div>
           <div class="source-pill">Proof state<strong>Explicit or unknown</strong></div>
         </div>
       </header>
@@ -410,7 +410,7 @@
       <section aria-labelledby="goals-title">
         <div class="section-title">
           <h2 id="goals-title">Active seeded goals</h2>
-          <span>Current owner, next owner, handoff state</span>
+          <span>Issue/title/state/latest PR/head/merge/proof/next action</span>
         </div>
         <div id="goal-grid" class="goal-grid"></div>
       </section>
@@ -418,7 +418,7 @@
       <section>
         <div class="guardrail">
           <strong>Safety boundary:</strong> this tile does not claim live GitHub, automation, Windows, browser, or WhatsApp proof.
-          Live wiring must be added through a bounded adapter and proved before the labels change.
+          Live wiring must be added through a bounded adapter and proved before the labels change; current update truth is MANUAL_REFRESH_REQUIRED.
         </div>
       </section>
     </main>
@@ -536,6 +536,10 @@
       const grid = document.getElementById('goal-grid');
 
       goals.forEach((goal) => {
+        goal.latestPr = goal.latestPr || 'not reported';
+        goal.head = goal.head || 'not reported';
+        goal.merge = goal.merge || 'NO_MERGED_PR_UPDATE_RECEIPT';
+        goal.proof = goal.proof || `${goal.proofIndex}/${proofSteps.length} seeded proof steps`;
         const card = document.createElement('article');
         card.className = 'goal-card';
         card.setAttribute('data-issue', goal.issue);
@@ -550,6 +554,10 @@
               <div><span>Next owner</span>${goal.nextOwner}</div>
               <div><span>Operator needed</span>${goal.operatorNeeded}</div>
               <div><span>Handoff</span>${goal.handoffState}</div>
+              <div><span>Latest PR</span>${goal.latestPr}</div>
+              <div><span>Head</span>${goal.head}</div>
+              <div><span>Merge</span>${goal.merge}</div>
+              <div><span>Proof</span>${goal.proof}</div>
             </div>
             <div aria-label="Proof-state rail for ${goal.issue}" class="rail">
               ${proofSteps.map((_, index) => `<i class="${index < goal.proofIndex ? 'done' : index === goal.proofIndex ? 'now' : ''}"></i>`).join('')}

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import { fetchMissionOperations } from '../state/missionOperationsClient';
+import { buildGoalDashboardStatusProjection } from '../../../shared/runtime/goalDashboardStatusProjection.mjs';
 import './MissionOperationsPanel.css';
 
 const REFRESH_INTERVAL_MS = 5000;
+const NO_LIVE_UPDATE_ADAPTER_STATUS = 'MANUAL_REFRESH_REQUIRED';
 
 function displayTime(value) {
   const parsed = Date.parse(String(value || ''));
@@ -41,6 +43,7 @@ export function MissionSummary({ mission }) {
   const checks = mission.pullRequest.checks || [];
   const approvals = mission.approvals || [];
   const receipts = mission.receipts || [];
+  const merged = mission.pullRequest.merged === true || mission.pullRequest.state === 'merged' || Boolean(mission.pullRequest.mergeCommitSha);
 
   return (
     <article className="mission-operations-item" data-testid="mission-operations-item" data-mission-state={mission.mission.state}>
@@ -71,6 +74,8 @@ export function MissionSummary({ mission }) {
         <div><dt>Pull request</dt><dd>{mission.pullRequest.number ? `#${mission.pullRequest.number}` : 'not opened'}</dd></div>
         <div><dt>PR state</dt><dd>{mission.pullRequest.state || 'not reported'}</dd></div>
         <div><dt>Mergeable</dt><dd>{mission.pullRequest.mergeable ? 'yes' : 'not proven'}</dd></div>
+        <div><dt>Merged PR update</dt><dd>{merged ? 'reported by receipt' : 'no merged PR update receipt'}</dd></div>
+        <div><dt>Merge commit</dt><dd>{mission.pullRequest.mergeCommitSha || 'not reported'}</dd></div>
         <div><dt>Checks</dt><dd>{checkSummary}</dd></div>
         <div><dt>Started</dt><dd>{displayTime(mission.mission.startedAt)}</dd></div>
         <div><dt>Updated</dt><dd>{displayTime(mission.mission.updatedAt)}</dd></div>
@@ -198,6 +203,8 @@ export default function MissionOperationsPanel({ isOpen, onToggle, missionId = '
     };
   }, [isOpen, refresh]);
 
+  const goalStatus = buildGoalDashboardStatusProjection(feed);
+
   const actions = (
     <button
       type="button"
@@ -228,6 +235,20 @@ export default function MissionOperationsPanel({ isOpen, onToggle, missionId = '
         <span><strong>Source:</strong> {feed.source || 'none'}</span>
         <span><strong>Last refresh:</strong> {displayTime(feed.generatedAt)}</span>
       </div>
+
+      <section className="mission-operations-goal-status" aria-label="Goal dashboard status projection">
+        <strong>Goal Dashboard status:</strong> {goalStatus.activeGoalCount} active goals / {goalStatus.liveAdapterStatus || NO_LIVE_UPDATE_ADAPTER_STATUS}
+        <div className="muted">GitHub update truth: {goalStatus.githubAutoUpdateTruth}; local update truth: {goalStatus.localAutoUpdateTruth}</div>
+        {goalStatus.goals.length ? (
+          <ul className="mission-operations-evidence-list">
+            {goalStatus.goals.map((goal) => (
+              <li key={`${goal.issue}-${goal.title}`}>
+                <strong>{goal.issue}</strong> {goal.title} - {goal.state}; PR {goal.latestPr}; head {goal.head}; merge {goal.merge}; proof {goal.proof}; next {goal.nextAction}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
 
       {transportError ? (
         <div className="mission-operations-alert mission-operations-alert--blocked" role="alert">

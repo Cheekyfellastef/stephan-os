@@ -82,6 +82,8 @@ function adaptOperationResult(document = {}, file = {}) {
       prUrl: text(packet.prUrl),
       prState: text(packet.prState),
       mergeable: packet.mergeable === true,
+      merged: packet.merged === true || text(packet.prState).toLowerCase() === 'merged' || Boolean(text(packet.mergeCommitSha)),
+      mergeCommitSha: text(packet.mergeCommitSha),
       clean: packet.clean === true,
       checks: list(packet.checks).map((status, index) => ({
         id: `github-check-${index + 1}`,

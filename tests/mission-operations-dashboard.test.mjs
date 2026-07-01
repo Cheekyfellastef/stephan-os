@@ -36,6 +36,8 @@ test('projection exposes complete mission, agent, Git, PR, approval, receipt, ti
       prUrl: 'https://github.com/Cheekyfellastef/stephan-os/pull/1262',
       prState: 'open',
       mergeable: true,
+      merged: false,
+      mergeCommitSha: '',
       checks: [{ name: 'Build', status: 'in_progress', required: true }],
     },
     approvals: [{ approvalId: 'merge', status: 'approved' }],
@@ -56,6 +58,8 @@ test('projection exposes complete mission, agent, Git, PR, approval, receipt, ti
   assert.equal(projection.pullRequest.url, 'https://github.com/Cheekyfellastef/stephan-os/pull/1262');
   assert.equal(projection.pullRequest.state, 'open');
   assert.equal(projection.pullRequest.mergeable, true);
+  assert.equal(projection.pullRequest.merged, false);
+  assert.equal(projection.pullRequest.mergeCommitSha, '');
   assert.equal(projection.pullRequest.requiredCheckCount, 1);
   assert.equal(projection.receipts[0].sha256, 'b'.repeat(64));
   assert.equal(projection.mission.nextAction, 'Wait for checks.');
@@ -234,6 +238,8 @@ test('Mission Operations panel visibly renders every required operational truth 
   assert.match(source, /receipt\.status/);
   assert.match(source, /check\.status/);
   assert.match(source, /approval\.status/);
+  assert.match(source, /buildGoalDashboardStatusProjection/);
+  assert.match(source, /MANUAL_REFRESH_REQUIRED/);
   assert.doesNotMatch(source, /MissionOperationsDashboard/);
 });
 

@@ -154,6 +154,8 @@ export function buildMissionOperationsProjection(input = {}, options = {}) {
       url: githubUrl(github.prUrl),
       state: text(github.prState, 'none'),
       mergeable: github.mergeable === true,
+      merged: github.merged === true || text(github.prState).toLowerCase() === 'merged' || Boolean(text(github.mergeCommitSha)),
+      mergeCommitSha: text(github.mergeCommitSha),
       checks,
       requiredCheckCount: checks.filter((check) => check.required).length,
       passingCheckCount: checks.filter((check) => check.required && check.status === 'success').length,
