@@ -83,16 +83,33 @@ function Initialize-IgnitionProofWorkspace {
 }
 
 function Get-IgnitionStageSnapshot([string]$CurrentStageId) {
+  $stageIds = @($ignitionStageModel | ForEach-Object { $_.id })
+  $currentIndex = $stageIds.IndexOf($CurrentStageId)
+  $ready = $CurrentStageId -eq 'ready'
+
   return @($ignitionStageModel | ForEach-Object {
+    $stageIndex = $stageIds.IndexOf($_.id)
+    $state = if ($ready) {
+      'complete'
+    }
+    elseif ($_.id -eq $CurrentStageId) {
+      'active'
+    }
+    elseif ($currentIndex -ge 0 -and $stageIndex -lt $currentIndex) {
+      'complete'
+    }
+    else {
+      'pending'
+    }
+
     [ordered]@{
       id = $_.id
       label = $_.label
       detail = $_.detail
-      state = if ($_.id -eq $CurrentStageId) { 'active' } elseif ($ignitionStageModel.IndexOf($_) -lt ($ignitionStageModel | ForEach-Object { $_.id }).IndexOf($CurrentStageId)) { 'complete' } else { 'pending' }
+      state = $state
     }
   })
 }
-
 function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extra = @{}) {
   Initialize-IgnitionProofWorkspace
   $currentStage = if ($Extra.ContainsKey('currentStage')) { $Extra.currentStage } else { $Phase }
@@ -573,7 +590,7 @@ try {
   Write-IgnitionStatus -Phase 'opening-command-deck' -Message 'Opening Command Deck browser surfaces after readiness proof.' -Extra @{ currentStage = 'opening-command-deck'; browserTargets = $browserTargets; visiblePowerShellWallRequired = $false }
 
   Write-IgnitionSupportSnapshot -Verdict 'ready-for-local-proof' -Extra @{ browserTargets = $browserTargets; port4173Before = $port4173Before; port5173Before = $port5173Before }
-  Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready.' -Extra @{ browserTargets = $browserTargets; visiblePowerShellWallRequired = $false; supportSnapshotPath = $ignitionSupportSnapshotPath; transcriptPath = $ignitionTranscriptPath }
+  Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready.' -Extra @{ currentStage = 'ready'; browserTargets = $browserTargets; visiblePowerShellWallRequired = $false; supportSnapshotPath = $ignitionSupportSnapshotPath; transcriptPath = $ignitionTranscriptPath }
 
   Write-LiveLog 'server started'
   Write-LiveLog "manual URL(s): $([string]::Join(', ', $browserTargets))"
