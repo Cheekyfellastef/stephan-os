@@ -45,6 +45,7 @@ $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --prob
 $visiblePowerShellRequired = $false
 $ignitionProofRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof'
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
+$supportSnapshotPath = Join-Path $ignitionProofRoot 'support-snapshot.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
 
 $ignitionStageModel = @(
@@ -90,14 +91,29 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
     primaryUi = 'splash-status-browser'
     splashPath = $ignitionSplashPath
     statusPath = $ignitionStatusPath
+    supportSnapshotPath = $supportSnapshotPath
     logRoot = (Join-Path $ignitionProofRoot 'logs')
     nextOperatorAction = if ($Extra.ContainsKey('nextOperatorAction')) { $Extra.nextOperatorAction } else { 'Watch the Stephanos ignition splash/status screen.' }
     currentStage = $currentStage
     ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $currentStage
-    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs') }
+    destinations = [ordered]@{ statusPath = $ignitionStatusPath; supportSnapshotPath = $supportSnapshotPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs') }
   }
   foreach ($key in $Extra.Keys) { $payload[$key] = $Extra[$key] }
   $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
+  $supportSnapshot = [ordered]@{
+    generatedAt = $payload.updatedAt
+    source = 'windows-launcher-ignition-status'
+    launcherStatusPath = $ignitionStatusPath
+    supportSnapshotPath = $supportSnapshotPath
+    phase = $payload.phase
+    message = $payload.message
+    blocker = if ($payload.Contains('blocker')) { $payload.blocker } else { $null }
+    blockerDetails = if ($payload.Contains('blockerDetails')) { $payload.blockerDetails } else { $null }
+    parentTimeout = if ($payload.Contains('parentTimeout')) { $payload.parentTimeout } else { $null }
+    childIgnitionBlocker = if ($payload.Contains('childIgnitionBlocker')) { $payload.childIgnitionBlocker } else { $null }
+    destinations = $payload.destinations
+  }
+  $supportSnapshot | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $supportSnapshotPath -Encoding UTF8
 }
 
 function New-IgnitionSplashScreen {
@@ -141,8 +157,85 @@ function Show-IgnitionSplashScreen {
   Write-LiveLog "verbose logs/status destination: $ignitionProofRoot"
 }
 
-function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord) {
-  Write-IgnitionStatus -Phase 'blocked' -Message $Step -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.'; blocker = $Step }
+
+function Get-BoundedLogTail([string]$Path, [int]$TailLines = 80) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+  try { return @(Get-Content -LiteralPath $Path -Tail $TailLines -ErrorAction Stop) }
+  catch { return @("<failed to read bounded log tail: $($_.Exception.Message)>") }
+}
+
+function ConvertFrom-IgnitionMarkerJson([string]$Line, [string]$Marker) {
+  $pattern = '^\[IGNITION\] ' + [regex]::Escape($Marker) + '=(.+)$'
+  if ($Line -notmatch $pattern) { return $null }
+  try { return ($Matches[1] | ConvertFrom-Json -ErrorAction Stop) }
+  catch { return $null }
+}
+
+function Get-ChildIgnitionBlockerFromLogs {
+  $logRoot = Join-Path $ignitionProofRoot 'logs'
+  if (-not (Test-Path -LiteralPath $logRoot -PathType Container)) { return $null }
+  $logs = @(Get-ChildItem -LiteralPath $logRoot -Filter '*.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
+  foreach ($log in $logs) {
+    $lines = Get-BoundedLogTail -Path $log.FullName
+    foreach ($line in @($lines | Select-Object -Last 80)) {
+      $sourceUpdateStatus = ConvertFrom-IgnitionMarkerJson -Line $line -Marker 'source-update-status'
+      if ($sourceUpdateStatus -and ($line -match 'missing-upstream')) {
+        return [ordered]@{
+          blocker = 'missing-upstream'
+          marker = 'source-update-status'
+          message = 'Child ignition reported missing-upstream in source-update-status before launcher runtime-status became reachable.'
+          logPath = $log.FullName
+          logStream = if ($log.Name -like '*.stderr.log') { 'stderr' } else { 'stdout' }
+          sourceUpdateStatus = $sourceUpdateStatus
+        }
+      }
+
+      $repairPacket = ConvertFrom-IgnitionMarkerJson -Line $line -Marker 'repair-packet'
+      if ($repairPacket) {
+        $repairText = ($repairPacket | ConvertTo-Json -Depth 10 -Compress)
+        $blocker = if ($repairText -match 'missing-upstream') { 'missing-upstream' } else { 'repair-packet' }
+        return [ordered]@{
+          blocker = $blocker
+          marker = 'repair-packet'
+          message = "Child ignition reported $blocker in repair-packet before launcher runtime-status became reachable."
+          logPath = $log.FullName
+          logStream = if ($log.Name -like '*.stderr.log') { 'stderr' } else { 'stdout' }
+          repairPacket = $repairPacket
+        }
+      }
+    }
+  }
+  return $null
+}
+
+function Resolve-LauncherTimeoutBlocker([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds) {
+  $parentTimeout = [ordered]@{
+    stepLabel = $StepLabel
+    url = $Url
+    timeoutSeconds = $TimeoutSeconds
+    diagnostic = "Timed out waiting for $StepLabel at $Url"
+  }
+  $childBlocker = Get-ChildIgnitionBlockerFromLogs
+  if ($childBlocker) {
+    return [ordered]@{
+      message = $childBlocker.message
+      blocker = $childBlocker.blocker
+      blockerDetails = $childBlocker
+      childIgnitionBlocker = $childBlocker
+      parentTimeout = $parentTimeout
+    }
+  }
+  return [ordered]@{
+    message = $parentTimeout.diagnostic
+    blocker = $parentTimeout.diagnostic
+    parentTimeout = $parentTimeout
+  }
+}
+
+function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord, [hashtable]$FailureDetails = @{}) {
+  $failureExtra = @{ currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.'; blocker = $Step }
+  foreach ($key in $FailureDetails.Keys) { $failureExtra[$key] = $FailureDetails[$key] }
+  Write-IgnitionStatus -Phase 'blocked' -Message $Step -Extra $failureExtra
   Write-Host "[LAUNCHER LIVE] Failed step: $Step" -ForegroundColor Red
   if ($null -ne $ErrorRecord) {
     Write-Host ($ErrorRecord | Out-String).Trim() -ForegroundColor Red
@@ -193,13 +286,19 @@ function Test-CommandSucceeds([string]$Command) {
   }
 }
 
-function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120) {
+function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120, [switch]$SurfaceChildIgnitionBlockers) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
     if (Test-UrlReachable -Url $Url) {
       return
     }
     Start-Sleep -Seconds 1
+  }
+
+  if ($SurfaceChildIgnitionBlockers.IsPresent) {
+    $timeoutBlocker = Resolve-LauncherTimeoutBlocker -StepLabel $StepLabel -Url $Url -TimeoutSeconds $TimeoutSeconds
+    Write-IgnitionStatus -Phase 'blocked' -Message $timeoutBlocker.message -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the surfaced child ignition blocker and bounded stdout/stderr logs, then resolve it before retrying.'; blocker = $timeoutBlocker.blocker; blockerDetails = $timeoutBlocker.blockerDetails; childIgnitionBlocker = $timeoutBlocker.childIgnitionBlocker; parentTimeout = $timeoutBlocker.parentTimeout }
+    throw $timeoutBlocker.message
   }
 
   throw "Timed out waiting for $StepLabel at $Url"
@@ -412,7 +511,7 @@ try {
   }
   else {
     Write-LiveLog "waiting for launcher-root runtime-status endpoint at $launcherRuntimeStatusUrl"
-    Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url $launcherRuntimeStatusUrl
+    Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url $launcherRuntimeStatusUrl -SurfaceChildIgnitionBlockers
 
     Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl"
     Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
