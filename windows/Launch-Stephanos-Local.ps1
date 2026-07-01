@@ -45,6 +45,8 @@ $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --prob
 $visiblePowerShellRequired = $false
 $ignitionProofRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof'
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
+$ignitionSupportSnapshotPath = Join-Path $ignitionProofRoot 'support-snapshot.json'
+$ignitionProofTranscriptPath = Join-Path $ignitionProofRoot 'ignition-proof-transcript.jsonl'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
 
 $ignitionStageModel = @(
@@ -94,10 +96,112 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
     nextOperatorAction = if ($Extra.ContainsKey('nextOperatorAction')) { $Extra.nextOperatorAction } else { 'Watch the Stephanos ignition splash/status screen.' }
     currentStage = $currentStage
     ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $currentStage
-    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs') }
+    destinations = [ordered]@{ statusPath = $ignitionStatusPath; supportSnapshotPath = $ignitionSupportSnapshotPath; proofTranscriptPath = $ignitionProofTranscriptPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs') }
   }
   foreach ($key in $Extra.Keys) { $payload[$key] = $Extra[$key] }
   $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
+}
+
+
+function Add-IgnitionProofTranscriptEntry([hashtable]$Entry) {
+  Initialize-IgnitionProofWorkspace
+  $payload = [ordered]@{ recordedAt = (Get-Date).ToUniversalTime().ToString('o') }
+  foreach ($key in $Entry.Keys) { $payload[$key] = $Entry[$key] }
+  ($payload | ConvertTo-Json -Depth 12 -Compress) | Add-Content -LiteralPath $ignitionProofTranscriptPath -Encoding UTF8
+}
+
+function Write-IgnitionSupportSnapshot([hashtable]$Payload) {
+  Initialize-IgnitionProofWorkspace
+  $snapshot = [ordered]@{
+    generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    primaryUi = 'splash-status-browser'
+    visiblePowerShellRequired = $visiblePowerShellRequired
+    statusPath = $ignitionStatusPath
+    supportSnapshotPath = $ignitionSupportSnapshotPath
+    proofTranscriptPath = $ignitionProofTranscriptPath
+    splashPath = $ignitionSplashPath
+    logRoot = (Join-Path $ignitionProofRoot 'logs')
+  }
+  foreach ($key in $Payload.Keys) { $snapshot[$key] = $Payload[$key] }
+  $snapshot | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ignitionSupportSnapshotPath -Encoding UTF8
+}
+
+function Write-IgnitionBlockedSplash([string]$Blocker, [hashtable]$Evidence) {
+  Initialize-IgnitionProofWorkspace
+  $blockerHtml = [System.Net.WebUtility]::HtmlEncode($Blocker)
+  $statusPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionStatusPath)
+  $snapshotPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionSupportSnapshotPath)
+  $transcriptPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionProofTranscriptPath)
+  $logRootHtml = [System.Net.WebUtility]::HtmlEncode((Join-Path $ignitionProofRoot 'logs'))
+  $html = @"
+<!doctype html>
+<meta charset="utf-8">
+<title>Stephanos Ignition Blocked</title>
+<style>body{margin:0;background:#07111f;color:#e7f2ff;font-family:Segoe UI,Arial,sans-serif}main{max-width:960px;margin:6vh auto;padding:32px;border:1px solid #7a3b1e;border-radius:18px;background:#0b1728}h1{margin-top:0}.pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#7a3b1e;color:#ffe6d8;font-weight:700}.muted{color:#a7bdd4}code{background:#111f33;padding:2px 6px;border-radius:6px}.blocker{white-space:pre-wrap;border:1px solid #7a3b1e;border-radius:12px;background:#2b160f;color:#ffd9c8;padding:14px}</style>
+<main>
+  <span class="pill">IGNITION BLOCKED</span>
+  <h1>Stephanos stopped before runtime readiness</h1>
+  <p>The splash/status browser remains the primary UI. Verbose PowerShell output remains bounded to logs.</p>
+  <section class="blocker" aria-label="Exact child ignition blocker">$blockerHtml</section>
+  <p class="muted">The launcher stopped waiting because the child ignition process emitted a structured BLOCKED packet; any parent timeout is diagnostic context only.</p>
+  <p>Status: <code>$statusPathHtml</code></p>
+  <p>Support snapshot: <code>$snapshotPathHtml</code></p>
+  <p>Proof transcript: <code>$transcriptPathHtml</code></p>
+  <p>Logs: <code>$logRootHtml</code></p>
+</main>
+"@
+  $html | Set-Content -LiteralPath $ignitionSplashPath -Encoding UTF8
+}
+
+function Get-IgnitionChildLogPaths {
+  Initialize-IgnitionProofWorkspace
+  $logRoot = Join-Path $ignitionProofRoot 'logs'
+  return @(Get-ChildItem -LiteralPath $logRoot -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.(stdout|stderr)\.log$' } | Select-Object -ExpandProperty FullName)
+}
+
+function Get-IgnitionPacketBlockerMessage($Packet) {
+  $reason = if ($Packet.PSObject.Properties.Name -contains 'reason') { [string]$Packet.reason } else { '' }
+  $nextSafeAction = if ($Packet.PSObject.Properties.Name -contains 'nextSafeAction') { [string]$Packet.nextSafeAction } else { '' }
+  $summary = if ($Packet.PSObject.Properties.Name -contains 'summary') { [string]$Packet.summary } else { '' }
+  $message = if ($summary) { $summary } elseif ($reason -and $nextSafeAction) { "blocked for safety: $reason. $nextSafeAction" } elseif ($reason) { "blocked for safety: $reason" } else { 'Child ignition reported BLOCKED.' }
+  return $message
+}
+
+function Get-ChildIgnitionBlockedPacket {
+  $packetNames = @('source-update-status', 'repair-packet', 'source-merge-repair-packet', 'openclaw-recovery-packet', 'recovery-packet')
+  foreach ($logPath in Get-IgnitionChildLogPaths) {
+    $lines = @(Get-Content -LiteralPath $logPath -Tail 240 -ErrorAction SilentlyContinue)
+    foreach ($line in $lines) {
+      foreach ($packetName in $packetNames) {
+        $prefix = "[IGNITION] $packetName="
+        if (-not $line.StartsWith($prefix)) { continue }
+        $json = $line.Substring($prefix.Length)
+        try {
+          $packet = $json | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+          Add-IgnitionProofTranscriptEntry @{ event = 'child-packet-parse-failed'; packetName = $packetName; logPath = $logPath; line = $line; error = $_.Exception.Message }
+          continue
+        }
+        Add-IgnitionProofTranscriptEntry @{ event = 'child-packet-observed'; packetName = $packetName; logPath = $logPath; packet = $packet }
+        if ([string]$packet.ignitionStatus -eq 'BLOCKED') {
+          return [ordered]@{ packetName = $packetName; packet = $packet; logPath = $logPath; blocker = Get-IgnitionPacketBlockerMessage $packet }
+        }
+      }
+    }
+  }
+  return $null
+}
+
+function Publish-ChildIgnitionBlocker($BlockedPacket, [string]$StepLabel, [string]$Url, [int]$TimeoutSeconds) {
+  $blocker = [string]$BlockedPacket.blocker
+  $diagnostic = "Parent wait was observing $StepLabel at $Url with timeout ${TimeoutSeconds}s; child blocker stopped the wait before timeout could become the operator-facing cause."
+  $evidence = @{ currentStage = 'blocked'; blocker = $blocker; blockerSource = 'child-ignition-structured-packet'; childPacketName = $BlockedPacket.packetName; childPacket = $BlockedPacket.packet; childLogPath = $BlockedPacket.logPath; parentTimeoutDiagnostic = $diagnostic; nextOperatorAction = 'Resolve the child ignition blocker, then retry the Stephanos launcher.'; visiblePowerShellWallRequired = $false }
+  Write-IgnitionStatus -Phase 'blocked' -Message $blocker -Extra $evidence
+  Write-IgnitionSupportSnapshot $evidence
+  Add-IgnitionProofTranscriptEntry @{ event = 'launcher-wait-stopped-by-child-blocker'; blocker = $blocker; stepLabel = $StepLabel; url = $Url; parentTimeoutDiagnostic = $diagnostic; packetName = $BlockedPacket.packetName; packet = $BlockedPacket.packet }
+  Write-IgnitionBlockedSplash -Blocker $blocker -Evidence $evidence
+  throw $blocker
 }
 
 function New-IgnitionSplashScreen {
@@ -142,7 +246,19 @@ function Show-IgnitionSplashScreen {
 }
 
 function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord) {
-  Write-IgnitionStatus -Phase 'blocked' -Message $Step -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.'; blocker = $Step }
+  $existingChildBlockerRecorded = $false
+  try {
+    if (Test-Path -LiteralPath $ignitionStatusPath -PathType Leaf) {
+      $existingStatus = Get-Content -LiteralPath $ignitionStatusPath -Raw | ConvertFrom-Json
+      $existingChildBlockerRecorded = $existingStatus.blockerSource -eq 'child-ignition-structured-packet' -and [string]$existingStatus.blocker -eq $Step
+    }
+  }
+  catch {
+    $existingChildBlockerRecorded = $false
+  }
+  if (-not $existingChildBlockerRecorded) {
+    Write-IgnitionStatus -Phase 'blocked' -Message $Step -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.'; blocker = $Step }
+  }
   Write-Host "[LAUNCHER LIVE] Failed step: $Step" -ForegroundColor Red
   if ($null -ne $ErrorRecord) {
     Write-Host ($ErrorRecord | Out-String).Trim() -ForegroundColor Red
@@ -199,10 +315,16 @@ function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 12
     if (Test-UrlReachable -Url $Url) {
       return
     }
+    $blockedPacket = Get-ChildIgnitionBlockedPacket
+    if ($null -ne $blockedPacket) {
+      Publish-ChildIgnitionBlocker -BlockedPacket $blockedPacket -StepLabel $StepLabel -Url $Url -TimeoutSeconds $TimeoutSeconds
+    }
     Start-Sleep -Seconds 1
   }
 
-  throw "Timed out waiting for $StepLabel at $Url"
+  $timeoutDiagnostic = "Timed out waiting for $StepLabel at $Url"
+  Add-IgnitionProofTranscriptEntry @{ event = 'parent-wait-timeout-diagnostic'; stepLabel = $StepLabel; url = $Url; timeoutSeconds = $TimeoutSeconds; diagnostic = $timeoutDiagnostic }
+  throw $timeoutDiagnostic
 }
 
 function Ensure-ProcessRunning(

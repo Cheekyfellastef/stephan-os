@@ -196,9 +196,56 @@ test('launcher-root splash uses detailed ignition stage model', async () => {
 
 test('ignition status preserves destination paths, blocker actions, and non-primary PowerShell wall truth', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\) \}/m, 'status payload must record status, splash, and log destinations');
+  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; supportSnapshotPath = \$ignitionSupportSnapshotPath; proofTranscriptPath = \$ignitionProofTranscriptPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\) \}/m, 'status payload must record status, splash, and log destinations');
   assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
   assert.match(script, /currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker/m, 'blocked status must preserve next operator action with blocker state');
   assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
   assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
+});
+
+test('launcher wait inspects child logs for structured blocker packets', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  for (const packetName of [
+    'source-update-status',
+    'repair-packet',
+    'source-merge-repair-packet',
+    'openclaw-recovery-packet',
+    'recovery-packet',
+  ]) {
+    assert.match(script, new RegExp(`'${packetName}'`), `launcher wait must inspect ${packetName}`);
+  }
+  assert.match(script, /Get-ChildIgnitionBlockedPacket[\s\S]*?ConvertFrom-Json[\s\S]*?\[string\]\$packet\.ignitionStatus -eq 'BLOCKED'/m, 'child packets must be parsed as JSON and checked for BLOCKED ignitionStatus');
+  assert.match(script, /Wait-ForUrl[\s\S]*?\$blockedPacket = Get-ChildIgnitionBlockedPacket[\s\S]*?Publish-ChildIgnitionBlocker/m, 'URL wait loop must observe child blockers while polling runtime-status');
+});
+
+test('launcher surfaces child repair packet blockers instead of waiting for parent timeout', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /Publish-ChildIgnitionBlocker[\s\S]*?blockerSource = 'child-ignition-structured-packet'/m, 'child repair packets must be identified as the blocker source');
+  assert.match(script, /Write-IgnitionStatus -Phase 'blocked' -Message \$blocker/m, 'launcher-status must receive the child blocker as the primary message');
+  assert.match(script, /existingChildBlockerRecorded[\s\S]*?blockerSource -eq 'child-ignition-structured-packet'[\s\S]*?Write-IgnitionStatus -Phase 'blocked' -Message \$Step/m, 'generic failure handling must not overwrite an already-surfaced child blocker');
+  assert.match(script, /Write-IgnitionSupportSnapshot \$evidence/m, 'support snapshot must receive the child blocker evidence');
+  assert.match(script, /launcher-wait-stopped-by-child-blocker/m, 'proof transcript must record that the child blocker stopped the wait');
+});
+
+test('missing-upstream child blocker is surfaced from source update truth', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /Get-IgnitionPacketBlockerMessage[\s\S]*?blocked for safety: \$reason\. \$nextSafeAction/m, 'missing-upstream reason and next safe action must become exact operator blocker text');
+  assert.match(script, /source-update-status/m, 'source-update-status must be inspected so missing-upstream safety is preserved');
+});
+
+test('parent runtime-status timeout remains diagnostic only when child blocker exists', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /parentTimeoutDiagnostic = \$diagnostic/m, 'parent timeout details must be retained as diagnostic evidence');
+  assert.match(script, /child blocker stopped the wait before timeout could become the operator-facing cause/m, 'operator-facing message must prefer the child blocker over the parent timeout');
+  assert.match(script, /parent-wait-timeout-diagnostic/m, 'plain timeout must remain available only when no child blocker is found');
+});
+
+test('blocked child packet updates launcher status, support snapshot, transcript, and splash UI', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\$ignitionSupportSnapshotPath = Join-Path \$ignitionProofRoot 'support-snapshot\.json'/m, 'support snapshot path must be canonical in proof root');
+  assert.match(script, /\$ignitionProofTranscriptPath = Join-Path \$ignitionProofRoot 'ignition-proof-transcript\.jsonl'/m, 'proof transcript path must be canonical in proof root');
+  assert.match(script, /Write-IgnitionBlockedSplash -Blocker \$blocker -Evidence \$evidence/m, 'blocked child packet must update the splash HTML');
+  assert.match(script, /aria-label="Exact child ignition blocker"/m, 'splash must render the exact child blocker as browser-visible primary UI');
+  assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash remains the primary UI while blocked');
+  assert.match(script, /visiblePowerShellRequired = \$visiblePowerShellRequired/m, 'visible PowerShell wall truth must remain false in evidence surfaces');
 });
