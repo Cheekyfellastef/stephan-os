@@ -1,3 +1,5 @@
+import { BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP } from './battleBridgeBuildConciergeRoadmap.mjs';
+export { BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP } from './battleBridgeBuildConciergeRoadmap.mjs';
 const SHA40 = /^[a-f0-9]{40}$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
 const SAFE_COMMANDS = new Set([
@@ -36,51 +38,6 @@ export const BATTLE_BRIDGE_BUILD_CONCIERGE_SUCCESS_MARKERS = [
   'GOAL_COMPLETE_BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP',
   'NO_CLICK_MONKEY_LOOP',
   'INTENT_ENGINE_APPROVAL_ONLY',
-];
-
-export const BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP = [
-  {
-    version: 'V2',
-    title: 'Operator Surfaces',
-    status: 'implemented',
-    intent: 'Project selected PR/goal, proof readiness, command plan, dirty-tree status, approval token state, proof packet summary, merge hold state, and next operator action into Mission Operations and Goal Dashboard.',
-  },
-  {
-    version: 'V3',
-    title: 'Local Proof Runner',
-    status: 'implemented_guarded',
-    intent: 'Use an isolated proof worktree for a supplied PR, run allowlisted build/test commands, clean generated artifacts, and emit a canonical proof packet; unsafe contexts return truthful blockers.',
-  },
-  {
-    version: 'V4',
-    title: 'Browser Proof Capture',
-    status: 'planned_guarded',
-    intent: 'Integrate browser proof runner with screenshots/checklists/caveats and console errors, without claiming proof when unavailable.',
-  },
-  {
-    version: 'V5',
-    title: 'Auto Pick Next Safe Work',
-    status: 'planned_guarded',
-    intent: 'Inspect PR and goal candidates using mergeability, blockers, labels, and declared proof commands while unknown remains unknown.',
-  },
-  {
-    version: 'V6',
-    title: 'Operator Approval Surface',
-    status: 'planned_guarded',
-    intent: 'Provide one operator approve/reject UI action while exact-head approval remains bound to PR number and current head SHA.',
-  },
-  {
-    version: 'V7',
-    title: 'Post-Merge Sync and Reproof',
-    status: 'planned_guarded',
-    intent: 'After approved merge only, pull main, refresh Stephanos when required, verify backend freshness routes, and update operator surfaces.',
-  },
-  {
-    version: 'V8',
-    title: 'Multi-Goal Queue',
-    status: 'planned_guarded',
-    intent: 'Maintain one active proof lane across a safe queue of proofable goals and PRs unless isolation is explicit.',
-  },
 ];
 
 export function buildConciergeRoadmap(input = {}) {

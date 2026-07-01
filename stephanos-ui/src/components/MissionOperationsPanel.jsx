@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
 import { fetchMissionOperations } from '../state/missionOperationsClient';
+import { buildConciergeRoadmap } from '../../../shared/agents/battleBridgeBuildConciergeV2.mjs';
 import './MissionOperationsPanel.css';
 
 const REFRESH_INTERVAL_MS = 5000;
@@ -41,7 +42,7 @@ export function BuildConciergeSurface({ concierge = {} }) {
   const exactHeadApproval = concierge.exactHeadApproval || {};
   const proofCommands = Array.isArray(candidate.proofCommands) ? candidate.proofCommands : [];
   const blockers = Array.isArray(concierge.blockers) ? concierge.blockers : [];
-  const roadmap = concierge.roadmap || {};
+  const roadmap = concierge.roadmap || buildConciergeRoadmap();
   const roadmapPhases = Array.isArray(roadmap.phases) ? roadmap.phases : [];
   return (
     <section className="mission-operations-build-concierge" aria-label="Build Concierge panel" data-testid="build-concierge-panel">

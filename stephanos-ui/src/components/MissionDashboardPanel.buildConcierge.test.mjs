@@ -24,7 +24,7 @@ test('Goal Dashboard renders Build Concierge status and next-action rail', async
         nextOperatorAction: 'Clean or stash intentionally first.',
       },
     }));
-    for (const value of ['Build Concierge Status / Next-Action Rail', 'Concierge rail candidate', 'blocked_or_unknown', 'dirty', 'Clean or stash intentionally first.']) {
+    for (const value of ['Build Concierge Status / Next-Action Rail', 'Concierge rail candidate', 'blocked_or_unknown', 'dirty', 'Clean or stash intentionally first.', 'V4', 'Browser Proof Capture', 'V5', 'Auto Pick Next Safe Work', 'V6', 'Operator Approval Surface', 'V7', 'Post-Merge Sync and Reproof', 'V8', 'Multi-Goal Queue', 'planned_guarded']) {
       assert.equal(markup.includes(value), true, `missing rendered value: ${value}`);
     }
   } finally {

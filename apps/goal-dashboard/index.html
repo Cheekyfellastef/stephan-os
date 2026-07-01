@@ -473,13 +473,13 @@
       <section aria-labelledby="concierge-title" data-testid="goal-dashboard-build-concierge">
         <div class="section-title">
           <h2 id="concierge-title">Build Concierge</h2>
-          <span>V2 landed · V3 next · exact-head approval required</span>
+          <span>V2 landed · V3 implemented_guarded · V4–V8 planned_guarded · exact-head approval required</span>
         </div>
         <article class="concierge-card" aria-label="Build Concierge rail">
-          <span class="badge complete">V2 landed</span>
-          <h3>Battle Bridge Build Concierge V2 operator surfaces</h3>
+          <span class="badge complete">V2 landed · V4–V8 planned_guarded</span>
+          <h3>Battle Bridge Build Concierge V4–V8 source-owned roadmap specs</h3>
           <p class="subtitle">
-            Canonical V2 status from shared/agents/battleBridgeBuildConciergeV2.mjs: Project selected PR/goal, proof readiness, command plan, dirty-tree status, approval token state, proof packet summary, merge hold state, and next operator action into Mission Operations and Goal Dashboard.
+            Canonical roadmap status from shared/agents/battleBridgeBuildConciergeRoadmap.mjs: Project selected PR/goal, proof readiness, command plan, dirty-tree status, approval token state, proof packet summary, merge hold state, and next operator action into Mission Operations and Goal Dashboard.
           </p>
           <div class="concierge-grid" aria-label="Build Concierge truth fields">
             <div><span>V2 status</span>implemented / landed on operator surfaces</div>
@@ -493,9 +493,14 @@
           <ul class="concierge-roadmap" aria-label="Build Concierge canonical roadmap excerpt">
             <li><span>V2 Operator Surfaces</span>implemented: Goal Dashboard and Mission Operations show status, proof readiness, merge hold, and next action.</li>
             <li><span>V3 Local Proof Runner</span>implemented_guarded: Use an isolated proof worktree for a supplied PR, run allowlisted build/test commands, clean generated artifacts, and emit a canonical proof packet; unsafe contexts return truthful blockers.</li>
+            <li><span>V4 Browser Proof Capture</span>planned_guarded: integrate browser proof runner where available; capture checklist, screenshot path, console errors, and caveats; no browser proof claim when browser unavailable.</li>
+            <li><span>V5 Auto Pick Next Safe Work</span>planned_guarded: inspect PR/goal candidates and rank safe candidates by mergeability, blockers, labels, and declared proof commands; unknown stays unknown and no fake GitHub proof.</li>
+            <li><span>V6 Operator Approval Surface</span>planned_guarded: one approve/reject UI state, exact-head approval bound to PR plus current head SHA, and no merge from UI without approval token.</li>
+            <li><span>V7 Post-Merge Sync and Reproof</span>planned_guarded: after approved merge only, pull main, restart/refresh only if needed, prove backend freshness, update surfaces, no dirty-tree auto mutation, and no PC restart.</li>
+            <li><span>V8 Multi-Goal Queue</span>planned_guarded: safe queue of proofable goals/PRs, one active proof lane unless isolated, visible blockers/progress/next action.</li>
           </ul>
           <div class="concierge-warning">
-            Truth boundary: this standalone Goal Dashboard rail is static seeded visibility only. It does not wire live GitHub state, local command proof, browser proof, or approval-token validation; unknown remains unknown.
+            Truth boundary: this standalone Goal Dashboard rail is static seeded visibility only. It does not wire live GitHub state, local command proof, browser proof, auto-pick execution, approval-token validation, post-merge sync, or multi-goal automation; unknown remains unknown and V4–V8 remain planned_guarded until implemented.
           </div>
         </article>
       </section>

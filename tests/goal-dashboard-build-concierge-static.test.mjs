@@ -20,6 +20,13 @@ test('Goal Dashboard static page contains Build Concierge V2 truth rail', () => 
     'No fake proof',
     'Next operator action',
     'Review the V2 operator surfaces',
+    'shared/agents/battleBridgeBuildConciergeRoadmap.mjs',
+    'V4–V8 planned_guarded',
+    'V4 Browser Proof Capture',
+    'V5 Auto Pick Next Safe Work',
+    'V6 Operator Approval Surface',
+    'V7 Post-Merge Sync and Reproof',
+    'V8 Multi-Goal Queue',
   ]) {
     assert.equal(source.includes(expected), true, `missing static Build Concierge text: ${expected}`);
   }
@@ -28,7 +35,7 @@ test('Goal Dashboard static page contains Build Concierge V2 truth rail', () => 
 test('Goal Dashboard static page keeps Build Concierge live proof claims blocked', () => {
   for (const expected of [
     'GitHub proof, local proof, and browser proof are not claimed from this static page.',
-    'It does not wire live GitHub state, local command proof, browser proof, or approval-token validation; unknown remains unknown.',
+    'It does not wire live GitHub state, local command proof, browser proof, auto-pick execution, approval-token validation, post-merge sync, or multi-goal automation; unknown remains unknown and V4–V8 remain planned_guarded until implemented.',
     'static seeded visibility only',
   ]) {
     assert.equal(source.includes(expected), true, `missing honest static proof boundary: ${expected}`);
