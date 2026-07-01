@@ -194,9 +194,35 @@ test('launcher-root splash uses detailed ignition stage model', async () => {
   assert.match(script, /aria-label="Detailed ignition stages"/m, 'splash HTML must render detailed stages as primary browser UI');
 });
 
+
+test('launcher-root child ignition blockers are surfaced to all evidence artifacts without waiting for generic runtime timeout', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\$ignitionSupportSnapshotPath = Join-Path \$ignitionProofRoot 'support-snapshot\.json'/m, 'support snapshot artifact must be explicit');
+  assert.match(script, /\$ignitionProofTranscriptPath = Join-Path \$ignitionProofRoot 'ignition-proof-transcript\.jsonl'/m, 'proof transcript artifact must be explicit');
+  assert.match(script, /\$payload \| ConvertTo-Json -Depth 8 \| Set-Content -LiteralPath \$ignitionStatusPath -Encoding UTF8[\s\S]*?\$payload \| ConvertTo-Json -Depth 8 \| Set-Content -LiteralPath \$ignitionSupportSnapshotPath -Encoding UTF8[\s\S]*?Write-IgnitionProofTranscript -Payload \$payload[\s\S]*?Update-IgnitionStatusHtml -Payload \$payload/m, 'launcher status, support snapshot, transcript, and splash HTML must share the same blocker payload');
+  assert.match(script, /Get-ChildIgnitionBlocker -ChildProcessInfo \$ChildProcessInfo -ParentDiagnostic \$parentDiagnostic[\s\S]*?Write-IgnitionStatus -Phase 'blocked'[\s\S]*?childBlocker = \$childBlocker[\s\S]*?parentRuntimeTimeoutDiagnostic = \$parentDiagnostic[\s\S]*?throw \$message/m, 'runtime-status polling must fail immediately with the child blocker and keep parent timeout diagnostic context');
+  assert.match(script, /Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url \$launcherRuntimeStatusUrl -ChildProcessInfo \$launcherRootProcessInfo/m, 'launcher-root runtime-status wait must observe the child ignition process');
+});
+
+test('launcher-root parses missing-upstream and structured child blocker packets from redirected logs', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  for (const packet of [
+    'source-update-status',
+    'repair-packet',
+    'source-merge-repair-packet',
+    'openclaw-recovery-packet',
+    'recovery-packet',
+  ]) {
+    assert.match(script, new RegExp(`'${packet}'`), `child blocker parser must include ${packet}`);
+  }
+  assert.match(script, /reason=missing-upstream[\s\S]*?Current branch has no upstream tracking branch[\s\S]*?nextSafeAction=\(\.\+\)/m, 'missing-upstream text must be elevated into a structured child blocker');
+  assert.match(script, /Configure an upstream tracking branch before ignition updates source or rebuilds dist\./m, 'missing-upstream safety action must not be weakened or bypassed');
+  assert.doesNotMatch(script, /--set-upstream|git branch --set-upstream|git push -u|force 4173|npm run stephanos:serve/m, 'launcher must not bypass upstream/source-update safety or force direct 4173 startup');
+});
+
 test('ignition status preserves destination paths, blocker actions, and non-primary PowerShell wall truth', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\) \}/m, 'status payload must record status, splash, and log destinations');
+  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; supportSnapshotPath = \$ignitionSupportSnapshotPath; proofTranscriptPath = \$ignitionProofTranscriptPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\) \}/m, 'status payload must record status, splash, and log destinations');
   assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
   assert.match(script, /currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker/m, 'blocked status must preserve next operator action with blocker state');
   assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');

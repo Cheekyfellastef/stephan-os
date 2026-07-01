@@ -46,6 +46,8 @@ $visiblePowerShellRequired = $false
 $ignitionProofRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof'
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
+$ignitionSupportSnapshotPath = Join-Path $ignitionProofRoot 'support-snapshot.json'
+$ignitionProofTranscriptPath = Join-Path $ignitionProofRoot 'ignition-proof-transcript.jsonl'
 
 $ignitionStageModel = @(
   [ordered]@{ id = 'finding-repo'; label = 'Finding repo'; detail = 'Resolve the exact Stephanos PR worktree before any process startup.' },
@@ -79,6 +81,57 @@ function Get-IgnitionStageSnapshot([string]$CurrentStageId) {
   })
 }
 
+function Write-IgnitionProofTranscript([object]$Payload) {
+  Initialize-IgnitionProofWorkspace
+  $record = [ordered]@{
+    recordedAt = (Get-Date).ToUniversalTime().ToString('o')
+    type = 'launcher-status'
+    payload = $Payload
+  }
+  ($record | ConvertTo-Json -Depth 10 -Compress) | Add-Content -LiteralPath $ignitionProofTranscriptPath -Encoding UTF8
+}
+
+function Update-IgnitionStatusHtml([object]$Payload) {
+  Initialize-IgnitionProofWorkspace
+  $statusPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionStatusPath)
+  $supportSnapshotPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionSupportSnapshotPath)
+  $proofTranscriptPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionProofTranscriptPath)
+  $logRootHtml = [System.Net.WebUtility]::HtmlEncode((Join-Path $ignitionProofRoot 'logs'))
+  $phaseHtml = [System.Net.WebUtility]::HtmlEncode([string]$Payload.phase)
+  $messageHtml = [System.Net.WebUtility]::HtmlEncode([string]$Payload.message)
+  $blockerText = if ($Payload.ContainsKey('blocker')) { [string]$Payload.blocker } elseif ($Payload.ContainsKey('childBlocker') -and $Payload.childBlocker.reason) { [string]$Payload.childBlocker.reason } else { 'No blocker reported yet.' }
+  $blockerHtml = [System.Net.WebUtility]::HtmlEncode($blockerText)
+  $nextActionHtml = [System.Net.WebUtility]::HtmlEncode([string]$Payload.nextOperatorAction)
+  $html = @"
+<!doctype html>
+<meta charset="utf-8">
+<title>Stephanos Ignition Status</title>
+<style>body{margin:0;background:#07111f;color:#e7f2ff;font-family:Segoe UI,Arial,sans-serif}main{max-width:960px;margin:6vh auto;padding:32px;border:1px solid #1e4f7a;border-radius:18px;background:#0b1728}h1{margin-top:0}.pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#0e7a4f;color:#d8fff0;font-weight:700}.muted{color:#a7bdd4}code{background:#111f33;padding:2px 6px;border-radius:6px}.stage-grid{display:grid;gap:10px;margin:22px 0}.stage{padding:12px 14px;border:1px solid #254766;border-radius:12px;background:#0f2036}.stage strong{display:block;color:#f5fbff}.blocker{border:1px solid #7a3b1e;border-radius:12px;padding:12px 14px;background:#2b160f;color:#ffd9c8}</style>
+<main>
+  <span class="pill">$phaseHtml</span>
+  <h1>Stephanos ignition status</h1>
+  <p>$messageHtml</p>
+  <p class="muted">Verbose PowerShell output is bounded to logs, not shown as the primary interface.</p>
+  <section aria-label="Detailed ignition stages" class="stage-grid">
+    <div class="stage"><strong>Finding repo</strong><span>Resolve the exact Stephanos PR worktree.</span></div>
+    <div class="stage"><strong>Checking workspace dirt</strong><span>Inspect local workspace state through canonical ignition.</span></div>
+    <div class="stage"><strong>Classifying safe vs unsafe dirt</strong><span>Separate generated/runtime cleanup from source divergence.</span></div>
+    <div class="stage"><strong>Cleaning generated/runtime stoppers</strong><span>Clean only approved generated/runtime paths; never reset source.</span></div>
+    <div class="stage"><strong>Checking dependencies</strong><span>Verify prerequisites before claiming readiness.</span></div>
+    <div class="stage"><strong>Checking ports and existing runtime</strong><span>Reuse only truth-verified runtime processes.</span></div>
+    <div class="stage"><strong>Starting local services</strong><span>Start minimized/background PowerShell processes with bounded logs.</span></div>
+    <div class="stage"><strong>Opening Command Deck</strong><span>Open browser surfaces after health proof.</span></div>
+  </section>
+  <section class="blocker" aria-label="Blocker and operator action"><strong>Blocker:</strong> $blockerHtml<br><strong>Next action:</strong> $nextActionHtml</section>
+  <p>Status: <code>$statusPathHtml</code></p>
+  <p>Support snapshot: <code>$supportSnapshotPathHtml</code></p>
+  <p>Proof transcript: <code>$proofTranscriptPathHtml</code></p>
+  <p>Logs: <code>$logRootHtml</code></p>
+</main>
+"@
+  $html | Set-Content -LiteralPath $ignitionSplashPath -Encoding UTF8
+}
+
 function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extra = @{}) {
   Initialize-IgnitionProofWorkspace
   $currentStage = if ($Extra.ContainsKey('currentStage')) { $Extra.currentStage } else { $Phase }
@@ -94,42 +147,17 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
     nextOperatorAction = if ($Extra.ContainsKey('nextOperatorAction')) { $Extra.nextOperatorAction } else { 'Watch the Stephanos ignition splash/status screen.' }
     currentStage = $currentStage
     ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $currentStage
-    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs') }
+    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; supportSnapshotPath = $ignitionSupportSnapshotPath; proofTranscriptPath = $ignitionProofTranscriptPath; logRoot = (Join-Path $ignitionProofRoot 'logs') }
   }
   foreach ($key in $Extra.Keys) { $payload[$key] = $Extra[$key] }
   $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
+  $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ignitionSupportSnapshotPath -Encoding UTF8
+  Write-IgnitionProofTranscript -Payload $payload
+  Update-IgnitionStatusHtml -Payload $payload
 }
 
 function New-IgnitionSplashScreen {
   Initialize-IgnitionProofWorkspace
-  $statusPathHtml = [System.Net.WebUtility]::HtmlEncode($ignitionStatusPath)
-  $logRootHtml = [System.Net.WebUtility]::HtmlEncode((Join-Path $ignitionProofRoot 'logs'))
-  $html = @"
-<!doctype html>
-<meta charset="utf-8">
-<title>Stephanos Ignition Status</title>
-<style>body{margin:0;background:#07111f;color:#e7f2ff;font-family:Segoe UI,Arial,sans-serif}main{max-width:960px;margin:6vh auto;padding:32px;border:1px solid #1e4f7a;border-radius:18px;background:#0b1728}h1{margin-top:0}.pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#0e7a4f;color:#d8fff0;font-weight:700}.muted{color:#a7bdd4}code{background:#111f33;padding:2px 6px;border-radius:6px}.stage-grid{display:grid;gap:10px;margin:22px 0}.stage{padding:12px 14px;border:1px solid #254766;border-radius:12px;background:#0f2036}.stage strong{display:block;color:#f5fbff}.blocker{border-color:#7a3b1e;background:#2b160f;color:#ffd9c8}</style>
-<main>
-  <span class="pill">IGNITION ACTIVE</span>
-  <h1>Stephanos is starting</h1>
-  <p>The ignition button selected the splash/status screen as the operator-facing UI.</p>
-  <p class="muted">Verbose PowerShell output is bounded to logs, not shown as the primary interface.</p>
-  <section aria-label="Detailed ignition stages" class="stage-grid">
-    <div class="stage"><strong>Finding repo</strong><span>Resolve the exact Stephanos PR worktree.</span></div>
-    <div class="stage"><strong>Checking workspace dirt</strong><span>Inspect local workspace state through canonical ignition.</span></div>
-    <div class="stage"><strong>Classifying safe vs unsafe dirt</strong><span>Separate generated/runtime cleanup from source divergence.</span></div>
-    <div class="stage"><strong>Cleaning generated/runtime stoppers</strong><span>Clean only approved generated/runtime paths; never reset source.</span></div>
-    <div class="stage"><strong>Checking dependencies</strong><span>Verify prerequisites before claiming readiness.</span></div>
-    <div class="stage"><strong>Checking ports and existing runtime</strong><span>Reuse only truth-verified runtime processes.</span></div>
-    <div class="stage"><strong>Starting local services</strong><span>Start minimized/background PowerShell processes with bounded logs.</span></div>
-    <div class="stage"><strong>Opening Command Deck</strong><span>Open browser surfaces after health proof.</span></div>
-  </section>
-  <section class="blocker" aria-label="Blocker and operator action">If blocked, status records the exact blocker plus the next operator action.</section>
-  <p>Status: <code>$statusPathHtml</code></p>
-  <p>Logs: <code>$logRootHtml</code></p>
-</main>
-"@
-  $html | Set-Content -LiteralPath $ignitionSplashPath -Encoding UTF8
   Write-IgnitionStatus -Phase 'splash-shown' -Message 'Stephanos ignition splash/status screen is the primary UI.' -Extra @{ currentStage = 'finding-repo' }
   return $ignitionSplashPath
 }
@@ -162,11 +190,60 @@ function Start-DevWindow([string]$Title, [string]$Command) {
   $stderrLog = Join-Path $ignitionProofRoot ("logs/{0}.stderr.log" -f $safeLogName)
   $psCommand = "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'; Set-Location '$escapedRepoRoot'; & $escapedCommand"
   Write-IgnitionStatus -Phase 'starting-process' -Message "Starting $Title in minimized/background PowerShell with bounded log capture." -Extra @{ processTitle = $Title; stdoutLog = $stdoutLog; stderrLog = $stderrLog }
-  Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
+  $process = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-Command', $psCommand
-  ) | Out-Null
+  )
+  return [ordered]@{ Title = $Title; Process = $process; StdoutLog = $stdoutLog; StderrLog = $stderrLog; Command = $Command }
+}
+
+function Convert-StructuredChildBlocker([string]$Text, [string]$SourcePath) {
+  if (-not $Text) { return $null }
+  $packetNames = @('source-update-status', 'repair-packet', 'source-merge-repair-packet', 'openclaw-recovery-packet', 'recovery-packet')
+  foreach ($packetName in $packetNames) {
+    $pattern = [regex]::Escape($packetName) + '\s*=\s*(\{.*\})'
+    $match = [regex]::Match($Text, $pattern)
+    if ($match.Success) {
+      try {
+        $packet = $match.Groups[1].Value | ConvertFrom-Json -ErrorAction Stop
+        $reason = if ($packet.reason) { [string]$packet.reason } elseif ($packet.ignitionStatus -eq 'BLOCKED') { $packetName } else { $null }
+        if ($reason) {
+          $next = if ($packet.nextSafeAction) { [string]$packet.nextSafeAction } elseif ($packet.recommendedRestartAction) { [string]$packet.recommendedRestartAction } elseif ($packet.nextOperatorAction) { [string]$packet.nextOperatorAction } else { 'Resolve the child ignition blocker before retrying.' }
+          return [ordered]@{ source = $SourcePath; packetType = $packetName; reason = $reason; nextSafeAction = $next; packet = $packet }
+        }
+      } catch {}
+    }
+  }
+  if ($Text -match 'reason=missing-upstream' -or $Text -match 'Current branch has no upstream tracking branch') {
+    $next = 'Configure an upstream tracking branch before ignition updates source or rebuilds dist.'
+    $nextMatch = [regex]::Match($Text, 'nextSafeAction=(.+)')
+    if ($nextMatch.Success) { $next = $nextMatch.Groups[1].Value.Trim() }
+    return [ordered]@{ source = $SourcePath; packetType = 'missing-upstream-text'; reason = 'missing-upstream'; nextSafeAction = $next; excerpt = ($Text.Trim() -replace "`r?`n", ' | ') }
+  }
+  return $null
+}
+
+function Get-ChildIgnitionBlocker([object]$ChildProcessInfo, [string]$ParentDiagnostic) {
+  if (-not $ChildProcessInfo) { return $null }
+  foreach ($logPath in @($ChildProcessInfo.StdoutLog, $ChildProcessInfo.StderrLog)) {
+    if ($logPath -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+      $text = ((Get-Content -LiteralPath $logPath -Tail 80 -ErrorAction SilentlyContinue) -join "`n")
+      $blocker = Convert-StructuredChildBlocker -Text $text -SourcePath $logPath
+      if ($blocker) {
+        $blocker.parentRuntimeTimeoutDiagnostic = $ParentDiagnostic
+        return $blocker
+      }
+    }
+  }
+  $process = $ChildProcessInfo.Process
+  if ($process) {
+    try { $process.Refresh() } catch {}
+    if ($process.HasExited) {
+      return [ordered]@{ source = 'child-process-exit'; packetType = 'child-process-exit'; reason = 'child-ignition-exited-before-runtime-ready'; exitCode = $process.ExitCode; nextSafeAction = 'Review child ignition logs and resolve the blocker before retrying.'; parentRuntimeTimeoutDiagnostic = $ParentDiagnostic }
+    }
+  }
+  return $null
 }
 
 function Test-UrlReachable([string]$Url) {
@@ -193,16 +270,23 @@ function Test-CommandSucceeds([string]$Command) {
   }
 }
 
-function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120) {
+function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120, [object]$ChildProcessInfo = $null) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $parentDiagnostic = "Timed out waiting for $StepLabel at $Url"
   while ((Get-Date) -lt $deadline) {
+    $childBlocker = Get-ChildIgnitionBlocker -ChildProcessInfo $ChildProcessInfo -ParentDiagnostic $parentDiagnostic
+    if ($childBlocker) {
+      $message = "Child ignition blocked before $StepLabel was ready: $($childBlocker.reason)"
+      Write-IgnitionStatus -Phase 'blocked' -Message $message -Extra @{ currentStage = 'blocked'; nextOperatorAction = $childBlocker.nextSafeAction; blocker = $childBlocker.reason; childBlocker = $childBlocker; parentRuntimeTimeoutDiagnostic = $parentDiagnostic }
+      throw $message
+    }
     if (Test-UrlReachable -Url $Url) {
       return
     }
     Start-Sleep -Seconds 1
   }
 
-  throw "Timed out waiting for $StepLabel at $Url"
+  throw $parentDiagnostic
 }
 
 function Ensure-ProcessRunning(
@@ -236,8 +320,9 @@ function Ensure-ProcessRunning(
     }
   }
 
-  Start-DevWindow -Title $WindowTitle -Command $Command
+  $childProcessInfo = Start-DevWindow -Title $WindowTitle -Command $Command
   Write-LiveLog "$StepLabel process started (command=$Command)"
+  return $childProcessInfo
 }
 
 function Stop-ProcessOnTcpPort([int]$Port) {
@@ -383,11 +468,11 @@ try {
 
   Write-IgnitionStatus -Phase 'starting-local-services' -Message 'Starting local services with minimized/background PowerShell log capture.' -Extra @{ currentStage = 'starting-local-services' }
 
-  Ensure-ProcessRunning -StepLabel 'backend' -HealthUrl $backendHealthUrl -WindowTitle 'Stephanos Backend' -Command 'npm --prefix stephanos-server run dev'
+  $backendProcessInfo = Ensure-ProcessRunning -StepLabel 'backend' -HealthUrl $backendHealthUrl -WindowTitle 'Stephanos Backend' -Command 'npm --prefix stephanos-server run dev'
 
   if ($Mode -eq 'vite-dev') {
     Write-LiveLog 'starting vite-dev UI server'
-    Ensure-ProcessRunning -StepLabel 'vite-dev ui' -HealthUrl $viteDevUrl -WindowTitle 'Stephanos Vite Dev' -Command 'npm --prefix stephanos-ui run dev'
+    $viteDevProcessInfo = Ensure-ProcessRunning -StepLabel 'vite-dev ui' -HealthUrl $viteDevUrl -WindowTitle 'Stephanos Vite Dev' -Command 'npm --prefix stephanos-ui run dev'
   }
   else {
     Write-LiveLog 'launcher-root selected; ensuring port 5173 is not used by vite-dev'
@@ -400,7 +485,7 @@ try {
     }
 
     Write-LiveLog "starting launcher-root UI server (command=$launcherRootCommand)"
-    Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherRuntimeStatusUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand -ReuseProbeCommand $launcherRootReuseProbeCommand
+    $launcherRootProcessInfo = Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherRuntimeStatusUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand -ReuseProbeCommand $launcherRootReuseProbeCommand
   }
 
   Write-LiveLog 'waiting for backend'
@@ -412,7 +497,7 @@ try {
   }
   else {
     Write-LiveLog "waiting for launcher-root runtime-status endpoint at $launcherRuntimeStatusUrl"
-    Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url $launcherRuntimeStatusUrl
+    Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url $launcherRuntimeStatusUrl -ChildProcessInfo $launcherRootProcessInfo
 
     Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl"
     Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
