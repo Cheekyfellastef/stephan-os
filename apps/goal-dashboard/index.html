@@ -18,6 +18,7 @@
         --good: #86efac;
         --warn: #fde68a;
         --unknown: #c4b5fd;
+        --bad: #fca5a5;
       }
 
       * {
@@ -52,7 +53,8 @@
       .eyebrow,
       .source-pill,
       .badge,
-      .actor-chip {
+      .actor-chip,
+      .proof-chip {
         letter-spacing: 0.08em;
         text-transform: uppercase;
         font-size: 0.72rem;
@@ -296,6 +298,41 @@
         border-color: rgba(253, 230, 138, 0.45);
       }
 
+      .platform-proof {
+        display: grid;
+        gap: 8px;
+        margin: 12px 0;
+      }
+
+      .proof-chip {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 8px 10px;
+        color: var(--muted);
+        font-weight: 760;
+        letter-spacing: 0;
+        text-transform: none;
+        font-size: 0.78rem;
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .proof-chip strong {
+        color: var(--text);
+        text-align: right;
+      }
+
+      .proof-chip.blocked strong,
+      .proof-chip.hold strong {
+        color: var(--bad);
+      }
+
+      .proof-chip.ready strong {
+        color: var(--good);
+      }
+
       .next-action {
         margin: 0;
         color: var(--text);
@@ -342,13 +379,12 @@
         <div class="eyebrow">GOAL_DASHBOARD_LANDING_TILE</div>
         <h1>Goal Dashboard</h1>
         <p class="subtitle">
-          Seeded cockpit panel for active Stephanos goals. This first tile is source-controlled static data only:
-          unknown proof stays unknown, live GitHub and automation state are not claimed until wired and proven.
+          Seeded cockpit panel for active Stephanos goals. Platform status and proof flow now consume the shared Battle Bridge supervisor, Codex dispatch queue, and automated dispatcher contracts without claiming live external proof.
         </p>
         <div class="source-row" aria-label="data source status">
           <div class="source-pill">Goal data<strong>Seeded / source-controlled</strong></div>
           <div class="source-pill">GitHub state<strong>Not live in browser</strong></div>
-          <div class="source-pill">Automation state<strong>Not live in browser</strong></div>
+          <div class="source-pill">Automation state<strong>Shared contracts wired</strong></div>
           <div class="source-pill">Proof state<strong>Explicit or unknown</strong></div>
         </div>
       </header>
@@ -393,12 +429,13 @@
       <section>
         <div class="guardrail">
           <strong>Safety boundary:</strong> this tile does not claim live GitHub, automation, Windows, browser, or WhatsApp proof.
-          Live wiring must be added through a bounded adapter and proved before the labels change.
+          Platform status wiring is source-controlled and deterministic; live GitHub, Windows, and browser proof remain unclaimed until external receipts exist.
         </div>
       </section>
     </main>
 
-    <script>
+    <script type="module">
+      import { buildPlatformStatusProofFlow } from '/shared/agents/platformStatusProofFlow.mjs';
       const proofSteps = [
         'goal created',
         'automation active',
@@ -458,8 +495,61 @@
           operatorNeeded: 'Proof only',
           proofIndex: 4,
           nextAction: 'Launch the Stephanos UI locally and capture DOM/browser proof that Goal Dashboard appears beside existing tiles.'
+        },
+        {
+          issue: '#1291',
+          title: 'Battle Bridge platform status hard-build slice',
+          status: 'Active',
+          currentOwner: 'Codex',
+          nextOwner: 'Operator',
+          handoffState: 'shared supervisor + dispatch contracts -> draft PR proof',
+          milestone: 'MILESTONE_PLATFORM_STATUS_PROOF_FLOW_WIRED',
+          operatorNeeded: 'Exact-head approval later',
+          proofIndex: 3,
+          nextAction: 'Show supervisor verdict, dispatch readiness, manual dispatch blocker, and exact-head hold without recreating merged modules.'
+        },
+        {
+          issue: '#1371',
+          title: 'Active-goal Codex dispatch readiness',
+          status: 'Active',
+          currentOwner: 'Codex',
+          nextOwner: 'Operator',
+          handoffState: 'queue/dispatcher readiness -> manual dispatch receipt until direct integration exists',
+          milestone: 'MILESTONE_CODEX_DISPATCH_STATUS_VISIBLE',
+          operatorNeeded: 'Manual dispatch if direct Codex unavailable',
+          proofIndex: 3,
+          nextAction: 'Keep missing integration blocker explicit and hold merge until exact-head approval is recorded.'
         }
       ];
+
+
+      const platformStatusProofFlow = buildPlatformStatusProofFlow({
+        now: '2026-07-01T00:00:00Z',
+        supervisorProbes: [
+          'backend',
+          'openclaw-gateway',
+          'stephanos-ui',
+          'mission-orchestrator-worker',
+          'shared-agent-workspace'
+        ].map((serviceId) => ({ serviceId, status: 'UNKNOWN', checkedAtUtc: 'pending', summary: `${serviceId} proof pending` })),
+        codexIntegration: { capabilities: { returnDispatchReceipt: true } },
+        goals: goals.filter((goal) => ['#1291', '#1371'].includes(goal.issue))
+      });
+      const platformProofByIssue = new Map(platformStatusProofFlow.activeGoals.map((goal) => [goal.issue, goal]));
+
+      function renderPlatformProof(goal) {
+        const proof = platformProofByIssue.get(goal.issue);
+        if (!proof) return '';
+        const blockerText = proof.missingIntegrationBlocker || 'none';
+        return `
+            <div class="platform-proof" aria-label="Platform status proof for ${goal.issue}">
+              <div class="proof-chip ${proof.supervisorStatus === 'READY' ? 'ready' : 'hold'}">Supervisor verdict <strong>${proof.supervisorVerdict}</strong></div>
+              <div class="proof-chip ${proof.manualDispatchRequired ? 'blocked' : 'ready'}">Codex dispatch readiness <strong>${proof.codexDispatchReadiness}</strong></div>
+              <div class="proof-chip ${proof.missingIntegrationBlocker ? 'blocked' : 'ready'}">Missing integration blocker <strong>${blockerText}</strong></div>
+              <div class="proof-chip ${proof.manualDispatchRequired ? 'blocked' : 'ready'}">Manual dispatch required <strong>${proof.manualDispatchRequired ? 'yes' : 'no'}</strong></div>
+              <div class="proof-chip ${proof.exactHeadMergeHold ? 'hold' : 'ready'}">Exact-head merge hold <strong>${proof.exactHeadMergeHold ? proof.mergeHoldReason : 'clear'}</strong></div>
+            </div>`;
+      }
 
       const actorOrder = ['Operator', 'ChatGPT', 'Codex', 'OpenClaw', 'Stephanos', 'Operator'];
       const grid = document.getElementById('goal-grid');
@@ -486,6 +576,7 @@
             <div class="actor-strip" aria-label="Actor interaction strip">
               ${actorOrder.map((actor) => `<span class="actor-chip ${actor === goal.currentOwner ? 'current' : ''}">${actor}</span>`).join('')}
             </div>
+            ${renderPlatformProof(goal)}
             <p class="next-action"><span>${goal.milestone}</span><br />${goal.nextAction}</p>
           </div>
         `;
