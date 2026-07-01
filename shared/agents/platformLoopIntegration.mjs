@@ -3,6 +3,7 @@ import { aggregateIgnitionStatusRoutes } from './ignitionConciergeStatusRouting.
 import { createCodexDispatchDecision } from './automatedCodexDispatcher.mjs';
 import { createCodexQueueItem, validateCodexQueueItem } from './codexDispatchQueue.mjs';
 import { createOperatorAutomationBatch } from './operatorAutomationLayer.mjs';
+import { evaluatePlatformStatusProofFlow } from './platformStatusProofFlow.mjs';
 import { createOpenClawFallbackRequest } from './openClawResilience.mjs';
 import { createStephanosCommandResponse } from './stephanosCommandResponse.mjs';
 import { createSharedWorkspaceMessage } from './sharedAgentWorkspace.mjs';
@@ -77,6 +78,10 @@ export function buildPlatformLoopIntegrationContract() {
       'verifierResult',
       'stephanosResponse',
       'sharedWorkspaceMessage',
+      'platformStatusProof',
+      'manualDispatchRequired',
+      'exactHeadMergeHold',
+      'liveProofClaims',
       'nextAction',
     ],
     finalVerdict: 'PLATFORM_LOOP_INTEGRATION_CONTRACT_READY',
@@ -129,6 +134,28 @@ export function createPlatformLoopSnapshot(input = {}) {
     reason: proofPassed ? '' : 'Platform loop integration proof is not complete.',
     proofRefs: ['proof/platform-loop-integration.json'],
   });
+  const platformStatusProof = evaluatePlatformStatusProofFlow({
+    claimId: input.platformProofClaimId || `${goalId}-platform-status-proof`,
+    status: input.platformProofStatus || 'requested',
+    surface: input.platformProofSurface || 'mission-operations',
+    summary: input.platformProofSummary || 'Canonical platform status proof must be visible without inventing live health.',
+    supportSnapshotRefs: input.supportSnapshotRefs || [],
+    uiRealityRefs: input.uiRealityRefs || [],
+    commandProofRefs: input.commandProofRefs || input.platformProofRefs || [],
+    collectedAt: input.platformProofCollectedAt || '',
+  });
+  const manualDispatchRequired = input.manualDispatchRequired === true || dispatcherDecision.decision === 'BLOCKED_BY_MISSING_INTEGRATION';
+  const exactHeadMergeHold = Object.freeze({
+    required: true,
+    state: 'HOLD_FOR_EXACT_HEAD_APPROVAL',
+    mergeAllowed: false,
+    summary: 'Merge remains held until operator approval names the exact PR head SHA.',
+  });
+  const liveProofClaims = Object.freeze({
+    github: 'not-live-in-browser',
+    windows: 'not-proven',
+    browser: platformStatusProof.claim.uiRealityRefs.length ? 'proof-ref-provided' : 'not-proven',
+  });
   const status = decidePlatformLoopStatus({ supervisor, ignition, queueValidation, dispatcherDecision, operatorBatch, proofPassed });
   const blocker = firstNonEmpty(
     supervisor.exactUnblockAction,
@@ -148,9 +175,12 @@ export function createPlatformLoopSnapshot(input = {}) {
     activeGoal: goalId,
     status,
     missionState: [
-      `Supervisor=${supervisor.finalVerdict}`,
-      `Ignition=${ignition.finalVerdict}`,
-      `Dispatcher=${dispatcherDecision.decision}`,
+      `Supervisor: ${supervisor.finalVerdict}`,
+      `Ignition: ${ignition.finalVerdict}`,
+      `Dispatcher: ${dispatcherDecision.decision}`,
+      `PlatformProof: ${platformStatusProof.status}`,
+      `ExactHeadMerge: ${exactHeadMergeHold.state}`,
+      `ManualDispatchRequired: ${manualDispatchRequired ? 'yes' : 'no'}`,
     ],
     proofState: [verifierResult.status],
     blockerState: status === PLATFORM_LOOP_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION ? [blocker || nextAction] : [],
@@ -188,6 +218,10 @@ export function createPlatformLoopSnapshot(input = {}) {
     verifierResult,
     stephanosResponse,
     sharedWorkspaceMessage,
+    platformStatusProof,
+    manualDispatchRequired,
+    exactHeadMergeHold,
+    liveProofClaims,
     nextAction,
     finalVerdict: status === PLATFORM_LOOP_STATUS.DONE ? 'PLATFORM_LOOP_INTEGRATION_PASS' : 'PLATFORM_LOOP_INTEGRATION_ACTIVE',
   };
