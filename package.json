@@ -48,7 +48,11 @@
     "stephanos:guard:pr-clean:local": "node scripts/guard-pr-clean.mjs --local",
     "stephanos:pr:prepare": "node scripts/guard-pr-clean.mjs --prepare",
     "stephanos:browser-proof": "node scripts/browser-proof-runner.mjs",
-    "stephanos:publish-merge": "node scripts/repository-native-publish-merge-lane.mjs"
+    "stephanos:publish-merge": "node scripts/repository-native-publish-merge-lane.mjs",
+    "stephanos:ignition-concierge": "node scripts/stephanos-ignition-concierge.mjs --approve-safe-autofix",
+    "stephanos:ignition-concierge:proof": "node scripts/stephanos-ignition-concierge.mjs --proof",
+    "stephanos:ignition-concierge:proof-runner": "node scripts/stephanos-ignition-proof-runner.mjs",
+    "stephanos:ignition-concierge:test": "node --test scripts/stephanos-ignition-concierge.test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
