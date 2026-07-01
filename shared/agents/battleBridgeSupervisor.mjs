@@ -1,3 +1,4 @@
+import { adjudicateBackendFreshnessProof } from './backendFreshnessSupervisor.mjs';
 export const BATTLE_BRIDGE_SUPERVISOR_SCHEMA_VERSION = 'battle-bridge-supervisor.v1';
 
 export const BATTLE_BRIDGE_SERVICE_IDS = Object.freeze([
@@ -201,4 +202,19 @@ export function createBattleBridgeGitPullHelper(input = {}) {
     sharedWorkspaceEventKind: safeToPull ? 'operator-action-required' : 'update-status-only',
     finalVerdict: safeToPull ? 'BATTLE_BRIDGE_GIT_PULL_HELPER_READY' : 'BATTLE_BRIDGE_GIT_PULL_HELPER_BLOCKED',
   };
+}
+
+
+export function createBackendFreshnessReuseProbe(input = {}) {
+  const proof = adjudicateBackendFreshnessProof(input);
+  return createBattleBridgeProbe({
+    serviceId: 'backend',
+    status: proof.backendCurrent ? BATTLE_BRIDGE_PROBE_STATUS.PASS : BATTLE_BRIDGE_PROBE_STATUS.FAIL,
+    port: BATTLE_BRIDGE_SERVICE_PORTS.backend,
+    checkedAtUtc: input.checkedAtUtc,
+    summary: proof.backendCurrent
+      ? 'Backend 8787 verified current with /api/health and /api/mission-operations.'
+      : `${proof.finalVerdict}: backend reuse blocked until route freshness is restored.`,
+    detail: proof.backendCurrent ? 'BACKEND_CURRENT' : proof.finalVerdict,
+  });
 }

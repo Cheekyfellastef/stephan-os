@@ -35,6 +35,7 @@ function Resolve-LauncherRepositoryRoot([string]$RequestedRoot) {
 
 $repoRoot = Resolve-LauncherRepositoryRoot -RequestedRoot $RepositoryRoot
 $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
+$backendMissionOperationsUrl = 'http://127.0.0.1:8787/api/mission-operations'
 $launcherShellUrl = 'http://127.0.0.1:4173/'
 $launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
 $launcherRuntimeStatusUrl = 'http://127.0.0.1:4173/apps/stephanos/runtime-status.json'
@@ -295,6 +296,19 @@ function Test-UrlReachable([string]$Url) {
   }
 }
 
+function Test-BackendFreshness {
+  $healthPass = Test-UrlReachable -Url $backendHealthUrl
+  $missionPass = Test-UrlReachable -Url $backendMissionOperationsUrl
+  $verdict = if ($healthPass -and $missionPass) { 'BACKEND_CURRENT' } elseif ($healthPass -and -not $missionPass) { 'BACKEND_STALE_ROUTE_MISSING' } else { 'BACKEND_STALE_RESTART_REQUIRED' }
+  return [ordered]@{
+    healthPass = $healthPass
+    missionOperationsPass = $missionPass
+    finalVerdict = $verdict
+    backendCurrent = ($verdict -eq 'BACKEND_CURRENT')
+    exactOperatorAction = if ($verdict -eq 'BACKEND_CURRENT') { '' } else { 'Stop only the allowlisted Stephanos backend process, then start it with: npm --prefix stephanos-server run dev' }
+  }
+}
+
 
 function Test-CommandSucceeds([string]$Command) {
   try {
@@ -338,7 +352,24 @@ function Ensure-ProcessRunning(
 ) {
   Write-LiveLog "starting $StepLabel"
   if (Test-UrlReachable -Url $HealthUrl) {
-    if ($ReuseProbeCommand) {
+    if ($StepLabel -eq 'backend') {
+      $backendFreshness = Test-BackendFreshness
+      if (-not $backendFreshness.backendCurrent) {
+        Write-LiveLog "$StepLabel health is up but route freshness failed: $($backendFreshness.finalVerdict)"
+        $stopped = Stop-AllowlistedStephanosBackendOnPort -Port 8787
+        if ($stopped.Count -gt 0) {
+          Write-LiveLog "stopped stale allowlisted Stephanos backend process ids on 8787: $([string]::Join(',', $stopped))"
+        }
+        else {
+          throw "$($backendFreshness.finalVerdict): $($backendFreshness.exactOperatorAction)"
+        }
+      }
+      else {
+        Write-LiveLog "$StepLabel already responding with current route freshness; reusing existing process"
+        return
+      }
+    }
+    elseif ($ReuseProbeCommand) {
       Write-LiveLog "$StepLabel health is up; validating served build truth before reuse"
       if (Test-CommandSucceeds -Command $ReuseProbeCommand) {
         Write-LiveLog "$StepLabel already responding with current build truth; reusing existing process"
@@ -362,6 +393,30 @@ function Ensure-ProcessRunning(
 
   Start-DevWindow -Title $WindowTitle -Command $Command
   Write-LiveLog "$StepLabel process started (command=$Command)"
+}
+
+function Stop-AllowlistedStephanosBackendOnPort([int]$Port) {
+  $connections = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+  if (-not $connections) { return @() }
+  $processIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+  $stopped = @()
+  foreach ($processId in $processIds) {
+    try {
+      $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
+      $commandLine = if ($process.CommandLine) { [string]$process.CommandLine } else { '' }
+      if ($commandLine -match 'npm(\.cmd)?(\s|.*)--prefix\s+stephanos-server\s+run\s+dev' -or $commandLine -match 'stephanos-server.*run\s+dev') {
+        Stop-Process -Id $processId -Force -ErrorAction Stop
+        $stopped += $processId
+      }
+      else {
+        Write-LiveLog "refusing to stop non-allowlisted process on backend port $Port (pid=$processId)"
+      }
+    }
+    catch {
+      Write-LiveLog "failed to verify/stop backend process on port $Port (pid=$processId): $($_.Exception.Message)"
+    }
+  }
+  return $stopped
 }
 
 function Stop-ProcessOnTcpPort([int]$Port) {
@@ -557,7 +612,8 @@ try {
   }
 
   Write-LiveLog 'waiting for backend'
-  Wait-ForUrl -StepLabel 'backend' -Url $backendHealthUrl
+  Wait-ForUrl -StepLabel 'backend health' -Url $backendHealthUrl
+  Wait-ForUrl -StepLabel 'backend mission operations freshness route' -Url $backendMissionOperationsUrl
 
   if ($Mode -eq 'vite-dev') {
     Write-LiveLog "waiting for vite-dev runtime at $viteDevUrl"

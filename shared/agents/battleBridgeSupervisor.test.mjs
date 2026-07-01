@@ -9,6 +9,7 @@ import {
   buildBattleBridgeSupervisorContract,
   createBattleBridgeProbe,
   createMissionWorkerSelfHealPlan,
+  createBackendFreshnessReuseProbe,
 } from './battleBridgeSupervisor.mjs';
 
 test('supervisor contract exposes required Battle Bridge services and guardrails', () => {
@@ -106,4 +107,18 @@ test('aggregate blocks when a service failed or a required service is missing', 
   assert.equal(aggregate.missingServiceIds.includes('stephanos-ui'), true);
   assert.equal(aggregate.missingServiceIds.includes('shared-agent-workspace'), true);
   assert.equal(aggregate.finalVerdict, 'BATTLE_BRIDGE_SUPERVISOR_BLOCKED');
+});
+
+
+test('backend reuse probe consumes freshness supervisor and blocks missing mission operations route', () => {
+  const probe = createBackendFreshnessReuseProbe({
+    routeProofs: [
+      { route: '/api/health', status: 200 },
+      { route: '/api/mission-operations', status: 404 },
+    ],
+  });
+
+  assert.equal(probe.status, BATTLE_BRIDGE_PROBE_STATUS.FAIL);
+  assert.match(probe.summary, /BACKEND_STALE_ROUTE_MISSING/);
+  assert.equal(probe.detail, 'BACKEND_STALE_ROUTE_MISSING');
 });
