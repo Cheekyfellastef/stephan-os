@@ -108,3 +108,71 @@ test('snapshot wires queue, dispatcher, OpenClaw, Stephanos response, and worksp
   assert.equal(snapshot.stephanosResponse.generic, false);
   assert.equal(snapshot.sharedWorkspaceMessage.eventKind, 'status');
 });
+
+test('snapshot consumes canonical platform status proof flow without live proof invention', () => {
+  const snapshot = createPlatformLoopSnapshot({
+    goalId: '#1383',
+    serviceProbes: servicePass,
+    ignitionRoutes: ignitionReady,
+    proofPassed: false,
+  });
+
+  assert.equal(snapshot.platformStatusProof.kind, 'stephanos.platform_status_proof_flow.evaluation');
+  assert.equal(snapshot.platformStatusProof.status, 'blocked');
+  assert.equal(snapshot.platformStatusProof.blockers.includes('MISSING_UI_REALITY_PROOF'), true);
+  assert.equal(snapshot.platformStatusProof.blockers.includes('MISSING_COMMAND_PROOF'), true);
+  assert.equal(snapshot.liveProofClaims.github, 'not-live-in-browser');
+  assert.equal(snapshot.liveProofClaims.windows, 'not-proven');
+  assert.equal(snapshot.liveProofClaims.browser, 'not-proven');
+});
+
+test('platform proof fields verify only when canonical evidence refs are provided', () => {
+  const snapshot = createPlatformLoopSnapshot({
+    goalId: '#1291',
+    serviceProbes: servicePass,
+    ignitionRoutes: ignitionReady,
+    proofPassed: true,
+    supportSnapshotRefs: ['support/platform-status-1291.json'],
+    uiRealityRefs: ['ui/platform-status-1291.png'],
+    commandProofRefs: ['proof/platform-status-1291.txt'],
+  });
+
+  assert.equal(snapshot.platformStatusProof.finalVerdict, 'PLATFORM_STATUS_PROOF_VERIFIED');
+  assert.deepEqual(snapshot.platformStatusProof.proofRefs, [
+    'support/platform-status-1291.json',
+    'ui/platform-status-1291.png',
+    'proof/platform-status-1291.txt',
+  ]);
+  assert.equal(snapshot.liveProofClaims.browser, 'proof-ref-provided');
+});
+
+test('missing integration blocker keeps manual dispatch explicit', () => {
+  const snapshot = createPlatformLoopSnapshot({
+    goalId: '#1371',
+    serviceProbes: servicePass,
+    ignitionRoutes: ignitionReady,
+    proofPassed: true,
+    integration: { capabilities: { launchCodexJob: false, returnDispatchReceipt: false, returnProofMetadata: false } },
+  });
+
+  assert.equal(snapshot.dispatcherDecision.decision, 'BLOCKED_BY_MISSING_INTEGRATION');
+  assert.equal(snapshot.manualDispatchRequired, true);
+  assert.deepEqual(snapshot.dispatcherDecision.missingCapabilities, ['launchCodexJob', 'returnDispatchReceipt', 'returnProofMetadata']);
+});
+
+test('exact-head merge hold is preserved even when proof fields pass', () => {
+  const snapshot = createPlatformLoopSnapshot({
+    goalId: '#1291',
+    serviceProbes: servicePass,
+    ignitionRoutes: ignitionReady,
+    proofPassed: true,
+    supportSnapshotRefs: ['support/platform-status-1291.json'],
+    uiRealityRefs: ['ui/platform-status-1291.png'],
+    commandProofRefs: ['proof/platform-status-1291.txt'],
+  });
+
+  assert.equal(snapshot.exactHeadMergeHold.required, true);
+  assert.equal(snapshot.exactHeadMergeHold.mergeAllowed, false);
+  assert.equal(snapshot.exactHeadMergeHold.state, 'HOLD_FOR_EXACT_HEAD_APPROVAL');
+  assert.equal(snapshot.stephanosResponse.missionState.includes('ExactHeadMerge: HOLD_FOR_EXACT_HEAD_APPROVAL'), true);
+});

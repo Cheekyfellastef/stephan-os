@@ -308,6 +308,31 @@
         font-weight: 850;
       }
 
+      .platform-proof {
+        display: grid;
+        gap: 8px;
+        margin: 14px 0;
+        border: 1px solid rgba(125, 211, 252, 0.22);
+        border-radius: 16px;
+        padding: 10px;
+        background: rgba(125, 211, 252, 0.055);
+      }
+
+      .platform-proof div {
+        color: var(--muted);
+        font-size: 0.78rem;
+        line-height: 1.35;
+      }
+
+      .platform-proof span {
+        display: inline-block;
+        min-width: 118px;
+        color: var(--accent);
+        font-weight: 850;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
       .guardrail {
         border: 1px solid rgba(253, 230, 138, 0.28);
         border-radius: 20px;
@@ -458,6 +483,52 @@
           operatorNeeded: 'Proof only',
           proofIndex: 4,
           nextAction: 'Launch the Stephanos UI locally and capture DOM/browser proof that Goal Dashboard appears beside existing tiles.'
+        },
+        {
+          issue: '#1291',
+          title: 'Platform proof projection surfaced in Mission Operations',
+          status: 'Blocked - proof unknown',
+          currentOwner: 'Codex',
+          nextOwner: 'Operator',
+          handoffState: 'canonical projection -> operator-visible proof fields',
+          milestone: 'PLATFORM_STATUS_PROOF_FLOW_VISIBLE',
+          operatorNeeded: 'Manual dispatch explicit',
+          proofIndex: 3,
+          nextAction: 'Keep status blocked until support snapshot, UI reality, and command proof refs are present.',
+          platformProof: {
+            schemaVersion: 'platform-status-proof-flow.v1',
+            status: 'blocked',
+            currentClaim: '#1291-platform-status-proof',
+            proofRefs: [],
+            blockers: ['MISSING_SUPPORT_SNAPSHOT', 'MISSING_UI_REALITY_PROOF', 'MISSING_COMMAND_PROOF'],
+            finalVerdict: 'PLATFORM_STATUS_PROOF_BLOCKED',
+            manualDispatchRequired: true,
+            exactHeadMergeHold: 'HOLD_FOR_EXACT_HEAD_APPROVAL',
+            liveClaims: 'GitHub not live in browser; Windows not proven; browser not proven'
+          }
+        },
+        {
+          issue: '#1371',
+          title: 'Exact-head merge hold and platform loop proof state',
+          status: 'Manual dispatch required',
+          currentOwner: 'Operator',
+          nextOwner: 'Codex',
+          handoffState: 'missing integration blocker -> manual dispatch',
+          milestone: 'BLOCKED_BY_MISSING_INTEGRATION_VISIBLE',
+          operatorNeeded: 'Yes - dispatch manually',
+          proofIndex: 3,
+          nextAction: 'Do not claim automated dispatch; use manual dispatch until integration capabilities are available.',
+          platformProof: {
+            schemaVersion: 'platform-status-proof-flow.v1',
+            status: 'blocked',
+            currentClaim: '#1371-platform-status-proof',
+            proofRefs: ['proof/platform-loop-integration.test.mjs'],
+            blockers: ['MISSING_SUPPORT_SNAPSHOT', 'MISSING_UI_REALITY_PROOF'],
+            finalVerdict: 'PLATFORM_STATUS_PROOF_BLOCKED',
+            manualDispatchRequired: true,
+            exactHeadMergeHold: 'HOLD_FOR_EXACT_HEAD_APPROVAL',
+            liveClaims: 'GitHub not live in browser; Windows not proven; browser not proven'
+          }
         }
       ];
 
@@ -486,6 +557,19 @@
             <div class="actor-strip" aria-label="Actor interaction strip">
               ${actorOrder.map((actor) => `<span class="actor-chip ${actor === goal.currentOwner ? 'current' : ''}">${actor}</span>`).join('')}
             </div>
+            ${goal.platformProof ? `
+              <div class="platform-proof" aria-label="Platform proof fields for ${goal.issue}">
+                <div><span>Proof schema</span>${goal.platformProof.schemaVersion}</div>
+                <div><span>Status</span>${goal.platformProof.status}</div>
+                <div><span>Claim</span>${goal.platformProof.currentClaim}</div>
+                <div><span>Proof refs</span>${goal.platformProof.proofRefs.length ? goal.platformProof.proofRefs.join(', ') : 'unknown'}</div>
+                <div><span>Blockers</span>${goal.platformProof.blockers.length ? goal.platformProof.blockers.join(', ') : 'none'}</div>
+                <div><span>Dispatch</span>${goal.platformProof.manualDispatchRequired ? 'manual dispatch required' : 'canonical dispatcher only'}</div>
+                <div><span>Merge hold</span>${goal.platformProof.exactHeadMergeHold}</div>
+                <div><span>Live claims</span>${goal.platformProof.liveClaims}</div>
+                <div><span>Verdict</span>${goal.platformProof.finalVerdict}</div>
+              </div>
+            ` : ''}
             <p class="next-action"><span>${goal.milestone}</span><br />${goal.nextAction}</p>
           </div>
         `;
