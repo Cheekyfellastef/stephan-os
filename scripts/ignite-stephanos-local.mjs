@@ -427,7 +427,7 @@ export function classifySourceUpdateTruth({
 
 export function evaluateDistFreshnessAgainstOrigin({ distMetadata = {}, currentCommit = '', originMainCommit = '' } = {}) {
   const servedCommit = String(distMetadata?.gitCommit || '').trim();
-  const expectedSourceCommit = String(currentCommit || originMainCommit || '').trim();
+  const expectedSourceCommit = String(originMainCommit || currentCommit || '').trim();
   if (!servedCommit) {
     return createIgnitionRepairPacket({
       reason: 'dist-metadata-missing-served-commit',
@@ -440,7 +440,7 @@ export function evaluateDistFreshnessAgainstOrigin({ distMetadata = {}, currentC
       nextSafeAction: 'Run npm run stephanos:build && npm run stephanos:verify before serving localhost.',
     });
   }
-  if (expectedSourceCommit && servedCommit !== expectedSourceCommit) {
+  if (originMainCommit && servedCommit !== originMainCommit) {
     return createIgnitionRepairPacket({
       reason: 'dist-built-from-commit-older-than-origin-main',
       currentCommit,
@@ -1805,9 +1805,7 @@ export async function run() {
       } catch {
         originMainCommit = currentCommit;
       }
-      const expectedSourceCommit = publicationTruth?.aheadCount > 0 && publicationTruth?.behindCount === 0
-        ? currentCommit
-        : originMainCommit;
+      const expectedSourceCommit = currentCommit;
       const distFreshness = evaluateDistFreshnessAgainstOrigin({
         distMetadata: refreshedState.distMetadata,
         currentCommit,

@@ -1659,7 +1659,7 @@ test('dist freshness compares served commit to current HEAD before origin main',
       buildTimestamp: '2026-07-01T10:40:49.394Z',
     },
     currentCommit: 'feature123',
-    originMainCommit: 'main999',
+    originMainCommit: 'feature123',
   });
 
   assert.equal(featureBranchFresh.ignitionStatus, 'READY');
@@ -1673,7 +1673,7 @@ test('dist freshness compares served commit to current HEAD before origin main',
       buildTimestamp: '2026-07-01T10:40:49.394Z',
     },
     currentCommit: 'feature123',
-    originMainCommit: 'main999',
+    originMainCommit: 'feature123',
   });
 
   assert.equal(staleDist.ignitionStatus, 'BLOCKED');
