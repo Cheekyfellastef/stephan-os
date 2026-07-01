@@ -313,6 +313,9 @@
 
       .concierge-card {
         padding: 16px;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        word-break: normal;
         background: linear-gradient(140deg, rgba(14, 31, 58, 0.96), rgba(31, 41, 75, 0.78));
       }
 
@@ -323,11 +326,14 @@
 
       .concierge-grid {
         grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        min-width: 0;
         margin: 12px 0;
       }
 
       .concierge-grid div,
       .concierge-roadmap li {
+        min-width: 0;
+        overflow-wrap: anywhere;
         border: 1px solid rgba(125, 211, 252, 0.22);
         border-radius: 16px;
         padding: 10px;
@@ -477,16 +483,16 @@
           </p>
           <div class="concierge-grid" aria-label="Build Concierge truth fields">
             <div><span>V2 status</span>implemented / landed on operator surfaces</div>
-            <div><span>V3 next</span>Local Proof Runner remains planned_guarded, not live execution.</div>
-            <div><span>Exact-head approval</span>required before merge; approval must bind PR number to current head SHA.</div>
+            <div><span>V3 next</span>Local Proof Runner is implemented_guarded through npm run stephanos:battle-bridge:concierge -- prove --pr &lt;number&gt;; unsafe contexts remain blocked.</div>
+            <div><span>Exact-head approval</span>required before merge; approval must bind PR number to current head SHA, e.g. APPROVE_BATTLE_BRIDGE_EXACT_HEAD_MERGE:1393:cccccccccccccccccccccccccccccccccccccccc.</div>
             <div><span>Proof readiness</span>blocked_or_unknown until an isolated proof packet is actually wired and captured.</div>
-            <div><span>Merge hold</span>HELD_PENDING_PROOF_PACKET_AND_EXACT_HEAD_APPROVAL</div>
+            <div><span>Merge hold</span>HELD_PENDING_PROOF_PACKET_AND_EXACT_HEAD_APPROVAL / HELD_PENDING_EXACT_HEAD_APPROVAL</div>
             <div><span>No fake proof</span>GitHub proof, local proof, and browser proof are not claimed from this static page.</div>
             <div><span>Next operator action</span>Review the V2 operator surfaces and declared proof/approval state before authorizing further automation.</div>
           </div>
           <ul class="concierge-roadmap" aria-label="Build Concierge canonical roadmap excerpt">
             <li><span>V2 Operator Surfaces</span>implemented: Goal Dashboard and Mission Operations show status, proof readiness, merge hold, and next action.</li>
-            <li><span>V3 Local Proof Runner</span>planned_guarded: use isolated proof worktree and canonical proof packet before any merge claim.</li>
+            <li><span>V3 Local Proof Runner</span>implemented_guarded: Use an isolated proof worktree for a supplied PR, run allowlisted build/test commands, clean generated artifacts, and emit a canonical proof packet; unsafe contexts return truthful blockers.</li>
           </ul>
           <div class="concierge-warning">
             Truth boundary: this standalone Goal Dashboard rail is static seeded visibility only. It does not wire live GitHub state, local command proof, browser proof, or approval-token validation; unknown remains unknown.
