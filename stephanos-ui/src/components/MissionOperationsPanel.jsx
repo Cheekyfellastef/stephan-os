@@ -41,6 +41,8 @@ export function MissionSummary({ mission }) {
   const checks = mission.pullRequest.checks || [];
   const approvals = mission.approvals || [];
   const receipts = mission.receipts || [];
+  const goalDashboardStatusProjection = mission.goalDashboardStatusProjection || {};
+  const goalDashboardGoals = goalDashboardStatusProjection.goals || [];
 
   return (
     <article className="mission-operations-item" data-testid="mission-operations-item" data-mission-state={mission.mission.state}>
@@ -76,6 +78,7 @@ export function MissionSummary({ mission }) {
         <div><dt>Updated</dt><dd>{displayTime(mission.mission.updatedAt)}</dd></div>
         <div><dt>Elapsed</dt><dd>{displayElapsed(mission.mission.elapsedSeconds)}</dd></div>
         <div><dt>Receipts</dt><dd>{receipts.length}</dd></div>
+        <div><dt>Goal status</dt><dd>{goalDashboardStatusProjection.refreshTruth || 'MANUAL_REFRESH_REQUIRED'}</dd></div>
       </dl>
 
       {mission.pullRequest.url ? (
@@ -121,6 +124,18 @@ export function MissionSummary({ mission }) {
               <strong>{approval.kind}</strong> - {approval.status}
               {approval.requiredToken ? <><br /><code>{approval.requiredToken}</code></> : null}
               {approval.decidedAt ? ` / decided ${displayTime(approval.decidedAt)}` : ''}
+            </>
+          )}
+        />
+        <EvidenceList
+          title="Goal Dashboard status"
+          items={goalDashboardGoals}
+          emptyText="Static Goal Dashboard seed is unavailable; manual refresh is required."
+          renderItem={(goal) => (
+            <>
+              <strong>{goal.issue}</strong> - {goal.status} / {goal.currentOwner} to {goal.nextOwner}
+              <br /><span>{goal.milestone}</span>
+              <br /><span>{goal.nextAction}</span>
             </>
           )}
         />
