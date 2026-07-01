@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 export const BATTLE_BRIDGE_SUPERVISOR_SCHEMA_VERSION = 'battle-bridge-supervisor.v1';
 
 export const BATTLE_BRIDGE_SERVICE_IDS = Object.freeze([
@@ -163,4 +165,87 @@ export function aggregateBattleBridgeSupervisorProbes(input = {}) {
       : 'Run supervisor probes for backend, OpenClaw gateway, Stephanos UI, Mission Orchestrator Worker, and shared workspace, then restart failed services only by explicit service id.',
     finalVerdict: ready ? 'BATTLE_BRIDGE_SUPERVISOR_PASS' : 'BATTLE_BRIDGE_SUPERVISOR_BLOCKED',
   };
+}
+
+export const MISSION_ORCHESTRATOR_WORKER_TASK = 'Stephanos Mission Orchestrator Worker';
+
+function battleBridgeSupervisorText(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  const out = String(value).trim();
+  return out || fallback;
+}
+
+function battleBridgeSupervisorApprovedTask(name) {
+  return battleBridgeSupervisorText(name) === MISSION_ORCHESTRATOR_WORKER_TASK;
+}
+
+function battleBridgeSupervisorHeartbeatLive(heartbeat = {}, nowMs = Date.now(), maxAgeMs = 120000) {
+  const at = Date.parse(battleBridgeSupervisorText(heartbeat.checkedAt || heartbeat.updatedAt || heartbeat.timestamp));
+  return Number.isFinite(at) && nowMs - at <= maxAgeMs && heartbeat.workerFromMain === true;
+}
+
+export function assessBattleBridgeWorker(input = {}) {
+  const taskName = battleBridgeSupervisorText(input.scheduledTask?.taskName, MISSION_ORCHESTRATOR_WORKER_TASK);
+  const processRunning = input.process?.running === true;
+  const heartbeatHealthy = battleBridgeSupervisorHeartbeatLive(input.heartbeat, input.nowMs, input.maxHeartbeatAgeMs);
+  const scheduledTaskHealthy = battleBridgeSupervisorApprovedTask(taskName) && ['ready', 'running'].includes(battleBridgeSupervisorText(input.scheduledTask?.status, 'unknown').toLowerCase());
+  const workerDown = !scheduledTaskHealthy || !processRunning || !heartbeatHealthy;
+  return Object.freeze({
+    schemaVersion: BATTLE_BRIDGE_SUPERVISOR_SCHEMA_VERSION,
+    supervisorKind: 'fixed-allowlisted-watchdog',
+    approvedScheduledTask: MISSION_ORCHESTRATOR_WORKER_TASK,
+    taskName,
+    scheduledTaskApproved: battleBridgeSupervisorApprovedTask(taskName),
+    scheduledTaskHealthy,
+    workerProcessRunning: processRunning,
+    heartbeatHealthy,
+    workerDown,
+    visiblePowerShellRequired: false,
+    arbitraryShellAllowed: false,
+    pcRestartAllowed: false,
+    finalVerdict: workerDown ? 'WORKER_DOWN' : 'WORKER_HEALTHY',
+  });
+}
+
+export function runBattleBridgeSupervisor(input = {}) {
+  const before = assessBattleBridgeWorker(input.before || input);
+  const proof = {
+    schemaVersion: BATTLE_BRIDGE_SUPERVISOR_SCHEMA_VERSION,
+    proofKind: 'battle-bridge-supervisor-worker-self-heal-proof',
+    WORKER_KILLED: input.workerKilled === true,
+    SUPERVISOR_DETECTED_WORKER_DOWN: before.workerDown === true,
+    SUPERVISOR_RESTARTED_WORKER: false,
+    WORKER_RECOVERED: false,
+    WORKER_FROM_MAIN: false,
+    PROOF_WRITTEN_TO_SHARED_WORKSPACE: false,
+    VISIBLE_POWERSHELL_REQUIRED: false,
+    approvedScheduledTask: MISSION_ORCHESTRATOR_WORKER_TASK,
+    attemptedTaskName: before.taskName,
+    blockedReasons: [],
+  };
+  if (!before.scheduledTaskApproved) proof.blockedReasons.push('scheduled-task-not-allowlisted');
+  if (proof.SUPERVISOR_DETECTED_WORKER_DOWN && before.scheduledTaskApproved) {
+    const restart = input.restartApprovedWorkerTask?.(MISSION_ORCHESTRATOR_WORKER_TASK) || { restarted: input.restartSucceeded === true };
+    proof.SUPERVISOR_RESTARTED_WORKER = restart.restarted === true;
+  }
+  const after = assessBattleBridgeWorker(input.after || {});
+  proof.WORKER_RECOVERED = proof.SUPERVISOR_RESTARTED_WORKER && after.finalVerdict === 'WORKER_HEALTHY';
+  proof.WORKER_FROM_MAIN = after.heartbeatHealthy === true;
+  proof.finalVerdict = proof.WORKER_RECOVERED && proof.WORKER_FROM_MAIN ? 'BATTLE_BRIDGE_WORKER_SELF_HEAL_PASS' : 'BATTLE_BRIDGE_WORKER_SELF_HEAL_BLOCKED';
+  return Object.freeze(proof);
+}
+
+
+export function writeBattleBridgeSupervisorProof(proof = {}, options = {}) {
+  const workspaceRoot = battleBridgeSupervisorText(
+    options.workspaceRoot,
+    process.env.STEPHANOS_OPENCLAW_WORKSPACE || (process.env.USERPROFILE ? join(process.env.USERPROFILE, 'Documents', 'Stephanos-openclaw-workspace') : ''),
+  );
+  if (!workspaceRoot) throw new Error('Shared workspace root is required for Battle Bridge proof.');
+  mkdirSync(workspaceRoot, { recursive: true });
+  const proofPath = join(workspaceRoot, battleBridgeSupervisorText(options.fileName, 'battle-bridge-supervisor-worker-self-heal-proof.json'));
+  const payload = { ...proof, PROOF_WRITTEN_TO_SHARED_WORKSPACE: true, proofPath };
+  writeFileSync(proofPath, `${JSON.stringify(payload, null, 2)}
+`, 'utf8');
+  return Object.freeze(payload);
 }

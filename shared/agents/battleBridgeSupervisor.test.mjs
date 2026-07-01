@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   BATTLE_BRIDGE_ACTION_STATUS,
   BATTLE_BRIDGE_PROBE_STATUS,
@@ -9,6 +12,9 @@ import {
   buildBattleBridgeSupervisorContract,
   createBattleBridgeProbe,
   createMissionWorkerSelfHealPlan,
+  MISSION_ORCHESTRATOR_WORKER_TASK,
+  runBattleBridgeSupervisor,
+  writeBattleBridgeSupervisorProof,
 } from './battleBridgeSupervisor.mjs';
 
 test('supervisor contract exposes required Battle Bridge services and guardrails', () => {
@@ -106,4 +112,32 @@ test('aggregate blocks when a service failed or a required service is missing', 
   assert.equal(aggregate.missingServiceIds.includes('stephanos-ui'), true);
   assert.equal(aggregate.missingServiceIds.includes('shared-agent-workspace'), true);
   assert.equal(aggregate.finalVerdict, 'BATTLE_BRIDGE_SUPERVISOR_BLOCKED');
+});
+
+test('fixed supervisor detects killed worker, restarts allowlisted task, verifies main heartbeat', async () => {
+  const now = Date.parse('2026-07-01T00:00:00Z');
+  const proof = runBattleBridgeSupervisor({
+    workerKilled: true,
+    nowMs: now,
+    before: { nowMs: now, scheduledTask: { taskName: MISSION_ORCHESTRATOR_WORKER_TASK, status: 'Ready' }, process: { running: false }, heartbeat: { checkedAt: '2026-06-30T23:55:00Z', workerFromMain: true } },
+    restartApprovedWorkerTask: (taskName) => ({ restarted: taskName === MISSION_ORCHESTRATOR_WORKER_TASK }),
+    after: { nowMs: now, scheduledTask: { taskName: MISSION_ORCHESTRATOR_WORKER_TASK, status: 'Running' }, process: { running: true }, heartbeat: { checkedAt: '2026-07-01T00:00:00Z', workerFromMain: true } },
+  });
+  assert.equal(proof.WORKER_KILLED, true);
+  assert.equal(proof.SUPERVISOR_DETECTED_WORKER_DOWN, true);
+  assert.equal(proof.SUPERVISOR_RESTARTED_WORKER, true);
+  assert.equal(proof.WORKER_RECOVERED, true);
+  assert.equal(proof.WORKER_FROM_MAIN, true);
+  assert.equal(proof.PROOF_WRITTEN_TO_SHARED_WORKSPACE, false);
+  assert.equal(proof.VISIBLE_POWERSHELL_REQUIRED, false);
+  const dir = await mkdtemp(join(tmpdir(), 'openclaw-workspace-'));
+  const written = writeBattleBridgeSupervisorProof(proof, { workspaceRoot: dir });
+  assert.equal(written.PROOF_WRITTEN_TO_SHARED_WORKSPACE, true);
+  assert.equal(JSON.parse(await readFile(written.proofPath, 'utf8')).PROOF_WRITTEN_TO_SHARED_WORKSPACE, true);
+});
+
+test('fixed supervisor blocks arbitrary scheduled task restart', () => {
+  const proof = runBattleBridgeSupervisor({ before: { scheduledTask: { taskName: 'Other Task', status: 'Ready' }, process: { running: false } }, after: {} });
+  assert.equal(proof.SUPERVISOR_RESTARTED_WORKER, false);
+  assert.ok(proof.blockedReasons.includes('scheduled-task-not-allowlisted'));
 });
