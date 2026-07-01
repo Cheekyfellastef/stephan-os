@@ -1,3 +1,5 @@
+import { buildGoalDashboardStatusProjection } from './goalDashboardStatusProjection.mjs';
+
 const TERMINAL_STATES = new Set(['COMPLETE', 'FAILED', 'CANCELLED']);
 const ACTIVE_STATES = new Set(['QUEUED', 'RUNNING', 'VERIFYING', 'AWAITING_APPROVAL', 'BLOCKED']);
 
@@ -164,6 +166,7 @@ export function buildMissionOperationsProjection(input = {}, options = {}) {
     warnings,
     stale,
     operatorActionRequired: state === 'AWAITING_APPROVAL' || blockers.length > 0,
+    goalDashboardStatusProjection: buildGoalDashboardStatusProjection(input.goalDashboardStatusProjection || input.goalDashboard || {}),
     finalVerdict: state,
   };
 }
