@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { buildMissionOperationsProjection } from '../../shared/runtime/missionOperationsProjection.mjs';
+import { readWorkspaceUpdateStatus } from './workspaceUpdateStatusService.js';
 
 const MAX_RECEIPT_BYTES = 1024 * 1024;
 const MAX_RECEIPT_FILES = 500;
@@ -229,6 +230,7 @@ export async function readMissionOperations(options = {}) {
   const env = options.env || process.env;
   const directory = options.directory || resolveMissionOperationsDirectory(env);
   const now = options.now instanceof Date ? options.now : new Date();
+  const updateStatus = options.updateStatus || await readWorkspaceUpdateStatus(options.updateStatusOptions || {});
   if (!directory) {
     return {
       schemaVersion: 'stephanos.mission-operations-feed.v1',
@@ -237,7 +239,8 @@ export async function readMissionOperations(options = {}) {
       directory: '',
       missions: [],
       errors: [],
-      recommendedNextAction: 'Configure STEPHANOS_MISSION_OPERATIONS_DIR to the external OpenClaw receipt directory.',
+      updateStatus,
+      recommendedNextAction: updateStatus?.nextOperatorAction || 'Configure STEPHANOS_MISSION_OPERATIONS_DIR to the external OpenClaw receipt directory.',
     };
   }
 
@@ -252,7 +255,8 @@ export async function readMissionOperations(options = {}) {
       directory,
       missions: [],
       errors: [error?.message || 'Mission receipt directory could not be read.'],
-      recommendedNextAction: 'Create or restore the configured external receipt directory.',
+      updateStatus,
+      recommendedNextAction: updateStatus?.nextOperatorAction || 'Create or restore the configured external receipt directory.',
     };
   }
 
@@ -285,6 +289,7 @@ export async function readMissionOperations(options = {}) {
     ignoredReceiptCount,
     missions,
     errors,
-    recommendedNextAction: missions.length ? missions[0].mission.nextAction : 'Run an authorized OpenClaw operation or publish a mission snapshot.',
+    updateStatus,
+    recommendedNextAction: updateStatus?.nextOperatorAction || (missions.length ? missions[0].mission.nextAction : 'Run an authorized OpenClaw operation or publish a mission snapshot.'),
   };
 }

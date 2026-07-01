@@ -213,6 +213,13 @@ test('Mission Operations panel visibly renders every required operational truth 
     'Supporting agents',
     'Base branch',
     'Head SHA',
+    'Workspace update:',
+    'Local SHA:',
+    'Main SHA:',
+    'Manual refresh required:',
+    'Auto-pull attempted:',
+    'UI refresh after build:',
+    'Next operator action:',
     'Worktree',
     'Changed files',
     'Pull request',
@@ -234,6 +241,7 @@ test('Mission Operations panel visibly renders every required operational truth 
   assert.match(source, /receipt\.status/);
   assert.match(source, /check\.status/);
   assert.match(source, /approval\.status/);
+  assert.match(source, /UPDATE_AVAILABLE|PULL_REQUIRED|REBUILD_REQUIRED|AUTO_UPDATE_NOT_ENABLED/);
   assert.doesNotMatch(source, /MissionOperationsDashboard/);
 });
 

@@ -20,6 +20,14 @@ export const BATTLE_BRIDGE_PROBE_STATUS = Object.freeze({
   UNKNOWN: 'UNKNOWN',
 });
 
+export const BATTLE_BRIDGE_UPDATE_STATUS = Object.freeze({
+  UPDATE_AVAILABLE: 'UPDATE_AVAILABLE',
+  PULL_REQUIRED: 'PULL_REQUIRED',
+  REBUILD_REQUIRED: 'REBUILD_REQUIRED',
+  AUTO_UPDATE_NOT_ENABLED: 'AUTO_UPDATE_NOT_ENABLED',
+  CURRENT: 'CURRENT',
+});
+
 export const BATTLE_BRIDGE_ACTION_STATUS = Object.freeze({
   READY: 'READY',
   NEEDS_START: 'NEEDS_START',
@@ -52,6 +60,11 @@ function safeId(value, fallback) {
 function normalizeServiceId(value) {
   const id = safeId(value, 'mission-orchestrator-worker');
   return BATTLE_BRIDGE_SERVICE_IDS.includes(id) ? id : 'mission-orchestrator-worker';
+}
+
+function normalizeUpdateStatus(value) {
+  const status = asText(value, BATTLE_BRIDGE_UPDATE_STATUS.AUTO_UPDATE_NOT_ENABLED).toUpperCase();
+  return Object.values(BATTLE_BRIDGE_UPDATE_STATUS).includes(status) ? status : BATTLE_BRIDGE_UPDATE_STATUS.AUTO_UPDATE_NOT_ENABLED;
 }
 
 function normalizeProbeStatus(value) {
@@ -162,5 +175,30 @@ export function aggregateBattleBridgeSupervisorProbes(input = {}) {
       ? ''
       : 'Run supervisor probes for backend, OpenClaw gateway, Stephanos UI, Mission Orchestrator Worker, and shared workspace, then restart failed services only by explicit service id.',
     finalVerdict: ready ? 'BATTLE_BRIDGE_SUPERVISOR_PASS' : 'BATTLE_BRIDGE_SUPERVISOR_BLOCKED',
+  };
+}
+
+export function createBattleBridgeGitPullHelper(input = {}) {
+  const dirtyTree = input.dirtyTree === true;
+  const updateStatus = normalizeUpdateStatus(input.updateStatus);
+  const safeToPull = dirtyTree === false && [BATTLE_BRIDGE_UPDATE_STATUS.UPDATE_AVAILABLE, BATTLE_BRIDGE_UPDATE_STATUS.PULL_REQUIRED].includes(updateStatus);
+
+  return {
+    schemaVersion: BATTLE_BRIDGE_SUPERVISOR_SCHEMA_VERSION,
+    kind: 'stephanos.battle_bridge.git_pull_helper',
+    updateStatus,
+    localSha: safeText(input.localSha, ''),
+    mainSha: safeText(input.mainSha, ''),
+    dirtyTree,
+    safeToPull,
+    autoPullClaim: false,
+    command: safeToPull ? 'npm run stephanos:publish-merge' : '',
+    exactUnblockAction: dirtyTree
+      ? 'Commit or stash local changes before using the Battle Bridge git pull helper.'
+      : safeToPull
+        ? 'Run the Battle Bridge git pull helper, rebuild Stephanos UI, then manually refresh the browser.'
+        : 'Refresh update status before requesting a pull.',
+    sharedWorkspaceEventKind: safeToPull ? 'operator-action-required' : 'update-status-only',
+    finalVerdict: safeToPull ? 'BATTLE_BRIDGE_GIT_PULL_HELPER_READY' : 'BATTLE_BRIDGE_GIT_PULL_HELPER_BLOCKED',
   };
 }
