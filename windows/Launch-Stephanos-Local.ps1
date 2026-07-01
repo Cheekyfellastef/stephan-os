@@ -174,10 +174,75 @@ function Show-IgnitionSplashScreen {
   Write-LiveLog "verbose logs/status destination: $ignitionProofRoot"
 }
 
+function Get-LauncherChildBlocker {
+  Initialize-IgnitionProofWorkspace
+  $logRoot = Join-Path $ignitionProofRoot 'logs'
+  if (-not (Test-Path -LiteralPath $logRoot -PathType Container)) { return $null }
+
+  $logFiles = @(Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 8)
+
+  foreach ($logFile in $logFiles) {
+    try {
+      $lines = @(Get-Content -LiteralPath $logFile.FullName -Encoding UTF8 -ErrorAction Stop)
+
+      for ($index = $lines.Count - 1; $index -ge 0; $index--) {
+        $line = [string]$lines[$index]
+
+        $packetMatch = [regex]::Match($line, '^\[IGNITION\]\s+(source-update-status|repair-packet|source-merge-repair-packet|openclaw-recovery-packet|recovery-packet)=(\{.*\})\s*$')
+        if ($packetMatch.Success) {
+          try {
+            $packetType = $packetMatch.Groups[1].Value
+            $packet = $packetMatch.Groups[2].Value | ConvertFrom-Json
+            $status = if ($packet.ignitionStatus) { [string]$packet.ignitionStatus } else { '' }
+
+            if ($status -eq 'BLOCKED') {
+              $reason = if ($packet.reason) { [string]$packet.reason } else { $packetType }
+              $nextAction = if ($packet.nextSafeAction) { [string]$packet.nextSafeAction } else { 'Review the child ignition repair packet and resolve the blocker before retrying.' }
+
+              return [ordered]@{
+                message = "blocked for safety: $reason. $nextAction"
+                reason = $reason
+                nextOperatorAction = $nextAction
+                packetType = $packetType
+                sourceLog = $logFile.FullName
+                rawLine = $line
+              }
+            }
+          }
+          catch {}
+        }
+
+        foreach ($pattern in @(
+          'blocked for safety: [^\r\n]*',
+          'Current branch has no upstream tracking branch[^\r\n]*',
+          'missing-upstream[^\r\n]*'
+        )) {
+          $textMatch = [regex]::Match($line, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+          if ($textMatch.Success) {
+            return [ordered]@{
+              message = $textMatch.Value.Trim()
+              reason = 'child-ignition-blocker'
+              nextOperatorAction = 'Review the child ignition blocker and resolve it before retrying.'
+              packetType = 'child-log-text'
+              sourceLog = $logFile.FullName
+              rawLine = $line
+            }
+          }
+        }
+      }
+    }
+    catch {}
+  }
+
+  return $null
+}
 function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord) {
-  Write-IgnitionStatus -Phase 'blocked' -Message $Step -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.'; blocker = $Step }
-  Write-IgnitionSupportSnapshot -Verdict 'blocked' -Extra @{ blocker = $Step; nextOperatorAction = 'Review blocker and retry after repair.' }
-  Write-Host "[LAUNCHER LIVE] Failed step: $Step" -ForegroundColor Red
+  $childBlocker = Get-LauncherChildBlocker
+  $surfacedBlocker = if ($childBlocker -and $childBlocker.message) { [string]$childBlocker.message } else { $Step }
+  $nextOperatorAction = if ($childBlocker -and $childBlocker.nextOperatorAction) { [string]$childBlocker.nextOperatorAction } else { 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying.' }
+  Write-IgnitionStatus -Phase 'blocked' -Message $surfacedBlocker -Extra @{ currentStage = 'blocked'; nextOperatorAction = $nextOperatorAction; blocker = $surfacedBlocker; parentFailure = $Step; childIgnitionBlocker = $childBlocker }
+  Write-IgnitionSupportSnapshot -Verdict 'blocked' -Extra @{ blocker = $surfacedBlocker; nextOperatorAction = $nextOperatorAction; parentFailure = $Step; childIgnitionBlocker = $childBlocker }
+  Write-Host "[LAUNCHER LIVE] Failed step: $surfacedBlocker" -ForegroundColor Red
   if ($null -ne $ErrorRecord) {
     Write-Host ($ErrorRecord | Out-String).Trim() -ForegroundColor Red
   }
@@ -227,12 +292,20 @@ function Test-CommandSucceeds([string]$Command) {
   }
 }
 
-function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120) {
+function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120, [switch]$ObserveChildIgnitionBlocker) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
     if (Test-UrlReachable -Url $Url) {
       return
     }
+
+    if ($ObserveChildIgnitionBlocker.IsPresent) {
+      $childBlocker = Get-LauncherChildBlocker
+      if ($childBlocker -and $childBlocker.message) {
+        throw ([string]$childBlocker.message)
+      }
+    }
+
     Start-Sleep -Seconds 1
   }
 
@@ -475,7 +548,7 @@ try {
   }
   else {
     Write-LiveLog "waiting for launcher-root runtime-status endpoint at $launcherRuntimeStatusUrl"
-    Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url $launcherRuntimeStatusUrl
+    Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url $launcherRuntimeStatusUrl -ObserveChildIgnitionBlocker
 
     Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl"
     Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl

@@ -171,8 +171,9 @@ test('ignition records bounded status and log destinations in proof workspace', 
 
 test('ignition failure status preserves exact blocker and next operator action', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /Write-IgnitionStatus -Phase 'blocked' -Message \$Step[\s\S]*blocker = \$Step/m, 'failure status must preserve the exact blocker message');
-  assert.match(script, /nextOperatorAction = 'Review the exact blocker in this launcher window and the bounded ignition logs, then resolve it before retrying\.'/m, 'failure status must include operator action');
+  assert.match(script, /\$childBlocker = Get-LauncherChildBlocker[\s\S]*\$surfacedBlocker = if \(\$childBlocker -and \$childBlocker\.message\)/m, 'failure status must prefer child ignition blocker when available');
+  assert.match(script, /Write-IgnitionStatus -Phase 'blocked' -Message \$surfacedBlocker[\s\S]*parentFailure = \$Step[\s\S]*childIgnitionBlocker = \$childBlocker/m, 'failure status must preserve parent failure and child blocker payload');
+  assert.match(script, /Write-IgnitionSupportSnapshot -Verdict 'blocked'[\s\S]*childIgnitionBlocker = \$childBlocker/m, 'support snapshot must receive child blocker payload');
 });
 
 
@@ -221,4 +222,12 @@ test('professional ignition splash refreshes real status and preserves safe auto
   assert.match(script, /hiddenBlockersAllowed = \$false/m, 'classification status must not hide blockers');
   assert.match(script, /safeAutoFixScope = 'known-generated-runtime-stoppers-only'/m, 'cleanup stage must limit safe autofix scope');
   assert.doesNotMatch(script, /Remove-Item[\s\S]*-Recurse[\s\S]*\$repoRoot|git reset --hard|git clean -fdx/, 'launcher must not delete source or reset the worktree');
+});
+
+test('launcher-root runtime-status wait observes child ignition repair packets', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Get-LauncherChildBlocker[\s\S]*source-update-status\|repair-packet[\s\S]*ConvertFrom-Json[\s\S]*ignitionStatus[\s\S]*BLOCKED/m, 'launcher must parse structured blocked ignition packets from child logs');
+  assert.match(script, /blocked for safety: \$reason/m, 'child blocker message must preserve exact reason text');
+  assert.match(script, /Wait-ForUrl\(\[string\]\$StepLabel, \[string\]\$Url, \[int\]\$TimeoutSeconds = 120, \[switch\]\$ObserveChildIgnitionBlocker\)/m, 'runtime wait must support child blocker observation');
+  assert.match(script, /Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url \$launcherRuntimeStatusUrl -ObserveChildIgnitionBlocker/m, 'launcher-root runtime-status wait must enable child blocker observation');
 });
