@@ -48,7 +48,8 @@
     "stephanos:guard:pr-clean:local": "node scripts/guard-pr-clean.mjs --local",
     "stephanos:pr:prepare": "node scripts/guard-pr-clean.mjs --prepare",
     "stephanos:browser-proof": "node scripts/browser-proof-runner.mjs",
-    "stephanos:publish-merge": "node scripts/repository-native-publish-merge-lane.mjs"
+    "stephanos:publish-merge": "node scripts/repository-native-publish-merge-lane.mjs",
+    "stephanos:battle-bridge:concierge": "node scripts/battle-bridge-build-concierge-v1.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
