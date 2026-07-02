@@ -602,8 +602,45 @@ async function finishWithSuccessWithoutForcedExit(server) {
   await new Promise((resolveTick) => setImmediate(resolveTick));
 }
 
-export function createStephanosDistServer() {
-  return createServer((request, response) => {
+async function closeServerHandle(server) {
+  if (!server || !server.listening) {
+    await new Promise((resolveTick) => setImmediate(resolveTick));
+    return { closed: false };
+  }
+
+  await new Promise((resolveClose, rejectClose) => {
+    server.close((error) => {
+      if (error) {
+        rejectClose(error);
+        return;
+      }
+      resolveClose();
+    });
+  });
+  await new Promise((resolveTick) => setImmediate(resolveTick));
+  return { closed: true };
+}
+
+export async function shutdownServerForRestart(server, {
+  exitProcess = process.env.STEPHANOS_TEST_DISABLE_EXIT !== '1',
+  exitFn = (code) => process.exit(code),
+  delayMs = 120,
+} = {}) {
+  await closeServerHandle(server);
+  if (!exitProcess) {
+    return { closed: true, exited: false };
+  }
+  setTimeout(() => {
+    exitFn(0);
+  }, delayMs);
+  return { closed: true, exited: true };
+}
+
+export function createStephanosDistServer({
+  shutdownForRestart = shutdownServerForRestart,
+} = {}) {
+  let server;
+  server = createServer((request, response) => {
     if (request.method === 'OPTIONS') {
       response.writeHead(204, baseHeaders);
       response.end();
@@ -654,12 +691,15 @@ export function createStephanosDistServer() {
           requestedAt: ignitionRestartState.requestedAt,
         })}\n`);
 
-        if (process.env.STEPHANOS_TEST_DISABLE_EXIT === '1') {
-          return;
-        }
-        setTimeout(() => {
-          process.exit(0);
-        }, 120);
+        setImmediate(() => {
+          shutdownForRestart(server).catch((error) => {
+            ignitionRestartState.lastResult = 'shutdown-failed';
+            console.error(`[DIST SERVER LIVE] Restart shutdown failed: ${error.message}`);
+            if (process.env.STEPHANOS_TEST_DISABLE_EXIT !== '1') {
+              process.exit(1);
+            }
+          });
+        });
       });
       return;
     }
@@ -770,6 +810,7 @@ export function createStephanosDistServer() {
     }
     createReadStream(filePath).pipe(response);
   });
+  return server;
 }
 
 export async function startFreshServerAfterPortClose({
@@ -783,8 +824,37 @@ export async function startFreshServerAfterPortClose({
     return { started: false, blocked: true, reason: 'stale-server-did-not-exit' };
   }
   const freshServer = createServerFn();
-  listenFn(freshServer);
+  await new Promise((resolveListen, rejectListen) => {
+    const onError = (error) => {
+      freshServer.off?.('listening', onListening);
+      rejectListen(error);
+    };
+    const onListening = () => {
+      freshServer.off?.('error', onError);
+      resolveListen();
+    };
+    freshServer.once?.('error', onError);
+    freshServer.once?.('listening', onListening);
+    listenFn(freshServer);
+    if (!freshServer.once) {
+      resolveListen();
+    }
+  });
   return { started: true, blocked: false, freshServer };
+}
+
+async function replaceStaleServerAfterAcceptedRestart(server, restartResponse, reasonLabel) {
+  if (!restartResponse.ok) {
+    return { started: false, blocked: true, reason: 'restart-request-refused' };
+  }
+
+  await closeServerHandle(server);
+  const staleServerClosed = await waitForPortToClose(port);
+  const freshStart = await startFreshServerAfterPortClose({ staleServerClosed });
+  if (!freshStart.started) {
+    console.error(`[DIST SERVER LIVE] Restart request accepted for ${reasonLabel} but stale server did not exit in time.`);
+  }
+  return freshStart;
 }
 
 if (isMainModule) {
@@ -832,14 +902,13 @@ if (isMainModule) {
         expectedRuntimeMarker,
         reason: 'dist-script-entry-mismatch',
       });
-      if (!restartResponse.ok) {
+      const freshStart = await replaceStaleServerAfterAcceptedRestart(server, restartResponse, 'dist-script-entry-mismatch');
+      if (freshStart.reason === 'restart-request-refused') {
         console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to serve current dist index.`);
         process.exit(1);
         return;
       }
-      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
       if (!freshStart.started) {
-        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
@@ -855,14 +924,13 @@ if (isMainModule) {
         expectedRuntimeMarker,
         reason: 'runtime-marker-mismatch',
       });
-      if (!restartResponse.ok) {
+      const freshStart = await replaceStaleServerAfterAcceptedRestart(server, restartResponse, 'runtime-marker-mismatch');
+      if (freshStart.reason === 'restart-request-refused') {
         console.error(`[DIST SERVER LIVE] Refusing process reuse. Stop the stale process on port ${port} and restart.`);
         process.exit(1);
         return;
       }
-      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
       if (!freshStart.started) {
-        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
@@ -877,14 +945,13 @@ if (isMainModule) {
         expectedRuntimeMarker,
         reason: 'module-mime-mismatch',
       });
-      if (!restartResponse.ok) {
+      const freshStart = await replaceStaleServerAfterAcceptedRestart(server, restartResponse, 'module-mime-mismatch');
+      if (freshStart.reason === 'restart-request-refused') {
         console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to launch a fresh server.`);
         process.exit(1);
         return;
       }
-      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
       if (!freshStart.started) {
-        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
@@ -897,14 +964,13 @@ if (isMainModule) {
         expectedRuntimeMarker,
         reason: 'runtime-status-route-missing',
       });
-      if (!restartResponse.ok) {
+      const freshStart = await replaceStaleServerAfterAcceptedRestart(server, restartResponse, 'runtime-status-route-missing');
+      if (freshStart.reason === 'restart-request-refused') {
         console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to serve runtime-status route.`);
         process.exit(1);
         return;
       }
-      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
       if (!freshStart.started) {
-        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
@@ -918,14 +984,13 @@ if (isMainModule) {
         expectedRuntimeMarker,
         reason: 'launcher-source-parity-mismatch',
       });
-      if (!restartResponse.ok) {
+      const freshStart = await replaceStaleServerAfterAcceptedRestart(server, restartResponse, 'launcher-source-parity-mismatch');
+      if (freshStart.reason === 'restart-request-refused') {
         console.error(`[DIST SERVER LIVE] Stop the stale process on port ${port} and restart to serve current launcher source.`);
         process.exit(1);
         return;
       }
-      const freshStart = await startFreshServerAfterPortClose({ staleServerClosed: await waitForPortToClose(port) });
       if (!freshStart.started) {
-        console.error(`[DIST SERVER LIVE] Restart request accepted but stale server did not exit in time.`);
         process.exit(1);
         return;
       }
