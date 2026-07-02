@@ -111,9 +111,40 @@ function Get-IgnitionStageSnapshot([string]$CurrentStageId) {
     }
   })
 }
+
+function Get-LatestOpenClawStartupStatus {
+  $logRoot = Join-Path $ignitionProofRoot 'logs'
+  if (-not (Test-Path -LiteralPath $logRoot)) { return $null }
+  $logFiles = @(Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 8)
+  foreach ($logFile in $logFiles) {
+    try {
+      $lines = @(Get-Content -LiteralPath $logFile.FullName -Encoding UTF8 -ErrorAction Stop)
+      for ($index = $lines.Count - 1; $index -ge 0; $index--) {
+        $line = [string]$lines[$index]
+        $packetMatch = [regex]::Match($line, '^\[IGNITION\]\s+openclaw-autostart-status=(\{.*\})\s*$')
+        if ($packetMatch.Success) {
+          try {
+            $packet = $packetMatch.Groups[1].Value | ConvertFrom-Json
+            return [ordered]@{
+              state = if ($packet.state) { [string]$packet.state } else { 'reported' }
+              detail = if ($packet.selectedReadinessEndpoint) { "endpoint $($packet.selectedReadinessEndpoint)" } elseif ($packet.reason) { [string]$packet.reason } else { 'OpenClaw autostart status packet observed.' }
+              packet = $packet
+              sourceLog = $logFile.FullName
+            }
+          }
+          catch {}
+        }
+      }
+    }
+    catch {}
+  }
+  return $null
+}
+
 function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extra = @{}) {
   Initialize-IgnitionProofWorkspace
   $currentStage = if ($Extra.ContainsKey('currentStage')) { $Extra.currentStage } else { $Phase }
+  $latestOpenClawStartup = Get-LatestOpenClawStartupStatus
   $payload = [ordered]@{
     phase = $Phase
     message = $Message
@@ -128,6 +159,8 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
     exactHeadApprovalRequired = $true
     exactHeadApprovalStatus = 'required-before-merge-proof'
     safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'
+    openClawStartupState = if ($latestOpenClawStartup) { $latestOpenClawStartup.state } else { 'pending' }
+    openClawStartupDetail = if ($latestOpenClawStartup) { $latestOpenClawStartup.detail } else { 'Awaiting OpenClaw runtime detection/autostart proof.' }
     nextOperatorAction = if ($Extra.ContainsKey('nextOperatorAction')) { $Extra.nextOperatorAction } else { 'Watch the Stephanos ignition splash/status screen.' }
     currentStage = $currentStage
     ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $currentStage
@@ -155,6 +188,8 @@ function Update-IgnitionSplashScreen([object]$Status) {
   $logRootHtml = [System.Net.WebUtility]::HtmlEncode((Join-Path $ignitionProofRoot 'logs'))
   $transcriptHtml = [System.Net.WebUtility]::HtmlEncode($ignitionTranscriptPath)
   $snapshotHtml = [System.Net.WebUtility]::HtmlEncode($ignitionSupportSnapshotPath)
+  $openClawStartupState = if ($Status.openClawStartupState) { [System.Net.WebUtility]::HtmlEncode($Status.openClawStartupState) } else { 'pending / not reported yet' }
+  $openClawStartupDetail = if ($Status.openClawStartupDetail) { [System.Net.WebUtility]::HtmlEncode($Status.openClawStartupDetail) } else { 'Ignition will reuse a verified OpenClaw runtime or start approved local runtime surfaces only.' }
   $json = [System.Net.WebUtility]::HtmlEncode(($Status | ConvertTo-Json -Depth 10))
   $html = @"
 <!doctype html>
@@ -168,6 +203,7 @@ function Update-IgnitionSplashScreen([object]$Status) {
   <p>$message</p>
   <p class="muted">Professional ignition is browser-first: detailed status, exact blockers, safe generated/runtime cleanup policy, and proof artifacts are visible before Stephanos opens.</p>
   <section aria-label="Detailed ignition stages" class="stage-grid">$stageHtml</section>
+  <section aria-label="OpenClaw startup status" class="blocker"><strong>OpenClaw startup:</strong> $openClawStartupState<br><strong>Detail:</strong> $openClawStartupDetail</section>
   <section class="blocker" aria-label="Blocker and operator action"><strong>Blocker:</strong> $blocker<br><strong>Next action:</strong> $next</section>
   <section class="proof" aria-label="Support snapshot and proof transcript">
     <p>Status: <code>$statusPathHtml</code></p><p>Logs: <code>$logRootHtml</code></p><p>Proof transcript: <code>$transcriptHtml</code></p><p>Support snapshot: <code>$snapshotHtml</code></p>
@@ -206,7 +242,7 @@ function Get-LauncherChildBlocker {
       for ($index = $lines.Count - 1; $index -ge 0; $index--) {
         $line = [string]$lines[$index]
 
-        $packetMatch = [regex]::Match($line, '^\[IGNITION\]\s+(source-update-status|repair-packet|source-merge-repair-packet|openclaw-recovery-packet|recovery-packet)=(\{.*\})\s*$')
+        $packetMatch = [regex]::Match($line, '^\[IGNITION\]\s+(source-update-status|repair-packet|source-merge-repair-packet|openclaw-autostart-status|openclaw-recovery-packet|recovery-packet)=(\{.*\})\s*$')
         if ($packetMatch.Success) {
           try {
             $packetType = $packetMatch.Groups[1].Value
@@ -540,6 +576,8 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
     exactHeadApprovalRequired = $true
     exactHeadApprovalStatus = 'required-before-merge-proof'
     safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'
+    openClawStartupState = if ($latestOpenClawStartup) { $latestOpenClawStartup.state } else { 'pending' }
+    openClawStartupDetail = if ($latestOpenClawStartup) { $latestOpenClawStartup.detail } else { 'Awaiting OpenClaw runtime detection/autostart proof.' }
     statusPath = $ignitionStatusPath
     splashPath = $ignitionSplashPath
     transcriptPath = $ignitionTranscriptPath

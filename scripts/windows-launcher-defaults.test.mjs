@@ -253,3 +253,10 @@ test('ready ignition status marks all launcher stages complete', async () => {
   assert.match(script, /if \(\$ready\) \{\s*'complete'\s*\}/m, 'ready status must mark all stages complete');
   assert.match(script, /Write-IgnitionStatus -Phase 'ready'[\s\S]*currentStage = 'ready'/m, 'final ready status must request ready stage projection');
 });
+
+test('status page shows OpenClaw startup state from ignition child logs', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /openclaw-autostart-status/, 'launcher must observe OpenClaw autostart status packets from bounded ignition logs');
+  assert.match(script, /aria-label="OpenClaw startup status"/, 'splash/status page must render OpenClaw startup state');
+  assert.match(script, /openClawStartupState/, 'status payload must include OpenClaw startup state');
+});

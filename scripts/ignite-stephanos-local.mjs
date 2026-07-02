@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,6 +13,7 @@ import {
 } from '../shared/agents/openClawWorkspaceHygiene.mjs';
 import {
   DEFAULT_OPENCLAW_ENDPOINTS,
+  OPENCLAW_STARTUP_SAFETY_LOCKS,
   DEFAULT_OPENCLAW_SERVICE_NAME,
   buildOpenClawStartupRecoveryPacket,
   classifyOpenClawReadiness,
@@ -23,6 +24,91 @@ import {
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const OPENCLAW_STARTUP_RESTART_FLAG = '--approve-openclaw-service-restart';
+
+const OPENCLAW_AUTOSTART_SURFACES = Object.freeze([
+  { id: 'gateway', envKey: 'STEPHANOS_OPENCLAW_GATEWAY_COMMAND', required: true },
+  { id: 'chat', envKey: 'STEPHANOS_OPENCLAW_CHAT_COMMAND', required: false },
+  { id: 'dashboard', envKey: 'STEPHANOS_OPENCLAW_DASHBOARD_COMMAND', required: false },
+]);
+
+function splitCommandLine(value = '') {
+  const parts = String(value || '').match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  return parts.map((part) => part.replace(/^"|"$/g, ''));
+}
+
+function hasForbiddenOpenClawAutostartToken(value = '') {
+  return /\b(codex|dispatch|task|execute|mutation|mutate|merge-ready|merge\s+readiness|git\s+(?:push|merge|commit)|openai|anthropic|paid)\b/i.test(String(value || ''));
+}
+
+export function resolveApprovedOpenClawAutostartTargets({ env = process.env } = {}) {
+  return OPENCLAW_AUTOSTART_SURFACES.map((surface) => {
+    const commandText = String(env[surface.envKey] || '').trim();
+    if (!commandText) return { ...surface, available: false, blocked: surface.required, reason: 'approved-launch-command-missing' };
+    const argv = splitCommandLine(commandText);
+    if (argv.length === 0) return { ...surface, available: false, blocked: surface.required, reason: 'approved-launch-command-empty' };
+    if (hasForbiddenOpenClawAutostartToken(commandText)) return { ...surface, available: false, blocked: true, reason: 'approved-launch-command-violates-guardrails', commandText };
+    return { ...surface, available: true, blocked: false, command: argv[0], commandArgs: argv.slice(1), commandText };
+  });
+}
+
+function startApprovedOpenClawSurface({ target, spawnFn = spawn, log = (message) => console.log(message) } = {}) {
+  if (!target?.available) return { surface: target?.id || 'unknown', started: false, reason: target?.reason || 'not-available' };
+  const child = spawnFn(target.command, target.commandArgs || [], {
+    cwd: process.cwd(),
+    detached: true,
+    stdio: 'ignore',
+    shell: false,
+    env: { ...process.env, STEPHANOS_OPENCLAW_AUTOSTART: 'runtime-surfaces-only' },
+  });
+  if (typeof child?.unref === 'function') child.unref();
+  const pid = Number(child?.pid || 0) || null;
+  log(`[IGNITION] openclaw-autostart-surface=${JSON.stringify({ surface: target.id, started: true, pid, guardrails: { openClawTaskExecutionAllowed: false, mutationAllowed: false, codexDispatchAllowed: false, mergeReadinessChangeAllowed: false, paidApiUsageAllowed: false } })}`);
+  return { surface: target.id, started: true, pid };
+}
+
+export async function evaluateOpenClawRuntimeAutostartWithDeps({
+  captureStep = runStepCapture,
+  fetchFn = globalThis.fetch,
+  spawnFn = spawn,
+  platform = process.platform,
+  env = process.env,
+  log = (message) => console.log(message),
+  waitMs = 1200,
+} = {}) {
+  const discovery = discoverOpenClawStandaloneIdentityWithDeps({ captureStep, platform, env });
+  const { endpoints, gatewayCandidate } = buildOpenClawReadinessEndpoints({ discovery });
+  const base = probeOpenClawProcessWithDeps({ captureStep, platform });
+  const beforeEndpoint = await probeOpenClawEndpoint({ endpoints, fetchFn });
+  const beforeReadiness = { ...base, endpoint: beforeEndpoint, standaloneGatewayCandidate: gatewayCandidate };
+  const beforeClassification = classifyOpenClawReadiness(beforeReadiness);
+  const endpointAlreadyVerified = beforeEndpoint.reachable === true && beforeEndpoint.identityVerified === true && /^(healthy|ready|live|connected)$/i.test(String(beforeEndpoint.connectionStatus || ''));
+  if (beforeClassification.healthy || endpointAlreadyVerified) {
+    const status = { state: 'openclaw-reused-existing-runtime', healthy: true, autostartAttempted: false, duplicateStartAvoided: true, selectedReadinessEndpoint: beforeEndpoint.url || null };
+    log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
+    return status;
+  }
+
+  const targets = resolveApprovedOpenClawAutostartTargets({ env });
+  const blockingTarget = targets.find((target) => target.blocked && target.required);
+  if (blockingTarget) {
+    const status = { state: 'openclaw-autostart-blocked', healthy: false, autostartAttempted: false, reason: blockingTarget.reason, surface: blockingTarget.id, guardrails: OPENCLAW_STARTUP_SAFETY_LOCKS };
+    log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
+    throw new Error(`blocked for safety: OpenClaw ${blockingTarget.id} autostart cannot proceed (${blockingTarget.reason}). Configure ${blockingTarget.envKey} with an approved local runtime-surface launch command; no OpenClaw task execution or mutation is allowed.`);
+  }
+
+  const started = targets.filter((target) => target.available).map((target) => startApprovedOpenClawSurface({ target, spawnFn, log }));
+  if (waitMs > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, waitMs));
+  const afterEndpoint = await probeOpenClawEndpoint({ endpoints, fetchFn });
+  const afterReadiness = { ...probeOpenClawProcessWithDeps({ captureStep, platform }), endpoint: afterEndpoint, standaloneGatewayCandidate: gatewayCandidate };
+  const afterClassification = classifyOpenClawReadiness(afterReadiness);
+  const identityVerified = afterClassification.healthy === true || afterClassification.endpointIdentityVerified === true || afterEndpoint.identityVerified === true;
+  const status = { state: identityVerified ? 'openclaw-autostart-identity-verified' : 'openclaw-autostart-identity-unverified', healthy: identityVerified, autostartAttempted: true, started, selectedReadinessEndpoint: afterEndpoint.url || null, guardrails: { openClawTaskExecutionAllowed: false, mutationAllowed: false, codexDispatchAllowed: false, mergeReadinessChangeAllowed: false, paidApiUsageAllowed: false } };
+  log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
+  if (!identityVerified) {
+    throw new Error('blocked for safety: OpenClaw local runtime surface started or was probed, but endpoint identity could not be verified. Operator action: confirm the gateway endpoint is the approved local OpenClaw runtime before retrying.');
+  }
+  return status;
+}
 
 
 
@@ -1721,7 +1807,7 @@ export async function run() {
       }
 
       if (ignitionMode === 'NORMAL_IGNITION' && process.platform === 'win32') {
-        await evaluateOpenClawStartupConnectRecoveryWithDeps();
+        await evaluateOpenClawRuntimeAutostartWithDeps();
       } else if (ignitionMode === 'NORMAL_IGNITION') {
         console.log('[IGNITION] OpenClaw startup connect recovery skipped (non-Windows desktop service probe unavailable).');
       }
