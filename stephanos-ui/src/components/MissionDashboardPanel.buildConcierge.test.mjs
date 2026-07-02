@@ -49,10 +49,12 @@ test('Mission Dashboard shows live Mission Control projection summary', async ()
         activeProofLane: [{ candidateId: 'bc-goal-live' }],
         executionEngine: { schemaVersion: 'stephanos.build-concierge.execution-engine.v9', status: 'blocked_or_manual', watchedGoalCount: 1, classifiedGoalCount: 1, manualDispatchRequiredCount: 1, enrichedCandidates: [{ candidateId: 'bc-goal-live', classification: 'proof_only_goal', requiredProofFamilies: ['local-verify'], declaredAllowlistedProofCommands: ['npm run stephanos:verify'], dispatchReadiness: 'MANUAL_DISPATCH_REQUIRED' }] },
         currentAgentStates: { operator: { state: 'approval_authority' }, stephanos: { state: 'backend_reachable' }, codex: { state: 'not_dispatched' }, openclaw: { state: 'unknown' }, github: { state: 'unknown' }, battleBridge: { state: 'satisfied' } },
+        heartbeat: { generatedAtAgeSeconds: 5, backendLive: true, projectionSource: 'live-goal-projection-service', watchedGoals: 1, classifiedGoals: 1, manualDispatchRequired: 1, staleUnknownWarnings: ['Local proof is unknown'] },
+        importedGoals: { verificationState: 'imported_unverified' },
         nextOperatorAction: 'Review live projection.',
       },
     } }));
-    for (const value of ['Mission Control Live Projection', 'LIVE', 'Operator state', 'approval_authority', 'Stephanos state', 'backend_reachable', 'Codex state', 'not_dispatched', 'OpenClaw state', 'GitHub state', 'Battle Bridge state', 'Active proof lane', 'bc-goal-live', 'Queued goals', '2', 'Blocked goals', '1', 'Completed goals', 'Review live projection.', 'V9 execution engine', 'proof_only_goal', 'local-verify']) {
+    for (const value of ['Mission Control Live Projection', 'LIVE', 'Operator state', 'approval_authority', 'Stephanos state', 'backend_reachable', 'Codex state', 'not_dispatched', 'OpenClaw state', 'GitHub state', 'Battle Bridge state', 'Active proof lane', 'bc-goal-live', 'Queued goals', '2', 'Blocked goals', '1', 'Completed goals', 'Review live projection.', 'GeneratedAt age', '5s', 'Backend live', 'true', 'Projection source', 'live-goal-projection-service', 'Watched goals', 'Classified goals', 'Manual dispatch required', 'Imported goals', 'imported_unverified', 'Stale/unknown warnings', 'Local proof is unknown', 'V9 execution engine', 'proof_only_goal', 'local-verify']) {
       assert.equal(markup.includes(value), true, `missing live Mission Dashboard value: ${value}`);
     }
   } finally {

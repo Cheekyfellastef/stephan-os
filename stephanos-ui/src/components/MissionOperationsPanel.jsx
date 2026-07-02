@@ -66,6 +66,9 @@ export function LiveGoalProjectionSummary({ projection = {} }) {
   const agents = projection.currentAgentStates || {};
   const activeLane = Array.isArray(projection.activeProofLane) ? projection.activeProofLane : [];
   const engine = projection.executionEngine || projection.buildConciergeStatus?.executionEngine || {};
+  const githubTelemetry = projection.githubTelemetry || {};
+  const notificationCounts = githubTelemetry.notificationCounts || {};
+  const workflowCounts = githubTelemetry.workflowCounts || {};
   const sourceBadge = projection.sourceTruth === 'live' ? 'LIVE' : projection.sourceTruth === 'mixed' ? 'MIXED' : projection.sourceTruth === 'static-fallback' ? 'STATIC_FALLBACK' : 'UNKNOWN';
   return (
     <section className="mission-operations-build-concierge" aria-label="Mission Control live projection" data-testid="mission-control-live-projection">
@@ -81,6 +84,18 @@ export function LiveGoalProjectionSummary({ projection = {} }) {
         <div><dt>Queued goals</dt><dd>{projection.queuedGoalCount ?? 'unknown'}</dd></div>
         <div><dt>Blocked goals</dt><dd>{projection.blockedGoalCount ?? 'unknown'}</dd></div>
         <div><dt>Completed goals</dt><dd>{projection.completedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>GeneratedAt age</dt><dd>{projection.heartbeat?.generatedAtAgeSeconds ?? projection.generatedAtAgeSeconds ?? 'unknown'}s</dd></div>
+        <div><dt>Backend live</dt><dd>{projection.heartbeat?.backendLive === true ? 'true' : 'unknown'}</dd></div>
+        <div><dt>Projection source</dt><dd>{projection.heartbeat?.projectionSource || projection.projectionSource || 'unknown'}</dd></div>
+        <div><dt>Watched goals</dt><dd>{projection.heartbeat?.watchedGoals ?? engine.watchedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>Classified goals</dt><dd>{projection.heartbeat?.classifiedGoals ?? engine.classifiedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>Manual dispatch required</dt><dd>{projection.heartbeat?.manualDispatchRequired ?? engine.manualDispatchRequiredCount ?? 'unknown'}</dd></div>
+        <div><dt>Imported goals</dt><dd>{projection.importedGoals?.verificationState || 'unknown'}</dd></div>
+        <div><dt>Stale/unknown warnings</dt><dd>{(projection.heartbeat?.staleUnknownWarnings || projection.staleWarnings || []).join(' | ') || 'none'}</dd></div>
+        <div><dt>GitHub adapter</dt><dd>{githubTelemetry.status || 'adapter_unavailable'}</dd></div>
+        <div><dt>GitHub notifications</dt><dd>{Object.entries(notificationCounts).map(([key, value]) => `${key}:${value}`).join(' | ') || 'none'}</dd></div>
+        <div><dt>Open PRs</dt><dd>{githubTelemetry.pullRequestCount ?? (githubTelemetry.pullRequests || []).length ?? 'unknown'}</dd></div>
+        <div><dt>Workflows</dt><dd>{Object.entries(workflowCounts).map(([key, value]) => `${key}:${value}`).join(' | ') || 'none'}</dd></div>
         <div><dt>V9 execution engine</dt><dd>{engine.status || 'unknown'} · classified {engine.classifiedGoalCount ?? 0} · manual dispatch {engine.manualDispatchRequiredCount ?? 0}</dd></div>
       </dl>
       <ExecutionEngineV9Surface engine={engine} />

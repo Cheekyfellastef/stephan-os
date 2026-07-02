@@ -1,8 +1,14 @@
 import express from 'express';
 import { fetchGithubPrEvidence, resolveGithubRepoConfig, resolveGithubTokenConfig } from '../services/githubPrEvidenceService.js';
 import { providerSecretStore } from '../services/providerSecretStore.js';
+import { readGithubTelemetry } from '../services/githubTelemetryService.js';
 
 const router = express.Router();
+
+router.get('/telemetry', async (_req, res) => {
+  const payload = await readGithubTelemetry();
+  res.status(payload.status === 'adapter_error' ? 502 : 200).json(payload);
+});
 
 router.get('/pr-evidence', async (req, res) => {
   const prNumber = Number(req.query.pr || 0) || null;
