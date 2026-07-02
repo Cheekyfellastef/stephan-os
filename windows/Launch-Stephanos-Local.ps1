@@ -218,7 +218,7 @@ function Get-LauncherChildBlocker {
               $nextAction = if ($packet.nextSafeAction) { [string]$packet.nextSafeAction } else { 'Review the child ignition repair packet and resolve the blocker before retrying.' }
 
               return [ordered]@{
-                message = "blocked for safety: $reason. $nextAction"
+                message = "blocked for safety: ${reason}. $nextAction"
                 reason = $reason
                 nextOperatorAction = $nextAction
                 packetType = $packetType

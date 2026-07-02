@@ -24,7 +24,7 @@ export const BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP = Object.freeze([
   Object.freeze({
     version: 'V4',
     title: 'Browser Proof Capture',
-    status: 'planned_guarded',
+    status: 'implemented_guarded',
     intent: 'Integrate browser proof runner where available and record checklist, screenshot path, console errors, and caveats without claiming browser proof when unavailable.',
     sourceCanon: ['#1391 V1', '#1392 V2', '#1393 Goal Dashboard rail', '#1394 V3 local proof runner and overflow fix'],
     requiredSurfaces: BATTLE_BRIDGE_BUILD_CONCIERGE_SURFACES,
@@ -34,7 +34,7 @@ export const BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP = Object.freeze([
       'No browser proof claim is allowed when the browser runner is unavailable.',
       'Mission Operations, Mission Dashboard, and standalone landing-page Goal Dashboard must all show V4 status.',
     ],
-    testsRequired: ['Each required surface shows V4 Browser Proof Capture and planned_guarded status.'],
+    testsRequired: ['Each required surface shows V4 Browser Proof Capture implemented_guarded status plus browser-proof blocked/verified truth.'],
   }),
   Object.freeze({
     version: 'V5',
