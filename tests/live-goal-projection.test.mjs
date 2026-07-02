@@ -49,6 +49,31 @@ test('projection does not claim GitHub local or browser proof without receipts',
   assert.equal(projection.proofTruth.github, 'unknown');
   assert.equal(projection.proofTruth.local, 'unknown');
   assert.equal(projection.proofTruth.browser, 'unknown');
-  assert.equal(projection.currentAgentStates.github.state, 'unknown');
+  assert.equal(projection.currentAgentStates.github.state, 'adapter_unavailable');
   assert.equal(projection.staleWarnings.includes('Static goal-dashboard seed is not presented as live truth.'), true);
+});
+
+test('goal ingestion imports unfinished pasted goals, dedupes, and projects imported_unverified V9 candidates', async () => {
+  const { importGoalSummaries, readImportedGoalReceipts } = await import('../stephanos-server/services/goalIngestionService.js');
+  const directory = await tempDir();
+  const payload = { goals: [{ title: 'Historical Mission Control API', intent: 'Add backend API projection for old goals.', source: 'operator-paste', status: 'blocked', lastKnownPR: '#123', blockers: ['needs proof'], nextAction: 'Inspect receipts.' }] };
+  const first = await importGoalSummaries(payload, { directory, now: new Date('2026-07-02T00:00:00.000Z') });
+  const second = await importGoalSummaries(payload, { directory, now: new Date('2026-07-02T00:00:01.000Z') });
+  assert.equal(first.imported.length, 1);
+  assert.equal(second.duplicates.length, 1);
+  const importedGoals = await readImportedGoalReceipts({ directory });
+  const projection = buildLiveGoalProjection({
+    now: new Date('2026-07-02T00:00:02.000Z'),
+    backendStatus: { status: 'live', ok: true, healthRoute: '/api/health' },
+    missionOperationsFeed: { status: 'ready', source: 'external-receipt-directory', missions: [], errors: [] },
+    importedGoals,
+  });
+  assert.equal(projection.importedGoals.verificationState, 'imported_unverified');
+  assert.equal(projection.queuedCandidates[0].title, 'Historical Mission Control API');
+  assert.equal(projection.executionEngine.watchedGoalCount, 1);
+  assert.equal(projection.executionEngine.classifiedGoalCount, 1);
+  assert.equal(projection.executionEngine.enrichedCandidates[0].dispatchReadiness, 'MANUAL_DISPATCH_REQUIRED');
+  assert.equal(projection.proofTruth.github, 'unknown');
+  assert.equal(projection.proofTruth.local, 'unknown');
+  assert.equal(projection.proofTruth.browser, 'unknown');
 });

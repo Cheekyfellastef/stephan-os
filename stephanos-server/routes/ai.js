@@ -10,6 +10,8 @@ import { routeLLMRequest, resolveProviderRequest, getProviderHealthSnapshot } fr
 import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
 import { providerSecretStore } from '../services/providerSecretStore.js';
 import { resolveProviderExecutionTruth } from '../services/providerExecutionTruth.js';
+import { readLiveGoalProjection } from '../services/liveGoalProjectionService.js';
+import { answerLiveTelemetryQuestion } from '../services/githubTelemetryService.js';
 import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
 import { localRetrievalService } from '../services/retrieval/localRetrievalService.js';
@@ -112,6 +114,43 @@ function stripRawSecretsFromConfig(config = {}) {
   const source = config && typeof config === 'object' ? config : {};
   const { apiKey, ...rest } = source;
   return rest;
+}
+
+
+function formatGoalProjectionForPrompt(projection = {}) {
+  if (!projection || projection.schemaVersion !== 'stephanos.live-goal-projection.v1') return '';
+  const engine = projection.executionEngine || projection.buildConciergeStatus?.executionEngine || {};
+  const active = Array.isArray(projection.activeProofLane) ? projection.activeProofLane : [];
+  const queued = Array.isArray(projection.queuedCandidates) ? projection.queuedCandidates : [];
+  const blocked = Array.isArray(projection.blockedCandidates) ? projection.blockedCandidates : [];
+  const warnings = Array.isArray(projection.staleWarnings) ? projection.staleWarnings : [];
+  return [
+    'Live Mission Control / Goal Projection context from /api/goal-projection/live:',
+    `schemaVersion: ${projection.schemaVersion}`,
+    `generatedAt: ${projection.generatedAt || 'unknown'}`,
+    `projectionSource: ${projection.projectionSource || 'unknown'}`,
+    `sourceTruth: ${projection.sourceTruth || 'unknown'}`,
+    `backendLive: ${projection.heartbeat?.backendLive === true}`,
+    `watchedGoals: ${projection.heartbeat?.watchedGoals ?? engine.watchedGoalCount ?? 'unknown'}`,
+    `classifiedGoals: ${projection.heartbeat?.classifiedGoals ?? engine.classifiedGoalCount ?? 'unknown'}`,
+    `manualDispatchRequired: ${projection.heartbeat?.manualDispatchRequired ?? engine.manualDispatchRequiredCount ?? 'unknown'}`,
+    `importedGoalsVerification: ${projection.importedGoals?.verificationState || 'unknown'}`,
+    `activeGoals: ${active.map((goal) => goal.candidateId || goal.title || 'unknown').join(', ') || 'none'}`,
+    `queuedGoals: ${queued.map((goal) => goal.candidateId || goal.title || 'unknown').join(', ') || 'none'}`,
+    `blockedGoals: ${blocked.map((goal) => goal.candidateId || goal.title || 'unknown').join(', ') || 'none'}`,
+    `blockers: ${(projection.blockers || []).join(' | ') || 'none reported'}`,
+    `nextOperatorAction: ${projection.nextOperatorAction || 'unknown'}`,
+    `proofTruth.github: ${projection.proofTruth?.github || 'unknown'}`,
+    `proofTruth.local: ${projection.proofTruth?.local || 'unknown'}`,
+    `proofTruth.browser: ${projection.proofTruth?.browser || 'unknown'}`,
+    `githubTelemetry.status: ${projection.githubTelemetry?.status || 'unknown'}`,
+    `githubTelemetry.notificationCounts: ${JSON.stringify(projection.githubTelemetry?.notificationCounts || {})}`,
+    `githubTelemetry.pullRequests: ${(projection.githubTelemetry?.pullRequests || []).map((pr) => `#${pr.number}:${pr.title}:${pr.checksStatus}:${pr.mergeReadiness}:${pr.approvalStatus}`).join(' | ') || 'none'}`,
+    `githubTelemetry.workflows: ${(projection.githubTelemetry?.workflows || []).map((run) => `${run.name}:${run.status}:PR${run.prNumber || 'unknown'}`).join(' | ') || 'none'}`,
+    `executionChains: ${(projection.executionChains || []).map((chain) => `${chain.title}->PR${chain.pr?.number || 'unknown'}->${(chain.workflows || []).map((run) => run.status).join(',') || 'workflow_unknown'}->browser:${chain.browserProof}->approval:${chain.approval}->merge:${chain.merge}`).join(' | ') || 'none'}`,
+    `staleWarnings: ${warnings.join(' | ') || 'none'}`,
+    'Answer goal/blocked/next-action questions only from these fields. Cite field names. Say unknown when a field is unknown. Do not invent GitHub, local, browser, Codex dispatch, merge, or command-execution proof.',
+  ].join('\n');
 }
 
 function buildServerOwnedProviderConfigs(input = {}) {
@@ -454,6 +493,12 @@ router.post('/chat', async (req, res) => {
       }));
     }
 
+    const liveGoalProjection = await readLiveGoalProjection();
+    const goalProjectionContext = formatGoalProjectionForPrompt(liveGoalProjection);
+    if (/\b(active goals?|github notifications?|safest.*merge|build concierge waiting|goal .*stalled|workflows? failed|what should i do next)\b/i.test(prompt)) {
+      const outputText = answerLiveTelemetryQuestion(prompt, liveGoalProjection);
+      return res.json(buildSuccessResponse({ type: 'live_telemetry_result', route: decision.route, command: null, output_text: outputText, data: { liveGoalProjection }, tools_used: ['live-goal-projection'], memory_hits: memoryHits, timing_ms: Date.now() - startedAt, debug: { request_id: requestId, route_reason: 'answered-from-live-goal-projection', error_code: null } }));
+    }
     const contextBundle = assistantContextService.buildContextBundle({ limit: 3 });
     const intentProposalEnvelope = buildIntentProposalEnvelope({ requestText: prompt, context: { route: decision.route } });
     const retrieval = localRetrievalService.query({
@@ -474,6 +519,7 @@ router.post('/chat', async (req, res) => {
 ${memorySummary}
 Use these memories when they help, but do not repeat them unless they are relevant.` : '',
       formatTileContextForPrompt(assembledTileContext),
+      goalProjectionContext,
       retrieval.contextBlock
         ? `Local retrieval context (bounded, local-first, non-fresh-web):
 ${retrieval.contextBlock}
@@ -521,6 +567,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         parsed_command: parsedCommand,
         memory_hits: memoryHits,
         subsystem_context: contextBundle,
+        live_goal_projection: liveGoalProjection,
         relevant_memory: memoryHits,
       },
       staleFallbackPermitted: staleFallbackPermitted ?? routeDecision?.staleFallbackPermitted ?? freshnessContext?.staleFallbackPermitted ?? false,
