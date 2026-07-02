@@ -159,7 +159,7 @@ test('OpenClaw readiness probes discovered standalone gateway port before readon
     return { ok: true, status: 200, text: async () => '{"ok":true,"status":"live"}' };
   };
   const result = await evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep, fetchFn, platform: 'win32', log: () => {} });
-  assert.equal(calls[0], 'http://127.0.0.1:18789/health');
+  assert.equal(calls[0], 'http://127.0.0.1:18789/identity');
   assert.equal(calls.includes('http://127.0.0.1:8790/health'), false);
   assert.equal(result.state, 'openclaw-standalone-gateway-live');
   assert.equal(result.readiness.identity, 'standalone-gateway');
@@ -181,7 +181,7 @@ test('OpenClaw real gateway candidate present is not classified adapter-only', (
   const { endpoints, gatewayCandidate } = buildOpenClawReadinessEndpoints({ discovery });
   assert.equal(gatewayCandidate.verified, true);
   assert.equal(gatewayCandidate.candidatePort, 18789);
-  assert.equal(endpoints[0], 'http://127.0.0.1:18789/health');
+  assert.equal(endpoints[0], 'http://127.0.0.1:18789/identity');
   const classification = classifyOpenClawReadiness({
     process: { running: true, name: 'node.exe', commandLine: 'node.exe scripts/openclaw-readonly-adapter-stub.mjs' },
     service: { running: false, exists: false },
