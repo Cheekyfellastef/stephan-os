@@ -13,6 +13,7 @@ import {
 } from '../shared/agents/openClawWorkspaceHygiene.mjs';
 import {
   DEFAULT_OPENCLAW_ENDPOINTS,
+  DEFAULT_OPENCLAW_IDENTITY_ENDPOINT,
   OPENCLAW_STARTUP_SAFETY_LOCKS,
   DEFAULT_OPENCLAW_SERVICE_NAME,
   buildOpenClawStartupRecoveryPacket,
@@ -74,11 +75,14 @@ export async function evaluateOpenClawRuntimeAutostartWithDeps({
   env = process.env,
   log = (message) => console.log(message),
   waitMs = 1200,
+  readinessTimeoutMs = 10000,
+  retryIntervalMs = 500,
 } = {}) {
   const discovery = discoverOpenClawStandaloneIdentityWithDeps({ captureStep, platform, env });
   const { endpoints, gatewayCandidate } = buildOpenClawReadinessEndpoints({ discovery });
+  const expectedIdentity = resolveExpectedOpenClawIdentity({ env, endpoint: endpoints[0] || DEFAULT_OPENCLAW_IDENTITY_ENDPOINT });
   const base = probeOpenClawProcessWithDeps({ captureStep, platform });
-  const beforeEndpoint = await probeOpenClawEndpoint({ endpoints, fetchFn });
+  const beforeEndpoint = await probeOpenClawEndpoint({ endpoints, fetchFn, expectedIdentity, timeoutMs: 0, retryIntervalMs });
   const beforeReadiness = { ...base, endpoint: beforeEndpoint, standaloneGatewayCandidate: gatewayCandidate };
   const beforeClassification = classifyOpenClawReadiness(beforeReadiness);
   const endpointAlreadyVerified = beforeEndpoint.reachable === true && beforeEndpoint.identityVerified === true && /^(healthy|ready|live|connected)$/i.test(String(beforeEndpoint.connectionStatus || ''));
@@ -98,14 +102,15 @@ export async function evaluateOpenClawRuntimeAutostartWithDeps({
 
   const started = targets.filter((target) => target.available).map((target) => startApprovedOpenClawSurface({ target, spawnFn, log }));
   if (waitMs > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, waitMs));
-  const afterEndpoint = await probeOpenClawEndpoint({ endpoints, fetchFn });
+  const afterEndpoint = await probeOpenClawEndpoint({ endpoints, fetchFn, expectedIdentity, timeoutMs: readinessTimeoutMs, retryIntervalMs });
   const afterReadiness = { ...probeOpenClawProcessWithDeps({ captureStep, platform }), endpoint: afterEndpoint, standaloneGatewayCandidate: gatewayCandidate };
   const afterClassification = classifyOpenClawReadiness(afterReadiness);
   const identityVerified = afterClassification.healthy === true || afterClassification.endpointIdentityVerified === true || afterEndpoint.identityVerified === true;
-  const status = { state: identityVerified ? 'openclaw-autostart-identity-verified' : 'openclaw-autostart-identity-unverified', healthy: identityVerified, autostartAttempted: true, started, selectedReadinessEndpoint: afterEndpoint.url || null, guardrails: { openClawTaskExecutionAllowed: false, mutationAllowed: false, codexDispatchAllowed: false, mergeReadinessChangeAllowed: false, paidApiUsageAllowed: false } };
+  const diagnostics = { expectedEndpoint: afterEndpoint.expectedEndpoint || expectedIdentity.endpoint, actualEndpoint: afterEndpoint.actualEndpoint || afterEndpoint.url || null, identityPayload: afterEndpoint.identityPayload || null, mismatchReason: afterEndpoint.identityMismatchReason || (identityVerified ? '' : 'identity-unverified') };
+  const status = { state: identityVerified ? 'openclaw-autostart-identity-verified' : 'openclaw-autostart-identity-unverified', healthy: identityVerified, autostartAttempted: true, started, selectedReadinessEndpoint: afterEndpoint.url || null, identityDiagnostics: diagnostics, guardrails: { openClawTaskExecutionAllowed: false, mutationAllowed: false, codexDispatchAllowed: false, mergeReadinessChangeAllowed: false, paidApiUsageAllowed: false } };
   log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
   if (!identityVerified) {
-    throw new Error('blocked for safety: OpenClaw local runtime surface started or was probed, but endpoint identity could not be verified. Operator action: confirm the gateway endpoint is the approved local OpenClaw runtime before retrying.');
+    throw new Error(`blocked for safety: OpenClaw local runtime surface started or was probed, but endpoint identity could not be verified. Diagnostics: ${JSON.stringify(diagnostics)}. Operator action: confirm the gateway endpoint is the approved local OpenClaw runtime before retrying.`);
   }
   return status;
 }
@@ -1394,28 +1399,103 @@ function parseJsonLine(value = '') {
   try { return JSON.parse(String(value || '').trim()); } catch { return null; }
 }
 
-export async function probeOpenClawEndpoint({ endpoints = DEFAULT_OPENCLAW_ENDPOINTS, fetchFn = globalThis.fetch } = {}) {
+
+function normalizeOpenClawEndpointUrl(value = '') {
+  try {
+    const url = new URL(String(value || '').trim());
+    url.hostname = url.hostname === 'localhost' ? '127.0.0.1' : url.hostname;
+    url.hash = '';
+    url.search = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return String(value || '').trim().replace(/\/$/, '');
+  }
+}
+
+function resolveExpectedOpenClawIdentity({ env = process.env, endpoint = DEFAULT_OPENCLAW_IDENTITY_ENDPOINT } = {}) {
+  return {
+    product: String(env.STEPHANOS_OPENCLAW_EXPECTED_PRODUCT || 'OpenClaw').trim(),
+    runtimeId: String(env.STEPHANOS_OPENCLAW_EXPECTED_RUNTIME_ID || 'openclaw-local-runtime').trim(),
+    endpoint: normalizeOpenClawEndpointUrl(env.STEPHANOS_OPENCLAW_IDENTITY_ENDPOINT || endpoint),
+  };
+}
+
+function extractOpenClawIdentityPayload(json = {}, body = '') {
+  const identity = json?.identity && typeof json.identity === 'object' ? json.identity : json;
+  return {
+    product: String(identity?.product || identity?.service || identity?.name || identity?.app || '').trim(),
+    runtimeId: String(identity?.runtimeId || identity?.runtimeID || identity?.id || identity?.runtime || '').trim(),
+    version: String(identity?.version || identity?.runtimeVersion || '').trim(),
+    endpoint: normalizeOpenClawEndpointUrl(identity?.endpoint || identity?.expectedEndpoint || identity?.url || ''),
+    raw: json && Object.keys(json).length > 0 ? json : body.slice(0, 500),
+  };
+}
+
+function verifyOpenClawIdentityPayload({ payload, expected, actualEndpoint }) {
+  const normalizedActualEndpoint = normalizeOpenClawEndpointUrl(actualEndpoint);
+  const actualProduct = String(payload?.product || '').trim();
+  const actualRuntimeId = String(payload?.runtimeId || '').trim();
+  const actualVersion = String(payload?.version || '').trim();
+  const actualDeclaredEndpoint = normalizeOpenClawEndpointUrl(payload?.endpoint || normalizedActualEndpoint);
+  const expectedEndpoint = normalizeOpenClawEndpointUrl(expected?.endpoint || actualEndpoint);
+  const productOk = actualProduct.toLowerCase() === String(expected?.product || '').trim().toLowerCase() || /^openclaw(?:\b|\s)/i.test(actualProduct);
+  const runtimeOk = actualRuntimeId === expected?.runtimeId;
+  const versionOk = actualVersion.length > 0;
+  const endpointOk = actualDeclaredEndpoint === expectedEndpoint && normalizedActualEndpoint === expectedEndpoint;
+  const mismatchReasons = [];
+  if (!productOk) mismatchReasons.push('product-mismatch');
+  if (!runtimeOk) mismatchReasons.push('runtime-id-mismatch');
+  if (!versionOk) mismatchReasons.push('version-missing');
+  if (!endpointOk) mismatchReasons.push('endpoint-mismatch');
+  return {
+    verified: mismatchReasons.length === 0,
+    mismatchReason: mismatchReasons.join(',') || '',
+    expected: { ...expected, endpoint: expectedEndpoint },
+    actual: { product: actualProduct, runtimeId: actualRuntimeId, version: actualVersion, endpoint: actualDeclaredEndpoint || normalizedActualEndpoint },
+  };
+}
+
+async function probeOpenClawEndpointOnce({ endpoints = DEFAULT_OPENCLAW_ENDPOINTS, fetchFn = globalThis.fetch, expectedIdentity = resolveExpectedOpenClawIdentity() } = {}) {
   for (const url of endpoints) {
     try {
       const response = await fetchFn(url, { headers: { Accept: 'application/json,text/plain', 'Cache-Control': 'no-cache' } });
       const body = await response.text();
       const json = parseJsonLine(body);
-      const identity = json?.service || json?.name || json?.app || body.slice(0, 200);
+      const identityPayload = extractOpenClawIdentityPayload(json || {}, body);
+      const verification = verifyOpenClawIdentityPayload({ payload: identityPayload, expected: expectedIdentity, actualEndpoint: url });
+      const identity = identityPayload.product || json?.service || json?.name || json?.app || body.slice(0, 200);
       const connectionStatus = json?.connectionStatus || json?.status || json?.health || (response.ok ? 'unknown' : 'unhealthy');
       return {
         url,
         reachable: Boolean(response?.ok),
         httpStatus: response?.status ?? null,
         identity,
+        identityPayload,
+        expectedEndpoint: verification.expected.endpoint,
+        actualEndpoint: normalizeOpenClawEndpointUrl(url),
         body: body.slice(0, 500),
-        identityVerified: /openclaw/i.test(String(identity || body || '')),
-        connectionStatus: /^(healthy|connected|ready)$/i.test(String(connectionStatus).trim()) ? 'healthy' : String(connectionStatus || 'unknown'),
+        identityVerified: response?.ok === true && verification.verified,
+        identityMismatchReason: verification.mismatchReason,
+        identityVerification: verification,
+        connectionStatus: /^(healthy|connected|ready|live)$/i.test(String(connectionStatus).trim()) ? 'healthy' : String(connectionStatus || 'unknown'),
       };
     } catch (error) {
       // Try the next known local endpoint before reporting unreachable.
     }
   }
-  return { reachable: false, status: 'unreachable-or-unknown', identityVerified: false, connectionStatus: 'unknown' };
+  return { reachable: false, status: 'unreachable-or-unknown', identityVerified: false, connectionStatus: 'unknown', expectedEndpoint: expectedIdentity.endpoint, actualEndpoint: null, identityPayload: null, identityMismatchReason: 'endpoint-unreachable' };
+}
+
+export async function probeOpenClawEndpoint({ endpoints = DEFAULT_OPENCLAW_ENDPOINTS, fetchFn = globalThis.fetch, expectedIdentity = resolveExpectedOpenClawIdentity(), timeoutMs = 0, retryIntervalMs = 500 } = {}) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
+  let last = null;
+  do {
+    last = await probeOpenClawEndpointOnce({ endpoints, fetchFn, expectedIdentity });
+    if (last.identityVerified === true) return last;
+    if (Date.now() >= deadline) return last;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.max(0, Number(retryIntervalMs || 0))));
+  } while (Date.now() <= deadline);
+  return last;
 }
 
 function parseJsonArrayLine(value = '') {
@@ -1481,18 +1561,20 @@ export function buildOpenClawReadinessEndpoints({ discovery = {}, defaultEndpoin
     return { endpoints: defaultEndpoints, gatewayCandidate };
   }
   const gatewayEndpoints = [
+    `http://127.0.0.1:${gatewayCandidate.candidatePort}/identity`,
     `http://127.0.0.1:${gatewayCandidate.candidatePort}/health`,
     `http://127.0.0.1:${gatewayCandidate.candidatePort}/status`,
   ];
   return { endpoints: [...gatewayEndpoints, ...defaultEndpoints], gatewayCandidate };
 }
 
-export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep = runStepCapture, runStepFn = runStep, fetchFn = globalThis.fetch, argvArgs = args, platform = process.platform, log = (message) => console.log(message) } = {}) {
+export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep = runStepCapture, runStepFn = runStep, fetchFn = globalThis.fetch, argvArgs = args, platform = process.platform, env = process.env, log = (message) => console.log(message) } = {}) {
   const discovery = discoverOpenClawStandaloneIdentityWithDeps({ captureStep, platform });
   log(`[IGNITION] openclaw-standalone-discovery=${JSON.stringify(discovery)}`);
   const { endpoints, gatewayCandidate } = buildOpenClawReadinessEndpoints({ discovery });
+  const expectedIdentity = resolveExpectedOpenClawIdentity({ env, endpoint: endpoints[0] || DEFAULT_OPENCLAW_IDENTITY_ENDPOINT });
   const base = probeOpenClawProcessWithDeps({ captureStep, platform });
-  const endpoint = await probeOpenClawEndpoint({ endpoints, fetchFn });
+  const endpoint = await probeOpenClawEndpoint({ endpoints, fetchFn, expectedIdentity });
   let readiness = { ...base, endpoint, standaloneGatewayCandidate: gatewayCandidate, candidatePort: gatewayCandidate?.candidatePort || null, selectedReadinessEndpoint: endpoint.url || null, adapterOnly: gatewayCandidate?.verified === true ? 'no' : undefined, restartCommandAllowed: false, safeRestartTarget: 'none' };
   let packet = buildOpenClawStartupRecoveryPacket(readiness);
   const classification = classifyOpenClawReadiness(readiness);

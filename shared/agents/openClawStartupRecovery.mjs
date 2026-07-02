@@ -8,7 +8,8 @@ export const OPENCLAW_STARTUP_SAFETY_LOCKS = Object.freeze({
 });
 
 export const DEFAULT_OPENCLAW_SERVICE_NAME = 'OpenClaw';
-export const DEFAULT_OPENCLAW_ENDPOINTS = ['http://127.0.0.1:8790/health', 'http://127.0.0.1:8790/status'];
+export const DEFAULT_OPENCLAW_IDENTITY_ENDPOINT = 'http://127.0.0.1:8790/identity';
+export const DEFAULT_OPENCLAW_ENDPOINTS = [DEFAULT_OPENCLAW_IDENTITY_ENDPOINT, 'http://127.0.0.1:8790/health', 'http://127.0.0.1:8790/status'];
 
 function includesOpenClaw(value = '') { return /openclaw/i.test(String(value || '')); }
 function isVerifiedOpenClawService(service = {}) {
