@@ -53,6 +53,10 @@ export function BuildConciergeSurface({ concierge = {} }) {
   const restartRefresh = postMergeSync.restartRefresh || {};
   const backendFreshnessProof = postMergeSync.backendFreshnessProof || {};
   const refreshState = postMergeSync.refreshState || {};
+  const queue = concierge.queue || {};
+  const antiStall = concierge.antiStallMergeLane || {};
+  const queuedCandidates = Array.isArray(queue.queuedCandidates) ? queue.queuedCandidates : [];
+  const activeProofLane = Array.isArray(queue.activeProofLane) ? queue.activeProofLane : [];
   return (
     <section className="mission-operations-build-concierge" aria-label="Build Concierge panel" data-testid="build-concierge-panel">
       <h4>Build Concierge</h4>
@@ -75,6 +79,11 @@ export function BuildConciergeSurface({ concierge = {} }) {
         <div><dt>V7 restart/refresh</dt><dd>{restartRefresh.status || 'unknown'} · PC restart {restartRefresh.pcRestartAllowed === true ? 'allowed' : 'prohibited'}</dd></div>
         <div><dt>V7 backend freshness proof</dt><dd>{backendFreshnessProof.status || 'unknown'}</dd></div>
         <div><dt>V7 surface refresh</dt><dd>Mission Operations {refreshState.missionOperations || 'unknown'} · Goal Dashboard {refreshState.goalDashboard || 'unknown'}</dd></div>
+        <div><dt>V8 queue</dt><dd>{queue.status || roadmapPhases.find((phase) => phase.version === 'V8')?.status || 'unknown'} · queued {queuedCandidates.length} · active {activeProofLane.length}</dd></div>
+        <div><dt>V8 one-active-lane guardrail</dt><dd>{queue.oneActiveLaneGuardrail || 'unknown'}</dd></div>
+        <div><dt>V8 next safe candidate</dt><dd>{queue.nextSafeCandidate?.candidateId || 'unknown'}</dd></div>
+        <div><dt>V8 anti-stall fallback truth</dt><dd>{antiStall.cliMergeFallbackAllowed === true ? 'manual CLI fallback allowed' : 'manual CLI fallback blocked_or_unknown'}</dd></div>
+        <div><dt>V8 connector merge</dt><dd>{antiStall.connectorMergeAttempted === true ? 'attempted' : 'not_attempted'} · {antiStall.connectorMergeBlockedReason || 'unknown'}</dd></div>
       </dl>
       <p className="mission-operations-next-action"><strong>Next operator action:</strong> {postMergeSync.nextOperatorAction || approvalDecision.nextOperatorAction || concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
       {proofCommands.length ? (
@@ -85,6 +94,13 @@ export function BuildConciergeSurface({ concierge = {} }) {
           <strong>V4 browser-proof blocker:</strong> {browserProofPacket.proofUnavailableBlocker || 'none'}
           {consoleErrors.length ? <div><strong>Console errors:</strong> {consoleErrors.join(' | ')}</div> : null}
           {caveats.length ? <div><strong>Caveats:</strong> {caveats.join(' | ')}</div> : null}
+        </div>
+      ) : null}
+      {queuedCandidates.length ? (
+        <div className="mission-operations-evidence-group" aria-label="Build Concierge V8 queue truth">
+          <strong>V8 queue state:</strong> one active proof lane unless explicitly isolated.
+          <ul className="mission-operations-evidence-list">{queuedCandidates.map((item) => <li key={item.candidateId}><strong>{item.candidateId}</strong> rank {item.queueRank} · {item.safeToProof ? 'safe_to_proof' : 'blocked_or_rejected'} · {item.rejectionReasons?.join(' | ') || item.blockers?.join(' | ') || 'no rejection reason'}</li>)}</ul>
+          {antiStall.exactCliMergeCommand ? <div><strong>Operator manual CLI fallback command:</strong> <code>{antiStall.exactCliMergeCommand}</code></div> : null}
         </div>
       ) : null}
       {roadmapPhases.length ? (

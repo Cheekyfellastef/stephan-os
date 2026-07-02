@@ -71,7 +71,7 @@ export function normalizeConciergeBrowserProof(input = {}) {
   };
 }
 
-export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v7';
+export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v8';
 export const BATTLE_BRIDGE_CONCIERGE_PREVIOUS_SCHEMA = 'stephanos.battle-bridge-build-concierge.v3';
 
 export const BATTLE_BRIDGE_BUILD_CONCIERGE_SUCCESS_MARKERS = [
@@ -346,8 +346,94 @@ export function buildConciergePostMergeSync(input = {}) {
   };
 }
 
+
+export function buildConciergeAntiStallMergeLane(input = {}) {
+  const candidate = input.selectedCandidate || input.candidate || {};
+  const prNumber = Number.parseInt(candidate.prNumber || input.prNumber, 10);
+  const headSha = text(candidate.headSha || input.headSha);
+  const approvalToken = text(input.approvalToken || input.exactHeadApproval?.token || input.approvalDecision?.approvalToken);
+  const approval = validateExactHeadMergeApproval({ prNumber, headSha, currentHeadSha: input.currentHeadSha || headSha, approvalToken });
+  const exactHeadApprovalMatches = input.exactHeadApprovalMatches === true || approval.mergeAllowed === true || input.approvalDecision?.approvalStatus === 'approved_exact_head';
+  const battleBridgeProofPassed = input.battleBridgeProofPassed === true || ['PROOF_PACKET_READY_FOR_EXACT_HEAD_APPROVAL', 'passed', 'verified'].includes(text(input.proofSummary?.status || input.proofPacketSummary?.status));
+  const githubChecksPassed = input.githubChecksPassed === true || ['passed', 'passing', 'success', 'clean'].includes(text(input.githubChecksStatus || input.requiredChecksStatus).toLowerCase());
+  const workingTreeClean = input.workingTreeClean === true;
+  const connectorMergeAttempted = input.connectorMergeAttempted === true;
+  const connectorMergeBlockedReason = text(input.connectorMergeBlockedReason || input.connectorBlocker, connectorMergeAttempted ? 'Connector merge is blocked for an unknown connector reason.' : 'Connector merge has not been attempted or has no blocked receipt.');
+  const missing = [];
+  if (!connectorMergeAttempted) missing.push('Connector merge blocked receipt is missing.');
+  if (!exactHeadApprovalMatches) missing.push('Exact-head approval token does not match current PR head.');
+  if (!battleBridgeProofPassed) missing.push('Battle Bridge proof has not passed.');
+  if (!githubChecksPassed) missing.push('GitHub checks have not passed.');
+  if (!workingTreeClean) missing.push(input.workingTreeClean === false ? 'Working tree is dirty.' : 'Working-tree cleanliness is unknown.');
+  const cliMergeFallbackAllowed = missing.length === 0;
+  const exactCliMergeCommand = cliMergeFallbackAllowed && PR_NUMBER.test(String(prNumber)) && SHA40.test(headSha)
+    ? `gh pr merge ${prNumber} --merge --match-head-commit ${headSha}`
+    : '';
+  return {
+    schemaVersion: `${BATTLE_BRIDGE_CONCIERGE_SCHEMA}.anti-stall-merge-lane`,
+    phase: 'V8',
+    status: 'implemented_guarded',
+    connectorMergeAttempted,
+    connectorMergeBlockedReason,
+    cliMergeFallbackAllowed,
+    exactCliMergeCommand,
+    postCliMergeSyncCommands: cliMergeFallbackAllowed ? ['git checkout main', 'git pull --ff-only origin main', 'npm run stephanos:build', 'npm run stephanos:verify'] : [],
+    proofRequiredBeforeFallback: ['exact-head operator approval token matching current PR head', 'Battle Bridge proof passed', 'GitHub checks passed', 'working tree clean'],
+    prerequisiteTruth: { exactHeadApprovalMatches, battleBridgeProofPassed, githubChecksPassed, workingTreeClean: workingTreeClean ? true : (input.workingTreeClean === false ? false : 'unknown') },
+    blockers: unique(missing),
+    mergeExecuted: false,
+    mergeClaimed: false,
+    commandExecutionAllowed: false,
+    nextOperatorAction: cliMergeFallbackAllowed
+      ? `Connector merge is blocked; operator may manually run ${exactCliMergeCommand}, then run post-CLI sync/reproof commands.`
+      : (missing[0] || 'Keep merge held until connector blocker and prerequisites are known.'),
+  };
+}
+
+export function buildConciergeQueue(input = {}) {
+  const autoPick = buildConciergeAutoPick(input);
+  const isolatedIds = new Set(list(input.isolatedCandidateIds));
+  const requestedActive = list(input.activeProofCandidateIds || input.activeProofLanes).map(String);
+  const activeSource = requestedActive.length ? requestedActive : (autoPick.selectedCandidate ? [autoPick.selectedCandidate.candidateId] : []);
+  const activeProofLane = autoPick.rankedCandidates.filter((candidate) => activeSource.includes(candidate.candidateId) || activeSource.includes(String(candidate.prNumber))).map((candidate) => ({ ...candidate, laneStatus: 'active_proof' }));
+  const nonIsolatedActive = activeProofLane.filter((candidate) => !isolatedIds.has(candidate.candidateId) && !isolatedIds.has(String(candidate.prNumber)));
+  const oneActiveLaneGuardrail = nonIsolatedActive.length <= 1 ? 'satisfied' : 'blocked_multiple_active_lanes_without_isolation';
+  const completedCandidates = list(input.completedCandidateIds).map((id) => ({ candidateId: id, postMergeSyncRequired: true }));
+  const rejectedIds = new Set(list(input.rejectedCandidateIds));
+  const blockedCandidates = autoPick.rankedCandidates.filter((candidate) => candidate.safeToProof === false && !rejectedIds.has(candidate.candidateId)).map((candidate) => ({ candidateId: candidate.candidateId, prNumber: candidate.prNumber, title: candidate.title, blockers: candidate.blockers, rejectionReasons: candidate.rejectionReasons }));
+  const rejectedCandidates = autoPick.rejectedCandidates.filter((candidate) => rejectedIds.has(candidate.candidateId) || !autoPick.selectedCandidate || candidate.candidateId !== autoPick.selectedCandidate.candidateId);
+  const queuedCandidates = autoPick.rankedCandidates.map((candidate, index) => ({ ...candidate, queueRank: index + 1, activeLane: activeProofLane.some((lane) => lane.candidateId === candidate.candidateId), isolated: isolatedIds.has(candidate.candidateId) || isolatedIds.has(String(candidate.prNumber)) }));
+  const nextSafeCandidate = oneActiveLaneGuardrail === 'satisfied' ? (queuedCandidates.find((candidate) => candidate.safeToProof && !candidate.activeLane) || autoPick.selectedCandidate || null) : null;
+  const postMergeSyncRequired = completedCandidates.length > 0;
+  const blockers = [];
+  if (oneActiveLaneGuardrail !== 'satisfied') blockers.push('Multiple active proof lanes are blocked unless every additional lane is explicitly isolated.');
+  if (postMergeSyncRequired) blockers.push('V7 post-merge sync/reproof is required after completed merge candidates before claiming current status.');
+  return {
+    schemaVersion: `${BATTLE_BRIDGE_CONCIERGE_SCHEMA}.multi-goal-queue`,
+    phase: 'V8',
+    status: 'implemented_guarded',
+    queuedCandidates,
+    activeProofLane,
+    blockedCandidates,
+    completedCandidates,
+    rejectedCandidates,
+    nextSafeCandidate,
+    nextOperatorAction: blockers[0] || (nextSafeCandidate ? `Continue one active proof lane for ${nextSafeCandidate.candidateId}; do not start another non-isolated lane.` : autoPick.nextOperatorAction),
+    oneActiveLaneGuardrail,
+    exactHeadApprovalBoundary: 'preserved_per_candidate_requiredApprovalToken',
+    postMergeSyncRequired,
+    commandExecutionAllowed: false,
+    mergeAllowed: false,
+    unknownStaysUnknown: true,
+    blockers: unique(blockers),
+    autoPick,
+  };
+}
+
 export function buildConciergePlan(input = {}) {
   const autoPick = buildConciergeAutoPick(input);
+  const queue = buildConciergeQueue(input);
+  const antiStallMergeLane = buildConciergeAntiStallMergeLane(input.antiStallMergeLane || input);
   const candidates = autoPick.rankedCandidates;
   const selected = autoPick.selectedCandidate || candidates[0] || null;
   const blockers = [];
@@ -378,6 +464,8 @@ export function buildConciergePlan(input = {}) {
     autoPick,
     roadmap: buildConciergeRoadmap(input),
     postMergeSync: buildConciergePostMergeSync(input.postMergeSync || input),
+    queue,
+    antiStallMergeLane,
     guardrails: {
       exactHeadApprovalRequired: true,
       neverMerge: true,

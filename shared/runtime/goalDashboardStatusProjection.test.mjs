@@ -40,3 +40,13 @@ test('standalone Goal Dashboard exposes V7 implemented guarded post-merge sync t
   assert.equal(projection.buildConcierge.postMergeSync.backendFreshnessProof.status, 'required');
   assert.equal(projection.buildConcierge.postMergeSync.refreshState.goalDashboard, 'blocked');
 });
+
+
+test('standalone Goal Dashboard exposes V8 queue and anti-stall truth', () => {
+  const projection = buildGoalDashboardStatusProjection({ buildConcierge: { candidates: [{ id: 'goal-v8', title: 'V8 goal', headSha: 'c'.repeat(40), state: 'OPEN', mergeable: true, requiredChecksClean: true, proofCommands: ['npm test'] }], antiStallMergeLane: { connectorMergeAttempted: false } } });
+  const v8 = projection.buildConcierge.roadmap.phases.find((phase) => phase.version === 'V8');
+  assert.equal(v8.status, 'implemented_guarded');
+  assert.equal(projection.buildConcierge.queue.status, 'implemented_guarded');
+  assert.equal(projection.buildConcierge.queue.oneActiveLaneGuardrail, 'satisfied');
+  assert.equal(projection.buildConcierge.antiStallMergeLane.cliMergeFallbackAllowed, false);
+});

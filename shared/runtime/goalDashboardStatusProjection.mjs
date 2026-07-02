@@ -1,4 +1,4 @@
-import { buildConciergePostMergeSync, buildConciergeRoadmap } from '../agents/battleBridgeBuildConciergeV2.mjs';
+import { buildConciergeAntiStallMergeLane, buildConciergePostMergeSync, buildConciergeQueue, buildConciergeRoadmap } from '../agents/battleBridgeBuildConciergeV2.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -121,6 +121,8 @@ export function buildGoalDashboardStatusProjection(input = {}) {
       roadmap: buildConciergeRoadmap(input.buildConcierge || {}),
       autoPickTruth: text(input.buildConcierge?.autoPickTruth || input.autoPickTruth, 'supplied-candidate-records-only'),
       postMergeSync: buildConciergePostMergeSync(input.buildConcierge?.postMergeSync || input.postMergeSync || {}),
+      queue: buildConciergeQueue(input.buildConcierge || {}),
+      antiStallMergeLane: buildConciergeAntiStallMergeLane(input.buildConcierge?.antiStallMergeLane || input.antiStallMergeLane || {}),
     }),
     nextAction: 'Refresh the static Goal Dashboard seed manually before making live GitHub/local automation claims.',
   });
