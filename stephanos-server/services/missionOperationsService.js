@@ -1,7 +1,9 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { buildMissionOperationsProjection } from '../../shared/runtime/missionOperationsProjection.mjs';
+import { buildConciergeQueue, buildConciergeRoadmap, buildConciergePostMergeSync, buildConciergeAntiStallMergeLane } from '../../shared/agents/battleBridgeBuildConciergeV2.mjs';
 import { readWorkspaceUpdateStatus } from './workspaceUpdateStatusService.js';
+import { readBuildConciergeGoalReceipts } from './buildConciergeGoalService.js';
 
 const MAX_RECEIPT_BYTES = 1024 * 1024;
 const MAX_RECEIPT_FILES = 500;
@@ -231,6 +233,7 @@ export async function readMissionOperations(options = {}) {
   const directory = options.directory || resolveMissionOperationsDirectory(env);
   const now = options.now instanceof Date ? options.now : new Date();
   const updateStatus = options.updateStatus || await readWorkspaceUpdateStatus(options.updateStatusOptions || {});
+  const buildConciergeGoals = options.buildConciergeGoals || await readBuildConciergeGoalReceipts(options.buildConciergeGoalOptions || {});
   if (!directory) {
     return {
       schemaVersion: 'stephanos.mission-operations-feed.v1',
@@ -240,6 +243,7 @@ export async function readMissionOperations(options = {}) {
       missions: [],
       errors: [],
       updateStatus,
+      buildConcierge: { roadmap: buildConciergeRoadmap(), liveAdapter: { available: true, route: '/api/build-concierge/goals', status: 'available', blockerText: '' }, createdGoalReceipts: buildConciergeGoals.receipts, queue: buildConciergeQueue({ goals: buildConciergeGoals.candidates }), postMergeSync: buildConciergePostMergeSync({}), antiStallMergeLane: buildConciergeAntiStallMergeLane({}) },
       recommendedNextAction: updateStatus?.nextOperatorAction || 'Configure STEPHANOS_MISSION_OPERATIONS_DIR to the external OpenClaw receipt directory.',
     };
   }
@@ -256,6 +260,7 @@ export async function readMissionOperations(options = {}) {
       missions: [],
       errors: [error?.message || 'Mission receipt directory could not be read.'],
       updateStatus,
+      buildConcierge: { roadmap: buildConciergeRoadmap(), liveAdapter: { available: true, route: '/api/build-concierge/goals', status: 'available', blockerText: '' }, createdGoalReceipts: buildConciergeGoals.receipts, queue: buildConciergeQueue({ goals: buildConciergeGoals.candidates }), postMergeSync: buildConciergePostMergeSync({}), antiStallMergeLane: buildConciergeAntiStallMergeLane({}) },
       recommendedNextAction: updateStatus?.nextOperatorAction || 'Create or restore the configured external receipt directory.',
     };
   }
@@ -278,9 +283,31 @@ export async function readMissionOperations(options = {}) {
     .map((events) => buildMissionOperationsProjection(mergeMissionEvents(events), { now }))
     .sort((left, right) => Date.parse(right.mission.updatedAt || 0) - Date.parse(left.mission.updatedAt || 0));
 
+  const buildConcierge = {
+    roadmap: buildConciergeRoadmap(),
+    liveAdapter: { available: true, route: '/api/build-concierge/goals', status: 'available', blockerText: '' },
+    createdGoalReceipts: buildConciergeGoals.receipts,
+    queue: buildConciergeQueue({ goals: buildConciergeGoals.candidates }),
+    postMergeSync: buildConciergePostMergeSync({}),
+    antiStallMergeLane: buildConciergeAntiStallMergeLane({}),
+  };
+  let liveGoalProjection = null;
+  if (options.includeLiveGoalProjection !== false) {
+    const { buildLiveGoalProjection } = await import('./liveGoalProjectionService.js');
+    liveGoalProjection = buildLiveGoalProjection({
+      now,
+      updateStatus,
+      missionOperationsFeed: { status: missions.length || buildConciergeGoals.candidates.length ? 'ready' : 'empty', source: 'external-receipt-directory', missions, errors, recommendedNextAction: updateStatus?.nextOperatorAction },
+      backendStatus: { status: 'live', ok: true, healthRoute: '/api/health', freshness: 'mission-operations-request' },
+      buildConcierge,
+      createdGoalCandidates: buildConciergeGoals.candidates,
+    });
+    buildConcierge.liveGoalProjection = liveGoalProjection;
+  }
+
   return {
     schemaVersion: 'stephanos.mission-operations-feed.v1',
-    status: missions.length ? 'ready' : 'empty',
+    status: missions.length || buildConciergeGoals.candidates.length ? 'ready' : 'empty',
     source: 'external-receipt-directory',
     directory,
     generatedAt: now.toISOString(),
@@ -290,6 +317,8 @@ export async function readMissionOperations(options = {}) {
     missions,
     errors,
     updateStatus,
+    buildConcierge,
+    liveGoalProjection,
     recommendedNextAction: updateStatus?.nextOperatorAction || (missions.length ? missions[0].mission.nextAction : 'Run an authorized OpenClaw operation or publish a mission snapshot.'),
   };
 }

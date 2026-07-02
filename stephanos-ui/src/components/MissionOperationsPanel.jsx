@@ -36,6 +36,32 @@ function EvidenceList({ title, items, emptyText, renderItem }) {
   );
 }
 
+
+export function LiveGoalProjectionSummary({ projection = {} }) {
+  if (!projection || !projection.schemaVersion) return null;
+  const agents = projection.currentAgentStates || {};
+  const activeLane = Array.isArray(projection.activeProofLane) ? projection.activeProofLane : [];
+  const sourceBadge = projection.sourceTruth === 'live' ? 'LIVE' : projection.sourceTruth === 'mixed' ? 'MIXED' : projection.sourceTruth === 'static-fallback' ? 'STATIC_FALLBACK' : 'UNKNOWN';
+  return (
+    <section className="mission-operations-build-concierge" aria-label="Mission Control live projection" data-testid="mission-control-live-projection">
+      <h4>Mission Control Live Projection <span>{sourceBadge}</span></h4>
+      <dl className="mission-operations-grid">
+        <div><dt>Operator state</dt><dd>{agents.operator?.state || 'unknown'}</dd></div>
+        <div><dt>Stephanos state</dt><dd>{agents.stephanos?.state || 'unknown'}</dd></div>
+        <div><dt>Codex state</dt><dd>{agents.codex?.state || 'unknown'}</dd></div>
+        <div><dt>OpenClaw state</dt><dd>{agents.openclaw?.state || 'unknown'}</dd></div>
+        <div><dt>GitHub state</dt><dd>{agents.github?.state || 'unknown'}</dd></div>
+        <div><dt>Battle Bridge state</dt><dd>{agents.battleBridge?.state || 'unknown'}</dd></div>
+        <div><dt>Active proof lane</dt><dd>{activeLane.map((candidate) => candidate.candidateId || candidate.title || 'unknown').join(', ') || 'none'}</dd></div>
+        <div><dt>Queued goals</dt><dd>{projection.queuedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>Blocked goals</dt><dd>{projection.blockedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>Completed goals</dt><dd>{projection.completedGoalCount ?? 'unknown'}</dd></div>
+      </dl>
+      <p className="mission-operations-next-action"><strong>Next operator action:</strong> {projection.nextOperatorAction || 'unknown'}</p>
+    </section>
+  );
+}
+
 export function BuildConciergeSurface({ concierge = {} }) {
   const candidate = concierge.selectedCandidate || {};
   const proofPacketSummary = concierge.proofPacketSummary || {};
@@ -55,10 +81,13 @@ export function BuildConciergeSurface({ concierge = {} }) {
   const refreshState = postMergeSync.refreshState || {};
   const queue = concierge.queue || {};
   const antiStall = concierge.antiStallMergeLane || {};
+  const liveAdapter = concierge.liveAdapter || {};
   const queuedCandidates = Array.isArray(queue.queuedCandidates) ? queue.queuedCandidates : [];
   const activeProofLane = Array.isArray(queue.activeProofLane) ? queue.activeProofLane : [];
   return (
-    <section className="mission-operations-build-concierge" aria-label="Build Concierge panel" data-testid="build-concierge-panel">
+    <>
+      <LiveGoalProjectionSummary projection={concierge.liveGoalProjection || {}} />
+      <section className="mission-operations-build-concierge" aria-label="Build Concierge panel" data-testid="build-concierge-panel">
       <h4>Build Concierge</h4>
       <dl className="mission-operations-grid">
         <div><dt>Selected PR/goal candidate</dt><dd>{candidate.prNumber ? `#${candidate.prNumber} ${candidate.title || ''}` : 'unknown'}</dd></div>
@@ -84,7 +113,9 @@ export function BuildConciergeSurface({ concierge = {} }) {
         <div><dt>V8 next safe candidate</dt><dd>{queue.nextSafeCandidate?.candidateId || 'unknown'}</dd></div>
         <div><dt>V8 anti-stall fallback truth</dt><dd>{antiStall.cliMergeFallbackAllowed === true ? 'manual CLI fallback allowed' : 'manual CLI fallback blocked_or_unknown'}</dd></div>
         <div><dt>V8 connector merge</dt><dd>{antiStall.connectorMergeAttempted === true ? 'attempted' : 'not_attempted'} · {antiStall.connectorMergeBlockedReason || 'unknown'}</dd></div>
+        <div><dt>Live goal-create adapter</dt><dd>{liveAdapter.status || (liveAdapter.available === true ? 'available' : 'blocked_unavailable')} · {liveAdapter.route || '/api/build-concierge/goals'}</dd></div>
       </dl>
+      {liveAdapter.available === false || liveAdapter.status === 'blocked_unavailable' ? <p className="mission-operations-next-action"><strong>Build Concierge live adapter blocker:</strong> {liveAdapter.blockerText || 'Build Concierge live adapter unavailable: backend route /api/build-concierge/goals has not returned availability proof; create goals manually and keep queue truth unknown until a durable receipt exists.'}</p> : null}
       <p className="mission-operations-next-action"><strong>Next operator action:</strong> {postMergeSync.nextOperatorAction || approvalDecision.nextOperatorAction || concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
       {proofCommands.length ? (
         <div><strong>Declared proof commands:</strong><ul className="mission-operations-evidence-list">{proofCommands.map((command) => <li key={command}><code>{command}</code></li>)}</ul></div>
@@ -114,7 +145,8 @@ export function BuildConciergeSurface({ concierge = {} }) {
       ) : null}
       {approvalDecision.rejectionReceipt ? <div className="mission-operations-alert mission-operations-alert--blocked"><strong>V6 rejection receipt:</strong> {approvalDecision.rejectionReceipt.status} · {approvalDecision.rejectionReceipt.reason}</div> : null}
       {blockers.length ? <div className="mission-operations-alert mission-operations-alert--blocked"><strong>Concierge blockers:</strong> {blockers.join(' | ')}</div> : null}
-    </section>
+      </section>
+    </>
   );
 }
 
@@ -328,6 +360,7 @@ export default function MissionOperationsPanel({ isOpen, onToggle, missionId = '
         <span><strong>Last refresh:</strong> {displayTime(feed.generatedAt)}</span>
       </div>
 
+      <LiveGoalProjectionSummary projection={feed.liveGoalProjection || {}} />
       <BuildConciergeSurface concierge={feed.buildConcierge || {}} />
 
       {feed.updateStatus ? (

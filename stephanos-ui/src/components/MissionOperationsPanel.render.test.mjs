@@ -150,3 +150,25 @@ test('Build Concierge panel renders selected candidate proof and approval truth'
     await vite.close();
   }
 });
+
+test('Mission Operations shows live Mission Control projection summary', async () => {
+  const vite = await createServer({ root: uiRoot, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } });
+  try {
+    const { LiveGoalProjectionSummary } = await vite.ssrLoadModule('/src/components/MissionOperationsPanel.jsx');
+    const markup = renderToStaticMarkup(React.createElement(LiveGoalProjectionSummary, { projection: {
+      schemaVersion: 'stephanos.live-goal-projection.v1',
+      sourceTruth: 'mixed',
+      queuedGoalCount: 1,
+      blockedGoalCount: 1,
+      completedGoalCount: 0,
+      activeProofLane: [{ candidateId: 'bc-goal-ops' }],
+      currentAgentStates: { operator: { state: 'approval_authority' }, stephanos: { state: 'backend_reachable' }, codex: { state: 'not_dispatched' }, openclaw: { state: 'unknown' }, github: { state: 'unknown' }, battleBridge: { state: 'satisfied' } },
+      nextOperatorAction: 'Inspect Mission Control.',
+    } }));
+    for (const value of ['Mission Control Live Projection', 'MIXED', 'Operator state', 'approval_authority', 'Stephanos state', 'backend_reachable', 'Codex state', 'not_dispatched', 'OpenClaw state', 'GitHub state', 'Battle Bridge state', 'Active proof lane', 'bc-goal-ops', 'Queued goals', 'Blocked goals', 'Completed goals', 'Inspect Mission Control.']) {
+      assert.equal(markup.includes(value), true, `missing live Mission Operations value: ${value}`);
+    }
+  } finally {
+    await vite.close();
+  }
+});

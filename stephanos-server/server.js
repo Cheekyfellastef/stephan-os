@@ -11,6 +11,8 @@ import musicRouter from './routes/music.js';
 import setupRouter from './routes/setup.js';
 import githubRouter from './routes/github.js';
 import missionOperationsRouter from './routes/mission-operations.js';
+import buildConciergeRouter from './routes/build-concierge.js';
+import goalProjectionRouter from './routes/goal-projection.js';
 import { createLogger } from './utils/logger.js';
 import { DEFAULT_PROVIDER_KEY } from '../shared/ai/providerDefaults.mjs';
 import {
@@ -77,6 +79,8 @@ app.use('/api/music', musicRouter);
 app.use('/api/setup', setupRouter);
 app.use('/api/github', githubRouter);
 app.use('/api/mission-operations', missionOperationsRouter);
+app.use('/api/build-concierge', buildConciergeRouter);
+app.use('/api/goal-projection', goalProjectionRouter);
 
 app.use((error, _req, res, next) => {
   if (error?.message?.startsWith('CORS origin denied:')) {
