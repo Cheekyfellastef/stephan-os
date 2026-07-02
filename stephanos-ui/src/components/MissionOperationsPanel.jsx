@@ -36,11 +36,36 @@ function EvidenceList({ title, items, emptyText, renderItem }) {
   );
 }
 
+function ExecutionEngineV9Surface({ engine = {} }) {
+  if (!engine || !engine.schemaVersion) return null;
+  const candidates = Array.isArray(engine.enrichedCandidates) ? engine.enrichedCandidates : [];
+  const packets = Array.isArray(engine.dispatchPackets) ? engine.dispatchPackets : [];
+  return (
+    <div className="mission-operations-evidence-group" aria-label="Build Concierge V9 execution engine status">
+      <strong>V9 Live Goal Execution Engine:</strong> {engine.status || 'unknown'} · watched {engine.watchedGoalCount ?? 0} · classified {engine.classifiedGoalCount ?? 0} · enriched {engine.enrichedCandidateCount ?? 0} · dispatch ready {engine.dispatchReadyCount ?? 0} · manual dispatch {engine.manualDispatchRequiredCount ?? 0}
+      <div><strong>V9 active execution lane:</strong> {engine.activeExecutionLane || 'none'}</div>
+      <ul className="mission-operations-evidence-list">
+        {candidates.map((candidate) => (
+          <li key={candidate.candidateId}>
+            <strong>{candidate.candidateId}</strong> · {candidate.classification || 'unknown'} · {candidate.suggestedLane || 'unknown'} · {candidate.dispatchReadiness || 'blocked_or_unknown'}
+            <div>Proof families: {(candidate.requiredProofFamilies || []).join(', ') || 'unknown'}</div>
+            <div>Allowlisted commands: {(candidate.declaredAllowlistedProofCommands || []).join(' · ') || 'none'}</div>
+            {candidate.blockerReasons?.length ? <div>Blockers: {candidate.blockerReasons.join(' | ')}</div> : null}
+          </li>
+        ))}
+      </ul>
+      {packets.length ? <div><strong>Copyable Codex mission packets:</strong>{packets.map((packet) => <pre key={packet.candidateId}>{packet.packet}</pre>)}</div> : null}
+      <div><strong>V9 next operator action:</strong> {engine.nextOperatorAction || 'unknown'}</div>
+      <div><strong>V9 final verdict:</strong> {engine.finalVerdict || 'unknown'}</div>
+    </div>
+  );
+}
 
 export function LiveGoalProjectionSummary({ projection = {} }) {
   if (!projection || !projection.schemaVersion) return null;
   const agents = projection.currentAgentStates || {};
   const activeLane = Array.isArray(projection.activeProofLane) ? projection.activeProofLane : [];
+  const engine = projection.executionEngine || projection.buildConciergeStatus?.executionEngine || {};
   const sourceBadge = projection.sourceTruth === 'live' ? 'LIVE' : projection.sourceTruth === 'mixed' ? 'MIXED' : projection.sourceTruth === 'static-fallback' ? 'STATIC_FALLBACK' : 'UNKNOWN';
   return (
     <section className="mission-operations-build-concierge" aria-label="Mission Control live projection" data-testid="mission-control-live-projection">
@@ -56,7 +81,9 @@ export function LiveGoalProjectionSummary({ projection = {} }) {
         <div><dt>Queued goals</dt><dd>{projection.queuedGoalCount ?? 'unknown'}</dd></div>
         <div><dt>Blocked goals</dt><dd>{projection.blockedGoalCount ?? 'unknown'}</dd></div>
         <div><dt>Completed goals</dt><dd>{projection.completedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>V9 execution engine</dt><dd>{engine.status || 'unknown'} · classified {engine.classifiedGoalCount ?? 0} · manual dispatch {engine.manualDispatchRequiredCount ?? 0}</dd></div>
       </dl>
+      <ExecutionEngineV9Surface engine={engine} />
       <p className="mission-operations-next-action"><strong>Next operator action:</strong> {projection.nextOperatorAction || 'unknown'}</p>
     </section>
   );
@@ -82,6 +109,7 @@ export function BuildConciergeSurface({ concierge = {} }) {
   const queue = concierge.queue || {};
   const antiStall = concierge.antiStallMergeLane || {};
   const liveAdapter = concierge.liveAdapter || {};
+  const executionEngine = concierge.executionEngine || concierge.liveGoalProjection?.executionEngine || concierge.liveGoalProjection?.buildConciergeStatus?.executionEngine || {};
   const queuedCandidates = Array.isArray(queue.queuedCandidates) ? queue.queuedCandidates : [];
   const activeProofLane = Array.isArray(queue.activeProofLane) ? queue.activeProofLane : [];
   return (
@@ -114,7 +142,9 @@ export function BuildConciergeSurface({ concierge = {} }) {
         <div><dt>V8 anti-stall fallback truth</dt><dd>{antiStall.cliMergeFallbackAllowed === true ? 'manual CLI fallback allowed' : 'manual CLI fallback blocked_or_unknown'}</dd></div>
         <div><dt>V8 connector merge</dt><dd>{antiStall.connectorMergeAttempted === true ? 'attempted' : 'not_attempted'} · {antiStall.connectorMergeBlockedReason || 'unknown'}</dd></div>
         <div><dt>Live goal-create adapter</dt><dd>{liveAdapter.status || (liveAdapter.available === true ? 'available' : 'blocked_unavailable')} · {liveAdapter.route || '/api/build-concierge/goals'}</dd></div>
+        <div><dt>V9 execution engine</dt><dd>{executionEngine.status || 'unknown'} · watched {executionEngine.watchedGoalCount ?? 0} · classified {executionEngine.classifiedGoalCount ?? 0}</dd></div>
       </dl>
+      <ExecutionEngineV9Surface engine={executionEngine} />
       {liveAdapter.available === false || liveAdapter.status === 'blocked_unavailable' ? <p className="mission-operations-next-action"><strong>Build Concierge live adapter blocker:</strong> {liveAdapter.blockerText || 'Build Concierge live adapter unavailable: backend route /api/build-concierge/goals has not returned availability proof; create goals manually and keep queue truth unknown until a durable receipt exists.'}</p> : null}
       <p className="mission-operations-next-action"><strong>Next operator action:</strong> {postMergeSync.nextOperatorAction || approvalDecision.nextOperatorAction || concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
       {proofCommands.length ? (
