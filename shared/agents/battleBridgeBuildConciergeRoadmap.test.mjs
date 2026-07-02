@@ -8,11 +8,12 @@ import {
 
 const requiredVersions = ['V4', 'V5', 'V6', 'V7', 'V8'];
 
-test('V4-V8 roadmap specs are source-owned and planned_guarded until implemented', () => {
+test('V4-V8 roadmap specs are source-owned with V4 browser proof implemented_guarded only', () => {
   const planned = plannedConciergeRoadmapVersions();
   assert.deepEqual(planned.map((phase) => phase.version), requiredVersions);
   for (const phase of planned) {
-    assert.equal(phase.status, 'planned_guarded', `${phase.version} must not claim implementation`);
+    if (phase.version === 'V4') assert.equal(phase.status, 'implemented_guarded');
+    else assert.equal(phase.status, 'planned_guarded', `${phase.version} must not claim implementation`);
     assert.deepEqual(phase.requiredSurfaces, BATTLE_BRIDGE_BUILD_CONCIERGE_SURFACES);
     assert.ok(phase.guardrails.length >= 3, `${phase.version} needs guardrail specs`);
     assert.ok(phase.testsRequired.some((item) => item.includes(phase.version)));

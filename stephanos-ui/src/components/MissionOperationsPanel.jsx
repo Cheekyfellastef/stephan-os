@@ -43,6 +43,9 @@ export function BuildConciergeSurface({ concierge = {} }) {
   const proofCommands = Array.isArray(candidate.proofCommands) ? candidate.proofCommands : [];
   const blockers = Array.isArray(concierge.blockers) ? concierge.blockers : [];
   const roadmap = concierge.roadmap || buildConciergeRoadmap();
+  const browserProofPacket = concierge.browserProofPacket || proofPacketSummary.browserProofPacket || {};
+  const consoleErrors = Array.isArray(browserProofPacket.consoleErrors) ? browserProofPacket.consoleErrors : [];
+  const caveats = Array.isArray(browserProofPacket.caveats) ? browserProofPacket.caveats : [];
   const roadmapPhases = Array.isArray(roadmap.phases) ? roadmap.phases : [];
   return (
     <section className="mission-operations-build-concierge" aria-label="Build Concierge panel" data-testid="build-concierge-panel">
@@ -55,12 +58,22 @@ export function BuildConciergeSurface({ concierge = {} }) {
         <div><dt>Exact-head approval</dt><dd>{exactHeadApproval.status || 'unknown'}</dd></div>
         <div><dt>Approval token</dt><dd><code>{exactHeadApproval.token || candidate.requiredApprovalToken || 'unknown'}</code></dd></div>
         <div><dt>Proof packet</dt><dd>{proofPacketSummary.status || 'not_started'} · commands {proofPacketSummary.passedCommandCount ?? 0}/{proofPacketSummary.commandCount ?? proofCommands.length}</dd></div>
+        <div><dt>V4 browser proof</dt><dd>{browserProofPacket.browserProofStatus || proofPacketSummary.browserProof || concierge.browserProof || 'unknown'}</dd></div>
+        <div><dt>V4 screenshot</dt><dd>{browserProofPacket.screenshotPath || browserProofPacket.screenshotUnavailableReason || 'unknown'}</dd></div>
+        <div><dt>V4 checklist</dt><dd>{browserProofPacket.checklistStatus || 'unknown'}</dd></div>
         <div><dt>Merge hold state</dt><dd>{concierge.mergeHoldState || 'HELD_UNKNOWN'}</dd></div>
       </dl>
       <p className="mission-operations-next-action"><strong>Next operator action:</strong> {concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
       {proofCommands.length ? (
         <div><strong>Declared proof commands:</strong><ul className="mission-operations-evidence-list">{proofCommands.map((command) => <li key={command}><code>{command}</code></li>)}</ul></div>
       ) : <p className="muted">Declared proof commands are unknown.</p>}
+      {(browserProofPacket.proofUnavailableBlocker || consoleErrors.length || caveats.length) ? (
+        <div className="mission-operations-evidence-group" aria-label="Build Concierge V4 browser proof truth">
+          <strong>V4 browser-proof blocker:</strong> {browserProofPacket.proofUnavailableBlocker || 'none'}
+          {consoleErrors.length ? <div><strong>Console errors:</strong> {consoleErrors.join(' | ')}</div> : null}
+          {caveats.length ? <div><strong>Caveats:</strong> {caveats.join(' | ')}</div> : null}
+        </div>
+      ) : null}
       {roadmapPhases.length ? (
         <div className="mission-operations-evidence-group" aria-label="Build Concierge roadmap">
           <strong>Roadmap:</strong> {roadmap.activePhase?.version || 'unknown'} · {roadmap.activePhase?.title || 'unknown'}

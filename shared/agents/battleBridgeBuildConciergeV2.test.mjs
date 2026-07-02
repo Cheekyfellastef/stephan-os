@@ -22,7 +22,7 @@ test('PR candidate plan includes PR/head/proof commands/next action', () => {
 });
 
 test('proof packet includes exact-head token', () => {
-  const packet = buildConciergeProofPacket({ candidate: { prNumber: 1391, headSha: head }, generatedArtifactsClean: true, commandResults: [{ command: 'npm test', exitCode: 0 }] });
+  const packet = buildConciergeProofPacket({ candidate: { prNumber: 1391, headSha: head }, generatedArtifactsClean: true, commandResults: [{ command: 'npm test', exitCode: 0 }], browserProofPacket: { browserProofStatus: 'verified', runnerAvailable: true, screenshotPath: 'artifacts/browser/v4.png', checklistStatus: 'passed', checklist: [{ item: 'page rendered', status: 'passed' }] } });
   const token = battleBridgeMergeApprovalToken({ prNumber: 1391, headSha: head });
   assert.equal(packet.requiredApprovalToken, token);
   assert.equal(packet.exactHeadApproval.token, token);
@@ -49,7 +49,8 @@ test('roadmap preserves intent-engine approval-only mission and success markers'
   const roadmap = buildConciergeRoadmap();
   assert.match(roadmap.mission, /intent engine and approval authority/);
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V2').status, 'implemented');
-  assert.equal(roadmap.activePhase.version, 'V4');
+  assert.equal(roadmap.activePhase.version, 'V5');
+  assert.equal(roadmap.phases.find((phase) => phase.version === 'V4').status, 'implemented_guarded');
   assert.equal(roadmap.guardrails.unsafeCommandExecutionAllowed, false);
   assert.equal(roadmap.guardrails.visibleReceiptsOrExplicitBlockersRequired, true);
   assert.ok(roadmap.successMarkers.includes('GOAL_COMPLETE_BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP'));
@@ -59,8 +60,8 @@ test('roadmap preserves intent-engine approval-only mission and success markers'
 
 
 test('V3 guarded proof packet keeps exact-head token and never allows merge', () => {
-  const packet = buildConciergeProofPacket({ candidate: { prNumber: 1393, headSha: head, proofCommands: ['node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs'] }, generatedArtifactsClean: true, commandResults: [{ command: 'node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs', exitCode: 0 }] });
-  assert.equal(packet.schemaVersion, 'stephanos.battle-bridge-build-concierge.v3.proof-packet');
+  const packet = buildConciergeProofPacket({ candidate: { prNumber: 1393, headSha: head, proofCommands: ['node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs'] }, generatedArtifactsClean: true, commandResults: [{ command: 'node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs', exitCode: 0 }], browserProofPacket: { browserProofStatus: 'verified', runnerAvailable: true, screenshotPath: 'artifacts/browser/v4.png', checklistStatus: 'passed', caveats: ['none'] } });
+  assert.equal(packet.schemaVersion, 'stephanos.battle-bridge-build-concierge.v4.proof-packet');
   assert.equal(packet.packetKind, 'canonical-battle-bridge-build-concierge-proof');
   assert.equal(packet.requiredApprovalToken, battleBridgeMergeApprovalToken({ prNumber: 1393, headSha: head }));
   assert.equal(packet.mergeAllowed, false);
@@ -80,4 +81,22 @@ test('V3 dirty or unsafe context returns truthful blocked prove state without me
   assert.equal(blocked.mergeAllowed, false);
   assert.match(blocked.mergeHoldState, /HELD/);
   assert.equal(blocked.requiredApprovalToken, battleBridgeMergeApprovalToken({ prNumber: 1393, headSha: head }));
+});
+
+
+test('V4 browser proof unavailable returns explicit blocker, not fake pass', () => {
+  const packet = buildConciergeProofPacket({ candidate: { prNumber: 1395, headSha: head }, generatedArtifactsClean: true, commandResults: [{ command: 'npm run stephanos:build', exitCode: 0 }], browserProofPacket: { runnerAvailable: false, unavailableReason: 'Playwright browser runtime is not installed.' } });
+  assert.equal(packet.browserProof, 'blocked_unavailable');
+  assert.equal(packet.proofPacketSummary.status, 'PROOF_PACKET_BLOCKED');
+  assert.match(packet.browserProofPacket.proofUnavailableBlocker, /Playwright browser runtime is not installed/);
+  assert.equal(packet.mergeAllowed, false);
+});
+
+test('V4 browser proof packet preserves screenshot checklist caveats and console errors', () => {
+  const packet = buildConciergeProofPacket({ candidate: { prNumber: 1395, headSha: head }, generatedArtifactsClean: true, commandResults: [{ command: 'npm run stephanos:build', exitCode: 0 }], browserProofPacket: { browserProofStatus: 'verified', runnerAvailable: true, screenshotPath: 'artifacts/browser/build-concierge-v4.png', checklistStatus: 'passed', checklist: [{ item: 'Mission Operations visible', status: 'passed' }], caveats: ['Animations disabled for capture.'], consoleErrors: ['Failed to load optional favicon.'] } });
+  assert.equal(packet.browserProof, 'verified');
+  assert.equal(packet.browserProofPacket.screenshotPath, 'artifacts/browser/build-concierge-v4.png');
+  assert.equal(packet.browserProofPacket.checklistStatus, 'passed');
+  assert.deepEqual(packet.browserProofPacket.caveats, ['Animations disabled for capture.']);
+  assert.deepEqual(packet.browserProofPacket.consoleErrors, ['Failed to load optional favicon.']);
 });

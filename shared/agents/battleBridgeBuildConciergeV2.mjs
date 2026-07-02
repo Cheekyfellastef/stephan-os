@@ -31,8 +31,39 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
-export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v3';
-export const BATTLE_BRIDGE_CONCIERGE_PREVIOUS_SCHEMA = 'stephanos.battle-bridge-build-concierge.v2';
+export function normalizeConciergeBrowserProof(input = {}) {
+  const source = input.browserProofPacket && typeof input.browserProofPacket === 'object'
+    ? input.browserProofPacket
+    : (input.browserProof && typeof input.browserProof === 'object' ? input.browserProof : input);
+  const runnerAvailable = source.runnerAvailable === true || source.browserRuntimeAvailable === true || source.status === 'verified' || source.browserProofStatus === 'verified';
+  const screenshotPath = text(source.screenshotPath);
+  const unavailableReason = text(source.unavailableReason || source.proofUnavailableBlocker || source.blocker);
+  const checklistItems = Array.isArray(source.checklist) ? source.checklist : (Array.isArray(source.checklistItems) ? source.checklistItems : []);
+  const checklist = checklistItems.map((item) => (typeof item === 'object' && item ? {
+    item: text(item.item || item.label || item.name, 'unnamed checklist item'),
+    status: text(item.status, item.passed === true ? 'passed' : 'unknown'),
+  } : { item: text(item, 'unnamed checklist item'), status: 'unknown' }));
+  const consoleErrors = list(source.consoleErrors);
+  const caveats = list(source.caveats);
+  const checklistStatus = text(source.checklistStatus, checklist.length ? (checklist.every((item) => item.status === 'passed') ? 'passed' : 'blocked_or_unknown') : 'unknown');
+  const explicitStatus = text(source.browserProofStatus || source.status);
+  const verified = explicitStatus === 'verified' && runnerAvailable && Boolean(screenshotPath) && checklistStatus === 'passed';
+  const proofUnavailableBlocker = verified ? '' : (unavailableReason || (!runnerAvailable ? 'Browser proof runner/runtime unavailable; browser proof was not captured.' : (!screenshotPath ? 'Browser screenshot path is unavailable.' : (checklistStatus !== 'passed' ? 'Browser proof checklist is not passed.' : 'Browser proof remains unknown.'))));
+  return {
+    browserProofStatus: verified ? 'verified' : (proofUnavailableBlocker ? 'blocked_unavailable' : 'unknown'),
+    screenshotPath,
+    screenshotUnavailableReason: screenshotPath ? '' : proofUnavailableBlocker,
+    checklistStatus,
+    checklist,
+    consoleErrors,
+    caveats,
+    proofUnavailableBlocker,
+    runnerAvailable,
+  };
+}
+
+export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v4';
+export const BATTLE_BRIDGE_CONCIERGE_PREVIOUS_SCHEMA = 'stephanos.battle-bridge-build-concierge.v3';
 
 export const BATTLE_BRIDGE_BUILD_CONCIERGE_SUCCESS_MARKERS = [
   'GOAL_COMPLETE_BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP',
@@ -141,6 +172,7 @@ export function buildConciergePlan(input = {}) {
   const nextOperatorAction = canStartProof
     ? `Run proof-packet/prove for PR #${selected.prNumber}; merge remains held until exact-head approval is supplied.`
     : (unique([...blockers, ...(selected?.safeToProof === false ? selected.blockers : [])])[0] || 'Supply a PR candidate with exact head truth and clean working tree proof.');
+  const browserProofPacket = normalizeConciergeBrowserProof(input);
   return {
     schemaVersion: BATTLE_BRIDGE_CONCIERGE_SCHEMA,
     mode: 'local-first-semi-automatic',
@@ -178,7 +210,8 @@ export function buildConciergePlan(input = {}) {
     proofPacketSummary: {
       status: 'not_started',
       commandCount: selected?.proofCommands?.length || 0,
-      browserProof: 'unknown',
+      browserProof: browserProofPacket.browserProofStatus,
+      browserProofPacket,
       generatedArtifactsClean: 'unknown',
     },
     mergeHoldState,
@@ -201,6 +234,8 @@ export function buildConciergeProofPacket(input = {}) {
   if (!SHA40.test(headSha)) blockers.push('Exact head SHA is missing from proof packet.');
   if (!PR_NUMBER.test(String(prNumber))) blockers.push('PR number is missing from proof packet.');
   if (input.generatedArtifactsClean !== true) blockers.push('Generated artifact cleanup has not been proven clean.');
+  const browserProofPacket = normalizeConciergeBrowserProof(input);
+  if (browserProofPacket.browserProofStatus !== 'verified') blockers.push(browserProofPacket.proofUnavailableBlocker || 'Browser proof remains unknown.');
 
   const finalVerdict = proofComplete && !blockers.length ? 'PROOF_PACKET_READY_FOR_EXACT_HEAD_APPROVAL' : 'PROOF_PACKET_BLOCKED';
   return {
@@ -211,7 +246,8 @@ export function buildConciergeProofPacket(input = {}) {
     branch: text(candidate.branch || input.branch),
     worktreePath: text(input.worktreePath),
     commandResults: commandResults.map((result) => ({ command: normalizeCommand(result.command), exitCode: Number(result.exitCode), evidencePath: text(result.evidencePath) })),
-    browserProof: input.browserProof === true ? 'verified' : 'unknown',
+    browserProof: browserProofPacket.browserProofStatus,
+    browserProofPacket,
     generatedArtifactsClean: input.generatedArtifactsClean === true,
     missionOperationsStatus: proofComplete && !blockers.length ? 'AWAITING_APPROVAL' : 'BLOCKED',
     goalDashboardStatus: proofComplete && !blockers.length ? 'Proof complete - exact-head approval required' : 'Proof blocked or unknown',
@@ -227,7 +263,7 @@ export function buildConciergeProofPacket(input = {}) {
       commandCount: commandResults.length,
       passedCommandCount: commandResults.length - failed.length,
       failedCommandCount: failed.length,
-      browserProof: input.browserProof === true ? 'verified' : 'unknown',
+      browserProof: browserProofPacket.browserProofStatus,
       generatedArtifactsClean: input.generatedArtifactsClean === true ? 'verified' : 'unknown',
     },
     mergeHoldState: 'HELD_PENDING_EXACT_HEAD_APPROVAL',
