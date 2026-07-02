@@ -39,17 +39,17 @@ export const BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP = Object.freeze([
   Object.freeze({
     version: 'V5',
     title: 'Auto Pick Next Safe Work',
-    status: 'planned_guarded',
-    intent: 'Inspect PR and goal candidates and rank safe candidates by mergeability, blockers, labels, and declared proof commands while preserving unknown truth.',
-    sourceCanon: ['#1391 V1', '#1392 V2', '#1393 Goal Dashboard rail', '#1394 V3 local proof runner and overflow fix'],
+    status: 'implemented_guarded',
+    intent: 'Inspect supplied PR and goal candidate records and rank safe candidates by open/ready state, mergeability, clean required checks, declared allowlisted proof commands, blocker absence, exact-head availability, and stale/unknown status while preserving unknown truth.',
+    sourceCanon: ['#1391 V1', '#1392 V2', '#1393 Goal Dashboard rail', '#1394 V3 local proof runner', '#1395 V4-V8 guarded roadmap specs', '#1398 V4 browser-proof capture'],
     requiredSurfaces: BATTLE_BRIDGE_BUILD_CONCIERGE_SURFACES,
     guardrails: [
-      'Candidate inspection may rank only from observed mergeability, blockers, labels, and declared proof commands.',
+      'Candidate inspection may rank only from supplied candidate records unless an explicit adapter provides observed truth.',
       'Unknown stays unknown; missing GitHub, label, blocker, or proof-command evidence must not be inferred as safe.',
       'No fake GitHub proof or live PR proof may be claimed from static or unavailable evidence.',
       'Mission Operations, Mission Dashboard, and standalone landing-page Goal Dashboard must all show V5 status.',
     ],
-    testsRequired: ['Each required surface shows V5 Auto Pick Next Safe Work and planned_guarded status.'],
+    testsRequired: ['Each required surface shows V5 Auto Pick Next Safe Work and implemented_guarded status plus auto-pick truth.'],
   }),
   Object.freeze({
     version: 'V6',

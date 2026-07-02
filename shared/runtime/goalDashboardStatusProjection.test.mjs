@@ -20,3 +20,12 @@ test('goal dashboard status projection remains read-only static seed truth', () 
   assert.equal(projection.goals[0].currentOwner, 'Codex');
   assert.equal(projection.goals[0].nextOwner, 'OpenClaw');
 });
+
+test('standalone Goal Dashboard exposes V5 implemented guarded auto-pick truth', () => {
+  const projection = buildGoalDashboardStatusProjection();
+  const v5 = projection.buildConcierge.roadmap.phases.find((phase) => phase.version === 'V5');
+  assert.equal(v5.title, 'Auto Pick Next Safe Work');
+  assert.equal(v5.status, 'implemented_guarded');
+  assert.equal(projection.buildConcierge.autoPickTruth, 'supplied-candidate-records-only');
+  assert.equal(projection.liveAutomationClaim, 'none');
+});

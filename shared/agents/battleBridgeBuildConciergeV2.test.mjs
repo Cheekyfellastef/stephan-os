@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   battleBridgeMergeApprovalToken,
   buildConciergePlan,
+  buildConciergeAutoPick,
   buildConciergeProofPacket,
   buildConciergeRoadmap,
   validateConciergeCommand,
@@ -13,7 +14,7 @@ import {
 const head = 'c'.repeat(40);
 
 test('PR candidate plan includes PR/head/proof commands/next action', () => {
-  const plan = buildConciergePlan({ repositoryRoot: '/repo', workingTreeClean: true, pullRequests: [{ number: 1391, title: 'V2 operator surfaces', headSha: head, state: 'OPEN', mergeable: true, changedFiles: ['shared/agents/a.mjs'], proofCommands: ['npm test'] }] });
+  const plan = buildConciergePlan({ repositoryRoot: '/repo', workingTreeClean: true, pullRequests: [{ number: 1391, title: 'V2 operator surfaces', headSha: head, state: 'OPEN', mergeable: true, requiredChecksClean: true, changedFiles: ['shared/agents/a.mjs'], proofCommands: ['npm test'] }] });
   assert.equal(plan.selectedCandidate.prNumber, 1391);
   assert.equal(plan.selectedCandidate.headSha, head);
   assert.deepEqual(plan.selectedCandidate.proofCommands, ['npm test']);
@@ -37,7 +38,7 @@ test('validate-merge accepts only matching PR/head/token', () => {
 });
 
 test('dirty tree blocks proof/merge readiness', () => {
-  const plan = buildConciergePlan({ repositoryRoot: '/repo', workingTreeClean: false, pullRequests: [{ number: 1391, headSha: head, state: 'OPEN', changedFiles: ['shared/a.mjs'], proofCommands: ['npm test'] }] });
+  const plan = buildConciergePlan({ repositoryRoot: '/repo', workingTreeClean: false, pullRequests: [{ number: 1391, headSha: head, state: 'OPEN', requiredChecksClean: true, changedFiles: ['shared/a.mjs'], proofCommands: ['npm test'] }] });
   assert.equal(plan.canStartProof, false);
   assert.equal(plan.dirtyTreeStatus, 'dirty');
   assert.match(plan.mergeHoldState, /HELD/);
@@ -49,13 +50,60 @@ test('roadmap preserves intent-engine approval-only mission and success markers'
   const roadmap = buildConciergeRoadmap();
   assert.match(roadmap.mission, /intent engine and approval authority/);
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V2').status, 'implemented');
-  assert.equal(roadmap.activePhase.version, 'V5');
+  assert.equal(roadmap.activePhase.version, 'V6');
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V4').status, 'implemented_guarded');
+  assert.equal(roadmap.phases.find((phase) => phase.version === 'V5').status, 'implemented_guarded');
   assert.equal(roadmap.guardrails.unsafeCommandExecutionAllowed, false);
   assert.equal(roadmap.guardrails.visibleReceiptsOrExplicitBlockersRequired, true);
   assert.ok(roadmap.successMarkers.includes('GOAL_COMPLETE_BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP'));
   assert.ok(roadmap.successMarkers.includes('NO_CLICK_MONKEY_LOOP'));
   assert.ok(roadmap.successMarkers.includes('INTENT_ENGINE_APPROVAL_ONLY'));
+});
+
+test('V5 selects safest candidate from mixed PR and goal records without executing commands', () => {
+  const autoPick = buildConciergeAutoPick({
+    pullRequests: [
+      { number: 1397, title: 'stale candidate', headSha: 'a'.repeat(40), state: 'OPEN', mergeable: true, requiredChecksClean: true, stale: true, proofCommands: ['npm test'] },
+      { number: 1398, title: 'safe candidate', headSha: head, state: 'OPEN', mergeable: true, requiredChecksStatus: 'passing', blockers: [], proofCommands: ['npm run stephanos:build'] },
+    ],
+    goals: [
+      { id: 'goal-unknown', title: 'unknown goal', state: 'unknown', mergeable: true, requiredChecksClean: true, proofCommands: ['npm test'], headSha: 'b'.repeat(40) },
+    ],
+  });
+  assert.equal(autoPick.selectedCandidate.prNumber, 1398);
+  assert.equal(autoPick.selectedCandidate.safeToProof, true);
+  assert.equal(autoPick.commandExecutionAllowed, false);
+  assert.equal(autoPick.mergeAllowed, false);
+  assert.equal(autoPick.confidence, 'high');
+});
+
+test('V5 rejects unknown stale blocked and unsafe candidates with reasons', () => {
+  const autoPick = buildConciergeAutoPick({
+    candidates: [
+      { id: 'unknown', title: 'unknown state', headSha: 'b'.repeat(40), state: 'unknown', mergeable: true, requiredChecksClean: true, proofCommands: ['npm test'] },
+      { id: 'blocked', title: 'blocked work', headSha: 'c'.repeat(40), state: 'OPEN', mergeable: true, requiredChecksClean: true, blockers: ['operator hold'], proofCommands: ['npm test'] },
+      { id: 'unsafe', title: 'unsafe proof', headSha: 'd'.repeat(40), state: 'OPEN', mergeable: true, requiredChecksClean: true, proofCommands: ['rm -rf tmp'] },
+      { id: 'stale', title: 'stale work', headSha: 'e'.repeat(40), state: 'OPEN', mergeable: true, requiredChecksClean: true, stale: true, proofCommands: ['npm test'] },
+    ],
+  });
+  assert.equal(autoPick.selectedCandidate, null);
+  assert.match(autoPick.rejectedCandidates.map((candidate) => candidate.rejectionReasons.join(' ')).join(' | '), /open\/ready state unknown/);
+  assert.match(autoPick.rejectedCandidates.map((candidate) => candidate.rejectionReasons.join(' ')).join(' | '), /operator hold/);
+  assert.match(autoPick.rejectedCandidates.map((candidate) => candidate.rejectionReasons.join(' ')).join(' | '), /outside the Battle Bridge allowlist/);
+  assert.match(autoPick.rejectedCandidates.map((candidate) => candidate.rejectionReasons.join(' ')).join(' | '), /stale/);
+});
+
+test('V5 does not claim live GitHub proof without adapter and preserves exact-head boundary', () => {
+  const plan = buildConciergePlan({
+    repositoryRoot: '/repo',
+    workingTreeClean: true,
+    pullRequests: [{ number: 1398, title: 'adapterless live proof request', headSha: head, state: 'OPEN', mergeable: true, requiredChecksClean: true, liveGithubProof: true, proofCommands: ['npm test'] }],
+  });
+  assert.equal(plan.autoPick.liveGithubProof, 'not-claimed');
+  assert.equal(plan.canStartProof, false);
+  assert.match(plan.blockers.join(' '), /no explicit adapter/);
+  assert.equal(plan.exactHeadApproval.token, battleBridgeMergeApprovalToken({ prNumber: 1398, headSha: head }));
+  assert.equal(plan.guardrails.neverMerge, true);
 });
 
 
@@ -75,7 +123,7 @@ test('allowlist blocks unsafe commands before proof execution', () => {
 });
 
 test('V3 dirty or unsafe context returns truthful blocked prove state without merge', () => {
-  const plan = buildConciergePlan({ repositoryRoot: '/repo', workingTreeClean: false, pullRequests: [{ number: 1393, headSha: head, state: 'OPEN', mergeable: true, changedFiles: ['shared/agents/a.mjs'], proofCommands: ['npm run stephanos:build'] }] });
+  const plan = buildConciergePlan({ repositoryRoot: '/repo', workingTreeClean: false, pullRequests: [{ number: 1393, headSha: head, state: 'OPEN', mergeable: true, requiredChecksClean: true, changedFiles: ['shared/agents/a.mjs'], proofCommands: ['npm run stephanos:build'] }] });
   const blocked = buildConciergeProveBlocked({ plan, blockers: plan.blockers });
   assert.equal(blocked.finalVerdict, 'PROVE_BLOCKED_OR_UNKNOWN');
   assert.equal(blocked.mergeAllowed, false);

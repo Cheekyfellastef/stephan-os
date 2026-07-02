@@ -31,6 +31,15 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+function knownBoolean(value) {
+  return value === true ? true : value === false ? false : 'unknown';
+}
+
+function candidateId(candidate, fallbackIndex = 0) {
+  const pr = Number.parseInt(candidate.number ?? candidate.prNumber, 10);
+  return PR_NUMBER.test(String(pr)) ? `PR #${pr}` : text(candidate.id || candidate.goalId || candidate.issue, `candidate-${fallbackIndex + 1}`);
+}
+
 export function normalizeConciergeBrowserProof(input = {}) {
   const source = input.browserProofPacket && typeof input.browserProofPacket === 'object'
     ? input.browserProofPacket
@@ -118,42 +127,116 @@ export function validateConciergeCommand(command) {
 }
 
 export function chooseSafeProofCandidates(input = {}) {
-  const prs = Array.isArray(input.pullRequests) ? input.pullRequests : [];
-  return prs.map((pr) => {
+  return buildConciergeAutoPick(input).rankedCandidates;
+}
+
+export function buildConciergeAutoPick(input = {}) {
+  const supplied = [
+    ...(Array.isArray(input.candidates) ? input.candidates : []),
+    ...(Array.isArray(input.pullRequests) ? input.pullRequests.map((candidate) => ({ ...candidate, candidateType: 'pull_request' })) : []),
+    ...(Array.isArray(input.goals) ? input.goals.map((candidate) => ({ ...candidate, candidateType: 'goal' })) : []),
+  ];
+  const githubAdapterProvided = input.githubAdapterProvided === true || input.adapterProvided === true || Boolean(input.adapter);
+  const liveGithubProof = githubAdapterProvided ? 'adapter-provided' : 'not-claimed';
+  const rankedCandidates = supplied.map((pr, index) => {
     const blockers = [];
-    const prNumber = Number.parseInt(pr.number, 10);
+    const rejectionReasons = [];
+    const prNumber = Number.parseInt(pr.number ?? pr.prNumber, 10);
     const headSha = text(pr.headSha || pr.headRefOid);
     const changedFiles = list(pr.changedFiles);
-    const proofCommands = (Array.isArray(pr.proofCommands) && pr.proofCommands.length ? pr.proofCommands : ['npm test'])
+    const proofCommandInputs = Array.isArray(pr.proofCommands) ? pr.proofCommands : [];
+    const proofCommands = proofCommandInputs
       .map(validateConciergeCommand);
+    const state = text(pr.state || pr.status, 'unknown').toLowerCase();
+    const openReadyState = /^(open|ready|active)$/.test(state) && pr.isDraft !== true;
+    const mergeable = knownBoolean(pr.mergeable);
+    const requiredChecksClean = pr.requiredChecksClean === true || /^(clean|passing|passed|success)$/.test(text(pr.requiredChecksStatus || pr.checksStatus).toLowerCase());
+    const stale = pr.stale === true || /^(stale|outdated)$/.test(text(pr.freshness || pr.statusFreshness).toLowerCase());
+    const explicitBlockers = list(pr.blockers);
+    const exactHeadAvailable = SHA40.test(headSha);
+    const unknowns = [];
 
-    if (!PR_NUMBER.test(String(pr.number))) blockers.push('PR number is unknown or invalid.');
-    if (!SHA40.test(headSha)) blockers.push('Exact PR head SHA is unknown or invalid.');
-    if (text(pr.state, 'UNKNOWN').toUpperCase() !== 'OPEN') blockers.push('PR open state is unknown or not open.');
-    if (pr.isDraft === true) blockers.push('Draft PRs stay inspect-only until marked ready by the author.');
-    if (pr.mergeable === false) blockers.push('PR is explicitly not mergeable.');
+    if (!PR_NUMBER.test(String(prNumber)) && text(pr.candidateType) === 'pull_request') blockers.push('PR number is unknown or invalid.');
+    if (!exactHeadAvailable) blockers.push('Exact PR/goal head SHA is unknown or invalid.');
+    if (state === 'unknown') unknowns.push('open/ready state unknown');
+    if (!openReadyState) blockers.push('Candidate open/ready state is unknown or not ready.');
+    if (pr.isDraft === true) blockers.push('Draft candidates stay inspect-only until marked ready by the author.');
+    if (mergeable === 'unknown') unknowns.push('mergeability unknown');
+    if (mergeable !== true) blockers.push(mergeable === false ? 'Candidate is explicitly not mergeable.' : 'Candidate mergeability is unknown.');
+    if (!requiredChecksClean) blockers.push('Required checks are unknown or not clean.');
+    if (!proofCommandInputs.length) blockers.push('Declared allowlisted proof commands are missing.');
+    if (explicitBlockers.length) blockers.push(...explicitBlockers.map((blocker) => `Declared blocker: ${blocker}`));
+    if (stale) blockers.push('Candidate status is stale or outdated.');
     if (changedFiles.some((file) => /(^|\/)(dist|node_modules|runtime|tmp)(\/|$)/i.test(file))) {
       blockers.push('Changed files include generated or forbidden runtime paths.');
     }
     for (const proof of proofCommands) if (!proof.allowed) blockers.push(proof.blocker);
+    if (!githubAdapterProvided && (pr.liveGithubProof === true || pr.githubProof === 'live')) blockers.push('Live GitHub proof was requested but no explicit adapter was provided.');
 
+    const safeToProof = blockers.length === 0 && unknowns.length === 0;
+    if (!safeToProof) rejectionReasons.push(...unique([...blockers, ...unknowns]));
+    const score = [
+      openReadyState,
+      mergeable === true,
+      requiredChecksClean,
+      proofCommands.length > 0 && proofCommands.every((proof) => proof.allowed),
+      explicitBlockers.length === 0,
+      exactHeadAvailable,
+      !stale && unknowns.length === 0,
+    ].filter(Boolean).length;
     return {
+      candidateId: candidateId(pr, index),
+      candidateType: text(pr.candidateType || pr.type, PR_NUMBER.test(String(prNumber)) ? 'pull_request' : 'goal'),
       prNumber,
       title: text(pr.title, 'Untitled PR'),
       headSha,
       branch: text(pr.branch || pr.headRefName),
       changedFiles,
       proofCommands: proofCommands.map((proof) => proof.command),
-      safeToProof: blockers.length === 0,
+      openReadyState: openReadyState ? 'ready' : (state === 'unknown' ? 'unknown' : 'not_ready'),
+      mergeability: mergeable === true ? 'mergeable' : mergeable === false ? 'not_mergeable' : 'unknown',
+      requiredChecks: requiredChecksClean ? 'clean' : 'unknown_or_not_clean',
+      blockerStatus: explicitBlockers.length ? 'blocked' : 'none_declared',
+      exactHeadAvailability: exactHeadAvailable ? 'available' : 'unknown',
+      staleStatus: stale ? 'stale' : (unknowns.length ? 'unknown' : 'fresh'),
+      liveGithubProof,
+      safeToProof,
+      score,
       blockers: unique(blockers),
+      rejectionReasons: unique(rejectionReasons),
       requiredApprovalToken: battleBridgeMergeApprovalToken({ prNumber, headSha }),
     };
-  }).sort((left, right) => Number(right.safeToProof) - Number(left.safeToProof) || left.prNumber - right.prNumber);
+  }).sort((left, right) => Number(right.safeToProof) - Number(left.safeToProof) || right.score - left.score || (left.prNumber || 999999) - (right.prNumber || 999999));
+  const selectedCandidate = rankedCandidates.find((candidate) => candidate.safeToProof) || null;
+  const rejectedCandidates = rankedCandidates.filter((candidate) => candidate !== selectedCandidate).map((candidate) => ({
+    candidateId: candidate.candidateId,
+    prNumber: candidate.prNumber,
+    title: candidate.title,
+    safeToProof: false,
+    rejectionReasons: candidate.rejectionReasons.length ? candidate.rejectionReasons : ['A safer candidate ranked higher.'],
+  }));
+  const blockers = selectedCandidate ? [] : unique(rankedCandidates.flatMap((candidate) => candidate.rejectionReasons));
+  return {
+    schemaVersion: `${BATTLE_BRIDGE_CONCIERGE_SCHEMA}.v5-auto-pick`,
+    selectedCandidate,
+    rankedCandidates,
+    rejectedCandidates,
+    blockers,
+    confidence: selectedCandidate ? (selectedCandidate.score >= 7 ? 'high' : 'medium') : 'low',
+    liveGithubProof,
+    githubAdapterProvided,
+    commandExecutionAllowed: false,
+    mergeAllowed: false,
+    nextOperatorAction: selectedCandidate
+      ? `Review selected ${selectedCandidate.candidateId}; run only declared allowlisted proof commands in the guarded proof lane.`
+      : (blockers[0] || 'Supply fresh candidate records with exact-head, mergeability, clean checks, blockers, and declared proof commands.'),
+  };
 }
 
 export function buildConciergePlan(input = {}) {
-  const candidates = chooseSafeProofCandidates(input);
-  const selected = candidates.find((candidate) => candidate.safeToProof) || candidates[0] || null;
+  const autoPick = buildConciergeAutoPick(input);
+  const candidates = autoPick.rankedCandidates;
+  const selected = autoPick.selectedCandidate || candidates[0] || null;
   const blockers = [];
   if (!selected) blockers.push('No open PR or goal candidate was supplied.');
   if (input.workingTreeClean === false) blockers.push('Dirty-tree auto mutation is blocked; clean or stash intentionally first.');
@@ -177,7 +260,9 @@ export function buildConciergePlan(input = {}) {
     schemaVersion: BATTLE_BRIDGE_CONCIERGE_SCHEMA,
     mode: 'local-first-semi-automatic',
     selectedCandidate: selected,
+    rejectedCandidates: autoPick.rejectedCandidates,
     candidates,
+    autoPick,
     roadmap: buildConciergeRoadmap(input),
     guardrails: {
       exactHeadApprovalRequired: true,
@@ -215,8 +300,9 @@ export function buildConciergePlan(input = {}) {
       generatedArtifactsClean: 'unknown',
     },
     mergeHoldState,
-    nextOperatorAction,
-    blockers: unique([...blockers, ...(selected?.safeToProof === false ? selected.blockers : [])]),
+    nextOperatorAction: canStartProof ? autoPick.nextOperatorAction : nextOperatorAction,
+    blockers: unique([...blockers, ...autoPick.blockers, ...(selected?.safeToProof === false ? selected.blockers : [])]),
+    confidence: autoPick.confidence,
     finalVerdict: canStartProof ? 'READY_TO_START_LOCAL_PROOF' : 'BLOCKED_OR_UNKNOWN',
   };
 }

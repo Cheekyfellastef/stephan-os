@@ -1,3 +1,5 @@
+import { buildConciergeRoadmap } from '../agents/battleBridgeBuildConciergeV2.mjs';
+
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const normalized = String(value).trim();
@@ -115,6 +117,10 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     blockedGoalCount: normalizedGoals.filter((goal) => /blocked/i.test(goal.status)).length,
     manualRefreshRequired: true,
     goals: normalizedGoals,
+    buildConcierge: Object.freeze({
+      roadmap: buildConciergeRoadmap(input.buildConcierge || {}),
+      autoPickTruth: text(input.buildConcierge?.autoPickTruth || input.autoPickTruth, 'supplied-candidate-records-only'),
+    }),
     nextAction: 'Refresh the static Goal Dashboard seed manually before making live GitHub/local automation claims.',
   });
 }
