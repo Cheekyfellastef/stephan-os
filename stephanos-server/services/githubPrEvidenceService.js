@@ -1,3 +1,5 @@
+import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
+
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim();
   return text || fallback;
@@ -30,25 +32,27 @@ function normalizeChecksState(conclusions = []) {
   return 'unknown';
 }
 
-export function resolveGithubTokenConfig({ env = process.env, secretStoreToken = '' } = {}) {
-  const envToken = asText(env.GITHUB_TOKEN || env.STEPHANOS_GITHUB_TOKEN, '');
-  const secretToken = asText(secretStoreToken, '');
-  const token = secretToken || envToken;
-  const authority = secretToken
-    ? 'backend-local-secret-store'
-    : (envToken ? 'env' : 'none');
-  const updatedAt = secretToken ? new Date().toISOString() : null;
-  return { token, configured: Boolean(token), authority, updatedAt };
+export async function resolveGithubTokenConfig(options = {}) {
+  return resolveGithubAuth(options);
 }
 
-export async function fetchGithubPrEvidence({ owner, repo, prNumber, token }) {
-  const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'User-Agent': 'stephanos-readonly-pr-evidence' };
-  const prRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers });
-  if (!prRes.ok) return { status: 'error', source: 'github-api', owner, repo, prNumber, recommendedNextAction: `GitHub API request failed (${prRes.status}).` };
+export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth, ghTokenProvider, fetchImpl = fetch }) {
+  let activeAuth = auth || { token, authority: 'unknown', configured: Boolean(token) };
+  const request = async (candidateAuth) => {
+    const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${candidateAuth.token}`, 'User-Agent': 'stephanos-readonly-pr-evidence' };
+    return fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers });
+  };
+  let prRes = await request(activeAuth);
+  if (prRes.status === 403 && activeAuth.authority !== 'gh-cli') {
+    const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
+    if (ghAuth.configured) { activeAuth = ghAuth; prRes = await request(activeAuth); }
+  }
+  if (!prRes.ok) return { status: 'error', source: 'github-api', owner, repo, prNumber, authAuthority: activeAuth.authority, recommendedNextAction: `GitHub API request failed (${prRes.status}).` };
   const pr = await prRes.json();
-  const filesRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers });
+  const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${activeAuth.token}`, 'User-Agent': 'stephanos-readonly-pr-evidence' };
+  const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers });
   const files = filesRes.ok ? await filesRes.json() : [];
-  const checksRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers });
+  const checksRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers });
   const checksPayload = checksRes.ok ? await checksRes.json() : { check_runs: [] };
   const checkRuns = asList(checksPayload?.check_runs?.map((run) => run?.conclusion || run?.status));
   const failingChecks = asList(checksPayload?.check_runs?.filter((run) => ['failure', 'failed', 'timed_out', 'cancelled', 'action_required'].includes(asText(run?.conclusion || run?.status, '').toLowerCase())).map((run) => run?.name));
@@ -58,7 +62,7 @@ export async function fetchGithubPrEvidence({ owner, repo, prNumber, token }) {
   if (checksStatus !== 'passed') missingProof.push('checks');
   const mergeReadiness = pr.merged ? 'already-merged' : (checksStatus === 'failed' ? 'needs-amendment' : (checksStatus === 'passed' ? 'merge-candidate' : 'needs-proof'));
   return {
-    status: 'fetched', source: 'github-api', owner, repo, prNumber: Number(pr.number || prNumber),
+    status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo, prNumber: Number(pr.number || prNumber),
     prUrl: asText(pr.html_url, ''), prTitle: asText(pr.title, ''), prState: asText(pr.state, 'unknown'), merged: pr.merged === true,
     headSha: asText(pr.head?.sha, ''), baseBranch: asText(pr.base?.ref, ''),
     changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks,
