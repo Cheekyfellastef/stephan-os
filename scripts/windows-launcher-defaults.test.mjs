@@ -161,6 +161,20 @@ test('ignition process output is minimized and redirected instead of primary Pow
   assert.doesNotMatch(script, /Start-Process -FilePath 'powershell\.exe'[\s\S]*?'-NoExit'/m, 'launcher must not keep a visible PowerShell wall open as the primary UI');
 });
 
+test('launcher-root starts and proves backend before UI restart waits can block', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(
+    script,
+    /Ensure-ProcessRunning -StepLabel 'backend'[\s\S]*?Ensure-ProcessRunning -StepLabel 'launcher-root ui'/m,
+    'backend start must stay before launcher-root UI restart handoff',
+  );
+  assert.match(
+    script,
+    /Write-LiveLog 'waiting for backend'[\s\S]*?Wait-ForUrl -StepLabel 'backend health'[\s\S]*?Wait-ForUrl -StepLabel 'backend mission operations freshness route'[\s\S]*?Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint'/m,
+    'backend proof must remain independent and before launcher-root UI proof waits',
+  );
+});
+
 test('ignition records bounded status and log destinations in proof workspace', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /\$ignitionProofRoot = Join-Path \(\[System\.IO\.Path\]::GetTempPath\(\)\) 'stephanos-ignition-proof'/m, 'ignition proof workspace must be deterministic under tmp');
@@ -229,7 +243,7 @@ test('professional ignition splash refreshes real status and preserves safe auto
 test('launcher-root runtime-status wait observes child ignition repair packets', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /function Get-LauncherChildBlocker[\s\S]*source-update-status\|repair-packet[\s\S]*ConvertFrom-Json[\s\S]*ignitionStatus[\s\S]*BLOCKED/m, 'launcher must parse structured blocked ignition packets from child logs');
-  assert.match(script, /blocked for safety: \$reason/m, 'child blocker message must preserve exact reason text');
+  assert.match(script, /blocked for safety: \$\{reason\}/m, 'child blocker message must preserve exact reason text');
   assert.match(script, /Wait-ForUrl\(\[string\]\$StepLabel, \[string\]\$Url, \[int\]\$TimeoutSeconds = 120, \[switch\]\$ObserveChildIgnitionBlocker\)/m, 'runtime wait must support child blocker observation');
   assert.match(script, /Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url \$launcherRuntimeStatusUrl -ObserveChildIgnitionBlocker/m, 'launcher-root runtime-status wait must enable child blocker observation');
 });
