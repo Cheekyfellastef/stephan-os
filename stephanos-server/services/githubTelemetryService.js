@@ -1,5 +1,6 @@
 import { providerSecretStore } from './providerSecretStore.js';
-import { resolveGithubRepoConfig, resolveGithubTokenConfig } from './githubPrEvidenceService.js';
+import { resolveGithubRepoConfig } from './githubPrEvidenceService.js';
+import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
 
 export const GITHUB_TELEMETRY_SCHEMA = 'stephanos.github.telemetry.v1';
 const WORKFLOW_STATES = new Set(['running', 'queued', 'failed', 'passed', 'cancelled']);
@@ -76,6 +77,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     adapterAvailable: available,
     status: available ? 'live' : 'adapter_unavailable',
     source: available ? text(raw.source, 'github-readonly-adapter') : 'adapter-unavailable',
+    authAuthority: text(raw.authAuthority, available ? 'unavailable' : 'unavailable'),
     repository: raw.repository || null,
     lastUpdatedAt: text(raw.lastUpdatedAt, now.toISOString()),
     notifications,
@@ -90,26 +92,36 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     mergeAllowed: false,
   };
 }
-async function githubJson(url, token) {
-  const response = await fetch(url, { headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'User-Agent': 'stephanos-readonly-github-telemetry' } });
-  if (!response.ok) throw new Error(`GitHub API request failed (${response.status})`);
+async function githubJson(url, auth, fetchImpl = fetch) {
+  const response = await fetchImpl(url, { headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': 'stephanos-readonly-github-telemetry' } });
+  if (!response.ok) { const error = new Error(`GitHub API request failed (${response.status})`); error.status = response.status; throw error; }
   return response.json();
+}
+async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
+  const { owner, repo } = repoConfig;
+  const fetchImpl = options.fetchImpl || fetch;
+  const [notifications, prs, workflowRuns] = await Promise.all([
+    githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl),
+    githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, auth, fetchImpl),
+    githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, fetchImpl),
+  ]);
+  return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: repoConfig, notifications, pullRequests: prs, workflows: workflowRuns.workflow_runs || [] }, options);
 }
 export async function readGithubTelemetry(options = {}) {
   if (options.adapterData) return normalizeGithubTelemetry(options.adapterData, options);
   const repoConfig = resolveGithubRepoConfig(options.env || process.env);
-  const tokenConfig = resolveGithubTokenConfig({ env: options.env || process.env, secretStoreToken: providerSecretStore.getSecret('github') });
-  if (!repoConfig || !tokenConfig.configured) return normalizeGithubTelemetry({ available: false, repository: repoConfig }, options);
+  const auth = await resolveGithubAuth({ env: options.env || process.env, secretStoreToken: Object.prototype.hasOwnProperty.call(options, 'secretStoreToken') ? options.secretStoreToken : providerSecretStore.getSecret('github'), ghTokenProvider: options.ghTokenProvider, execFile: options.execFile });
+  if (!repoConfig || !auth.configured) return normalizeGithubTelemetry({ available: false, authAuthority: auth.authority, repository: repoConfig }, options);
   try {
-    const { owner, repo } = repoConfig;
-    const [notifications, prs, workflowRuns] = await Promise.all([
-      githubJson('https://api.github.com/notifications?all=false&participating=false', tokenConfig.token),
-      githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, tokenConfig.token),
-      githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, tokenConfig.token),
-    ]);
-    return normalizeGithubTelemetry({ available: true, source: 'github-api', repository: repoConfig, notifications, pullRequests: prs, workflows: workflowRuns.workflow_runs || [] }, options);
+    return await readGithubTelemetryWithAuth(repoConfig, auth, options);
   } catch (error) {
-    return { ...normalizeGithubTelemetry({ available: false, repository: repoConfig }, options), status: 'adapter_error', blockers: [`github_adapter_error:${error?.message || 'unknown'}`] };
+    if (error?.status === 403 && auth.authority !== 'gh-cli') {
+      const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider: options.ghTokenProvider, execFile: options.execFile });
+      if (ghAuth.configured) {
+        try { return await readGithubTelemetryWithAuth(repoConfig, ghAuth, options); } catch (retryError) { error = retryError; }
+      }
+    }
+    return { ...normalizeGithubTelemetry({ available: false, authAuthority: auth.authority, repository: repoConfig }, options), status: 'adapter_error', blockers: [`github_adapter_error:${error?.message || 'unknown'}`] };
   }
 }
 export function buildExecutionChains({ goals = [], githubTelemetry = {} } = {}) {

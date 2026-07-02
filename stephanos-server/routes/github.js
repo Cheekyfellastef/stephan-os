@@ -1,6 +1,7 @@
 import express from 'express';
 import { fetchGithubPrEvidence, resolveGithubRepoConfig, resolveGithubTokenConfig } from '../services/githubPrEvidenceService.js';
 import { providerSecretStore } from '../services/providerSecretStore.js';
+import { maskGithubAuthStatus } from '../services/githubAuthResolver.js';
 import { readGithubTelemetry } from '../services/githubTelemetryService.js';
 
 const router = express.Router();
@@ -24,7 +25,7 @@ router.get('/pr-evidence', async (req, res) => {
     return;
   }
   const secretStatus = providerSecretStore.getMaskedProviderStatus('github');
-  const tokenConfig = resolveGithubTokenConfig({
+  const tokenConfig = await resolveGithubTokenConfig({
     env: process.env,
     secretStoreToken: providerSecretStore.getSecret('github'),
   });
@@ -32,13 +33,8 @@ router.get('/pr-evidence', async (req, res) => {
     res.json({ status: 'needs-configuration', source: 'none', owner, repo, prNumber, recommendedNextAction: 'Configure read-only GitHub token to fetch PR evidence.' });
     return;
   }
-  const payload = await fetchGithubPrEvidence({ owner, repo, prNumber, token: tokenConfig.token });
-  payload.tokenStatus = {
-    configured: true,
-    masked: secretStatus?.masked || (tokenConfig.authority === 'env' ? '••••••••env' : ''),
-    updatedAt: secretStatus?.updatedAt || null,
-    authority: tokenConfig.authority,
-  };
+  const payload = await fetchGithubPrEvidence({ owner, repo, prNumber, auth: tokenConfig });
+  payload.tokenStatus = maskGithubAuthStatus({ ...tokenConfig, authority: payload.authAuthority || tokenConfig.authority }, secretStatus);
   res.status(payload.status === 'error' ? 502 : 200).json(payload);
 });
 
