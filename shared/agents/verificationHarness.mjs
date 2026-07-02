@@ -1,3 +1,5 @@
+import { createSharedWorkspaceMessage } from './sharedAgentWorkspace.mjs';
+
 export const VERIFICATION_HARNESS_SCHEMA_VERSION = 'verification-harness.v1';
 export const VERIFICATION_RESULT_KIND = 'stephanos.verification.result';
 
@@ -19,6 +21,11 @@ export const VERIFIER_TYPES = Object.freeze([
   'RelayVerifier',
   'TailscaleVerifier',
   'SharedWorkspaceVerifier',
+  'FileVerifier',
+  'PluginVerifier',
+  'TaskVerifier',
+  'OpenClawGatewayVerifier',
+  'BattleBridgePreflightVerifier',
 ]);
 
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
@@ -110,6 +117,7 @@ export function validateVerifierResult(result = {}) {
   if (!VERIFIER_TYPES.includes(result.verifierType)) errors.push('invalid-verifier-type');
   if (![VERIFICATION_STATUS.PASS, VERIFICATION_STATUS.FAIL].includes(result.status)) errors.push('invalid-status');
   if (result.status === VERIFICATION_STATUS.FAIL && !asText(result.reason, '')) errors.push('missing-failure-reason');
+  if (result.status === VERIFICATION_STATUS.PASS && asList(result.evidence).length === 0) errors.push('missing-pass-evidence');
   for (const line of asList(result.evidence)) {
     if (FORBIDDEN_OUTPUT_PATTERN.test(line)) errors.push('unsafe-evidence-line');
   }
@@ -135,11 +143,26 @@ export function aggregateVerificationResults(input = {}) {
     aggregateId: safeId(input.aggregateId, 'verification-aggregate'),
     status,
     checks,
+    overall: status === VERIFICATION_STATUS.PASS ? 'VERIFIED' : 'BLOCKED',
     evidence: checks.map((check) => `${check.checkId}: ${check.status}`),
+    proofRefs: [...new Set(checks.flatMap((check) => check.proofRefs))],
+    blockers: failedChecks.map((check) => `${check.checkId}: ${check.reason || check.status}`),
+    operatorNeeded: failedChecks.length > 0,
     reason: status === VERIFICATION_STATUS.PASS ? '' : safeField(input.reason, `${failedChecks.length || 'unknown'} check(s) failed`),
     durationMs: checks.reduce((total, check) => total + check.durationMs, 0),
     timestampUtc: safeField(input.timestampUtc, 'pending'),
     finalVerdict: status === VERIFICATION_STATUS.PASS ? 'VERIFICATION_HARNESS_PASS' : 'VERIFICATION_HARNESS_FAIL',
+    workspaceMessage: createSharedWorkspaceMessage({
+      messageId: safeId(input.aggregateId, 'verification-aggregate'),
+      sender: 'codex',
+      recipient: 'operator',
+      kind: 'verification-result',
+      severity: status === VERIFICATION_STATUS.PASS ? 'info' : 'warning',
+      summary: status === VERIFICATION_STATUS.PASS ? 'Verification harness proof verified.' : 'Verification harness proof blocked.',
+      status: status === VERIFICATION_STATUS.PASS ? 'verified' : 'blocked',
+      requiresOperator: failedChecks.length > 0,
+      proofRefs: [...new Set(checks.flatMap((check) => check.proofRefs))],
+    }),
   };
 }
 
@@ -170,4 +193,135 @@ export function buildVerificationHarnessContract() {
     },
     finalVerdict: 'VERIFICATION_HARNESS_CONTRACT_READY',
   };
+}
+
+export const BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND = 'node --test shared/agents/verificationHarness*.test.mjs shared/agents/*Verifier*.test.mjs';
+export const VERIFIER_RUNNER_VERSION = 'verification-runner.v1';
+
+function bool(value) {
+  return value === true;
+}
+
+function packetEvidence(packet = {}, fields = []) {
+  return fields.map((field) => `${field}=${asText(packet[field], 'unknown')}`);
+}
+
+function resultFromPacket(verifierType, packet = {}, options = {}) {
+  const passed = bool(packet.pass) || options.pass === true;
+  return createVerifierResult({
+    checkId: options.checkId || verifierType.replace(/Verifier$/, '').toLowerCase(),
+    verifierType,
+    status: passed ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.FAIL,
+    target: options.target || packet.target || verifierType,
+    evidence: options.evidence || packetEvidence(packet, options.fields || ['pass']),
+    reason: passed ? '' : options.reason || packet.reason || `${verifierType} proof packet blocked`,
+    durationMs: packet.durationMs || 0,
+    timestampUtc: packet.timestampUtc || 'pending',
+    proofRefs: packet.proofRefs || [],
+  });
+}
+
+export function runProofPacketVerifier(name, packet = {}) {
+  if (!VERIFIER_TYPES.includes(name)) {
+    return createVerifierResult({
+      checkId: 'unknown-verifier',
+      verifierType: 'HealthEndpointVerifier',
+      status: VERIFICATION_STATUS.FAIL,
+      evidence: ['unknownVerifier=true'],
+      reason: 'unknown verifier name failed closed',
+    });
+  }
+
+  if (name === 'OpenClawGatewayVerifier') return runOpenClawGatewayVerifier(packet);
+  if (name === 'BattleBridgePreflightVerifier') return runBattleBridgePreflightVerifier(packet);
+
+  const fieldsByVerifier = {
+    GitVerifier: ['repoClean', 'headMatchesOrigin', 'branch', 'head'],
+    BuildVerifier: ['buildPassed', 'sourceOnly'],
+    BackendVerifier: ['backendHealth', 'httpStatus'],
+    FrontendVerifier: ['uiProof', 'browserProof'],
+    WorkerVerifier: ['missionWorker'],
+    FileVerifier: ['sourcePresent'],
+    PluginVerifier: ['targetPluginSourcePresent'],
+    TaskVerifier: ['stephanosBackendTask'],
+  };
+  const passByVerifier = {
+    GitVerifier: bool(packet.repoClean) && packet.headMatchesOrigin !== false,
+    BuildVerifier: bool(packet.buildPassed) && packet.sourceOnly !== false,
+    BackendVerifier: packet.backendHealth === 'pass' || packet.ok === true,
+    FrontendVerifier: packet.uiProof === 'pass' || packet.browserProof === 'pass' || packet.ok === true,
+    WorkerVerifier: packet.missionWorker === 'running' || packet.ok === true,
+    FileVerifier: bool(packet.sourcePresent),
+    PluginVerifier: packet.targetPluginSourcePresent !== false,
+    TaskVerifier: ['running', 'ready'].includes(packet.stephanosBackendTask) || packet.ok === true,
+  };
+  return resultFromPacket(name, packet, {
+    pass: passByVerifier[name] || bool(packet.pass),
+    fields: fieldsByVerifier[name] || ['pass'],
+    reason: packet.reason || `${name} proof packet blocked`,
+  });
+}
+
+export function runOpenClawGatewayVerifier(packet = {}) {
+  let verdict = 'OPENCLAW_GATEWAY_MISSING';
+  if (packet.endpointIdentity === 'openclaw-readonly-adapter-stub' || packet.mode === 'readonly_status_only') verdict = 'OPENCLAW_READONLY_ADAPTER_ONLY';
+  else if (packet.unsafeRestartTarget) verdict = 'OPENCLAW_GATEWAY_UNSAFE_RESTART_TARGET';
+  else if (packet.portOwnerVerified === false || packet.processIdentityVerified === false) verdict = 'OPENCLAW_GATEWAY_UNVERIFIED_OWNER';
+  else if (packet.canExecute === true && packet.executionAllowed === true && packet.endpointIdentity !== 'openclaw-readonly-adapter-stub') verdict = 'OPENCLAW_GATEWAY_VERIFIED';
+  const pass = verdict === 'OPENCLAW_GATEWAY_VERIFIED';
+  return createVerifierResult({
+    checkId: 'openclaw-gateway',
+    verifierType: 'OpenClawGatewayVerifier',
+    status: pass ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.FAIL,
+    target: packet.endpoint || 'OpenClaw Gateway',
+    evidence: [
+      `finalVerdict=${verdict}`,
+      `httpStatus=${asText(packet.httpStatus, 'unknown')}`,
+      `endpointIdentity=${asText(packet.endpointIdentity, 'unknown')}`,
+      `canExecute=${asText(packet.canExecute, 'unknown')}`,
+    ],
+    reason: pass ? '' : verdict,
+    durationMs: packet.durationMs || 0,
+    timestampUtc: packet.timestampUtc || 'pending',
+    proofRefs: packet.proofRefs || [],
+  });
+}
+
+export function runBattleBridgePreflightVerifier(packet = {}) {
+  const checks = [
+    runProofPacketVerifier('GitVerifier', packet),
+    runProofPacketVerifier('BackendVerifier', packet),
+    runProofPacketVerifier('OpenClawGatewayVerifier', packet.openClawGateway || packet),
+    runProofPacketVerifier('WorkerVerifier', packet),
+    runProofPacketVerifier('FileVerifier', packet),
+    runProofPacketVerifier('PluginVerifier', packet),
+    runProofPacketVerifier('TaskVerifier', packet),
+  ];
+  const blockers = checks.filter((check) => check.status !== VERIFICATION_STATUS.PASS).map((check) => check.reason || check.checkId);
+  const pass = blockers.length === 0 && bool(packet.safeToBuild) && bool(packet.safeToInstall) && bool(packet.safeToRepair);
+  return createVerifierResult({
+    checkId: 'battle-bridge-preflight',
+    verifierType: 'BattleBridgePreflightVerifier',
+    status: pass ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.FAIL,
+    target: 'Battle Bridge preflight',
+    evidence: [
+      `repoClean=${asText(packet.repoClean, false)}`,
+      `sourcePresent=${asText(packet.sourcePresent, false)}`,
+      `backendHealth=${asText(packet.backendHealth, 'unknown')}`,
+      `safeToInstall=${asText(packet.safeToInstall, false)}`,
+      `safeToBuild=${asText(packet.safeToBuild, false)}`,
+      `safeToRepair=${asText(packet.safeToRepair, false)}`,
+      `blockingReasons=${blockers.join('|') || 'none'}`,
+      `finalVerdict=${pass ? 'BATTLE_BRIDGE_PREFLIGHT_PASS' : 'BATTLE_BRIDGE_PREFLIGHT_BLOCKED'}`,
+    ],
+    reason: pass ? '' : blockers.join('; ') || 'Battle Bridge preflight blocked',
+    durationMs: checks.reduce((total, check) => total + check.durationMs, 0),
+    timestampUtc: packet.timestampUtc || 'pending',
+    proofRefs: packet.proofRefs || [],
+  });
+}
+
+export function runVerificationHarness(input = {}) {
+  const checks = asList(input.verifiers).map((name) => runProofPacketVerifier(name, input.packets?.[name] || input.packet || {}));
+  return aggregateVerificationResults({ aggregateId: input.aggregateId || 'verification-harness', checks });
 }
