@@ -207,7 +207,7 @@ function packetEvidence(packet = {}, fields = []) {
 }
 
 function resultFromPacket(verifierType, packet = {}, options = {}) {
-  const passed = bool(packet.pass) || options.pass === true;
+  const passed = options.pass === true;
   return createVerifierResult({
     checkId: options.checkId || verifierType.replace(/Verifier$/, '').toLowerCase(),
     verifierType,
@@ -246,17 +246,17 @@ export function runProofPacketVerifier(name, packet = {}) {
     TaskVerifier: ['stephanosBackendTask'],
   };
   const passByVerifier = {
-    GitVerifier: bool(packet.repoClean) && packet.headMatchesOrigin !== false,
-    BuildVerifier: bool(packet.buildPassed) && packet.sourceOnly !== false,
-    BackendVerifier: packet.backendHealth === 'pass' || packet.ok === true,
-    FrontendVerifier: packet.uiProof === 'pass' || packet.browserProof === 'pass' || packet.ok === true,
-    WorkerVerifier: packet.missionWorker === 'running' || packet.ok === true,
+    GitVerifier: bool(packet.repoClean) && bool(packet.headMatchesOrigin),
+    BuildVerifier: bool(packet.buildPassed) && bool(packet.sourceOnly),
+    BackendVerifier: packet.backendHealth === 'pass',
+    FrontendVerifier: packet.uiProof === 'pass' || packet.browserProof === 'pass',
+    WorkerVerifier: packet.missionWorker === 'running',
     FileVerifier: bool(packet.sourcePresent),
-    PluginVerifier: packet.targetPluginSourcePresent !== false,
-    TaskVerifier: ['running', 'ready'].includes(packet.stephanosBackendTask) || packet.ok === true,
+    PluginVerifier: bool(packet.targetPluginSourcePresent),
+    TaskVerifier: ['running', 'ready'].includes(packet.stephanosBackendTask),
   };
   return resultFromPacket(name, packet, {
-    pass: passByVerifier[name] || bool(packet.pass),
+    pass: passByVerifier[name],
     fields: fieldsByVerifier[name] || ['pass'],
     reason: packet.reason || `${name} proof packet blocked`,
   });
@@ -266,7 +266,7 @@ export function runOpenClawGatewayVerifier(packet = {}) {
   let verdict = 'OPENCLAW_GATEWAY_MISSING';
   if (packet.endpointIdentity === 'openclaw-readonly-adapter-stub' || packet.mode === 'readonly_status_only') verdict = 'OPENCLAW_READONLY_ADAPTER_ONLY';
   else if (packet.unsafeRestartTarget) verdict = 'OPENCLAW_GATEWAY_UNSAFE_RESTART_TARGET';
-  else if (packet.portOwnerVerified === false || packet.processIdentityVerified === false) verdict = 'OPENCLAW_GATEWAY_UNVERIFIED_OWNER';
+  else if (packet.portOwnerVerified !== true || packet.processIdentityVerified !== true) verdict = 'OPENCLAW_GATEWAY_UNVERIFIED_OWNER';
   else if (packet.canExecute === true && packet.executionAllowed === true && packet.endpointIdentity !== 'openclaw-readonly-adapter-stub') verdict = 'OPENCLAW_GATEWAY_VERIFIED';
   const pass = verdict === 'OPENCLAW_GATEWAY_VERIFIED';
   return createVerifierResult({
@@ -279,6 +279,9 @@ export function runOpenClawGatewayVerifier(packet = {}) {
       `httpStatus=${asText(packet.httpStatus, 'unknown')}`,
       `endpointIdentity=${asText(packet.endpointIdentity, 'unknown')}`,
       `canExecute=${asText(packet.canExecute, 'unknown')}`,
+      `executionAllowed=${asText(packet.executionAllowed, 'unknown')}`,
+      `portOwnerVerified=${asText(packet.portOwnerVerified, 'unknown')}`,
+      `processIdentityVerified=${asText(packet.processIdentityVerified, 'unknown')}`,
     ],
     reason: pass ? '' : verdict,
     durationMs: packet.durationMs || 0,

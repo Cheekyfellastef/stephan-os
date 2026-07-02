@@ -31,6 +31,22 @@ test('unknown verifier names fail closed', () => {
   assert.equal(result.reason, 'unknown verifier name failed closed');
 });
 
+test('generic pass bit does not override verifier-specific failure proof', () => {
+  const gitResult = runProofPacketVerifier('GitVerifier', {
+    pass: true,
+    repoClean: false,
+    headMatchesOrigin: true,
+  });
+  const backendResult = runProofPacketVerifier('BackendVerifier', {
+    pass: true,
+    backendHealth: 'fail',
+    httpStatus: 503,
+  });
+
+  assert.equal(gitResult.status, VERIFICATION_STATUS.FAIL);
+  assert.equal(backendResult.status, VERIFICATION_STATUS.FAIL);
+});
+
 test('OpenClaw gateway rejects readonly adapter fixture', () => {
   const result = runOpenClawGatewayVerifier({
     endpoint: 'http://127.0.0.1:8790/health',
@@ -58,6 +74,29 @@ test('OpenClaw gateway accepts executable gateway fixture', () => {
 
   assert.equal(result.status, VERIFICATION_STATUS.PASS);
   assert.equal(result.evidence.includes('finalVerdict=OPENCLAW_GATEWAY_VERIFIED'), true);
+});
+
+test('OpenClaw gateway requires explicit owner proof before pass', () => {
+  const result = runOpenClawGatewayVerifier({
+    endpoint: 'http://127.0.0.1:18789/health',
+    httpStatus: 200,
+    endpointIdentity: 'openclaw-executable-gateway',
+    executionAllowed: true,
+    canExecute: true,
+  });
+
+  assert.equal(result.status, VERIFICATION_STATUS.FAIL);
+  assert.equal(result.reason, 'OPENCLAW_GATEWAY_UNVERIFIED_OWNER');
+  assert.equal(result.evidence.includes('portOwnerVerified=unknown'), true);
+  assert.equal(result.evidence.includes('processIdentityVerified=unknown'), true);
+});
+
+test('PluginVerifier requires explicit target plugin source evidence', () => {
+  const result = runProofPacketVerifier('PluginVerifier', { pass: true });
+
+  assert.equal(result.status, VERIFICATION_STATUS.FAIL);
+  assert.equal(result.reason, 'PluginVerifier proof packet blocked');
+  assert.equal(result.evidence.includes('targetPluginSourcePresent=unknown'), true);
 });
 
 test('Battle Bridge preflight blocks on missing proof', () => {
