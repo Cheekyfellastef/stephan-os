@@ -87,17 +87,18 @@ export const BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP = Object.freeze([
   Object.freeze({
     version: 'V8',
     title: 'Multi-Goal Queue',
-    status: 'planned_guarded',
-    intent: 'Maintain a safe queue of proofable goals and PRs with one active proof lane unless isolation is explicit, exposing blockers, progress, and next action.',
-    sourceCanon: ['#1391 V1', '#1392 V2', '#1393 Goal Dashboard rail', '#1394 V3 local proof runner and overflow fix'],
+    status: 'implemented_guarded',
+    intent: 'Maintain guarded multi-goal queue truth and anti-stall merge guidance with one active proof lane unless isolation is explicit, preserving V5 ranking/rejection reasons, V6 exact-head approval, and V7 post-merge sync/reproof requirements.',
+    sourceCanon: ['#1391 V1', '#1392 V2', '#1393 Goal Dashboard rail', '#1394 V3 local proof runner', '#1395 V4-V8 roadmap specs', '#1398 V4 browser-proof capture', '#1399 V5 guarded auto-pick', '#1400 V6 operator approval surface', '#1401 V7 post-merge sync/reproof'],
     requiredSurfaces: BATTLE_BRIDGE_BUILD_CONCIERGE_SURFACES,
     guardrails: [
-      'Queue only proofable goals or PRs with visible truth fields.',
-      'Use one active proof lane unless work is explicitly isolated.',
-      'Visible blockers, progress, and next action are required before acting.',
+      'Queue preserves supplied V5 ranking, blockers, and rejection reasons; unknown stays unknown.',
+      'Use one active proof lane unless work is explicitly isolated; multiple active lanes are blocked otherwise.',
+      'Exact-head approval remains bound to the current PR head and V7 post-merge sync/reproof stays required after completed merges.',
+      'Anti-stall CLI fallback guidance is allowed only after exact-head approval, Battle Bridge proof, GitHub checks, and clean-tree prerequisites are all true; it never claims or executes a merge.',
       'Mission Operations, Mission Dashboard, and standalone landing-page Goal Dashboard must all show V8 status.',
     ],
-    testsRequired: ['Each required surface shows V8 Multi-Goal Queue and planned_guarded status.'],
+    testsRequired: ['Each required surface shows V8 Multi-Goal Queue implemented_guarded status, queue truth, one-active-lane guardrail, and anti-stall fallback truth.'],
   }),
 ]);
 

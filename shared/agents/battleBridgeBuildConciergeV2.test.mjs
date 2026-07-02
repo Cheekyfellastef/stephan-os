@@ -11,6 +11,8 @@ import {
   validateExactHeadMergeApproval,
   buildConciergeApprovalDecision,
   buildConciergePostMergeSync,
+  buildConciergeQueue,
+  buildConciergeAntiStallMergeLane,
 } from './battleBridgeBuildConciergeV2.mjs';
 
 const head = 'c'.repeat(40);
@@ -111,7 +113,7 @@ test('V5 does not claim live GitHub proof without adapter and preserves exact-he
 
 test('V3 guarded proof packet keeps exact-head token and never allows merge', () => {
   const packet = buildConciergeProofPacket({ candidate: { prNumber: 1393, headSha: head, proofCommands: ['node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs'] }, generatedArtifactsClean: true, commandResults: [{ command: 'node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs', exitCode: 0 }], browserProofPacket: { browserProofStatus: 'verified', runnerAvailable: true, screenshotPath: 'artifacts/browser/v4.png', checklistStatus: 'passed', caveats: ['none'] } });
-  assert.equal(packet.schemaVersion, 'stephanos.battle-bridge-build-concierge.v7.proof-packet');
+  assert.equal(packet.schemaVersion, 'stephanos.battle-bridge-build-concierge.v8.proof-packet');
   assert.equal(packet.packetKind, 'canonical-battle-bridge-build-concierge-proof');
   assert.equal(packet.requiredApprovalToken, battleBridgeMergeApprovalToken({ prNumber: 1393, headSha: head }));
   assert.equal(packet.mergeAllowed, false);
@@ -222,4 +224,48 @@ test('V7 backend freshness proof is required after sync and refresh state is vis
 test('V7 roadmap is implemented_guarded', () => {
   const roadmap = buildConciergeRoadmap();
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V7').status, 'implemented_guarded');
+});
+
+test('V8 queue selects one active lane and preserves ranked queue with reasons and exact-head token', () => {
+  const queue = buildConciergeQueue({
+    pullRequests: [
+      { number: 1402, title: 'safe', headSha: head, state: 'OPEN', mergeable: true, requiredChecksClean: true, proofCommands: ['npm test'] },
+      { number: 1403, title: 'blocked', headSha: 'd'.repeat(40), state: 'OPEN', mergeable: true, requiredChecksClean: true, blockers: ['operator hold'], proofCommands: ['npm test'] },
+    ],
+  });
+  assert.equal(queue.status, 'implemented_guarded');
+  assert.equal(queue.activeProofLane.length, 1);
+  assert.equal(queue.queuedCandidates[0].candidateId, 'PR #1402');
+  assert.match(queue.blockedCandidates[0].rejectionReasons.join(' '), /operator hold/);
+  assert.equal(queue.queuedCandidates[0].requiredApprovalToken, battleBridgeMergeApprovalToken({ prNumber: 1402, headSha: head }));
+});
+
+test('V8 queue blocks multiple active lanes unless explicitly isolated and preserves V7 sync requirement', () => {
+  const base = { pullRequests: [1404, 1405].map((number) => ({ number, headSha: String(number % 10).repeat(40).replace(/4/g, 'a').replace(/5/g, 'b'), state: 'OPEN', mergeable: true, requiredChecksClean: true, proofCommands: ['npm test'] })) };
+  const blocked = buildConciergeQueue({ ...base, activeProofCandidateIds: ['PR #1404', 'PR #1405'], completedCandidateIds: ['PR #1401'] });
+  assert.equal(blocked.oneActiveLaneGuardrail, 'blocked_multiple_active_lanes_without_isolation');
+  assert.equal(blocked.postMergeSyncRequired, true);
+  assert.match(blocked.blockers.join(' '), /V7 post-merge sync\/reproof is required/);
+  const isolated = buildConciergeQueue({ ...base, activeProofCandidateIds: ['PR #1404', 'PR #1405'], isolatedCandidateIds: ['PR #1405'] });
+  assert.equal(isolated.oneActiveLaneGuardrail, 'satisfied');
+});
+
+test('V8 anti-stall fallback is allowed only with approval proof checks and clean tree and includes manual commands', () => {
+  const token = battleBridgeMergeApprovalToken({ prNumber: 1406, headSha: head });
+  const lane = buildConciergeAntiStallMergeLane({ prNumber: 1406, headSha: head, currentHeadSha: head, approvalToken: token, connectorMergeAttempted: true, connectorMergeBlockedReason: 'Connector timeout', battleBridgeProofPassed: true, githubChecksPassed: true, workingTreeClean: true });
+  assert.equal(lane.cliMergeFallbackAllowed, true);
+  assert.equal(lane.exactCliMergeCommand, `gh pr merge 1406 --merge --match-head-commit ${head}`);
+  assert.ok(lane.postCliMergeSyncCommands.includes('git pull --ff-only origin main'));
+  assert.equal(lane.mergeClaimed, false);
+  const blocked = buildConciergeAntiStallMergeLane({ prNumber: 1406, headSha: head, currentHeadSha: head, approvalToken: token, connectorMergeAttempted: true, battleBridgeProofPassed: true, githubChecksPassed: false, workingTreeClean: true });
+  assert.equal(blocked.cliMergeFallbackAllowed, false);
+  assert.match(blocked.blockers.join(' '), /GitHub checks/);
+});
+
+test('V8 plan surfaces queue and anti-stall status without executing merge', () => {
+  const token = battleBridgeMergeApprovalToken({ prNumber: 1408, headSha: head });
+  const plan = buildConciergePlan({ repositoryRoot: '/repo', workingTreeClean: true, pullRequests: [{ number: 1408, title: 'surface', headSha: head, state: 'OPEN', mergeable: true, requiredChecksClean: true, proofCommands: ['npm test'] }], antiStallMergeLane: { prNumber: 1408, headSha: head, currentHeadSha: head, approvalToken: token, connectorMergeAttempted: true, battleBridgeProofPassed: true, githubChecksPassed: true, workingTreeClean: true } });
+  assert.equal(plan.queue.status, 'implemented_guarded');
+  assert.equal(plan.antiStallMergeLane.cliMergeFallbackAllowed, true);
+  assert.equal(plan.antiStallMergeLane.mergeExecuted, false);
 });
