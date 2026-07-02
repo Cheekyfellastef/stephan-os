@@ -473,10 +473,10 @@
       <section aria-labelledby="concierge-title" data-testid="goal-dashboard-build-concierge">
         <div class="section-title">
           <h2 id="concierge-title">Build Concierge</h2>
-          <span>V2 landed · V3 implemented_guarded · V4 browser-proof contract implemented_guarded · V5 guarded auto-pick · V6 operator approval implemented_guarded · V7–V8 planned_guarded · exact-head approval required</span>
+          <span>V2 landed · V3 implemented_guarded · V4 browser-proof contract implemented_guarded · V5 guarded auto-pick · V6 operator approval implemented_guarded · V7 implemented_guarded post-merge sync · V8 planned_guarded · exact-head approval required</span>
         </div>
         <article class="concierge-card" aria-label="Build Concierge rail">
-          <span class="badge complete">V2 landed · V4 implemented_guarded · V5 guarded auto-pick · V6 operator approval implemented_guarded · V7–V8 planned_guarded</span>
+          <span class="badge complete">V2 landed · V4 implemented_guarded · V5 guarded auto-pick · V6 operator approval implemented_guarded · V7 implemented_guarded post-merge sync · V8 planned_guarded</span>
           <h3>Battle Bridge Build Concierge V4–V8 source-owned roadmap specs</h3>
           <p class="subtitle">
             Canonical roadmap status from shared/agents/battleBridgeBuildConciergeRoadmap.mjs: Project selected PR/goal, proof readiness, command plan, dirty-tree status, approval token state, proof packet summary, merge hold state, and next operator action into Mission Operations and Goal Dashboard.
@@ -491,6 +491,8 @@
             <div><span>V6 Operator Approval Surface</span>implemented_guarded canonical approval decision model: selectedCandidate, proofSummary, approvalToken, approvalStatus, rejectionStatus, nextOperatorAction.</div>
             <div><span>V6 approval status</span>awaiting_operator_token · exact-head approval token binds PR number plus current head SHA · no UI merge claim · no command execution.</div>
             <div><span>V6 rejection status</span>not_rejected by default; reject action produces blocker/rejection receipt state and blocks merge.</div>
+            <div><span>V7 Post-Merge Sync and Reproof</span>implemented_guarded guarded state: merge receipt observed, pull main required/performed/blocked, dirty-tree blocks sync, restart/refresh Stephanos required/performed/blocked, backend freshness proof required/performed/blocked, Mission Operations and Goal Dashboard refresh state, and nextOperatorAction.</div>
+            <div><span>V7 proof boundary</span>No PC restart, no dirty-tree auto mutation, no fake pull-main/sync proof, and no live GitHub claim without adapter or receipt.</div>
             <div><span>Merge hold</span>HELD_PENDING_PROOF_PACKET_AND_EXACT_HEAD_APPROVAL / HELD_PENDING_EXACT_HEAD_APPROVAL</div>
             <div><span>No fake proof</span>GitHub proof, local proof, and browser proof are not claimed from this static page.</div>
             <div><span>Next operator action</span>Review the V2 operator surfaces and declared proof/approval state before authorizing further automation.</div>
@@ -501,11 +503,11 @@
             <li><span>V4 Browser Proof Capture</span>implemented_guarded: browser-proof contract records browserProofStatus, screenshot path or unavailable reason, checklist status, console errors, caveats, and explicit proof unavailable blocker; no browser proof claim when browser/runtime unavailable.</li>
             <li><span>V5 Auto Pick Next Safe Work</span>implemented_guarded: inspect PR/goal candidates and rank safe candidates by mergeability, blockers, labels, and declared proof commands; unknown stays unknown and no fake GitHub proof.</li>
             <li><span>V6 Operator Approval Surface</span>implemented_guarded: one canonical approval decision model validates exact PR/head approval tokens, records rejection receipts, blocks merge on rejection, and never lets UI/state merge directly.</li>
-            <li><span>V7 Post-Merge Sync and Reproof</span>planned_guarded: after approved merge only, pull main, restart/refresh only if needed, prove backend freshness, update surfaces, no dirty-tree auto mutation, and no PC restart.</li>
+            <li><span>V7 Post-Merge Sync and Reproof</span>implemented_guarded: after an approved merge receipt is observed, model pull main, Stephanos restart/refresh, backend freshness proof, and Mission Operations/Goal Dashboard refresh state with blockers instead of unsafe automation.</li>
             <li><span>V8 Multi-Goal Queue</span>planned_guarded: safe queue of proofable goals/PRs, one active proof lane unless isolated, visible blockers/progress/next action.</li>
           </ul>
           <div class="concierge-warning">
-            Truth boundary: this standalone Goal Dashboard rail is static seeded visibility only. It does not wire live GitHub state, local command proof, browser proof, auto-pick execution, approval-token validation, post-merge sync, or multi-goal automation; unknown remains unknown; V4 browser-proof contract is implemented_guarded, while V7–V8 remain planned_guarded until implemented; V5 and V6 are implemented_guarded with no fake GitHub proof, no command execution, and no UI merge claim.
+            Truth boundary: this standalone Goal Dashboard rail is static seeded visibility only. It does not wire live GitHub state, local command proof, browser proof, auto-pick execution, approval-token validation, post-merge sync, or multi-goal automation; unknown remains unknown; V4 browser-proof contract is implemented_guarded, V7 is implemented_guarded for guarded post-merge sync/reproof state, while V8 remains planned_guarded; V5 and V6 are implemented_guarded with no fake GitHub proof, no command execution, and no UI merge claim.
           </div>
         </article>
       </section>

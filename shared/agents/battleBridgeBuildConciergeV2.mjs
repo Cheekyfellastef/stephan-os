@@ -71,7 +71,7 @@ export function normalizeConciergeBrowserProof(input = {}) {
   };
 }
 
-export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v6';
+export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v7';
 export const BATTLE_BRIDGE_CONCIERGE_PREVIOUS_SCHEMA = 'stephanos.battle-bridge-build-concierge.v3';
 
 export const BATTLE_BRIDGE_BUILD_CONCIERGE_SUCCESS_MARKERS = [
@@ -288,6 +288,64 @@ export function buildConciergeApprovalDecision(input = {}) {
   };
 }
 
+
+export function buildConciergePostMergeSync(input = {}) {
+  const mergeReceipt = input.mergeReceipt && typeof input.mergeReceipt === 'object' ? input.mergeReceipt : null;
+  const adapterProvided = input.githubAdapterProvided === true || input.adapterProvided === true || Boolean(input.adapter);
+  const mergeReceiptObserved = Boolean(mergeReceipt?.observed === true || mergeReceipt?.receiptId || mergeReceipt?.mergeCommitSha || (adapterProvided && mergeReceipt?.merged === true));
+  const workingTreeClean = input.workingTreeClean === true;
+  const dirtyTreeStatus = input.workingTreeClean === false ? 'dirty' : (workingTreeClean ? 'clean' : 'unknown');
+  const pullMainReceipt = input.pullMainReceipt && typeof input.pullMainReceipt === 'object' ? input.pullMainReceipt : null;
+  const restartReceipt = input.restartRefreshReceipt && typeof input.restartRefreshReceipt === 'object' ? input.restartRefreshReceipt : (input.refreshReceipt && typeof input.refreshReceipt === 'object' ? input.refreshReceipt : null);
+  const backendReceipt = input.backendFreshnessReceipt && typeof input.backendFreshnessReceipt === 'object' ? input.backendFreshnessReceipt : null;
+  const dashboardReceipt = input.dashboardRefreshReceipt && typeof input.dashboardRefreshReceipt === 'object' ? input.dashboardRefreshReceipt : null;
+  const opsReceipt = input.missionOperationsRefreshReceipt && typeof input.missionOperationsRefreshReceipt === 'object' ? input.missionOperationsRefreshReceipt : null;
+  const pullMainPerformed = Boolean(pullMainReceipt?.performed === true || pullMainReceipt?.receiptId || pullMainReceipt?.headSha || pullMainReceipt?.mainSha);
+  const restartRequired = input.restartRefreshRequired !== false;
+  const restartPerformed = Boolean(restartReceipt?.performed === true || restartReceipt?.receiptId || restartReceipt?.refreshedAt);
+  const backendPerformed = Boolean(backendReceipt?.performed === true || backendReceipt?.receiptId || backendReceipt?.freshnessSha || backendReceipt?.observedAt);
+  const dashboardPerformed = Boolean(dashboardReceipt?.performed === true || dashboardReceipt?.receiptId || dashboardReceipt?.refreshedAt);
+  const opsPerformed = Boolean(opsReceipt?.performed === true || opsReceipt?.receiptId || opsReceipt?.refreshedAt);
+  const blockers = [];
+  if (!mergeReceiptObserved) blockers.push('Merge receipt is required before post-merge sync/reproof starts; no live GitHub claim is made without an adapter or receipt.');
+  if (input.workingTreeClean === false) blockers.push('Dirty-tree blocks post-merge sync; automatic mutation/stash/checkout is prohibited.');
+  if (dirtyTreeStatus === 'unknown') blockers.push('Working-tree cleanliness is unknown; pull main proof is blocked until clean/dirty truth is supplied.');
+  if (mergeReceiptObserved && workingTreeClean && !pullMainPerformed) blockers.push('Pull-main receipt is required before claiming local main is synced.');
+  if (pullMainPerformed && restartRequired && !restartPerformed) blockers.push('Stephanos restart/refresh receipt is required after sync before reproof.');
+  if (pullMainPerformed && (!restartRequired || restartPerformed) && !backendPerformed) blockers.push('Backend freshness proof is required after sync/refresh before claiming current status.');
+  const pullMain = !mergeReceiptObserved || !workingTreeClean
+    ? { status: 'blocked', required: mergeReceiptObserved, performed: false, blockedReason: blockers[0] || 'Merge receipt and clean tree are required before pull main.' }
+    : { status: pullMainPerformed ? 'performed' : 'required', required: true, performed: pullMainPerformed, receipt: pullMainReceipt };
+  const restartRefresh = !pullMainPerformed
+    ? { status: 'blocked', required: restartRequired, performed: false, blockedReason: 'Pull-main receipt is required before restart/refresh.' }
+    : { status: restartRequired ? (restartPerformed ? 'performed' : 'required') : 'not_required', required: restartRequired, performed: restartPerformed, receipt: restartReceipt, pcRestartAllowed: false };
+  const backendFreshnessProof = !pullMainPerformed || (restartRequired && !restartPerformed)
+    ? { status: 'blocked', required: true, performed: false, blockedReason: 'Sync and restart/refresh truth are required before backend freshness proof.' }
+    : { status: backendPerformed ? 'performed' : 'required', required: true, performed: backendPerformed, receipt: backendReceipt };
+  const refreshState = {
+    missionOperations: opsPerformed ? 'performed' : (backendPerformed ? 'required' : 'blocked'),
+    goalDashboard: dashboardPerformed ? 'performed' : (backendPerformed ? 'required' : 'blocked'),
+    receipts: { missionOperations: opsReceipt, goalDashboard: dashboardReceipt },
+  };
+  return {
+    schemaVersion: `${BATTLE_BRIDGE_CONCIERGE_SCHEMA}.post-merge-sync-reproof`,
+    phase: 'V7',
+    status: 'implemented_guarded',
+    mergeReceiptObserved,
+    mergeReceipt: mergeReceiptObserved ? mergeReceipt : null,
+    liveGithubProof: adapterProvided || mergeReceiptObserved ? (adapterProvided ? 'adapter-provided' : 'receipt-provided') : 'not-claimed',
+    dirtyTreeStatus,
+    pullMain,
+    restartRefresh,
+    backendFreshnessProof,
+    refreshState,
+    nextOperatorAction: blockers[0] || (!backendPerformed ? 'Record backend freshness proof, then refresh Mission Operations and Goal Dashboard.' : (!opsPerformed || !dashboardPerformed ? 'Refresh Mission Operations and Goal Dashboard surfaces with the post-merge proof receipt.' : 'Post-merge sync/reproof receipts are present; continue with the next guarded goal.')),
+    guardrails: { pcRestartAllowed: false, dirtyTreeAutoMutationAllowed: false, fakePullMainProofAllowed: false, fakeSyncProofAllowed: false, liveGithubClaimWithoutAdapterOrReceiptAllowed: false },
+    blockers: unique(blockers),
+    finalVerdict: blockers.length ? 'POST_MERGE_SYNC_REPROOF_BLOCKED_OR_REQUIRED' : ((!opsPerformed || !dashboardPerformed) ? 'POST_MERGE_SURFACE_REFRESH_REQUIRED' : 'POST_MERGE_SYNC_REPROOF_READY'),
+  };
+}
+
 export function buildConciergePlan(input = {}) {
   const autoPick = buildConciergeAutoPick(input);
   const candidates = autoPick.rankedCandidates;
@@ -319,6 +377,7 @@ export function buildConciergePlan(input = {}) {
     candidates,
     autoPick,
     roadmap: buildConciergeRoadmap(input),
+    postMergeSync: buildConciergePostMergeSync(input.postMergeSync || input),
     guardrails: {
       exactHeadApprovalRequired: true,
       neverMerge: true,

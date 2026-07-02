@@ -10,6 +10,7 @@ import {
   buildConciergeProveBlocked,
   validateExactHeadMergeApproval,
   buildConciergeApprovalDecision,
+  buildConciergePostMergeSync,
 } from './battleBridgeBuildConciergeV2.mjs';
 
 const head = 'c'.repeat(40);
@@ -51,7 +52,7 @@ test('roadmap preserves intent-engine approval-only mission and success markers'
   const roadmap = buildConciergeRoadmap();
   assert.match(roadmap.mission, /intent engine and approval authority/);
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V2').status, 'implemented');
-  assert.equal(roadmap.activePhase.version, 'V7');
+  assert.equal(roadmap.activePhase.version, 'V8');
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V4').status, 'implemented_guarded');
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V5').status, 'implemented_guarded');
   assert.equal(roadmap.guardrails.unsafeCommandExecutionAllowed, false);
@@ -110,7 +111,7 @@ test('V5 does not claim live GitHub proof without adapter and preserves exact-he
 
 test('V3 guarded proof packet keeps exact-head token and never allows merge', () => {
   const packet = buildConciergeProofPacket({ candidate: { prNumber: 1393, headSha: head, proofCommands: ['node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs'] }, generatedArtifactsClean: true, commandResults: [{ command: 'node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs', exitCode: 0 }], browserProofPacket: { browserProofStatus: 'verified', runnerAvailable: true, screenshotPath: 'artifacts/browser/v4.png', checklistStatus: 'passed', caveats: ['none'] } });
-  assert.equal(packet.schemaVersion, 'stephanos.battle-bridge-build-concierge.v6.proof-packet');
+  assert.equal(packet.schemaVersion, 'stephanos.battle-bridge-build-concierge.v7.proof-packet');
   assert.equal(packet.packetKind, 'canonical-battle-bridge-build-concierge-proof');
   assert.equal(packet.requiredApprovalToken, battleBridgeMergeApprovalToken({ prNumber: 1393, headSha: head }));
   assert.equal(packet.mergeAllowed, false);
@@ -187,4 +188,38 @@ test('V6 rejection state produces receipt and blocks merge', () => {
 test('V6 roadmap is implemented_guarded', () => {
   const roadmap = buildConciergeRoadmap();
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V6').status, 'implemented_guarded');
+});
+
+
+test('V7 post-merge sync blocks on dirty tree and does not fake pull-main proof', () => {
+  const sync = buildConciergePostMergeSync({ mergeReceipt: { receiptId: 'merge-1400', mergeCommitSha: 'd'.repeat(40) }, workingTreeClean: false });
+  assert.equal(sync.status, 'implemented_guarded');
+  assert.equal(sync.dirtyTreeStatus, 'dirty');
+  assert.equal(sync.pullMain.status, 'blocked');
+  assert.equal(sync.guardrails.dirtyTreeAutoMutationAllowed, false);
+  assert.equal(sync.guardrails.fakePullMainProofAllowed, false);
+  assert.match(sync.blockers.join(' '), /Dirty-tree blocks post-merge sync/);
+});
+
+test('V7 requires merge receipt before pull-main proof and avoids live GitHub claims', () => {
+  const sync = buildConciergePostMergeSync({ workingTreeClean: true });
+  assert.equal(sync.mergeReceiptObserved, false);
+  assert.equal(sync.liveGithubProof, 'not-claimed');
+  assert.equal(sync.pullMain.status, 'blocked');
+  assert.match(sync.nextOperatorAction, /Merge receipt is required/);
+});
+
+test('V7 backend freshness proof is required after sync and refresh state is visible', () => {
+  const sync = buildConciergePostMergeSync({ mergeReceipt: { receiptId: 'merge-1400' }, workingTreeClean: true, pullMainReceipt: { receiptId: 'pull-main', mainSha: 'e'.repeat(40) }, restartRefreshReceipt: { receiptId: 'refresh-ui', performed: true } });
+  assert.equal(sync.pullMain.status, 'performed');
+  assert.equal(sync.restartRefresh.status, 'performed');
+  assert.equal(sync.backendFreshnessProof.status, 'required');
+  assert.equal(sync.refreshState.missionOperations, 'blocked');
+  assert.equal(sync.refreshState.goalDashboard, 'blocked');
+  assert.match(sync.nextOperatorAction, /Backend freshness proof is required/);
+});
+
+test('V7 roadmap is implemented_guarded', () => {
+  const roadmap = buildConciergeRoadmap();
+  assert.equal(roadmap.phases.find((phase) => phase.version === 'V7').status, 'implemented_guarded');
 });

@@ -15,6 +15,7 @@ test('Goal Dashboard static page contains Build Concierge V2-V8 truth rail', () 
     'V5 Auto Pick Next Safe Work',
     'V6 Operator Approval Surface',
     'V7 Post-Merge Sync and Reproof',
+    'V7 implemented_guarded',
     'V8 Multi-Goal Queue',
   ]) {
     assert.equal(source.includes(expected), true, `missing static Build Concierge text: ${expected}`);
@@ -25,6 +26,7 @@ test('Goal Dashboard static page keeps Build Concierge live proof claims blocked
   for (const expected of [
     'GitHub proof, local proof, and browser proof are not claimed from this static page.',    'unknown remains unknown',
     'static seeded visibility only',
+    'No PC restart, no dirty-tree auto mutation, no fake pull-main/sync proof',
   ]) {
     assert.equal(source.includes(expected), true, `missing honest static proof boundary: ${expected}`);
   }

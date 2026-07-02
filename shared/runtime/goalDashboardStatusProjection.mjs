@@ -1,4 +1,4 @@
-import { buildConciergeRoadmap } from '../agents/battleBridgeBuildConciergeV2.mjs';
+import { buildConciergePostMergeSync, buildConciergeRoadmap } from '../agents/battleBridgeBuildConciergeV2.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -120,6 +120,7 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     buildConcierge: Object.freeze({
       roadmap: buildConciergeRoadmap(input.buildConcierge || {}),
       autoPickTruth: text(input.buildConcierge?.autoPickTruth || input.autoPickTruth, 'supplied-candidate-records-only'),
+      postMergeSync: buildConciergePostMergeSync(input.buildConcierge?.postMergeSync || input.postMergeSync || {}),
     }),
     nextAction: 'Refresh the static Goal Dashboard seed manually before making live GitHub/local automation claims.',
   });

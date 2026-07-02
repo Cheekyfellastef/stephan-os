@@ -29,3 +29,14 @@ test('standalone Goal Dashboard exposes V5 implemented guarded auto-pick truth',
   assert.equal(projection.buildConcierge.autoPickTruth, 'supplied-candidate-records-only');
   assert.equal(projection.liveAutomationClaim, 'none');
 });
+
+
+test('standalone Goal Dashboard exposes V7 implemented guarded post-merge sync truth', () => {
+  const projection = buildGoalDashboardStatusProjection({ buildConcierge: { postMergeSync: { mergeReceipt: { receiptId: 'merge-1400' }, workingTreeClean: true, pullMainReceipt: { receiptId: 'pull-main' }, restartRefreshReceipt: { receiptId: 'refresh' } } } });
+  const v7 = projection.buildConcierge.roadmap.phases.find((phase) => phase.version === 'V7');
+  assert.equal(v7.title, 'Post-Merge Sync and Reproof');
+  assert.equal(v7.status, 'implemented_guarded');
+  assert.equal(projection.buildConcierge.postMergeSync.status, 'implemented_guarded');
+  assert.equal(projection.buildConcierge.postMergeSync.backendFreshnessProof.status, 'required');
+  assert.equal(projection.buildConcierge.postMergeSync.refreshState.goalDashboard, 'blocked');
+});
