@@ -33,3 +33,27 @@ test('Goal Dashboard renders Build Concierge status and next-action rail', async
     await vite.close();
   }
 });
+
+test('Mission Dashboard shows live Mission Control projection summary', async () => {
+  const vite = await createServer({ root: uiRoot, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } });
+  try {
+    const { BuildConciergeRail } = await vite.ssrLoadModule('/src/components/MissionDashboardPanel.jsx');
+    const markup = renderToStaticMarkup(React.createElement(BuildConciergeRail, { buildConcierge: {
+      liveGoalProjection: {
+        schemaVersion: 'stephanos.live-goal-projection.v1',
+        sourceTruth: 'live',
+        queuedGoalCount: 2,
+        blockedGoalCount: 1,
+        completedGoalCount: 1,
+        activeProofLane: [{ candidateId: 'bc-goal-live' }],
+        currentAgentStates: { operator: { state: 'approval_authority' }, stephanos: { state: 'backend_reachable' }, codex: { state: 'not_dispatched' }, openclaw: { state: 'unknown' }, github: { state: 'unknown' }, battleBridge: { state: 'satisfied' } },
+        nextOperatorAction: 'Review live projection.',
+      },
+    } }));
+    for (const value of ['Mission Control Live Projection', 'LIVE', 'Operator state', 'approval_authority', 'Stephanos state', 'backend_reachable', 'Codex state', 'not_dispatched', 'OpenClaw state', 'GitHub state', 'Battle Bridge state', 'Active proof lane', 'bc-goal-live', 'Queued goals', '2', 'Blocked goals', '1', 'Completed goals', 'Review live projection.']) {
+      assert.equal(markup.includes(value), true, `missing live Mission Dashboard value: ${value}`);
+    }
+  } finally {
+    await vite.close();
+  }
+});

@@ -11,6 +11,36 @@ function publicReceiptPath(value = '') {
   return leaf ? `receipt://${leaf}` : '';
 }
 
+function sanitizePublicText(value = '') {
+  const raw = text(value);
+  if (!raw || raw.startsWith('receipt://') || raw.startsWith('/api/')) return raw;
+  return raw
+    .replace(/[A-Za-z]:\\[^\s|,;)]+/g, 'redacted-local-path')
+    .replace(/(^|[\s|,;(])\/(?:Users|home|tmp|workspace|var|private|mnt)\/[^\s|,;)]+/g, '$1redacted-local-path')
+    .replace(/(^|[\s|,;(])\.{1,2}\/[^\s|,;)]+/g, '$1redacted-local-path')
+    .replace(/(^|[\s|,;(])~\/[^\s|,;)]+/g, '$1redacted-local-path');
+}
+
+function sanitizePublicValue(value, key = '') {
+  const normalizedKey = String(key || '').toLowerCase();
+  if (typeof value === 'string') {
+    if (/worktree/.test(normalizedKey)) return value === 'configured-isolated-worktree' ? value : (value ? 'configured-isolated-worktree' : '');
+    if (/workspace|filesystem|receiptstore|storeroot|runtimepath/.test(normalizedKey)) return value ? 'redacted-local-path' : '';
+    if (/^(directory|dir)$/.test(normalizedKey)) return value === 'configured-external-receipt-directory' ? value : (value ? 'configured-external-receipt-directory' : '');
+    if (/(receiptpath|receipt_path|path)$/.test(normalizedKey)) return publicReceiptPath(value) || 'redacted-local-path';
+    return sanitizePublicText(value);
+  }
+  if (Array.isArray(value)) return value.map((item) => sanitizePublicValue(item, key));
+  if (value && typeof value === 'object') {
+    const sanitized = {};
+    for (const [childKey, childValue] of Object.entries(value)) {
+      sanitized[childKey] = sanitizePublicValue(childValue, childKey);
+    }
+    return sanitized;
+  }
+  return value;
+}
+
 export function resolvePublicMissionOperationsDirectory(env = process.env) {
   const configured = text(env.STEPHANOS_MISSION_OPERATIONS_DIR || env.STEPHANOS_GITHUB_AUTH_RECEIPT_DIR);
   if (configured) return resolve(configured);
@@ -31,7 +61,7 @@ export async function readPublicMissionOperations(options = {}) {
   const env = options.env || process.env;
   const directory = options.directory || resolvePublicMissionOperationsDirectory(env);
   const feed = await readMissionOperations({ ...options, env, directory });
-  return {
+  const publicFeed = {
     ...feed,
     directory: feed.directory ? 'configured-external-receipt-directory' : '',
     missions: (feed.missions || []).map((mission) => ({
@@ -46,4 +76,5 @@ export async function readPublicMissionOperations(options = {}) {
       })),
     })),
   };
+  return sanitizePublicValue(publicFeed);
 }

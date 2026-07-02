@@ -432,11 +432,12 @@
           Seeded cockpit panel for active Stephanos goals. This first tile is source-controlled static data only:
           unknown proof stays unknown, live GitHub and automation state are not claimed until wired and proven.
         </p>
-        <div class="source-row" aria-label="data source status">
-          <div class="source-pill">Goal data<strong>Seeded / source-controlled</strong></div>
-          <div class="source-pill">GitHub state<strong>Not live in browser</strong></div>
-          <div class="source-pill">Automation state<strong>Not live in browser</strong></div>
-          <div class="source-pill">Proof state<strong>Explicit or unknown</strong></div>
+        <div class="source-row" aria-label="data source status" data-testid="goal-dashboard-source-row">
+          <div class="source-pill">Source badge<strong id="source-badge" data-live-telemetry-field="source-badge">STATIC_FALLBACK</strong></div>
+          <div class="source-pill">Goal data<strong id="goal-data-source" data-live-telemetry-field="goal-data-source">Seeded / source-controlled</strong></div>
+          <div class="source-pill">GitHub state<strong id="github-state" data-live-telemetry-field="github-state">Not live in browser</strong></div>
+          <div class="source-pill">Automation state<strong id="automation-state" data-live-telemetry-field="automation-state">Not live in browser</strong></div>
+          <div class="source-pill">Proof state<strong id="proof-state" data-live-telemetry-field="proof-state">Explicit or unknown</strong></div>
         </div>
       </header>
 
@@ -485,7 +486,7 @@
             <div><span>V2 status</span>implemented / landed on operator surfaces</div>
             <div><span>V3 next</span>Local Proof Runner is implemented_guarded through npm run stephanos:battle-bridge:concierge -- prove --pr &lt;number&gt;; unsafe contexts remain blocked.</div>
             <div><span>Exact-head approval</span>required before merge; approval must bind PR number to current head SHA, e.g. APPROVE_BATTLE_BRIDGE_EXACT_HEAD_MERGE:1393:cccccccccccccccccccccccccccccccccccccccc.</div>
-            <div><span>Proof readiness</span>blocked_or_unknown until an isolated proof packet is actually wired and captured.</div>
+            <div><span>Proof readiness</span><b data-live-telemetry-field="proof-readiness">blocked_or_unknown until an isolated proof packet is actually wired and captured.</b></div>
             <div><span>V4 browser proof status</span>blocked_unavailable unless the browser proof runner/runtime captures a real screenshot, checklist status, caveats, and console errors.</div>
             <div><span>V4 proof unavailable blocker</span>Browser proof runner/runtime unavailable; browser proof is not claimed from this static page.</div>
             <div><span>V6 Operator Approval Surface</span>implemented_guarded canonical approval decision model: selectedCandidate, proofSummary, approvalToken, approvalStatus, rejectionStatus, nextOperatorAction.</div>
@@ -495,7 +496,12 @@
             <div><span>V7 proof boundary</span>No PC restart, no dirty-tree auto mutation, no fake pull-main/sync proof, and no live GitHub claim without adapter or receipt.</div>
             <div><span>Merge hold</span>HELD_PENDING_PROOF_PACKET_AND_EXACT_HEAD_APPROVAL / HELD_PENDING_EXACT_HEAD_APPROVAL</div>
             <div><span>No fake proof</span>GitHub proof, local proof, and browser proof are not claimed from this static page.</div>
-            <div><span>Next operator action</span>Review the V2 operator surfaces and declared proof/approval state before authorizing further automation.</div>
+            <div><span>Active goal queue</span><b data-live-telemetry-field="active-goal-queue">static_seed_unknown</b></div>
+            <div><span>Active proof lane</span><b data-live-telemetry-field="active-proof-lane">static_seed_unknown</b></div>
+            <div><span>Blocked goals</span><b data-live-telemetry-field="blocked-goals">static_seed_unknown</b></div>
+            <div><span>Completed goals</span><b data-live-telemetry-field="completed-goals">static_seed_unknown</b></div>
+            <div><span>Build Concierge V1-V8 status</span><b data-live-telemetry-field="build-concierge-v1-v8-status">V1-V8 static seeded/guarded; V7–V8 planned_guarded live status not claimed.</b></div>
+            <div><span>Next operator action</span><b data-live-telemetry-field="next-operator-action">Review the V2 operator surfaces and declared proof/approval state before authorizing further automation.</b></div>
           </div>
           <ul class="concierge-roadmap" aria-label="Build Concierge canonical roadmap excerpt">
             <li><span>V2 Operator Surfaces</span>implemented: Goal Dashboard and Mission Operations show status, proof readiness, merge hold, and next action.</li>
@@ -506,8 +512,8 @@
             <li><span>V7 Post-Merge Sync and Reproof</span>implemented_guarded: after an approved merge receipt is observed, model pull main, Stephanos restart/refresh, backend freshness proof, and Mission Operations/Goal Dashboard refresh state with blockers instead of unsafe automation.</li>
             <li><span>V8 Multi-Goal Queue</span>planned_guarded: safe queue of proofable goals/PRs, one active proof lane unless isolated, visible blockers/progress/next action.</li>
           </ul>
-          <div class="concierge-warning">
-            Truth boundary: this standalone Goal Dashboard rail is static seeded visibility only. It does not wire live GitHub state, local command proof, browser proof, auto-pick execution, approval-token validation, post-merge sync, or multi-goal automation; unknown remains unknown; V4 browser-proof contract is implemented_guarded, V7 is implemented_guarded for guarded post-merge sync/reproof state, while V8 remains planned_guarded; V5 and V6 are implemented_guarded with no fake GitHub proof, no command execution, and no UI merge claim.
+          <div class="concierge-warning" data-live-telemetry-field="telemetry-blocker">
+            BACKEND_UNAVAILABLE_STATIC_SEED_ONLY · Truth boundary: this standalone Goal Dashboard rail is static seeded visibility only. It does not wire live GitHub state, local command proof, browser proof, auto-pick execution, approval-token validation, post-merge sync, or multi-goal automation; unknown remains unknown; V4 browser-proof contract is implemented_guarded, V7 is implemented_guarded for guarded post-merge sync/reproof state, while V8 remains planned_guarded; V5 and V6 are implemented_guarded with no fake GitHub proof, no command execution, and no UI merge claim.
           </div>
         </article>
       </section>
@@ -637,10 +643,17 @@
         }
       ];
 
+
+      const APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT = '/api/goal-projection/live';
+      const BACKEND_UNAVAILABLE_STATIC_SEED_ONLY = 'BACKEND_UNAVAILABLE_STATIC_SEED_ONLY';
       const actorOrder = ['Operator', 'ChatGPT', 'Codex', 'OpenClaw', 'Stephanos', 'Operator'];
+
       const grid = document.getElementById('goal-grid');
 
-      goals.forEach((goal) => {
+      function renderGoals(goalRecords = goals, sourceState = 'static-seed') {
+        grid.textContent = '';
+        grid.setAttribute('data-goal-dashboard-source-state', sourceState);
+        goalRecords.forEach((goal) => {
         const card = document.createElement('article');
         card.className = 'goal-card';
         card.setAttribute('data-issue', goal.issue);
@@ -679,6 +692,100 @@
           </div>
         `;
         grid.appendChild(card);
+        });
+      }
+
+      function setTelemetryText(field, value) {
+        const node = document.querySelector(`[data-live-telemetry-field="${field}"]`);
+        if (node) node.textContent = value || 'unknown';
+      }
+
+      function summarizeQueue(queue = {}) {
+        const queued = Array.isArray(queue.queuedCandidates) ? queue.queuedCandidates : [];
+        const active = Array.isArray(queue.activeProofLane) ? queue.activeProofLane : [];
+        const blocked = Array.isArray(queue.blockedCandidates) ? queue.blockedCandidates : [];
+        const completed = Array.isArray(queue.completedCandidates) ? queue.completedCandidates : [];
+        return {
+          activeGoalQueue: queued.length ? queued.map((candidate) => candidate.candidateId || candidate.title || 'unknown').join(', ') : 'unknown',
+          activeProofLane: active.length ? active.map((candidate) => candidate.candidateId || candidate.title || 'unknown').join(', ') : 'none',
+          blockedGoals: blocked.length ? blocked.map((candidate) => candidate.candidateId || candidate.title || 'unknown').join(', ') : 'none',
+          completedGoals: completed.length ? completed.map((candidate) => candidate.candidateId || 'unknown').join(', ') : 'none',
+        };
+      }
+
+      function renderLiveMissionOperationsTelemetry(feed) {
+        if (!feed || !['stephanos.mission-operations-feed.v1', 'stephanos.live-goal-projection.v1'].includes(feed.schemaVersion)) return false;
+        const liveProjection = feed.schemaVersion === 'stephanos.live-goal-projection.v1' ? feed : null;
+        const concierge = feed.buildConcierge || {};
+        const queue = liveProjection || concierge.queue || {};
+        const summary = summarizeQueue(queue);
+        const phases = Array.isArray(liveProjection?.buildConciergeStatus?.roadmap?.phases) ? liveProjection.buildConciergeStatus.roadmap.phases : (Array.isArray(concierge.roadmap?.phases) ? concierge.roadmap.phases : []);
+        const missions = Array.isArray(feed.missions) ? feed.missions : [];
+        const sourceBadge = liveProjection?.sourceTruth === 'mixed' ? 'MIXED' : (liveProjection?.sourceTruth === 'live' ? 'LIVE' : 'UNKNOWN');
+        setTelemetryText('source-badge', sourceBadge);
+        setTelemetryText('goal-data-source', `${sourceBadge} backend telemetry · ${APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT}`);
+        setTelemetryText('github-state', liveProjection?.currentAgentStates?.github?.state || concierge.queue?.autoPick?.liveGithubProof || 'unknown');
+        setTelemetryText('automation-state', liveProjection?.currentAgentStates?.stephanos?.state || concierge.liveAdapter?.status || 'unknown');
+        setTelemetryText('proof-state', liveProjection?.proofTruth?.local || queue.oneActiveLaneGuardrail || 'unknown');
+        setTelemetryText('proof-readiness', queue.nextSafeCandidate ? 'queued_candidate_ready_for_guarded_proof_lane' : 'blocked_or_unknown');
+        setTelemetryText('active-goal-queue', summary.activeGoalQueue);
+        setTelemetryText('active-proof-lane', summary.activeProofLane);
+        setTelemetryText('blocked-goals', summary.blockedGoals);
+        setTelemetryText('completed-goals', summary.completedGoals);
+        setTelemetryText('build-concierge-v1-v8-status', phases.length ? phases.map((phase) => `${phase.version}:${phase.status}`).join(' · ') : (queue.status || 'unknown'));
+        setTelemetryText('next-operator-action', liveProjection?.nextOperatorAction || queue.nextOperatorAction || feed.recommendedNextAction || 'unknown');
+        setTelemetryText('telemetry-blocker', 'Live backend telemetry loaded from approved read-only Mission Operations endpoint; no landing-page mutation, GitHub proof, local proof, or browser proof is claimed here.');
+        if (missions.length) {
+          const liveGoals = missions.map((mission) => ({
+            issue: mission.mission?.missionId || 'live-mission',
+            title: mission.mission?.title || 'Live Mission Operations goal',
+            status: mission.mission?.state || 'unknown',
+            currentOwner: mission.agent?.label || mission.agent?.activeAgent?.label || 'unknown',
+            nextOwner: 'Operator',
+            handoffState: mission.mission?.currentPhase || 'unknown',
+            milestone: mission.mission?.finalVerdict || 'MISSION_OPERATIONS_LIVE_TELEMETRY',
+            operatorNeeded: 'Review live Mission Operations',
+            proofIndex: 0,
+            nextAction: mission.mission?.nextAction || feed.recommendedNextAction || 'unknown',
+          }));
+          renderGoals(liveGoals, 'live-backend');
+        }
+        return true;
+      }
+
+      function markStaticTelemetryFallback() {
+        setTelemetryText('source-badge', 'STATIC_FALLBACK');
+        setTelemetryText('goal-data-source', `Seeded / source-controlled · ${BACKEND_UNAVAILABLE_STATIC_SEED_ONLY}`);
+        setTelemetryText('github-state', 'Not live in browser');
+        setTelemetryText('automation-state', 'Not live in browser');
+        setTelemetryText('proof-state', 'Explicit or unknown');
+        setTelemetryText('telemetry-blocker', `${BACKEND_UNAVAILABLE_STATIC_SEED_ONLY} · Backend unavailable; static seed only. No live GitHub proof, local proof, browser proof, command execution, merge, or dispatch is claimed.`);
+      }
+
+      function shouldAttemptLiveTelemetry() {
+        return ['localhost', '127.0.0.1', ''].includes(window.location.hostname) || window.location.protocol === 'file:';
+      }
+
+      async function fetchApprovedLiveTelemetry(fetchImpl = window.fetch) {
+        if (!shouldAttemptLiveTelemetry() || typeof fetchImpl !== 'function') return null;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 1200);
+        try {
+          const response = await fetchImpl(APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT, { method: 'GET', cache: 'no-store', signal: controller.signal });
+          if (!response || !response.ok) return null;
+          return await response.json();
+        } catch {
+          return null;
+        } finally {
+          window.clearTimeout(timeout);
+        }
+      }
+
+
+      renderGoals(goals, 'static-seed');
+      markStaticTelemetryFallback();
+      fetchApprovedLiveTelemetry().then((feed) => {
+        if (feed) renderLiveMissionOperationsTelemetry(feed);
       });
     </script>
   </body>

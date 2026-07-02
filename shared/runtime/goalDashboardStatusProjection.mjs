@@ -90,6 +90,7 @@ export const STATIC_GOAL_DASHBOARD_GOALS = Object.freeze([
 ]);
 
 export function buildGoalDashboardStatusProjection(input = {}) {
+  const liveGoalCandidates = Array.isArray(input.buildConcierge?.createdGoalCandidates) ? input.buildConcierge.createdGoalCandidates : [];
   const goals = Array.isArray(input.goals) && input.goals.length ? input.goals : STATIC_GOAL_DASHBOARD_GOALS;
   const normalizedGoals = goals.map((goal) => ({
     issue: text(goal.issue, 'untracked'),
@@ -121,7 +122,13 @@ export function buildGoalDashboardStatusProjection(input = {}) {
       roadmap: buildConciergeRoadmap(input.buildConcierge || {}),
       autoPickTruth: text(input.buildConcierge?.autoPickTruth || input.autoPickTruth, 'supplied-candidate-records-only'),
       postMergeSync: buildConciergePostMergeSync(input.buildConcierge?.postMergeSync || input.postMergeSync || {}),
-      queue: buildConciergeQueue(input.buildConcierge || {}),
+      liveAdapter: Object.freeze({
+        available: input.buildConcierge?.liveAdapter?.available === true,
+        route: text(input.buildConcierge?.liveAdapter?.route, '/api/build-concierge/goals'),
+        status: input.buildConcierge?.liveAdapter?.available === true ? 'available' : 'blocked_unavailable',
+        blockerText: input.buildConcierge?.liveAdapter?.available === true ? '' : 'Build Concierge live adapter unavailable: backend route /api/build-concierge/goals has not returned availability proof; created-goal queue truth remains unknown.',
+      }),
+      queue: buildConciergeQueue({ ...(input.buildConcierge || {}), goals: [...(Array.isArray(input.buildConcierge?.goals) ? input.buildConcierge.goals : []), ...liveGoalCandidates] }),
       antiStallMergeLane: buildConciergeAntiStallMergeLane(input.buildConcierge?.antiStallMergeLane || input.antiStallMergeLane || {}),
     }),
     nextAction: 'Refresh the static Goal Dashboard seed manually before making live GitHub/local automation claims.',
