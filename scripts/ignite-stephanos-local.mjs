@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
+import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync, renameSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
@@ -1017,6 +1017,8 @@ export function createRuntimeStateCheckpoint(runtimePaths, options = {}) {
     pathExists = (filePath) => existsSync(filePath),
     makeDir = (dirPath) => mkdirSync(dirPath, { recursive: true }),
     copyFile = (fromPath, toPath) => copyFileSync(fromPath, toPath),
+    copyPath = (fromPath, toPath) => cpSync(fromPath, toPath, { recursive: true }),
+    statPath = (filePath) => statSync(filePath),
     writeFile = (filePath, data) => writeFileSync(filePath, data, 'utf8'),
   } = options;
 
@@ -1037,13 +1039,21 @@ export function createRuntimeStateCheckpoint(runtimePaths, options = {}) {
   for (const runtimePath of runtimePaths) {
     const sourceExists = pathExists(runtimePath);
     const checkpointPath = `${checkpointDir}/${runtimePath}`;
+    let kind = 'missing';
     if (sourceExists) {
-      makeDir(checkpointPath.slice(0, checkpointPath.lastIndexOf('/')));
-      copyFile(runtimePath, checkpointPath);
+      const stats = statPath(runtimePath);
+      kind = stats.isDirectory() ? 'directory' : 'file';
+      makeDir(checkpointPath.includes('/') ? checkpointPath.slice(0, checkpointPath.lastIndexOf('/')) : '.');
+      if (kind === 'directory') {
+        copyPath(runtimePath, checkpointPath);
+      } else {
+        copyFile(runtimePath, checkpointPath);
+      }
     }
     manifest.paths.push({
       path: runtimePath,
       exists: sourceExists,
+      kind,
     });
   }
 
@@ -1068,7 +1078,8 @@ export function restoreRuntimeStateCheckpoint(checkpointState, options = {}) {
     pathExists = (filePath) => existsSync(filePath),
     makeDir = (dirPath) => mkdirSync(dirPath, { recursive: true }),
     copyFile = (fromPath, toPath) => copyFileSync(fromPath, toPath),
-    removePath = (targetPath) => rmSync(targetPath, { force: true }),
+    copyPath = (fromPath, toPath) => cpSync(fromPath, toPath, { recursive: true }),
+    removePath = (targetPath) => rmSync(targetPath, { recursive: true, force: true }),
   } = options;
 
   for (const entry of checkpointState.manifest.paths) {
@@ -1077,8 +1088,12 @@ export function restoreRuntimeStateCheckpoint(checkpointState, options = {}) {
       if (!pathExists(sourcePath)) {
         throw new Error(`runtime checkpoint missing file: ${entry.path}`);
       }
-      makeDir(entry.path.slice(0, entry.path.lastIndexOf('/')));
-      copyFile(sourcePath, entry.path);
+      makeDir(entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : '.');
+      if (entry.kind === 'directory') {
+        copyPath(sourcePath, entry.path);
+      } else {
+        copyFile(sourcePath, entry.path);
+      }
       continue;
     }
 
