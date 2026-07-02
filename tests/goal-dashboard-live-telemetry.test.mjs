@@ -62,7 +62,7 @@ test('standalone Goal Dashboard renders live telemetry from approved endpoint', 
         nextOperatorAction: 'Continue one active proof lane.',
         currentAgentStates: { github: { state: 'adapter-provided' }, stephanos: { state: 'backend_reachable' } },
         proofTruth: { local: 'unknown' },
-        buildConciergeStatus: { roadmap: { phases: [{ version: 'V1', status: 'landed' }, { version: 'V8', status: 'implemented_guarded' }] } },
+        buildConciergeStatus: { roadmap: { phases: [{ version: 'V1', status: 'landed' }, { version: 'V8', status: 'implemented_guarded' }] }, executionEngine: { status: 'blocked_or_manual', watchedGoalCount: 1, classifiedGoalCount: 1, manualDispatchRequiredCount: 1, enrichedCandidates: [{ candidateId: 'bc-goal-live', classification: 'ui_surface_goal', dispatchReadiness: 'MANUAL_DISPATCH_REQUIRED' }] } },
         missions: [{ mission: { missionId: 'mission-live', title: 'Live goal', state: 'RUNNING', currentPhase: 'proof', nextAction: 'Inspect proof.' }, agent: { label: 'Codex' } }],
         queuedCandidates: [{ candidateId: 'bc-goal-live' }],
         activeProofLane: [{ candidateId: 'bc-goal-live' }],
@@ -82,6 +82,8 @@ test('standalone Goal Dashboard renders live telemetry from approved endpoint', 
   assert.equal(telemetry.get('blocked-goals').textContent, 'bc-goal-blocked');
   assert.equal(telemetry.get('completed-goals').textContent, 'bc-goal-done');
   assert.match(telemetry.get('build-concierge-v1-v8-status').textContent, /V8:implemented_guarded/);
+  assert.match(telemetry.get('build-concierge-v9-execution-engine').textContent, /classified 1/);
+  assert.match(telemetry.get('build-concierge-v9-enriched-candidates').textContent, /ui_surface_goal/);
   assert.equal(telemetry.get('next-operator-action').textContent, 'Continue one active proof lane.');
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-backend');
 });

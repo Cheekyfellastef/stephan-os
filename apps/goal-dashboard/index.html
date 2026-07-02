@@ -501,6 +501,8 @@
             <div><span>Blocked goals</span><b data-live-telemetry-field="blocked-goals">static_seed_unknown</b></div>
             <div><span>Completed goals</span><b data-live-telemetry-field="completed-goals">static_seed_unknown</b></div>
             <div><span>Build Concierge V1-V8 status</span><b data-live-telemetry-field="build-concierge-v1-v8-status">V1-V8 static seeded/guarded; V7–V8 planned_guarded live status not claimed.</b></div>
+            <div><span>V9 execution engine</span><b data-live-telemetry-field="build-concierge-v9-execution-engine">blocked_or_unknown · watched 0 · classified 0 · manual dispatch 0</b></div>
+            <div><span>V9 enriched candidates</span><b data-live-telemetry-field="build-concierge-v9-enriched-candidates">none</b></div>
             <div><span>Next operator action</span><b data-live-telemetry-field="next-operator-action">Review the V2 operator surfaces and declared proof/approval state before authorizing further automation.</b></div>
           </div>
           <ul class="concierge-roadmap" aria-label="Build Concierge canonical roadmap excerpt">
@@ -733,6 +735,10 @@
         setTelemetryText('blocked-goals', summary.blockedGoals);
         setTelemetryText('completed-goals', summary.completedGoals);
         setTelemetryText('build-concierge-v1-v8-status', phases.length ? phases.map((phase) => `${phase.version}:${phase.status}`).join(' · ') : (queue.status || 'unknown'));
+        const engine = liveProjection?.executionEngine || liveProjection?.buildConciergeStatus?.executionEngine || concierge.executionEngine || {};
+        const enriched = Array.isArray(engine.enrichedCandidates) ? engine.enrichedCandidates : [];
+        setTelemetryText('build-concierge-v9-execution-engine', `${engine.status || 'unknown'} · watched ${engine.watchedGoalCount ?? 0} · classified ${engine.classifiedGoalCount ?? 0} · manual dispatch ${engine.manualDispatchRequiredCount ?? 0}`);
+        setTelemetryText('build-concierge-v9-enriched-candidates', enriched.length ? enriched.map((candidate) => `${candidate.candidateId || 'goal'}:${candidate.classification || 'unknown'}:${candidate.dispatchReadiness || 'blocked_or_unknown'}`).join(' · ') : 'none');
         setTelemetryText('next-operator-action', liveProjection?.nextOperatorAction || queue.nextOperatorAction || feed.recommendedNextAction || 'unknown');
         setTelemetryText('telemetry-blocker', 'Live backend telemetry loaded from approved read-only Mission Operations endpoint; no landing-page mutation, GitHub proof, local proof, or browser proof is claimed here.');
         if (missions.length) {

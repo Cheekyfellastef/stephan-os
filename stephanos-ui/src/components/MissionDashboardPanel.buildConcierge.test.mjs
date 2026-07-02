@@ -24,9 +24,10 @@ test('Goal Dashboard renders Build Concierge status and next-action rail', async
         mergeHoldState: 'HELD_BLOCKED_OR_UNKNOWN',
         postMergeSync: { status: 'implemented_guarded', mergeReceiptObserved: true, pullMain: { status: 'required' }, restartRefresh: { status: 'blocked', pcRestartAllowed: false }, backendFreshnessProof: { status: 'blocked' }, refreshState: { missionOperations: 'blocked', goalDashboard: 'blocked' }, nextOperatorAction: 'Pull main with receipt before claiming sync.' },
         nextOperatorAction: 'Clean or stash intentionally first.',
+        executionEngine: { schemaVersion: 'stephanos.build-concierge.execution-engine.v9', status: 'blocked_or_manual', watchedGoalCount: 1, classifiedGoalCount: 1, enrichedCandidateCount: 1, dispatchReadyCount: 0, manualDispatchRequiredCount: 1, activeExecutionLane: 'source-build-proof-lane', enrichedCandidates: [{ candidateId: 'bc-goal-build', classification: 'source_only_build_goal', suggestedLane: 'source-build-proof-lane', dispatchReadiness: 'MANUAL_DISPATCH_REQUIRED', requiredProofFamilies: ['local-build'], declaredAllowlistedProofCommands: ['npm run stephanos:build'] }], dispatchPackets: [{ candidateId: 'bc-goal-build', packet: 'Build Concierge V9 mission packet' }], nextOperatorAction: 'Copy packet.', finalVerdict: 'BUILD_CONCIERGE_V9_BLOCKED_OR_MANUAL_DISPATCH_REQUIRED' },
       },
     }));
-    for (const value of ['Build Concierge Status / Next-Action Rail', 'Concierge rail candidate', 'blocked_or_unknown', 'dirty', 'V4', 'Browser Proof Capture', 'V5', 'Auto Pick Next Safe Work', 'V6', 'Operator Approval Surface', 'V6 approval surface', 'awaiting_operator_token', 'not_rejected', 'no UI merge claim', 'V7', 'Post-Merge Sync and Reproof', 'V8', 'Multi-Goal Queue', 'implemented_guarded', 'blocked_unavailable', 'Browser proof runner/runtime unavailable; browser proof was not captured.', 'V7 post-merge sync', 'merge receipt observed', 'V7 pull main', 'required', 'V7 restart/refresh', 'PC restart prohibited', 'V7 backend freshness proof', 'V7 surface refresh', 'Mission Operations blocked', 'Goal Dashboard blocked', 'V8 queue', 'V8 one-active-lane guardrail', 'V8 anti-stall fallback truth', 'implemented_guarded']) {
+    for (const value of ['Build Concierge Status / Next-Action Rail', 'Concierge rail candidate', 'blocked_or_unknown', 'dirty', 'V4', 'Browser Proof Capture', 'V5', 'Auto Pick Next Safe Work', 'V6', 'Operator Approval Surface', 'V6 approval surface', 'awaiting_operator_token', 'not_rejected', 'no UI merge claim', 'V7', 'Post-Merge Sync and Reproof', 'V8', 'Multi-Goal Queue', 'implemented_guarded', 'blocked_unavailable', 'Browser proof runner/runtime unavailable; browser proof was not captured.', 'V7 post-merge sync', 'merge receipt observed', 'V7 pull main', 'required', 'V7 restart/refresh', 'PC restart prohibited', 'V7 backend freshness proof', 'V7 surface refresh', 'Mission Operations blocked', 'Goal Dashboard blocked', 'V8 queue', 'V8 one-active-lane guardrail', 'V8 anti-stall fallback truth', 'implemented_guarded', 'V9 Live Goal Execution Engine', 'source_only_build_goal', 'MANUAL_DISPATCH_REQUIRED']) {
       assert.equal(markup.includes(value), true, `missing rendered value: ${value}`);
     }
   } finally {
@@ -46,11 +47,12 @@ test('Mission Dashboard shows live Mission Control projection summary', async ()
         blockedGoalCount: 1,
         completedGoalCount: 1,
         activeProofLane: [{ candidateId: 'bc-goal-live' }],
+        executionEngine: { schemaVersion: 'stephanos.build-concierge.execution-engine.v9', status: 'blocked_or_manual', watchedGoalCount: 1, classifiedGoalCount: 1, manualDispatchRequiredCount: 1, enrichedCandidates: [{ candidateId: 'bc-goal-live', classification: 'proof_only_goal', requiredProofFamilies: ['local-verify'], declaredAllowlistedProofCommands: ['npm run stephanos:verify'], dispatchReadiness: 'MANUAL_DISPATCH_REQUIRED' }] },
         currentAgentStates: { operator: { state: 'approval_authority' }, stephanos: { state: 'backend_reachable' }, codex: { state: 'not_dispatched' }, openclaw: { state: 'unknown' }, github: { state: 'unknown' }, battleBridge: { state: 'satisfied' } },
         nextOperatorAction: 'Review live projection.',
       },
     } }));
-    for (const value of ['Mission Control Live Projection', 'LIVE', 'Operator state', 'approval_authority', 'Stephanos state', 'backend_reachable', 'Codex state', 'not_dispatched', 'OpenClaw state', 'GitHub state', 'Battle Bridge state', 'Active proof lane', 'bc-goal-live', 'Queued goals', '2', 'Blocked goals', '1', 'Completed goals', 'Review live projection.']) {
+    for (const value of ['Mission Control Live Projection', 'LIVE', 'Operator state', 'approval_authority', 'Stephanos state', 'backend_reachable', 'Codex state', 'not_dispatched', 'OpenClaw state', 'GitHub state', 'Battle Bridge state', 'Active proof lane', 'bc-goal-live', 'Queued goals', '2', 'Blocked goals', '1', 'Completed goals', 'Review live projection.', 'V9 execution engine', 'proof_only_goal', 'local-verify']) {
       assert.equal(markup.includes(value), true, `missing live Mission Dashboard value: ${value}`);
     }
   } finally {

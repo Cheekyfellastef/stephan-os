@@ -3,6 +3,7 @@ import { buildConciergeQueue, buildConciergeRoadmap, buildConciergePostMergeSync
 import { readWorkspaceUpdateStatus } from './workspaceUpdateStatusService.js';
 import { readBuildConciergeGoalReceipts } from './buildConciergeGoalService.js';
 import { readMissionOperations } from './missionOperationsService.js';
+import { buildConciergeExecutionEngineV9 } from '../../shared/agents/buildConciergeExecutionEngineV9.mjs';
 
 function list(value) { return Array.isArray(value) ? value : []; }
 function text(value, fallback = 'unknown') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
@@ -23,8 +24,10 @@ export function buildLiveGoalProjection(input = {}) {
     ...list(buildConcierge.createdGoalReceipts),
     ...list(feed.missions).flatMap((mission) => list(mission.receipts)),
   ];
+  const executionEngine = input.executionEngine || buildConcierge.executionEngine || buildConciergeExecutionEngineV9({ receipts: buildConcierge.createdGoalReceipts || [] });
   const blockers = unique([
     ...list(queue.blockers),
+    ...list(executionEngine.blockers),
     ...blockedCandidates.flatMap((candidate) => list(candidate.blockers || candidate.rejectionReasons)),
     ...list(feed.errors).map((error) => error.error || error.message || String(error)),
   ]);
@@ -47,7 +50,8 @@ export function buildLiveGoalProjection(input = {}) {
     sourceTruth,
     backendStatus: input.backendStatus || { status: backendHealthy ? 'live' : 'unknown', healthRoute: '/api/health' },
     missionOperationsStatus: { status: text(feed.status, 'unknown'), source: text(feed.source, 'unknown'), route: '/api/mission-operations' },
-    buildConciergeStatus: { status: text(queue.status, 'unknown'), roadmap: buildConcierge.roadmap || buildConciergeRoadmap(), postMergeSync: buildConcierge.postMergeSync || buildConciergePostMergeSync({}), antiStallMergeLane: buildConcierge.antiStallMergeLane || buildConciergeAntiStallMergeLane({}) },
+    buildConciergeStatus: { status: text(queue.status, 'unknown'), roadmap: buildConcierge.roadmap || buildConciergeRoadmap(), postMergeSync: buildConcierge.postMergeSync || buildConciergePostMergeSync({}), antiStallMergeLane: buildConcierge.antiStallMergeLane || buildConciergeAntiStallMergeLane({}), executionEngine },
+    executionEngine,
     totalGoals: queuedCandidates.length + completedCandidates.length + rejectedCandidates.length,
     activeGoalCount: activeProofLane.length,
     queuedGoalCount: queuedCandidates.length,
@@ -73,7 +77,7 @@ export function buildLiveGoalProjection(input = {}) {
     receipts,
     staleWarnings: unique(staleWarnings),
     workspaceUpdateStatus: updateStatus,
-    nextOperatorAction: queue.nextOperatorAction || feed.recommendedNextAction || updateStatus.nextOperatorAction || 'Inspect live Mission Control projection; unknown stays unknown.',
+    nextOperatorAction: executionEngine.nextOperatorAction || queue.nextOperatorAction || feed.recommendedNextAction || updateStatus.nextOperatorAction || 'Inspect live Mission Control projection; unknown stays unknown.',
     finalVerdict: blockers.length ? 'LIVE_GOAL_PROJECTION_BLOCKED_OR_UNKNOWN' : (sourceTruth === 'live' ? 'LIVE_GOAL_PROJECTION_READY' : 'LIVE_GOAL_PROJECTION_MIXED_OR_STATIC_FALLBACK'),
     commandExecutionAllowed: false,
     mergeAllowed: false,
