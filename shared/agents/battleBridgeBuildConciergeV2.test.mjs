@@ -9,6 +9,7 @@ import {
   validateConciergeCommand,
   buildConciergeProveBlocked,
   validateExactHeadMergeApproval,
+  buildConciergeApprovalDecision,
 } from './battleBridgeBuildConciergeV2.mjs';
 
 const head = 'c'.repeat(40);
@@ -50,7 +51,7 @@ test('roadmap preserves intent-engine approval-only mission and success markers'
   const roadmap = buildConciergeRoadmap();
   assert.match(roadmap.mission, /intent engine and approval authority/);
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V2').status, 'implemented');
-  assert.equal(roadmap.activePhase.version, 'V6');
+  assert.equal(roadmap.activePhase.version, 'V7');
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V4').status, 'implemented_guarded');
   assert.equal(roadmap.phases.find((phase) => phase.version === 'V5').status, 'implemented_guarded');
   assert.equal(roadmap.guardrails.unsafeCommandExecutionAllowed, false);
@@ -109,7 +110,7 @@ test('V5 does not claim live GitHub proof without adapter and preserves exact-he
 
 test('V3 guarded proof packet keeps exact-head token and never allows merge', () => {
   const packet = buildConciergeProofPacket({ candidate: { prNumber: 1393, headSha: head, proofCommands: ['node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs'] }, generatedArtifactsClean: true, commandResults: [{ command: 'node --test shared/agents/battleBridgeBuildConciergeV2.test.mjs', exitCode: 0 }], browserProofPacket: { browserProofStatus: 'verified', runnerAvailable: true, screenshotPath: 'artifacts/browser/v4.png', checklistStatus: 'passed', caveats: ['none'] } });
-  assert.equal(packet.schemaVersion, 'stephanos.battle-bridge-build-concierge.v4.proof-packet');
+  assert.equal(packet.schemaVersion, 'stephanos.battle-bridge-build-concierge.v6.proof-packet');
   assert.equal(packet.packetKind, 'canonical-battle-bridge-build-concierge-proof');
   assert.equal(packet.requiredApprovalToken, battleBridgeMergeApprovalToken({ prNumber: 1393, headSha: head }));
   assert.equal(packet.mergeAllowed, false);
@@ -147,4 +148,43 @@ test('V4 browser proof packet preserves screenshot checklist caveats and console
   assert.equal(packet.browserProofPacket.checklistStatus, 'passed');
   assert.deepEqual(packet.browserProofPacket.caveats, ['Animations disabled for capture.']);
   assert.deepEqual(packet.browserProofPacket.consoleErrors, ['Failed to load optional favicon.']);
+});
+
+test('V6 approval decision accepts only exact PR/head approval token', () => {
+  const token = battleBridgeMergeApprovalToken({ prNumber: 1400, headSha: head });
+  const decision = buildConciergeApprovalDecision({ selectedCandidate: { prNumber: 1400, title: 'V6 approval', headSha: head }, proofSummary: { status: 'PROOF_PACKET_READY_FOR_EXACT_HEAD_APPROVAL', commandCount: 2, browserProof: 'verified' }, currentHeadSha: head, approvalToken: token });
+  assert.equal(decision.approvalToken, token);
+  assert.equal(decision.approvalStatus, 'approved_exact_head');
+  assert.equal(decision.rejectionStatus, 'not_rejected');
+  assert.equal(decision.mergeAllowed, false);
+  assert.equal(decision.commandExecutionAllowed, false);
+  assert.equal(decision.uiMergeClaim, false);
+});
+
+test('V6 approval decision rejects wrong PR head or token', () => {
+  const token = battleBridgeMergeApprovalToken({ prNumber: 1400, headSha: head });
+  for (const input of [
+    { prNumber: 1401, headSha: head, currentHeadSha: head, approvalToken: token },
+    { prNumber: 1400, headSha: head, currentHeadSha: 'd'.repeat(40), approvalToken: token },
+    { prNumber: 1400, headSha: head, currentHeadSha: head, approvalToken: 'APPROVE_BATTLE_BRIDGE_EXACT_HEAD_MERGE:1400:' + 'e'.repeat(40) },
+  ]) {
+    const decision = buildConciergeApprovalDecision({ selectedCandidate: { prNumber: input.prNumber, headSha: input.headSha }, proofSummary: { status: 'PROOF_PACKET_READY_FOR_EXACT_HEAD_APPROVAL' }, currentHeadSha: input.currentHeadSha, approvalToken: input.approvalToken });
+    assert.equal(decision.approvalStatus, 'blocked_invalid_token');
+    assert.equal(decision.mergeAllowed, false);
+    assert.ok(decision.blockers.length > 0);
+  }
+});
+
+test('V6 rejection state produces receipt and blocks merge', () => {
+  const decision = buildConciergeApprovalDecision({ selectedCandidate: { prNumber: 1400, headSha: head }, proofSummary: { status: 'PROOF_PACKET_READY_FOR_EXACT_HEAD_APPROVAL' }, decision: 'reject', rejectionReason: 'Needs operator changes.' });
+  assert.equal(decision.approvalStatus, 'blocked_by_rejection');
+  assert.equal(decision.rejectionStatus, 'rejected_with_receipt');
+  assert.equal(decision.rejectionReceipt.status, 'blocks_merge');
+  assert.equal(decision.mergeAllowed, false);
+  assert.match(decision.nextOperatorAction, /blocks merge/);
+});
+
+test('V6 roadmap is implemented_guarded', () => {
+  const roadmap = buildConciergeRoadmap();
+  assert.equal(roadmap.phases.find((phase) => phase.version === 'V6').status, 'implemented_guarded');
 });

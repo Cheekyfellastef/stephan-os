@@ -71,7 +71,7 @@ export function normalizeConciergeBrowserProof(input = {}) {
   };
 }
 
-export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v4';
+export const BATTLE_BRIDGE_CONCIERGE_SCHEMA = 'stephanos.battle-bridge-build-concierge.v6';
 export const BATTLE_BRIDGE_CONCIERGE_PREVIOUS_SCHEMA = 'stephanos.battle-bridge-build-concierge.v3';
 
 export const BATTLE_BRIDGE_BUILD_CONCIERGE_SUCCESS_MARKERS = [
@@ -233,6 +233,61 @@ export function buildConciergeAutoPick(input = {}) {
   };
 }
 
+export function buildConciergeApprovalDecision(input = {}) {
+  const selectedCandidate = input.selectedCandidate || input.candidate || {};
+  const proofSummary = input.proofSummary || input.proofPacketSummary || {};
+  const prNumber = Number.parseInt(selectedCandidate.prNumber || input.prNumber, 10);
+  const headSha = text(selectedCandidate.headSha || input.headSha);
+  const currentHeadSha = text(input.currentHeadSha || headSha);
+  const approvalToken = battleBridgeMergeApprovalToken({ prNumber, headSha });
+  const suppliedApprovalToken = text(input.approvalToken);
+  const rejectRequested = input.reject === true || text(input.decision).toLowerCase() === 'reject';
+  const approveRequested = input.approve === true || text(input.decision).toLowerCase() === 'approve' || Boolean(suppliedApprovalToken);
+  const validation = validateExactHeadMergeApproval({ prNumber, headSha, currentHeadSha, approvalToken: suppliedApprovalToken });
+  const proofReady = ['PROOF_PACKET_READY_FOR_EXACT_HEAD_APPROVAL', 'ready', 'verified'].includes(text(proofSummary.status || input.proofStatus));
+  const blockers = [];
+  if (!PR_NUMBER.test(String(prNumber))) blockers.push('Approval PR number is missing or invalid.');
+  if (!SHA40.test(headSha)) blockers.push('Approval head SHA is missing or invalid.');
+  if (!proofReady) blockers.push('Proof packet is not ready for exact-head approval.');
+  if (rejectRequested) blockers.push(text(input.rejectionReason, 'Operator rejected this exact-head candidate.'));
+  if (approveRequested && validation.blockers.length) blockers.push(...validation.blockers);
+  const approvalStatus = rejectRequested ? 'blocked_by_rejection' : (approveRequested && proofReady && validation.mergeAllowed ? 'approved_exact_head' : (approveRequested ? 'blocked_invalid_token' : 'awaiting_operator_token'));
+  const rejectionStatus = rejectRequested ? 'rejected_with_receipt' : 'not_rejected';
+  const rejectionReceipt = rejectRequested ? {
+    receiptType: 'battle-bridge-operator-rejection',
+    status: 'blocks_merge',
+    prNumber,
+    headSha,
+    reason: text(input.rejectionReason, 'Operator rejected this exact-head candidate.'),
+  } : null;
+  return {
+    selectedCandidate: {
+      prNumber: PR_NUMBER.test(String(prNumber)) ? prNumber : null,
+      title: text(selectedCandidate.title, 'Untitled PR'),
+      headSha,
+      requiredApprovalToken: approvalToken,
+    },
+    proofSummary: {
+      status: text(proofSummary.status || input.proofStatus, 'not_started'),
+      commandCount: Number(proofSummary.commandCount || 0),
+      browserProof: text(proofSummary.browserProof, 'unknown'),
+    },
+    approvalToken,
+    approvalStatus,
+    rejectionStatus,
+    rejectionReceipt,
+    blockers: unique(blockers),
+    mergeAllowed: false,
+    commandExecutionAllowed: false,
+    uiMergeClaim: false,
+    nextOperatorAction: rejectRequested
+      ? 'Rejection receipt blocks merge; update or replace the candidate before requesting approval again.'
+      : (approvalStatus === 'approved_exact_head'
+        ? 'Exact-head approval receipt is valid; hand off to a guarded merge executor outside this UI/state surface.'
+        : `Review proof and provide exact token ${approvalToken} for PR #${PR_NUMBER.test(String(prNumber)) ? prNumber : 'unknown'}, or reject with a blocker receipt.`),
+  };
+}
+
 export function buildConciergePlan(input = {}) {
   const autoPick = buildConciergeAutoPick(input);
   const candidates = autoPick.rankedCandidates;
@@ -292,6 +347,7 @@ export function buildConciergePlan(input = {}) {
     proofReadiness,
     dirtyTreeStatus,
     exactHeadApproval,
+    approvalDecision: buildConciergeApprovalDecision({ selectedCandidate: selected || {}, proofSummary: { status: 'not_started', commandCount: selected?.proofCommands?.length || 0, browserProof: browserProofPacket.browserProofStatus }, currentHeadSha: selected?.headSha, approvalToken: input.approvalToken, decision: input.decision, rejectionReason: input.rejectionReason }),
     proofPacketSummary: {
       status: 'not_started',
       commandCount: selected?.proofCommands?.length || 0,
@@ -344,6 +400,7 @@ export function buildConciergeProofPacket(input = {}) {
       prNumber,
       headSha,
     },
+    approvalDecision: buildConciergeApprovalDecision({ selectedCandidate: { ...candidate, prNumber, headSha }, proofSummary: { status: finalVerdict, commandCount: commandResults.length, browserProof: browserProofPacket.browserProofStatus }, currentHeadSha: input.currentHeadSha || headSha, approvalToken: input.approvalToken, decision: input.decision, rejectionReason: input.rejectionReason }),
     proofPacketSummary: {
       status: finalVerdict,
       commandCount: commandResults.length,

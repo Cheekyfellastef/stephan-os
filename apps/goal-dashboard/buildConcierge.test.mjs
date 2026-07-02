@@ -15,7 +15,14 @@ test('standalone Goal Dashboard shows V4 implemented and blocked browser-proof t
     'Browser proof runner/runtime unavailable; browser proof is not claimed from this static page.',
     'console errors',
     'caveats',
-    'V5–V8 planned_guarded',
+    'V6 Operator Approval Surface',
+    'V6 approval status',
+    'awaiting_operator_token',
+    'exact-head approval token binds PR number plus current head SHA',
+    'no UI merge claim',
+    'V6 rejection status',
+    'implemented_guarded',
+    'V7–V8 planned_guarded',
   ]) {
     assert.equal(html.includes(value), true, `missing standalone Goal Dashboard value: ${value}`);
   }
