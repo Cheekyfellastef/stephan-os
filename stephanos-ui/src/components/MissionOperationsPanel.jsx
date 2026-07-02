@@ -48,6 +48,11 @@ export function BuildConciergeSurface({ concierge = {} }) {
   const consoleErrors = Array.isArray(browserProofPacket.consoleErrors) ? browserProofPacket.consoleErrors : [];
   const caveats = Array.isArray(browserProofPacket.caveats) ? browserProofPacket.caveats : [];
   const roadmapPhases = Array.isArray(roadmap.phases) ? roadmap.phases : [];
+  const postMergeSync = concierge.postMergeSync || {};
+  const pullMain = postMergeSync.pullMain || {};
+  const restartRefresh = postMergeSync.restartRefresh || {};
+  const backendFreshnessProof = postMergeSync.backendFreshnessProof || {};
+  const refreshState = postMergeSync.refreshState || {};
   return (
     <section className="mission-operations-build-concierge" aria-label="Build Concierge panel" data-testid="build-concierge-panel">
       <h4>Build Concierge</h4>
@@ -65,8 +70,13 @@ export function BuildConciergeSurface({ concierge = {} }) {
         <div><dt>V4 screenshot</dt><dd>{browserProofPacket.screenshotPath || browserProofPacket.screenshotUnavailableReason || 'unknown'}</dd></div>
         <div><dt>V4 checklist</dt><dd>{browserProofPacket.checklistStatus || 'unknown'}</dd></div>
         <div><dt>Merge hold state</dt><dd>{concierge.mergeHoldState || 'HELD_UNKNOWN'}</dd></div>
+        <div><dt>V7 post-merge sync</dt><dd>{postMergeSync.status || roadmapPhases.find((phase) => phase.version === 'V7')?.status || 'unknown'} · merge receipt {postMergeSync.mergeReceiptObserved === true ? 'observed' : 'required'}</dd></div>
+        <div><dt>V7 pull main</dt><dd>{pullMain.status || 'unknown'}</dd></div>
+        <div><dt>V7 restart/refresh</dt><dd>{restartRefresh.status || 'unknown'} · PC restart {restartRefresh.pcRestartAllowed === true ? 'allowed' : 'prohibited'}</dd></div>
+        <div><dt>V7 backend freshness proof</dt><dd>{backendFreshnessProof.status || 'unknown'}</dd></div>
+        <div><dt>V7 surface refresh</dt><dd>Mission Operations {refreshState.missionOperations || 'unknown'} · Goal Dashboard {refreshState.goalDashboard || 'unknown'}</dd></div>
       </dl>
-      <p className="mission-operations-next-action"><strong>Next operator action:</strong> {approvalDecision.nextOperatorAction || concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
+      <p className="mission-operations-next-action"><strong>Next operator action:</strong> {postMergeSync.nextOperatorAction || approvalDecision.nextOperatorAction || concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
       {proofCommands.length ? (
         <div><strong>Declared proof commands:</strong><ul className="mission-operations-evidence-list">{proofCommands.map((command) => <li key={command}><code>{command}</code></li>)}</ul></div>
       ) : <p className="muted">Declared proof commands are unknown.</p>}

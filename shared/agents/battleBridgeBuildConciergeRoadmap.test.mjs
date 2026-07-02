@@ -8,11 +8,11 @@ import {
 
 const requiredVersions = ['V4', 'V5', 'V6', 'V7', 'V8'];
 
-test('V4-V8 roadmap specs are source-owned with V4 browser proof, V5 auto-pick, and V6 approval implemented_guarded', () => {
+test('V4-V8 roadmap specs are source-owned with V4 browser proof, V5 auto-pick, V6 approval, and V7 post-merge sync implemented_guarded', () => {
   const planned = plannedConciergeRoadmapVersions();
   assert.deepEqual(planned.map((phase) => phase.version), requiredVersions);
   for (const phase of planned) {
-    if (['V4', 'V5', 'V6'].includes(phase.version)) assert.equal(phase.status, 'implemented_guarded');
+    if (['V4', 'V5', 'V6', 'V7'].includes(phase.version)) assert.equal(phase.status, 'implemented_guarded');
     else assert.equal(phase.status, 'planned_guarded', `${phase.version} must not claim implementation`);
     assert.deepEqual(phase.requiredSurfaces, BATTLE_BRIDGE_BUILD_CONCIERGE_SURFACES);
     assert.ok(phase.guardrails.length >= 3, `${phase.version} needs guardrail specs`);
@@ -28,7 +28,7 @@ test('roadmap preserves required V4-V8 truth boundaries', () => {
   assert.match(byVersion.V5.guardrails.join(' '), /No fake GitHub proof/);
   assert.match(byVersion.V6.intent, /one canonical approve\/reject surface state/);
   assert.match(byVersion.V6.guardrails.join(' '), /UI\/state must never merge directly/i);
-  assert.match(byVersion.V7.intent, /After an approved merge only/);
+  assert.match(byVersion.V7.intent, /approved merge receipt is observed/);
   assert.match(byVersion.V7.guardrails.join(' '), /Dirty-tree auto mutation and PC restart are prohibited/);
   assert.match(byVersion.V8.intent, /one active proof lane unless isolation is explicit/);
   assert.match(byVersion.V8.guardrails.join(' '), /Visible blockers, progress, and next action/);
