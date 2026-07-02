@@ -40,6 +40,7 @@ export function BuildConciergeSurface({ concierge = {} }) {
   const candidate = concierge.selectedCandidate || {};
   const proofPacketSummary = concierge.proofPacketSummary || {};
   const exactHeadApproval = concierge.exactHeadApproval || {};
+  const approvalDecision = concierge.approvalDecision || {};
   const proofCommands = Array.isArray(candidate.proofCommands) ? candidate.proofCommands : [];
   const blockers = Array.isArray(concierge.blockers) ? concierge.blockers : [];
   const roadmap = concierge.roadmap || buildConciergeRoadmap();
@@ -56,14 +57,16 @@ export function BuildConciergeSurface({ concierge = {} }) {
         <div><dt>Proof readiness</dt><dd>{concierge.proofReadiness || (concierge.canStartProof ? 'ready' : 'blocked_or_unknown')}</dd></div>
         <div><dt>Dirty-tree status</dt><dd>{concierge.dirtyTreeStatus || 'unknown'}</dd></div>
         <div><dt>Exact-head approval</dt><dd>{exactHeadApproval.status || 'unknown'}</dd></div>
-        <div><dt>Approval token</dt><dd><code>{exactHeadApproval.token || candidate.requiredApprovalToken || 'unknown'}</code></dd></div>
+        <div><dt>Approval token</dt><dd><code>{approvalDecision.approvalToken || exactHeadApproval.token || candidate.requiredApprovalToken || 'unknown'}</code></dd></div>
+        <div><dt>V6 approval surface</dt><dd>{approvalDecision.approvalStatus || 'awaiting_operator_token'} / {approvalDecision.rejectionStatus || 'not_rejected'}</dd></div>
+        <div><dt>V6 UI merge claim</dt><dd>{approvalDecision.uiMergeClaim === true ? 'invalid_merge_claim' : 'no UI merge claim'}</dd></div>
         <div><dt>Proof packet</dt><dd>{proofPacketSummary.status || 'not_started'} · commands {proofPacketSummary.passedCommandCount ?? 0}/{proofPacketSummary.commandCount ?? proofCommands.length}</dd></div>
         <div><dt>V4 browser proof</dt><dd>{browserProofPacket.browserProofStatus || proofPacketSummary.browserProof || concierge.browserProof || 'unknown'}</dd></div>
         <div><dt>V4 screenshot</dt><dd>{browserProofPacket.screenshotPath || browserProofPacket.screenshotUnavailableReason || 'unknown'}</dd></div>
         <div><dt>V4 checklist</dt><dd>{browserProofPacket.checklistStatus || 'unknown'}</dd></div>
         <div><dt>Merge hold state</dt><dd>{concierge.mergeHoldState || 'HELD_UNKNOWN'}</dd></div>
       </dl>
-      <p className="mission-operations-next-action"><strong>Next operator action:</strong> {concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
+      <p className="mission-operations-next-action"><strong>Next operator action:</strong> {approvalDecision.nextOperatorAction || concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
       {proofCommands.length ? (
         <div><strong>Declared proof commands:</strong><ul className="mission-operations-evidence-list">{proofCommands.map((command) => <li key={command}><code>{command}</code></li>)}</ul></div>
       ) : <p className="muted">Declared proof commands are unknown.</p>}
@@ -83,6 +86,7 @@ export function BuildConciergeSurface({ concierge = {} }) {
           {Array.isArray(roadmap.successMarkers) && roadmap.successMarkers.length ? <code>{roadmap.successMarkers.join(' · ')}</code> : null}
         </div>
       ) : null}
+      {approvalDecision.rejectionReceipt ? <div className="mission-operations-alert mission-operations-alert--blocked"><strong>V6 rejection receipt:</strong> {approvalDecision.rejectionReceipt.status} · {approvalDecision.rejectionReceipt.reason}</div> : null}
       {blockers.length ? <div className="mission-operations-alert mission-operations-alert--blocked"><strong>Concierge blockers:</strong> {blockers.join(' | ')}</div> : null}
     </section>
   );
