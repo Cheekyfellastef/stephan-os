@@ -14,13 +14,20 @@ import {
 import {
   DEFAULT_OPENCLAW_ENDPOINTS,
   DEFAULT_OPENCLAW_IDENTITY_ENDPOINT,
-  OPENCLAW_STARTUP_SAFETY_LOCKS,
   DEFAULT_OPENCLAW_SERVICE_NAME,
   buildOpenClawStartupRecoveryPacket,
   classifyOpenClawReadiness,
   createOpenClawStandaloneDiscoveryPacket,
   findVerifiedOpenClawStandaloneGatewayCandidate,
 } from '../shared/agents/openClawStartupRecovery.mjs';
+import {
+  OPENCLAW_GATEWAY_APPROVED_ENDPOINT,
+  OPENCLAW_GATEWAY_STARTUP_SOURCE,
+  OPENCLAW_GATEWAY_STARTUP_GUARDRAILS,
+  buildOpenClawGatewayStartupTarget,
+  hasForbiddenOpenClawGatewayStartupToken,
+  splitOpenClawGatewayStartupCommand,
+} from '../shared/agents/openClawGatewayStartup.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -32,23 +39,20 @@ const OPENCLAW_AUTOSTART_SURFACES = Object.freeze([
   { id: 'dashboard', envKey: 'STEPHANOS_OPENCLAW_DASHBOARD_COMMAND', required: false },
 ]);
 
-function splitCommandLine(value = '') {
-  const parts = String(value || '').match(/(?:[^\s"]+|"[^"]*")+/g) || [];
-  return parts.map((part) => part.replace(/^"|"$/g, ''));
-}
-
-function hasForbiddenOpenClawAutostartToken(value = '') {
-  return /\b(codex|dispatch|task|execute|mutation|mutate|merge-ready|merge\s+readiness|git\s+(?:push|merge|commit)|openai|anthropic|paid)\b/i.test(String(value || ''));
-}
 
 export function resolveApprovedOpenClawAutostartTargets({ env = process.env } = {}) {
   return OPENCLAW_AUTOSTART_SURFACES.map((surface) => {
     const commandText = String(env[surface.envKey] || '').trim();
+    if (surface.id === 'gateway') {
+      const target = buildOpenClawGatewayStartupTarget({ commandText: commandText || undefined, source: commandText ? `env:${surface.envKey}` : OPENCLAW_GATEWAY_STARTUP_SOURCE });
+      const reason = target.reason === 'startup-command-violates-guardrails' ? 'approved-launch-command-violates-guardrails' : target.reason;
+      return { ...surface, ...target, reason, blocked: target.blocked, required: surface.required };
+    }
     if (!commandText) return { ...surface, available: false, blocked: surface.required, reason: 'approved-launch-command-missing' };
-    const argv = splitCommandLine(commandText);
+    const argv = splitOpenClawGatewayStartupCommand(commandText);
     if (argv.length === 0) return { ...surface, available: false, blocked: surface.required, reason: 'approved-launch-command-empty' };
-    if (hasForbiddenOpenClawAutostartToken(commandText)) return { ...surface, available: false, blocked: true, reason: 'approved-launch-command-violates-guardrails', commandText };
-    return { ...surface, available: true, blocked: false, command: argv[0], commandArgs: argv.slice(1), commandText };
+    if (hasForbiddenOpenClawGatewayStartupToken(commandText)) return { ...surface, available: false, blocked: true, reason: 'approved-launch-command-violates-guardrails', commandText };
+    return { ...surface, available: true, blocked: false, command: argv[0], commandArgs: argv.slice(1), commandText, source: `env:${surface.envKey}` };
   });
 }
 
@@ -63,7 +67,7 @@ function startApprovedOpenClawSurface({ target, spawnFn = spawn, log = (message)
   });
   if (typeof child?.unref === 'function') child.unref();
   const pid = Number(child?.pid || 0) || null;
-  log(`[IGNITION] openclaw-autostart-surface=${JSON.stringify({ surface: target.id, started: true, pid, guardrails: { openClawTaskExecutionAllowed: false, mutationAllowed: false, codexDispatchAllowed: false, mergeReadinessChangeAllowed: false, paidApiUsageAllowed: false } })}`);
+  log(`[IGNITION] openclaw-autostart-surface=${JSON.stringify({ surface: target.id, started: true, pid, guardrails: OPENCLAW_GATEWAY_STARTUP_GUARDRAILS })}`);
   return { surface: target.id, started: true, pid };
 }
 
@@ -87,7 +91,7 @@ export async function evaluateOpenClawRuntimeAutostartWithDeps({
   const beforeClassification = classifyOpenClawReadiness(beforeReadiness);
   const endpointAlreadyVerified = beforeEndpoint.reachable === true && beforeEndpoint.identityVerified === true && /^(healthy|ready|live|connected)$/i.test(String(beforeEndpoint.connectionStatus || ''));
   if (beforeClassification.healthy || endpointAlreadyVerified) {
-    const status = { state: 'openclaw-reused-existing-runtime', healthy: true, autostartAttempted: false, duplicateStartAvoided: true, selectedReadinessEndpoint: beforeEndpoint.url || null, selectedGatewayEndpoint, selectedGatewayEndpointSource };
+    const status = { state: 'openclaw-reused-existing-runtime', ignitionPhase: 'openclaw-gateway-startup', healthy: true, autostartAttempted: false, duplicateStartAvoided: true, startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, selectedReadinessEndpoint: beforeEndpoint.url || null, selectedGatewayEndpoint, selectedGatewayEndpointSource };
     log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
     return status;
   }
@@ -95,7 +99,7 @@ export async function evaluateOpenClawRuntimeAutostartWithDeps({
   const targets = resolveApprovedOpenClawAutostartTargets({ env });
   const blockingTarget = targets.find((target) => target.blocked && target.required);
   if (blockingTarget) {
-    const status = { state: 'openclaw-autostart-blocked', healthy: false, autostartAttempted: false, reason: blockingTarget.reason, surface: blockingTarget.id, guardrails: OPENCLAW_STARTUP_SAFETY_LOCKS };
+    const status = { state: 'openclaw-autostart-blocked', healthy: false, autostartAttempted: false, reason: blockingTarget.reason, surface: blockingTarget.id, guardrails: OPENCLAW_GATEWAY_STARTUP_GUARDRAILS };
     log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
     throw new Error(`blocked for safety: OpenClaw ${blockingTarget.id} autostart cannot proceed (${blockingTarget.reason}). Configure ${blockingTarget.envKey} with an approved local runtime-surface launch command; no OpenClaw task execution or mutation is allowed.`);
   }
@@ -106,8 +110,8 @@ export async function evaluateOpenClawRuntimeAutostartWithDeps({
   const afterReadiness = { ...probeOpenClawProcessWithDeps({ captureStep, platform }), endpoint: afterEndpoint, standaloneGatewayCandidate: gatewayCandidate };
   const afterClassification = classifyOpenClawReadiness(afterReadiness);
   const identityVerified = afterClassification.healthy === true || afterClassification.endpointIdentityVerified === true || afterEndpoint.identityVerified === true;
-  const diagnostics = { selectedGatewayEndpoint, selectedGatewayEndpointSource, expectedEndpoint: afterEndpoint.expectedEndpoint || expectedIdentity.endpoint, expectedEndpointSource: expectedIdentity.endpointSource || selectedGatewayEndpointSource, actualEndpoint: afterEndpoint.actualEndpoint || afterEndpoint.url || null, identityPayload: afterEndpoint.identityPayload || null, mismatchReason: afterEndpoint.identityMismatchReason || (identityVerified ? '' : 'identity-unverified') };
-  const status = { state: identityVerified ? 'openclaw-autostart-identity-verified' : 'openclaw-autostart-identity-unverified', healthy: identityVerified, autostartAttempted: true, started, selectedReadinessEndpoint: afterEndpoint.url || null, identityDiagnostics: diagnostics, guardrails: { openClawTaskExecutionAllowed: false, mutationAllowed: false, codexDispatchAllowed: false, mergeReadinessChangeAllowed: false, paidApiUsageAllowed: false } };
+  const diagnostics = { selectedGatewayEndpoint, selectedGatewayEndpointSource, startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, startupCommand: (targets.find((target) => target.id === 'gateway') || {}).commandText || '', processStartResult: started.find((entry) => entry.surface === 'gateway') || null, probeAttempts: afterEndpoint.probeAttempts || null, expectedEndpoint: afterEndpoint.expectedEndpoint || expectedIdentity.endpoint, expectedEndpointSource: expectedIdentity.endpointSource || selectedGatewayEndpointSource, actualEndpoint: afterEndpoint.actualEndpoint || afterEndpoint.url || null, identityPayload: afterEndpoint.identityPayload || null, mismatchReason: afterEndpoint.identityMismatchReason || (identityVerified ? '' : 'identity-unverified') };
+  const status = { state: identityVerified ? 'openclaw-autostart-identity-verified' : 'openclaw-autostart-identity-unverified', ignitionPhase: 'openclaw-gateway-startup', healthy: identityVerified, autostartAttempted: true, startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, started, selectedReadinessEndpoint: afterEndpoint.url || null, identityDiagnostics: diagnostics, guardrails: OPENCLAW_GATEWAY_STARTUP_GUARDRAILS };
   log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
   if (!identityVerified) {
     throw new Error(`blocked for safety: OpenClaw local runtime surface started or was probed, but endpoint identity could not be verified. Diagnostics: ${JSON.stringify(diagnostics)}. Operator action: confirm the gateway endpoint is the approved local OpenClaw runtime before retrying.`);
@@ -1588,7 +1592,7 @@ function resolveConfiguredOpenClawGatewayEndpoint({ env = process.env } = {}) {
   const commandText = String(env.STEPHANOS_OPENCLAW_GATEWAY_COMMAND || '').trim();
   const portMatch = commandText.match(/(?:^|\s)--port(?:=|\s+)(\d{2,5})(?:\s|$)/i);
   if (portMatch) return { endpoint: `http://127.0.0.1:${portMatch[1]}`, source: 'env:STEPHANOS_OPENCLAW_GATEWAY_COMMAND:--port' };
-  return { endpoint: '', source: '' };
+  return { endpoint: OPENCLAW_GATEWAY_APPROVED_ENDPOINT, source: OPENCLAW_GATEWAY_STARTUP_SOURCE };
 }
 
 export function buildOpenClawReadinessEndpoints({ discovery = {}, defaultEndpoints = DEFAULT_OPENCLAW_ENDPOINTS, env = process.env } = {}) {

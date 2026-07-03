@@ -34,3 +34,12 @@ test('OpenClaw Control Bridge does not model auto-start or scheduled service beh
   assert.doesNotMatch(projection.stopOpenClawCommand, /schtasks|startup folder|autorun/i);
   assert.match(projection.noAutoStartGuarantee, /No Windows auto-start/);
 });
+
+test('Control Panel Start Gateway command uses shared canonical startup implementation', async () => {
+  const { getOpenClawGatewayStartupCommand, buildOpenClawGatewayStartupTarget } = await import('./openClawGatewayStartup.mjs');
+  const projection = buildOpenClawControlBridgeProjection();
+  assert.equal(projection.startGatewayCommand, getOpenClawGatewayStartupCommand());
+  const target = buildOpenClawGatewayStartupTarget({ commandText: projection.startGatewayCommand });
+  assert.equal(target.port, 18789);
+  assert.equal(target.available, true);
+});

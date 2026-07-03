@@ -11,7 +11,7 @@ function identity(overrides = {}) {
     product: 'OpenClaw',
     runtimeId: 'openclaw-local-runtime',
     version: '1.0.0',
-    endpoint: 'http://127.0.0.1:8790/identity',
+    endpoint: 'http://127.0.0.1:18789/identity',
     status: 'ready',
     ...overrides,
   };
@@ -22,7 +22,7 @@ function response(body, status = 200) {
 }
 
 const approvedEnv = {
-  STEPHANOS_OPENCLAW_GATEWAY_COMMAND: 'node local-openclaw-gateway.js --port 8790',
+  STEPHANOS_OPENCLAW_GATEWAY_COMMAND: 'node local-openclaw-gateway.js --port 18789',
   STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node local-openclaw-chat.js',
   STEPHANOS_OPENCLAW_DASHBOARD_COMMAND: 'node local-openclaw-dashboard.js',
 };
@@ -75,7 +75,7 @@ test('successful autostart verification uses canonical OpenClaw identity endpoin
     },
     fetchFn: async (url) => {
       fetchCount += 1;
-      assert.equal(url, 'http://127.0.0.1:8790/identity');
+      assert.equal(url, 'http://127.0.0.1:18789/identity');
       return fetchCount <= 1 ? Promise.reject(new Error('missing')) : response(identity());
     },
     waitMs: 0,
@@ -91,7 +91,7 @@ test('successful autostart verification uses canonical OpenClaw identity endpoin
 });
 
 
-test('default fallback keeps 8790 identity first when no gateway endpoint is configured or discovered', async () => {
+test('default fallback keeps approved 18789 identity first when no gateway endpoint is configured or discovered', async () => {
   const calls = [];
   const result = await evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
@@ -107,9 +107,9 @@ test('default fallback keeps 8790 identity first when no gateway endpoint is con
   });
 
   assert.equal(result.state, 'openclaw-reused-existing-runtime');
-  assert.equal(result.selectedGatewayEndpoint, 'http://127.0.0.1:8790');
+  assert.equal(result.selectedGatewayEndpoint, 'http://127.0.0.1:18789');
   assert.equal(result.selectedGatewayEndpointSource, 'env:STEPHANOS_OPENCLAW_GATEWAY_COMMAND:--port');
-  assert.equal(calls[0], 'http://127.0.0.1:8790/identity');
+  assert.equal(calls[0], 'http://127.0.0.1:18789/identity');
 });
 
 test('OpenClaw already running is reused and no duplicate start is attempted', async () => {
@@ -133,7 +133,7 @@ test('delayed startup retries until identity is ready', async () => {
   let fetchCount = 0;
   const result = await evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: { STEPHANOS_OPENCLAW_GATEWAY_COMMAND: 'node gateway.js' },
+    env: {},
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => (++fetchCount < 4 ? Promise.reject(new Error('down')) : response(identity())),
@@ -151,22 +151,20 @@ test('delayed startup retries until identity is ready', async () => {
 test('identity failure diagnostics include selected gateway endpoint and source', async () => {
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: {
-      STEPHANOS_OPENCLAW_GATEWAY_COMMAND: 'node gateway.js --port 18789',
-    },
+    env: {},
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => { throw new Error('down'); },
     waitMs: 0,
     readinessTimeoutMs: 0,
     log: () => {},
-  }), /selectedGatewayEndpoint.*18789.*selectedGatewayEndpointSource.*STEPHANOS_OPENCLAW_GATEWAY_COMMAND.*expectedEndpoint.*18789.*endpoint-unreachable/);
+  }), /selectedGatewayEndpoint.*18789.*selectedGatewayEndpointSource.*openclaw-control-panel-start-gateway.*expectedEndpoint.*18789.*endpoint-unreachable/);
 });
 
 test('wrong endpoint blocks with explicit diagnostics', async () => {
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: { STEPHANOS_OPENCLAW_GATEWAY_COMMAND: 'node gateway.js' },
+    env: {},
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => response(identity({ endpoint: 'http://127.0.0.1:9999/identity' })),
@@ -179,7 +177,7 @@ test('wrong endpoint blocks with explicit diagnostics', async () => {
 test('wrong runtime blocks with runtime diagnostics', async () => {
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: { STEPHANOS_OPENCLAW_GATEWAY_COMMAND: 'node gateway.js' },
+    env: {},
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => response(identity({ runtimeId: 'other-runtime' })),
@@ -193,7 +191,7 @@ test('timeout blocks when gateway never becomes reachable', async () => {
   let fetchCount = 0;
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: { STEPHANOS_OPENCLAW_GATEWAY_COMMAND: 'node gateway.js' },
+    env: {},
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => { fetchCount += 1; throw new Error('down'); },
@@ -208,7 +206,7 @@ test('timeout blocks when gateway never becomes reachable', async () => {
 test('identity mismatch blocks when product or version is not approved', async () => {
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: { STEPHANOS_OPENCLAW_GATEWAY_COMMAND: 'node gateway.js' },
+    env: {},
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => response(identity({ product: 'Unknown Gateway', version: '' })),
@@ -225,4 +223,49 @@ test('guardrails reject OpenClaw task execution and mutation launch commands', (
 
   assert.equal(targets[0].blocked, true);
   assert.equal(targets[0].reason, 'approved-launch-command-violates-guardrails');
+});
+
+test('ignition uses shared Control Panel gateway startup path on approved 18789 port', async () => {
+  const spawned = [];
+  let fetchCount = 0;
+  const result = await evaluateOpenClawRuntimeAutostartWithDeps({
+    platform: 'win32',
+    env: {},
+    captureStep: noWindowsDiscovery,
+    spawnFn: (command, commandArgs) => {
+      spawned.push({ command, commandArgs });
+      return { pid: 18789, unref() {} };
+    },
+    fetchFn: async (url) => {
+      fetchCount += 1;
+      assert.equal(url, 'http://127.0.0.1:18789/identity');
+      return fetchCount <= 1 ? Promise.reject(new Error('starting')) : response(identity({ endpoint: 'http://127.0.0.1:18789/identity' }));
+    },
+    waitMs: 0,
+    readinessTimeoutMs: 50,
+    retryIntervalMs: 0,
+    log: () => {},
+  });
+
+  assert.equal(result.state, 'openclaw-autostart-identity-verified');
+  assert.equal(result.ignitionPhase, 'openclaw-gateway-startup');
+  assert.equal(result.startupSource, 'shared:openclaw-control-panel-start-gateway');
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0].command, 'powershell.exe');
+  assert.match(spawned[0].commandArgs.join(' '), /openclaw gateway --host 127\.0\.0\.1 --port 18789/);
+});
+
+test('splash/status diagnostics report OpenClaw startup phase and endpoint unreachable details', async () => {
+  const logs = [];
+  await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
+    platform: 'win32',
+    env: {},
+    captureStep: noWindowsDiscovery,
+    spawnFn: () => ({ pid: 42, unref() {} }),
+    fetchFn: async () => { throw new Error('down'); },
+    waitMs: 0,
+    readinessTimeoutMs: 0,
+    log: (message) => logs.push(message),
+  }), /startupSource.*shared:openclaw-control-panel-start-gateway.*startupCommand.*18789.*processStartResult.*probeAttempts.*endpoint-unreachable/);
+  assert.match(logs.join('\n'), /openclaw-gateway-startup/);
 });
