@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildConciergeExecutionEngineV9, classifyBuildConciergeGoal } from './buildConciergeExecutionEngineV9.mjs';
+import {
+  buildBuildEngineReadinessV1,
+  buildConciergeExecutionEngineV9,
+  buildConnectorCapabilityProbeV1,
+  classifyBuildConciergeGoal,
+} from './buildConciergeExecutionEngineV9.mjs';
 
 const receipt = { schemaVersion: 'stephanos.build-concierge.goal-request.v1', receiptId: 'r1', goal: { id: 'goal-ui', title: 'Improve Mission Operations panel UI', intent: 'Add dashboard surface rendering for status' } };
 
@@ -34,4 +39,44 @@ test('V9 exact-head approval boundary is preserved and dispatch is model-only wi
   assert.equal(engine.mergeAllowed, false);
   assert.equal(engine.codexDispatchAllowed, false);
   assert.match(engine.enrichedCandidates[0].blockerReasons.join(' '), /exact source approval/);
+});
+
+test('connector capability probe classifies read, write, PR, and Codex dispatch separately', () => {
+  const probe = buildConnectorCapabilityProbeV1({
+    github: { readAvailable: true, commentAvailable: false, branchCreateAvailable: true, fileWriteAvailable: true, prCreateAvailable: true },
+    codex: { dispatchIntegrationAvailable: false, capacityState: 'blocked-by-meter', lastAttemptUtc: '2026-07-04T11:21:00Z', nextRetryUtc: 'unknown' },
+  });
+  assert.equal(probe.schemaVersion, 'stephanos.connector-capability-probe.v1');
+  assert.equal(probe.github.read, 'OK');
+  assert.equal(probe.github.comment, 'BLOCKED');
+  assert.equal(probe.github.branch, 'OK');
+  assert.equal(probe.github.fileWrite, 'OK');
+  assert.equal(probe.github.prCreate, 'OK');
+  assert.equal(probe.codex.dispatchIntegration, 'BLOCKED');
+  assert.match(probe.blockers.join(' '), /Codex dispatch integration is not proven/);
+});
+
+test('build engine readiness gives issue classifications and exact next command', () => {
+  const readiness = buildBuildEngineReadinessV1({
+    github: { readAvailable: true, commentAvailable: true, branchCreateAvailable: true, fileWriteAvailable: true, prCreateAvailable: true },
+    codex: { dispatchIntegrationAvailable: false, capacityState: 'blocked-by-no-integration' },
+  });
+  assert.equal(readiness.schemaVersion, 'stephanos.build-engine-readiness.v1');
+  assert.equal(readiness.issueClassifications[0].issue, '#1290');
+  assert.equal(readiness.issueClassifications[0].classification, 'READY_TO_BUILD');
+  assert.equal(readiness.issueClassifications.find((item) => item.issue === '#1293').classification, 'BLOCKED_BY_MISSING_INTEGRATION');
+  assert.equal(readiness.buildingNow, '#1290 Shared Agent Workspace V1');
+  assert.equal(readiness.exactNextPromptOrCommand, 'node --test shared/agents/buildConciergeExecutionEngineV9.test.mjs');
+});
+
+test('V9 exposes build engine readiness without allowing dispatch or merge execution', () => {
+  const engine = buildConciergeExecutionEngineV9({
+    receipts: [receipt],
+    github: { readAvailable: true, commentAvailable: true, branchCreateAvailable: true, fileWriteAvailable: true, prCreateAvailable: true },
+  });
+  assert.equal(engine.buildEngineReadiness.schemaVersion, 'stephanos.build-engine-readiness.v1');
+  assert.equal(engine.connectorCapabilityProbe.github.read, 'OK');
+  assert.equal(engine.codexDispatchAllowed, false);
+  assert.equal(engine.mergeAllowed, false);
+  assert.equal(engine.commandExecutionAllowed, false);
 });
