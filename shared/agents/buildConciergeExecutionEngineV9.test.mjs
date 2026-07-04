@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildConciergeExecutionEngineV9, classifyBuildConciergeGoal } from './buildConciergeExecutionEngineV9.mjs';
+import {
+  buildBuildEngineReadinessV1,
+  buildConciergeExecutionEngineV9,
+  buildConnectorCapabilityProbeV1,
+  classifyBuildConciergeGoal,
+} from './buildConciergeExecutionEngineV9.mjs';
 
 const receipt = { schemaVersion: 'stephanos.build-concierge.goal-request.v1', receiptId: 'r1', goal: { id: 'goal-ui', title: 'Improve Mission Operations panel UI', intent: 'Add dashboard surface rendering for status' } };
 
@@ -34,4 +39,48 @@ test('V9 exact-head approval boundary is preserved and dispatch is model-only wi
   assert.equal(engine.mergeAllowed, false);
   assert.equal(engine.codexDispatchAllowed, false);
   assert.match(engine.enrichedCandidates[0].blockerReasons.join(' '), /exact source approval/);
+});
+
+test('Connector Capability Probe V1 classifies read, comment, branch, write, and PR capability without fake proof', () => {
+  const probe = buildConnectorCapabilityProbeV1({ github: { read: true, comment: false, branch: true, write: false, pullRequest: true }, lastProbeAtUtc: '2026-07-04T10:00:00Z' });
+  assert.equal(probe.schemaVersion, 'stephanos.connector-capability-probe.v1');
+  assert.equal(probe.capabilities.read, 'ok');
+  assert.equal(probe.capabilities.branch, 'ok');
+  assert.equal(probe.capabilities.comment, 'unknown_or_blocked');
+  assert.equal(probe.capabilities.write, 'unknown_or_blocked');
+  assert.equal(probe.capabilities.pullRequest, 'ok');
+  assert.match(probe.proofBoundary, /no fake GitHub\/Codex proof/);
+});
+
+test('Build Engine Readiness V1 exposes Codex capacity, retry, resume eligibility, and fallback owner', () => {
+  const readiness = buildBuildEngineReadinessV1({
+    connectorCapabilities: { github: { read: true, branch: true, write: true, comment: true, pullRequest: true } },
+    codex: { dispatchAvailable: true, capacity: 'waiting_for_quota_reset', lastAttemptUtc: '2026-07-04T09:14:00Z', nextRetryUtc: '2026-07-04T12:14:00Z', fallbackOwner: 'openclaw' },
+  });
+  assert.equal(readiness.schemaVersion, 'stephanos.build-engine-readiness.v1');
+  assert.equal(readiness.status, 'waiting_for_codex_capacity');
+  assert.equal(readiness.codex.dispatchAvailable, true);
+  assert.equal(readiness.codex.capacityState, 'waiting_for_quota_reset');
+  assert.equal(readiness.retry.lastAttemptUtc, '2026-07-04T09:14:00.000Z');
+  assert.equal(readiness.retry.nextRetryUtc, '2026-07-04T12:14:00.000Z');
+  assert.equal(readiness.retry.automaticResumeEligible, false);
+  assert.equal(readiness.retry.fallbackOwner, 'openclaw');
+  assert.match(readiness.blockers.join(' '), /meter\/quota/);
+});
+
+test('V9 surfaces Build Engine Readiness V1 and Connector Capability Probe V1 without allowing commands or merge', () => {
+  const engine = buildConciergeExecutionEngineV9({
+    receipts: [receipt],
+    dispatchAdapterAvailable: true,
+    sourceApproved: true,
+    connectorCapabilities: { github: { read: true, branch: true, write: true, comment: true, pullRequest: true } },
+    codex: { dispatchAvailable: true, capacity: 'available' },
+  });
+  assert.equal(engine.buildEngineReadiness.schemaVersion, 'stephanos.build-engine-readiness.v1');
+  assert.equal(engine.connectorCapabilityProbe.schemaVersion, 'stephanos.connector-capability-probe.v1');
+  assert.equal(engine.buildEngineReadiness.status, 'ready_to_resume');
+  assert.equal(engine.enrichedCandidates[0].buildEngineReadiness, 'ready_to_resume');
+  assert.equal(engine.commandExecutionAllowed, false);
+  assert.equal(engine.mergeAllowed, false);
+  assert.equal(engine.codexDispatchAllowed, false);
 });
