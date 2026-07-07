@@ -74,7 +74,10 @@ test('startup integration returns stoppable scheduler cleanup contract', () => {
 });
 
 test('scheduler skips overlapping ticks deterministically', async () => {
-  let releases;
+  let releaseTick;
+  let markBuildStarted;
+  const buildStarted = new Promise((resolve) => { markBuildStarted = resolve; });
+  let intervalFn;
   let calls = 0;
   const root = await mkdtemp(join(tmpdir(), 'stephanos-battle-bridge-overlap-'));
   const loop = startBattleBridgePublisherLoop({
@@ -85,15 +88,17 @@ test('scheduler skips overlapping ticks deterministically', async () => {
     intervalMs: 30_000,
     buildSlice: async () => {
       calls += 1;
-      await new Promise((resolve) => { releases = resolve; });
+      markBuildStarted();
+      await new Promise((resolve) => { releaseTick = resolve; });
       return undefined;
     },
-    setIntervalFn(fn) { return { fn }; },
+    setIntervalFn(fn) { intervalFn = fn; return { fn }; },
     clearIntervalFn() {},
   });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await buildStarted;
+  intervalFn();
   loop.stop();
-  releases();
+  releaseTick();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(calls, 1);
 });
