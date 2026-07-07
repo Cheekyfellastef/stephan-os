@@ -13,6 +13,8 @@ import githubRouter from './routes/github.js';
 import missionOperationsRouter from './routes/mission-operations.js';
 import buildConciergeRouter from './routes/build-concierge.js';
 import goalProjectionRouter from './routes/goal-projection.js';
+import sharedWorkspaceRouter from './routes/shared-workspace.js';
+import { startBattleBridgePublisherLoopForBackend } from './services/battleBridgePublisherLifecycle.js';
 import { createLogger } from './utils/logger.js';
 import { DEFAULT_PROVIDER_KEY } from '../shared/ai/providerDefaults.mjs';
 import {
@@ -81,6 +83,7 @@ app.use('/api/github', githubRouter);
 app.use('/api/mission-operations', missionOperationsRouter);
 app.use('/api/build-concierge', buildConciergeRouter);
 app.use('/api/goal-projection', goalProjectionRouter);
+app.use('/api/shared-workspace', sharedWorkspaceRouter);
 
 app.use((error, _req, res, next) => {
   if (error?.message?.startsWith('CORS origin denied:')) {
@@ -128,6 +131,21 @@ async function probeExistingStephanosServer() {
 }
 
 const server = http.createServer(app);
+let battleBridgePublisherLoopHandle = null;
+async function startBackendPublisherLoop() {
+  battleBridgePublisherLoopHandle = await startBattleBridgePublisherLoopForBackend({
+    env: process.env,
+    repoRoot: process.cwd(),
+    intervalMs: process.env.STEPHANOS_BATTLE_BRIDGE_PUBLISHER_INTERVAL_MS,
+  });
+  logger.info(`Battle Bridge publisher loop startup: ${battleBridgePublisherLoopHandle.started ? 'started' : 'not-started'} (${battleBridgePublisherLoopHandle.reason})`);
+}
+function stopBackendPublisherLoop() {
+  const result = battleBridgePublisherLoopHandle?.stop?.();
+  if (result?.stopped) logger.info(`Battle Bridge publisher loop shutdown: ${result.finalVerdict}`);
+}
+process.once('SIGINT', () => { stopBackendPublisherLoop(); server.close(() => process.exit(0)); });
+process.once('SIGTERM', () => { stopBackendPublisherLoop(); server.close(() => process.exit(0)); });
 
 server.on('error', async (error) => {
   if (error?.code !== 'EADDRINUSE') {
@@ -151,6 +169,7 @@ server.on('error', async (error) => {
 });
 
 server.listen(PORT, () => {
+  void startBackendPublisherLoop();
   logger.info(`Stephanos server listening on http://localhost:${PORT}`);
   logger.info(`Allowed origins: ${allowedOrigins.join(', ')}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
