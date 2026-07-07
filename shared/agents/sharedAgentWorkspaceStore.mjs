@@ -1,8 +1,8 @@
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
 import {
-  DEFAULT_SHARED_WORKSPACE_ROOT,
   SHARED_WORKSPACE_DIRECTORIES,
   createSharedWorkspaceMessage,
 } from './sharedAgentWorkspace.mjs';
@@ -68,7 +68,7 @@ function safeId(value) {
 }
 
 export function resolveSharedWorkspacePath(input = {}) {
-  const rootInput = text(input.root || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE || DEFAULT_SHARED_WORKSPACE_ROOT);
+  const rootInput = text(input.root || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE || getDefaultSharedWorkspaceRoot(input));
   if (!rootInput || rootInput.includes('\0')) return { ok: false, reason: 'UNSAFE_WORKSPACE_PATH', path: '' };
   if (/%[A-Z_]+%/i.test(rootInput)) return { ok: false, reason: 'WORKSPACE_PATH_MISSING', path: '' };
   const root = resolve(rootInput);

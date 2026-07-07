@@ -880,6 +880,9 @@
         setTelemetryText('proof-state', projection.sourceTruth || 'UNKNOWN');
         setTelemetryText('next-operator-action', feed.exactNextAction || projection.operatorAttention?.exactNextAction || 'UNKNOWN');
         setTelemetryText('telemetry-blocker', `Shared Agent Workspace dashboard feed is read-only (${feed.state || 'unknown'}). ${feed.exactNextAction || 'Missing records remain UNKNOWN; stale records remain STALE.'}`);
+        if (!['ready', 'stale'].includes(feed.state)) {
+          renderGoals([{ issue: 'shared-workspace-blocker', title: `Shared Workspace ${String(feed.state || 'unavailable').toUpperCase()}`, status: String(feed.reason || 'UNKNOWN'), currentOwner: 'Battle Bridge runtime configuration', nextOwner: 'Operator', handoffState: 'blocked', milestone: 'LIVE_SHARED_WORKSPACE_BLOCKED', operatorNeeded: 'Yes - configure safe external workspace', proofIndex: 0, nextAction: feed.exactNextAction || 'Configure a safe external Shared Agent Workspace path outside the repository.' }], 'live-shared-workspace-blocked');
+        }
         if (Array.isArray(projection.goals) && ['ready', 'stale'].includes(feed.state)) {
           renderGoals(projection.goals.map((goal) => ({
             issue: goal.issue || 'workspace-goal',
