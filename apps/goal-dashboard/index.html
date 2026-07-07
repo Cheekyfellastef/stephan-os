@@ -668,21 +668,25 @@
 
 
       const APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT = '/api/goal-projection/live';
+      const APPROVED_SHARED_WORKSPACE_DASHBOARD_FEED_ENDPOINT = '/api/shared-workspace/dashboard-feed';
+      const SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION = 'stephanos.shared-workspace-dashboard-feed.v1';
+      const MIN_SHARED_WORKSPACE_DASHBOARD_POLL_INTERVAL_MS = 15000;
       const BACKEND_UNAVAILABLE_STATIC_SEED_ONLY = 'BACKEND_UNAVAILABLE_STATIC_SEED_ONLY';
       const actorOrder = ['Operator', 'ChatGPT', 'Codex', 'OpenClaw', 'Stephanos', 'Operator'];
 
       const grid = document.getElementById('goal-grid');
       const platformGrid = document.getElementById('platform-grid');
 
-      function renderLandingPlatformProjection(projection = buildLandingGoalDashboardProjection()) {
+      function renderLandingPlatformProjection(projection = buildLandingGoalDashboardProjection(), feed = null) {
         if (!platformGrid) return;
         platformGrid.textContent = '';
         const cards = [
+          ['Workspace feed', feed?.state || 'loading', `poll ${feed?.polling?.pollIntervalMs || MIN_SHARED_WORKSPACE_DASHBOARD_POLL_INTERVAL_MS}ms · ${feed?.reason || 'INITIAL_POLL_PENDING'}`],
           ['Source truth', projection.sourceTruth, projection.finalVerdict],
           ['Queue / dispatcher', `${projection.queueDispatcher.dispatcherState} · queued ${projection.queueDispatcher.queueDepth} · current ${projection.queueDispatcher.currentJob}`, `capability ${projection.queueDispatcher.capabilityMode}`],
           ['Battle Bridge supervisor', projection.battleBridgeSupervisor.overallState, projection.battleBridgeSupervisor.services.map((service) => `${service.serviceId}:${service.state}`).join(' · ')],
           ['OpenClaw ladder', `can run ${projection.openClawCapabilityLadder.canRunNow.join(', ') || 'none'}`, `approval ${projection.openClawCapabilityLadder.needsApproval.join(', ') || 'none'} · blocked ${projection.openClawCapabilityLadder.blocked.join(', ') || 'none'}`],
-          ['Operator attention', projection.operatorAttention.exactNextAction, `approvals ${projection.operatorAttention.approvals.length} · local proof ${projection.operatorAttention.localProofNeeded.join(', ') || 'none'} · blockers ${projection.operatorAttention.blockers.join(', ') || 'none'}`],
+          ['Operator attention', feed?.exactNextAction || projection.operatorAttention.exactNextAction, `approvals ${projection.operatorAttention.approvals.length} · local proof ${projection.operatorAttention.localProofNeeded.join(', ') || 'none'} · blockers ${projection.operatorAttention.blockers.join(', ') || 'none'}`],
         ];
         for (const [label, value, detail] of cards) {
           const node = document.createElement('div');
@@ -800,6 +804,43 @@
         return true;
       }
 
+
+      function renderSharedWorkspaceDashboardFeed(feed) {
+        if (!feed || feed.schemaVersion !== SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION || !feed.projection) return false;
+        renderLandingPlatformProjection(feed.projection, feed);
+        setTelemetryText('source-badge', String(feed.state || 'unknown').toUpperCase());
+        setTelemetryText('goal-data-source', `${String(feed.state || 'unknown').toUpperCase()} Shared Agent Workspace feed · ${APPROVED_SHARED_WORKSPACE_DASHBOARD_FEED_ENDPOINT}`);
+        setTelemetryText('proof-state', feed.projection.sourceTruth || 'UNKNOWN');
+        setTelemetryText('next-operator-action', feed.exactNextAction || feed.projection.operatorAttention?.exactNextAction || 'UNKNOWN');
+        setTelemetryText('telemetry-blocker', `Shared Agent Workspace dashboard feed is read-only (${feed.state || 'unknown'}). ${feed.exactNextAction || 'Missing records remain UNKNOWN; stale records remain STALE.'}`);
+        return true;
+      }
+
+      async function fetchSharedWorkspaceDashboardFeed(fetchImpl = window.fetch) {
+        if (!shouldAttemptLiveTelemetry() || typeof fetchImpl !== 'function') return null;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 1200);
+        try {
+          const response = await fetchImpl(APPROVED_SHARED_WORKSPACE_DASHBOARD_FEED_ENDPOINT, { method: 'GET', cache: 'no-store', signal: controller.signal });
+          if (!response || !response.ok) return null;
+          return await response.json();
+        } catch {
+          return null;
+        } finally {
+          window.clearTimeout(timeout);
+        }
+      }
+
+      function scheduleSharedWorkspaceDashboardFeedPoll(feed) {
+        const requested = Number(feed?.polling?.pollIntervalMs);
+        const interval = Number.isFinite(requested) ? Math.max(MIN_SHARED_WORKSPACE_DASHBOARD_POLL_INTERVAL_MS, requested) : 30000;
+        window.setTimeout(async () => {
+          const nextFeed = await fetchSharedWorkspaceDashboardFeed();
+          if (nextFeed && renderSharedWorkspaceDashboardFeed(nextFeed)) scheduleSharedWorkspaceDashboardFeedPoll(nextFeed);
+          else scheduleSharedWorkspaceDashboardFeedPoll({ polling: { pollIntervalMs: interval } });
+        }, interval);
+      }
+
       function markStaticTelemetryFallback() {
         setTelemetryText('source-badge', 'STATIC_FALLBACK');
         setTelemetryText('goal-data-source', `Seeded / source-controlled · ${BACKEND_UNAVAILABLE_STATIC_SEED_ONLY}`);
@@ -832,6 +873,10 @@
       renderLandingPlatformProjection();
       renderGoals(goals, 'static-seed');
       markStaticTelemetryFallback();
+      fetchSharedWorkspaceDashboardFeed().then((feed) => {
+        if (feed && renderSharedWorkspaceDashboardFeed(feed)) scheduleSharedWorkspaceDashboardFeedPoll(feed);
+        else scheduleSharedWorkspaceDashboardFeedPoll();
+      });
       fetchApprovedLiveTelemetry().then((feed) => {
         if (feed) renderLiveMissionOperationsTelemetry(feed);
       });
