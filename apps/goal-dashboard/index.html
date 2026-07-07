@@ -114,6 +114,32 @@
         margin-top: 22px;
       }
 
+      .live-card {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .live-card::before {
+        content: "";
+        display: inline-block;
+        width: 0.72rem;
+        height: 0.72rem;
+        margin-right: 0.45rem;
+        border-radius: 999px;
+        background: var(--unknown);
+        box-shadow: 0 0 18px rgba(196, 181, 253, 0.55);
+      }
+
+      .live-card.good::before {
+        background: var(--good);
+        box-shadow: 0 0 18px rgba(134, 239, 172, 0.6);
+      }
+
+      .live-card.warn::before {
+        background: var(--warn);
+        box-shadow: 0 0 18px rgba(253, 230, 138, 0.6);
+      }
+
       .section-title {
         display: flex;
         align-items: end;
@@ -438,6 +464,9 @@
           <div class="source-pill">GitHub state<strong id="github-state" data-live-telemetry-field="github-state">Not live in browser</strong></div>
           <div class="source-pill">Automation state<strong id="automation-state" data-live-telemetry-field="automation-state">Not live in browser</strong></div>
           <div class="source-pill">Proof state<strong id="proof-state" data-live-telemetry-field="proof-state">Explicit or unknown</strong></div>
+          <div class="source-pill">Feed endpoint<strong data-live-telemetry-field="dashboard-feed-endpoint">pending</strong></div>
+          <div class="source-pill">Last refresh<strong data-live-telemetry-field="dashboard-last-refresh">pending</strong></div>
+          <div class="source-pill">Workspace root<strong data-live-telemetry-field="dashboard-workspace-root">UNKNOWN</strong></div>
         </div>
       </header>
 
@@ -556,8 +585,7 @@
       </section>
     </main>
 
-    <script type="module">
-      import { buildLandingGoalDashboardProjection } from '../../shared/agents/landingGoalDashboardProjection.mjs';
+    <script>
       const proofSteps = [
         'goal created',
         'automation active',
@@ -667,6 +695,31 @@
       ];
 
 
+
+      function buildLandingGoalDashboardProjection() {
+        return {
+          sourceTruth: 'UNKNOWN',
+          finalVerdict: 'LANDING_GOAL_DASHBOARD_LOADING',
+          queueDispatcher: { dispatcherState: 'UNKNOWN', queueDepth: 0, currentJob: 'UNKNOWN', capabilityMode: 'UNKNOWN' },
+          battleBridgeSupervisor: { overallState: 'UNKNOWN', services: [] },
+          openClawCapabilityLadder: { canRunNow: [], needsApproval: [], blocked: ['UNKNOWN_CAPABILITY_RECORD'] },
+          operatorAttention: { approvals: [], localProofNeeded: [], blockers: ['INITIAL_FEED_PENDING'], exactNextAction: 'Load the read-only Shared Workspace dashboard feed before claiming live platform state.' },
+        };
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+      }
+
+      function safeDisplayPath(value) {
+        const text = String(value || 'UNKNOWN').trim();
+        if (!text || text === 'UNKNOWN') return 'UNKNOWN';
+        const clean = text.replace(/[?#].*$/, '');
+        const parts = clean.split(/[\\/]+/).filter(Boolean);
+        if (parts.length <= 3) return clean;
+        return `${parts[0]}/…/${parts[parts.length - 1]}`;
+      }
+
       const APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT = '/api/goal-projection/live';
       const APPROVED_SHARED_WORKSPACE_DASHBOARD_FEED_ENDPOINT = '/api/shared-workspace/dashboard-feed';
       const SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION = 'stephanos.shared-workspace-dashboard-feed.v1';
@@ -677,11 +730,20 @@
       const grid = document.getElementById('goal-grid');
       const platformGrid = document.getElementById('platform-grid');
 
+
+      function resolveSharedWorkspaceDashboardFeedEndpoint() {
+        const path = APPROVED_SHARED_WORKSPACE_DASHBOARD_FEED_ENDPOINT;
+        const loc = window.location || {};
+        if (loc.protocol === 'file:' || loc.port === '4173') return `http://127.0.0.1:8787${path}`;
+        return path;
+      }
+
       function renderLandingPlatformProjection(projection = buildLandingGoalDashboardProjection(), feed = null) {
         if (!platformGrid) return;
         platformGrid.textContent = '';
         const cards = [
-          ['Workspace feed', feed?.state || 'loading', `poll ${feed?.polling?.pollIntervalMs || MIN_SHARED_WORKSPACE_DASHBOARD_POLL_INTERVAL_MS}ms · ${feed?.reason || 'INITIAL_POLL_PENDING'}`],
+          ['Workspace feed', feed?.state || 'loading', `endpoint ${feed?.endpoint || resolveSharedWorkspaceDashboardFeedEndpoint()} · poll ${feed?.polling?.pollIntervalMs || MIN_SHARED_WORKSPACE_DASHBOARD_POLL_INTERVAL_MS}ms · ${feed?.reason || 'INITIAL_POLL_PENDING'}`],
+          ['Last refresh / root', feed?.lastRefreshUtc || 'pending', `Shared Workspace root ${safeDisplayPath(feed?.workspaceRoot)}`],
           ['Source truth', projection.sourceTruth, projection.finalVerdict],
           ['Queue / dispatcher', `${projection.queueDispatcher.dispatcherState} · queued ${projection.queueDispatcher.queueDepth} · current ${projection.queueDispatcher.currentJob}`, `capability ${projection.queueDispatcher.capabilityMode}`],
           ['Battle Bridge supervisor', projection.battleBridgeSupervisor.overallState, projection.battleBridgeSupervisor.services.map((service) => `${service.serviceId}:${service.state}`).join(' · ')],
@@ -692,6 +754,7 @@
           const node = document.createElement('div');
           const labelNode = document.createElement('span');
           labelNode.textContent = label;
+          node.className = `live-card ${String(value).toLowerCase().includes('current') || String(value).toLowerCase().includes('ready') ? 'good' : String(value).toLowerCase().includes('stale') || String(value).toLowerCase().includes('unknown') || String(value).toLowerCase().includes('attention') ? 'warn' : ''}`;
           node.append(labelNode, String(value), document.createElement('br'), String(detail));
           platformGrid.appendChild(node);
         }
@@ -706,36 +769,36 @@
         card.setAttribute('data-issue', goal.issue);
         card.innerHTML = `
           <div class="goal-head">
-            <span class="badge ${goal.status.includes('Waiting') ? 'active' : 'complete'}">${goal.status}</span>
-            <h3>${goal.issue} ${goal.title}</h3>
+            <span class="badge ${goal.status.includes('Waiting') ? 'active' : 'complete'}">${escapeHtml(goal.status)}</span>
+            <h3>${escapeHtml(goal.issue)} ${escapeHtml(goal.title)}</h3>
           </div>
           <div class="goal-body">
             <div class="meta">
-              <div><span>Current owner</span>${goal.currentOwner}</div>
-              <div><span>Next owner</span>${goal.nextOwner}</div>
-              <div><span>Operator needed</span>${goal.operatorNeeded}</div>
-              <div><span>Handoff</span>${goal.handoffState}</div>
+              <div><span>Current owner</span>${escapeHtml(goal.currentOwner)}</div>
+              <div><span>Next owner</span>${escapeHtml(goal.nextOwner)}</div>
+              <div><span>Operator needed</span>${escapeHtml(goal.operatorNeeded)}</div>
+              <div><span>Handoff</span>${escapeHtml(goal.handoffState)}</div>
             </div>
-            <div aria-label="Proof-state rail for ${goal.issue}" class="rail">
+            <div aria-label="Proof-state rail for ${escapeHtml(goal.issue)}" class="rail">
               ${proofSteps.map((_, index) => `<i class="${index < goal.proofIndex ? 'done' : index === goal.proofIndex ? 'now' : ''}"></i>`).join('')}
             </div>
             <div class="actor-strip" aria-label="Actor interaction strip">
               ${actorOrder.map((actor) => `<span class="actor-chip ${actor === goal.currentOwner ? 'current' : ''}">${actor}</span>`).join('')}
             </div>
             ${goal.platformProof ? `
-              <div class="platform-proof" aria-label="Platform proof fields for ${goal.issue}">
-                <div><span>Proof schema</span>${goal.platformProof.schemaVersion}</div>
-                <div><span>Status</span>${goal.platformProof.status}</div>
-                <div><span>Claim</span>${goal.platformProof.currentClaim}</div>
+              <div class="platform-proof" aria-label="Platform proof fields for ${escapeHtml(goal.issue)}">
+                <div><span>Proof schema</span>${escapeHtml(goal.platformProof.schemaVersion)}</div>
+                <div><span>Status</span>${escapeHtml(goal.platformProof.status)}</div>
+                <div><span>Claim</span>${escapeHtml(goal.platformProof.currentClaim)}</div>
                 <div><span>Proof refs</span>${goal.platformProof.proofRefs.length ? goal.platformProof.proofRefs.join(', ') : 'unknown'}</div>
                 <div><span>Blockers</span>${goal.platformProof.blockers.length ? goal.platformProof.blockers.join(', ') : 'none'}</div>
                 <div><span>Dispatch</span>${goal.platformProof.manualDispatchRequired ? 'manual dispatch required' : 'canonical dispatcher only'}</div>
-                <div><span>Merge hold</span>${goal.platformProof.exactHeadMergeHold}</div>
-                <div><span>Live claims</span>${goal.platformProof.liveClaims}</div>
-                <div><span>Verdict</span>${goal.platformProof.finalVerdict}</div>
+                <div><span>Merge hold</span>${escapeHtml(goal.platformProof.exactHeadMergeHold)}</div>
+                <div><span>Live claims</span>${escapeHtml(goal.platformProof.liveClaims)}</div>
+                <div><span>Verdict</span>${escapeHtml(goal.platformProof.finalVerdict)}</div>
               </div>
             ` : ''}
-            <p class="next-action"><span>${goal.milestone}</span><br />${goal.nextAction}</p>
+            <p class="next-action"><span>${escapeHtml(goal.milestone)}</span><br />${escapeHtml(goal.nextAction)}</p>
           </div>
         `;
         grid.appendChild(card);
@@ -806,13 +869,31 @@
 
 
       function renderSharedWorkspaceDashboardFeed(feed) {
-        if (!feed || feed.schemaVersion !== SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION || !feed.projection) return false;
-        renderLandingPlatformProjection(feed.projection, feed);
+        if (!feed || ![SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION, 'stephanos.backend.shared-workspace-dashboard-feed.v1'].includes(feed.schemaVersion)) return false;
+        const projection = feed.projection || buildLandingGoalDashboardProjection();
+        renderLandingPlatformProjection(projection, feed);
         setTelemetryText('source-badge', String(feed.state || 'unknown').toUpperCase());
-        setTelemetryText('goal-data-source', `${String(feed.state || 'unknown').toUpperCase()} Shared Agent Workspace feed · ${APPROVED_SHARED_WORKSPACE_DASHBOARD_FEED_ENDPOINT}`);
-        setTelemetryText('proof-state', feed.projection.sourceTruth || 'UNKNOWN');
-        setTelemetryText('next-operator-action', feed.exactNextAction || feed.projection.operatorAttention?.exactNextAction || 'UNKNOWN');
+        setTelemetryText('goal-data-source', `${String(feed.state || 'unknown').toUpperCase()} Shared Agent Workspace feed · ${feed.endpoint || resolveSharedWorkspaceDashboardFeedEndpoint()}`);
+        setTelemetryText('dashboard-feed-endpoint', feed.endpoint || resolveSharedWorkspaceDashboardFeedEndpoint());
+        setTelemetryText('dashboard-last-refresh', feed.lastRefreshUtc || 'unknown');
+        setTelemetryText('dashboard-workspace-root', safeDisplayPath(feed.workspaceRoot));
+        setTelemetryText('proof-state', projection.sourceTruth || 'UNKNOWN');
+        setTelemetryText('next-operator-action', feed.exactNextAction || projection.operatorAttention?.exactNextAction || 'UNKNOWN');
         setTelemetryText('telemetry-blocker', `Shared Agent Workspace dashboard feed is read-only (${feed.state || 'unknown'}). ${feed.exactNextAction || 'Missing records remain UNKNOWN; stale records remain STALE.'}`);
+        if (Array.isArray(projection.goals) && ['ready', 'stale'].includes(feed.state)) {
+          renderGoals(projection.goals.map((goal) => ({
+            issue: goal.issue || 'workspace-goal',
+            title: goal.title || 'Shared Workspace goal',
+            status: `${goal.statusTruth || 'UNKNOWN'} status · ${goal.proofTruth || 'UNKNOWN'} proof`,
+            currentOwner: 'Shared Workspace feed',
+            nextOwner: 'Operator',
+            handoffState: goal.blockers?.length ? goal.blockers.join(', ') : 'current proof refs present',
+            milestone: projection.finalVerdict || 'LIVE_SHARED_WORKSPACE_PROJECTION',
+            operatorNeeded: goal.blockers?.length ? 'Yes - resolve blockers' : 'Review',
+            proofIndex: goal.proofTruth === 'CURRENT' ? 4 : 1,
+            nextAction: goal.exactNextAction || feed.exactNextAction || 'Review live workspace record.',
+          })), 'live-shared-workspace');
+        }
         return true;
       }
 
@@ -821,9 +902,10 @@
         const controller = new AbortController();
         const timeout = window.setTimeout(() => controller.abort(), 1200);
         try {
-          const response = await fetchImpl(APPROVED_SHARED_WORKSPACE_DASHBOARD_FEED_ENDPOINT, { method: 'GET', cache: 'no-store', signal: controller.signal });
-          if (!response || !response.ok) return null;
-          return await response.json();
+          const response = await fetchImpl(resolveSharedWorkspaceDashboardFeedEndpoint(), { method: 'GET', cache: 'no-store', signal: controller.signal });
+          if (!response) return null;
+          const payload = await response.json();
+          return payload ? { ...payload, endpoint: resolveSharedWorkspaceDashboardFeedEndpoint(), httpOk: response.ok, lastRefreshUtc: new Date().toISOString() } : null;
         } catch {
           return null;
         } finally {
@@ -847,6 +929,9 @@
         setTelemetryText('github-state', 'Not live in browser');
         setTelemetryText('automation-state', 'Not live in browser');
         setTelemetryText('proof-state', 'Explicit or unknown');
+        setTelemetryText('dashboard-feed-endpoint', resolveSharedWorkspaceDashboardFeedEndpoint());
+        setTelemetryText('dashboard-last-refresh', 'pending');
+        setTelemetryText('dashboard-workspace-root', 'UNKNOWN');
         setTelemetryText('telemetry-blocker', `${BACKEND_UNAVAILABLE_STATIC_SEED_ONLY} · Backend unavailable; static seed only. No live GitHub proof, local proof, browser proof, command execution, merge, or dispatch is claimed.`);
       }
 
