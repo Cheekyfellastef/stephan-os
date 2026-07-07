@@ -3,6 +3,12 @@ import {
   createSharedWorkspaceMessage,
   validateSharedWorkspaceMessage,
 } from './sharedAgentWorkspace.mjs';
+import {
+  appendWorkspaceJsonl,
+  createSharedWorkspaceEventRecord,
+  createSharedWorkspaceStatusRecord,
+  writeAtomicJson,
+} from './sharedAgentWorkspaceStore.mjs';
 
 export const CODEX_DISPATCH_QUEUE_SCHEMA_VERSION = 'codex-dispatch-queue.v1';
 export const CODEX_DISPATCH_QUEUE_KIND = 'stephanos.codex_dispatch.queue_record';
@@ -216,6 +222,75 @@ export function validateCodexQueueRecord(record = {}) {
 }
 
 export const validateCodexQueueItem = validateCodexQueueRecord;
+
+function workspaceStatusFor(record) {
+  return createSharedWorkspaceStatusRecord({
+    statusId: 'codex-dispatch-queue',
+    timestampUtc: text(record.completedAt || record.dispatchedAt || record.createdAt, 'pending'),
+    status: record.status,
+    summary: `Codex dispatch queue job ${record.jobId} for issue #${record.issueNumber} is ${record.status}.`,
+    proofRefs: record.sharedWorkspaceMessage?.proofRefs || [`proof/${record.jobId}.json`],
+  });
+}
+
+function workspaceEventFor(record) {
+  return createSharedWorkspaceEventRecord({
+    eventId: `${record.jobId}-${record.status}`,
+    timestampUtc: text(record.completedAt || record.dispatchedAt || record.createdAt, 'pending'),
+    eventKind: record.sharedWorkspaceMessage?.eventKind || 'codex-job-created',
+    summary: record.sharedWorkspaceMessage?.summary || `Codex dispatch queue job ${record.jobId} is ${record.status}.`,
+  });
+}
+
+export async function publishCodexQueueRecordToSharedWorkspace(rootInput, record = {}, options = {}) {
+  const normalized = createCodexQueueRecord(record);
+  const validation = validateCodexQueueRecord(normalized);
+  if (!validation.valid) {
+    return Object.freeze({
+      ok: false,
+      reason: validation.errors[0] || 'invalid-codex-queue-record',
+      validation,
+      finalVerdict: 'CODEX_QUEUE_WORKSPACE_PUBLISH_BLOCKED',
+    });
+  }
+
+  const statusRecord = workspaceStatusFor(normalized);
+  const eventRecord = workspaceEventFor(normalized);
+  const statusWrite = await writeAtomicJson(rootInput, ['status', 'codex-dispatch-queue.json'], statusRecord, options);
+  if (!statusWrite.ok) {
+    return Object.freeze({
+      ok: false,
+      reason: statusWrite.reason,
+      statusWrite,
+      finalVerdict: 'CODEX_QUEUE_WORKSPACE_PUBLISH_BLOCKED',
+    });
+  }
+  const eventAppend = await appendWorkspaceJsonl(rootInput, ['events', 'codex-dispatch-queue.jsonl'], eventRecord, options);
+  if (!eventAppend.ok) {
+    return Object.freeze({
+      ok: false,
+      reason: eventAppend.reason,
+      statusWrite,
+      eventAppend,
+      finalVerdict: 'CODEX_QUEUE_WORKSPACE_PUBLISH_BLOCKED',
+    });
+  }
+
+  return Object.freeze({
+    ok: true,
+    reason: 'CODEX_QUEUE_WORKSPACE_PUBLISHED',
+    record: normalized,
+    statusRecord,
+    eventRecord,
+    statusWrite,
+    eventAppend,
+    finalVerdict: 'CODEX_QUEUE_WORKSPACE_PUBLISH_PASS',
+  });
+}
+
+export const publishCodexQueueRecord = publishCodexQueueRecordToSharedWorkspace;
+export const publishCodexQueueItemToSharedWorkspace = publishCodexQueueRecordToSharedWorkspace;
+export const publishCodexQueueItem = publishCodexQueueRecordToSharedWorkspace;
 
 export function transitionCodexQueueRecord(record = {}, nextStatus, input = {}) {
   const current = safeStatus(record.status);
