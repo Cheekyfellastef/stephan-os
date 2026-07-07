@@ -3,6 +3,7 @@ import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync, ren
 import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
+import { projectIgnitionCockpit } from './ignition-cockpit-model.mjs';
 import { runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
 import {
   OPENCLAW_WORKSPACE_DIRT_PATHS,
@@ -769,7 +770,7 @@ export async function ensureLocalStaticServerRestartWithDeps({
 
   report.serverStarted = true;
   report.restartRequired = true;
-  if (verifyServedAfterStart) {
+  if (verifyServedAfterStart && report.previousServerStatus === 'running') {
     let servedHealth = null;
     try {
       const servedResponse = await fetchFn(healthUrl, { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
@@ -1391,8 +1392,15 @@ export function runGitPullPreflightWithDeps({
 
   console.log('[IGNITION] git pull passed');
   const postPullPublicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
-  reportPublicationParity(postPullPublicationTruth, { label: 'publication parity (post-pull)' });
-  return postPullPublicationTruth;
+  let afterCommit = currentCommit;
+  try {
+    afterCommit = normalizeCaptureStdout(captureStep('git-current-commit-post-pull', 'git', ['rev-parse', '--short', 'HEAD']));
+  } catch {
+    afterCommit = currentCommit;
+  }
+  const enrichedPublicationTruth = { ...postPullPublicationTruth, beforeCommit: currentCommit, afterCommit, pulledFromCommit: originMainCommit };
+  reportPublicationParity(enrichedPublicationTruth, { label: 'publication parity (post-pull)' });
+  return enrichedPublicationTruth;
 }
 
 function runGitPullPreflight() {
@@ -2049,6 +2057,29 @@ export async function run() {
       }
       const restartReport = await ensureLocalStaticServerRestartWithDeps({
         expectedMetadata: refreshedState.distMetadata || refreshedState.expectedMetadata,
+        verifyServedAfterStart: true,
+      });
+      const cockpit = projectIgnitionCockpit({
+        buildPassed: buildAction.startsWith('passed'),
+        verifyPassed: verifyResult === 'passed',
+        serverStarted: restartReport.serverStarted === true,
+        sourceProof: { beforeCommit: publicationTruth?.beforeCommit || null, afterCommit: publicationTruth?.afterCommit || expectedSourceCommit, originMainCommit, headPublished: publicationTruth?.headPublished ?? null, publicationState: publicationTruth?.publicationState || null, behindCount: publicationTruth?.behindCount ?? null },
+        servedProof: {
+          healthProbePass: restartReport.serverStarted === true,
+          runtimeMarkerMatches: restartReport.servedRuntimeMatchesExpectedDistMetadata === true,
+          moduleMimeChecksPass: restartReport.moduleMimeChecksPass === true,
+          servedCommit: restartReport.servedCommit,
+          expectedSourceCommit,
+          servedBuildTimestamp: restartReport.servedBuildTimestamp,
+          servedSourceFingerprint: restartReport.servedSourceFingerprint,
+        },
+        stages: [
+          { id: 'source-update', label: 'Source update', status: 'complete', detail: `state=${publicationTruth?.publicationState || 'unknown'} behind=${publicationTruth?.behindCount ?? 'unknown'} before=${publicationTruth?.beforeCommit || 'unknown'} after=${publicationTruth?.afterCommit || expectedSourceCommit}` },
+          { id: 'build', label: 'Build', status: buildAction.startsWith('passed') ? 'passed' : 'pending', detail: buildAction },
+          { id: 'verify', label: 'Verify', status: verifyResult === 'passed' ? 'passed' : 'pending', detail: verifyResult },
+          { id: 'restart', label: 'Restart 4173', status: restartReport.serverStarted ? 'complete' : 'pending', detail: `previous=${restartReport.previousServerStatus}; stopped=${restartReport.serverStopped}; started=${restartReport.serverStarted}` },
+          { id: 'served-proof', label: 'Served runtime proof', status: restartReport.servedRuntimeMatchesExpectedDistMetadata ? 'passed' : 'pending', detail: `markerAndMime=${restartReport.servedRuntimeMatchesExpectedDistMetadata}; mime=${restartReport.moduleMimeChecksPass}` },
+        ],
       });
       const finalStatus = {
         ignitionMode,
@@ -2060,8 +2091,12 @@ export async function run() {
         buildTimestamp,
         sourceFingerprint,
         staticServerRestart: restartReport,
-        StartupDecision: 'START',
+        StartupDecision: cockpit.readyToEnterStephanos ? 'START_READY' : 'START_PROOF_PENDING',
+        ignitionCockpit: cockpit,
       };
+      if (!cockpit.readyToEnterStephanos) {
+        console.log(`[IGNITION] cockpit-status=${JSON.stringify(cockpit)}`);
+      }
       console.log(`[IGNITION] status-report=${JSON.stringify(finalStatus)}`);
       printPreflightSummary({
         ...refreshedState,

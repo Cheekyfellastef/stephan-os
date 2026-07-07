@@ -194,14 +194,11 @@ test('ignition failure status preserves exact blocker and next operator action',
 test('launcher-root splash uses detailed ignition stage model', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   for (const stage of [
-    'finding-repo',
-    'checking-workspace-dirt',
-    'classifying-safe-vs-unsafe-dirt',
-    'cleaning-generated-runtime-stoppers',
-    'checking-dependencies',
-    'checking-ports-existing-runtime',
-    'starting-local-services',
-    'opening-command-deck',
+    'source-update',
+    'build',
+    'verify',
+    'restart',
+    'served-proof',
   ]) {
     assert.match(script, new RegExp(`id = '${stage}'`), `missing ignition stage ${stage}`);
   }
@@ -259,4 +256,16 @@ test('status page shows OpenClaw startup state from ignition child logs', async 
   assert.match(script, /openclaw-autostart-status/, 'launcher must observe OpenClaw autostart status packets from bounded ignition logs');
   assert.match(script, /aria-label="OpenClaw startup status"/, 'splash/status page must render OpenClaw startup state');
   assert.match(script, /openClawStartupState/, 'status payload must include OpenClaw startup state');
+});
+
+
+test('visual ignition cockpit contains traffic lights progress proof cards and no script injection', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /trafficLight = if \(\$Phase -eq 'ready'\) \{ 'green' \}/, 'status payload must include traffic light projection');
+  assert.match(script, /progressPercentage = if \(\$currentStage -eq 'ready'\) \{ 100 \}/, 'status payload must include deterministic progress percentage');
+  assert.match(script, /aria-label="Traffic-light status"/, 'splash must render browser-visible traffic lights');
+  assert.match(script, /aria-label="Ignition progress"/, 'splash must render a progress bar');
+  assert.match(script, /aria-label="Build verify pull restart serve proof cards"/, 'splash must render proof cards');
+  assert.match(script, /Enter Stephanos locked until served proof passes/, 'splash must keep Enter Stephanos locked until proof passes');
+  assert.doesNotMatch(script, /<script[\s>]/i, 'splash must not inject executable browser script');
 });

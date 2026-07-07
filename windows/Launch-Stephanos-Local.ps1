@@ -51,16 +51,12 @@ $ignitionTranscriptPath = Join-Path $ignitionProofRoot 'ignition-proof-transcrip
 $ignitionSupportSnapshotPath = Join-Path $ignitionProofRoot 'support-snapshot.json'
 
 $ignitionStageModel = @(
-  [ordered]@{ id = 'finding-repo'; label = 'Finding repo'; detail = 'Resolve the exact Stephanos PR worktree before any process startup.' },
-  [ordered]@{ id = 'checking-workspace-dirt'; label = 'Checking workspace dirt'; detail = 'Inspect local workspace state through the canonical ignition flow.' },
-  [ordered]@{ id = 'classifying-safe-vs-unsafe-dirt'; label = 'Classifying safe vs unsafe dirt'; detail = 'Keep generated/runtime cleanup separate from source divergence.' },
-  [ordered]@{ id = 'cleaning-generated-runtime-stoppers'; label = 'Cleaning generated/runtime stoppers'; detail = 'Only approved generated/runtime stoppers may be cleaned; source files are not reset.' },
-  [ordered]@{ id = 'checking-dependencies'; label = 'Checking dependencies'; detail = 'Verify dependency/runtime prerequisites before readiness claims.' },
-  [ordered]@{ id = 'checking-ports-existing-runtime'; label = 'Checking ports and existing runtime'; detail = 'Probe current listeners and reuse only truth-verified runtime processes.' },
-  [ordered]@{ id = 'starting-local-services'; label = 'Starting local services'; detail = 'Start backend and launcher-root services in minimized/background PowerShell with bounded logs.' },
-  [ordered]@{ id = 'opening-command-deck'; label = 'Opening Command Deck'; detail = 'Open browser Command Deck/runtime surfaces after health and runtime-status proof.' }
+  [ordered]@{ id = 'source-update'; label = 'Source update'; detail = 'Detect whether local main is behind origin/main; show pull progress/result and before/after commit.'; proofKind = 'pull' },
+  [ordered]@{ id = 'build'; label = 'Build'; detail = 'Run canonical build and surface running/passed/failed plus runtime marker and git commit.'; proofKind = 'build' },
+  [ordered]@{ id = 'verify'; label = 'Verify'; detail = 'Run canonical verify and surface running/passed/failed without treating it as served-browser proof.'; proofKind = 'verify' },
+  [ordered]@{ id = 'restart'; label = 'Restart 4173'; detail = 'Show restart requested, server stopped, server started, and health probe result.'; proofKind = 'restart' },
+  [ordered]@{ id = 'served-proof'; label = 'Served runtime proof'; detail = 'Require served runtime marker match and JavaScript module MIME proof before Enter Stephanos.'; proofKind = 'serve-proof' }
 )
-
 
 function Write-IgnitionTranscript([hashtable]$Event) {
   Initialize-IgnitionProofWorkspace
@@ -148,6 +144,12 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
   $payload = [ordered]@{
     phase = $Phase
     message = $Message
+    trafficLight = if ($Phase -eq 'ready') { 'green' } elseif ($Phase -eq 'blocked') { 'red' } elseif ($Phase -match 'pending|starting|splash') { 'blue' } else { 'amber' }
+    progressPercentage = if ($currentStage -eq 'ready') { 100 } elseif ($currentStage -eq 'served-proof') { 85 } elseif ($currentStage -eq 'restart') { 70 } elseif ($currentStage -eq 'verify') { 55 } elseif ($currentStage -eq 'build') { 35 } elseif ($currentStage -eq 'source-update') { 15 } else { 5 }
+    currentAction = $Message
+    lastCompletedAction = if ($Extra.ContainsKey('lastCompletedAction')) { $Extra.lastCompletedAction } else { '' }
+    proofSummary = if ($Extra.ContainsKey('proofSummary')) { $Extra.proofSummary } else { [ordered]@{ build = 'pending'; verify = 'pending'; pull = 'pending'; restart = 'pending'; servedRuntime = 'pending'; moduleMime = 'pending' } }
+    enterStephanosEnabled = $Phase -eq 'ready'
     updatedAt = (Get-Date).ToUniversalTime().ToString('o')
     visiblePowerShellRequired = $visiblePowerShellRequired
     primaryUi = 'splash-status-browser'
@@ -190,19 +192,24 @@ function Update-IgnitionSplashScreen([object]$Status) {
   $snapshotHtml = [System.Net.WebUtility]::HtmlEncode($ignitionSupportSnapshotPath)
   $openClawStartupState = if ($Status.openClawStartupState) { [System.Net.WebUtility]::HtmlEncode($Status.openClawStartupState) } else { 'pending / not reported yet' }
   $openClawStartupDetail = if ($Status.openClawStartupDetail) { [System.Net.WebUtility]::HtmlEncode($Status.openClawStartupDetail) } else { 'Ignition will reuse a verified OpenClaw runtime or start approved local runtime surfaces only.' }
+  $trafficLight = if ($Status.trafficLight) { [System.Net.WebUtility]::HtmlEncode($Status.trafficLight) } else { 'blue' }
+  $progress = if ($Status.progressPercentage -ne $null) { [int]$Status.progressPercentage } else { 5 }
+  $enterLabel = if ($Status.enterStephanosEnabled) { 'Enter Stephanos' } else { 'Enter Stephanos locked until served proof passes' }
+  $proofCards = @('pull','build','verify','restart','servedRuntime','moduleMime') | ForEach-Object { "<div class='proof-card'><strong>$($_)</strong><br><span>$(if ($Status.proofSummary -and $Status.proofSummary.$_) { [System.Net.WebUtility]::HtmlEncode([string]$Status.proofSummary.$_) } else { 'pending' })</span></div>" }
+  $proofCardsHtml = $proofCards -join "`n"
   $json = [System.Net.WebUtility]::HtmlEncode(($Status | ConvertTo-Json -Depth 10))
   $html = @"
 <!doctype html>
 <meta charset="utf-8">
 <meta http-equiv="refresh" content="2">
 <title>Stephanos Ignition Status</title>
-<style>body{margin:0;background:#07111f;color:#e7f2ff;font-family:Segoe UI,Arial,sans-serif}main{max-width:1080px;margin:4vh auto;padding:32px;border:1px solid #1e4f7a;border-radius:18px;background:#0b1728}h1{margin-top:0}.pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#0e7a4f;color:#d8fff0;font-weight:700}.muted{color:#a7bdd4}code,pre{background:#111f33;padding:2px 6px;border-radius:6px}.stage-grid{display:grid;gap:10px;margin:22px 0}.stage{padding:12px 14px;border:1px solid #254766;border-radius:12px;background:#0f2036}.stage strong{display:block;color:#f5fbff}.stage em{color:#9ed8ff}.stage-complete{border-color:#247a55}.stage-active{border-color:#4eb3ff;box-shadow:0 0 0 1px #4eb3ff}.blocker{border:1px solid #7a3b1e;background:#2b160f;color:#ffd9c8;padding:12px;border-radius:12px}.proof{display:grid;gap:6px}.raw{white-space:pre-wrap;max-height:280px;overflow:auto}</style>
+<style>body{margin:0;background:#07111f;color:#e7f2ff;font-family:Segoe UI,Arial,sans-serif}main{max-width:1080px;margin:4vh auto;padding:32px;border:1px solid #1e4f7a;border-radius:18px;background:#0b1728}h1{margin-top:0}.pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#0e7a4f;color:#d8fff0;font-weight:700}.lights{display:flex;gap:8px;margin:14px 0}.light{width:18px;height:18px;border-radius:50%;background:#26384f;border:1px solid #5f7896}.light-green.active{background:#26d07c}.light-amber.active{background:#f5b942}.light-red.active{background:#ff5c5c}.light-blue.active{background:#4eb3ff}.progress{height:12px;background:#13243a;border-radius:999px;overflow:hidden}.bar{height:100%;background:linear-gradient(90deg,#4eb3ff,#26d07c)}.proof-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.proof-card{border:1px solid #254766;border-radius:12px;padding:10px;background:#0f2036}.muted{color:#a7bdd4}code,pre{background:#111f33;padding:2px 6px;border-radius:6px}.stage-grid{display:grid;gap:10px;margin:22px 0}.stage{padding:12px 14px;border:1px solid #254766;border-radius:12px;background:#0f2036}.stage strong{display:block;color:#f5fbff}.stage em{color:#9ed8ff}.stage-complete{border-color:#247a55}.stage-active{border-color:#4eb3ff;box-shadow:0 0 0 1px #4eb3ff}.blocker{border:1px solid #7a3b1e;background:#2b160f;color:#ffd9c8;padding:12px;border-radius:12px}.proof{display:grid;gap:6px}.raw{white-space:pre-wrap;max-height:280px;overflow:auto}</style>
 <main>
-  <span class="pill">$phase</span>
+  <span class="pill">$phase</span><div class="lights" aria-label="Traffic-light status"><span class="light light-green $(if ($trafficLight -eq 'green') { 'active' })"></span><span class="light light-amber $(if ($trafficLight -eq 'amber') { 'active' })"></span><span class="light light-red $(if ($trafficLight -eq 'red') { 'active' })"></span><span class="light light-blue $(if ($trafficLight -eq 'blue') { 'active' })"></span></div><div class="progress" aria-label="Ignition progress"><div class="bar" style="width:$progress%"></div></div>
   <h1>Stephanos is starting</h1>
   <p>$message</p>
   <p class="muted">Professional ignition is browser-first: detailed status, exact blockers, safe generated/runtime cleanup policy, and proof artifacts are visible before Stephanos opens.</p>
-  <section aria-label="Detailed ignition stages" class="stage-grid">$stageHtml</section>
+  <section aria-label="Detailed ignition stages" class="stage-grid">$stageHtml</section><section aria-label="Build verify pull restart serve proof cards" class="proof-cards">$proofCardsHtml</section><section aria-label="Enter Stephanos state" class="blocker"><strong>$enterLabel</strong></section>
   <section aria-label="OpenClaw startup status" class="blocker"><strong>OpenClaw startup:</strong> $openClawStartupState<br><strong>Detail:</strong> $openClawStartupDetail</section>
   <section class="blocker" aria-label="Blocker and operator action"><strong>Blocker:</strong> $blocker<br><strong>Next action:</strong> $next</section>
   <section class="proof" aria-label="Support snapshot and proof transcript">
@@ -217,7 +224,7 @@ function Update-IgnitionSplashScreen([object]$Status) {
 
 function New-IgnitionSplashScreen {
   Initialize-IgnitionProofWorkspace
-  Write-IgnitionStatus -Phase 'splash-shown' -Message 'Stephanos ignition splash/status screen is the primary UI.' -Extra @{ currentStage = 'finding-repo' }
+  Write-IgnitionStatus -Phase 'splash-shown' -Message 'Stephanos ignition splash/status screen is the primary UI.' -Extra @{ currentStage = 'source-update' }
   return $ignitionSplashPath
 }
 
