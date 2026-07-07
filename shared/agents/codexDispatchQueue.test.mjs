@@ -1,14 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import {
   CODEX_DISPATCH_QUEUE_SCHEMA_VERSION,
   CODEX_QUEUE_STATUS,
   buildCodexDispatchQueueContract,
   createCodexQueueRecord,
+  publishCodexQueueRecordToSharedWorkspace,
   transitionCodexQueueRecord,
   validateCodexQueueRecord,
 } from './codexDispatchQueue.mjs';
 
+const REPO_ROOT = resolve('.');
 const base = {
   issueNumber: 1292,
   branch: 'codex/issues-1292-1293-dispatch-queue',
@@ -84,4 +89,27 @@ test('bounded schema rejects extra fields and unsafe proof commands', () => {
 
   assert.deepEqual(record.requestedProofCommands, ['node --test shared/agents/codexDispatchQueue.test.mjs']);
   assert.equal(validateCodexQueueRecord(tampered).errors.includes('unbounded-schema'), true);
+});
+
+test('Shared Agent Workspace write/read and status publish stay in bounded temp workspace', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-codex-queue-workspace-test-'));
+  try {
+    const record = createCodexQueueRecord({
+      ...base,
+      createdAt: '2026-06-30T00:00:00Z',
+    });
+    const publication = await publishCodexQueueRecordToSharedWorkspace(root, record, { repoRoot: REPO_ROOT });
+
+    assert.equal(publication.ok, true);
+    assert.equal(publication.statusWrite.path.startsWith(root), true);
+    assert.equal(publication.eventAppend.path.startsWith(root), true);
+    const status = JSON.parse(await readFile(join(root, 'status', 'codex-dispatch-queue.json'), 'utf8'));
+    const events = (await readFile(join(root, 'events', 'codex-dispatch-queue.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(status.kind, 'stephanos.shared_workspace.status');
+    assert.equal(status.status, 'queued');
+    assert.equal(events.at(-1).kind, 'stephanos.shared_workspace.event');
+    assert.equal(events.at(-1).eventKind, 'codex-job-created');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
