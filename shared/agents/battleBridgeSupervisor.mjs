@@ -131,11 +131,22 @@ export function buildBattleBridgeSupervisorContract() {
       structuredContractsOnly: true,
       secretOutputAllowed: false,
       visiblePowerShellWallsAllowed: false,
+      runtimePublisherLoopAllowed: true,
+      minimumPublisherLoopIntervalMs: 30000,
     },
     workspaceRoutes: {
       status: 'status/battle-bridge-supervisor.json',
       events: 'events/battle-bridge-supervisor.ndjson',
       receipts: 'receipts/battle-bridge-supervisor-recovery.json',
+      publisherLoop: 'events/battle-bridge-publisher-loop.ndjson',
+      livePublisherStatus: 'status/battle-bridge-current.json',
+    },
+    startupPublisherIntegration: {
+      enabled: true,
+      integrationPoint: 'battle-bridge-supervisor-startup',
+      module: 'shared/agents/battleBridgePublisherLoop.mjs',
+      factory: 'createBattleBridgeSupervisorStartupPublisher',
+      stopContract: 'BATTLE_BRIDGE_PUBLISHER_LOOP_STOPPED',
     },
     finalVerdict: 'BATTLE_BRIDGE_SUPERVISOR_CONTRACT_READY',
   };
