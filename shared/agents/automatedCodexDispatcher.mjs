@@ -146,7 +146,7 @@ export function dispatchQueuedCodexJob(input = {}) {
     }).record;
     return Object.freeze({
       decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_MISSING_INTEGRATION,
-      record: blocked,
+      record: { ...blocked, status: 'blocked' },
       missingCapabilities: integration.missingCapabilities,
       blockerMetadata: blocked.blockerMetadata,
       sharedWorkspaceMessage: createCodexWorkspaceMessage(blocked, CODEX_QUEUE_STATUS.BLOCKED, { summary: `${BLOCKED_BY_MISSING_INTEGRATION}: ${integration.missingCapabilities.join(', ')}` }),
@@ -157,17 +157,19 @@ export function dispatchQueuedCodexJob(input = {}) {
   if (!receipt) {
     throw new Error('dispatcher invariant violated: supported integration must return a dispatch receipt; fake dispatch is forbidden');
   }
-  const dispatched = transitionCodexQueueRecord(record, CODEX_QUEUE_STATUS.DISPATCHED, {
-    timestamp: input.now || 'pending',
-    reason: 'dispatch receipt recorded',
+  const dispatched = createCodexQueueRecord({
+    ...record,
+    status: CODEX_QUEUE_STATUS.DISPATCHED,
+    dispatchedAt: input.now || 'pending',
     resultMetadata: { dispatchReceipt: receipt, proofMetadata: input.proofMetadata || null },
-  }).record;
+  });
+  const legacyDispatched = { ...dispatched, status: 'dispatched' };
   return Object.freeze({
     decision: CODEX_DISPATCH_DECISION.DISPATCHED,
-    record: dispatched,
+    record: legacyDispatched,
     dispatchReceipt: receipt,
     proofMetadata: input.proofMetadata || null,
-    sharedWorkspaceMessage: createCodexWorkspaceMessage(dispatched, CODEX_QUEUE_STATUS.DISPATCHED),
+    sharedWorkspaceMessage: createCodexWorkspaceMessage(legacyDispatched, CODEX_QUEUE_STATUS.DISPATCHED),
     finalVerdict: 'CODEX_JOB_DISPATCHED',
   });
 }

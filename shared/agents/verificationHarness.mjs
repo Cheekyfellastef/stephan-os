@@ -7,6 +7,7 @@ import {
   validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
+import { createCodexQueueRecordVerifierResult } from './codexDispatchQueue.mjs';
 
 export const VERIFICATION_HARNESS_SCHEMA_VERSION = 'verification-harness.v1';
 export const VERIFICATION_RESULT_KIND = 'stephanos.verification.result';
@@ -43,6 +44,7 @@ export const VERIFIER_TYPES = Object.freeze([
   'AgentCapabilityVerifier',
   'StaleCapabilityVerifier',
   'BattleBridgePreflightVerifier',
+  'CodexQueueRecordVerifier',
 ]);
 
 export const OPENCLAW_GATEWAY_VERDICTS = Object.freeze({
@@ -366,6 +368,7 @@ export const VerifierFactories = Object.freeze({
   CommandReceiptVerifier: (packet = {}, options = {}) => createCommandReceiptVerifierResult(packet, options),
   AgentCapabilityVerifier: (packet = {}, options = {}) => createAgentCapabilityVerifierResult(packet, options),
   StaleCapabilityVerifier: (packet = {}, options = {}) => createStaleCapabilityVerifierResult(packet, options),
+  CodexQueueRecordVerifier: (packet = {}, options = {}) => createCodexQueueRecordVerifierResult(packet, options),
 });
 
 export function createOpenClawGatewayVerifierResult(packet = {}, options = {}) {
