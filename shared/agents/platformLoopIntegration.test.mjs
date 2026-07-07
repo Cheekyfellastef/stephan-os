@@ -10,8 +10,7 @@ const servicePass = [
   { serviceId: 'backend', status: 'PASS' },
   { serviceId: 'openclaw-gateway', status: 'PASS' },
   { serviceId: 'stephanos-ui', status: 'PASS' },
-  { serviceId: 'mission-orchestrator-worker', status: 'PASS' },
-  { serviceId: 'shared-agent-workspace', status: 'PASS' },
+  { serviceId: 'mission-worker', status: 'PASS' },
 ];
 
 const ignitionReady = [
@@ -53,15 +52,15 @@ test('failed supervisor blocks with exact next action', () => {
   const snapshot = createPlatformLoopSnapshot({
     serviceProbes: [
       { serviceId: 'backend', status: 'PASS' },
-      { serviceId: 'mission-orchestrator-worker', status: 'FAIL' },
+      { serviceId: 'mission-worker', status: 'FAIL' },
     ],
     ignitionRoutes: ignitionReady,
     proofPassed: true,
   });
 
   assert.equal(snapshot.status, PLATFORM_LOOP_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION);
-  assert.equal(snapshot.supervisor.failedServiceIds.includes('mission-orchestrator-worker'), true);
-  assert.equal(snapshot.nextAction.includes('Run supervisor probes'), true);
+  assert.equal(snapshot.supervisor.failedServiceIds.includes('mission-worker'), true);
+  assert.equal(snapshot.nextAction.includes('structured health and recovery receipts'), true);
   assert.equal(snapshot.stephanosResponse.blockerState.length > 0, true);
 });
 
