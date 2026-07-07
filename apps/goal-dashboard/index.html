@@ -532,6 +532,14 @@
         </article>
       </section>
 
+      <section aria-labelledby="platform-title" data-testid="landing-goal-dashboard-live-wiring">
+        <div class="section-title">
+          <h2 id="platform-title">Live platform projection</h2>
+          <span>Shared Workspace · Queue/Dispatcher · Battle Bridge · OpenClaw ladder</span>
+        </div>
+        <div id="platform-grid" class="concierge-grid" aria-live="polite"></div>
+      </section>
+
       <section aria-labelledby="goals-title">
         <div class="section-title">
           <h2 id="goals-title">Active seeded goals</h2>
@@ -548,7 +556,8 @@
       </section>
     </main>
 
-    <script>
+    <script type="module">
+      import { buildLandingGoalDashboardProjection } from '../../shared/agents/landingGoalDashboardProjection.mjs';
       const proofSteps = [
         'goal created',
         'automation active',
@@ -663,6 +672,26 @@
       const actorOrder = ['Operator', 'ChatGPT', 'Codex', 'OpenClaw', 'Stephanos', 'Operator'];
 
       const grid = document.getElementById('goal-grid');
+      const platformGrid = document.getElementById('platform-grid');
+
+      function renderLandingPlatformProjection(projection = buildLandingGoalDashboardProjection()) {
+        if (!platformGrid) return;
+        platformGrid.textContent = '';
+        const cards = [
+          ['Source truth', projection.sourceTruth, projection.finalVerdict],
+          ['Queue / dispatcher', `${projection.queueDispatcher.dispatcherState} · queued ${projection.queueDispatcher.queueDepth} · current ${projection.queueDispatcher.currentJob}`, `capability ${projection.queueDispatcher.capabilityMode}`],
+          ['Battle Bridge supervisor', projection.battleBridgeSupervisor.overallState, projection.battleBridgeSupervisor.services.map((service) => `${service.serviceId}:${service.state}`).join(' · ')],
+          ['OpenClaw ladder', `can run ${projection.openClawCapabilityLadder.canRunNow.join(', ') || 'none'}`, `approval ${projection.openClawCapabilityLadder.needsApproval.join(', ') || 'none'} · blocked ${projection.openClawCapabilityLadder.blocked.join(', ') || 'none'}`],
+          ['Operator attention', projection.operatorAttention.exactNextAction, `approvals ${projection.operatorAttention.approvals.length} · local proof ${projection.operatorAttention.localProofNeeded.join(', ') || 'none'} · blockers ${projection.operatorAttention.blockers.join(', ') || 'none'}`],
+        ];
+        for (const [label, value, detail] of cards) {
+          const node = document.createElement('div');
+          const labelNode = document.createElement('span');
+          labelNode.textContent = label;
+          node.append(labelNode, String(value), document.createElement('br'), String(detail));
+          platformGrid.appendChild(node);
+        }
+      }
 
       function renderGoals(goalRecords = goals, sourceState = 'static-seed') {
         grid.textContent = '';
@@ -800,6 +829,7 @@
       }
 
 
+      renderLandingPlatformProjection();
       renderGoals(goals, 'static-seed');
       markStaticTelemetryFallback();
       fetchApprovedLiveTelemetry().then((feed) => {
