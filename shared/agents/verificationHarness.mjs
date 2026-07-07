@@ -1,4 +1,12 @@
 import { createSharedWorkspaceMessage } from './sharedAgentWorkspace.mjs';
+import {
+  appendWorkspaceJsonl,
+  createSharedWorkspaceEventRecord,
+  createSharedWorkspaceProofRecord,
+  createSharedWorkspaceStatusRecord,
+  validateSharedWorkspaceRecord,
+  writeAtomicJson,
+} from './sharedAgentWorkspaceStore.mjs';
 
 export const VERIFICATION_HARNESS_SCHEMA_VERSION = 'verification-harness.v1';
 export const VERIFICATION_RESULT_KIND = 'stephanos.verification.result';
@@ -8,6 +16,8 @@ export const BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND = 'node --test shared/agents/
 export const VERIFICATION_STATUS = Object.freeze({
   PASS: 'PASS',
   FAIL: 'FAIL',
+  OBSERVED: 'OBSERVED',
+  BLOCKED: 'BLOCKED',
 });
 
 export const VERIFIER_TYPES = Object.freeze([
@@ -27,6 +37,11 @@ export const VERIFIER_TYPES = Object.freeze([
   'RelayVerifier',
   'TailscaleVerifier',
   'SharedWorkspaceVerifier',
+  'WorkspaceRecordVerifier',
+  'ProofReferenceVerifier',
+  'CommandReceiptVerifier',
+  'AgentCapabilityVerifier',
+  'StaleCapabilityVerifier',
   'BattleBridgePreflightVerifier',
 ]);
 
@@ -104,8 +119,8 @@ function proofEvidence(label, value) {
 
 export function createVerifierResult(input = {}) {
   const evidence = sanitizeEvidence(input.evidence);
-  const requestedStatus = input.status === VERIFICATION_STATUS.PASS ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.FAIL;
-  const status = requestedStatus === VERIFICATION_STATUS.PASS && evidence.length === 0 ? VERIFICATION_STATUS.FAIL : requestedStatus;
+  const allowedStatus = Object.values(VERIFICATION_STATUS).includes(input.status) ? input.status : VERIFICATION_STATUS.FAIL;
+  const status = allowedStatus === VERIFICATION_STATUS.PASS && evidence.length === 0 ? VERIFICATION_STATUS.FAIL : allowedStatus;
   const checkId = safeId(input.checkId, 'verification-check');
   const exitCode = asInteger(input.exitCode, null);
   const commandOutputHash = asText(input.commandOutputHash, '');
@@ -120,7 +135,7 @@ export function createVerifierResult(input = {}) {
     status,
     target: safeField(input.target, 'unknown'),
     evidence,
-    reason: status === VERIFICATION_STATUS.PASS ? '' : safeField(input.reason, evidence.length === 0 ? 'verification evidence missing' : 'verification failed'),
+    reason: status === VERIFICATION_STATUS.PASS || status === VERIFICATION_STATUS.OBSERVED ? '' : safeField(input.reason, evidence.length === 0 ? 'verification evidence missing' : 'verification failed'),
     durationMs: Math.max(0, asInteger(input.durationMs, 0)),
     timestampUtc: safeField(input.timestampUtc, 'pending'),
     verifierVersion: safeField(input.verifierVersion, VERIFIER_RUNNER_VERSION),
@@ -138,9 +153,9 @@ export function validateVerifierResult(result = {}) {
   if (result.kind !== VERIFICATION_RESULT_KIND) errors.push('invalid-result-kind');
   if (!SAFE_ID_PATTERN.test(asText(result.checkId, ''))) errors.push('invalid-check-id');
   if (!VERIFIER_TYPES.includes(result.verifierType)) errors.push('invalid-verifier-type');
-  if (![VERIFICATION_STATUS.PASS, VERIFICATION_STATUS.FAIL].includes(result.status)) errors.push('invalid-status');
+  if (!Object.values(VERIFICATION_STATUS).includes(result.status)) errors.push('invalid-status');
   if (result.status === VERIFICATION_STATUS.PASS && asList(result.evidence).length === 0) errors.push('missing-success-evidence');
-  if (result.status === VERIFICATION_STATUS.FAIL && !asText(result.reason, '')) errors.push('missing-failure-reason');
+  if ([VERIFICATION_STATUS.FAIL, VERIFICATION_STATUS.BLOCKED].includes(result.status) && !asText(result.reason, '')) errors.push('missing-failure-reason');
   if (!asText(result.verifierVersion, '')) errors.push('missing-verifier-version');
   if (!asText(result.finalVerdict, '')) errors.push('missing-final-verdict');
   for (const line of asList(result.evidence)) {
@@ -157,7 +172,7 @@ export function validateVerifierResult(result = {}) {
 }
 
 export function projectVerificationWorkspaceMessage(input = {}) {
-  const status = input.status === VERIFICATION_STATUS.PASS ? 'VERIFIED' : 'BLOCKED';
+  const status = input.status === VERIFICATION_STATUS.PASS ? 'VERIFIED' : (input.status === VERIFICATION_STATUS.OBSERVED ? 'OBSERVED' : 'BLOCKED');
   return createSharedWorkspaceMessage({
     messageId: safeId(input.messageId, `${safeId(input.aggregateId || input.checkId, 'verification')}-proof`),
     timestampUtc: input.timestampUtc || 'pending',
@@ -178,9 +193,16 @@ export function projectVerificationWorkspaceMessage(input = {}) {
 export function aggregateVerificationResults(input = {}) {
   const checks = Array.isArray(input.checks) ? input.checks.map(createVerifierResult) : [];
   const validated = checks.map(validateVerifierResult);
-  const failedChecks = checks.filter((check, index) => check.status !== VERIFICATION_STATUS.PASS || !validated[index].valid);
-  const status = checks.length > 0 && failedChecks.length === 0 ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.FAIL;
-  const blockers = failedChecks.map((check) => check.reason || `${check.checkId} failed`);
+  const failedChecks = checks.filter((check, index) => !validated[index].valid || [VERIFICATION_STATUS.FAIL, VERIFICATION_STATUS.BLOCKED].includes(check.status));
+  let status = VERIFICATION_STATUS.FAIL;
+  const invalidChecks = checks.filter((check, index) => !validated[index].valid);
+  if (checks.length > 0 && invalidChecks.length === 0) {
+    if (checks.some((check) => check.status === VERIFICATION_STATUS.FAIL)) status = VERIFICATION_STATUS.FAIL;
+    else if (checks.some((check) => check.status === VERIFICATION_STATUS.BLOCKED)) status = VERIFICATION_STATUS.BLOCKED;
+    else if (checks.some((check) => check.status === VERIFICATION_STATUS.OBSERVED)) status = VERIFICATION_STATUS.OBSERVED;
+    else status = VERIFICATION_STATUS.PASS;
+  }
+  const blockers = failedChecks.map((check) => check.reason || `${check.checkId} ${check.status}`);
   const proofRefs = [...new Set(checks.flatMap((check) => check.proofRefs))];
   const aggregateId = safeId(input.aggregateId, 'verification-aggregate');
   const aggregate = {
@@ -188,17 +210,17 @@ export function aggregateVerificationResults(input = {}) {
     kind: 'stephanos.verification.aggregate',
     aggregateId,
     status,
-    overall: status === VERIFICATION_STATUS.PASS ? 'VERIFIED' : 'BLOCKED',
+    overall: status === VERIFICATION_STATUS.PASS ? 'VERIFIED' : (status === VERIFICATION_STATUS.OBSERVED ? 'OBSERVED' : 'BLOCKED'),
     checks,
     evidence: checks.map((check) => `${check.checkId}: ${check.status}`),
     proofRefs,
     blockers,
-    operatorNeeded: blockers.length > 0,
-    reason: status === VERIFICATION_STATUS.PASS ? '' : safeField(input.reason, `${failedChecks.length || 'unknown'} check(s) failed`),
+    operatorNeeded: [VERIFICATION_STATUS.FAIL, VERIFICATION_STATUS.BLOCKED].includes(status),
+    reason: [VERIFICATION_STATUS.PASS, VERIFICATION_STATUS.OBSERVED].includes(status) ? '' : safeField(input.reason, `${failedChecks.length || 'unknown'} check(s) failed`),
     durationMs: checks.reduce((total, check) => total + check.durationMs, 0),
     timestampUtc: safeField(input.timestampUtc, 'pending'),
     verifierVersion: VERIFIER_RUNNER_VERSION,
-    finalVerdict: status === VERIFICATION_STATUS.PASS ? 'VERIFICATION_HARNESS_PASS' : 'VERIFICATION_HARNESS_FAIL',
+    finalVerdict: status === VERIFICATION_STATUS.PASS ? 'VERIFICATION_HARNESS_PASS' : (status === VERIFICATION_STATUS.OBSERVED ? 'VERIFICATION_HARNESS_OBSERVED' : 'VERIFICATION_HARNESS_FAIL'),
   };
   aggregate.workspaceMessage = projectVerificationWorkspaceMessage({
     ...aggregate,
@@ -227,6 +249,107 @@ function packetVerifier({ verifierType, checkId, target, passField, evidenceFiel
   };
 }
 
+
+function resultFromValidation({ checkId, verifierType, target, validation, passVerdict, failVerdict, timestampUtc, evidence = [], proofRefs = [] }) {
+  const valid = validation?.valid === true;
+  return createVerifierResult({
+    checkId,
+    verifierType,
+    status: valid ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.BLOCKED,
+    target,
+    evidence: [...evidence, `valid=${valid}`, `errors=${(validation?.errors || []).join('|') || 'none'}`],
+    reason: valid ? '' : (validation?.refusalReason || validation?.errors?.[0] || `${checkId} blocked`),
+    timestampUtc,
+    finalVerdict: valid ? passVerdict : failVerdict,
+    proofRefs,
+  });
+}
+
+export function createWorkspaceRecordVerifierResult(packet = {}, options = {}) {
+  return resultFromValidation({
+    checkId: 'workspace-record-proof',
+    verifierType: 'WorkspaceRecordVerifier',
+    target: packet.target || 'shared-agent-workspace-record',
+    validation: validateSharedWorkspaceRecord(packet.record || packet, options),
+    passVerdict: 'WORKSPACE_RECORD_VERIFIER_PASS',
+    failVerdict: 'WORKSPACE_RECORD_VERIFIER_BLOCKED',
+    timestampUtc: options.timestampUtc || packet.timestampUtc || packet.record?.timestampUtc || 'pending',
+    evidence: [`recordKind=${packet.record?.kind || packet.kind || 'unknown'}`, `recordId=${packet.record?.recordId || packet.record?.proofId || packet.record?.statusId || packet.record?.agentId || 'unknown'}`],
+    proofRefs: packet.proofRefs || packet.record?.proofRefs || [],
+  });
+}
+
+export function createProofReferenceVerifierResult(packet = {}, options = {}) {
+  const refs = asList(packet.proofRefs || packet.refs);
+  const normalized = normalizeProofRefs(refs);
+  const valid = refs.length > 0 && refs.length === normalized.length;
+  return createVerifierResult({
+    checkId: 'proof-reference-proof',
+    verifierType: 'ProofReferenceVerifier',
+    status: valid ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.BLOCKED,
+    target: packet.target || 'shared-workspace-proof-refs',
+    evidence: [`refCount=${refs.length}`, `safeRefCount=${normalized.length}`],
+    reason: valid ? '' : 'proof references missing or unsafe',
+    timestampUtc: options.timestampUtc || packet.timestampUtc || 'pending',
+    finalVerdict: valid ? 'PROOF_REFERENCE_VERIFIER_PASS' : 'PROOF_REFERENCE_VERIFIER_BLOCKED',
+    proofRefs: normalized,
+  });
+}
+
+export function createCommandReceiptVerifierResult(packet = {}, options = {}) {
+  const receipt = packet.receipt || packet;
+  const hasIdentity = !!asText(receipt.receiptId || receipt.commandId, '');
+  const exitCode = asInteger(receipt.exitCode, null);
+  const hasHash = LOWERCASE_SHA256_PATTERN.test(asText(receipt.commandOutputHash || receipt.sha256, ''));
+  const arbitraryShellAllowed = receipt.arbitraryShellAllowed === true;
+  const valid = hasIdentity && exitCode !== null && hasHash && !arbitraryShellAllowed;
+  return createVerifierResult({
+    checkId: 'command-receipt-proof',
+    verifierType: 'CommandReceiptVerifier',
+    status: valid ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.BLOCKED,
+    target: receipt.commandId || receipt.receiptId || 'command-receipt',
+    evidence: [`receiptId=${receipt.receiptId || 'unknown'}`, `exitCode=${exitCode ?? 'unknown'}`, `outputHash=${hasHash ? 'sha256' : 'missing'}`, `arbitraryShellAllowed=${arbitraryShellAllowed}`],
+    reason: valid ? '' : 'command receipt missing identity exit code output hash or safe shell posture',
+    timestampUtc: options.timestampUtc || receipt.timestampUtc || 'pending',
+    finalVerdict: valid ? 'COMMAND_RECEIPT_VERIFIER_PASS' : 'COMMAND_RECEIPT_VERIFIER_BLOCKED',
+    proofRefs: receipt.proofRefs || [],
+    exitCode,
+    commandOutputHash: receipt.commandOutputHash || receipt.sha256 || '',
+  });
+}
+
+export function createAgentCapabilityVerifierResult(packet = {}, options = {}) {
+  const record = packet.record || packet.capability || packet;
+  return resultFromValidation({
+    checkId: 'agent-capability-proof',
+    verifierType: 'AgentCapabilityVerifier',
+    target: record.agentId || 'agent-capability',
+    validation: validateSharedWorkspaceRecord(record, options),
+    passVerdict: 'AGENT_CAPABILITY_VERIFIER_PASS',
+    failVerdict: 'AGENT_CAPABILITY_VERIFIER_BLOCKED',
+    timestampUtc: options.timestampUtc || record.timestampUtc || 'pending',
+    evidence: [`agentId=${record.agentId || 'unknown'}`, `mergeAuthority=${record.mergeAuthority === true}`, `arbitraryShellAllowed=${record.arbitraryShellAllowed === true}`, `mode=${record.mode || 'unknown'}`],
+    proofRefs: record.proofRefs || [],
+  });
+}
+
+export function createStaleCapabilityVerifierResult(packet = {}, options = {}) {
+  const record = packet.record || packet.capability || packet;
+  const validation = validateSharedWorkspaceRecord(record, options);
+  const valid = validation.valid && !validation.stale;
+  return createVerifierResult({
+    checkId: 'stale-capability-proof',
+    verifierType: 'StaleCapabilityVerifier',
+    status: valid ? VERIFICATION_STATUS.PASS : (validation.stale ? VERIFICATION_STATUS.OBSERVED : VERIFICATION_STATUS.BLOCKED),
+    target: record.agentId || 'agent-capability-staleness',
+    evidence: [`agentId=${record.agentId || 'unknown'}`, `classification=${validation.classification}`, `stale=${validation.stale}`],
+    reason: valid || validation.stale ? '' : (validation.refusalReason || 'capability record invalid'),
+    timestampUtc: options.timestampUtc || record.timestampUtc || 'pending',
+    finalVerdict: valid ? 'STALE_CAPABILITY_VERIFIER_PASS' : (validation.stale ? 'CAPABILITY_RECORD_STALE_OBSERVED' : 'STALE_CAPABILITY_VERIFIER_BLOCKED'),
+    proofRefs: record.proofRefs || [],
+  });
+}
+
 export const VerifierFactories = Object.freeze({
   GitVerifier: packetVerifier({ verifierType: 'GitVerifier', checkId: 'git-proof', target: 'repo-source', passField: 'repoClean', evidenceFields: ['repoExists', 'branch', 'head', 'originMain', 'repoClean', 'ahead', 'behind'], passVerdict: 'GIT_VERIFIER_PASS', failVerdict: 'GIT_VERIFIER_BLOCKED' }),
   BuildVerifier: packetVerifier({ verifierType: 'BuildVerifier', checkId: 'build-proof', target: 'source-build', passField: 'buildPassed', evidenceFields: ['buildPassed', 'script', 'artifactScope'], passVerdict: 'BUILD_VERIFIER_PASS', failVerdict: 'BUILD_VERIFIER_BLOCKED' }),
@@ -237,6 +360,12 @@ export const VerifierFactories = Object.freeze({
   PluginVerifier: packetVerifier({ verifierType: 'PluginVerifier', checkId: 'plugin-proof', target: 'plugin-runtime', passField: 'pluginRuntimePresent', evidenceFields: ['pluginRuntimePresent', 'targetPluginSourcePresent'], passVerdict: 'PLUGIN_VERIFIER_PASS', failVerdict: 'PLUGIN_VERIFIER_BLOCKED' }),
   TaskVerifier: packetVerifier({ verifierType: 'TaskVerifier', checkId: 'task-proof', target: 'stephanos-backend-task', passField: 'taskReady', evidenceFields: ['taskReady', 'stephanosBackendTask'], passVerdict: 'TASK_VERIFIER_PASS', failVerdict: 'TASK_VERIFIER_BLOCKED' }),
   OpenClawGatewayVerifier: (packet = {}, options = {}) => createOpenClawGatewayVerifierResult(packet, options),
+  SharedWorkspaceVerifier: (packet = {}, options = {}) => createWorkspaceRecordVerifierResult(packet, options),
+  WorkspaceRecordVerifier: (packet = {}, options = {}) => createWorkspaceRecordVerifierResult(packet, options),
+  ProofReferenceVerifier: (packet = {}, options = {}) => createProofReferenceVerifierResult(packet, options),
+  CommandReceiptVerifier: (packet = {}, options = {}) => createCommandReceiptVerifierResult(packet, options),
+  AgentCapabilityVerifier: (packet = {}, options = {}) => createAgentCapabilityVerifierResult(packet, options),
+  StaleCapabilityVerifier: (packet = {}, options = {}) => createStaleCapabilityVerifierResult(packet, options),
 });
 
 export function createOpenClawGatewayVerifierResult(packet = {}, options = {}) {
@@ -329,8 +458,43 @@ export function buildVerificationHarnessContract() {
     schemaVersion: VERIFICATION_HARNESS_SCHEMA_VERSION,
     contractKind: 'stephanos.verification.contract',
     allowedVerifierTypes: [...VERIFIER_TYPES],
+    resultStatuses: Object.values(VERIFICATION_STATUS),
+    sharedWorkspaceWriter: 'writeVerificationPacketToSharedWorkspace',
     resultFields: ['schemaVersion', 'kind', 'checkId', 'verifierType', 'status', 'target', 'evidence', 'reason', 'durationMs', 'timestampUtc', 'verifierVersion', 'finalVerdict', 'proofRefs', 'workspaceMessage'],
     guardrails: { arbitraryShellAllowed: false, arbitraryPowerShellAllowed: false, mutationAllowedByDefault: false, secretOutputAllowed: false, successWithoutEvidenceAllowed: false },
     finalVerdict: 'VERIFICATION_HARNESS_CONTRACT_READY',
   };
+}
+
+
+export async function writeVerificationPacketToSharedWorkspace(root, aggregate, options = {}) {
+  const timestampUtc = safeField(options.timestampUtc || aggregate.timestampUtc, 'pending');
+  const aggregateId = safeId(aggregate.aggregateId, 'verification-aggregate');
+  const proof = createSharedWorkspaceProofRecord({
+    proofId: `${aggregateId}-verification`,
+    timestampUtc,
+    status: aggregate.status,
+    summary: `${aggregateId} ${aggregate.overall}`,
+    refs: aggregate.proofRefs || [],
+  });
+  const status = createSharedWorkspaceStatusRecord({
+    statusId: `${aggregateId}-status`,
+    timestampUtc,
+    status: aggregate.overall,
+    summary: aggregate.reason || `${aggregateId} verification ${aggregate.overall}`,
+    proofRefs: [`proof/${aggregateId}-verification.json`, ...(aggregate.proofRefs || [])],
+  });
+  const event = createSharedWorkspaceEventRecord({
+    eventId: `${aggregateId}-event`,
+    timestampUtc,
+    eventKind: 'verification-result',
+    summary: `${aggregateId} verification packet emitted`,
+  });
+  const proofWrite = await writeAtomicJson(root, ['proof', `${aggregateId}-verification.json`], proof, options);
+  if (!proofWrite.ok) return { ok: false, reason: proofWrite.reason, proofWrite };
+  const statusWrite = await writeAtomicJson(root, ['status', `${aggregateId}-status.json`], status, options);
+  if (!statusWrite.ok) return { ok: false, reason: statusWrite.reason, proofWrite, statusWrite };
+  const eventWrite = await appendWorkspaceJsonl(root, ['events', 'verification-results.jsonl'], event, options);
+  if (!eventWrite.ok) return { ok: false, reason: eventWrite.reason, proofWrite, statusWrite, eventWrite };
+  return { ok: true, reason: 'VERIFICATION_PACKET_WRITTEN', proof, status, event, proofWrite, statusWrite, eventWrite };
 }
