@@ -524,7 +524,7 @@
       <section aria-labelledby="captains-bridge-title" data-testid="captains-bridge-panel">
         <div class="section-title">
           <h2 id="captains-bridge-title">Captain’s Bridge V1</h2>
-          <span>G10–G12 implemented · G13–G19 planned_guarded · read-only operator bridge</span>
+          <span>G10–G15 implemented_guarded · G16–G19 planned_guarded · read-only operator bridge</span>
         </div>
         <article class="concierge-card" aria-label="Captain’s Bridge read-only lane panel">
           <span class="badge active">Make Stephan the captain, not the click worker</span>
@@ -539,12 +539,20 @@
             <div class="captain-card"><span>Next action</span><b data-live-telemetry-field="captain-next-action">Load Build Lane Manager projection before claiming active lane truth.</b></div>
             <div class="captain-card"><span>Queue state</span><b data-live-telemetry-field="captain-queue-state">UNKNOWN</b></div>
             <div class="captain-card"><span>Merge readiness</span><b data-live-telemetry-field="captain-merge-readiness">HELD_UNKNOWN</b></div>
+            <div class="captain-card"><span>Build orchestration</span><b data-live-telemetry-field="captain-build-phase">NEXT_ACTION</b></div>
+            <div class="captain-card"><span>Merge pipeline</span><b data-live-telemetry-field="captain-merge-phase">PR</b></div>
+            <div class="captain-card"><span>Runtime health</span><b data-live-telemetry-field="captain-runtime-health">UNKNOWN</b></div>
+            <div class="captain-card"><span>Operator needed</span><b data-live-telemetry-field="captain-operator-needed">YES</b></div>
+            <div class="captain-card"><span>Exact next action</span><b data-live-telemetry-field="captain-exact-next-action">Load canonical projections before advancing.</b></div>
           </div>
           <ul class="concierge-roadmap" aria-label="Captain’s Bridge goals">
             <li><span>G10 Build Lane Manager</span>implemented_guarded: read-only worktree/branch/PR/head/proof/dirty/merge projection.</li>
             <li><span>G11 Live Goal Dashboard</span>implemented_guarded: Captain’s Bridge panel consumes canonical projections; no fake live proof.</li>
             <li><span>G12 Professional Ignition Cockpit</span>implemented_guarded: mission-control splash projection with Captain status and exact next action.</li>
-            <li><span>G13–G19</span>planned_guarded: Build Orchestrator, Merge Pipeline, Health Observatory, Timeline, Auto Discovery, Visual Mission Control, Self-Explaining Stephanos.</li>
+            <li><span>G13 Automatic Build Orchestrator</span>implemented_guarded: proposes and tracks deterministic lanes only; no automatic builds.</li>
+            <li><span>G14 Merge Pipeline</span>implemented_guarded: PR → proof → exact-head approval → merge receipt → main sync → ignition proof.</li>
+            <li><span>G15 Runtime Health Observatory</span>implemented_guarded: traffic-light runtime projection with freshness and exact next action.</li>
+            <li><span>G16–G19</span>planned_guarded: Timeline, Auto Discovery, Visual Mission Control, Self-Explaining Stephanos.</li>
           </ul>
         </article>
       </section>
@@ -753,7 +761,7 @@
           battleBridgeSupervisor: { overallState: 'UNKNOWN', services: [] },
           openClawCapabilityLadder: { canRunNow: [], needsApproval: [], blocked: ['UNKNOWN_CAPABILITY_RECORD'] },
           operatorAttention: { approvals: [], localProofNeeded: [], blockers: ['INITIAL_FEED_PENDING'], exactNextAction: 'Load the read-only Shared Workspace dashboard feed before claiming live platform state.' },
-          captainsBridge: { activeLane: null, currentPr: null, branch: 'UNKNOWN', exactHead: 'UNKNOWN', latestProof: 'UNKNOWN', blocker: 'BUILD_LANE_MANAGER_FEED_MISSING', nextAction: 'Load Build Lane Manager projection before claiming active lane truth.', queueState: 'UNKNOWN', mergeReadiness: 'HELD_UNKNOWN' },
+          captainsBridge: { activeLane: null, currentPr: null, branch: 'UNKNOWN', exactHead: 'UNKNOWN', latestProof: 'UNKNOWN', blocker: 'BUILD_LANE_MANAGER_FEED_MISSING', nextAction: 'Load Build Lane Manager projection before claiming active lane truth.', queueState: 'UNKNOWN', mergeReadiness: 'HELD_UNKNOWN', buildOrchestration: { phase: 'NEXT_ACTION' }, mergePipeline: { phase: 'PR' }, runtimeHealth: { overallTrafficLight: 'UNKNOWN', services: [] }, operatorNeeded: true, exactNextAction: 'Load canonical projections before advancing.' },
         };
       }
 
@@ -800,6 +808,11 @@
           'captain-next-action': bridge.nextAction || 'UNKNOWN',
           'captain-queue-state': bridge.queueState || 'UNKNOWN',
           'captain-merge-readiness': bridge.mergeReadiness || 'HELD_UNKNOWN',
+          'captain-build-phase': bridge.buildOrchestration?.phase || 'NEXT_ACTION',
+          'captain-merge-phase': bridge.mergePipeline?.phase || 'PR',
+          'captain-runtime-health': `${bridge.runtimeHealth?.overallTrafficLight || 'UNKNOWN'} · ${(bridge.runtimeHealth?.services || []).map((service) => `${service.serviceId}:${service.trafficLight}`).join(' · ') || 'no live records'}`,
+          'captain-operator-needed': bridge.operatorNeeded ? 'YES' : 'NO',
+          'captain-exact-next-action': bridge.exactNextAction || bridge.nextAction || 'UNKNOWN',
         };
         Object.entries(fields).forEach(([field, value]) => setTelemetryText(field, value));
       }
