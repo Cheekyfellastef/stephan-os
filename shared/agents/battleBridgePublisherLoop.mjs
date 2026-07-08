@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { resolveSharedWorkspacePath, appendWorkspaceJsonl } from './sharedAgentWorkspaceStore.mjs';
+import { validateExistingSharedWorkspaceRuntimeConfig } from './sharedWorkspaceRuntimeConfig.mjs';
 import {
   BATTLE_BRIDGE_PUBLISHER_SERVICES,
   BATTLE_BRIDGE_SERVICE_STATUS,
@@ -63,7 +64,12 @@ export function buildBattleBridgePublisherLoopContract(input = {}) {
 }
 
 export async function resolveExistingSharedWorkspace(root, options = {}) {
-  const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot });
+  const runtime = await validateExistingSharedWorkspaceRuntimeConfig({ root, repoRoot: options.repoRoot, env: options.env });
+  if (!runtime.ok) {
+    const reason = runtime.reason === 'STEPHANOS_SHARED_AGENT_WORKSPACE_PATH_MISSING' ? 'WORKSPACE_PATH_MISSING' : runtime.reason;
+    return workspaceUnavailableResult(reason, runtime.root || runtime.workspaceRoot || '');
+  }
+  const resolved = resolveSharedWorkspacePath({ root: runtime.root, repoRoot: options.repoRoot });
   if (!resolved.ok) return workspaceUnavailableResult(resolved.reason, resolved.path || '');
   try {
     const info = await stat(resolved.root);

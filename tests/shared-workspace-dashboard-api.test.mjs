@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharedWorkspaceRouter from '../stephanos-server/routes/shared-workspace.js';
 import { readBackendSharedWorkspaceDashboardFeed } from '../stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
@@ -20,6 +20,17 @@ test('backend dashboard feed adapter returns exact unavailable state without dum
   assert.equal(payload.workspaceRoot, 'UNKNOWN');
   assert.equal(payload.exactNextAction, 'Set STEPHANOS_SHARED_AGENT_WORKSPACE to an existing external Shared Agent Workspace directory, then restart Battle Bridge startup supervision.');
   assert.equal(JSON.stringify(payload).includes('SECRET'), false);
+});
+
+test('backend dashboard feed redacts missing configured workspace root', async () => {
+  const missingRoot = join(homedir(), 'Documents', `stephanos-missing-shared-workspace-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const payload = await readBackendSharedWorkspaceDashboardFeed({ env: { STEPHANOS_SHARED_AGENT_WORKSPACE: missingRoot }, repoRoot: process.cwd() });
+  const serialized = JSON.stringify(payload);
+  assert.equal(payload.state, 'unavailable');
+  assert.equal(payload.reason, 'STEPHANOS_SHARED_AGENT_WORKSPACE_PATH_MISSING');
+  assert.equal(payload.workspaceRoot, 'UNKNOWN');
+  assert.equal(serialized.includes(missingRoot), false);
+  assert.match(payload.safeWorkspaceRoot, /^~[\/]/);
 });
 
 test('backend dashboard feed route uses read-only adapter and maps unavailable to 503', async () => {
