@@ -144,8 +144,26 @@ function stopBackendPublisherLoop() {
   const result = battleBridgePublisherLoopHandle?.stop?.();
   if (result?.stopped) logger.info(`Battle Bridge publisher loop shutdown: ${result.finalVerdict}`);
 }
-process.once('SIGINT', () => { stopBackendPublisherLoop(); server.close(() => process.exit(0)); });
-process.once('SIGTERM', () => { stopBackendPublisherLoop(); server.close(() => process.exit(0)); });
+let shutdownStarted = false;
+function shutdownBackend(signal) {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  stopBackendPublisherLoop();
+  if (!server.listening) {
+    process.exit(0);
+    return;
+  }
+  server.close((error) => {
+    if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') {
+      logger.error(`Stephanos server shutdown failed after ${signal}.`, error);
+      process.exit(1);
+      return;
+    }
+    process.exit(0);
+  });
+}
+process.once('SIGINT', () => shutdownBackend('SIGINT'));
+process.once('SIGTERM', () => shutdownBackend('SIGTERM'));
 
 server.on('error', async (error) => {
   if (error?.code !== 'EADDRINUSE') {
