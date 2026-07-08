@@ -12,7 +12,7 @@ test('landing dashboard projection is read-only and shows unknowns without fake 
   assert.equal(projection.fakeLiveProofAllowed, false);
   assert.equal(projection.goals.length, 17);
   assert.deepEqual(projection.goals.map((goal) => goal.issue).slice(0, 7), ['#1290', '#1287', '#1291', '#1292', '#1293', '#1284', '#1286']);
-  assert.deepEqual(projection.captainsBridge.milestone.implementedGoals, ['G10', 'G11', 'G12']);
+  assert.deepEqual(projection.captainsBridge.milestone.implementedGoals, ['G10', 'G11', 'G12', 'G13', 'G14', 'G15']);
   assert.equal(projection.sourceTruth, 'UNKNOWN');
   assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
   assert.match(projection.operatorAttention.exactNextAction, /Publish or refresh missing Shared Workspace/);

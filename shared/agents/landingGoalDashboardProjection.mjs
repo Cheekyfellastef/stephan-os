@@ -2,6 +2,9 @@ import { CODEX_QUEUE_STATUS } from './codexDispatchQueue.mjs';
 import { createDispatcherDashboard } from './automatedCodexDispatcher.mjs';
 import { buildBattleBridgeServiceRegistry, BATTLE_BRIDGE_SERVICE_STATE } from './battleBridgeSupervisor.mjs';
 import { projectOpenClawOperatorAutomation } from './openClawCapabilityLadder.mjs';
+import { projectCaptainsBridgeBuildOrchestrator, CAPTAINS_BRIDGE_IMPLEMENTED_GUARDED, CAPTAINS_BRIDGE_PLANNED_GUARDED } from './captainsBridgeBuildOrchestrator.mjs';
+import { projectCaptainsBridgeMergePipeline } from './captainsBridgeMergePipeline.mjs';
+import { projectCaptainsBridgeRuntimeHealth } from './captainsBridgeRuntimeHealth.mjs';
 
 export const LANDING_GOAL_DASHBOARD_SCHEMA_VERSION = 'stephanos.landing-goal-dashboard-projection.v1';
 export const LANDING_DASHBOARD_GOALS = Object.freeze([
@@ -28,8 +31,8 @@ export const CAPTAINS_BRIDGE_MILESTONE = Object.freeze({
   id: 'captains-bridge-v1',
   title: "Captain's Bridge V1",
   goal: 'Make Stephan feel like the captain, not the click worker.',
-  implementedGoals: ['G10', 'G11', 'G12'],
-  plannedGoals: ['G13', 'G14', 'G15', 'G16', 'G17', 'G18', 'G19'],
+  implementedGoals: ['G10', 'G11', 'G12', ...CAPTAINS_BRIDGE_IMPLEMENTED_GUARDED],
+  plannedGoals: [...CAPTAINS_BRIDGE_PLANNED_GUARDED],
 });
 
 const UNKNOWN = 'UNKNOWN';
@@ -110,6 +113,9 @@ export function buildLandingGoalDashboardProjection(input = {}) {
   });
   const openClaw = input.openClawProjection || projectOpenClawOperatorAutomation({ timestampUtc: input.timestampUtc || 'pending' });
   const goals = LANDING_DASHBOARD_GOALS.map(([issue, title]) => cardFor(issue, title, { ...input, latest }, { nowMs, staleAfterMs }));
+  const buildOrchestration = projectCaptainsBridgeBuildOrchestrator({ ...input, dispatcherDashboard: dispatcher, battleBridgeSupervisor: { overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' } });
+  const mergePipeline = projectCaptainsBridgeMergePipeline(input.mergePipeline || input);
+  const runtimeHealth = projectCaptainsBridgeRuntimeHealth({ ...input, nowMs, staleAfterMs, supervisorHealthRecords: supervisorRecords });
   const captainBridge = Object.freeze({
     milestone: CAPTAINS_BRIDGE_MILESTONE,
     activeLane: input.buildLaneManager?.activeLane || null,
@@ -120,7 +126,12 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     blocker: input.buildLaneManager?.activeLane?.blocker || (input.buildLaneManager ? '' : 'BUILD_LANE_MANAGER_FEED_MISSING'),
     nextAction: input.buildLaneManager?.exactNextAction || 'Load Build Lane Manager projection before claiming active lane truth.',
     queueState: input.buildLaneManager?.queueState || dispatcher.dispatcherState || UNKNOWN,
-    mergeReadiness: input.buildLaneManager?.mergeReadiness || 'HELD_UNKNOWN',
+    mergeReadiness: input.buildLaneManager?.mergeReadiness || mergePipeline.phase || 'HELD_UNKNOWN',
+    buildOrchestration,
+    mergePipeline,
+    runtimeHealth,
+    operatorNeeded: buildOrchestration.signals.OPERATOR_NEEDED || mergePipeline.phase === 'EXACT_HEAD_APPROVAL' || runtimeHealth.overallTrafficLight !== 'GREEN',
+    exactNextAction: buildOrchestration.signals.OPERATOR_NEEDED ? buildOrchestration.exactNextAction : (mergePipeline.phase !== 'COMPLETE' ? mergePipeline.exactNextAction : runtimeHealth.exactNextAction),
     consumesSharedProjections: ['Shared Agent Workspace', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
   });
   const approvals = goals.filter((goal) => goal.issue === '#1286' || goal.issue === '#1293' || goal.blockers.some((blocker) => blocker.includes('UNKNOWN'))).map((goal) => `${goal.issue}: ${goal.exactNextAction}`);
