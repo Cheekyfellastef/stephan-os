@@ -51,14 +51,18 @@ export function projectIgnitionCockpit(input = {}) {
   let exactNextOperatorAction = input.exactNextOperatorAction || 'Wait for ignition to finish the current proof stage.';
   let readyToEnterStephanos = false;
 
+  let captainStatus = 'BUILDING';
   if (blocker) {
+    captainStatus = 'BLOCKED';
     trafficLight = TRAFFIC_LIGHT.RED;
     exactNextOperatorAction = input.exactNextOperatorAction || 'Resolve the blocker, then rerun npm run stephanos:ignite.';
   } else if (buildPassed && verifyPassed && servedProofReady) {
+    captainStatus = (input.sourceUpdateProof || input.sourceProof?.sourceUpdateProof || {}).runningLatestMain === true ? 'RUNNING LATEST MAIN' : 'READY TO ENTER';
     trafficLight = TRAFFIC_LIGHT.GREEN;
     readyToEnterStephanos = true;
     exactNextOperatorAction = 'Enter Stephanos.';
   } else if (buildPassed && verifyPassed && input.serverStarted === true) {
+    captainStatus = 'BUILDING';
     trafficLight = TRAFFIC_LIGHT.AMBER;
     exactNextOperatorAction = input.exactNextOperatorAction || 'Wait for served runtime proof, then hard-refresh only after marker and MIME proof pass.';
   }
@@ -74,6 +78,15 @@ export function projectIgnitionCockpit(input = {}) {
     lastCompletedAction: input.lastCompletedAction || lastCompleted?.label || 'None yet',
     blocker,
     exactNextOperatorAction,
+    captainStatus,
+    captainStatusSummary: {
+      status: captainStatus,
+      runningLatestMain: (input.sourceUpdateProof || input.sourceProof?.sourceUpdateProof || {}).runningLatestMain === true,
+      buildOutputDirty: (input.sourceUpdateProof || input.sourceProof?.sourceUpdateProof || {}).buildOutputDirty === true,
+      commitProof: String((input.sourceUpdateProof || input.sourceProof?.sourceUpdateProof || {}).localHeadAfter || input.sourceProof?.afterCommit || '').trim(),
+      runtimeProofReady: servedProofReady,
+      exactNextAction: exactNextOperatorAction,
+    },
     readyToEnterStephanos,
     enterStephanosEnabled: readyToEnterStephanos,
     proofSummary: {
