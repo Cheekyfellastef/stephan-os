@@ -4,6 +4,7 @@ import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { projectIgnitionCockpit } from './ignition-cockpit-model.mjs';
+import { projectGitBranchIntelligence } from './git-branch-intelligence.mjs';
 import { runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
 import {
   OPENCLAW_WORKSPACE_DIRT_PATHS,
@@ -255,6 +256,10 @@ function normalizeCaptureStdout(result) {
   return String(result?.stdout || '').trim();
 }
 
+function shortSha(value = '') {
+  return String(value || '').trim().slice(0, 12);
+}
+
 export function classifyPublicationTruth({
   branch,
   detachedHead = false,
@@ -394,6 +399,47 @@ export function evaluateGitPublicationTruthWithDeps({
     publicationSummary: classification.publicationSummary,
     operatorAction: classification.operatorAction,
     blockedForRemoteTruth: classification.blockedForRemoteTruth,
+  };
+}
+
+function dirtyPaths(entries = []) {
+  return entries.flatMap((entry) => entry.paths || []).filter(Boolean).sort();
+}
+
+export function projectIgnitionSourceUpdateProof({
+  localHeadBefore = '',
+  originMainHead = '',
+  localHeadAfter = '',
+  statusAssessment = evaluateGitStatusForIgnition(''),
+  error = '',
+} = {}) {
+  const sourceDirtyFiles = dirtyPaths(statusAssessment.meaningfulEntries);
+  const generatedDistDirtyFiles = dirtyPaths((statusAssessment.entries || []).filter((entry) => entry.category === 'approved-generated-dist'));
+  const hasKnownAfter = Boolean(localHeadAfter && localHeadAfter !== 'unknown');
+  const hasKnownOrigin = Boolean(originMainHead && originMainHead !== 'unknown');
+  let verdict = 'ERROR';
+  if (error) verdict = 'ERROR';
+  else if (sourceDirtyFiles.length > 0) verdict = 'BLOCKED_DIRTY_TREE';
+  else if (localHeadBefore && localHeadAfter && localHeadBefore !== localHeadAfter) verdict = 'UPDATED';
+  else if (hasKnownAfter && hasKnownOrigin && localHeadAfter === originMainHead) verdict = 'ALREADY_CURRENT';
+  else if (localHeadBefore && localHeadAfter && localHeadBefore === localHeadAfter) verdict = 'ALREADY_CURRENT';
+  return {
+    schema: 'stephanos.ignition-source-update-proof.v1',
+    localHeadBefore,
+    originMainHead,
+    localHeadAfter,
+    verdict,
+    runningLatestMain: Boolean(hasKnownAfter && hasKnownOrigin && localHeadAfter === originMainHead),
+    sourceClean: sourceDirtyFiles.length === 0,
+    buildOutputDirty: generatedDistDirtyFiles.length > 0,
+    dirtyFiles: {
+      source: sourceDirtyFiles,
+      generatedDist: generatedDistDirtyFiles,
+    },
+    exactBlocker: sourceDirtyFiles.length > 0 ? `Source dirty tree blocks pull: ${sourceDirtyFiles.join(', ')}` : (error || ''),
+    nextAction: sourceDirtyFiles.length > 0
+      ? 'Commit/stash/discard source dirt before ignition pull; generated dist dirt alone is build output, not source staleness.'
+      : (generatedDistDirtyFiles.length > 0 ? 'Continue source proof; regenerate or clean dist after source update proof completes.' : 'Continue ignition proof.'),
   };
 }
 
@@ -1276,6 +1322,10 @@ export function runGitPullPreflightWithDeps({
     }
     const publicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
     reportPublicationParity(publicationTruth, { label: 'publication parity (dirty working tree)', forceWarning: true });
+    console.error(`[IGNITION] source-update-proof=${JSON.stringify(projectIgnitionSourceUpdateProof({
+      statusAssessment,
+      error: 'BLOCKED_DIRTY_TREE',
+    }))}`);
     console.error('[IGNITION] git pull blocked');
     throw new Error('blocked for safety: local working tree is dirty. Commit/stash/discard local changes before ignition can pull latest remote changes.');
   }
@@ -1304,18 +1354,23 @@ export function runGitPullPreflightWithDeps({
 
   const prePullPublicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
   reportPublicationParity(prePullPublicationTruth, { label: 'publication parity (pre-pull)' });
+  console.log(`[IGNITION] git-branch-intelligence=${JSON.stringify(projectGitBranchIntelligence({
+    currentBranch: prePullPublicationTruth.branch,
+    upstreamBranch: prePullPublicationTruth.upstreamBranch,
+    hasUpstream: prePullPublicationTruth.hasUpstream,
+  }))}`);
   let currentCommit = 'unknown';
   try {
-    currentCommit = normalizeCaptureStdout(captureStep('git-current-commit', 'git', ['rev-parse', '--short', 'HEAD']));
+    currentCommit = normalizeCaptureStdout(captureStep('git-current-commit', 'git', ['rev-parse', 'HEAD']));
   } catch {
     currentCommit = 'unknown';
   }
   let originMainCommit = 'unknown';
   try {
-    originMainCommit = normalizeCaptureStdout(captureStep('git-origin-main-commit', 'git', ['rev-parse', '--short', 'origin/main']));
+    originMainCommit = normalizeCaptureStdout(captureStep('git-origin-main-commit', 'git', ['rev-parse', 'origin/main']));
   } catch {
     try {
-      originMainCommit = normalizeCaptureStdout(captureStep('git-upstream-commit', 'git', ['rev-parse', '--short', '@{u}']));
+      originMainCommit = normalizeCaptureStdout(captureStep('git-upstream-commit', 'git', ['rev-parse', '@{u}']));
     } catch {
       originMainCommit = 'unknown';
     }
@@ -1394,11 +1449,29 @@ export function runGitPullPreflightWithDeps({
   const postPullPublicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
   let afterCommit = currentCommit;
   try {
-    afterCommit = normalizeCaptureStdout(captureStep('git-current-commit-post-pull', 'git', ['rev-parse', '--short', 'HEAD']));
+    afterCommit = normalizeCaptureStdout(captureStep('git-current-commit-post-pull', 'git', ['rev-parse', 'HEAD']));
   } catch {
     afterCommit = currentCommit;
   }
-  const enrichedPublicationTruth = { ...postPullPublicationTruth, beforeCommit: currentCommit, afterCommit, pulledFromCommit: originMainCommit };
+  const sourceUpdateProof = projectIgnitionSourceUpdateProof({
+    localHeadBefore: currentCommit,
+    originMainHead: originMainCommit,
+    localHeadAfter: afterCommit,
+    statusAssessment,
+  });
+  console.log(`[IGNITION] source-update-proof=${JSON.stringify({
+    ...sourceUpdateProof,
+    localHeadBeforeShort: shortSha(sourceUpdateProof.localHeadBefore),
+    originMainHeadShort: shortSha(sourceUpdateProof.originMainHead),
+    localHeadAfterShort: shortSha(sourceUpdateProof.localHeadAfter),
+  })}`);
+  const enrichedPublicationTruth = {
+    ...postPullPublicationTruth,
+    beforeCommit: shortSha(currentCommit),
+    afterCommit: shortSha(afterCommit),
+    pulledFromCommit: shortSha(originMainCommit),
+    sourceUpdateProof,
+  };
   reportPublicationParity(enrichedPublicationTruth, { label: 'publication parity (post-pull)' });
   return enrichedPublicationTruth;
 }
@@ -2064,6 +2137,7 @@ export async function run() {
         verifyPassed: verifyResult === 'passed',
         serverStarted: restartReport.serverStarted === true,
         sourceProof: { beforeCommit: publicationTruth?.beforeCommit || null, afterCommit: publicationTruth?.afterCommit || expectedSourceCommit, originMainCommit, headPublished: publicationTruth?.headPublished ?? null, publicationState: publicationTruth?.publicationState || null, behindCount: publicationTruth?.behindCount ?? null },
+        sourceUpdateProof: publicationTruth?.sourceUpdateProof || null,
         servedProof: {
           healthProbePass: restartReport.serverStarted === true,
           runtimeMarkerMatches: restartReport.servedRuntimeMatchesExpectedDistMetadata === true,
@@ -2075,10 +2149,9 @@ export async function run() {
         },
         stages: [
           { id: 'source-update', label: 'Source update', status: 'complete', detail: `state=${publicationTruth?.publicationState || 'unknown'} behind=${publicationTruth?.behindCount ?? 'unknown'} before=${publicationTruth?.beforeCommit || 'unknown'} after=${publicationTruth?.afterCommit || expectedSourceCommit}` },
-          { id: 'build', label: 'Build', status: buildAction.startsWith('passed') ? 'passed' : 'pending', detail: buildAction },
+          { id: 'build-output', label: 'Build Output', status: buildAction.startsWith('passed') ? 'passed' : 'pending', detail: buildAction },
           { id: 'verify', label: 'Verify', status: verifyResult === 'passed' ? 'passed' : 'pending', detail: verifyResult },
-          { id: 'restart', label: 'Restart 4173', status: restartReport.serverStarted ? 'complete' : 'pending', detail: `previous=${restartReport.previousServerStatus}; stopped=${restartReport.serverStopped}; started=${restartReport.serverStarted}` },
-          { id: 'served-proof', label: 'Served runtime proof', status: restartReport.servedRuntimeMatchesExpectedDistMetadata ? 'passed' : 'pending', detail: `markerAndMime=${restartReport.servedRuntimeMatchesExpectedDistMetadata}; mime=${restartReport.moduleMimeChecksPass}` },
+          { id: 'runtime', label: 'Runtime', status: restartReport.servedRuntimeMatchesExpectedDistMetadata ? 'passed' : 'pending', detail: `restart=${restartReport.serverStarted}; markerAndMime=${restartReport.servedRuntimeMatchesExpectedDistMetadata}; mime=${restartReport.moduleMimeChecksPass}` },
         ],
       });
       const finalStatus = {
