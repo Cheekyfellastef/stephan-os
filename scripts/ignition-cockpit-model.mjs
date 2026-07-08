@@ -9,10 +9,9 @@ export const TRAFFIC_LIGHT = Object.freeze({
 
 export const DEFAULT_IGNITION_STAGES = Object.freeze([
   { id: 'source-update', label: 'Source update', weight: 15 },
-  { id: 'build', label: 'Build', weight: 20 },
+  { id: 'build-output', label: 'Build Output', weight: 20 },
   { id: 'verify', label: 'Verify', weight: 20 },
-  { id: 'restart', label: 'Restart 4173', weight: 15 },
-  { id: 'served-proof', label: 'Served runtime proof', weight: 30 },
+  { id: 'runtime', label: 'Runtime', weight: 45 },
 ]);
 
 const TERMINAL_PASS = new Set(['passed', 'complete', 'current', 'not-needed']);
@@ -40,7 +39,9 @@ export function projectIgnitionCockpit(input = {}) {
   const completeWeight = stages.reduce((sum, stage) => sum + (TERMINAL_PASS.has(stage.status) ? Math.max(0, stage.weight) : 0), 0);
   const progressPercentage = Math.min(100, Math.max(0, Math.round((completeWeight / totalWeight) * 100)));
   const blocker = input.blocker || stages.find((stage) => stage.trafficLight === TRAFFIC_LIGHT.RED)?.detail || '';
-  const buildPassed = input.buildPassed === true || TERMINAL_PASS.has(stages.find((stage) => stage.id === 'build')?.status);
+  const buildPassed = input.buildPassed === true
+    || TERMINAL_PASS.has(stages.find((stage) => stage.id === 'build')?.status)
+    || TERMINAL_PASS.has(stages.find((stage) => stage.id === 'build-output')?.status);
   const verifyPassed = input.verifyPassed === true || TERMINAL_PASS.has(stages.find((stage) => stage.id === 'verify')?.status);
   const servedProof = input.servedProof || {};
   const servedProofReady = servedProof.healthProbePass === true
@@ -77,6 +78,12 @@ export function projectIgnitionCockpit(input = {}) {
     enterStephanosEnabled: readyToEnterStephanos,
     proofSummary: {
       source: input.sourceProof || {},
+      sourceUpdate: input.sourceUpdateProof || input.sourceProof?.sourceUpdateProof || {},
+      runningLatestMain: (input.sourceUpdateProof || input.sourceProof?.sourceUpdateProof || {}).runningLatestMain === true,
+      commitShortSha: input.commitShortSha || String((input.sourceUpdateProof || input.sourceProof?.sourceUpdateProof || {}).localHeadAfter || input.sourceProof?.afterCommit || '').slice(0, 12),
+      prTitle: input.prTitle || input.gitBranchIntelligence?.associatedPr?.title || '',
+      exactBlocker: input.exactBlocker || (input.sourceUpdateProof || input.sourceProof?.sourceUpdateProof || {}).exactBlocker || blocker,
+      nextAction: exactNextOperatorAction,
       buildPassed,
       verifyPassed,
       serverStarted: input.serverStarted === true,

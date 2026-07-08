@@ -11,6 +11,8 @@ These platform goals source the next Stephanos/OpenClaw build sequence while pre
 | G5 | Real runtime telemetry enrichment | Queued | Add richer live runtime facts from canonical sources only. |
 | G6 | Goal dashboard realtime progress model | Queued | Model realtime progress while keeping static fallback as fallback only. |
 | G7 | Operator inbox | Queued | Add a read-only/operator-approved inbox flow for workspace attention items. |
+| G8 | Git Branch Intelligence | Implemented in this slice | Project current/upstream/remote branch truth, PR association, exact safe push advice, and blocked ambiguous destinations without auto-push. |
+| G9 | Ignition Source Update Proof | Implemented in this slice | Record local HEAD before update, origin/main HEAD, local HEAD after update, latest-main verdict, and separate source dirt from generated dist build-output dirt. |
 
 ## G1/G2 proof commands
 
@@ -23,6 +25,21 @@ node --test tests/goal-dashboard-live-telemetry.test.mjs
 node --test apps/goal-dashboard/*.test.mjs
 node --test shared/agents/*.test.mjs
 git diff --check
+```
+
+## G8/G9 proof commands
+
+```bash
+node --test scripts/*ignition*.test.mjs
+node --test scripts/*git*branch*.test.mjs
+node --test shared/agents/*.test.mjs
+git diff --check
+```
+
+Battle Bridge proof command:
+
+```bash
+npm run stephanos:ignite
 ```
 
 ## Runtime safety boundary

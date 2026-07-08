@@ -18,6 +18,7 @@ import {
   evaluateOpenClawStartupConnectRecoveryWithDeps,
   evaluateGitPublicationTruthWithDeps,
   evaluateGitStatusForIgnition,
+  projectIgnitionSourceUpdateProof,
   ensureLocalStaticServerRestartWithDeps,
   isGitWorkingTreeClean,
   isMainModule,
@@ -1679,4 +1680,49 @@ test('dist freshness compares served commit to current HEAD before origin main',
   assert.equal(staleDist.ignitionStatus, 'BLOCKED');
   assert.equal(staleDist.expectedSourceCommit, 'feature123');
   assert.equal(staleDist.servedCommit, 'main999');
+});
+
+test('G9 source already current reports ALREADY_CURRENT and latest main yes', () => {
+  const proof = projectIgnitionSourceUpdateProof({
+    localHeadBefore: '3fc4fdf1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    originMainHead: '3fc4fdf1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    localHeadAfter: '3fc4fdf1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    statusAssessment: evaluateGitStatusForIgnition(''),
+  });
+  assert.equal(proof.verdict, 'ALREADY_CURRENT');
+  assert.equal(proof.runningLatestMain, true);
+});
+
+test('G9 source updated reports UPDATED with before origin after proof', () => {
+  const proof = projectIgnitionSourceUpdateProof({
+    localHeadBefore: '1111111111111111111111111111111111111111',
+    originMainHead: '2222222222222222222222222222222222222222',
+    localHeadAfter: '2222222222222222222222222222222222222222',
+    statusAssessment: evaluateGitStatusForIgnition(''),
+  });
+  assert.equal(proof.verdict, 'UPDATED');
+  assert.equal(proof.runningLatestMain, true);
+});
+
+test('G9 dirty source blocks pull proof', () => {
+  const proof = projectIgnitionSourceUpdateProof({
+    statusAssessment: evaluateGitStatusForIgnition(' M scripts/ignite-stephanos-local.mjs\n'),
+  });
+  assert.equal(proof.verdict, 'BLOCKED_DIRTY_TREE');
+  assert.deepEqual(proof.dirtyFiles.source, ['scripts/ignite-stephanos-local.mjs']);
+  assert.match(proof.exactBlocker, /Source dirty tree blocks pull/);
+});
+
+test('G9 generated dist dirtiness does not falsely imply source stale', () => {
+  const proof = projectIgnitionSourceUpdateProof({
+    localHeadBefore: '3fc4fdf1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    originMainHead: '3fc4fdf1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    localHeadAfter: '3fc4fdf1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    statusAssessment: evaluateGitStatusForIgnition(' M apps/stephanos/dist/index.html\n?? apps/stephanos/dist/assets/new.js\n'),
+  });
+  assert.equal(proof.verdict, 'ALREADY_CURRENT');
+  assert.equal(proof.sourceClean, true);
+  assert.equal(proof.buildOutputDirty, true);
+  assert.deepEqual(proof.dirtyFiles.source, []);
+  assert.deepEqual(proof.dirtyFiles.generatedDist, ['apps/stephanos/dist/assets/new.js', 'apps/stephanos/dist/index.html']);
 });

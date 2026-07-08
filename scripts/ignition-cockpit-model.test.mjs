@@ -35,3 +35,24 @@ test('stage progress is weighted and tracks transitions', () => {
   assert.equal(cockpit.currentAction, 'Build');
   assert.equal(cockpit.lastCompletedAction, 'Source update');
 });
+
+test('splash renders latest-main proof visibly with traffic-light stages', () => {
+  const cockpit = projectIgnitionCockpit({
+    buildPassed: true,
+    verifyPassed: true,
+    serverStarted: true,
+    servedProof: goodProof,
+    sourceUpdateProof: {
+      verdict: 'UPDATED',
+      runningLatestMain: true,
+      localHeadAfter: '3fc4fdf1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      exactBlocker: '',
+    },
+    gitBranchIntelligence: { associatedPr: { title: 'Repair shared workspace API test isolation' } },
+  });
+  assert.equal(cockpit.proofSummary.runningLatestMain, true);
+  assert.equal(cockpit.proofSummary.commitShortSha, '3fc4fdf1aaaa');
+  assert.equal(cockpit.proofSummary.prTitle, 'Repair shared workspace API test isolation');
+  assert.deepEqual(cockpit.stages.map((stage) => stage.label), ['Source update', 'Build Output', 'Verify', 'Runtime']);
+  assert.ok(cockpit.stages.every((stage) => ['green', 'amber', 'red', 'blue'].includes(stage.trafficLight)));
+});
