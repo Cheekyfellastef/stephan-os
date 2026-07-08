@@ -2,8 +2,8 @@ import { CODEX_QUEUE_STATUS } from './codexDispatchQueue.mjs';
 
 export const CAPTAINS_BRIDGE_ORCHESTRATOR_SCHEMA_VERSION = 'stephanos.captains-bridge-build-orchestrator.v1';
 export const CAPTAINS_BRIDGE_GOALS = Object.freeze(['G13', 'G14', 'G15', 'G16', 'G17', 'G18', 'G19']);
-export const CAPTAINS_BRIDGE_IMPLEMENTED_GUARDED = Object.freeze(['G13', 'G14', 'G15']);
-export const CAPTAINS_BRIDGE_PLANNED_GUARDED = Object.freeze(['G16', 'G17', 'G18', 'G19']);
+export const CAPTAINS_BRIDGE_IMPLEMENTED_GUARDED = Object.freeze(['G13', 'G14', 'G15', 'G16', 'G17', 'G18', 'G19']);
+export const CAPTAINS_BRIDGE_PLANNED_GUARDED = Object.freeze([]);
 
 const TERMINAL = new Set([CODEX_QUEUE_STATUS.SUCCEEDED, CODEX_QUEUE_STATUS.BLOCKED, CODEX_QUEUE_STATUS.FAILED]);
 const UNKNOWN = 'UNKNOWN';

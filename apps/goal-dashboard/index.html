@@ -524,7 +524,7 @@
       <section aria-labelledby="captains-bridge-title" data-testid="captains-bridge-panel">
         <div class="section-title">
           <h2 id="captains-bridge-title">Captain’s Bridge V1</h2>
-          <span>G10–G15 implemented_guarded · G16–G19 planned_guarded · read-only operator bridge</span>
+          <span>G10–G19 implemented_guarded · Captain’s Bridge V1 complete_guarded · read-only operator bridge</span>
         </div>
         <article class="concierge-card" aria-label="Captain’s Bridge read-only lane panel">
           <span class="badge active">Make Stephan the captain, not the click worker</span>
@@ -544,6 +544,9 @@
             <div class="captain-card"><span>Runtime health</span><b data-live-telemetry-field="captain-runtime-health">UNKNOWN</b></div>
             <div class="captain-card"><span>Operator needed</span><b data-live-telemetry-field="captain-operator-needed">YES</b></div>
             <div class="captain-card"><span>Exact next action</span><b data-live-telemetry-field="captain-exact-next-action">Load canonical projections before advancing.</b></div>
+            <div class="captain-card"><span>Captain status banner</span><b data-live-telemetry-field="captain-status-banner">Captain’s Bridge V1 complete_guarded · no fake proof · no shell mutation</b></div>
+            <div class="captain-card"><span>Runtime health lights</span><b data-live-telemetry-field="captain-runtime-lights">UNKNOWN</b></div>
+            <div class="captain-card"><span>Merge visual steps</span><b data-live-telemetry-field="captain-merge-steps">PR → PROOF → APPROVAL → MERGE → MAIN_SYNC → IGNITION</b></div>
           </div>
           <ul class="concierge-roadmap" aria-label="Captain’s Bridge goals">
             <li><span>G10 Build Lane Manager</span>implemented_guarded: read-only worktree/branch/PR/head/proof/dirty/merge projection.</li>
@@ -552,8 +555,20 @@
             <li><span>G13 Automatic Build Orchestrator</span>implemented_guarded: proposes and tracks deterministic lanes only; no automatic builds.</li>
             <li><span>G14 Merge Pipeline</span>implemented_guarded: PR → proof → exact-head approval → merge receipt → main sync → ignition proof.</li>
             <li><span>G15 Runtime Health Observatory</span>implemented_guarded: traffic-light runtime projection with freshness and exact next action.</li>
-            <li><span>G16–G19</span>planned_guarded: Timeline, Auto Discovery, Visual Mission Control, Self-Explaining Stephanos.</li>
+            <li><span>G16 Operator Timeline</span>implemented_guarded: chronological read-only ship’s log with proof refs and exact next action.</li>
+            <li><span>G17 Workspace Auto Discovery</span>implemented_guarded: classifies active, proof-ready, blocked, merged, stale, orphaned, and unknown lanes without cleanup mutation.</li>
+            <li><span>G18 Visual Mission Control</span>implemented_guarded: timeline panel, workspace lane map, runtime lights, merge steps, orchestration status, and captain banner.</li>
+            <li><span>G19 Self-Explaining Stephanos</span>implemented_guarded: First Officer Briefing answers what, why, proof, blockers, operator need, next, and stopped-state.</li>
+            <li><span>Captain’s Bridge V1</span>complete_guarded: read-only command visibility with no arbitrary shell, auto-push, auto-merge, branch deletion, hard reset, restarts, process killing, secret dumping, or fake proof.</li>
           </ul>
+          <div class="captain-grid" aria-label="First Officer Briefing" data-testid="first-officer-briefing">
+            <div class="captain-card"><span>First Officer Briefing · What am I doing?</span><b data-live-telemetry-field="first-officer-doing">Projecting Captain’s Bridge state.</b></div>
+            <div class="captain-card"><span>Why?</span><b data-live-telemetry-field="first-officer-why">Show what happened, what is happening, what is next, and why.</b></div>
+            <div class="captain-card"><span>Proof</span><b data-live-telemetry-field="first-officer-proof">No fake live proof; canonical proof refs only.</b></div>
+            <div class="captain-card"><span>Blocked</span><b data-live-telemetry-field="first-officer-blocked">Unknown until projections load.</b></div>
+            <div class="captain-card"><span>Need from Stephan</span><b data-live-telemetry-field="first-officer-need">Review exact next action and approval holds.</b></div>
+            <div class="captain-card"><span>If stopped now</span><b data-live-telemetry-field="first-officer-stopped">Read-only projection; no mutation has been performed.</b></div>
+          </div>
         </article>
       </section>
 
@@ -761,7 +776,7 @@
           battleBridgeSupervisor: { overallState: 'UNKNOWN', services: [] },
           openClawCapabilityLadder: { canRunNow: [], needsApproval: [], blocked: ['UNKNOWN_CAPABILITY_RECORD'] },
           operatorAttention: { approvals: [], localProofNeeded: [], blockers: ['INITIAL_FEED_PENDING'], exactNextAction: 'Load the read-only Shared Workspace dashboard feed before claiming live platform state.' },
-          captainsBridge: { activeLane: null, currentPr: null, branch: 'UNKNOWN', exactHead: 'UNKNOWN', latestProof: 'UNKNOWN', blocker: 'BUILD_LANE_MANAGER_FEED_MISSING', nextAction: 'Load Build Lane Manager projection before claiming active lane truth.', queueState: 'UNKNOWN', mergeReadiness: 'HELD_UNKNOWN', buildOrchestration: { phase: 'NEXT_ACTION' }, mergePipeline: { phase: 'PR' }, runtimeHealth: { overallTrafficLight: 'UNKNOWN', services: [] }, operatorNeeded: true, exactNextAction: 'Load canonical projections before advancing.' },
+          captainsBridge: { activeLane: null, currentPr: null, branch: 'UNKNOWN', exactHead: 'UNKNOWN', latestProof: 'UNKNOWN', blocker: 'BUILD_LANE_MANAGER_FEED_MISSING', nextAction: 'Load Build Lane Manager projection before claiming active lane truth.', queueState: 'UNKNOWN', mergeReadiness: 'HELD_UNKNOWN', buildOrchestration: { phase: 'NEXT_ACTION' }, mergePipeline: { phase: 'PR' }, runtimeHealth: { overallTrafficLight: 'UNKNOWN', services: [] }, operatorTimeline: { events: [] }, workspaceDiscovery: { workspaces: [] }, firstOfficerBriefing: { questions: {} }, operatorNeeded: true, exactNextAction: 'Load canonical projections before advancing.' },
         };
       }
 
@@ -811,6 +826,15 @@
           'captain-build-phase': bridge.buildOrchestration?.phase || 'NEXT_ACTION',
           'captain-merge-phase': bridge.mergePipeline?.phase || 'PR',
           'captain-runtime-health': `${bridge.runtimeHealth?.overallTrafficLight || 'UNKNOWN'} · ${(bridge.runtimeHealth?.services || []).map((service) => `${service.serviceId}:${service.trafficLight}`).join(' · ') || 'no live records'}`,
+          'captain-runtime-lights': `${bridge.runtimeHealth?.overallTrafficLight || 'UNKNOWN'} traffic light`,
+          'captain-merge-steps': (bridge.visualMissionControl?.mergePipelineSteps || ['PR','PROOF','EXACT_HEAD_APPROVAL','MERGE_RECEIPT','MAIN_SYNC','IGNITION_PROOF']).join(' → '),
+          'captain-status-banner': bridge.visualMissionControl?.captainStatusBanner || 'Captain’s Bridge V1 complete_guarded',
+          'first-officer-doing': bridge.firstOfficerBriefing?.questions?.whatAmIDoing || 'Projecting Captain’s Bridge state.',
+          'first-officer-why': bridge.firstOfficerBriefing?.questions?.whyAmIDoingIt || 'Show what happened, what is happening, what is next, and why.',
+          'first-officer-proof': Array.isArray(bridge.firstOfficerBriefing?.questions?.whatProofDoIHave) ? bridge.firstOfficerBriefing.questions.whatProofDoIHave.join(' · ') : 'No fake live proof; canonical proof refs only.',
+          'first-officer-blocked': Array.isArray(bridge.firstOfficerBriefing?.questions?.whatIsBlocked) ? bridge.firstOfficerBriefing.questions.whatIsBlocked.join(' · ') : 'Unknown until projections load.',
+          'first-officer-need': bridge.firstOfficerBriefing?.questions?.whatDoINeedFromStephan || 'Review exact next action and approval holds.',
+          'first-officer-stopped': bridge.firstOfficerBriefing?.questions?.ifStoppedNow || 'Read-only projection; no mutation has been performed.',
           'captain-operator-needed': bridge.operatorNeeded ? 'YES' : 'NO',
           'captain-exact-next-action': bridge.exactNextAction || bridge.nextAction || 'UNKNOWN',
         };

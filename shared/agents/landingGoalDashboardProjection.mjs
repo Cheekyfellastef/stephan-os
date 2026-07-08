@@ -5,6 +5,9 @@ import { projectOpenClawOperatorAutomation } from './openClawCapabilityLadder.mj
 import { projectCaptainsBridgeBuildOrchestrator, CAPTAINS_BRIDGE_IMPLEMENTED_GUARDED, CAPTAINS_BRIDGE_PLANNED_GUARDED } from './captainsBridgeBuildOrchestrator.mjs';
 import { projectCaptainsBridgeMergePipeline } from './captainsBridgeMergePipeline.mjs';
 import { projectCaptainsBridgeRuntimeHealth } from './captainsBridgeRuntimeHealth.mjs';
+import { projectOperatorTimeline } from './operatorTimeline.mjs';
+import { projectWorkspaceAutoDiscovery } from './workspaceAutoDiscovery.mjs';
+import { projectSelfExplainingStephanos } from './selfExplainingStephanos.mjs';
 
 export const LANDING_GOAL_DASHBOARD_SCHEMA_VERSION = 'stephanos.landing-goal-dashboard-projection.v1';
 export const LANDING_DASHBOARD_GOALS = Object.freeze([
@@ -33,6 +36,7 @@ export const CAPTAINS_BRIDGE_MILESTONE = Object.freeze({
   goal: 'Make Stephan feel like the captain, not the click worker.',
   implementedGoals: ['G10', 'G11', 'G12', ...CAPTAINS_BRIDGE_IMPLEMENTED_GUARDED],
   plannedGoals: [...CAPTAINS_BRIDGE_PLANNED_GUARDED],
+  status: 'complete_guarded',
 });
 
 const UNKNOWN = 'UNKNOWN';
@@ -116,6 +120,9 @@ export function buildLandingGoalDashboardProjection(input = {}) {
   const buildOrchestration = projectCaptainsBridgeBuildOrchestrator({ ...input, dispatcherDashboard: dispatcher, battleBridgeSupervisor: { overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' } });
   const mergePipeline = projectCaptainsBridgeMergePipeline(input.mergePipeline || input);
   const runtimeHealth = projectCaptainsBridgeRuntimeHealth({ ...input, nowMs, staleAfterMs, supervisorHealthRecords: supervisorRecords });
+  const operatorTimeline = projectOperatorTimeline({ ...input, timestampUtc: input.timestampUtc, buildLaneManager: input.buildLaneManager, mergePipeline, runtimeHealth, openClawProjection: openClaw });
+  const workspaceDiscovery = projectWorkspaceAutoDiscovery({ ...input, nowMs, staleAfterMs });
+  const firstOfficerBriefing = projectSelfExplainingStephanos({ buildOrchestration, mergePipeline, runtimeHealth, timeline: operatorTimeline, workspaceDiscovery });
   const captainBridge = Object.freeze({
     milestone: CAPTAINS_BRIDGE_MILESTONE,
     activeLane: input.buildLaneManager?.activeLane || null,
@@ -130,6 +137,10 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     buildOrchestration,
     mergePipeline,
     runtimeHealth,
+    operatorTimeline,
+    workspaceDiscovery,
+    firstOfficerBriefing,
+    visualMissionControl: Object.freeze({ timelinePanel: true, workspaceLaneMap: true, runtimeHealthLights: true, mergePipelineSteps: ['PR','PROOF','EXACT_HEAD_APPROVAL','MERGE_RECEIPT','MAIN_SYNC','IGNITION_PROOF','COMPLETE'], orchestrationStatus: buildOrchestration.phase, captainStatusBanner: firstOfficerBriefing.finalVerdict }),
     operatorNeeded: buildOrchestration.signals.OPERATOR_NEEDED || mergePipeline.phase === 'EXACT_HEAD_APPROVAL' || runtimeHealth.overallTrafficLight !== 'GREEN',
     exactNextAction: buildOrchestration.signals.OPERATOR_NEEDED ? buildOrchestration.exactNextAction : (mergePipeline.phase !== 'COMPLETE' ? mergePipeline.exactNextAction : runtimeHealth.exactNextAction),
     consumesSharedProjections: ['Shared Agent Workspace', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
