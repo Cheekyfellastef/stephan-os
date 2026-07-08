@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
+import { resolveSharedWorkspaceRuntimeConfig } from './sharedWorkspaceRuntimeConfig.mjs';
 import {
   SHARED_WORKSPACE_DIRECTORIES,
   createSharedWorkspaceMessage,
@@ -67,18 +67,38 @@ function safeId(value) {
   return SAFE_SEGMENT.test(text(value)) ? text(value) : '';
 }
 
+function mapRuntimePathReason(reason) {
+  if (reason === 'STEPHANOS_SHARED_AGENT_WORKSPACE_PATH_INSIDE_REPOSITORY') return 'WORKSPACE_PATH_INSIDE_REPOSITORY';
+  if (reason === 'STEPHANOS_SHARED_AGENT_WORKSPACE_PATH_MISSING') return 'WORKSPACE_PATH_MISSING';
+  if (reason === 'SHARED_WORKSPACE_PATH_UNCONFIGURED') return 'WORKSPACE_PATH_UNCONFIGURED';
+  if (reason === 'STEPHANOS_SHARED_AGENT_WORKSPACE_PATH_NOT_DIRECTORY') return 'WORKSPACE_PATH_NOT_DIRECTORY';
+  return 'UNSAFE_WORKSPACE_PATH';
+}
+
 export function resolveSharedWorkspacePath(input = {}) {
-  const rootInput = text(input.root || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE || getDefaultSharedWorkspaceRoot(input));
-  if (!rootInput || rootInput.includes('\0')) return { ok: false, reason: 'UNSAFE_WORKSPACE_PATH', path: '' };
-  if (/%[A-Z_]+%/i.test(rootInput)) return { ok: false, reason: 'WORKSPACE_PATH_MISSING', path: '' };
-  const root = resolve(rootInput);
-  const repoRoot = input.repoRoot ? resolve(input.repoRoot) : process.cwd();
-  if (isWithin(repoRoot, root)) return { ok: false, reason: 'WORKSPACE_PATH_INSIDE_REPOSITORY', path: root };
+  const runtime = resolveSharedWorkspaceRuntimeConfig({
+    root: input.root,
+    env: input.env,
+    repoRoot: input.repoRoot,
+  });
+  if (!runtime.ok) {
+    return {
+      ok: false,
+      reason: mapRuntimePathReason(runtime.reason),
+      path: '',
+      root: '',
+      safeDisplayPath: runtime.safeDisplayPath || 'UNKNOWN',
+      exactNextAction: runtime.exactNextAction,
+    };
+  }
+  const root = runtime.root;
   const segments = Array.isArray(input.segments) ? input.segments : [];
-  if (segments.some((segment) => !SAFE_SEGMENT.test(text(segment)))) return { ok: false, reason: 'UNSAFE_WORKSPACE_PATH', path: root };
+  if (segments.some((segment) => !SAFE_SEGMENT.test(text(segment)))) {
+    return { ok: false, reason: 'UNSAFE_WORKSPACE_PATH', path: '', root: '', safeDisplayPath: 'UNKNOWN' };
+  }
   const target = resolve(root, ...segments.map(String));
-  if (!isWithin(root, target)) return { ok: false, reason: 'UNSAFE_WORKSPACE_PATH', path: target };
-  return { ok: true, reason: 'WORKSPACE_PATH_RESOLVED', root, path: target };
+  if (!isWithin(root, target)) return { ok: false, reason: 'UNSAFE_WORKSPACE_PATH', path: '', root: '', safeDisplayPath: 'UNKNOWN' };
+  return { ok: true, reason: 'WORKSPACE_PATH_RESOLVED', root, path: target, safeDisplayPath: runtime.safeDisplayPath };
 }
 
 export async function ensureSharedWorkspaceLayout(input = {}) {

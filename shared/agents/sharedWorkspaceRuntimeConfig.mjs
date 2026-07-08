@@ -66,7 +66,7 @@ export function resolveSharedWorkspaceRuntimeConfig(input = {}) {
   }
   const root = resolve(rawRoot);
   if (isWithin(repoRoot, root)) {
-    return { ok: false, configured: !!rawOverride, source, reason: SHARED_WORKSPACE_BLOCKERS.INSIDE_REPO, workspaceRoot: 'UNKNOWN', attemptedRoot: root, safeDisplayPath: 'UNKNOWN', exactNextAction: SHARED_WORKSPACE_NEXT_ACTION };
+    return { ok: false, configured: !!rawOverride, source, reason: SHARED_WORKSPACE_BLOCKERS.INSIDE_REPO, workspaceRoot: 'UNKNOWN', safeDisplayPath: 'UNKNOWN', exactNextAction: SHARED_WORKSPACE_NEXT_ACTION };
   }
   return { ok: true, configured: true, source, reason: 'STEPHANOS_SHARED_AGENT_WORKSPACE_PATH_RESOLVED', root, workspaceRoot: root, safeDisplayPath: displayPath(root), exactNextAction: 'Keep Battle Bridge publisher, backend feed, and dashboard on this resolved Shared Agent Workspace path.' };
 }
