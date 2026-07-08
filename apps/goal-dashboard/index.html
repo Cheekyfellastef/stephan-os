@@ -87,6 +87,28 @@
         gap: 14px;
       }
 
+      .captain-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 14px;
+      }
+
+      .captain-card {
+        border: 1px solid var(--line-strong);
+        border-radius: 22px;
+        padding: 16px;
+        background: linear-gradient(145deg, rgba(20, 39, 70, 0.9), rgba(9, 17, 32, 0.9));
+      }
+
+      .captain-card span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 6px;
+      }
+
       .source-row {
         grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
         margin-top: 22px;
@@ -499,6 +521,33 @@
         </div>
       </section>
 
+      <section aria-labelledby="captains-bridge-title" data-testid="captains-bridge-panel">
+        <div class="section-title">
+          <h2 id="captains-bridge-title">Captain’s Bridge V1</h2>
+          <span>G10–G12 implemented · G13–G19 planned_guarded · read-only operator bridge</span>
+        </div>
+        <article class="concierge-card" aria-label="Captain’s Bridge read-only lane panel">
+          <span class="badge active">Make Stephan the captain, not the click worker</span>
+          <p class="subtitle">Consumes Shared Agent Workspace, queue/dispatcher, supervisor, and git intelligence projections. Unknown remains unknown; this panel does not execute shell, push, merge, reset, or delete branches.</p>
+          <div id="captains-bridge-grid" class="captain-grid" aria-live="polite">
+            <div class="captain-card"><span>Active lane</span><b data-live-telemetry-field="captain-active-lane">UNKNOWN</b></div>
+            <div class="captain-card"><span>Current PR</span><b data-live-telemetry-field="captain-current-pr">UNKNOWN</b></div>
+            <div class="captain-card"><span>Branch</span><b data-live-telemetry-field="captain-branch">UNKNOWN</b></div>
+            <div class="captain-card"><span>Exact head</span><b data-live-telemetry-field="captain-exact-head">UNKNOWN</b></div>
+            <div class="captain-card"><span>Latest proof</span><b data-live-telemetry-field="captain-latest-proof">UNKNOWN</b></div>
+            <div class="captain-card"><span>Blocker</span><b data-live-telemetry-field="captain-blocker">BUILD_LANE_MANAGER_FEED_MISSING</b></div>
+            <div class="captain-card"><span>Next action</span><b data-live-telemetry-field="captain-next-action">Load Build Lane Manager projection before claiming active lane truth.</b></div>
+            <div class="captain-card"><span>Queue state</span><b data-live-telemetry-field="captain-queue-state">UNKNOWN</b></div>
+            <div class="captain-card"><span>Merge readiness</span><b data-live-telemetry-field="captain-merge-readiness">HELD_UNKNOWN</b></div>
+          </div>
+          <ul class="concierge-roadmap" aria-label="Captain’s Bridge goals">
+            <li><span>G10 Build Lane Manager</span>implemented_guarded: read-only worktree/branch/PR/head/proof/dirty/merge projection.</li>
+            <li><span>G11 Live Goal Dashboard</span>implemented_guarded: Captain’s Bridge panel consumes canonical projections; no fake live proof.</li>
+            <li><span>G12 Professional Ignition Cockpit</span>implemented_guarded: mission-control splash projection with Captain status and exact next action.</li>
+            <li><span>G13–G19</span>planned_guarded: Build Orchestrator, Merge Pipeline, Health Observatory, Timeline, Auto Discovery, Visual Mission Control, Self-Explaining Stephanos.</li>
+          </ul>
+        </article>
+      </section>
 
       <section aria-labelledby="concierge-title" data-testid="goal-dashboard-build-concierge">
         <div class="section-title">
@@ -704,6 +753,7 @@
           battleBridgeSupervisor: { overallState: 'UNKNOWN', services: [] },
           openClawCapabilityLadder: { canRunNow: [], needsApproval: [], blocked: ['UNKNOWN_CAPABILITY_RECORD'] },
           operatorAttention: { approvals: [], localProofNeeded: [], blockers: ['INITIAL_FEED_PENDING'], exactNextAction: 'Load the read-only Shared Workspace dashboard feed before claiming live platform state.' },
+          captainsBridge: { activeLane: null, currentPr: null, branch: 'UNKNOWN', exactHead: 'UNKNOWN', latestProof: 'UNKNOWN', blocker: 'BUILD_LANE_MANAGER_FEED_MISSING', nextAction: 'Load Build Lane Manager projection before claiming active lane truth.', queueState: 'UNKNOWN', mergeReadiness: 'HELD_UNKNOWN' },
         };
       }
 
@@ -738,6 +788,22 @@
         return path;
       }
 
+      function renderCaptainsBridge(projection = buildLandingGoalDashboardProjection()) {
+        const bridge = projection.captainsBridge || buildLandingGoalDashboardProjection().captainsBridge;
+        const fields = {
+          'captain-active-lane': bridge.activeLane?.laneId || bridge.activeLane?.worktreePath || 'UNKNOWN',
+          'captain-current-pr': bridge.currentPr ? `#${bridge.currentPr}` : 'UNKNOWN',
+          'captain-branch': bridge.branch || 'UNKNOWN',
+          'captain-exact-head': bridge.exactHead || 'UNKNOWN',
+          'captain-latest-proof': bridge.latestProof || 'UNKNOWN',
+          'captain-blocker': bridge.blocker || 'none',
+          'captain-next-action': bridge.nextAction || 'UNKNOWN',
+          'captain-queue-state': bridge.queueState || 'UNKNOWN',
+          'captain-merge-readiness': bridge.mergeReadiness || 'HELD_UNKNOWN',
+        };
+        Object.entries(fields).forEach(([field, value]) => setTelemetryText(field, value));
+      }
+
       function renderLandingPlatformProjection(projection = buildLandingGoalDashboardProjection(), feed = null) {
         if (!platformGrid) return;
         platformGrid.textContent = '';
@@ -750,6 +816,7 @@
           ['OpenClaw ladder', `can run ${projection.openClawCapabilityLadder.canRunNow.join(', ') || 'none'}`, `approval ${projection.openClawCapabilityLadder.needsApproval.join(', ') || 'none'} · blocked ${projection.openClawCapabilityLadder.blocked.join(', ') || 'none'}`],
           ['Operator attention', feed?.exactNextAction || projection.operatorAttention.exactNextAction, `approvals ${projection.operatorAttention.approvals.length} · local proof ${projection.operatorAttention.localProofNeeded.join(', ') || 'none'} · blockers ${projection.operatorAttention.blockers.join(', ') || 'none'}`],
         ];
+        renderCaptainsBridge(projection);
         for (const [label, value, detail] of cards) {
           const node = document.createElement('div');
           const labelNode = document.createElement('span');

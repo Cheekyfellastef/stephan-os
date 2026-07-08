@@ -56,3 +56,18 @@ test('splash renders latest-main proof visibly with traffic-light stages', () =>
   assert.deepEqual(cockpit.stages.map((stage) => stage.label), ['Source update', 'Build Output', 'Verify', 'Runtime']);
   assert.ok(cockpit.stages.every((stage) => ['green', 'amber', 'red', 'blue'].includes(stage.trafficLight)));
 });
+
+
+test('captain status separates latest main build output and runtime proof', () => {
+  const cockpit = projectIgnitionCockpit({
+    buildPassed: true,
+    verifyPassed: true,
+    serverStarted: true,
+    servedProof: goodProof,
+    sourceUpdateProof: { runningLatestMain: true, buildOutputDirty: true, localHeadAfter: 'ffffeeee11112222333344445555666677778888' },
+  });
+  assert.equal(cockpit.captainStatus, 'RUNNING LATEST MAIN');
+  assert.equal(cockpit.captainStatusSummary.buildOutputDirty, true);
+  assert.equal(cockpit.captainStatusSummary.runtimeProofReady, true);
+  assert.match(cockpit.captainStatusSummary.exactNextAction, /Enter Stephanos/);
+});

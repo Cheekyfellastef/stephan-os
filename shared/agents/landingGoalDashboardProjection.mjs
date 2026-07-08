@@ -12,7 +12,25 @@ export const LANDING_DASHBOARD_GOALS = Object.freeze([
   ['#1293', 'Automated Codex Dispatcher'],
   ['#1284', 'OpenClaw Capability Ladder'],
   ['#1286', 'OpenClaw Capability Ladder Enablement'],
+  ['G10', 'Build Lane Manager'],
+  ['G11', 'Live Goal Dashboard'],
+  ['G12', 'Professional Ignition Cockpit'],
+  ['G13', 'Automatic Build Orchestrator'],
+  ['G14', 'Merge Pipeline'],
+  ['G15', 'Runtime Health Observatory'],
+  ['G16', 'Operator Timeline'],
+  ['G17', 'Workspace Auto Discovery'],
+  ['G18', 'Visual Mission Control'],
+  ['G19', 'Self-Explaining Stephanos'],
 ]);
+
+export const CAPTAINS_BRIDGE_MILESTONE = Object.freeze({
+  id: 'captains-bridge-v1',
+  title: "Captain's Bridge V1",
+  goal: 'Make Stephan feel like the captain, not the click worker.',
+  implementedGoals: ['G10', 'G11', 'G12'],
+  plannedGoals: ['G13', 'G14', 'G15', 'G16', 'G17', 'G18', 'G19'],
+});
 
 const UNKNOWN = 'UNKNOWN';
 const STALE = 'STALE';
@@ -92,6 +110,19 @@ export function buildLandingGoalDashboardProjection(input = {}) {
   });
   const openClaw = input.openClawProjection || projectOpenClawOperatorAutomation({ timestampUtc: input.timestampUtc || 'pending' });
   const goals = LANDING_DASHBOARD_GOALS.map(([issue, title]) => cardFor(issue, title, { ...input, latest }, { nowMs, staleAfterMs }));
+  const captainBridge = Object.freeze({
+    milestone: CAPTAINS_BRIDGE_MILESTONE,
+    activeLane: input.buildLaneManager?.activeLane || null,
+    currentPr: input.buildLaneManager?.activeLane?.prNumber || null,
+    branch: input.buildLaneManager?.activeLane?.branch || UNKNOWN,
+    exactHead: input.buildLaneManager?.activeLane?.headSha || UNKNOWN,
+    latestProof: input.buildLaneManager?.activeLane?.latestProof?.status || input.buildLaneManager?.latestProofState || UNKNOWN,
+    blocker: input.buildLaneManager?.activeLane?.blocker || (input.buildLaneManager ? '' : 'BUILD_LANE_MANAGER_FEED_MISSING'),
+    nextAction: input.buildLaneManager?.exactNextAction || 'Load Build Lane Manager projection before claiming active lane truth.',
+    queueState: input.buildLaneManager?.queueState || dispatcher.dispatcherState || UNKNOWN,
+    mergeReadiness: input.buildLaneManager?.mergeReadiness || 'HELD_UNKNOWN',
+    consumesSharedProjections: ['Shared Agent Workspace', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
+  });
   const approvals = goals.filter((goal) => goal.issue === '#1286' || goal.issue === '#1293' || goal.blockers.some((blocker) => blocker.includes('UNKNOWN'))).map((goal) => `${goal.issue}: ${goal.exactNextAction}`);
   const blockers = [...new Set(goals.flatMap((goal) => goal.blockers))];
   return Object.freeze({
@@ -106,6 +137,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     queueDispatcher: Object.freeze({ queueDepth: dispatcher.queueDepth, currentJob: dispatcher.currentJob || UNKNOWN, dispatcherState: dispatcher.dispatcherState, capabilityMode: dispatcher.capabilityMode, operatorActionRequired: dispatcher.operatorActionRequired, queued: queueRecords.filter((r) => r.status === CODEX_QUEUE_STATUS.QUEUED).length, blocked: queueRecords.filter((r) => r.status === CODEX_QUEUE_STATUS.BLOCKED).length }),
     battleBridgeSupervisor: Object.freeze({ services: supervisorHealth, overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' }),
     openClawCapabilityLadder: Object.freeze({ canRunNow: openClaw.canRunNow, needsApproval: openClaw.needsApproval, blocked: openClaw.blocked, exactNextAction: openClaw.exactNextAction, guardrails: openClaw.guardrails }),
+    captainsBridge: captainBridge,
     operatorAttention: Object.freeze({ approvals, localProofNeeded: goals.filter((goal) => goal.proofTruth !== CURRENT).map((goal) => goal.issue), blockers, exactNextAction: blockers.length ? 'Publish or refresh missing Shared Workspace status/proof/capability records; do not claim live proof until records are current.' : 'Review approval-gated next step and keep UI read-only.' }),
     finalVerdict: blockers.length ? 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED' : 'LANDING_GOAL_DASHBOARD_CURRENT',
   });
