@@ -1,0 +1,11 @@
+{
+  "pullRequests": [
+    { "number": 1448, "title": "Ready implementation", "state": "open", "ready": true },
+    { "number": 1444, "title": "Runtime blocked implementation", "state": "open", "runtimeStatus": "blocked", "blockers": ["runtime proof missing"] },
+    { "number": 1447, "title": "Claimed-head drift sample", "state": "open", "claimedHeadSha": "abc123", "actualHeadSha": "def456" },
+    { "number": 1449, "title": "Implement operator automation layer for #1286", "state": "open", "implementsIssues": [1286], "readyForReview": true, "reviewState": "review_required" }
+  ],
+  "issues": [
+    { "number": 1286, "title": "Operator automation layer" }
+  ]
+}
