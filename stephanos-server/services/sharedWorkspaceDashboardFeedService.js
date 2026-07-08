@@ -13,7 +13,7 @@ export async function validateSharedWorkspaceFeedConfig(input = {}) {
       reason: resolved.reason,
       root: resolved.root,
       workspaceRoot: 'UNKNOWN',
-      safeDisplayPath: resolved.safeDisplayPath || 'UNKNOWN',
+      safeDisplayPath: 'UNKNOWN',
       exactNextAction: resolved.exactNextAction || MISSING_WORKSPACE_NEXT_ACTION,
       trace: { hop: 'resolver', state: 'blocked', owner: 'Battle Bridge runtime configuration', reason: resolved.reason },
     });
