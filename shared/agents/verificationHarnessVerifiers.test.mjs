@@ -112,3 +112,66 @@ test('Battle Bridge preflight passes only when all required evidence passes', ()
   assert.equal(preflight.safeToInstall, true);
   assert.equal(BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND, 'node --test shared/agents/verificationHarness*.test.mjs shared/agents/*Verifier*.test.mjs');
 });
+
+test('PR publication verifier passes only when GitHub PR, origin branch, local HEAD, and tested code agree', () => {
+  const sha = '5d3412b26393fcfc4627bb0b1a1e942e3dac9651';
+  const result = runVerifier('PRPublicationVerifier', {
+    prNumber: 1444,
+    headBranch: 'feature/battle-bridge-proof',
+    expectedCommit: sha,
+    remotePrHeadSha: sha,
+    fetchedOriginBranchSha: sha,
+    localHeadSha: sha,
+    testedHeadSha: sha,
+    prCommits: [sha],
+  }, { timestampUtc: '2026-07-08T00:00:00Z' });
+
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.finalVerdict, 'PR_PUBLICATION_VERIFIER_PASS');
+  assert.equal(result.reason, '');
+  assert.equal(result.evidence.includes('prNumber=1444'), true);
+  assert.equal(result.evidence.includes(`remotePrHeadSha=${sha}`), true);
+  assert.equal(result.evidence.includes('expectedCommitPresent=true'), true);
+  assert.equal(validateVerifierResult(result).valid, true);
+});
+
+test('PR publication verifier fails closed for stale local or tested code', () => {
+  const prSha = '5d3412b26393fcfc4627bb0b1a1e942e3dac9651';
+  const staleSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const result = runVerifier('PRPublicationVerifier', {
+    prNumber: 1444,
+    headBranch: 'feature/battle-bridge-proof',
+    expectedCommit: prSha,
+    remotePrHeadSha: prSha,
+    fetchedOriginBranchSha: prSha,
+    localHeadSha: staleSha,
+    testedHeadSha: staleSha,
+    prCommits: [prSha],
+  }, { timestampUtc: '2026-07-08T00:00:00Z' });
+
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.finalVerdict, 'PR_PUBLICATION_VERIFIER_BLOCKED');
+  assert.equal(result.reason.includes('local-head-is-not-pr-head'), true);
+  assert.equal(result.reason.includes('tested-code-is-not-pr-code'), true);
+  assert.equal(validateVerifierResult(result).valid, true);
+});
+
+test('PR publication verifier blocks missing expected commit or stale origin branch', () => {
+  const expected = '5d3412b26393fcfc4627bb0b1a1e942e3dac9651';
+  const githubHead = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const result = runVerifier('PRPublicationVerifier', {
+    prNumber: 1444,
+    headBranch: 'feature/battle-bridge-proof',
+    expectedCommit: expected,
+    remotePrHeadSha: githubHead,
+    fetchedOriginBranchSha: 'cccccccccccccccccccccccccccccccccccccccc',
+    localHeadSha: githubHead,
+    testedHeadSha: githubHead,
+    prCommits: [githubHead],
+  }, { timestampUtc: '2026-07-08T00:00:00Z' });
+
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.reason.includes('expected-commit-missing-from-pr'), true);
+  assert.equal(result.reason.includes('pr-head-does-not-match-expected-commit'), true);
+  assert.equal(result.reason.includes('origin-branch-stale-or-missing'), true);
+});
