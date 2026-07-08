@@ -1,0 +1,13 @@
+{
+  "id": "stephanos-ignite-command",
+  "name": "Stephanos Ignite Command",
+  "description": "Adds an authorized /stephanos-ignite WhatsApp command for source-controlled Stephanos ignition status and help.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
