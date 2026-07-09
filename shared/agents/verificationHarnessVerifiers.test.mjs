@@ -112,3 +112,40 @@ test('Battle Bridge preflight passes only when all required evidence passes', ()
   assert.equal(preflight.safeToInstall, true);
   assert.equal(BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND, 'node --test shared/agents/verificationHarness*.test.mjs shared/agents/*Verifier*.test.mjs');
 });
+
+test('PR publication verifier accepts existing PR target without publishing', () => {
+  const result = runVerifier('PRPublicationVerifier', {
+    prNumber: '1448',
+    branch: 'codex/add-prpublicationverifier-to-verification-harness',
+    remoteHead: '69e374e40426a11982409a251729ca0a401fd40d',
+    expectedPr: '1448',
+    expectedBranch: 'codex/add-prpublicationverifier-to-verification-harness',
+    expectedRemoteHead: '69e374e40426a11982409a251729ca0a401fd40d',
+    targetExistingPr: true,
+    publishAllowed: false,
+  }, { timestampUtc: '2026-07-09T00:00:00Z' });
+
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.finalVerdict, 'PR_PUBLICATION_VERIFIER_PASS');
+  assert.equal(result.evidence.includes('publishAllowed=false'), true);
+  assert.equal(validateVerifierResult(result).valid, true);
+});
+
+test('PR publication verifier blocks publish or mismatched remote head', () => {
+  const result = runVerifier('PRPublicationVerifier', {
+    prNumber: '1448',
+    branch: 'codex/add-prpublicationverifier-to-verification-harness',
+    remoteHead: 'bad-head',
+    expectedPr: '1448',
+    expectedBranch: 'codex/add-prpublicationverifier-to-verification-harness',
+    expectedRemoteHead: '69e374e40426a11982409a251729ca0a401fd40d',
+    targetExistingPr: true,
+    publishAllowed: true,
+  }, { timestampUtc: '2026-07-09T00:00:00Z' });
+
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.finalVerdict, 'PR_PUBLICATION_VERIFIER_BLOCKED');
+  assert.equal(result.reason.includes('remote-head-mismatch'), true);
+  assert.equal(result.reason.includes('publication-disabled'), true);
+  assert.equal(validateVerifierResult(result).valid, true);
+});
