@@ -87,6 +87,27 @@ test('--facts-file valid JSON returns PARTIAL_UI_MISSING for backend OpenClaw wo
   }
 });
 
+test('--facts-file UTF-8 BOM JSON returns PARTIAL_UI_MISSING for backend OpenClaw workspace with missing UI', () => {
+  const dir = fs.mkdtempSync(path.join(process.cwd(), '.tmp-launcher-readiness-'));
+  const fixture = path.join(dir, 'ignition-facts-bom.json');
+  fs.writeFileSync(
+    fixture,
+    `\uFEFF${JSON.stringify({ observedFacts: { services: { backend: true, 'openclaw-gateway': true, 'shared-workspace': true } } })}`,
+    'utf8',
+  );
+  let output = '';
+  try {
+    const relativeFixture = path.relative(process.cwd(), fixture);
+    const code = main(['--facts-file', relativeFixture, '--json'], { write: (chunk) => { output += chunk; } });
+    assert.equal(code, 0);
+    const parsed = JSON.parse(output);
+    assert.equal(parsed.status, 'PARTIAL_UI_MISSING');
+    assert.equal(parsed.verdict, 'partial-ui-missing');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('--facts inline JSON still works', () => {
   let output = '';
   const code = main(['--facts', JSON.stringify({ observedFacts: { services: allReady } }), '--json'], { write: (chunk) => { output += chunk; } });
