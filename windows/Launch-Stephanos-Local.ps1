@@ -6,6 +6,7 @@ param(
   [ValidateSet('launcher','runtime','cockpit')]
   [string]$BootMode = 'cockpit',
   [string]$RepositoryRoot = '',
+  [string]$SharedWorkspace = '',
   [switch]$ReadinessReportOnly
 )
 
@@ -54,7 +55,12 @@ $ignitionSupportSnapshotPath = Join-Path $ignitionProofRoot 'support-snapshot.js
 if ($ReadinessReportOnly.IsPresent) {
   Push-Location -LiteralPath $repoRoot
   try {
-    & node scripts/launcher-readiness-live-facts.mjs --report --json
+    if ($SharedWorkspace -and $SharedWorkspace.Trim()) {
+      & node scripts/launcher-readiness-live-facts.mjs --report --json --shared-workspace $SharedWorkspace
+    }
+    else {
+      & node scripts/launcher-readiness-live-facts.mjs --report --json
+    }
     exit $LASTEXITCODE
   }
   finally {
