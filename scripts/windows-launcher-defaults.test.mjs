@@ -269,3 +269,11 @@ test('visual ignition cockpit contains traffic lights progress proof cards and n
   assert.match(script, /Enter Stephanos locked until served proof passes/, 'splash must keep Enter Stephanos locked until proof passes');
   assert.doesNotMatch(script, /<script[\s>]/i, 'splash must not inject executable browser script');
 });
+
+test('ReadinessReportOnly is a guarded report path and leaves normal launch invocation unchanged', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\[switch\]\$ReadinessReportOnly/m, 'launcher must expose an explicit report-only switch');
+  assert.match(script, /if \(\$ReadinessReportOnly\.IsPresent\) \{[\s\S]*?node scripts\/launcher-readiness-live-facts\.mjs --report --json[\s\S]*?exit \$LASTEXITCODE[\s\S]*?\}/m, 'report-only path must delegate to the live facts collector/readiness report and exit before launch behavior');
+  assert.match(script, /Ensure-ProcessRunning -StepLabel 'backend'/m, 'normal launcher path must still contain backend startup after report-only guard');
+  assert.match(script, /Ensure-ProcessRunning -StepLabel 'launcher-root ui'/m, 'normal launcher-root startup must remain present');
+});
