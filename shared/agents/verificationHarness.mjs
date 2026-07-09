@@ -43,6 +43,7 @@ export const VERIFIER_TYPES = Object.freeze([
   'AgentCapabilityVerifier',
   'StaleCapabilityVerifier',
   'BattleBridgePreflightVerifier',
+  'PRPublicationVerifier',
 ]);
 
 export const OPENCLAW_GATEWAY_VERDICTS = Object.freeze({
@@ -56,6 +57,8 @@ export const OPENCLAW_GATEWAY_VERDICTS = Object.freeze({
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
 const SAFE_TEXT_PATTERN = /^[a-z0-9][a-z0-9._:/# -]{0,240}$/i;
 const LOWERCASE_SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/i;
+const PR_NUMBER_PATTERN = /^[1-9][0-9]{0,8}$/;
 const FORBIDDEN_OUTPUT_PATTERN = /token|secret|password|credential|\.env|private key/i;
 
 function asText(value, fallback = '') {
@@ -350,6 +353,47 @@ export function createStaleCapabilityVerifierResult(packet = {}, options = {}) {
   });
 }
 
+
+export function createPRPublicationVerifierResult(packet = {}, options = {}) {
+  const prNumber = asText(packet.prNumber || packet.pr || packet.pullRequestNumber, '');
+  const branch = asText(packet.branch || packet.headRef || packet.sourceBranch, '');
+  const remoteHead = asText(packet.remoteHead || packet.headSha || packet.remoteHeadSha, '');
+  const expectedPr = asText(packet.expectedPr || options.expectedPr || '', '');
+  const expectedBranch = asText(packet.expectedBranch || options.expectedBranch || '', '');
+  const expectedRemoteHead = asText(packet.expectedRemoteHead || options.expectedRemoteHead || '', '');
+  const targetExistingPr = packet.targetExistingPr !== false;
+  const publishAllowed = packet.publishAllowed === true || packet.publish === true || packet.createPr === true || packet.merge === true;
+  const prMatches = PR_NUMBER_PATTERN.test(prNumber) && (!expectedPr || prNumber === expectedPr);
+  const branchMatches = !!branch && (!expectedBranch || branch === expectedBranch);
+  const remoteHeadMatches = GIT_SHA_PATTERN.test(remoteHead) && (!expectedRemoteHead || remoteHead.toLowerCase() === expectedRemoteHead.toLowerCase());
+  const valid = prMatches && branchMatches && remoteHeadMatches && targetExistingPr && !publishAllowed;
+  const blockers = [];
+  if (!prMatches) blockers.push('pr-number-mismatch');
+  if (!branchMatches) blockers.push('branch-mismatch');
+  if (!remoteHeadMatches) blockers.push('remote-head-mismatch');
+  if (!targetExistingPr) blockers.push('target-existing-pr-required');
+  if (publishAllowed) blockers.push('publication-disabled');
+
+  return createVerifierResult({
+    checkId: 'pr-publication-proof',
+    verifierType: 'PRPublicationVerifier',
+    status: valid ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.BLOCKED,
+    target: prNumber ? `pr-${prNumber}` : 'existing-pr',
+    evidence: [
+      `pr=${prNumber || 'unknown'}`,
+      `branch=${branch || 'unknown'}`,
+      `remoteHead=${remoteHead || 'unknown'}`,
+      `targetExistingPr=${targetExistingPr}`,
+      `publishAllowed=${publishAllowed}`,
+    ],
+    reason: valid ? '' : blockers.join(' ') || 'pr publication proof blocked',
+    durationMs: options.durationMs ?? 0,
+    timestampUtc: options.timestampUtc || packet.timestampUtc || 'pending',
+    finalVerdict: valid ? 'PR_PUBLICATION_VERIFIER_PASS' : 'PR_PUBLICATION_VERIFIER_BLOCKED',
+    proofRefs: packet.proofRefs || [],
+  });
+}
+
 export const VerifierFactories = Object.freeze({
   GitVerifier: packetVerifier({ verifierType: 'GitVerifier', checkId: 'git-proof', target: 'repo-source', passField: 'repoClean', evidenceFields: ['repoExists', 'branch', 'head', 'originMain', 'repoClean', 'ahead', 'behind'], passVerdict: 'GIT_VERIFIER_PASS', failVerdict: 'GIT_VERIFIER_BLOCKED' }),
   BuildVerifier: packetVerifier({ verifierType: 'BuildVerifier', checkId: 'build-proof', target: 'source-build', passField: 'buildPassed', evidenceFields: ['buildPassed', 'script', 'artifactScope'], passVerdict: 'BUILD_VERIFIER_PASS', failVerdict: 'BUILD_VERIFIER_BLOCKED' }),
@@ -366,6 +410,7 @@ export const VerifierFactories = Object.freeze({
   CommandReceiptVerifier: (packet = {}, options = {}) => createCommandReceiptVerifierResult(packet, options),
   AgentCapabilityVerifier: (packet = {}, options = {}) => createAgentCapabilityVerifierResult(packet, options),
   StaleCapabilityVerifier: (packet = {}, options = {}) => createStaleCapabilityVerifierResult(packet, options),
+  PRPublicationVerifier: (packet = {}, options = {}) => createPRPublicationVerifierResult(packet, options),
 });
 
 export function createOpenClawGatewayVerifierResult(packet = {}, options = {}) {
