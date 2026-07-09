@@ -119,10 +119,11 @@ function resolveSharedWorkspaceRoot(repoRoot, { sharedWorkspace = null, env = pr
   return { root, source: selected.source, fallback: selected.fallback };
 }
 
-function recordLooksUnknown(record) {
-  const text = JSON.stringify(record.parsed ?? {});
-  return /UNKNOWN|STALE|blocked|error/i.test(text);
+function recordStatus(record) {
+  const status = record.parsed && typeof record.parsed === 'object' && !Array.isArray(record.parsed) ? record.parsed.status : undefined;
+  return typeof status === 'string' ? status : null;
 }
+
 
 function workspaceEvidencePath(repoRoot, absolutePath) {
   const relativePath = path.relative(repoRoot, absolutePath);
@@ -130,29 +131,80 @@ function workspaceEvidencePath(repoRoot, absolutePath) {
   return absolutePath;
 }
 
+const BATTLE_BRIDGE_CURRENT_RECORD_PATHS = Object.freeze([
+  path.join('status', 'battle-bridge-current.json'),
+  path.join('proof', 'battle-bridge-current.json'),
+  path.join('events', 'battle-bridge-current.json'),
+]);
+
+function currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs) {
+  const ageMs = Math.max(0, now - record.mtimeMs);
+  const ageSeconds = Math.floor(ageMs / 1000);
+  const status = recordStatus(record);
+  return {
+    path: workspaceEvidencePath(repoRoot, absolutePath),
+    mtimeMs: record.mtimeMs,
+    length: record.length,
+    ageSeconds,
+    status,
+    stale: ageMs > maxRecordAgeMs,
+    unknownStatus: status === 'UNKNOWN',
+  };
+}
+
 function collectWorkspaceFacts(repoRoot, { now = Date.now(), maxRecordAgeMs = DEFAULT_MAX_RECORD_AGE_MS, workspaceCurrentDir = null, sharedWorkspace = null, env = process.env, platform = process.platform } = {}) {
   const resolvedWorkspace = workspaceCurrentDir
     ? { root: path.resolve(repoRoot, workspaceCurrentDir, '..'), source: 'legacy-current-dir-option', fallback: false, currentDir: path.resolve(repoRoot, workspaceCurrentDir) }
     : resolveSharedWorkspaceRoot(repoRoot, { sharedWorkspace, env, platform });
   const currentDir = resolvedWorkspace.currentDir || path.join(resolvedWorkspace.root, 'current');
-  const evidenceCurrentDir = workspaceEvidencePath(repoRoot, currentDir);
+  const battleBridgePaths = BATTLE_BRIDGE_CURRENT_RECORD_PATHS.map((relativePath) => path.join(resolvedWorkspace.root, relativePath));
+  const checkedAbsolutePaths = [currentDir, ...battleBridgePaths];
+  const checkedPaths = checkedAbsolutePaths.map((checkedPath) => workspaceEvidencePath(repoRoot, checkedPath));
+  const foundRecords = [];
+  const missingPaths = [];
   const staleRecords = [];
-  const records = [];
-  const evidence = { currentDir: evidenceCurrentDir, workspaceRoot: resolvedWorkspace.root, source: resolvedWorkspace.source, fallback: resolvedWorkspace.fallback, records };
-  if (!fs.existsSync(currentDir)) {
-    return { ready: false, evidence, staleRecords: [`${evidenceCurrentDir} missing`] };
+
+  if (fs.existsSync(currentDir)) {
+    const currentEntries = fs.readdirSync(currentDir, { withFileTypes: true }).filter((entry) => entry.isFile());
+    if (!currentEntries.length) missingPaths.push(`${workspaceEvidencePath(repoRoot, currentDir)} empty`);
+    for (const entry of currentEntries) {
+      const absolutePath = path.join(currentDir, entry.name);
+      checkedAbsolutePaths.push(absolutePath);
+      checkedPaths.push(workspaceEvidencePath(repoRoot, absolutePath));
+      const record = readWorkspaceRecord(absolutePath);
+      foundRecords.push(currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs));
+    }
+  } else {
+    missingPaths.push(`${workspaceEvidencePath(repoRoot, currentDir)} missing`);
   }
-  for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    const absolutePath = path.join(currentDir, entry.name);
+
+  for (const absolutePath of battleBridgePaths) {
+    if (!fs.existsSync(absolutePath)) {
+      missingPaths.push(`${workspaceEvidencePath(repoRoot, absolutePath)} missing`);
+      continue;
+    }
     const record = readWorkspaceRecord(absolutePath);
-    const evidencePath = workspaceEvidencePath(repoRoot, absolutePath);
-    records.push({ ...record, path: evidencePath });
-    if ((now - record.mtimeMs) > maxRecordAgeMs) staleRecords.push(`${evidencePath} stale`);
-    if (recordLooksUnknown(record)) staleRecords.push(`${evidencePath} UNKNOWN`);
+    foundRecords.push(currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs));
   }
-  if (!records.length) staleRecords.push(`${evidenceCurrentDir} empty`);
-  return { ready: staleRecords.length === 0, evidence, staleRecords };
+
+  for (const record of foundRecords) {
+    if (record.stale) staleRecords.push(`${record.path} stale ageSeconds=${record.ageSeconds}`);
+    if (record.unknownStatus) staleRecords.push(`${record.path} UNKNOWN ageSeconds=${record.ageSeconds}`);
+  }
+
+  if (!foundRecords.length) staleRecords.push(...missingPaths);
+
+  const evidence = {
+    currentDir: workspaceEvidencePath(repoRoot, currentDir),
+    workspaceRoot: resolvedWorkspace.root,
+    source: resolvedWorkspace.source,
+    fallback: resolvedWorkspace.fallback,
+    checkedPaths: [...new Set(checkedPaths)],
+    foundRecords,
+    missingPaths,
+    records: foundRecords,
+  };
+  return { ready: foundRecords.length > 0 && staleRecords.length === 0, evidence, staleRecords };
 }
 
 export { resolveSharedWorkspaceRoot };
