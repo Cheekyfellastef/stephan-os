@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { planLauncherReadiness } from './launcher-readiness-planner.mjs';
@@ -79,30 +80,81 @@ export function createLauncherReadinessReport(facts = {}) {
   };
 }
 
+function requireFlagValue(argv, index, flag) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith('--')) throw new Error(`Missing value for ${flag}`);
+  return value;
+}
+
 function parseArgs(argv) {
-  const args = { facts: null, pretty: true };
+  const args = { facts: null, factsFile: null, pretty: true };
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--facts') args.facts = argv[++i];
-    else if (argv[i] === '--json') args.pretty = false;
+    if (argv[i] === '--facts') {
+      args.facts = requireFlagValue(argv, i, '--facts');
+      i += 1;
+    } else if (argv[i] === '--facts-file') {
+      args.factsFile = requireFlagValue(argv, i, '--facts-file');
+      i += 1;
+    } else if (argv[i] === '--json') args.pretty = false;
     else if (argv[i] === '--help') args.help = true;
     else throw new Error(`Unknown argument: ${argv[i]}`);
   }
+  if (args.facts && args.factsFile) throw new Error('Usage error: supply either --facts or --facts-file, not both.');
   return args;
 }
 
-function loadFacts(factsArg) {
-  if (!factsArg) return {};
-  const raw = factsArg.trim().startsWith('{') ? factsArg : fs.readFileSync(factsArg, 'utf8');
-  return JSON.parse(raw);
+function parseFactsJson(raw, sourceLabel) {
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Invalid JSON in ${sourceLabel}: ${error.message}`);
+  }
+}
+
+function resolveSafeFactsFile(factsFileArg) {
+  if (!factsFileArg || !factsFileArg.trim()) throw new Error('Missing value for --facts-file');
+  if (factsFileArg.includes('\0')) throw new Error('Unsafe --facts-file path rejected: NUL byte is not allowed.');
+
+  const cwd = process.cwd();
+  const resolvedPath = path.resolve(cwd, factsFileArg);
+  const relativePath = path.relative(cwd, resolvedPath);
+  if (relativePath === '' || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error('Unsafe --facts-file path rejected: path must stay within the current workspace.');
+  }
+  return resolvedPath;
+}
+
+function loadFactsFile(factsFileArg) {
+  const resolvedPath = resolveSafeFactsFile(factsFileArg);
+  let stat;
+  try {
+    stat = fs.statSync(resolvedPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error(`Facts file not found: ${factsFileArg}`);
+    throw new Error(`Unable to read facts file ${factsFileArg}: ${error.message}`);
+  }
+  if (!stat.isFile()) throw new Error(`Facts file is not a regular file: ${factsFileArg}`);
+  return parseFactsJson(fs.readFileSync(resolvedPath, 'utf8'), `--facts-file ${factsFileArg}`);
+}
+
+function loadFacts(argsOrFactsArg) {
+  const args = typeof argsOrFactsArg === 'object' && argsOrFactsArg !== null && !Array.isArray(argsOrFactsArg)
+    ? argsOrFactsArg
+    : { facts: argsOrFactsArg, factsFile: null };
+  if (args.factsFile) return loadFactsFile(args.factsFile);
+  if (!args.facts) return {};
+  const raw = args.facts.trim().startsWith('{') ? args.facts : fs.readFileSync(args.facts, 'utf8');
+  return parseFactsJson(raw, '--facts');
 }
 
 export function main(argv = process.argv.slice(2), stdout = process.stdout) {
   const args = parseArgs(argv);
   if (args.help) {
-    stdout.write('Usage: node scripts/launcher-readiness-report.mjs --facts <fixture-or-json> [--json]\n');
+    stdout.write('Usage: node scripts/launcher-readiness-report.mjs [--facts <fixture-or-json> | --facts-file <path>] [--json]\n');
+    stdout.write('Windows: node .\\scripts\\launcher-readiness-report.mjs --facts-file .\\ignition-facts.json --json\n');
     return 0;
   }
-  const report = createLauncherReadinessReport(loadFacts(args.facts));
+  const report = createLauncherReadinessReport(loadFacts(args));
   stdout.write(`${JSON.stringify(report, null, args.pretty ? 2 : 0)}\n`);
   return 0;
 }
