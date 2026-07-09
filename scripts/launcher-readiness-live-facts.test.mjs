@@ -186,3 +186,101 @@ test('facts emitted by live collector are accepted by launcher-readiness-report 
 test('CLI output path is explicit and workspace-relative', async () => {
   await assert.rejects(() => main(['--output', '../facts.json'], { write() {} }), /Unsafe --output path rejected/);
 });
+
+function writeBattleBridgeCurrentRecord(workspaceRoot, channel, value = { status: 'READY' }, mtime = new Date()) {
+  const dir = path.join(workspaceRoot, channel);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'battle-bridge-current.json');
+  fs.writeFileSync(file, JSON.stringify(value));
+  fs.utimesSync(file, mtime, mtime);
+  return file;
+}
+
+function writeBattleBridgeCurrentSet(workspaceRoot, valueByChannel = {}, mtime = new Date()) {
+  writeBattleBridgeCurrentRecord(workspaceRoot, 'status', valueByChannel.status ?? { status: 'READY' }, mtime);
+  writeBattleBridgeCurrentRecord(workspaceRoot, 'proof', valueByChannel.proof ?? { status: 'READY' }, mtime);
+  writeBattleBridgeCurrentRecord(workspaceRoot, 'events', valueByChannel.events ?? { event: 'heartbeat' }, mtime);
+}
+
+test('fixture with future current fresh record returns shared-workspace ready', async () => withRepo(async (repoRoot) => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-future-current-workspace-'));
+  try {
+    writeExternalCurrentRecord(workspaceRoot, 'battle-bridge-current.json', { status: 'READY' });
+    const facts = await collectLauncherReadinessLiveFacts({ repoRoot, sharedWorkspace: workspaceRoot, serviceProbe: serviceProbeFor(['backend']), execFile: cleanGit });
+    assert.equal(facts.observedFacts.services['shared-workspace'].ready, true);
+    assert.equal(facts.observedFacts.services['shared-workspace'].evidence.foundRecords.length, 1);
+    assert.match(facts.observedFacts.services['shared-workspace'].evidence.foundRecords[0].path, /current.*battle-bridge-current\.json/);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+}));
+
+test('fixture with status/proof/events fresh Battle Bridge records returns shared-workspace ready', async () => withRepo(async (repoRoot) => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-battle-bridge-workspace-'));
+  try {
+    writeBattleBridgeCurrentSet(workspaceRoot);
+    const facts = await collectLauncherReadinessLiveFacts({ repoRoot, sharedWorkspace: workspaceRoot, serviceProbe: serviceProbeFor(['backend']), execFile: cleanGit });
+    assert.equal(facts.observedFacts.services['shared-workspace'].ready, true);
+    assert.equal(facts.observedFacts.services['shared-workspace'].evidence.foundRecords.length, 3);
+    assert.deepEqual(facts.observedFacts.staleWorkspaceRecords, []);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+}));
+
+test('fixture matching observed UNKNOWN old Battle Bridge records returns STALE_WORKSPACE with stale and UNKNOWN evidence', async () => withRepo(async (repoRoot) => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-observed-battle-bridge-workspace-'));
+  try {
+    const old = new Date(Date.now() - 38_939_000);
+    writeBattleBridgeCurrentSet(workspaceRoot, { status: { status: 'UNKNOWN' }, proof: { status: 'UNKNOWN' }, events: { event: 'heartbeat' } }, old);
+    const facts = await collectLauncherReadinessLiveFacts({ repoRoot, sharedWorkspace: workspaceRoot, serviceProbe: serviceProbeFor(['backend', 'stephanos-ui', 'openclaw-gateway']), execFile: cleanGit });
+    const report = createLauncherReadinessReport(facts);
+    assert.equal(report.status, 'STALE_WORKSPACE');
+    assert.match(report.staleWorkspaceRecords.join('\n'), /status.*stale ageSeconds=/);
+    assert.match(report.staleWorkspaceRecords.join('\n'), /proof.*UNKNOWN ageSeconds=/);
+    assert.equal(facts.observedFacts.services['shared-workspace'].evidence.foundRecords.some((record) => record.unknownStatus), true);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+}));
+
+test('fixture with status/proof/events present but no current directory does not report only current missing', async () => withRepo(async (repoRoot) => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-no-current-with-records-'));
+  try {
+    const old = new Date(Date.now() - 600_000);
+    writeBattleBridgeCurrentSet(workspaceRoot, { status: { status: 'UNKNOWN' }, proof: { status: 'UNKNOWN' }, events: { event: 'heartbeat' } }, old);
+    const facts = await collectLauncherReadinessLiveFacts({ repoRoot, sharedWorkspace: workspaceRoot, serviceProbe: serviceProbeFor(['backend']), execFile: cleanGit });
+    const stale = facts.observedFacts.staleWorkspaceRecords;
+    assert.equal(stale.every((entry) => /current.*missing/.test(entry)), false);
+    assert.match(stale.join('\n'), /battle-bridge-current\.json.*(?:stale|UNKNOWN)/);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+}));
+
+test('fixture with no records anywhere reports missing records clearly', async () => withRepo(async (repoRoot) => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-empty-workspace-'));
+  try {
+    const facts = await collectLauncherReadinessLiveFacts({ repoRoot, sharedWorkspace: workspaceRoot, serviceProbe: serviceProbeFor(['backend']), execFile: cleanGit });
+    assert.equal(facts.observedFacts.services['shared-workspace'].ready, false);
+    assert.match(facts.observedFacts.staleWorkspaceRecords.join('\n'), /current.*missing/);
+    assert.match(facts.observedFacts.staleWorkspaceRecords.join('\n'), /status.*battle-bridge-current\.json missing/);
+    assert.match(facts.observedFacts.staleWorkspaceRecords.join('\n'), /proof.*battle-bridge-current\.json missing/);
+    assert.match(facts.observedFacts.staleWorkspaceRecords.join('\n'), /events.*battle-bridge-current\.json missing/);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+}));
+
+test('backend+OpenClaw connected + UI missing + fresh status/proof/events records returns PARTIAL_UI_MISSING', async () => withRepo(async (repoRoot) => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-partial-battle-bridge-workspace-'));
+  try {
+    writeBattleBridgeCurrentSet(workspaceRoot);
+    const facts = await collectLauncherReadinessLiveFacts({ repoRoot, sharedWorkspace: workspaceRoot, serviceProbe: serviceProbeFor(['backend', 'openclaw-gateway']), execFile: cleanGit });
+    const report = createLauncherReadinessReport(facts);
+    assert.equal(report.status, 'PARTIAL_UI_MISSING');
+    assert.deepEqual(report.staleWorkspaceRecords, []);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+}));

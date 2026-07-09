@@ -37,7 +37,7 @@ export const PROOF_COMMANDS = Object.freeze({
   sharedWorkspaceCurrent: Object.freeze({
     id: 'shared-workspace-current-records',
     purpose: 'Inspect shared workspace current records freshness without mutating runtime state.',
-    command: 'powershell.exe -NoProfile -Command "Get-ChildItem .\\runtime-activity\\shared-workspace\\current -File | Select-Object Name,LastWriteTime,Length"',
+    command: String.raw`powershell.exe -NoProfile -Command "$root = if ($env:STEPHANOS_SHARED_WORKSPACE) { $env:STEPHANOS_SHARED_WORKSPACE } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE) { $env:STEPHANOS_OPENCLAW_WORKSPACE } else { Join-Path $PWD 'runtime-activity\shared-workspace' }; @((Join-Path $root 'current'), (Join-Path $root 'status\battle-bridge-current.json'), (Join-Path $root 'proof\battle-bridge-current.json'), (Join-Path $root 'events\battle-bridge-current.json')) | ForEach-Object { Get-Item $_ -ErrorAction SilentlyContinue } | Select-Object FullName,LastWriteTime,Length"`,
   }),
 });
 
