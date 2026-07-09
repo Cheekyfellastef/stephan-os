@@ -5,7 +5,8 @@ param(
   [string]$Mode = 'launcher-root',
   [ValidateSet('launcher','runtime','cockpit')]
   [string]$BootMode = 'cockpit',
-  [string]$RepositoryRoot = ''
+  [string]$RepositoryRoot = '',
+  [switch]$ReadinessReportOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,6 +50,17 @@ $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
 $ignitionTranscriptPath = Join-Path $ignitionProofRoot 'ignition-proof-transcript.jsonl'
 $ignitionSupportSnapshotPath = Join-Path $ignitionProofRoot 'support-snapshot.json'
+
+if ($ReadinessReportOnly.IsPresent) {
+  Push-Location -LiteralPath $repoRoot
+  try {
+    & node scripts/launcher-readiness-live-facts.mjs --report --json
+    exit $LASTEXITCODE
+  }
+  finally {
+    Pop-Location
+  }
+}
 
 $ignitionStageModel = @(
   [ordered]@{ id = 'source-update'; label = 'Source update'; detail = 'Detect whether local main is behind origin/main; show pull progress/result and before/after commit.'; proofKind = 'pull' },
