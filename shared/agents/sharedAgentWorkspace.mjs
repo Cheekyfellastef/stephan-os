@@ -1,7 +1,7 @@
 export const SHARED_AGENT_WORKSPACE_SCHEMA_VERSION = 'shared-agent-workspace.v1';
 export const SHARED_AGENT_WORKSPACE_MESSAGE_KIND = 'stephanos.shared_workspace.message';
 
-export const DEFAULT_SHARED_WORKSPACE_ROOT = '%USERPROFILE%/Documents/Stephanos-openclaw-workspace';
+export const DEFAULT_SHARED_WORKSPACE_ROOT = '%USERPROFILE%\\Documents\\Stephanos-openclaw-workspace';
 
 export const SHARED_WORKSPACE_DIRECTORIES = Object.freeze([
   'inbox',
