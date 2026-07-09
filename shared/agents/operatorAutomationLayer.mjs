@@ -2,6 +2,7 @@ import {
   createSharedWorkspaceMessage,
   validateSharedWorkspaceMessage,
 } from './sharedAgentWorkspace.mjs';
+import { buildPatchCourierDiffCommand } from './patchCourierPacket.mjs';
 
 export const OPERATOR_AUTOMATION_SCHEMA_VERSION = 'operator-automation-layer.v1';
 
@@ -22,6 +23,31 @@ export const OPERATOR_DECISION_KIND = Object.freeze({
   PROOF_REQUEST: 'PROOF_REQUEST',
   BLOCKER_UNBLOCK: 'BLOCKER_UNBLOCK',
 });
+
+
+export const GITHUB_OPERATOR_ACTION_CLASS = Object.freeze({
+  STATUS_ONLY: 'status-only',
+  PROOF_NEEDED: 'proof-needed',
+  PATCH_NEEDED: 'patch-needed',
+  EXACT_HEAD_MERGE_NEEDED: 'exact-head merge-needed',
+  BLOCKED: 'blocked',
+});
+
+const ACTION_BRIEF_ALLOWED_COMMANDS = Object.freeze({
+  STATUS_ONLY: ['gh issue view {issue}', 'gh pr view {relatedPr}'],
+  PROOF_NEEDED: ['npm run stephanos:verify:pr-publication', 'node --test shared/agents/verificationHarness*.test.mjs'],
+  PATCH_NEEDED: ['git diff --binary -- {sourcePaths} | base64 -w 0'],
+  EXACT_HEAD_MERGE_NEEDED: ['gh pr view {relatedPr} --json headRefOid,headRefName,number'],
+});
+
+const SAFE_OPERATOR_COMMAND_PATTERNS = Object.freeze([
+  /^gh issue view #[0-9]+$/i,
+  /^gh pr view #[0-9]+$/i,
+  /^gh pr view #[0-9]+ --json headRefOid,headRefName,number$/i,
+  /^npm run stephanos:verify:pr-publication$/i,
+  /^node --test shared\/agents\/verificationHarness\\*\.test\.mjs$/i,
+  /^git diff --binary( -- [a-z0-9_./:-]+( [a-z0-9_./:-]+)*)? \| base64 -w 0$/i,
+]);
 
 export const OPERATOR_AUTOMATION_GUARDRAILS = Object.freeze({
   bestClickIsNoClick: true,
@@ -190,5 +216,127 @@ export function applyOperatorApproval(decision = {}, approval = {}) {
     status: approved ? OPERATOR_DECISION_STATUS.APPROVED : OPERATOR_DECISION_STATUS.REJECTED,
     rejectionReason: approved ? '' : 'Exact operator approval text did not match.',
     finalVerdict: approved ? 'OPERATOR_APPROVAL_PASS' : 'OPERATOR_APPROVAL_REJECTED',
+  };
+}
+
+
+function normalizeActionClass(value) {
+  const text = asText(value, '').toLowerCase().replace(/_/g, '-');
+  if (['status', 'status-only', 'status only'].includes(text)) return GITHUB_OPERATOR_ACTION_CLASS.STATUS_ONLY;
+  if (['proof', 'proof-needed', 'proof needed', 'success-claim'].includes(text)) return GITHUB_OPERATOR_ACTION_CLASS.PROOF_NEEDED;
+  if (['patch', 'patch-needed', 'patch needed'].includes(text)) return GITHUB_OPERATOR_ACTION_CLASS.PATCH_NEEDED;
+  if (['merge', 'merge-needed', 'exact-head merge-needed', 'exact-head-merge-needed'].includes(text)) return GITHUB_OPERATOR_ACTION_CLASS.EXACT_HEAD_MERGE_NEEDED;
+  return GITHUB_OPERATOR_ACTION_CLASS.BLOCKED;
+}
+
+function normalizeIssueRef(value) {
+  const text = asText(value, '').replace(/^issue-/i, '#');
+  const match = text.match(/^#?[0-9]+$/);
+  return match ? `#${text.replace(/^#/, '')}` : '';
+}
+
+function normalizePrRef(value) {
+  const text = asText(value, '').replace(/^pr-/i, '#');
+  const match = text.match(/^#?[0-9]+$/);
+  return match ? `#${text.replace(/^#/, '')}` : '';
+}
+
+function hasProof(input = {}) {
+  const refs = Array.isArray(input.proofRefs) ? input.proofRefs.filter(Boolean) : [];
+  const proofs = Array.isArray(input.proofs) ? input.proofs.filter(Boolean) : [];
+  return refs.length > 0 || proofs.length > 0 || input.prPublicationProof?.status === 'PASS' || input.prPublicationProof?.finalVerdict === 'PR_PUBLICATION_VERIFIER_PASS';
+}
+
+function isSafeOperatorCommand(command) {
+  const text = asText(command, '');
+  if (!text) return false;
+  if (/[;&`$<>]/.test(text)) return false;
+  if (/\b(push|merge|checkout|reset|clean|rm|curl|wget|powershell|sh|bash|node -e)\b/i.test(text)) return false;
+  return SAFE_OPERATOR_COMMAND_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function normalizeAllowedCommands(commands = [], fallback = []) {
+  const requested = Array.isArray(commands) ? commands.map((command) => asText(command, '')).filter(Boolean) : [];
+  const source = requested.length ? requested : fallback;
+  const accepted = source.filter(isSafeOperatorCommand);
+  const rejected = requested.filter((command) => !isSafeOperatorCommand(command));
+  return { accepted, rejected };
+}
+
+export function createGitHubOperatorActionBrief(intentPacket = {}) {
+  const issue = normalizeIssueRef(intentPacket.issue || intentPacket.relatedGoal) || '#1286';
+  const relatedPr = normalizePrRef(intentPacket.relatedPr || intentPacket.pr || intentPacket.pullRequest);
+  const targetBranch = safeText(intentPacket.targetBranch || intentPacket.branch || intentPacket.headBranch, '');
+  const expectedHead = SHA_PATTERN.test(asText(intentPacket.expectedHead || intentPacket.expectedHeadSha || intentPacket.expectedHeadCommit, ''))
+    ? asText(intentPacket.expectedHead || intentPacket.expectedHeadSha || intentPacket.expectedHeadCommit, '').toLowerCase()
+    : '';
+  const actionClass = normalizeActionClass(intentPacket.actionClass || intentPacket.action || intentPacket.intentType);
+  const safetyBlockers = [];
+  let nextOwner = 'codex';
+  let smallestNextOperatorAction = 'Review the deterministic action brief; no execution has occurred.';
+  let requiredProofs = [];
+  let fallbackCommands = [];
+
+  if (issue !== '#1286') safetyBlockers.push('operator-action-brief-must-remain-related-to-issue-1286');
+
+  if (actionClass === GITHUB_OPERATOR_ACTION_CLASS.STATUS_ONLY) {
+    fallbackCommands = ACTION_BRIEF_ALLOWED_COMMANDS.STATUS_ONLY.map((command) => command.replace('{issue}', issue).replace('{relatedPr}', relatedPr || '#0'));
+    requiredProofs = [];
+    smallestNextOperatorAction = 'Read the status brief; no GitHub mutation is proposed.';
+  } else if (actionClass === GITHUB_OPERATOR_ACTION_CLASS.PROOF_NEEDED) {
+    fallbackCommands = ACTION_BRIEF_ALLOWED_COMMANDS.PROOF_NEEDED;
+    requiredProofs = ['ProofReferenceVerifier PASS', 'CommandReceiptVerifier PASS', 'PRPublicationVerifier PASS when a PR is claimed'];
+    smallestNextOperatorAction = 'Provide or request the missing proof packet before any success claim.';
+    if (!hasProof(intentPacket)) safetyBlockers.push('proof-missing-success-claim-blocked');
+  } else if (actionClass === GITHUB_OPERATOR_ACTION_CLASS.PATCH_NEEDED) {
+    const paths = Array.isArray(intentPacket.sourcePaths) ? intentPacket.sourcePaths : [];
+    fallbackCommands = [buildPatchCourierDiffCommand(paths)];
+    requiredProofs = ['Patch Courier V1 packet', 'ProofReferenceVerifier PASS'];
+    smallestNextOperatorAction = 'Route the bounded diff through Patch Courier; do not push or merge.';
+  } else if (actionClass === GITHUB_OPERATOR_ACTION_CLASS.EXACT_HEAD_MERGE_NEEDED) {
+    fallbackCommands = relatedPr ? [ACTION_BRIEF_ALLOWED_COMMANDS.EXACT_HEAD_MERGE_NEEDED[0].replace('{relatedPr}', relatedPr)] : [];
+    requiredProofs = ['PRPublicationVerifier PASS', 'exact expectedHead', 'explicit operator approval text'];
+    nextOwner = 'operator';
+    smallestNextOperatorAction = expectedHead && relatedPr
+      ? `If all proofs pass, manually approve with exact head ${expectedHead}; this brief will not merge.`
+      : 'Supply relatedPr and exact expectedHead before any merge approval can be considered.';
+    if (!relatedPr) safetyBlockers.push('related-pr-missing');
+    if (!expectedHead) safetyBlockers.push('expected-head-missing');
+    if (!hasProof(intentPacket)) safetyBlockers.push('pr-publication-proof-missing');
+  } else {
+    safetyBlockers.push('intent-action-class-unsupported');
+    nextOwner = 'operator';
+    smallestNextOperatorAction = 'Clarify whether the intent is status-only, proof-needed, patch-needed, or exact-head merge-needed.';
+  }
+
+  if (intentPacket.operatorApproved === true || intentPacket.approvalText || intentPacket.exactApprovalText) {
+    safetyBlockers.push('operator-approval-spoofing-rejected');
+  }
+
+  const { accepted, rejected } = normalizeAllowedCommands(intentPacket.allowedCommands, fallbackCommands);
+  if (rejected.length) safetyBlockers.push('unsafe-command-rejected');
+
+  const finalClass = safetyBlockers.length ? GITHUB_OPERATOR_ACTION_CLASS.BLOCKED : actionClass;
+  return {
+    schemaVersion: OPERATOR_AUTOMATION_SCHEMA_VERSION,
+    kind: 'stephanos.operator_automation.github_action_brief.v1',
+    issue,
+    relatedPr,
+    targetBranch,
+    expectedHead,
+    actionClass: finalClass,
+    requestedActionClass: actionClass,
+    allowedCommands: accepted,
+    rejectedCommands: rejected,
+    requiredProofs,
+    safetyBlockers,
+    nextOwner: safetyBlockers.length ? 'operator' : nextOwner,
+    smallestNextOperatorAction,
+    executesAction: false,
+    merges: false,
+    pushes: false,
+    writesOutsideTempFixtures: false,
+    routesTo: actionClass === GITHUB_OPERATOR_ACTION_CLASS.PATCH_NEEDED ? 'Patch Courier V1' : '',
+    finalVerdict: safetyBlockers.length ? 'GITHUB_OPERATOR_ACTION_BRIEF_BLOCKED' : 'GITHUB_OPERATOR_ACTION_BRIEF_READY',
   };
 }
