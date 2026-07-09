@@ -1,0 +1,13 @@
+{
+  "id": "stephanos-ignite-command",
+  "name": "Stephanos Ignite Command",
+  "description": "Adds an authorized /stephanos-ignite command for Battle Bridge ignition guidance.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
