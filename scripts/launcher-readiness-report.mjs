@@ -111,6 +111,10 @@ function parseFactsJson(raw, sourceLabel) {
   }
 }
 
+function stripLeadingUtf8Bom(raw) {
+  return raw.startsWith('\uFEFF') ? raw.slice(1) : raw;
+}
+
 function resolveSafeFactsFile(factsFileArg) {
   if (!factsFileArg || !factsFileArg.trim()) throw new Error('Missing value for --facts-file');
   if (factsFileArg.includes('\0')) throw new Error('Unsafe --facts-file path rejected: NUL byte is not allowed.');
@@ -134,7 +138,7 @@ function loadFactsFile(factsFileArg) {
     throw new Error(`Unable to read facts file ${factsFileArg}: ${error.message}`);
   }
   if (!stat.isFile()) throw new Error(`Facts file is not a regular file: ${factsFileArg}`);
-  return parseFactsJson(fs.readFileSync(resolvedPath, 'utf8'), `--facts-file ${factsFileArg}`);
+  return parseFactsJson(stripLeadingUtf8Bom(fs.readFileSync(resolvedPath, 'utf8')), `--facts-file ${factsFileArg}`);
 }
 
 function loadFacts(argsOrFactsArg) {
