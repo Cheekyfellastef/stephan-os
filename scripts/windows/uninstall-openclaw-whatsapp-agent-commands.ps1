@@ -1,10 +1,9 @@
 #requires -Version 5.1
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
 param(
   [switch]$WhatIfRollback
 )
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $PluginRoot = Join-Path $RepoRoot 'integrations\openclaw\whatsapp-agent-commands'
