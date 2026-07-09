@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
@@ -16,14 +17,17 @@ export const LIVE_FACT_SERVICES = Object.freeze({
 });
 
 export const LIVE_COLLECTOR_AUTHORITY = Object.freeze({
+  executesCommands: false,
   executesArbitraryShell: false,
   startsServices: false,
   killsProcesses: false,
+  mergesOrPushes: false,
   mutatesRuntime: false,
   writesOutputOnlyWhenAsked: true,
 });
 
-const DEFAULT_WORKSPACE_CURRENT_DIR = path.join('runtime-activity', 'shared-workspace', 'current');
+const REPO_LOCAL_WORKSPACE_DIR = path.join('runtime-activity', 'shared-workspace');
+const DEFAULT_WORKSPACE_CURRENT_DIR = path.join(REPO_LOCAL_WORKSPACE_DIR, 'current');
 const DEFAULT_MAX_RECORD_AGE_MS = 5 * 60 * 1000;
 
 function normalizeRepoRelativePath(value) {
@@ -80,7 +84,39 @@ function readWorkspaceRecord(filePath) {
   if (filePath.endsWith('.json')) {
     try { parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch {}
   }
-  return { path: normalizeRepoRelativePath(filePath), mtimeMs: stat.mtimeMs, length: stat.size, parsed };
+  return { path: filePath, mtimeMs: stat.mtimeMs, length: stat.size, parsed };
+}
+
+
+function isWindowsPlatform(platform = process.platform) {
+  return platform === 'win32';
+}
+
+export function defaultWindowsSharedWorkspacePath({ home = process.env.USERPROFILE || process.env.HOME || os.homedir(), platform = process.platform } = {}) {
+  if (!isWindowsPlatform(platform)) return null;
+  if (!home || home.includes('\0')) return null;
+  return path.join(home, 'Documents', 'Stephanos-openclaw-workspace');
+}
+
+function assertSafeSharedWorkspacePath(value, source) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`Unsafe shared workspace path rejected from ${source}: empty path is not allowed.`);
+  if (value.includes('\0')) throw new Error(`Unsafe shared workspace path rejected from ${source}: NUL byte is not allowed.`);
+  if (!path.isAbsolute(value) && value.split(/[\\/]+/).includes('..')) throw new Error(`Unsafe shared workspace path rejected from ${source}: relative traversal is not allowed.`);
+  return value.trim();
+}
+
+function resolveSharedWorkspaceRoot(repoRoot, { sharedWorkspace = null, env = process.env, platform = process.platform } = {}) {
+  const candidates = [
+    sharedWorkspace ? { source: 'cli-arg', value: sharedWorkspace, fallback: false } : null,
+    env.STEPHANOS_SHARED_WORKSPACE ? { source: 'env:STEPHANOS_SHARED_WORKSPACE', value: env.STEPHANOS_SHARED_WORKSPACE, fallback: false } : null,
+    env.STEPHANOS_OPENCLAW_WORKSPACE ? { source: 'env:STEPHANOS_OPENCLAW_WORKSPACE', value: env.STEPHANOS_OPENCLAW_WORKSPACE, fallback: false } : null,
+    defaultWindowsSharedWorkspacePath({ home: env.USERPROFILE || env.HOME || os.homedir(), platform }) ? { source: 'windows-default', value: defaultWindowsSharedWorkspacePath({ home: env.USERPROFILE || env.HOME || os.homedir(), platform }), fallback: false } : null,
+    { source: 'repo-local-fallback', value: path.join(repoRoot, REPO_LOCAL_WORKSPACE_DIR), fallback: true },
+  ].filter(Boolean);
+  const selected = candidates[0];
+  const safeValue = assertSafeSharedWorkspacePath(selected.value, selected.source);
+  const root = path.isAbsolute(safeValue) ? path.resolve(safeValue) : path.resolve(repoRoot, safeValue);
+  return { root, source: selected.source, fallback: selected.fallback };
 }
 
 function recordLooksUnknown(record) {
@@ -88,25 +124,38 @@ function recordLooksUnknown(record) {
   return /UNKNOWN|STALE|blocked|error/i.test(text);
 }
 
-function collectWorkspaceFacts(repoRoot, { now = Date.now(), maxRecordAgeMs = DEFAULT_MAX_RECORD_AGE_MS, workspaceCurrentDir = DEFAULT_WORKSPACE_CURRENT_DIR } = {}) {
-  const currentDir = path.resolve(repoRoot, workspaceCurrentDir);
+function workspaceEvidencePath(repoRoot, absolutePath) {
+  const relativePath = path.relative(repoRoot, absolutePath);
+  if (relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)) return normalizeRepoRelativePath(relativePath);
+  return absolutePath;
+}
+
+function collectWorkspaceFacts(repoRoot, { now = Date.now(), maxRecordAgeMs = DEFAULT_MAX_RECORD_AGE_MS, workspaceCurrentDir = null, sharedWorkspace = null, env = process.env, platform = process.platform } = {}) {
+  const resolvedWorkspace = workspaceCurrentDir
+    ? { root: path.resolve(repoRoot, workspaceCurrentDir, '..'), source: 'legacy-current-dir-option', fallback: false, currentDir: path.resolve(repoRoot, workspaceCurrentDir) }
+    : resolveSharedWorkspaceRoot(repoRoot, { sharedWorkspace, env, platform });
+  const currentDir = resolvedWorkspace.currentDir || path.join(resolvedWorkspace.root, 'current');
+  const evidenceCurrentDir = workspaceEvidencePath(repoRoot, currentDir);
   const staleRecords = [];
   const records = [];
+  const evidence = { currentDir: evidenceCurrentDir, workspaceRoot: resolvedWorkspace.root, source: resolvedWorkspace.source, fallback: resolvedWorkspace.fallback, records };
   if (!fs.existsSync(currentDir)) {
-    return { ready: false, evidence: { currentDir: workspaceCurrentDir, records: [] }, staleRecords: [`${workspaceCurrentDir} missing`] };
+    return { ready: false, evidence, staleRecords: [`${evidenceCurrentDir} missing`] };
   }
   for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
     if (!entry.isFile()) continue;
     const absolutePath = path.join(currentDir, entry.name);
     const record = readWorkspaceRecord(absolutePath);
-    const relativePath = normalizeRepoRelativePath(path.relative(repoRoot, absolutePath));
-    records.push({ ...record, path: relativePath });
-    if ((now - record.mtimeMs) > maxRecordAgeMs) staleRecords.push(`${relativePath} stale`);
-    if (recordLooksUnknown(record)) staleRecords.push(`${relativePath} UNKNOWN`);
+    const evidencePath = workspaceEvidencePath(repoRoot, absolutePath);
+    records.push({ ...record, path: evidencePath });
+    if ((now - record.mtimeMs) > maxRecordAgeMs) staleRecords.push(`${evidencePath} stale`);
+    if (recordLooksUnknown(record)) staleRecords.push(`${evidencePath} UNKNOWN`);
   }
-  if (!records.length) staleRecords.push(`${workspaceCurrentDir} empty`);
-  return { ready: staleRecords.length === 0, evidence: { currentDir: workspaceCurrentDir, records }, staleRecords };
+  if (!records.length) staleRecords.push(`${evidenceCurrentDir} empty`);
+  return { ready: staleRecords.length === 0, evidence, staleRecords };
 }
+
+export { resolveSharedWorkspaceRoot };
 
 export async function collectLauncherReadinessLiveFacts(options = {}) {
   const repoRoot = path.resolve(options.repoRoot || process.cwd());
@@ -128,11 +177,12 @@ function requireFlagValue(argv, index, flag) {
 }
 
 function parseArgs(argv) {
-  const args = { pretty: true, report: false, output: null };
+  const args = { pretty: true, report: false, output: null, sharedWorkspace: null };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--json') args.pretty = false;
     else if (argv[i] === '--report') args.report = true;
     else if (argv[i] === '--output') { args.output = requireFlagValue(argv, i, '--output'); i += 1; }
+    else if (argv[i] === '--shared-workspace') { args.sharedWorkspace = requireFlagValue(argv, i, '--shared-workspace'); i += 1; }
     else if (argv[i] === '--help') args.help = true;
     else throw new Error(`Unknown argument: ${argv[i]}`);
   }
@@ -152,10 +202,10 @@ function resolveSafeOutputPath(outputArg) {
 export async function main(argv = process.argv.slice(2), stdout = process.stdout) {
   const args = parseArgs(argv);
   if (args.help) {
-    stdout.write('Usage: node scripts/launcher-readiness-live-facts.mjs [--json] [--report] [--output <workspace-relative-path>]\n');
+    stdout.write('Usage: node scripts/launcher-readiness-live-facts.mjs [--json] [--report] [--shared-workspace <path>] [--output <workspace-relative-path>]\n');
     return 0;
   }
-  const facts = await collectLauncherReadinessLiveFacts();
+  const facts = await collectLauncherReadinessLiveFacts({ sharedWorkspace: args.sharedWorkspace });
   const payload = args.report ? createLauncherReadinessReport(facts) : facts;
   const serialized = `${JSON.stringify(payload, null, args.pretty ? 2 : 0)}\n`;
   const outputPath = resolveSafeOutputPath(args.output);
