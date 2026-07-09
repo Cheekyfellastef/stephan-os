@@ -43,6 +43,7 @@ export const VERIFIER_TYPES = Object.freeze([
   'AgentCapabilityVerifier',
   'StaleCapabilityVerifier',
   'BattleBridgePreflightVerifier',
+  'PRPublicationVerifier',
 ]);
 
 export const OPENCLAW_GATEWAY_VERDICTS = Object.freeze({
@@ -350,6 +351,48 @@ export function createStaleCapabilityVerifierResult(packet = {}, options = {}) {
   });
 }
 
+
+export function createPRPublicationVerifierResult(packet = {}, options = {}) {
+  const prNumber = asInteger(packet.pr || packet.prNumber, null);
+  const head = asText(packet.head || packet.headSha, '');
+  const base = asText(packet.base || packet.baseSha, '');
+  const branch = asText(packet.branch, '');
+  const filesChanged = asList(packet.filesChanged || packet.files);
+  const testsRun = asList(packet.testsRun || packet.tests);
+  const blockers = asList(packet.blockers);
+  const exactProofCommand = asText(packet.exactBattleBridgeProofCommand || packet.proofCommand, BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND);
+  const safeFiles = filesChanged.every((file) => file && !file.startsWith('/') && !file.startsWith('//') && !file.split(/[\\/]/).includes('..'));
+  const valid = prNumber > 0
+    && /^codex\/[-a-z0-9._/]+$/i.test(branch)
+    && /^[a-f0-9]{7,40}$/i.test(head)
+    && /^[a-f0-9]{7,40}$/i.test(base)
+    && head !== base
+    && safeFiles
+    && testsRun.includes(BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND)
+    && testsRun.includes('git diff --check')
+    && exactProofCommand === BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND
+    && blockers.length === 0;
+  return createVerifierResult({
+    checkId: 'pr-publication-proof',
+    verifierType: 'PRPublicationVerifier',
+    status: valid ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.BLOCKED,
+    target: prNumber ? `PR #${prNumber}` : 'pull-request-publication',
+    evidence: [
+      `pr=${prNumber ?? 'unknown'}`,
+      `branch=${branch || 'unknown'}`,
+      `head=${head || 'unknown'}`,
+      `base=${base || 'unknown'}`,
+      `filesChanged=${filesChanged.length}`,
+      `testsRun=${testsRun.length}`,
+      `exactBattleBridgeProofCommand=${exactProofCommand}`,
+    ],
+    reason: valid ? '' : 'PR publication proof missing required identity branch head base clean files tests or blocker-free verdict',
+    timestampUtc: options.timestampUtc || packet.timestampUtc || 'pending',
+    finalVerdict: valid ? 'PR_PUBLICATION_VERIFIER_PASS' : 'PR_PUBLICATION_VERIFIER_BLOCKED',
+    proofRefs: packet.proofRefs || [],
+  });
+}
+
 export const VerifierFactories = Object.freeze({
   GitVerifier: packetVerifier({ verifierType: 'GitVerifier', checkId: 'git-proof', target: 'repo-source', passField: 'repoClean', evidenceFields: ['repoExists', 'branch', 'head', 'originMain', 'repoClean', 'ahead', 'behind'], passVerdict: 'GIT_VERIFIER_PASS', failVerdict: 'GIT_VERIFIER_BLOCKED' }),
   BuildVerifier: packetVerifier({ verifierType: 'BuildVerifier', checkId: 'build-proof', target: 'source-build', passField: 'buildPassed', evidenceFields: ['buildPassed', 'script', 'artifactScope'], passVerdict: 'BUILD_VERIFIER_PASS', failVerdict: 'BUILD_VERIFIER_BLOCKED' }),
@@ -366,6 +409,7 @@ export const VerifierFactories = Object.freeze({
   CommandReceiptVerifier: (packet = {}, options = {}) => createCommandReceiptVerifierResult(packet, options),
   AgentCapabilityVerifier: (packet = {}, options = {}) => createAgentCapabilityVerifierResult(packet, options),
   StaleCapabilityVerifier: (packet = {}, options = {}) => createStaleCapabilityVerifierResult(packet, options),
+  PRPublicationVerifier: (packet = {}, options = {}) => createPRPublicationVerifierResult(packet, options),
 });
 
 export function createOpenClawGatewayVerifierResult(packet = {}, options = {}) {

@@ -112,3 +112,39 @@ test('Battle Bridge preflight passes only when all required evidence passes', ()
   assert.equal(preflight.safeToInstall, true);
   assert.equal(BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND, 'node --test shared/agents/verificationHarness*.test.mjs shared/agents/*Verifier*.test.mjs');
 });
+
+test('PR publication verifier requires PR identity and exact Battle Bridge proof command', () => {
+  const result = runVerifier('PRPublicationVerifier', {
+    pr: 1448,
+    branch: 'codex/add-prpublicationverifier-to-verification-harness',
+    head: '69e374e40426a11982409a251729ca0a401fd40d',
+    base: 'aadc5dfcbd9c361766c3bc3b108a2c99b79c094a',
+    filesChanged: [
+      'shared/agents/verificationHarness.mjs',
+      'shared/agents/verificationHarnessVerifiers.test.mjs',
+      'scripts/verify-pr-publication.mjs',
+      'package.json',
+    ],
+    testsRun: [BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND, 'git diff --check'],
+    blockers: [],
+    exactBattleBridgeProofCommand: BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND,
+  });
+
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.finalVerdict, 'PR_PUBLICATION_VERIFIER_PASS');
+});
+
+test('PR publication verifier blocks unsafe or incomplete publication proof', () => {
+  const result = runVerifier('PRPublicationVerifier', {
+    pr: 1448,
+    branch: 'feature/local-shortcut',
+    head: '69e374e40426a11982409a251729ca0a401fd40d',
+    base: '69e374e40426a11982409a251729ca0a401fd40d',
+    filesChanged: ['../secret.json'],
+    testsRun: ['git diff --check'],
+    blockers: ['missing Battle Bridge proof command'],
+  });
+
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.finalVerdict, 'PR_PUBLICATION_VERIFIER_BLOCKED');
+});
