@@ -1,0 +1,30 @@
+{
+  "id": "stephanos-ignite-command",
+  "name": "Stephanos Ignite Command",
+  "description": "Adds safe read-only V1A /stephanos-ignite WhatsApp commands for bounded status proof.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "openclawHealthEndpoint": {
+        "type": "string",
+        "default": "http://127.0.0.1:8790/health",
+        "description": "Loopback-only OpenClaw readonly health endpoint."
+      },
+      "stephanosHealthEndpoint": {
+        "type": "string",
+        "default": "http://127.0.0.1:8787/api/health",
+        "description": "Loopback-only Stephanos backend health endpoint."
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 500,
+        "maximum": 10000,
+        "default": 2500
+      }
+    }
+  }
+}
