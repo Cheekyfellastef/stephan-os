@@ -69,3 +69,63 @@ test('CLI wrapper reads facts from a temp fixture and emits deterministic JSON',
   assert.equal(parsed.status, 'READY');
   assert.equal(parsed.proofCommands.length, 4);
 });
+
+test('--facts-file valid JSON returns PARTIAL_UI_MISSING for backend OpenClaw workspace with missing UI', () => {
+  const dir = fs.mkdtempSync(path.join(process.cwd(), '.tmp-launcher-readiness-'));
+  const fixture = path.join(dir, 'ignition-facts.json');
+  fs.writeFileSync(fixture, JSON.stringify({ observedFacts: { services: { backend: true, 'openclaw-gateway': true, 'shared-workspace': true } } }));
+  let output = '';
+  try {
+    const relativeFixture = path.relative(process.cwd(), fixture);
+    const code = main(['--facts-file', relativeFixture, '--json'], { write: (chunk) => { output += chunk; } });
+    assert.equal(code, 0);
+    const parsed = JSON.parse(output);
+    assert.equal(parsed.status, 'PARTIAL_UI_MISSING');
+    assert.equal(parsed.verdict, 'partial-ui-missing');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--facts inline JSON still works', () => {
+  let output = '';
+  const code = main(['--facts', JSON.stringify({ observedFacts: { services: allReady } }), '--json'], { write: (chunk) => { output += chunk; } });
+  assert.equal(code, 0);
+  assert.equal(JSON.parse(output).status, 'READY');
+});
+
+test('both --facts and --facts-file are blocked with deterministic usage error', () => {
+  assert.throws(
+    () => main(['--facts', '{}', '--facts-file', '.\\ignition-facts.json', '--json'], { write: () => {} }),
+    /Usage error: supply either --facts or --facts-file, not both\./,
+  );
+});
+
+test('missing --facts-file is blocked with deterministic error', () => {
+  assert.throws(
+    () => main(['--facts-file', '.\\missing-ignition-facts.json', '--json'], { write: () => {} }),
+    /Facts file not found: \.\\missing-ignition-facts\.json/,
+  );
+});
+
+test('invalid --facts-file JSON is blocked with deterministic error', () => {
+  const dir = fs.mkdtempSync(path.join(process.cwd(), '.tmp-launcher-readiness-'));
+  const fixture = path.join(dir, 'invalid.json');
+  fs.writeFileSync(fixture, '{not-json');
+  try {
+    const relativeFixture = path.relative(process.cwd(), fixture);
+    assert.throws(
+      () => main(['--facts-file', relativeFixture, '--json'], { write: () => {} }),
+      new RegExp(`Invalid JSON in --facts-file ${relativeFixture.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`),
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('unsafe traversal --facts-file path is blocked with deterministic error', () => {
+  assert.throws(
+    () => main(['--facts-file', '../ignition-facts.json', '--json'], { write: () => {} }),
+    /Unsafe --facts-file path rejected: path must stay within the current workspace\./,
+  );
+});
