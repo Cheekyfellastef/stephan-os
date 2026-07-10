@@ -1,0 +1,19 @@
+{
+  "id": "stephanos-ignite-command",
+  "name": "Stephanos Ignite Command",
+  "description": "Adds an authorized /ignite command that prints the approved local Stephanos ignition command without executing it.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "command": {
+        "type": "string",
+        "default": "npm run stephanos:ignite",
+        "description": "Operator-run Stephanos ignition command to display. The plugin never executes it."
+      }
+    }
+  }
+}
