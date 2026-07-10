@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import path from 'node:path';
@@ -87,9 +87,10 @@ export function defaultBattleBridgeSharedWorkspace({ env = process.env, platform
 function applyReadinessToStatus(status, report = {}) {
   const services = report.observedServices || {};
   const backendRepair = status.services.backend8787?.repair || null;
+  const servedRuntimeProof = status.services.stephanosUi4173?.servedRuntimeProof || null;
   status.services.backend8787 = { state: services.backend?.ready ? 'ready' : 'blocked', ready: services.backend?.ready === true, evidence: services.backend?.evidence || null, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, ...(backendRepair ? { repair: backendRepair } : {}) };
   status.services.openClaw18789 = { state: services['openclaw-gateway']?.ready ? 'ready' : 'blocked', ready: services['openclaw-gateway']?.ready === true, evidence: services['openclaw-gateway']?.evidence || null };
-  status.services.stephanosUi4173 = { state: services['stephanos-ui']?.ready ? 'ready' : 'blocked', ready: services['stephanos-ui']?.ready === true, evidence: services['stephanos-ui']?.evidence || null };
+  status.services.stephanosUi4173 = { state: services['stephanos-ui']?.ready ? 'ready' : 'blocked', ready: services['stephanos-ui']?.ready === true, evidence: services['stephanos-ui']?.evidence || null, ...(servedRuntimeProof ? { servedRuntimeProof } : {}) };
   status.sharedWorkspaceFreshness = { state: (services['shared-workspace']?.ready && !(report.staleWorkspaceRecords || []).length) ? 'ready' : 'degraded', fresh: services['shared-workspace']?.ready === true && !(report.staleWorkspaceRecords || []).length, staleRecords: report.staleWorkspaceRecords || [] };
   status.runtimeOnlyDirtCaveat = (report.caveats || []).find((caveat) => caveat.id === 'runtime-only-dirt') || null;
   const sourceBlocker = (report.safetyBlockers || []).find((blocker) => /source|branch|dirty|tracked-runtime/.test(String(blocker.id || '')));
@@ -136,6 +137,64 @@ export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorks
   });
 }
 
+export function getCurrentGitHead({ cwd = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), execFile = execFileSync } = {}) {
+  return String(execFile('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' })).trim();
+}
+
+function commitMatchesHead(value, head) {
+  const served = String(value || '').trim();
+  const current = String(head || '').trim();
+  if (!served || !current) return false;
+  if (served === current) return true;
+  return served.length >= 7 && current.startsWith(served);
+}
+
+function runtimeMarkerMatchesHead(marker, head) {
+  const text = String(marker || '');
+  const tokens = text.match(/[0-9a-f]{7,40}/gi) || [];
+  return tokens.some((token) => commitMatchesHead(token, head));
+}
+
+export function evaluateServedRuntimeExactHeadProof({ health = null, dist = null, currentHead = '' } = {}) {
+  const gitCommit = health?.gitCommit || health?.commit || '';
+  const runtimeMarker = health?.runtimeMarker || health?.marker || '';
+  const healthOk = health?.ok === true || health?.status === 'ok' || Boolean(gitCommit || runtimeMarker);
+  const distOk = dist?.ok === true || (dist?.statusCode >= 200 && dist?.statusCode < 300);
+  const gitCommitMatches = commitMatchesHead(gitCommit, currentHead);
+  const runtimeMarkerMatches = runtimeMarkerMatchesHead(runtimeMarker, currentHead);
+  return {
+    ready: Boolean(healthOk && distOk && gitCommitMatches && runtimeMarkerMatches),
+    currentHead,
+    healthOk,
+    distOk,
+    gitCommit,
+    runtimeMarker,
+    gitCommitMatches,
+    runtimeMarkerMatches,
+    buildTimestamp: health?.buildTimestamp || null,
+    health,
+    dist,
+  };
+}
+
+async function fetchJson(url, { fetchFn = globalThis.fetch } = {}) {
+  const response = await fetchFn(url);
+  const text = await response.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+  return { ok: response.ok, statusCode: response.status, json, text: text.slice(0, 500) };
+}
+
+export async function collectServedRuntimeExactHeadProof({ currentHead = getCurrentGitHead(), fetchFn = globalThis.fetch } = {}) {
+  const healthResponse = await fetchJson('http://127.0.0.1:4173/__stephanos/health', { fetchFn });
+  const distResponse = await fetchJson('http://127.0.0.1:4173/apps/stephanos/dist/index.html', { fetchFn });
+  return evaluateServedRuntimeExactHeadProof({
+    currentHead,
+    health: healthResponse.json || { ok: healthResponse.ok, statusCode: healthResponse.statusCode },
+    dist: { ok: distResponse.ok, statusCode: distResponse.statusCode },
+  });
+}
+
 function requiredServiceBlocker(id, detail, nextOperatorAction, extra = {}) {
   return { id, detail, nextOperatorAction, ...extra };
 }
@@ -153,7 +212,7 @@ async function writeStatus(status, sharedWorkspace) {
   return file;
 }
 
-export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runIgnitionHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, sourceTruthFn = evaluateGitPublicationTruthWithDeps, stdout = process.stdout } = {}) {
+export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runIgnitionHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, sourceTruthFn = evaluateGitPublicationTruthWithDeps, runtimeProofFn = collectServedRuntimeExactHeadProof, currentHeadFn = getCurrentGitHead, stdout = process.stdout } = {}) {
   let status = createBattleBridgeSupervisorStatus();
   const writes = [];
   const persist = async () => { const file = await writeStatus(status, sharedWorkspace); if (file) writes.push(file); };
@@ -227,11 +286,38 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   }
   const proofFacts = await collectFactsFn({ sharedWorkspace });
   const proofReport = plannerFn(proofFacts);
-  const proofReady = proofReport.finalVerdict === 'ready' && isReady(proofReport, 'backend') && isReady(proofReport, 'openclaw-gateway') && isReady(proofReport, 'stephanos-ui') && isReady(proofReport, 'shared-workspace');
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'running', readinessReport: proofReport }); await persist();
+  let servedRuntimeProof = null;
+  if (isReady(proofReport, 'stephanos-ui')) {
+    servedRuntimeProof = await runtimeProofFn({ currentHead: currentHeadFn(), sharedWorkspace });
+    status.services.stephanosUi4173.servedRuntimeProof = servedRuntimeProof;
+    if (!servedRuntimeProof.ready) {
+      status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: 'running' }); await persist();
+      const repairOutput = { chunks: '' };
+      const code = await repairFn({ sharedWorkspace, dryRun: false, stdout: { write: (chunk) => { repairOutput.chunks += chunk; } } });
+      let repairResult = null;
+      try { repairResult = JSON.parse(repairOutput.chunks); } catch {}
+      await publisherFn({ sharedWorkspace });
+      const repairedFacts = await collectFactsFn({ sharedWorkspace });
+      const repairedReport = plannerFn(repairedFacts);
+      proofReport.observedServices = repairedReport.observedServices;
+      proofReport.finalVerdict = repairedReport.finalVerdict;
+      proofReport.staleWorkspaceRecords = repairedReport.staleWorkspaceRecords || [];
+      servedRuntimeProof = isReady(repairedReport, 'stephanos-ui') ? await runtimeProofFn({ currentHead: currentHeadFn(), sharedWorkspace }) : servedRuntimeProof;
+      status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: servedRuntimeProof.ready ? 'ready' : (code === 0 ? 'blocked' : 'failed'), readinessReport: repairedReport, logPath: repairResult?.logs?.logPath || '' });
+      status.services.stephanosUi4173.servedRuntimeProof = servedRuntimeProof;
+      await persist();
+    }
+  }
+  const exactHeadReady = servedRuntimeProof?.ready === true;
+  const proofReady = proofReport.finalVerdict === 'ready' && isReady(proofReport, 'backend') && isReady(proofReport, 'openclaw-gateway') && isReady(proofReport, 'stephanos-ui') && isReady(proofReport, 'shared-workspace') && exactHeadReady;
   if (!proofReady) {
     const missingPhase = !isReady(proofReport, 'backend') ? 'backend 8787' : (!isReady(proofReport, 'openclaw-gateway') ? 'OpenClaw gateway 18789' : (!isReady(proofReport, 'stephanos-ui') ? 'Stephanos UI 4173' : 'shared workspace publisher'));
-    const blockerId = status.blockerId || (missingPhase === 'backend 8787' ? 'backend-8787-missing' : (missingPhase === 'Stephanos UI 4173' ? 'stephanos-ui-4173-missing' : 'browser-runtime-proof-incomplete'));
-    status = projectBattleBridgeSupervisorStatus({ status, phase: missingPhase, phaseState: 'blocked', readinessReport: proofReport, blocker: requiredServiceBlocker(blockerId, 'Required Battle Bridge element is not ready; browser/runtime proof remains pending.', 'Resolve blocked required elements, then rerun npm run stephanos:ignite.') });
+    const staleRuntime = isReady(proofReport, 'stephanos-ui') && servedRuntimeProof && !servedRuntimeProof.ready;
+    const blockerId = staleRuntime ? 'served-runtime-stale' : (status.blockerId || (missingPhase === 'backend 8787' ? 'backend-8787-missing' : (missingPhase === 'Stephanos UI 4173' ? 'stephanos-ui-4173-missing' : 'browser-runtime-proof-incomplete')));
+    const detail = staleRuntime ? `Stephanos UI 4173 is alive but served runtime does not match current source HEAD ${servedRuntimeProof.currentHead}.` : 'Required Battle Bridge element is not ready; browser/runtime proof remains pending.';
+    const action = staleRuntime ? 'Rebuild/restart 4173 through guarded UI repair, then rerun npm run stephanos:ignite.' : 'Resolve blocked required elements, then rerun npm run stephanos:ignite.';
+    status = projectBattleBridgeSupervisorStatus({ status, phase: staleRuntime ? 'browser/runtime proof' : missingPhase, phaseState: 'blocked', readinessReport: proofReport, blocker: requiredServiceBlocker(blockerId, detail, action, { servedRuntimeProof }) });
     await persist();
     stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
