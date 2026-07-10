@@ -170,6 +170,16 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   const healthProofLogPath = path.join(logPath, 'health-proof.json');
   const logs = { logPath, stdoutLogPath, stderrLogPath, exitLogPath, healthProofLogPath };
   if (!target.available) return { started: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath };
+  let existingProof = null;
+  try { existingProof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+  await fs.writeFile(healthProofLogPath, `${JSON.stringify(existingProof, null, 2)}
+`);
+  if (existingProof.ready) {
+    const exitState = { code: null, signal: null, error: null, reusedExistingRuntime: true };
+    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}
+`);
+    return { started: false, reusedExistingRuntime: true, duplicateStartAvoided: true, ready: true, exitCode: null, exit: exitState, logs, logPath, target, healthProof: existingProof, pid: null };
+  }
   const child = spawnFn(target.command, target.commandArgs, { cwd: path.resolve(sharedWorkspace), detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: { ...process.env, STEPHANOS_OPENCLAW_AUTOSTART: 'battle-bridge-supervisor-gateway-only' } });
   if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(stdoutLogPath, { flags: 'a' }));
   if (child?.stderr?.pipe) child.stderr.pipe(createWriteStream(stderrLogPath, { flags: 'a' }));

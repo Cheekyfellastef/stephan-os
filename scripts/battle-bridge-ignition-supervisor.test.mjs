@@ -174,13 +174,14 @@ test('backend start unavailable returns adapter blocker', async () => {
 
 
 
-test('approved OpenClaw gateway start uses Control Panel adapter command shape and canonical logs', async () => {
+test('approved OpenClaw gateway start uses scheduled-task start command shape and canonical logs', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-start-'));
   const child = new EventEmitter();
   child.pid = 18789;
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
   const spawnCalls = [];
+  let healthCalls = 0;
   const result = await runApprovedOpenClawGateway18789Start({
     sharedWorkspace: workspace,
     token: 'test-token',
@@ -193,7 +194,11 @@ test('approved OpenClaw gateway start uses Control Panel adapter command shape a
       return child;
     },
     fetchFn: async (url) => {
-      if (url.endsWith('/health')) return { ok: true, status: 200, text: async () => JSON.stringify({ status: 'live' }) };
+      if (url.endsWith('/health')) {
+        healthCalls += 1;
+        if (healthCalls === 1) throw new Error('not listening before start');
+        return { ok: true, status: 200, text: async () => JSON.stringify({ status: 'live' }) };
+      }
       return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
     },
   });
@@ -202,12 +207,35 @@ test('approved OpenClaw gateway start uses Control Panel adapter command shape a
   assert.equal(spawnCalls[0].command, 'powershell.exe');
   assert.match(spawnCalls[0].args.join(' '), /openclaw config set gateway\.mode local/);
   assert.match(spawnCalls[0].args.join(' '), /openclaw config set gateway\.auth\.mode token/);
-  assert.match(spawnCalls[0].args.join(' '), /openclaw gateway run --force/);
+  assert.match(spawnCalls[0].args.join(' '), /openclaw gateway start --json/);
+  assert.doesNotMatch(spawnCalls[0].args.join(' '), /openclaw gateway run --force/);
   assert.doesNotMatch(spawnCalls[0].args.join(' '), /--port 18789 --bind loopback|--host/);
   assert.equal(spawnCalls[0].options.shell, false);
   assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
   assert.equal(fs.readFileSync(result.logs.stdoutLogPath, 'utf8'), 'openclaw stdout proof\n');
   assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'openclaw stderr proof\n');
+});
+
+test('approved OpenClaw gateway start reuses healthy 18789 and avoids duplicate start', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-reuse-'));
+  const spawnCalls = [];
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    token: 'test-token',
+    approved: true,
+    spawnFn: (...args) => { spawnCalls.push(args); throw new Error('duplicate start must not run'); },
+    fetchFn: async (url) => {
+      if (url.endsWith('/health')) return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+    },
+  });
+
+  assert.equal(result.ready, true);
+  assert.equal(result.reusedExistingRuntime, true);
+  assert.equal(result.duplicateStartAvoided, true);
+  assert.equal(result.started, false);
+  assert.equal(spawnCalls.length, 0);
+  assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
 });
 
 test('supervisor calls approved OpenClaw startup adapter when 18789 is missing', async () => {
