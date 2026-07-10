@@ -174,7 +174,7 @@ test('backend start unavailable returns adapter blocker', async () => {
 
 
 
-test('approved OpenClaw gateway start uses scheduled-task start command shape and canonical logs', async () => {
+test('approved OpenClaw gateway start uses config-safe start command shape, env token, health retries, and canonical logs', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-start-'));
   const child = new EventEmitter();
   child.pid = 18789;
@@ -204,16 +204,45 @@ test('approved OpenClaw gateway start uses scheduled-task start command shape an
   });
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(result.ready, true);
-  assert.equal(spawnCalls[0].command, 'powershell.exe');
-  assert.match(spawnCalls[0].args.join(' '), /openclaw config set gateway\.mode local/);
-  assert.match(spawnCalls[0].args.join(' '), /openclaw config set gateway\.auth\.mode token/);
-  assert.match(spawnCalls[0].args.join(' '), /openclaw gateway start --json/);
+  assert.equal(spawnCalls[0].command, 'openclaw');
+  assert.deepEqual(spawnCalls[0].args, ['gateway', 'start', '--json']);
+  assert.doesNotMatch(result.target.commandText, /openclaw config set/);
+  assert.doesNotMatch(spawnCalls[0].args.join(' '), /openclaw config set/);
+  assert.match(`${spawnCalls[0].command} ${spawnCalls[0].args.join(' ')}`, /openclaw gateway start --json/);
+  assert.equal(spawnCalls[0].options.env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN, 'test-token');
+  assert.equal(spawnCalls[0].options.env.OPENCLAW_GATEWAY_TOKEN, 'test-token');
+  assert.equal(healthCalls >= 2, true);
   assert.doesNotMatch(spawnCalls[0].args.join(' '), /openclaw gateway run --force/);
   assert.doesNotMatch(spawnCalls[0].args.join(' '), /--port 18789 --bind loopback|--host/);
   assert.equal(spawnCalls[0].options.shell, false);
   assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
   assert.equal(fs.readFileSync(result.logs.stdoutLogPath, 'utf8'), 'openclaw stdout proof\n');
   assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'openclaw stderr proof\n');
+});
+
+test('approved OpenClaw gateway start writes all log paths on timeout', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-timeout-'));
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    token: 'test-token',
+    approved: true,
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: () => child,
+    fetchFn: async () => { throw new Error('still down'); },
+  });
+
+  assert.equal(result.ready, false);
+  assert.equal(result.started, true);
+  assert.equal(fs.existsSync(result.logs.stdoutLogPath), true);
+  assert.equal(fs.existsSync(result.logs.stderrLogPath), true);
+  assert.equal(fs.existsSync(result.logs.exitLogPath), true);
+  assert.equal(fs.existsSync(result.logs.healthProofLogPath), true);
+  assert.match(fs.readFileSync(result.logs.healthProofLogPath, 'utf8'), /still down/);
 });
 
 test('approved OpenClaw gateway start reuses healthy 18789 and avoids duplicate start', async () => {

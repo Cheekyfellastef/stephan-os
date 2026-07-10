@@ -1,4 +1,4 @@
-import { OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY, OPENCLAW_WORKSPACE_SAFE_START_COMMAND_PREFIX } from './openClawWorkspaceHygiene.mjs';
+import { OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY } from './openClawWorkspaceHygiene.mjs';
 
 export const OPENCLAW_GATEWAY_STARTUP_SOURCE = 'shared:openclaw-control-panel-start-gateway';
 export const OPENCLAW_GATEWAY_APPROVED_PORT = 18789;
@@ -14,7 +14,7 @@ export const OPENCLAW_GATEWAY_STARTUP_GUARDRAILS = Object.freeze({
 export const OPENCLAW_GATEWAY_STARTGATEWAY_APPROVAL = Object.freeze({
   required: true,
   actionId: 'approve-openclaw-control-panel-startgateway',
-  reason: 'Battle Bridge/OpenClaw startup writes gateway config/token settings when needed and starts the Windows OpenClaw gateway service/process with openclaw gateway start --json.',
+  reason: 'Battle Bridge/OpenClaw startup starts the Windows OpenClaw gateway service/process with openclaw gateway start --json; tokens are provided through the child process environment and OpenClaw config is not rewritten.',
   envFlag: 'STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY',
 });
 
@@ -26,19 +26,12 @@ export function openClawGatewayStartApprovalGranted({ env = process.env, approve
   return approved === true || /^(1|true|yes|approved)$/i.test(String(env[OPENCLAW_GATEWAY_STARTGATEWAY_APPROVAL.envFlag] || ''));
 }
 
-export function getOpenClawGatewayStartupCommand({ token = '<operator-token>' } = {}) {
-  const safeToken = String(token || '<operator-token>').replace(/'/g, "''");
-  return [
-    `${OPENCLAW_WORKSPACE_SAFE_START_COMMAND_PREFIX} openclaw config set gateway.mode local`,
-    `openclaw config set gateway.auth.mode token`,
-    `openclaw config set gateway.auth.token '${safeToken}'`,
-    `openclaw config set gateway.remote.token '${safeToken}'`,
-    `openclaw gateway start --json`,
-  ].join('; ');
+export function getOpenClawGatewayStartupCommand() {
+  return 'openclaw gateway start --json';
 }
 
 export function redactOpenClawGatewayStartupCommand(value = '') {
-  return String(value || '').replace(/(gateway\.(?:auth|remote)\.token\s+)(?:'[^']*'|\S+)/gi, '$1<redacted-token>');
+  return String(value || '').replace(/(OPENCLAW(?:_GATEWAY)?_TOKEN=)(?:'[^']*'|\S+)/gi, '$1<redacted-token>');
 }
 
 export function splitOpenClawGatewayStartupCommand(value = getOpenClawGatewayStartupCommand()) {
@@ -53,7 +46,7 @@ export function hasForbiddenOpenClawGatewayStartupToken(value = '') {
 export function buildOpenClawGatewayStartupTarget({ commandText = '', source = OPENCLAW_GATEWAY_STARTUP_SOURCE, env = process.env, token = '', approved = false } = {}) {
   const resolvedToken = resolveOpenClawGatewayStartToken({ env, token });
   const approvalGranted = openClawGatewayStartApprovalGranted({ env, approved });
-  const text = String(commandText || getOpenClawGatewayStartupCommand({ token: resolvedToken || '<operator-token>' }) || '').trim();
+  const text = String(commandText || getOpenClawGatewayStartupCommand() || '').trim();
   const argv = splitOpenClawGatewayStartupCommand(text);
   const startsApprovedGateway = /openclaw\s+gateway\s+start\s+--json/i.test(text);
   const legacyForceRunGateway = /openclaw\s+gateway\s+run\s+--force/i.test(text);
@@ -90,6 +83,7 @@ export function buildOpenClawGatewayStartupTarget({ commandText = '', source = O
     killsProcesses: legacyForceRunGateway,
     startsOpenClawGatewayServiceOrProcess: startsApprovedGateway,
     mayMutateOpenClawGatewayServiceOrRuntimeState: true,
+    mutatesOpenClawConfig: false,
     repoMutationAllowed: false,
     mergePushInstallAllowed: false,
   };
