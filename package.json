@@ -51,7 +51,8 @@
     "stephanos:publish-merge": "node scripts/repository-native-publish-merge-lane.mjs",
     "stephanos:battle-bridge:concierge": "node scripts/battle-bridge-build-concierge-v2.mjs",
     "stephanos:verify:pr-publication": "node scripts/verify-pr-publication.mjs",
-    "ignition:readiness": "node scripts/launcher-readiness-report.mjs"
+    "ignition:readiness": "node scripts/launcher-readiness-report.mjs",
+    "stephanos:battle-bridge:repair-ui-4173": "node scripts/battle-bridge-ui-4173-repair.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
