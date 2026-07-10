@@ -227,7 +227,7 @@ test('guardrails reject OpenClaw task execution and mutation launch commands', (
   assert.equal(targets[0].reason, 'approved-launch-command-violates-guardrails');
 });
 
-test('ignition uses shared Control Panel gateway startup path on approved 18789 port', async () => {
+test('ignition uses shared OpenClaw gateway startup path on approved 18789 port', async () => {
   const spawned = [];
   let fetchCount = 0;
   const result = await evaluateOpenClawRuntimeAutostartWithDeps({
@@ -254,7 +254,8 @@ test('ignition uses shared Control Panel gateway startup path on approved 18789 
   assert.equal(result.startupSource, 'shared:openclaw-control-panel-start-gateway');
   assert.equal(spawned.length, 1);
   assert.equal(spawned[0].command, 'powershell.exe');
-  assert.match(spawned[0].commandArgs.join(' '), /openclaw gateway run --force/);
+  assert.match(spawned[0].commandArgs.join(' '), /openclaw gateway start --json/);
+  assert.doesNotMatch(spawned[0].commandArgs.join(' '), /openclaw gateway run --force/);
 });
 
 test('splash/status diagnostics report OpenClaw startup phase and endpoint unreachable details', async () => {
@@ -268,6 +269,6 @@ test('splash/status diagnostics report OpenClaw startup phase and endpoint unrea
     waitMs: 0,
     readinessTimeoutMs: 0,
     log: (message) => logs.push(message),
-  }), /startupSource.*shared:openclaw-control-panel-start-gateway.*startupCommand.*gateway run --force.*processStartResult.*probeAttempts.*endpoint-unreachable/);
+  }), /startupSource.*shared:openclaw-control-panel-start-gateway.*startupCommand.*gateway start --json.*processStartResult.*probeAttempts.*endpoint-unreachable/);
   assert.match(logs.join('\n'), /openclaw-gateway-startup/);
 });

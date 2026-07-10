@@ -14,7 +14,7 @@ export const OPENCLAW_GATEWAY_STARTUP_GUARDRAILS = Object.freeze({
 export const OPENCLAW_GATEWAY_STARTGATEWAY_APPROVAL = Object.freeze({
   required: true,
   actionId: 'approve-openclaw-control-panel-startgateway',
-  reason: 'Control Panel StartGateway writes OpenClaw gateway config/token settings and runs openclaw gateway run --force, which may replace an existing listener.',
+  reason: 'Battle Bridge/OpenClaw startup writes gateway config/token settings when needed and starts the Windows OpenClaw gateway service/process with openclaw gateway start --json.',
   envFlag: 'STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY',
 });
 
@@ -33,7 +33,7 @@ export function getOpenClawGatewayStartupCommand({ token = '<operator-token>' } 
     `openclaw config set gateway.auth.mode token`,
     `openclaw config set gateway.auth.token '${safeToken}'`,
     `openclaw config set gateway.remote.token '${safeToken}'`,
-    `openclaw gateway run --force`,
+    `openclaw gateway start --json`,
   ].join('; ');
 }
 
@@ -55,9 +55,10 @@ export function buildOpenClawGatewayStartupTarget({ commandText = '', source = O
   const approvalGranted = openClawGatewayStartApprovalGranted({ env, approved });
   const text = String(commandText || getOpenClawGatewayStartupCommand({ token: resolvedToken || '<operator-token>' }) || '').trim();
   const argv = splitOpenClawGatewayStartupCommand(text);
-  const forceStartGateway = /openclaw\s+gateway\s+run\s+--force/i.test(text);
+  const startsApprovedGateway = /openclaw\s+gateway\s+start\s+--json/i.test(text);
+  const legacyForceRunGateway = /openclaw\s+gateway\s+run\s+--force/i.test(text);
   const portMatch = text.match(/(?:^|\s)--port(?:=|\s+)(\d{2,5})(?:\s|$)/i);
-  const port = forceStartGateway ? OPENCLAW_GATEWAY_APPROVED_PORT : Number(portMatch?.[1] || 0);
+  const port = (startsApprovedGateway || legacyForceRunGateway) ? OPENCLAW_GATEWAY_APPROVED_PORT : Number(portMatch?.[1] || 0);
   const blockedReason = !text
     ? 'startup-command-missing'
     : argv.length === 0
@@ -86,6 +87,10 @@ export function buildOpenClawGatewayStartupTarget({ commandText = '', source = O
     guardrails: OPENCLAW_GATEWAY_STARTUP_GUARDRAILS,
     approval: { ...OPENCLAW_GATEWAY_STARTGATEWAY_APPROVAL, granted: approvalGranted },
     mutatesOpenClaw: true,
-    killsProcesses: forceStartGateway,
+    killsProcesses: legacyForceRunGateway,
+    startsOpenClawGatewayServiceOrProcess: startsApprovedGateway,
+    mayMutateOpenClawGatewayServiceOrRuntimeState: true,
+    repoMutationAllowed: false,
+    mergePushInstallAllowed: false,
   };
 }
