@@ -14,7 +14,11 @@ import {
   runApprovedBackend8787Start,
   defaultBattleBridgeSharedWorkspace,
   runBattleBridgeIgnitionSupervisor,
+  evaluateServedRuntimeExactHeadProof,
 } from './battle-bridge-ignition-supervisor.mjs';
+
+
+const readyRuntimeProof = async () => ({ ready: true, currentHead: '51600ceb00000000000000000000000000000000', healthOk: true, distOk: true, gitCommitMatches: true, runtimeMarkerMatches: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture' });
 
 const readyServices = {
   backend: { ready: true },
@@ -59,7 +63,7 @@ test('publisher is refreshed before UI repair and stale records are refreshed by
     },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready && !(facts.staleWorkspaceRecords || []).length ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true, logs: { logPath: path.join(workspace, 'logs', 'repair') } })); return 0; },
-    stdout: { write() {} },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, true);
   assert.deepEqual(calls.slice(0, 5), ['housekeeping', 'publisher', 'collect-1', 'publisher', 'collect-2']);
@@ -78,7 +82,7 @@ test('partial-ui-missing triggers repair and ready is only reported after 4173 p
     collectFactsFn: async () => { collectCount += 1; return factsFor({ ui: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
-    stdout: { write() {} },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.deepEqual(calls, ['repair']);
   assert.equal(result.status.phases.ready.state, 'ready');
@@ -90,7 +94,7 @@ test('missing 4173 repair attempt records structured degraded result when proof 
     collectFactsFn: async () => factsFor({ ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: false, action: 'start-ui-4173-spawned-but-not-ready' })); return 0; },
-    stdout: { write() {} },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, false);
   assert.equal(result.status.phases['Stephanos UI 4173'].state, 'blocked');
@@ -100,7 +104,7 @@ test('missing 4173 repair attempt records structured degraded result when proof 
 test('non-main stale branch reports blocker to splash/status model', async () => {
   const blocker = { id: 'non-main-source-truth', detail: 'non-main branch', nextOperatorAction: 'Switch through approved source update path.' };
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ blocker }), stdout: { write() {} },
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ blocker }), runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, false);
   assert.equal(result.status.blockerId, 'non-main-source-truth');
@@ -133,7 +137,7 @@ test('backend missing plus UI missing does not enter browser/runtime proof and s
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices.backend.ready ? 'partial-ui-missing' : 'blocked-needs-supervisor-repair' }),
     backendStartFn: async ({ commandIdentity }) => { calls.push(commandIdentity.commandText); return { started: true, commandIdentity }; },
     repairFn: async ({ stdout }) => { calls.push('ui-repair'); stdout.write(JSON.stringify({ ready: false })); return 0; },
-    stdout: { write() {} },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(calls[0], 'npm run stephanos:battle-bridge:repair');
   assert.equal(result.status.blockerId, 'stephanos-ui-4173-missing');
@@ -146,7 +150,7 @@ test('backend missing has deterministic backend blocker and no empty blockerId w
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ started: false }),
     repairFn: async () => { throw new Error('ui repair must not run without backend'); },
-    stdout: { write() {} },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, false);
   assert.equal(result.status.blockerId, 'backend-8787-repair-failed');
@@ -160,7 +164,7 @@ test('backend start unavailable returns adapter blocker', async () => {
     collectFactsFn: async () => factsFor({ backend: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ unavailable: true }),
-    stdout: { write() {} },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.status.blockerId, 'backend-8787-start-unavailable');
   assert.match(result.status.nextOperatorAction, /safe backend start adapter/);
@@ -215,7 +219,7 @@ test('backend repair success without health proof blocks with no-health-proof an
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ started: true, exitCode: 0, logPath, logs: { logPath, stdoutLogPath: path.join(logPath, 'stdout.log'), stderrLogPath: path.join(logPath, 'stderr.log') } }),
     repairFn: async () => { throw new Error('ui repair must not run without backend health proof'); },
-    stdout: { write() {} },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, false);
   assert.equal(result.status.blockerId, 'backend-8787-repair-no-health-proof');
@@ -231,7 +235,7 @@ test('backend repair nonzero blocks with backend repair failed and does not run 
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ started: false, exitCode: 7, logPath: '/canonical/log' }),
     repairFn: async () => { calls.push('ui-repair'); return 0; },
-    stdout: { write() {} },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, false);
   assert.equal(result.status.blockerId, 'backend-8787-repair-failed');
@@ -247,8 +251,55 @@ test('backend and OpenClaw ready with UI missing refreshes publisher before UI r
     collectFactsFn: async () => { collectCount += 1; return collectCount === 1 ? factsFor({ ui: false, stale: ['old UNKNOWN'] }) : factsFor({ ui: collectCount > 2 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
-    stdout: { write() {} },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(calls.indexOf('publisher') < calls.indexOf('repair'), true);
   assert.equal(result.ok, true);
+});
+
+test('served runtime exact-head proof accepts full or unambiguous short head in gitCommit and runtimeMarker', () => {
+  const currentHead = '51600ceb1234567890abcdef1234567890abcdef';
+  const proof = evaluateServedRuntimeExactHeadProof({
+    currentHead,
+    health: { ok: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture', buildTimestamp: '2026-07-10T00:00:00.000Z' },
+    dist: { ok: true, statusCode: 200 },
+  });
+  assert.equal(proof.ready, true);
+});
+
+test('supervisor blocks with served-runtime-stale when 4173 reports old gitCommit after guarded repair', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',
+    runtimeProofFn: async ({ currentHead }) => evaluateServedRuntimeExactHeadProof({ currentHead, health: { ok: true, gitCommit: '0f0aa30d', runtimeMarker: 'antifriction-live-v3::0f0aa30d::fixture' }, dist: { ok: true, statusCode: 200 } }),
+    repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: true })); return 0; },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'served-runtime-stale');
+  assert.equal(result.status.currentPhase, 'browser/runtime proof');
+  assert.match(result.status.nextOperatorAction, /Rebuild\/restart 4173 through guarded UI repair/);
+});
+
+test('stale served runtime triggers guarded repair and final ready only after exact-head proof', async () => {
+  let proofCount = 0;
+  let repairCount = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',
+    runtimeProofFn: async ({ currentHead }) => {
+      proofCount += 1;
+      const commit = proofCount > 1 ? '51600ceb' : '0f0aa30d';
+      return evaluateServedRuntimeExactHeadProof({ currentHead, health: { ok: true, gitCommit: commit, runtimeMarker: `antifriction-live-v3::${commit}::fixture` }, dist: { ok: true, statusCode: 200 } });
+    },
+    repairFn: async ({ stdout }) => { repairCount += 1; stdout.write(JSON.stringify({ ready: true })); return 0; },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(repairCount, 1);
+  assert.equal(result.status.services.stephanosUi4173.servedRuntimeProof.ready, true);
 });

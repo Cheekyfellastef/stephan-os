@@ -48,7 +48,8 @@ $launcherRootCommand = 'powershell.exe -ExecutionPolicy Bypass -File .\windows\I
 $launcherRootCanonicalCommand = 'npm run stephanos:ignite'
 $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --probe-existing-server'
 $visiblePowerShellRequired = $false
-$ignitionProofRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof'
+$canonicalSharedWorkspaceRoot = if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $SharedWorkspace.Trim() } elseif ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
+$ignitionProofRoot = $canonicalSharedWorkspaceRoot
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
 $ignitionTranscriptPath = Join-Path $ignitionProofRoot 'ignition-proof-transcript.jsonl'
@@ -172,8 +173,65 @@ function Get-LatestOpenClawStartupStatus {
   return $null
 }
 
+
+function Get-BattleBridgeSupervisorCurrentRecord {
+  $supervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'status/battle-bridge-ignition-supervisor-current.json'
+  if (-not (Test-Path -LiteralPath $supervisorCurrentPath -PathType Leaf)) { return $null }
+  try {
+    $record = Get-Content -LiteralPath $supervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    return $record
+  }
+  catch {
+    return $null
+  }
+}
+
+function Convert-SupervisorRecordToIgnitionStatus([object]$SupervisorRecord, [string]$FallbackPhase, [string]$FallbackMessage) {
+  if (-not $SupervisorRecord) { return $null }
+  $phase = if ($SupervisorRecord.currentPhase) { [string]$SupervisorRecord.currentPhase } else { $FallbackPhase }
+  $message = if ($SupervisorRecord.blockerId) { "Battle Bridge ignition blocked: $($SupervisorRecord.blockerId)" } elseif ($SupervisorRecord.trafficLight -eq 'green') { 'Battle Bridge ignition supervisor reports READY.' } else { $FallbackMessage }
+  $stage = if ($SupervisorRecord.trafficLight -eq 'green') { 'ready' } elseif ($SupervisorRecord.blockerId) { 'blocked' } else { $phase }
+  return [ordered]@{
+    phase = if ($SupervisorRecord.blockerId) { 'blocked' } elseif ($SupervisorRecord.trafficLight -eq 'green') { 'ready' } else { $phase }
+    message = $message
+    trafficLight = if ($SupervisorRecord.trafficLight) { [string]$SupervisorRecord.trafficLight } else { 'blue' }
+    progressPercentage = if ($SupervisorRecord.trafficLight -eq 'green') { 100 } elseif ($SupervisorRecord.blockerId) { 100 } else { 65 }
+    currentAction = $message
+    lastCompletedAction = ''
+    proofSummary = [ordered]@{ build = 'supervisor-truth'; verify = 'supervisor-truth'; pull = 'supervisor-truth'; restart = 'supervisor-truth'; servedRuntime = if ($SupervisorRecord.services.stephanosUi4173.servedRuntimeProof.ready) { 'exact-head-ready' } else { 'pending-or-blocked' }; moduleMime = 'supervisor-truth' }
+    enterStephanosEnabled = $SupervisorRecord.trafficLight -eq 'green'
+    updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    visiblePowerShellRequired = $visiblePowerShellRequired
+    primaryUi = 'splash-status-browser'
+    splashPath = $ignitionSplashPath
+    statusPath = $ignitionStatusPath
+    logRoot = (Join-Path $ignitionProofRoot 'logs')
+    transcriptPath = $ignitionTranscriptPath
+    supportSnapshotPath = $ignitionSupportSnapshotPath
+    exactHeadApprovalRequired = $true
+    exactHeadApprovalStatus = 'required-before-merge-proof'
+    safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'
+    openClawStartupState = if ($SupervisorRecord.services.openClaw18789.ready) { 'ready' } else { 'pending' }
+    openClawStartupDetail = 'Projected from Battle Bridge ignition supervisor current record.'
+    nextOperatorAction = if ($SupervisorRecord.nextOperatorAction) { [string]$SupervisorRecord.nextOperatorAction } else { 'Watch the Battle Bridge ignition supervisor surface.' }
+    currentStage = $stage
+    ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $stage
+    blocker = if ($SupervisorRecord.blockerId) { [string]$SupervisorRecord.blockerId } else { '' }
+    battleBridgeSupervisorCurrentPath = $supervisorCurrentPath
+    battleBridgeSupervisor = $SupervisorRecord
+    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs'); transcriptPath = $ignitionTranscriptPath; supportSnapshotPath = $ignitionSupportSnapshotPath }
+  }
+}
+
 function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extra = @{}) {
   Initialize-IgnitionProofWorkspace
+  $supervisorStatus = Convert-SupervisorRecordToIgnitionStatus -SupervisorRecord (Get-BattleBridgeSupervisorCurrentRecord) -FallbackPhase $Phase -FallbackMessage $Message
+  if ($supervisorStatus -and ($supervisorStatus.trafficLight -eq 'green' -or $supervisorStatus.phase -eq 'blocked')) {
+    $supervisorStatus | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
+    Write-IgnitionTranscript -Event @{ event = 'ignition-status'; phase = $supervisorStatus.phase; message = $supervisorStatus.message; currentStage = $supervisorStatus.currentStage; blocker = $supervisorStatus.blocker; battleBridgeSupervisorCurrentPath = $supervisorStatus.battleBridgeSupervisorCurrentPath }
+    Update-IgnitionSplashScreen -Status $supervisorStatus
+    return
+  }
   $currentStage = if ($Extra.ContainsKey('currentStage')) { $Extra.currentStage } else { $Phase }
   $latestOpenClawStartup = Get-LatestOpenClawStartupStatus
   $payload = [ordered]@{

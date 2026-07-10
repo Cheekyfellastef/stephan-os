@@ -177,7 +177,9 @@ test('launcher-root starts and proves backend before UI restart waits can block'
 
 test('ignition records bounded status and log destinations in proof workspace', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /\$ignitionProofRoot = Join-Path \(\[System\.IO\.Path\]::GetTempPath\(\)\) 'stephanos-ignition-proof'/m, 'ignition proof workspace must be deterministic under tmp');
+  assert.match(script, /\$canonicalSharedWorkspaceRoot = if \(\$SharedWorkspace[\s\S]*?Join-Path \(\[Environment\]::GetFolderPath\('MyDocuments'\)\) 'Stephanos-openclaw-workspace'/m, 'ignition proof workspace must default to canonical Documents shared workspace');
+  assert.match(script, /\$ignitionProofRoot = \$canonicalSharedWorkspaceRoot/m, 'normal launcher proof root must be the canonical shared workspace');
+  assert.doesNotMatch(script, /GetTempPath\(\)[\s\S]*stephanos-ignition-proof/m, 'normal launcher mode must not use AppData Temp ignition proof paths');
   assert.match(script, /\$ignitionStatusPath = Join-Path \$ignitionProofRoot 'launcher-status\.json'/m, 'status destination must be recorded');
   assert.match(script, /logRoot = \(Join-Path \$ignitionProofRoot 'logs'\)/m, 'log root must be recorded in status payload');
   assert.match(script, /stdoutLog = \$stdoutLog; stderrLog = \$stderrLog/m, 'per-process stdout/stderr log destinations must be recorded');
@@ -276,4 +278,11 @@ test('ReadinessReportOnly is a guarded report path and leaves normal launch invo
   assert.match(script, /if \(\$ReadinessReportOnly\.IsPresent\) \{[\s\S]*?node scripts\/launcher-readiness-live-facts\.mjs --report --json[\s\S]*?exit \$LASTEXITCODE[\s\S]*?\}/m, 'report-only path must delegate to the live facts collector/readiness report and exit before launch behavior');
   assert.match(script, /Ensure-ProcessRunning -StepLabel 'backend'/m, 'normal launcher path must still contain backend startup after report-only guard');
   assert.match(script, /Ensure-ProcessRunning -StepLabel 'launcher-root ui'/m, 'normal launcher-root startup must remain present');
+});
+
+test('Windows launcher splash/status handoff reads Battle Bridge supervisor current record', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /Get-BattleBridgeSupervisorCurrentRecord[\s\S]*battle-bridge-ignition-supervisor-current\.json/m, 'launcher must read supervisor current record from canonical workspace');
+  assert.match(script, /Convert-SupervisorRecordToIgnitionStatus[\s\S]*battleBridgeSupervisor = \$SupervisorRecord/m, 'splash payload must project supervisor truth instead of a second independent splash truth');
+  assert.match(script, /if \(\$supervisorStatus -and \(\$supervisorStatus\.trafficLight -eq 'green' -or \$supervisorStatus\.phase -eq 'blocked'\)\)/m, 'green or blocked supervisor truth must override pending splash cards');
 });
