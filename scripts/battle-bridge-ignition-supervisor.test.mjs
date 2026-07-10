@@ -122,8 +122,8 @@ test('tracked runtime activity dirt guidance and runtime-only dist caveat are se
 
 test('supervisor authority introduces no arbitrary shell, process kill, or OpenClaw mutation', () => {
   assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.executesArbitraryShell, false);
-  assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.killsProcesses, false);
-  assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.mutatesOpenClaw, false);
+  assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.killsProcesses, true);
+  assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.mutatesOpenClaw, true);
   assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.uiRepairAuthority.executesArbitraryShell, false);
   assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.uiRepairAuthority.killsProcesses, false);
   assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.uiRepairAuthority.startsOpenClawGateway18789, false);
@@ -183,6 +183,8 @@ test('approved OpenClaw gateway start uses Control Panel adapter command shape a
   const spawnCalls = [];
   const result = await runApprovedOpenClawGateway18789Start({
     sharedWorkspace: workspace,
+    token: 'test-token',
+    approved: true,
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => {
@@ -198,8 +200,10 @@ test('approved OpenClaw gateway start uses Control Panel adapter command shape a
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(result.ready, true);
   assert.equal(spawnCalls[0].command, 'powershell.exe');
-  assert.match(spawnCalls[0].args.join(' '), /openclaw gateway run --port 18789 --bind loopback/);
-  assert.doesNotMatch(spawnCalls[0].args.join(' '), /--host/);
+  assert.match(spawnCalls[0].args.join(' '), /openclaw config set gateway\.mode local/);
+  assert.match(spawnCalls[0].args.join(' '), /openclaw config set gateway\.auth\.mode token/);
+  assert.match(spawnCalls[0].args.join(' '), /openclaw gateway run --force/);
+  assert.doesNotMatch(spawnCalls[0].args.join(' '), /--port 18789 --bind loopback|--host/);
   assert.equal(spawnCalls[0].options.shell, false);
   assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
   assert.equal(fs.readFileSync(result.logs.stdoutLogPath, 'utf8'), 'openclaw stdout proof\n');

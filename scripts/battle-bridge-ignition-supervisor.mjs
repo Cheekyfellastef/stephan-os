@@ -33,8 +33,8 @@ export const BACKEND_8787_START_COMMAND_IDENTITY = Object.freeze({
 });
 export const BATTLE_BRIDGE_IGNITION_AUTHORITY = Object.freeze({
   executesArbitraryShell: false,
-  killsProcesses: false,
-  mutatesOpenClaw: false,
+  killsProcesses: true,
+  mutatesOpenClaw: true,
   mergesOrPushes: false,
   installsDependencies: false,
   switchesBranches: false,
@@ -157,8 +157,8 @@ async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch } = 
   return { ready: Boolean(healthResponse.ok && openClawHealthReady(healthResponse.json || {})), healthUrl, identityUrl, health: healthResponse, identity };
 }
 
-export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 10000, retryIntervalMs = 500 } = {}) {
-  const target = buildOpenClawGatewayStartupTarget();
+export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 10000, retryIntervalMs = 500, env = process.env, token = '', approved = false } = {}) {
+  const target = buildOpenClawGatewayStartupTarget({ env, token, approved });
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'openclaw-gateway-18789-start');
   await fs.mkdir(logRoot, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -166,7 +166,9 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   await fs.mkdir(logPath, { recursive: true });
   const stdoutLogPath = path.join(logPath, 'stdout.log');
   const stderrLogPath = path.join(logPath, 'stderr.log');
-  const logs = { logPath, stdoutLogPath, stderrLogPath };
+  const exitLogPath = path.join(logPath, 'exit.json');
+  const healthProofLogPath = path.join(logPath, 'health-proof.json');
+  const logs = { logPath, stdoutLogPath, stderrLogPath, exitLogPath, healthProofLogPath };
   if (!target.available) return { started: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath };
   const child = spawnFn(target.command, target.commandArgs, { cwd: path.resolve(sharedWorkspace), detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: { ...process.env, STEPHANOS_OPENCLAW_AUTOSTART: 'battle-bridge-supervisor-gateway-only' } });
   if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(stdoutLogPath, { flags: 'a' }));
@@ -180,10 +182,14 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   let proof = null;
   do {
     try { proof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+    await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
+    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
     if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, healthProof: proof, pid: Number(child?.pid || 0) || null };
     if (exitState.error || exitState.code !== null || exitState.signal !== null) break;
     if (Date.now() < deadline && retryIntervalMs > 0) await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
   } while (Date.now() <= deadline);
+  await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
+  await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
   return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, logs, logPath, target, healthProof: proof, pid: Number(child?.pid || 0) || null };
 }
 
@@ -317,11 +323,12 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     report = plannerFn(facts);
     status = projectBattleBridgeSupervisorStatus({ status, readinessReport: report });
     if (!isReady(report, 'openclaw-gateway') || startResult?.ready !== true) {
-      const exited = startResult?.error || startResult?.exitCode !== null || startResult?.exit?.signal;
-      const blockerId = exited ? 'openclaw-gateway-18789-start-failed' : 'openclaw-gateway-18789-no-health-proof';
+      const exitCode = startResult?.exitCode ?? startResult?.exit?.code ?? null;
+      const failedExit = Boolean(startResult?.error || startResult?.exit?.signal || (exitCode !== null && exitCode !== 0));
+      const blockerId = failedExit ? 'openclaw-gateway-18789-start-failed' : 'openclaw-gateway-18789-no-health-proof';
       const logPath = startResult?.logPath || startResult?.logs?.logPath || 'canonical shared workspace logs/openclaw-gateway-18789-start';
       const blocker = requiredServiceBlocker(blockerId, 'OpenClaw gateway 18789 startup must be proved by http://127.0.0.1:18789/health returning ok/status live; readonly adapter stubs are not accepted.', `Inspect OpenClaw gateway startup logs at ${logPath}; then rerun npm run stephanos:ignite.`, { startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, startResult, logPath });
-      status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: exited ? 'failed' : 'blocked', blocker, logPath }); await persist();
+      status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: failedExit ? 'failed' : 'blocked', blocker, logPath }); await persist();
       stdout.write(`${JSON.stringify(status, null, 2)}\n`);
       return { ok: false, status, writes };
     }

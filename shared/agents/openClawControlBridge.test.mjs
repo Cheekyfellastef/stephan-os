@@ -39,7 +39,7 @@ test('Control Panel Start Gateway command uses shared canonical startup implemen
   const { getOpenClawGatewayStartupCommand, buildOpenClawGatewayStartupTarget } = await import('./openClawGatewayStartup.mjs');
   const projection = buildOpenClawControlBridgeProjection();
   assert.equal(projection.startGatewayCommand, getOpenClawGatewayStartupCommand());
-  const target = buildOpenClawGatewayStartupTarget({ commandText: projection.startGatewayCommand });
+  const target = buildOpenClawGatewayStartupTarget({ commandText: projection.startGatewayCommand, token: 'test-token', approved: true });
   assert.equal(target.port, 18789);
   assert.equal(target.available, true);
 });
