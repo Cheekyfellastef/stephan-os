@@ -475,13 +475,23 @@ export function createIgnitionRepairPacket({
   localOnlyPaths = [],
   localOnlyDistOnly = false,
   nextSafeAction = 'Stop ignition and ask the operator to approve the next source-control action.',
+  blocker = null,
+  currentBranch = 'unknown',
+  runningLatestMain = false,
+  branchMatchesMain = false,
+  sourceTruthVerdict = reason,
 } = {}) {
   return {
     ignitionStatus: 'BLOCKED',
     statusPanel: 'source-update-safety',
     reason,
+    currentBranch,
     currentCommit,
     originMainCommit,
+    runningLatestMain,
+    branchMatchesMain,
+    sourceTruthVerdict,
+    blocker,
     servedCommit,
     expectedSourceCommit,
     sourceFingerprint,
@@ -512,6 +522,7 @@ export function classifySourceUpdateTruth({
   detachedHead = false,
   hasUpstream = true,
   upstreamBranch = 'origin/main',
+  currentBranch = 'main',
 } = {}) {
   if (detachedHead) {
     return createIgnitionRepairPacket({
@@ -528,6 +539,26 @@ export function classifySourceUpdateTruth({
       currentCommit,
       originMainCommit,
       nextSafeAction: 'Current branch has no upstream tracking branch. Configure an upstream tracking branch before ignition updates source or rebuilds dist.',
+    });
+  }
+
+  const branchMatchesMain = currentBranch === 'main';
+  const runningLatestMain = Boolean(currentCommit && originMainCommit && currentCommit !== 'unknown' && originMainCommit !== 'unknown' && currentCommit === originMainCommit);
+  if (!branchMatchesMain && !runningLatestMain) {
+    return createIgnitionRepairPacket({
+      reason: 'non-main-source-truth',
+      currentCommit,
+      originMainCommit,
+      nextSafeAction: 'cd <repo>; git fetch origin main; git switch main; git merge --ff-only origin/main',
+      blocker: {
+        id: 'non-main-source-truth',
+        detail: 'Ignition is running from a non-main branch that does not match origin/main.',
+        nextOperatorAction: 'cd <repo>; git fetch origin main; git switch main; git merge --ff-only origin/main',
+      },
+      currentBranch,
+      runningLatestMain,
+      branchMatchesMain,
+      sourceTruthVerdict: 'non-main-source-truth',
     });
   }
 
@@ -549,21 +580,30 @@ export function classifySourceUpdateTruth({
       ignitionStatus: 'READY',
       statusPanel: 'source-update-safety',
       reason: 'safe-fast-forward-required',
+      currentBranch,
       currentCommit,
       originMainCommit,
+      runningLatestMain,
+      branchMatchesMain,
+      sourceTruthVerdict: 'safe-fast-forward-required',
       nextSafeAction: 'Run git pull --ff-only, then rebuild and verify before serving.',
     };
   }
 
+  const sourceTruthVerdict = aheadCount > 0 ? 'local-ahead-origin' : (runningLatestMain ? 'source-current' : 'source-mismatch');
   return {
     ignitionStatus: 'READY',
     statusPanel: 'source-update-safety',
-    reason: aheadCount > 0 ? 'local-ahead-origin' : 'source-current',
+    reason: sourceTruthVerdict,
+    currentBranch,
     currentCommit,
     originMainCommit,
+    runningLatestMain,
+    branchMatchesMain,
+    sourceTruthVerdict,
     nextSafeAction: aheadCount > 0
       ? 'Local commits are ahead of origin/main; do not silently treat them as remote truth.'
-      : 'Source commit matches tracked remote truth; build and verify may continue.',
+      : (runningLatestMain ? 'Source commit matches tracked remote truth; build and verify may continue.' : 'Source commit does not match origin/main; prove source truth before build.'),
   };
 }
 
@@ -927,6 +967,19 @@ function isTransientRootDataPath(path) {
 
 function isTransientRootTmpDirectoryStatusPath(path) {
   return path === 'tmp' || path === ROOT_TRANSIENT_TMP_PATH;
+}
+
+export const TRACKED_RUNTIME_ACTIVITY_EVENTS_PATH = 'stephanos-server/data/activity/events.json';
+
+export function buildTrackedRuntimeActivityDirtBlocker({ path = TRACKED_RUNTIME_ACTIVITY_EVENTS_PATH, userProfile = '%USERPROFILE%', timestamp = '<timestamp>' } = {}) {
+  const backupPath = `${userProfile}\\Documents\\Stephanos-openclaw-workspace\\backups\\main-repo-runtime-events\\${timestamp}\\events.json`;
+  return {
+    id: 'tracked-runtime-activity-dirt',
+    path,
+    detail: 'Runtime activity data is dirty inside source repo.',
+    backupPath,
+    nextOperatorAction: `Preserve then restore runtime activity data: mkdir "${userProfile}\\Documents\\Stephanos-openclaw-workspace\\backups\\main-repo-runtime-events\\${timestamp}" && copy "${path.replace(/\//g, '\\')}" "${backupPath}" && git restore --worktree --staged -- "${path}"`,
+  };
 }
 
 function isAllowlistedRootRuntimePath(path) {
@@ -1389,6 +1442,7 @@ export function runGitPullPreflightWithDeps({
     detachedHead: prePullPublicationTruth.detachedHead,
     hasUpstream: prePullPublicationTruth.hasUpstream,
     upstreamBranch: prePullPublicationTruth.upstreamBranch,
+    currentBranch: prePullPublicationTruth.branch,
   });
   console.log(`[IGNITION] source-update-status=${JSON.stringify(sourceUpdateTruth)}`);
   if (sourceUpdateTruth.ignitionStatus === 'BLOCKED') {
@@ -1806,6 +1860,9 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
 
   const uniqueRuntimeTargets = [...new Set(runtimeTargets)];
   const uniqueHardBlockTargets = [...new Set(hardBlockTargets)];
+  const trackedRuntimeActivityBlocker = entryPaths.includes(TRACKED_RUNTIME_ACTIVITY_EVENTS_PATH)
+    ? buildTrackedRuntimeActivityDirtBlocker({ timestamp: '<timestamp>' })
+    : null;
   const blocked = sourceTargets.length > 0 || uniqueHardBlockTargets.length > 0;
   const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({ hardBlockPaths: uniqueHardBlockTargets, sourcePaths: sourceTargets, blocksIgnition: blocked });
   const status = {
@@ -1823,6 +1880,7 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     ignitionDependencyWarningCount: dependencyTargets.length,
     ignitionHardBlockCount: uniqueHardBlockTargets.length,
     ignitionHardBlockPaths: uniqueHardBlockTargets.slice(0, 10),
+    ignitionStructuredBlockers: trackedRuntimeActivityBlocker ? [trackedRuntimeActivityBlocker] : [],
     openClawWorkspaceHygieneStatus: openClawWorkspaceHygiene.workspaceHygieneStatus,
     openClawWorkspaceDirtDetected: openClawWorkspaceHygiene.workspaceDirtDetected,
     openClawWorkspaceDirtPaths: openClawWorkspaceHygiene.workspaceDirtPaths,
@@ -1839,7 +1897,7 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     openClawWorkspaceMutationAuthority: openClawWorkspaceHygiene.workspaceMutationAuthority,
     openClawWorkspaceNextOperatorAction: openClawWorkspaceHygiene.workspaceNextOperatorAction,
     ignitionBlockedReason: uniqueHardBlockTargets.length > 0 ? 'Hard-block dirt detected' : (sourceTargets.length > 0 ? 'Source dirt detected' : ''),
-    ignitionNextOperatorAction: blocked ? 'Resolve source dirt/hard-block files before ignition.' : 'Housekeeping complete.',
+    ignitionNextOperatorAction: trackedRuntimeActivityBlocker ? trackedRuntimeActivityBlocker.nextOperatorAction : (blocked ? 'Resolve source dirt/hard-block files before ignition.' : 'Housekeeping complete.'),
     ignitionReadyToEnterCommandDeck: !blocked,
   };
   console.log(`[HOUSEKEEP] status=${JSON.stringify(status)}`);

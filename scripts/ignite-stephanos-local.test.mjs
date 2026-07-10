@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import {
   autoPublishDistWithDeps,
   buildOpenClawReadinessEndpoints,
+  buildTrackedRuntimeActivityDirtBlocker,
   canAutoPublishDist,
   checkpointAndRemoveTransientRootData,
   captureDivergenceRecoveryPacket,
@@ -1547,6 +1548,48 @@ test('preflight blocks when branch has no upstream configured', () => {
     }),
     /no upstream tracking branch/i,
   );
+});
+
+
+test('source truth does not label non-main branch behind origin main as source-current', () => {
+  const result = classifySourceUpdateTruth({ currentBranch: 'issue-1278-whatsapp-agent-commands', currentCommit: 'old123', originMainCommit: 'new456', aheadCount: 0, behindCount: 1 });
+  assert.equal(result.ignitionStatus, 'BLOCKED');
+  assert.equal(result.reason, 'non-main-source-truth');
+  assert.equal(result.runningLatestMain, false);
+  assert.equal(result.branchMatchesMain, false);
+  assert.equal(result.blocker.id, 'non-main-source-truth');
+  assert.match(result.blocker.detail, /non-main branch/);
+  assert.match(result.nextSafeAction, /git switch main/);
+});
+
+test('source truth labels main matching origin main as source-current', () => {
+  const result = classifySourceUpdateTruth({ currentBranch: 'main', currentCommit: 'same123', originMainCommit: 'same123', aheadCount: 0, behindCount: 0 });
+  assert.equal(result.ignitionStatus, 'READY');
+  assert.equal(result.reason, 'source-current');
+  assert.equal(result.runningLatestMain, true);
+  assert.equal(result.branchMatchesMain, true);
+});
+
+test('dirty source still blocks before branch switch advice', () => {
+  assert.throws(() => runGitPullPreflightWithDeps({
+    captureStep: (label) => {
+      if (label === 'git-status') return { stdout: ' M scripts/ignite-stephanos-local.mjs\n', stderr: '' };
+      if (label === 'git-branch') return { stdout: 'issue-1278-whatsapp-agent-commands\n', stderr: '' };
+      if (label === 'git-upstream') return { stdout: 'origin/main\n', stderr: '' };
+      if (label === 'git-ahead-behind') return { stdout: '0\t1\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: () => { throw new Error('must not fetch or switch'); },
+  }), /local working tree is dirty/);
+});
+
+test('tracked runtime activity dirt blocker gives preserve-then-restore guidance', () => {
+  const blocker = buildTrackedRuntimeActivityDirtBlocker({ userProfile: '%USERPROFILE%', timestamp: '2026-07-10T00-00-00-000Z' });
+  assert.equal(blocker.id, 'tracked-runtime-activity-dirt');
+  assert.equal(blocker.path, 'stephanos-server/data/activity/events.json');
+  assert.match(blocker.detail, /Runtime activity data is dirty inside source repo/);
+  assert.match(blocker.backupPath, /Documents\\Stephanos-openclaw-workspace\\backups\\main-repo-runtime-events\\2026-07-10T00-00-00-000Z\\events\.json/);
+  assert.match(blocker.nextOperatorAction, /git restore/);
 });
 
 test('shouldAutoPull is true unless skip flag is provided', () => {

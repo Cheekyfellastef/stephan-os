@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { Readable } from 'node:stream';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { evaluateUi4173Repair, resolveUi4173RepairInvocation, runUi4173Repair } from './battle-bridge-ui-4173-repair.mjs';
 
 function report({ backend = true, ui = false, openclaw = true, workspace = true, verdict = 'partial-ui-missing', stale = [], safety = [] } = {}) {
@@ -80,6 +84,10 @@ function stdoutCapture() {
   };
 }
 
+function fakeChild(pid = 4173) { const child = new EventEmitter(); child.pid = pid; child.stdout = Readable.from(['child stdout\n']); child.stderr = Readable.from(['child stderr\n']); child.unref = () => {}; queueMicrotask(() => child.emit('spawn')); return child; }
+function okFetch() { return Promise.resolve({ ok: true, status: 200 }); }
+function failFetch() { return Promise.reject(new Error('ECONNREFUSED')); }
+function depsOk() { return { ok: true, missing: [], noLockfileDetected: true, nextOperatorAction: 'none' }; }
 function fakeCollector() {
   return Promise.resolve({});
 }
@@ -99,8 +107,11 @@ test('Windows start uses controlled cmd.exe wrapper with fixed args for the cano
     stdout,
     spawnFn(command, args, options) {
       calls.push({ command, args, options });
-      return { pid: 4173, unref() {} };
+      return fakeChild(4173);
     },
+    preflightDepsFn: depsOk,
+    probeFetch: okFetch,
+    readyTimeoutMs: 1,
   });
   assert.equal(code, 0);
   assert.equal(calls[0].command, 'cmd.exe');
@@ -114,7 +125,8 @@ test('Windows start uses controlled cmd.exe wrapper with fixed args for the cano
   assert.equal(output.invocation.wrappedCommand, 'npm.cmd');
   assert.deepEqual(output.invocation.wrappedCommandArgs, ['run', 'stephanos:ignite:launcher-root']);
   assert.equal(output.invocation.cwd, process.cwd());
-  assert.equal(output.action, 'start-ui-4173-started');
+  assert.equal(output.action, 'start-ui-4173-ready');
+  assert.equal(output.ready, true);
   assert.equal(output.started, true);
   assert.equal(output.pid, 4173);
 });
@@ -130,8 +142,11 @@ test('non-Windows start remains controlled direct npm for the canonical npm scri
     stdout,
     spawnFn(command, args, options) {
       calls.push({ command, args, options });
-      return { pid: 4173, unref() {} };
+      return fakeChild(4173);
     },
+    preflightDepsFn: depsOk,
+    probeFetch: okFetch,
+    readyTimeoutMs: 1,
   });
   assert.equal(code, 0);
   assert.equal(calls[0].command, 'npm');
@@ -141,6 +156,10 @@ test('non-Windows start remains controlled direct npm for the canonical npm scri
   assert.equal(output.invocation.kind, 'CONTROLLED_DIRECT_NPM');
   assert.equal(output.invocation.command, 'npm');
   assert.equal(output.invocation.cwd, process.cwd());
+  assert.equal(output.action, 'start-ui-4173-ready');
+  assert.equal(output.ready, true);
+  assert.equal(output.started, true);
+  assert.equal(output.pid, 4173);
 });
 
 test('spawn errors return structured JSON and non-zero exit', async () => {
@@ -151,6 +170,7 @@ test('spawn errors return structured JSON and non-zero exit', async () => {
     collectFactsFn: fakeCollector,
     plannerFn: readyPlanner,
     stdout,
+    preflightDepsFn: depsOk,
     spawnFn() {
       const error = new Error('spawn EINVAL');
       error.code = 'EINVAL';
@@ -174,6 +194,7 @@ test('asynchronous spawn errors return structured JSON and non-zero exit', async
     collectFactsFn: fakeCollector,
     plannerFn: readyPlanner,
     stdout,
+    preflightDepsFn: depsOk,
     spawnFn() {
       const child = new EventEmitter();
       child.pid = 0;
@@ -190,6 +211,50 @@ test('asynchronous spawn errors return structured JSON and non-zero exit', async
   assert.equal(json().spawnError.code, 'EINVAL');
 });
 
+
+test('missing UI build dependencies block without spawning and give no-lockfile npm install guidance', async () => {
+  const { stdout, json } = stdoutCapture();
+  const code = await runUi4173Repair({
+    dryRun: false,
+    collectFactsFn: fakeCollector,
+    plannerFn: readyPlanner,
+    stdout,
+    preflightDepsFn: () => ({ ok: false, missing: ['vite', '@vitejs/plugin-react'], noLockfileDetected: true, nextOperatorAction: 'npm install --prefix .\\stephanos-ui --no-audit --no-fund --package-lock=false' }),
+    spawnFn() { throw new Error('must not spawn'); },
+  });
+  const output = json();
+  assert.equal(code, 2);
+  assert.equal(output.action, 'blocked');
+  assert.deepEqual(output.missing, ['vite', '@vitejs/plugin-react']);
+  assert.equal(output.noLockfileDetected, true);
+  assert.match(output.nextOperatorAction, /npm install --prefix \.\\stephanos-ui/);
+  assert.doesNotMatch(output.nextOperatorAction, /npm ci/);
+});
+
+test('spawned but port never opens reports not ready with log paths under shared workspace', async () => {
+  const sharedWorkspace = mkdtempSync(join(tmpdir(), 'bb-ui-repair-'));
+  const { stdout, json } = stdoutCapture();
+  const code = await runUi4173Repair({ dryRun: false, sharedWorkspace, collectFactsFn: fakeCollector, plannerFn: readyPlanner, stdout, preflightDepsFn: depsOk, probeFetch: failFetch, readyTimeoutMs: 1, spawnFn: () => fakeChild(4174) });
+  const output = json();
+  assert.equal(code, 0);
+  assert.equal(output.action, 'start-ui-4173-spawned-but-not-ready');
+  assert.equal(output.started, true);
+  assert.equal(output.ready, false);
+  assert.equal(output.logs.logPath.startsWith(join(sharedWorkspace, 'logs', 'battle-bridge-ui-4173-repair')), true);
+  assert.equal(JSON.stringify(output).includes('process.env'), false);
+});
+
+
+test('child exits early reports failed with exit metadata', async () => {
+  const child = fakeChild(4175);
+  queueMicrotask(() => { child.exitCode = 1; child.signalCode = null; child.emit('exit', 1, null); });
+  const { stdout, json } = stdoutCapture();
+  await runUi4173Repair({ dryRun: false, collectFactsFn: fakeCollector, plannerFn: readyPlanner, stdout, preflightDepsFn: depsOk, probeFetch: failFetch, readyTimeoutMs: 1, spawnFn: () => child });
+  const output = json();
+  assert.equal(output.action, 'start-ui-4173-failed');
+  assert.deepEqual(output.exit, { code: 1, signal: null });
+});
+
 test('dry-run still does not spawn', async () => {
   const { stdout, json } = stdoutCapture();
   const code = await runUi4173Repair({
@@ -197,6 +262,7 @@ test('dry-run still does not spawn', async () => {
     collectFactsFn: fakeCollector,
     plannerFn: readyPlanner,
     stdout,
+    probeFetch() { throw new Error('probe should not be called during dry-run'); },
     spawnFn() {
       throw new Error('spawn should not be called during dry-run');
     },
