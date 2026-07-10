@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -9,6 +11,8 @@ import {
   BATTLE_BRIDGE_IGNITION_PHASE_STATES,
   createBattleBridgeSupervisorStatus,
   projectBattleBridgeSupervisorStatus,
+  runApprovedBackend8787Start,
+  defaultBattleBridgeSharedWorkspace,
   runBattleBridgeIgnitionSupervisor,
 } from './battle-bridge-ignition-supervisor.mjs';
 
@@ -145,9 +149,9 @@ test('backend missing has deterministic backend blocker and no empty blockerId w
     stdout: { write() {} },
   });
   assert.equal(result.ok, false);
-  assert.equal(result.status.blockerId, 'backend-8787-missing');
+  assert.equal(result.status.blockerId, 'backend-8787-repair-failed');
   assert.equal(result.status.phases['browser/runtime proof'].state, 'pending');
-  assert.match(result.status.nextOperatorAction, /npm run stephanos:battle-bridge:repair/);
+  assert.match(result.status.nextOperatorAction, /backend repair logs|npm run stephanos:battle-bridge:repair/);
 });
 
 test('backend start unavailable returns adapter blocker', async () => {
@@ -161,6 +165,79 @@ test('backend start unavailable returns adapter blocker', async () => {
   assert.equal(result.status.blockerId, 'backend-8787-start-unavailable');
   assert.match(result.status.nextOperatorAction, /safe backend start adapter/);
 });
+
+
+
+test('default shared workspace is canonical Documents path, not temp Battle Bridge workspace', () => {
+  const workspace = defaultBattleBridgeSharedWorkspace({ env: { USERPROFILE: 'C:\\Users\\Stephan' }, platform: 'win32' });
+  assert.equal(workspace, path.join('C:\\Users\\Stephan', 'Documents', 'Stephanos-openclaw-workspace'));
+  assert.doesNotMatch(workspace, /AppData|Temp|stephanos-battle-bridge-workspace/i);
+});
+
+
+
+test('approved backend repair command captures stdout stderr exit code and canonical log paths', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-backend-repair-'));
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const spawnCalls = [];
+  const promise = runApprovedBackend8787Start({
+    sharedWorkspace: workspace,
+    spawnFn: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      queueMicrotask(() => {
+        child.stdout.end('backend stdout proof\n');
+        child.stderr.end('backend stderr proof\n');
+        child.emit('exit', 0, null);
+      });
+      return child;
+    },
+  });
+  const result = await promise;
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(spawnCalls[0].command, 'npm');
+  assert.deepEqual(spawnCalls[0].args, ['run', 'stephanos:battle-bridge:repair']);
+  assert.equal(spawnCalls[0].options.shell, false);
+  assert.equal(result.exitCode, 0);
+  assert.match(result.logPath, /battle-bridge-backend-8787-repair/);
+  assert.equal(fs.readFileSync(result.logs.stdoutLogPath, 'utf8'), 'backend stdout proof\n');
+  assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'backend stderr proof\n');
+});
+
+
+test('backend repair success without health proof blocks with no-health-proof and surfaces canonical logPath', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-supervisor-canonical-'));
+  const logPath = path.join(workspace, 'logs', 'battle-bridge-backend-8787-repair', 'fixture');
+  const result = await runBattleBridgeIgnitionSupervisor({
+    sharedWorkspace: workspace, housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor({ backend: false, ui: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
+    backendStartFn: async () => ({ started: true, exitCode: 0, logPath, logs: { logPath, stdoutLogPath: path.join(logPath, 'stdout.log'), stderrLogPath: path.join(logPath, 'stderr.log') } }),
+    repairFn: async () => { throw new Error('ui repair must not run without backend health proof'); },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'backend-8787-repair-no-health-proof');
+  assert.equal(result.status.phases['backend 8787'].logPath, logPath);
+  assert.equal(result.status.services.backend8787.repair.logPath, logPath);
+});
+
+test('backend repair nonzero blocks with backend repair failed and does not run UI repair', async () => {
+  const calls = [];
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor({ backend: false, ui: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
+    backendStartFn: async () => ({ started: false, exitCode: 7, logPath: '/canonical/log' }),
+    repairFn: async () => { calls.push('ui-repair'); return 0; },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'backend-8787-repair-failed');
+  assert.deepEqual(calls, []);
+});
+
 
 test('backend and OpenClaw ready with UI missing refreshes publisher before UI repair', async () => {
   const calls = [];
