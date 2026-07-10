@@ -43,6 +43,10 @@ export function hasForbiddenOpenClawGatewayStartupToken(value = '') {
   return /\b(codex|dispatch|task|execute|mutation|mutate|merge-ready|merge\s+readiness|git\s+(?:push|merge|commit)|openai|anthropic|paid)\b/i.test(String(value || ''));
 }
 
+export function mutatesOpenClawGatewayConfig(value = '') {
+  return /\bopenclaw\s+config\s+(?:set|write|put|update)\b/i.test(String(value || ''));
+}
+
 export function buildOpenClawGatewayStartupTarget({ commandText = '', source = OPENCLAW_GATEWAY_STARTUP_SOURCE, env = process.env, token = '', approved = false } = {}) {
   const resolvedToken = resolveOpenClawGatewayStartToken({ env, token });
   const approvalGranted = openClawGatewayStartApprovalGranted({ env, approved });
@@ -50,6 +54,7 @@ export function buildOpenClawGatewayStartupTarget({ commandText = '', source = O
   const argv = splitOpenClawGatewayStartupCommand(text);
   const startsApprovedGateway = /openclaw\s+gateway\s+start\s+--json/i.test(text);
   const legacyForceRunGateway = /openclaw\s+gateway\s+run\s+--force/i.test(text);
+  const configMutation = mutatesOpenClawGatewayConfig(text);
   const portMatch = text.match(/(?:^|\s)--port(?:=|\s+)(\d{2,5})(?:\s|$)/i);
   const port = (startsApprovedGateway || legacyForceRunGateway) ? OPENCLAW_GATEWAY_APPROVED_PORT : Number(portMatch?.[1] || 0);
   const blockedReason = !text
@@ -58,13 +63,15 @@ export function buildOpenClawGatewayStartupTarget({ commandText = '', source = O
       ? 'startup-command-empty'
       : hasForbiddenOpenClawGatewayStartupToken(text)
         ? 'startup-command-violates-guardrails'
-        : !resolvedToken
+        : configMutation && !resolvedToken
           ? 'startup-token-missing'
-          : !approvalGranted
-            ? 'startup-approval-required'
-            : port !== OPENCLAW_GATEWAY_APPROVED_PORT
-              ? 'startup-command-port-not-approved'
-              : '';
+          : configMutation
+            ? 'startup-command-violates-guardrails'
+            : !approvalGranted
+              ? 'startup-approval-required'
+              : port !== OPENCLAW_GATEWAY_APPROVED_PORT
+                ? 'startup-command-port-not-approved'
+                : '';
   return {
     id: 'gateway',
     source,
@@ -83,7 +90,7 @@ export function buildOpenClawGatewayStartupTarget({ commandText = '', source = O
     killsProcesses: legacyForceRunGateway,
     startsOpenClawGatewayServiceOrProcess: startsApprovedGateway,
     mayMutateOpenClawGatewayServiceOrRuntimeState: true,
-    mutatesOpenClawConfig: false,
+    mutatesOpenClawConfig: configMutation,
     repoMutationAllowed: false,
     mergePushInstallAllowed: false,
   };
