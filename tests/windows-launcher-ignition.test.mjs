@@ -17,6 +17,15 @@ test('button path delegates launcher-root ignition to Battle Bridge supervisor a
   assert.match(script, /Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command \$launcherRootCommand/, 'launcher-root button path must start the approval helper that runs the supervisor');
 });
 
+
+test('launcher-root approval helper passes OpenClaw start approval without broad mutation approval', async () => {
+  const script = await readFile(new URL('../windows/Invoke-Stephanos-Ignite-With-Approval.ps1', import.meta.url), 'utf8');
+  assert.match(script, /\$openClawStartGatewayApprovalEnvFlag = 'STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY'/, 'helper must name the narrow OpenClaw gateway start approval flag');
+  assert.match(script, /Invoke-IgniteWithOpenClawStartGatewayApproval[\s\S]*SetEnvironmentVariable\(\$openClawStartGatewayApprovalEnvFlag, '1', 'Process'\)[\s\S]*cmd\.exe \/d \/c "\$Command 2>&1"/, 'helper must pass the narrow approval env to the child supervisor command');
+  assert.match(script, /finally \{[\s\S]*SetEnvironmentVariable\(\$openClawStartGatewayApprovalEnvFlag, \$previousApproval, 'Process'\)/, 'helper must restore the process env after the approved child command');
+  assert.doesNotMatch(script, /STEPHANOS_APPROVE_(?:SHELL|MERGE|REPO|MUTATION|OPENCLAW_TASK|CODEX|PUSH)/, 'button path must not set broad shell, merge, repo mutation, OpenClaw task, Codex, or push approvals');
+});
+
 test('button path reads and waits on canonical Battle Bridge supervisor current record', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /\$battleBridgeSupervisorCurrentPath = Join-Path \$canonicalSharedWorkspaceRoot 'status\/battle-bridge-ignition-supervisor-current\.json'/, 'current record must live in canonical shared workspace status directory');

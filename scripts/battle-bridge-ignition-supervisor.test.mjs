@@ -175,6 +175,28 @@ test('backend start unavailable returns adapter blocker', async () => {
 
 
 
+
+test('OpenClaw gateway start blocks with startup-approval-required without approval when 18789 is down', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-no-approval-'));
+  const spawnCalls = [];
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    env: {},
+    approved: false,
+    spawnFn: (...args) => { spawnCalls.push(args); throw new Error('unapproved start must not spawn'); },
+    fetchFn: async () => { throw new Error('18789 down'); },
+  });
+
+  const exitLog = JSON.parse(fs.readFileSync(result.logs.exitLogPath, 'utf8'));
+  const healthLog = JSON.parse(fs.readFileSync(result.logs.healthProofLogPath, 'utf8'));
+  assert.equal(result.unavailable, true);
+  assert.equal(result.reason, 'startup-approval-required');
+  assert.equal(exitLog.error, 'startup-approval-required');
+  assert.equal(healthLog.skipped, true);
+  assert.equal(healthLog.reason, 'startup-approval-required');
+  assert.equal(spawnCalls.length, 0);
+});
+
 test('approved OpenClaw gateway start uses config-safe start command shape, env token, health retries, and canonical logs', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-start-'));
   const child = new EventEmitter();
