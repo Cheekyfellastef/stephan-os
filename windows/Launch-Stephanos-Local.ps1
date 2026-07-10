@@ -7,7 +7,9 @@ param(
   [string]$BootMode = 'cockpit',
   [string]$RepositoryRoot = '',
   [string]$SharedWorkspace = '',
-  [switch]$ReadinessReportOnly
+  [switch]$ReadinessReportOnly,
+  [switch]$RepairMissingUi4173,
+  [switch]$RepairDryRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +63,21 @@ if ($ReadinessReportOnly.IsPresent) {
     else {
       & node scripts/launcher-readiness-live-facts.mjs --report --json
     }
+    exit $LASTEXITCODE
+  }
+  finally {
+    Pop-Location
+  }
+}
+
+
+if ($RepairMissingUi4173.IsPresent) {
+  Push-Location -LiteralPath $repoRoot
+  try {
+    $repairArgs = @('scripts/battle-bridge-ui-4173-repair.mjs', '--json')
+    if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $repairArgs += @('--shared-workspace', $SharedWorkspace) }
+    if ($RepairDryRun.IsPresent) { $repairArgs += '--dry-run' } else { $repairArgs += '--start' }
+    & node @repairArgs
     exit $LASTEXITCODE
   }
   finally {
