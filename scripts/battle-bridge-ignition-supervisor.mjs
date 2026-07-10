@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { refreshBattleBridgeSharedWorkspacePublisher } from './battle-bridge-shared-workspace-publisher.mjs';
-import { collectLauncherReadinessLiveFacts } from './launcher-readiness-live-facts.mjs';
+import { collectLauncherReadinessLiveFacts, defaultWindowsSharedWorkspacePath } from './launcher-readiness-live-facts.mjs';
 import { planLauncherReadiness } from './launcher-readiness-planner.mjs';
 import { runUi4173Repair, UI_4173_REPAIR_AUTHORITY } from './battle-bridge-ui-4173-repair.mjs';
 import { evaluateGitPublicationTruthWithDeps, runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
@@ -76,9 +77,17 @@ function trafficLightFor(status) {
   return 'blue';
 }
 
+export function defaultBattleBridgeSharedWorkspace({ env = process.env, platform = process.platform } = {}) {
+  return env.STEPHANOS_SHARED_WORKSPACE
+    || env.STEPHANOS_OPENCLAW_WORKSPACE
+    || defaultWindowsSharedWorkspacePath({ home: env.USERPROFILE || env.HOME || os.homedir(), platform })
+    || path.join(os.homedir(), 'Documents', 'Stephanos-openclaw-workspace');
+}
+
 function applyReadinessToStatus(status, report = {}) {
   const services = report.observedServices || {};
-  status.services.backend8787 = { state: services.backend?.ready ? 'ready' : 'blocked', ready: services.backend?.ready === true, evidence: services.backend?.evidence || null, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY };
+  const backendRepair = status.services.backend8787?.repair || null;
+  status.services.backend8787 = { state: services.backend?.ready ? 'ready' : 'blocked', ready: services.backend?.ready === true, evidence: services.backend?.evidence || null, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, ...(backendRepair ? { repair: backendRepair } : {}) };
   status.services.openClaw18789 = { state: services['openclaw-gateway']?.ready ? 'ready' : 'blocked', ready: services['openclaw-gateway']?.ready === true, evidence: services['openclaw-gateway']?.evidence || null };
   status.services.stephanosUi4173 = { state: services['stephanos-ui']?.ready ? 'ready' : 'blocked', ready: services['stephanos-ui']?.ready === true, evidence: services['stephanos-ui']?.evidence || null };
   status.sharedWorkspaceFreshness = { state: (services['shared-workspace']?.ready && !(report.staleWorkspaceRecords || []).length) ? 'ready' : 'degraded', fresh: services['shared-workspace']?.ready === true && !(report.staleWorkspaceRecords || []).length, staleRecords: report.staleWorkspaceRecords || [] };
@@ -108,12 +117,22 @@ export function projectBattleBridgeSupervisorStatus({ status = createBattleBridg
 }
 
 
-async function runApprovedBackend8787Start({ spawnFn = spawn } = {}) {
-  const child = spawnFn('npm', ['run', 'stephanos:battle-bridge:repair'], { cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), detached: false, stdio: 'ignore', shell: false });
-  if (!child || typeof child.on !== 'function') return { started: true, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY };
+export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace() } = {}) {
+  const logRoot = path.resolve(sharedWorkspace, 'logs', 'battle-bridge-backend-8787-repair');
+  await fs.mkdir(logRoot, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const logPath = path.join(logRoot, stamp);
+  await fs.mkdir(logPath, { recursive: true });
+  const stdoutLogPath = path.join(logPath, 'stdout.log');
+  const stderrLogPath = path.join(logPath, 'stderr.log');
+  const child = spawnFn('npm', ['run', 'stephanos:battle-bridge:repair'], { cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), detached: false, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+  if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(stdoutLogPath, { flags: 'a' }));
+  if (child?.stderr?.pipe) child.stderr.pipe(createWriteStream(stderrLogPath, { flags: 'a' }));
+  const logs = { logPath, stdoutLogPath, stderrLogPath };
+  if (!child || typeof child.on !== 'function') return { started: true, exitCode: 0, logs, logPath, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY };
   return await new Promise((resolve) => {
-    child.once('error', (error) => resolve({ started: false, error: error?.message || String(error), commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY }));
-    child.once('exit', (code, signal) => resolve({ started: code === 0, exit: { code, signal }, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY }));
+    child.once('error', (error) => resolve({ started: false, exitCode: null, error: error?.message || String(error), logs, logPath, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY }));
+    child.once('exit', (code, signal) => resolve({ started: code === 0, exitCode: code, exit: { code, signal }, logs, logPath, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY }));
   });
 }
 
@@ -134,17 +153,13 @@ async function writeStatus(status, sharedWorkspace) {
   return file;
 }
 
-export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = process.env.STEPHANOS_SHARED_WORKSPACE || path.join(os.tmpdir(), 'stephanos-battle-bridge-workspace'), housekeepFn = runIgnitionHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, sourceTruthFn = evaluateGitPublicationTruthWithDeps, stdout = process.stdout } = {}) {
+export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runIgnitionHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, sourceTruthFn = evaluateGitPublicationTruthWithDeps, stdout = process.stdout } = {}) {
   let status = createBattleBridgeSupervisorStatus();
   const writes = [];
   const persist = async () => { const file = await writeStatus(status, sharedWorkspace); if (file) writes.push(file); };
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'running' }); await persist();
   housekeepFn({ dryRun: false, compact: true });
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'ready' }); await persist();
-
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();
-  await publisherFn({ sharedWorkspace });
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'ready' }); await persist();
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'running' }); await persist();
   const sourceTruth = sourceTruthFn();
@@ -156,6 +171,10 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = proc
   status.sourceTruthVerdict = { state: 'ready', verdict: sourceTruth?.publicationState || sourceTruth?.sourceTruthVerdict || 'source-current' };
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'ready' }); await persist();
 
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();
+  await publisherFn({ sharedWorkspace });
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'ready' }); await persist();
+
   let facts = await collectFactsFn({ sharedWorkspace });
   let report = plannerFn(facts);
   status = projectBattleBridgeSupervisorStatus({ status, readinessReport: report }); await persist();
@@ -163,18 +182,21 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = proc
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: isReady(report, 'backend') ? 'ready' : 'running' }); await persist();
   if (!isReady(report, 'backend')) {
     const startResult = await backendStartFn({ sharedWorkspace, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY });
+    status.services.backend8787.repair = { commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, logPath: startResult?.logPath || startResult?.logs?.logPath || '', logs: startResult?.logs || null, exitCode: startResult?.exitCode ?? startResult?.exit?.code ?? null };
+    status.phases['backend 8787'].logPath = startResult?.logPath || startResult?.logs?.logPath || '';
+    await persist();
     facts = await collectFactsFn({ sharedWorkspace });
     report = plannerFn(facts);
     status = projectBattleBridgeSupervisorStatus({ status, readinessReport: report });
     if (!isReady(report, 'backend')) {
-      const blockerId = startResult?.unavailable ? 'backend-8787-start-unavailable' : 'backend-8787-missing';
-      const blocker = requiredServiceBlocker(blockerId, 'Backend 8787 is required before browser/runtime proof and UI repair.', startResult?.unavailable ? 'Source needs a safe backend start adapter before Battle Bridge ignition can continue.' : `Approved backend start command did not produce readiness proof: ${BACKEND_8787_START_COMMAND_IDENTITY.commandText}`, { commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, startResult });
-      status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: startResult?.unavailable ? 'blocked' : 'failed', blocker }); await persist();
+      const blockerId = startResult?.unavailable ? 'backend-8787-start-unavailable' : (startResult?.exitCode === 0 || startResult?.started ? 'backend-8787-repair-no-health-proof' : 'backend-8787-repair-failed');
+      const blocker = requiredServiceBlocker(blockerId, 'Backend 8787 is required before browser/runtime proof and UI repair, and must be proved by HTTP health.', startResult?.unavailable ? 'Source needs a safe backend start adapter before Battle Bridge ignition can continue.' : `Inspect backend repair logs at ${startResult?.logPath || startResult?.logs?.logPath || 'canonical shared workspace logs'}; then rerun npm run stephanos:ignite.`, { commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, startResult, logPath: startResult?.logPath || startResult?.logs?.logPath || '' });
+      status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: startResult?.unavailable ? 'blocked' : 'failed', blocker, logPath: startResult?.logPath || startResult?.logs?.logPath || '' }); await persist();
       stdout.write(`${JSON.stringify(status, null, 2)}\n`);
       return { ok: false, status, writes };
     }
   }
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: 'ready', readinessReport: report }); await persist();
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: 'ready', readinessReport: report, logPath: status.services.backend8787.repair?.logPath || '' }); await persist();
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: isReady(report, 'openclaw-gateway') ? 'ready' : 'blocked' }); await persist();
   if (!isReady(report, 'openclaw-gateway')) {
