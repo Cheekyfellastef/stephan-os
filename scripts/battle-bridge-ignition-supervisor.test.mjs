@@ -19,13 +19,13 @@ const readyServices = {
   'shared-workspace': { ready: true },
 };
 
-function factsFor({ ui = true, stale = [], caveats = [], blockers = [] } = {}) {
+function factsFor({ backend = true, openclaw = true, ui = true, stale = [], caveats = [], blockers = [] } = {}) {
   return {
-    observedServices: { ...readyServices, 'stephanos-ui': { ready: ui }, 'shared-workspace': { ready: stale.length === 0 } },
+    observedServices: { ...readyServices, backend: { ready: backend }, 'openclaw-gateway': { ready: openclaw }, 'stephanos-ui': { ready: ui }, 'shared-workspace': { ready: stale.length === 0 } },
     staleWorkspaceRecords: stale,
     caveats,
     safetyBlockers: blockers,
-    finalVerdict: ui && stale.length === 0 && blockers.length === 0 ? 'ready' : 'partial-ui-missing',
+    finalVerdict: backend && openclaw && ui && stale.length === 0 && blockers.length === 0 ? 'ready' : 'partial-ui-missing',
   };
 }
 
@@ -51,14 +51,15 @@ test('publisher is refreshed before UI repair and stale records are refreshed by
     collectFactsFn: async () => {
       collectCount += 1;
       calls.push(`collect-${collectCount}`);
-      return collectCount === 1 ? factsFor({ ui: false, stale: ['old UNKNOWN'] }) : factsFor({ ui: true });
+      return collectCount === 1 ? factsFor({ ui: false, stale: ['old UNKNOWN'] }) : factsFor({ ui: collectCount > 2 });
     },
-    plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready && !(facts.staleWorkspaceRecords || []).length ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true, logs: { logPath: path.join(workspace, 'logs', 'repair') } })); return 0; },
     stdout: { write() {} },
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(calls.slice(0, 4), ['housekeeping', 'publisher', 'collect-1', 'repair']);
+  assert.deepEqual(calls.slice(0, 5), ['housekeeping', 'publisher', 'collect-1', 'publisher', 'collect-2']);
+  assert.equal(calls.includes('repair'), true);
   assert.equal(calls.includes('publisher'), true);
   assert.equal(fs.existsSync(path.join(workspace, 'status', 'battle-bridge-ignition-supervisor-current.json')), true);
 });
@@ -88,7 +89,7 @@ test('missing 4173 repair attempt records structured degraded result when proof 
     stdout: { write() {} },
   });
   assert.equal(result.ok, false);
-  assert.equal(result.status.phases['Stephanos UI 4173'].state, 'degraded');
+  assert.equal(result.status.phases['Stephanos UI 4173'].state, 'blocked');
   assert.notEqual(result.status.phases.ready.state, 'ready');
 });
 
@@ -117,4 +118,60 @@ test('supervisor authority introduces no arbitrary shell, process kill, or OpenC
   assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.uiRepairAuthority.executesArbitraryShell, false);
   assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.uiRepairAuthority.killsProcesses, false);
   assert.equal(BATTLE_BRIDGE_IGNITION_AUTHORITY.uiRepairAuthority.startsOpenClawGateway18789, false);
+});
+
+test('backend missing plus UI missing does not enter browser/runtime proof and starts approved backend first', async () => {
+  const calls = [];
+  let collectCount = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => { collectCount += 1; return factsFor({ backend: collectCount > 1, ui: false }); },
+    plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices.backend.ready ? 'partial-ui-missing' : 'blocked-needs-supervisor-repair' }),
+    backendStartFn: async ({ commandIdentity }) => { calls.push(commandIdentity.commandText); return { started: true, commandIdentity }; },
+    repairFn: async ({ stdout }) => { calls.push('ui-repair'); stdout.write(JSON.stringify({ ready: false })); return 0; },
+    stdout: { write() {} },
+  });
+  assert.equal(calls[0], 'npm run stephanos:battle-bridge:repair');
+  assert.equal(result.status.blockerId, 'stephanos-ui-4173-missing');
+});
+
+test('backend missing has deterministic backend blocker and no empty blockerId when approved start fails proof', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor({ backend: false, ui: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
+    backendStartFn: async () => ({ started: false }),
+    repairFn: async () => { throw new Error('ui repair must not run without backend'); },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'backend-8787-missing');
+  assert.equal(result.status.phases['browser/runtime proof'].state, 'pending');
+  assert.match(result.status.nextOperatorAction, /npm run stephanos:battle-bridge:repair/);
+});
+
+test('backend start unavailable returns adapter blocker', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor({ backend: false, ui: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
+    backendStartFn: async () => ({ unavailable: true }),
+    stdout: { write() {} },
+  });
+  assert.equal(result.status.blockerId, 'backend-8787-start-unavailable');
+  assert.match(result.status.nextOperatorAction, /safe backend start adapter/);
+});
+
+test('backend and OpenClaw ready with UI missing refreshes publisher before UI repair', async () => {
+  const calls = [];
+  let collectCount = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => { calls.push('publisher'); }, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => { collectCount += 1; return collectCount === 1 ? factsFor({ ui: false, stale: ['old UNKNOWN'] }) : factsFor({ ui: collectCount > 2 }); },
+    plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
+    repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
+    stdout: { write() {} },
+  });
+  assert.equal(calls.indexOf('publisher') < calls.indexOf('repair'), true);
+  assert.equal(result.ok, true);
 });
