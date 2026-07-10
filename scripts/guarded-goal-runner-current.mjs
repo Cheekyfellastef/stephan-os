@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import {
   GUARDED_GOAL_RUNNER_V1_BLOCKERS as B,
   GUARDED_GOAL_RUNNER_V1_OUTCOMES as O,
@@ -20,7 +21,8 @@ const KNOWN_SUPERVISOR_BLOCKER_MAP = Object.freeze({
   'spawn-einval': B.SPAWN_EINVAL,
   'openclaw-health-live': B.OPENCLAW_HEALTH_LIVE,
   'served-runtime-exact-head-green': B.SERVED_RUNTIME_EXACT_HEAD_GREEN,
-  'served-runtime-stale': B.OPENCLAW_HEALTH_LIVE,
+  'served-runtime-stale': B.SERVED_RUNTIME_STALE,
+  'exact-head-mismatch': B.EXACT_HEAD_MISMATCH,
 });
 
 function clean(value) { return String(value ?? '').trim(); }
@@ -72,7 +74,7 @@ function inferBlocker(record = {}, currentHead = '') {
   const expected = inferExpectedHead(record, currentHead);
   if (record.trafficLight === 'green' && record.currentPhase === 'ready' && served?.ready === true) {
     if (clean(served.currentHead) === expected && expected === currentHead) return B.SERVED_RUNTIME_EXACT_HEAD_GREEN;
-    return B.OPENCLAW_HEALTH_LIVE;
+    return clean(served.currentHead) && clean(served.currentHead) !== currentHead ? B.EXACT_HEAD_MISMATCH : B.SERVED_RUNTIME_STALE;
   }
   return '';
 }
@@ -161,7 +163,19 @@ function parseArgs(argv) {
   return args;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+export function isDirectCliEntrypoint({ metaUrl = import.meta.url, argv1 = process.argv[1], cwd = process.cwd(), platform = process.platform } = {}) {
+  if (!argv1) return false;
+  const modulePath = fileURLToPath(metaUrl);
+  const scriptPath = platform === 'win32' ? path.win32.resolve(cwd, argv1) : path.resolve(cwd, argv1);
+  const normalizeForPlatform = (value) => {
+    const normalized = (platform === 'win32' ? path.win32.normalize(value) : path.normalize(value));
+    if (platform !== 'win32') return normalized;
+    return normalized.replace(/^\\([A-Za-z]:\\)/, '$1').toLowerCase();
+  };
+  return normalizeForPlatform(modulePath) === normalizeForPlatform(scriptPath);
+}
+
+if (isDirectCliEntrypoint()) {
   const args = parseArgs(process.argv.slice(2));
   const result = runGuardedGoalRunnerCurrent({ repoRoot: args.repoRoot, sharedWorkspaceRoot: args.sharedWorkspaceRoot, currentHead: args.currentHead });
   process.stdout.write(`${result.outputPath}\n`);

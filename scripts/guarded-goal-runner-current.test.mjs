@@ -3,9 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { GUARDED_GOAL_RUNNER_V1_OUTCOMES as O } from '../shared/agents/guardedGoalRunnerV1.mjs';
-import { runGuardedGoalRunnerCurrent, SUPERVISOR_CURRENT_RELATIVE_PATH, GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH } from './guarded-goal-runner-current.mjs';
+import {
+  isDirectCliEntrypoint,
+  runGuardedGoalRunnerCurrent,
+  SUPERVISOR_CURRENT_RELATIVE_PATH,
+  GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH,
+} from './guarded-goal-runner-current.mjs';
 
 const head = 'baad917bebc836004b4f5665c0099fade8ae04cc';
 const otherHead = '37915edd61a319c3a1f3e456605986ab637a59fd';
@@ -56,6 +62,33 @@ function redRecord() {
   };
 }
 
+
+test('direct CLI entrypoint detection works for POSIX-style paths', () => {
+  const scriptPath = path.join(repoRoot, 'scripts', 'guarded-goal-runner-current.mjs');
+  assert.equal(isDirectCliEntrypoint({ metaUrl: pathToFileURL(scriptPath).href, argv1: './scripts/guarded-goal-runner-current.mjs', cwd: repoRoot, platform: 'linux' }), true);
+});
+
+test('direct CLI entrypoint detection works for Windows-style paths', () => {
+  assert.equal(isDirectCliEntrypoint({
+    metaUrl: 'file:///C:/Users/Stephan%20Callear/Documents/Stephanos-openclaw-workspace/scripts/guarded-goal-runner-current.mjs',
+    argv1: String.raw`C:\Users\Stephan Callear\Documents\Stephanos-openclaw-workspace\scripts\guarded-goal-runner-current.mjs`,
+    cwd: String.raw`C:\Users\Stephan Callear\Documents\Stephanos-openclaw-workspace`,
+    platform: 'win32',
+  }), true);
+});
+
+test('direct CLI invocation writes guarded-goal-runner-current.json', () => withWorkspace((workspace) => {
+  writeSupervisor(workspace, greenRecord());
+  const scriptPath = path.join(repoRoot, 'scripts', 'guarded-goal-runner-current.mjs');
+  const result = spawnSync(process.execPath, [scriptPath, '--repoRoot', repoRoot, '--sharedWorkspaceRoot', workspace, '--currentHead', head], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const outputPath = path.join(workspace, GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH);
+  assert.equal(result.stdout.trim(), outputPath);
+  const packet = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+  assert.equal(packet.outcome, O.GOAL_GREEN);
+  assert.equal(packet.currentHead, head);
+}));
+
 test('green exact-head supervisor record emits goal-green packet', () => withWorkspace((workspace) => {
   const sourceProofPath = writeSupervisor(workspace, greenRecord());
   const { outputPath, packet } = runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot: workspace, currentHead: head, now: '2026-07-10T01:00:00.000Z' });
@@ -83,11 +116,13 @@ test('missing supervisor file emits abort-missing-proof packet', () => withWorks
   assert.match(packet.abortReason, /Missing supervisor/);
 }));
 
-test('exact-head mismatch does not emit goal-green', () => withWorkspace((workspace) => {
+test('stale exact-head proof emits exact-head blocker instead of openclaw-health-live', () => withWorkspace((workspace) => {
   writeSupervisor(workspace, greenRecord(otherHead));
   const { packet } = runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot: workspace, currentHead: head, now: '2026-07-10T01:00:00.000Z' });
   assert.notEqual(packet.outcome, O.GOAL_GREEN);
   assert.equal(packet.outcome, O.KNOWN_BLOCKER_NEXT_PATCH);
+  assert.equal(packet.blockerId, 'exact-head-mismatch');
+  assert.notEqual(packet.blockerId, 'openclaw-health-live');
 }));
 
 test('output packet always states performsMerge=false and performsShellExecution=false', () => withWorkspace((workspace) => {

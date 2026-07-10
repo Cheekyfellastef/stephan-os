@@ -19,6 +19,8 @@ export const GUARDED_GOAL_RUNNER_V1_BLOCKERS = Object.freeze({
   SPAWN_OPENCLAW_ENOENT: 'spawn-openclaw-enoent',
   SPAWN_EINVAL: 'spawn-einval',
   OPENCLAW_HEALTH_LIVE: 'openclaw-health-live',
+  SERVED_RUNTIME_STALE: 'served-runtime-stale',
+  EXACT_HEAD_MISMATCH: 'exact-head-mismatch',
   SERVED_RUNTIME_EXACT_HEAD_GREEN: 'served-runtime-exact-head-green',
 });
 
