@@ -210,6 +210,7 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
 }
 
 function Update-IgnitionSplashScreen([object]$Status) {
+  # Promoted Battle Bridge ignition supervisor surface: this existing splash is now the top-level readiness/status UI.
   Initialize-IgnitionProofWorkspace
   $stageHtml = @($Status.ignitionStages | ForEach-Object {
     $state = [System.Net.WebUtility]::HtmlEncode($_.state)
