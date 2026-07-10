@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY } from './openClawWorkspaceHygiene.mjs';
 
 export const OPENCLAW_GATEWAY_STARTUP_SOURCE = 'shared:openclaw-control-panel-start-gateway';
@@ -37,6 +39,51 @@ export function redactOpenClawGatewayStartupCommand(value = '') {
 export function splitOpenClawGatewayStartupCommand(value = getOpenClawGatewayStartupCommand()) {
   const parts = String(value || '').match(/(?:[^\s"]+|"[^"]*")+/g) || [];
   return parts.map((part) => part.replace(/^"|"$/g, ''));
+}
+
+export function isFixedOpenClawGatewayStartCommand(value = '') {
+  return String(value || '').trim() === getOpenClawGatewayStartupCommand();
+}
+
+export function npmGlobalBinCandidatesForOpenClaw({ env = process.env } = {}) {
+  const candidates = [];
+  const append = (value) => {
+    const normalized = String(value || '').trim();
+    if (normalized && !candidates.includes(normalized)) candidates.push(normalized);
+  };
+  if (env.APPDATA) { append(path.win32.join(env.APPDATA, 'npm')); append(path.join(env.APPDATA, 'npm')); }
+  if (env.NPM_CONFIG_PREFIX) { append(path.win32.join(env.NPM_CONFIG_PREFIX, 'bin')); append(path.join(env.NPM_CONFIG_PREFIX, 'bin')); }
+  if (env.ProgramFiles) { append(path.win32.join(env.ProgramFiles, 'nodejs')); append(path.join(env.ProgramFiles, 'nodejs')); }
+  if (env['ProgramFiles(x86)']) { append(path.win32.join(env['ProgramFiles(x86)'], 'nodejs')); append(path.join(env['ProgramFiles(x86)'], 'nodejs')); }
+  return candidates;
+}
+
+export function resolveOpenClawGatewayWindowsExecutable({ commandText = getOpenClawGatewayStartupCommand(), env = process.env, existsSync = fs.existsSync } = {}) {
+  if (!isFixedOpenClawGatewayStartCommand(commandText)) {
+    return { ok: false, reason: 'startup-command-not-fixed-allowlisted', command: '', commandArgs: [] };
+  }
+  const pathValue = String(env.Path || env.PATH || '');
+  const pathEntries = pathValue.split(';').filter(Boolean);
+  const searchDirs = [...pathEntries, ...npmGlobalBinCandidatesForOpenClaw({ env })];
+  const names = ['openclaw.cmd', 'openclaw.exe', 'openclaw.ps1'];
+  for (const dir of searchDirs) {
+    for (const name of names) {
+      const candidates = [path.win32.join(dir, name), path.join(dir, name)].filter((candidate, index, all) => candidate && all.indexOf(candidate) === index);
+      for (const candidate of candidates) {
+        if (existsSync(candidate)) {
+          return { ok: true, source: 'windows-path-or-npm-global-bin', command: candidate, commandArgs: ['gateway', 'start', '--json'], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false, resolvedExecutable: candidate, searchedDirs: searchDirs };
+        }
+      }
+    }
+  }
+  return { ok: false, reason: 'openclaw-executable-not-found', command: '', commandArgs: [], commandText: getOpenClawGatewayStartupCommand(), searchedDirs: searchDirs };
+}
+
+export function resolveOpenClawGatewayStartupExecution({ target, env = process.env, platform = process.platform, existsSync = fs.existsSync } = {}) {
+  if (!target?.available) return { ok: false, reason: target?.reason || 'startup-target-unavailable', command: '', commandArgs: [] };
+  if (!isFixedOpenClawGatewayStartCommand(target.commandText)) return { ok: false, reason: 'startup-command-not-fixed-allowlisted', command: '', commandArgs: [] };
+  if (platform === 'win32') return resolveOpenClawGatewayWindowsExecutable({ commandText: target.commandText, env, existsSync });
+  return { ok: true, source: 'posix-path', command: 'openclaw', commandArgs: ['gateway', 'start', '--json'], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false };
 }
 
 export function hasForbiddenOpenClawGatewayStartupToken(value = '') {

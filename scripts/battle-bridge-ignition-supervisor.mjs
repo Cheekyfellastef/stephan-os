@@ -11,7 +11,7 @@ import { collectLauncherReadinessLiveFacts, defaultWindowsSharedWorkspacePath } 
 import { planLauncherReadiness } from './launcher-readiness-planner.mjs';
 import { runUi4173Repair, UI_4173_REPAIR_AUTHORITY } from './battle-bridge-ui-4173-repair.mjs';
 import { evaluateGitPublicationTruthWithDeps, runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
-import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE } from '../shared/agents/openClawGatewayStartup.mjs';
+import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
 
 export const BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA = 'stephanos.battle-bridge-ignition-supervisor.v1';
 export const BATTLE_BRIDGE_IGNITION_PHASES = Object.freeze([
@@ -157,7 +157,7 @@ async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch } = 
   return { ready: Boolean(healthResponse.ok && openClawHealthReady(healthResponse.json || {})), healthUrl, identityUrl, health: healthResponse, identity };
 }
 
-export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false } = {}) {
+export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false, platform = process.platform, existsSync } = {}) {
   const target = buildOpenClawGatewayStartupTarget({ env, token, approved });
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'openclaw-gateway-18789-start');
   await fs.mkdir(logRoot, { recursive: true });
@@ -199,9 +199,10 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
       OPENCLAW_GATEWAY_TOKEN: token || env.OPENCLAW_GATEWAY_TOKEN || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN,
     } : {}),
   };
-  const exitState = { code: null, signal: null, error: null };
+  const execution = resolveOpenClawGatewayStartupExecution({ target, env: childEnv, platform, ...(existsSync ? { existsSync } : {}) });
+  const exitState = { code: null, signal: null, error: execution.ok ? null : execution.reason };
   try {
-    child = spawnFn(target.command, target.commandArgs, { cwd: path.resolve(sharedWorkspace), detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: childEnv });
+    if (execution.ok) child = spawnFn(execution.command, execution.commandArgs, { cwd: path.resolve(sharedWorkspace), detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: childEnv });
   } catch (error) {
     exitState.error = error?.message || String(error);
   }
@@ -217,13 +218,13 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     try { proof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
     await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
     await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-    if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, healthProof: proof, pid: Number(child?.pid || 0) || null };
+    if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, execution, healthProof: proof, pid: Number(child?.pid || 0) || null };
     if (exitState.error || exitState.signal !== null || (exitState.code !== null && exitState.code !== 0)) break;
     if (Date.now() < deadline && retryIntervalMs > 0) await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
   } while (Date.now() <= deadline);
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
   await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-  return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, logs, logPath, target, healthProof: proof, pid: Number(child?.pid || 0) || null };
+  return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, logs, logPath, target, execution, healthProof: proof, pid: Number(child?.pid || 0) || null };
 }
 
 export function getCurrentGitHead({ cwd = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), execFile = execFileSync } = {}) {

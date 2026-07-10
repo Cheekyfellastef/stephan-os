@@ -17,7 +17,7 @@ import {
   runBattleBridgeIgnitionSupervisor,
   evaluateServedRuntimeExactHeadProof,
 } from './battle-bridge-ignition-supervisor.mjs';
-import { buildOpenClawGatewayStartupTarget } from '../shared/agents/openClawGatewayStartup.mjs';
+import { buildOpenClawGatewayStartupTarget, npmGlobalBinCandidatesForOpenClaw, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
 
 
 const readyRuntimeProof = async () => ({ ready: true, currentHead: '51600ceb00000000000000000000000000000000', healthOk: true, distOk: true, gitCommitMatches: true, runtimeMarkerMatches: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture' });
@@ -307,6 +307,93 @@ test('OpenClaw config write startup targets still require token and never become
   assert.equal(withToken.mutatesOpenClawConfig, true);
   assert.doesNotMatch(noToken.commandText, /^openclaw gateway start --json$/);
   assert.doesNotMatch(withToken.commandText, /^openclaw gateway start --json$/);
+});
+
+
+
+test('Windows OpenClaw gateway execution resolves openclaw.cmd from APPDATA npm without bare ENOENT-prone spawn', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-win-'));
+  const appData = path.join(workspace, 'AppData', 'Roaming');
+  const npmBin = path.join(appData, 'npm');
+  fs.mkdirSync(npmBin, { recursive: true });
+  const cmdShim = path.join(npmBin, 'openclaw.cmd');
+  fs.writeFileSync(cmdShim, '@echo off\n');
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const spawnCalls = [];
+  let healthCalls = 0;
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    env: { APPDATA: appData, Path: '' },
+    approved: true,
+    platform: 'win32',
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: (command, args, options) => { spawnCalls.push({ command, args, options }); return child; },
+    fetchFn: async (url) => {
+      if (url.endsWith('/health')) {
+        healthCalls += 1;
+        if (healthCalls === 1) throw new Error('down before start');
+        return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+    },
+  });
+  assert.equal(result.ready, true);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0].command, cmdShim);
+  assert.notEqual(spawnCalls[0].command, 'openclaw');
+  assert.deepEqual(spawnCalls[0].args, ['gateway', 'start', '--json']);
+  assert.equal(spawnCalls[0].options.shell, false);
+  assert.equal(result.target.commandText, 'openclaw gateway start --json');
+  assert.doesNotMatch(result.target.commandText, /openclaw config set/);
+});
+
+test('Windows OpenClaw resolver includes APPDATA npm fallback and only accepts fixed allowlisted command', () => {
+  const env = { APPDATA: 'C:\\Users\\operator\\AppData\\Roaming', Path: 'C:\\Windows\\System32' };
+  const candidates = npmGlobalBinCandidatesForOpenClaw({ env });
+  assert.equal(candidates.includes('C:\\Users\\operator\\AppData\\Roaming' + path.sep + 'npm'), true);
+  const target = buildOpenClawGatewayStartupTarget({ commandText: 'openclaw gateway start --json', env, approved: true });
+  const resolved = resolveOpenClawGatewayStartupExecution({
+    target,
+    env,
+    platform: 'win32',
+    existsSync: (candidate) => candidate.endsWith(`npm${path.sep}openclaw.cmd`),
+  });
+  assert.equal(resolved.ok, true);
+  assert.match(resolved.command, /openclaw\.cmd$/);
+  assert.deepEqual(resolved.commandArgs, ['gateway', 'start', '--json']);
+  assert.equal(resolved.executesArbitraryShell, false);
+
+  const badTarget = { ...target, commandText: 'openclaw gateway start --json && openclaw config set gateway.token secret' };
+  const blocked = resolveOpenClawGatewayStartupExecution({ target: badTarget, env, platform: 'win32', existsSync: () => true });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'startup-command-not-fixed-allowlisted');
+});
+
+test('Windows unresolved OpenClaw executable is classified as start-failed with canonical logs', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-win-missing-'));
+  const spawnCalls = [];
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    env: { APPDATA: path.join(workspace, 'missing-appdata'), Path: '' },
+    approved: true,
+    platform: 'win32',
+    existsSync: () => false,
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: (...args) => { spawnCalls.push(args); throw new Error('must not spawn unresolved openclaw'); },
+    fetchFn: async () => { throw new Error('fetch failed'); },
+  });
+  assert.equal(spawnCalls.length, 0);
+  assert.equal(result.ready, false);
+  assert.equal(result.error, 'openclaw-executable-not-found');
+  assert.equal(fs.existsSync(result.logs.stdoutLogPath), true);
+  assert.equal(fs.existsSync(result.logs.stderrLogPath), true);
+  assert.equal(JSON.parse(fs.readFileSync(result.logs.exitLogPath, 'utf8')).error, 'openclaw-executable-not-found');
+  assert.equal(JSON.parse(fs.readFileSync(result.logs.healthProofLogPath, 'utf8')).error, 'fetch failed');
 });
 
 test('approved OpenClaw gateway start writes all log paths on timeout', async () => {
