@@ -200,7 +200,18 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     } : {}),
   };
   const execution = resolveOpenClawGatewayStartupExecution({ target, env: childEnv, platform, ...(existsSync ? { existsSync } : {}) });
-  const exitState = { code: null, signal: null, error: execution.ok ? null : execution.reason };
+  const safeExecution = execution.ok ? {
+    program: execution.command,
+    args: execution.commandArgs,
+    resolvedOpenClawPath: execution.resolvedOpenClawPath || execution.resolvedExecutable || '',
+    strategy: execution.strategy || execution.source || '',
+  } : {
+    program: '',
+    args: [],
+    resolvedOpenClawPath: '',
+    strategy: '',
+  };
+  const exitState = { code: null, signal: null, error: execution.ok ? null : execution.reason, execution: safeExecution, commandText: target.commandText };
   try {
     if (execution.ok) child = spawnFn(execution.command, execution.commandArgs, { cwd: path.resolve(sharedWorkspace), detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: childEnv });
   } catch (error) {
@@ -218,13 +229,13 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     try { proof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
     await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
     await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-    if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, execution, healthProof: proof, pid: Number(child?.pid || 0) || null };
+    if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
     if (exitState.error || exitState.signal !== null || (exitState.code !== null && exitState.code !== 0)) break;
     if (Date.now() < deadline && retryIntervalMs > 0) await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
   } while (Date.now() <= deadline);
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
   await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-  return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, logs, logPath, target, execution, healthProof: proof, pid: Number(child?.pid || 0) || null };
+  return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
 }
 
 export function getCurrentGitHead({ cwd = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), execFile = execFileSync } = {}) {
@@ -350,7 +361,7 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: isReady(report, 'openclaw-gateway') ? 'ready' : 'running' }); await persist();
   if (!isReady(report, 'openclaw-gateway')) {
     const startResult = await openClawStartFn({ sharedWorkspace });
-    status.services.openClaw18789.start = { startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, commandText: startResult?.target?.commandText || '', logPath: startResult?.logPath || startResult?.logs?.logPath || '', logs: startResult?.logs || null, exitCode: startResult?.exitCode ?? startResult?.exit?.code ?? null, healthProof: startResult?.healthProof || null };
+    status.services.openClaw18789.start = { startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, commandText: startResult?.target?.commandText || '', execution: startResult?.execution || startResult?.exit?.execution || null, logPath: startResult?.logPath || startResult?.logs?.logPath || '', logs: startResult?.logs || null, exitCode: startResult?.exitCode ?? startResult?.exit?.code ?? null, healthProof: startResult?.healthProof || null };
     status.phases['OpenClaw gateway 18789'].logPath = startResult?.logPath || startResult?.logs?.logPath || '';
     await persist();
     facts = await collectFactsFn({ sharedWorkspace });
