@@ -722,7 +722,7 @@ test('package scripts include plain ignition aliases with expected targets', asy
   const { readFile } = await import('node:fs/promises');
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(packageJson.scripts['stephanos:serve'], 'node scripts/ignite-stephanos-local.mjs');
-  assert.equal(packageJson.scripts['stephanos:ignite'], 'node scripts/ignite-stephanos-local.mjs --mode=ignite');
+  assert.equal(packageJson.scripts['stephanos:ignite'], 'node scripts/battle-bridge-ignition-supervisor.mjs');
   assert.equal(packageJson.scripts['stephanos:ignite:auto-publish'], 'node scripts/ignite-stephanos-local-autopublish.mjs');
   assert.equal(packageJson.scripts['stephanos:ignite:pr-clean'], 'node scripts/ignite-stephanos-local.mjs --mode=pr-clean');
   assert.equal(packageJson.scripts['stephanos:ignite:housekeep'], 'node scripts/ignite-stephanos-local.mjs --mode=housekeep');
