@@ -253,8 +253,10 @@ test('ignition uses shared OpenClaw gateway startup path on approved 18789 port'
   assert.equal(result.ignitionPhase, 'openclaw-gateway-startup');
   assert.equal(result.startupSource, 'shared:openclaw-control-panel-start-gateway');
   assert.equal(spawned.length, 1);
-  assert.equal(spawned[0].command, 'powershell.exe');
-  assert.match(spawned[0].commandArgs.join(' '), /openclaw gateway start --json/);
+  assert.equal(spawned[0].command, 'openclaw');
+  assert.deepEqual(spawned[0].commandArgs, ['gateway', 'start', '--json']);
+  assert.match(`${spawned[0].command} ${spawned[0].commandArgs.join(' ')}`, /openclaw gateway start --json/);
+  assert.doesNotMatch(`${spawned[0].command} ${spawned[0].commandArgs.join(' ')}`, /openclaw config set/);
   assert.doesNotMatch(spawned[0].commandArgs.join(' '), /openclaw gateway run --force/);
 });
 

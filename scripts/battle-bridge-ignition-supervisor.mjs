@@ -157,7 +157,7 @@ async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch } = 
   return { ready: Boolean(healthResponse.ok && openClawHealthReady(healthResponse.json || {})), healthUrl, identityUrl, health: healthResponse, identity };
 }
 
-export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 10000, retryIntervalMs = 500, env = process.env, token = '', approved = false } = {}) {
+export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false } = {}) {
   const target = buildOpenClawGatewayStartupTarget({ env, token, approved });
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'openclaw-gateway-18789-start');
   await fs.mkdir(logRoot, { recursive: true });
@@ -169,7 +169,16 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   const exitLogPath = path.join(logPath, 'exit.json');
   const healthProofLogPath = path.join(logPath, 'health-proof.json');
   const logs = { logPath, stdoutLogPath, stderrLogPath, exitLogPath, healthProofLogPath };
-  if (!target.available) return { started: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath };
+  if (!target.available) {
+    const unavailableExit = { code: null, signal: null, error: target.reason, reusedExistingRuntime: false };
+    await fs.writeFile(stdoutLogPath, '');
+    await fs.writeFile(stderrLogPath, '');
+    await fs.writeFile(exitLogPath, `${JSON.stringify(unavailableExit, null, 2)}
+`);
+    await fs.writeFile(healthProofLogPath, `${JSON.stringify({ ready: false, skipped: true, reason: target.reason, healthUrl: 'http://127.0.0.1:18789/health' }, null, 2)}
+`);
+    return { started: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath, exit: unavailableExit, healthProof: { ready: false, skipped: true, reason: target.reason } };
+  }
   let existingProof = null;
   try { existingProof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(existingProof, null, 2)}
@@ -180,10 +189,24 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
 `);
     return { started: false, reusedExistingRuntime: true, duplicateStartAvoided: true, ready: true, exitCode: null, exit: exitState, logs, logPath, target, healthProof: existingProof, pid: null };
   }
-  const child = spawnFn(target.command, target.commandArgs, { cwd: path.resolve(sharedWorkspace), detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: { ...process.env, STEPHANOS_OPENCLAW_AUTOSTART: 'battle-bridge-supervisor-gateway-only' } });
-  if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(stdoutLogPath, { flags: 'a' }));
-  if (child?.stderr?.pipe) child.stderr.pipe(createWriteStream(stderrLogPath, { flags: 'a' }));
+  let child = null;
+  const childEnv = {
+    ...process.env,
+    ...env,
+    STEPHANOS_OPENCLAW_AUTOSTART: 'battle-bridge-supervisor-gateway-only',
+    ...(token || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN || env.OPENCLAW_GATEWAY_TOKEN ? {
+      STEPHANOS_OPENCLAW_GATEWAY_TOKEN: token || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN || env.OPENCLAW_GATEWAY_TOKEN,
+      OPENCLAW_GATEWAY_TOKEN: token || env.OPENCLAW_GATEWAY_TOKEN || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN,
+    } : {}),
+  };
   const exitState = { code: null, signal: null, error: null };
+  try {
+    child = spawnFn(target.command, target.commandArgs, { cwd: path.resolve(sharedWorkspace), detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: childEnv });
+  } catch (error) {
+    exitState.error = error?.message || String(error);
+  }
+  if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(stdoutLogPath, { flags: 'a' })); else await fs.writeFile(stdoutLogPath, '', { flag: 'a' });
+  if (child?.stderr?.pipe) child.stderr.pipe(createWriteStream(stderrLogPath, { flags: 'a' })); else await fs.writeFile(stderrLogPath, '', { flag: 'a' });
   if (child?.once) {
     child.once('error', (error) => { exitState.error = error?.message || String(error); });
     child.once('exit', (code, signal) => { exitState.code = code; exitState.signal = signal; });
@@ -195,7 +218,7 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
     await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
     if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, healthProof: proof, pid: Number(child?.pid || 0) || null };
-    if (exitState.error || exitState.code !== null || exitState.signal !== null) break;
+    if (exitState.error || exitState.signal !== null || (exitState.code !== null && exitState.code !== 0)) break;
     if (Date.now() < deadline && retryIntervalMs > 0) await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
   } while (Date.now() <= deadline);
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
