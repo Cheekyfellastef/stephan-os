@@ -58,25 +58,56 @@ export function npmGlobalBinCandidatesForOpenClaw({ env = process.env } = {}) {
   return candidates;
 }
 
+function uniqueCandidates(candidates = []) {
+  return candidates.filter((candidate, index, all) => candidate && all.indexOf(candidate) === index);
+}
+
+function windowsPathEntries({ env = process.env } = {}) {
+  return String(env.Path || env.PATH || '').split(';').filter(Boolean);
+}
+
+function findWindowsProgram({ names = [], env = process.env, existsSync = fs.existsSync } = {}) {
+  for (const dir of windowsPathEntries({ env })) {
+    for (const name of names) {
+      for (const candidate of uniqueCandidates([path.win32.join(dir, name), path.join(dir, name)])) {
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+  }
+  return '';
+}
+
+function findOpenClawWindowsShim({ env = process.env, existsSync = fs.existsSync } = {}) {
+  const searchDirs = [...windowsPathEntries({ env }), ...npmGlobalBinCandidatesForOpenClaw({ env })];
+  const names = ['openclaw.cmd', 'openclaw.bat', 'openclaw.exe', 'openclaw.ps1', 'openclaw'];
+  for (const dir of searchDirs) {
+    for (const name of names) {
+      for (const candidate of uniqueCandidates([path.win32.join(dir, name), path.join(dir, name)])) {
+        if (existsSync(candidate)) return { shim: candidate, searchedDirs: searchDirs };
+      }
+    }
+  }
+  return { shim: '', searchedDirs: searchDirs };
+}
+
 export function resolveOpenClawGatewayWindowsExecutable({ commandText = getOpenClawGatewayStartupCommand(), env = process.env, existsSync = fs.existsSync } = {}) {
   if (!isFixedOpenClawGatewayStartCommand(commandText)) {
     return { ok: false, reason: 'startup-command-not-fixed-allowlisted', command: '', commandArgs: [] };
   }
-  const pathValue = String(env.Path || env.PATH || '');
-  const pathEntries = pathValue.split(';').filter(Boolean);
-  const searchDirs = [...pathEntries, ...npmGlobalBinCandidatesForOpenClaw({ env })];
-  const names = ['openclaw.cmd', 'openclaw.exe', 'openclaw.ps1'];
-  for (const dir of searchDirs) {
-    for (const name of names) {
-      const candidates = [path.win32.join(dir, name), path.join(dir, name)].filter((candidate, index, all) => candidate && all.indexOf(candidate) === index);
-      for (const candidate of candidates) {
-        if (existsSync(candidate)) {
-          return { ok: true, source: 'windows-path-or-npm-global-bin', command: candidate, commandArgs: ['gateway', 'start', '--json'], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false, resolvedExecutable: candidate, searchedDirs: searchDirs };
-        }
-      }
-    }
+  const { shim, searchedDirs } = findOpenClawWindowsShim({ env, existsSync });
+  const appDataNpm = env.APPDATA ? path.win32.join(env.APPDATA, 'npm') : '';
+  const openClawMjs = appDataNpm ? path.win32.join(appDataNpm, 'node_modules', 'openclaw', 'openclaw.mjs') : '';
+  const nodeExe = findWindowsProgram({ names: ['node.exe'], env, existsSync });
+  if (openClawMjs && nodeExe && existsSync(openClawMjs)) {
+    return { ok: true, source: 'windows-appdata-npm-node-entrypoint', strategy: 'node-entrypoint', command: nodeExe, commandArgs: [openClawMjs, 'gateway', 'start', '--json'], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false, resolvedOpenClawPath: openClawMjs, resolvedExecutable: nodeExe, searchedDirs };
   }
-  return { ok: false, reason: 'openclaw-executable-not-found', command: '', commandArgs: [], commandText: getOpenClawGatewayStartupCommand(), searchedDirs: searchDirs };
+  if (/\.cmd$/i.test(shim)) {
+    return { ok: true, source: 'windows-cmd-shim', strategy: 'cmd-shim', command: 'cmd.exe', commandArgs: ['/d', '/s', '/c', `""${shim}" gateway start --json"`], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false, resolvedOpenClawPath: shim, resolvedExecutable: 'cmd.exe', searchedDirs };
+  }
+  if (shim && !/\.(?:bat|cmd|ps1)$/i.test(shim) && path.win32.extname(shim)) {
+    return { ok: true, source: 'windows-native-executable', strategy: 'native-executable', command: shim, commandArgs: ['gateway', 'start', '--json'], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false, resolvedOpenClawPath: shim, resolvedExecutable: shim, searchedDirs };
+  }
+  return { ok: false, reason: 'openclaw-executable-not-found', command: '', commandArgs: [], commandText: getOpenClawGatewayStartupCommand(), searchedDirs };
 }
 
 export function resolveOpenClawGatewayStartupExecution({ target, env = process.env, platform = process.platform, existsSync = fs.existsSync } = {}) {

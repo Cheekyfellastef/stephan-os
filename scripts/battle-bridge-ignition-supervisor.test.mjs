@@ -311,7 +311,7 @@ test('OpenClaw config write startup targets still require token and never become
 
 
 
-test('Windows OpenClaw gateway execution resolves openclaw.cmd from APPDATA npm without bare ENOENT-prone spawn', async () => {
+test('Windows OpenClaw gateway execution uses cmd.exe wrapper for openclaw.cmd instead of direct shim spawn', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-win-'));
   const appData = path.join(workspace, 'AppData', 'Roaming');
   const npmBin = path.join(appData, 'npm');
@@ -343,12 +343,63 @@ test('Windows OpenClaw gateway execution resolves openclaw.cmd from APPDATA npm 
   });
   assert.equal(result.ready, true);
   assert.equal(spawnCalls.length, 1);
-  assert.equal(spawnCalls[0].command, cmdShim);
+  assert.equal(spawnCalls[0].command, 'cmd.exe');
   assert.notEqual(spawnCalls[0].command, 'openclaw');
-  assert.deepEqual(spawnCalls[0].args, ['gateway', 'start', '--json']);
+  assert.deepEqual(spawnCalls[0].args, ['/d', '/s', '/c', `""${cmdShim}" gateway start --json"`]);
   assert.equal(spawnCalls[0].options.shell, false);
   assert.equal(result.target.commandText, 'openclaw gateway start --json');
+  assert.equal(result.execution.strategy, 'cmd-shim');
+  assert.equal(result.execution.resolvedOpenClawPath, cmdShim);
   assert.doesNotMatch(result.target.commandText, /openclaw config set/);
+});
+
+test('Windows OpenClaw gateway execution prefers APPDATA npm node entrypoint when openclaw.mjs exists', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-win-node-entry-'));
+  const appData = path.join(workspace, 'AppData', 'Roaming');
+  const npmBin = path.join(appData, 'npm');
+  const openClawPackage = path.join(npmBin, 'node_modules', 'openclaw');
+  const nodeDir = path.join(workspace, 'nodejs');
+  fs.mkdirSync(openClawPackage, { recursive: true });
+  fs.mkdirSync(nodeDir, { recursive: true });
+  const cmdShim = path.join(npmBin, 'openclaw.cmd');
+  const openClawMjs = path.win32.join(appData, 'npm', 'node_modules', 'openclaw', 'openclaw.mjs');
+  const localMjs = path.join(openClawPackage, 'openclaw.mjs');
+  const nodeExe = path.join(nodeDir, 'node.exe');
+  fs.writeFileSync(cmdShim, '@echo off\n');
+  fs.writeFileSync(localMjs, 'export {};\n');
+  fs.writeFileSync(nodeExe, '');
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const spawnCalls = [];
+  let healthCalls = 0;
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    env: { APPDATA: appData, Path: nodeDir },
+    approved: true,
+    platform: 'win32',
+    existsSync: (candidate) => candidate === cmdShim || candidate === localMjs || candidate === openClawMjs || candidate === nodeExe,
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: (command, args, options) => { spawnCalls.push({ command, args, options }); return child; },
+    fetchFn: async (url) => {
+      if (url.endsWith('/health')) {
+        healthCalls += 1;
+        if (healthCalls === 1) throw new Error('down before start');
+        return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+    },
+  });
+  assert.equal(result.ready, true);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0].command, nodeExe);
+  assert.deepEqual(spawnCalls[0].args, [openClawMjs, 'gateway', 'start', '--json']);
+  assert.equal(spawnCalls[0].options.shell, false);
+  assert.equal(result.execution.strategy, 'node-entrypoint');
+  assert.equal(result.execution.resolvedOpenClawPath, openClawMjs);
+  assert.equal(result.target.commandText, 'openclaw gateway start --json');
 });
 
 test('Windows OpenClaw resolver includes APPDATA npm fallback and only accepts fixed allowlisted command', () => {
@@ -363,8 +414,10 @@ test('Windows OpenClaw resolver includes APPDATA npm fallback and only accepts f
     existsSync: (candidate) => candidate.endsWith(`npm${path.sep}openclaw.cmd`),
   });
   assert.equal(resolved.ok, true);
-  assert.match(resolved.command, /openclaw\.cmd$/);
-  assert.deepEqual(resolved.commandArgs, ['gateway', 'start', '--json']);
+  assert.equal(resolved.command, 'cmd.exe');
+  assert.deepEqual(resolved.commandArgs.slice(0, 3), ['/d', '/s', '/c']);
+  assert.match(resolved.commandArgs[3], /^"".*openclaw\.cmd" gateway start --json"$/);
+  assert.equal(resolved.strategy, 'cmd-shim');
   assert.equal(resolved.executesArbitraryShell, false);
 
   const badTarget = { ...target, commandText: 'openclaw gateway start --json && openclaw config set gateway.token secret' };
@@ -419,6 +472,38 @@ test('approved OpenClaw gateway start writes all log paths on timeout', async ()
   assert.equal(fs.existsSync(result.logs.exitLogPath), true);
   assert.equal(fs.existsSync(result.logs.healthProofLogPath), true);
   assert.match(fs.readFileSync(result.logs.healthProofLogPath, 'utf8'), /still down/);
+});
+
+test('Windows OpenClaw spawn EINVAL is captured in exit log for start-failed classification', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-win-einval-'));
+  const appData = path.join(workspace, 'AppData', 'Roaming');
+  const npmBin = path.join(appData, 'npm');
+  fs.mkdirSync(npmBin, { recursive: true });
+  const cmdShim = path.join(npmBin, 'openclaw.cmd');
+  fs.writeFileSync(cmdShim, '@echo off\n');
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    env: { APPDATA: appData, Path: '' },
+    approved: true,
+    platform: 'win32',
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: () => {
+      const error = new Error('spawn EINVAL');
+      error.code = 'EINVAL';
+      throw error;
+    },
+    fetchFn: async () => { throw new Error('fetch failed'); },
+  });
+  const exitLog = JSON.parse(fs.readFileSync(result.logs.exitLogPath, 'utf8'));
+  assert.equal(result.ready, false);
+  assert.equal(result.error, 'spawn EINVAL');
+  assert.equal(exitLog.error, 'spawn EINVAL');
+  assert.equal(exitLog.commandText, 'openclaw gateway start --json');
+  assert.equal(exitLog.execution.strategy, 'cmd-shim');
+  assert.equal(fs.existsSync(result.logs.stdoutLogPath), true);
+  assert.equal(fs.existsSync(result.logs.stderrLogPath), true);
+  assert.equal(JSON.parse(fs.readFileSync(result.logs.healthProofLogPath, 'utf8')).error, 'fetch failed');
 });
 
 test('approved OpenClaw gateway start reuses healthy 18789 and avoids duplicate start', async () => {
