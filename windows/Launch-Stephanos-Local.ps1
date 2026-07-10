@@ -9,7 +9,8 @@ param(
   [string]$SharedWorkspace = '',
   [switch]$ReadinessReportOnly,
   [switch]$RepairMissingUi4173,
-  [switch]$RepairDryRun
+  [switch]$RepairDryRun,
+  [switch]$TestTempIgnitionProof
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,11 +45,13 @@ $launcherShellUrl = 'http://127.0.0.1:4173/'
 $launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
 $launcherRuntimeStatusUrl = 'http://127.0.0.1:4173/apps/stephanos/runtime-status.json'
 $viteDevUrl = 'http://localhost:5173/'
-$launcherRootCommand = 'powershell.exe -ExecutionPolicy Bypass -File .\windows\Invoke-Stephanos-Ignite-With-Approval.ps1 -RepositoryRoot .'
+$launcherRootCommand = 'npm run stephanos:ignite'
 $launcherRootCanonicalCommand = 'npm run stephanos:ignite'
 $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --probe-existing-server'
 $visiblePowerShellRequired = $false
-$ignitionProofRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof'
+$canonicalSharedWorkspace = if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $SharedWorkspace.Trim() } elseif ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } else { Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace' }
+$ignitionProofRoot = if ($TestTempIgnitionProof.IsPresent) { Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof' } else { $canonicalSharedWorkspace }
+$supervisorStatusPath = Join-Path $canonicalSharedWorkspace 'status\battle-bridge-ignition-supervisor-current.json'
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
 $ignitionTranscriptPath = Join-Path $ignitionProofRoot 'ignition-proof-transcript.jsonl'
@@ -172,10 +175,31 @@ function Get-LatestOpenClawStartupStatus {
   return $null
 }
 
+
+function Get-CurrentSupervisorStatus {
+  try {
+    if (Test-Path -LiteralPath $supervisorStatusPath -PathType Leaf) {
+      return (Get-Content -LiteralPath $supervisorStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+    }
+  }
+  catch {}
+  return $null
+}
+
 function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extra = @{}) {
   Initialize-IgnitionProofWorkspace
   $currentStage = if ($Extra.ContainsKey('currentStage')) { $Extra.currentStage } else { $Phase }
   $latestOpenClawStartup = Get-LatestOpenClawStartupStatus
+  $supervisorStatus = Get-CurrentSupervisorStatus
+  if ($supervisorStatus -and ($supervisorStatus.trafficLight -eq 'green' -or $supervisorStatus.blockerId)) {
+    $Phase = if ($supervisorStatus.trafficLight -eq 'green') { 'ready' } else { 'blocked' }
+    $Message = if ($supervisorStatus.blockerId) { [string]$supervisorStatus.blockerId } elseif ($supervisorStatus.currentPhase) { [string]$supervisorStatus.currentPhase } else { $Message }
+    $Extra['currentStage'] = $Phase
+    $Extra['nextOperatorAction'] = if ($supervisorStatus.nextOperatorAction) { [string]$supervisorStatus.nextOperatorAction } else { 'Follow the Battle Bridge ignition supervisor current record.' }
+    if ($supervisorStatus.blockerId) { $Extra['blocker'] = [string]$supervisorStatus.blockerId }
+    $Extra['supervisorStatusPath'] = $supervisorStatusPath
+    $Extra['supervisorCurrentRecord'] = $supervisorStatus
+  }
   $payload = [ordered]@{
     phase = $Phase
     message = $Message
@@ -269,6 +293,7 @@ function Show-IgnitionSplashScreen {
   Start-Process -FilePath $splashPath | Out-Null
   Write-LiveLog "ignition splash/status screen opened: $splashPath"
   Write-LiveLog "verbose logs/status destination: $ignitionProofRoot"
+  Write-LiveLog "supervisor status source: $supervisorStatusPath"
 }
 
 function Get-LauncherChildBlocker {

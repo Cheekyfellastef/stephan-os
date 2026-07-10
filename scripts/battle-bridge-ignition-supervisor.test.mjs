@@ -52,6 +52,7 @@ test('publisher is refreshed before UI repair and stale records are refreshed by
     housekeepFn: () => calls.push('housekeeping'),
     publisherFn: async () => { calls.push('publisher'); },
     sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    servedRuntimeProofFn: async () => ({ healthOk: true, distOk: true, ready: true }),
     collectFactsFn: async () => {
       collectCount += 1;
       calls.push(`collect-${collectCount}`);
@@ -75,6 +76,7 @@ test('partial-ui-missing triggers repair and ready is only reported after 4173 p
     housekeepFn: () => {},
     publisherFn: async () => {},
     sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    servedRuntimeProofFn: async () => ({ healthOk: true, distOk: true, ready: true }),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ ui: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
@@ -244,6 +246,7 @@ test('backend and OpenClaw ready with UI missing refreshes publisher before UI r
   let collectCount = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {}, publisherFn: async () => { calls.push('publisher'); }, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    servedRuntimeProofFn: async () => ({ healthOk: true, distOk: true, ready: true }),
     collectFactsFn: async () => { collectCount += 1; return collectCount === 1 ? factsFor({ ui: false, stale: ['old UNKNOWN'] }) : factsFor({ ui: collectCount > 2 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
@@ -251,4 +254,31 @@ test('backend and OpenClaw ready with UI missing refreshes publisher before UI r
   });
   assert.equal(calls.indexOf('publisher') < calls.indexOf('repair'), true);
   assert.equal(result.ok, true);
+});
+
+test('served runtime stale blocks exact-head ready with served-runtime-stale', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    servedRuntimeProofFn: async () => ({ healthOk: true, distOk: true, gitCommit: '0f0aa30d', runtimeMarker: 'antifriction-live-v3::0f0aa30d::6b9790b02ced', expectedShortGitCommit: '51600ce', ready: false }),
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'served-runtime-stale');
+  assert.equal(result.status.phases['browser/runtime proof'].state, 'blocked');
+  assert.match(result.status.nextOperatorAction, /npm run stephanos:ignite:launcher-root/);
+});
+
+test('supervisor ready requires served runtime commit marker to match current HEAD', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    servedRuntimeProofFn: async () => ({ healthOk: true, distOk: true, gitCommit: '51600ce', runtimeMarker: 'antifriction-live-v3::51600ce::fixture', expectedShortGitCommit: '51600ce', ready: true }),
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.status.phases.ready.state, 'ready');
+  assert.equal(result.status.services.stephanosUi4173.servedRuntimeProof.ready, true);
 });

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import path from 'node:path';
@@ -144,6 +144,46 @@ function isReady(report, id) {
   return report?.observedServices?.[id]?.ready === true;
 }
 
+export function readCurrentGitHead({ spawnSyncFn = spawnSync } = {}) {
+  const full = spawnSyncFn('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
+  const short = spawnSyncFn('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' });
+  return {
+    full: full.status === 0 ? String(full.stdout || '').trim() : '',
+    short: short.status === 0 ? String(short.stdout || '').trim() : '',
+  };
+}
+
+export function evaluateServedRuntimeHead({ health = {}, currentHead = {} } = {}) {
+  const gitCommit = String(health.gitCommit || '').trim();
+  const marker = String(health.runtimeMarker || health.marker || '').trim();
+  const full = String(currentHead.full || '').trim();
+  const short = String(currentHead.short || (full ? full.slice(0, 7) : '')).trim();
+  const commitMatches = Boolean(gitCommit && (gitCommit === full || gitCommit === short || (full && full.startsWith(gitCommit))));
+  const markerMatches = Boolean(marker && ((short && marker.includes(`::${short}::`)) || (full && marker.includes(`::${full}::`)) || (gitCommit && (marker.includes(`::${gitCommit}::`) || marker.includes(gitCommit)))));
+  return {
+    ready: commitMatches || markerMatches,
+    gitCommit,
+    runtimeMarker: marker,
+    buildTimestamp: health.buildTimestamp || '',
+    expectedGitCommit: full,
+    expectedShortGitCommit: short,
+    commitMatches,
+    markerMatches,
+  };
+}
+
+export async function probeServedRuntimeHead({ fetchFn = fetch, currentHead = readCurrentGitHead() } = {}) {
+  const healthUrl = 'http://127.0.0.1:4173/__stephanos/health';
+  const distUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
+  const healthResponse = await fetchFn(healthUrl);
+  const healthOk = Boolean(healthResponse?.ok);
+  const health = healthOk && typeof healthResponse.json === 'function' ? await healthResponse.json() : {};
+  const distResponse = await fetchFn(distUrl);
+  const distOk = Boolean(distResponse?.ok);
+  const headProof = evaluateServedRuntimeHead({ health, currentHead });
+  return { healthUrl, distUrl, healthOk, distOk, ...headProof, ready: healthOk && distOk && headProof.ready };
+}
+
 async function writeStatus(status, sharedWorkspace) {
   if (!sharedWorkspace) return null;
   const dir = path.resolve(sharedWorkspace, 'status');
@@ -153,7 +193,7 @@ async function writeStatus(status, sharedWorkspace) {
   return file;
 }
 
-export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runIgnitionHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, sourceTruthFn = evaluateGitPublicationTruthWithDeps, stdout = process.stdout } = {}) {
+export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runIgnitionHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, sourceTruthFn = evaluateGitPublicationTruthWithDeps, servedRuntimeProofFn = probeServedRuntimeHead, stdout = process.stdout } = {}) {
   let status = createBattleBridgeSupervisorStatus();
   const writes = [];
   const persist = async () => { const file = await writeStatus(status, sharedWorkspace); if (file) writes.push(file); };
@@ -236,7 +276,25 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
   }
+  let servedProof;
+  try { servedProof = await servedRuntimeProofFn(); }
+  catch (error) { servedProof = { ready: false, error: error?.message || String(error) }; }
+  status.services.stephanosUi4173.servedRuntimeProof = servedProof;
+  if (!servedProof?.ready) {
+    const stale = servedProof?.healthOk === true && servedProof?.distOk === true && (servedProof?.gitCommit || servedProof?.runtimeMarker);
+    const blocker = requiredServiceBlocker(
+      stale ? 'served-runtime-stale' : 'browser-runtime-proof-incomplete',
+      stale ? 'Stephanos UI 4173 is reachable, but the served runtime gitCommit/runtimeMarker does not match current source HEAD.' : 'Stephanos UI 4173 browser/runtime proof is incomplete.',
+      'Rebuild and restart 4173 through the guarded UI repair path: npm run stephanos:ignite:launcher-root, then rerun npm run stephanos:ignite.',
+      { servedRuntimeProof: servedProof },
+    );
+    status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'blocked', readinessReport: proofReport, blocker });
+    await persist();
+    stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+    return { ok: false, status, writes };
+  }
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'ready', readinessReport: proofReport });
+  status.services.stephanosUi4173.servedRuntimeProof = servedProof;
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'ready', phaseState: 'ready' });
   await persist();
   stdout.write(`${JSON.stringify(status, null, 2)}\n`);
