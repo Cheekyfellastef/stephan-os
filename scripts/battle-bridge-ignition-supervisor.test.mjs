@@ -17,6 +17,7 @@ import {
   runBattleBridgeIgnitionSupervisor,
   evaluateServedRuntimeExactHeadProof,
 } from './battle-bridge-ignition-supervisor.mjs';
+import { buildOpenClawGatewayStartupTarget } from '../shared/agents/openClawGatewayStartup.mjs';
 
 
 const readyRuntimeProof = async () => ({ ready: true, currentHead: '51600ceb00000000000000000000000000000000', healthOk: true, distOk: true, gitCommitMatches: true, runtimeMarkerMatches: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture' });
@@ -218,6 +219,72 @@ test('approved OpenClaw gateway start uses config-safe start command shape, env 
   assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
   assert.equal(fs.readFileSync(result.logs.stdoutLogPath, 'utf8'), 'openclaw stdout proof\n');
   assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'openclaw stderr proof\n');
+});
+
+test('approved OpenClaw gateway start runs without token and writes non-skipped exit and health logs', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-no-token-'));
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const spawnCalls = [];
+  let healthCalls = 0;
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    env: {},
+    approved: true,
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      queueMicrotask(() => child.emit('exit', 0, null));
+      return child;
+    },
+    fetchFn: async (url) => {
+      if (url.endsWith('/health')) {
+        healthCalls += 1;
+        return healthCalls <= 1
+          ? Promise.reject(new Error('not ready yet'))
+          : { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+    },
+  });
+
+  const exitLog = JSON.parse(fs.readFileSync(result.logs.exitLogPath, 'utf8'));
+  const healthLog = JSON.parse(fs.readFileSync(result.logs.healthProofLogPath, 'utf8'));
+  assert.equal(result.ready, true);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(`${spawnCalls[0].command} ${spawnCalls[0].args.join(' ')}`, 'openclaw gateway start --json');
+  assert.equal(spawnCalls[0].options.env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN, undefined);
+  assert.equal(spawnCalls[0].options.env.OPENCLAW_GATEWAY_TOKEN, undefined);
+  assert.equal(exitLog.error, null);
+  assert.notEqual(exitLog.error, 'startup-token-missing');
+  assert.equal(healthLog.skipped, undefined);
+  assert.notEqual(healthLog.reason, 'startup-token-missing');
+  assert.equal(healthLog.ready, true);
+});
+
+test('OpenClaw config write startup targets still require token and never become gateway start commands', () => {
+  const noToken = buildOpenClawGatewayStartupTarget({
+    commandText: 'openclaw config set gateway.token secret',
+    env: {},
+    approved: true,
+  });
+  const withToken = buildOpenClawGatewayStartupTarget({
+    commandText: 'openclaw config set gateway.token secret',
+    token: 'test-token',
+    approved: true,
+  });
+
+  assert.equal(noToken.available, false);
+  assert.equal(noToken.reason, 'startup-token-missing');
+  assert.equal(noToken.mutatesOpenClawConfig, true);
+  assert.equal(withToken.available, false);
+  assert.equal(withToken.reason, 'startup-command-violates-guardrails');
+  assert.equal(withToken.mutatesOpenClawConfig, true);
+  assert.doesNotMatch(noToken.commandText, /^openclaw gateway start --json$/);
+  assert.doesNotMatch(withToken.commandText, /^openclaw gateway start --json$/);
 });
 
 test('approved OpenClaw gateway start writes all log paths on timeout', async () => {
