@@ -252,7 +252,7 @@ test('ignition uses shared Control Panel gateway startup path on approved 18789 
   assert.equal(result.startupSource, 'shared:openclaw-control-panel-start-gateway');
   assert.equal(spawned.length, 1);
   assert.equal(spawned[0].command, 'powershell.exe');
-  assert.match(spawned[0].commandArgs.join(' '), /openclaw gateway --host 127\.0\.0\.1 --port 18789/);
+  assert.match(spawned[0].commandArgs.join(' '), /openclaw gateway run --port 18789 --bind loopback/);
 });
 
 test('splash/status diagnostics report OpenClaw startup phase and endpoint unreachable details', async () => {

@@ -12,6 +12,7 @@ import {
   createBattleBridgeSupervisorStatus,
   projectBattleBridgeSupervisorStatus,
   runApprovedBackend8787Start,
+  runApprovedOpenClawGateway18789Start,
   defaultBattleBridgeSharedWorkspace,
   runBattleBridgeIgnitionSupervisor,
   evaluateServedRuntimeExactHeadProof,
@@ -171,6 +172,83 @@ test('backend start unavailable returns adapter blocker', async () => {
 });
 
 
+
+
+test('approved OpenClaw gateway start uses Control Panel adapter command shape and canonical logs', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-start-'));
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const spawnCalls = [];
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      queueMicrotask(() => { child.stdout.end('openclaw stdout proof\n'); child.stderr.end('openclaw stderr proof\n'); });
+      return child;
+    },
+    fetchFn: async (url) => {
+      if (url.endsWith('/health')) return { ok: true, status: 200, text: async () => JSON.stringify({ status: 'live' }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(result.ready, true);
+  assert.equal(spawnCalls[0].command, 'powershell.exe');
+  assert.match(spawnCalls[0].args.join(' '), /openclaw gateway run --port 18789 --bind loopback/);
+  assert.doesNotMatch(spawnCalls[0].args.join(' '), /--host/);
+  assert.equal(spawnCalls[0].options.shell, false);
+  assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
+  assert.equal(fs.readFileSync(result.logs.stdoutLogPath, 'utf8'), 'openclaw stdout proof\n');
+  assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'openclaw stderr proof\n');
+});
+
+test('supervisor calls approved OpenClaw startup adapter when 18789 is missing', async () => {
+  const calls = [];
+  let collectCount = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => { collectCount += 1; return factsFor({ openclaw: collectCount > 1 }); },
+    plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['openclaw-gateway'].ready ? 'ready' : 'partial-openclaw-missing' }),
+    openClawStartFn: async ({ sharedWorkspace }) => { calls.push(sharedWorkspace); return { ready: true, started: true, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } }; },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(result.status.services.openClaw18789.start.logPath, '/canonical/openclaw-log');
+});
+
+test('OpenClaw command failure blocks with start-failed and does not run UI repair', async () => {
+  const calls = [];
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
+    openClawStartFn: async () => ({ ready: false, started: false, exitCode: 2, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' } }),
+    repairFn: async () => { calls.push('ui-repair'); return 0; },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'openclaw-gateway-18789-start-failed');
+  assert.deepEqual(calls, []);
+});
+
+test('OpenClaw running without health proof blocks with no-health-proof and surfaces logPath', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
+    openClawStartFn: async () => ({ ready: false, started: true, exitCode: null, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: false, health: { json: { service: 'openclaw-readonly-adapter-stub', status: 'healthy' } } } }),
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'openclaw-gateway-18789-no-health-proof');
+  assert.equal(result.status.phases['OpenClaw gateway 18789'].logPath, '/canonical/openclaw-log');
+  assert.match(result.status.nextOperatorAction, /\/canonical\/openclaw-log/);
+});
 
 test('default shared workspace is canonical Documents path, not temp Battle Bridge workspace', () => {
   const workspace = defaultBattleBridgeSharedWorkspace({ env: { USERPROFILE: 'C:\\Users\\Stephan' }, platform: 'win32' });

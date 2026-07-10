@@ -12,7 +12,7 @@ export const OPENCLAW_GATEWAY_STARTUP_GUARDRAILS = Object.freeze({
 });
 
 export function getOpenClawGatewayStartupCommand() {
-  return `${OPENCLAW_WORKSPACE_SAFE_START_COMMAND_PREFIX} openclaw gateway --host 127.0.0.1 --port ${OPENCLAW_GATEWAY_APPROVED_PORT}`;
+  return `${OPENCLAW_WORKSPACE_SAFE_START_COMMAND_PREFIX} openclaw gateway run --port ${OPENCLAW_GATEWAY_APPROVED_PORT} --bind loopback`;
 }
 
 export function splitOpenClawGatewayStartupCommand(value = getOpenClawGatewayStartupCommand()) {
