@@ -62,6 +62,15 @@ test('command allowlist prevents arbitrary shell', () => {
   assert.match(result.blockers.map((b) => b.id).join(','), /command-not-allowlisted/);
 });
 
+test('no user supplied command text reaches cmd.exe invocation', () => {
+  const blocked = evaluateUi4173Repair({ readinessReport: report(), dryRun: false, commandIdentity: { commandText: 'npm run evil && calc.exe', id: 'bad', source: 'test', purpose: 'test' } });
+  const invocation = resolveUi4173RepairInvocation('win32');
+  assert.equal(blocked.allowedToStart, false);
+  assert.deepEqual(invocation.commandArgs, ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:ignite:launcher-root']);
+  assert.equal(invocation.commandArgs.includes('evil'), false);
+  assert.equal(invocation.commandArgs.includes('calc.exe'), false);
+});
+
 
 function stdoutCapture() {
   let text = '';
@@ -79,7 +88,7 @@ function readyPlanner() {
   return report();
 }
 
-test('Windows start uses npm.cmd for the canonical npm script', async () => {
+test('Windows start uses controlled cmd.exe wrapper with fixed args for the canonical npm script', async () => {
   const calls = [];
   const { stdout, json } = stdoutCapture();
   const code = await runUi4173Repair({
@@ -94,13 +103,23 @@ test('Windows start uses npm.cmd for the canonical npm script', async () => {
     },
   });
   assert.equal(code, 0);
-  assert.equal(calls[0].command, 'npm.cmd');
-  assert.deepEqual(calls[0].args, ['run', 'stephanos:ignite:launcher-root']);
+  assert.equal(calls[0].command, 'cmd.exe');
+  assert.deepEqual(calls[0].args, ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:ignite:launcher-root']);
   assert.equal(calls[0].options.shell, false);
-  assert.equal(json().invocation.command, 'npm.cmd');
+  assert.equal(calls[0].options.cwd, process.cwd());
+  const output = json();
+  assert.equal(output.invocation.kind, 'CONTROLLED_WINDOWS_NPM_WRAPPER');
+  assert.equal(output.invocation.command, 'cmd.exe');
+  assert.deepEqual(output.invocation.commandArgs, ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:ignite:launcher-root']);
+  assert.equal(output.invocation.wrappedCommand, 'npm.cmd');
+  assert.deepEqual(output.invocation.wrappedCommandArgs, ['run', 'stephanos:ignite:launcher-root']);
+  assert.equal(output.invocation.cwd, process.cwd());
+  assert.equal(output.action, 'start-ui-4173-started');
+  assert.equal(output.started, true);
+  assert.equal(output.pid, 4173);
 });
 
-test('non-Windows start uses npm for the canonical npm script', async () => {
+test('non-Windows start remains controlled direct npm for the canonical npm script', async () => {
   const calls = [];
   const { stdout, json } = stdoutCapture();
   const code = await runUi4173Repair({
@@ -109,15 +128,19 @@ test('non-Windows start uses npm for the canonical npm script', async () => {
     collectFactsFn: fakeCollector,
     plannerFn: readyPlanner,
     stdout,
-    spawnFn(command, args) {
-      calls.push({ command, args });
+    spawnFn(command, args, options) {
+      calls.push({ command, args, options });
       return { pid: 4173, unref() {} };
     },
   });
   assert.equal(code, 0);
   assert.equal(calls[0].command, 'npm');
   assert.deepEqual(calls[0].args, ['run', 'stephanos:ignite:launcher-root']);
-  assert.equal(json().invocation.command, 'npm');
+  assert.equal(calls[0].options.cwd, process.cwd());
+  const output = json();
+  assert.equal(output.invocation.kind, 'CONTROLLED_DIRECT_NPM');
+  assert.equal(output.invocation.command, 'npm');
+  assert.equal(output.invocation.cwd, process.cwd());
 });
 
 test('spawn errors return structured JSON and non-zero exit', async () => {
@@ -139,6 +162,8 @@ test('spawn errors return structured JSON and non-zero exit', async () => {
   assert.equal(output.started, false);
   assert.equal(output.action, 'start-ui-4173-failed');
   assert.deepEqual(output.spawnError, { code: 'EINVAL', message: 'spawn EINVAL' });
+  assert.equal(output.invocation.kind, 'CONTROLLED_WINDOWS_NPM_WRAPPER');
+  assert.equal(output.invocation.cwd, process.cwd());
   assert.match(output.afterProofInstruction, /Do not claim live health/);
 });
 
@@ -177,8 +202,10 @@ test('dry-run still does not spawn', async () => {
     },
   });
   assert.equal(code, 0);
-  assert.equal(json().action, 'dry-run-plan-ui-4173-start');
-  assert.equal(json().started, null);
+  const output = json();
+  assert.equal(output.action, 'dry-run-plan-ui-4173-start');
+  assert.equal(output.started, null);
+  assert.equal(output.invocation, undefined);
 });
 
 test('authority forbids backend/OpenClaw starts, kill authority, and arbitrary shell', () => {
@@ -208,6 +235,20 @@ test('existing blocked readiness/report-only behavior remains unchanged', async 
 });
 
 test('platform invocation resolver is source-coded and not arbitrary shell', () => {
-  assert.deepEqual(resolveUi4173RepairInvocation('win32'), { command: 'npm.cmd', commandArgs: ['run', 'stephanos:ignite:launcher-root'] });
-  assert.deepEqual(resolveUi4173RepairInvocation('linux'), { command: 'npm', commandArgs: ['run', 'stephanos:ignite:launcher-root'] });
+  assert.deepEqual(resolveUi4173RepairInvocation('win32'), {
+    kind: 'CONTROLLED_WINDOWS_NPM_WRAPPER',
+    command: 'cmd.exe',
+    commandArgs: ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:ignite:launcher-root'],
+    wrappedCommand: 'npm.cmd',
+    wrappedCommandArgs: ['run', 'stephanos:ignite:launcher-root'],
+    shell: false,
+    cwd: process.cwd(),
+  });
+  assert.deepEqual(resolveUi4173RepairInvocation('linux'), {
+    kind: 'CONTROLLED_DIRECT_NPM',
+    command: 'npm',
+    commandArgs: ['run', 'stephanos:ignite:launcher-root'],
+    shell: false,
+    cwd: process.cwd(),
+  });
 });

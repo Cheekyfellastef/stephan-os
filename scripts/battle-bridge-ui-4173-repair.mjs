@@ -2,15 +2,35 @@
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import process from 'node:process';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectLauncherReadinessLiveFacts } from './launcher-readiness-live-facts.mjs';
 import { isAllowedLauncherStartCommand, planLauncherReadiness } from './launcher-readiness-planner.mjs';
 
 export const UI_4173_REPAIR_SCHEMA = 'stephanos.battle-bridge-ui-4173-repair-plan.v1';
+const CANONICAL_NPM_SCRIPT_ARGS = Object.freeze(['run', 'stephanos:ignite:launcher-root']);
+const WINDOWS_NPM_WRAPPER_ARGS = Object.freeze(['/d', '/s', '/c', 'npm.cmd', ...CANONICAL_NPM_SCRIPT_ARGS]);
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
 export function resolveUi4173RepairInvocation(platform = process.platform) {
+  if (platform === 'win32') {
+    return Object.freeze({
+      kind: 'CONTROLLED_WINDOWS_NPM_WRAPPER',
+      command: 'cmd.exe',
+      commandArgs: WINDOWS_NPM_WRAPPER_ARGS,
+      wrappedCommand: 'npm.cmd',
+      wrappedCommandArgs: CANONICAL_NPM_SCRIPT_ARGS,
+      shell: false,
+      cwd: REPO_ROOT,
+    });
+  }
+
   return Object.freeze({
-    command: platform === 'win32' ? 'npm.cmd' : 'npm',
-    commandArgs: Object.freeze(['run', 'stephanos:ignite:launcher-root']),
+    kind: 'CONTROLLED_DIRECT_NPM',
+    command: 'npm',
+    commandArgs: CANONICAL_NPM_SCRIPT_ARGS,
+    shell: false,
+    cwd: REPO_ROOT,
   });
 }
 
@@ -23,6 +43,7 @@ export const UI_4173_REPAIR_COMMAND_IDENTITY = Object.freeze({
 export const UI_4173_REPAIR_INVOCATION = resolveUi4173RepairInvocation();
 export const UI_4173_REPAIR_COMMAND = Object.freeze({
   ...UI_4173_REPAIR_COMMAND_IDENTITY,
+  invocationKind: UI_4173_REPAIR_INVOCATION.kind,
   command: UI_4173_REPAIR_INVOCATION.command,
   commandArgs: UI_4173_REPAIR_INVOCATION.commandArgs,
 });
@@ -70,11 +91,26 @@ export function evaluateUi4173Repair({ readinessReport, dryRun = true, commandId
 }
 
 
+function formatInvocation(invocation) {
+  const formatted = {
+    kind: invocation.kind,
+    command: invocation.command,
+    commandArgs: [...invocation.commandArgs],
+    cwd: invocation.cwd,
+    shell: invocation.shell,
+  };
+  if (invocation.wrappedCommand) {
+    formatted.wrappedCommand = invocation.wrappedCommand;
+    formatted.wrappedCommandArgs = [...invocation.wrappedCommandArgs];
+  }
+  return formatted;
+}
+
 function spawnUi4173Repair({ spawnFn, platform }) {
   const invocation = resolveUi4173RepairInvocation(platform);
   let child;
   try {
-    child = spawnFn(invocation.command, invocation.commandArgs, { cwd: process.cwd(), detached: true, stdio: 'ignore', shell: false });
+    child = spawnFn(invocation.command, invocation.commandArgs, { cwd: invocation.cwd, detached: true, stdio: 'ignore', shell: invocation.shell });
   } catch (error) {
     return Promise.resolve({ ok: false, invocation, error });
   }
@@ -118,12 +154,14 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, s
         code: spawnResult.error?.code || null,
         message: spawnResult.error?.message || String(spawnResult.error || 'spawn failed'),
       };
-      result.invocation = { command: spawnResult.invocation.command, commandArgs: [...spawnResult.invocation.commandArgs] };
+      result.invocation = formatInvocation(spawnResult.invocation);
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return 1;
     }
-    result.invocation = { command: spawnResult.invocation.command, commandArgs: [...spawnResult.invocation.commandArgs] };
-    result.started = { pid: Number(spawnResult.child?.pid || 0) || null, commandId: UI_4173_REPAIR_COMMAND_IDENTITY.id };
+    result.action = 'start-ui-4173-started';
+    result.invocation = formatInvocation(spawnResult.invocation);
+    result.started = true;
+    result.pid = Number(spawnResult.child?.pid || 0) || null;
   } else {
     result.started = null;
   }
