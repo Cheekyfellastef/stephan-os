@@ -46,3 +46,15 @@ test('bootstrap creates only approved Shared Workspace layout', async () => {
   const names = (await readdir(result.root)).sort();
   assert.deepEqual(names, [...SHARED_WORKSPACE_RUNTIME_DIRECTORIES].sort());
 });
+
+test('configured repo workspace root is rejected without exposing raw path', () => {
+  const repoRoot = process.cwd();
+  const repoPath = join(repoRoot, 'shared-agent-workspace');
+  const resolved = resolveSharedWorkspaceRuntimeConfig({ env: { STEPHANOS_SHARED_AGENT_WORKSPACE: repoPath }, repoRoot });
+  const serialized = JSON.stringify(resolved);
+  assert.equal(resolved.ok, false);
+  assert.equal(resolved.reason, SHARED_WORKSPACE_BLOCKERS.INSIDE_REPO);
+  assert.equal(resolved.workspaceRoot, 'UNKNOWN');
+  assert.equal(resolved.safeDisplayPath, 'UNKNOWN');
+  assert.equal(serialized.includes(repoPath), false);
+});

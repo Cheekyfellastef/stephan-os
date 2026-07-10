@@ -86,3 +86,13 @@ test('invalid record produces error with exact next action', async () => {
   assert.equal(feed.errors.length, 1);
   assert.match(feed.exactNextAction, /fix the unreadable or invalid/i);
 });
+
+test('unavailable feed redacts unsafe configured filesystem paths', async () => {
+  const repoRoot = process.cwd();
+  const repoPath = join(repoRoot, 'shared-agent-workspace');
+  const feed = await readSharedWorkspaceDashboardFeed({ root: repoPath, repoRoot, nowMs: Date.parse('2026-07-07T00:00:00.000Z') });
+  const serialized = JSON.stringify(feed);
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.UNAVAILABLE);
+  assert.equal(feed.workspaceRoot, 'UNKNOWN');
+  assert.equal(serialized.includes(repoPath), false);
+});

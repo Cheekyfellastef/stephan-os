@@ -81,7 +81,7 @@ function classifyFeed({ resolved, records, projection, errors }) {
 }
 
 async function readRecordDirectory(root, directory, options) {
-  const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: [directory] });
+  const resolved = resolveSharedWorkspacePath({ root, env: options.env, repoRoot: options.repoRoot, segments: [directory] });
   if (!resolved.ok) return { records: [], errors: [`${directory}:${resolved.reason}`] };
   let names = [];
   try {
@@ -139,12 +139,12 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const polling = createSharedWorkspaceDashboardPollingContract(input);
-  const resolved = resolveSharedWorkspacePath({ root: input.root, repoRoot: input.repoRoot, segments: [] });
+  const resolved = resolveSharedWorkspacePath({ root: input.root, env: input.env, repoRoot: input.repoRoot, segments: [] });
   const records = emptyRecords();
   const errors = [];
   if (resolved.ok) {
     for (const [directory, key] of Object.entries(DIRECTORY_BY_KIND)) {
-      const result = await readRecordDirectory(resolved.root, directory, { repoRoot: input.repoRoot, nowMs, staleAfterMs });
+      const result = await readRecordDirectory(resolved.root, directory, { env: input.env, repoRoot: input.repoRoot, nowMs, staleAfterMs });
       records[key] = result.records;
       errors.push(...result.errors);
     }
