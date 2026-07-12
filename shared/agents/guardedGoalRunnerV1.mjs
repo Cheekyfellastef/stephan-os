@@ -40,6 +40,7 @@ export const GUARDED_GOAL_RUNNER_PR_PROOF_SCHEMA_ID = 'stephanos.guarded-goal-ru
 
 export const guardedGoalRunnerV1PrProofPacketShape = Object.freeze({
   schema: GUARDED_GOAL_RUNNER_PR_PROOF_SCHEMA_ID,
+  generatedAt: 'string: ISO timestamp when explicit operator PR metadata was packetized',
   issue: 'number|string: goal/issue id the PR publication proof belongs to',
   prNumber: 'number|null: real GitHub PR number; null before operator Create PR click',
   prUrl: 'string|null: real GitHub PR URL; null before publication',
@@ -55,6 +56,8 @@ export const guardedGoalRunnerV1PrProofPacketShape = Object.freeze({
   changedFiles: 'object: { count, files?, summary? } source-controlled summary only',
   testsRun: 'object|array: required tests and green/failing status summary',
   operatorApprovalRequired: 'boolean: true for PR create/merge clicks',
+  performsMerge: 'false: publisher authority boundary; never merges',
+  performsShellExecution: 'false: publisher authority boundary; never executes shell beyond writing packet',
 });
 
 export const guardedGoalRunnerV1ProofPacketShape = Object.freeze({
