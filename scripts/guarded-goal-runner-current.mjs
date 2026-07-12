@@ -12,6 +12,7 @@ import {
 export const GUARDED_GOAL_RUNNER_CURRENT_SCHEMA = 'stephanos.guarded-goal-runner-current.v1';
 export const SUPERVISOR_CURRENT_RELATIVE_PATH = path.join('status', 'battle-bridge-ignition-supervisor-current.json');
 export const GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH = path.join('status', 'guarded-goal-runner-current.json');
+export const GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH = path.join('status', 'guarded-goal-runner-pr-current.json');
 
 const KNOWN_SUPERVISOR_BLOCKER_MAP = Object.freeze({
   'openclaw-config-write-rejected': B.CONFIG_WRITE_REJECTED,
@@ -79,14 +80,14 @@ function inferBlocker(record = {}, currentHead = '') {
   return '';
 }
 
-export function supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecord, currentHead }) {
+export function supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecord, currentHead, prProof = null }) {
   const expected = inferExpectedHead(supervisorRecord, currentHead);
   const blocker = inferBlocker(supervisorRecord, currentHead);
   return {
     supervisorCurrentRecord: { ...supervisorRecord, blocker, expectedHeadSha: expected },
     currentSourceHead: { sha: clean(currentHead) },
-    prPublicationStatus: { state: 'published' },
-    pr: { expectedHeadSha: expected, headSha: clean(currentHead), mergeable: true, conflicting: false },
+    prPublicationStatus: prProof ? { state: prProof.publicationState, prNumber: prProof.prNumber, url: prProof.prUrl } : { state: 'pending-operator-create-pr-click' },
+    prProof: prProof || { publicationState: 'pending-operator-create-pr-click', prNumber: null, prUrl: null, expectedHeadSha: expected, headSha: clean(currentHead), mergeable: null, conflicting: null, draft: false, changedFiles: { count: 0, summary: 'PR proof not published yet.' }, testsRun: { allGreen: false, summary: 'PR proof not published yet.' }, operatorApprovalRequired: true },
     logPaths: collectLogPaths(supervisorRecord),
     allowedTests: [
       'node --test shared/agents/guardedGoalRunner*.test.mjs',
@@ -98,6 +99,7 @@ export function supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecor
 
 function nextOperatorActionFor(nextAction, supervisorRecord = {}) {
   if (nextAction.operatorApproval?.action) return nextAction.operatorApproval.action;
+  if (nextAction.mergeGate?.nextOperatorAction) return nextAction.mergeGate.nextOperatorAction;
   if (supervisorRecord.nextOperatorAction) return supervisorRecord.nextOperatorAction;
   if (nextAction.outcome === O.GOAL_GREEN) return 'Prepare bounded PR publication proof; do not merge.';
   if (nextAction.outcome === O.ABORT_MISSING_PROOF) return 'Run Battle Bridge ignition supervisor to produce current proof, then rerun Guarded Goal Runner intake.';
@@ -111,8 +113,8 @@ function allowedNextStepFor(nextAction) {
   return 'stop-and-report';
 }
 
-export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord = null, sourceProofPath }) {
-  const proofPacket = supervisorRecord ? supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecord, currentHead }) : { supervisorCurrentRecord: null };
+export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord = null, sourceProofPath, prProof = null, prProofPath = null }) {
+  const proofPacket = supervisorRecord ? supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecord, currentHead, prProof }) : { supervisorCurrentRecord: null, prProof };
   const nextAction = classifyGuardedGoalRunnerV1(proofPacket);
   const safeToMerge = nextAction.outcome === O.SAFE_TO_MERGE_WITH_EXPECTED_HEAD;
   return {
@@ -123,6 +125,7 @@ export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceR
     sharedWorkspaceRoot,
     currentHead: clean(currentHead),
     sourceProofPath,
+    prProofPath,
     outcome: nextAction.outcome,
     blockerId: nextAction.blocker || null,
     nextOperatorAction: nextOperatorActionFor(nextAction, supervisorRecord || {}),
@@ -131,6 +134,7 @@ export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceR
     performsShellExecution: false,
     allowedNextStep: allowedNextStepFor(nextAction),
     ...(nextAction.outcome.startsWith('abort-') ? { abortReason: nextAction.reason } : {}),
+    prProofSummary: prProof ? { publicationState: prProof.publicationState, prNumber: prProof.prNumber ?? null, prUrl: prProof.prUrl ?? null, baseBranch: prProof.baseBranch ?? null, baseSha: prProof.baseSha ?? null, expectedBaseSha: prProof.expectedBaseSha ?? null, headSha: prProof.headSha ?? null, expectedHeadSha: prProof.expectedHeadSha ?? null, mergeable: prProof.mergeable ?? null, conflicting: prProof.conflicting ?? null, draft: prProof.draft ?? null, changedFiles: prProof.changedFiles ?? null, testsRun: prProof.testsRun ?? null, operatorApprovalRequired: prProof.operatorApprovalRequired ?? null } : null,
     proofSummary: {
       backend8787: summarizeService(supervisorRecord?.services?.backend8787),
       openClaw18789: summarizeService(supervisorRecord?.services?.openClaw18789),
@@ -146,8 +150,10 @@ export function runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot, cur
   if (!repoRoot || !sharedWorkspaceRoot || !currentHead) throw new Error('repoRoot, sharedWorkspaceRoot, and currentHead are required.');
   const sourceProofPath = path.join(sharedWorkspaceRoot, SUPERVISOR_CURRENT_RELATIVE_PATH);
   const outputPath = path.join(sharedWorkspaceRoot, GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH);
+  const prProofPath = path.join(sharedWorkspaceRoot, GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH);
   const supervisorRecord = fs.existsSync(sourceProofPath) ? JSON.parse(fs.readFileSync(sourceProofPath, 'utf8')) : null;
-  const packet = buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord, sourceProofPath });
+  const prProof = fs.existsSync(prProofPath) ? JSON.parse(fs.readFileSync(prProofPath, 'utf8')) : null;
+  const packet = buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord, sourceProofPath, prProof, prProofPath });
   if (now) packet.generatedAt = now;
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(packet, null, 2)}\n`);
