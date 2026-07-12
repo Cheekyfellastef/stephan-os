@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "required": [
     "schema",
+    "generatedAt",
     "issue",
     "publicationState",
     "baseBranch",
@@ -22,6 +23,7 @@
   ],
   "properties": {
     "schema": { "const": "stephanos.guarded-goal-runner-pr-proof.v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
     "issue": { "type": ["integer", "string"] },
     "prNumber": { "type": ["integer", "null"], "minimum": 1 },
     "prUrl": { "type": ["string", "null"], "format": "uri" },
@@ -51,6 +53,8 @@
       "type": ["object", "array"],
       "description": "Required test summary. Safe merge gate requires allGreen=true or every required/commands item green/pass."
     },
-    "operatorApprovalRequired": { "type": "boolean" }
+    "operatorApprovalRequired": { "type": "boolean" },
+    "performsMerge": { "const": false },
+    "performsShellExecution": { "const": false }
   }
 }
