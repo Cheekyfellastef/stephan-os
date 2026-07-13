@@ -9,7 +9,9 @@ on:
       - 'system/apps/app_validator.js'
       - 'scripts/**'
       - '!scripts/codex-patch-escrow-export.mjs'
+      - '!scripts/codex-patch-escrow-prepare.mjs'
       - '!scripts/codex-patch-escrow-publisher.mjs'
+      - '!scripts/codex-patch-escrow-validate-prepared.mjs'
       - 'package.json'
       - 'apps/stephanos/app.json'
   pull_request:
@@ -20,7 +22,9 @@ on:
       - 'system/apps/app_validator.js'
       - 'scripts/**'
       - '!scripts/codex-patch-escrow-export.mjs'
+      - '!scripts/codex-patch-escrow-prepare.mjs'
       - '!scripts/codex-patch-escrow-publisher.mjs'
+      - '!scripts/codex-patch-escrow-validate-prepared.mjs'
       - 'package.json'
       - 'apps/stephanos/app.json'
 
