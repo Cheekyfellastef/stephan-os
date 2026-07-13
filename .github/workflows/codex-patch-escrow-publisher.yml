@@ -7,9 +7,13 @@ on:
     paths:
       - '.github/workflows/codex-patch-escrow-publisher.yml'
       - 'scripts/codex-patch-escrow-export.mjs'
+      - 'scripts/codex-patch-escrow-prepare.mjs'
       - 'scripts/codex-patch-escrow-publisher.mjs'
+      - 'scripts/codex-patch-escrow-validate-prepared.mjs'
       - 'shared/agents/codexPatchEscrow.mjs'
       - 'shared/agents/codexPatchEscrow.test.mjs'
+      - 'shared/agents/codexPatchEscrowIdentity.test.mjs'
+      - 'shared/agents/codexPatchEscrowPreparedValidation.test.mjs'
       - 'shared/agents/codexPatchEscrowPublisher.test.mjs'
       - 'shared/agents/codexPatchEscrow.RUNBOOK.md'
   issue_comment:
@@ -34,21 +38,28 @@ jobs:
           node-version: '22'
 
       - name: Run deterministic escrow tests
-        run: node --test shared/agents/codexPatchEscrow.test.mjs shared/agents/codexPatchEscrowPublisher.test.mjs
+        run: >-
+          node --test
+          shared/agents/codexPatchEscrow.test.mjs
+          shared/agents/codexPatchEscrowIdentity.test.mjs
+          shared/agents/codexPatchEscrowPublisher.test.mjs
+          shared/agents/codexPatchEscrowPreparedValidation.test.mjs
 
-      - name: Parse publisher scripts
+      - name: Parse escrow scripts
         run: |
           node --check scripts/codex-patch-escrow-export.mjs
+          node --check scripts/codex-patch-escrow-prepare.mjs
           node --check scripts/codex-patch-escrow-publisher.mjs
+          node --check scripts/codex-patch-escrow-validate-prepared.mjs
 
-  validate-publication:
+  prepare-publication:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
       github.event.issue.pull_request == null &&
       startsWith(github.event.comment.body, 'PATCH_ESCROW_PUBLISH_V1')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: read
@@ -66,10 +77,55 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate patch and run patched tests without write credentials
+      - name: Fetch and prepare the authorised escrow
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/codex-patch-escrow-publisher.mjs validate
+        run: node scripts/codex-patch-escrow-prepare.mjs "${{ runner.temp }}/patch-escrow-prepared.json"
+
+      - name: Upload untrusted prepared escrow
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch-escrow-prepared-${{ github.run_id }}-${{ github.event.issue.number }}
+          path: ${{ runner.temp }}/patch-escrow-prepared.json
+          if-no-files-found: error
+          retention-days: 1
+
+  validate-publication:
+    needs:
+      - prepare-publication
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      github.event.issue.pull_request == null &&
+      startsWith(github.event.comment.body, 'PATCH_ESCROW_PUBLISH_V1') &&
+      needs.prepare-publication.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out canonical main without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download the prepared escrow as untrusted input
+        uses: actions/download-artifact@v4
+        with:
+          name: patch-escrow-prepared-${{ github.run_id }}-${{ github.event.issue.number }}
+          path: ${{ runner.temp }}/patch-escrow-prepared
+
+      - name: Revalidate and run patched tests in a token-free process tree
+        run: |
+          unset GITHUB_TOKEN GH_TOKEN GITHUB_PAT GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+          node scripts/codex-patch-escrow-validate-prepared.mjs "${{ runner.temp }}/patch-escrow-prepared/patch-escrow-prepared.json"
 
   publish:
     needs:
@@ -102,7 +158,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Publish previously validated exact patch without executing patched code
+      - name: Publish the exact escrow without executing patched code
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/codex-patch-escrow-publisher.mjs publish
