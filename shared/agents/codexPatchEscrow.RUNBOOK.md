@@ -58,29 +58,43 @@ Post `manifest.comment.md` and every numbered chunk comment to the issue. Chunks
 
 The final `publish.comment.md` must be posted by the repository owner on an issue carrying the existing `codex` label. That owner-authored comment is the bounded publication authorization.
 
-## Two-stage automatic publisher
+The bundle ID is not merely shape-checked. It must equal `patch-issue-{issueNumber}-{patchSha256.slice(0, 12)}` for the same manifest, or the request fails before selection and publication.
 
-After this workflow is present on `main`, the final `PATCH_ESCROW_PUBLISH_V1` comment starts two separate jobs.
+## Three-phase automatic publisher
 
-### 1. Validation job — no write credentials
+After this workflow is present on `main`, the final `PATCH_ESCROW_PUBLISH_V1` comment starts three separate jobs.
 
-The validation job checks out canonical `main` with `persist-credentials: false` and has read-only GitHub permissions. It:
+### 1. Tokened preparation job
 
-1. Fetches all issue comments.
-2. Reassembles the exact bundle from numbered chunks.
-3. Verifies every chunk hash, full patch SHA-256, patch byte length, base SHA, changed-file list, safe paths, and fixed test profile.
+The preparation job has read-only GitHub permission and checks out canonical `main` with `persist-credentials: false`. It:
+
+1. Validates the owner-authored publication event and issue label.
+2. Fetches issue comments using a short-lived read token.
+3. Selects and reassembles the exact escrow.
+4. Binds the bundle ID to the same issue number and patch SHA-256.
+5. Verifies current `main` still equals the signed base SHA.
+6. Writes a one-day prepared artifact containing only the manifest, checksummed patch bytes, and public repository metadata.
+
+It does not apply the patch or execute patched code.
+
+### 2. Token-free validation job
+
+The validation job starts separately and never receives `GITHUB_TOKEN`, `GH_TOKEN`, or a GitHub PAT. It checks out canonical `main` with `persist-credentials: false`, downloads the prepared artifact as untrusted input, and:
+
+1. Revalidates the complete manifest and bundle/hash/issue binding.
+2. Revalidates patch base64, byte length, SHA-256, signed base, changed-file list, safe paths, and fixed test profile.
+3. Walks Linux `/proc` process ancestry and fails if the current process or a parent exposes a GitHub repository credential variable.
 4. Computes the exact expected Git tree from the signed patch.
 5. Applies the patch with `git apply --check --binary`.
 6. Verifies no Git credentials were persisted.
-7. Removes token, secret, password, credential, and private-key environment variables.
-8. Runs `git diff --check` and the fixed test profile with an isolated HOME and disabled ambient Git configuration.
-9. Fails if tests introduce any unapproved workspace change.
+7. Runs `git diff --check` and the fixed test profile with an isolated HOME and disabled ambient Git configuration.
+8. Fails if tests introduce any unapproved workspace change.
 
-Patched test code therefore never runs in a job holding contents, issue, or pull-request write permission.
+Patched test code therefore runs in a process tree that never received GitHub repository credentials.
 
-### 2. Publication job — no patched code execution
+### 3. Write-enabled publication job
 
-The publication job starts only after validation succeeds. It receives write permission but does not run code from the patch. It:
+The publication job starts only after token-free validation succeeds. It receives write permission but does not run code from the patch. It:
 
 1. Re-fetches and re-verifies the complete escrow against current `main`.
 2. Recomputes the expected Git tree.
@@ -110,7 +124,8 @@ No arbitrary command from an issue comment is executed.
 - No approval inferred from a Codex local SHA or `make_pr` report.
 - Current `main` must exactly match the signed `baseSha`; stale patches fail closed.
 - Existing mismatched deterministic branches fail closed rather than being overwritten.
-- Patched code never executes with GitHub write credentials.
+- Bundle identity must match the manifest issue number and exact patch hash.
+- Patched code never executes in a process tree that received GitHub repository credentials.
 - Existing publication is reusable only when its exact tree and signed-base parent are proven.
 
 ## Operational result
