@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: recover-shared-workspace-1503
+  cancel-in-progress: true
+
 jobs:
   recover:
     runs-on: ubuntu-latest
@@ -110,7 +114,7 @@ jobs:
           node --test shared/agents/*.test.mjs
           git diff --check
 
-      - name: Replace recovery runner with the verified repair commit
+      - name: Publish verified source-only repair
         shell: bash
         run: |
           set -euo pipefail
@@ -118,7 +122,7 @@ jobs:
           git config user.name "stephan-os-recovery-bot"
           git config user.email "actions@users.noreply.github.com"
           git add -A
-          git commit --amend -m "Restore shared workspace proof validation for #1503"
+          git commit -m "Restore shared workspace proof validation for #1503"
 
           cat > /tmp/expected-files.txt <<'EOF'
           shared/agents/battleBridgePublisher.mjs
@@ -128,6 +132,6 @@ jobs:
           shared/agents/verificationHarness.mjs
           shared/agents/verificationHarnessWorkspace.test.mjs
           EOF
-          git diff --name-only HEAD^ HEAD | sort > /tmp/actual-files.txt
+          git diff --name-only cb2a3fafd039814d0eb5f204615139fc5ecb110b..HEAD | sort > /tmp/actual-files.txt
           diff -u /tmp/expected-files.txt /tmp/actual-files.txt
-          git push --force-with-lease origin HEAD:repair/shared-workspace-proof-validation-1503
+          git push origin HEAD:repair/shared-workspace-proof-validation-1503
