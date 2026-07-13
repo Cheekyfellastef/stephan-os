@@ -58,20 +58,39 @@ Post `manifest.comment.md` and every numbered chunk comment to the issue. Chunks
 
 The final `publish.comment.md` must be posted by the repository owner on an issue carrying the existing `codex` label. That owner-authored comment is the bounded publication authorization.
 
-## Automatic publisher
+## Two-stage automatic publisher
 
-After this workflow is present on `main`, the final `PATCH_ESCROW_PUBLISH_V1` comment triggers the GitHub-native publisher. It:
+After this workflow is present on `main`, the final `PATCH_ESCROW_PUBLISH_V1` comment starts two separate jobs.
+
+### 1. Validation job — no write credentials
+
+The validation job checks out canonical `main` with `persist-credentials: false` and has read-only GitHub permissions. It:
 
 1. Fetches all issue comments.
 2. Reassembles the exact bundle from numbered chunks.
 3. Verifies every chunk hash, full patch SHA-256, patch byte length, base SHA, changed-file list, safe paths, and fixed test profile.
-4. Refuses stale base commits, duplicate or corrupt chunks, unsafe paths, unknown test commands, existing mismatched branches, and non-owner final authorization.
+4. Computes the exact expected Git tree from the signed patch.
 5. Applies the patch with `git apply --check --binary`.
-6. Runs `git diff --check` plus the fixed test profile.
-7. Creates the deterministic branch `patch-escrow/issue-<number>-<hash-prefix>`.
-8. Pushes and verifies the exact remote head.
-9. Opens one linked pull request.
-10. Posts a publication receipt and never merges.
+6. Verifies no Git credentials were persisted.
+7. Removes token, secret, password, credential, and private-key environment variables.
+8. Runs `git diff --check` and the fixed test profile with an isolated HOME and disabled ambient Git configuration.
+9. Fails if tests introduce any unapproved workspace change.
+
+Patched test code therefore never runs in a job holding contents, issue, or pull-request write permission.
+
+### 2. Publication job — no patched code execution
+
+The publication job starts only after validation succeeds. It receives write permission but does not run code from the patch. It:
+
+1. Re-fetches and re-verifies the complete escrow against current `main`.
+2. Recomputes the expected Git tree.
+3. For an existing deterministic branch, verifies the remote commit tree, its single signed-base parent, branch ref, PR head, PR base, and patch receipt before idempotent reuse.
+4. Otherwise applies and stages the patch, verifies the staged tree exactly matches the signed expected tree, commits, and pushes the deterministic branch.
+5. Re-reads GitHub's remote ref and commit tree to prove exact publication.
+6. Opens one linked pull request.
+7. Posts a publication receipt and never merges.
+
+A matching PR body alone is never accepted as remote proof.
 
 ## Fixed test profiles
 
@@ -91,7 +110,9 @@ No arbitrary command from an issue comment is executed.
 - No approval inferred from a Codex local SHA or `make_pr` report.
 - Current `main` must exactly match the signed `baseSha`; stale patches fail closed.
 - Existing mismatched deterministic branches fail closed rather than being overwritten.
+- Patched code never executes with GitHub write credentials.
+- Existing publication is reusable only when its exact tree and signed-base parent are proven.
 
-## Bootstrap for issue #1503
+## Operational result
 
-Once this publisher PR is approved and merged, encode the already-tested #1503 unified diff into this protocol and post the owner-authored publish request. The workflow will create the real remote repair branch and linked PR without Stephan acting as patch courier.
+A disposable builder must finish with either a verified remote head or a durable escrow. A later clean process can safely publish the exact patch without Stephan acting as courier or Codex rebuilding it.
