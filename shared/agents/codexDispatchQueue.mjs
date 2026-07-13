@@ -157,7 +157,7 @@ export function createCodexQueueRecord(input = {}) {
     branch: safeBranch(input.branch),
     prompt,
     requestedProofCommands: safeProofCommands(input.requestedProofCommands || input.requiredTests),
-    proofRequirements: Object.freeze({ refs: unique(input.proofRequirements?.refs || ['#1287', `proof/${jobId}.json`]), verifierTypes: unique(input.proofRequirements?.verifierTypes || ['CodexQueueRecordVerifier', 'ProofReferenceVerifier']) }),
+    proofRequirements: Object.freeze({ refs: unique(input.proofRequirements?.refs || [`proof/${jobId}.json`]), verifierTypes: unique(input.proofRequirements?.verifierTypes || ['CodexQueueRecordVerifier', 'ProofReferenceVerifier']) }),
     approvalRequirements: Object.freeze({
       requiresOperatorApprovalBeforeDispatch: input.approvalRequirements?.requiresOperatorApprovalBeforeDispatch === true,
       requiresExactHeadApproval: input.approvalRequirements?.requiresExactHeadApproval !== false,
@@ -208,10 +208,7 @@ export const validateCodexQueueItem = validateCodexQueueRecord;
 export function transitionCodexQueueRecord(record = {}, nextStatus, input = {}) {
   const current = safeStatus(record.status);
   const target = safeStatus(nextStatus);
-  let allowed = CODEX_QUEUE_TRANSITIONS[current] || [];
-  if (current === CODEX_QUEUE_STATUS.QUEUED && text(nextStatus).toLowerCase() === 'dispatched') {
-    allowed = [...allowed, CODEX_QUEUE_STATUS.DISPATCHED_MANUAL];
-  }
+  const allowed = CODEX_QUEUE_TRANSITIONS[current] || [];
   if (!allowed.includes(target)) return Object.freeze({ valid: false, error: 'invalid-transition', fromStatus: current, toStatus: target, record, finalVerdict: 'CODEX_QUEUE_TRANSITION_REJECTED' });
   if (target === CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH && !text(input.approvalReceipt || record.approvalRequirements?.approvalReceipt)) {
     return Object.freeze({ valid: false, error: 'missing-operator-approval-receipt', fromStatus: current, toStatus: target, record, finalVerdict: 'CODEX_QUEUE_TRANSITION_REJECTED' });

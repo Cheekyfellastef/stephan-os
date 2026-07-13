@@ -79,6 +79,22 @@ test('state transitions enforce approval before manual dispatch and keep determi
   assert.deepEqual(done.record.history.map((entry) => entry.toStatus), ['QUEUED', 'WAITING_OPERATOR_APPROVAL', 'READY_FOR_MANUAL_DISPATCH', 'DISPATCHED_MANUAL', 'CLAIMED', 'RUNNING', 'WAITING_PROOF', 'PROOF_RECEIVED', 'VERIFIED', 'DONE']);
 });
 
+test('legacy lowercase dispatched input cannot bypass operator approval path', () => {
+  const queued = createCodexQueueRecord(base);
+  const legacy = transitionCodexQueueRecord(queued, 'dispatched', { timestamp: '2026-07-07T00:01:00Z' });
+  assert.equal(legacy.valid, false);
+  assert.equal(legacy.error, 'invalid-transition');
+  assert.equal(legacy.fromStatus, 'QUEUED');
+  assert.equal(legacy.toStatus, 'DISPATCHED_MANUAL');
+});
+
+test('default proof refs satisfy ProofReferenceVerifier', () => {
+  const record = createCodexQueueRecord(base);
+  const verifier = runVerifier('ProofReferenceVerifier', { proofRefs: record.proofRequirements.refs }, { timestampUtc: '2026-07-07T00:21:30Z' });
+  assert.equal(verifier.status, 'PASS');
+  assert.equal(verifier.finalVerdict, 'PROOF_REFERENCE_VERIFIER_PASS');
+});
+
 test('manual handoff packet never claims automated dispatch and requires approved ready state', () => {
   const queued = createCodexQueueRecord(base);
   assert.equal(buildManualCodexHandoffPacket(queued).finalVerdict, 'CODEX_MANUAL_HANDOFF_BLOCKED');

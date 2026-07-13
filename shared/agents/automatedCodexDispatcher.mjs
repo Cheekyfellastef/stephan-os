@@ -146,7 +146,7 @@ export function dispatchQueuedCodexJob(input = {}) {
     }).record;
     return Object.freeze({
       decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_MISSING_INTEGRATION,
-      record: { ...blocked, status: 'blocked' },
+      record: blocked,
       missingCapabilities: integration.missingCapabilities,
       blockerMetadata: blocked.blockerMetadata,
       sharedWorkspaceMessage: createCodexWorkspaceMessage(blocked, CODEX_QUEUE_STATUS.BLOCKED, { summary: `${BLOCKED_BY_MISSING_INTEGRATION}: ${integration.missingCapabilities.join(', ')}` }),
@@ -163,13 +163,12 @@ export function dispatchQueuedCodexJob(input = {}) {
     dispatchedAt: input.now || 'pending',
     resultMetadata: { dispatchReceipt: receipt, proofMetadata: input.proofMetadata || null },
   });
-  const legacyDispatched = { ...dispatched, status: 'dispatched' };
   return Object.freeze({
     decision: CODEX_DISPATCH_DECISION.DISPATCHED,
-    record: legacyDispatched,
+    record: dispatched,
     dispatchReceipt: receipt,
     proofMetadata: input.proofMetadata || null,
-    sharedWorkspaceMessage: createCodexWorkspaceMessage(legacyDispatched, CODEX_QUEUE_STATUS.DISPATCHED),
+    sharedWorkspaceMessage: createCodexWorkspaceMessage(dispatched, CODEX_QUEUE_STATUS.DISPATCHED),
     finalVerdict: 'CODEX_JOB_DISPATCHED',
   });
 }

@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
   BLOCKED_BY_MISSING_INTEGRATION,
@@ -8,7 +11,12 @@ import {
   createDispatcherDashboard,
   dispatchQueuedCodexJob,
 } from './automatedCodexDispatcher.mjs';
-import { createCodexQueueRecord, transitionCodexQueueRecord } from './codexDispatchQueue.mjs';
+import {
+  createCodexQueueRecord,
+  transitionCodexQueueRecord,
+  validateCodexQueueRecord,
+  writeCodexQueueRecordToSharedWorkspace,
+} from './codexDispatchQueue.mjs';
 
 const job = createCodexQueueRecord({
   issueNumber: 1293,
@@ -41,7 +49,8 @@ test('unsupported integration produces deterministic missing integration blocker
   });
 
   assert.equal(result.finalVerdict, BLOCKED_BY_MISSING_INTEGRATION);
-  assert.equal(result.record.status, 'blocked');
+  assert.equal(result.record.status, 'BLOCKED');
+  assert.equal(validateCodexQueueRecord(result.record).valid, true);
   assert.equal(result.blockerMetadata.code, BLOCKED_BY_MISSING_INTEGRATION);
   assert.deepEqual(result.missingCapabilities, ['launchCodexJob', 'returnProofMetadata']);
   assert.equal(result.sharedWorkspaceMessage.eventKind, 'codex-job-blocked');
@@ -59,11 +68,34 @@ test('supported integration dispatches queued job and records receipt plus proof
   });
 
   assert.equal(result.finalVerdict, 'CODEX_JOB_DISPATCHED');
-  assert.equal(result.record.status, 'dispatched');
+  assert.equal(result.record.status, 'DISPATCHED_MANUAL');
+  assert.equal(validateCodexQueueRecord(result.record).valid, true);
   assert.equal(result.record.dispatchedAt, '2026-06-30T00:01:00Z');
   assert.equal(result.dispatchReceipt.accepted, true);
   assert.deepEqual(result.proofMetadata.commands, job.requestedProofCommands);
   assert.equal(result.sharedWorkspaceMessage.eventKind, 'codex-job-dispatched');
+});
+
+test('dispatcher blocked and dispatched records remain persistable queue records', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-codex-dispatcher-'));
+  try {
+    const blocked = dispatchQueuedCodexJob({ queueRecord: job, integration: {}, now: '2026-06-30T00:03:00Z' }).record;
+    const dispatched = dispatchQueuedCodexJob({
+      queueRecord: job,
+      integration: {
+        capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+        dispatch: (record) => ({ receiptId: `receipt-${record.jobId}`, accepted: true }),
+      },
+      now: '2026-06-30T00:04:00Z',
+    }).record;
+
+    assert.equal(validateCodexQueueRecord(blocked).valid, true);
+    assert.equal(validateCodexQueueRecord(dispatched).valid, true);
+    assert.equal((await writeCodexQueueRecordToSharedWorkspace(root, blocked)).ok, true);
+    assert.equal((await writeCodexQueueRecordToSharedWorkspace(root, dispatched)).ok, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('approval requirements are not treated as bypassable by queue presence', () => {
@@ -81,7 +113,14 @@ test('approval requirements are not treated as bypassable by queue presence', ()
 });
 
 test('dashboard reports queue depth, current job, last proof, and last blocker', () => {
-  const dispatched = transitionCodexQueueRecord(job, 'dispatched', { timestamp: '2026-06-30T00:01:00Z' }).record;
+  const dispatched = dispatchQueuedCodexJob({
+    queueRecord: job,
+    integration: {
+      capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+      dispatch: (record) => ({ receiptId: `receipt-${record.jobId}`, accepted: true }),
+    },
+    now: '2026-06-30T00:01:00Z',
+  }).record;
   const proof = transitionCodexQueueRecord(dispatched, 'running', { timestamp: '2026-06-30T00:02:00Z' }).record;
   const blocked = dispatchQueuedCodexJob({ queueRecord: job, integration: {}, now: '2026-06-30T00:03:00Z' }).record;
   const dashboard = createDispatcherDashboard({
