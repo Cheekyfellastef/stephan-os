@@ -1,0 +1,130 @@
+name: Recover Shared Workspace repair 1503
+
+on:
+  push:
+    branches:
+      - repair/shared-workspace-proof-validation-1503
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    if: github.event.head_commit.message != 'Restore shared workspace proof validation for #1503'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out recovery branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Recover and verify exact authorized patch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import urllib.request
+
+          expected_sha = "cf16f311a80dcddb7fb2437c933a61e52427211fbf98d135cd26101367c36b92"
+          expected_length = 15080
+          url = "https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/comments/4952003071"
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "User-Agent": "stephan-os-1503-recovery",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request) as response:
+              body = json.load(response)["body"]
+
+          marker = "**Complete unified diff**"
+          marker_pos = body.index(marker)
+          fence_start = body.index("```diff", marker_pos) + len("```diff")
+          fence_end = body.index("\n```", fence_start)
+          patch_text = body[fence_start:fence_end]
+          if patch_text.startswith("\n"):
+              patch_text = patch_text[1:]
+
+          candidates = [patch_text.encode("utf-8"), (patch_text + "\n").encode("utf-8")]
+          patch = next(
+              (
+                  candidate
+                  for candidate in candidates
+                  if len(candidate) == expected_length
+                  and hashlib.sha256(candidate).hexdigest() == expected_sha
+              ),
+              None,
+          )
+          if patch is None:
+              observed = [
+                  {"bytes": len(candidate), "sha256": hashlib.sha256(candidate).hexdigest()}
+                  for candidate in candidates
+              ]
+              raise SystemExit(f"Recovered patch failed integrity check: {observed}")
+
+          with open("/tmp/shared-workspace-1503.patch", "wb") as handle:
+              handle.write(patch)
+          print(f"PATCH_SHA256={expected_sha}")
+          print(f"PATCH_BYTE_LENGTH={expected_length}")
+          PY
+
+          git apply --check /tmp/shared-workspace-1503.patch
+          git apply /tmp/shared-workspace-1503.patch
+          git diff --check
+
+          cat > /tmp/expected-files.txt <<'EOF'
+          shared/agents/battleBridgePublisher.mjs
+          shared/agents/shared-workspace-dashboard-feed.test.mjs
+          shared/agents/sharedAgentWorkspaceStore.mjs
+          shared/agents/sharedAgentWorkspaceStore.test.mjs
+          shared/agents/verificationHarness.mjs
+          shared/agents/verificationHarnessWorkspace.test.mjs
+          EOF
+          git diff --name-only | sort > /tmp/actual-files.txt
+          diff -u /tmp/expected-files.txt /tmp/actual-files.txt
+
+          node --test \
+            shared/agents/sharedAgentWorkspaceStore.test.mjs \
+            shared/agents/verificationHarnessWorkspace.test.mjs \
+            shared/agents/shared-workspace-dashboard-feed.test.mjs \
+            shared/agents/battle-bridge-publisher.test.mjs \
+            shared/agents/battle-bridge-publisher-loop.test.mjs
+          node --test shared/agents/*.test.mjs
+          git diff --check
+
+      - name: Replace recovery runner with the verified repair commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/recover-shared-workspace-1503.yml
+          git config user.name "stephan-os-recovery-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit --amend -m "Restore shared workspace proof validation for #1503"
+
+          cat > /tmp/expected-files.txt <<'EOF'
+          shared/agents/battleBridgePublisher.mjs
+          shared/agents/shared-workspace-dashboard-feed.test.mjs
+          shared/agents/sharedAgentWorkspaceStore.mjs
+          shared/agents/sharedAgentWorkspaceStore.test.mjs
+          shared/agents/verificationHarness.mjs
+          shared/agents/verificationHarnessWorkspace.test.mjs
+          EOF
+          git diff --name-only HEAD^ HEAD | sort > /tmp/actual-files.txt
+          diff -u /tmp/expected-files.txt /tmp/actual-files.txt
+          git push --force-with-lease origin HEAD:repair/shared-workspace-proof-validation-1503
