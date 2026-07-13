@@ -36,6 +36,7 @@ const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,159}$/i;
 const SAFE_BRANCH_PATTERN = /^patch-escrow\/issue-[1-9][0-9]*-[a-f0-9]{12}$/;
+const SAFE_BUNDLE_PATTERN = /^patch-issue-[1-9][0-9]*-[a-f0-9]{12}$/;
 const FORBIDDEN_PATH_PATTERN = /(^|\/)(apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|node_modules|\.git)(\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
 const SECRET_PATH_PATTERN = /(?:^|\/)(?:secrets?|tokens?|credentials?|private[-_ ]?keys?)(?:\/|$)/i;
 
@@ -50,13 +51,13 @@ function integer(value, fallback = 0) {
   return Number.isSafeInteger(parsed) ? parsed : fallback;
 }
 
+function normalizePath(value) {
+  return text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
+}
+
 function uniqueSorted(values = []) {
   return [...new Set((Array.isArray(values) ? values : []).map((value) => normalizePath(value)).filter(Boolean))]
     .sort((left, right) => left.localeCompare(right));
-}
-
-function normalizePath(value) {
-  return text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
 }
 
 function isoTime(value) {
@@ -108,6 +109,13 @@ export function derivePatchEscrowBranch(issueNumber, patchSha256) {
   const hash = text(patchSha256).toLowerCase();
   if (issue < 1 || !SHA256_PATTERN.test(hash)) return '';
   return `patch-escrow/issue-${issue}-${hash.slice(0, 12)}`;
+}
+
+export function derivePatchEscrowBundleId(issueNumber, patchSha256) {
+  const issue = integer(issueNumber);
+  const hash = text(patchSha256).toLowerCase();
+  if (issue < 1 || !SHA256_PATTERN.test(hash)) return '';
+  return `patch-issue-${issue}-${hash.slice(0, 12)}`;
 }
 
 export function createCodexWorkspaceAttempt(input = {}) {
@@ -247,17 +255,15 @@ export function createPatchEscrowBundle(input = {}) {
   const rawPatch = patchBuffer(input.patch);
   const patchSha256 = sha256(rawPatch);
   const branch = derivePatchEscrowBranch(issueNumber, patchSha256);
+  const bundleId = derivePatchEscrowBundleId(issueNumber, patchSha256);
   const changedFiles = uniqueSorted(input.changedFiles);
   const baseSha = text(input.baseSha).toLowerCase();
   const chunkChars = Math.max(4, integer(input.chunkChars, CODEX_PATCH_ESCROW_DEFAULT_CHUNK_CHARS));
   const safeChunkChars = chunkChars - (chunkChars % 4);
   const encoded = rawPatch.toString('base64');
   const dataChunks = [];
-  for (let offset = 0; offset < encoded.length; offset += safeChunkChars) {
-    dataChunks.push(encoded.slice(offset, offset + safeChunkChars));
-  }
+  for (let offset = 0; offset < encoded.length; offset += safeChunkChars) dataChunks.push(encoded.slice(offset, offset + safeChunkChars));
   if (!dataChunks.length) dataChunks.push('');
-  const bundleId = `patch-issue-${issueNumber}-${patchSha256.slice(0, 12)}`;
   const chunks = dataChunks.map((data, index) => {
     const decoded = Buffer.from(data, 'base64');
     return Object.freeze({
@@ -296,11 +302,13 @@ export function validatePatchEscrowManifest(manifest = {}) {
   const errors = [];
   if (manifest.schemaVersion !== CODEX_PATCH_ESCROW_SCHEMA_VERSION) errors.push('invalid-schema-version');
   if (manifest.kind !== 'PATCH_ESCROW_MANIFEST_V1') errors.push('invalid-kind');
-  if (!/^patch-issue-[1-9][0-9]*-[a-f0-9]{12}$/.test(text(manifest.bundleId))) errors.push('invalid-bundle-id');
+  if (!SAFE_BUNDLE_PATTERN.test(text(manifest.bundleId))) errors.push('invalid-bundle-id');
   if (!Number.isSafeInteger(manifest.issueNumber) || manifest.issueNumber < 1) errors.push('invalid-issue-number');
   if (manifest.baseBranch !== 'main') errors.push('invalid-base-branch');
   if (!SHA_PATTERN.test(text(manifest.baseSha))) errors.push('invalid-base-sha');
   if (!SHA256_PATTERN.test(text(manifest.patchSha256))) errors.push('invalid-patch-sha256');
+  const expectedBundleId = derivePatchEscrowBundleId(manifest.issueNumber, manifest.patchSha256);
+  if (!expectedBundleId || manifest.bundleId !== expectedBundleId) errors.push('bundle-id-patch-mismatch');
   if (manifest.targetBranch !== derivePatchEscrowBranch(manifest.issueNumber, manifest.patchSha256)) errors.push('invalid-target-branch');
   if (!SAFE_BRANCH_PATTERN.test(text(manifest.targetBranch))) errors.push('unsafe-target-branch');
   if (!Number.isSafeInteger(manifest.patchByteLength) || manifest.patchByteLength < 1 || manifest.patchByteLength > CODEX_PATCH_ESCROW_MAX_BYTES) errors.push('invalid-patch-byte-length');
@@ -323,9 +331,7 @@ export function validatePatchEscrowManifest(manifest = {}) {
 
 export function reassemblePatchEscrow(manifest = {}, chunks = []) {
   const manifestValidation = validatePatchEscrowManifest(manifest);
-  if (!manifestValidation.valid) {
-    return Object.freeze({ ok: false, reason: manifestValidation.errors[0], manifestValidation });
-  }
+  if (!manifestValidation.valid) return Object.freeze({ ok: false, reason: manifestValidation.errors[0], manifestValidation });
   const matching = chunks.filter((chunk) => chunk?.bundleId === manifest.bundleId);
   if (matching.length !== manifest.chunkCount) return Object.freeze({ ok: false, reason: 'missing-or-duplicate-chunks' });
   const byIndex = new Map();
