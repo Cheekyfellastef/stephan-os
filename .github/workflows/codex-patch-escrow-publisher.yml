@@ -1,0 +1,75 @@
+name: Codex Patch Escrow Publisher
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/codex-patch-escrow-publisher.yml'
+      - 'scripts/codex-patch-escrow-export.mjs'
+      - 'scripts/codex-patch-escrow-publisher.mjs'
+      - 'shared/agents/codexPatchEscrow.mjs'
+      - 'shared/agents/codexPatchEscrow.test.mjs'
+      - 'shared/agents/codexPatchEscrowPublisher.test.mjs'
+      - 'shared/agents/codexPatchEscrow.RUNBOOK.md'
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run deterministic escrow tests
+        run: node --test shared/agents/codexPatchEscrow.test.mjs shared/agents/codexPatchEscrowPublisher.test.mjs
+
+      - name: Parse publisher scripts
+        run: |
+          node --check scripts/codex-patch-escrow-export.mjs
+          node --check scripts/codex-patch-escrow-publisher.mjs
+
+  publish:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      github.event.issue.pull_request == null &&
+      startsWith(github.event.comment.body, 'PATCH_ESCROW_PUBLISH_V1')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: codex-patch-escrow-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check out canonical main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Publish verified patch escrow
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/codex-patch-escrow-publisher.mjs
