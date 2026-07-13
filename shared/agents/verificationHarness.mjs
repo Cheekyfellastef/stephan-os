@@ -548,6 +548,9 @@ export async function writeVerificationPacketToSharedWorkspace(root, aggregate, 
     timestampUtc,
     status: aggregate.status,
     summary: `${aggregateId} ${aggregate.overall}`,
+    correlationId: aggregate.correlationId || aggregateId,
+    relatedIssue: aggregate.relatedIssue || aggregate.relatedGoal || '#1287',
+    proofRefs: [`proof/${aggregateId}-verification.json`, ...(aggregate.proofRefs || [])],
     refs: aggregate.proofRefs || [],
   });
   const status = createSharedWorkspaceStatusRecord({

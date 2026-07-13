@@ -53,7 +53,7 @@ test('current shared workspace records produce ready feed and refresh operator a
   const root = await tempWorkspace();
   const now = '2026-07-07T00:00:00.000Z';
   const status = { ...createSharedWorkspaceStatusRecord({ statusId: 'status-1290', timestampUtc: now, status: 'CURRENT', summary: '#1290 Shared Workspace current', proofRefs: ['proof/status'] }), relatedGoal: '#1290' };
-  const proof = { ...createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: now, status: 'PASS', summary: '#1290 proof current', refs: ['proof/shared-workspace'] }), relatedGoal: '#1290' };
+  const proof = { ...createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: now, status: 'PASS', summary: '#1290 proof current', correlationId: 'issue-1290', relatedIssue: '#1290', proofRefs: ['proof/shared-workspace'], refs: ['proof/shared-workspace'] }), relatedGoal: '#1290' };
   const capability = { ...createAgentCapabilityRecord({ agentId: 'openclaw', timestampUtc: now, proofRefs: ['proof/capability'] }), relatedGoal: '#1284 #1286' };
   await writeJson(root, 'status', 'status-1290.json', status);
   await writeJson(root, 'proof', 'proof-1290.json', proof);
@@ -70,7 +70,7 @@ test('current shared workspace records produce ready feed and refresh operator a
 test('stale records show stale and exact refresh action', async () => {
   const root = await tempWorkspace();
   await writeJson(root, 'status', 'status-1290.json', { ...createSharedWorkspaceStatusRecord({ statusId: 'status-1290', timestampUtc: '2026-07-06T00:00:00.000Z', status: 'CURRENT' }), relatedGoal: '#1290' });
-  await writeJson(root, 'proof', 'proof-1290.json', { ...createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: '2026-07-06T00:00:00.000Z', status: 'PASS' }), relatedGoal: '#1290' });
+  await writeJson(root, 'proof', 'proof-1290.json', { ...createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: '2026-07-06T00:00:00.000Z', status: 'PASS', correlationId: 'issue-1290', relatedIssue: '#1290', proofRefs: ['proof/shared-workspace'] }), relatedGoal: '#1290' });
 
   const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse('2026-07-07T00:00:00.000Z'), staleAfterMs: 60_000 });
   assert.equal(feed.state, DASHBOARD_FEED_STATES.STALE);
