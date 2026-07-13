@@ -5,6 +5,72 @@
     "Cockpit Mode is the pragmatic default: head-tracked seated play with low-friction control mapping and comfort-first frame pacing.",
     "Use this surface as the operational front door while the repo folders hold durable notes, experiments, and tools."
   ],
+  "spatialBridge": {
+    "status": "doctrine-recorded-implementation-deferred",
+    "decisionDate": "2026-07-13",
+    "doctrinePath": "VR-Research-Lab/docs/research-notes/stephanos-spatial-bridge-doctrine.md",
+    "retrievalTags": [
+      "vr",
+      "spatial-surface",
+      "captain-model",
+      "quest-3",
+      "intent-engine",
+      "battle-bridge",
+      "approval-gates",
+      "verification",
+      "starship-bridge"
+    ],
+    "captainModel": {
+      "humanResponsibilities": [
+        "state intent",
+        "exercise judgment",
+        "grant bounded authority",
+        "accept or reject completion evidence"
+      ],
+      "stephanosResponsibilities": [
+        "interpret intent",
+        "discover goals, dependencies, and missing capabilities",
+        "coordinate research, build, execution, and verification",
+        "maintain continuity and canonical state",
+        "return evidence and escalate only genuine judgment or permission gates"
+      ],
+      "governingPrinciple": "The captain commands the ship; the captain does not carry messages between decks or perform repeatable engineering rituals."
+    },
+    "surfaceRole": "A thin spatial command client over the same canonical Stephanos brain, never a separate VR Stephanos.",
+    "visualDirection": "An original Stephanos far-future starship bridge: calm, panoramic, seated-first, luminous, mission-led, and not a replica of a specific set.",
+    "initialInteractionModel": {
+      "posture": "seated-cockpit",
+      "attention": "Quest 3 head tracking and gaze context",
+      "navigation": "Xbox controller",
+      "intent": "voice",
+      "motionControls": "deferred-until-useful"
+    },
+    "singleBrainRule": true,
+    "directQuestExecutionForbidden": true,
+    "initialAuthority": "read-only",
+    "transitionStages": [
+      "mirror",
+      "navigate-and-ask",
+      "proposal-mode",
+      "bounded-reversible-actions",
+      "captain-approvals",
+      "intent-level-command"
+    ],
+    "readinessGates": [
+      "canonical continuity across chats, devices, restarts, and agents",
+      "reliable intent and contextual-reference interpretation",
+      "capability discovery with available, missing, blocked, and unproven states",
+      "Shared Agent Workspace truth for goals, dependencies, actions, blockers, and evidence",
+      "deny-by-default bounded authority",
+      "authenticated and independently stoppable Battle Bridge control",
+      "verification harness returning observed evidence",
+      "rollback and known-good-state protection",
+      "idempotent execution across duplicate events and reconnects",
+      "surface parity outside VR"
+    ],
+    "primaryReadinessTest": "The headset can disconnect completely without losing mission state, approvals, execution state, or evidence.",
+    "implementationGate": "Do not begin execution-capable spatial integration until Stephan judges Stephanos intelligent and dependable enough to understand the operating context and safely close the gap between intent and reality."
+  },
   "targets": [
     {
       "name": "Starfield",
@@ -30,7 +96,8 @@
     "Tooling / Analysis",
     "Reusable Conversion Techniques",
     "Open Questions",
-    "Priority Opportunities"
+    "Priority Opportunities",
+    "Stephanos Spatial Bridge Doctrine"
   ],
   "techniques": [
     {
@@ -110,7 +177,8 @@
     "Capture initial Starfield research brief in VR-Research-Lab/examples/starfield-vr/README.md.",
     "Add first experiment note under docs/experiment-logs/ with timestamped findings.",
     "Run engine-scanner prototype against target code snapshots and commit reports.",
-    "Promote stable findings into module folders (camera-injection, stereo-rendering, input-hooks)."
+    "Promote stable findings into module folders (camera-injection, stereo-rendering, input-hooks).",
+    "Retrieve the spatial bridge doctrine before planning any Quest, WebXR, cockpit, voice, or spatial command-surface implementation."
   ],
   "folderMap": [
     {
@@ -130,6 +198,10 @@
       "path": "VR-Research-Lab/docs/research-notes/"
     },
     {
+      "label": "Spatial Bridge Doctrine",
+      "path": "VR-Research-Lab/docs/research-notes/stephanos-spatial-bridge-doctrine.md"
+    },
+    {
       "label": "Experiment Logs",
       "path": "VR-Research-Lab/docs/experiment-logs/"
     },
@@ -146,6 +218,7 @@
     "Memory seam: findings can be serialized as memory candidates for future retrieval indexing.",
     "Experiment seam: docs/experiment-logs and experiments/* are canonical drop points for run artifacts.",
     "Pattern seam: modules/* folders are the reusable output contract for flat-to-VR techniques.",
-    "Game-lab seam: examples/starfield-vr and examples/rdr2-vr can evolve into game-specific research tracks."
+    "Game-lab seam: examples/starfield-vr and examples/rdr2-vr can evolve into game-specific research tracks.",
+    "Spatial seam: the future Quest surface consumes versioned canonical Stephanos projections and never owns separate goals, memory, approvals, execution queues, or evidence."
   ]
 }
