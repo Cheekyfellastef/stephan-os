@@ -88,6 +88,22 @@ function hasRequiredIssueOrPr(record = {}) {
   return Boolean(text(record.relatedIssue) || text(record.relatedPr));
 }
 
+function requiresCorrelationAndProofRefs(kind) {
+  return isWorkspaceRuntimeRecordKind(kind) || kind === SHARED_WORKSPACE_RECORD_KINDS.PROOF;
+}
+
+function hasCanonicalCorrelation(record = {}) {
+  return Boolean(safeId(record.correlationId));
+}
+
+function isSafeProofRef(ref) {
+  const normalized = text(ref).replace(/\\/g, '/');
+  if (!normalized) return false;
+  if (normalized.startsWith('/') || normalized.startsWith('//') || /^[a-z]:\//i.test(normalized)) return false;
+  if (normalized.split('/').some((part) => part === '..')) return false;
+  return SAFE_SEGMENT.test(normalized) || /^(proof|proofs|receipts|evidence\/receipts)\//.test(normalized);
+}
+
 function isWorkspaceRuntimeRecordKind(kind) {
   return [
     SHARED_WORKSPACE_RECORD_KINDS.MESSAGE,
@@ -146,13 +162,14 @@ export function validateSharedWorkspaceRecord(record = {}, options = {}) {
   if (record?.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION) errors.push('invalid-schema-version');
   if (!Object.values(SHARED_WORKSPACE_RECORD_KINDS).includes(record?.kind)) errors.push('invalid-kind');
   if (!safeId(firstRecordId(record))) errors.push('invalid-record-id');
-  if (!safeId(record?.participantId || record?.agentId || record?.sender)) errors.push('invalid-participant-id');
+  if (isWorkspaceRuntimeRecordKind(record?.kind) && !safeId(record?.participantId || record?.agentId || record?.sender)) errors.push('invalid-participant-id');
   if (!text(record?.timestampUtc)) errors.push('missing-timestampUtc');
   if (text(record?.timestampUtc) && !Number.isFinite(timestampMs(record?.timestampUtc))) errors.push('invalid-timestampUtc');
-  if (isWorkspaceRuntimeRecordKind(record?.kind) && !hasRequiredIssueOrPr(record)) errors.push('missing-related-issue-or-pr');
-  if (isWorkspaceRuntimeRecordKind(record?.kind) && list(record?.proofRefs).length === 0) errors.push('missing-proofRefs');
+  if (requiresCorrelationAndProofRefs(record?.kind) && !hasCanonicalCorrelation(record)) errors.push('missing-correlationId');
+  if (requiresCorrelationAndProofRefs(record?.kind) && !hasRequiredIssueOrPr(record)) errors.push('missing-related-issue-or-pr');
+  if (requiresCorrelationAndProofRefs(record?.kind) && list(record?.proofRefs).length === 0) errors.push('missing-proofRefs');
   if (bytes(record?.body) > MAX_RECORD_BODY_BYTES) errors.push('body-too-large');
-  for (const ref of list(record?.proofRefs)) if (!SAFE_SEGMENT.test(ref) && /(^|[\\/])\.\.|^[\\/]|^[a-z]:[\\/]/i.test(ref)) errors.push('unsafe-proof-ref');
+  for (const ref of list(record?.proofRefs)) if (!isSafeProofRef(ref)) errors.push('unsafe-proof-ref');
   if (record?.kind === SHARED_WORKSPACE_RECORD_KINDS.CAPABILITY) {
     if (record.mergeAuthority === true) errors.push('merge-authority-forbidden');
     if (record.arbitraryShellAllowed === true) errors.push('arbitrary-shell-forbidden');
@@ -226,7 +243,7 @@ export function createSharedWorkspaceGoalRecord(input = {}) {
   return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL, goalId: safeId(input.goalId) || 'goal-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), title: text(input.title, 'Untitled goal'), status: text(input.status, 'open') };
 }
 export function createSharedWorkspaceProofRecord(input = {}) {
-  return { ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.PROOF, 'proofId', 'proof-current'), status: text(input.status, 'pending'), summary: text(input.summary, 'No proof summary supplied.'), refs: list(input.refs), proofRefs: list(input.proofRefs).length ? list(input.proofRefs) : ['self'] };
+  return { ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.PROOF, 'proofId', 'proof-current'), correlationId: safeId(input.correlationId), status: text(input.status, 'pending'), summary: text(input.summary, 'No proof summary supplied.'), refs: list(input.refs), proofRefs: list(input.proofRefs) };
 }
 export function createSharedWorkspaceEventRecord(input = {}) {
   return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT, eventId: safeId(input.eventId) || 'event-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), eventKind: text(input.eventKind, 'status'), summary: text(input.summary, 'No event summary supplied.') };

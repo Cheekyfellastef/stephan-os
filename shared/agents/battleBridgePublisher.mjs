@@ -150,6 +150,9 @@ export function createBattleBridgePublisherWorkspaceRecords(slice = {}) {
     timestampUtc,
     status: slice.status || 'UNKNOWN',
     summary: slice.exactNextAction || 'Battle Bridge publisher proof requires refresh.',
+    correlationId: slice.correlationId || 'battle-bridge-current',
+    relatedIssue: slice.relatedIssue || '#1287',
+    proofRefs,
     refs: proofRefs,
   });
   const eventRecord = createSharedWorkspaceEventRecord({
