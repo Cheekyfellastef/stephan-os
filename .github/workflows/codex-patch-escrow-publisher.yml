@@ -41,7 +41,7 @@ jobs:
           node --check scripts/codex-patch-escrow-export.mjs
           node --check scripts/codex-patch-escrow-publisher.mjs
 
-  publish:
+  validate-publication:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
@@ -49,6 +49,39 @@ jobs:
       startsWith(github.event.comment.body, 'PATCH_ESCROW_PUBLISH_V1')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Check out canonical main without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate patch and run patched tests without write credentials
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/codex-patch-escrow-publisher.mjs validate
+
+  publish:
+    needs:
+      - validate-publication
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      github.event.issue.pull_request == null &&
+      startsWith(github.event.comment.body, 'PATCH_ESCROW_PUBLISH_V1') &&
+      needs.validate-publication.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     concurrency:
       group: codex-patch-escrow-${{ github.event.issue.number }}
       cancel-in-progress: false
@@ -57,7 +90,7 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - name: Check out canonical main
+      - name: Check out canonical main for publication
         uses: actions/checkout@v4
         with:
           ref: main
@@ -69,7 +102,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Publish verified patch escrow
+      - name: Publish previously validated exact patch without executing patched code
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/codex-patch-escrow-publisher.mjs
+        run: node scripts/codex-patch-escrow-publisher.mjs publish
