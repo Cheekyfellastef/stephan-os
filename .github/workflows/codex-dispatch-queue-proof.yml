@@ -50,7 +50,8 @@ jobs:
         run: node --test shared/agents/verificationHarness.test.mjs shared/agents/verificationHarnessWorkspace.test.mjs
 
       - name: Full shared-agent regression suite
-        run: node --test shared/agents/*.test.mjs
+        run: node --test --test-reporter=dot shared/agents/*.test.mjs
 
       - name: Diff check
+        if: always()
         run: git diff --check origin/main...HEAD
