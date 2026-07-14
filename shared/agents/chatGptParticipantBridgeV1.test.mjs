@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
 import {
   CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS,
   CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES,
   CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP,
   CHATGPT_BRIDGE_READ_OPERATIONS,
   CHATGPT_BRIDGE_RECORD_KINDS,
+  CHATGPT_BRIDGE_REDACTED_TEXT,
   CHATGPT_BRIDGE_RESPONSE_STATUSES,
   CHATGPT_BRIDGE_TRANSPORT_STATUS,
   CHATGPT_BRIDGE_WRITE_OPERATIONS,
@@ -75,6 +77,8 @@ test('schema/authentication/correlation/expiry/replay guards produce required st
   assert.equal(verify({ ...validRequest(), expiryUtc: 'not-a-date' }).responseStatus, 'BLOCKED_EXPIRED_REQUEST');
   assert.equal(verify({ ...validRequest(), requestId: '' }).responseStatus, 'BLOCKED_AUTHORIZATION_FAILED');
   assert.equal(verify({ ...validRequest(), requestId: 'bad request id' }).responseStatus, 'BLOCKED_AUTHORIZATION_FAILED');
+  assert.equal(verify({ ...validRequest(), requestId: 'request:1506' }).responseStatus, 'BLOCKED_AUTHORIZATION_FAILED');
+  assert.equal(verify({ ...validRequest(), correlationId: 'issue:1506' }).responseStatus, 'BLOCKED_AUTHORIZATION_FAILED');
 
   const replayStore = createInMemoryReplayStore();
   assert.equal(verify(validRequest({ requestId: 'request-replay' }), { replayStore }).responseStatus, 'BRIDGE_VERIFIED_PASS');
@@ -88,6 +92,8 @@ test('payload bounds and secret-shaped data are rejected before workspace record
   assert.equal(verify(validRequest({ boundedPayload: { summary: 'x'.repeat(CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES + 1) } })).responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
   assert.equal(verify(validRequest({ boundedPayload: { apiToken: 'ghp_1234567890abcdef' } })).responseStatus, 'BLOCKED_SECRET_SHAPED_DATA');
   assert.equal(verify(validRequest({ boundedPayload: { summary: 'contains .env path' } })).responseStatus, 'BLOCKED_SECRET_SHAPED_DATA');
+  assert.equal(buildChatGptBridgeRecord(validRequest({ boundedPayload: { apiToken: 'ghp_1234567890abcdef' } })).reason, 'BLOCKED_SECRET_SHAPED_DATA');
+  assert.equal(buildChatGptBridgeRecord(validRequest({ boundedPayload: { summary: 'x'.repeat(CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES + 1) } })).reason, 'BLOCKED_PAYLOAD_UNSAFE');
 });
 
 test('ChatGPT cannot create approval-result truth or self-approve operator decisions', () => {
@@ -96,7 +102,7 @@ test('ChatGPT cannot create approval-result truth or self-approve operator decis
   assert.deepEqual(verifyOperatorApprovalSeparation(validRequest({ approvalRef: 'approval-1' }), { participantId: 'operator-stephan', approvalRef: 'approval-1', correlationId: 'issue-1506' }), { ok: true, responseStatus: 'BRIDGE_VERIFIED_PASS' });
 });
 
-test('bounded record builders preserve Shared Workspace boundaries without shell or source mutation access', () => {
+test('bounded record builders preserve Shared Workspace boundaries and validate canonically', () => {
   for (const [operation, recordKind] of Object.entries(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP)) {
     if (!operation.startsWith('WRITE_')) continue;
     const built = buildChatGptBridgeRecord(validRequest({ operation, recordKind, requestId: `request-${recordKind}` }));
@@ -104,23 +110,41 @@ test('bounded record builders preserve Shared Workspace boundaries without shell
     assert.equal(built.record.channel, 'chatgpt-participant-bridge');
     assert.equal(built.record.participantId, CHATGPT_BRIDGE_PARTICIPANT_ID);
     assert.equal(built.record.body.includes('EXECUTE'), false);
+    assert.equal(validateSharedWorkspaceRecord(built.record).valid, true);
   }
 });
 
-test('sanitized status/proof projection omits arbitrary filesystem and execution capability', async () => {
+test('sanitized status/proof projection redacts secret-shaped strings and omits execution capability', async () => {
   const projection = await createSanitizedSharedWorkspaceProjection({
     timestampUtc: '2026-07-13T00:00:00.000Z',
     latest: {
-      goal: { kind: 'goal', timestampUtc: '2026-07-13T00:00:00.000Z', title: 'Bridge V1', status: 'open' },
-      status: { kind: 'status', timestampUtc: '2026-07-13T00:00:00.000Z', status: 'PASS', summary: 'Current.' },
-      proof: { kind: 'proof', timestampUtc: '2026-07-13T00:00:00.000Z', status: 'PASS', summary: 'Proof.', proofRefs: ['proof/ok', '.env'] },
+      goal: { kind: 'goal', timestampUtc: '2026-07-13T00:00:00.000Z', title: 'ghp_1234567890abcdef', status: 'open' },
+      status: { kind: 'status', timestampUtc: '2026-07-13T00:00:00.000Z', status: 'sk-12345678901234567890', summary: 'Current.' },
+      proof: { kind: 'proof', timestampUtc: '2026-07-13T00:00:00.000Z', status: 'PASS', summary: 'ghp_1234567890abcdef', proofRefs: ['proof/ok', '.env'] },
     },
   });
   assert.equal(projection.schemaVersion, CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION);
   assert.equal(projection.arbitraryFilesystemAccess, false);
   assert.equal(projection.commandExecutionAccess, false);
   assert.equal(projection.sourceMutationAccess, false);
+  assert.equal(projection.currentGoal.title, CHATGPT_BRIDGE_REDACTED_TEXT);
+  assert.equal(projection.currentStatus.status, CHATGPT_BRIDGE_REDACTED_TEXT);
+  assert.equal(projection.latestProof.summary, CHATGPT_BRIDGE_REDACTED_TEXT);
   assert.deepEqual(projection.latestProof.proofRefs, ['proof/ok']);
+});
+
+test('blocked workspace aggregation returns a bounded fail-closed projection', async () => {
+  const projection = await createSanitizedSharedWorkspaceProjection({
+    workspaceRoot: process.cwd(),
+    repoRoot: process.cwd(),
+    timestampUtc: '2026-07-13T00:00:00.000Z',
+  });
+  assert.equal(projection.aggregationOk, false);
+  assert.equal(projection.aggregationReason, 'WORKSPACE_PATH_INSIDE_REPOSITORY');
+  assert.equal(projection.aggregationVerdict, 'SHARED_WORKSPACE_AGGREGATION_BLOCKED');
+  assert.equal(projection.currentGoal, null);
+  assert.equal(projection.currentStatus, null);
+  assert.equal(projection.latestProof, null);
 });
 
 test('inert transport adapter never opens a socket and reports transport not configured', async () => {
