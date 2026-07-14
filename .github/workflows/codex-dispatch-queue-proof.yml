@@ -9,6 +9,7 @@ on:
       - 'shared/agents/automatedCodexDispatcher.test.mjs'
       - 'shared/agents/platformLoopIntegration.mjs'
       - 'shared/agents/platformLoopIntegration.test.mjs'
+      - 'shared/agents/missionOrchestratorV1.test.mjs'
       - 'shared/agents/verificationHarness.mjs'
       - 'shared/agents/verificationHarness.test.mjs'
       - 'shared/agents/verificationHarnessWorkspace.test.mjs'
@@ -43,8 +44,8 @@ jobs:
       - name: Dispatcher proof
         run: node --test shared/agents/automatedCodexDispatcher.test.mjs
 
-      - name: Platform loop consumer proof
-        run: node --test shared/agents/platformLoopIntegration.test.mjs
+      - name: Platform loop and mission consumers proof
+        run: node --test shared/agents/platformLoopIntegration.test.mjs shared/agents/missionOrchestratorV1.test.mjs
 
       - name: Verification Harness proof
         run: node --test shared/agents/verificationHarness.test.mjs shared/agents/verificationHarnessWorkspace.test.mjs
