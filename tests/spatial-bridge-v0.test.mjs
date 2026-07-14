@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeSpatialBridgeIcons } from '../scripts/build-spatial-bridge-icons.mjs';
+import { writeSpatialBridgeIcons } from '../apps/spatial-bridge/tools/build-icons.mjs';
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -90,6 +90,7 @@ test('Quest entry scaffold meets the source-level PWA contract', () => {
   assert.match(entry, /flat staging surface/);
   assert.match(serviceWorker, /caches\.open\(CACHE_NAME\)/);
   assert.match(serviceWorker, /event\.request\.method !== 'GET'/);
+  assert.match(serviceWorker, /GENERATED_PACKAGING_ASSETS/);
   assert.match(serviceWorker, /offline\.html/);
   assert.match(offline, /Posture: read only/);
 });
