@@ -7,6 +7,8 @@ on:
       - 'shared/agents/codexDispatchQueue.test.mjs'
       - 'shared/agents/automatedCodexDispatcher.mjs'
       - 'shared/agents/automatedCodexDispatcher.test.mjs'
+      - 'shared/agents/platformLoopIntegration.mjs'
+      - 'shared/agents/platformLoopIntegration.test.mjs'
       - 'shared/agents/verificationHarness.mjs'
       - 'shared/agents/verificationHarness.test.mjs'
       - 'shared/agents/verificationHarnessWorkspace.test.mjs'
@@ -35,11 +37,12 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Focused queue dispatcher and verification proof
+      - name: Focused queue dispatcher platform-loop and verification proof
         run: >-
           node --test
           shared/agents/codexDispatchQueue.test.mjs
           shared/agents/automatedCodexDispatcher.test.mjs
+          shared/agents/platformLoopIntegration.test.mjs
           shared/agents/verificationHarness.test.mjs
           shared/agents/verificationHarnessWorkspace.test.mjs
 
