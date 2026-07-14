@@ -199,22 +199,25 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
   const operation = text(request.operation);
   const expectedRecordKind = CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[operation];
   const isAllowedOperation = [...CHATGPT_BRIDGE_READ_OPERATIONS, ...CHATGPT_BRIDGE_WRITE_OPERATIONS].includes(operation);
+  const requestId = safeId(request.requestId);
+  const expiryMs = Date.parse(request.expiryUtc);
 
   if (options.transportConfigured === false) responseStatus = CHATGPT_BRIDGE_TRANSPORT_STATUS;
   else if (request.schemaVersion !== CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION) responseStatus = 'BLOCKED_AUTHORIZATION_FAILED';
   else if (text(request.participantId) !== CHATGPT_BRIDGE_PARTICIPANT_ID || options.authenticated !== true) responseStatus = 'BLOCKED_AUTHENTICATION_FAILED';
   else if (!isAllowedOperation || CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS.includes(operation)) responseStatus = 'BLOCKED_OPERATION_NOT_ALLOWLISTED';
   else if (text(request.recordKind) !== expectedRecordKind) responseStatus = 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED';
+  else if (!requestId || requestId !== text(request.requestId)) responseStatus = 'BLOCKED_AUTHORIZATION_FAILED';
   else if (!safeId(request.correlationId) || (!text(request.relatedGoal) && !text(request.relatedPr))) responseStatus = 'BLOCKED_AUTHORIZATION_FAILED';
-  else if (!text(request.expiryUtc) || Date.parse(request.expiryUtc) <= nowMs) responseStatus = 'BLOCKED_EXPIRED_REQUEST';
-  else if (replayStore?.has?.(request.requestId)) responseStatus = 'BLOCKED_REPLAY_DETECTED';
+  else if (!text(request.expiryUtc) || !Number.isFinite(expiryMs) || expiryMs <= nowMs) responseStatus = 'BLOCKED_EXPIRED_REQUEST';
+  else if (replayStore?.has?.(requestId)) responseStatus = 'BLOCKED_REPLAY_DETECTED';
   else if (payloadBytes(request.boundedPayload) > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
   else if (hasSecretShapedData(request.boundedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
   else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
   else if (text(request.approvalRef) && text(options.operatorApproval?.participantId) === CHATGPT_BRIDGE_PARTICIPANT_ID) responseStatus = 'BLOCKED_APPROVAL_MISMATCH';
 
-  if (responseStatus === 'BRIDGE_VERIFIED_PASS') replayStore?.remember?.(request.requestId);
-  const auditReceiptRecord = auditReceipt({ request, responseStatus, timestampUtc: text(options.timestampUtc, new Date(nowMs).toISOString()), proofRefs: [`receipts/${safeId(request.requestId, 'request')}`] });
+  if (responseStatus === 'BRIDGE_VERIFIED_PASS') replayStore?.remember?.(requestId);
+  const auditReceiptRecord = auditReceipt({ request, responseStatus, timestampUtc: text(options.timestampUtc, new Date(nowMs).toISOString()), proofRefs: [`receipts/${requestId || 'request'}`] });
   return Object.freeze({
     schemaVersion: CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
     requestId: text(request.requestId),
