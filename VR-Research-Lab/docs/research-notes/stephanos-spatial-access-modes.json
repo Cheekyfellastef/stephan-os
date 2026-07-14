@@ -1,0 +1,152 @@
+{
+  "version": "spatial-access-modes.v1",
+  "recordedDate": "2026-07-14",
+  "status": "architecture-recorded-implementation-deferred",
+  "parentDoctrine": "VR-Research-Lab/docs/research-notes/stephanos-spatial-bridge-doctrine.md",
+  "humanDoctrine": "VR-Research-Lab/docs/research-notes/stephanos-spatial-dual-access-transport.md",
+  "retrievalTags": [
+    "vr",
+    "quest-3",
+    "quest-link",
+    "starlink",
+    "caravan",
+    "remote-spatial",
+    "battle-bridge",
+    "control-plane",
+    "media-plane",
+    "tailscale",
+    "pcvr"
+  ],
+  "principle": "Render the bridge as close to Stephan as possible and move only the information that must cross the network.",
+  "singleBrainRule": true,
+  "modes": {
+    "homeLink": {
+      "label": "HOME · LOCAL LINK",
+      "location": "home",
+      "questProximityToBattleBridge": "local",
+      "preferredTransport": [
+        "Quest Link USB",
+        "proven local wireless PCVR"
+      ],
+      "renderPreference": "Battle Bridge or Quest local rendering through the same versioned Stephanos contract",
+      "publicInternetDependency": "not required for core local surface",
+      "authorityPosture": "normal Stephanos gates"
+    },
+    "caravanRemote": {
+      "label": "CARAVAN · REMOTE STARLINK",
+      "location": "caravan",
+      "questProximityToBattleBridge": "remote",
+      "preferredTransport": "authenticated Stephanos control plane over Starlink",
+      "renderPreference": "spatial shell and comfort-critical rendering local on Quest 3",
+      "battleBridgeLocation": "home",
+      "authorityPosture": "remote health and freshness constrained",
+      "remotePcvr": "optional separate media plane"
+    },
+    "remoteDegraded": {
+      "label": "REMOTE DEGRADED · READ ONLY",
+      "trigger": "identity, freshness, route, telemetry, or Battle Bridge certainty is insufficient",
+      "authorityPosture": "read-only"
+    },
+    "offline": {
+      "label": "OFFLINE · LAST VERIFIED STATE",
+      "available": [
+        "local bridge shell",
+        "clearly aged last verified state",
+        "non-authoritative local notes"
+      ],
+      "forbidden": [
+        "remote approvals",
+        "execution authority",
+        "cached reusable approval tokens"
+      ]
+    }
+  },
+  "planes": {
+    "control": {
+      "authoritative": true,
+      "traffic": [
+        "identity",
+        "canonical mission state",
+        "selected-object context",
+        "intent",
+        "proposals",
+        "risk classification",
+        "exact-action approvals",
+        "execution progress",
+        "verification evidence",
+        "telemetry",
+        "stop and revoke signals"
+      ],
+      "preferredSecurity": "authenticated encrypted Stephanos or Tailscale-class route",
+      "relayPolicy": "relay may support observation and proposals but can restrict approvals or execution"
+    },
+    "media": {
+      "authoritative": false,
+      "optional": true,
+      "traffic": [
+        "encoded stereoscopic video",
+        "audio",
+        "low-latency tracking and controller input"
+      ],
+      "candidateProductsMustBeReverified": true,
+      "failurePolicy": "must not remove or corrupt the control plane"
+    }
+  },
+  "remoteObservations": [
+    "authenticated session status",
+    "direct, peer-relayed, or public-relayed connection",
+    "round-trip latency",
+    "jitter",
+    "packet loss",
+    "reconnect count",
+    "state freshness",
+    "caravan Wi-Fi quality",
+    "Starlink obstruction or service degradation where available",
+    "home upload headroom",
+    "Battle Bridge reachability",
+    "GPU encoder health when media is requested"
+  ],
+  "battleBridgeRequirements": [
+    "authenticated remote bootstrap",
+    "service supervisor and self-recovery",
+    "controlled start, restart, and shutdown",
+    "independent stop route outside Quest",
+    "locked-session handling",
+    "no visible PowerShell dependency",
+    "headless display support where required",
+    "known-good profiles and rollback",
+    "evidence capture surviving network disconnect",
+    "no local human click requirement"
+  ],
+  "failClosedRules": [
+    "disable approval before disabling observation",
+    "do not accept approval from stale state",
+    "bind approval to exact target revision",
+    "make retries and reconnects idempotent",
+    "do not reuse approval after proposal or target changes",
+    "fall back to read-only when certainty is insufficient",
+    "do not execute hidden work after headset or session loss",
+    "a disconnected intent may return only as an unapproved draft"
+  ],
+  "remotePcvrStopConditions": [
+    "packet loss or jitter outside the tested comfort envelope",
+    "route cannot sustain the stream",
+    "home upload or caravan download is unstable",
+    "GPU encoder lacks headroom",
+    "display or runtime is not known-good",
+    "reconnects or input delay create discomfort risk"
+  ],
+  "acceptanceTests": [
+    "home and caravan show the same canonical mission",
+    "Quest disconnect loses no state or evidence",
+    "Starlink interruption causes the expected degraded posture",
+    "duplicate events cannot duplicate actions",
+    "stale state cannot authorize remote action",
+    "control remains useful without media streaming",
+    "relayed transport is detected and surfaced",
+    "Battle Bridge blockers do not require a local click",
+    "media failure cannot affect authority state",
+    "phone or tablet can recover the same mission"
+  ],
+  "implementationGate": "Prioritise a locally rendered Quest command surface for caravan use. Treat remote PCVR streaming as optional and do not begin execution-capable spatial integration until the parent doctrine readiness gates are proven."
+}
