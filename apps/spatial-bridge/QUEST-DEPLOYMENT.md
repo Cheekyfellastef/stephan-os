@@ -36,12 +36,29 @@ Present on the branch:
 - `service-worker.js`
 - `offline.html`
 - `quest-entry.html`
-- 192px and 512px Quest icon assets
+- source-only icon specification and deterministic PNG generator
 - `quest-entry-contract.v1.json`
 - flat read-only bridge staging surface
 - deterministic source tests
 
 The current Quest entry page embeds the flat staging surface. It is not yet an immersive WebXR renderer.
+
+## Generated icon requirement
+
+The strict PR clean guard rejects committed images and binary artifacts. Before hosting or packaging, generate the required PNGs:
+
+```text
+node scripts/build-spatial-bridge-icons.mjs
+```
+
+This creates:
+
+```text
+apps/spatial-bridge/icons/icon-192.png
+apps/spatial-bridge/icons/icon-512.png
+```
+
+The generator is deterministic and dependency-free. The source test generates the icons in a temporary directory and validates the PNG signature and dimensions. Generated PNGs must not be committed.
 
 ## Hosting requirement
 
@@ -50,6 +67,8 @@ The PWA must be served from a stable HTTPS origin. The production URL must expos
 ```text
 /manifest.webmanifest
 /service-worker.js
+/icons/icon-192.png
+/icons/icon-512.png
 /.well-known/assetlinks.json
 ```
 
@@ -62,12 +81,13 @@ The exact public or private HTTPS hostname is deliberately unresolved until the 
 3. Install Meta's fork of Bubblewrap on the Battle Bridge.
 4. Use the package ID `com.stephanos.spatialbridge` unless a collision or Meta requirement forces a reviewed change.
 5. Select **immersive** app mode once the WebXR renderer is ready.
-6. Create a dedicated signing keystore.
-7. Store the keystore and passwords outside the repository and back them up securely.
-8. Build the signed APK.
-9. Generate the SHA-256 signing fingerprint.
-10. Replace the placeholders in `assetlinks.template.json` and publish it as `/.well-known/assetlinks.json` on the same HTTPS origin.
-11. Verify Digital Asset Link success before describing the package as launchable.
+6. Generate the Quest icon assets from source.
+7. Create a dedicated signing keystore.
+8. Store the keystore and passwords outside the repository and back them up securely.
+9. Build the signed APK.
+10. Generate the SHA-256 signing fingerprint.
+11. Replace the placeholders in `assetlinks.template.json` and publish it as `/.well-known/assetlinks.json` on the same HTTPS origin.
+12. Verify Digital Asset Link success before describing the package as launchable.
 
 ## Distribution requirement
 
@@ -106,22 +126,25 @@ At or after that time, the first proof lane is:
 
 ```text
 node --test tests/spatial-bridge-v0.test.mjs
+node scripts/build-spatial-bridge-icons.mjs
 ```
 
 Then:
 
-1. Serve the exact PR head through HTTPS.
-2. Open `quest-entry.html` in desktop Chromium and inspect manifest and service-worker status.
-3. Implement or integrate the first immersive WebXR captain scene.
-4. Verify no mutation or execution endpoints are reachable.
-5. Package with Meta Bubblewrap in immersive mode.
-6. Create and preserve the signing key.
-7. publish the exact Digital Asset Link file.
-8. Upload the signed build to ALPHA.
-9. Add Stephan's Meta account to the channel.
-10. Confirm the icon appears in Quest App Library.
-11. Launch from the icon and capture headset, console and network proof.
-12. Test home and caravan profiles independently.
+1. Confirm the generated icons exist and remain uncommitted.
+2. Serve the exact PR head through HTTPS.
+3. Open `quest-entry.html` in desktop Chromium and inspect manifest and service-worker status.
+4. Implement or integrate the first immersive WebXR captain scene.
+5. Verify no mutation or execution endpoints are reachable.
+6. Package with Meta Bubblewrap in immersive mode.
+7. Create and preserve the signing key.
+8. Publish the exact Digital Asset Link file.
+9. Upload the signed build to ALPHA.
+10. Add Stephan's Meta account to the channel.
+11. Confirm the icon appears in Quest App Library.
+12. Launch from the icon and capture headset, console and network proof.
+13. Test home and caravan profiles independently.
+14. Remove or quarantine generated PNGs before any source commit or PR update.
 
 ## Safety gate
 
