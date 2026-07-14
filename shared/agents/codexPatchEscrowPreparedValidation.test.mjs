@@ -9,8 +9,13 @@ import {
   inspectGithubCredentialProcessAncestry,
   validatePreparedPatchEscrow,
 } from '../../scripts/codex-patch-escrow-validate-prepared.mjs';
+import {
+  createValidatedPatchEscrowArtifact,
+  validateValidatedPatchEscrowArtifact,
+} from '../../scripts/codex-patch-escrow-validated-artifact.mjs';
 
 const BASE_SHA = 'a'.repeat(40);
+const TREE_SHA = 'b'.repeat(40);
 
 function fixture() {
   const patch = Buffer.from('diff --git a/shared/agents/a.mjs b/shared/agents/a.mjs\n', 'utf8');
@@ -28,6 +33,8 @@ function fixture() {
       repository: 'Cheekyfellastef/stephan-os',
       ownerLogin: 'Cheekyfellastef',
       issueNumber: 1503,
+      commentId: 42,
+      patchSha256: bundle.manifest.patchSha256,
     },
     selected: {
       ok: true,
@@ -39,15 +46,42 @@ function fixture() {
     repositoryMetadata: { default_branch: 'main' },
     currentBase: { sha: BASE_SHA },
   });
-  return { bundle, patch, prepared };
+  const preparedBytes = Buffer.from(`${JSON.stringify(prepared, null, 2)}\n`, 'utf8');
+  const validationResult = {
+    finalVerdict: 'PATCH_ESCROW_TOKEN_FREE_VALIDATION_PASS',
+    bundleId: prepared.bundleId,
+    patchSha256: prepared.patchSha256,
+    expectedTreeSha: TREE_SHA,
+    ancestry: { safe: true, blockers: [], inspectedPids: [200, 1] },
+    testEvidence: { profile: 'node-changed', commands: ['node --check shared/agents/a.mjs'] },
+  };
+  return { bundle, patch, prepared, preparedBytes, validationResult };
 }
 
 test('prepared patch escrow revalidates the exact manifest and patch without GitHub credentials', () => {
   const { prepared } = fixture();
   assert.equal(prepared.schemaVersion, PREPARED_PATCH_ESCROW_SCHEMA_VERSION);
+  assert.equal(prepared.publishCommentId, 42);
+  assert.equal(prepared.authorizedPatchSha256, prepared.patchSha256);
   const validation = validatePreparedPatchEscrow(prepared);
   assert.equal(validation.valid, true);
   assert.equal(validation.finalVerdict, 'PATCH_ESCROW_PREPARED_PASS');
+});
+
+test('prepared artifact construction rejects a publish request authorising another full patch hash', () => {
+  const { bundle, patch } = fixture();
+  assert.throws(() => buildPreparedPatchEscrow({
+    publishEvent: {
+      repository: 'Cheekyfellastef/stephan-os',
+      ownerLogin: 'Cheekyfellastef',
+      issueNumber: 1503,
+      commentId: 42,
+      patchSha256: '0'.repeat(64),
+    },
+    selected: { ok: true, manifest: bundle.manifest, patch, manifestCommentId: 1, chunkCommentIds: [2] },
+    repositoryMetadata: { default_branch: 'main' },
+    currentBase: { sha: BASE_SHA },
+  }), /does not match owner publication authorization/);
 });
 
 test('prepared patch escrow fails closed when artifact patch bytes are replaced', () => {
@@ -69,6 +103,46 @@ test('prepared patch escrow fails closed when advertised bundle identity changes
   });
   assert.equal(validation.valid, false);
   assert.equal(validation.blockers.includes('prepared-bundle-id-mismatch'), true);
+});
+
+test('validated artifact binds exact prepared bytes, full patch hash, expected tree, and evidence', () => {
+  const { preparedBytes, validationResult } = fixture();
+  const artifact = createValidatedPatchEscrowArtifact({ preparedBytes, validationResult });
+  const validation = validateValidatedPatchEscrowArtifact(artifact);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.finalVerdict, 'PATCH_ESCROW_VALIDATED_ARTIFACT_PASS');
+  assert.equal(artifact.authorizedPatchSha256, artifact.patchSha256);
+  assert.equal(artifact.expectedTreeSha, TREE_SHA);
+  assert.match(artifact.preparedArtifactSha256, /^[a-f0-9]{64}$/);
+  assert.match(artifact.artifactSha256, /^[a-f0-9]{64}$/);
+});
+
+test('validated artifact fails closed when any embedded prepared byte is replaced', () => {
+  const { preparedBytes, validationResult } = fixture();
+  const artifact = createValidatedPatchEscrowArtifact({ preparedBytes, validationResult });
+  const changedPrepared = Buffer.from(preparedBytes);
+  changedPrepared[0] = changedPrepared[0] === 0x7b ? 0x5b : 0x7b;
+  const validation = validateValidatedPatchEscrowArtifact({
+    ...artifact,
+    preparedArtifactBase64: changedPrepared.toString('base64'),
+  });
+  assert.equal(validation.valid, false);
+  assert.equal(validation.blockers.includes('prepared-artifact-digest-mismatch'), true);
+});
+
+test('validated artifact fails closed when expected tree or validation evidence is altered', () => {
+  const { preparedBytes, validationResult } = fixture();
+  const artifact = createValidatedPatchEscrowArtifact({ preparedBytes, validationResult });
+  const treeValidation = validateValidatedPatchEscrowArtifact({ ...artifact, expectedTreeSha: 'c'.repeat(40) });
+  assert.equal(treeValidation.valid, false);
+  assert.equal(treeValidation.blockers.includes('validated-artifact-digest-mismatch'), true);
+
+  const evidenceValidation = validateValidatedPatchEscrowArtifact({
+    ...artifact,
+    validationEvidence: { ...artifact.validationEvidence, testEvidence: { profile: 'other' } },
+  });
+  assert.equal(evidenceValidation.valid, false);
+  assert.equal(evidenceValidation.blockers.includes('validation-evidence-digest-mismatch'), true);
 });
 
 test('process ancestry guard detects a GitHub token held by a parent process', () => {
