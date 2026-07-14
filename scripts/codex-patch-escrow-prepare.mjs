@@ -67,6 +67,7 @@ export function buildPreparedPatchEscrow(input = {}) {
     });
   }
   if (manifest.issueNumber !== publishEvent.issueNumber) fail('manifest issue number does not match publish request issue');
+  if (manifest.patchSha256 !== publishEvent.patchSha256) fail('manifest patch SHA-256 does not match owner publication authorization');
   if (repositoryMetadata.default_branch !== manifest.baseBranch) fail('manifest base branch does not match repository default branch');
   if (currentBase.sha !== manifest.baseSha) {
     fail('patch base is stale; rebuild or re-export against current main', {
@@ -80,6 +81,8 @@ export function buildPreparedPatchEscrow(input = {}) {
     repository: publishEvent.repository,
     ownerLogin: publishEvent.ownerLogin,
     issueNumber: publishEvent.issueNumber,
+    publishCommentId: publishEvent.commentId,
+    authorizedPatchSha256: publishEvent.patchSha256,
     defaultBranch: repositoryMetadata.default_branch,
     currentBaseSha: currentBase.sha,
     bundleId: manifest.bundleId,
@@ -97,7 +100,12 @@ export async function preparePatchEscrow(event, options = {}) {
   if (!publishEvent.valid) fail(`publish event blocked: ${publishEvent.blockers.join(', ')}`, publishEvent);
 
   const comments = options.comments || await fetchAllIssueComments(publishEvent.repository, publishEvent.issueNumber);
-  const selected = selectPatchEscrowFromComments(comments, publishEvent.bundleId, publishEvent.ownerLogin);
+  const selected = selectPatchEscrowFromComments(
+    comments,
+    publishEvent.bundleId,
+    publishEvent.ownerLogin,
+    publishEvent.patchSha256,
+  );
   if (!selected.ok) fail(`patch escrow selection failed: ${selected.reason}`, selected);
 
   const repositoryMetadata = options.repositoryMetadata || await githubRequest(`/repos/${publishEvent.repository}`);
@@ -119,6 +127,7 @@ async function main() {
     bundleId: prepared.bundleId,
     patchSha256: prepared.patchSha256,
     patchByteLength: prepared.patchByteLength,
+    publishCommentId: prepared.publishCommentId,
     outputPath: resolve(outputPath),
   }, null, 2)}\n`);
 }
