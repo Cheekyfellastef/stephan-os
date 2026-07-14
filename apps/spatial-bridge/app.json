@@ -1,0 +1,20 @@
+{
+  "name": "Stephanos Spatial Bridge",
+  "icon": "🖖",
+  "entry": "index.html",
+  "type": "command-surface",
+  "packaging": "classic-static",
+  "capabilities": [
+    "spatial-bridge-preview",
+    "read-only-captain-view",
+    "transport-mode-simulation",
+    "mock-spatial-projection"
+  ],
+  "eventsPublished": [],
+  "eventsConsumed": [],
+  "memoryUsage": "none-v0-mock-projection",
+  "continuityParticipation": "planned",
+  "aiAddressable": false,
+  "authority": "read-only",
+  "implementationStage": "v0-flat-prototype"
+}
