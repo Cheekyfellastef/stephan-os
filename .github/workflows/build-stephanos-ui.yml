@@ -33,7 +33,6 @@ jobs:
         with:
           node-version: '20'
 
-
       - name: Preflight frontend path and lockfile
         run: |
           echo "Frontend package path: stephanos-ui"
@@ -63,6 +62,7 @@ jobs:
         run: npm run stephanos:verify
 
       - name: Upload built Stephanos dist artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stephanos-ui-dist
