@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { writeSpatialBridgeIcons } from '../scripts/build-spatial-bridge-icons.mjs';
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -16,8 +19,7 @@ const serviceWorkerPath = new URL('../apps/spatial-bridge/service-worker.js', im
 const offlinePath = new URL('../apps/spatial-bridge/offline.html', import.meta.url);
 const questContractPath = new URL('../apps/spatial-bridge/quest-entry-contract.v1.json', import.meta.url);
 const assetLinksTemplatePath = new URL('../apps/spatial-bridge/assetlinks.template.json', import.meta.url);
-const icon192Path = new URL('../apps/spatial-bridge/icons/icon-192.png', import.meta.url);
-const icon512Path = new URL('../apps/spatial-bridge/icons/icon-512.png', import.meta.url);
+const iconSourcePath = new URL('../apps/spatial-bridge/icons/icon-source.json', import.meta.url);
 
 test('spatial bridge is launcher discoverable and explicitly read-only', () => {
   const appIndex = readJson(appIndexPath);
@@ -58,6 +60,7 @@ test('flat bridge prototype exposes simulation controls without mutation routes'
 
   assert.match(html, /Captain Bridge V0/);
   assert.match(html, /Read only · No execution authority/);
+  assert.match(html, /Home · Local Quest/);
   assert.match(html, /data-mode="home" data-simulation-only/);
   assert.match(html, /data-mode="caravan" data-simulation-only/);
   assert.match(html, /data-mode="degraded" data-simulation-only/);
@@ -89,8 +92,34 @@ test('Quest entry scaffold meets the source-level PWA contract', () => {
   assert.match(serviceWorker, /event\.request\.method !== 'GET'/);
   assert.match(serviceWorker, /offline\.html/);
   assert.match(offline, /Posture: read only/);
-  assert.equal(existsSync(icon192Path), true);
-  assert.equal(existsSync(icon512Path), true);
+});
+
+test('Quest icon generator produces valid deterministic PNG dimensions without committed binaries', () => {
+  const source = readJson(iconSourcePath);
+  const outputDir = mkdtempSync(join(tmpdir(), 'stephanos-spatial-icons-'));
+
+  try {
+    const outputs = writeSpatialBridgeIcons({
+      specPath: iconSourcePath,
+      outputDir,
+    });
+
+    assert.deepEqual(source.outputSizes, [192, 512]);
+    assert.equal(outputs.length, 2);
+
+    outputs.forEach((output, index) => {
+      const png = readFileSync(output);
+      const expectedSize = source.outputSizes[index];
+      assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+      assert.equal(png.readUInt32BE(16), expectedSize);
+      assert.equal(png.readUInt32BE(20), expectedSize);
+      assert.equal(png.includes(Buffer.from('IHDR')), true);
+      assert.equal(png.includes(Buffer.from('IDAT')), true);
+      assert.equal(png.includes(Buffer.from('IEND')), true);
+    });
+  } finally {
+    rmSync(outputDir, { recursive: true, force: true });
+  }
 });
 
 test('Quest entry contract selects Alpha release distribution and keeps Air Link optional', () => {
