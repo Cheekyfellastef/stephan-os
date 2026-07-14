@@ -57,9 +57,13 @@ jobs:
         if: always()
         run: node --test --test-reporter=dot shared/agents/[g-l]*.test.mjs
 
-      - name: Shared-agent regressions MA-ML
+      - name: Shared-agent regressions MA-MF
         if: always()
-        run: node --test --test-reporter=dot shared/agents/m[a-l]*.test.mjs
+        run: node --test --test-reporter=dot shared/agents/m[a-f]*.test.mjs
+
+      - name: Shared-agent regressions MG-ML
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/m[g-l]*.test.mjs
 
       - name: Shared-agent regressions MM-MZ
         if: always()
