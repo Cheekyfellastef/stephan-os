@@ -4,12 +4,14 @@ import {
   SHARED_WORKSPACE_RECORD_KINDS,
   SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
   aggregateLatestSharedWorkspaceStatus,
+  validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 
 export const CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION = 'chatgpt-participant-bridge.v1';
 export const CHATGPT_BRIDGE_PARTICIPANT_ID = 'chatgpt-bridge';
 export const CHATGPT_BRIDGE_TRANSPORT_STATUS = 'BLOCKED_TRANSPORT_NOT_CONFIGURED';
 export const CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES = 4096;
+export const CHATGPT_BRIDGE_REDACTED_TEXT = '[REDACTED]';
 
 export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_CURRENT_STATUS',
@@ -66,7 +68,7 @@ export const CHATGPT_BRIDGE_RESPONSE_STATUSES = Object.freeze([
 
 const SECRET_KEY_PATTERN = /secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|env/i;
 const SECRET_VALUE_PATTERN = /BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|\.env\b|browser cookies?|session\b/i;
-const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
+const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -87,6 +89,12 @@ function hasSecretShapedData(value, path = []) {
   if (Array.isArray(value)) return value.some((item, index) => hasSecretShapedData(item, [...path, String(index)]));
   if (!value || typeof value !== 'object') return typeof value === 'string' && SECRET_VALUE_PATTERN.test(value);
   return Object.entries(value).some(([key, child]) => SECRET_KEY_PATTERN.test(key) || hasSecretShapedData(child, [...path, key]));
+}
+
+function sanitizedProjectionText(value) {
+  const out = text(value);
+  if (!out) return '';
+  return SECRET_VALUE_PATTERN.test(out) ? CHATGPT_BRIDGE_REDACTED_TEXT : out;
 }
 
 function canonicalHash(value) {
@@ -150,38 +158,61 @@ export function createInertChatGptBridgeTransportAdapter() {
 }
 
 export function buildChatGptBridgeRecord(request = {}, options = {}) {
+  if (request.recordKind === 'approval-result') return { ok: false, reason: 'BLOCKED_APPROVAL_REQUIRED' };
+  if (!Object.values(CHATGPT_BRIDGE_RECORD_KINDS).includes(request.recordKind) || !CHATGPT_BRIDGE_WRITE_OPERATIONS.includes(request.operation)) {
+    return { ok: false, reason: 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED' };
+  }
+  if (CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[request.operation] !== request.recordKind) {
+    return { ok: false, reason: 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED' };
+  }
+  if (payloadBytes(request.boundedPayload) > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) return { ok: false, reason: 'BLOCKED_PAYLOAD_UNSAFE' };
+  if (hasSecretShapedData(request.boundedPayload)) return { ok: false, reason: 'BLOCKED_SECRET_SHAPED_DATA' };
+
+  const requestId = safeId(request.requestId);
+  const correlationId = safeId(request.correlationId);
+  if (!requestId || requestId !== text(request.requestId) || !correlationId || correlationId !== text(request.correlationId)) {
+    return { ok: false, reason: 'BLOCKED_AUTHORIZATION_FAILED' };
+  }
+  if (!text(request.relatedGoal) && !text(request.relatedPr)) return { ok: false, reason: 'BLOCKED_AUTHORIZATION_FAILED' };
+
   const timestampUtc = text(options.timestampUtc, request.timestampUtc);
-  const base = {
+  const record = {
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.MESSAGE,
-    messageId: safeId(`${request.recordKind}-${request.requestId}`, `bridge-${canonicalHash(request).slice(0, 16)}`),
+    messageId: safeId(`${request.recordKind}-${requestId}`, `bridge-${canonicalHash(request).slice(0, 16)}`),
     participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
     timestampUtc,
-    correlationId: safeId(request.correlationId, safeId(request.requestId, 'bridge-request')),
+    correlationId,
     relatedIssue: text(request.relatedGoal),
     relatedPr: text(request.relatedPr),
-    proofRefs: [`receipts/${safeId(request.requestId, 'request')}`],
+    proofRefs: [`receipts/${requestId}`],
     channel: 'chatgpt-participant-bridge',
     summary: text(request.boundedPayload?.summary, request.recordKind),
     body: JSON.stringify({ recordKind: request.recordKind, boundedPayload: request.boundedPayload }),
   };
-  if (request.recordKind === 'approval-result') return { ok: false, reason: 'BLOCKED_APPROVAL_REQUIRED' };
-  return { ok: true, record: base };
+  const validation = validateSharedWorkspaceRecord(record, options.workspaceValidationOptions);
+  if (!validation.valid) return { ok: false, reason: 'BLOCKED_WORKSPACE_RECORD_INVALID', validation };
+  return { ok: true, record, validation };
 }
 
 export async function createSanitizedSharedWorkspaceProjection(input = {}) {
-  const latest = input.latest || (input.workspaceRoot ? (await aggregateLatestSharedWorkspaceStatus(input.workspaceRoot, input)).latest : {});
+  let aggregation = { ok: true, reason: 'LATEST_STATUS_SUPPLIED', latest: input.latest || {} };
+  if (!input.latest && input.workspaceRoot) aggregation = await aggregateLatestSharedWorkspaceStatus(input.workspaceRoot, input);
+  const latest = aggregation?.latest || {};
   const sanitizeRecord = (record = null) => record ? {
-    kind: record.kind,
-    timestampUtc: record.timestampUtc,
-    status: record.status,
-    summary: record.summary,
-    title: record.title,
-    proofRefs: Array.isArray(record.proofRefs) ? record.proofRefs.filter((ref) => !SECRET_VALUE_PATTERN.test(String(ref))) : [],
+    kind: sanitizedProjectionText(record.kind),
+    timestampUtc: sanitizedProjectionText(record.timestampUtc),
+    status: sanitizedProjectionText(record.status),
+    summary: sanitizedProjectionText(record.summary),
+    title: sanitizedProjectionText(record.title),
+    proofRefs: Array.isArray(record.proofRefs) ? record.proofRefs.map(String).filter((ref) => !SECRET_VALUE_PATTERN.test(ref)) : [],
   } : null;
   return Object.freeze({
     schemaVersion: CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
     projectionKind: 'sanitized-shared-workspace-status',
+    aggregationOk: aggregation?.ok !== false,
+    aggregationReason: sanitizedProjectionText(aggregation?.reason),
+    aggregationVerdict: sanitizedProjectionText(aggregation?.finalVerdict),
     currentGoal: sanitizeRecord(latest.goal),
     currentStatus: sanitizeRecord(latest.status),
     latestProof: sanitizeRecord(latest.proof),
@@ -200,6 +231,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
   const expectedRecordKind = CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[operation];
   const isAllowedOperation = [...CHATGPT_BRIDGE_READ_OPERATIONS, ...CHATGPT_BRIDGE_WRITE_OPERATIONS].includes(operation);
   const requestId = safeId(request.requestId);
+  const correlationId = safeId(request.correlationId);
   const expiryMs = Date.parse(request.expiryUtc);
 
   if (options.transportConfigured === false) responseStatus = CHATGPT_BRIDGE_TRANSPORT_STATUS;
@@ -208,7 +240,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
   else if (!isAllowedOperation || CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS.includes(operation)) responseStatus = 'BLOCKED_OPERATION_NOT_ALLOWLISTED';
   else if (text(request.recordKind) !== expectedRecordKind) responseStatus = 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED';
   else if (!requestId || requestId !== text(request.requestId)) responseStatus = 'BLOCKED_AUTHORIZATION_FAILED';
-  else if (!safeId(request.correlationId) || (!text(request.relatedGoal) && !text(request.relatedPr))) responseStatus = 'BLOCKED_AUTHORIZATION_FAILED';
+  else if (!correlationId || correlationId !== text(request.correlationId) || (!text(request.relatedGoal) && !text(request.relatedPr))) responseStatus = 'BLOCKED_AUTHORIZATION_FAILED';
   else if (!text(request.expiryUtc) || !Number.isFinite(expiryMs) || expiryMs <= nowMs) responseStatus = 'BLOCKED_EXPIRED_REQUEST';
   else if (replayStore?.has?.(requestId)) responseStatus = 'BLOCKED_REPLAY_DETECTED';
   else if (payloadBytes(request.boundedPayload) > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
