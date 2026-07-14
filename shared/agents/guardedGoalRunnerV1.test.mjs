@@ -71,6 +71,18 @@ test('buildable capability gap advances an existing owning goal under inherited 
   assert.ok(result.capability.authority.allows.includes('bounded-source-build'));
 });
 
+test('unsafe mutation guard runs before governed capability dispatch', () => {
+  for (const kind of ['secret-access', 'destructive-mutation', 'arbitrary-shell']) {
+    const result = classifyGuardedGoalRunnerV1(packet('classified-capability-gap', {
+      blockerClassification: { class: C.BUILDABLE_CAPABILITY_GAP, owningGoal: '1509' },
+      requestedMutation: { kind },
+    }));
+    assert.equal(result.outcome, O.ABORT_UNKNOWN_BLOCKER);
+    assert.match(result.reason, /Unsafe mutation/);
+    assert.equal(result.capability, null);
+  }
+});
+
 test('buildable capability gap searches existing goals before creating a new one', () => {
   const result = classifyGuardedGoalRunnerV1(packet('missing-proof-return-channel', {
     blockerClassification: { class: C.BUILDABLE_CAPABILITY_GAP },
