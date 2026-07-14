@@ -49,8 +49,21 @@ jobs:
       - name: Verification Harness proof
         run: node --test shared/agents/verificationHarness.test.mjs shared/agents/verificationHarnessWorkspace.test.mjs
 
-      - name: Full shared-agent regression suite
-        run: node --test --test-reporter=dot shared/agents/*.test.mjs
+      - name: Shared-agent regressions A-F
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/[a-f]*.test.mjs
+
+      - name: Shared-agent regressions G-L
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/[g-l]*.test.mjs
+
+      - name: Shared-agent regressions M-R
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/[m-r]*.test.mjs
+
+      - name: Shared-agent regressions S-Z
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/[s-z]*.test.mjs
 
       - name: Diff check
         if: always()
