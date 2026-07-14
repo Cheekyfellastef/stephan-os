@@ -86,8 +86,8 @@ export function supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecor
   return {
     supervisorCurrentRecord: { ...supervisorRecord, blocker, expectedHeadSha: expected },
     currentSourceHead: { sha: clean(currentHead) },
-    prPublicationStatus: prProof ? { state: prProof.publicationState, prNumber: prProof.prNumber, url: prProof.prUrl } : { state: 'pending-operator-create-pr-click' },
-    prProof: prProof || { publicationState: 'pending-operator-create-pr-click', prNumber: null, prUrl: null, expectedHeadSha: expected, headSha: clean(currentHead), mergeable: null, conflicting: null, draft: false, changedFiles: { count: 0, summary: 'PR proof not published yet.' }, testsRun: { allGreen: false, summary: 'PR proof not published yet.' }, operatorApprovalRequired: true },
+    prPublicationStatus: prProof ? { state: prProof.publicationState, prNumber: prProof.prNumber, url: prProof.prUrl } : { state: 'pending-automated-publication' },
+    prProof: prProof || { publicationState: 'pending-automated-publication', prNumber: null, prUrl: null, expectedHeadSha: expected, headSha: clean(currentHead), mergeable: null, conflicting: null, draft: false, changedFiles: { count: 0, summary: 'Automated PR publication proof not published yet.' }, testsRun: { allGreen: false, summary: 'Automated PR publication proof not published yet.' }, operatorApprovalRequired: false },
     logPaths: collectLogPaths(supervisorRecord),
     allowedTests: [
       'node --test shared/agents/guardedGoalRunner*.test.mjs',
@@ -100,6 +100,7 @@ export function supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecor
 function nextOperatorActionFor(nextAction, supervisorRecord = {}) {
   if (nextAction.operatorApproval?.action) return nextAction.operatorApproval.action;
   if (nextAction.mergeGate?.nextOperatorAction) return nextAction.mergeGate.nextOperatorAction;
+  if (nextAction.outcome === O.ROUTE_TO_AUTOMATED_PUBLICATION) return nextAction.reason;
   if (supervisorRecord.nextOperatorAction) return supervisorRecord.nextOperatorAction;
   if (nextAction.outcome === O.GOAL_GREEN) return 'Prepare bounded PR publication proof; do not merge.';
   if (nextAction.outcome === O.ABORT_MISSING_PROOF) return 'Run Battle Bridge ignition supervisor to produce current proof, then rerun Guarded Goal Runner intake.';
@@ -108,6 +109,7 @@ function nextOperatorActionFor(nextAction, supervisorRecord = {}) {
 
 function allowedNextStepFor(nextAction) {
   if (nextAction.outcome === O.KNOWN_BLOCKER_NEXT_PATCH) return 'write-bounded-source-or-proof-patch';
+  if (nextAction.outcome === O.ROUTE_TO_AUTOMATED_PUBLICATION) return 'route-to-authenticated-pr-publisher';
   if (nextAction.outcome === O.GOAL_GREEN) return 'operator-pr-publication-proof-only';
   if (nextAction.outcome === O.ABORT_MISSING_PROOF) return 'produce-supervisor-current-record';
   return 'stop-and-report';
