@@ -211,10 +211,10 @@ function classifyGovernedBlocker(packet, blocker, classification) {
 export function classifyGuardedGoalRunnerV1(packet = {}) {
   if (!packet.supervisorCurrentRecord) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_MISSING_PROOF, reason: 'Missing supervisor current proof record.' });
   const blocker = latestBlocker(packet.supervisorCurrentRecord);
+  if (hasUnsafeMutation(packet)) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_UNKNOWN_BLOCKER, blocker, reason: `Unsafe mutation request rejected: ${packet.requestedMutation.kind}.` });
   const governed = classifyGovernedBlocker(packet, blocker, normalizedBlockerClassification(packet));
   if (governed) return governed;
   if (!blocker || !KNOWN_BLOCKERS.has(blocker)) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_UNKNOWN_BLOCKER, blocker, reason: 'Proof record does not contain a known Guarded Goal Runner V1 blocker or governed blocker classification.' });
-  if (hasUnsafeMutation(packet)) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_UNKNOWN_BLOCKER, blocker, reason: `Unsafe mutation request rejected: ${packet.requestedMutation.kind}.` });
   if (hasRepeatedBlocker(packet, blocker)) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_REPEATED_BLOCKER, blocker, reason: 'The same blocker repeated consecutively; stop before looping.' });
 
   const proof = prProof(packet);
