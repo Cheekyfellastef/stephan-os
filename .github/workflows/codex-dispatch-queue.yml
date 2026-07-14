@@ -1,0 +1,44 @@
+name: Codex Dispatch Queue Proof
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/codexDispatchQueue.mjs'
+      - 'shared/agents/codexDispatchQueue.test.mjs'
+      - 'shared/agents/automatedCodexDispatcher.mjs'
+      - 'shared/agents/automatedCodexDispatcher.test.mjs'
+      - 'shared/agents/verificationHarness.mjs'
+      - 'shared/agents/verificationHarness.test.mjs'
+      - 'shared/agents/verificationHarnessWorkspace.test.mjs'
+      - '.github/workflows/codex-dispatch-queue.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Focused queue and dispatcher proof
+        run: >-
+          node --test
+          shared/agents/codexDispatchQueue.test.mjs
+          shared/agents/automatedCodexDispatcher.test.mjs
+          shared/agents/verificationHarness.test.mjs
+          shared/agents/verificationHarnessWorkspace.test.mjs
+
+      - name: Full shared-agent regression suite
+        run: node --test shared/agents/*.test.mjs
+
+      - name: Diff check
+        run: git diff --check origin/main...HEAD
