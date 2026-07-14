@@ -1,0 +1,63 @@
+name: Battle Bridge Publisher Proof
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/battle-bridge-shared-workspace-publisher.mjs'
+      - 'scripts/battle-bridge-shared-workspace-publisher.test.mjs'
+      - 'scripts/guard-import-structure.mjs'
+      - 'tests/import-guard.test.mjs'
+      - 'shared/agents/sharedAgentWorkspaceStore.mjs'
+      - 'shared/agents/sharedAgentWorkspaceStore.test.mjs'
+      - 'shared/agents/verificationHarness.mjs'
+      - 'shared/agents/verificationHarness.test.mjs'
+      - 'shared/agents/verificationHarnessWorkspace.test.mjs'
+      - 'shared/agents/shared-workspace-dashboard-feed.test.mjs'
+      - '.github/workflows/battle-bridge-publisher-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: battle-bridge-publisher-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Publisher and import guard proof
+        run: >-
+          node --test
+          scripts/battle-bridge-shared-workspace-publisher.test.mjs
+          tests/import-guard.test.mjs
+
+      - name: Repository import structure proof
+        run: node scripts/guard-import-structure.mjs
+
+      - name: Shared Workspace and Verification Harness proof
+        run: >-
+          node --test
+          shared/agents/sharedAgentWorkspaceStore.test.mjs
+          shared/agents/verificationHarness.test.mjs
+          shared/agents/verificationHarnessWorkspace.test.mjs
+          shared/agents/shared-workspace-dashboard-feed.test.mjs
+
+      - name: Full shared-agent regression suite
+        run: node --test --test-reporter=dot shared/agents/*.test.mjs
+
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD
