@@ -1,0 +1,56 @@
+name: PR 1486 Bounded Resilience Repair
+
+on:
+  push:
+    branches:
+      - codex/fix-served-runtime-proof-and-windows-launcher-handoff
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply bounded exact-marker repair
+        run: node scripts/pr-1486-resilience-repair.mjs
+
+      - name: Run focused proof before publication
+        run: >-
+          node --test
+          scripts/battle-bridge-ignition-supervisor.test.mjs
+          scripts/windows-launcher-supervisor-freshness.test.mjs
+          scripts/windows-launcher-defaults.test.mjs
+          tests/windows-launcher-ignition.test.mjs
+
+      - name: Run launcher script guard
+        run: npm run stephanos:guard:scripts
+
+      - name: Check repair diff
+        run: git diff --check
+
+      - name: Publish bounded repair to existing PR branch
+        run: |
+          git config user.name "stephanos-resilience-repair[bot]"
+          git config user.email "stephanos-resilience-repair[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Expected bounded repair produced no changes" >&2
+            exit 1
+          fi
+          git commit -m "Repair PR #1486 resilience findings"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
