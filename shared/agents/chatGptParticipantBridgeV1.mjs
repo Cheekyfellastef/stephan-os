@@ -107,6 +107,15 @@ function hasSecretShapedData(value, path = [], seen = new WeakSet()) {
   }
 }
 
+function serializedPayloadHasSecretShapedData(serializedPayload) {
+  if (!serializedPayload?.ok || typeof serializedPayload.json !== 'string') return true;
+  try {
+    return hasSecretShapedData(JSON.parse(serializedPayload.json));
+  } catch {
+    return true;
+  }
+}
+
 function sanitizedProjectionText(value) {
   const out = text(value);
   if (!out) return '';
@@ -183,7 +192,7 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
   }
   const serializedPayload = serializePayload(request.boundedPayload);
   if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) return { ok: false, reason: 'BLOCKED_PAYLOAD_UNSAFE' };
-  if (hasSecretShapedData(request.boundedPayload)) return { ok: false, reason: 'BLOCKED_SECRET_SHAPED_DATA' };
+  if (serializedPayloadHasSecretShapedData(serializedPayload)) return { ok: false, reason: 'BLOCKED_SECRET_SHAPED_DATA' };
 
   const requestId = safeId(request.requestId);
   const correlationId = safeId(request.correlationId);
@@ -191,6 +200,10 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
     return { ok: false, reason: 'BLOCKED_AUTHORIZATION_FAILED' };
   }
   if (!text(request.relatedGoal) && !text(request.relatedPr)) return { ok: false, reason: 'BLOCKED_AUTHORIZATION_FAILED' };
+  if (text(request.approvalRef)) {
+    const approvalCheck = verifyOperatorApprovalSeparation(request, options.operatorApproval);
+    if (!approvalCheck.ok) return { ok: false, reason: approvalCheck.responseStatus };
+  }
 
   const timestampUtc = text(options.timestampUtc, request.timestampUtc);
   const record = {
@@ -274,9 +287,12 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
   else {
     const serializedPayload = serializePayload(request.boundedPayload);
     if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
-    else if (hasSecretShapedData(request.boundedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
+    else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
-    else if (text(request.approvalRef) && text(options.operatorApproval?.participantId) === CHATGPT_BRIDGE_PARTICIPANT_ID) responseStatus = 'BLOCKED_APPROVAL_MISMATCH';
+    else if (text(request.approvalRef)) {
+      const approvalCheck = verifyOperatorApprovalSeparation(request, options.operatorApproval);
+      if (!approvalCheck.ok) responseStatus = approvalCheck.responseStatus;
+    }
   }
 
   if (responseStatus === 'BRIDGE_VERIFIED_PASS') replayStore?.remember?.(requestId);
@@ -297,8 +313,12 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
 }
 
 export function verifyOperatorApprovalSeparation(request = {}, operatorApproval = {}) {
-  if (text(operatorApproval.participantId) === CHATGPT_BRIDGE_PARTICIPANT_ID) return { ok: false, responseStatus: 'BLOCKED_APPROVAL_MISMATCH' };
-  if (!text(operatorApproval.approvalRef) || text(operatorApproval.approvalRef) !== text(request.approvalRef)) return { ok: false, responseStatus: 'BLOCKED_APPROVAL_MISMATCH' };
-  if (!safeId(operatorApproval.correlationId) || text(operatorApproval.correlationId) !== text(request.correlationId)) return { ok: false, responseStatus: 'BLOCKED_APPROVAL_MISMATCH' };
+  const participantId = safeId(operatorApproval.participantId);
+  const approvalRef = text(operatorApproval.approvalRef);
+  const correlationId = safeId(operatorApproval.correlationId);
+  if (!participantId || !approvalRef || !correlationId) return { ok: false, responseStatus: 'BLOCKED_APPROVAL_REQUIRED' };
+  if (participantId !== text(operatorApproval.participantId) || participantId === CHATGPT_BRIDGE_PARTICIPANT_ID) return { ok: false, responseStatus: 'BLOCKED_APPROVAL_MISMATCH' };
+  if (approvalRef !== text(request.approvalRef)) return { ok: false, responseStatus: 'BLOCKED_APPROVAL_MISMATCH' };
+  if (correlationId !== text(operatorApproval.correlationId) || correlationId !== text(request.correlationId)) return { ok: false, responseStatus: 'BLOCKED_APPROVAL_MISMATCH' };
   return { ok: true, responseStatus: 'BRIDGE_VERIFIED_PASS' };
 }
