@@ -4,9 +4,9 @@ import {
   createPatchEscrowBundle,
   renderPatchEscrowChunkComment,
   renderPatchEscrowManifestComment,
-  renderPatchEscrowPublishComment,
   validatePatchEscrowManifest,
 } from '../shared/agents/codexPatchEscrow.mjs';
+import { renderPatchEscrowPublishAuthorizationComment } from '../shared/agents/codexPatchEscrowAuthorization.mjs';
 
 function fail(message) {
   process.stderr.write(`${JSON.stringify({ finalVerdict: 'PATCH_ESCROW_EXPORT_BLOCKED', message }, null, 2)}\n`);
@@ -42,7 +42,10 @@ bundle.chunks.forEach((chunk) => {
     `${renderPatchEscrowChunkComment(chunk)}\n`,
   );
 });
-writeFileSync(join(outputDirectory, 'publish.comment.md'), `${renderPatchEscrowPublishComment(bundle.manifest.bundleId)}\n`);
+writeFileSync(
+  join(outputDirectory, 'publish.comment.md'),
+  `${renderPatchEscrowPublishAuthorizationComment(bundle.manifest.bundleId, bundle.manifest.patchSha256)}\n`,
+);
 writeFileSync(join(outputDirectory, 'bundle.json'), `${JSON.stringify(bundle, null, 2)}\n`);
 
 process.stdout.write(`${JSON.stringify({
