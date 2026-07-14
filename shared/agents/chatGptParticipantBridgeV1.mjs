@@ -81,14 +81,30 @@ function safeId(value, fallback = '') {
   return SAFE_ID_PATTERN.test(out) ? out : fallback;
 }
 
-function payloadBytes(value) {
-  return Buffer.byteLength(JSON.stringify(value ?? {}), 'utf8');
+function serializePayload(value) {
+  try {
+    const json = JSON.stringify(value ?? {});
+    if (typeof json !== 'string') return { ok: false, json: '', bytes: Number.POSITIVE_INFINITY };
+    return { ok: true, json, bytes: Buffer.byteLength(json, 'utf8') };
+  } catch {
+    return { ok: false, json: '', bytes: Number.POSITIVE_INFINITY };
+  }
 }
 
-function hasSecretShapedData(value, path = []) {
-  if (Array.isArray(value)) return value.some((item, index) => hasSecretShapedData(item, [...path, String(index)]));
+function hasSecretShapedData(value, path = [], seen = new WeakSet()) {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return true;
+    seen.add(value);
+    return value.some((item, index) => hasSecretShapedData(item, [...path, String(index)], seen));
+  }
   if (!value || typeof value !== 'object') return typeof value === 'string' && SECRET_VALUE_PATTERN.test(value);
-  return Object.entries(value).some(([key, child]) => SECRET_KEY_PATTERN.test(key) || hasSecretShapedData(child, [...path, key]));
+  if (seen.has(value)) return true;
+  seen.add(value);
+  try {
+    return Object.entries(value).some(([key, child]) => SECRET_KEY_PATTERN.test(key) || hasSecretShapedData(child, [...path, key], seen));
+  } catch {
+    return true;
+  }
 }
 
 function sanitizedProjectionText(value) {
@@ -165,7 +181,8 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
   if (CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[request.operation] !== request.recordKind) {
     return { ok: false, reason: 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED' };
   }
-  if (payloadBytes(request.boundedPayload) > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) return { ok: false, reason: 'BLOCKED_PAYLOAD_UNSAFE' };
+  const serializedPayload = serializePayload(request.boundedPayload);
+  if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) return { ok: false, reason: 'BLOCKED_PAYLOAD_UNSAFE' };
   if (hasSecretShapedData(request.boundedPayload)) return { ok: false, reason: 'BLOCKED_SECRET_SHAPED_DATA' };
 
   const requestId = safeId(request.requestId);
@@ -179,7 +196,7 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
   const record = {
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.MESSAGE,
-    messageId: safeId(`${request.recordKind}-${requestId}`, `bridge-${canonicalHash(request).slice(0, 16)}`),
+    messageId: safeId(`${request.recordKind}-${requestId}`, `bridge-${canonicalHash({ recordKind: request.recordKind, requestId }).slice(0, 16)}`),
     participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
     timestampUtc,
     correlationId,
@@ -188,7 +205,7 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
     proofRefs: [`receipts/${requestId}`],
     channel: 'chatgpt-participant-bridge',
     summary: text(request.boundedPayload?.summary, request.recordKind),
-    body: JSON.stringify({ recordKind: request.recordKind, boundedPayload: request.boundedPayload }),
+    body: `{"recordKind":${JSON.stringify(request.recordKind)},"boundedPayload":${serializedPayload.json}}`,
   };
   const validation = validateSharedWorkspaceRecord(record, options.workspaceValidationOptions);
   if (!validation.valid) return { ok: false, reason: 'BLOCKED_WORKSPACE_RECORD_INVALID', validation };
@@ -197,7 +214,18 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
 
 export async function createSanitizedSharedWorkspaceProjection(input = {}) {
   let aggregation = { ok: true, reason: 'LATEST_STATUS_SUPPLIED', latest: input.latest || {} };
-  if (!input.latest && input.workspaceRoot) aggregation = await aggregateLatestSharedWorkspaceStatus(input.workspaceRoot, input);
+  if (!input.latest && input.workspaceRoot) {
+    try {
+      aggregation = await aggregateLatestSharedWorkspaceStatus(input.workspaceRoot, input);
+    } catch {
+      aggregation = {
+        ok: false,
+        reason: 'SHARED_WORKSPACE_AGGREGATION_FAILED',
+        finalVerdict: 'SHARED_WORKSPACE_AGGREGATION_BLOCKED',
+        latest: {},
+      };
+    }
+  }
   const latest = aggregation?.latest || {};
   const sanitizeRecord = (record = null) => record ? {
     kind: sanitizedProjectionText(record.kind),
@@ -243,10 +271,13 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
   else if (!correlationId || correlationId !== text(request.correlationId) || (!text(request.relatedGoal) && !text(request.relatedPr))) responseStatus = 'BLOCKED_AUTHORIZATION_FAILED';
   else if (!text(request.expiryUtc) || !Number.isFinite(expiryMs) || expiryMs <= nowMs) responseStatus = 'BLOCKED_EXPIRED_REQUEST';
   else if (replayStore?.has?.(requestId)) responseStatus = 'BLOCKED_REPLAY_DETECTED';
-  else if (payloadBytes(request.boundedPayload) > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
-  else if (hasSecretShapedData(request.boundedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
-  else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
-  else if (text(request.approvalRef) && text(options.operatorApproval?.participantId) === CHATGPT_BRIDGE_PARTICIPANT_ID) responseStatus = 'BLOCKED_APPROVAL_MISMATCH';
+  else {
+    const serializedPayload = serializePayload(request.boundedPayload);
+    if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
+    else if (hasSecretShapedData(request.boundedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
+    else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
+    else if (text(request.approvalRef) && text(options.operatorApproval?.participantId) === CHATGPT_BRIDGE_PARTICIPANT_ID) responseStatus = 'BLOCKED_APPROVAL_MISMATCH';
+  }
 
   if (responseStatus === 'BRIDGE_VERIFIED_PASS') replayStore?.remember?.(requestId);
   const auditReceiptRecord = auditReceipt({ request, responseStatus, timestampUtc: text(options.timestampUtc, new Date(nowMs).toISOString()), proofRefs: [`receipts/${requestId || 'request'}`] });
