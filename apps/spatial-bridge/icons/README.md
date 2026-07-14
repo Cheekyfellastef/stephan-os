@@ -11,7 +11,7 @@ apps/spatial-bridge/icons/icon-source.json
 Generator:
 
 ```text
-node scripts/build-spatial-bridge-icons.mjs
+node apps/spatial-bridge/tools/build-icons.mjs
 ```
 
 The command creates:
@@ -24,7 +24,7 @@ apps/spatial-bridge/icons/icon-512.png
 Use a temporary output directory for source verification without dirtying the worktree:
 
 ```text
-node scripts/build-spatial-bridge-icons.mjs --output-dir tmp/spatial-bridge-icons
+node apps/spatial-bridge/tools/build-icons.mjs --output-dir tmp/spatial-bridge-icons
 ```
 
 The generated icon is an original Stephanos bridge mark: a luminous captain core, curved bridge arcs, and two restrained status lights. Generated PNGs must remain uncommitted.
