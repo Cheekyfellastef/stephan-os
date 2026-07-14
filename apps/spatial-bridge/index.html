@@ -23,7 +23,6 @@
     }
 
     * { box-sizing: border-box; }
-
     html, body { min-height: 100%; }
 
     body {
@@ -341,10 +340,7 @@
     .footer-deck .center { color: var(--cyan); text-align: center; letter-spacing: 0.08em; }
     .footer-deck .right { text-align: right; }
 
-    .error {
-      color: var(--red);
-      border-color: rgba(255, 126, 126, 0.55) !important;
-    }
+    .error { color: var(--red); border-color: rgba(255, 126, 126, 0.55) !important; }
 
     @media (max-width: 1120px) {
       .topbar { grid-template-columns: 1fr auto; }
@@ -387,7 +383,7 @@
     </header>
 
     <nav class="mode-rack frame" aria-label="Simulation transport modes">
-      <button class="mode-button" type="button" data-mode="home" data-simulation-only aria-pressed="true">Home · Air Link</button>
+      <button class="mode-button" type="button" data-mode="home" data-simulation-only aria-pressed="true">Home · Local Quest</button>
       <button class="mode-button" type="button" data-mode="caravan" data-simulation-only aria-pressed="false">Caravan · Starlink</button>
       <button class="mode-button" type="button" data-mode="degraded" data-simulation-only aria-pressed="false">Remote degraded</button>
     </nav>
@@ -445,8 +441,8 @@
 
     <footer class="footer-deck frame">
       <span id="projection-version">projection version: loading</span>
-      <span class="center">One ship · One brain · Two wireless transport profiles</span>
-      <span class="right">Controller and headset proof pending</span>
+      <span class="center">One ship · One brain · Quest-local bridge</span>
+      <span class="right">Immersive renderer and headset proof pending</span>
     </footer>
   </main>
 
