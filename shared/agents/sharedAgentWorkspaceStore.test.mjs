@@ -11,9 +11,14 @@ import {
   createAgentCapabilityRecord,
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceGoalRecord,
+  createSharedWorkspaceHandoffRecord,
+  createSharedWorkspaceMessageRecord,
+  createSharedWorkspaceParticipantStatusRecord,
   createSharedWorkspaceProofRecord,
+  createSharedWorkspaceReceiptRecord,
   createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
+  readCommandInboxInert,
   resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
   writeAtomicJson,
@@ -42,7 +47,7 @@ test('valid message/status/proof/capability records pass deterministic validator
   assert.equal(validateSharedWorkspaceMessage(message).valid, true);
   for (const record of [
     createSharedWorkspaceStatusRecord({ statusId: 'status-1', timestampUtc: '2026-07-07T00:00:00Z', status: 'READY' }),
-    createSharedWorkspaceProofRecord({ proofId: 'proof-1', timestampUtc: '2026-07-07T00:00:01Z', status: 'PASS' }),
+    createSharedWorkspaceProofRecord({ proofId: 'proof-1', timestampUtc: '2026-07-07T00:00:01Z', status: 'PASS', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1'] }),
     createAgentCapabilityRecord({ agentId: 'codex', timestampUtc: '2026-07-07T00:00:02Z', mode: 'source_writer', trustedBuilder: true }),
   ]) {
     assert.equal(validateSharedWorkspaceRecord(record, { nowMs: Date.parse('2026-07-07T00:10:00Z') }).valid, true);
@@ -95,7 +100,7 @@ test('latest-status aggregation reads latest goal/status/proof/capability record
   try {
     await writeAtomicJson(root, ['goals', 'goal.json'], createSharedWorkspaceGoalRecord({ goalId: 'goal-1290', timestampUtc: '2026-07-07T00:00:00Z', title: '#1290' }), { repoRoot: REPO_ROOT });
     await writeAtomicJson(root, ['status', 'status.json'], createSharedWorkspaceStatusRecord({ statusId: 'status-1290', timestampUtc: '2026-07-07T00:01:00Z', status: 'READY' }), { repoRoot: REPO_ROOT });
-    await writeAtomicJson(root, ['proof', 'proof.json'], createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: '2026-07-07T00:02:00Z', status: 'PASS' }), { repoRoot: REPO_ROOT });
+    await writeAtomicJson(root, ['proof', 'proof.json'], createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: '2026-07-07T00:02:00Z', status: 'PASS', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1290'] }), { repoRoot: REPO_ROOT });
     await writeAtomicJson(root, ['capabilities', 'codex.json'], createAgentCapabilityRecord({ agentId: 'codex', timestampUtc: '2026-07-07T00:03:00Z', mode: 'source_writer', trustedBuilder: true }), { repoRoot: REPO_ROOT });
     const result = await aggregateLatestSharedWorkspaceStatus(root, { repoRoot: REPO_ROOT, nowMs: Date.parse('2026-07-07T00:10:00Z') });
     assert.equal(result.finalVerdict, 'SHARED_WORKSPACE_LATEST_STATUS_READY');
@@ -142,4 +147,92 @@ test('OpenClaw default capability remains design_only via /courier-open', () => 
   assert.equal(record.boundedWritePath, '/courier-open');
   assert.equal(record.trustedBuilder, false);
   assert.equal(validateSharedWorkspaceRecord(record).valid, true);
+});
+
+
+
+test('legacy Shared Workspace v1 records do not require participant identity unless runtime contract requires it', () => {
+  const timestampUtc = '2026-07-09T00:00:00.000Z';
+  const legacyRecords = [
+    { ...createSharedWorkspaceGoalRecord({ goalId: 'goal-legacy', timestampUtc, title: 'Legacy goal' }), participantId: '' },
+    { ...createSharedWorkspaceStatusRecord({ statusId: 'status-legacy', timestampUtc, status: 'CURRENT' }), participantId: '' },
+    { ...createSharedWorkspaceProofRecord({ proofId: 'proof-legacy', timestampUtc, status: 'PASS', correlationId: 'issue-1503', relatedIssue: '#1503', proofRefs: ['proof/legacy.json'] }), participantId: '' },
+    { ...createSharedWorkspaceEventRecord({ eventId: 'event-legacy', timestampUtc, eventKind: 'status' }), participantId: '' },
+  ];
+  for (const record of legacyRecords) {
+    const result = validateSharedWorkspaceRecord(record, { nowMs: Date.parse('2026-07-09T00:10:00.000Z') });
+    assert.equal(result.valid, true, `${record.kind}: ${result.errors.join(',')}`);
+  }
+
+  const runtime = { ...createSharedWorkspaceMessageRecord({ messageId: 'message-runtime', timestampUtc, correlationId: 'issue-1503', relatedIssue: '#1503', proofRefs: ['proof/runtime.json'] }), participantId: '' };
+  const runtimeResult = validateSharedWorkspaceRecord(runtime);
+  assert.equal(runtimeResult.valid, false);
+  assert.equal(runtimeResult.errors.includes('invalid-participant-id'), true);
+});
+
+test('PROOF records fail closed without canonical correlation and safe proof refs', () => {
+  const base = { proofId: 'proof-1503', timestampUtc: '2026-07-09T00:00:00.000Z', status: 'PASS' };
+  const missingCorrelation = validateSharedWorkspaceRecord(createSharedWorkspaceProofRecord({ ...base, relatedIssue: '#1503', proofRefs: ['proof/1503.json'] }));
+  assert.equal(missingCorrelation.valid, false);
+  assert.equal(missingCorrelation.errors.includes('missing-correlationId'), true);
+
+  const missingProofRefs = validateSharedWorkspaceRecord(createSharedWorkspaceProofRecord({ ...base, correlationId: 'issue-1503', relatedIssue: '#1503' }));
+  assert.equal(missingProofRefs.valid, false);
+  assert.equal(missingProofRefs.errors.includes('missing-proofRefs'), true);
+
+  const unsafeProofRefs = validateSharedWorkspaceRecord(createSharedWorkspaceProofRecord({ ...base, correlationId: 'issue-1503', relatedIssue: '#1503', proofRefs: ['../secret.json'] }));
+  assert.equal(unsafeProofRefs.valid, false);
+  assert.equal(unsafeProofRefs.errors.includes('unsafe-proof-ref'), true);
+});
+
+test('Shared Workspace Record Store V1 accepts message proof receipt status handoff records', () => {
+  const base = { timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1290'] };
+  const records = [
+    createSharedWorkspaceMessageRecord({ ...base, messageId: 'message-1290', body: 'Bounded source-only update.' }),
+    createSharedWorkspaceProofRecord({ ...base, proofId: 'proof-1290', status: 'PASS' }),
+    createSharedWorkspaceReceiptRecord({ ...base, receiptId: 'receipt-1290', receivedRecordId: 'message-1290' }),
+    createSharedWorkspaceParticipantStatusRecord({ ...base, participantStatusId: 'status-codex', status: 'available' }),
+    createSharedWorkspaceHandoffRecord({ ...base, handoffId: 'handoff-1290', fromParticipantId: 'codex', toParticipantId: 'operator' }),
+  ];
+  for (const record of records) {
+    const result = validateSharedWorkspaceRecord(record, { nowMs: Date.parse('2026-07-09T00:10:00.000Z') });
+    assert.equal(result.valid, true, `${record.kind}: ${result.errors.join(',')}`);
+  }
+});
+
+test('Shared Workspace Record Store V1 requires issue or PR correlation and proof refs', () => {
+  const missing = createSharedWorkspaceMessageRecord({ messageId: 'message-missing', timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'c' });
+  const result = validateSharedWorkspaceRecord(missing);
+  assert.equal(result.valid, false);
+  assert.equal(result.errors.includes('missing-related-issue-or-pr'), true);
+  assert.equal(result.errors.includes('missing-proofRefs'), true);
+});
+
+test('Shared Workspace Record Store V1 rejects large bodies and unsafe proof paths', () => {
+  const large = createSharedWorkspaceMessageRecord({ messageId: 'message-large', timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'c', relatedIssue: '1290', proofRefs: ['proof-1290'], body: 'x'.repeat(16 * 1024 + 1) });
+  assert.equal(validateSharedWorkspaceRecord(large).errors.includes('body-too-large'), true);
+  const unsafe = createSharedWorkspaceMessageRecord({ messageId: 'message-path', timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'c', relatedIssue: '1290', proofRefs: ['../secret'] });
+  assert.equal(validateSharedWorkspaceRecord(unsafe).errors.includes('unsafe-proof-ref'), true);
+});
+
+test('Shared Workspace Record Store V1 writes runtime records and reads latest status/proof summary from temp workspace', async () => {
+  const root = await tempWorkspace();
+  try {
+    await writeAtomicJson(root, ['status', 'participant-status.json'], createSharedWorkspaceParticipantStatusRecord({ participantStatusId: 'status-codex', timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1290'], status: 'available' }), { repoRoot: REPO_ROOT });
+    await writeAtomicJson(root, ['proof', 'proof-1290.json'], createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: '2026-07-09T00:01:00.000Z', participantId: 'codex', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1290'], status: 'PASS', summary: 'Deterministic temp workspace proof.' }), { repoRoot: REPO_ROOT });
+    await writeAtomicJson(root, ['capabilities', 'codex.json'], createAgentCapabilityRecord({ agentId: 'codex', timestampUtc: '2026-07-09T00:02:00.000Z' }), { repoRoot: REPO_ROOT });
+    const latest = await aggregateLatestSharedWorkspaceStatus(root, { repoRoot: REPO_ROOT, nowMs: Date.parse('2026-07-09T00:10:00.000Z') });
+    assert.equal(latest.finalVerdict, 'SHARED_WORKSPACE_LATEST_STATUS_READY');
+    assert.equal(latest.latest.status.status, 'available');
+    assert.equal(latest.latest.proof.summary, 'Deterministic temp workspace proof.');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('command inbox remains inert and grants no execution surfaces', () => {
+  const inbox = readCommandInboxInert();
+  assert.equal(inbox.finalVerdict, 'COMMAND_INBOX_INERT');
+  assert.equal(inbox.commandExecutionAllowed, false);
+  assert.equal(inbox.arbitraryShellAllowed, false);
+  assert.equal(inbox.patchApplicationAllowed, false);
+  assert.deepEqual(inbox.records, []);
 });

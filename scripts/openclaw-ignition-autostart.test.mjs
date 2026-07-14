@@ -22,6 +22,8 @@ function response(body, status = 200) {
 }
 
 const approvedEnv = {
+  STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'test-token',
+  STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1',
   STEPHANOS_OPENCLAW_GATEWAY_COMMAND: 'node local-openclaw-gateway.js --port 18789',
   STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node local-openclaw-chat.js',
   STEPHANOS_OPENCLAW_DASHBOARD_COMMAND: 'node local-openclaw-dashboard.js',
@@ -87,7 +89,7 @@ test('successful autostart verification uses canonical OpenClaw identity endpoin
   assert.equal(result.state, 'openclaw-autostart-identity-verified');
   assert.deepEqual(spawned.map((entry) => entry.commandArgs[0]), ['local-openclaw-gateway.js', 'local-openclaw-chat.js', 'local-openclaw-dashboard.js']);
   assert.equal(result.guardrails.openClawTaskExecutionAllowed, false);
-  assert.equal(result.guardrails.mutationAllowed, false);
+  assert.equal(result.guardrails.mutationAllowed, true);
 });
 
 
@@ -133,7 +135,7 @@ test('delayed startup retries until identity is ready', async () => {
   let fetchCount = 0;
   const result = await evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: {},
+    env: { STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'test-token', STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1' },
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => (++fetchCount < 4 ? Promise.reject(new Error('down')) : response(identity())),
@@ -151,7 +153,7 @@ test('delayed startup retries until identity is ready', async () => {
 test('identity failure diagnostics include selected gateway endpoint and source', async () => {
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: {},
+    env: { STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'test-token', STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1' },
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => { throw new Error('down'); },
@@ -164,7 +166,7 @@ test('identity failure diagnostics include selected gateway endpoint and source'
 test('wrong endpoint blocks with explicit diagnostics', async () => {
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: {},
+    env: { STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'test-token', STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1' },
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => response(identity({ endpoint: 'http://127.0.0.1:9999/identity' })),
@@ -177,7 +179,7 @@ test('wrong endpoint blocks with explicit diagnostics', async () => {
 test('wrong runtime blocks with runtime diagnostics', async () => {
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: {},
+    env: { STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'test-token', STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1' },
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => response(identity({ runtimeId: 'other-runtime' })),
@@ -191,7 +193,7 @@ test('timeout blocks when gateway never becomes reachable', async () => {
   let fetchCount = 0;
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: {},
+    env: { STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'test-token', STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1' },
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => { fetchCount += 1; throw new Error('down'); },
@@ -206,7 +208,7 @@ test('timeout blocks when gateway never becomes reachable', async () => {
 test('identity mismatch blocks when product or version is not approved', async () => {
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: {},
+    env: { STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'test-token', STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1' },
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => response(identity({ product: 'Unknown Gateway', version: '' })),
@@ -225,12 +227,12 @@ test('guardrails reject OpenClaw task execution and mutation launch commands', (
   assert.equal(targets[0].reason, 'approved-launch-command-violates-guardrails');
 });
 
-test('ignition uses shared Control Panel gateway startup path on approved 18789 port', async () => {
+test('ignition uses shared OpenClaw gateway startup path on approved 18789 port', async () => {
   const spawned = [];
   let fetchCount = 0;
   const result = await evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: {},
+    env: { STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'test-token', STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1' },
     captureStep: noWindowsDiscovery,
     spawnFn: (command, commandArgs) => {
       spawned.push({ command, commandArgs });
@@ -251,21 +253,24 @@ test('ignition uses shared Control Panel gateway startup path on approved 18789 
   assert.equal(result.ignitionPhase, 'openclaw-gateway-startup');
   assert.equal(result.startupSource, 'shared:openclaw-control-panel-start-gateway');
   assert.equal(spawned.length, 1);
-  assert.equal(spawned[0].command, 'powershell.exe');
-  assert.match(spawned[0].commandArgs.join(' '), /openclaw gateway --host 127\.0\.0\.1 --port 18789/);
+  assert.equal(spawned[0].command, 'openclaw');
+  assert.deepEqual(spawned[0].commandArgs, ['gateway', 'start', '--json']);
+  assert.match(`${spawned[0].command} ${spawned[0].commandArgs.join(' ')}`, /openclaw gateway start --json/);
+  assert.doesNotMatch(`${spawned[0].command} ${spawned[0].commandArgs.join(' ')}`, /openclaw config set/);
+  assert.doesNotMatch(spawned[0].commandArgs.join(' '), /openclaw gateway run --force/);
 });
 
 test('splash/status diagnostics report OpenClaw startup phase and endpoint unreachable details', async () => {
   const logs = [];
   await assert.rejects(() => evaluateOpenClawRuntimeAutostartWithDeps({
     platform: 'win32',
-    env: {},
+    env: { STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'test-token', STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1' },
     captureStep: noWindowsDiscovery,
     spawnFn: () => ({ pid: 42, unref() {} }),
     fetchFn: async () => { throw new Error('down'); },
     waitMs: 0,
     readinessTimeoutMs: 0,
     log: (message) => logs.push(message),
-  }), /startupSource.*shared:openclaw-control-panel-start-gateway.*startupCommand.*18789.*processStartResult.*probeAttempts.*endpoint-unreachable/);
+  }), /startupSource.*shared:openclaw-control-panel-start-gateway.*startupCommand.*gateway start --json.*processStartResult.*probeAttempts.*endpoint-unreachable/);
   assert.match(logs.join('\n'), /openclaw-gateway-startup/);
 });

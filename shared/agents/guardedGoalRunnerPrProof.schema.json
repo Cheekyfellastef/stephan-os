@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stephanos.guarded-goal-runner-pr-proof.v1",
+  "title": "Guarded Goal Runner V1 PR Proof Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generatedAt",
+    "issue",
+    "publicationState",
+    "baseBranch",
+    "baseSha",
+    "expectedBaseSha",
+    "headSha",
+    "expectedHeadSha",
+    "mergeable",
+    "conflicting",
+    "draft",
+    "changedFiles",
+    "testsRun",
+    "operatorApprovalRequired"
+  ],
+  "properties": {
+    "schema": { "const": "stephanos.guarded-goal-runner-pr-proof.v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "issue": { "type": ["integer", "string"] },
+    "prNumber": { "type": ["integer", "null"], "minimum": 1 },
+    "prUrl": { "type": ["string", "null"], "format": "uri" },
+    "publicationState": {
+      "type": "string",
+      "enum": ["missing", "pending-operator-create-pr-click", "published", "draft", "unknown"]
+    },
+    "baseBranch": { "type": "string", "minLength": 1 },
+    "baseSha": { "type": "string" },
+    "expectedBaseSha": { "type": ["string", "null"] },
+    "headSha": { "type": "string" },
+    "expectedHeadSha": { "type": ["string", "null"] },
+    "mergeable": { "type": ["boolean", "null"] },
+    "conflicting": { "type": ["boolean", "null"] },
+    "draft": { "type": "boolean" },
+    "changedFiles": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["count"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "files": { "type": "array", "items": { "type": "string" } },
+        "summary": { "type": "string" }
+      }
+    },
+    "testsRun": {
+      "type": ["object", "array"],
+      "description": "Required test summary. Safe merge gate requires allGreen=true or every required/commands item green/pass."
+    },
+    "operatorApprovalRequired": { "type": "boolean" },
+    "performsMerge": { "const": false },
+    "performsShellExecution": { "const": false }
+  }
+}

@@ -9,8 +9,7 @@ param(
   [string]$SharedWorkspace = '',
   [switch]$ReadinessReportOnly,
   [switch]$RepairMissingUi4173,
-  [switch]$RepairDryRun,
-  [switch]$TestTempIgnitionProof
+  [switch]$RepairDryRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,13 +44,13 @@ $launcherShellUrl = 'http://127.0.0.1:4173/'
 $launcherRuntimeUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html'
 $launcherRuntimeStatusUrl = 'http://127.0.0.1:4173/apps/stephanos/runtime-status.json'
 $viteDevUrl = 'http://localhost:5173/'
-$launcherRootCommand = 'npm run stephanos:ignite'
+$launcherRootCommand = 'powershell.exe -ExecutionPolicy Bypass -File .\windows\Invoke-Stephanos-Ignite-With-Approval.ps1 -RepositoryRoot .'
 $launcherRootCanonicalCommand = 'npm run stephanos:ignite'
 $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --probe-existing-server'
 $visiblePowerShellRequired = $false
-$canonicalSharedWorkspace = if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $SharedWorkspace.Trim() } elseif ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } else { Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace' }
-$ignitionProofRoot = if ($TestTempIgnitionProof.IsPresent) { Join-Path ([System.IO.Path]::GetTempPath()) 'stephanos-ignition-proof' } else { $canonicalSharedWorkspace }
-$supervisorStatusPath = Join-Path $canonicalSharedWorkspace 'status\battle-bridge-ignition-supervisor-current.json'
+$canonicalSharedWorkspaceRoot = if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $SharedWorkspace.Trim() } elseif ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
+$battleBridgeSupervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'status/battle-bridge-ignition-supervisor-current.json'
+$ignitionProofRoot = $canonicalSharedWorkspaceRoot
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
 $ignitionTranscriptPath = Join-Path $ignitionProofRoot 'ignition-proof-transcript.jsonl'
@@ -176,30 +175,66 @@ function Get-LatestOpenClawStartupStatus {
 }
 
 
-function Get-CurrentSupervisorStatus {
+function Get-BattleBridgeSupervisorCurrentRecord {
+  $supervisorCurrentPath = $battleBridgeSupervisorCurrentPath
+  if (-not (Test-Path -LiteralPath $supervisorCurrentPath -PathType Leaf)) { return $null }
   try {
-    if (Test-Path -LiteralPath $supervisorStatusPath -PathType Leaf) {
-      return (Get-Content -LiteralPath $supervisorStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json)
-    }
+    $record = Get-Content -LiteralPath $supervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    return $record
   }
-  catch {}
-  return $null
+  catch {
+    return $null
+  }
+}
+
+function Convert-SupervisorRecordToIgnitionStatus([object]$SupervisorRecord, [string]$FallbackPhase, [string]$FallbackMessage) {
+  if (-not $SupervisorRecord) { return $null }
+  $phase = if ($SupervisorRecord.currentPhase) { [string]$SupervisorRecord.currentPhase } else { $FallbackPhase }
+  $message = if ($SupervisorRecord.blockerId) { "Battle Bridge ignition blocked: $($SupervisorRecord.blockerId)" } elseif ($SupervisorRecord.trafficLight -eq 'green') { 'Battle Bridge ignition supervisor reports READY.' } else { $FallbackMessage }
+  $stage = if ($SupervisorRecord.trafficLight -eq 'green') { 'ready' } elseif ($SupervisorRecord.blockerId) { 'blocked' } else { $phase }
+  return [ordered]@{
+    phase = if ($SupervisorRecord.blockerId) { 'blocked' } elseif ($SupervisorRecord.trafficLight -eq 'green') { 'ready' } else { $phase }
+    message = $message
+    trafficLight = if ($SupervisorRecord.trafficLight) { [string]$SupervisorRecord.trafficLight } else { 'blue' }
+    progressPercentage = if ($SupervisorRecord.trafficLight -eq 'green') { 100 } elseif ($SupervisorRecord.blockerId) { 100 } else { 65 }
+    currentAction = $message
+    lastCompletedAction = ''
+    proofSummary = [ordered]@{ build = 'supervisor-truth'; verify = 'supervisor-truth'; pull = 'supervisor-truth'; restart = 'supervisor-truth'; servedRuntime = if ($SupervisorRecord.services.stephanosUi4173.servedRuntimeProof.ready) { 'exact-head-ready' } else { 'pending-or-blocked' }; moduleMime = 'supervisor-truth' }
+    enterStephanosEnabled = $SupervisorRecord.trafficLight -eq 'green'
+    updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    visiblePowerShellRequired = $visiblePowerShellRequired
+    primaryUi = 'splash-status-browser'
+    splashPath = $ignitionSplashPath
+    statusPath = $ignitionStatusPath
+    logRoot = (Join-Path $ignitionProofRoot 'logs')
+    transcriptPath = $ignitionTranscriptPath
+    supportSnapshotPath = $ignitionSupportSnapshotPath
+    exactHeadApprovalRequired = $true
+    exactHeadApprovalStatus = 'required-before-merge-proof'
+    safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'
+    openClawStartupState = if ($SupervisorRecord.services.openClaw18789.ready) { 'ready' } else { 'pending' }
+    openClawStartupDetail = 'Projected from Battle Bridge ignition supervisor current record.'
+    nextOperatorAction = if ($SupervisorRecord.nextOperatorAction) { [string]$SupervisorRecord.nextOperatorAction } else { 'Watch the Battle Bridge ignition supervisor surface.' }
+    currentStage = $stage
+    ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $stage
+    blocker = if ($SupervisorRecord.blockerId) { [string]$SupervisorRecord.blockerId } else { '' }
+    battleBridgeSupervisorCurrentPath = $supervisorCurrentPath
+    battleBridgeSupervisor = $SupervisorRecord
+    destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs'); transcriptPath = $ignitionTranscriptPath; supportSnapshotPath = $ignitionSupportSnapshotPath }
+  }
 }
 
 function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extra = @{}) {
   Initialize-IgnitionProofWorkspace
+  $supervisorStatus = Convert-SupervisorRecordToIgnitionStatus -SupervisorRecord (Get-BattleBridgeSupervisorCurrentRecord) -FallbackPhase $Phase -FallbackMessage $Message
+  if ($supervisorStatus -and ($supervisorStatus.trafficLight -eq 'green' -or $supervisorStatus.phase -eq 'blocked')) {
+    $supervisorStatus | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
+    Write-IgnitionTranscript -Event @{ event = 'ignition-status'; phase = $supervisorStatus.phase; message = $supervisorStatus.message; currentStage = $supervisorStatus.currentStage; blocker = $supervisorStatus.blocker; battleBridgeSupervisorCurrentPath = $supervisorStatus.battleBridgeSupervisorCurrentPath }
+    Update-IgnitionSplashScreen -Status $supervisorStatus
+    return
+  }
   $currentStage = if ($Extra.ContainsKey('currentStage')) { $Extra.currentStage } else { $Phase }
   $latestOpenClawStartup = Get-LatestOpenClawStartupStatus
-  $supervisorStatus = Get-CurrentSupervisorStatus
-  if ($supervisorStatus -and ($supervisorStatus.trafficLight -eq 'green' -or $supervisorStatus.blockerId)) {
-    $Phase = if ($supervisorStatus.trafficLight -eq 'green') { 'ready' } else { 'blocked' }
-    $Message = if ($supervisorStatus.blockerId) { [string]$supervisorStatus.blockerId } elseif ($supervisorStatus.currentPhase) { [string]$supervisorStatus.currentPhase } else { $Message }
-    $Extra['currentStage'] = $Phase
-    $Extra['nextOperatorAction'] = if ($supervisorStatus.nextOperatorAction) { [string]$supervisorStatus.nextOperatorAction } else { 'Follow the Battle Bridge ignition supervisor current record.' }
-    if ($supervisorStatus.blockerId) { $Extra['blocker'] = [string]$supervisorStatus.blockerId }
-    $Extra['supervisorStatusPath'] = $supervisorStatusPath
-    $Extra['supervisorCurrentRecord'] = $supervisorStatus
-  }
   $payload = [ordered]@{
     phase = $Phase
     message = $Message
@@ -293,7 +328,6 @@ function Show-IgnitionSplashScreen {
   Start-Process -FilePath $splashPath | Out-Null
   Write-LiveLog "ignition splash/status screen opened: $splashPath"
   Write-LiveLog "verbose logs/status destination: $ignitionProofRoot"
-  Write-LiveLog "supervisor status source: $supervisorStatusPath"
 }
 
 function Get-LauncherChildBlocker {
@@ -425,6 +459,61 @@ function Test-CommandSucceeds([string]$Command) {
   catch {
     return $false
   }
+}
+
+
+function Get-RepositoryHeadForSupervisorProof {
+  try {
+    Push-Location -LiteralPath $repoRoot
+    try {
+      $head = (& git rev-parse HEAD 2>$null)
+      if ($LASTEXITCODE -eq 0 -and $head) { return ([string]$head).Trim() }
+    }
+    finally {
+      Pop-Location
+    }
+  }
+  catch {}
+  return ''
+}
+
+function Test-BattleBridgeSupervisorFinalContract([object]$SupervisorRecord, [string]$ExpectedHead) {
+  if (-not $SupervisorRecord) { return $false }
+  $servedRuntimeProof = $SupervisorRecord.services.stephanosUi4173.servedRuntimeProof
+  return (
+    $SupervisorRecord.currentPhase -eq 'ready' -and
+    $SupervisorRecord.trafficLight -eq 'green' -and
+    $SupervisorRecord.services.backend8787.ready -eq $true -and
+    $SupervisorRecord.services.openClaw18789.ready -eq $true -and
+    $SupervisorRecord.services.stephanosUi4173.ready -eq $true -and
+    $servedRuntimeProof.ready -eq $true -and
+    [string]$servedRuntimeProof.currentHead -eq [string]$ExpectedHead
+  )
+}
+
+function Wait-ForBattleBridgeSupervisorReady([int]$TimeoutSeconds = 300) {
+  $expectedHead = Get-RepositoryHeadForSupervisorProof
+  if (-not $expectedHead) { throw 'Unable to resolve git HEAD for Battle Bridge served runtime exact-head proof.' }
+  Write-LiveLog "waiting for Battle Bridge supervisor current record at $battleBridgeSupervisorCurrentPath (expectedHead=$expectedHead)"
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    $record = Get-BattleBridgeSupervisorCurrentRecord
+    if ($record) {
+      Write-IgnitionStatus -Phase 'battle-bridge-supervisor' -Message 'Waiting for Battle Bridge ignition supervisor final contract.' -Extra @{ currentStage = 'served-proof'; battleBridgeSupervisorCurrentPath = $battleBridgeSupervisorCurrentPath }
+      if (Test-BattleBridgeSupervisorFinalContract -SupervisorRecord $record -ExpectedHead $expectedHead) {
+        Write-LiveLog 'Battle Bridge supervisor final contract is green and exact-head.'
+        return $record
+      }
+      if ($record.blockerId) {
+        if ($record.blockerId -eq 'served-runtime-stale') {
+          Write-LiveLog 'Battle Bridge supervisor detected stale served runtime; guarded UI repair/retry remains delegated to npm run stephanos:ignite.'
+        }
+        throw "Battle Bridge ignition supervisor blocked: $($record.blockerId). $($record.nextOperatorAction)"
+      }
+    }
+    Start-Sleep -Seconds 1
+  }
+  throw "Timed out waiting for Battle Bridge supervisor final contract at $battleBridgeSupervisorCurrentPath"
 }
 
 function Wait-ForUrl([string]$StepLabel, [string]$Url, [int]$TimeoutSeconds = 120, [switch]$ObserveChildIgnitionBlocker) {
@@ -697,11 +786,16 @@ try {
 
   Write-IgnitionStatus -Phase 'starting-local-services' -Message 'Starting local services with minimized/background PowerShell log capture.' -Extra @{ currentStage = 'starting-local-services' }
 
-  Ensure-ProcessRunning -StepLabel 'backend' -HealthUrl $backendHealthUrl -WindowTitle 'Stephanos Backend' -Command 'npm --prefix stephanos-server run dev'
-
   if ($Mode -eq 'vite-dev') {
+    Ensure-ProcessRunning -StepLabel 'backend' -HealthUrl $backendHealthUrl -WindowTitle 'Stephanos Backend' -Command 'npm --prefix stephanos-server run dev'
     Write-LiveLog 'starting vite-dev UI server'
     Ensure-ProcessRunning -StepLabel 'vite-dev ui' -HealthUrl $viteDevUrl -WindowTitle 'Stephanos Vite Dev' -Command 'npm --prefix stephanos-ui run dev'
+
+    Write-LiveLog 'waiting for backend'
+    Wait-ForUrl -StepLabel 'backend health' -Url $backendHealthUrl
+    Wait-ForUrl -StepLabel 'backend mission operations freshness route' -Url $backendMissionOperationsUrl
+    Write-LiveLog "waiting for vite-dev runtime at $viteDevUrl"
+    Wait-ForUrl -StepLabel 'vite-dev ui' -Url $viteDevUrl
   }
   else {
     Write-LiveLog 'launcher-root selected; ensuring port 5173 is not used by vite-dev'
@@ -713,27 +807,15 @@ try {
       Write-LiveLog 'no 5173 listener to stop'
     }
 
-    Write-LiveLog "starting launcher-root UI server (command=$launcherRootCommand)"
-    Ensure-ProcessRunning -StepLabel 'launcher-root ui' -HealthUrl $launcherRuntimeStatusUrl -WindowTitle 'Stephanos Launcher Root' -Command $launcherRootCommand -ReuseProbeCommand $launcherRootReuseProbeCommand
-  }
+    Write-LiveLog "starting Battle Bridge supervisor through launcher-root approval helper (command=$launcherRootCommand)"
+    Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command $launcherRootCommand
+    $battleBridgeSupervisor = Wait-ForBattleBridgeSupervisorReady
 
-  Write-LiveLog 'waiting for backend'
-  Wait-ForUrl -StepLabel 'backend health' -Url $backendHealthUrl
-  Wait-ForUrl -StepLabel 'backend mission operations freshness route' -Url $backendMissionOperationsUrl
-
-  if ($Mode -eq 'vite-dev') {
-    Write-LiveLog "waiting for vite-dev runtime at $viteDevUrl"
-    Wait-ForUrl -StepLabel 'vite-dev ui' -Url $viteDevUrl
-  }
-  else {
-    Write-LiveLog "waiting for launcher-root runtime-status endpoint at $launcherRuntimeStatusUrl"
-    Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url $launcherRuntimeStatusUrl -ObserveChildIgnitionBlocker
-
-    Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl"
+    Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl after supervisor green proof"
     Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
 
     if ($resolvedBootMode -in @('runtime', 'cockpit')) {
-      Write-LiveLog "waiting for launcher-root runtime target at $launcherRuntimeUrl"
+      Write-LiveLog "waiting for launcher-root runtime target at $launcherRuntimeUrl after supervisor green proof"
       Wait-ForUrl -StepLabel 'launcher-root runtime target' -Url $launcherRuntimeUrl
     }
   }

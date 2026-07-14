@@ -46,7 +46,7 @@ export function resolveApprovedOpenClawAutostartTargets({ env = process.env } = 
   return OPENCLAW_AUTOSTART_SURFACES.map((surface) => {
     const commandText = String(env[surface.envKey] || '').trim();
     if (surface.id === 'gateway') {
-      const target = buildOpenClawGatewayStartupTarget({ commandText: commandText || undefined, source: commandText ? `env:${surface.envKey}` : OPENCLAW_GATEWAY_STARTUP_SOURCE });
+      const target = buildOpenClawGatewayStartupTarget({ commandText: commandText || undefined, source: commandText ? `env:${surface.envKey}` : OPENCLAW_GATEWAY_STARTUP_SOURCE, env });
       const reason = target.reason === 'startup-command-violates-guardrails' ? 'approved-launch-command-violates-guardrails' : target.reason;
       return { ...surface, ...target, reason, blocked: target.blocked, required: surface.required };
     }

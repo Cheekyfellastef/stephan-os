@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import {
   CODEX_QUEUE_STATUS,
   buildCodexDispatchQueueContract,
-  createCodexQueueRecord,
   transitionCodexQueueRecord,
   validateCodexQueueRecord,
 } from './codexDispatchQueue.mjs';
@@ -42,6 +41,7 @@ export const CODEX_DISPATCH_DECISION = Object.freeze({
   WAITING_FOR_QUEUE: 'WAITING_FOR_QUEUE',
   BLOCKED_BY_INVALID_QUEUE_ITEM: 'BLOCKED_BY_INVALID_QUEUE_ITEM',
   BLOCKED_BY_OPERATOR_APPROVAL: 'BLOCKED_BY_OPERATOR_APPROVAL',
+  BLOCKED_BY_QUEUE_NOT_READY: 'BLOCKED_BY_QUEUE_NOT_READY',
   BLOCKED_BY_MISSING_INTEGRATION,
 });
 
@@ -68,8 +68,8 @@ function text(value, fallback = '') {
   return out || fallback;
 }
 
-function queued(records = []) {
-  return records.map(createCodexQueueRecord).find((record) => record.status === CODEX_QUEUE_STATUS.QUEUED) || null;
+function dispatchable(records = []) {
+  return records.find((record) => record?.status === CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH) || null;
 }
 
 function eventKindFor(status) {
@@ -193,16 +193,19 @@ export function createCodexWorkspaceMessage(record, status, input = {}) {
 }
 
 export function createDispatcherWorkspacePublication(input = {}) {
-  const record = createCodexQueueRecord(input.record || input.queueRecord || {});
+  const record = input.record || input.queueRecord || {};
+  const validation = validateCodexQueueRecord(record);
+  if (!validation.valid) return Object.freeze({ valid: false, validation, statusRecord: null, eventRecord: null });
   const state = input.dispatcherState || CODEX_DISPATCHER_STATE.IDLE;
   const timestampUtc = text(input.timestampUtc || input.now, 'pending');
   return Object.freeze({
+    valid: true,
     statusRecord: createSharedWorkspaceStatusRecord({
       statusId: `codex-dispatcher-${record.jobId}`,
       timestampUtc,
       status: state,
       summary: input.summary || `Automated Codex Dispatcher ${state} for ${record.jobId}`,
-      proofRefs: input.proofRefs || [`proof/${record.jobId}.json`],
+      proofRefs: input.proofRefs || record.proofRequirements.refs,
     }),
     eventRecord: createSharedWorkspaceEventRecord({
       eventId: `codex-dispatcher-${record.jobId}-${state.toLowerCase().replaceAll('_', '-')}`,
@@ -227,7 +230,7 @@ export function verifyDispatchReceipt(input = {}) {
 }
 
 export function createDispatcherDashboard(input = {}) {
-  const records = (input.queueRecords || []).map(createCodexQueueRecord);
+  const records = (input.queueRecords || []).filter((record) => validateCodexQueueRecord(record).valid);
   const active = records.find((record) => [CODEX_QUEUE_STATUS.DISPATCHED, CODEX_QUEUE_STATUS.RUNNING, CODEX_QUEUE_STATUS.WAITING_PROOF].includes(record.status)) || null;
   const lastProof = records.map((record) => record.resultMetadata?.proofMetadata || record.resultMetadata).filter((meta) => meta && Object.keys(meta).length).at(-1) || null;
   const lastBlocker = records.map((record) => record.blockerMetadata).filter((meta) => meta && Object.keys(meta).length).at(-1) || null;
@@ -247,15 +250,56 @@ export function createDispatcherDashboard(input = {}) {
   });
 }
 
+function invalidTransitionResult(record, transition) {
+  return Object.freeze({
+    dispatcherState: CODEX_DISPATCHER_STATE.FAILED,
+    decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_INVALID_QUEUE_ITEM,
+    record,
+    errors: transition.errors || [transition.error],
+    finalVerdict: 'CODEX_DISPATCHER_BLOCKED',
+  });
+}
+
 export function dispatchQueuedCodexJob(input = {}) {
-  const record = input.queueRecord ? createCodexQueueRecord(input.queueRecord) : queued(input.queueRecords || []);
+  const record = input.queueRecord || dispatchable(input.queueRecords || []);
   if (!record) return Object.freeze({ dispatcherState: CODEX_DISPATCHER_STATE.IDLE, decision: CODEX_DISPATCH_DECISION.WAITING_FOR_QUEUE, finalVerdict: 'CODEX_DISPATCHER_WAITING' });
   const validation = validateCodexQueueRecord(record);
   if (!validation.valid) return Object.freeze({ dispatcherState: CODEX_DISPATCHER_STATE.FAILED, decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_INVALID_QUEUE_ITEM, record, errors: validation.errors, finalVerdict: 'CODEX_DISPATCHER_BLOCKED' });
-  if (record.approvalRequirements.requiresOperatorApprovalBeforeDispatch && !record.approvalRequirements.approvalReceipt) {
-    return Object.freeze({ dispatcherState: CODEX_DISPATCHER_STATE.WAITING_FOR_OPERATOR, decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_OPERATOR_APPROVAL, record, finalVerdict: 'CODEX_DISPATCHER_BLOCKED' });
-  }
+
   const capability = assessCodexIntegration(input.integration || {});
+  if (!capability.supported && capability.mode !== CODEX_DISPATCH_CAPABILITY.MANUAL_ONLY) {
+    const transition = transitionCodexQueueRecord(record, CODEX_QUEUE_STATUS.BLOCKED, {
+      timestamp: input.now || 'pending',
+      reason: BLOCKED_BY_MISSING_INTEGRATION,
+      blockerMetadata: { code: BLOCKED_BY_MISSING_INTEGRATION, reason: capability.exactReason, missingCapabilities: capability.missingCapabilities },
+    });
+    if (!transition.valid) return invalidTransitionResult(record, transition);
+    const blocked = transition.record;
+    return Object.freeze({
+      dispatcherState: CODEX_DISPATCHER_STATE.BLOCKED_BY_MISSING_INTEGRATION,
+      decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_MISSING_INTEGRATION,
+      capability,
+      record: blocked,
+      dispatchPacket: createDispatchPacket(record, input),
+      missingCapabilities: capability.missingCapabilities,
+      blockerMetadata: blocked.blockerMetadata,
+      sharedWorkspaceMessage: createCodexWorkspaceMessage(blocked, CODEX_QUEUE_STATUS.BLOCKED, { summary: `${BLOCKED_BY_MISSING_INTEGRATION}: ${capability.exactReason}` }),
+      workspacePublication: createDispatcherWorkspacePublication({ record: blocked, dispatcherState: CODEX_DISPATCHER_STATE.BLOCKED_BY_MISSING_INTEGRATION, timestampUtc: input.now, summary: capability.exactReason }),
+      finalVerdict: BLOCKED_BY_MISSING_INTEGRATION,
+    });
+  }
+
+  const approvalMissing = !record.approvalRequirements.approvalReceipt;
+  if (record.status !== CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH || approvalMissing) {
+    return Object.freeze({
+      dispatcherState: CODEX_DISPATCHER_STATE.WAITING_FOR_OPERATOR,
+      decision: approvalMissing ? CODEX_DISPATCH_DECISION.BLOCKED_BY_OPERATOR_APPROVAL : CODEX_DISPATCH_DECISION.BLOCKED_BY_QUEUE_NOT_READY,
+      record,
+      requiredStatus: CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH,
+      finalVerdict: 'CODEX_DISPATCHER_BLOCKED',
+    });
+  }
+
   const dispatchPacket = createDispatchPacket(record, input);
   if (capability.mode === CODEX_DISPATCH_CAPABILITY.MANUAL_ONLY) {
     return Object.freeze({
@@ -264,38 +308,22 @@ export function dispatchQueuedCodexJob(input = {}) {
       capability,
       record,
       dispatchPacket,
-      sharedWorkspaceMessage: createCodexWorkspaceMessage(record, CODEX_QUEUE_STATUS.QUEUED, { dispatcherState: CODEX_DISPATCHER_STATE.WAITING_FOR_OPERATOR, summary: capability.exactReason }),
+      sharedWorkspaceMessage: createCodexWorkspaceMessage(record, record.status, { dispatcherState: CODEX_DISPATCHER_STATE.WAITING_FOR_OPERATOR, summary: capability.exactReason }),
       workspacePublication: createDispatcherWorkspacePublication({ record, dispatcherState: CODEX_DISPATCHER_STATE.WAITING_FOR_OPERATOR, timestampUtc: input.now, summary: capability.exactReason }),
       finalVerdict: 'CODEX_MANUAL_DISPATCH_PACKET_READY',
     });
   }
-  if (!capability.supported) {
-    const blocked = transitionCodexQueueRecord(record, CODEX_QUEUE_STATUS.BLOCKED, {
-      timestamp: input.now || 'pending',
-      reason: BLOCKED_BY_MISSING_INTEGRATION,
-      blockerMetadata: { code: BLOCKED_BY_MISSING_INTEGRATION, reason: capability.exactReason, missingCapabilities: capability.missingCapabilities },
-    }).record;
-    return Object.freeze({
-      dispatcherState: CODEX_DISPATCHER_STATE.BLOCKED_BY_MISSING_INTEGRATION,
-      decision: CODEX_DISPATCH_DECISION.BLOCKED_BY_MISSING_INTEGRATION,
-      capability,
-      record: blocked,
-      dispatchPacket,
-      missingCapabilities: capability.missingCapabilities,
-      blockerMetadata: blocked.blockerMetadata,
-      sharedWorkspaceMessage: createCodexWorkspaceMessage(blocked, CODEX_QUEUE_STATUS.BLOCKED, { summary: `${BLOCKED_BY_MISSING_INTEGRATION}: ${capability.exactReason}` }),
-      workspacePublication: createDispatcherWorkspacePublication({ record: blocked, dispatcherState: CODEX_DISPATCHER_STATE.BLOCKED_BY_MISSING_INTEGRATION, timestampUtc: input.now, summary: capability.exactReason }),
-      finalVerdict: BLOCKED_BY_MISSING_INTEGRATION,
-    });
-  }
+
   const receipt = createDispatchReceipt({ ...(input.integration.dispatch(dispatchPacket) || {}), jobId: record.jobId, mode: CODEX_DISPATCH_CAPABILITY.AUTOMATED_SUPPORTED, timestampUtc: input.now || 'pending', integrationId: input.integration.integrationId || 'codex-automated-integration' });
   if (!receipt.accepted) throw new Error('dispatcher invariant violated: supported integration must return an accepted dispatch receipt; fake dispatch is forbidden');
   const verification = verifyDispatchReceipt({ receipt });
-  const dispatched = transitionCodexQueueRecord(record, CODEX_QUEUE_STATUS.DISPATCHED, {
+  const transition = transitionCodexQueueRecord(record, CODEX_QUEUE_STATUS.DISPATCHED_MANUAL, {
     timestamp: input.now || 'pending',
     reason: 'dispatch receipt recorded',
     resultMetadata: { dispatchReceipt: receipt, proofMetadata: verification },
-  }).record;
+  });
+  if (!transition.valid) return invalidTransitionResult(record, transition);
+  const dispatched = transition.record;
   return Object.freeze({
     dispatcherState: CODEX_DISPATCHER_STATE.WAITING_FOR_RESULT,
     decision: CODEX_DISPATCH_DECISION.DISPATCHED,

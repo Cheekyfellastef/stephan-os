@@ -31,11 +31,24 @@ $repoRoot = Resolve-IgniteRepositoryRoot -RequestedRoot $RepositoryRoot
 $normalIgniteCommand = 'npm run stephanos:ignite'
 $approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'
 $approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-openclaw-service-restart'
+$openClawStartGatewayApprovalEnvFlag = 'STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY'
 $sourceMergeCheckCommand = 'git merge --no-commit --no-ff origin/main'
 $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stephanos-ignite-{0}.log" -f ([guid]::NewGuid().ToString('N')))
 
 function Write-IgniteApprovalLog([string]$Message) {
   Write-Host "[IGNITION APPROVAL] $Message"
+}
+
+function Invoke-IgniteWithOpenClawStartGatewayApproval([string]$Command) {
+  $previousApproval = [Environment]::GetEnvironmentVariable($openClawStartGatewayApprovalEnvFlag, 'Process')
+  try {
+    Write-IgniteApprovalLog "passing OpenClaw start-gateway approval to Battle Bridge supervisor child process via $openClawStartGatewayApprovalEnvFlag=1"
+    [Environment]::SetEnvironmentVariable($openClawStartGatewayApprovalEnvFlag, '1', 'Process')
+    & cmd.exe /d /c "$Command 2>&1"
+  }
+  finally {
+    [Environment]::SetEnvironmentVariable($openClawStartGatewayApprovalEnvFlag, $previousApproval, 'Process')
+  }
 }
 
 function ConvertFrom-RepairPacketLine([string[]]$Lines) {
@@ -365,7 +378,7 @@ function Show-IgniteRecoveryPopup($Packet) {
 Set-Location -LiteralPath $repoRoot
 Write-IgniteApprovalLog "selected repository root: $repoRoot"
 Write-IgniteApprovalLog "running safe default ignition: $normalIgniteCommand"
-& cmd.exe /d /c "$normalIgniteCommand 2>&1" | Tee-Object -FilePath $transcriptPath
+Invoke-IgniteWithOpenClawStartGatewayApproval -Command $normalIgniteCommand 2>&1 | Tee-Object -FilePath $transcriptPath
 $normalExitCode = $LASTEXITCODE
 if ($normalExitCode -eq 0) {
   exit 0
