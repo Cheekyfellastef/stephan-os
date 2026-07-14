@@ -1,0 +1,45 @@
+name: Battle Bridge GitHub Sync Policy Proof
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/battle-bridge-github-sync-policy.mjs'
+      - 'scripts/battle-bridge-github-sync-policy.test.mjs'
+      - '.github/workflows/battle-bridge-github-sync-policy-proof.yml'
+  push:
+    paths:
+      - 'scripts/battle-bridge-github-sync-policy.mjs'
+      - 'scripts/battle-bridge-github-sync-policy.test.mjs'
+      - '.github/workflows/battle-bridge-github-sync-policy-proof.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  policy-proof:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Parse policy source
+        run: node --check scripts/battle-bridge-github-sync-policy.mjs
+
+      - name: Run deterministic policy tests
+        run: node --test scripts/battle-bridge-github-sync-policy.test.mjs
+
+      - name: Check pull request patch whitespace
+        if: github.event_name == 'pull_request'
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+
+      - name: Check pushed patch whitespace
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: git diff --check "${{ github.event.before }}...${{ github.sha }}"
