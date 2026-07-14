@@ -58,6 +58,7 @@ export const FIXED_SYNC_GIT_COMMANDS = Object.freeze({
 const FIXED_COMMAND_IDS = new Map(Object.values(FIXED_SYNC_GIT_COMMANDS).map((command) => [command.id, command]));
 const FORBIDDEN_ARG_PATTERN = /^(?:checkout|switch|reset|clean|stash|rebase|push|branch)$/i;
 const SHA_PATTERN = /^[a-f0-9]{40}$/i;
+export const SYNC_LOCK_STALE_AFTER_MS = 10 * 60 * 1000;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -199,7 +200,21 @@ async function publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind }
   return Object.freeze({ record, receiptPath, statusPath, eventPath, proofRefs });
 }
 
-async function acquireSingleInstanceLock(workspaceRoot, now) {
+function defaultProcessIsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+async function acquireSingleInstanceLock(workspaceRoot, now, {
+  processIsAliveFn = defaultProcessIsAlive,
+  staleAfterMs = SYNC_LOCK_STALE_AFTER_MS,
+  allowRecovery = true,
+} = {}) {
   const lockPath = path.resolve(workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
   await mkdir(path.dirname(lockPath), { recursive: true });
   try {
@@ -210,8 +225,24 @@ async function acquireSingleInstanceLock(workspaceRoot, now) {
   } catch (error) {
     if (error?.code === 'EEXIST') {
       let existing = '';
-      try { existing = await readFile(lockPath, 'utf8'); } catch {}
-      return { ok: false, reason: 'SYNC_ALREADY_RUNNING', lockPath, existing: existing.slice(0, 500) };
+      let parsed = null;
+      try {
+        existing = await readFile(lockPath, 'utf8');
+        parsed = JSON.parse(existing);
+      } catch {}
+      const acquiredAtMs = Date.parse(text(parsed?.acquiredAtUtc));
+      const ageMs = Number.isFinite(acquiredAtMs) ? now.getTime() - acquiredAtMs : NaN;
+      const ownerAlive = processIsAliveFn(Number.parseInt(parsed?.pid, 10));
+      if (allowRecovery && Number.isFinite(ageMs) && ageMs > staleAfterMs && !ownerAlive) {
+        await rm(lockPath, { force: true });
+        const recovered = await acquireSingleInstanceLock(workspaceRoot, now, {
+          processIsAliveFn,
+          staleAfterMs,
+          allowRecovery: false,
+        });
+        return { ...recovered, recoveredStaleLock: recovered.ok, staleLock: { ageMs, pid: parsed?.pid ?? null } };
+      }
+      return { ok: false, reason: 'SYNC_ALREADY_RUNNING', lockPath, existing: existing.slice(0, 500), ownerAlive, ageMs };
     }
     return { ok: false, reason: 'LOCK_ACQUISITION_FAILED', lockPath, error: error?.message || String(error) };
   }
@@ -248,6 +279,8 @@ export async function runBattleBridgeGitHubSync({
   git = createFixedGitAdapter(),
   paths = resolveCanonicalSyncPaths({ env }),
   expectedPaths = resolveCanonicalSyncPaths({ env }),
+  processIsAliveFn = defaultProcessIsAlive,
+  staleAfterMs = SYNC_LOCK_STALE_AFTER_MS,
 } = {}) {
   const { repoRoot, workspaceRoot } = paths;
   const pathValidation = validateCanonicalSyncPaths({ repoRoot, workspaceRoot, expectedPaths });
@@ -262,7 +295,7 @@ export async function runBattleBridgeGitHubSync({
   } catch (error) {
     return Object.freeze({ ok: false, evaluation: blockedEvaluation(SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED, `Shared Workspace is unavailable: ${error?.message || error}`) });
   }
-  const lock = await acquireSingleInstanceLock(workspaceRoot, now);
+  const lock = await acquireSingleInstanceLock(workspaceRoot, now, { processIsAliveFn, staleAfterMs });
   if (!lock.ok) {
     const evaluation = blockedEvaluation(SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED, lock.reason);
     let publication = null;
@@ -274,23 +307,16 @@ export async function runBattleBridgeGitHubSync({
     const before = await collectPreFetchFacts({ git, repoRoot });
     const earlyBlocker = preFetchBlocker(before);
     if (earlyBlocker) {
+      const heartbeat = await publishSyncRecord({ workspaceRoot, evaluation: earlyBlocker, facts: before, now, kind: 'heartbeat' });
       const publication = await publishSyncRecord({ workspaceRoot, evaluation: earlyBlocker, facts: before, now, kind: 'blocker' });
-      return Object.freeze({ ok: false, evaluation: earlyBlocker, facts: before, publication });
+      return Object.freeze({ ok: false, evaluation: earlyBlocker, facts: before, heartbeat, publication });
     }
-
-    const heartbeat = await publishSyncRecord({ workspaceRoot, evaluation: {
-      classification: SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE,
-      dirt: classifyDirt(before.statusLines),
-      operatorNeeded: false,
-      exactNextAction: 'Fetch origin/main using the fixed command registry.',
-      performsGitMutation: false,
-      performsShellExecution: false,
-    }, facts: before, now, kind: 'heartbeat' });
 
     const fetchResult = git.run(FIXED_SYNC_GIT_COMMANDS.fetchOriginMain.id, repoRoot);
     if (!fetchResult.ok) {
       const facts = { ...before, fetchOk: false, remoteHead: before.localHead, mergeBase: before.localHead };
       const evaluation = evaluateSyncPolicy(facts);
+      const heartbeat = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: 'heartbeat' });
       const publication = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: 'blocker' });
       return Object.freeze({ ok: false, evaluation, facts, fetchResult, heartbeat, publication });
     }
@@ -305,7 +331,8 @@ export async function runBattleBridgeGitHubSync({
       commandEvidence: { ...before.commandEvidence, fetch: fetchResult, remote: remoteResult, mergeBase: mergeBaseResult },
     };
     let evaluation = evaluateSyncPolicy(facts);
-    const plan = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: evaluation.operatorNeeded ? 'blocker' : 'plan' });
+    const heartbeat = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: 'heartbeat' });
+    const plan = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: 'plan' });
 
     if (evaluation.classification !== SYNC_CLASSIFICATIONS.SYNC_FAST_FORWARD_READY) {
       const receipt = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: evaluation.operatorNeeded ? 'blocker' : 'receipt' });
@@ -365,5 +392,5 @@ export function isDirectCliEntrypoint({ metaUrl = import.meta.url, argv1 = proce
 if (isDirectCliEntrypoint()) {
   const result = await runBattleBridgeGitHubSync();
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  process.exitCode = result.ok || result.sourceUpdated ? 0 : 2;
+  process.exitCode = result.ok ? 0 : 2;
 }
