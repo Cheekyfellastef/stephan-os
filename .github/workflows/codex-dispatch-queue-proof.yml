@@ -37,14 +37,17 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Focused queue dispatcher platform-loop and verification proof
-        run: >-
-          node --test
-          shared/agents/codexDispatchQueue.test.mjs
-          shared/agents/automatedCodexDispatcher.test.mjs
-          shared/agents/platformLoopIntegration.test.mjs
-          shared/agents/verificationHarness.test.mjs
-          shared/agents/verificationHarnessWorkspace.test.mjs
+      - name: Queue contract proof
+        run: node --test shared/agents/codexDispatchQueue.test.mjs
+
+      - name: Dispatcher proof
+        run: node --test shared/agents/automatedCodexDispatcher.test.mjs
+
+      - name: Platform loop consumer proof
+        run: node --test shared/agents/platformLoopIntegration.test.mjs
+
+      - name: Verification Harness proof
+        run: node --test shared/agents/verificationHarness.test.mjs shared/agents/verificationHarnessWorkspace.test.mjs
 
       - name: Full shared-agent regression suite
         run: node --test shared/agents/*.test.mjs
