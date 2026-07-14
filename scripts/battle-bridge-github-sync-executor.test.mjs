@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   FIXED_SYNC_GIT_COMMANDS,
+  SYNC_LOCK_STALE_AFTER_MS,
   runBattleBridgeGitHubSync,
   validateCanonicalSyncPaths,
 } from './battle-bridge-github-sync-executor.mjs';
@@ -123,13 +124,32 @@ test('fetch, divergence and ff-only failures fail closed', async () => {
   }
 });
 
+test('stale dead-process lock is recovered once and does not permanently stall the watcher', async () => {
+  const fx = await fixture();
+  try {
+    const now = new Date('2026-07-14T20:30:00Z');
+    const lockPath = path.join(fx.workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, `${JSON.stringify({ pid: 123, acquiredAtUtc: new Date(now.getTime() - SYNC_LOCK_STALE_AFTER_MS - 1).toISOString() })}\n`);
+    const result = await runBattleBridgeGitHubSync({
+      paths: fx.paths,
+      expectedPaths: fx.expectedPaths,
+      git: fakeGit(),
+      now,
+      processIsAliveFn: () => false,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.evaluation.classification, SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE);
+  } finally { await rm(fx.root, { recursive: true, force: true }); }
+});
+
 test('single-instance lock fails closed and remains auditable', async () => {
   const fx = await fixture();
   try {
     const lockPath = path.join(fx.workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
     await mkdir(path.dirname(lockPath), { recursive: true });
-    await writeFile(lockPath, '{"pid":123}\n');
-    const result = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.expectedPaths, git: fakeGit() });
+    await writeFile(lockPath, `${JSON.stringify({ pid: 123, acquiredAtUtc: new Date().toISOString() })}\n`);
+    const result = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.expectedPaths, git: fakeGit(), processIsAliveFn: () => true });
     assert.equal(result.evaluation.classification, SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED);
     assert.equal(result.lock.reason, 'SYNC_ALREADY_RUNNING');
   } finally { await rm(fx.root, { recursive: true, force: true }); }
