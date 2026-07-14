@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
@@ -96,6 +99,18 @@ test('payload bounds and secret-shaped data are rejected before workspace record
   assert.equal(buildChatGptBridgeRecord(validRequest({ boundedPayload: { summary: 'x'.repeat(CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES + 1) } })).reason, 'BLOCKED_PAYLOAD_UNSAFE');
 });
 
+test('unserializable payloads fail closed without throwing', () => {
+  const cyclicPayload = {};
+  cyclicPayload.self = cyclicPayload;
+  for (const boundedPayload of [cyclicPayload, { count: 1n }]) {
+    const verified = verify(validRequest({ boundedPayload }));
+    assert.equal(verified.responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
+    assert.equal(verified.accepted, false);
+    assert.match(verified.auditReceiptId, /^audit-/);
+    assert.equal(buildChatGptBridgeRecord(validRequest({ boundedPayload })).reason, 'BLOCKED_PAYLOAD_UNSAFE');
+  }
+});
+
 test('ChatGPT cannot create approval-result truth or self-approve operator decisions', () => {
   assert.equal(buildChatGptBridgeRecord(validRequest({ recordKind: 'approval-result' })).reason, 'BLOCKED_APPROVAL_REQUIRED');
   assert.deepEqual(verifyOperatorApprovalSeparation(validRequest({ approvalRef: 'approval-1' }), { participantId: CHATGPT_BRIDGE_PARTICIPANT_ID, approvalRef: 'approval-1', correlationId: 'issue-1506' }), { ok: false, responseStatus: 'BLOCKED_APPROVAL_MISMATCH' });
@@ -145,6 +160,27 @@ test('blocked workspace aggregation returns a bounded fail-closed projection', a
   assert.equal(projection.currentGoal, null);
   assert.equal(projection.currentStatus, null);
   assert.equal(projection.latestProof, null);
+});
+
+test('workspace aggregation exceptions return a bounded fail-closed projection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'chatgpt-bridge-v1-'));
+  const fileRoot = join(root, 'not-a-directory');
+  await writeFile(fileRoot, 'occupied', 'utf8');
+  try {
+    const projection = await createSanitizedSharedWorkspaceProjection({
+      workspaceRoot: fileRoot,
+      repoRoot: process.cwd(),
+      timestampUtc: '2026-07-13T00:00:00.000Z',
+    });
+    assert.equal(projection.aggregationOk, false);
+    assert.equal(projection.aggregationReason, 'SHARED_WORKSPACE_AGGREGATION_FAILED');
+    assert.equal(projection.aggregationVerdict, 'SHARED_WORKSPACE_AGGREGATION_BLOCKED');
+    assert.equal(projection.currentGoal, null);
+    assert.equal(projection.currentStatus, null);
+    assert.equal(projection.latestProof, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('inert transport adapter never opens a socket and reports transport not configured', async () => {
