@@ -48,7 +48,7 @@ The current Quest entry page embeds the flat staging surface. It is not yet an i
 The strict PR clean guard rejects committed images and binary artifacts. Before hosting or packaging, generate the required PNGs:
 
 ```text
-node scripts/build-spatial-bridge-icons.mjs
+node apps/spatial-bridge/tools/build-icons.mjs
 ```
 
 This creates:
@@ -126,7 +126,7 @@ At or after that time, the first proof lane is:
 
 ```text
 node --test tests/spatial-bridge-v0.test.mjs
-node scripts/build-spatial-bridge-icons.mjs
+node apps/spatial-bridge/tools/build-icons.mjs
 ```
 
 Then:
