@@ -1,0 +1,146 @@
+{
+  "version": "stephanos.spatial-projection.v0.mock",
+  "generatedAt": "2026-07-14T18:10:00Z",
+  "source": "mock-projection",
+  "readOnly": true,
+  "authority": "none",
+  "freshness": {
+    "status": "mock",
+    "ageSeconds": 0,
+    "label": "Prototype data · not live Stephanos truth"
+  },
+  "session": {
+    "captain": "Stephan",
+    "surface": "spatial-bridge-v0",
+    "posture": "seated-cockpit",
+    "interaction": ["gaze-context-planned", "xbox-controller-planned", "voice-intent-planned"]
+  },
+  "modes": {
+    "home": {
+      "id": "home",
+      "label": "HOME · AIR LINK",
+      "transport": "Meta Quest Air Link",
+      "rendering": "Battle Bridge PC rendering over local wireless media path",
+      "control": "Local Stephanos control plane",
+      "health": "nominal",
+      "latencyMs": 19,
+      "jitterMs": 3,
+      "packetLossPercent": 0,
+      "stateFreshness": "mock-current"
+    },
+    "caravan": {
+      "id": "caravan",
+      "label": "CARAVAN · REMOTE STARLINK",
+      "transport": "Authenticated Stephanos control plane over Starlink",
+      "rendering": "Quest-local bridge shell",
+      "control": "Remote control plane · media optional",
+      "health": "constrained",
+      "latencyMs": 62,
+      "jitterMs": 14,
+      "packetLossPercent": 0.4,
+      "stateFreshness": "mock-current"
+    },
+    "degraded": {
+      "id": "degraded",
+      "label": "REMOTE DEGRADED · READ ONLY",
+      "transport": "Connection uncertainty simulated",
+      "rendering": "Quest-local fallback shell",
+      "control": "Observation only",
+      "health": "degraded",
+      "latencyMs": 148,
+      "jitterMs": 47,
+      "packetLossPercent": 4.8,
+      "stateFreshness": "stale-simulated"
+    }
+  },
+  "captainView": {
+    "overallStatus": "BUILDING THE INTENT-TO-REALITY LOOP",
+    "activeMission": "Make Stephanos capable of turning spoken intent into safely verified outcomes.",
+    "nextBestAction": "Prove the read-only spatial projection and launcher route before connecting live state.",
+    "confidence": "prototype",
+    "majorBlockers": [
+      "Live canonical spatial API is not connected.",
+      "Battle Bridge and Quest proof are deferred for Codex/local testing.",
+      "Voice, gaze, controller, approval and execution paths remain disabled."
+    ]
+  },
+  "departments": [
+    {
+      "id": "navigation",
+      "name": "Navigation",
+      "summary": "Goals, direction, dependencies and next moves.",
+      "status": "course plotted",
+      "signal": "nominal",
+      "detail": "The bridge currently displays a mock mission trajectory. V1 will consume the canonical Stephanos projection without owning goal state."
+    },
+    {
+      "id": "operations",
+      "name": "Operations",
+      "summary": "Agents, workflows, automations and connector posture.",
+      "status": "observer only",
+      "signal": "guarded",
+      "detail": "No agent dispatch, connector write, approval or execution capability exists in this V0 surface."
+    },
+    {
+      "id": "science",
+      "name": "Science",
+      "summary": "Research, contradictions, simulations and unknowns.",
+      "status": "analysis available",
+      "signal": "nominal",
+      "detail": "Future versions can spatially expose evidence strength, conflicting claims and scenario relationships while preserving explicit uncertainty."
+    },
+    {
+      "id": "engineering",
+      "name": "Engineering",
+      "summary": "Battle Bridge, OpenClaw, Codex, runtime health and rollback.",
+      "status": "testing deferred",
+      "signal": "attention",
+      "detail": "Battle Bridge launch, browser proof, Air Link behaviour and performance require local verification when Codex is available."
+    },
+    {
+      "id": "memory",
+      "name": "Memory",
+      "summary": "Canonical continuity and retrieval across every surface.",
+      "status": "single-brain rule",
+      "signal": "nominal",
+      "detail": "The Quest surface must never own separate mission truth, approvals, evidence or completion verdicts."
+    },
+    {
+      "id": "proof",
+      "name": "Proof",
+      "summary": "Observed evidence, completion verdicts and remaining uncertainty.",
+      "status": "source slice only",
+      "signal": "guarded",
+      "detail": "This source slice is not proven on the Battle Bridge or Quest. The PR must remain unmerged until local browser and launcher proof are returned."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "doctrine",
+      "label": "Spatial Bridge Doctrine",
+      "status": "recorded",
+      "detail": "Captain model, single-brain rule, staged authority and fail-closed behaviour are durable source truth."
+    },
+    {
+      "id": "transport",
+      "label": "Dual-access transport",
+      "status": "recorded",
+      "detail": "Home uses Air Link only. Caravan uses a lightweight authenticated control plane over Starlink."
+    },
+    {
+      "id": "runtime",
+      "label": "Runtime proof",
+      "status": "pending",
+      "detail": "Codex/local Battle Bridge testing must verify launcher discovery, rendering, console errors and responsive behaviour."
+    }
+  ],
+  "constraints": [
+    "No live Stephanos state",
+    "No AI calls",
+    "No network writes",
+    "No approvals",
+    "No execution",
+    "No OpenClaw, Codex or Battle Bridge command route",
+    "No claim of WebXR or headset proof"
+  ]
+}
