@@ -15,6 +15,10 @@ on:
       - '!scripts/codex-patch-escrow-publisher.mjs'
       - '!scripts/codex-patch-escrow-validate-prepared.mjs'
       - '!scripts/codex-patch-escrow-validated-artifact.mjs'
+      - '!scripts/battle-bridge-github-sync-*.mjs'
+      - '!scripts/windows/install-battle-bridge-github-sync.ps1'
+      - '!scripts/windows/status-battle-bridge-github-sync.ps1'
+      - '!scripts/windows/uninstall-battle-bridge-github-sync.ps1'
       - 'package.json'
       - 'apps/stephanos/app.json'
   pull_request:
@@ -31,6 +35,10 @@ on:
       - '!scripts/codex-patch-escrow-publisher.mjs'
       - '!scripts/codex-patch-escrow-validate-prepared.mjs'
       - '!scripts/codex-patch-escrow-validated-artifact.mjs'
+      - '!scripts/battle-bridge-github-sync-*.mjs'
+      - '!scripts/windows/install-battle-bridge-github-sync.ps1'
+      - '!scripts/windows/status-battle-bridge-github-sync.ps1'
+      - '!scripts/windows/uninstall-battle-bridge-github-sync.ps1'
       - 'package.json'
       - 'apps/stephanos/app.json'
 
@@ -46,7 +54,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
 
       - name: Preflight frontend path and lockfile
         run: |
