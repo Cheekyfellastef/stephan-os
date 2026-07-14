@@ -36,16 +36,18 @@ test('spatial bridge is launcher discoverable and explicitly read-only', () => {
   assert.deepEqual(manifest.eventsPublished, []);
 });
 
-test('spatial projection carries no execution authority and records wireless transport modes', () => {
+test('spatial projection carries no execution authority and records Quest-local transport modes', () => {
   const projection = readJson(projectionPath);
 
   assert.equal(projection.version, 'stephanos.spatial-projection.v0.mock');
   assert.equal(projection.source, 'mock-projection');
   assert.equal(projection.readOnly, true);
   assert.equal(projection.authority, 'none');
-  assert.equal(projection.modes.home.label, 'HOME · AIR LINK');
-  assert.equal(projection.modes.home.transport, 'Meta Quest Air Link');
+  assert.equal(projection.modes.home.label, 'HOME · LOCAL QUEST');
+  assert.match(projection.modes.home.transport, /Quest-local bridge/);
+  assert.match(projection.modes.home.airLinkRole, /Optional separate PCVR/);
   assert.equal(projection.modes.caravan.label, 'CARAVAN · REMOTE STARLINK');
+  assert.equal(projection.modes.caravan.rendering, 'Quest-local immersive renderer');
   assert.equal(projection.modes.degraded.label, 'REMOTE DEGRADED · READ ONLY');
   assert.match(projection.constraints.join('\n'), /No approvals/);
   assert.match(projection.constraints.join('\n'), /No execution/);
