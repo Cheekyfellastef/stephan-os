@@ -1,7 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import {
   createSharedWorkspaceMessage,
   validateSharedWorkspaceMessage,
@@ -77,6 +76,7 @@ export const CODEX_DISPATCH_GUARDRAILS = Object.freeze({
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
 const SAFE_BRANCH_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,160}$/i;
 const SAFE_COMMAND_PATTERN = /^(node|npm|git)\b(?!.*\b(reset\s+--hard|merge|push|branch\s+-d|branch\s+-D)\b)/i;
+const SAFE_PROOF_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const FORBIDDEN_TEXT_PATTERN = /token|secret|password|credential|private key|\.env|session/i;
 const REQUIRED_KEYS = Object.freeze([
   'schemaVersion', 'kind', 'jobId', 'issueNumber', 'branch', 'prompt', 'requestedProofCommands',
@@ -109,6 +109,13 @@ function safeBranch(value) {
 function safePrompt(value) { return text(value).replace(/\s+/g, ' ').slice(0, 4000); }
 function safeProofCommands(value) {
   return unique(value).filter((command) => SAFE_COMMAND_PATTERN.test(command) && !FORBIDDEN_TEXT_PATTERN.test(command)).slice(0, 20);
+}
+export function isSafeCodexQueueProofRef(value) {
+  const normalized = text(value).replace(/\\/g, '/');
+  if (!normalized) return false;
+  if (normalized.startsWith('/') || normalized.startsWith('//') || /^[a-z]:\//i.test(normalized)) return false;
+  if (normalized.split('/').some((part) => part === '..')) return false;
+  return SAFE_PROOF_SEGMENT_PATTERN.test(normalized) || /^(proof|proofs|receipts|evidence\/receipts)\//.test(normalized);
 }
 function stableJobId(input) {
   const seed = `${text(input.issueNumber)}\n${text(input.branch)}\n${text(input.prompt)}`;
@@ -143,12 +150,13 @@ export function buildCodexDispatchQueueContract() {
   });
 }
 
-export function createCodexQueueRecord(input = {}) {
+function buildCodexQueueRecord(input = {}, { status, history, approvalReceipt } = {}) {
   const issueNumber = Number.parseInt(input.issueNumber, 10);
   const prompt = safePrompt(input.prompt || input.summary || '');
   const jobId = safeId(input.jobId, stableJobId({ ...input, prompt }));
   const createdAt = text(input.createdAt || input.createdAtUtc, 'pending');
-  const status = safeStatus(input.status || (input.approvalRequirements?.approvalReceipt ? CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH : CODEX_QUEUE_STATUS.QUEUED));
+  const canonicalStatus = safeStatus(status);
+  const proofRefs = unique(input.proofRequirements?.refs || [`proof/${jobId}.json`]);
   const record = {
     schemaVersion: CODEX_DISPATCH_QUEUE_SCHEMA_VERSION,
     kind: CODEX_DISPATCH_QUEUE_KIND,
@@ -157,32 +165,68 @@ export function createCodexQueueRecord(input = {}) {
     branch: safeBranch(input.branch),
     prompt,
     requestedProofCommands: safeProofCommands(input.requestedProofCommands || input.requiredTests),
-    proofRequirements: Object.freeze({ refs: unique(input.proofRequirements?.refs || [`proof/${jobId}.json`]), verifierTypes: unique(input.proofRequirements?.verifierTypes || ['CodexQueueRecordVerifier', 'ProofReferenceVerifier']) }),
+    proofRequirements: Object.freeze({ refs: proofRefs, verifierTypes: unique(input.proofRequirements?.verifierTypes || ['CodexQueueRecordVerifier', 'ProofReferenceVerifier']) }),
     approvalRequirements: Object.freeze({
       requiresOperatorApprovalBeforeDispatch: input.approvalRequirements?.requiresOperatorApprovalBeforeDispatch === true,
       requiresExactHeadApproval: input.approvalRequirements?.requiresExactHeadApproval !== false,
       requiresOperatorApprovalBeforeMerge: input.approvalRequirements?.requiresOperatorApprovalBeforeMerge !== false,
-      approvalReceipt: text(input.approvalRequirements?.approvalReceipt, ''),
+      approvalReceipt: text(approvalReceipt, ''),
     }),
     integrationState: Object.freeze({ automatedCodexDispatchProven: input.integrationState?.automatedCodexDispatchProven === true, blocker: input.integrationState?.automatedCodexDispatchProven === true ? '' : 'BLOCKED_BY_MISSING_CODEX_AUTOMATED_DISPATCH_INTEGRATION_1293' }),
     createdAt,
-    dispatchedAt: text(input.dispatchedAt, ''),
-    completedAt: text(input.completedAt, ''),
-    status,
+    dispatchedAt: canonicalStatus === CODEX_QUEUE_STATUS.DISPATCHED_MANUAL ? text(input.dispatchedAt, '') : text(input.dispatchedAt, ''),
+    completedAt: CODEX_QUEUE_TERMINAL_STATUSES.includes(canonicalStatus) ? text(input.completedAt, '') : text(input.completedAt, ''),
+    status: canonicalStatus,
     resultMetadata: Object.freeze({ ...(input.resultMetadata || {}) }),
     blockerMetadata: Object.freeze({ ...(input.blockerMetadata || {}) }),
-    history: Object.freeze((Array.isArray(input.history) && input.history.length ? input.history : [historyEntry({ toStatus: status, timestamp: createdAt })]).map((entry) => Object.freeze({ ...entry }))),
+    history: Object.freeze(history.map((entry) => Object.freeze({ ...entry }))),
     sharedWorkspaceMessage: createSharedWorkspaceMessage({
-      messageId: jobId, sender: 'codex', recipient: 'operator', channel: 'codex-dispatch-queue', kind: eventKindForStatus(status),
-      severity: status === CODEX_QUEUE_STATUS.BLOCKED || status === CODEX_QUEUE_STATUS.FAILED ? 'warning' : 'info',
-      correlationId: `issue-${Number.isSafeInteger(issueNumber) ? issueNumber : 0}`, relatedGoal: `#${Number.isSafeInteger(issueNumber) ? issueNumber : 0}`,
-      summary: `Codex queue job ${jobId} is ${status} for issue #${Number.isSafeInteger(issueNumber) ? issueNumber : 0}.`,
-      status, proofRefs: [`proof/${jobId}.json`], requiresOperator: status === CODEX_QUEUE_STATUS.WAITING_OPERATOR_APPROVAL,
+      messageId: jobId,
+      sender: 'codex',
+      recipient: 'operator',
+      channel: 'codex-dispatch-queue',
+      kind: eventKindForStatus(canonicalStatus),
+      severity: canonicalStatus === CODEX_QUEUE_STATUS.BLOCKED || canonicalStatus === CODEX_QUEUE_STATUS.FAILED ? 'warning' : 'info',
+      correlationId: `issue-${Number.isSafeInteger(issueNumber) ? issueNumber : 0}`,
+      relatedGoal: `#${Number.isSafeInteger(issueNumber) ? issueNumber : 0}`,
+      summary: `Codex queue job ${jobId} is ${canonicalStatus} for issue #${Number.isSafeInteger(issueNumber) ? issueNumber : 0}.`,
+      status: canonicalStatus,
+      proofRefs,
+      requiresOperator: canonicalStatus === CODEX_QUEUE_STATUS.WAITING_OPERATOR_APPROVAL,
     }),
   };
   return Object.freeze(record);
 }
+
+export function createCodexQueueRecord(input = {}) {
+  const createdAt = text(input.createdAt || input.createdAtUtc, 'pending');
+  return buildCodexQueueRecord(input, {
+    status: CODEX_QUEUE_STATUS.QUEUED,
+    history: [historyEntry({ toStatus: CODEX_QUEUE_STATUS.QUEUED, timestamp: createdAt })],
+    approvalReceipt: '',
+  });
+}
 export const createCodexQueueItem = createCodexQueueRecord;
+
+function validateHistory(record, errors) {
+  if (!Array.isArray(record.history) || record.history.length === 0) {
+    errors.push('missing-history');
+    return;
+  }
+  const first = record.history[0];
+  if (first?.fromStatus !== '' || first?.toStatus !== CODEX_QUEUE_STATUS.QUEUED) errors.push('history-must-start-queued');
+  for (let index = 0; index < record.history.length; index += 1) {
+    const entry = record.history[index];
+    if (entry?.kind !== CODEX_DISPATCH_HISTORY_KIND) errors.push('invalid-history-kind');
+    if (!Object.values(CODEX_QUEUE_STATUS).includes(entry?.toStatus)) errors.push('invalid-history-status');
+    if (index > 0) {
+      const previous = record.history[index - 1];
+      if (entry?.fromStatus !== previous?.toStatus) errors.push('disconnected-history');
+      if (!(CODEX_QUEUE_TRANSITIONS[previous?.toStatus] || []).includes(entry?.toStatus)) errors.push('invalid-history-transition');
+    }
+  }
+  if (record.history.at(-1)?.toStatus !== record.status) errors.push('history-status-mismatch');
+}
 
 export function validateCodexQueueRecord(record = {}) {
   const errors = [];
@@ -198,32 +242,39 @@ export function validateCodexQueueRecord(record = {}) {
   if (!Object.values(CODEX_QUEUE_STATUS).includes(record.status)) errors.push('invalid-status');
   if (record.approvalRequirements?.requiresExactHeadApproval !== true) errors.push('exact-head-approval-not-required');
   if (!record.integrationState || typeof record.integrationState.automatedCodexDispatchProven !== 'boolean') errors.push('missing-integration-state');
-  if (!Array.isArray(record.history) || record.history.length === 0) errors.push('missing-history');
+  validateHistory(record, errors);
   if (!Array.isArray(record.proofRequirements?.refs) || record.proofRequirements.refs.length === 0) errors.push('missing-proof-requirement-refs');
+  for (const ref of list(record.proofRequirements?.refs)) if (!isSafeCodexQueueProofRef(ref)) errors.push('unsafe-proof-ref');
   if (!validateSharedWorkspaceMessage(record.sharedWorkspaceMessage).valid) errors.push('invalid-shared-workspace-message');
-  return { valid: errors.length === 0, errors, finalVerdict: errors.length ? 'CODEX_QUEUE_RECORD_BLOCKED' : 'CODEX_QUEUE_RECORD_PASS' };
+  return { valid: errors.length === 0, errors: [...new Set(errors)], finalVerdict: errors.length ? 'CODEX_QUEUE_RECORD_BLOCKED' : 'CODEX_QUEUE_RECORD_PASS' };
 }
 export const validateCodexQueueItem = validateCodexQueueRecord;
 
 export function transitionCodexQueueRecord(record = {}, nextStatus, input = {}) {
-  const current = safeStatus(record.status);
+  const validation = validateCodexQueueRecord(record);
+  if (!validation.valid) return Object.freeze({ valid: false, error: 'invalid-record', errors: validation.errors, record, finalVerdict: 'CODEX_QUEUE_TRANSITION_REJECTED' });
+  const current = record.status;
   const target = safeStatus(nextStatus);
   const allowed = CODEX_QUEUE_TRANSITIONS[current] || [];
   if (!allowed.includes(target)) return Object.freeze({ valid: false, error: 'invalid-transition', fromStatus: current, toStatus: target, record, finalVerdict: 'CODEX_QUEUE_TRANSITION_REJECTED' });
-  if (target === CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH && !text(input.approvalReceipt || record.approvalRequirements?.approvalReceipt)) {
+  const receipt = text(input.approvalReceipt, record.approvalRequirements?.approvalReceipt);
+  if (target === CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH && !receipt) {
     return Object.freeze({ valid: false, error: 'missing-operator-approval-receipt', fromStatus: current, toStatus: target, record, finalVerdict: 'CODEX_QUEUE_TRANSITION_REJECTED' });
   }
   const timestamp = text(input.timestamp || input.timestampUtc, 'pending');
-  const next = createCodexQueueRecord({
+  const next = buildCodexQueueRecord({
     ...record,
-    status: target,
-    approvalRequirements: { ...record.approvalRequirements, approvalReceipt: text(input.approvalReceipt, record.approvalRequirements?.approvalReceipt) },
     dispatchedAt: target === CODEX_QUEUE_STATUS.DISPATCHED_MANUAL ? timestamp : record.dispatchedAt,
     completedAt: CODEX_QUEUE_TERMINAL_STATUSES.includes(target) ? timestamp : record.completedAt,
     resultMetadata: input.resultMetadata || record.resultMetadata,
     blockerMetadata: input.blockerMetadata || record.blockerMetadata,
+  }, {
+    status: target,
+    approvalReceipt: receipt,
     history: [...record.history, historyEntry({ fromStatus: current, toStatus: target, timestamp, reason: input.reason, metadata: input.metadata })],
   });
+  const nextValidation = validateCodexQueueRecord(next);
+  if (!nextValidation.valid) return Object.freeze({ valid: false, error: 'invalid-transition-result', errors: nextValidation.errors, fromStatus: current, toStatus: target, record, finalVerdict: 'CODEX_QUEUE_TRANSITION_REJECTED' });
   return Object.freeze({ valid: true, record: next, finalVerdict: 'CODEX_QUEUE_TRANSITION_PASS' });
 }
 
@@ -243,7 +294,7 @@ export function buildManualCodexHandoffPacket(record = {}, input = {}) {
     exactHeadApprovalRequired: true,
     prompt: record.prompt,
     proofCommands: [...(record.requestedProofCommands || [])],
-    proofRefs: [...(record.proofRequirements?.refs || []), ...(input.proofRefs || [])],
+    proofRefs: unique([...(record.proofRequirements?.refs || []), ...(input.proofRefs || [])]).filter(isSafeCodexQueueProofRef),
     safety: { ...CODEX_DISPATCH_GUARDRAILS },
     validForManualDispatch: queueValidation.valid && ready,
     finalVerdict: queueValidation.valid && ready ? 'CODEX_MANUAL_HANDOFF_READY' : 'CODEX_MANUAL_HANDOFF_BLOCKED',
@@ -251,7 +302,7 @@ export function buildManualCodexHandoffPacket(record = {}, input = {}) {
 }
 
 export function projectCodexQueueDashboard(records = [], input = {}) {
-  const safeRecords = records.map(createCodexQueueRecord).sort((a, b) => a.jobId.localeCompare(b.jobId));
+  const safeRecords = records.filter((record) => validateCodexQueueRecord(record).valid).sort((a, b) => a.jobId.localeCompare(b.jobId));
   const counts = Object.fromEntries(Object.values(CODEX_QUEUE_STATUS).map((status) => [status, safeRecords.filter((record) => record.status === status).length]));
   return Object.freeze({
     schemaVersion: CODEX_DISPATCH_DASHBOARD_SCHEMA_VERSION,
@@ -293,13 +344,15 @@ export async function readCodexQueueRecordFromSharedWorkspace(root, jobId, optio
 }
 
 export async function publishCodexQueueStatusToSharedWorkspace(root, record, options = {}) {
+  const validation = validateCodexQueueRecord(record);
+  if (!validation.valid) return { ok: false, reason: validation.errors[0], validation, writes: [] };
   const timestampUtc = text(options.timestampUtc, record.createdAt || 'pending');
-  const statusRecord = createSharedWorkspaceStatusRecord({ statusId: 'codex-dispatch-queue', timestampUtc, status: record.status, summary: `Codex dispatch queue ${record.jobId} is ${record.status}.`, proofRefs: record.proofRequirements?.refs || [] });
+  const statusRecord = createSharedWorkspaceStatusRecord({ statusId: 'codex-dispatch-queue', timestampUtc, status: record.status, summary: `Codex dispatch queue ${record.jobId} is ${record.status}.`, proofRefs: record.proofRequirements.refs });
   const eventRecord = createSharedWorkspaceEventRecord({ eventId: `${record.jobId}-event`, timestampUtc, eventKind: eventKindForStatus(record.status), summary: record.sharedWorkspaceMessage.summary });
   const statusWrite = await writeAtomicJson(root, ['status', 'codex-dispatch-queue.json'], statusRecord, options);
   if (!statusWrite.ok) return { ok: false, reason: statusWrite.reason, statusWrite };
   const eventWrite = await appendWorkspaceJsonl(root, ['events', 'codex-dispatch-queue.jsonl'], eventRecord, options);
-  return { ok: eventWrite.ok, reason: eventWrite.ok ? 'CODEX_QUEUE_STATUS_PUBLISHED' : eventWrite.reason, statusWrite, eventWrite, statusRecord, eventRecord };
+  return { ok: eventWrite.ok, reason: eventWrite.ok ? 'CODEX_QUEUE_STATUS_PUBLISHED' : eventWrite.reason, statusWrite, eventWrite, statusRecord, eventRecord, validation };
 }
 
 export function createCodexQueueRecordVerifierResult(packet = {}, options = {}) {
