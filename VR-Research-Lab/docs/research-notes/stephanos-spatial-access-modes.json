@@ -1,12 +1,14 @@
 {
-  "version": "spatial-access-modes.v1",
+  "version": "spatial-access-modes.v1.1",
   "recordedDate": "2026-07-14",
   "status": "architecture-recorded-implementation-deferred",
   "parentDoctrine": "VR-Research-Lab/docs/research-notes/stephanos-spatial-bridge-doctrine.md",
   "humanDoctrine": "VR-Research-Lab/docs/research-notes/stephanos-spatial-dual-access-transport.md",
+  "homeProfile": "VR-Research-Lab/docs/research-notes/stephanos-home-air-link-profile.md",
   "retrievalTags": [
     "vr",
     "quest-3",
+    "air-link",
     "quest-link",
     "starlink",
     "caravan",
@@ -19,16 +21,20 @@
   ],
   "principle": "Render the bridge as close to Stephan as possible and move only the information that must cross the network.",
   "singleBrainRule": true,
+  "currentObservedSetup": {
+    "home": "Meta Quest Air Link from Quest 3 to the Battle Bridge",
+    "caravan": "Remote Stephanos access over Starlink",
+    "homeUsbLinkRole": "diagnostic, recovery, benchmarking, or fallback rather than normal use"
+  },
   "modes": {
     "homeLink": {
-      "label": "HOME · LOCAL LINK",
+      "label": "HOME · AIR LINK",
       "location": "home",
       "questProximityToBattleBridge": "local",
-      "preferredTransport": [
-        "Quest Link USB",
-        "proven local wireless PCVR"
-      ],
-      "renderPreference": "Battle Bridge or Quest local rendering through the same versioned Stephanos contract",
+      "preferredTransport": "Meta Quest Air Link",
+      "fallbackTransport": "Quest Link USB for diagnostics, recovery, benchmarking, or fallback",
+      "renderPreference": "Battle Bridge PC rendering delivered to Quest 3 over the local Air Link media path, while canonical Stephanos state remains transport-independent",
+      "networkPreference": "Battle Bridge wired to the home network where practical, with Quest 3 on the strongest suitable local Wi-Fi path",
       "publicInternetDependency": "not required for core local surface",
       "authorityPosture": "normal Stephanos gates"
     },
@@ -83,6 +89,7 @@
     "media": {
       "authoritative": false,
       "optional": true,
+      "homeDefault": "Meta Quest Air Link",
       "traffic": [
         "encoded stereoscopic video",
         "audio",
@@ -92,6 +99,19 @@
       "failurePolicy": "must not remove or corrupt the control plane"
     }
   },
+  "homeObservations": [
+    "Air Link session availability and connection state",
+    "Battle Bridge reachability",
+    "local Wi-Fi quality",
+    "local round-trip latency",
+    "local jitter",
+    "local packet loss",
+    "Battle Bridge Ethernet status where available",
+    "GPU encoder headroom",
+    "frame pacing and comfort health",
+    "headset battery and power posture where available",
+    "reconnect count and transport changes"
+  ],
   "remoteObservations": [
     "authenticated session status",
     "direct, peer-relayed, or public-relayed connection",
@@ -138,6 +158,8 @@
   ],
   "acceptanceTests": [
     "home and caravan show the same canonical mission",
+    "home mode identifies Meta Quest Air Link as the normal transport",
+    "Air Link disconnect loses no canonical state or evidence",
     "Quest disconnect loses no state or evidence",
     "Starlink interruption causes the expected degraded posture",
     "duplicate events cannot duplicate actions",
@@ -148,5 +170,5 @@
     "media failure cannot affect authority state",
     "phone or tablet can recover the same mission"
   ],
-  "implementationGate": "Prioritise a locally rendered Quest command surface for caravan use. Treat remote PCVR streaming as optional and do not begin execution-capable spatial integration until the parent doctrine readiness gates are proven."
+  "implementationGate": "Use Meta Quest Air Link as Stephan's normal home transport profile. Prioritise a locally rendered Quest command surface for caravan use. Treat remote PCVR streaming as optional and do not begin execution-capable spatial integration until the parent doctrine readiness gates are proven."
 }
