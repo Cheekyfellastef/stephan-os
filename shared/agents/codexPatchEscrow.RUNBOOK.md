@@ -56,9 +56,9 @@ node scripts/codex-patch-escrow-export.mjs escrow-config.json repair.patch escro
 
 Post `manifest.comment.md` and every numbered chunk comment to the issue. Chunks may be posted by the repository owner or `chatgpt-codex-connector[bot]`.
 
-The final `publish.comment.md` must be posted by the repository owner on an issue carrying the existing `codex` label. That owner-authored comment is the bounded publication authorization.
+The final `publish.comment.md` must be posted by the repository owner on an issue carrying the existing `codex` label. That owner-authored comment includes both the deterministic bundle ID and the complete 64-character patch SHA-256. Publication requires both values to match the selected manifest.
 
-The bundle ID is not merely shape-checked. It must equal `patch-issue-{issueNumber}-{patchSha256.slice(0, 12)}` for the same manifest, or the request fails before selection and publication.
+The deterministic bundle ID remains `patch-issue-{issueNumber}-{patchSha256.slice(0, 12)}` for compatibility. It is never sufficient authorization by itself. The full patch SHA-256 in the owner comment is the authoritative collision-resistant publication identity.
 
 ## Three-phase automatic publisher
 
@@ -68,12 +68,11 @@ After this workflow is present on `main`, the final `PATCH_ESCROW_PUBLISH_V1` co
 
 The preparation job has read-only GitHub permission and checks out canonical `main` with `persist-credentials: false`. It:
 
-1. Validates the owner-authored publication event and issue label.
-2. Fetches issue comments using a short-lived read token.
-3. Selects and reassembles the exact escrow.
-4. Binds the bundle ID to the same issue number and patch SHA-256.
-5. Verifies current `main` still equals the signed base SHA.
-6. Writes a one-day prepared artifact containing only the manifest, checksummed patch bytes, and public repository metadata.
+1. Validates the owner-authored publication event, issue label, publish comment ID, deterministic bundle ID, and full authorised patch SHA-256.
+2. Fetches issue comments once using a short-lived read token.
+3. Selects and reassembles the only manifest/chunk set matching both the bundle ID and complete authorised patch hash.
+4. Verifies current `main` still equals the signed base SHA.
+5. Writes a one-day prepared artifact containing the exact comment identities, manifest, checksummed patch bytes, full authorisation hash, and public repository metadata.
 
 It does not apply the patch or execute patched code.
 
@@ -81,7 +80,7 @@ It does not apply the patch or execute patched code.
 
 The validation job starts separately and never receives `GITHUB_TOKEN`, `GH_TOKEN`, or a GitHub PAT. It checks out canonical `main` with `persist-credentials: false`, downloads the prepared artifact as untrusted input, and:
 
-1. Revalidates the complete manifest and bundle/hash/issue binding.
+1. Revalidates the complete manifest, comment identities, issue binding, and full owner-authorised patch SHA-256.
 2. Revalidates patch base64, byte length, SHA-256, signed base, changed-file list, safe paths, and fixed test profile.
 3. Walks Linux `/proc` process ancestry and fails if the current process or a parent exposes a GitHub repository credential variable.
 4. Computes the exact expected Git tree from the signed patch.
@@ -89,6 +88,7 @@ The validation job starts separately and never receives `GITHUB_TOKEN`, `GH_TOKE
 6. Verifies no Git credentials were persisted.
 7. Runs `git diff --check` and the fixed test profile with an isolated HOME and disabled ambient Git configuration.
 8. Fails if tests introduce any unapproved workspace change.
+9. Emits an immutable validated artifact containing the exact prepared-file bytes, their SHA-256, the full patch hash, expected tree, comment IDs, validation evidence digest, and a digest over the complete attestation.
 
 Patched test code therefore runs in a process tree that never received GitHub repository credentials.
 
@@ -96,15 +96,17 @@ Patched test code therefore runs in a process tree that never received GitHub re
 
 The publication job starts only after token-free validation succeeds. It receives write permission but does not run code from the patch. It:
 
-1. Re-fetches and re-verifies the complete escrow against current `main`.
-2. Recomputes the expected Git tree.
-3. For an existing deterministic branch, verifies the remote commit tree, its single signed-base parent, branch ref, PR head, PR base, and patch receipt before idempotent reuse.
-4. Otherwise applies and stages the patch, verifies the staged tree exactly matches the signed expected tree, commits, and pushes the deterministic branch.
-5. Re-reads GitHub's remote ref and commit tree to prove exact publication.
-6. Opens one linked pull request.
-7. Posts a publication receipt and never merges.
+1. Downloads the exact validated artifact emitted by the token-free job. It does not re-fetch issue comments or re-select a manifest.
+2. Revalidates the artifact digest, embedded prepared-file digest, full owner-authorised patch hash, comment identities, validation evidence digest, signed base, and expected tree.
+3. Binds the triggering GitHub event to the same repository, issue, owner, publish comment ID, bundle ID, and complete patch SHA-256 recorded in the artifact.
+4. Verifies current `main` and the checked-out commit still equal the validated base SHA.
+5. Reproduces the exact Git tree from the embedded patch and requires it to equal the token-free validated tree.
+6. For an existing deterministic branch, verifies the remote commit tree, its single signed-base parent, branch ref, PR head, PR base, and patch receipt before idempotent reuse.
+7. Otherwise applies and stages the embedded patch, verifies the staged tree exactly matches the validated tree, commits, and pushes the deterministic branch.
+8. Re-reads GitHub's remote ref and commit tree to prove exact publication.
+9. Opens one linked pull request, posts a digest-bearing publication receipt, and never merges.
 
-A matching PR body alone is never accepted as remote proof.
+A matching PR body alone is never accepted as remote proof. A second live issue-comment fetch is forbidden after validation.
 
 ## Fixed test profiles
 
@@ -124,8 +126,9 @@ No arbitrary command from an issue comment is executed.
 - No approval inferred from a Codex local SHA or `make_pr` report.
 - Current `main` must exactly match the signed `baseSha`; stale patches fail closed.
 - Existing mismatched deterministic branches fail closed rather than being overwritten.
-- Bundle identity must match the manifest issue number and exact patch hash.
+- The deterministic bundle ID is only a locator; authorization requires the exact complete patch SHA-256.
 - Patched code never executes in a process tree that received GitHub repository credentials.
+- Publication consumes only the immutable token-free validated artifact and cannot reselect live comments.
 - Existing publication is reusable only when its exact tree and signed-base parent are proven.
 
 ## Operational result
