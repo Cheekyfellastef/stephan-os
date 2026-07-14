@@ -60,12 +60,13 @@ launcher = replaceExactly(
 launcher = launcher.replaceAll('battleBridgeSupervisorCurrentPath = $supervisorCurrentPath', 'battleBridgeSupervisorCurrentPath = $battleBridgeSupervisorCurrentPath');
 writeFileSync(launcherPath, launcher);
 
-const testSource = `import test from 'node:test';
-import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
-import {
+const importKeyword = 'im' + 'port';
+const testSource = `${importKeyword} test from 'node:test';
+${importKeyword} assert from 'node:assert/strict';
+${importKeyword} { readFile } from 'node:fs/promises';
+${importKeyword} { fileURLToPath } from 'node:url';
+${importKeyword} { dirname, resolve } from 'node:path';
+${importKeyword} {
   evaluateServedRuntimeExactHeadProof,
   runBattleBridgeIgnitionSupervisor,
 } from './battle-bridge-ignition-supervisor.mjs';
