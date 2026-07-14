@@ -8,6 +8,8 @@ import { collectLauncherReadinessLiveFacts, resolveSharedWorkspaceRoot } from '.
 import { SHARED_WORKSPACE_RECORD_KINDS, SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, validateSharedWorkspaceRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 export const BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_SCHEMA = 'stephanos.battle-bridge-shared-workspace-publisher.v1';
+export const BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_CORRELATION_ID = 'issue-1290-battle-bridge-current';
+export const BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_RELATED_ISSUE = '#1290';
 export const BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_AUTHORITY = Object.freeze({
   executesCommands: false,
   executesArbitraryShell: false,
@@ -79,9 +81,20 @@ function observedServiceFacts(facts = {}) {
   }]));
 }
 
-export function createBattleBridgeSharedWorkspaceRecords({ facts = {}, timestampUtc = new Date().toISOString(), mode = 'explicit-refresh', workspace = {} } = {}) {
+export function createBattleBridgeSharedWorkspaceRecords({
+  facts = {},
+  timestampUtc = new Date().toISOString(),
+  mode = 'explicit-refresh',
+  workspace = {},
+  correlationId = BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_CORRELATION_ID,
+  relatedIssue = BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_RELATED_ISSUE,
+  relatedPr = '',
+} = {}) {
   const publication = deriveBattleBridgePublicationStatus(facts);
   const proofRefs = ['proof/battle-bridge-current.json'];
+  const issueOrPrCorrelation = String(relatedPr || '').trim()
+    ? { relatedPr: String(relatedPr).trim() }
+    : { relatedIssue: String(relatedIssue || BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_RELATED_ISSUE).trim() };
   const source = {
     schema: BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_SCHEMA,
     mode,
@@ -99,7 +112,17 @@ export function createBattleBridgeSharedWorkspaceRecords({ facts = {}, timestamp
   };
   return Object.freeze({
     status: { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: 'battle-bridge-current', ...common, proofRefs },
-    proof: { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.PROOF, proofId: 'battle-bridge-current', ...common, refs: proofRefs, proofCommand: 'node scripts/battle-bridge-shared-workspace-publisher.mjs --shared-workspace <path> --json' },
+    proof: {
+      schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+      kind: SHARED_WORKSPACE_RECORD_KINDS.PROOF,
+      proofId: 'battle-bridge-current',
+      correlationId,
+      ...issueOrPrCorrelation,
+      ...common,
+      proofRefs,
+      refs: proofRefs,
+      proofCommand: 'node scripts/battle-bridge-shared-workspace-publisher.mjs --shared-workspace <path> --json',
+    },
     event: { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT, eventId: 'battle-bridge-current', eventKind: 'battle-bridge-shared-workspace-refresh', ...common, proofRefs },
   });
 }
@@ -122,7 +145,14 @@ export async function refreshBattleBridgeSharedWorkspacePublisher(options = {}) 
   const workspace = assertSafePublisherWorkspace(resolveSharedWorkspaceRoot(repoRoot, options), repoRoot, options);
   const facts = options.facts || await collectLauncherReadinessLiveFacts({ ...options, repoRoot, sharedWorkspace: workspace.root });
   const timestampUtc = options.timestampUtc || new Date().toISOString();
-  const records = createBattleBridgeSharedWorkspaceRecords({ facts, timestampUtc, workspace });
+  const records = createBattleBridgeSharedWorkspaceRecords({
+    facts,
+    timestampUtc,
+    workspace,
+    correlationId: options.correlationId,
+    relatedIssue: options.relatedIssue,
+    relatedPr: options.relatedPr,
+  });
   const writes = [];
   writes.push(await writeAtomicJsonWithinRoot(workspace.root, RECORD_ROUTES.status, records.status, { nowMs: Date.parse(timestampUtc) }));
   writes.push(await writeAtomicJsonWithinRoot(workspace.root, RECORD_ROUTES.proof, records.proof, { nowMs: Date.parse(timestampUtc) }));
