@@ -18,10 +18,11 @@
   "modes": {
     "home": {
       "id": "home",
-      "label": "HOME · AIR LINK",
-      "transport": "Meta Quest Air Link",
-      "rendering": "Battle Bridge PC rendering over local wireless media path",
-      "control": "Local Stephanos control plane",
+      "label": "HOME · LOCAL QUEST",
+      "transport": "Quest-local bridge over home Wi-Fi",
+      "rendering": "Quest-local immersive renderer",
+      "control": "Authenticated local Stephanos control plane to the Battle Bridge",
+      "airLinkRole": "Optional separate PCVR or high-fidelity media route",
       "health": "nominal",
       "latencyMs": 19,
       "jitterMs": 3,
@@ -32,8 +33,9 @@
       "id": "caravan",
       "label": "CARAVAN · REMOTE STARLINK",
       "transport": "Authenticated Stephanos control plane over Starlink",
-      "rendering": "Quest-local bridge shell",
+      "rendering": "Quest-local immersive renderer",
       "control": "Remote control plane · media optional",
+      "airLinkRole": "None",
       "health": "constrained",
       "latencyMs": 62,
       "jitterMs": 14,
@@ -56,11 +58,11 @@
   "captainView": {
     "overallStatus": "BUILDING THE INTENT-TO-REALITY LOOP",
     "activeMission": "Make Stephanos capable of turning spoken intent into safely verified outcomes.",
-    "nextBestAction": "Prove the read-only spatial projection and launcher route before connecting live state.",
+    "nextBestAction": "Prove the read-only Quest entry shell and spatial projection before connecting live state.",
     "confidence": "prototype",
     "majorBlockers": [
-      "Live canonical spatial API is not connected.",
-      "Battle Bridge and Quest proof are deferred for Codex/local testing.",
+      "Immersive WebXR captain scene is not connected.",
+      "Battle Bridge and Quest packaging proof are deferred for Codex/local testing.",
       "Voice, gaze, controller, approval and execution paths remain disabled."
     ]
   },
@@ -95,7 +97,7 @@
       "summary": "Battle Bridge, OpenClaw, Codex, runtime health and rollback.",
       "status": "testing deferred",
       "signal": "attention",
-      "detail": "Battle Bridge launch, browser proof, Air Link behaviour and performance require local verification when Codex is available."
+      "detail": "HTTPS hosting, immersive rendering, signed packaging, Alpha-channel installation and Quest performance require local verification when Codex is available."
     },
     {
       "id": "memory",
@@ -109,9 +111,9 @@
       "id": "proof",
       "name": "Proof",
       "summary": "Observed evidence, completion verdicts and remaining uncertainty.",
-      "status": "source slice only",
+      "status": "source scaffold only",
       "signal": "guarded",
-      "detail": "This source slice is not proven on the Battle Bridge or Quest. The PR must remain unmerged until local browser and launcher proof are returned."
+      "detail": "This source scaffold is not proven as an installed immersive Quest app. The PR remains draft until its exact-head tests and recorded proof gates are satisfied."
     }
   ],
   "evidence": [
@@ -125,13 +127,13 @@
       "id": "transport",
       "label": "Dual-access transport",
       "status": "recorded",
-      "detail": "Home uses Air Link only. Caravan uses a lightweight authenticated control plane over Starlink."
+      "detail": "The bridge renders locally on Quest at home and in the caravan. Air Link is optional media, while Starlink carries the remote control plane."
     },
     {
       "id": "runtime",
-      "label": "Runtime proof",
+      "label": "Quest runtime proof",
       "status": "pending",
-      "detail": "Codex/local Battle Bridge testing must verify launcher discovery, rendering, console errors and responsive behaviour."
+      "detail": "Codex and local testing must verify HTTPS hosting, immersive WebXR, signed packaging, Digital Asset Links, Alpha installation and icon launch."
     }
   ],
   "constraints": [
@@ -141,6 +143,6 @@
     "No approvals",
     "No execution",
     "No OpenClaw, Codex or Battle Bridge command route",
-    "No claim of WebXR or headset proof"
+    "No claim of immersive WebXR or installed Quest proof"
   ]
 }
