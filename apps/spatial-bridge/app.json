@@ -3,12 +3,15 @@
   "icon": "🖖",
   "entry": "index.html",
   "type": "command-surface",
-  "packaging": "classic-static",
+  "packaging": "classic-static-plus-quest-pwa-scaffold",
   "capabilities": [
     "spatial-bridge-preview",
     "read-only-captain-view",
     "transport-mode-simulation",
-    "mock-spatial-projection"
+    "mock-spatial-projection",
+    "quest-pwa-manifest",
+    "offline-entry-shell",
+    "release-channel-readiness-contract"
   ],
   "eventsPublished": [],
   "eventsConsumed": [],
@@ -16,5 +19,13 @@
   "continuityParticipation": "planned",
   "aiAddressable": false,
   "authority": "read-only",
-  "implementationStage": "v0-flat-prototype"
+  "implementationStage": "v0-flat-prototype-plus-quest-entry-scaffold",
+  "questDistribution": {
+    "preferredType": "immersive-webxr-pwa",
+    "preferredChannel": "private-alpha-release-channel",
+    "questLibraryIconAfterInstall": true,
+    "immersiveRendererReady": false,
+    "packageReady": false,
+    "proofPending": true
+  }
 }
