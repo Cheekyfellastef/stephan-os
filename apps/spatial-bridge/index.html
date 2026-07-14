@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stephanos Spatial Bridge V0</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --void: #02040a;
+      --deck: rgba(7, 13, 27, 0.9);
+      --deck-soft: rgba(11, 22, 42, 0.72);
+      --line: rgba(102, 188, 255, 0.38);
+      --line-strong: rgba(129, 219, 255, 0.78);
+      --text: #e6f5ff;
+      --muted: #86a8bf;
+      --cyan: #78d8ff;
+      --blue: #6ca4ff;
+      --green: #8ff7c1;
+      --amber: #ffd38a;
+      --red: #ff9f9f;
+      --glow: 0 0 24px rgba(83, 186, 255, 0.13);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      overflow-x: hidden;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 50% -10%, rgba(51, 107, 178, 0.28), transparent 38%),
+        radial-gradient(circle at 15% 65%, rgba(32, 110, 145, 0.15), transparent 28%),
+        radial-gradient(circle at 85% 70%, rgba(80, 67, 158, 0.13), transparent 30%),
+        var(--void);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.3;
+      background-image:
+        radial-gradient(circle at 12% 22%, #fff 0 1px, transparent 1.4px),
+        radial-gradient(circle at 67% 18%, #fff 0 0.8px, transparent 1.2px),
+        radial-gradient(circle at 88% 42%, #9edfff 0 1px, transparent 1.5px),
+        radial-gradient(circle at 33% 78%, #fff 0 0.7px, transparent 1.1px),
+        radial-gradient(circle at 73% 84%, #b3c9ff 0 1px, transparent 1.5px);
+      background-size: 260px 240px, 330px 310px, 410px 360px, 290px 280px, 370px 340px;
+    }
+
+    button { font: inherit; }
+
+    .bridge-shell {
+      position: relative;
+      z-index: 1;
+      width: min(1640px, 100%);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: 20px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 14px;
+    }
+
+    .frame {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(10, 20, 39, 0.92), rgba(4, 9, 18, 0.92));
+      box-shadow: var(--glow), inset 0 1px rgba(255, 255, 255, 0.03);
+      backdrop-filter: blur(16px);
+    }
+
+    .topbar {
+      min-height: 72px;
+      padding: 13px 16px;
+      border-radius: 18px 18px 8px 8px;
+      display: grid;
+      grid-template-columns: minmax(240px, 1.3fr) auto minmax(280px, 1fr);
+      align-items: center;
+      gap: 16px;
+    }
+
+    .brand { display: grid; gap: 3px; }
+    .eyebrow { color: var(--cyan); font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(1.15rem, 2vw, 1.8rem); font-weight: 560; letter-spacing: 0.04em; }
+    .subtle { color: var(--muted); font-size: 0.84rem; }
+
+    .authority-lock {
+      justify-self: center;
+      padding: 8px 14px;
+      border: 1px solid rgba(255, 206, 115, 0.45);
+      border-radius: 999px;
+      color: #ffe8b8;
+      background: rgba(116, 78, 18, 0.2);
+      letter-spacing: 0.08em;
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .mode-summary {
+      justify-self: end;
+      text-align: right;
+      display: grid;
+      gap: 3px;
+    }
+
+    #mode-label { color: var(--green); font-weight: 650; letter-spacing: 0.06em; }
+
+    .mode-rack {
+      padding: 8px;
+      border-radius: 9px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .mode-button, .department-button {
+      border: 1px solid var(--line);
+      color: var(--text);
+      background: rgba(11, 25, 48, 0.66);
+      cursor: pointer;
+      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+
+    .mode-button {
+      min-height: 42px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .mode-button:hover, .mode-button:focus-visible,
+    .department-button:hover, .department-button:focus-visible {
+      border-color: var(--line-strong);
+      background: rgba(30, 74, 112, 0.42);
+      outline: none;
+      transform: translateY(-1px);
+    }
+
+    .mode-button[aria-pressed="true"] {
+      color: #eaffff;
+      border-color: var(--cyan);
+      background: linear-gradient(180deg, rgba(29, 100, 139, 0.46), rgba(13, 49, 79, 0.5));
+      box-shadow: inset 0 0 18px rgba(73, 195, 255, 0.1);
+    }
+
+    .bridge-grid {
+      min-height: 630px;
+      display: grid;
+      grid-template-columns: minmax(220px, 0.78fr) minmax(480px, 1.8fr) minmax(220px, 0.78fr);
+      gap: 14px;
+      align-items: stretch;
+      perspective: 1200px;
+    }
+
+    .wing {
+      padding: 12px;
+      border-radius: 20px 8px 20px 8px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 10px;
+    }
+
+    .wing.left { transform: rotateY(2deg); transform-origin: right center; }
+    .wing.right { transform: rotateY(-2deg); transform-origin: left center; }
+
+    .section-title {
+      margin: 0;
+      font-size: 0.78rem;
+      color: var(--cyan);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+
+    .department-list { display: grid; align-content: start; gap: 8px; }
+
+    .department-button {
+      width: 100%;
+      padding: 11px;
+      border-radius: 8px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px 10px;
+      text-align: left;
+    }
+
+    .department-button[aria-selected="true"] {
+      border-color: var(--cyan);
+      background: rgba(31, 88, 126, 0.45);
+      box-shadow: inset 3px 0 var(--cyan);
+    }
+
+    .department-name { font-weight: 620; }
+    .department-summary { grid-column: 1 / -1; color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+
+    .signal {
+      width: 8px;
+      height: 8px;
+      margin-top: 5px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 12px currentColor;
+    }
+    .signal.guarded { background: var(--amber); }
+    .signal.attention { background: var(--red); }
+
+    .captain-deck {
+      position: relative;
+      padding: 18px;
+      border-radius: 10px 10px 28px 28px;
+      display: grid;
+      grid-template-rows: auto auto minmax(180px, 1fr) auto;
+      gap: 14px;
+      overflow: hidden;
+    }
+
+    .captain-deck::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, transparent 49.8%, rgba(109, 204, 255, 0.08) 50%, transparent 50.2%),
+        radial-gradient(ellipse at 50% 105%, rgba(68, 151, 214, 0.16), transparent 48%);
+    }
+
+    .captain-header, .mission-core, .detail-console, .telemetry-row { position: relative; z-index: 1; }
+
+    .captain-header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: start;
+      gap: 12px;
+    }
+
+    .captain-header h2 { margin: 5px 0 0; font-size: clamp(1.2rem, 2.4vw, 2rem); font-weight: 520; }
+
+    .confidence {
+      padding: 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 0.72rem;
+    }
+
+    .mission-core {
+      min-height: 160px;
+      padding: clamp(16px, 3vw, 28px);
+      border: 1px solid rgba(117, 205, 255, 0.48);
+      border-radius: 120px 120px 24px 24px / 56px 56px 24px 24px;
+      background:
+        radial-gradient(ellipse at 50% 0%, rgba(74, 177, 231, 0.2), transparent 55%),
+        rgba(6, 18, 35, 0.82);
+      text-align: center;
+      display: grid;
+      place-content: center;
+      gap: 10px;
+    }
+
+    .mission-core .mission-label { color: var(--cyan); text-transform: uppercase; letter-spacing: 0.18em; font-size: 0.7rem; }
+    #active-mission { margin: 0; font-size: clamp(1.05rem, 2vw, 1.55rem); line-height: 1.4; font-weight: 520; }
+    #next-action { color: #b9d8eb; line-height: 1.45; }
+
+    .detail-console {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(4, 11, 23, 0.75);
+      display: grid;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .detail-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    #detail-title { margin: 0; font-size: 1.05rem; }
+    #detail-status { color: var(--green); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.1em; }
+    #detail-body { margin: 0; color: #bfd8e8; line-height: 1.55; }
+
+    .blocker-list { margin: 0; padding-left: 18px; color: #e8d3aa; display: grid; gap: 5px; }
+
+    .telemetry-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric {
+      min-height: 72px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(8, 18, 34, 0.72);
+      display: grid;
+      align-content: center;
+      gap: 3px;
+    }
+
+    .metric-label { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; }
+    .metric-value { font-size: 1.02rem; color: var(--cyan); }
+
+    .evidence-list { display: grid; align-content: start; gap: 8px; }
+    .evidence-card {
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(8, 18, 34, 0.68);
+      display: grid;
+      gap: 5px;
+    }
+    .evidence-card strong { font-size: 0.87rem; }
+    .evidence-card p { margin: 0; color: var(--muted); font-size: 0.76rem; line-height: 1.4; }
+    .evidence-status { color: var(--green); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .evidence-status.pending { color: var(--amber); }
+
+    .constraint-card {
+      padding: 10px;
+      border: 1px solid rgba(255, 185, 103, 0.35);
+      border-radius: 8px;
+      background: rgba(78, 49, 17, 0.14);
+      color: #f0d8ad;
+      font-size: 0.76rem;
+      line-height: 1.45;
+    }
+
+    .footer-deck {
+      padding: 10px 14px;
+      border-radius: 8px 8px 18px 18px;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.76rem;
+      color: var(--muted);
+    }
+
+    .footer-deck .center { color: var(--cyan); text-align: center; letter-spacing: 0.08em; }
+    .footer-deck .right { text-align: right; }
+
+    .error {
+      color: var(--red);
+      border-color: rgba(255, 126, 126, 0.55) !important;
+    }
+
+    @media (max-width: 1120px) {
+      .topbar { grid-template-columns: 1fr auto; }
+      .authority-lock { grid-row: 2; grid-column: 1 / -1; }
+      .mode-summary { justify-self: end; }
+      .bridge-grid { grid-template-columns: 1fr 1fr; }
+      .captain-deck { grid-column: 1 / -1; grid-row: 1; }
+      .wing.left, .wing.right { transform: none; }
+    }
+
+    @media (max-width: 720px) {
+      .bridge-shell { padding: 10px; }
+      .topbar, .bridge-grid, .footer-deck { grid-template-columns: 1fr; }
+      .mode-summary, .footer-deck .right { justify-self: start; text-align: left; }
+      .mode-rack { grid-template-columns: 1fr; }
+      .telemetry-row { grid-template-columns: 1fr 1fr; }
+      .captain-deck { grid-column: auto; }
+      .mission-core { border-radius: 34px 34px 18px 18px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <script type="module" src="../../shared/runtime/commandDeckReturnControls.mjs"></script>
+  <main class="bridge-shell" aria-label="Stephanos Spatial Bridge V0 read-only prototype">
+    <header class="topbar frame">
+      <div class="brand">
+        <span class="eyebrow">Stephanos spatial surface</span>
+        <h1>Captain Bridge V0</h1>
+        <span class="subtle">Flat source prototype for later Quest and Battle Bridge proof</span>
+      </div>
+      <div class="authority-lock" id="authority-lock">Read only · No execution authority</div>
+      <div class="mode-summary">
+        <span id="mode-label">Loading transport profile</span>
+        <span class="subtle" id="freshness-label">Loading projection</span>
+      </div>
+    </header>
+
+    <nav class="mode-rack frame" aria-label="Simulation transport modes">
+      <button class="mode-button" type="button" data-mode="home" data-simulation-only aria-pressed="true">Home · Air Link</button>
+      <button class="mode-button" type="button" data-mode="caravan" data-simulation-only aria-pressed="false">Caravan · Starlink</button>
+      <button class="mode-button" type="button" data-mode="degraded" data-simulation-only aria-pressed="false">Remote degraded</button>
+    </nav>
+
+    <section class="bridge-grid">
+      <aside class="wing left frame" aria-label="Navigation and science departments">
+        <h2 class="section-title">Mission departments</h2>
+        <div class="department-list" id="left-departments"></div>
+        <div class="constraint-card">
+          V0 reads a bundled mock projection only. It cannot dispatch agents, approve actions, modify Stephanos, or contact the Battle Bridge.
+        </div>
+      </aside>
+
+      <section class="captain-deck frame" aria-label="Captain view">
+        <div class="captain-header">
+          <div>
+            <span class="eyebrow">Captain view</span>
+            <h2 id="overall-status">Loading mission state</h2>
+          </div>
+          <span class="confidence" id="confidence-label">confidence: unknown</span>
+        </div>
+
+        <section class="mission-core">
+          <span class="mission-label">Active mission</span>
+          <p id="active-mission">Loading canonical intent mock</p>
+          <div id="next-action">Loading next action</div>
+        </section>
+
+        <section class="detail-console" id="detail-console" tabindex="0" aria-live="polite">
+          <div class="detail-head">
+            <h3 id="detail-title">Select a department</h3>
+            <span id="detail-status">observer only</span>
+          </div>
+          <p id="detail-body">Use the department panels to bring a system into the captain view.</p>
+          <div>
+            <span class="eyebrow">Major blockers</span>
+            <ul class="blocker-list" id="blocker-list"></ul>
+          </div>
+        </section>
+
+        <section class="telemetry-row" aria-label="Transport telemetry simulation">
+          <div class="metric"><span class="metric-label">Transport</span><span class="metric-value" id="transport-value">unknown</span></div>
+          <div class="metric"><span class="metric-label">Round trip</span><span class="metric-value" id="latency-value">unknown</span></div>
+          <div class="metric"><span class="metric-label">Jitter</span><span class="metric-value" id="jitter-value">unknown</span></div>
+          <div class="metric"><span class="metric-label">Packet loss</span><span class="metric-value" id="loss-value">unknown</span></div>
+        </section>
+      </section>
+
+      <aside class="wing right frame" aria-label="Engineering and evidence departments">
+        <h2 class="section-title">Evidence and readiness</h2>
+        <div class="evidence-list" id="evidence-list"></div>
+        <div class="constraint-card" id="constraint-summary">Loading safety constraints</div>
+      </aside>
+    </section>
+
+    <footer class="footer-deck frame">
+      <span id="projection-version">projection version: loading</span>
+      <span class="center">One ship · One brain · Two wireless transport profiles</span>
+      <span class="right">Controller and headset proof pending</span>
+    </footer>
+  </main>
+
+  <script type="module">
+    const state = {
+      projection: null,
+      mode: 'home',
+      selectedDepartmentId: null,
+    };
+
+    const nodes = {
+      authorityLock: document.getElementById('authority-lock'),
+      modeLabel: document.getElementById('mode-label'),
+      freshnessLabel: document.getElementById('freshness-label'),
+      overallStatus: document.getElementById('overall-status'),
+      confidence: document.getElementById('confidence-label'),
+      activeMission: document.getElementById('active-mission'),
+      nextAction: document.getElementById('next-action'),
+      detailConsole: document.getElementById('detail-console'),
+      detailTitle: document.getElementById('detail-title'),
+      detailStatus: document.getElementById('detail-status'),
+      detailBody: document.getElementById('detail-body'),
+      blockerList: document.getElementById('blocker-list'),
+      transport: document.getElementById('transport-value'),
+      latency: document.getElementById('latency-value'),
+      jitter: document.getElementById('jitter-value'),
+      loss: document.getElementById('loss-value'),
+      leftDepartments: document.getElementById('left-departments'),
+      evidenceList: document.getElementById('evidence-list'),
+      constraintSummary: document.getElementById('constraint-summary'),
+      projectionVersion: document.getElementById('projection-version'),
+    };
+
+    function queryMode() {
+      const requested = new URLSearchParams(window.location.search).get('mode');
+      return ['home', 'caravan', 'degraded'].includes(requested) ? requested : 'home';
+    }
+
+    function setText(node, value, fallback = 'unknown') {
+      node.textContent = String(value || fallback);
+    }
+
+    function renderMode() {
+      const mode = state.projection?.modes?.[state.mode];
+      if (!mode) return;
+
+      setText(nodes.modeLabel, mode.label);
+      setText(nodes.transport, mode.transport);
+      setText(nodes.latency, `${mode.latencyMs} ms`);
+      setText(nodes.jitter, `${mode.jitterMs} ms`);
+      setText(nodes.loss, `${mode.packetLossPercent}%`);
+
+      document.querySelectorAll('[data-mode]').forEach((button) => {
+        button.setAttribute('aria-pressed', String(button.dataset.mode === state.mode));
+      });
+
+      const degraded = state.mode === 'degraded';
+      nodes.authorityLock.textContent = degraded
+        ? 'Read only · Connection certainty degraded'
+        : 'Read only · No execution authority';
+      nodes.authorityLock.classList.toggle('error', degraded);
+    }
+
+    function signalClass(signal) {
+      return ['guarded', 'attention'].includes(signal) ? signal : '';
+    }
+
+    function selectDepartment(id, focusDetail = false) {
+      const department = state.projection?.departments?.find((item) => item.id === id);
+      if (!department) return;
+      state.selectedDepartmentId = id;
+      setText(nodes.detailTitle, department.name);
+      setText(nodes.detailStatus, department.status);
+      setText(nodes.detailBody, department.detail);
+
+      document.querySelectorAll('[data-department-id]').forEach((button) => {
+        button.setAttribute('aria-selected', String(button.dataset.departmentId === id));
+      });
+
+      if (focusDetail) nodes.detailConsole.focus();
+    }
+
+    function renderDepartments() {
+      nodes.leftDepartments.innerHTML = '';
+      (state.projection.departments || []).forEach((department) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'department-button';
+        button.dataset.departmentId = department.id;
+        button.dataset.simulationOnly = '';
+        button.setAttribute('aria-selected', 'false');
+        button.innerHTML = `
+          <span class="department-name"></span>
+          <span class="signal ${signalClass(department.signal)}" aria-hidden="true"></span>
+          <span class="department-summary"></span>
+        `;
+        button.querySelector('.department-name').textContent = department.name;
+        button.querySelector('.department-summary').textContent = department.summary;
+        button.addEventListener('click', () => selectDepartment(department.id, true));
+        nodes.leftDepartments.appendChild(button);
+      });
+
+      const first = state.projection.departments?.[0];
+      if (first) selectDepartment(first.id);
+    }
+
+    function renderEvidence() {
+      nodes.evidenceList.innerHTML = '';
+      (state.projection.evidence || []).forEach((evidence) => {
+        const card = document.createElement('article');
+        card.className = 'evidence-card';
+        const statusClass = evidence.status === 'pending' ? 'pending' : '';
+        card.innerHTML = `
+          <span class="evidence-status ${statusClass}"></span>
+          <strong></strong>
+          <p></p>
+        `;
+        card.querySelector('.evidence-status').textContent = evidence.status;
+        card.querySelector('strong').textContent = evidence.label;
+        card.querySelector('p').textContent = evidence.detail;
+        nodes.evidenceList.appendChild(card);
+      });
+    }
+
+    function renderCaptain() {
+      const captain = state.projection.captainView || {};
+      setText(nodes.overallStatus, captain.overallStatus);
+      setText(nodes.confidence, `confidence: ${captain.confidence || 'unknown'}`);
+      setText(nodes.activeMission, captain.activeMission);
+      setText(nodes.nextAction, `Next: ${captain.nextBestAction || 'unknown'}`);
+      nodes.blockerList.innerHTML = '';
+      (captain.majorBlockers || []).forEach((blocker) => {
+        const item = document.createElement('li');
+        item.textContent = blocker;
+        nodes.blockerList.appendChild(item);
+      });
+    }
+
+    function renderProjection() {
+      const projection = state.projection;
+      setText(nodes.freshnessLabel, projection.freshness?.label);
+      setText(nodes.projectionVersion, `projection version: ${projection.version}`);
+      nodes.constraintSummary.textContent = (projection.constraints || []).join(' · ');
+      renderCaptain();
+      renderDepartments();
+      renderEvidence();
+      renderMode();
+    }
+
+    function moveDepartmentSelection(direction) {
+      const buttons = [...document.querySelectorAll('[data-department-id]')];
+      if (!buttons.length) return;
+      const currentIndex = Math.max(0, buttons.findIndex((button) => button.dataset.departmentId === state.selectedDepartmentId));
+      const nextIndex = (currentIndex + direction + buttons.length) % buttons.length;
+      buttons[nextIndex].focus();
+      selectDepartment(buttons[nextIndex].dataset.departmentId);
+    }
+
+    document.querySelectorAll('[data-mode]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.mode = button.dataset.mode;
+        renderMode();
+      });
+    });
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' || event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        moveDepartmentSelection(1);
+      }
+      if (event.key === 'ArrowUp' || event.key.toLowerCase() === 'w') {
+        event.preventDefault();
+        moveDepartmentSelection(-1);
+      }
+      if (event.key === 'Enter' && document.activeElement?.dataset?.departmentId) {
+        selectDepartment(document.activeElement.dataset.departmentId, true);
+      }
+      if (event.key === 'Escape') {
+        nodes.detailConsole.blur();
+      }
+    });
+
+    async function loadProjection() {
+      const response = await fetch('./bridge-state.v0.json', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`projection unavailable (${response.status})`);
+      const projection = await response.json();
+      if (projection.readOnly !== true || projection.authority !== 'none') {
+        throw new Error('V0 projection rejected because read-only authority contract was not satisfied');
+      }
+      return projection;
+    }
+
+    state.mode = queryMode();
+    loadProjection()
+      .then((projection) => {
+        state.projection = projection;
+        renderProjection();
+      })
+      .catch((error) => {
+        nodes.authorityLock.textContent = 'Read only · Projection load failed';
+        nodes.authorityLock.classList.add('error');
+        nodes.overallStatus.textContent = 'Bridge unavailable';
+        nodes.activeMission.textContent = error.message;
+        nodes.freshnessLabel.textContent = 'No mission truth loaded';
+      });
+  </script>
+</body>
+</html>
