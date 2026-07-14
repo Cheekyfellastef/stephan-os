@@ -33,6 +33,7 @@ jobs:
         with:
           node-version: '20'
 
+
       - name: Preflight frontend path and lockfile
         run: |
           echo "Frontend package path: stephanos-ui"
@@ -58,29 +59,12 @@ jobs:
       - name: Build Stephanos UI pipeline from repo root
         run: npm run stephanos:build
 
-      - name: Capture generated Stephanos dist verification
-        id: verify
-        continue-on-error: true
-        run: npm run stephanos:verify > stephanos-verify.log 2>&1
-
-      - name: Upload verifier log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stephanos-verify-log
-          path: stephanos-verify.log
-          if-no-files-found: error
+      - name: Verify generated Stephanos dist from repo root
+        run: npm run stephanos:verify
 
       - name: Upload built Stephanos dist artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stephanos-ui-dist
           path: apps/stephanos/dist
           if-no-files-found: error
-
-      - name: Enforce generated Stephanos dist verification
-        if: steps.verify.outcome != 'success'
-        run: |
-          cat stephanos-verify.log
-          exit 1
