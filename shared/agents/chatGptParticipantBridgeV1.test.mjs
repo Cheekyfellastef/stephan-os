@@ -99,6 +99,18 @@ test('payload bounds and secret-shaped data are rejected before workspace record
   assert.equal(buildChatGptBridgeRecord(validRequest({ boundedPayload: { summary: 'x'.repeat(CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES + 1) } })).reason, 'BLOCKED_PAYLOAD_UNSAFE');
 });
 
+test('serialized toJSON output is inspected for secret-shaped data', () => {
+  const boundedPayload = {
+    summary: 'Safe before serialization.',
+    toJSON() {
+      return { apiToken: 'ghp_1234567890abcdef' };
+    },
+  };
+  const request = validRequest({ boundedPayload });
+  assert.equal(verify(request).responseStatus, 'BLOCKED_SECRET_SHAPED_DATA');
+  assert.equal(buildChatGptBridgeRecord(request).reason, 'BLOCKED_SECRET_SHAPED_DATA');
+});
+
 test('unserializable payloads fail closed without throwing', () => {
   const cyclicPayload = {};
   cyclicPayload.self = cyclicPayload;
@@ -111,8 +123,23 @@ test('unserializable payloads fail closed without throwing', () => {
   }
 });
 
+test('approvalRef writes require independent canonical operator proof', () => {
+  const request = validRequest({ approvalRef: 'approval-1' });
+  const validOperatorApproval = { participantId: 'operator-stephan', approvalRef: 'approval-1', correlationId: 'issue-1506' };
+
+  assert.equal(verify(request).responseStatus, 'BLOCKED_APPROVAL_REQUIRED');
+  assert.equal(verify(request, { operatorApproval: { approvalRef: 'approval-1', correlationId: 'issue-1506' } }).responseStatus, 'BLOCKED_APPROVAL_REQUIRED');
+  assert.equal(verify(request, { operatorApproval: { ...validOperatorApproval, participantId: CHATGPT_BRIDGE_PARTICIPANT_ID } }).responseStatus, 'BLOCKED_APPROVAL_MISMATCH');
+  assert.equal(verify(request, { operatorApproval: { ...validOperatorApproval, approvalRef: 'approval-2' } }).responseStatus, 'BLOCKED_APPROVAL_MISMATCH');
+  assert.equal(verify(request, { operatorApproval: validOperatorApproval }).responseStatus, 'BRIDGE_VERIFIED_PASS');
+
+  assert.equal(buildChatGptBridgeRecord(request).reason, 'BLOCKED_APPROVAL_REQUIRED');
+  assert.equal(buildChatGptBridgeRecord(request, { operatorApproval: validOperatorApproval }).ok, true);
+});
+
 test('ChatGPT cannot create approval-result truth or self-approve operator decisions', () => {
   assert.equal(buildChatGptBridgeRecord(validRequest({ recordKind: 'approval-result' })).reason, 'BLOCKED_APPROVAL_REQUIRED');
+  assert.deepEqual(verifyOperatorApprovalSeparation(validRequest({ approvalRef: 'approval-1' }), {}), { ok: false, responseStatus: 'BLOCKED_APPROVAL_REQUIRED' });
   assert.deepEqual(verifyOperatorApprovalSeparation(validRequest({ approvalRef: 'approval-1' }), { participantId: CHATGPT_BRIDGE_PARTICIPANT_ID, approvalRef: 'approval-1', correlationId: 'issue-1506' }), { ok: false, responseStatus: 'BLOCKED_APPROVAL_MISMATCH' });
   assert.deepEqual(verifyOperatorApprovalSeparation(validRequest({ approvalRef: 'approval-1' }), { participantId: 'operator-stephan', approvalRef: 'approval-1', correlationId: 'issue-1506' }), { ok: true, responseStatus: 'BRIDGE_VERIFIED_PASS' });
 });
