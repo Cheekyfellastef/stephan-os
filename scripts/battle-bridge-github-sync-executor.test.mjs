@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -67,8 +67,11 @@ test('no-change run fetches safely and publishes auditable external receipt', as
     assert.ok(git.calls.includes('git-fetch-origin-main'));
     assert.ok(!git.calls.includes('git-merge-ff-only-origin-main'));
     const status = await readStatus(fx.workspaceRoot);
+    assert.equal(status.schemaVersion, 'shared-agent-workspace-record.v1');
+    assert.equal(status.kind, 'stephanos.shared_workspace.status');
     assert.equal(status.classification, SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE);
     assert.equal(status.authority.liveOpenClawUpdateAllowed, false);
+    assert.equal(status.proofRefs.length, 1);
   } finally { await rm(fx.root, { recursive: true, force: true }); }
 });
 
@@ -131,6 +134,27 @@ test('stale dead-process lock is recovered once and does not permanently stall t
     const lockPath = path.join(fx.workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
     await mkdir(path.dirname(lockPath), { recursive: true });
     await writeFile(lockPath, `${JSON.stringify({ pid: 123, acquiredAtUtc: new Date(now.getTime() - SYNC_LOCK_STALE_AFTER_MS - 1).toISOString() })}\n`);
+    const result = await runBattleBridgeGitHubSync({
+      paths: fx.paths,
+      expectedPaths: fx.expectedPaths,
+      git: fakeGit(),
+      now,
+      processIsAliveFn: () => false,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.evaluation.classification, SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE);
+  } finally { await rm(fx.root, { recursive: true, force: true }); }
+});
+
+test('malformed stale lock is recovered from bounded file age', async () => {
+  const fx = await fixture();
+  try {
+    const now = new Date('2026-07-14T20:30:00Z');
+    const lockPath = path.join(fx.workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, '');
+    const old = new Date(now.getTime() - SYNC_LOCK_STALE_AFTER_MS - 1);
+    await utimes(lockPath, old, old);
     const result = await runBattleBridgeGitHubSync({
       paths: fx.paths,
       expectedPaths: fx.expectedPaths,
