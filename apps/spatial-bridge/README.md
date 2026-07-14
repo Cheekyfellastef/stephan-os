@@ -39,7 +39,7 @@ Transport simulation routes:
 ## Included in the branch
 
 - captain mission view
-- home Air Link, caravan Starlink and degraded read-only simulations in the flat prototype
+- Quest-local home, caravan Starlink and degraded read-only simulations in the flat prototype
 - department selection and captain detail focus
 - mock transport telemetry
 - evidence and readiness panels
@@ -50,10 +50,26 @@ Transport simulation routes:
 - Quest PWA web manifest
 - Quest entry staging shell
 - offline service worker and read-only fallback
-- 192px and 512px icon assets
+- source-only deterministic generator for 192px and 512px PNG icons
 - Digital Asset Link template
 - private Alpha release-channel deployment contract
 - exact Sunday Codex proof window and task packet
+
+## Generated packaging assets
+
+The repository firewall rejects committed images and binary files. Generate the required PNG icons during packaging:
+
+```text
+node scripts/build-spatial-bridge-icons.mjs
+```
+
+For verification without dirtying the application folder:
+
+```text
+node scripts/build-spatial-bridge-icons.mjs --output-dir tmp/spatial-bridge-icons
+```
+
+Generated PNGs are deployment artifacts and must not be committed.
 
 ## Explicitly not yet included
 
@@ -78,31 +94,35 @@ Transport simulation routes:
 node --test tests/spatial-bridge-v0.test.mjs
 ```
 
+The test generates and validates the PNG icons inside a temporary directory, then removes them.
+
 ## Codex availability
 
 Codex is treated as unavailable until **Sunday 19 July 2026 at 20:35 Europe/London**.
 
-Before that time, design, source contracts, PWA scaffolding, offline behaviour, icons, safety gates and proof instructions can continue without Codex.
+Before that time, design, source contracts, PWA scaffolding, offline behaviour, icon generation, safety gates and proof instructions can continue without Codex.
 
 At or after that time, Codex should work at the exact PR head and:
 
 1. Run `node --test tests/spatial-bridge-v0.test.mjs`.
-2. Run the repository app or static-surface validation used by the launcher.
-3. Serve the repository through a trusted HTTPS route.
-4. Confirm the launcher discovers **Stephanos Spatial Bridge**.
-5. Open the flat prototype and Quest entry shell and record screenshot, DOM, manifest, service-worker and console evidence.
-6. Confirm all simulation controls change only local presentation state.
-7. Confirm no POST, PUT, PATCH or DELETE request is emitted.
-8. Implement or integrate the first immersive WebXR captain scene.
-9. Package with Meta's forked Bubblewrap in immersive mode.
-10. Create and preserve the signing keystore outside the repository.
-11. Generate and publish the exact Digital Asset Link statement.
-12. Upload the signed build to the invite-only ALPHA release channel.
-13. Add Stephan's Meta account to the channel.
-14. Prove the icon appears in Quest App Library and launches from the icon.
-15. Test Quest-local home and caravan profiles independently.
-16. Map and prove Xbox controller inputs separately.
-17. Record comfort, readability, network and frame-pacing evidence.
+2. Generate deployment icons with `node scripts/build-spatial-bridge-icons.mjs`.
+3. Run the repository app or static-surface validation used by the launcher.
+4. Serve the repository through a trusted HTTPS route.
+5. Confirm the launcher discovers **Stephanos Spatial Bridge**.
+6. Open the flat prototype and Quest entry shell and record screenshot, DOM, manifest, service-worker and console evidence.
+7. Confirm all simulation controls change only local presentation state.
+8. Confirm no POST, PUT, PATCH or DELETE request is emitted.
+9. Implement or integrate the first immersive WebXR captain scene.
+10. Package with Meta's forked Bubblewrap in immersive mode.
+11. Create and preserve the signing keystore outside the repository.
+12. Generate and publish the exact Digital Asset Link statement.
+13. Upload the signed build to the invite-only ALPHA release channel.
+14. Add Stephan's Meta account to the channel.
+15. Prove the icon appears in Quest App Library and launches from the icon.
+16. Test Quest-local home and caravan profiles independently.
+17. Map and prove Xbox controller inputs separately.
+18. Record comfort, readability, network and frame-pacing evidence.
+19. Remove or quarantine generated icon artifacts before any source commit or PR update.
 
 See `QUEST-DEPLOYMENT.md` and `quest-entry-contract.v1.json` for the full handoff.
 
@@ -114,6 +134,7 @@ Do not merge merely because the source looks plausible. Merge only after the exa
 - launcher discovery proof
 - browser render and console proof
 - PWA manifest and service-worker proof
+- generated icon validation
 - confirmation that the surface remains read-only
 - an explicit record that immersive WebXR, Quest Library installation, controller and headset proof are either observed or still deferred
 
