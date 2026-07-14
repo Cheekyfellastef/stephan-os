@@ -4,15 +4,20 @@ import {
   mkdir,
   open,
   readFile,
-  rename,
   rm,
   stat,
-  writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import {
+  appendWorkspaceJsonl,
+  createSharedWorkspaceEventRecord,
+  createSharedWorkspaceProofRecord,
+  createSharedWorkspaceStatusRecord,
+  writeAtomicJson,
+} from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
   CANONICAL_SYNC_CONTRACT,
   FIXED_GIT_COMMANDS,
@@ -150,17 +155,11 @@ function requireGitResult(result, fallback = '') {
   return result?.ok ? text(result.stdout) : fallback;
 }
 
-async function writeJsonAtomic(target, value) {
-  await mkdir(path.dirname(target), { recursive: true });
-  const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
-  await rename(temporary, target);
-}
-
-async function publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind }) {
+async function publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind }) {
   const timestampUtc = now.toISOString();
   const stamp = isoStamp(now);
-  const receiptRelative = path.posix.join('receipts', 'battle-bridge-github-sync', `${stamp}-${kind}.json`);
+  const receiptFile = `${stamp}-${kind}.json`;
+  const receiptRelative = path.posix.join('receipts', 'battle-bridge-github-sync', receiptFile);
   const proofRefs = [receiptRelative];
   const heads = {
     localHeadBefore: facts.localHeadBefore || facts.localHead || null,
@@ -174,30 +173,78 @@ async function publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind }
       : kind === 'blocker'
         ? buildSharedWorkspaceBlocker(evaluation, heads, proofRefs)
         : buildSharedWorkspaceReceipt(evaluation, heads, proofRefs);
-  const record = Object.freeze({
-    schema: BATTLE_BRIDGE_GITHUB_SYNC_EXECUTOR_SCHEMA,
-    generatedAtUtc: timestampUtc,
+  const { kind: syncRecordKind, ...boundedFields } = bounded;
+  const summary = `Battle Bridge GitHub sync ${evaluation.classification}: ${evaluation.exactNextAction}`;
+  const common = {
     repositoryIdentity: CANONICAL_SYNC_CONTRACT.repositoryIdentity,
     branch: CANONICAL_SYNC_CONTRACT.branch,
     remote: CANONICAL_SYNC_CONTRACT.remote,
     taskName: BATTLE_BRIDGE_GITHUB_SYNC_TASK_NAME,
-    ...bounded,
+    syncRecordKind,
+    ...boundedFields,
     authority: BATTLE_BRIDGE_GITHUB_SYNC_AUTHORITY,
+  };
+  const receiptRecord = Object.freeze({
+    ...createSharedWorkspaceProofRecord({
+      proofId: `battle-bridge-github-sync-${stamp}-${kind}`,
+      timestampUtc,
+      status: evaluation.classification,
+      summary,
+      refs: [],
+    }),
+    receiptType: 'battle-bridge-github-sync-receipt',
+    ...common,
   });
-  const receiptPath = path.resolve(workspaceRoot, ...receiptRelative.split('/'));
-  const statusPath = path.resolve(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json');
-  const eventPath = path.resolve(workspaceRoot, 'events', 'battle-bridge-github-sync.jsonl');
-  await writeJsonAtomic(receiptPath, record);
-  await writeJsonAtomic(statusPath, record);
-  await mkdir(path.dirname(eventPath), { recursive: true });
-  await writeFile(eventPath, `${JSON.stringify({
-    schema: BATTLE_BRIDGE_GITHUB_SYNC_EXECUTOR_SCHEMA,
-    generatedAtUtc: timestampUtc,
-    eventKind: `battle-bridge-github-sync-${evaluation.classification.toLowerCase()}`,
+  const receiptWrite = await writeAtomicJson(
+    workspaceRoot,
+    ['receipts', 'battle-bridge-github-sync', receiptFile],
+    receiptRecord,
+    { repoRoot },
+  );
+  if (!receiptWrite.ok) throw new Error(`Shared Workspace receipt write failed: ${receiptWrite.reason}`);
+  const statusRecord = Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'battle-bridge-github-sync-current',
+      timestampUtc,
+      status: evaluation.classification,
+      summary,
+      proofRefs,
+    }),
+    ...common,
+  });
+  const statusWrite = await writeAtomicJson(
+    workspaceRoot,
+    ['status', 'battle-bridge-github-sync-current.json'],
+    statusRecord,
+    { repoRoot },
+  );
+  if (!statusWrite.ok) throw new Error(`Shared Workspace status write failed: ${statusWrite.reason}`);
+  const eventRecord = Object.freeze({
+    ...createSharedWorkspaceEventRecord({
+      eventId: `battle-bridge-github-sync-${stamp}-${kind}`,
+      timestampUtc,
+      eventKind: `battle-bridge-github-sync-${kind}`,
+      summary,
+    }),
     classification: evaluation.classification,
     proofRefs,
-  })}\n`, { flag: 'a', mode: 0o600 });
-  return Object.freeze({ record, receiptPath, statusPath, eventPath, proofRefs });
+  });
+  const eventWrite = await appendWorkspaceJsonl(
+    workspaceRoot,
+    ['events', 'battle-bridge-github-sync.jsonl'],
+    eventRecord,
+    { repoRoot },
+  );
+  if (!eventWrite.ok) throw new Error(`Shared Workspace event write failed: ${eventWrite.reason}`);
+  return Object.freeze({
+    record: receiptRecord,
+    statusRecord,
+    eventRecord,
+    receiptPath: receiptWrite.path,
+    statusPath: statusWrite.path,
+    eventPath: eventWrite.path,
+    proofRefs,
+  });
 }
 
 function defaultProcessIsAlive(pid) {
@@ -230,7 +277,10 @@ async function acquireSingleInstanceLock(workspaceRoot, now, {
         existing = await readFile(lockPath, 'utf8');
         parsed = JSON.parse(existing);
       } catch {}
-      const acquiredAtMs = Date.parse(text(parsed?.acquiredAtUtc));
+      let lockStat = null;
+      try { lockStat = await stat(lockPath); } catch {}
+      const parsedAcquiredAtMs = Date.parse(text(parsed?.acquiredAtUtc));
+      const acquiredAtMs = Number.isFinite(parsedAcquiredAtMs) ? parsedAcquiredAtMs : lockStat?.mtimeMs;
       const ageMs = Number.isFinite(acquiredAtMs) ? now.getTime() - acquiredAtMs : NaN;
       const ownerAlive = processIsAliveFn(Number.parseInt(parsed?.pid, 10));
       if (allowRecovery && Number.isFinite(ageMs) && ageMs > staleAfterMs && !ownerAlive) {
@@ -299,7 +349,7 @@ export async function runBattleBridgeGitHubSync({
   if (!lock.ok) {
     const evaluation = blockedEvaluation(SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED, lock.reason);
     let publication = null;
-    try { publication = await publishSyncRecord({ workspaceRoot, evaluation, facts: {}, now, kind: 'blocker' }); } catch {}
+    try { publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts: {}, now, kind: 'blocker' }); } catch {}
     return Object.freeze({ ok: false, evaluation, lock, publication });
   }
 
@@ -307,8 +357,8 @@ export async function runBattleBridgeGitHubSync({
     const before = await collectPreFetchFacts({ git, repoRoot });
     const earlyBlocker = preFetchBlocker(before);
     if (earlyBlocker) {
-      const heartbeat = await publishSyncRecord({ workspaceRoot, evaluation: earlyBlocker, facts: before, now, kind: 'heartbeat' });
-      const publication = await publishSyncRecord({ workspaceRoot, evaluation: earlyBlocker, facts: before, now, kind: 'blocker' });
+      const heartbeat = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation: earlyBlocker, facts: before, now, kind: 'heartbeat' });
+      const publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation: earlyBlocker, facts: before, now, kind: 'blocker' });
       return Object.freeze({ ok: false, evaluation: earlyBlocker, facts: before, heartbeat, publication });
     }
 
@@ -316,8 +366,8 @@ export async function runBattleBridgeGitHubSync({
     if (!fetchResult.ok) {
       const facts = { ...before, fetchOk: false, remoteHead: before.localHead, mergeBase: before.localHead };
       const evaluation = evaluateSyncPolicy(facts);
-      const heartbeat = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: 'heartbeat' });
-      const publication = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: 'blocker' });
+      const heartbeat = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'heartbeat' });
+      const publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'blocker' });
       return Object.freeze({ ok: false, evaluation, facts, fetchResult, heartbeat, publication });
     }
 
@@ -331,11 +381,11 @@ export async function runBattleBridgeGitHubSync({
       commandEvidence: { ...before.commandEvidence, fetch: fetchResult, remote: remoteResult, mergeBase: mergeBaseResult },
     };
     let evaluation = evaluateSyncPolicy(facts);
-    const heartbeat = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: 'heartbeat' });
-    const plan = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: 'plan' });
+    const heartbeat = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'heartbeat' });
+    const plan = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'plan' });
 
     if (evaluation.classification !== SYNC_CLASSIFICATIONS.SYNC_FAST_FORWARD_READY) {
-      const receipt = await publishSyncRecord({ workspaceRoot, evaluation, facts, now, kind: evaluation.operatorNeeded ? 'blocker' : 'receipt' });
+      const receipt = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: evaluation.operatorNeeded ? 'blocker' : 'receipt' });
       return Object.freeze({ ok: evaluation.classification === SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE, evaluation, facts, heartbeat, plan, receipt });
     }
 
@@ -343,7 +393,7 @@ export async function runBattleBridgeGitHubSync({
     if (!mergeResult.ok) {
       const failedFacts = { ...facts, mergeAttempted: true, mergeOk: false };
       evaluation = evaluateSyncPolicy(failedFacts);
-      const publication = await publishSyncRecord({ workspaceRoot, evaluation, facts: failedFacts, now, kind: 'blocker' });
+      const publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts: failedFacts, now, kind: 'blocker' });
       return Object.freeze({ ok: false, evaluation, facts: failedFacts, mergeResult, heartbeat, plan, publication });
     }
 
@@ -362,7 +412,7 @@ export async function runBattleBridgeGitHubSync({
       commandEvidence: { ...facts.commandEvidence, merge: mergeResult, localAfter: afterResult },
     };
     evaluation = evaluateSyncPolicy(appliedFacts);
-    const receipt = await publishSyncRecord({ workspaceRoot, evaluation, facts: appliedFacts, now, kind: evaluation.operatorNeeded ? 'blocker' : 'receipt' });
+    const receipt = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts: appliedFacts, now, kind: evaluation.operatorNeeded ? 'blocker' : 'receipt' });
     return Object.freeze({
       ok: false,
       sourceUpdated: true,
@@ -377,7 +427,7 @@ export async function runBattleBridgeGitHubSync({
   } catch (error) {
     const evaluation = blockedEvaluation(SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED, `Sync executor failed closed: ${error?.message || error}`);
     let publication = null;
-    try { publication = await publishSyncRecord({ workspaceRoot, evaluation, facts: {}, now, kind: 'blocker' }); } catch {}
+    try { publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts: {}, now, kind: 'blocker' }); } catch {}
     return Object.freeze({ ok: false, evaluation, error: error?.message || String(error), publication });
   } finally {
     await rm(lock.lockPath, { force: true }).catch(() => {});
