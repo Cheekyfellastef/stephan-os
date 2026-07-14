@@ -190,8 +190,11 @@ async function publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, n
       timestampUtc,
       status: evaluation.classification,
       summary,
-      refs: [],
+      refs: proofRefs,
     }),
+    correlationId: 'issue-1507',
+    relatedIssue: '#1507',
+    proofRefs,
     receiptType: 'battle-bridge-github-sync-receipt',
     ...common,
   });
