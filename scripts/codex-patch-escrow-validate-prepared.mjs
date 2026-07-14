@@ -22,6 +22,7 @@ import {
 import { PREPARED_PATCH_ESCROW_SCHEMA_VERSION } from './codex-patch-escrow-prepare.mjs';
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const GITHUB_CREDENTIAL_NAMES = Object.freeze(new Set([
   'GITHUB_TOKEN',
   'GH_TOKEN',
@@ -116,6 +117,10 @@ export function validatePreparedPatchEscrow(prepared = {}) {
   if (!text(prepared.repository).includes('/')) blockers.push('invalid-prepared-repository');
   if (!text(prepared.ownerLogin)) blockers.push('invalid-prepared-owner');
   if (!Number.isSafeInteger(prepared.issueNumber) || prepared.issueNumber < 1) blockers.push('invalid-prepared-issue-number');
+  if (!Number.isSafeInteger(prepared.publishCommentId) || prepared.publishCommentId < 1) blockers.push('invalid-prepared-publish-comment-id');
+  if (!Number.isSafeInteger(prepared.manifestCommentId) || prepared.manifestCommentId < 1) blockers.push('invalid-prepared-manifest-comment-id');
+  if (!Array.isArray(prepared.chunkCommentIds) || !prepared.chunkCommentIds.length || prepared.chunkCommentIds.some((id) => !Number.isSafeInteger(id) || id < 1)) blockers.push('invalid-prepared-chunk-comment-ids');
+  if (!SHA256_PATTERN.test(text(prepared.authorizedPatchSha256))) blockers.push('invalid-prepared-authorized-patch-sha256');
   if (prepared.defaultBranch !== 'main') blockers.push('invalid-prepared-default-branch');
   if (!SHA_PATTERN.test(text(prepared.currentBaseSha))) blockers.push('invalid-prepared-base-sha');
   if (!manifestValidation.valid) blockers.push(...manifestValidation.errors.map((error) => `manifest:${error}`));
@@ -128,6 +133,7 @@ export function validatePreparedPatchEscrow(prepared = {}) {
   if (patch && patch.length !== manifest.patchByteLength) blockers.push('manifest-patch-length-mismatch');
   if (patch && sha256(patch) !== prepared.patchSha256) blockers.push('prepared-patch-hash-mismatch');
   if (prepared.patchSha256 !== manifest.patchSha256) blockers.push('prepared-manifest-patch-hash-mismatch');
+  if (prepared.authorizedPatchSha256 !== prepared.patchSha256) blockers.push('prepared-owner-authorization-hash-mismatch');
 
   return Object.freeze({
     valid: blockers.length === 0,
@@ -202,14 +208,6 @@ function assertNoPersistedGitCredentials(repositoryRoot) {
 function statusChangedFiles(repositoryRoot) {
   return lines(run('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repositoryRoot }).stdout)
     .map((entry) => entry.slice(3).replace(/^"|"$/g, ''));
-}
-
-function sharedAgentTestFiles(repositoryRoot) {
-  const directory = join(repositoryRoot, 'shared', 'agents');
-  return readdirSync(directory)
-    .filter((name) => name.endsWith('.test.mjs'))
-    .map((name) => join('shared', 'agents', name))
-    .sort((left, right) => left.localeCompare(right));
 }
 
 function writePatchFile(manifest, patch) {
