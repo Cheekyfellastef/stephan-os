@@ -1,6 +1,16 @@
 name: Guarded Goal Runner Proof
 
 on:
+  push:
+    branches:
+      - codex/1497-standing-authority-enforcement-v1
+    paths:
+      - 'shared/agents/guardedGoalRunnerV1.mjs'
+      - 'shared/agents/guardedGoalRunnerV1.test.mjs'
+      - 'scripts/guarded-goal-runner-current.mjs'
+      - 'scripts/guarded-goal-runner-current.test.mjs'
+      - 'scripts/guarded-goal-runner-pr-proof-current.test.mjs'
+      - '.github/workflows/guarded-goal-runner-proof.yml'
   pull_request:
     paths:
       - 'shared/agents/guardedGoalRunnerV1.mjs'
@@ -19,10 +29,10 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout exact pull request head
+      - name: Checkout exact event head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -43,4 +53,9 @@ jobs:
           scripts/guarded-goal-runner-pr-proof-current.test.mjs
 
       - name: Check pull request diff
+        if: github.event_name == 'pull_request'
         run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+      - name: Check pushed commit
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: git diff --check "${{ github.event.before }}...${{ github.sha }}"
