@@ -91,7 +91,6 @@ function redRecord() {
   };
 }
 
-
 test('direct CLI entrypoint detection works for POSIX-style paths', () => {
   const scriptPath = path.join(repoRoot, 'scripts', 'guarded-goal-runner-current.mjs');
   assert.equal(isDirectCliEntrypoint({ metaUrl: pathToFileURL(scriptPath).href, argv1: './scripts/guarded-goal-runner-current.mjs', cwd: repoRoot, platform: 'linux' }), true);
@@ -106,7 +105,7 @@ test('direct CLI entrypoint detection works for Windows-style paths', () => {
   }), true);
 });
 
-test('direct CLI invocation writes guarded-goal-runner-current.json', () => withWorkspace((workspace) => {
+test('direct CLI invocation writes automated-publication current packet', () => withWorkspace((workspace) => {
   writeSupervisor(workspace, greenRecord());
   const scriptPath = path.join(repoRoot, 'scripts', 'guarded-goal-runner-current.mjs');
   const result = spawnSync(process.execPath, [scriptPath, '--repoRoot', repoRoot, '--sharedWorkspaceRoot', workspace, '--currentHead', head], { encoding: 'utf8' });
@@ -114,15 +113,17 @@ test('direct CLI invocation writes guarded-goal-runner-current.json', () => with
   const outputPath = path.join(workspace, GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH);
   assert.equal(result.stdout.trim(), outputPath);
   const packet = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
-  assert.equal(packet.outcome, O.NEEDS_OPERATOR_PR_CREATE_CLICK);
+  assert.equal(packet.outcome, O.ROUTE_TO_AUTOMATED_PUBLICATION);
+  assert.equal(packet.allowedNextStep, 'route-to-authenticated-pr-publisher');
   assert.equal(packet.currentHead, head);
 }));
 
-test('green exact-head supervisor record emits goal-green packet', () => withWorkspace((workspace) => {
+test('green exact-head supervisor record routes to automated publication', () => withWorkspace((workspace) => {
   const sourceProofPath = writeSupervisor(workspace, greenRecord());
   const { outputPath, packet } = runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot: workspace, currentHead: head, now: '2026-07-10T01:00:00.000Z' });
   assert.equal(outputPath, path.join(workspace, GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH));
-  assert.equal(packet.outcome, O.NEEDS_OPERATOR_PR_CREATE_CLICK);
+  assert.equal(packet.outcome, O.ROUTE_TO_AUTOMATED_PUBLICATION);
+  assert.equal(packet.allowedNextStep, 'route-to-authenticated-pr-publisher');
   assert.equal(packet.currentHead, head);
   assert.equal(packet.sourceProofPath, sourceProofPath);
   assert.equal(packet.proofSummary.backend8787.ready, true);
@@ -164,11 +165,10 @@ test('output packet always states performsMerge=false and performsShellExecution
 test('runtime-only dirt caveat is preserved as caveat, not blocker', () => withWorkspace((workspace) => {
   writeSupervisor(workspace, greenRecord());
   const { packet } = runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot: workspace, currentHead: head, now: '2026-07-10T01:00:00.000Z' });
-  assert.equal(packet.outcome, O.NEEDS_OPERATOR_PR_CREATE_CLICK);
+  assert.equal(packet.outcome, O.ROUTE_TO_AUTOMATED_PUBLICATION);
   assert.equal(packet.proofSummary.runtimeOnlyDirtCaveat.id, 'runtime-only-dirt');
   assert.notEqual(packet.blockerId, 'runtime-only-dirt');
 }));
-
 
 test('replay combines Battle Bridge green proof and PR proof into safe merge gate without merging', () => withWorkspace((workspace) => {
   const sourceProofPath = writeSupervisor(workspace, greenRecord());
@@ -184,10 +184,11 @@ test('replay combines Battle Bridge green proof and PR proof into safe merge gat
   assert.equal(packet.prProofSummary.prNumber, 1497);
 }));
 
-test('PR proof pending operator click emits create PR action', () => withWorkspace((workspace) => {
+test('pending legacy operator-click state is converged to automated publication', () => withWorkspace((workspace) => {
   writeSupervisor(workspace, greenRecord());
   writePrProof(workspace, { ...safePrProof(), prNumber: null, prUrl: null, publicationState: 'pending-operator-create-pr-click' });
   const { packet } = runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot: workspace, currentHead: head, now: '2026-07-10T01:00:00.000Z' });
-  assert.equal(packet.outcome, O.NEEDS_OPERATOR_PR_CREATE_CLICK);
-  assert.match(packet.nextOperatorAction, /Create PR/);
+  assert.equal(packet.outcome, O.ROUTE_TO_AUTOMATED_PUBLICATION);
+  assert.equal(packet.allowedNextStep, 'route-to-authenticated-pr-publisher');
+  assert.match(packet.nextOperatorAction, /authenticated bounded publication connector/);
 }));
