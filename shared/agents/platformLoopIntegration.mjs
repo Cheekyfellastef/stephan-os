@@ -43,11 +43,6 @@ function asText(value, fallback = '') {
   return text || fallback;
 }
 
-function asList(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => asText(item, '')).filter(Boolean);
-}
-
 function safeText(value, fallback = '') {
   const text = asText(value, fallback);
   return text && SAFE_TEXT_PATTERN.test(text) ? text : fallback;
@@ -63,6 +58,8 @@ function requestedQueueStatus(value) {
     QUEUED: CODEX_QUEUE_STATUS.QUEUED,
     DISPATCHED: CODEX_QUEUE_STATUS.DISPATCHED_MANUAL,
     SUCCEEDED: CODEX_QUEUE_STATUS.DONE,
+    COMPLETE: CODEX_QUEUE_STATUS.DONE,
+    COMPLETED: CODEX_QUEUE_STATUS.DONE,
     WAITINGPROOF: CODEX_QUEUE_STATUS.WAITING_PROOF,
   };
   const status = legacy[normalized] || normalized;
@@ -106,10 +103,9 @@ function decidePlatformLoopStatus({ supervisor, ignition, queueValidation, dispa
   if (ignition.finalVerdict !== 'IGNITION_CONCIERGE_STATUS_ROUTING_PASS') return PLATFORM_LOOP_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION;
   if (!queueValidation.valid) return PLATFORM_LOOP_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION;
   if (operatorBatch.status === 'WAITING_FOR_OPERATOR_APPROVAL') return PLATFORM_LOOP_STATUS.WAITING_FOR_OPERATOR_APPROVAL;
-  if (dispatcherDecision.canonicalDecision === 'DISPATCHED' && inputQueueComplete(dispatcherDecision, proofPassed)) return PLATFORM_LOOP_STATUS.DONE;
+  if (inputQueueComplete(dispatcherDecision, proofPassed)) return PLATFORM_LOOP_STATUS.DONE;
   if (dispatcherDecision.decision === 'BLOCKED_BY_OPERATOR_APPROVAL' || dispatcherDecision.decision === 'BLOCKED_BY_QUEUE_NOT_READY') return PLATFORM_LOOP_STATUS.WAITING_FOR_OPERATOR_APPROVAL;
   if (dispatcherDecision.decision === 'BLOCKED_BY_INVALID_QUEUE_ITEM' || dispatcherDecision.decision === 'BLOCKED_BY_MISSING_INTEGRATION') return PLATFORM_LOOP_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION;
-  if (inputQueueComplete(dispatcherDecision, proofPassed)) return PLATFORM_LOOP_STATUS.DONE;
   if (!proofPassed) return PLATFORM_LOOP_STATUS.BUILDING;
   if (dispatcherDecision.decision === 'DISPATCH_READY_ITEM' || dispatcherDecision.decision === 'DISPATCHED') return PLATFORM_LOOP_STATUS.BUILDING;
   return PLATFORM_LOOP_STATUS.WAITING_FOR_PROOF;
