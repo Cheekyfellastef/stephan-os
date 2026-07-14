@@ -72,6 +72,9 @@ test('schema/authentication/correlation/expiry/replay guards produce required st
   assert.equal(verify({ ...validRequest(), schemaVersion: 'wrong' }).responseStatus, 'BLOCKED_AUTHORIZATION_FAILED');
   assert.equal(verify(validRequest({ correlationId: '' })).responseStatus, 'BLOCKED_AUTHORIZATION_FAILED');
   assert.equal(verify(validRequest({ expiryUtc: '2026-07-12T23:59:00.000Z' })).responseStatus, 'BLOCKED_EXPIRED_REQUEST');
+  assert.equal(verify({ ...validRequest(), expiryUtc: 'not-a-date' }).responseStatus, 'BLOCKED_EXPIRED_REQUEST');
+  assert.equal(verify({ ...validRequest(), requestId: '' }).responseStatus, 'BLOCKED_AUTHORIZATION_FAILED');
+  assert.equal(verify({ ...validRequest(), requestId: 'bad request id' }).responseStatus, 'BLOCKED_AUTHORIZATION_FAILED');
 
   const replayStore = createInMemoryReplayStore();
   assert.equal(verify(validRequest({ requestId: 'request-replay' }), { replayStore }).responseStatus, 'BRIDGE_VERIFIED_PASS');
