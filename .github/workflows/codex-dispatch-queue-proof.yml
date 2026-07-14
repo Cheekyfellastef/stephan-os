@@ -1,0 +1,87 @@
+name: Codex Dispatch Queue Proof
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/codexDispatchQueue.mjs'
+      - 'shared/agents/codexDispatchQueue.test.mjs'
+      - 'shared/agents/automatedCodexDispatcher.mjs'
+      - 'shared/agents/automatedCodexDispatcher.test.mjs'
+      - 'shared/agents/platformLoopIntegration.mjs'
+      - 'shared/agents/platformLoopIntegration.test.mjs'
+      - 'shared/agents/missionOrchestratorV1.test.mjs'
+      - 'shared/agents/verificationHarness.mjs'
+      - 'shared/agents/verificationHarness.test.mjs'
+      - 'shared/agents/verificationHarnessWorkspace.test.mjs'
+      - '.github/workflows/codex-dispatch-queue-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-dispatch-queue-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Queue contract proof
+        run: node --test shared/agents/codexDispatchQueue.test.mjs
+
+      - name: Dispatcher proof
+        run: node --test shared/agents/automatedCodexDispatcher.test.mjs
+
+      - name: Platform loop and mission consumers proof
+        run: node --test shared/agents/platformLoopIntegration.test.mjs shared/agents/missionOrchestratorV1.test.mjs
+
+      - name: Verification Harness proof
+        run: node --test shared/agents/verificationHarness.test.mjs shared/agents/verificationHarnessWorkspace.test.mjs
+
+      - name: Shared-agent regressions A-F
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/[a-f]*.test.mjs
+
+      - name: Shared-agent regressions G-L
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/[g-l]*.test.mjs
+
+      - name: Shared-agent regressions MA-MF
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/m[a-f]*.test.mjs
+
+      - name: Shared-agent regressions MG-ML
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/m[g-l]*.test.mjs
+
+      - name: Shared-agent regressions MM-MZ
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/m[m-z]*.test.mjs
+
+      - name: Shared-agent regressions N-O
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/[n-o]*.test.mjs
+
+      - name: Shared-agent regressions P-R
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/[p-r]*.test.mjs
+
+      - name: Shared-agent regressions S-Z
+        if: always()
+        run: node --test --test-reporter=dot shared/agents/[s-z]*.test.mjs
+
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD
