@@ -14,6 +14,7 @@ export const SYNC_CLASSIFICATIONS = Object.freeze({
   BLOCKED_DIRTY_SOURCE: 'BLOCKED_DIRTY_SOURCE',
   BLOCKED_NON_MAIN_BRANCH: 'BLOCKED_NON_MAIN_BRANCH',
   BLOCKED_REMOTE_MISMATCH: 'BLOCKED_REMOTE_MISMATCH',
+  BLOCKED_HEAD_PROOF_MISSING: 'BLOCKED_HEAD_PROOF_MISSING',
   BLOCKED_DIVERGED_HISTORY: 'BLOCKED_DIVERGED_HISTORY',
   BLOCKED_FETCH_FAILED: 'BLOCKED_FETCH_FAILED',
   BLOCKED_FAST_FORWARD_FAILED: 'BLOCKED_FAST_FORWARD_FAILED',
@@ -40,6 +41,12 @@ export const FIXED_GIT_COMMANDS = Object.freeze({
 });
 
 const UNSAFE_GIT_WORDS = new Set(['checkout', 'reset', 'clean', 'stash', 'rebase', 'push', 'branch', 'switch']);
+const OBSERVED_COMMIT_SHA = /^[a-f0-9]{40}$/i;
+const CANONICAL_REMOTE_PATTERNS = Object.freeze([
+  /^https:\/\/github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?$/i,
+  /^git@github\.com:Cheekyfellastef\/stephan-os(?:\.git)?$/i,
+  /^ssh:\/\/git@github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?$/i,
+]);
 
 export const POST_SYNC_REFRESH_REGISTRY = Object.freeze({
   'refresh-shared-workspace': Object.freeze({ id: 'refresh-shared-workspace', requiresSourceChange: false, rawCommand: null }),
@@ -92,7 +99,12 @@ export function classifyDirt(statusLines = [], options = {}) {
 }
 
 function remoteMatches(remoteUrl) {
-  return /(^|[:/])Cheekyfellastef\/stephan-os(\.git)?$/i.test(String(remoteUrl ?? '').replace(/\/$/, ''));
+  const candidate = String(remoteUrl ?? '').trim();
+  return CANONICAL_REMOTE_PATTERNS.some((pattern) => pattern.test(candidate));
+}
+
+function isObservedCommitSha(value) {
+  return OBSERVED_COMMIT_SHA.test(String(value ?? '').trim());
 }
 
 export function evaluateSyncPolicy(facts) {
@@ -106,9 +118,12 @@ export function evaluateSyncPolicy(facts) {
     performsShellExecution: false,
   });
   if (facts.currentBranch !== CANONICAL_SYNC_CONTRACT.branch) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_NON_MAIN_BRANCH, 'Return canonical checkout to main before sync.');
-  if (!remoteMatches(facts.originUrl)) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_REMOTE_MISMATCH, 'Fix origin to Cheekyfellastef/stephan-os before sync.');
+  if (!remoteMatches(facts.originUrl)) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_REMOTE_MISMATCH, 'Fix origin to the canonical GitHub repository before sync.');
   if (dirt.blocksSync) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE, 'Resolve or preserve source dirt outside unattended sync.');
   if (facts.fetchOk === false) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_FETCH_FAILED, 'Investigate fetch failure without mutating local source.');
+  if (!isObservedCommitSha(facts.localHead) || !isObservedCommitSha(facts.remoteHead)) {
+    return blocked(SYNC_CLASSIFICATIONS.BLOCKED_HEAD_PROOF_MISSING, 'Collect concrete local and origin/main commit SHAs before classifying sync state.');
+  }
   if (facts.localHead === facts.remoteHead) return { classification: SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE, dirt, operatorNeeded: false, exactNextAction: 'No source update required.', performsGitMutation: false, performsShellExecution: false };
   if (facts.mergeBase !== facts.localHead) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_DIVERGED_HISTORY, 'Operator must resolve non-fast-forward history.');
   if (facts.mergeAttempted && facts.mergeOk === false) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_FAST_FORWARD_FAILED, 'Inspect failed git merge --ff-only origin/main.');
