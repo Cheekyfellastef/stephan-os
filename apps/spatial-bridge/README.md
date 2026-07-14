@@ -60,13 +60,13 @@ Transport simulation routes:
 The repository firewall rejects committed images and binary files. Generate the required PNG icons during packaging:
 
 ```text
-node scripts/build-spatial-bridge-icons.mjs
+node apps/spatial-bridge/tools/build-icons.mjs
 ```
 
 For verification without dirtying the application folder:
 
 ```text
-node scripts/build-spatial-bridge-icons.mjs --output-dir tmp/spatial-bridge-icons
+node apps/spatial-bridge/tools/build-icons.mjs --output-dir tmp/spatial-bridge-icons
 ```
 
 Generated PNGs are deployment artifacts and must not be committed.
@@ -105,7 +105,7 @@ Before that time, design, source contracts, PWA scaffolding, offline behaviour, 
 At or after that time, Codex should work at the exact PR head and:
 
 1. Run `node --test tests/spatial-bridge-v0.test.mjs`.
-2. Generate deployment icons with `node scripts/build-spatial-bridge-icons.mjs`.
+2. Generate deployment icons with `node apps/spatial-bridge/tools/build-icons.mjs`.
 3. Run the repository app or static-surface validation used by the launcher.
 4. Serve the repository through a trusted HTTPS route.
 5. Confirm the launcher discovers **Stephanos Spatial Bridge**.
