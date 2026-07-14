@@ -8,6 +8,8 @@ on:
       - 'shared/runtime/**'
       - 'system/apps/app_validator.js'
       - 'scripts/**'
+      - '!scripts/battle-bridge-github-sync-policy.mjs'
+      - '!scripts/battle-bridge-github-sync-policy.test.mjs'
       - 'package.json'
       - 'apps/stephanos/app.json'
   pull_request:
@@ -17,6 +19,8 @@ on:
       - 'shared/runtime/**'
       - 'system/apps/app_validator.js'
       - 'scripts/**'
+      - '!scripts/battle-bridge-github-sync-policy.mjs'
+      - '!scripts/battle-bridge-github-sync-policy.test.mjs'
       - 'package.json'
       - 'apps/stephanos/app.json'
 
@@ -32,7 +36,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
 
       - name: Preflight frontend path and lockfile
         run: |
