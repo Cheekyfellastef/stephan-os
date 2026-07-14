@@ -4,10 +4,11 @@ import {
   createPatchEscrowBundle,
   renderPatchEscrowChunkComment,
   renderPatchEscrowManifestComment,
-  renderPatchEscrowPublishComment,
 } from './codexPatchEscrow.mjs';
+import { renderPatchEscrowPublishAuthorizationComment } from './codexPatchEscrowAuthorization.mjs';
 import {
   clearSensitiveProcessEnvironment,
+  runPatchEscrowPublisher,
   sanitizedTestEnvironment,
   selectPatchEscrowFromComments,
   validateExistingPublicationEvidence,
@@ -35,15 +36,37 @@ function publishEvent(data = bundle()) {
     action: 'created',
     repository: { full_name: 'Cheekyfellastef/stephan-os', owner: { login: 'Cheekyfellastef' } },
     issue: { number: 1503, labels: [{ name: 'codex' }] },
-    comment: { user: { login: 'Cheekyfellastef' }, body: renderPatchEscrowPublishComment(data.manifest.bundleId) },
+    comment: {
+      id: 42,
+      user: { login: 'Cheekyfellastef' },
+      body: renderPatchEscrowPublishAuthorizationComment(data.manifest.bundleId, data.manifest.patchSha256),
+    },
   };
 }
 
-test('only the repository owner can issue the final publish request', () => {
+test('only the repository owner can issue the final full-hash publish request', () => {
   const event = publishEvent();
-  assert.equal(validatePatchEscrowPublishEvent(event).valid, true);
+  const validation = validatePatchEscrowPublishEvent(event);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.patchSha256, bundle().manifest.patchSha256);
+  assert.equal(validation.commentId, 42);
   event.comment.user.login = 'chatgpt-codex-connector[bot]';
   assert.equal(validatePatchEscrowPublishEvent(event).valid, false);
+});
+
+test('publish request fails closed when the full patch hash is changed or omitted', () => {
+  const data = bundle();
+  const changed = publishEvent(data);
+  changed.comment.body = renderPatchEscrowPublishAuthorizationComment(data.manifest.bundleId, '0'.repeat(64));
+  const changedValidation = validatePatchEscrowPublishEvent(changed);
+  assert.equal(changedValidation.valid, true);
+  assert.notEqual(changedValidation.patchSha256, data.manifest.patchSha256);
+
+  const omitted = publishEvent(data);
+  omitted.comment.body = `PATCH_ESCROW_PUBLISH_V1\n${JSON.stringify({ bundleId: data.manifest.bundleId })}\nEND_PATCH_ESCROW_PUBLISH_V1`;
+  const omittedValidation = validatePatchEscrowPublishEvent(omitted);
+  assert.equal(omittedValidation.valid, false);
+  assert.equal(omittedValidation.blockers.includes('invalid-publish-authorization-patch-sha256'), true);
 });
 
 test('publish requests require the codex-labelled issue lane', () => {
@@ -52,15 +75,19 @@ test('publish requests require the codex-labelled issue lane', () => {
   assert.equal(validatePatchEscrowPublishEvent(event).valid, false);
 });
 
-test('manifest and chunks can be supplied by trusted owner and Codex bot comments', () => {
+test('manifest and chunks require the exact owner-authorised full patch hash', () => {
   const data = bundle();
   const comments = [
     { id: 1, user: { login: 'Cheekyfellastef' }, body: renderPatchEscrowManifestComment(data.manifest) },
     ...data.chunks.map((chunk, index) => ({ id: index + 2, user: { login: 'chatgpt-codex-connector[bot]' }, body: renderPatchEscrowChunkComment(chunk) })),
   ];
-  const selected = selectPatchEscrowFromComments(comments, data.manifest.bundleId, 'Cheekyfellastef');
+  const selected = selectPatchEscrowFromComments(comments, data.manifest.bundleId, 'Cheekyfellastef', data.manifest.patchSha256);
   assert.equal(selected.ok, true);
   assert.equal(selected.patch.toString('utf8'), 'diff --git a/shared/agents/a.mjs b/shared/agents/a.mjs\n');
+
+  const wrongHash = selectPatchEscrowFromComments(comments, data.manifest.bundleId, 'Cheekyfellastef', '0'.repeat(64));
+  assert.equal(wrongHash.ok, false);
+  assert.equal(wrongHash.reason, 'manifest-patch-hash-not-authorised');
 });
 
 test('untrusted patch comments are ignored and fail closed', () => {
@@ -69,9 +96,13 @@ test('untrusted patch comments are ignored and fail closed', () => {
     { id: 1, user: { login: 'unknown-user' }, body: renderPatchEscrowManifestComment(data.manifest) },
     ...data.chunks.map((chunk, index) => ({ id: index + 2, user: { login: 'unknown-user' }, body: renderPatchEscrowChunkComment(chunk) })),
   ];
-  const selected = selectPatchEscrowFromComments(comments, data.manifest.bundleId, 'Cheekyfellastef');
+  const selected = selectPatchEscrowFromComments(comments, data.manifest.bundleId, 'Cheekyfellastef', data.manifest.patchSha256);
   assert.equal(selected.ok, false);
   assert.equal(selected.reason, 'manifest-not-found');
+});
+
+test('legacy direct publication path is disabled even when called explicitly', async () => {
+  await assert.rejects(() => runPatchEscrowPublisher(), /validated artifact is required/);
 });
 
 test('patched-code test environment strips credentials and disables ambient Git config', () => {
