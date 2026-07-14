@@ -5,7 +5,9 @@ const CORE_ASSETS = [
   './index.html',
   './bridge-state.v0.json',
   './manifest.webmanifest',
-  './offline.html',
+  './offline.html'
+];
+const GENERATED_PACKAGING_ASSETS = [
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];
@@ -13,7 +15,10 @@ const CORE_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(CORE_ASSETS))
+      .then(async (cache) => {
+        await cache.addAll(CORE_ASSETS);
+        await Promise.all(GENERATED_PACKAGING_ASSETS.map((asset) => cache.add(asset).catch(() => null)));
+      })
       .then(() => self.skipWaiting())
   );
 });
