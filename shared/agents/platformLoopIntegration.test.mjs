@@ -51,7 +51,7 @@ test('healthy service and ignition state with approved ready dispatch keeps the 
   assert.equal(snapshot.status, PLATFORM_LOOP_STATUS.BUILDING);
   assert.equal(snapshot.supervisor.finalVerdict, 'BATTLE_BRIDGE_SUPERVISOR_PASS');
   assert.equal(snapshot.ignition.finalVerdict, 'IGNITION_CONCIERGE_STATUS_ROUTING_PASS');
-  assert.equal(snapshot.queueItem.history.at(-2).toStatus, 'READY_FOR_MANUAL_DISPATCH');
+  assert.equal(snapshot.queueItem.history.at(-1).toStatus, 'READY_FOR_MANUAL_DISPATCH');
   assert.equal(snapshot.dispatcherDecision.decision, 'DISPATCH_READY_ITEM');
   assert.equal(snapshot.dispatcherDecision.record.status, 'DISPATCHED_MANUAL');
   assert.equal(snapshot.verifierResult.status, 'PASS');
