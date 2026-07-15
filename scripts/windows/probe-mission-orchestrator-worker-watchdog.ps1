@@ -14,18 +14,47 @@ if (-not $env:USERPROFILE) {
 }
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
 $workerPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\mission-orchestrator-worker-supervised.mjs'))
+$workerLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\start-mission-orchestrator-worker.ps1'))
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $heartbeatPath = Join-Path $workspaceRoot 'status\mission-orchestrator-worker-heartbeat.json'
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+
+function Test-CanonicalWorkerTaskAction {
+    param([object]$ScheduledTask)
+
+    if (-not $ScheduledTask) { return $false }
+    if ([string]$ScheduledTask.TaskName -ne $taskName) { return $false }
+    if ([string]$ScheduledTask.TaskPath -ne '\') { return $false }
+    if (-not $ScheduledTask.Actions -or $ScheduledTask.Actions.Count -ne 1) { return $false }
+
+    $action = $ScheduledTask.Actions[0]
+    $execute = [string]$action.Execute
+    $arguments = [string]$action.Arguments
+    $executeLeaf = [System.IO.Path]::GetFileName($execute)
+    if ($executeLeaf -notin @('powershell.exe', 'pwsh.exe')) { return $false }
+
+    $escapedLauncher = [regex]::Escape($workerLauncherPath)
+    $launcherPattern = '(?i)(?:^|\s)-File\s+(?:"' + $escapedLauncher + '"|' + $escapedLauncher + ')(?:\s|$)'
+    if ($arguments -notmatch $launcherPattern) { return $false }
+    if ($arguments -notmatch '(?i)(?:^|\s)-NoProfile(?:\s|$)') { return $false }
+    if ($arguments -notmatch '(?i)(?:^|\s)-ExecutionPolicy\s+Bypass(?:\s|$)') { return $false }
+    return $true
+}
+
+$taskActionMatchesCanonicalWorker = Test-CanonicalWorkerTaskAction -ScheduledTask $task
 
 if ($Mode -eq 'StartApprovedWorkerTask') {
     if (-not $task -or [string]$task.TaskName -ne $taskName) {
         throw 'The fixed Mission Orchestrator worker task is not installed.'
     }
+    if (-not $taskActionMatchesCanonicalWorker) {
+        throw 'The fixed Mission Orchestrator worker task action is not canonical.'
+    }
     Start-ScheduledTask -TaskName $taskName
     [pscustomobject]@{
         mode = $Mode
         taskName = $taskName
+        taskActionMatchesCanonicalWorker = $true
         started = $true
         arbitraryTaskNameAllowed = $false
         arbitraryPowerShellAllowed = $false
@@ -62,7 +91,9 @@ if ($workerProcess -and -not [string]::IsNullOrWhiteSpace($commandLine)) {
 [pscustomobject]@{
     scheduledTask = [pscustomobject]@{
         taskName = if ($task) { [string]$task.TaskName } else { '' }
+        taskPath = if ($task) { [string]$task.TaskPath } else { '' }
         status = if ($task) { [string]$task.State } else { 'Missing' }
+        actionMatchesCanonicalWorker = [bool]$taskActionMatchesCanonicalWorker
     }
     process = [pscustomobject]@{
         running = [bool]$workerProcess
