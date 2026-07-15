@@ -81,7 +81,9 @@ function approvedQueueRecord(args, now) {
     issueNumber: args.issueNumber,
     branch: args.branch || 'main',
     prompt: args.task,
-    requestedProofCommands: args.requestedProofCommands || [],
+    requestedProofCommands: Array.isArray(args.requestedProofCommands) && args.requestedProofCommands.length
+      ? args.requestedProofCommands
+      : ['git rev-parse HEAD'],
     createdAt: now,
     approvalRequirements: {
       requiresOperatorApprovalBeforeDispatch: true,
