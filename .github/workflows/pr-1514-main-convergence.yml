@@ -1,26 +1,23 @@
 name: PR 1514 Current Main Convergence
 
 on:
-  push:
-    branches:
-      - codex/1497-standing-authority-enforcement-v1
-    paths:
-      - '.github/workflows/pr-1514-main-convergence.yml'
+  pull_request:
+    types: [ready_for_review]
 
 permissions:
   contents: write
 
 jobs:
   converge:
-    if: ${{ github.actor != 'github-actions[bot]' && github.event.head_commit.message == 'Run PR 1514 current-main convergence' }}
+    if: ${{ github.event.pull_request.number == 1514 && github.event.pull_request.head.ref == 'codex/1497-standing-authority-enforcement-v1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-      - name: Checkout exact branch head
+      - name: Checkout exact pull request head
         uses: actions/checkout@v4
         with:
-          ref: codex/1497-standing-authority-enforcement-v1
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: true
 
@@ -28,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
           git fetch --no-tags origin main
 
           set +e
@@ -152,6 +149,7 @@ jobs:
             fi
           fi
 
+          git rm .github/workflows/pr-1514-main-convergence.yml
           git config user.name 'stephanos-main-convergence[bot]'
           git config user.email 'stephanos-main-convergence[bot]@users.noreply.github.com'
           git commit -m 'Merge current main into PR #1514'
@@ -166,6 +164,7 @@ jobs:
             shared/agents/guardedGoalRunnerV1.test.mjs \
             scripts/guarded-goal-runner-current.test.mjs \
             scripts/guarded-goal-runner-pr-proof-current.test.mjs
+          npm run stephanos:guard:pr-clean
           git diff --check origin/main...HEAD
 
       - name: Publish merge commit to existing PR branch
