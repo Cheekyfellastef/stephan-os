@@ -53,7 +53,11 @@
     "stephanos:battle-bridge:concierge": "node scripts/battle-bridge-build-concierge-v2.mjs",
     "stephanos:verify:pr-publication": "node scripts/verify-pr-publication.mjs",
     "ignition:readiness": "node scripts/launcher-readiness-report.mjs",
-    "stephanos:battle-bridge:repair-ui-4173": "node scripts/battle-bridge-ui-4173-repair.mjs"
+    "stephanos:battle-bridge:repair-ui-4173": "node scripts/battle-bridge-ui-4173-repair.mjs",
+    "stephanos:codex-dispatch:mcp": "node scripts/stephanos-codex-dispatch-mcp.mjs",
+    "stephanos:codex-dispatch:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-stephanos-codex-dispatch-plugin.ps1",
+    "stephanos:codex-dispatch:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-stephanos-codex-dispatch-plugin.ps1",
+    "stephanos:codex-dispatch:test": "node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

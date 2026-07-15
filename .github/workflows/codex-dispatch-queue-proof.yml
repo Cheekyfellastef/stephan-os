@@ -7,12 +7,19 @@ on:
       - 'shared/agents/codexDispatchQueue.test.mjs'
       - 'shared/agents/automatedCodexDispatcher.mjs'
       - 'shared/agents/automatedCodexDispatcher.test.mjs'
+      - 'shared/agents/localCodexExecIntegration.mjs'
+      - 'shared/agents/localCodexExecIntegration.test.mjs'
+      - 'shared/agents/codexDispatchMcp.test.mjs'
       - 'shared/agents/platformLoopIntegration.mjs'
       - 'shared/agents/platformLoopIntegration.test.mjs'
       - 'shared/agents/missionOrchestratorV1.test.mjs'
       - 'shared/agents/verificationHarness.mjs'
       - 'shared/agents/verificationHarness.test.mjs'
       - 'shared/agents/verificationHarnessWorkspace.test.mjs'
+      - 'scripts/stephanos-codex-dispatch-*.mjs'
+      - 'scripts/windows/*stephanos-codex-dispatch*.ps1'
+      - 'plugins/stephanos-codex-dispatch/**'
+      - 'package.json'
       - '.github/workflows/codex-dispatch-queue-proof.yml'
 
 permissions:
@@ -43,6 +50,9 @@ jobs:
 
       - name: Dispatcher proof
         run: node --test shared/agents/automatedCodexDispatcher.test.mjs
+
+      - name: Local Codex dispatch bridge proof
+        run: node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs
 
       - name: Platform loop and mission consumers proof
         run: node --test shared/agents/platformLoopIntegration.test.mjs shared/agents/missionOrchestratorV1.test.mjs
