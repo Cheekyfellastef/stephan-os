@@ -45,7 +45,7 @@ function Stop-AllowlistedPortProcessTree([int]$Port, [string[]]$AllowedPatterns)
 
   foreach ($processId in @($connections | Select-Object -ExpandProperty OwningProcess -Unique)) {
     $process = $allProcesses | Where-Object ProcessId -eq $processId | Select-Object -First 1
-    if (-not $process) { throw "Could not inspect process $processId on port $Port." }
+    if (-not $process) { throw "Could not inspect process $processId on port ${Port}." }
 
     $commandLine = [string]$process.CommandLine
     if (-not (Test-CommandLineMatchesAny -CommandLine $commandLine -Patterns $AllowedPatterns)) {
@@ -64,7 +64,7 @@ function Stop-AllowlistedPortProcessTree([int]$Port, [string[]]$AllowedPatterns)
     }
 
     & taskkill.exe /PID $root.ProcessId /T /F | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Failed to stop the allowlisted Stephanos process tree on port $Port." }
+    if ($LASTEXITCODE -ne 0) { throw "Failed to stop the allowlisted Stephanos process tree on port ${Port}." }
     $stopped += [int]$root.ProcessId
   }
 
@@ -100,7 +100,7 @@ function Wait-ForJsonEndpoint([string]$Url, [int]$TimeoutSeconds = 180) {
       Start-Sleep -Seconds 1
     }
   }
-  throw "Timed out waiting for $Url. Last error: $lastError"
+  throw "Timed out waiting for ${Url}. Last error: $lastError"
 }
 
 function Wait-ForWebEndpoint([string]$Url, [int]$TimeoutSeconds = 180) {
@@ -116,7 +116,7 @@ function Wait-ForWebEndpoint([string]$Url, [int]$TimeoutSeconds = 180) {
       Start-Sleep -Seconds 1
     }
   }
-  throw "Timed out waiting for $Url. Last error: $lastError"
+  throw "Timed out waiting for ${Url}. Last error: $lastError"
 }
 
 function Get-OptionalPropertyString([object]$Object, [string]$PropertyName, [string]$Fallback = '') {
@@ -248,7 +248,7 @@ try {
   if ($LASTEXITCODE -ne 0 -or -not $head) { throw 'Unable to resolve the current Git commit.' }
   $servedCommit = Get-OptionalPropertyString -Object $uiHealth -PropertyName 'gitCommit' -Fallback 'missing'
   if ($servedCommit -ne $head) {
-    throw "Served runtime commit $servedCommit does not match current source HEAD $head."
+    throw "Served runtime commit $servedCommit does not match current source HEAD ${head}."
   }
 
   Write-IgnitionStatus -Stage 'open-stephanos' -Message 'Opening Stephanos after AI Core, OpenClaw, and exact-head proof passed.' -TrafficLight 'amber'
