@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  GUARDED_GOAL_RUNNER_V1_BLOCKER_CLASSES as C,
   GUARDED_GOAL_RUNNER_V1_BLOCKERS as B,
   GUARDED_GOAL_RUNNER_V1_OUTCOMES as O,
   classifyGuardedGoalRunnerV1,
@@ -11,9 +12,10 @@ const expectedHeadSha = '37915edd61a319c3a1f3e456605986ab637a59fd';
 
 function packet(blocker, overrides = {}) {
   return {
+    authorizedGoal: '1506',
     supervisorCurrentRecord: { blocker, expectedHeadSha, currentPhase: 'repairing', trafficLight: 'yellow' },
     currentSourceHead: { sha: expectedHeadSha },
-    prProof: { publicationState: 'pending-operator-create-pr-click', prNumber: null, prUrl: null, expectedBaseSha: 'base1', baseSha: 'base1', expectedHeadSha, headSha: expectedHeadSha, mergeable: true, conflicting: false, draft: false, changedFiles: { count: 1 }, testsRun: { allGreen: true }, operatorApprovalRequired: true },
+    prProof: { publicationState: 'pending-automated-publication', prNumber: null, prUrl: null, expectedBaseSha: 'base1', baseSha: 'base1', expectedHeadSha, headSha: expectedHeadSha, mergeable: true, conflicting: false, draft: false, changedFiles: { count: 1 }, testsRun: { allGreen: true }, operatorApprovalRequired: false },
     logPaths: ['logs/openclaw-supervisor.json'],
     allowedTests: ['node --test shared/agents/guardedGoalRunner*.test.mjs'],
     ...overrides,
@@ -48,10 +50,64 @@ test('#1291 replay advances one known blocker at a time and completes only on gr
   const green = classifyGuardedGoalRunnerV1(packet(B.SERVED_RUNTIME_EXACT_HEAD_GREEN, {
     priorBlockers: seen,
     supervisorCurrentRecord: { blocker: B.SERVED_RUNTIME_EXACT_HEAD_GREEN, expectedHeadSha, currentPhase: 'ready', trafficLight: 'green' },
-    prProof: { publicationState: 'pending-operator-create-pr-click', prNumber: null, prUrl: null, expectedBaseSha: 'base1', baseSha: 'base1', expectedHeadSha, headSha: expectedHeadSha, mergeable: true, conflicting: false, draft: false, changedFiles: { count: 1 }, testsRun: { allGreen: true }, operatorApprovalRequired: true },
   }));
-  assert.equal(green.outcome, O.NEEDS_OPERATOR_PR_CREATE_CLICK);
-  assert.match(green.operatorApproval.action, /Create PR/);
+  assert.equal(green.outcome, O.ROUTE_TO_AUTOMATED_PUBLICATION);
+  assert.equal(green.publication.requiresNewOperatorApproval, false);
+  assert.equal(green.publication.authority.inherited, true);
+});
+
+test('buildable capability gap advances an existing owning goal under inherited standing authority', () => {
+  const result = classifyGuardedGoalRunnerV1(packet('codex-review-trigger-missed', {
+    blockerClassification: {
+      class: C.BUILDABLE_CAPABILITY_GAP,
+      owningGoal: '1509',
+      evidenceRefs: ['PR #1513 head 28bc2cb5934dfd9f71eebcb2ae4c9d3c6fe0d32f'],
+    },
+  }));
+  assert.equal(result.outcome, O.ADVANCE_EXISTING_CAPABILITY_GOAL);
+  assert.equal(result.capability.owningGoal, '1509');
+  assert.equal(result.capability.resumeGoal, '1506');
+  assert.equal(result.capability.authority.requiresNewOperatorApproval, false);
+  assert.ok(result.capability.authority.allows.includes('bounded-source-build'));
+});
+
+test('unsafe mutation guard runs before governed capability dispatch', () => {
+  for (const kind of ['secret-access', 'destructive-mutation', 'arbitrary-shell']) {
+    const result = classifyGuardedGoalRunnerV1(packet('classified-capability-gap', {
+      blockerClassification: { class: C.BUILDABLE_CAPABILITY_GAP, owningGoal: '1509' },
+      requestedMutation: { kind },
+    }));
+    assert.equal(result.outcome, O.ABORT_UNKNOWN_BLOCKER);
+    assert.match(result.reason, /Unsafe mutation/);
+    assert.equal(result.capability, null);
+  }
+});
+
+test('buildable capability gap searches existing goals before creating a new one', () => {
+  const result = classifyGuardedGoalRunnerV1(packet('missing-proof-return-channel', {
+    blockerClassification: { class: C.BUILDABLE_CAPABILITY_GAP },
+  }));
+  assert.equal(result.outcome, O.SEARCH_CAPABILITY_OWNER);
+  assert.equal(result.capability.action, 'search-existing-goals');
+});
+
+test('buildable capability gap creates only a minimal goal after duplicate search completes', () => {
+  const result = classifyGuardedGoalRunnerV1(packet('missing-review-delivery-watchdog', {
+    blockerClassification: {
+      class: C.BUILDABLE_CAPABILITY_GAP,
+      duplicateSearchComplete: true,
+      proposedGoalTitle: 'Review Delivery Watchdog V1',
+    },
+  }));
+  assert.equal(result.outcome, O.CREATE_MINIMAL_CAPABILITY_GOAL);
+  assert.equal(result.capability.action, 'create-minimal-goal');
+  assert.equal(result.capability.authority.requiresNewOperatorApproval, false);
+});
+
+test('governed blockers distinguish genuine operator, hardware, and external gates', () => {
+  assert.equal(classifyGuardedGoalRunnerV1(packet('legal-consent', { blockerClassification: C.GENUINE_OPERATOR_APPROVAL_GATE })).outcome, O.WAIT_FOR_GENUINE_OPERATOR_APPROVAL);
+  assert.equal(classifyGuardedGoalRunnerV1(packet('physical-cold-boot', { blockerClassification: C.GENUINE_LOCAL_HARDWARE_PROOF })).outcome, O.WAIT_FOR_LOCAL_HARDWARE_PROOF);
+  assert.equal(classifyGuardedGoalRunnerV1(packet('third-party-outage', { blockerClassification: C.EXTERNAL_UNBUILDABLE_BLOCKER })).outcome, O.ABORT_EXTERNAL_UNBUILDABLE);
 });
 
 test('published clean PR with green exact head emits merge gate but does not merge', () => {
@@ -64,12 +120,12 @@ test('published clean PR with green exact head emits merge gate but does not mer
   assert.equal(result.performsShellExecution, false);
 });
 
-test('aborts on repeated same blocker', () => {
+test('aborts on repeated same known blocker', () => {
   const result = classifyGuardedGoalRunnerV1(packet(B.SPAWN_EINVAL, { priorBlockers: [B.SPAWN_EINVAL] }));
   assert.equal(result.outcome, O.ABORT_REPEATED_BLOCKER);
 });
 
-test('aborts on unknown blocker', () => {
+test('aborts on unknown blocker without governed classification', () => {
   const result = classifyGuardedGoalRunnerV1(packet('mystery-failure'));
   assert.equal(result.outcome, O.ABORT_UNKNOWN_BLOCKER);
 });
@@ -100,7 +156,6 @@ test('aborts on unsafe mutation request', () => {
   assert.equal(result.outcome, O.ABORT_UNKNOWN_BLOCKER);
   assert.match(result.reason, /Unsafe mutation/);
 });
-
 
 test('aborts when PR proof packet is missing', () => {
   const result = classifyGuardedGoalRunnerV1(packet(B.SERVED_RUNTIME_EXACT_HEAD_GREEN, {
