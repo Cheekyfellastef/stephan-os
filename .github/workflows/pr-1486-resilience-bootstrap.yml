@@ -1,9 +1,18 @@
 name: PR 1486 Bounded Resilience Repair
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/pr-1486-resilience-bootstrap.yml'
+      - 'scripts/pr-1486-resilience-repair.mjs'
+      - 'scripts/battle-bridge-ignition-supervisor.mjs'
+      - 'windows/Launch-Stephanos-Local.ps1'
   push:
     branches:
       - codex/fix-served-runtime-proof-and-windows-launcher-handoff
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,11 +22,13 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
     steps:
       - name: Checkout exact branch head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.TARGET_BRANCH }}
           fetch-depth: 0
           persist-credentials: true
 
@@ -53,4 +64,4 @@ jobs:
             exit 1
           fi
           git commit -m "Repair PR #1486 resilience findings"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${TARGET_BRANCH}"
