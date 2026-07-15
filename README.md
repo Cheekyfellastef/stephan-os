@@ -13,36 +13,34 @@ Core architecture and development of Stephanos OS.
 
 Use the Windows launcher named **Update + Launch Local Stephanos (Ollama)** at `windows/Launch-Stephanos-Local.cmd`.
 
-What it does, in plain English:
+The default `launcher-root` + `cockpit` ignition keeps the complete established startup system and opens three browser surfaces:
 
-- Opens the existing professional ignition splash and keeps progress, approvals, recovery states, and exact blockers visible there.
-- Preserves the full launcher-root cockpit flow, including repository/worktree resolution, source safety checks, approval-gated recovery, Battle Bridge supervisor proof, bounded logs, support snapshots, and browser surface routing.
-- Safely checks your local repo and pulls the latest GitHub changes only when the repo is clean.
-- Skips the pull with a clear message when local changes are present, so nothing gets overwritten.
-- Installs dependencies automatically for the root repo, `stephanos-ui`, and `stephanos-server` when package metadata changed or `node_modules` is missing.
-- Starts or reuses the local Stephanos backend on `8787`, the real OpenClaw gateway on `18789`, and the shared launcher shell server on `4173`.
-- Opens **Stephanos AI Core** in its own visible PowerShell window without replacing the existing ignition machinery.
-- Waits for the launcher shell health/runtime URLs and exact-head proof before opening the configured launcher/runtime cockpit surfaces.
-- Runs one localhost launcher/workspace shell so Mission Console and local tiles share runtime context.
-- Keeps generated-dist, source-divergence, OpenClaw recovery, and unknown-process safety gates intact.
-- Targets local Ollama at `http://localhost:11434` by default, with Mock Mode available inside Stephanos if Ollama is offline.
+1. **Stephanos Ignition Status**: the professional splash, progress, approval, repair, blocker, log, and proof surface.
+2. **Stephanos OS landing page**: the root launcher and tile workspace at `http://127.0.0.1:4173/`.
+3. **Stephanos AI Core**: the built Mission Console/runtime browser surface at `http://127.0.0.1:4173/apps/stephanos/dist/index.html`.
 
-Mental model:
+What the full launcher does:
 
-- **GitHub is the source of the latest code.**
-- **The existing ignition launcher remains authoritative.**
-- **The AI Core window is an added visible surface, not a replacement launcher.**
-- **The launcher runs your local Stephanos build, not the GitHub-hosted web copy.**
-- **Your local Stephanos build talks to your local Ollama on `localhost`.**
-- **The GitHub-hosted version is not the one that uses your local Ollama.**
+- resolves the intended repository or proof worktree;
+- classifies source dirt, generated runtime dirt, and approval-required blockers;
+- checks dependencies and guarded source update state;
+- runs the Battle Bridge ignition supervisor;
+- starts or reuses backend `8787`, OpenClaw gateway `18789`, and UI `4173`;
+- preserves approval-gated generated-dist, source-divergence, and OpenClaw recovery;
+- writes bounded logs, transcripts, support snapshots, and exact blocker details;
+- requires exact-head served-runtime proof before unlocking and opening the cockpit browser surfaces;
+- supports launcher-root, Vite development, readiness-report, and guarded UI-repair modes;
+- targets local Ollama at `http://localhost:11434`, with Mock Mode available inside Stephanos when Ollama is offline.
+
+The AI Core is a browser application, not a dedicated PowerShell console. PowerShell processes may host or supervise services in the background, but the operator-facing AI Core surface is the browser page whose HTML title is `Stephanos AI Core`.
 
 Launch it from PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\windows\Launch-Stephanos-Ignition.ps1 -Mode launcher-root -BootMode cockpit
+powershell -ExecutionPolicy Bypass -File .\windows\Launch-Stephanos-Local.ps1 -Mode launcher-root -BootMode cockpit
 ```
 
-Or by double-clicking the Windows launcher:
+Or by double-clicking:
 
 ```text
 windows\Launch-Stephanos-Local.cmd
@@ -50,17 +48,15 @@ windows\Launch-Stephanos-Local.cmd
 
 ## Stephanos developer scripts
 
-- `npm run stephanos:dev` — run the Stephanos server plus the live Vite UI from `stephanos-ui` (component iteration mode).
+- `npm run stephanos:dev` — run the Stephanos server plus the live Vite UI from `stephanos-ui`.
 - `npm run stephanos:clean` — remove generated `apps/stephanos/dist/**` assets before a rebuild.
 - `npm run stephanos:build` — rebuild `stephanos-ui` into `apps/stephanos/dist/**` and stamp it with runtime metadata.
-- `npm run stephanos:verify` — validate that dist exists, asset references resolve, and build metadata/fingerprint still match the current source.
-- `npm run stephanos:serve` — rebuild, verify, and serve the repository so the generated runtime can be checked in a browser.
+- `npm run stephanos:verify` — validate dist, referenced assets, metadata, fingerprint, and source alignment.
+- `npm run stephanos:serve` — rebuild, verify, and serve the repository for browser proof.
 - `npm run stephanos:ignite` — run the Battle Bridge ignition supervisor proof flow.
-- `npm run stephanos:ignite:auto-publish` — local ignition flow with `STEPHANOS_IGNITION_AUTOPUBLISH_DIST=1` enabled via a Node wrapper for cross-platform use.
-- `npm run stephanos:ignite:housekeep` — standalone housekeeper clean pass (uses `scripts/ignite-stephanos-local.mjs --mode=housekeep`).
-- `npm run stephanos:ignite:housekeep:dry-run` — standalone housekeeper preview with no cleanup mutations (`--mode=housekeep-dry-run`).
-
-Housekeeper remains part of the established guarded ignition design. The visible AI Core wrapper does not bypass, duplicate, or remove those source and runtime safety contracts.
+- `npm run stephanos:ignite:auto-publish` — ignition with generated-dist auto-publication enabled through the guarded wrapper.
+- `npm run stephanos:ignite:housekeep` — standalone guarded housekeeping.
+- `npm run stephanos:ignite:housekeep:dry-run` — preview housekeeping without cleanup mutations.
 
 ## Required workflow after editing Stephanos UI source
 
@@ -69,4 +65,4 @@ Housekeeper remains part of the established guarded ignition design. The visible
 3. Run `npm run stephanos:verify`.
 4. Commit the source changes and regenerated `apps/stephanos/dist/**` together.
 
-For the fuller source-of-truth notes and guardrails, see `docs/stephanos-ui-build.md`.
+For fuller source-of-truth notes and guardrails, see `docs/stephanos-ui-build.md`.
