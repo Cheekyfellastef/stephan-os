@@ -29,7 +29,9 @@ compatible chat
 -> get_codex_task_status / read_codex_task_result
 ```
 
-The worker runs Codex non-interactively with JSON output, ephemeral session state, and workspace-write sandboxing. It records the source HEAD and Git status before and after execution.
+The worker runs Codex non-interactively with JSON output, ephemeral session state, an explicit `never` approval policy, and a read-only sandbox. It ignores user config for the child run and explicitly disables the dispatch MCP server so the worker cannot recursively dispatch itself. It records the source HEAD and Git status before and after execution.
+
+A successful process exit is not sufficient. The worker requires a `turn.completed` JSON event and rejects `turn.failed`, `error`, failed-item, cancellation, or missing-completion evidence.
 
 ## Safety contract
 
@@ -40,10 +42,11 @@ The local worker has no authority to:
 - run `git reset --hard`;
 - expose a public tunnel;
 - use broad process-kill commands;
+- call MCP or app tools from the child Codex run;
 - silently discard source changes;
 - run more than one active job.
 
-V1 accepts only the `battle-bridge-proof` task type. Generated `apps/stephanos/dist/**` changes are classified separately. Any other source-tree change blocks the task result and is preserved for operator inspection.
+V1 accepts only the `battle-bridge-proof` task type. Generated `apps/stephanos/dist/**` activity is classified separately. Source mutation is determined by comparing pre-task and post-task source-dirt snapshots, so unchanged pre-existing dirt is reported but is not falsely attributed to the dispatched task. Any new or removed source dirt, or a changed source HEAD, blocks the task result and is preserved for operator inspection.
 
 ## Windows installation
 
