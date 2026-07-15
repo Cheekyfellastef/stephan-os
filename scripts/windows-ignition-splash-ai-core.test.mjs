@@ -28,9 +28,13 @@ test('AI Core uses its own visible PowerShell window', async () => {
   assert.match(script, /Wait-ForWebEndpoint -Url \$backendMissionOperationsUrl/);
 });
 
-test('runtime uses canonical launcher-root build and serve command', async () => {
+test('main uses canonical launcher-root lane and PR proof uses no-pull exact branch lane', async () => {
   const script = await readFile(ignitionScript, 'utf8');
-  assert.match(script, /Start-StephanosPowerShellWindow -Title 'Stephanos Runtime' -Command 'npm run stephanos:ignite:launcher-root' -WindowStyle Minimized/);
+  assert.match(script, /\[switch\]\$AllowProofBranch/);
+  assert.match(script, /if \(\$branch -ne 'main' -and -not \$AllowProofBranch\.IsPresent\)/);
+  assert.match(script, /'npm run stephanos:ignite:launcher-root'/);
+  assert.match(script, /'npm run stephanos:serve -- --skip-auto-pull'/);
+  assert.match(script, /Start-StephanosPowerShellWindow -Title 'Stephanos Runtime' -Command \$runtimeCommand -WindowStyle Minimized/);
 });
 
 test('browser opens only after exact-head proof', async () => {
