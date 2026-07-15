@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 20
     env:
       TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      STAGING_BRANCH: automation/pr-1486-finalized
     steps:
       - name: Checkout exact branch head
         uses: actions/checkout@v4
@@ -59,7 +60,7 @@ jobs:
       - name: Check repair diff
         run: git diff --check
 
-      - name: Publish bounded repair to existing PR branch
+      - name: Publish tested repair to staging branch
         run: |
           git config user.name "stephanos-resilience-repair[bot]"
           git config user.email "stephanos-resilience-repair[bot]@users.noreply.github.com"
@@ -69,4 +70,4 @@ jobs:
             exit 1
           fi
           git commit -m "Repair PR #1486 resilience findings"
-          git push origin "HEAD:${TARGET_BRANCH}"
+          git push --force origin "HEAD:refs/heads/${STAGING_BRANCH}"
