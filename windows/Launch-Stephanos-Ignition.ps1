@@ -64,6 +64,7 @@ function Stop-AllowlistedPortProcessTree([int]$Port, [string[]]$AllowedPatterns)
     }
 
     & taskkill.exe /PID $root.ProcessId /T /F | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to stop the allowlisted Stephanos process tree on port $Port." }
     $stopped += [int]$root.ProcessId
   }
 
@@ -118,13 +119,22 @@ function Wait-ForWebEndpoint([string]$Url, [int]$TimeoutSeconds = 180) {
   throw "Timed out waiting for $Url. Last error: $lastError"
 }
 
+function Get-OptionalPropertyString([object]$Object, [string]$PropertyName, [string]$Fallback = '') {
+  if ($null -eq $Object) { return $Fallback }
+  $property = $Object.PSObject.Properties[$PropertyName]
+  if ($null -eq $property -or $null -eq $property.Value) { return $Fallback }
+  $value = [string]$property.Value
+  if (-not $value.Trim()) { return $Fallback }
+  return $value
+}
+
 function Write-IgnitionStatus([string]$Stage, [string]$Message, [string]$TrafficLight = 'blue', [string]$Blocker = '') {
-  $stageOrder = @('workspace','ai-core','source-build','ui-runtime','openclaw','served-proof','open-stephanos','ready')
+  $stageOrder = @('workspace','source-build','ui-runtime','ai-core','openclaw','served-proof','open-stephanos','ready')
   $stageLabels = [ordered]@{
     workspace = 'Checking workspace'
-    'ai-core' = 'Starting AI Core window'
     'source-build' = 'Updating and building Stephanos'
     'ui-runtime' = 'Starting Stephanos runtime'
+    'ai-core' = 'Starting AI Core window'
     openclaw = 'Checking OpenClaw gateway'
     'served-proof' = 'Proving exact served build'
     'open-stephanos' = 'Opening Stephanos'
@@ -152,7 +162,7 @@ body{margin:0;background:#07111f;color:#e7f2ff;font-family:Segoe UI,Arial,sans-s
 </style>
 <main>
   <h1>Stephanos Ignition</h1>
-  <p class='muted'>One click starts the splash, the visible AI Core console, the current Stephanos runtime, and then Stephanos itself.</p>
+  <p class='muted'>One click starts the splash, updates the runtime, opens the visible AI Core console, and then opens Stephanos.</p>
   <div class='lights $TrafficLight'><span class='light light-green'></span><span class='light light-amber'></span><span class='light light-red'></span><span class='light light-blue'></span></div>
   <div class='progress'><div class='bar' style='width:$progress%'></div></div>
   <h2>$safeMessage</h2>
@@ -191,6 +201,7 @@ $script:statusPath = Join-Path $script:ignitionRoot 'stephanos-ignition-status.j
 New-Item -ItemType Directory -Force -Path $script:ignitionRoot | Out-Null
 
 $backendHealthUrl = 'http://127.0.0.1:8787/api/health'
+$backendMissionOperationsUrl = 'http://127.0.0.1:8787/api/mission-operations'
 $openClawHealthUrl = 'http://127.0.0.1:18789/health'
 $uiHealthUrl = 'http://127.0.0.1:4173/__stephanos/health'
 $stephanosUrl = 'http://127.0.0.1:4173/'
@@ -205,17 +216,6 @@ try {
   if ($LASTEXITCODE -ne 0 -or -not $branch) { throw 'Unable to read the current Git branch.' }
   if ($branch -ne 'main') { throw "Ignition requires the main branch. Current branch: $branch" }
 
-  Write-IgnitionStatus -Stage 'ai-core' -Message 'Starting Stephanos AI Core in its own visible window.'
-  Stop-AllowlistedPortProcessTree -Port 8787 -AllowedPatterns @('stephanos-server','nodemon','server\.js','npm(?:\.cmd)?.*--prefix\s+stephanos-server') | Out-Null
-  Start-StephanosPowerShellWindow -Title 'Stephanos AI Core' -Command 'npm --prefix stephanos-server run dev' -WindowStyle Normal | Out-Null
-  $backendHealth = Wait-ForJsonEndpoint -Url $backendHealthUrl -TimeoutSeconds 120
-
-  try {
-    $shell = New-Object -ComObject WScript.Shell
-    $null = $shell.AppActivate('Stephanos AI Core')
-  }
-  catch {}
-
   Write-IgnitionStatus -Stage 'source-build' -Message 'Updating main, building the current Stephanos UI, and verifying generated assets.'
   Stop-AllowlistedPortProcessTree -Port 4173 -AllowedPatterns @('serve-stephanos-dist\.mjs','ignite-stephanos-local\.mjs','stephanos:ignite:launcher-root','stephanos:serve') | Out-Null
   Start-StephanosPowerShellWindow -Title 'Stephanos Runtime' -Command 'npm run stephanos:ignite:launcher-root' -WindowStyle Minimized | Out-Null
@@ -224,16 +224,31 @@ try {
   $uiHealth = Wait-ForJsonEndpoint -Url $uiHealthUrl -TimeoutSeconds 300
   $null = Wait-ForWebEndpoint -Url $runtimeUrl -TimeoutSeconds 60
 
+  Write-IgnitionStatus -Stage 'ai-core' -Message 'Starting Stephanos AI Core from the updated source in its own visible window.'
+  Stop-AllowlistedPortProcessTree -Port 8787 -AllowedPatterns @('stephanos-server','nodemon','server\.js','npm(?:\.cmd)?.*--prefix\s+stephanos-server') | Out-Null
+  Start-StephanosPowerShellWindow -Title 'Stephanos AI Core' -Command 'npm --prefix stephanos-server run dev' -WindowStyle Normal | Out-Null
+  $backendHealth = Wait-ForJsonEndpoint -Url $backendHealthUrl -TimeoutSeconds 120
+  $null = Wait-ForWebEndpoint -Url $backendMissionOperationsUrl -TimeoutSeconds 60
+
+  try {
+    $shell = New-Object -ComObject WScript.Shell
+    $null = $shell.AppActivate('Stephanos AI Core')
+  }
+  catch {}
+
   Write-IgnitionStatus -Stage 'openclaw' -Message 'Checking the real OpenClaw gateway on port 18789.'
   $openClawHealth = Wait-ForJsonEndpoint -Url $openClawHealthUrl -TimeoutSeconds 90
-  $openClawReady = ($openClawHealth.ok -eq $true) -or ([string]$openClawHealth.status -match '^(ok|live|ready|healthy)$')
+  $openClawOk = $openClawHealth.PSObject.Properties['ok']
+  $openClawStatus = Get-OptionalPropertyString -Object $openClawHealth -PropertyName 'status' -Fallback 'responding'
+  $openClawReady = ($null -ne $openClawOk -and $openClawOk.Value -eq $true) -or ($openClawStatus -match '^(ok|live|ready|healthy)$')
   if (-not $openClawReady) { throw 'OpenClaw gateway responded but did not report a healthy/live state.' }
 
   Write-IgnitionStatus -Stage 'served-proof' -Message 'Proving the served runtime matches the current main commit.'
   $head = (& git rev-parse --short HEAD).Trim()
   if ($LASTEXITCODE -ne 0 -or -not $head) { throw 'Unable to resolve the current Git commit.' }
-  if ([string]$uiHealth.gitCommit -ne $head) {
-    throw "Served runtime commit $($uiHealth.gitCommit) does not match current source HEAD $head."
+  $servedCommit = Get-OptionalPropertyString -Object $uiHealth -PropertyName 'gitCommit' -Fallback 'missing'
+  if ($servedCommit -ne $head) {
+    throw "Served runtime commit $servedCommit does not match current source HEAD $head."
   }
 
   Write-IgnitionStatus -Stage 'open-stephanos' -Message 'Opening Stephanos after AI Core, OpenClaw, and exact-head proof passed.' -TrafficLight 'amber'
@@ -243,11 +258,11 @@ try {
     schema = 'stephanos.windows-ignition-proof.v1'
     verdict = 'ready'
     sourceHead = $head
-    servedCommit = [string]$uiHealth.gitCommit
-    runtimeMarker = [string]$uiHealth.runtimeMarker
-    buildTimestamp = [string]$uiHealth.buildTimestamp
-    backend8787 = @{ ready = $true; status = if ($backendHealth.status) { [string]$backendHealth.status } else { 'responding' } }
-    openClaw18789 = @{ ready = $true; status = if ($openClawHealth.status) { [string]$openClawHealth.status } else { 'responding' } }
+    servedCommit = $servedCommit
+    runtimeMarker = Get-OptionalPropertyString -Object $uiHealth -PropertyName 'runtimeMarker' -Fallback 'unknown'
+    buildTimestamp = Get-OptionalPropertyString -Object $uiHealth -PropertyName 'buildTimestamp' -Fallback 'unknown'
+    backend8787 = @{ ready = $true; status = Get-OptionalPropertyString -Object $backendHealth -PropertyName 'status' -Fallback 'responding' }
+    openClaw18789 = @{ ready = $true; status = $openClawStatus }
     ui4173 = @{ ready = $true; exactHead = $true; url = $stephanosUrl }
     writtenAt = (Get-Date).ToUniversalTime().ToString('o')
   }
@@ -255,7 +270,7 @@ try {
 
   Write-IgnitionStatus -Stage 'ready' -Message 'Stephanos is ready. The AI Core console and Stephanos are both open.' -TrafficLight 'green'
   Write-Host '[IGNITION] STEPHANOS_READY' -ForegroundColor Green
-  Write-Host "[IGNITION] sourceHead=$head servedCommit=$($uiHealth.gitCommit)"
+  Write-Host "[IGNITION] sourceHead=$head servedCommit=$servedCommit"
   exit 0
 }
 catch {
