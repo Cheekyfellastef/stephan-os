@@ -8,6 +8,7 @@ import { LOCAL_CODEX_TASK_SCHEMA } from '../shared/agents/localCodexExecIntegrat
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
 ]);
+const CHILD_DISPATCH_MCP_OVERRIDE = 'mcp_servers.stephanos-codex-dispatch.enabled=false';
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -28,23 +29,102 @@ function gitCapture(repoRoot, args) {
   };
 }
 
-export function parseGitStatusPaths(output = '') {
+export function parseGitStatusEntries(output = '') {
   return String(output || '')
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter(Boolean)
     .flatMap((line) => {
+      const status = line.slice(0, 2);
       const pathText = line.length > 3 ? line.slice(3).trim() : '';
       if (!pathText) return [];
-      return pathText.split(' -> ').map((item) => item.replace(/^"|"$/g, '').replace(/\\/g, '/'));
+      return pathText.split(' -> ').map((item) => Object.freeze({
+        status,
+        path: item.replace(/^"|"$/g, '').replace(/\\/g, '/'),
+      }));
     });
 }
 
+export function parseGitStatusPaths(output = '') {
+  return parseGitStatusEntries(output).map((entry) => entry.path);
+}
+
 export function classifyPostTaskDirt(output = '') {
-  const paths = [...new Set(parseGitStatusPaths(output))];
-  const generated = paths.filter((path) => APPROVED_GENERATED_PREFIXES.some((prefix) => path.startsWith(prefix)));
-  const source = paths.filter((path) => !generated.includes(path));
-  return Object.freeze({ paths, generated, source, safe: source.length === 0 });
+  const entries = parseGitStatusEntries(output);
+  const paths = [...new Set(entries.map((entry) => entry.path))];
+  const generatedEntries = entries.filter((entry) => APPROVED_GENERATED_PREFIXES.some((prefix) => entry.path.startsWith(prefix)));
+  const sourceEntries = entries.filter((entry) => !generatedEntries.includes(entry));
+  const generated = [...new Set(generatedEntries.map((entry) => entry.path))];
+  const source = [...new Set(sourceEntries.map((entry) => entry.path))];
+  return Object.freeze({ entries, paths, generatedEntries, sourceEntries, generated, source, safe: source.length === 0 });
+}
+
+function stableEntries(entries = []) {
+  return entries
+    .map((entry) => `${entry.status} ${entry.path}`)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+export function compareDirtSnapshots(before = {}, after = {}) {
+  const sourceBefore = stableEntries(before.sourceEntries || []);
+  const sourceAfter = stableEntries(after.sourceEntries || []);
+  const generatedBefore = stableEntries(before.generatedEntries || []);
+  const generatedAfter = stableEntries(after.generatedEntries || []);
+  const sourceMutationDetected = JSON.stringify(sourceBefore) !== JSON.stringify(sourceAfter);
+  const generatedRuntimeMutationDetected = JSON.stringify(generatedBefore) !== JSON.stringify(generatedAfter);
+  const sourcePathsBefore = [...new Set((before.source || []).map(String))].sort();
+  const sourcePathsAfter = [...new Set((after.source || []).map(String))].sort();
+  return Object.freeze({
+    sourceMutationDetected,
+    generatedRuntimeMutationDetected,
+    sourcePathsBefore,
+    sourcePathsAfter,
+    newSourcePaths: sourcePathsAfter.filter((path) => !sourcePathsBefore.includes(path)),
+    removedSourcePaths: sourcePathsBefore.filter((path) => !sourcePathsAfter.includes(path)),
+    preExistingSourceDirt: sourcePathsBefore.length > 0,
+    sourceDirtUnchanged: !sourceMutationDetected,
+  });
+}
+
+export function parseCodexJsonEvents(output = '') {
+  const events = [];
+  const invalidLines = [];
+  for (const line of String(output || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+    try {
+      events.push(JSON.parse(line));
+    } catch {
+      invalidLines.push(line.slice(0, 240));
+    }
+  }
+  return Object.freeze({ events, invalidLines });
+}
+
+export function classifyCodexExecution({ exit = {}, events = [], lastMessage = '' } = {}) {
+  const failureEvent = events.find((event) => (
+    event?.type === 'turn.failed'
+    || event?.type === 'error'
+    || event?.type === 'item.failed'
+    || event?.item?.status === 'failed'
+  )) || null;
+  const turnCompleted = events.some((event) => event?.type === 'turn.completed');
+  const failureText = `${lastMessage}\n${failureEvent ? JSON.stringify(failureEvent) : ''}`;
+  const cancelled = /(?:user\s+)?cancel(?:led|ed)(?:\s+by\s+user)?|tool call.*cancel(?:led|ed)/i.test(failureText);
+  const exitPassed = exit.code === 0 && !exit.error;
+  const passed = exitPassed && turnCompleted && !failureEvent && !cancelled;
+  let reason = '';
+  if (!exitPassed) reason = exit.error || `codex-exit-${exit.code ?? 'unknown'}`;
+  else if (cancelled) reason = 'CODEX_EXEC_CANCELLED';
+  else if (failureEvent) reason = `CODEX_EVENT_${String(failureEvent.type || 'FAILED').toUpperCase().replaceAll('.', '_')}`;
+  else if (!turnCompleted) reason = 'CODEX_TURN_COMPLETION_MISSING';
+  return Object.freeze({
+    passed,
+    exitPassed,
+    turnCompleted,
+    cancelled,
+    failureEventType: failureEvent?.type || '',
+    reason,
+    eventCount: events.length,
+  });
 }
 
 export function resolveCodexExecInvocation({
@@ -53,7 +133,17 @@ export function resolveCodexExecInvocation({
   lastMessagePath,
 } = {}) {
   const codexCommand = String(env.STEPHANOS_CODEX_COMMAND || 'codex').trim();
-  const codexArgs = ['exec', '--json', '--ephemeral', '--sandbox', 'workspace-write', '--output-last-message', lastMessagePath, '-'];
+  const codexArgs = [
+    '--ask-for-approval', 'never',
+    'exec',
+    '--json',
+    '--ephemeral',
+    '--ignore-user-config',
+    '--sandbox', 'read-only',
+    '--config', CHILD_DISPATCH_MCP_OVERRIDE,
+    '--output-last-message', lastMessagePath,
+    '-',
+  ];
   if (platform === 'win32') {
     return Object.freeze({ command: 'cmd.exe', args: ['/d', '/s', '/c', codexCommand, ...codexArgs], codexCommand, codexArgs });
   }
@@ -61,13 +151,30 @@ export function resolveCodexExecInvocation({
 }
 
 export function buildGuardedCodexPrompt(task) {
-  return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- Generated apps/stephanos/dist output may change only when the existing source-controlled build or ignition path requires it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.\n- Return a structured PASS/FAIL report with remaining blockers.\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
+  return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- The child Codex run is read-only and non-interactive. Do not request approval.\n- Do not call MCP tools, app tools, or dispatch another Codex task. Use bounded shell diagnostics only.\n- Do not create generated output unless the exact requested proof cannot be completed without it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.\n- Return a structured PASS/FAIL report with remaining blockers.\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
 }
 
 function streamToFile(stream, path) {
   const writer = createWriteStream(path, { flags: 'a', mode: 0o600 });
   stream?.pipe?.(writer);
   return writer;
+}
+
+function waitForWriter(writer, timeoutMs = 2000) {
+  if (!writer || writer.writableFinished || writer.closed) return Promise.resolve();
+  return new Promise((resolveWait) => {
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      resolveWait();
+    };
+    writer.once('finish', settle);
+    writer.once('close', settle);
+    writer.once('error', settle);
+    const timeout = setTimeout(settle, timeoutMs);
+    timeout.unref?.();
+  });
 }
 
 export async function runCodexWorker(taskPath, {
@@ -89,6 +196,7 @@ export async function runCodexWorker(taskPath, {
   const currentPath = join(dirname(dirname(taskRoot)), 'current.json');
   const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD']);
   const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1']);
+  const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
   const startedAt = now();
   const running = {
     ...task,
@@ -96,7 +204,13 @@ export async function runCodexWorker(taskPath, {
     startedAt,
     workerPid: process.pid,
     sourceHeadBefore: sourceHeadBefore.stdout,
-    dirtBefore: classifyPostTaskDirt(statusBefore.stdout),
+    dirtBefore,
+    executionPolicy: {
+      approvalPolicy: 'never',
+      sandboxMode: 'read-only',
+      ignoreUserConfig: true,
+      nestedDispatchMcpEnabled: false,
+    },
     logPaths: { stdoutPath, stderrPath, lastMessagePath },
   };
   writeJson(statusPath, running);
@@ -125,19 +239,23 @@ export async function runCodexWorker(taskPath, {
     child.once?.('error', (error) => settle({ code: null, signal: null, error: error?.message || String(error) }));
     child.once?.('exit', (code, signal) => settle({ code, signal, error: '' }));
   });
-  stdoutWriter.end();
-  stderrWriter.end();
+  await Promise.all([waitForWriter(stdoutWriter), waitForWriter(stderrWriter)]);
 
   const completedAt = now();
   const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD']);
   const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1']);
   const dirtAfter = classifyPostTaskDirt(statusAfter.stdout);
+  const dirtDelta = compareDirtSnapshots(dirtBefore, dirtAfter);
   let lastMessage = '';
+  let stdoutEvents = '';
   try { lastMessage = readFileSync(lastMessagePath, 'utf8').trim(); } catch {}
+  try { stdoutEvents = readFileSync(stdoutPath, 'utf8'); } catch {}
+  const parsedEvents = parseCodexJsonEvents(stdoutEvents);
+  const execution = classifyCodexExecution({ exit, events: parsedEvents.events, lastMessage });
   const sourceHeadUnchanged = sourceHeadBefore.ok && sourceHeadAfter.ok && sourceHeadBefore.stdout === sourceHeadAfter.stdout;
-  const exitPassed = exit.code === 0 && !exit.error;
-  const passed = exitPassed && sourceHeadUnchanged && dirtAfter.safe;
-  const finalStatus = passed ? 'DONE' : (dirtAfter.safe && sourceHeadUnchanged ? 'FAILED' : 'BLOCKED');
+  const sourceSafe = sourceHeadUnchanged && !dirtDelta.sourceMutationDetected;
+  const passed = execution.passed && sourceSafe;
+  const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
   const result = {
     schemaVersion: LOCAL_CODEX_TASK_SCHEMA,
     kind: 'stephanos.codex_dispatch.local_result',
@@ -152,8 +270,14 @@ export async function runCodexWorker(taskPath, {
     sourceHeadAfter: sourceHeadAfter.stdout,
     sourceHeadUnchanged,
     exit,
-    dirtBefore: classifyPostTaskDirt(statusBefore.stdout),
+    execution,
+    eventParsing: {
+      eventCount: parsedEvents.events.length,
+      invalidLineCount: parsedEvents.invalidLines.length,
+    },
+    dirtBefore,
     dirtAfter,
+    dirtDelta,
     lastMessage,
     logs: {
       stdout: basename(stdoutPath),
@@ -163,14 +287,19 @@ export async function runCodexWorker(taskPath, {
     safety: {
       mergePerformed: false,
       pushPerformed: false,
-      sourceMutationDetected: !dirtAfter.safe,
+      sourceMutationDetected: dirtDelta.sourceMutationDetected,
+      generatedRuntimeMutationDetected: dirtDelta.generatedRuntimeMutationDetected,
+      preExistingSourceDirt: dirtDelta.preExistingSourceDirt,
       sourceHeadChanged: !sourceHeadUnchanged,
+      approvalPolicy: 'never',
+      sandboxMode: 'read-only',
+      nestedDispatchMcpEnabled: false,
     },
     nextOperatorAction: passed
       ? 'Review the returned proof and decide whether the owning goal may advance.'
-      : (!sourceHeadUnchanged || !dirtAfter.safe
+      : (!sourceSafe
         ? 'Inspect the task logs and source dirt. Do not auto-discard changes.'
-        : 'Inspect the task logs and repair the precise runtime blocker before retrying.'),
+        : `Inspect the task logs and repair the precise runtime blocker: ${execution.reason || 'CODEX_EXEC_FAILED'}.`),
   };
   writeJson(resultPath, result);
   writeJson(statusPath, result);
