@@ -5,6 +5,8 @@ import { readFile } from 'node:fs/promises';
 const launcherCmd = new URL('../windows/Launch-Stephanos-Local.cmd', import.meta.url);
 const launcherPs1 = new URL('../windows/Launch-Stephanos-Local.ps1', import.meta.url);
 const aiCoreHtml = new URL('../stephanos-ui/index.html', import.meta.url);
+const packageJson = new URL('../package.json', import.meta.url);
+const ignitionEntry = new URL('./run-battle-bridge-ignition.mjs', import.meta.url);
 
 test('desktop ignition enters the complete existing launcher-root cockpit flow', async () => {
   const cmd = await readFile(launcherCmd, 'utf8');
@@ -32,4 +34,18 @@ test('AI Core remains a browser surface rather than a dedicated PowerShell conso
   const script = await readFile(launcherPs1, 'utf8');
   assert.doesNotMatch(cmd, /visible AI Core window/i);
   assert.doesNotMatch(script, /WindowTitle\s*=\s*'Stephanos AI Core'/);
+});
+
+test('Windows ignition preflights only backend 8787 before entering the full supervisor', async () => {
+  const pkg = JSON.parse(await readFile(packageJson, 'utf8'));
+  const entry = await readFile(ignitionEntry, 'utf8');
+
+  assert.equal(pkg.scripts['stephanos:ignite'], 'node scripts/run-battle-bridge-ignition.mjs');
+  assert.equal(pkg.scripts['stephanos:ignite:supervisor'], 'node scripts/battle-bridge-ignition-supervisor.mjs');
+  assert.match(entry, /backend-8787-preflight/);
+  assert.match(entry, /start-stephanos-backend\.ps1/);
+  assert.match(entry, /battle-bridge-ignition-supervisor\.mjs/);
+  assert.match(entry, /process\.argv\.slice\(2\)/);
+  assert.doesNotMatch(entry, /repair-stephanos-battle-bridge\.ps1/);
+  assert.doesNotMatch(entry, /tailscale/i);
 });
