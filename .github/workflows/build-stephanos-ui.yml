@@ -8,6 +8,7 @@ on:
       - 'shared/runtime/**'
       - 'system/apps/app_validator.js'
       - 'scripts/**'
+      - 'windows/**'
       - '!scripts/codex-patch-escrow-attest.mjs'
       - '!scripts/codex-patch-escrow-export.mjs'
       - '!scripts/codex-patch-escrow-prepare.mjs'
@@ -28,6 +29,7 @@ on:
       - 'shared/runtime/**'
       - 'system/apps/app_validator.js'
       - 'scripts/**'
+      - 'windows/**'
       - '!scripts/codex-patch-escrow-attest.mjs'
       - '!scripts/codex-patch-escrow-export.mjs'
       - '!scripts/codex-patch-escrow-prepare.mjs'
@@ -75,7 +77,8 @@ jobs:
             stephanos-server/tests/runtime-status-model.test.js \
             stephanos-server/tests/provider-routing.test.js \
             stephanos-ui/src/components/StatusPanel.render.test.mjs \
-            scripts/stephanos-build-utils.test.mjs
+            scripts/stephanos-build-utils.test.mjs \
+            scripts/windows-ignition-splash-ai-core.test.mjs
 
       - name: Build Stephanos UI pipeline from repo root
         run: npm run stephanos:build
