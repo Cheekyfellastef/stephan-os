@@ -122,18 +122,18 @@ test('new or removed source dirt is classified as a task-time mutation', () => {
   assert.deepEqual(delta.newSourcePaths, ['scripts/new-file.mjs']);
 });
 
-test('worker invocation uses exec-compatible flags and isolates the child by ignoring user config', () => {
+test('worker invocation keeps approval policy global and isolates the exec child by ignoring user config', () => {
   const windows = resolveCodexExecInvocation({ platform: 'win32', env: { STEPHANOS_CODEX_COMMAND: 'codex.cmd' }, lastMessagePath: 'C:\\proof\\last.txt' });
   assert.equal(windows.command, 'cmd.exe');
   assert.deepEqual(windows.args.slice(0, 4), ['/d', '/s', '/c', 'codex.cmd']);
-  assert.equal(windows.codexArgs[0], 'exec');
+  assert.deepEqual(windows.codexArgs.slice(0, 3), ['--ask-for-approval', 'never', 'exec']);
+  const execIndex = windows.codexArgs.indexOf('exec');
+  assert.equal(windows.codexArgs.slice(execIndex + 1).includes('--ask-for-approval'), false);
   assert.equal(windows.codexArgs.includes('--json'), true);
   assert.equal(windows.codexArgs.includes('--ephemeral'), true);
   assert.equal(windows.codexArgs.includes('--ignore-user-config'), true);
   assert.equal(windows.codexArgs.includes('read-only'), true);
   assert.equal(windows.codexArgs.includes('workspace-write'), false);
-  assert.equal(windows.codexArgs.includes('--ask-for-approval'), true);
-  assert.equal(windows.codexArgs.includes('never'), true);
   assert.equal(windows.codexArgs.includes('--config'), false);
   assert.equal(windows.codexArgs.some((arg) => String(arg).includes('mcp_servers.')), false);
   assert.equal(windows.args.at(-1), '-');
@@ -204,11 +204,11 @@ test('missing turn.completed is a deterministic failure rather than an assumed p
 
 test('zero-event CLI startup failures retain bounded stderr instead of becoming opaque codex-exit-1', () => {
   const execution = classifyCodexExecution({
-    exit: { code: 1, error: '' },
+    exit: { code: 2, error: '' },
     events: [],
-    stderr: 'error: invalid configuration for isolated child invocation',
+    stderr: "error: unexpected argument '--ask-for-approval' found",
   });
   assert.equal(execution.passed, false);
   assert.equal(execution.reason, 'CODEX_CLI_STARTUP_FAILED');
-  assert.match(execution.stderrExcerpt, /invalid configuration/);
+  assert.match(execution.stderrExcerpt, /unexpected argument '--ask-for-approval'/);
 });
