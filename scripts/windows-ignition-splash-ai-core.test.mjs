@@ -11,20 +11,21 @@ test('desktop ignition routes through splash launcher', async () => {
   assert.match(cmd, /Starting splash-driven Stephanos ignition/);
 });
 
-test('ignition opens splash before starting runtime surfaces', async () => {
+test('ignition opens splash before updating runtime and starts AI Core from updated source', async () => {
   const script = await readFile(ignitionScript, 'utf8');
   const splashIndex = script.indexOf("Start-Process -FilePath $script:splashPath");
-  const coreIndex = script.indexOf("Start-StephanosPowerShellWindow -Title 'Stephanos AI Core'");
   const runtimeIndex = script.indexOf("Start-StephanosPowerShellWindow -Title 'Stephanos Runtime'");
+  const coreIndex = script.indexOf("Start-StephanosPowerShellWindow -Title 'Stephanos AI Core'");
   assert.ok(splashIndex >= 0);
-  assert.ok(coreIndex > splashIndex);
-  assert.ok(runtimeIndex > coreIndex);
+  assert.ok(runtimeIndex > splashIndex);
+  assert.ok(coreIndex > runtimeIndex);
 });
 
 test('AI Core uses its own visible PowerShell window', async () => {
   const script = await readFile(ignitionScript, 'utf8');
   assert.match(script, /Start-StephanosPowerShellWindow -Title 'Stephanos AI Core' -Command 'npm --prefix stephanos-server run dev' -WindowStyle Normal/);
   assert.match(script, /AppActivate\('Stephanos AI Core'\)/);
+  assert.match(script, /Wait-ForWebEndpoint -Url \$backendMissionOperationsUrl/);
 });
 
 test('runtime uses canonical launcher-root build and serve command', async () => {
@@ -34,7 +35,7 @@ test('runtime uses canonical launcher-root build and serve command', async () =>
 
 test('browser opens only after exact-head proof', async () => {
   const script = await readFile(ignitionScript, 'utf8');
-  const proofIndex = script.indexOf('if ([string]$uiHealth.gitCommit -ne $head)');
+  const proofIndex = script.indexOf('if ($servedCommit -ne $head)');
   const openIndex = script.indexOf('Start-Process -FilePath $stephanosUrl');
   assert.ok(proofIndex >= 0);
   assert.ok(openIndex > proofIndex);
