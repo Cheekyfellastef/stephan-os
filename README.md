@@ -15,19 +15,23 @@ Use the Windows launcher named **Update + Launch Local Stephanos (Ollama)** at `
 
 What it does, in plain English:
 
-- Opens the Stephanos ignition splash first and keeps progress or exact blockers visible there.
-- Safely checks the local main worktree and lets the canonical launcher pull, build, verify, and serve the latest GitHub source.
-- Opens **Stephanos AI Core** in its own visible PowerShell window on port `8787`.
-- Starts the Stephanos runtime host separately on port `4173`, verifies the served commit matches current main, and checks the real OpenClaw gateway on `18789`.
-- Opens Stephanos in the browser only after AI Core, OpenClaw, and exact-head runtime proof pass.
-- Replaces only allowlisted Stephanos listeners when a restart is required; unknown port owners are refused rather than terminated.
+- Opens the existing professional ignition splash and keeps progress, approvals, recovery states, and exact blockers visible there.
+- Preserves the full launcher-root cockpit flow, including repository/worktree resolution, source safety checks, approval-gated recovery, Battle Bridge supervisor proof, bounded logs, support snapshots, and browser surface routing.
+- Safely checks your local repo and pulls the latest GitHub changes only when the repo is clean.
+- Skips the pull with a clear message when local changes are present, so nothing gets overwritten.
+- Installs dependencies automatically for the root repo, `stephanos-ui`, and `stephanos-server` when package metadata changed or `node_modules` is missing.
+- Starts or reuses the local Stephanos backend on `8787`, the real OpenClaw gateway on `18789`, and the shared launcher shell server on `4173`.
+- Opens **Stephanos AI Core** in its own visible PowerShell window without replacing the existing ignition machinery.
+- Waits for the launcher shell health/runtime URLs and exact-head proof before opening the configured launcher/runtime cockpit surfaces.
+- Runs one localhost launcher/workspace shell so Mission Console and local tiles share runtime context.
+- Keeps generated-dist, source-divergence, OpenClaw recovery, and unknown-process safety gates intact.
 - Targets local Ollama at `http://localhost:11434` by default, with Mock Mode available inside Stephanos if Ollama is offline.
 
 Mental model:
 
 - **GitHub is the source of the latest code.**
-- **The ignition splash is the primary startup surface.**
-- **Stephanos AI Core is a visible, separate runtime window.**
+- **The existing ignition launcher remains authoritative.**
+- **The AI Core window is an added visible surface, not a replacement launcher.**
 - **The launcher runs your local Stephanos build, not the GitHub-hosted web copy.**
 - **Your local Stephanos build talks to your local Ollama on `localhost`.**
 - **The GitHub-hosted version is not the one that uses your local Ollama.**
@@ -35,7 +39,7 @@ Mental model:
 Launch it from PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\windows\Launch-Stephanos-Ignition.ps1
+powershell -ExecutionPolicy Bypass -File .\windows\Launch-Stephanos-Ignition.ps1 -Mode launcher-root -BootMode cockpit
 ```
 
 Or by double-clicking the Windows launcher:
@@ -56,7 +60,7 @@ windows\Launch-Stephanos-Local.cmd
 - `npm run stephanos:ignite:housekeep` — standalone housekeeper clean pass (uses `scripts/ignite-stephanos-local.mjs --mode=housekeep`).
 - `npm run stephanos:ignite:housekeep:dry-run` — standalone housekeeper preview with no cleanup mutations (`--mode=housekeep-dry-run`).
 
-Housekeeper is intentionally standalone and is **not** auto-wired into the splash-driven Windows launcher after the current build has been created; the exact-head proof must never restore an older generated dist over the build being proved.
+Housekeeper remains part of the established guarded ignition design. The visible AI Core wrapper does not bypass, duplicate, or remove those source and runtime safety contracts.
 
 ## Required workflow after editing Stephanos UI source
 
