@@ -51,7 +51,7 @@ test('internal probe permits only inspect or fixed canonical task start and neve
   assert.match(source, /\$taskName = 'Stephanos Mission Orchestrator Worker'/);
   assert.match(source, /\$workerLauncherPath/);
   assert.match(source, /Test-CanonicalWorkerTaskAction/);
-  assert.match(source, /TaskPath -ne '\\\\'/);
+  assert.match(source, /TaskPath -ne '\\'/);
   assert.match(source, /\.Actions\.Count -ne 1/);
   assert.match(source, /actionMatchesCanonicalWorker/);
   assert.match(source, /The fixed Mission Orchestrator worker task action is not canonical/);
