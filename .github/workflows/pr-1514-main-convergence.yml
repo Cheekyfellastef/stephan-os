@@ -1,0 +1,176 @@
+name: PR 1514 Current Main Convergence
+
+on:
+  push:
+    branches:
+      - codex/1497-standing-authority-enforcement-v1
+    paths:
+      - '.github/workflows/pr-1514-main-convergence.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  converge:
+    if: github.actor != 'github-actions[bot]' && github.event.head_commit.message == 'Bootstrap PR #1514 current-main convergence'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: codex/1497-standing-authority-enforcement-v1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge current main with bounded conflict resolution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git fetch --no-tags origin main
+
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_status=$?
+          set -e
+
+          if [ "$merge_status" -ne 0 ]; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            expected='.github/workflows/build-stephanos-ui.yml'
+            if [ "$conflicts" != "$expected" ]; then
+              echo "Unexpected merge conflicts:" >&2
+              printf '%s\n' "$conflicts" >&2
+              git merge --abort
+              exit 1
+            fi
+
+            cat > .github/workflows/build-stephanos-ui.yml <<'YAML'
+          name: Build Stephanos UI
+
+          on:
+            push:
+              paths:
+                - 'stephanos-ui/**'
+                - 'shared/ai/**'
+                - 'shared/runtime/**'
+                - 'system/apps/app_validator.js'
+                - 'scripts/**'
+                - '!scripts/codex-patch-escrow-attest.mjs'
+                - '!scripts/codex-patch-escrow-export.mjs'
+                - '!scripts/codex-patch-escrow-prepare.mjs'
+                - '!scripts/codex-patch-escrow-publish-validated.mjs'
+                - '!scripts/codex-patch-escrow-publisher.mjs'
+                - '!scripts/codex-patch-escrow-validate-prepared.mjs'
+                - '!scripts/codex-patch-escrow-validated-artifact.mjs'
+                - '!scripts/battle-bridge-github-sync-*.mjs'
+                - '!scripts/windows/install-battle-bridge-github-sync.ps1'
+                - '!scripts/windows/status-battle-bridge-github-sync.ps1'
+                - '!scripts/windows/uninstall-battle-bridge-github-sync.ps1'
+                - '!scripts/guarded-goal-runner-current.mjs'
+                - '!scripts/guarded-goal-runner-current.test.mjs'
+                - 'package.json'
+                - 'apps/stephanos/app.json'
+            pull_request:
+              paths:
+                - 'stephanos-ui/**'
+                - 'shared/ai/**'
+                - 'shared/runtime/**'
+                - 'system/apps/app_validator.js'
+                - 'scripts/**'
+                - '!scripts/codex-patch-escrow-attest.mjs'
+                - '!scripts/codex-patch-escrow-export.mjs'
+                - '!scripts/codex-patch-escrow-prepare.mjs'
+                - '!scripts/codex-patch-escrow-publish-validated.mjs'
+                - '!scripts/codex-patch-escrow-publisher.mjs'
+                - '!scripts/codex-patch-escrow-validate-prepared.mjs'
+                - '!scripts/codex-patch-escrow-validated-artifact.mjs'
+                - '!scripts/battle-bridge-github-sync-*.mjs'
+                - '!scripts/windows/install-battle-bridge-github-sync.ps1'
+                - '!scripts/windows/status-battle-bridge-github-sync.ps1'
+                - '!scripts/windows/uninstall-battle-bridge-github-sync.ps1'
+                - '!scripts/guarded-goal-runner-current.mjs'
+                - '!scripts/guarded-goal-runner-current.test.mjs'
+                - 'package.json'
+                - 'apps/stephanos/app.json'
+
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+
+              steps:
+                - name: Checkout repository
+                  uses: actions/checkout@v4
+
+                - name: Setup Node.js
+                  uses: actions/setup-node@v4
+                  with:
+                    node-version: '20'
+
+                - name: Preflight frontend path and lockfile
+                  run: |
+                    echo "Frontend package path: stephanos-ui"
+                    test -f stephanos-ui/package.json || (echo "Missing required file: stephanos-ui/package.json" && exit 1)
+                    test -f stephanos-ui/package-lock.json || (echo "Missing required file: stephanos-ui/package-lock.json (run npm install in stephanos-ui and commit lockfile)" && exit 1)
+
+                - name: Install dependencies
+                  working-directory: stephanos-ui
+                  run: npm ci
+
+                - name: Run Stephanos routing guardrails tests
+                  run: |
+                    node --test \
+                      shared/runtime/runtimeGuardrails.test.mjs \
+                      shared/runtime/runtimeStatusModel.test.mjs \
+                      shared/runtime/stephanosHomeNode.test.mjs \
+                      shared/runtime/stephanosSessionMemory.test.mjs \
+                      stephanos-server/tests/runtime-status-model.test.js \
+                      stephanos-server/tests/provider-routing.test.js \
+                      stephanos-ui/src/components/StatusPanel.render.test.mjs \
+                      scripts/stephanos-build-utils.test.mjs
+
+                - name: Build Stephanos UI pipeline from repo root
+                  run: npm run stephanos:build
+
+                - name: Verify generated Stephanos dist from repo root
+                  run: npm run stephanos:verify
+
+                - name: Upload built Stephanos dist artifact
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: stephanos-ui-dist
+                    path: apps/stephanos/dist
+                    if-no-files-found: error
+          YAML
+
+            git add .github/workflows/build-stephanos-ui.yml
+            if git diff --name-only --diff-filter=U | grep -q .; then
+              echo 'Conflict resolution is incomplete.' >&2
+              git merge --abort
+              exit 1
+            fi
+          fi
+
+          git config user.name 'stephanos-main-convergence[bot]'
+          git config user.email 'stephanos-main-convergence[bot]@users.noreply.github.com'
+          git commit -m 'Merge current main into PR #1514'
+
+      - name: Prove exact merge commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check shared/agents/guardedGoalRunnerV1.mjs
+          node --check scripts/guarded-goal-runner-current.mjs
+          node --test \
+            shared/agents/guardedGoalRunnerV1.test.mjs \
+            scripts/guarded-goal-runner-current.test.mjs \
+            scripts/guarded-goal-runner-pr-proof-current.test.mjs
+          git diff --check origin/main...HEAD
+
+      - name: Publish merge commit to existing PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:codex/1497-standing-authority-enforcement-v1
+          echo "published_head=$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
