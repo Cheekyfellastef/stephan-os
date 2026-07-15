@@ -243,7 +243,7 @@ export async function runCodexWorker(taskPath, {
   writeJson(statusPath, running);
   writeJson(currentPath, running);
 
-  const prompt = buildGuaredCodexPrompt(task);
+  const prompt = buildGuardedCodexPrompt(task);
   const child = spawnFn(invocation.command, invocation.args, {
     cwd: resolve(task.repoRoot),
     windowsHide: true,
