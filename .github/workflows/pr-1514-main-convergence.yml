@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   converge:
-    if: github.actor != 'github-actions[bot]' && github.event.head_commit.message == 'Bootstrap PR #1514 current-main convergence'
+    if: github.actor != 'github-actions[bot]' && github.event.head_commit.message == 'Run PR #1514 current-main convergence'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
