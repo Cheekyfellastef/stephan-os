@@ -12,6 +12,7 @@ import { runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const backendStarterScript = path.join(repoRoot, 'scripts', 'windows', 'start-stephanos-backend.ps1');
+const ui4173RefreshScript = path.join(repoRoot, 'scripts', 'refresh-stephanos-ui-4173.mjs');
 const DIST_MUTATION_LABELS = new Set([
   'git-restore-auto-generated',
   'git-clean-dist-untracked',
@@ -101,17 +102,10 @@ export async function probeLiveUiExactHead({
   }
 }
 
-function canonicalUiRefreshInvocation(platform = process.platform) {
-  if (platform === 'win32') {
-    return {
-      command: 'cmd.exe',
-      args: ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:ignite:launcher-root'],
-    };
-  }
-
+function canonicalUiRefreshInvocation() {
   return {
-    command: 'npm',
-    args: ['run', 'stephanos:ignite:launcher-root'],
+    command: process.execPath,
+    args: [ui4173RefreshScript],
   };
 }
 
@@ -151,16 +145,16 @@ export async function ensureLiveUiConvergedBeforeSupervisor({
     return { action: 'reuse-exact-head-ui', before, after: before };
   }
 
-  console.log(`[IGNITION ENTRY] 4173 preflight: live UI is stale; refreshing through the canonical launcher-root build/verify/restart path.`);
+  console.log('[IGNITION ENTRY] 4173 preflight: live UI is stale; running bounded build, verify, restart handoff, and exact-head proof.');
   const invocation = canonicalUiRefreshInvocation(platform);
   const refreshStarted = runStepFn('refresh-stale-ui-4173', invocation.command, invocation.args);
   if (!refreshStarted) {
-    throw new Error('Canonical launcher-root refresh failed before Battle Bridge supervisor proof.');
+    throw new Error('Bounded UI 4173 refresh failed before Battle Bridge supervisor proof.');
   }
 
   const after = await waitFn();
   if (!after?.ready) {
-    throw new Error(`Canonical launcher-root refresh completed without exact-head browser proof (${after?.error || 'served runtime remained stale'}).`);
+    throw new Error(`Bounded UI 4173 refresh completed without exact-head browser proof (${after?.error || 'served runtime remained stale'}).`);
   }
 
   console.log(`[IGNITION ENTRY] 4173 preflight: stale runtime converged to exact HEAD ${after.currentHead}.`);

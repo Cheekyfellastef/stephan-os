@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import process from 'node:process';
 import {
   createSupervisorHousekeepRunStep,
   ensureLiveUiConvergedBeforeSupervisor,
@@ -64,7 +65,7 @@ test('second press reuses an existing exact-head UI without spawning another ref
   assert.equal(refreshCalls.length, 0);
 });
 
-test('live stale UI is refreshed through launcher-root and must converge before supervisor starts', async () => {
+test('live stale UI uses the bounded refresh helper and must converge before supervisor starts', async () => {
   const refreshCalls = [];
   const before = { reachable: true, ready: false, currentHead: 'abc1234', proof: { ready: false } };
   const after = { reachable: true, ready: true, currentHead: 'abc1234', proof: { ready: true } };
@@ -83,8 +84,9 @@ test('live stale UI is refreshed through launcher-root and must converge before 
   assert.equal(result.after, after);
   assert.equal(refreshCalls.length, 1);
   assert.equal(refreshCalls[0].label, 'refresh-stale-ui-4173');
-  assert.equal(refreshCalls[0].command, 'cmd.exe');
-  assert.deepEqual(refreshCalls[0].args, ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:ignite:launcher-root']);
+  assert.equal(refreshCalls[0].command, process.execPath);
+  assert.equal(refreshCalls[0].args.length, 1);
+  assert.match(refreshCalls[0].args[0].replace(/\\/g, '/'), /scripts\/refresh-stephanos-ui-4173\.mjs$/);
 });
 
 test('cold start remains delegated to the complete existing supervisor flow', async () => {

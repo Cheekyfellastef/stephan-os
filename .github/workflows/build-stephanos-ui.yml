@@ -79,7 +79,8 @@ jobs:
             stephanos-ui/src/components/StatusPanel.render.test.mjs \
             scripts/stephanos-build-utils.test.mjs \
             scripts/windows-ignition-browser-surfaces.test.mjs \
-            scripts/run-battle-bridge-ignition.test.mjs
+            scripts/run-battle-bridge-ignition.test.mjs \
+            scripts/refresh-stephanos-ui-4173.test.mjs
 
       - name: Build Stephanos UI pipeline from repo root
         run: npm run stephanos:build
