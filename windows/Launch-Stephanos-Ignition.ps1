@@ -66,7 +66,7 @@ function Wait-ForWebEndpoint([string]$Url, [int]$TimeoutSeconds = 120) {
     }
     Start-Sleep -Seconds 1
   }
-  throw "Timed out waiting for $Url. Last error: $lastError"
+  throw "Timed out waiting for ${Url}. Last error: $lastError"
 }
 
 function Test-AiCoreWindowVisible {
