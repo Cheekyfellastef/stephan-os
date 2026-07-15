@@ -19,8 +19,6 @@ on:
       - '!scripts/windows/install-battle-bridge-github-sync.ps1'
       - '!scripts/windows/status-battle-bridge-github-sync.ps1'
       - '!scripts/windows/uninstall-battle-bridge-github-sync.ps1'
-      - '!scripts/guarded-goal-runner-current.mjs'
-      - '!scripts/guarded-goal-runner-current.test.mjs'
       - 'package.json'
       - 'apps/stephanos/app.json'
   pull_request:
@@ -41,8 +39,6 @@ on:
       - '!scripts/windows/install-battle-bridge-github-sync.ps1'
       - '!scripts/windows/status-battle-bridge-github-sync.ps1'
       - '!scripts/windows/uninstall-battle-bridge-github-sync.ps1'
-      - '!scripts/guarded-goal-runner-current.mjs'
-      - '!scripts/guarded-goal-runner-current.test.mjs'
       - 'package.json'
       - 'apps/stephanos/app.json'
 
@@ -58,7 +54,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
 
       - name: Preflight frontend path and lockfile
         run: |
