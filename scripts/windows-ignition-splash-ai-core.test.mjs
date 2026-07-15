@@ -44,12 +44,13 @@ test('full launcher remains the source of splash supervisor approval and cockpit
 test('visible AI Core starts only after the full launcher splash is observed', async () => {
   const script = await readFile(wrapperScript, 'utf8');
   const launcherIndex = script.indexOf('$launcherProcess = Start-FullLegacyLauncher');
-  const splashIndex = script.indexOf('Wait-ForFullLauncherSplash');
-  const coreIndex = script.indexOf('Ensure-VisibleAiCoreWindow');
+  const splashIndex = script.indexOf('Wait-ForFullLauncherSplash -Process $launcherProcess', launcherIndex);
+  const coreIndex = script.indexOf('  Ensure-VisibleAiCoreWindow\n', splashIndex);
   assert.ok(launcherIndex >= 0);
   assert.ok(splashIndex > launcherIndex);
   assert.ok(coreIndex > splashIndex);
-  assert.match(script, /powershell\.exe'[\s\S]*?'-NoExit'[\s\S]*?Stephanos AI Core/);
+  assert.match(script, /`\$Host\.UI\.RawUI\.WindowTitle = 'Stephanos AI Core'/);
+  assert.match(script, /Start-Process -FilePath 'powershell\.exe'[\s\S]*?'-NoExit'/);
   assert.match(script, /npm --prefix stephanos-server run dev/);
   assert.match(script, /api\/mission-operations/);
 });
