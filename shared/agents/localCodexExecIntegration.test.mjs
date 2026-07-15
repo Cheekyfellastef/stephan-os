@@ -151,6 +151,12 @@ test('worker invocation uses exec-compatible flags and isolates the child by ign
   assert.match(promptText, /git rev-parse HEAD/);
 });
 
+test('worker source invokes the exported guarded prompt builder without a misspelled call site', () => {
+  const workerSource = readFileSync(new URL('../../scripts/stephanos-codex-dispatch-worker.mjs', import.meta.url), 'utf8');
+  assert.match(workerSource, /const prompt = buildGuardedCodexPrompt\(task\);/);
+  assert.doesNotMatch(workerSource, /buildGuaredCodexPrompt/);
+});
+
 test('JSON event parsing and completed-turn classification prove a successful Codex run', () => {
   const parsed = parseCodexJsonEvents([
     '{"type":"thread.started","thread_id":"thread-1"}',
