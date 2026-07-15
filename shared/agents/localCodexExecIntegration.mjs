@@ -130,8 +130,11 @@ export function createLocalCodexExecIntegration({
           hardResetAllowed: false,
           broadProcessKillAllowed: false,
           sourceMutationAllowed: false,
-          generatedDistMutationAllowed: true,
+          generatedDistMutationAllowed: false,
           oneActiveJob: true,
+          childApprovalPolicy: 'never',
+          childSandboxMode: 'read-only',
+          childMcpToolsAllowed: false,
         },
         proofRefs: [`proof/${packet.jobId}.json`, `receipts/${packet.jobId}.json`],
       };
