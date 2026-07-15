@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$RepositoryRoot = '',
-  [string]$SharedWorkspace = ''
+  [string]$SharedWorkspace = '',
+  [switch]$AllowProofBranch
 )
 
 Set-StrictMode -Version Latest
@@ -214,11 +215,19 @@ try {
   Set-Location -LiteralPath $script:repoRoot
   $branch = (& git branch --show-current).Trim()
   if ($LASTEXITCODE -ne 0 -or -not $branch) { throw 'Unable to read the current Git branch.' }
-  if ($branch -ne 'main') { throw "Ignition requires the main branch. Current branch: $branch" }
+  if ($branch -ne 'main' -and -not $AllowProofBranch.IsPresent) {
+    throw "Ignition requires the main branch. Current branch: $branch"
+  }
+  $runtimeCommand = if ($branch -eq 'main') {
+    'npm run stephanos:ignite:launcher-root'
+  }
+  else {
+    'npm run stephanos:serve -- --skip-auto-pull'
+  }
 
   Write-IgnitionStatus -Stage 'source-build' -Message 'Updating main, building the current Stephanos UI, and verifying generated assets.'
   Stop-AllowlistedPortProcessTree -Port 4173 -AllowedPatterns @('serve-stephanos-dist\.mjs','ignite-stephanos-local\.mjs','stephanos:ignite:launcher-root','stephanos:serve') | Out-Null
-  Start-StephanosPowerShellWindow -Title 'Stephanos Runtime' -Command 'npm run stephanos:ignite:launcher-root' -WindowStyle Minimized | Out-Null
+  Start-StephanosPowerShellWindow -Title 'Stephanos Runtime' -Command $runtimeCommand -WindowStyle Minimized | Out-Null
 
   Write-IgnitionStatus -Stage 'ui-runtime' -Message 'Waiting for the rebuilt Stephanos runtime on port 4173.'
   $uiHealth = Wait-ForJsonEndpoint -Url $uiHealthUrl -TimeoutSeconds 300
@@ -243,12 +252,12 @@ try {
   $openClawReady = ($null -ne $openClawOk -and $openClawOk.Value -eq $true) -or ($openClawStatus -match '^(ok|live|ready|healthy)$')
   if (-not $openClawReady) { throw 'OpenClaw gateway responded but did not report a healthy/live state.' }
 
-  Write-IgnitionStatus -Stage 'served-proof' -Message 'Proving the served runtime matches the current main commit.'
+  Write-IgnitionStatus -Stage 'served-proof' -Message 'Proving the served runtime matches the selected source commit.'
   $head = (& git rev-parse --short HEAD).Trim()
   if ($LASTEXITCODE -ne 0 -or -not $head) { throw 'Unable to resolve the current Git commit.' }
   $servedCommit = Get-OptionalPropertyString -Object $uiHealth -PropertyName 'gitCommit' -Fallback 'missing'
   if ($servedCommit -ne $head) {
-    throw "Served runtime commit $servedCommit does not match current source HEAD ${head}."
+    throw "Served runtime commit $servedCommit does not match selected source HEAD ${head}."
   }
 
   Write-IgnitionStatus -Stage 'open-stephanos' -Message 'Opening Stephanos after AI Core, OpenClaw, and exact-head proof passed.' -TrafficLight 'amber'
@@ -257,6 +266,7 @@ try {
   $supportSnapshot = [ordered]@{
     schema = 'stephanos.windows-ignition-proof.v1'
     verdict = 'ready'
+    sourceBranch = $branch
     sourceHead = $head
     servedCommit = $servedCommit
     runtimeMarker = Get-OptionalPropertyString -Object $uiHealth -PropertyName 'runtimeMarker' -Fallback 'unknown'
