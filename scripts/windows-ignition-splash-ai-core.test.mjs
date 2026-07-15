@@ -2,46 +2,60 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const ignitionScript = new URL('../windows/Launch-Stephanos-Ignition.ps1', import.meta.url);
+const wrapperScript = new URL('../windows/Launch-Stephanos-Ignition.ps1', import.meta.url);
+const fullLauncherScript = new URL('../windows/Launch-Stephanos-Local.ps1', import.meta.url);
 const launcherCmd = new URL('../windows/Launch-Stephanos-Local.cmd', import.meta.url);
 
-test('desktop ignition routes through splash launcher', async () => {
+test('desktop button routes through compatibility wrapper with canonical full launcher arguments', async () => {
   const cmd = await readFile(launcherCmd, 'utf8');
   assert.match(cmd, /Launch-Stephanos-Ignition\.ps1/);
-  assert.match(cmd, /Starting splash-driven Stephanos ignition/);
+  assert.match(cmd, /-Mode launcher-root -BootMode cockpit/);
+  assert.match(cmd, /preserving the full launcher-root cockpit flow/);
 });
 
-test('ignition opens splash before updating runtime and starts AI Core from updated source', async () => {
-  const script = await readFile(ignitionScript, 'utf8');
-  const splashIndex = script.indexOf("Start-Process -FilePath $script:splashPath");
-  const runtimeIndex = script.indexOf("Start-StephanosPowerShellWindow -Title 'Stephanos Runtime'");
-  const coreIndex = script.indexOf("Start-StephanosPowerShellWindow -Title 'Stephanos AI Core'");
-  assert.ok(splashIndex >= 0);
-  assert.ok(runtimeIndex > splashIndex);
-  assert.ok(coreIndex > runtimeIndex);
+test('wrapper preserves the established launcher parameter surface', async () => {
+  const script = await readFile(wrapperScript, 'utf8');
+  assert.match(script, /\[switch\]\$AutoOpen/);
+  assert.match(script, /\[string\]\$Mode = 'launcher-root'/);
+  assert.match(script, /\[string\]\$BootMode = 'cockpit'/);
+  assert.match(script, /\[switch\]\$ReadinessReportOnly/);
+  assert.match(script, /\[switch\]\$RepairMissingUi4173/);
+  assert.match(script, /\[switch\]\$RepairDryRun/);
 });
 
-test('AI Core uses its own visible PowerShell window', async () => {
-  const script = await readFile(ignitionScript, 'utf8');
-  assert.match(script, /Start-StephanosPowerShellWindow -Title 'Stephanos AI Core' -Command 'npm --prefix stephanos-server run dev' -WindowStyle Normal/);
-  assert.match(script, /AppActivate\('Stephanos AI Core'\)/);
-  assert.match(script, /Wait-ForWebEndpoint -Url \$backendMissionOperationsUrl/);
+test('wrapper delegates to the full existing launcher instead of recreating a reduced ignition path', async () => {
+  const script = await readFile(wrapperScript, 'utf8');
+  assert.match(script, /windows\/Launch-Stephanos-Local\.ps1/);
+  assert.match(script, /Delegating to the full existing Stephanos launcher\. No legacy ignition features are bypassed\./);
+  assert.match(script, /& '\$escapedLauncher' -Mode '\$escapedMode' -BootMode '\$escapedBootMode'/);
+  assert.doesNotMatch(script, /npm run stephanos:ignite:launcher-root/);
+  assert.doesNotMatch(script, /Start-Process -FilePath \$stephanosUrl/);
 });
 
-test('main uses canonical launcher-root lane and PR proof uses no-pull exact branch lane', async () => {
-  const script = await readFile(ignitionScript, 'utf8');
-  assert.match(script, /\[switch\]\$AllowProofBranch/);
-  assert.match(script, /if \(\$branch -ne 'main' -and -not \$AllowProofBranch\.IsPresent\)/);
-  assert.match(script, /'npm run stephanos:ignite:launcher-root'/);
-  assert.match(script, /'npm run stephanos:serve -- --skip-auto-pull'/);
-  assert.match(script, /Start-StephanosPowerShellWindow -Title 'Stephanos Runtime' -Command \$runtimeCommand -WindowStyle Minimized/);
+test('full launcher remains the source of splash supervisor approval and cockpit behavior', async () => {
+  const launcher = await readFile(fullLauncherScript, 'utf8');
+  assert.match(launcher, /Show-IgnitionSplashScreen/);
+  assert.match(launcher, /Invoke-Stephanos-Ignite-With-Approval\.ps1/);
+  assert.match(launcher, /Wait-ForBattleBridgeSupervisorReady/);
+  assert.match(launcher, /Get-CockpitSurfaces/);
+  assert.match(launcher, /Write-IgnitionSupportSnapshot/);
 });
 
-test('browser opens only after exact-head proof', async () => {
-  const script = await readFile(ignitionScript, 'utf8');
-  const proofIndex = script.indexOf('if ($servedCommit -ne $head)');
-  const openIndex = script.indexOf('Start-Process -FilePath $stephanosUrl');
-  assert.ok(proofIndex >= 0);
-  assert.ok(openIndex > proofIndex);
-  assert.match(script, /Stephanos is ready\. The AI Core console and Stephanos are both open\./);
+test('visible AI Core starts only after the full launcher splash is observed', async () => {
+  const script = await readFile(wrapperScript, 'utf8');
+  const launcherIndex = script.indexOf('$launcherProcess = Start-FullLegacyLauncher');
+  const splashIndex = script.indexOf('Wait-ForFullLauncherSplash');
+  const coreIndex = script.indexOf('Ensure-VisibleAiCoreWindow');
+  assert.ok(launcherIndex >= 0);
+  assert.ok(splashIndex > launcherIndex);
+  assert.ok(coreIndex > splashIndex);
+  assert.match(script, /powershell\.exe'[\s\S]*?'-NoExit'[\s\S]*?Stephanos AI Core/);
+  assert.match(script, /npm --prefix stephanos-server run dev/);
+  assert.match(script, /api\/mission-operations/);
+});
+
+test('source updates trigger a visible AI Core restart from the updated worktree', async () => {
+  const script = await readFile(wrapperScript, 'utf8');
+  assert.match(script, /if \(\$headBefore -and \$headAfter -and \$headBefore -ne \$headAfter\)/);
+  assert.match(script, /Ensure-VisibleAiCoreWindow -ForceRestart/);
 });
