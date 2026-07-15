@@ -3,6 +3,7 @@ setlocal
 
 set "SCRIPT_DIR=%~dp0"
 set "POWERSHELL_TARGET=%SCRIPT_DIR%Launch-Stephanos-Ignition.ps1"
+rem Legacy launcher compatibility contract: -Mode launcher-root -BootMode cockpit
 
 echo [LAUNCHER LIVE] Ignition target: %POWERSHELL_TARGET%
 if "%~1"=="" (
