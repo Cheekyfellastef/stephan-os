@@ -8,7 +8,6 @@ import { LOCAL_CODEX_TASK_SCHEMA } from '../shared/agents/localCodexExecIntegrat
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
 ]);
-const CHILD_DISPATCH_MCP_OVERRIDE = 'mcp_servers.stephanos-codex-dispatch.enabled=false';
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -27,6 +26,11 @@ function gitCapture(repoRoot, args) {
     stderr: String(result.stderr || '').trim(),
     error: result.error?.message || '',
   };
+}
+
+function boundedText(value = '', limit = 4000) {
+  const text = String(value || '').trim();
+  return text.length > limit ? `${text.slice(0, limit)}\n...[truncated]` : text;
 }
 
 export function parseGitStatusEntries(output = '') {
@@ -99,7 +103,12 @@ export function parseCodexJsonEvents(output = '') {
   return Object.freeze({ events, invalidLines });
 }
 
-export function classifyCodexExecution({ exit = {}, events = [], lastMessage = '' } = {}) {
+export function classifyCodexExecution({
+  exit = {},
+  events = [],
+  lastMessage = '',
+  stderr = '',
+} = {}) {
   const failureEvent = events.find((event) => (
     event?.type === 'turn.failed'
     || event?.type === 'error'
@@ -107,15 +116,21 @@ export function classifyCodexExecution({ exit = {}, events = [], lastMessage = '
     || event?.item?.status === 'failed'
   )) || null;
   const turnCompleted = events.some((event) => event?.type === 'turn.completed');
-  const failureText = `${lastMessage}\n${failureEvent ? JSON.stringify(failureEvent) : ''}`;
+  const stderrExcerpt = boundedText(stderr);
+  const failureText = `${lastMessage}\n${stderrExcerpt}\n${failureEvent ? JSON.stringify(failureEvent) : ''}`;
   const cancelled = /(?:user\s+)?cancel(?:led|ed)(?:\s+by\s+user)?|tool call.*cancel(?:led|ed)/i.test(failureText);
   const exitPassed = exit.code === 0 && !exit.error;
   const passed = exitPassed && turnCompleted && !failureEvent && !cancelled;
   let reason = '';
-  if (!exitPassed) reason = exit.error || `codex-exit-${exit.code ?? 'unknown'}`;
-  else if (cancelled) reason = 'CODEX_EXEC_CANCELLED';
-  else if (failureEvent) reason = `CODEX_EVENT_${String(failureEvent.type || 'FAILED').toUpperCase().replaceAll('.', '_')}`;
-  else if (!turnCompleted) reason = 'CODEX_TURN_COMPLETION_MISSING';
+  if (!exitPassed) {
+    reason = exit.error || (events.length === 0 ? 'CODEX_CLI_STARTUP_FAILED' : `codex-exit-${exit.code ?? 'unknown'}`);
+  } else if (cancelled) {
+    reason = 'CODEX_EXEC_CANCELLED';
+  } else if (failureEvent) {
+    reason = `CODEX_EVENT_${String(failureEvent.type || 'FAILED').toUpperCase().replaceAll('.', '_')}`;
+  } else if (!turnCompleted) {
+    reason = 'CODEX_TURN_COMPLETION_MISSING';
+  }
   return Object.freeze({
     passed,
     exitPassed,
@@ -124,6 +139,7 @@ export function classifyCodexExecution({ exit = {}, events = [], lastMessage = '
     failureEventType: failureEvent?.type || '',
     reason,
     eventCount: events.length,
+    stderrExcerpt,
   });
 }
 
@@ -134,24 +150,28 @@ export function resolveCodexExecInvocation({
 } = {}) {
   const codexCommand = String(env.STEPHANOS_CODEX_COMMAND || 'codex').trim();
   const codexArgs = [
-    '--ask-for-approval', 'never',
     'exec',
     '--json',
     '--ephemeral',
     '--ignore-user-config',
     '--sandbox', 'read-only',
-    '--config', CHILD_DISPATCH_MCP_OVERRIDE,
+    '--ask-for-approval', 'never',
     '--output-last-message', lastMessagePath,
     '-',
   ];
   if (platform === 'win32') {
-    return Object.freeze({ command: 'cmd.exe', args: ['/d', '/s', '/c', codexCommand, ...codexArgs], codexCommand, codexArgs });
+    return Object.freeze({
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', codexCommand, ...codexArgs],
+      codexCommand,
+      codexArgs,
+    });
   }
   return Object.freeze({ command: codexCommand, args: codexArgs, codexCommand, codexArgs });
 }
 
 export function buildGuardedCodexPrompt(task) {
-  return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- The child Codex run is read-only and non-interactive. Do not request approval.\n- Do not call MCP tools, app tools, or dispatch another Codex task. Use bounded shell diagnostics only.\n- Do not create generated output unless the exact requested proof cannot be completed without it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.\n- Return a structured PASS/FAIL report with remaining blockers.\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
+  return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- The child Codex run is read-only and non-interactive. Do not request approval.\n- User configuration is not loaded for this child run, so local MCP and app tools are unavailable by construction.\n- Do not call MCP tools, app tools, or dispatch another Codex task. Use bounded shell diagnostics only.\n- Do not create generated output unless the exact requested proof cannot be completed without it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.\n- Return a structured PASS/FAIL report with remaining blockers.\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
 }
 
 function streamToFile(stream, path) {
@@ -198,6 +218,7 @@ export async function runCodexWorker(taskPath, {
   const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1']);
   const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
   const startedAt = now();
+  const invocation = resolveCodexExecInvocation({ platform, env, lastMessagePath });
   const running = {
     ...task,
     status: 'RUNNING',
@@ -210,14 +231,19 @@ export async function runCodexWorker(taskPath, {
       sandboxMode: 'read-only',
       ignoreUserConfig: true,
       nestedDispatchMcpEnabled: false,
+      isolationMechanism: 'ignore-user-config',
+    },
+    invocation: {
+      command: invocation.command,
+      codexCommand: invocation.codexCommand,
+      codexArgs: invocation.codexArgs,
     },
     logPaths: { stdoutPath, stderrPath, lastMessagePath },
   };
   writeJson(statusPath, running);
   writeJson(currentPath, running);
 
-  const invocation = resolveCodexExecInvocation({ platform, env, lastMessagePath });
-  const prompt = buildGuardedCodexPrompt(task);
+  const prompt = buildGuaredCodexPrompt(task);
   const child = spawnFn(invocation.command, invocation.args, {
     cwd: resolve(task.repoRoot),
     windowsHide: true,
@@ -248,10 +274,17 @@ export async function runCodexWorker(taskPath, {
   const dirtDelta = compareDirtSnapshots(dirtBefore, dirtAfter);
   let lastMessage = '';
   let stdoutEvents = '';
+  let stderrText = '';
   try { lastMessage = readFileSync(lastMessagePath, 'utf8').trim(); } catch {}
   try { stdoutEvents = readFileSync(stdoutPath, 'utf8'); } catch {}
+  try { stderrText = readFileSync(stderrPath, 'utf8'); } catch {}
   const parsedEvents = parseCodexJsonEvents(stdoutEvents);
-  const execution = classifyCodexExecution({ exit, events: parsedEvents.events, lastMessage });
+  const execution = classifyCodexExecution({
+    exit,
+    events: parsedEvents.events,
+    lastMessage,
+    stderr: stderrText,
+  });
   const sourceHeadUnchanged = sourceHeadBefore.ok && sourceHeadAfter.ok && sourceHeadBefore.stdout === sourceHeadAfter.stdout;
   const sourceSafe = sourceHeadUnchanged && !dirtDelta.sourceMutationDetected;
   const passed = execution.passed && sourceSafe;
@@ -274,6 +307,12 @@ export async function runCodexWorker(taskPath, {
     eventParsing: {
       eventCount: parsedEvents.events.length,
       invalidLineCount: parsedEvents.invalidLines.length,
+      invalidLines: parsedEvents.invalidLines,
+    },
+    invocation: {
+      command: invocation.command,
+      codexCommand: invocation.codexCommand,
+      codexArgs: invocation.codexArgs,
     },
     dirtBefore,
     dirtAfter,
@@ -283,6 +322,7 @@ export async function runCodexWorker(taskPath, {
       stdout: basename(stdoutPath),
       stderr: basename(stderrPath),
       lastMessage: basename(lastMessagePath),
+      stderrExcerpt: execution.stderrExcerpt,
     },
     safety: {
       mergePerformed: false,
@@ -294,6 +334,7 @@ export async function runCodexWorker(taskPath, {
       approvalPolicy: 'never',
       sandboxMode: 'read-only',
       nestedDispatchMcpEnabled: false,
+      isolationMechanism: 'ignore-user-config',
     },
     nextOperatorAction: passed
       ? 'Review the returned proof and decide whether the owning goal may advance.'

@@ -122,17 +122,20 @@ test('new or removed source dirt is classified as a task-time mutation', () => {
   assert.deepEqual(delta.newSourcePaths, ['scripts/new-file.mjs']);
 });
 
-test('worker invocation is explicit non-interactive read-only automation and disables nested dispatch MCP', () => {
+test('worker invocation uses exec-compatible flags and isolates the child by ignoring user config', () => {
   const windows = resolveCodexExecInvocation({ platform: 'win32', env: { STEPHANOS_CODEX_COMMAND: 'codex.cmd' }, lastMessagePath: 'C:\\proof\\last.txt' });
   assert.equal(windows.command, 'cmd.exe');
   assert.deepEqual(windows.args.slice(0, 4), ['/d', '/s', '/c', 'codex.cmd']);
-  assert.deepEqual(windows.codexArgs.slice(0, 3), ['--ask-for-approval', 'never', 'exec']);
-  assert.equal(windows.args.includes('--json'), true);
-  assert.equal(windows.args.includes('--ephemeral'), true);
-  assert.equal(windows.args.includes('--ignore-user-config'), true);
-  assert.equal(windows.args.includes('read-only'), true);
-  assert.equal(windows.args.includes('workspace-write'), false);
-  assert.equal(windows.args.includes('mcp_servers.stephanos-codex-dispatch.enabled=false'), true);
+  assert.equal(windows.codexArgs[0], 'exec');
+  assert.equal(windows.codexArgs.includes('--json'), true);
+  assert.equal(windows.codexArgs.includes('--ephemeral'), true);
+  assert.equal(windows.codexArgs.includes('--ignore-user-config'), true);
+  assert.equal(windows.codexArgs.includes('read-only'), true);
+  assert.equal(windows.codexArgs.includes('workspace-write'), false);
+  assert.equal(windows.codexArgs.includes('--ask-for-approval'), true);
+  assert.equal(windows.codexArgs.includes('never'), true);
+  assert.equal(windows.codexArgs.includes('--config'), false);
+  assert.equal(windows.codexArgs.some((arg) => String(arg).includes('mcp_servers.')), false);
   assert.equal(windows.args.at(-1), '-');
 
   const promptText = buildGuardedCodexPrompt({
@@ -144,6 +147,7 @@ test('worker invocation is explicit non-interactive read-only automation and dis
   assert.match(promptText, /Do not modify source files/);
   assert.match(promptText, /Do not call MCP tools/);
   assert.match(promptText, /read-only and non-interactive/);
+  assert.match(promptText, /User configuration is not loaded/);
   assert.match(promptText, /git rev-parse HEAD/);
 });
 
@@ -190,4 +194,15 @@ test('missing turn.completed is a deterministic failure rather than an assumed p
   });
   assert.equal(execution.passed, false);
   assert.equal(execution.reason, 'CODEX_TURN_COMPLETION_MISSING');
+});
+
+test('zero-event CLI startup failures retain bounded stderr instead of becoming opaque codex-exit-1', () => {
+  const execution = classifyCodexExecution({
+    exit: { code: 1, error: '' },
+    events: [],
+    stderr: 'error: invalid configuration for isolated child invocation',
+  });
+  assert.equal(execution.passed, false);
+  assert.equal(execution.reason, 'CODEX_CLI_STARTUP_FAILED');
+  assert.match(execution.stderrExcerpt, /invalid configuration/);
 });
