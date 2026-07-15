@@ -15,18 +15,23 @@ Use the Windows launcher named **Update + Launch Local Stephanos (Ollama)** at `
 
 What it does, in plain English:
 
+- Opens the existing professional ignition splash and keeps progress, approvals, recovery states, and exact blockers visible there.
+- Preserves the full launcher-root cockpit flow, including repository/worktree resolution, source safety checks, approval-gated recovery, Battle Bridge supervisor proof, bounded logs, support snapshots, and browser surface routing.
 - Safely checks your local repo and pulls the latest GitHub changes only when the repo is clean.
 - Skips the pull with a clear message when local changes are present, so nothing gets overwritten.
 - Installs dependencies automatically for the root repo, `stephanos-ui`, and `stephanos-server` when package metadata changed or `node_modules` is missing.
-- Starts or reuses the local Stephanos backend on `8787` and the shared launcher shell server on `4173`.
-- Waits for the launcher shell health/runtime URLs to answer, then opens `http://127.0.0.1:4173/`.
+- Starts or reuses the local Stephanos backend on `8787`, the real OpenClaw gateway on `18789`, and the shared launcher shell server on `4173`.
+- Opens **Stephanos AI Core** in its own visible PowerShell window without replacing the existing ignition machinery.
+- Waits for the launcher shell health/runtime URLs and exact-head proof before opening the configured launcher/runtime cockpit surfaces.
 - Runs one localhost launcher/workspace shell so Mission Console and local tiles share runtime context.
+- Keeps generated-dist, source-divergence, OpenClaw recovery, and unknown-process safety gates intact.
 - Targets local Ollama at `http://localhost:11434` by default, with Mock Mode available inside Stephanos if Ollama is offline.
 
 Mental model:
 
 - **GitHub is the source of the latest code.**
-- **The launcher updates your local repo when it can do so safely.**
+- **The existing ignition launcher remains authoritative.**
+- **The AI Core window is an added visible surface, not a replacement launcher.**
 - **The launcher runs your local Stephanos build, not the GitHub-hosted web copy.**
 - **Your local Stephanos build talks to your local Ollama on `localhost`.**
 - **The GitHub-hosted version is not the one that uses your local Ollama.**
@@ -34,7 +39,7 @@ Mental model:
 Launch it from PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\windows\Launch-Stephanos-Local.ps1
+powershell -ExecutionPolicy Bypass -File .\windows\Launch-Stephanos-Ignition.ps1 -Mode launcher-root -BootMode cockpit
 ```
 
 Or by double-clicking the Windows launcher:
@@ -50,12 +55,12 @@ windows\Launch-Stephanos-Local.cmd
 - `npm run stephanos:build` — rebuild `stephanos-ui` into `apps/stephanos/dist/**` and stamp it with runtime metadata.
 - `npm run stephanos:verify` — validate that dist exists, asset references resolve, and build metadata/fingerprint still match the current source.
 - `npm run stephanos:serve` — rebuild, verify, and serve the repository so the generated runtime can be checked in a browser.
-- `npm run stephanos:ignite` — alias for the local ignition flow (same behavior as `stephanos:serve`).
+- `npm run stephanos:ignite` — run the Battle Bridge ignition supervisor proof flow.
 - `npm run stephanos:ignite:auto-publish` — local ignition flow with `STEPHANOS_IGNITION_AUTOPUBLISH_DIST=1` enabled via a Node wrapper for cross-platform use.
 - `npm run stephanos:ignite:housekeep` — standalone housekeeper clean pass (uses `scripts/ignite-stephanos-local.mjs --mode=housekeep`).
 - `npm run stephanos:ignite:housekeep:dry-run` — standalone housekeeper preview with no cleanup mutations (`--mode=housekeep-dry-run`).
 
-Housekeeper is intentionally standalone and is **not** auto-wired into `npm run stephanos:ignite`; normal ignition remains canonical build+verify flow and keeps source-dirt approval/hard-block safety unchanged.
+Housekeeper remains part of the established guarded ignition design. The visible AI Core wrapper does not bypass, duplicate, or remove those source and runtime safety contracts.
 
 ## Required workflow after editing Stephanos UI source
 
