@@ -1,0 +1,45 @@
+name: Battle Bridge Resilience Proof
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/battle-bridge-ignition-supervisor.mjs'
+      - 'scripts/battle-bridge-ignition-supervisor.test.mjs'
+      - 'scripts/windows-launcher-supervisor-freshness.test.mjs'
+      - 'scripts/windows-launcher-defaults.test.mjs'
+      - 'tests/windows-launcher-ignition.test.mjs'
+      - 'windows/Launch-Stephanos-Local.ps1'
+      - '.github/workflows/battle-bridge-resilience-proof.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Served runtime and launcher freshness proof
+        run: >-
+          node --test
+          scripts/battle-bridge-ignition-supervisor.test.mjs
+          scripts/windows-launcher-supervisor-freshness.test.mjs
+          scripts/windows-launcher-defaults.test.mjs
+          tests/windows-launcher-ignition.test.mjs
+
+      - name: Launcher script guard
+        run: npm run stephanos:guard:scripts
+
+      - name: Diff check
+        run: git diff --check origin/main...HEAD
