@@ -150,12 +150,12 @@ export function resolveCodexExecInvocation({
 } = {}) {
   const codexCommand = String(env.STEPHANOS_CODEX_COMMAND || 'codex').trim();
   const codexArgs = [
+    '--ask-for-approval', 'never',
     'exec',
     '--json',
     '--ephemeral',
     '--ignore-user-config',
     '--sandbox', 'read-only',
-    '--ask-for-approval', 'never',
     '--output-last-message', lastMessagePath,
     '-',
   ];
