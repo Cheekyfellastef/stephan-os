@@ -40,6 +40,11 @@ jobs:
       - name: Apply bounded exact-marker repair
         run: node scripts/pr-1486-resilience-repair.mjs
 
+      - name: Keep workflow-file publication outside GITHUB_TOKEN
+        run: |
+          git checkout -- .github/workflows/pr-1486-resilience-bootstrap.yml
+          rm -f .github/workflows/battle-bridge-resilience-proof.yml
+
       - name: Run focused proof before publication
         run: >-
           node --test
