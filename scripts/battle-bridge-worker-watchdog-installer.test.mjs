@@ -45,10 +45,16 @@ test('rollback removes only the watchdog task and preserves worker, source and p
   assert.doesNotMatch(source, /Remove-Item|Stop-Process|Restart-Computer|shutdown\.exe|\bgit(?:\.exe)?\s/i);
 });
 
-test('internal probe permits only inspect or fixed task start and never process kill', async () => {
+test('internal probe permits only inspect or fixed canonical task start and never process kill', async () => {
   const source = await readFile(probePath, 'utf8');
   assert.match(source, /ValidateSet\('Inspect', 'StartApprovedWorkerTask'\)/);
   assert.match(source, /\$taskName = 'Stephanos Mission Orchestrator Worker'/);
+  assert.match(source, /\$workerLauncherPath/);
+  assert.match(source, /Test-CanonicalWorkerTaskAction/);
+  assert.match(source, /TaskPath -ne '\\\\'/);
+  assert.match(source, /\.Actions\.Count -ne 1/);
+  assert.match(source, /actionMatchesCanonicalWorker/);
+  assert.match(source, /The fixed Mission Orchestrator worker task action is not canonical/);
   assert.match(source, /Start-ScheduledTask -TaskName \$taskName/);
   assert.match(source, /Get-CimInstance Win32_Process/);
   assert.doesNotMatch(source, /\[string\]\$TaskName|Stop-ScheduledTask|Stop-Process|Invoke-Expression|Restart-Computer|shutdown\.exe/i);
