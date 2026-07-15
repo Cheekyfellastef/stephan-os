@@ -18,13 +18,15 @@ One press of `windows/Launch-Stephanos-Local.cmd` must:
 - The exact-head proof does not run the destructive supervisor housekeeping pass after the new dist has been built.
 - The AI Core starts after the source update, so the visible backend window cannot be left on pre-pull code.
 - OpenClaw task execution, Git push, merge, and arbitrary shell authority are not added.
+- Non-main execution is blocked unless the explicit `-AllowProofBranch` switch is supplied.
+- Proof-branch mode builds the selected branch without pulling or merging it.
 
 ## Windows proof required before merge
 
-Run from `main` after checking out the PR branch in a proof worktree:
+Run from the PR worktree:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\Launch-Stephanos-Ignition.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\Launch-Stephanos-Ignition.ps1 -RepositoryRoot . -AllowProofBranch
 ```
 
 Expected visible surfaces:
@@ -43,6 +45,7 @@ Required fields:
 
 ```text
 verdict = ready
+sourceBranch = fix/ignition-splash-ai-core-windows
 sourceHead = servedCommit
 backend8787.ready = true
 openClaw18789.ready = true
