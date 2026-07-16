@@ -17,7 +17,7 @@ import {
   verifyChatGptBridgeRequest,
 } from '../shared/agents/chatGptParticipantBridgeV1.mjs';
 import {
-  appendWorkspaceJsonl,
+  createSharedWorkspaceEventRecord,
   createSharedWorkspaceReceiptRecord,
   resolveSharedWorkspacePath,
   writeAtomicJson,
@@ -210,12 +210,8 @@ export function createFixedChatGptSharedWorkspaceGitHubAdapter({
   });
 }
 
-async function defaultReceiptExists({ workspaceRoot, repoRoot, receiptId, readFileFn = readFile }) {
-  const resolved = resolveSharedWorkspacePath({
-    root: workspaceRoot,
-    repoRoot,
-    segments: ['receipts', `${receiptId}.json`],
-  });
+async function defaultWorkspaceRecordExists({ workspaceRoot, repoRoot, segments, readFileFn = readFile }) {
+  const resolved = resolveSharedWorkspacePath({ root: workspaceRoot, repoRoot, segments });
   if (!resolved.ok) return false;
   try {
     await readFileFn(resolved.path, 'utf8');
@@ -225,9 +221,27 @@ async function defaultReceiptExists({ workspaceRoot, repoRoot, receiptId, readFi
   }
 }
 
+async function defaultReceiptExists({ workspaceRoot, repoRoot, receiptId, readFileFn = readFile }) {
+  return defaultWorkspaceRecordExists({
+    workspaceRoot,
+    repoRoot,
+    segments: ['receipts', `${receiptId}.json`],
+    readFileFn,
+  });
+}
+
 function receiptIdFor(request, rawBody = '') {
   const canonical = safeId(request?.requestId);
-  return `chatgpt-bridge-${canonical || digest(rawBody).slice(0, 24)}`;
+  const readable = canonical ? safeId(`chatgpt-bridge-${canonical}`) : '';
+  return readable || `chatgpt-bridge-${digest(canonical || rawBody).slice(0, 24)}`;
+}
+
+function completionReceiptIdFor(receiptId) {
+  return `chatgpt-complete-${digest(receiptId).slice(0, 24)}`;
+}
+
+function eventIdFor(receiptId) {
+  return `chatgpt-event-${digest(receiptId).slice(0, 24)}`;
 }
 
 function readProjectionForOperation(operation, projection) {
@@ -266,18 +280,32 @@ function compactWriteResult(result = {}) {
   });
 }
 
+async function persistOnce({
+  workspaceRoot,
+  repoRoot,
+  segments,
+  record,
+  nowMs,
+  recordExistsFn,
+  writeAtomicJsonFn,
+}) {
+  const exists = await recordExistsFn({ workspaceRoot, repoRoot, segments });
+  if (exists) return Object.freeze({ ok: true, reason: 'WORKSPACE_RECORD_ALREADY_PERSISTED', bytes: 0, resumed: true });
+  return writeAtomicJsonFn(workspaceRoot, segments, record, { repoRoot, nowMs });
+}
+
 export async function runChatGptSharedWorkspaceGitHubRelay({
   now = new Date(),
   env = process.env,
   paths = resolveChatGptSharedWorkspaceRelayPaths({ env }),
   adapter = createFixedChatGptSharedWorkspaceGitHubAdapter(),
   receiptExistsFn = defaultReceiptExists,
+  recordExistsFn = defaultWorkspaceRecordExists,
   readFileFn = readFile,
   verifyRequestFn = verifyChatGptBridgeRequest,
   projectionBuilder = createSanitizedSharedWorkspaceProjection,
   recordBuilder = buildChatGptBridgeRecord,
   writeAtomicJsonFn = writeAtomicJson,
-  appendWorkspaceJsonlFn = appendWorkspaceJsonl,
 } = {}) {
   const observed = adapter.readRequest();
   if (!observed?.ok) {
@@ -302,11 +330,13 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
 
   const request = parsed.request || {};
   const timestampUtc = now.toISOString();
+  const nowMs = now.getTime();
   const receiptId = receiptIdFor(request, observed.body);
-  if (parsed.ok && await receiptExistsFn({
+  const completionReceiptId = completionReceiptIdFor(receiptId);
+  if (await receiptExistsFn({
     workspaceRoot: paths.workspaceRoot,
     repoRoot: paths.repoRoot,
-    receiptId,
+    receiptId: completionReceiptId,
     readFileFn,
   })) {
     return Object.freeze({
@@ -315,6 +345,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       classification: 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED',
       requestObserved: true,
       requestId: text(request.requestId),
+      completionReceiptId,
       responsePublished: false,
     });
   }
@@ -325,7 +356,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         authenticated: observed.authorLogin === CHATGPT_SHARED_WORKSPACE_OWNER,
         transportConfigured: true,
         replayStore,
-        nowMs: now.getTime(),
+        nowMs,
         timestampUtc,
       })
     : Object.freeze({
@@ -349,14 +380,14 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       workspaceRoot: paths.workspaceRoot,
       repoRoot: paths.repoRoot,
       timestampUtc,
-      nowMs: now.getTime(),
+      nowMs,
     });
     projection = readProjectionForOperation(request.operation, projection);
     deliveryStatus = projection?.aggregationOk === false ? 'WORKSPACE_READ_BLOCKED' : 'WORKSPACE_READ_PASS';
   } else if (verification.accepted) {
     const built = recordBuilder(request, {
       timestampUtc,
-      workspaceValidationOptions: { nowMs: now.getTime() },
+      workspaceValidationOptions: { nowMs },
     });
     if (!built?.ok) {
       deliveryStatus = built?.reason || 'WORKSPACE_RECORD_BUILD_FAILED';
@@ -364,18 +395,28 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     } else {
       workspaceRecord = built.record;
       const messageName = `${safeId(request.requestId, digest(observed.body).slice(0, 24))}.json`;
-      primaryWrite = await writeAtomicJsonFn(paths.workspaceRoot, ['inbox', messageName], workspaceRecord, {
+      primaryWrite = await persistOnce({
+        workspaceRoot: paths.workspaceRoot,
         repoRoot: paths.repoRoot,
-        nowMs: now.getTime(),
+        segments: ['inbox', messageName],
+        record: workspaceRecord,
+        nowMs,
+        recordExistsFn,
+        writeAtomicJsonFn,
       });
       deliveryStatus = primaryWrite.ok ? 'WORKSPACE_WRITE_PASS' : 'WORKSPACE_WRITE_FAILED';
     }
   }
 
+  const acceptedDelivery = verification.accepted === true
+    && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS'].includes(deliveryStatus)
+    && primaryWrite.ok === true;
+  const terminalOutcome = acceptedDelivery || verification.accepted !== true;
   const relatedIssue = text(request.relatedGoal, `#${CHATGPT_SHARED_WORKSPACE_ISSUE}`);
   const relatedPr = text(request.relatedPr);
   const correlationId = safeId(request.correlationId, receiptId);
-  const receipt = createSharedWorkspaceReceiptRecord({
+
+  const auditReceipt = createSharedWorkspaceReceiptRecord({
     receiptId,
     participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
     timestampUtc,
@@ -387,26 +428,47 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     disposition: `${verification.responseStatus}:${deliveryStatus}`,
     summary: `ChatGPT bridge ${text(request.operation, 'request')} ${deliveryStatus}`,
   });
-  const receiptWrite = await writeAtomicJsonFn(paths.workspaceRoot, ['receipts', `${receiptId}.json`], receipt, {
-    repoRoot: paths.repoRoot,
-    nowMs: now.getTime(),
-  });
-  const eventWrite = receiptWrite.ok
-    ? await appendWorkspaceJsonlFn(paths.workspaceRoot, ['events', 'chatgpt-participant-bridge.jsonl'], receipt, {
+  const auditReceiptWrite = terminalOutcome
+    ? await persistOnce({
+        workspaceRoot: paths.workspaceRoot,
         repoRoot: paths.repoRoot,
-        nowMs: now.getTime(),
+        segments: ['receipts', `${receiptId}.json`],
+        record: auditReceipt,
+        nowMs,
+        recordExistsFn,
+        writeAtomicJsonFn,
       })
-    : { ok: false, reason: 'RECEIPT_WRITE_FAILED', bytes: 0 };
+    : { ok: false, reason: 'DELIVERY_NOT_TERMINAL', bytes: 0 };
+
+  const eventId = eventIdFor(receiptId);
+  const event = createSharedWorkspaceEventRecord({
+    eventId,
+    participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
+    timestampUtc,
+    eventKind: verification.accepted ? 'response' : 'warning',
+    summary: `ChatGPT bridge ${text(request.operation, 'request')} ${verification.responseStatus}:${deliveryStatus}`,
+  });
+  const eventWrite = auditReceiptWrite.ok
+    ? await persistOnce({
+        workspaceRoot: paths.workspaceRoot,
+        repoRoot: paths.repoRoot,
+        segments: ['events', `${eventId}.json`],
+        record: event,
+        nowMs,
+        recordExistsFn,
+        writeAtomicJsonFn,
+      })
+    : { ok: false, reason: 'AUDIT_RECEIPT_NOT_PERSISTED', bytes: 0 };
 
   const responseBody = renderChatGptSharedWorkspaceResponse({
-    state: verification.accepted && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS'].includes(deliveryStatus) ? 'RESPONSE_READY' : 'BLOCKED',
+    state: terminalOutcome && auditReceiptWrite.ok && eventWrite.ok ? 'RESPONSE_READY' : 'BLOCKED',
     requestId: text(request.requestId),
     operation: text(request.operation),
     recordKind: text(request.recordKind),
     timestampUtc,
     verificationStatus: verification.responseStatus,
     deliveryStatus,
-    completed: verification.accepted && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS'].includes(deliveryStatus),
+    completed: acceptedDelivery,
     projection,
     workspaceRecord: workspaceRecord ? {
       kind: workspaceRecord.kind,
@@ -421,9 +483,11 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     audit: {
       auditReceiptId: verification.auditReceiptId,
       receiptId,
+      completionReceiptId,
       proofRefs: verification.proofRefs || [],
-      receiptPersisted: receiptWrite.ok === true,
-      eventAppended: eventWrite.ok === true,
+      receiptPersisted: auditReceiptWrite.ok === true,
+      eventPersisted: eventWrite.ok === true,
+      completionReceiptWrittenLast: true,
     },
     source: {
       repository: CHATGPT_SHARED_WORKSPACE_REPOSITORY,
@@ -434,13 +498,28 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     },
   });
   const responseWrite = adapter.writeResponse(responseBody);
-  const handledRejection = verification.accepted !== true && receiptWrite.ok === true && eventWrite.ok === true && responseWrite.ok === true;
-  const completed = verification.accepted === true
-    && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS'].includes(deliveryStatus)
-    && primaryWrite.ok === true
-    && receiptWrite.ok === true
-    && eventWrite.ok === true
-    && responseWrite.ok === true;
+
+  const completionReceipt = createSharedWorkspaceReceiptRecord({
+    receiptId: completionReceiptId,
+    participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
+    timestampUtc,
+    correlationId,
+    relatedIssue,
+    relatedPr,
+    proofRefs: [`receipts/${receiptId}`],
+    receivedRecordId: receiptId,
+    disposition: `RELAY_COMPLETE:${verification.responseStatus}:${deliveryStatus}`,
+    summary: `ChatGPT bridge relay completed after audit event and response publication`,
+  });
+  const completionWrite = terminalOutcome && auditReceiptWrite.ok && eventWrite.ok && responseWrite.ok
+    ? await writeAtomicJsonFn(paths.workspaceRoot, ['receipts', `${completionReceiptId}.json`], completionReceipt, {
+        repoRoot: paths.repoRoot,
+        nowMs,
+      })
+    : { ok: false, reason: 'RELAY_SIDE_EFFECTS_INCOMPLETE', bytes: 0 };
+
+  const handledRejection = verification.accepted !== true && completionWrite.ok === true;
+  const completed = acceptedDelivery && completionWrite.ok === true;
   const ok = completed || handledRejection;
 
   return Object.freeze({
@@ -454,10 +533,13 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     operation: text(request.operation),
     verificationStatus: verification.responseStatus,
     deliveryStatus,
+    receiptId,
+    completionReceiptId,
     primaryWrite: compactWriteResult(primaryWrite),
-    receiptWrite: compactWriteResult(receiptWrite),
+    auditReceiptWrite: compactWriteResult(auditReceiptWrite),
     eventWrite: compactWriteResult(eventWrite),
     responseWrite: compactWriteResult(responseWrite),
+    completionWrite: compactWriteResult(completionWrite),
     responsePublished: responseWrite.ok === true,
   });
 }
