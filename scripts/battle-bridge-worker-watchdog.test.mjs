@@ -23,7 +23,11 @@ function canonicalPaths(root) {
 
 function workerObservation({ paths, healthy = true, timestampUtc = new Date(Date.now() - 1_000).toISOString() } = {}) {
   return {
-    scheduledTask: { taskName: APPROVED_WORKER_TASK, status: healthy ? 'Running' : 'Ready' },
+    scheduledTask: {
+      taskName: APPROVED_WORKER_TASK,
+      status: healthy ? 'Running' : 'Ready',
+      actionMatchesCanonicalWorker: true,
+    },
     process: {
       running: healthy,
       taskName: healthy ? APPROVED_WORKER_TASK : '',
