@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleBridgeGitHubCommandMailboxBootstrap.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
 import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
 
@@ -11,6 +12,7 @@ export async function runSupervisedMissionWorker({
   env = process.env,
   stdout = process.stdout,
   stderr = process.stderr,
+  bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox,
   runTick = runMissionWorkerTick,
   writeHeartbeat = writeMissionWorkerHeartbeat,
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
@@ -25,6 +27,20 @@ export async function runSupervisedMissionWorker({
     1000,
   );
   let exitCode = 0;
+
+  try {
+    const mailboxBootstrap = await bootstrapMailbox({ env });
+    stdout.write(`${JSON.stringify({ checkedAt: now(), ...mailboxBootstrap })}\n`);
+  } catch (error) {
+    stderr.write(`${JSON.stringify({
+      checkedAt: now(),
+      finalVerdict: 'MAILBOX_SELF_BOOTSTRAP_FAILED',
+      error: error?.message || String(error),
+      operatorNeeded: true,
+    })}\n`);
+    if (once) exitCode = 1;
+  }
+
   do {
     const checkedAt = now();
     let lastTickVerdict = 'MISSION_WORKER_TICK_PASS';
