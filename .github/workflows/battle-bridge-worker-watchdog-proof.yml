@@ -4,8 +4,10 @@ on:
   pull_request:
     paths:
       - 'scripts/battle-bridge-worker-watchdog*.mjs'
+      - 'scripts/chatgpt-shared-workspace-github-relay*.mjs'
       - 'scripts/remote-codex-task-visibility-observer*.mjs'
       - 'scripts/remote-codex-github-mirror-publisher*.mjs'
+      - 'shared/agents/chatGptParticipantBridgeV1*.mjs'
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
@@ -15,8 +17,10 @@ on:
   push:
     paths:
       - 'scripts/battle-bridge-worker-watchdog*.mjs'
+      - 'scripts/chatgpt-shared-workspace-github-relay*.mjs'
       - 'scripts/remote-codex-task-visibility-observer*.mjs'
       - 'scripts/remote-codex-github-mirror-publisher*.mjs'
+      - 'shared/agents/chatGptParticipantBridgeV1*.mjs'
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
@@ -47,8 +51,10 @@ jobs:
           node --check scripts/battle-bridge-worker-watchdog-policy.mjs
           node --check scripts/battle-bridge-worker-watchdog.mjs
           node --check scripts/battle-bridge-worker-watchdog-runner.mjs
+          node --check scripts/chatgpt-shared-workspace-github-relay.mjs
           node --check scripts/remote-codex-task-visibility-observer.mjs
           node --check scripts/remote-codex-github-mirror-publisher.mjs
+          node --check shared/agents/chatGptParticipantBridgeV1.mjs
           node --check shared/agents/remoteCodexTaskVisibility.mjs
           node --check scripts/mission-orchestrator-worker-heartbeat.mjs
           node --check scripts/mission-orchestrator-worker-supervised.mjs
@@ -85,6 +91,9 @@ jobs:
 
       - name: Test watchdog executor
         run: node --test scripts/battle-bridge-worker-watchdog.test.mjs
+
+      - name: Test participant bridge contract and live relay
+        run: node --test shared/agents/chatGptParticipantBridgeV1.test.mjs scripts/chatgpt-shared-workspace-github-relay.test.mjs
 
       - name: Test visibility observer, mirror and combined runner
         run: node --test shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/remote-codex-github-mirror-publisher.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs
