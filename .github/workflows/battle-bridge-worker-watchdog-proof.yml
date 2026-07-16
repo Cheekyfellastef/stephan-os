@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/battle-bridge-worker-watchdog*.mjs'
       - 'scripts/remote-codex-task-visibility-observer*.mjs'
+      - 'scripts/remote-codex-github-mirror-publisher*.mjs'
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'scripts/battle-bridge-worker-watchdog*.mjs'
       - 'scripts/remote-codex-task-visibility-observer*.mjs'
+      - 'scripts/remote-codex-github-mirror-publisher*.mjs'
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
@@ -46,6 +48,7 @@ jobs:
           node --check scripts/battle-bridge-worker-watchdog.mjs
           node --check scripts/battle-bridge-worker-watchdog-runner.mjs
           node --check scripts/remote-codex-task-visibility-observer.mjs
+          node --check scripts/remote-codex-github-mirror-publisher.mjs
           node --check shared/agents/remoteCodexTaskVisibility.mjs
           node --check scripts/mission-orchestrator-worker-heartbeat.mjs
           node --check scripts/mission-orchestrator-worker-supervised.mjs
@@ -83,8 +86,8 @@ jobs:
       - name: Test watchdog executor
         run: node --test scripts/battle-bridge-worker-watchdog.test.mjs
 
-      - name: Test visibility observer and combined runner
-        run: node --test shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs
+      - name: Test visibility observer, mirror and combined runner
+        run: node --test shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/remote-codex-github-mirror-publisher.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs
 
       - name: Test Windows script guards
         run: node --test scripts/battle-bridge-worker-watchdog-installer.test.mjs
