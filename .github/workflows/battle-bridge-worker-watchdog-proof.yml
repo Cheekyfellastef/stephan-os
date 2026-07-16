@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'scripts/battle-bridge-worker-watchdog*.mjs'
+      - 'scripts/remote-codex-task-visibility-observer*.mjs'
+      - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
@@ -12,6 +14,8 @@ on:
   push:
     paths:
       - 'scripts/battle-bridge-worker-watchdog*.mjs'
+      - 'scripts/remote-codex-task-visibility-observer*.mjs'
+      - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
@@ -40,6 +44,9 @@ jobs:
         run: |
           node --check scripts/battle-bridge-worker-watchdog-policy.mjs
           node --check scripts/battle-bridge-worker-watchdog.mjs
+          node --check scripts/battle-bridge-worker-watchdog-runner.mjs
+          node --check scripts/remote-codex-task-visibility-observer.mjs
+          node --check shared/agents/remoteCodexTaskVisibility.mjs
           node --check scripts/mission-orchestrator-worker-heartbeat.mjs
           node --check scripts/mission-orchestrator-worker-supervised.mjs
 
@@ -75,6 +82,9 @@ jobs:
 
       - name: Test watchdog executor
         run: node --test scripts/battle-bridge-worker-watchdog.test.mjs
+
+      - name: Test visibility observer and combined runner
+        run: node --test shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs
 
       - name: Test Windows script guards
         run: node --test scripts/battle-bridge-worker-watchdog-installer.test.mjs
