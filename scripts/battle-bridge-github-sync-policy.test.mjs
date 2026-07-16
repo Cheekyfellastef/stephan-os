@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CANONICAL_SYNC_CONTRACT,
+  DEFAULT_RUNTIME_ONLY_ALLOWLIST,
   FIXED_GIT_COMMANDS,
   POST_SYNC_REFRESH_REGISTRY,
   SYNC_CLASSIFICATIONS,
@@ -91,6 +92,28 @@ test('dirty source blocks and runtime-only dirt cannot hide source dirt', () => 
   assert.deepEqual(dirt.trackedSource, ['scripts/ignite-stephanos-local.mjs']);
   assert.deepEqual(dirt.runtimeOnly, ['logs/runtime.txt']);
   assert.equal(evaluateSyncPolicy({ ...baseFacts, statusLines: [' M scripts/ignite-stephanos-local.mjs'] }).classification, SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE);
+});
+
+test('generated dream-memory journals are runtime-only while other memory paths still block', () => {
+  const dreamFiles = [
+    '?? memory/.dreams/events.jsonl',
+    '?? memory/.dreams/session-ingestion.json',
+    '?? memory/dreaming/deep/2026-07-16.md',
+    '?? memory/dreaming/light/2026-07-16.md',
+    '?? memory/dreaming/rem/2026-07-16.md',
+  ];
+  const dirt = classifyDirt([...dreamFiles, '?? memory/source-contract.md']);
+  assert.deepEqual(dirt.runtimeOnly, dreamFiles.map((line) => line.slice(3)));
+  assert.deepEqual(dirt.untrackedSource, ['memory/source-contract.md']);
+  assert.equal(dirt.blocksSync, true);
+  assert.equal(
+    evaluateSyncPolicy({ ...baseFacts, statusLines: dreamFiles }).classification,
+    SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE,
+  );
+  assert.deepEqual(
+    DEFAULT_RUNTIME_ONLY_ALLOWLIST.filter((path) => path.startsWith('memory/')),
+    ['memory/.dreams/', 'memory/dreaming/deep/', 'memory/dreaming/light/', 'memory/dreaming/rem/'],
+  );
 });
 
 test('non-main branch wrong remote diverged fetch and ff-only failures block', () => {

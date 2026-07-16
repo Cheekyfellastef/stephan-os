@@ -12,6 +12,10 @@ const APPROVED_RUNTIME_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
   'data/',
   'stephanos-server/data/memory/durable-memory.json',
+  'memory/.dreams/',
+  'memory/dreaming/deep/',
+  'memory/dreaming/light/',
+  'memory/dreaming/rem/',
 ]);
 
 function bounded(value = '', limit = 8000) {

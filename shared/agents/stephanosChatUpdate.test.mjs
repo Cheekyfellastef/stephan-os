@@ -129,11 +129,29 @@ test('chat update blocks newly changed source dirt while allowing runtime dirt c
 });
 
 test('runtime and source dirt classification remains deterministic', () => {
-  const before = classifyUpdateDirt(' M apps/stephanos/dist/index.html\n M scripts/source.mjs\n');
-  const after = classifyUpdateDirt(' M apps/stephanos/dist/index.html\n M scripts/source.mjs\n?? data/activity/events.json\n');
+  const dreamRuntime = [
+    '?? memory/.dreams/events.jsonl',
+    '?? memory/.dreams/session-ingestion.json',
+    '?? memory/dreaming/deep/2026-07-16.md',
+    '?? memory/dreaming/light/2026-07-16.md',
+    '?? memory/dreaming/rem/2026-07-16.md',
+  ].join('\n');
+  const before = classifyUpdateDirt(` M apps/stephanos/dist/index.html\n M scripts/source.mjs\n${dreamRuntime}\n`);
+  const after = classifyUpdateDirt(` M apps/stephanos/dist/index.html\n M scripts/source.mjs\n${dreamRuntime}\n?? data/activity/events.json\n`);
   const delta = compareUpdateDirt(before, after);
   assert.equal(delta.sourceMutationDetected, false);
   assert.equal(delta.runtimeMutationDetected, true);
+  assert.deepEqual(
+    before.runtime.filter((path) => path.startsWith('memory/')),
+    [
+      'memory/.dreams/events.jsonl',
+      'memory/.dreams/session-ingestion.json',
+      'memory/dreaming/deep/2026-07-16.md',
+      'memory/dreaming/light/2026-07-16.md',
+      'memory/dreaming/rem/2026-07-16.md',
+    ],
+  );
+  assert.deepEqual(classifyUpdateDirt('?? memory/source-contract.md\n').source, ['memory/source-contract.md']);
 });
 
 test('Codex Remote CLI maps update intent to the guarded update operation and does not require PowerShell', async () => {
