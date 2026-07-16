@@ -8,7 +8,13 @@ export const MAILBOX_SELF_BOOTSTRAP_TASK = 'Stephanos Battle Bridge GitHub Comma
 export const MAILBOX_SELF_BOOTSTRAP_INSTALLER = 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1';
 
 function normalizedPath(value = '') {
-  return resolve(String(value || '')).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const portable = String(value || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  if (/^[a-z]:\//i.test(portable)) return portable.toLowerCase();
+  return resolve(portable || '.').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function canonicalWindowsRepoRoot(userProfile = '') {
+  return `${String(userProfile).replace(/[\\/]+$/, '')}\\Documents\\GitHub\\stephan-os`;
 }
 
 function defaultRepoRoot() {
@@ -61,7 +67,7 @@ export async function ensureBattleBridgeGitHubCommandMailbox({
     return verdict('MAILBOX_SELF_BOOTSTRAP_BLOCKED_USERPROFILE_REQUIRED', { repoRoot, operatorNeeded: true });
   }
 
-  const canonicalRepoRoot = resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os');
+  const canonicalRepoRoot = canonicalWindowsRepoRoot(env.USERPROFILE);
   if (normalizedPath(repoRoot) !== normalizedPath(canonicalRepoRoot)) {
     return verdict('MAILBOX_SELF_BOOTSTRAP_BLOCKED_NON_CANONICAL_CHECKOUT', {
       repoRoot,
