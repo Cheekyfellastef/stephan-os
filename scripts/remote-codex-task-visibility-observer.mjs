@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 import {
   publishRemoteCodexTaskVisibility,
 } from '../shared/agents/remoteCodexTaskVisibility.mjs';
+import {
+  publishRemoteCodexGitHubMirror,
+} from './remote-codex-github-mirror-publisher.mjs';
 
 export const REMOTE_CODEX_VISIBILITY_OBSERVER_SCHEMA = 'stephanos.remote-codex-task-visibility-observer.v1';
 
@@ -53,6 +56,7 @@ export async function observeRemoteCodexTaskVisibility({
   paths = resolveRemoteCodexVisibilityObserverPaths({ env }),
   processIsAliveFn = defaultProcessIsAlive,
   publisher = publishRemoteCodexTaskVisibility,
+  mirrorPublisher = publishRemoteCodexGitHubMirror,
 } = {}) {
   const current = await readJson(paths.currentTaskPath);
   if (!current) {
@@ -60,7 +64,8 @@ export async function observeRemoteCodexTaskVisibility({
       ok: true,
       schemaVersion: REMOTE_CODEX_VISIBILITY_OBSERVER_SCHEMA,
       classification: 'REMOTE_CODEX_VISIBILITY_NO_CURRENT_TASK',
-      published: false,
+      workspacePublished: false,
+      mirrorPublished: false,
     });
   }
 
@@ -70,7 +75,8 @@ export async function observeRemoteCodexTaskVisibility({
       ok: false,
       schemaVersion: REMOTE_CODEX_VISIBILITY_OBSERVER_SCHEMA,
       classification: 'REMOTE_CODEX_VISIBILITY_UNSAFE_CURRENT_TASK',
-      published: false,
+      workspacePublished: false,
+      mirrorPublished: false,
     });
   }
 
@@ -102,17 +108,29 @@ export async function observeRemoteCodexTaskVisibility({
     timestampUtc,
   });
 
+  let mirror = { ok: false, reason: 'WORKSPACE_PUBLICATION_FAILED' };
+  if (publication.ok) {
+    try {
+      mirror = await mirrorPublisher(publication.slice, { nowMs: now.getTime() });
+    } catch (error) {
+      mirror = { ok: false, reason: error?.message || String(error) };
+    }
+  }
+
+  const ok = publication.ok === true && mirror.ok === true;
   return Object.freeze({
-    ok: publication.ok === true,
+    ok,
     schemaVersion: REMOTE_CODEX_VISIBILITY_OBSERVER_SCHEMA,
-    classification: publication.ok ? 'REMOTE_CODEX_VISIBILITY_RECONCILED' : 'REMOTE_CODEX_VISIBILITY_RECONCILIATION_FAILED',
-    published: publication.ok === true,
+    classification: ok ? 'REMOTE_CODEX_VISIBILITY_RECONCILED' : 'REMOTE_CODEX_VISIBILITY_RECONCILIATION_FAILED',
+    workspacePublished: publication.ok === true,
+    mirrorPublished: mirror.ok === true,
     jobId,
     taskStatus: status,
     taskState: publication.slice?.state || '',
     workerAlive,
     resultAvailable,
-    reason: publication.reason || '',
+    workspaceReason: publication.reason || '',
+    mirrorReason: mirror.reason || '',
   });
 }
 
