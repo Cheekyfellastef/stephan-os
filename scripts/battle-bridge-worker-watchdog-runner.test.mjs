@@ -20,6 +20,9 @@ test('runner reconciles Remote Codex visibility before the worker watchdog', asy
   });
 
   assert.deepEqual(calls, ['visibility', 'watchdog']);
+  assert.equal(result.ok, true);
+  assert.equal(result.visibilityOk, true);
+  assert.equal(result.workerWatchdogOk, true);
   assert.equal(result.schemaVersion, BATTLE_BRIDGE_WORKER_WATCHDOG_RUNNER_SCHEMA);
   assert.equal(result.codexVisibilityObserved, true);
   assert.equal(result.codexVisibility.classification, 'REMOTE_CODEX_VISIBILITY_RECONCILED');
@@ -37,6 +40,9 @@ test('visibility reconciliation failure is surfaced but does not disable the mis
   });
 
   assert.equal(watchdogCalled, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.visibilityOk, false);
+  assert.equal(result.workerWatchdogOk, true);
   assert.equal(result.codexVisibility.ok, false);
   assert.equal(result.codexVisibility.classification, 'REMOTE_CODEX_VISIBILITY_RECONCILIATION_FAILED');
   assert.match(result.codexVisibility.reason, /observer failed/);
