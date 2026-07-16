@@ -13,7 +13,11 @@ const NOW = Date.parse('2026-07-15T02:00:00.000Z');
 function healthyInput() {
   return {
     nowMs: NOW,
-    scheduledTask: { taskName: APPROVED_WORKER_TASK, status: 'Running' },
+    scheduledTask: {
+      taskName: APPROVED_WORKER_TASK,
+      status: 'Running',
+      actionMatchesCanonicalWorker: true,
+    },
     process: {
       running: true,
       taskName: APPROVED_WORKER_TASK,
@@ -35,6 +39,7 @@ test('healthy canonical worker is a no-op', () => {
   const result = buildWorkerWatchdogRecoveryDecision(healthyInput());
   assert.equal(result.action, 'NO_OP');
   assert.equal(result.assessment.healthy, true);
+  assert.equal(result.assessment.taskActionMatchesCanonicalWorker, true);
   assert.equal(result.restartTaskName, '');
 });
 
@@ -57,7 +62,18 @@ test('wrong task name cannot be restarted', () => {
   assert.ok(result.blockers.includes('scheduled-task-not-allowlisted'));
 });
 
-test('approved stopped task authorizes only the fixed task', () => {
+test('noncanonical task action blocks healthy and recovery verdicts', () => {
+  const input = healthyInput();
+  input.scheduledTask.actionMatchesCanonicalWorker = false;
+  const result = buildWorkerWatchdogRecoveryDecision(input);
+  assert.equal(result.action, 'BLOCKED');
+  assert.equal(result.assessment.healthy, false);
+  assert.equal(result.assessment.restartPermitted, false);
+  assert.equal(result.restartTaskName, '');
+  assert.ok(result.blockers.includes('scheduled-task-action-not-canonical'));
+});
+
+test('approved stopped canonical task authorizes only the fixed task', () => {
   const input = healthyInput();
   input.scheduledTask.status = 'Ready';
   input.process.running = false;
