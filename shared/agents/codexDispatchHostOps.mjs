@@ -8,6 +8,17 @@ export const DEFAULT_BATTLE_BRIDGE_ENDPOINTS = Object.freeze([
   'http://127.0.0.1:8787/api/health',
   'http://127.0.0.1:18789/health',
 ]);
+export const CODEX_DISPATCH_TEST_ARGS = Object.freeze([
+  '--test',
+  'shared/agents/localCodexExecIntegration.test.mjs',
+  'shared/agents/codexDispatchMcp.test.mjs',
+  'shared/agents/codexDispatchHostOps.test.mjs',
+  'shared/agents/stephanosChatUpdate.test.mjs',
+  'shared/agents/remoteCodexTaskVisibility.test.mjs',
+  'scripts/remote-codex-task-visibility-observer.test.mjs',
+  'scripts/remote-codex-github-mirror-publisher.test.mjs',
+  'scripts/battle-bridge-worker-watchdog-runner.test.mjs',
+]);
 
 function bounded(value = '', limit = 6000) {
   const text = String(value || '').trim();
@@ -57,7 +68,7 @@ export function syncCodexDispatchBridge({
   expectedBranch = 'main',
   operatorApproval = '',
   spawnSyncFn = spawnSync,
-  platform = process.platform,
+  nodeCommand = process.execPath,
 } = {}) {
   if (operatorApproval !== 'operator-approved') {
     return Object.freeze({
@@ -65,7 +76,7 @@ export function syncCodexDispatchBridge({
       status: 'BLOCKED',
       verdict: 'FAIL',
       blocker: 'OPERATOR_APPROVAL_REQUIRED',
-      nextOperatorAction: 'Ask the operator to explicitly approve the exact fast-forward sync and test run.',
+      nextOperatorAction: 'Ask the operator to explicitly approve updating to the latest canonical origin/main observed by this run.',
     });
   }
 
@@ -151,13 +162,17 @@ export function syncCodexDispatchBridge({
     ? Object.freeze({ ok: true, stdout: '', command: 'git', args: [] })
     : git(spawnSyncFn, repoRoot, ['diff', '--name-only', `${beforeHead.stdout}..${afterHead.stdout}`]);
   const filesChanged = diffNames.ok ? changedFiles(diffNames.stdout) : [];
-  const npmCommand = platform === 'win32' ? 'npm.cmd' : 'npm';
-  const tests = capture(spawnSyncFn, npmCommand, ['run', 'stephanos:codex-dispatch:test'], { cwd: repoRoot, timeout: 180000 });
+  const tests = capture(spawnSyncFn, nodeCommand, CODEX_DISPATCH_TEST_ARGS, { cwd: repoRoot, timeout: 180000 });
   const restartRequired = filesChanged.some((path) => [
     'scripts/stephanos-codex-dispatch-mcp.mjs',
     'shared/agents/codexDispatchHostOps.mjs',
+    'shared/agents/stephanosChatUpdate.mjs',
   ].includes(path));
-  const passed = afterHead.ok && statusAfter.ok && diffNames.ok && tests.ok;
+  const passed = afterHead.ok
+    && afterHead.stdout === remoteHead.stdout
+    && statusAfter.ok
+    && diffNames.ok
+    && tests.ok;
 
   return Object.freeze({
     ok: passed,
@@ -165,6 +180,8 @@ export function syncCodexDispatchBridge({
     verdict: passed ? 'PASS' : 'FAIL',
     repoRoot,
     branch: branch.stdout,
+    approvalScope: 'latest-canonical-origin-main-observed-after-fetch',
+    approvedTargetHead: remoteHead.stdout,
     beforeHead: beforeHead.stdout,
     remoteHead: remoteHead.stdout,
     afterHead: afterHead.stdout,
