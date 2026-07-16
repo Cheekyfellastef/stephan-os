@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CODEX_DISPATCH_TEST_ARGS,
   runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from './codexDispatchHostOps.mjs';
@@ -26,7 +27,11 @@ function scriptedSpawn(script) {
   return spawn;
 }
 
-test('sync bridge fast-forwards main and runs tests without PowerShell or destructive cleanup', () => {
+function nodeTestCommand(nodeCommand = 'node.exe') {
+  return `${nodeCommand} ${CODEX_DISPATCH_TEST_ARGS.join(' ')}`;
+}
+
+test('sync bridge fast-forwards latest canonical main and runs tests through the current Node runtime', () => {
   const spawnSyncFn = scriptedSpawn({
     'git branch --show-current': { stdout: 'main\n' },
     'git rev-parse HEAD': [{ stdout: 'old-head\n' }, { stdout: 'new-head\n' }],
@@ -39,27 +44,60 @@ test('sync bridge fast-forwards main and runs tests without PowerShell or destru
     'git rev-list --left-right --count HEAD...origin/main': { stdout: '0\t1\n' },
     'git merge --ff-only origin/main': { stdout: 'Updating old-head..new-head\nFast-forward\n' },
     'git diff --name-only old-head..new-head': { stdout: 'scripts/stephanos-codex-dispatch-worker.mjs\n' },
-    'npm.cmd run stephanos:codex-dispatch:test': { stdout: 'tests 22\npass 22\nfail 0\n' },
+    [nodeTestCommand()]: { stdout: 'tests 22\npass 22\nfail 0\n' },
   });
 
   const result = syncCodexDispatchBridge({
     repoRoot: 'C:\\repo',
     operatorApproval: 'operator-approved',
     expectedBranch: 'main',
-    platform: 'win32',
+    nodeCommand: 'node.exe',
     spawnSyncFn,
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.verdict, 'PASS');
   assert.equal(result.beforeHead, 'old-head');
+  assert.equal(result.remoteHead, 'new-head');
   assert.equal(result.afterHead, 'new-head');
+  assert.equal(result.approvedTargetHead, 'new-head');
+  assert.equal(result.approvalScope, 'latest-canonical-origin-main-observed-after-fetch');
   assert.equal(result.updated, true);
   assert.equal(result.preExistingDirt, true);
   assert.equal(result.restartRequired, false);
   assert.equal(result.destructiveCleanupPerformed, false);
+  assert.equal(result.tests.command, 'node.exe');
+  assert.deepEqual(result.tests.args, CODEX_DISPATCH_TEST_ARGS);
+  assert.equal(spawnSyncFn.calls.some((call) => /npm(?:\.cmd)?/i.test(call)), false);
   assert.equal(spawnSyncFn.calls.some((call) => /powershell/i.test(call)), false);
   assert.equal(spawnSyncFn.calls.some((call) => /reset|clean|stash|checkout/i.test(call)), false);
+});
+
+test('sync bridge fails if the post-merge HEAD is not the exact origin/main observed after fetch', () => {
+  const spawnSyncFn = scriptedSpawn({
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': [{ stdout: 'old-head\n' }, { stdout: 'unexpected-head\n' }],
+    'git status --porcelain=v1 --untracked-files=all': [{ stdout: '' }, { stdout: '' }],
+    'git fetch origin main': { stdout: '' },
+    'git rev-parse origin/main': { stdout: 'approved-head\n' },
+    'git rev-list --left-right --count HEAD...origin/main': { stdout: '0\t1\n' },
+    'git merge --ff-only origin/main': { stdout: 'Fast-forward\n' },
+    'git diff --name-only old-head..unexpected-head': { stdout: '' },
+    [nodeTestCommand()]: { stdout: 'pass\n' },
+  });
+
+  const result = syncCodexDispatchBridge({
+    repoRoot: 'C:\\repo',
+    operatorApproval: 'operator-approved',
+    expectedBranch: 'main',
+    nodeCommand: 'node.exe',
+    spawnSyncFn,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.verdict, 'FAIL');
+  assert.equal(result.approvedTargetHead, 'approved-head');
+  assert.equal(result.afterHead, 'unexpected-head');
 });
 
 test('sync bridge blocks local commits or divergence instead of forcing main', () => {
@@ -76,7 +114,7 @@ test('sync bridge blocks local commits or divergence instead of forcing main', (
     repoRoot: 'C:\\repo',
     operatorApproval: 'operator-approved',
     expectedBranch: 'main',
-    platform: 'win32',
+    nodeCommand: 'node.exe',
     spawnSyncFn,
   });
 
