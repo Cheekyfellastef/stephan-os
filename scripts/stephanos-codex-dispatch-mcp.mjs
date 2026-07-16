@@ -16,6 +16,7 @@ import {
   runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from '../shared/agents/codexDispatchHostOps.mjs';
+import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mjs';
 
 export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp.v1';
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
@@ -89,6 +90,21 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'update_stephanos_from_chat',
+    title: 'Update Stephanos source and exact-head runtime',
+    description: 'Operator-approved full Stephanos update from chat: fast-forward canonical main, run bridge tests, invoke the existing guarded ignition entry, and prove the served UI plus backend and OpenClaw health. No manual PowerShell is required.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['operatorApproval'],
+      properties: {
+        operatorApproval: { type: 'string', enum: ['operator-approved'] },
+        expectedBranch: { type: 'string', enum: ['main'], default: 'main' },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: 'run_battle_bridge_diagnostics',
     title: 'Run direct Battle Bridge diagnostics',
     description: 'Run deterministic read-only Git and localhost health diagnostics directly in the trusted MCP host, without a Codex child, PowerShell, service control, source mutation, or shell-policy dependency.',
@@ -133,7 +149,7 @@ function approvedQueueRecord(args, now) {
 
 export function createCodexDispatchMcpHandler({
   integration = createLocalCodexExecIntegration(),
-  hostOps = { syncCodexDispatchBridge, runBattleBridgeDiagnostics },
+  hostOps = { syncCodexDispatchBridge, updateStephanosFromChat, runBattleBridgeDiagnostics },
   now = () => new Date().toISOString(),
 } = {}) {
   return async function handle(method, params = {}) {
@@ -141,8 +157,8 @@ export function createCodexDispatchMcpHandler({
       return {
         protocolVersion: params.protocolVersion || '2025-06-18',
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: STEPHANOS_CODEX_DISPATCH_MCP_NAME, version: '1.1.0' },
-        instructions: 'Prefer direct GitHub work for source changes. Use sync_codex_dispatch_bridge for approved fast-forward updates, run_battle_bridge_diagnostics for deterministic local proof, and dispatch_codex_task only when a real Codex child is genuinely required.',
+        serverInfo: { name: STEPHANOS_CODEX_DISPATCH_MCP_NAME, version: '1.2.0' },
+        instructions: 'Prefer direct GitHub work for source changes. Use update_stephanos_from_chat for an approved complete Battle Bridge update, sync_codex_dispatch_bridge for source-only bridge updates, run_battle_bridge_diagnostics for deterministic local proof, and dispatch_codex_task only when a real Codex child is genuinely required.',
       };
     }
     if (method === 'ping') return {};
@@ -178,6 +194,13 @@ export function createCodexDispatchMcpHandler({
       }
       if (name === 'sync_codex_dispatch_bridge') {
         const result = await hostOps.syncCodexDispatchBridge({
+          operatorApproval: args.operatorApproval,
+          expectedBranch: args.expectedBranch || 'main',
+        });
+        return asTextResult(result, !result.ok);
+      }
+      if (name === 'update_stephanos_from_chat') {
+        const result = await hostOps.updateStephanosFromChat({
           operatorApproval: args.operatorApproval,
           expectedBranch: args.expectedBranch || 'main',
         });

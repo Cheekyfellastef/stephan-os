@@ -36,6 +36,11 @@ function fakeHostOps() {
       if (args.operatorApproval !== 'operator-approved') return { ok: false, blocker: 'OPERATOR_APPROVAL_REQUIRED' };
       return { ok: true, status: 'DONE', verdict: 'PASS', beforeHead: 'a', afterHead: 'b', restartRequired: true };
     },
+    async updateStephanosFromChat(args) {
+      calls.push({ tool: 'update', args });
+      if (args.operatorApproval !== 'operator-approved') return { ok: false, blocker: 'OPERATOR_APPROVAL_REQUIRED' };
+      return { ok: true, status: 'DONE', verdict: 'PASS', servedUiProof: { exactHead: true }, operatorPowerShellRequired: false };
+    },
     async runBattleBridgeDiagnostics() {
       calls.push({ tool: 'diagnostics' });
       return { ok: true, status: 'DONE', verdict: 'PASS', fullHead: 'abc', health: [] };
@@ -43,23 +48,25 @@ function fakeHostOps() {
   };
 }
 
-test('MCP server advertises guarded dispatch, read, sync, and deterministic diagnostics tools', async () => {
+test('MCP server advertises guarded dispatch, sync, full update, and deterministic diagnostics tools', async () => {
   const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
   const initialized = await handler('initialize', { protocolVersion: '2025-06-18' });
   assert.equal(initialized.serverInfo.name, STEPHANOS_CODEX_DISPATCH_MCP_NAME);
-  assert.equal(initialized.serverInfo.version, '1.1.0');
+  assert.equal(initialized.serverInfo.version, '1.2.0');
   const listed = await handler('tools/list');
   assert.deepEqual(listed.tools.map((tool) => tool.name), [
     'dispatch_codex_task',
     'get_codex_task_status',
     'read_codex_task_result',
     'sync_codex_dispatch_bridge',
+    'update_stephanos_from_chat',
     'run_battle_bridge_diagnostics',
   ]);
   assert.equal(listed.tools[0].annotations.destructiveHint, true);
   assert.equal(listed.tools[1].annotations.readOnlyHint, true);
   assert.equal(listed.tools[3].annotations.destructiveHint, true);
-  assert.equal(listed.tools[4].annotations.readOnlyHint, true);
+  assert.equal(listed.tools[4].annotations.destructiveHint, true);
+  assert.equal(listed.tools[5].annotations.readOnlyHint, true);
 });
 
 test('dispatch tool requires explicit operator approval', async () => {
@@ -126,6 +133,28 @@ test('sync tool forwards only an approved main fast-forward request to bounded h
   });
 });
 
+test('full update tool requires approval and returns exact-head host proof without a Codex child', async () => {
+  const hostOps = fakeHostOps();
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({ integration, hostOps });
+  const denied = await handler('tools/call', { name: 'update_stephanos_from_chat', arguments: {} });
+  assert.equal(denied.isError, true);
+  assert.equal(denied.structuredContent.blocker, 'OPERATOR_APPROVAL_REQUIRED');
+  const approved = await handler('tools/call', {
+    name: 'update_stephanos_from_chat',
+    arguments: { operatorApproval: 'operator-approved', expectedBranch: 'main' },
+  });
+  assert.equal(approved.isError, false);
+  assert.equal(approved.structuredContent.status, 'DONE');
+  assert.equal(approved.structuredContent.servedUiProof.exactHead, true);
+  assert.equal(approved.structuredContent.operatorPowerShellRequired, false);
+  assert.equal(integration.calls.length, 0);
+  assert.deepEqual(hostOps.calls.at(-1), {
+    tool: 'update',
+    args: { operatorApproval: 'operator-approved', expectedBranch: 'main' },
+  });
+});
+
 test('diagnostics tool returns direct host proof without dispatching a Codex child', async () => {
   const hostOps = fakeHostOps();
   const integration = fakeIntegration();
@@ -150,5 +179,5 @@ test('stdio transport returns JSON-RPC responses and ignores initialized notific
   await server;
   const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2]);
-  assert.equal(responses[1].result.tools.length, 5);
+  assert.equal(responses[1].result.tools.length, 6);
 });
