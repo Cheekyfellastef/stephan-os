@@ -48,6 +48,17 @@ const CANONICAL_REMOTE_PATTERNS = Object.freeze([
   /^ssh:\/\/git@github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?$/i,
 ]);
 
+export const DEFAULT_RUNTIME_ONLY_ALLOWLIST = Object.freeze([
+  'logs/',
+  'tmp/',
+  '.cache/',
+  'apps/stephanos/dist/',
+  'memory/.dreams/',
+  'memory/dreaming/deep/',
+  'memory/dreaming/light/',
+  'memory/dreaming/rem/',
+]);
+
 export const POST_SYNC_REFRESH_REGISTRY = Object.freeze({
   'refresh-shared-workspace': Object.freeze({ id: 'refresh-shared-workspace', requiresSourceChange: false, rawCommand: null }),
   'refresh-ui-runtime': Object.freeze({ id: 'refresh-ui-runtime', requiresSourceChange: true, rawCommand: null }),
@@ -71,7 +82,7 @@ export function rejectArbitraryShellPlan(plan) {
 }
 
 export function classifyDirt(statusLines = [], options = {}) {
-  const runtimeOnlyAllowlist = options.runtimeOnlyAllowlist ?? ['logs/', 'tmp/', '.cache/', 'apps/stephanos/dist/'];
+  const runtimeOnlyAllowlist = options.runtimeOnlyAllowlist ?? DEFAULT_RUNTIME_ONLY_ALLOWLIST;
   const generatedSourceAllowlist = options.generatedSourceAllowlist ?? [];
   const result = {
     trackedSource: [],
