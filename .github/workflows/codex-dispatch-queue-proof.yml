@@ -10,6 +10,8 @@ on:
       - 'shared/agents/localCodexExecIntegration.mjs'
       - 'shared/agents/localCodexExecIntegration.test.mjs'
       - 'shared/agents/codexDispatchMcp.test.mjs'
+      - 'shared/agents/codexDispatchHostOps.mjs'
+      - 'shared/agents/codexDispatchHostOps.test.mjs'
       - 'shared/agents/platformLoopIntegration.mjs'
       - 'shared/agents/platformLoopIntegration.test.mjs'
       - 'shared/agents/missionOrchestratorV1.test.mjs'

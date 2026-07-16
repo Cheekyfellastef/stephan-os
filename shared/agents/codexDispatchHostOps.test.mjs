@@ -41,8 +41,8 @@ test('sync bridge fast-forwards latest canonical main and runs tests through the
     ],
     'git fetch origin main': { stdout: '' },
     'git rev-parse origin/main': { stdout: 'new-head\n' },
-    'git rev-list --left-right --count HEAD...origin/main': { stdout: '0\t1\n' },
-    'git merge --ff-only origin/main': { stdout: 'Updating old-head..new-head\nFast-forward\n' },
+    'git rev-list --left-right --count HEAD...new-head': { stdout: '0\t1\n' },
+    'git merge --ff-only new-head': { stdout: 'Updating old-head..new-head\nFast-forward\n' },
     'git diff --name-only old-head..new-head': { stdout: 'scripts/stephanos-codex-dispatch-worker.mjs\n' },
     [nodeTestCommand()]: { stdout: 'tests 22\npass 22\nfail 0\n' },
   });
@@ -68,9 +68,39 @@ test('sync bridge fast-forwards latest canonical main and runs tests through the
   assert.equal(result.destructiveCleanupPerformed, false);
   assert.equal(result.tests.command, 'node.exe');
   assert.deepEqual(result.tests.args, CODEX_DISPATCH_TEST_ARGS);
+  assert.equal(spawnSyncFn.calls.includes('git rev-list --left-right --count HEAD...new-head'), true);
+  assert.equal(spawnSyncFn.calls.includes('git merge --ff-only new-head'), true);
+  assert.equal(spawnSyncFn.calls.includes('git merge --ff-only origin/main'), false);
   assert.equal(spawnSyncFn.calls.some((call) => /npm(?:\.cmd)?/i.test(call)), false);
   assert.equal(spawnSyncFn.calls.some((call) => /powershell/i.test(call)), false);
   assert.equal(spawnSyncFn.calls.some((call) => /reset|clean|stash|checkout/i.test(call)), false);
+});
+
+test('sync bridge pins fast-forward safety and mutation to the exact head observed after fetch', () => {
+  const spawnSyncFn = scriptedSpawn({
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': [{ stdout: 'old-head\n' }, { stdout: 'approved-head\n' }],
+    'git status --porcelain=v1 --untracked-files=all': [{ stdout: '' }, { stdout: '' }],
+    'git fetch origin main': { stdout: '' },
+    'git rev-parse origin/main': { stdout: 'approved-head\n' },
+    'git rev-list --left-right --count HEAD...approved-head': { stdout: '0\t1\n' },
+    'git merge --ff-only approved-head': { stdout: 'Fast-forward\n' },
+    'git diff --name-only old-head..approved-head': { stdout: '' },
+    [nodeTestCommand()]: { stdout: 'pass\n' },
+  });
+
+  const result = syncCodexDispatchBridge({
+    repoRoot: 'C:\\repo',
+    operatorApproval: 'operator-approved',
+    expectedBranch: 'main',
+    nodeCommand: 'node.exe',
+    spawnSyncFn,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.approvedTargetHead, 'approved-head');
+  assert.equal(spawnSyncFn.calls.includes('git rev-list --left-right --count HEAD...origin/main'), false);
+  assert.equal(spawnSyncFn.calls.includes('git merge --ff-only origin/main'), false);
 });
 
 test('sync bridge fails if the post-merge HEAD is not the exact origin/main observed after fetch', () => {
@@ -80,8 +110,8 @@ test('sync bridge fails if the post-merge HEAD is not the exact origin/main obse
     'git status --porcelain=v1 --untracked-files=all': [{ stdout: '' }, { stdout: '' }],
     'git fetch origin main': { stdout: '' },
     'git rev-parse origin/main': { stdout: 'approved-head\n' },
-    'git rev-list --left-right --count HEAD...origin/main': { stdout: '0\t1\n' },
-    'git merge --ff-only origin/main': { stdout: 'Fast-forward\n' },
+    'git rev-list --left-right --count HEAD...approved-head': { stdout: '0\t1\n' },
+    'git merge --ff-only approved-head': { stdout: 'Fast-forward\n' },
     'git diff --name-only old-head..unexpected-head': { stdout: '' },
     [nodeTestCommand()]: { stdout: 'pass\n' },
   });
@@ -107,7 +137,7 @@ test('sync bridge blocks local commits or divergence instead of forcing main', (
     'git status --porcelain=v1 --untracked-files=all': { stdout: '' },
     'git fetch origin main': { stdout: '' },
     'git rev-parse origin/main': { stdout: 'remote-head\n' },
-    'git rev-list --left-right --count HEAD...origin/main': { stdout: '1\t2\n' },
+    'git rev-list --left-right --count HEAD...remote-head': { stdout: '1\t2\n' },
   });
 
   const result = syncCodexDispatchBridge({

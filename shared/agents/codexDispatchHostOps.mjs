@@ -115,7 +115,8 @@ export function syncCodexDispatchBridge({
 
   const remoteRef = `origin/${expectedBranch}`;
   const remoteHead = git(spawnSyncFn, repoRoot, ['rev-parse', remoteRef]);
-  const divergence = git(spawnSyncFn, repoRoot, ['rev-list', '--left-right', '--count', `HEAD...${remoteRef}`]);
+  const approvedTargetHead = remoteHead.stdout;
+  const divergence = git(spawnSyncFn, repoRoot, ['rev-list', '--left-right', '--count', `HEAD...${approvedTargetHead}`]);
   if (!remoteHead.ok || !divergence.ok) {
     return Object.freeze({ ok: false, status: 'FAILED', verdict: 'FAIL', blocker: 'REMOTE_STATE_READ_FAILED', remoteHead, divergence });
   }
@@ -138,7 +139,7 @@ export function syncCodexDispatchBridge({
 
   let fastForward = null;
   if (counts.behind > 0) {
-    fastForward = git(spawnSyncFn, repoRoot, ['merge', '--ff-only', remoteRef], 120000);
+    fastForward = git(spawnSyncFn, repoRoot, ['merge', '--ff-only', approvedTargetHead], 120000);
     if (!fastForward.ok) {
       return Object.freeze({
         ok: false,
@@ -169,7 +170,7 @@ export function syncCodexDispatchBridge({
     'shared/agents/stephanosChatUpdate.mjs',
   ].includes(path));
   const passed = afterHead.ok
-    && afterHead.stdout === remoteHead.stdout
+    && afterHead.stdout === approvedTargetHead
     && statusAfter.ok
     && diffNames.ok
     && tests.ok;
@@ -181,7 +182,7 @@ export function syncCodexDispatchBridge({
     repoRoot,
     branch: branch.stdout,
     approvalScope: 'latest-canonical-origin-main-observed-after-fetch',
-    approvedTargetHead: remoteHead.stdout,
+    approvedTargetHead,
     beforeHead: beforeHead.stdout,
     remoteHead: remoteHead.stdout,
     afterHead: afterHead.stdout,
