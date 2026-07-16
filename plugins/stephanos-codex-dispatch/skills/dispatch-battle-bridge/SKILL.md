@@ -1,22 +1,26 @@
 ---
 name: Dispatch Battle Bridge Codex
-description: Use the local Stephanos dispatcher for operator-approved live Windows proof and diagnostics that genuinely require the Battle Bridge.
+description: Use the local Stephanos dispatcher for guarded Battle Bridge maintenance, deterministic diagnostics, and operator-approved Codex work.
 ---
 
 # Dispatch Battle Bridge Codex
 
-Use `dispatch_codex_task` only after the operator explicitly asks for the work to be sent to Codex.
+Prefer the narrowest tool that can return trustworthy evidence.
 
-## Meter routing policy
+## Routing policy
 
 Keep source design, code changes, tests, GitHub review, commits, pull requests, and merges in the normal ChatGPT plus GitHub lane whenever they can be completed there.
 
-Reserve Codex dispatch for work that requires the real Battle Bridge, including:
+Use `sync_codex_dispatch_bridge` after explicit operator approval when the canonical Battle Bridge repository needs to fast-forward `main` and run the dispatch regression tests. This tool must never reset, clean, stash, force-check out, or discard local work.
 
-- Windows processes, ports, PowerShell, local services, or machine state;
-- live browser, Playwright, visual, or runtime acceptance proof;
-- local credentials or tools that are not available through GitHub;
-- post-merge cold-start, second-press, self-heal, and end-to-end tests.
+Use `run_battle_bridge_diagnostics` for deterministic Git and localhost health proof. It runs in the trusted MCP host without a Codex child, PowerShell, service control, source mutation, or dependency on Codex shell policy.
+
+Use `dispatch_codex_task` only after the operator explicitly asks for work that genuinely requires a Codex child, such as:
+
+- live Windows runtime or browser acceptance that deterministic host tools do not cover;
+- bounded machine-only investigation requiring Codex reasoning;
+- local credentials or specialist tools unavailable through GitHub and direct diagnostics;
+- post-merge end-to-end proof that cannot be represented as an allowlisted host operation.
 
 Do not dispatch ordinary code writing merely because Codex is available.
 
