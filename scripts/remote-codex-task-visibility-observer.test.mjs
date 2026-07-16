@@ -26,6 +26,8 @@ async function withFixture(run) {
   }
 }
 
+const mirrorPublisher = async () => ({ ok: true, reason: 'REMOTE_CODEX_GITHUB_MIRROR_UPDATED' });
+
 test('external observer reclassifies a dead RUNNING worker without depending on the emitting process', async () => {
   await withFixture(async (paths) => {
     const jobId = 'codex-job-dead-worker';
@@ -48,9 +50,12 @@ test('external observer reclassifies a dead RUNNING worker without depending on 
         observed = { input, options };
         return { ok: true, reason: 'PUBLISHED', slice: { state: REMOTE_CODEX_VISIBILITY_STATES.WORKER_EXITED_WITHOUT_RESULT } };
       },
+      mirrorPublisher,
     });
 
     assert.equal(result.ok, true);
+    assert.equal(result.workspacePublished, true);
+    assert.equal(result.mirrorPublished, true);
     assert.equal(result.taskState, REMOTE_CODEX_VISIBILITY_STATES.WORKER_EXITED_WITHOUT_RESULT);
     assert.equal(observed.input.workerAlive, false);
     assert.equal(observed.input.resultAvailable, false);
@@ -76,10 +81,12 @@ test('external observer republishes stale heartbeat truth while a worker process
       now: new Date('2026-07-16T16:00:00.000Z'),
       processIsAliveFn: () => true,
       publisher: async () => ({ ok: true, slice: { state: REMOTE_CODEX_VISIBILITY_STATES.RUNNING_STALE } }),
+      mirrorPublisher,
     });
 
     assert.equal(result.taskState, REMOTE_CODEX_VISIBILITY_STATES.RUNNING_STALE);
     assert.equal(result.workerAlive, true);
+    assert.equal(result.mirrorPublished, true);
   });
 });
 
@@ -115,11 +122,40 @@ test('external observer prefers a durable result over a stale RUNNING current re
         publishedInput = input;
         return { ok: true, slice: { state: REMOTE_CODEX_VISIBILITY_STATES.RESULT_READY } };
       },
+      mirrorPublisher,
     });
 
     assert.equal(result.resultAvailable, true);
     assert.equal(result.taskState, REMOTE_CODEX_VISIBILITY_STATES.RESULT_READY);
     assert.equal(publishedInput.status, 'DONE');
     assert.equal(publishedInput.resultVerdict, 'PASS');
+  });
+});
+
+test('workspace success with mirror failure remains a truthful incomplete visibility result', async () => {
+  await withFixture(async (paths) => {
+    const jobId = 'codex-job-mirror-blocked';
+    await writeFile(paths.currentTaskPath, `${JSON.stringify({
+      jobId,
+      taskId: jobId,
+      issueNumber: 1506,
+      status: 'RUNNING',
+      workerPid: 7788,
+      heartbeatUtc: '2026-07-16T15:59:50.000Z',
+      proofRefs: [`proof/${jobId}.json`, `receipts/${jobId}.json`],
+    })}\n`);
+
+    const result = await observeRemoteCodexTaskVisibility({
+      paths,
+      now: new Date('2026-07-16T16:00:00.000Z'),
+      processIsAliveFn: () => true,
+      publisher: async () => ({ ok: true, reason: 'PUBLISHED', slice: { state: REMOTE_CODEX_VISIBILITY_STATES.RUNNING_CURRENT } }),
+      mirrorPublisher: async () => ({ ok: false, reason: 'GH_CLI_NOT_INSTALLED' }),
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.workspacePublished, true);
+    assert.equal(result.mirrorPublished, false);
+    assert.equal(result.mirrorReason, 'GH_CLI_NOT_INSTALLED');
   });
 });
