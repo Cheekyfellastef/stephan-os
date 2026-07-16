@@ -218,7 +218,7 @@ async function publishWatchdogRecords({
     restartAttemptedAtUtc,
     recoveryProbeCount,
     probeError,
-    workerKilledObserved: initialAssessment?.processHealthy === false,
+    workerKilledObserved: false,
     supervisorDetectedWorkerDown: initialAssessment?.healthy === false,
     supervisorRestartedWorker: restartAttempted,
     workerRecovered: finalAssessment?.healthy === true,
