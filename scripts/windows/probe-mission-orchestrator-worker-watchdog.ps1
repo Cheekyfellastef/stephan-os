@@ -41,6 +41,79 @@ function Test-CanonicalWorkerTaskAction {
     return $true
 }
 
+function ConvertFrom-WindowsCommandLine {
+    param([string]$CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return @() }
+    if (-not ('Stephanos.CommandLineNative' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace Stephanos {
+    public static class CommandLineNative {
+        [DllImport("shell32.dll", SetLastError = true)]
+        public static extern IntPtr CommandLineToArgvW(
+            [MarshalAs(UnmanagedType.LPWStr)] string commandLine,
+            out int argumentCount);
+        [DllImport("kernel32.dll")]
+        public static extern IntPtr LocalFree(IntPtr memory);
+    }
+}
+'@
+    }
+
+    $argumentCount = 0
+    $argvPointer = [Stephanos.CommandLineNative]::CommandLineToArgvW($CommandLine, [ref]$argumentCount)
+    if ($argvPointer -eq [IntPtr]::Zero -or $argumentCount -le 0) { return @() }
+
+    try {
+        $arguments = New-Object string[] $argumentCount
+        for ($index = 0; $index -lt $argumentCount; $index++) {
+            $itemPointer = [Runtime.InteropServices.Marshal]::ReadIntPtr(
+                $argvPointer,
+                $index * [IntPtr]::Size
+            )
+            $arguments[$index] = [Runtime.InteropServices.Marshal]::PtrToStringUni($itemPointer)
+        }
+        return $arguments
+    }
+    finally {
+        [void][Stephanos.CommandLineNative]::LocalFree($argvPointer)
+    }
+}
+
+function Test-CanonicalWorkerProcessCommandLine {
+    param(
+        [object]$Process,
+        [string]$CommandLine
+    )
+
+    if (-not $Process -or [string]::IsNullOrWhiteSpace($CommandLine)) { return $false }
+    $arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $CommandLine)
+    if ($arguments.Count -lt 2) { return $false }
+
+    $executePath = if (-not [string]::IsNullOrWhiteSpace([string]$Process.ExecutablePath)) {
+        [string]$Process.ExecutablePath
+    } else {
+        [string]$arguments[0]
+    }
+    $executeLeaf = [System.IO.Path]::GetFileName($executePath)
+    if ($executeLeaf -notin @('node.exe', 'node')) { return $false }
+
+    try {
+        $scriptArgument = [System.IO.Path]::GetFullPath([string]$arguments[1])
+    }
+    catch {
+        return $false
+    }
+
+    return [string]::Equals(
+        $scriptArgument,
+        $workerPath,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+}
+
 $taskActionMatchesCanonicalWorker = Test-CanonicalWorkerTaskAction -ScheduledTask $task
 
 if ($Mode -eq 'StartApprovedWorkerTask') {
@@ -83,10 +156,9 @@ if ($heartbeatPid -gt 0) {
     $workerProcess = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $heartbeatPid) -ErrorAction SilentlyContinue
 }
 $commandLine = if ($workerProcess) { [string]$workerProcess.CommandLine } else { '' }
-$commandLineMatchesCanonicalWorker = $false
-if ($workerProcess -and -not [string]::IsNullOrWhiteSpace($commandLine)) {
-    $commandLineMatchesCanonicalWorker = $commandLine.IndexOf($workerPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-}
+$commandLineMatchesCanonicalWorker = Test-CanonicalWorkerProcessCommandLine `
+    -Process $workerProcess `
+    -CommandLine $commandLine
 
 [pscustomobject]@{
     scheduledTask = [pscustomobject]@{
