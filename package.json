@@ -57,7 +57,7 @@
     "stephanos:codex-dispatch:mcp": "node scripts/stephanos-codex-dispatch-mcp.mjs",
     "stephanos:codex-dispatch:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-stephanos-codex-dispatch-plugin.ps1",
     "stephanos:codex-dispatch:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-stephanos-codex-dispatch-plugin.ps1",
-    "stephanos:codex-dispatch:test": "node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs"
+    "stephanos:codex-dispatch:test": "node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs shared/agents/codexDispatchHostOps.test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

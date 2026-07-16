@@ -12,6 +12,10 @@ import {
   readLocalCodexTaskResult,
   readLocalCodexTaskStatus,
 } from '../shared/agents/localCodexExecIntegration.mjs';
+import {
+  runBattleBridgeDiagnostics,
+  syncCodexDispatchBridge,
+} from '../shared/agents/codexDispatchHostOps.mjs';
 
 export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp.v1';
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
@@ -69,6 +73,28 @@ const TOOLS = Object.freeze([
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  {
+    name: 'sync_codex_dispatch_bridge',
+    title: 'Sync and test the Codex dispatch bridge',
+    description: 'Operator-approved, fast-forward-only sync of the canonical main branch followed by the dispatch bridge regression tests. It never resets, cleans, stashes, force-checks out, or discards local work.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['operatorApproval'],
+      properties: {
+        operatorApproval: { type: 'string', enum: ['operator-approved'] },
+        expectedBranch: { type: 'string', enum: ['main'], default: 'main' },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'run_battle_bridge_diagnostics',
+    title: 'Run direct Battle Bridge diagnostics',
+    description: 'Run deterministic read-only Git and localhost health diagnostics directly in the trusted MCP host, without a Codex child, PowerShell, service control, source mutation, or shell-policy dependency.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ]);
 
 function asTextResult(value, isError = false) {
@@ -107,6 +133,7 @@ function approvedQueueRecord(args, now) {
 
 export function createCodexDispatchMcpHandler({
   integration = createLocalCodexExecIntegration(),
+  hostOps = { syncCodexDispatchBridge, runBattleBridgeDiagnostics },
   now = () => new Date().toISOString(),
 } = {}) {
   return async function handle(method, params = {}) {
@@ -114,8 +141,8 @@ export function createCodexDispatchMcpHandler({
       return {
         protocolVersion: params.protocolVersion || '2025-06-18',
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: STEPHANOS_CODEX_DISPATCH_MCP_NAME, version: '1.0.0' },
-        instructions: 'Use dispatch_codex_task only after explicit operator approval and only for live Battle Bridge proof/diagnostics that genuinely require Codex. Prefer ChatGPT plus GitHub for source work.',
+        serverInfo: { name: STEPHANOS_CODEX_DISPATCH_MCP_NAME, version: '1.1.0' },
+        instructions: 'Prefer direct GitHub work for source changes. Use sync_codex_dispatch_bridge for approved fast-forward updates, run_battle_bridge_diagnostics for deterministic local proof, and dispatch_codex_task only when a real Codex child is genuinely required.',
       };
     }
     if (method === 'ping') return {};
@@ -148,6 +175,17 @@ export function createCodexDispatchMcpHandler({
       if (name === 'read_codex_task_result') {
         const result = integration.readResult?.(args.taskId) || readLocalCodexTaskResult(args.taskId);
         return asTextResult(result ? { ok: true, taskId: args.taskId, result } : { ok: false, taskId: args.taskId, blocker: 'RESULT_NOT_READY' }, !result);
+      }
+      if (name === 'sync_codex_dispatch_bridge') {
+        const result = await hostOps.syncCodexDispatchBridge({
+          operatorApproval: args.operatorApproval,
+          expectedBranch: args.expectedBranch || 'main',
+        });
+        return asTextResult(result, !result.ok);
+      }
+      if (name === 'run_battle_bridge_diagnostics') {
+        const result = await hostOps.runBattleBridgeDiagnostics();
+        return asTextResult(result, !result.ok);
       }
       return asTextResult({ ok: false, blocker: 'UNKNOWN_TOOL', tool: name }, true);
     }
