@@ -85,12 +85,24 @@ export function compareUpdateDirt(before = {}, after = {}) {
   });
 }
 
+function extractJsonString(text = '', key = '') {
+  const match = String(text || '').match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)"`));
+  return match?.[1] || '';
+}
+
 function servedUiProof(diagnostics = {}) {
   const ui = Array.isArray(diagnostics.health)
     ? diagnostics.health.find((entry) => String(entry?.url || '').includes('127.0.0.1:4173'))
     : null;
+  const body = String(ui?.body || '');
   let payload = null;
-  try { payload = ui?.body ? JSON.parse(ui.body) : null; } catch {}
+  try { payload = body ? JSON.parse(body) : null; } catch {
+    payload = {
+      gitCommit: extractJsonString(body, 'gitCommit'),
+      runtimeMarker: extractJsonString(body, 'runtimeMarker'),
+      intendedMode: extractJsonString(body, 'intendedMode'),
+    };
+  }
   const sourceHead = String(diagnostics.fullHead || '');
   const servedCommit = String(payload?.gitCommit || '');
   return Object.freeze({
