@@ -27,19 +27,44 @@ function fakeIntegration() {
   };
 }
 
-test('MCP server advertises only guarded dispatch and read tools', async () => {
-  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration() });
+function fakeHostOps() {
+  const calls = [];
+  return {
+    calls,
+    syncCodexDispatchBridge(args) {
+      calls.push({ tool: 'sync', args });
+      if (args.operatorApproval !== 'operator-approved') return { ok: false, blocker: 'OPERATOR_APPROVAL_REQUIRED' };
+      return { ok: true, status: 'DONE', verdict: 'PASS', beforeHead: 'a', afterHead: 'b', restartRequired: true };
+    },
+    async runBattleBridgeDiagnostics() {
+      calls.push({ tool: 'diagnostics' });
+      return { ok: true, status: 'DONE', verdict: 'PASS', fullHead: 'abc', health: [] };
+    },
+  };
+}
+
+test('MCP server advertises guarded dispatch, read, sync, and deterministic diagnostics tools', async () => {
+  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
   const initialized = await handler('initialize', { protocolVersion: '2025-06-18' });
   assert.equal(initialized.serverInfo.name, STEPHANOS_CODEX_DISPATCH_MCP_NAME);
+  assert.equal(initialized.serverInfo.version, '1.1.0');
   const listed = await handler('tools/list');
-  assert.deepEqual(listed.tools.map((tool) => tool.name), ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result']);
+  assert.deepEqual(listed.tools.map((tool) => tool.name), [
+    'dispatch_codex_task',
+    'get_codex_task_status',
+    'read_codex_task_result',
+    'sync_codex_dispatch_bridge',
+    'run_battle_bridge_diagnostics',
+  ]);
   assert.equal(listed.tools[0].annotations.destructiveHint, true);
   assert.equal(listed.tools[1].annotations.readOnlyHint, true);
+  assert.equal(listed.tools[3].annotations.destructiveHint, true);
+  assert.equal(listed.tools[4].annotations.readOnlyHint, true);
 });
 
 test('dispatch tool requires explicit operator approval', async () => {
   const integration = fakeIntegration();
-  const handler = createCodexDispatchMcpHandler({ integration });
+  const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps() });
   const result = await handler('tools/call', {
     name: 'dispatch_codex_task',
     arguments: { issueNumber: 1293, task: 'Run the exact Battle Bridge ignition proof and return evidence.' },
@@ -51,7 +76,7 @@ test('dispatch tool requires explicit operator approval', async () => {
 
 test('dispatch tool creates canonical approved queue packet and returns a real receipt', async () => {
   const integration = fakeIntegration();
-  const handler = createCodexDispatchMcpHandler({ integration, now: () => '2026-07-15T21:00:00.000Z' });
+  const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), now: () => '2026-07-15T21:00:00.000Z' });
   const result = await handler('tools/call', {
     name: 'dispatch_codex_task',
     arguments: {
@@ -73,7 +98,7 @@ test('dispatch tool creates canonical approved queue packet and returns a real r
 });
 
 test('status and result tools return structured truth without claiming missing work', async () => {
-  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration() });
+  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
   const status = await handler('tools/call', { name: 'get_codex_task_status', arguments: { taskId: 'known-task' } });
   assert.equal(status.structuredContent.status.status, 'RUNNING');
   const result = await handler('tools/call', { name: 'read_codex_task_result', arguments: { taskId: 'known-task' } });
@@ -83,12 +108,41 @@ test('status and result tools return structured truth without claiming missing w
   assert.equal(missing.structuredContent.blocker, 'RESULT_NOT_READY');
 });
 
+test('sync tool forwards only an approved main fast-forward request to bounded host operations', async () => {
+  const hostOps = fakeHostOps();
+  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps });
+  const denied = await handler('tools/call', { name: 'sync_codex_dispatch_bridge', arguments: {} });
+  assert.equal(denied.isError, true);
+  assert.equal(denied.structuredContent.blocker, 'OPERATOR_APPROVAL_REQUIRED');
+  const approved = await handler('tools/call', {
+    name: 'sync_codex_dispatch_bridge',
+    arguments: { operatorApproval: 'operator-approved', expectedBranch: 'main' },
+  });
+  assert.equal(approved.isError, false);
+  assert.equal(approved.structuredContent.verdict, 'PASS');
+  assert.deepEqual(hostOps.calls.at(-1), {
+    tool: 'sync',
+    args: { operatorApproval: 'operator-approved', expectedBranch: 'main' },
+  });
+});
+
+test('diagnostics tool returns direct host proof without dispatching a Codex child', async () => {
+  const hostOps = fakeHostOps();
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({ integration, hostOps });
+  const result = await handler('tools/call', { name: 'run_battle_bridge_diagnostics', arguments: {} });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.status, 'DONE');
+  assert.equal(result.structuredContent.fullHead, 'abc');
+  assert.equal(integration.calls.length, 0);
+});
+
 test('stdio transport returns JSON-RPC responses and ignores initialized notification', async () => {
   const input = new PassThrough();
   const output = new PassThrough();
   let captured = '';
   output.on('data', (chunk) => { captured += chunk.toString(); });
-  const server = runStdioMcpServer({ input, output, handler: createCodexDispatchMcpHandler({ integration: fakeIntegration() }) });
+  const server = runStdioMcpServer({ input, output, handler: createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() }) });
   input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } })}\n`);
   input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
   input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
@@ -96,5 +150,5 @@ test('stdio transport returns JSON-RPC responses and ignores initialized notific
   await server;
   const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2]);
-  assert.equal(responses[1].result.tools.length, 3);
+  assert.equal(responses[1].result.tools.length, 5);
 });
