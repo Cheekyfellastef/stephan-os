@@ -55,12 +55,12 @@ test('fresh, stale, dead-worker and completed task states are classified determi
   assert.equal(completed.resultAvailable, true);
 });
 
-test('Codex thread identity is extracted from bounded JSON events without exposing runtime configuration', () => {
+test('Codex thread identity is extracted from bounded JSON events without accepting traversal-shaped values', () => {
   assert.equal(extractCodexThreadId([
     { type: 'turn.started' },
     { type: 'thread.started', thread_id: 'thread-abc-123' },
   ]), 'thread-abc-123');
-  assert.equal(extractCodexThreadId([{ type: 'thread.started', thread_id: '../unsafe' }]), 'unsafe');
+  assert.equal(extractCodexThreadId([{ type: 'thread.started', thread_id: '../unsafe' }]), '');
   assert.equal(extractCodexThreadId([]), '');
 });
 
@@ -77,6 +77,18 @@ test('visibility slice carries one sanitized canonical truth record', () => {
   assert.equal(slice.arbitraryFilesystemAccess, false);
   assert.equal(slice.arbitraryShellAllowed, false);
   assert.equal(slice.mergeAuthority, false);
+});
+
+test('local Windows and Unix paths are replaced by the bounded default action before projection', () => {
+  for (const unsafeAction of [
+    'Inspect spawn C:\\Users\\Stephan\\AppData\\Roaming\\npm\\codex.cmd ENOENT.',
+    'Inspect /home/stephan/.local/bin/codex after the failure.',
+  ]) {
+    const slice = createRemoteCodexTaskVisibilitySlice(runningInput({ nextOperatorAction: unsafeAction }), { nowMs: NOW_MS });
+    assert.equal(slice.nextAction, 'Continue monitoring the current Remote Codex task.');
+    const comment = renderRemoteCodexGitHubMirrorComment(slice, { nowMs: NOW_MS });
+    assert.doesNotMatch(comment, /Stephan|AppData|\/home\//i);
+  }
 });
 
 test('Shared Workspace status, proof and event records validate through the canonical store', () => {
