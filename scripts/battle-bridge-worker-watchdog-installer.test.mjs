@@ -13,12 +13,13 @@ function parameterBlock(source) {
   return match?.[1] || '';
 }
 
-test('installer exposes only StartNow and registers hidden limited fixed watchdog task', async () => {
+test('installer exposes only StartNow and registers hidden limited fixed watchdog plus visibility reconciler', async () => {
   const source = await readFile(installPath, 'utf8');
   assert.deepEqual([...parameterBlock(source).matchAll(/\[switch\]\s*\$(\w+)/g)].map((match) => match[1]), ['StartNow']);
   assert.match(source, /Stephanos Mission Orchestrator Worker Watchdog/);
   assert.match(source, /New-ScheduledTaskAction -Execute \$nodeExe/);
-  assert.match(source, /battle-bridge-worker-watchdog\.mjs/);
+  assert.match(source, /battle-bridge-worker-watchdog-runner\.mjs/);
+  assert.match(source, /remoteCodexVisibilityReconciler = \$true/);
   assert.match(source, /-RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
   assert.match(source, /-AtLogOn/);
   assert.match(source, /-Hidden/);

@@ -4,6 +4,10 @@ import { createWriteStream, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOCAL_CODEX_TASK_SCHEMA } from '../shared/agents/localCodexExecIntegration.mjs';
+import {
+  extractCodexThreadId,
+  publishRemoteCodexTaskVisibility,
+} from '../shared/agents/remoteCodexTaskVisibility.mjs';
 
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
@@ -197,11 +201,29 @@ function waitForWriter(writer, timeoutMs = 2000) {
   });
 }
 
+async function publishVisibilitySafely(publisher, task, snapshot) {
+  try {
+    return await publisher(task.workspaceRoot, {
+      ...snapshot,
+      jobId: task.jobId,
+      taskId: task.taskId,
+      issueNumber: task.issueNumber,
+      proofRefs: task.proofRefs,
+    }, { repoRoot: task.repoRoot });
+  } catch (error) {
+    return { ok: false, reason: error?.message || String(error) };
+  }
+}
+
 export async function runCodexWorker(taskPath, {
   spawnFn = spawn,
   now = () => new Date().toISOString(),
   platform = process.platform,
   env = process.env,
+  heartbeatIntervalMs = 15_000,
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval,
+  visibilityPublisher = publishRemoteCodexTaskVisibility,
 } = {}) {
   const task = readJson(taskPath);
   if (task?.schemaVersion !== LOCAL_CODEX_TASK_SCHEMA) throw new Error('Unsupported local Codex task schema.');
@@ -219,10 +241,13 @@ export async function runCodexWorker(taskPath, {
   const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
   const startedAt = now();
   const invocation = resolveCodexExecInvocation({ platform, env, lastMessagePath });
-  const running = {
+  let running = {
     ...task,
     status: 'RUNNING',
     startedAt,
+    heartbeatUtc: startedAt,
+    workerAlive: true,
+    resultAvailable: false,
     workerPid: process.pid,
     sourceHeadBefore: sourceHeadBefore.stdout,
     dirtBefore,
@@ -242,6 +267,16 @@ export async function runCodexWorker(taskPath, {
   };
   writeJson(statusPath, running);
   writeJson(currentPath, running);
+  const startedVisibility = await publishVisibilitySafely(visibilityPublisher, task, running);
+  running = {
+    ...running,
+    visibilityPublication: {
+      ok: startedVisibility.ok === true,
+      reason: startedVisibility.reason || '',
+    },
+  };
+  writeJson(statusPath, running);
+  writeJson(currentPath, running);
 
   const prompt = buildGuardedCodexPrompt(task);
   const child = spawnFn(invocation.command, invocation.args, {
@@ -255,6 +290,43 @@ export async function runCodexWorker(taskPath, {
   const stderrWriter = streamToFile(child.stderr, stderrPath);
   child.stdin?.end?.(prompt);
 
+  let heartbeatChain = Promise.resolve();
+  const queueHeartbeat = () => {
+    heartbeatChain = heartbeatChain.then(async () => {
+      let stdoutEvents = '';
+      try { stdoutEvents = readFileSync(stdoutPath, 'utf8'); } catch {}
+      const parsedEvents = parseCodexJsonEvents(stdoutEvents);
+      const heartbeatUtc = now();
+      running = {
+        ...running,
+        heartbeatUtc,
+        workerAlive: true,
+        codexThreadId: extractCodexThreadId(parsedEvents.events),
+        eventCount: parsedEvents.events.length,
+      };
+      writeJson(statusPath, running);
+      writeJson(currentPath, running);
+      const publication = await publishVisibilitySafely(visibilityPublisher, task, {
+        ...running,
+        events: parsedEvents.events,
+      });
+      running = {
+        ...running,
+        visibilityPublication: {
+          ok: publication.ok === true,
+          reason: publication.reason || '',
+        },
+      };
+      writeJson(statusPath, running);
+      writeJson(currentPath, running);
+    }).catch(() => {});
+    return heartbeatChain;
+  };
+  const heartbeatTimer = Number.isFinite(heartbeatIntervalMs) && heartbeatIntervalMs > 0
+    ? setIntervalFn(() => { void queueHeartbeat(); }, heartbeatIntervalMs)
+    : null;
+  heartbeatTimer?.unref?.();
+
   const exit = await new Promise((resolveExit) => {
     let settled = false;
     const settle = (value) => {
@@ -265,6 +337,8 @@ export async function runCodexWorker(taskPath, {
     child.once?.('error', (error) => settle({ code: null, signal: null, error: error?.message || String(error) }));
     child.once?.('exit', (code, signal) => settle({ code, signal, error: '' }));
   });
+  if (heartbeatTimer) clearIntervalFn(heartbeatTimer);
+  await heartbeatChain;
   await Promise.all([waitForWriter(stdoutWriter), waitForWriter(stderrWriter)]);
 
   const completedAt = now();
@@ -289,7 +363,7 @@ export async function runCodexWorker(taskPath, {
   const sourceSafe = sourceHeadUnchanged && !dirtDelta.sourceMutationDetected;
   const passed = execution.passed && sourceSafe;
   const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
-  const result = {
+  let result = {
     schemaVersion: LOCAL_CODEX_TASK_SCHEMA,
     kind: 'stephanos.codex_dispatch.local_result',
     taskId: task.taskId,
@@ -297,6 +371,11 @@ export async function runCodexWorker(taskPath, {
     issueNumber: task.issueNumber,
     status: finalStatus,
     verdict: passed ? 'PASS' : 'FAIL',
+    resultAvailable: true,
+    resultVerdict: passed ? 'PASS' : 'FAIL',
+    workerAlive: false,
+    heartbeatUtc: completedAt,
+    codexThreadId: extractCodexThreadId(parsedEvents.events),
     startedAt,
     completedAt,
     sourceHeadBefore: sourceHeadBefore.stdout,
@@ -341,6 +420,21 @@ export async function runCodexWorker(taskPath, {
       : (!sourceSafe
         ? 'Inspect the task logs and source dirt. Do not auto-discard changes.'
         : `Inspect the task logs and repair the precise runtime blocker: ${execution.reason || 'CODEX_EXEC_FAILED'}.`),
+  };
+  writeJson(resultPath, result);
+  writeJson(statusPath, result);
+  writeJson(currentPath, result);
+  const finalVisibility = await publishVisibilitySafely(visibilityPublisher, task, {
+    ...result,
+    events: parsedEvents.events,
+    sourceHead: sourceHeadAfter.stdout || sourceHeadBefore.stdout,
+  });
+  result = {
+    ...result,
+    visibilityPublication: {
+      ok: finalVisibility.ok === true,
+      reason: finalVisibility.reason || '',
+    },
   };
   writeJson(resultPath, result);
   writeJson(statusPath, result);
