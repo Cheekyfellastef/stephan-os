@@ -24,11 +24,16 @@ export async function runBattleBridgeWorkerWatchdogRunner({
   }
 
   const watchdog = await workerWatchdog();
+  const visibilityOk = codexVisibility?.ok === true;
+  const workerWatchdogOk = watchdog?.ok === true;
   return Object.freeze({
     ...watchdog,
+    ok: visibilityOk && workerWatchdogOk,
     schemaVersion: BATTLE_BRIDGE_WORKER_WATCHDOG_RUNNER_SCHEMA,
     codexVisibility,
     codexVisibilityObserved: true,
+    visibilityOk,
+    workerWatchdogOk,
   });
 }
 
