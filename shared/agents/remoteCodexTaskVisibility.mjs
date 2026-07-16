@@ -30,6 +30,7 @@ export const REMOTE_CODEX_VISIBILITY_STATES = Object.freeze({
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const SAFE_SHA = /^[a-f0-9]{7,64}$/i;
 const FORBIDDEN_TEXT = /secret|token|password|credential|private key|\.env|cookie|session|node_modules|runtime-data/i;
+const LOCAL_PATH_TEXT = /(?:[a-z]:\\|\\\\|\/(?:users|home|workspace|tmp)\/|appdata\\|documents\\github\\)/i;
 const FINAL_TASK_STATUSES = new Set(['DONE', 'FAILED', 'BLOCKED']);
 const ACTIVE_TASK_STATUSES = new Set(['DISPATCHED', 'CLAIMED', 'RUNNING', 'WAITING_PROOF']);
 
@@ -41,7 +42,7 @@ function text(value, fallback = '') {
 
 function boundedText(value, fallback = '', limit = 240) {
   const out = text(value, fallback);
-  if (!out || FORBIDDEN_TEXT.test(out)) return fallback;
+  if (!out || FORBIDDEN_TEXT.test(out) || LOCAL_PATH_TEXT.test(out)) return fallback;
   return out.length > limit ? `${out.slice(0, limit)}...` : out;
 }
 
@@ -286,7 +287,7 @@ export function renderRemoteCodexGitHubMirrorComment(sliceInput = {}, options = 
   const slice = sliceInput?.kind === REMOTE_CODEX_TASK_VISIBILITY_KIND
     ? sliceInput
     : createRemoteCodexTaskVisibilitySlice(sliceInput, options);
-  const value = (input, fallback = 'unknown') => text(input, fallback).replace(/[\r\n`]/g, ' ');
+  const value = (input, fallback = 'unknown') => boundedText(input, fallback, 240).replace(/[\r\n`]/g, ' ');
   return [
     '<!-- stephanos-remote-codex-task-visibility-v1 -->',
     '## Remote Codex task visibility',
