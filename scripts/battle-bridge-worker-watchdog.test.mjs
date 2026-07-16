@@ -48,6 +48,14 @@ async function withFixture(run) {
   try { await run({ root, paths }); } finally { await rm(root, { recursive: true, force: true }); }
 }
 
+async function readCurrentStatus(paths) {
+  return JSON.parse(await readFile(paths.currentStatusPath, 'utf8'));
+}
+
+function assertOrdinaryWatchdogDidNotClaimCanaryKill(status) {
+  assert.equal(status.workerKilledObserved, false);
+}
+
 test('healthy worker is a no-op and publishes Shared Workspace proof', async () => {
   await withFixture(async ({ paths }) => {
     const now = new Date();
@@ -63,14 +71,15 @@ test('healthy worker is a no-op and publishes Shared Workspace proof', async () 
     assert.equal(result.ok, true);
     assert.equal(result.classification, 'WORKER_WATCHDOG_HEALTHY');
     assert.equal(result.publication.proofWrittenToSharedWorkspace, true);
-    const status = JSON.parse(await readFile(paths.currentStatusPath, 'utf8'));
+    const status = await readCurrentStatus(paths);
+    assertOrdinaryWatchdogDidNotClaimCanaryKill(status);
     assert.equal(status.supervisorRestartedWorker, false);
     assert.equal(status.workerFromMain, true);
     assert.equal(status.visiblePowerShellRequired, false);
   });
 });
 
-test('unhealthy fixed worker is started once and bounded probes can prove recovery', async () => {
+test('unhealthy fixed worker is started once and bounded probes can prove recovery without claiming canary kill evidence', async () => {
   await withFixture(async ({ paths }) => {
     let starts = 0;
     let inspections = 0;
@@ -90,10 +99,15 @@ test('unhealthy fixed worker is started once and bounded probes can prove recove
     assert.equal(starts, 1);
     assert.equal(result.recoveryProbeCount, 1);
     assert.equal(result.publication.proofWrittenToSharedWorkspace, true);
+    const status = await readCurrentStatus(paths);
+    assertOrdinaryWatchdogDidNotClaimCanaryKill(status);
+    assert.equal(status.supervisorDetectedWorkerDown, true);
+    assert.equal(status.supervisorRestartedWorker, true);
+    assert.equal(status.workerRecovered, true);
   });
 });
 
-test('recovery starts at most once and fails after exactly three probes', async () => {
+test('recovery starts at most once and fails after exactly three probes without claiming canary kill evidence', async () => {
   await withFixture(async ({ paths }) => {
     let starts = 0;
     let inspections = 0;
@@ -113,6 +127,11 @@ test('recovery starts at most once and fails after exactly three probes', async 
     assert.equal(starts, 1);
     assert.equal(inspections, 4);
     assert.equal(result.recoveryProbeCount, 3);
+    const status = await readCurrentStatus(paths);
+    assertOrdinaryWatchdogDidNotClaimCanaryKill(status);
+    assert.equal(status.supervisorDetectedWorkerDown, true);
+    assert.equal(status.supervisorRestartedWorker, true);
+    assert.equal(status.workerRecovered, false);
   });
 });
 
@@ -131,10 +150,12 @@ test('live lock blocks a second watchdog without starting the worker', async () 
     });
     assert.equal(result.classification, 'WORKER_WATCHDOG_LIVE_LOCK');
     assert.equal(calls, 0);
+    const status = await readCurrentStatus(paths);
+    assertOrdinaryWatchdogDidNotClaimCanaryKill(status);
   });
 });
 
-test('restart cooldown prevents repeated starts', async () => {
+test('restart cooldown prevents repeated starts without claiming canary kill evidence', async () => {
   await withFixture(async ({ paths }) => {
     const now = new Date();
     await mkdir(path.dirname(paths.currentStatusPath), { recursive: true });
@@ -149,6 +170,10 @@ test('restart cooldown prevents repeated starts', async () => {
     const result = await runBattleBridgeWorkerWatchdog({ paths, expectedPaths: paths, probeAdapter, now, sleep: async () => {} });
     assert.equal(result.classification, 'WORKER_WATCHDOG_RECOVERY_COOLDOWN');
     assert.equal(starts, 0);
+    const status = await readCurrentStatus(paths);
+    assertOrdinaryWatchdogDidNotClaimCanaryKill(status);
+    assert.equal(status.supervisorDetectedWorkerDown, true);
+    assert.equal(status.supervisorRestartedWorker, false);
   });
 });
 
