@@ -11,9 +11,9 @@ Prefer the narrowest tool that can return trustworthy evidence.
 
 Keep source design, code changes, tests, GitHub review, commits, pull requests, and merges in the normal ChatGPT plus GitHub lane whenever they can be completed there.
 
-Use `update_stephanos_from_chat` after explicit operator approval when Stephan asks to update Stephanos completely. It fast-forwards canonical `main`, runs the bridge regression tests, invokes the existing guarded ignition entry, and proves the served UI plus backend and OpenClaw health. It removes manual PowerShell from the operator workflow while preserving the existing internal Windows machinery and safety gates.
+Use `update_stephanos_from_chat` after explicit operator approval when Stephan asks to update Stephanos completely. It fetches and records the latest canonical `origin/main` head observed by the current run, fast-forwards only to that exact target, runs the bridge regression tests through the current Node executable, invokes the existing guarded ignition entry, and proves the served UI plus backend and OpenClaw health. It removes manual PowerShell from the operator workflow while preserving the existing internal Windows machinery and safety gates.
 
-Use `sync_codex_dispatch_bridge` after explicit operator approval when only the canonical Battle Bridge repository and dispatch tests need to move forward. This tool must never reset, clean, stash, force-check out, or discard local work.
+Use `sync_codex_dispatch_bridge` after explicit operator approval when only the canonical Battle Bridge repository and dispatch tests need to move forward. The approval scope is the latest canonical `origin/main` observed immediately after that run fetches it. The returned `approvedTargetHead` must equal the post-sync local HEAD. This tool must never reset, clean, stash, force-check out, or discard local work.
 
 Use `run_battle_bridge_diagnostics` for deterministic Git and localhost health proof. It runs in the trusted MCP host without a Codex child, PowerShell, service control, source mutation, or dependency on Codex shell policy.
 
@@ -28,7 +28,7 @@ Do not dispatch ordinary code writing merely because Codex is available.
 
 ## Phone and iPad Codex Remote route
 
-When this local MCP tool surface is not present but the chat is attached to the Battle Bridge through Codex Remote, use the repository skill `update-stephanos-from-chat` and its exact source-controlled entrypoint. Do not ask Stephan to open PowerShell or paste a shell wall.
+When this local MCP tool surface is not present but the chat is attached to the Battle Bridge through Codex Remote, use the repository skill `update-stephanos-from-chat` and its exact source-controlled Node entrypoint. Do not use `npm`, `npm.cmd`, handwritten PowerShell, or a pasted shell wall. Do not pin a request for the latest canonical main to an older merge head.
 
 ## Required dispatch shape
 
