@@ -16,7 +16,7 @@ $expectedRepoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'D
 if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) {
     throw "Worker watchdog installer must run from the canonical checkout: $expectedRepoRoot"
 }
-$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-worker-watchdog.mjs')).Path
+$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-worker-watchdog-runner.mjs')).Path
 $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
 if (-not $nodeCommand) { $nodeCommand = Get-Command node -ErrorAction Stop }
 $nodeExe = $nodeCommand.Source
@@ -38,14 +38,14 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
-if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Mission Orchestrator worker watchdog')) {
+if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Mission Orchestrator worker watchdog and Remote Codex visibility reconciler')) {
     Register-ScheduledTask `
         -TaskName $taskName `
         -Action $action `
         -Trigger @($logonTrigger, $intervalTrigger) `
         -Principal $principal `
         -Settings $settings `
-        -Description 'Probes and starts only the fixed Stephanos Mission Orchestrator Worker task, with bounded recovery and Shared Workspace proof.' `
+        -Description 'Reconciles Remote Codex task visibility, then probes and starts only the fixed Stephanos Mission Orchestrator Worker task, with bounded recovery and Shared Workspace proof.' `
         -Force | Out-Null
     if ($StartNow) {
         Start-ScheduledTask -TaskName $taskName
@@ -64,6 +64,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Missio
     runLevel = 'Limited'
     multipleInstances = 'IgnoreNew'
     startedNow = [bool]$StartNow
+    remoteCodexVisibilityReconciler = $true
     arbitraryTaskNameAllowed = $false
     arbitraryShellAllowed = $false
     visiblePowerShellRequired = $false
