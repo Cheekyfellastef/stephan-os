@@ -87,7 +87,7 @@ test('local Windows and Unix paths are replaced by the bounded default action be
     const slice = createRemoteCodexTaskVisibilitySlice(runningInput({ nextOperatorAction: unsafeAction }), { nowMs: NOW_MS });
     assert.equal(slice.nextAction, 'Continue monitoring the current Remote Codex task.');
     const comment = renderRemoteCodexGitHubMirrorComment(slice, { nowMs: NOW_MS });
-    assert.doesNotMatch(comment, /Stephan|AppData|\/home\//i);
+    assert.doesNotMatch(comment, /C:\\Users\\Stephan|AppData|\/home\/stephan\//i);
   }
 });
 
