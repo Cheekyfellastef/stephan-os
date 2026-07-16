@@ -49,7 +49,10 @@ export function assessMissionOrchestratorWorker(input = {}) {
     && SHA_40.test(text(input.heartbeat?.headSha));
   const taskIdentityObserved = Boolean(observedTaskName);
   const taskApproved = taskIdentityObserved && observedTaskName === APPROVED_WORKER_TASK;
-  const taskStateHealthy = taskApproved && ['ready', 'running'].includes(observedTaskStatus);
+  const taskActionMatchesCanonicalWorker = input.scheduledTask?.actionMatchesCanonicalWorker === true;
+  const taskStateHealthy = taskApproved
+    && taskActionMatchesCanonicalWorker
+    && ['ready', 'running'].includes(observedTaskStatus);
   const processCommandLineVerified = input.process?.commandLineMatchesCanonicalWorker === true;
   const processHealthy = input.process?.running === true
     && text(input.process?.taskName) === APPROVED_WORKER_TASK
@@ -69,7 +72,10 @@ export function assessMissionOrchestratorWorker(input = {}) {
 
   if (!taskIdentityObserved) blockers.push('scheduled-task-identity-missing');
   else if (!taskApproved) blockers.push('scheduled-task-not-allowlisted');
-  if (taskApproved && !taskStateHealthy) blockers.push('scheduled-task-not-ready-or-running');
+  if (taskApproved && !taskActionMatchesCanonicalWorker) blockers.push('scheduled-task-action-not-canonical');
+  if (taskApproved && taskActionMatchesCanonicalWorker && !taskStateHealthy) {
+    blockers.push('scheduled-task-not-ready-or-running');
+  }
   if (!processHealthy) blockers.push('worker-process-proof-missing');
   if (input.process?.running === true && !processCommandLineVerified) blockers.push('worker-command-line-not-canonical');
   if (!Number.isFinite(heartbeatTimestamp)) blockers.push('worker-heartbeat-malformed');
@@ -85,6 +91,7 @@ export function assessMissionOrchestratorWorker(input = {}) {
     observedTaskName,
     taskIdentityObserved,
     taskApproved,
+    taskActionMatchesCanonicalWorker,
     taskStateHealthy,
     processHealthy,
     processCommandLineVerified,
@@ -94,7 +101,7 @@ export function assessMissionOrchestratorWorker(input = {}) {
     repositoryFromCanonicalMain,
     heartbeatAgeMs,
     healthy,
-    restartPermitted: !healthy && taskApproved,
+    restartPermitted: !healthy && taskApproved && taskActionMatchesCanonicalWorker,
     blockers,
     arbitraryShellAllowed: false,
     arbitraryPowerShellAllowed: false,
