@@ -57,6 +57,10 @@ test('internal probe permits only inspect or fixed canonical task start and neve
   assert.match(source, /The fixed Mission Orchestrator worker task action is not canonical/);
   assert.match(source, /Start-ScheduledTask -TaskName \$taskName/);
   assert.match(source, /Get-CimInstance Win32_Process/);
+  assert.match(source, /CommandLineToArgvW/);
+  assert.match(source, /Test-CanonicalWorkerProcessCommandLine/);
+  assert.match(source, /\$arguments\[1\]/);
+  assert.doesNotMatch(source, /IndexOf\(\$workerPath/);
   assert.doesNotMatch(source, /\[string\]\$TaskName|Stop-ScheduledTask|Stop-Process|Invoke-Expression|Restart-Computer|shutdown\.exe/i);
 });
 
