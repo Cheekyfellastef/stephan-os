@@ -67,6 +67,22 @@ test('launcher-critical shell sources select the UI refresh target', () => {
   }
 });
 
+test('actual UI build verify serve and exact-proof tools select UI refresh', () => {
+  for (const path of [
+    'scripts/build-stephanos-ui.mjs',
+    'scripts/clean-stephanos-dist.mjs',
+    'scripts/stephanos-build-utils.mjs',
+    'scripts/verify-stephanos-dist.mjs',
+    'scripts/serve-stephanos-dist.mjs',
+    'scripts/refresh-stephanos-ui-4173.mjs',
+    'scripts/battle-bridge-ignition-supervisor.mjs',
+  ]) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY, path);
+    assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173], path);
+  }
+});
+
 test('shared runtime refreshes UI and backend', () => {
   const plan = classifyPostSyncRefresh(['shared/runtime/runtimeStatusModel.mjs']);
   assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173, POST_SYNC_REFRESH_TARGETS.BACKEND_8787]);
