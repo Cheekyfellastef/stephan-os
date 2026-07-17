@@ -6,6 +6,7 @@ on:
       - 'scripts/battle-bridge-shared-workspace-publisher.mjs'
       - 'scripts/battle-bridge-shared-workspace-publisher.test.mjs'
       - 'scripts/battle-bridge-monitor-multiplexer-canary.mjs'
+      - 'scripts/battle-bridge-monitor-multiplexer-canary.test.mjs'
       - 'scripts/guard-import-structure.mjs'
       - 'tests/import-guard.test.mjs'
       - 'shared/agents/sharedAgentWorkspaceStore.mjs'
