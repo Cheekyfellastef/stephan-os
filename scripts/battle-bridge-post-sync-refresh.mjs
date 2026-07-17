@@ -283,11 +283,11 @@ export async function runBattleBridgePostSyncRefresh({
     if (!changed.ok) return Object.freeze({ ok: false, blocker: changed.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
 
     const plan = classifyPostSyncRefresh(changed.paths);
-    const planProjection = buildPostSyncRefreshProjection({ ok: false, classification: plan.classification, plan, results: [] }, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
+    const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter);
+    const planProjection = buildPostSyncRefreshProjection({ ok: false, classification: plan.classification, plan, results: completedResults }, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
     const planPublication = await publishProjection({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, projection: planProjection, afterHead: normalizedAfter, phase: 'plan', now });
     if (!planPublication.ok) return Object.freeze({ ok: false, blocker: planPublication.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
 
-    const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter);
     const execution = await executePostSyncRefreshPlan({
       beforeHead: normalizedBefore,
       afterHead: normalizedAfter,
