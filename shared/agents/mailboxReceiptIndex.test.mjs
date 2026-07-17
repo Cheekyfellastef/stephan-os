@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -81,6 +81,7 @@ async function workspaceFixture(fn) {
 async function writeReceipt(workspaceRoot, value) {
   const target = join(workspaceRoot, 'receipts', 'github-command-mailbox', `${value.requestId}.json`);
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  return target;
 }
 
 test('sanitization retains bounded evidence and removes raw payloads, machine paths and secret-shaped data', () => {
@@ -157,16 +158,22 @@ test('the same bounded projection is explicitly available to every registered pa
 
 test('refresh writes one fixed authoritative Shared Workspace status record and read returns its safe projection', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
   await writeReceipt(workspaceRoot, receipt());
+  const timestampUtc = '2026-07-17T19:45:00.000Z';
   const refreshed = await refreshMailboxReceiptIndex({
     root: workspaceRoot,
     repoRoot,
-    timestampUtc: '2026-07-17T19:45:00.000Z',
+    timestampUtc,
   });
   assert.equal(refreshed.ok, true);
   assert.equal(refreshed.finalVerdict, 'MAILBOX_RECEIPT_INDEX_READY');
-  const read = await readMailboxReceiptIndex({ root: workspaceRoot, repoRoot });
+  const read = await readMailboxReceiptIndex({
+    root: workspaceRoot,
+    repoRoot,
+    nowMs: Date.parse(timestampUtc),
+  });
   assert.equal(read.ok, true);
   assert.equal(read.finalVerdict, 'MAILBOX_RECEIPT_INDEX_READ_READY');
+  assert.equal(read.stale, false);
   assert.equal(read.projection.recentReceipts[0].requestId, receipt().requestId);
   assert.equal(read.projection.recentReceipts[0].sourceHead, HEAD);
   assert.equal(read.arbitraryFilesystemAccess, false);
@@ -177,6 +184,51 @@ test('refresh writes one fixed authoritative Shared Workspace status record and 
   assert.equal(loaded.receipts.length, 1);
   const statusPath = join(workspaceRoot, 'status', MAILBOX_RECEIPT_INDEX_FILENAME);
   assert.equal((await import('node:fs')).existsSync(statusPath), true);
+}));
+
+test('stale authoritative receipt indexes fail closed while retaining only the bounded projection', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  await writeReceipt(workspaceRoot, receipt());
+  const timestampUtc = '2026-07-17T19:45:00.000Z';
+  await refreshMailboxReceiptIndex({ root: workspaceRoot, repoRoot, timestampUtc });
+  const stale = await readMailboxReceiptIndex({
+    root: workspaceRoot,
+    repoRoot,
+    nowMs: Date.parse('2026-07-17T19:45:02.000Z'),
+    staleAfterMs: 1_000,
+  });
+  assert.equal(stale.ok, false);
+  assert.equal(stale.blocker, 'MAILBOX_RECEIPT_INDEX_STALE');
+  assert.equal(stale.finalVerdict, 'MAILBOX_RECEIPT_INDEX_STALE');
+  assert.equal(stale.stale, true);
+  assert.equal(stale.projection.recentReceipts[0].requestId, receipt().requestId);
+  assert.equal(stale.arbitraryFilesystemAccess, false);
+  assert.equal(stale.commandExecutionAccess, false);
+  assert.equal(stale.sourceMutationAccess, false);
+}));
+
+test('bounded loading selects newest receipt files by metadata rather than request-id order', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const oldReceipt = receipt({
+    requestId: 'z-old-receipt-20260717T1900Z',
+    completedAt: '2026-07-17T19:00:00.000Z',
+  });
+  const newReceipt = receipt({
+    requestId: 'a-new-receipt-20260717T2000Z',
+    completedAt: '2026-07-17T20:00:00.000Z',
+  });
+  const oldPath = await writeReceipt(workspaceRoot, oldReceipt);
+  const newPath = await writeReceipt(workspaceRoot, newReceipt);
+  const oldTime = new Date('2026-07-17T19:00:00.000Z');
+  const newTime = new Date('2026-07-17T20:00:00.000Z');
+  await utimes(oldPath, oldTime, oldTime);
+  await utimes(newPath, newTime, newTime);
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({
+    root: workspaceRoot,
+    repoRoot,
+    maxFiles: 1,
+  });
+  assert.equal(loaded.ok, true);
+  assert.equal(loaded.receipts.length, 1);
+  assert.equal(loaded.receipts[0].requestId, newReceipt.requestId);
 }));
 
 test('receipt loading is fixed to the canonical receipt directory and rejects a workspace inside the repository', async () => workspaceFixture(async ({ repoRoot }) => {
