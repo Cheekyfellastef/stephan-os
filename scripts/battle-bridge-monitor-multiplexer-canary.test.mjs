@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseMonitorMultiplexerCanaryArguments,
+  resolveMonitorMultiplexerCanaryWorkspace,
   runBattleBridgeMonitorMultiplexerCanary,
 } from './battle-bridge-monitor-multiplexer-canary.mjs';
 
@@ -43,6 +44,25 @@ test('canary CLI accepts only one exact head and at most one bounded request id'
   ], {
     requestIdFactory: () => '../unsafe',
   }).blocker, 'CANARY_REQUEST_ID_INVALID');
+});
+
+test('canary workspace uses the canonical resolver and rejects secret-shaped targets', () => {
+  const unsafe = resolveMonitorMultiplexerCanaryWorkspace({
+    env: {
+      USERPROFILE: 'C:\\Users\\Stephan Callear',
+      STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\Users\\Stephan Callear\\.ssh',
+    },
+  });
+  assert.equal(unsafe.ok, false);
+  assert.equal(unsafe.blocker, 'STEPHANOS_SHARED_AGENT_WORKSPACE_PATH_UNSAFE');
+  assert.equal(unsafe.arbitraryFilesystemAccess, false);
+
+  const safe = resolveMonitorMultiplexerCanaryWorkspace({
+    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+  });
+  assert.equal(safe.ok, true);
+  assert.equal(safe.source, 'default-documents');
+  assert.equal(safe.arbitraryFilesystemAccess, false);
 });
 
 test('runner fails closed outside the real Windows Battle Bridge', async () => {
