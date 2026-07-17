@@ -179,8 +179,28 @@ export async function ensureCriticalBacklogMission({
   let createdMission = false;
   let duplicateCreateObserved = false;
   let missionRecord = null;
+  let preflightPublication = null;
 
   if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION) {
+    preflightPublication = await publishProjection(projection, { paths, now });
+    if (!preflightPublication.ok) {
+      return Object.freeze({
+        schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+        ok: false,
+        classification: 'CREATE_NEXT_MISSION_PUBLICATION_BLOCKED',
+        projection,
+        createdMission: false,
+        duplicateCreateObserved: false,
+        missionRecord: null,
+        preflightPublication,
+        publication: preflightPublication,
+        arbitraryShellAllowed: false,
+        destructiveGitAllowed: false,
+        duplicateActiveMissionAllowed: false,
+        mergeAuthority: false,
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+      });
+    }
     const worktreePath = path.resolve(paths.worktreeRoot, projection.selectedItem.mission.missionId);
     const built = buildCriticalBacklogMissionInput(projection.selectedItem, {
       repositoryRoot: paths.repoRoot,
@@ -220,6 +240,7 @@ export async function ensureCriticalBacklogMission({
     missionRecord: missionRecord?.state
       ? Object.freeze({ missionId: missionRecord.state.missionId, currentPhase: missionRecord.state.currentPhase })
       : null,
+    preflightPublication,
     publication,
     arbitraryShellAllowed: false,
     destructiveGitAllowed: false,
