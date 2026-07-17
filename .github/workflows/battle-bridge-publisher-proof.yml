@@ -9,10 +9,13 @@ on:
       - 'tests/import-guard.test.mjs'
       - 'shared/agents/sharedAgentWorkspaceStore.mjs'
       - 'shared/agents/sharedAgentWorkspaceStore.test.mjs'
+      - 'shared/agents/monitorMultiplexer.mjs'
+      - 'shared/agents/monitorMultiplexer.test.mjs'
       - 'shared/agents/verificationHarness.mjs'
       - 'shared/agents/verificationHarness.test.mjs'
       - 'shared/agents/verificationHarnessWorkspace.test.mjs'
       - 'shared/agents/shared-workspace-dashboard-feed.test.mjs'
+      - 'package.json'
       - '.github/workflows/battle-bridge-publisher-proof.yml'
 
 permissions:
@@ -46,6 +49,9 @@ jobs:
 
       - name: Repository import structure proof
         run: node scripts/guard-import-structure.mjs
+
+      - name: Monitor multiplexer proof
+        run: npm run stephanos:monitor-multiplexer:test
 
       - name: Shared Workspace and Verification Harness proof
         run: >-
