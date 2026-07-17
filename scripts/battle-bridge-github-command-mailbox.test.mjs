@@ -34,7 +34,7 @@ test('oversized GitHub receipt becomes valid structured JSON rather than a slice
   const json = serializeBoundedReceiptJson({
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
     requestId: 'req-1507-large-receipt',
-    operation: 'READ_CAPABILITY_REGISTRY',
+    operation: 'RUN_WORKER_WATCHDOG_ACCEPTANCE',
     repository: 'Cheekyfellastef/stephan-os',
     issueNumber: 1507,
     branch: 'main',
@@ -45,24 +45,43 @@ test('oversized GitHub receipt becomes valid structured JSON rather than a slice
       verdict: 'COMMAND_EXECUTION_COMPLETE',
       result: {
         ok: true,
-        finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS',
+        finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS',
         sourceHead: '704f64a1662de33bfd3ac2ff6531ad296bf5e846',
+        initialPid: 101,
+        recoveredPid: 202,
+        workerKilledObserved: true,
+        supervisorDetectedWorkerDown: true,
+        supervisorRestartedWorker: true,
+        workerRecovered: true,
+        workerFromMain: true,
+        proofWrittenToSharedWorkspace: true,
         payload: 'x'.repeat(20_000),
       },
     },
   }, 4096);
   const parsed = JSON.parse(json);
   assert.equal(parsed.githubProjectionTruncated, true);
-  assert.equal(parsed.result.result.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
+  assert.equal(parsed.result.result.finalVerdict, 'WORKER_WATCHDOG_ACCEPTANCE_PASS');
+  assert.equal(parsed.result.result.initialPid, 101);
+  assert.equal(parsed.result.result.recoveredPid, 202);
+  assert.equal(parsed.result.result.workerKilledObserved, true);
+  assert.equal(parsed.result.result.supervisorDetectedWorkerDown, true);
+  assert.equal(parsed.result.result.supervisorRestartedWorker, true);
+  assert.equal(parsed.result.result.workerRecovered, true);
+  assert.equal(parsed.result.result.workerFromMain, true);
+  assert.equal(parsed.result.result.proofWrittenToSharedWorkspace, true);
   assert.ok(Buffer.byteLength(json, 'utf8') <= 4096);
 });
 
-test('runner wires capability registry and sanitized workspace reads without generic execution', async () => {
+test('runner wires capability registry, sanitized workspace reads and bounded watchdog acceptance', async () => {
   const source = await readFile(runnerPath, 'utf8');
   assert.match(source, /buildStephanosCapabilityRegistrySummary/);
   assert.match(source, /createSanitizedSharedWorkspaceProjection/);
+  assert.match(source, /runBattleBridgeWorkerWatchdogAcceptance/);
   assert.match(source, /readCapabilityRegistry/);
   assert.match(source, /readSharedWorkspaceStatus/);
+  assert.match(source, /runWorkerWatchdogAcceptance/);
+  assert.match(source, /expectedHead: command\.expectedHead/);
   assert.match(source, /EXPECTED_HEAD_MISMATCH/);
   assert.match(source, /SHARED_WORKSPACE_LATEST_STATUS_READY/);
   assert.match(source, /projection\.currentStatus !== null/);

@@ -11,6 +11,7 @@ import {
   buildStephanosCapabilityRegistrySummary,
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
+import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
@@ -99,6 +100,15 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: String(operationResult?.sourceHead || ''),
         branch: String(operationResult?.branch || ''),
         expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+        initialPid: Number(operationResult?.initialPid || 0),
+        recoveredPid: Number(operationResult?.recoveredPid || 0),
+        workerKilledObserved: operationResult?.workerKilledObserved === true,
+        supervisorDetectedWorkerDown: operationResult?.supervisorDetectedWorkerDown === true,
+        supervisorRestartedWorker: operationResult?.supervisorRestartedWorker === true,
+        workerRecovered: operationResult?.workerRecovered === true,
+        workerFromMain: operationResult?.workerFromMain === true,
+        proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
+        visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
         githubProjectionTruncated: true,
         originalBytes: fullBytes,
       },
@@ -263,6 +273,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     readDeploymentStatus,
     readCapabilityRegistry,
     readSharedWorkspaceStatus,
+    runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
   });
 
   const completedAt = now().toISOString();
