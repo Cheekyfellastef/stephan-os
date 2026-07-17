@@ -6,6 +6,7 @@ import {
   buildPostSyncRefreshProjection,
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
+  parseGitChangedPathStatus,
 } from './postSyncRuntimeRefreshCoordinator.mjs';
 
 const A = 'a'.repeat(40);
@@ -14,6 +15,22 @@ const B = 'b'.repeat(40);
 function pass(sourceHead = B) {
   return { ok: true, exactHeadProofOk: true, sourceHead };
 }
+
+test('Git changed-path status parser includes deletions and both rename sides', () => {
+  const parsed = parseGitChangedPathStatus([
+    'D\tstephanos-server/server.js',
+    'R100\tstephanos-server/legacy.js\tdocs/legacy.md',
+    'M\tmain.js',
+  ].join('\n'));
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.paths, [
+    'stephanos-server/server.js',
+    'stephanos-server/legacy.js',
+    'docs/legacy.md',
+    'main.js',
+  ]);
+  assert.equal(parseGitChangedPathStatus('R100\tonly-one-path').ok, false);
+});
 
 test('classifies docs and tests as no-runtime changes', () => {
   const plan = classifyPostSyncRefresh(['docs/runbook.md', 'scripts/example.test.mjs']);
@@ -35,6 +52,19 @@ test('classifies UI backend worker and natural reload targets deterministically'
     POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
     POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
   ]);
+});
+
+test('launcher-critical shell sources select the UI refresh target', () => {
+  for (const path of [
+    'main.js',
+    'modules/command-deck/command-deck.js',
+    'system/module_loader.js',
+    'system/workspace.js',
+  ]) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+    assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  }
 });
 
 test('shared runtime refreshes UI and backend', () => {
