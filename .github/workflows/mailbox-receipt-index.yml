@@ -1,0 +1,122 @@
+name: Mailbox Receipt Index
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/mailboxReceiptIndex.mjs'
+      - 'shared/agents/mailboxReceiptIndex.test.mjs'
+      - 'shared/agents/mailboxReceiptIndexAccess.mjs'
+      - 'shared/agents/mailboxReceiptIndexAccess.test.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs'
+      - 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
+      - '.github/workflows/mailbox-receipt-index.yml'
+  issue_comment:
+    types: [created, edited]
+  push:
+    branches: [main]
+    paths:
+      - 'shared/agents/mailboxReceiptIndex.mjs'
+      - '.github/workflows/mailbox-receipt-index.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mailbox-receipt-index-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Shared Workspace receipt index proof
+        run: >-
+          node --test
+          shared/agents/mailboxReceiptIndex.test.mjs
+          shared/agents/mailboxReceiptIndexAccess.test.mjs
+          scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
+
+      - name: Import structure proof
+        run: node scripts/guard-import-structure.mjs
+
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD
+
+  mirror:
+    if: >-
+      github.event_name != 'pull_request' &&
+      (
+        github.event_name != 'issue_comment' ||
+        (
+          github.event.issue.number == 1507 &&
+          github.event.comment.user.login == github.repository_owner &&
+          contains(github.event.comment.body, '<!-- stephanos-battle-bridge-command-receipt -->')
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted main source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Update the single compact receipt index comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const path = await import('node:path');
+            const { pathToFileURL } = await import('node:url');
+            const moduleUrl = `${pathToFileURL(path.resolve('shared/agents/mailboxReceiptIndex.mjs')).href}?run=${Date.now()}`;
+            const receiptIndex = await import(moduleUrl);
+            const issueNumber = 1507;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const ownerReceipts = comments.filter((comment) => comment.user?.login === context.repo.owner);
+            const record = receiptIndex.createMailboxReceiptIndexFromGitHubComments(ownerReceipts, {
+              timestampUtc: new Date().toISOString(),
+            });
+            const body = receiptIndex.buildMailboxReceiptIndexGitHubBody(record);
+            const existing = receiptIndex.findMailboxReceiptIndexComment(comments);
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated receipt index comment ${existing.id}.`);
+            } else {
+              const created = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+              core.info(`Created receipt index comment ${created.data.id}.`);
+            }
