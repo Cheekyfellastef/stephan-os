@@ -4,7 +4,7 @@ export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan
 
 const SAFE_CAPABILITY_ID = /^[a-z0-9][a-z0-9.-]{2,80}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const ABSOLUTE_PATH_PATTERN = /(?:^[a-z]:[\\/]|^\\\\|^\/(?:users|home|workspace|tmp)\/)/i;
+const ABSOLUTE_PATH_PATTERN = /(?:^|["'\s])(?:[a-z]:[\\/]|\\\\|\/(?:users|home|workspace|tmp)\/)/i;
 
 function descriptor(input) {
   return Object.freeze({
