@@ -108,9 +108,11 @@ function durableMonitorFieldsPresent(executions = []) {
   ));
 }
 
-function receiptRef(result) {
+export function receiptRefForPublishedTick(result) {
   const receiptId = String(result?.receipt?.receiptId || '');
-  return receiptId ? `receipts/${receiptId}.json` : '';
+  const writes = Array.isArray(result?.writes) ? result.writes : [];
+  const receiptWrite = writes.length ? writes[writes.length - 1] : null;
+  return receiptId && receiptWrite?.ok === true ? `receipts/${receiptId}.json` : '';
 }
 
 export async function runMonitorMultiplexerCanary(input = {}) {
@@ -174,9 +176,9 @@ export async function runMonitorMultiplexerCanary(input = {}) {
   const retiredSkipped = restart.skipped?.filter((entry) => entry.due?.reason === 'MONITOR_RETIRED') || [];
   const recurringRunCounts = restart.executions?.map((execution) => execution.statusRecord?.runCount) || [];
   const tickReceiptRefs = [
-    receiptRef(forcedOutboxFailure),
-    receiptRef(retry),
-    receiptRef(restart),
+    receiptRefForPublishedTick(forcedOutboxFailure),
+    receiptRefForPublishedTick(retry),
+    receiptRefForPublishedTick(restart),
   ].filter(Boolean);
 
   const checks = Object.freeze({
