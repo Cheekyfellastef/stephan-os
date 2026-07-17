@@ -12,6 +12,7 @@ import {
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
+import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
@@ -103,6 +104,16 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       sourceHead: String(operationResult?.sourceHead || ''),
       branch: String(operationResult?.branch || ''),
       expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+      monitorCount: Number(operationResult?.monitorCount || 0),
+      executedCount: Number(operationResult?.executedCount || 0),
+      unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
+      expectedFailureCount: Number(operationResult?.expectedFailureCount || 0),
+      notificationBatchCount: Number(operationResult?.notificationBatchCount || 0),
+      notificationCount: Number(operationResult?.notificationCount || 0),
+      notificationSurface: String(operationResult?.notificationSurface || ''),
+      externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
+      maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
+      receiptCount: Number(operationResult?.receiptCount || 0),
       watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
       watchdogRecoveryRoute: String(operationResult?.watchdogRecoveryRoute || ''),
       initialHead: String(operationResult?.initialHead || ''),
@@ -159,6 +170,16 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: String(operationResult?.sourceHead || ''),
         branch: String(operationResult?.branch || ''),
         expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+        monitorCount: Number(operationResult?.monitorCount || 0),
+        executedCount: Number(operationResult?.executedCount || 0),
+        unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
+        expectedFailureCount: Number(operationResult?.expectedFailureCount || 0),
+        notificationBatchCount: Number(operationResult?.notificationBatchCount || 0),
+        notificationCount: Number(operationResult?.notificationCount || 0),
+        notificationSurface: String(operationResult?.notificationSurface || ''),
+        externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
+        maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
+        receiptCount: Number(operationResult?.receiptCount || 0),
         targetRequestId: String(operationResult?.targetRequestId || ''),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
@@ -170,6 +191,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         workerFromMain: operationResult?.workerFromMain === true,
         proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
         visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
+        proofRefs: safeProofRefs(operationResult?.proofRefs),
         githubProjectionTruncated: true,
         originalBytes: fullBytes,
       },
@@ -374,6 +396,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     readSharedWorkspaceStatus,
     readMailboxReceipt,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
+    runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
   });
 
   const completedAt = now().toISOString();
