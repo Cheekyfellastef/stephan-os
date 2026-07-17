@@ -8,6 +8,10 @@ import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mj
 import { runBattleBridgeDiagnostics } from '../shared/agents/codexDispatchHostOps.mjs';
 import { createSanitizedSharedWorkspaceProjection } from '../shared/agents/chatGptParticipantBridgeV1.mjs';
 import {
+  DEFAULT_STALE_AFTER_MS,
+  validateSharedWorkspaceRecord,
+} from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
   buildStephanosCapabilityRegistrySummary,
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
@@ -110,6 +114,16 @@ function safeConveyorAction(value) {
   return normalized;
 }
 
+function safeTimestamp(value) {
+  const ms = Date.parse(String(value || ''));
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+}
+
+function safeNonNegativeNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+}
+
 function conveyorProjection(operationResult = {}) {
   return Object.freeze({
     decision: safeConveyorDecision(operationResult?.decision),
@@ -119,6 +133,9 @@ function conveyorProjection(operationResult = {}) {
     completedItemIds: safeConveyorIds(operationResult?.completedItemIds),
     remainingItemIds: safeConveyorIds(operationResult?.remainingItemIds),
     exactNextAction: safeConveyorAction(operationResult?.exactNextAction),
+    statusTimestampUtc: safeTimestamp(operationResult?.statusTimestampUtc),
+    statusAgeMs: safeNonNegativeNumber(operationResult?.statusAgeMs),
+    staleAfterMs: safeNonNegativeNumber(operationResult?.staleAfterMs),
     oneActiveMissionEnforced: operationResult?.oneActiveMissionEnforced === true,
     duplicateCodexDispatchAllowed: operationResult?.duplicateCodexDispatchAllowed === true,
     mergeAuthority: operationResult?.mergeAuthority === true,
@@ -379,7 +396,12 @@ async function readSharedWorkspaceStatus(command = {}) {
   };
 }
 
-export function createSanitizedCriticalBacklogStatusProjection(record = {}) {
+export function createSanitizedCriticalBacklogStatusProjection(record = {}, {
+  nowMs = Date.now(),
+  staleAfterMs = DEFAULT_STALE_AFTER_MS,
+} = {}) {
+  const statusTimestampUtc = safeTimestamp(record?.timestampUtc || record?.statusTimestampUtc);
+  const recordMs = Date.parse(statusTimestampUtc);
   return Object.freeze({
     decision: safeConveyorDecision(record?.decision),
     selectedItemId: safeConveyorId(record?.selectedItemId),
@@ -388,11 +410,36 @@ export function createSanitizedCriticalBacklogStatusProjection(record = {}) {
     completedItemIds: safeConveyorIds(record?.completedItemIds),
     remainingItemIds: safeConveyorIds(record?.remainingItemIds),
     exactNextAction: safeConveyorAction(record?.exactNextAction),
+    statusTimestampUtc,
+    statusAgeMs: Number.isFinite(recordMs) ? Math.max(0, nowMs - recordMs) : 0,
+    staleAfterMs: safeNonNegativeNumber(staleAfterMs),
     oneActiveMissionEnforced: record?.oneActiveMissionEnforced === true,
     duplicateCodexDispatchAllowed: record?.duplicateCodexDispatchAllowed === true,
     mergeAuthority: record?.mergeAuthority === true,
     exactHeadApprovalRequired: record?.exactHeadApprovalRequired === true,
   });
+}
+
+export function validateCriticalBacklogStatusRecord(record = {}, {
+  nowMs = Date.now(),
+  staleAfterMs = DEFAULT_STALE_AFTER_MS,
+} = {}) {
+  const validation = validateSharedWorkspaceRecord(record, { nowMs, staleAfterMs });
+  const projection = createSanitizedCriticalBacklogStatusProjection(record, { nowMs, staleAfterMs });
+  if (!validation.valid) {
+    return Object.freeze({ ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_RECORD_INVALID', validation, ...projection });
+  }
+  if (String(record?.statusId || '') !== 'critical-backlog-conveyor-current'
+    || String(record?.participantId || '') !== 'critical-backlog-conveyor') {
+    return Object.freeze({ ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_IDENTITY_MISMATCH', validation, ...projection });
+  }
+  if (!projection.decision) {
+    return Object.freeze({ ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_DECISION_INVALID', validation, ...projection });
+  }
+  if (validation.stale) {
+    return Object.freeze({ ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_STALE', validation, ...projection });
+  }
+  return Object.freeze({ ok: true, blocker: '', validation, ...projection });
 }
 
 async function readCriticalBacklogStatus(command = {}) {
@@ -413,19 +460,23 @@ async function readCriticalBacklogStatus(command = {}) {
   } catch {
     return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_JSON_INVALID' };
   }
-  if (String(record?.statusId || '') !== 'critical-backlog-conveyor-current'
-    || String(record?.participantId || '') !== 'critical-backlog-conveyor') {
-    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_IDENTITY_MISMATCH' };
-  }
-  const projection = createSanitizedCriticalBacklogStatusProjection(record);
-  if (!projection.decision) {
-    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_DECISION_INVALID' };
+  const status = validateCriticalBacklogStatusRecord(record);
+  if (!status.ok) {
+    return {
+      ...identity,
+      ...status,
+      validation: undefined,
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+    };
   }
   return {
     ...identity,
+    ...status,
+    validation: undefined,
     ok: true,
     finalVerdict: 'CRITICAL_BACKLOG_STATUS_READY',
-    ...projection,
     arbitraryFilesystemAccess: false,
     commandExecutionAccess: false,
     sourceMutationAccess: false,
