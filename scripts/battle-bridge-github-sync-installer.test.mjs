@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 const installPath = new URL('./windows/install-battle-bridge-github-sync.ps1', import.meta.url);
 const statusPath = new URL('./windows/status-battle-bridge-github-sync.ps1', import.meta.url);
 const uninstallPath = new URL('./windows/uninstall-battle-bridge-github-sync.ps1', import.meta.url);
+const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-sync-hidden.ps1', import.meta.url);
 
 function parameterBlock(source) {
   const match = source.match(/param\(([^)]*)\)/s);
@@ -15,13 +16,24 @@ test('installer exposes only StartNow and registers hidden limited fixed task', 
   const source = await readFile(installPath, 'utf8');
   assert.deepEqual([...parameterBlock(source).matchAll(/\[switch\]\s*\$(\w+)/g)].map((match) => match[1]), ['StartNow']);
   assert.match(source, /Stephanos Battle Bridge GitHub Sync/);
-  assert.match(source, /New-ScheduledTaskAction -Execute \$nodeExe/);
-  assert.match(source, /battle-bridge-github-sync-executor\.mjs/);
+  assert.match(source, /New-ScheduledTaskAction -Execute \$wscriptExe/);
+  assert.match(source, /run-stephanos-scheduled-task-windowless\.vbs/);
+  assert.match(source, /\/\/B \/\/NoLogo/);
+  assert.match(source, /github-sync/);
   assert.match(source, /-RepetitionInterval \(New-TimeSpan -Minutes 15\)/);
   assert.match(source, /-AtLogOn/);
   assert.match(source, /-Hidden/);
   assert.match(source, /-RunLevel Limited/);
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression|Start-Process powershell/i);
+});
+
+test('GitHub sync headless launcher pins the canonical fixed executor', async () => {
+  const source = await readFile(hiddenLauncherPath, 'utf8');
+  assert.match(source, /Documents\\GitHub\\stephan-os/);
+  assert.match(source, /battle-bridge-github-sync-executor\.mjs/);
+  assert.match(source, /Get-Command node\.exe/);
+  assert.match(source, /\*> \$null/);
+  assert.doesNotMatch(source, /\[string\]\s*\$|Invoke-Expression|Start-Process|cmd\.exe/i);
 });
 
 test('status probe is read-only and reports canonical receipt surface', async () => {

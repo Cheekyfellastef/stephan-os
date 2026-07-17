@@ -75,6 +75,25 @@ test('no-change run fetches safely and publishes auditable external receipt', as
   } finally { await rm(fx.root, { recursive: true, force: true }); }
 });
 
+test('runtime-only dist dirt is counted without publishing forbidden generated paths', async () => {
+  const fx = await fixture();
+  try {
+    const git = fakeGit({ status: ' M apps/stephanos/dist/index.html\n?? apps/stephanos/dist/assets/generated.js\n' });
+    const result = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.expectedPaths, git, now: new Date('2026-07-14T20:00:30Z') });
+    assert.equal(result.ok, true);
+    assert.equal(result.evaluation.classification, SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE);
+    assert.deepEqual(result.evaluation.dirt.runtimeOnly, [
+      'apps/stephanos/dist/index.html',
+      'apps/stephanos/dist/assets/generated.js',
+    ]);
+    const status = await readStatus(fx.workspaceRoot);
+    assert.equal(status.dirtClassification.runtimeOnlyCount, 2);
+    assert.equal(status.dirtClassification.blocksSync, false);
+    assert.equal(status.dirtClassification.pathValuesPublished, false);
+    assert.doesNotMatch(JSON.stringify(status), /apps\/stephanos\/dist/);
+  } finally { await rm(fx.root, { recursive: true, force: true }); }
+});
+
 test('clean fast-forward applies only ff-only source update then stops for refresh proof', async () => {
   const fx = await fixture();
   try {
