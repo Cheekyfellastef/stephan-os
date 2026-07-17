@@ -210,13 +210,15 @@ try {
         if ([string]$task.State -eq 'Running') {
             Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             if (-not (Wait-Until -Seconds 30 -Condition {
-                $taskStopped = [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
-                $oldProcessStopped = (-not $oldWorker) -or (-not (Get-CimInstance Win32_Process -Filter "ProcessId = $($oldWorker.ProcessId)" -ErrorAction SilentlyContinue))
-                return $taskStopped -and $oldProcessStopped
-            })) { Stop-WithBlocker 'MISSION_WORKER_TASK_OR_PROCESS_DID_NOT_STOP' }
+                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
+            })) { Stop-WithBlocker 'MISSION_WORKER_TASK_DID_NOT_STOP' }
         }
-        elseif ($oldWorker) {
-            Stop-WithBlocker 'MISSION_WORKER_PROCESS_OUTSIDE_RUNNING_TASK'
+        if ($oldWorker -and (Get-CimInstance Win32_Process -Filter "ProcessId = $($oldWorker.ProcessId)" -ErrorAction SilentlyContinue)) {
+            Stop-Process -Id $oldWorker.ProcessId -Force -ErrorAction Stop
+            $terminatedVerifiedOwnedProcess = $true
+            if (-not (Wait-Until -Seconds 30 -Condition {
+                -not (Get-CimInstance Win32_Process -Filter "ProcessId = $($oldWorker.ProcessId)" -ErrorAction SilentlyContinue)
+            })) { Stop-WithBlocker 'MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP' }
         }
         Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition {
