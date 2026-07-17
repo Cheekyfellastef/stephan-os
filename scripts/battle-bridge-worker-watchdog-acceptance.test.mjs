@@ -12,6 +12,7 @@ import {
 
 const sourcePath = new URL('./battle-bridge-worker-watchdog-acceptance.mjs', import.meta.url);
 const expectedHead = 'ffc7f5b5f6f0ac826c3f5b390b8eb60f414e3743';
+const previousHead = '704f64a1662de33bfd3ac2ff6531ad296bf5e846';
 const repoRoot = '/canonical/Documents/GitHub/stephan-os';
 const workspaceRoot = '/canonical/Documents/Stephanos-openclaw-workspace';
 const paths = Object.freeze({
@@ -22,7 +23,7 @@ const paths = Object.freeze({
   watchdogStatusPath: `${workspaceRoot}/status/battle-bridge-worker-watchdog-current.json`,
 });
 
-function healthyObservation(pid, timestampUtc = new Date().toISOString()) {
+function healthyObservation(pid, timestampUtc = new Date().toISOString(), headSha = expectedHead) {
   return {
     scheduledTask: {
       taskName: APPROVED_WORKER_TASK,
@@ -39,14 +40,14 @@ function healthyObservation(pid, timestampUtc = new Date().toISOString()) {
       timestampUtc,
       repositoryRoot: repoRoot,
       branch: 'main',
-      headSha: expectedHead,
+      headSha,
       taskName: APPROVED_WORKER_TASK,
       pid,
     },
   };
 }
 
-function downObservation() {
+function downObservation(timestampUtc = new Date().toISOString()) {
   return {
     scheduledTask: {
       taskName: APPROVED_WORKER_TASK,
@@ -60,10 +61,10 @@ function downObservation() {
       commandLineMatchesCanonicalWorker: false,
     },
     heartbeat: {
-      timestampUtc: new Date().toISOString(),
+      timestampUtc,
       repositoryRoot: repoRoot,
       branch: 'main',
-      headSha: expectedHead,
+      headSha: previousHead,
       taskName: APPROVED_WORKER_TASK,
       pid: 101,
     },
@@ -84,7 +85,7 @@ function common(overrides = {}) {
   };
 }
 
-test('canonical worker observation binds task, command, heartbeat, repository and exact head', () => {
+test('canonical worker observation binds task, command, heartbeat, repository and exact-head policy', () => {
   const result = assessCanonicalWorkerObservation(healthyObservation(101), {
     expectedHead,
     expectedRepoRoot: repoRoot,
@@ -92,21 +93,34 @@ test('canonical worker observation binds task, command, heartbeat, repository an
   });
   assert.equal(result.ok, true);
   assert.equal(result.pid, 101);
+  assert.equal(result.exactHeadMatch, true);
 
-  const wrongHead = assessCanonicalWorkerObservation({
-    ...healthyObservation(101),
-    heartbeat: { ...healthyObservation(101).heartbeat, headSha: '0'.repeat(40) },
-  }, {
+  const oldHeadObservation = healthyObservation(101, new Date().toISOString(), previousHead);
+  const exactRequired = assessCanonicalWorkerObservation(oldHeadObservation, {
     expectedHead,
     expectedRepoRoot: repoRoot,
     nowMs: Date.now(),
   });
-  assert.equal(wrongHead.ok, false);
-  assert.ok(wrongHead.blockers.includes('WORKER_HEARTBEAT_HEAD_MISMATCH'));
+  assert.equal(exactRequired.ok, false);
+  assert.ok(exactRequired.blockers.includes('WORKER_HEARTBEAT_HEAD_MISMATCH'));
+
+  const canonicalPreMergeAllowed = assessCanonicalWorkerObservation(oldHeadObservation, {
+    expectedHead,
+    requireExactHead: false,
+    expectedRepoRoot: repoRoot,
+    nowMs: Date.now(),
+  });
+  assert.equal(canonicalPreMergeAllowed.ok, true);
+  assert.equal(canonicalPreMergeAllowed.exactHeadMatch, false);
+  assert.equal(canonicalPreMergeAllowed.headSha, previousHead);
 });
 
-test('runs one verified kill and proves direct watchdog detect, restart, recovery and Shared Workspace publication', async () => {
-  const observations = [healthyObservation(101), downObservation(), healthyObservation(202)];
+test('runs one verified kill from a canonical pre-merge worker to exact-head recovery and Shared Workspace proof', async () => {
+  const observations = [
+    healthyObservation(101, new Date().toISOString(), previousHead),
+    downObservation(),
+    healthyObservation(202),
+  ];
   const killed = [];
   const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
     inspectWorker: () => ({ ok: true, data: observations.shift() }),
@@ -129,6 +143,8 @@ test('runs one verified kill and proves direct watchdog detect, restart, recover
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'WORKER_WATCHDOG_ACCEPTANCE_PASS');
   assert.equal(result.watchdogRecoveryRoute, 'direct-watchdog-run');
+  assert.equal(result.initialHead, previousHead);
+  assert.equal(result.recoveredHead, expectedHead);
   assert.equal(result.initialPid, 101);
   assert.equal(result.recoveredPid, 202);
   assert.equal(result.workerKilled, true);
@@ -143,17 +159,24 @@ test('runs one verified kill and proves direct watchdog detect, restart, recover
 
 test('accepts fresh installed-watchdog status when the scheduled task wins the recovery race', async () => {
   const killedAtMs = Date.now();
-  const observations = [healthyObservation(101), downObservation(), healthyObservation(202)];
+  const timestampUtc = new Date(killedAtMs).toISOString();
+  const observations = [
+    healthyObservation(101, timestampUtc, previousHead),
+    downObservation(timestampUtc),
+    healthyObservation(202, timestampUtc),
+  ];
+  let directRunCalls = 0;
   const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
+    now: new Date(killedAtMs),
     inspectWorker: () => ({ ok: true, data: observations.shift() }),
     killWorker: (pid) => ({ ok: true, pid }),
     clock: () => killedAtMs,
-    runWatchdog: async () => ({
-      ok: false,
-      classification: 'WORKER_WATCHDOG_LIVE_LOCK',
-    }),
+    runWatchdog: async () => {
+      directRunCalls += 1;
+      return { ok: false, classification: 'WORKER_WATCHDOG_LIVE_LOCK' };
+    },
     readWatchdogStatus: async () => ({
-      timestampUtc: new Date(killedAtMs).toISOString(),
+      timestampUtc,
       classification: 'WORKER_WATCHDOG_RECOVERED',
       supervisorDetectedWorkerDown: true,
       supervisorRestartedWorker: true,
@@ -171,6 +194,7 @@ test('accepts fresh installed-watchdog status when the scheduled task wins the r
   assert.equal(result.watchdogRecoveryRoute, 'installed-watchdog-status');
   assert.equal(result.initialPid, 101);
   assert.equal(result.recoveredPid, 202);
+  assert.equal(directRunCalls, 0);
 });
 
 test('fails before kill when the observed worker is not canonical and healthy', async () => {
