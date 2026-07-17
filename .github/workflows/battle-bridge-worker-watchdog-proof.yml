@@ -9,6 +9,7 @@ on:
       - 'scripts/remote-codex-task-visibility-observer*.mjs'
       - 'scripts/remote-codex-github-mirror-publisher*.mjs'
       - 'shared/agents/battleBridgeGitHubCommandMailbox*.mjs'
+      - 'shared/agents/stephanosCapabilityRegistry*.mjs'
       - 'shared/agents/chatGptParticipantBridgeV1*.mjs'
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
@@ -24,6 +25,7 @@ on:
       - 'scripts/remote-codex-task-visibility-observer*.mjs'
       - 'scripts/remote-codex-github-mirror-publisher*.mjs'
       - 'shared/agents/battleBridgeGitHubCommandMailbox*.mjs'
+      - 'shared/agents/stephanosCapabilityRegistry*.mjs'
       - 'shared/agents/chatGptParticipantBridgeV1*.mjs'
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
@@ -61,6 +63,7 @@ jobs:
           node --check scripts/remote-codex-task-visibility-observer.mjs
           node --check scripts/remote-codex-github-mirror-publisher.mjs
           node --check shared/agents/battleBridgeGitHubCommandMailbox.mjs
+          node --check shared/agents/stephanosCapabilityRegistry.mjs
           node --check shared/agents/chatGptParticipantBridgeV1.mjs
           node --check shared/agents/remoteCodexTaskVisibility.mjs
           node --check scripts/mission-orchestrator-worker-heartbeat.mjs
@@ -99,8 +102,8 @@ jobs:
       - name: Test watchdog executor and acceptance lane
         run: node --test scripts/battle-bridge-worker-watchdog.test.mjs scripts/battle-bridge-worker-watchdog-acceptance.test.mjs
 
-      - name: Test mailbox contract and runner
-        run: node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs scripts/battle-bridge-github-command-mailbox.test.mjs
+      - name: Test mailbox contract, capability registry and runner
+        run: node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs shared/agents/stephanosCapabilityRegistry.test.mjs scripts/battle-bridge-github-command-mailbox.test.mjs
 
       - name: Test participant bridge contract and live relay
         run: node --test shared/agents/chatGptParticipantBridgeV1.test.mjs scripts/chatgpt-shared-workspace-github-relay.test.mjs
