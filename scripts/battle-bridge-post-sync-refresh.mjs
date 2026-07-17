@@ -10,6 +10,7 @@ import {
   buildPostSyncRefreshProjection,
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
+  parseGitChangedPathStatus,
 } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import {
   appendWorkspaceJsonl,
@@ -105,11 +106,12 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
     },
     changedPaths({ beforeHead, afterHead, repoRoot }) {
       if (!isSafeHead(beforeHead) || !isSafeHead(afterHead)) return { ok: false, blocker: 'POST_SYNC_HEADS_INVALID', paths: [] };
-      const diff = fixedRun(gitCommand, ['diff', '--name-only', '--diff-filter=ACMRT', beforeHead, afterHead, '--'], { cwd: repoRoot, spawnSyncFn });
+      const diff = fixedRun(gitCommand, ['diff', '--name-status', '--find-renames', '--diff-filter=ACDMRT', beforeHead, afterHead, '--'], { cwd: repoRoot, spawnSyncFn });
       if (!diff.ok) return { ok: false, blocker: 'POST_SYNC_CHANGED_PATHS_READ_FAILED', paths: [] };
-      const paths = splitLines(diff.stdout);
-      if (paths.length > MAX_CHANGED_PATHS) return { ok: false, blocker: 'POST_SYNC_CHANGED_PATHS_LIMIT_EXCEEDED', paths: [] };
-      return { ok: true, paths };
+      const parsed = parseGitChangedPathStatus(diff.stdout);
+      if (!parsed.ok) return parsed;
+      if (parsed.paths.length > MAX_CHANGED_PATHS) return { ok: false, blocker: 'POST_SYNC_CHANGED_PATHS_LIMIT_EXCEEDED', paths: [] };
+      return { ok: true, paths: parsed.paths };
     },
     async refreshUi({ afterHead }) {
       const result = await refreshUiFn();
