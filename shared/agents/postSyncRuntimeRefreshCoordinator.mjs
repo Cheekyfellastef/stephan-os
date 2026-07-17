@@ -72,6 +72,16 @@ const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
   'system/workspace.js',
 ]);
 
+const UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS = new Set([
+  'scripts/build-stephanos-ui.mjs',
+  'scripts/clean-stephanos-dist.mjs',
+  'scripts/stephanos-build-utils.mjs',
+  'scripts/verify-stephanos-dist.mjs',
+  'scripts/serve-stephanos-dist.mjs',
+  'scripts/refresh-stephanos-ui-4173.mjs',
+  'scripts/battle-bridge-ignition-supervisor.mjs',
+]);
+
 function normalizePath(value) {
   const path = String(value ?? '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
   if (!path || path.startsWith('/') || path.startsWith('//') || /^[A-Za-z]:\//.test(path)) return '';
@@ -113,6 +123,7 @@ function isOpenClawPath(path) {
 
 function isUiPath(path) {
   return LAUNCHER_CRITICAL_SOURCE_PATHS.has(path)
+    || UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS.has(path)
     || path.startsWith('stephanos-ui/')
     || path.startsWith('system/apps/')
     || (path.startsWith('apps/') && !path.startsWith('apps/stephanos/dist/'))
@@ -123,10 +134,6 @@ function isUiPath(path) {
       'apps/stephanos/app.json',
       'apps/index.json',
       'system/apps/app_validator.js',
-      'scripts/build-stephanos-ui.mjs',
-      'scripts/verify-stephanos-ui.mjs',
-      'scripts/serve-stephanos-dist.mjs',
-      'scripts/refresh-stephanos-ui-4173.mjs',
       'stephanos-ui/package.json',
       'stephanos-ui/package-lock.json',
     ].includes(path)
