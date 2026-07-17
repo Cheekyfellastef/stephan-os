@@ -19,6 +19,7 @@ const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Document
 const workspaceRoot = resolve(process.env.STEPHANOS_SHARED_WORKSPACE_ROOT || join(homedir(), 'Documents', 'Stephanos', 'shared-agent-workspace'));
 const receiptRoot = join(workspaceRoot, 'github-command-mailbox');
 const statePath = join(receiptRoot, 'state.json');
+const MAX_GITHUB_JSON_BYTES = 2 * 1024 * 1024;
 
 function bounded(value, limit = 12000) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
@@ -32,14 +33,30 @@ function run(executable, args, options = {}) {
     shell: false,
     windowsHide: true,
     timeout: options.timeout || 900000,
+    maxBuffer: options.maxBuffer || MAX_GITHUB_JSON_BYTES,
   });
+  const stdout = String(result.stdout || '');
+  const stderr = String(result.stderr || '');
   return {
     ok: !result.error && result.status === 0,
     status: result.status ?? null,
-    stdout: bounded(result.stdout || ''),
-    stderr: bounded(result.stderr || ''),
+    stdout: options.preserveStdout ? stdout : bounded(stdout),
+    stderr: bounded(stderr),
     error: result.error?.message || '',
   };
+}
+
+export function parseBoundedGitHubJson(stdout, maxBytes = MAX_GITHUB_JSON_BYTES) {
+  const text = String(stdout || '');
+  const byteLength = Buffer.byteLength(text, 'utf8');
+  if (byteLength > maxBytes) {
+    throw new Error(`GITHUB_RESPONSE_TOO_LARGE:${byteLength}:${maxBytes}`);
+  }
+  try {
+    return JSON.parse(text || 'null');
+  } catch (error) {
+    throw new Error(`GITHUB_RESPONSE_JSON_INVALID:${error?.message || String(error)}`);
+  }
 }
 
 function loadState() {
@@ -59,9 +76,13 @@ function writeReceipt(receipt) {
 }
 
 function ghJson(args) {
-  const result = run('gh.exe', args, { timeout: 120000 });
+  const result = run('gh.exe', args, {
+    timeout: 120000,
+    preserveStdout: true,
+    maxBuffer: MAX_GITHUB_JSON_BYTES,
+  });
   if (!result.ok) throw new Error(result.error || result.stderr || 'gh command failed');
-  return JSON.parse(result.stdout || 'null');
+  return parseBoundedGitHubJson(result.stdout);
 }
 
 function postReceipt(receipt) {
