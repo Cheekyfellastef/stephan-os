@@ -6,6 +6,11 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mjs';
 import { runBattleBridgeDiagnostics } from '../shared/agents/codexDispatchHostOps.mjs';
+import { createSanitizedSharedWorkspaceProjection } from '../shared/agents/chatGptParticipantBridgeV1.mjs';
+import {
+  buildStephanosCapabilityRegistryProjection,
+  validateStephanosCapabilityRegistry,
+} from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
@@ -16,8 +21,9 @@ import {
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
-const workspaceRoot = resolve(process.env.STEPHANOS_SHARED_WORKSPACE_ROOT || join(homedir(), 'Documents', 'Stephanos', 'shared-agent-workspace'));
-const receiptRoot = join(workspaceRoot, 'github-command-mailbox');
+const mailboxWorkspaceRoot = resolve(process.env.STEPHANOS_SHARED_WORKSPACE_ROOT || join(homedir(), 'Documents', 'Stephanos', 'shared-agent-workspace'));
+const sharedWorkspaceRoot = resolve(process.env.STEPHANOS_SHARED_AGENT_WORKSPACE || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'));
+const receiptRoot = join(mailboxWorkspaceRoot, 'github-command-mailbox');
 const statePath = join(receiptRoot, 'state.json');
 const MAX_GITHUB_JSON_BYTES = 2 * 1024 * 1024;
 
@@ -102,11 +108,69 @@ async function installUnattendedSync() {
   return { ...result, installer, fixedCommand: true, arbitraryShellAllowed: false };
 }
 
-async function readDeploymentStatus() {
+function readCanonicalSourceIdentity(command = {}) {
   const source = run('git.exe', ['rev-parse', 'HEAD'], { timeout: 120000 });
   const branch = run('git.exe', ['branch', '--show-current'], { timeout: 120000 });
+  const sourceHead = source.stdout.trim().toLowerCase();
+  const branchName = branch.stdout.trim();
+  if (!source.ok || !branch.ok || !/^[0-9a-f]{40}$/.test(sourceHead)) {
+    return { ok: false, blocker: 'SOURCE_IDENTITY_READ_FAILED', sourceHead: '', branch: branchName || '' };
+  }
+  if (branchName !== 'main') {
+    return { ok: false, blocker: 'SOURCE_BRANCH_NOT_MAIN', sourceHead, branch: branchName };
+  }
+  const expectedHead = String(command.expectedHead || '').trim().toLowerCase();
+  if (expectedHead && expectedHead !== sourceHead) {
+    return { ok: false, blocker: 'EXPECTED_HEAD_MISMATCH', sourceHead, expectedHead, branch: branchName };
+  }
+  return { ok: true, sourceHead, expectedHead, expectedHeadMatch: !expectedHead || expectedHead === sourceHead, branch: branchName };
+}
+
+async function readDeploymentStatus(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
   const task = run('powershell.exe', ['-NoProfile', '-Command', "Get-ScheduledTask -TaskName 'Stephanos Battle Bridge GitHub Sync' -ErrorAction SilentlyContinue | Select-Object TaskName,State | ConvertTo-Json -Compress"], { timeout: 120000 });
-  return { ok: source.ok && branch.ok, sourceHead: source.stdout.trim(), branch: branch.stdout.trim(), task };
+  return { ...identity, task };
+}
+
+async function readCapabilityRegistry(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const registry = buildStephanosCapabilityRegistryProjection({
+    sourceHead: identity.sourceHead,
+    generatedAtUtc: new Date().toISOString(),
+  });
+  const validation = validateStephanosCapabilityRegistry(registry.capabilities);
+  return {
+    ok: validation.valid,
+    blocker: validation.valid ? '' : 'CAPABILITY_REGISTRY_INVALID',
+    finalVerdict: validation.finalVerdict,
+    sourceHead: identity.sourceHead,
+    branch: identity.branch,
+    expectedHeadMatch: identity.expectedHeadMatch,
+    registry,
+  };
+}
+
+async function readSharedWorkspaceStatus(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const projection = await createSanitizedSharedWorkspaceProjection({
+    workspaceRoot: sharedWorkspaceRoot,
+    repoRoot,
+    timestampUtc: new Date().toISOString(),
+  });
+  return {
+    ok: projection.aggregationOk === true,
+    blocker: projection.aggregationOk === true ? '' : 'SHARED_WORKSPACE_STATUS_UNAVAILABLE',
+    finalVerdict: projection.aggregationOk === true ? 'SHARED_WORKSPACE_STATUS_READY' : 'SHARED_WORKSPACE_STATUS_BLOCKED',
+    sourceHead: identity.sourceHead,
+    branch: identity.branch,
+    expectedHeadMatch: identity.expectedHeadMatch,
+    projection,
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  };
 }
 
 export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
@@ -126,13 +190,16 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
   const acceptedAt = now().toISOString();
   let receipt = buildBattleBridgeGitHubCommandReceipt({ command: selected.command, state: 'ACCEPTED', acceptedAt, heartbeatAt: acceptedAt, proofRefs: [selected.commentUrl] });
   const receiptPath = writeReceipt(receipt);
-  postReceipt({ ...receipt, receiptPath });
+  const receiptRef = `receipts/github-command-mailbox/${selected.command.requestId}.json`;
+  postReceipt({ ...receipt, receiptRef });
 
   const execution = await executeBattleBridgeGitHubCommand(selected.command, {
     updateStephanos: (command) => updateStephanosFromChat({ operatorApproval: command.operatorApproval, expectedBranch: 'main' }),
     installUnattendedSync,
     runDiagnostics: () => runBattleBridgeDiagnostics(),
     readDeploymentStatus,
+    readCapabilityRegistry,
+    readSharedWorkspaceStatus,
   });
 
   const completedAt = now().toISOString();
@@ -144,14 +211,14 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     completedAt,
     result: execution,
     blocker: execution.blocker || execution.result?.blocker || '',
-    proofRefs: [selected.commentUrl, receiptPath],
+    proofRefs: [selected.commentUrl, receiptRef],
   });
   writeReceipt(receipt);
   state.consumedRequestIds = [...new Set([...(state.consumedRequestIds || []), selected.command.requestId])].slice(-500);
   state.lastReceipt = receipt;
   saveState(state);
-  postReceipt({ ...receipt, receiptPath });
-  return { ...receipt, receiptPath };
+  postReceipt({ ...receipt, receiptRef });
+  return { ...receipt, receiptPath, receiptRef };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
