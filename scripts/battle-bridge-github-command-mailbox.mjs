@@ -27,12 +27,24 @@ const mailboxWorkspaceRoot = resolve(process.env.STEPHANOS_SHARED_WORKSPACE_ROOT
 const sharedWorkspaceRoot = resolve(process.env.STEPHANOS_SHARED_AGENT_WORKSPACE || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'));
 const mailboxStateRoot = join(mailboxWorkspaceRoot, 'github-command-mailbox');
 const canonicalReceiptRoot = join(sharedWorkspaceRoot, 'receipts', 'github-command-mailbox');
+const criticalBacklogStatusPath = join(sharedWorkspaceRoot, 'status', 'critical-backlog-conveyor-current.json');
 const statePath = join(mailboxStateRoot, 'state.json');
 const MAX_GITHUB_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_GITHUB_RECEIPT_JSON_BYTES = 9 * 1024;
 const MAX_LOCAL_RECEIPT_BYTES = 256 * 1024;
+const MAX_CRITICAL_BACKLOG_STATUS_BYTES = 64 * 1024;
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SAFE_PROOF_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
+const SAFE_CONVEYOR_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
+const SAFE_CONVEYOR_DECISIONS = new Set([
+  'CREATE_NEXT_MISSION',
+  'WAIT_ACTIVE_MISSION',
+  'WAIT_EXTERNAL_ACTIVE_MISSION',
+  'BLOCKED_BY_TERMINAL_MISSION',
+  'BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS',
+  'BLOCKED_BY_INVALID_BACKLOG',
+  'BACKLOG_COMPLETE',
+]);
 
 function bounded(value, limit = 12000) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
@@ -76,6 +88,42 @@ function safeProofRefs(value) {
   return Array.isArray(value)
     ? value.map(String).filter((ref) => SAFE_PROOF_REF_PATTERN.test(ref) && !ref.includes('..')).slice(0, 20)
     : [];
+}
+
+function safeConveyorId(value) {
+  const normalized = String(value || '').trim();
+  return SAFE_CONVEYOR_ID_PATTERN.test(normalized) ? normalized : '';
+}
+
+function safeConveyorIds(value) {
+  return Array.isArray(value) ? [...new Set(value.map(safeConveyorId).filter(Boolean))].slice(0, 20) : [];
+}
+
+function safeConveyorDecision(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  return SAFE_CONVEYOR_DECISIONS.has(normalized) ? normalized : '';
+}
+
+function safeConveyorAction(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized.length > 500 || /[\\/]|[A-Za-z]:|\.\./.test(normalized)) return '';
+  return normalized;
+}
+
+function conveyorProjection(operationResult = {}) {
+  return Object.freeze({
+    decision: safeConveyorDecision(operationResult?.decision),
+    selectedItemId: safeConveyorId(operationResult?.selectedItemId),
+    activeMissionId: safeConveyorId(operationResult?.activeMissionId),
+    activePhase: safeConveyorId(operationResult?.activePhase),
+    completedItemIds: safeConveyorIds(operationResult?.completedItemIds),
+    remainingItemIds: safeConveyorIds(operationResult?.remainingItemIds),
+    exactNextAction: safeConveyorAction(operationResult?.exactNextAction),
+    oneActiveMissionEnforced: operationResult?.oneActiveMissionEnforced === true,
+    duplicateCodexDispatchAllowed: operationResult?.duplicateCodexDispatchAllowed === true,
+    mergeAuthority: operationResult?.mergeAuthority === true,
+    exactHeadApprovalRequired: operationResult?.exactHeadApprovalRequired === true,
+  });
 }
 
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
@@ -130,6 +178,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       publicationState: String(operationResult?.publicationState || ''),
       visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
       proofRefs: safeProofRefs(operationResult?.proofRefs),
+      ...conveyorProjection(operationResult),
     }),
     arbitraryFilesystemAccess: false,
     arbitraryShellAllowed: false,
@@ -192,6 +241,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
         visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
         proofRefs: safeProofRefs(operationResult?.proofRefs),
+        ...conveyorProjection(operationResult),
         githubProjectionTruncated: true,
         originalBytes: fullBytes,
       },
@@ -329,6 +379,59 @@ async function readSharedWorkspaceStatus(command = {}) {
   };
 }
 
+export function createSanitizedCriticalBacklogStatusProjection(record = {}) {
+  return Object.freeze({
+    decision: safeConveyorDecision(record?.decision),
+    selectedItemId: safeConveyorId(record?.selectedItemId),
+    activeMissionId: safeConveyorId(record?.activeMissionId),
+    activePhase: safeConveyorId(record?.activePhase),
+    completedItemIds: safeConveyorIds(record?.completedItemIds),
+    remainingItemIds: safeConveyorIds(record?.remainingItemIds),
+    exactNextAction: safeConveyorAction(record?.exactNextAction),
+    oneActiveMissionEnforced: record?.oneActiveMissionEnforced === true,
+    duplicateCodexDispatchAllowed: record?.duplicateCodexDispatchAllowed === true,
+    mergeAuthority: record?.mergeAuthority === true,
+    exactHeadApprovalRequired: record?.exactHeadApprovalRequired === true,
+  });
+}
+
+async function readCriticalBacklogStatus(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  let payload;
+  try {
+    payload = readFileSync(criticalBacklogStatusPath, 'utf8');
+  } catch {
+    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_NOT_FOUND' };
+  }
+  if (Buffer.byteLength(payload, 'utf8') > MAX_CRITICAL_BACKLOG_STATUS_BYTES) {
+    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_TOO_LARGE' };
+  }
+  let record;
+  try {
+    record = JSON.parse(payload);
+  } catch {
+    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_JSON_INVALID' };
+  }
+  if (String(record?.statusId || '') !== 'critical-backlog-conveyor-current'
+    || String(record?.participantId || '') !== 'critical-backlog-conveyor') {
+    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_IDENTITY_MISMATCH' };
+  }
+  const projection = createSanitizedCriticalBacklogStatusProjection(record);
+  if (!projection.decision) {
+    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_DECISION_INVALID' };
+  }
+  return {
+    ...identity,
+    ok: true,
+    finalVerdict: 'CRITICAL_BACKLOG_STATUS_READY',
+    ...projection,
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  };
+}
+
 async function readMailboxReceipt(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -394,6 +497,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     readDeploymentStatus,
     readCapabilityRegistry,
     readSharedWorkspaceStatus,
+    readCriticalBacklogStatus,
     readMailboxReceipt,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
