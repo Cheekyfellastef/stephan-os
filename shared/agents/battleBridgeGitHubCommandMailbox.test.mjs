@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_MARKER,
+  BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
   buildBattleBridgeGitHubCommandReceipt,
   executeBattleBridgeGitHubCommand,
@@ -48,6 +49,15 @@ test('extracts and accepts an owner-authored bounded command', () => {
   assert.equal(validated.command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
 });
 
+test('control-plane read operations are first-class allowlisted commands', () => {
+  assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes('READ_CAPABILITY_REGISTRY'));
+  assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes('READ_SHARED_WORKSPACE_STATUS'));
+  for (const operation of ['READ_CAPABILITY_REGISTRY', 'READ_SHARED_WORKSPACE_STATUS']) {
+    const validated = validateBattleBridgeGitHubCommand(command({ operation }), { authorLogin: 'Cheekyfellastef', now });
+    assert.equal(validated.verdict, 'COMMAND_ACCEPTED');
+  }
+});
+
 test('rejects non-owner, expired, wrong repository, wrong branch and arbitrary operation', () => {
   assert.equal(validateBattleBridgeGitHubCommand(command(), { authorLogin: 'someone-else', now }).blocker, 'COMMAND_AUTHOR_NOT_ALLOWED');
   assert.equal(validateBattleBridgeGitHubCommand(command({ expiresAt: '2026-07-16T22:00:00.000Z' }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'COMMAND_EXPIRED');
@@ -79,6 +89,19 @@ test('dispatches only through the named injected handler', async () => {
   assert.equal(result.ok, true);
   assert.equal(calls, 1);
   assert.equal(result.result.expectedHead, command().expectedHead);
+});
+
+test('dispatches registry and workspace reads through distinct bounded handlers', async () => {
+  const calls = [];
+  const registryResult = await executeBattleBridgeGitHubCommand(command({ operation: 'READ_CAPABILITY_REGISTRY' }), {
+    readCapabilityRegistry: async () => { calls.push('registry'); return { ok: true, finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS' }; },
+  });
+  const workspaceResult = await executeBattleBridgeGitHubCommand(command({ operation: 'READ_SHARED_WORKSPACE_STATUS' }), {
+    readSharedWorkspaceStatus: async () => { calls.push('workspace'); return { ok: true, finalVerdict: 'SHARED_WORKSPACE_STATUS_READY' }; },
+  });
+  assert.deepEqual(calls, ['registry', 'workspace']);
+  assert.equal(registryResult.result.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
+  assert.equal(workspaceResult.result.finalVerdict, 'SHARED_WORKSPACE_STATUS_READY');
 });
 
 test('receipt always records the safety boundary', () => {
