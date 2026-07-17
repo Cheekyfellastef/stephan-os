@@ -10,6 +10,18 @@ import { runBattleBridgeGitHubCommandMailbox } from './battle-bridge-github-comm
 const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DEFAULT_INDEX_HEARTBEAT_INTERVAL_MS = 15_000;
 
+function blockedIndexRefresh() {
+  return Object.freeze({
+    ok: false,
+    blocker: 'MAILBOX_RECEIPT_INDEX_REFRESH_FAILED',
+    finalVerdict: 'MAILBOX_RECEIPT_INDEX_BLOCKED',
+    projection: Object.freeze({ activeReceipt: null, recentReceipts: [] }),
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  });
+}
+
 export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
   platform = process.platform,
   env = process.env,
@@ -50,11 +62,18 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
     });
   }
 
-  const refresh = (timestampUtc) => refreshIndex({
-    root: workspace.root,
-    repoRoot: actualRepoRoot,
-    timestampUtc,
-  });
+  const refresh = async (timestampUtc) => {
+    try {
+      const result = await refreshIndex({
+        root: workspace.root,
+        repoRoot: actualRepoRoot,
+        timestampUtc,
+      });
+      return result && typeof result === 'object' ? result : blockedIndexRefresh();
+    } catch {
+      return blockedIndexRefresh();
+    }
+  };
   const before = await refresh(now().toISOString());
 
   let heartbeatRefreshCount = 0;
@@ -63,12 +82,11 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
   const refreshHeartbeat = () => {
     if (heartbeatInFlight) return heartbeatPromise;
     heartbeatInFlight = true;
-    heartbeatPromise = Promise.resolve(refresh(now().toISOString()))
+    heartbeatPromise = refresh(now().toISOString())
       .then((result) => {
         heartbeatRefreshCount += 1;
         return result;
       })
-      .catch(() => null)
       .finally(() => { heartbeatInFlight = false; });
     return heartbeatPromise;
   };
@@ -79,12 +97,11 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
   let mailbox;
   try {
     mailbox = await runMailbox({ now });
-  } catch (error) {
+  } catch {
     mailbox = {
       ok: false,
       blocker: 'MAILBOX_RUNNER_FAILED',
       finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
-      error: error?.message || String(error),
     };
   } finally {
     clearIntervalFn(timer);
@@ -92,10 +109,15 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
   }
 
   const after = await refresh(now().toISOString());
+  const indexBlocker = !before.ok ? String(before.blocker || 'MAILBOX_RECEIPT_INDEX_BLOCKED')
+    : (!after.ok ? String(after.blocker || 'MAILBOX_RECEIPT_INDEX_BLOCKED') : '');
+  const mailboxBlocker = mailbox?.ok === false ? String(mailbox?.blocker || 'MAILBOX_COMMAND_POLL_BLOCKED') : '';
   const ok = before.ok !== false && mailbox?.ok !== false && after.ok !== false;
   return Object.freeze({
     ok,
-    blocker: !before.ok ? before.blocker : (!mailbox?.ok ? mailbox?.blocker : (!after.ok ? after.blocker : '')),
+    blocker: mailboxBlocker || indexBlocker,
+    mailboxBlocker,
+    indexBlocker,
     finalVerdict: ok ? 'MAILBOX_WITH_RECEIPT_INDEX_READY' : 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
     mailboxVerdict: String(mailbox?.finalVerdict || mailbox?.verdict || ''),
     indexBeforeVerdict: String(before?.finalVerdict || ''),
