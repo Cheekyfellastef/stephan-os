@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   STEPHANOS_CAPABILITIES,
   buildStephanosCapabilityRegistryProjection,
+  buildStephanosCapabilityRegistrySummary,
   findStephanosCapability,
   validateStephanosCapabilityRegistry,
 } from './stephanosCapabilityRegistry.mjs';
@@ -25,6 +26,15 @@ test('projection exposes the universal bootstrap and core routes without machine
   assert.equal(projection.safety.arbitraryShellAllowed, false);
   assert.equal(projection.safety.destructiveGitAllowed, false);
   assert.doesNotMatch(JSON.stringify(projection), MACHINE_PATH_PATTERN);
+});
+
+test('summary remains machine-readable and bounded for GitHub receipts', () => {
+  const summary = buildStephanosCapabilityRegistrySummary({ sourceHead: head, generatedAtUtc: '2026-07-17T12:00:00.000Z' });
+  const json = JSON.stringify(summary);
+  assert.equal(summary.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
+  assert.equal(summary.capabilityCount, STEPHANOS_CAPABILITIES.length);
+  assert.ok(Buffer.byteLength(json, 'utf8') < 8 * 1024);
+  assert.doesNotMatch(json, MACHINE_PATH_PATTERN);
 });
 
 test('mailbox and shared workspace are first-class discoverable capabilities', () => {
