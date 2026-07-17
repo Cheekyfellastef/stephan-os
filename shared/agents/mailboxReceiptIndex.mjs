@@ -84,7 +84,7 @@ function sortTimestamp(receipt = {}) {
 
 export function sanitizeMailboxReceiptForIndex(receipt = {}) {
   const execution = receipt?.result || {};
-  const operationResult = execution?.result || {};
+  const operationResult = execution?.result && typeof execution.result === 'object' ? execution.result : receipt;
   const requestId = safeRequestId(receipt?.requestId);
   if (!requestId) return null;
   return Object.freeze({
@@ -99,7 +99,7 @@ export function sanitizeMailboxReceiptForIndex(receipt = {}) {
     branch: String(operationResult?.branch || receipt?.branch || '') === 'main' ? 'main' : '',
     expectedHeadMatch: operationResult?.expectedHeadMatch === true,
     blocker: safeBlocker(receipt?.blocker || operationResult?.blocker),
-    finalVerdict: safeVerdict(operationResult?.finalVerdict || execution?.verdict),
+    finalVerdict: safeVerdict(operationResult?.finalVerdict || receipt?.finalVerdict || execution?.verdict),
     proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
     monitorCount: safeCount(operationResult?.monitorCount),
     executedCount: safeCount(operationResult?.executedCount),
