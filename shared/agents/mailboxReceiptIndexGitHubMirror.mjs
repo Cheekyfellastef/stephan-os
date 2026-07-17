@@ -9,6 +9,7 @@ export const MAILBOX_RECEIPT_GITHUB_COMMAND_MARKER = 'stephanos-battle-bridge-co
 export const MAILBOX_RECEIPT_GITHUB_RECEIPT_MARKER = 'stephanos-battle-bridge-command-receipt';
 export const MAILBOX_RECEIPT_GITHUB_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const MAILBOX_RECEIPT_GITHUB_ISSUE = 1507;
+export const MAILBOX_RECEIPT_GITHUB_INDEX_AUTHOR = 'github-actions[bot]';
 
 const COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
 const RECEIPT_SCHEMA = 'stephanos.battle-bridge-github-command-receipt.v1';
@@ -74,9 +75,8 @@ export function createTrustedMailboxReceiptIndexFromGitHubComments(comments = []
   return createMailboxReceiptIndexRecord({ receipts, timestampUtc });
 }
 
-export function findTrustedMailboxReceiptIndexComment(comments = [], { ownerLogin } = {}) {
-  const trustedAuthors = new Set([ownerLogin, 'github-actions[bot]'].filter(Boolean));
-  return comments.find((comment) => trustedAuthors.has(comment?.user?.login)
+export function findTrustedMailboxReceiptIndexComment(comments = []) {
+  return comments.find((comment) => comment?.user?.login === MAILBOX_RECEIPT_GITHUB_INDEX_AUTHOR
     && String(comment?.body || '').includes(`<!-- ${MAILBOX_RECEIPT_INDEX_GITHUB_MARKER} -->`)) || null;
 }
 
