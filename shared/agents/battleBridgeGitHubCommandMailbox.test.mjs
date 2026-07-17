@@ -49,7 +49,7 @@ test('extracts and accepts an owner-authored bounded command', () => {
   assert.equal(validated.command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
 });
 
-test('control-plane and explicit watchdog acceptance operations are first-class allowlisted commands', () => {
+test('control-plane, receipt read and watchdog acceptance are first-class allowlisted commands', () => {
   for (const operation of [
     'READ_CAPABILITY_REGISTRY',
     'READ_SHARED_WORKSPACE_STATUS',
@@ -59,6 +59,24 @@ test('control-plane and explicit watchdog acceptance operations are first-class 
     const validated = validateBattleBridgeGitHubCommand(command({ operation }), { authorLogin: 'Cheekyfellastef', now });
     assert.equal(validated.verdict, 'COMMAND_ACCEPTED');
   }
+  const receiptRead = validateBattleBridgeGitHubCommand(command({
+    operation: 'READ_MAILBOX_RECEIPT',
+    targetRequestId: 'req-1291-watchdog-acceptance-20260717T1710Z',
+  }), { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(receiptRead.verdict, 'COMMAND_ACCEPTED');
+  assert.equal(receiptRead.command.targetRequestId, 'req-1291-watchdog-acceptance-20260717T1710Z');
+});
+
+test('receipt target is mandatory, path-safe and forbidden on all other operations', () => {
+  assert.equal(validateBattleBridgeGitHubCommand(command({ operation: 'READ_MAILBOX_RECEIPT' }), {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'COMMAND_TARGET_REQUEST_ID_INVALID');
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    operation: 'READ_MAILBOX_RECEIPT', targetRequestId: '../state.json',
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'COMMAND_TARGET_REQUEST_ID_INVALID');
+  assert.equal(validateBattleBridgeGitHubCommand(command({ targetRequestId: 'req-1507-other1' }), {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED');
 });
 
 test('rejects non-owner, expired, wrong repository, wrong branch and arbitrary operation', () => {
@@ -105,6 +123,23 @@ test('dispatches registry and workspace reads through distinct bounded handlers'
   assert.deepEqual(calls, ['registry', 'workspace']);
   assert.equal(registryResult.result.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
   assert.equal(workspaceResult.result.finalVerdict, 'SHARED_WORKSPACE_STATUS_READY');
+});
+
+test('dispatches a receipt read only through the named bounded handler', async () => {
+  const targetRequestId = 'req-1291-watchdog-acceptance-20260717T1710Z';
+  const calls = [];
+  const result = await executeBattleBridgeGitHubCommand(command({
+    operation: 'READ_MAILBOX_RECEIPT',
+    targetRequestId,
+  }), {
+    readMailboxReceipt: async (input) => {
+      calls.push(input.targetRequestId);
+      return { ok: true, finalVerdict: 'MAILBOX_RECEIPT_READ_READY', targetRequestId };
+    },
+  });
+  assert.deepEqual(calls, [targetRequestId]);
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'MAILBOX_RECEIPT_READ_READY');
 });
 
 test('dispatches watchdog acceptance only through its named bounded handler', async () => {

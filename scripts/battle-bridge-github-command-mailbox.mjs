@@ -29,6 +29,9 @@ const canonicalReceiptRoot = join(sharedWorkspaceRoot, 'receipts', 'github-comma
 const statePath = join(mailboxStateRoot, 'state.json');
 const MAX_GITHUB_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_GITHUB_RECEIPT_JSON_BYTES = 9 * 1024;
+const MAX_LOCAL_RECEIPT_BYTES = 256 * 1024;
+const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const SAFE_PROOF_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 
 function bounded(value, limit = 12000) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
@@ -68,6 +71,62 @@ export function parseBoundedGitHubJson(stdout, maxBytes = MAX_GITHUB_JSON_BYTES)
   }
 }
 
+function safeProofRefs(value) {
+  return Array.isArray(value)
+    ? value.map(String).filter((ref) => SAFE_PROOF_REF_PATTERN.test(ref) && !ref.includes('..')).slice(0, 20)
+    : [];
+}
+
+export function createSanitizedMailboxReceiptProjection(receipt = {}) {
+  const execution = receipt?.result || {};
+  const operationResult = execution?.result || {};
+  return Object.freeze({
+    schemaVersion: String(receipt?.schemaVersion || ''),
+    requestId: String(receipt?.requestId || ''),
+    operation: String(receipt?.operation || ''),
+    state: String(receipt?.state || ''),
+    acceptedAt: String(receipt?.acceptedAt || ''),
+    heartbeatAt: String(receipt?.heartbeatAt || ''),
+    completedAt: String(receipt?.completedAt || ''),
+    blocker: String(receipt?.blocker || operationResult?.blocker || ''),
+    proofRefs: safeProofRefs(receipt?.proofRefs),
+    execution: Object.freeze({
+      ok: execution?.ok !== false,
+      verdict: String(execution?.verdict || ''),
+      operation: String(execution?.operation || receipt?.operation || ''),
+      requestId: String(execution?.requestId || receipt?.requestId || ''),
+    }),
+    operationResult: Object.freeze({
+      ok: operationResult?.ok !== false,
+      blocker: String(operationResult?.blocker || ''),
+      finalVerdict: String(operationResult?.finalVerdict || ''),
+      sourceHead: String(operationResult?.sourceHead || ''),
+      branch: String(operationResult?.branch || ''),
+      expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+      watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
+      watchdogRecoveryRoute: String(operationResult?.watchdogRecoveryRoute || ''),
+      initialHead: String(operationResult?.initialHead || ''),
+      recoveredHead: String(operationResult?.recoveredHead || ''),
+      initialPid: Number(operationResult?.initialPid || 0),
+      recoveredPid: Number(operationResult?.recoveredPid || 0),
+      workerKilled: operationResult?.workerKilled === true,
+      workerKilledObserved: operationResult?.workerKilledObserved === true,
+      supervisorDetectedWorkerDown: operationResult?.supervisorDetectedWorkerDown === true,
+      supervisorRestartedWorker: operationResult?.supervisorRestartedWorker === true,
+      workerRecovered: operationResult?.workerRecovered === true,
+      workerFromMain: operationResult?.workerFromMain === true,
+      proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
+      publicationState: String(operationResult?.publicationState || ''),
+      visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
+      proofRefs: safeProofRefs(operationResult?.proofRefs),
+    }),
+    arbitraryFilesystemAccess: false,
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    sourceMutationAllowed: false,
+  });
+}
+
 export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
@@ -87,7 +146,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: String(receipt?.heartbeatAt || ''),
     completedAt: String(receipt?.completedAt || ''),
     blocker: String(receipt?.blocker || operationResult?.blocker || ''),
-    proofRefs: Array.isArray(receipt?.proofRefs) ? receipt.proofRefs.slice(0, 20).map(String) : [],
+    proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
       ok: execution?.ok !== false,
       verdict: String(execution?.verdict || ''),
@@ -100,6 +159,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: String(operationResult?.sourceHead || ''),
         branch: String(operationResult?.branch || ''),
         expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+        targetRequestId: String(operationResult?.targetRequestId || ''),
+        receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
         recoveredPid: Number(operationResult?.recoveredPid || 0),
         workerKilledObserved: operationResult?.workerKilledObserved === true,
@@ -246,6 +307,44 @@ async function readSharedWorkspaceStatus(command = {}) {
   };
 }
 
+async function readMailboxReceipt(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const targetRequestId = String(command.targetRequestId || '');
+  if (!SAFE_REQUEST_ID_PATTERN.test(targetRequestId)) {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TARGET_INVALID' };
+  }
+  const receiptPath = join(canonicalReceiptRoot, `${targetRequestId}.json`);
+  let payload;
+  try {
+    payload = readFileSync(receiptPath, 'utf8');
+  } catch {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
+  }
+  if (Buffer.byteLength(payload, 'utf8') > MAX_LOCAL_RECEIPT_BYTES) {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TOO_LARGE', targetRequestId };
+  }
+  let receipt;
+  try {
+    receipt = JSON.parse(payload);
+  } catch {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_JSON_INVALID', targetRequestId };
+  }
+  if (String(receipt?.requestId || '') !== targetRequestId) {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
+  }
+  return {
+    ...identity,
+    ok: true,
+    finalVerdict: 'MAILBOX_RECEIPT_READ_READY',
+    targetRequestId,
+    receipt: createSanitizedMailboxReceiptProjection(receipt),
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  };
+}
+
 export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
   if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
@@ -273,6 +372,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     readDeploymentStatus,
     readCapabilityRegistry,
     readSharedWorkspaceStatus,
+    readMailboxReceipt,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
   });
 

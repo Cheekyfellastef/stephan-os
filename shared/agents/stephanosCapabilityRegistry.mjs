@@ -1,5 +1,5 @@
 export const STEPHANOS_CAPABILITY_REGISTRY_SCHEMA = 'stephanos.capability-registry.v1';
-export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.0.1';
+export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.0.2';
 export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 const SAFE_CAPABILITY_ID = /^[a-z0-9][a-z0-9.-]{2,80}$/;
@@ -79,6 +79,7 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
       'READ_DEPLOYMENT_STATUS',
       'READ_CAPABILITY_REGISTRY',
       'READ_SHARED_WORKSPACE_STATUS',
+      'READ_MAILBOX_RECEIPT',
       'RUN_WORKER_WATCHDOG_ACCEPTANCE',
     ],
     requiresOperatorApproval: true,
