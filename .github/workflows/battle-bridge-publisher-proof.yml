@@ -5,16 +5,19 @@ on:
     paths:
       - 'scripts/battle-bridge-shared-workspace-publisher.mjs'
       - 'scripts/battle-bridge-shared-workspace-publisher.test.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - 'scripts/battle-bridge-monitor-multiplexer-canary.mjs'
       - 'scripts/battle-bridge-monitor-multiplexer-canary.test.mjs'
       - 'scripts/guard-import-structure.mjs'
       - 'tests/import-guard.test.mjs'
       - 'shared/agents/sharedAgentWorkspaceStore.mjs'
       - 'shared/agents/sharedAgentWorkspaceStore.test.mjs'
+      - 'shared/agents/battleBridgeGitHubCommandMailbox.mjs'
       - 'shared/agents/monitorMultiplexer.mjs'
       - 'shared/agents/monitorMultiplexer.test.mjs'
       - 'shared/agents/monitorMultiplexerCanary.mjs'
       - 'shared/agents/monitorMultiplexerCanary.test.mjs'
+      - 'shared/agents/monitorMultiplexerMailboxRoute.test.mjs'
       - 'shared/agents/verificationHarness.mjs'
       - 'shared/agents/verificationHarness.test.mjs'
       - 'shared/agents/verificationHarnessWorkspace.test.mjs'
@@ -59,6 +62,9 @@ jobs:
 
       - name: Monitor multiplexer canary proof
         run: npm run stephanos:monitor-multiplexer:canary:test
+
+      - name: Monitor multiplexer mailbox route proof
+        run: node --test shared/agents/monitorMultiplexerMailboxRoute.test.mjs
 
       - name: Shared Workspace and Verification Harness proof
         run: >-
