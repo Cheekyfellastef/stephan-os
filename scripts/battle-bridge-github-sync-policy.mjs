@@ -148,6 +148,7 @@ export function evaluateSyncPolicy(facts) {
 }
 
 function boundedRecord(kind, evaluation, heads = {}, proofRefs = []) {
+  const dirt = evaluation.dirt || {};
   return Object.freeze({
     kind,
     workspaceLocation: 'shared-agent-workspace-external-to-repo',
@@ -155,7 +156,15 @@ function boundedRecord(kind, evaluation, heads = {}, proofRefs = []) {
     remoteHeadObserved: heads.remoteHeadObserved ?? heads.remoteHead ?? null,
     localHeadAfter: heads.localHeadAfter ?? null,
     classification: evaluation.classification,
-    dirtClassification: evaluation.dirt,
+    dirtClassification: Object.freeze({
+      trackedSourceCount: Array.isArray(dirt.trackedSource) ? dirt.trackedSource.length : 0,
+      untrackedSourceCount: Array.isArray(dirt.untrackedSource) ? dirt.untrackedSource.length : 0,
+      runtimeOnlyCount: Array.isArray(dirt.runtimeOnly) ? dirt.runtimeOnly.length : 0,
+      generatedSourceCount: Array.isArray(dirt.generatedSource) ? dirt.generatedSource.length : 0,
+      unknownCount: Array.isArray(dirt.unknown) ? dirt.unknown.length : 0,
+      blocksSync: dirt.blocksSync === true,
+      pathValuesPublished: false,
+    }),
     operatorNeeded: evaluation.operatorNeeded,
     exactNextAction: evaluation.exactNextAction,
     performsGitMutation: evaluation.performsGitMutation,

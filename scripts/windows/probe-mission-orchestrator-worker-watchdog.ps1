@@ -15,6 +15,7 @@ if (-not $env:USERPROFILE) {
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
 $workerPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\mission-orchestrator-worker-supervised.mjs'))
 $workerLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\start-mission-orchestrator-worker.ps1'))
+$windowlessLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $heartbeatPath = Join-Path $workspaceRoot 'status\mission-orchestrator-worker-heartbeat.json'
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -29,16 +30,22 @@ function Test-CanonicalWorkerTaskAction {
 
     $action = $ScheduledTask.Actions[0]
     $execute = [string]$action.Execute
-    $arguments = [string]$action.Arguments
+    $commandLine = [string]$action.Arguments
     $executeLeaf = [System.IO.Path]::GetFileName($execute)
-    if ($executeLeaf -notin @('powershell.exe', 'pwsh.exe')) { return $false }
+    if ($executeLeaf -ne 'wscript.exe') { return $false }
 
-    $escapedLauncher = [regex]::Escape($workerLauncherPath)
-    $launcherPattern = '(?i)(?:^|\s)-File\s+(?:"' + $escapedLauncher + '"|' + $escapedLauncher + ')(?:\s|$)'
-    if ($arguments -notmatch $launcherPattern) { return $false }
-    if ($arguments -notmatch '(?i)(?:^|\s)-NoProfile(?:\s|$)') { return $false }
-    if ($arguments -notmatch '(?i)(?:^|\s)-ExecutionPolicy\s+Bypass(?:\s|$)') { return $false }
-    return $true
+    $arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $commandLine)
+    if ($arguments.Count -ne 4) { return $false }
+    if ([string]$arguments[0] -ne '//B') { return $false }
+    if ([string]$arguments[1] -ne '//NoLogo') { return $false }
+    try {
+        $observedLauncherPath = [System.IO.Path]::GetFullPath([string]$arguments[2])
+    }
+    catch {
+        return $false
+    }
+    if (-not [string]::Equals($observedLauncherPath, $windowlessLauncherPath, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    return [string]$arguments[3] -eq 'mission-worker'
 }
 
 function ConvertFrom-WindowsCommandLine {

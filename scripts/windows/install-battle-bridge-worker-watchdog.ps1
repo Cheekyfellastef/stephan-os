@@ -16,13 +16,13 @@ $expectedRepoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'D
 if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) {
     throw "Worker watchdog installer must run from the canonical checkout: $expectedRepoRoot"
 }
-$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-worker-watchdog-runner.mjs')).Path
-$nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
-if (-not $nodeCommand) { $nodeCommand = Get-Command node -ErrorAction Stop }
-$nodeExe = $nodeCommand.Source
+$launcherPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs')).Path
+$wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
+if (-not (Test-Path -LiteralPath $wscriptExe -PathType Leaf)) { throw "Windowless task host is missing: $wscriptExe" }
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$escapedRunnerPath = $runnerPath.Replace('"', '""')
-$action = New-ScheduledTaskAction -Execute $nodeExe -Argument "`"$escapedRunnerPath`""
+$escapedLauncherPath = $launcherPath.Replace('"', '""')
+$actionArguments = "//B //NoLogo `"$escapedLauncherPath`" worker-watchdog"
+$action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger `
     -Once `
@@ -56,8 +56,8 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Missio
     taskName = $taskName
     installed = $true
     currentUser = $currentUser
-    executable = $nodeExe
-    runnerPath = $runnerPath
+    executable = $wscriptExe
+    launcherPath = $launcherPath
     intervalMinutes = 1
     atLogon = $true
     hidden = $true
@@ -68,4 +68,5 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Missio
     arbitraryTaskNameAllowed = $false
     arbitraryShellAllowed = $false
     visiblePowerShellRequired = $false
+    headlessLauncher = $true
 } | ConvertTo-Json -Depth 4

@@ -7,6 +7,7 @@ const statusPath = new URL('./windows/status-battle-bridge-worker-watchdog.ps1',
 const uninstallPath = new URL('./windows/uninstall-battle-bridge-worker-watchdog.ps1', import.meta.url);
 const probePath = new URL('./windows/probe-mission-orchestrator-worker-watchdog.ps1', import.meta.url);
 const workerStartPath = new URL('./windows/start-mission-orchestrator-worker.ps1', import.meta.url);
+const hiddenLauncherPath = new URL('./windows/run-battle-bridge-worker-watchdog-hidden.ps1', import.meta.url);
 
 function parameterBlock(source) {
   const match = source.match(/param\(([^)]*)\)/s);
@@ -17,8 +18,10 @@ test('installer exposes only StartNow and registers hidden limited fixed watchdo
   const source = await readFile(installPath, 'utf8');
   assert.deepEqual([...parameterBlock(source).matchAll(/\[switch\]\s*\$(\w+)/g)].map((match) => match[1]), ['StartNow']);
   assert.match(source, /Stephanos Mission Orchestrator Worker Watchdog/);
-  assert.match(source, /New-ScheduledTaskAction -Execute \$nodeExe/);
-  assert.match(source, /battle-bridge-worker-watchdog-runner\.mjs/);
+  assert.match(source, /New-ScheduledTaskAction -Execute \$wscriptExe/);
+  assert.match(source, /run-stephanos-scheduled-task-windowless\.vbs/);
+  assert.match(source, /\/\/B \/\/NoLogo/);
+  assert.match(source, /worker-watchdog/);
   assert.match(source, /remoteCodexVisibilityReconciler = \$true/);
   assert.match(source, /-RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
   assert.match(source, /-AtLogOn/);
@@ -26,6 +29,15 @@ test('installer exposes only StartNow and registers hidden limited fixed watchdo
   assert.match(source, /-RunLevel Limited/);
   assert.match(source, /-MultipleInstances IgnoreNew/);
   assert.doesNotMatch(source, /Invoke-Expression|Start-Process powershell|Stop-Process|Restart-Computer|shutdown\.exe/i);
+});
+
+test('watchdog headless launcher pins the canonical fixed Node runner', async () => {
+  const source = await readFile(hiddenLauncherPath, 'utf8');
+  assert.match(source, /Documents\\GitHub\\stephan-os/);
+  assert.match(source, /battle-bridge-worker-watchdog-runner\.mjs/);
+  assert.match(source, /Get-Command node\.exe/);
+  assert.match(source, /\*> \$null/);
+  assert.doesNotMatch(source, /\[string\]\s*\$|Invoke-Expression|Start-Process|cmd\.exe/i);
 });
 
 test('operator status script is read-only and surfaces watchdog plus worker heartbeat', async () => {
@@ -51,6 +63,7 @@ test('internal probe permits only inspect or fixed canonical task start and neve
   assert.match(source, /ValidateSet\('Inspect', 'StartApprovedWorkerTask'\)/);
   assert.match(source, /\$taskName = 'Stephanos Mission Orchestrator Worker'/);
   assert.match(source, /\$workerLauncherPath/);
+  assert.match(source, /\$windowlessLauncherPath/);
   assert.match(source, /Test-CanonicalWorkerTaskAction/);
   assert.match(source, /TaskPath -ne '\\'/);
   assert.match(source, /\.Actions\.Count -ne 1/);
@@ -61,6 +74,9 @@ test('internal probe permits only inspect or fixed canonical task start and neve
   assert.match(source, /CommandLineToArgvW/);
   assert.match(source, /Test-CanonicalWorkerProcessCommandLine/);
   assert.match(source, /\$arguments\[1\]/);
+  assert.match(source, /\$arguments\[2\]/);
+  assert.match(source, /\$arguments\[3\]\s*-eq 'mission-worker'/);
+  assert.match(source, /wscript\.exe/);
   assert.doesNotMatch(source, /IndexOf\(\$workerPath/);
   assert.doesNotMatch(source, /\[string\]\$TaskName|Stop-ScheduledTask|Stop-Process|Invoke-Expression|Restart-Computer|shutdown\.exe/i);
 });
