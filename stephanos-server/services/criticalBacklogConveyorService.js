@@ -10,7 +10,6 @@ import {
   buildCriticalBacklogProjection,
 } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import {
-  appendWorkspaceJsonl,
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceStatusRecord,
   resolveSharedWorkspacePath,
@@ -125,19 +124,13 @@ export async function publishCriticalBacklogProjection(projection, {
     mergeAuthority: false,
     exactHeadApprovalRequired: true,
   });
-  const statusWrite = await writeAtomicJson(
-    paths.workspaceRoot,
-    ['status', 'critical-backlog-conveyor-current.json'],
-    statusRecord,
-    { repoRoot: paths.repoRoot },
-  );
-  if (!statusWrite.ok) return Object.freeze({ ok: false, reason: statusWrite.reason, statusWrite, eventWrite: null });
 
   let eventWrite = null;
   if (changed) {
+    const transitionEventId = eventId(projectionSignature(projection));
     const eventRecord = Object.freeze({
       ...createSharedWorkspaceEventRecord({
-        eventId: eventId(`${timestampUtc}:${projectionSignature(projection)}`),
+        eventId: transitionEventId,
         participantId: 'critical-backlog-conveyor',
         timestampUtc,
         eventKind: 'critical-backlog-state-changed',
@@ -148,14 +141,23 @@ export async function publishCriticalBacklogProjection(projection, {
       activeMissionId,
       activePhase,
     });
-    eventWrite = await appendWorkspaceJsonl(
+    eventWrite = await writeAtomicJson(
       paths.workspaceRoot,
-      ['events', 'critical-backlog-conveyor.jsonl'],
+      ['events', 'critical-backlog-conveyor', `${transitionEventId}.json`],
       eventRecord,
       { repoRoot: paths.repoRoot },
     );
-    if (!eventWrite.ok) return Object.freeze({ ok: false, reason: eventWrite.reason, statusWrite, eventWrite });
+    if (!eventWrite.ok) return Object.freeze({ ok: false, reason: eventWrite.reason, statusWrite: null, eventWrite });
   }
+
+  const statusWrite = await writeAtomicJson(
+    paths.workspaceRoot,
+    ['status', 'critical-backlog-conveyor-current.json'],
+    statusRecord,
+    { repoRoot: paths.repoRoot },
+  );
+  if (!statusWrite.ok) return Object.freeze({ ok: false, reason: statusWrite.reason, statusWrite, eventWrite });
+
   return Object.freeze({
     ok: true,
     reason: changed ? 'CONVEYOR_STATUS_AND_EVENT_PUBLISHED' : 'CONVEYOR_STATUS_REFRESHED',
