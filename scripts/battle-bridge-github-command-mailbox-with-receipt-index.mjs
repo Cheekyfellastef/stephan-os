@@ -8,6 +8,7 @@ import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWork
 import { runBattleBridgeGitHubCommandMailbox } from './battle-bridge-github-command-mailbox.mjs';
 
 const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const DEFAULT_INDEX_HEARTBEAT_INTERVAL_MS = 15_000;
 
 export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
   platform = process.platform,
@@ -15,6 +16,9 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
   now = () => new Date(),
   sourceRepoRoot = defaultRepoRoot,
   canonicalRepoRoot = '',
+  heartbeatIntervalMs = DEFAULT_INDEX_HEARTBEAT_INTERVAL_MS,
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval,
   runMailbox = runBattleBridgeGitHubCommandMailbox,
   refreshIndex = refreshMailboxReceiptIndex,
 } = {}) {
@@ -46,12 +50,31 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
     });
   }
 
-  const beforeTimestampUtc = now().toISOString();
-  const before = await refreshIndex({
+  const refresh = (timestampUtc) => refreshIndex({
     root: workspace.root,
     repoRoot: actualRepoRoot,
-    timestampUtc: beforeTimestampUtc,
+    timestampUtc,
   });
+  const before = await refresh(now().toISOString());
+
+  let heartbeatRefreshCount = 0;
+  let heartbeatInFlight = false;
+  let heartbeatPromise = Promise.resolve(null);
+  const refreshHeartbeat = () => {
+    if (heartbeatInFlight) return heartbeatPromise;
+    heartbeatInFlight = true;
+    heartbeatPromise = Promise.resolve(refresh(now().toISOString()))
+      .then((result) => {
+        heartbeatRefreshCount += 1;
+        return result;
+      })
+      .catch(() => null)
+      .finally(() => { heartbeatInFlight = false; });
+    return heartbeatPromise;
+  };
+  const boundedHeartbeatIntervalMs = Math.max(5_000, Math.min(60_000, Number(heartbeatIntervalMs) || DEFAULT_INDEX_HEARTBEAT_INTERVAL_MS));
+  const timer = setIntervalFn(() => { void refreshHeartbeat(); }, boundedHeartbeatIntervalMs);
+  timer?.unref?.();
 
   let mailbox;
   try {
@@ -63,15 +86,12 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
       finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
       error: error?.message || String(error),
     };
+  } finally {
+    clearIntervalFn(timer);
+    await heartbeatPromise;
   }
 
-  const afterTimestampUtc = now().toISOString();
-  const after = await refreshIndex({
-    root: workspace.root,
-    repoRoot: actualRepoRoot,
-    timestampUtc: afterTimestampUtc,
-  });
-
+  const after = await refresh(now().toISOString());
   const ok = before.ok !== false && mailbox?.ok !== false && after.ok !== false;
   return Object.freeze({
     ok,
@@ -80,6 +100,8 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
     mailboxVerdict: String(mailbox?.finalVerdict || mailbox?.verdict || ''),
     indexBeforeVerdict: String(before?.finalVerdict || ''),
     indexAfterVerdict: String(after?.finalVerdict || ''),
+    indexHeartbeatIntervalMs: boundedHeartbeatIntervalMs,
+    indexHeartbeatRefreshCount: heartbeatRefreshCount,
     activeReceipt: after?.projection?.activeReceipt || null,
     recentReceiptCount: Array.isArray(after?.projection?.recentReceipts) ? after.projection.recentReceipts.length : 0,
     arbitraryFilesystemAccess: false,
