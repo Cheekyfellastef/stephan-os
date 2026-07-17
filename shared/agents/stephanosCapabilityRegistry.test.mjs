@@ -37,11 +37,13 @@ test('summary remains machine-readable and bounded for GitHub receipts', () => {
   assert.doesNotMatch(json, MACHINE_PATH_PATTERN);
 });
 
-test('mailbox and shared workspace are first-class discoverable capabilities', () => {
+test('mailbox, watchdog acceptance and shared workspace are first-class discoverable capabilities', () => {
   const mailbox = findStephanosCapability('battle-bridge-github-command-mailbox');
   const workspace = findStephanosCapability('shared-agent-workspace');
   assert.ok(mailbox.operations.includes('READ_CAPABILITY_REGISTRY'));
   assert.ok(mailbox.operations.includes('READ_SHARED_WORKSPACE_STATUS'));
+  assert.ok(mailbox.operations.includes('RUN_WORKER_WATCHDOG_ACCEPTANCE'));
+  assert.equal(mailbox.runtimeMutationAllowed, true);
   assert.equal(workspace.discoveryRoute, 'mailbox:READ_SHARED_WORKSPACE_STATUS');
 });
 
