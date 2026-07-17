@@ -16,6 +16,14 @@ test('canary CLI accepts only one exact head and at most one bounded request id'
   assert.equal(valid.expectedHead, HEAD);
   assert.equal(valid.requestId, 'req-monitor-canary-script-0001');
 
+  const generated = parseMonitorMultiplexerCanaryArguments([
+    `--expected-head=${HEAD}`,
+  ], {
+    requestIdFactory: () => 'req-monitor-canary-fresh-0001',
+  });
+  assert.equal(generated.ok, true);
+  assert.equal(generated.requestId, 'req-monitor-canary-fresh-0001');
+
   assert.equal(parseMonitorMultiplexerCanaryArguments([]).blocker, 'CANARY_EXPECTED_HEAD_REQUIRED_ONCE');
   assert.equal(parseMonitorMultiplexerCanaryArguments([
     `--expected-head=${HEAD}`,
@@ -30,6 +38,11 @@ test('canary CLI accepts only one exact head and at most one bounded request id'
     `--expected-head=${HEAD}`,
     '--path=C:\\unsafe',
   ]).blocker, 'CANARY_ARGUMENT_NOT_ALLOWED');
+  assert.equal(parseMonitorMultiplexerCanaryArguments([
+    `--expected-head=${HEAD}`,
+  ], {
+    requestIdFactory: () => '../unsafe',
+  }).blocker, 'CANARY_REQUEST_ID_INVALID');
 });
 
 test('runner fails closed outside the real Windows Battle Bridge', async () => {
