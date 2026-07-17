@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -29,7 +30,9 @@ function fixedGit(args) {
   };
 }
 
-export function parseMonitorMultiplexerCanaryArguments(argv = []) {
+export function parseMonitorMultiplexerCanaryArguments(argv = [], {
+  requestIdFactory = () => `req-monitor-canary-${randomUUID()}`,
+} = {}) {
   const expectedFlags = argv.filter((arg) => arg.startsWith('--expected-head='));
   const requestFlags = argv.filter((arg) => arg.startsWith('--request-id='));
   const unknown = argv.filter((arg) => !arg.startsWith('--expected-head=') && !arg.startsWith('--request-id='));
@@ -38,13 +41,14 @@ export function parseMonitorMultiplexerCanaryArguments(argv = []) {
   if (requestFlags.length > 1) return { ok: false, blocker: 'CANARY_REQUEST_ID_ALLOWED_ONCE' };
 
   const expectedHead = expectedFlags[0].slice('--expected-head='.length).trim().toLowerCase();
-  const requestId = String(requestFlags[0] || '').slice('--request-id='.length).trim();
+  const suppliedRequestId = String(requestFlags[0] || '').slice('--request-id='.length).trim();
+  const requestId = suppliedRequestId || String(requestIdFactory());
   if (!SHA.test(expectedHead)) return { ok: false, blocker: 'CANARY_EXPECTED_HEAD_INVALID' };
-  if (requestId && !SAFE_REQUEST.test(requestId)) return { ok: false, blocker: 'CANARY_REQUEST_ID_INVALID' };
+  if (!SAFE_REQUEST.test(requestId)) return { ok: false, blocker: 'CANARY_REQUEST_ID_INVALID' };
   return {
     ok: true,
     expectedHead,
-    requestId: requestId || `req-monitor-canary-${expectedHead.slice(0, 16)}`,
+    requestId,
   };
 }
 
