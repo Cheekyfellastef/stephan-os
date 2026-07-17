@@ -40,7 +40,7 @@ function Write-BackendRuntimeReceipt {
     $statusDir = Join-Path $WorkspaceRoot 'status'
     [System.IO.Directory]::CreateDirectory($statusDir) | Out-Null
     $statusPath = Join-Path $statusDir 'stephanos-backend-runtime.json'
-    $temporaryPath = "$statusPath.$PID.tmp"
+    $temporaryPath = "${statusPath}.$PID.tmp"
     [PSCustomObject]@{
         schemaVersion = 'stephanos.backend-runtime.v1'
         timestampUtc = [DateTime]::UtcNow.ToString('o')
@@ -103,7 +103,7 @@ function Write-LatestBackendErrorTail {
     Get-Content -Path $latestStderr.FullName -Tail $TailLineCount | ForEach-Object { Write-Log $_ }
 }
 
-Write-Log "Stephanos Battle Bridge backend start requested from canonical main $headSha."
+Write-Log "Stephanos Battle Bridge backend start requested from canonical main ${headSha}."
 Write-Log "Backend health endpoint: $healthUrl"
 Write-Log 'Frontend/dist server not started by this backend script (port 4173).'
 Write-Log 'Ensuring OpenClaw readonly adapter stub lifecycle (execution remains disabled).'
