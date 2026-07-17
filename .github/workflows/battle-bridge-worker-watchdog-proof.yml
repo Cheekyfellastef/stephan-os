@@ -103,7 +103,22 @@ jobs:
         run: node --test scripts/battle-bridge-worker-watchdog.test.mjs scripts/battle-bridge-worker-watchdog-acceptance.test.mjs
 
       - name: Test mailbox command contract
-        run: node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
+        id: mailbox-contract
+        shell: bash
+        run: |
+          set +e
+          node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs 2>&1 | tee mailbox-command-contract.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+
+      - name: Upload mailbox command contract failure
+        if: failure() && steps.mailbox-contract.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mailbox-command-contract-failure
+          path: mailbox-command-contract.log
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Test capability registry
         run: node --test shared/agents/stephanosCapabilityRegistry.test.mjs
