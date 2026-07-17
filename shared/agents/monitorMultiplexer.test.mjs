@@ -13,7 +13,6 @@ import {
   runMonitorMultiplexerTick,
   validateMonitorDefinition,
 } from './monitorMultiplexer.mjs';
-import { writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
 
 async function workspace() {
   return mkdtemp(join(tmpdir(), 'monitor-mux-'));
@@ -192,15 +191,9 @@ test('failed outbox write cannot durably suppress the pending notification', asy
       proofRefs: ['proof/monitor-1.json'],
     }),
   };
-  let failed = false;
   const testStorageAdapter = createMonitorMultiplexerTestStorageAdapter({
-    writeAtomicJson: async (workspaceRoot, segments, record, options) => {
-      if (!failed && segments[0] === 'outbox') {
-        failed = true;
-        return { ok: false, reason: 'INJECTED_OUTBOX_WRITE_FAILURE' };
-      }
-      return writeAtomicJson(workspaceRoot, segments, record, options);
-    },
+    recordKind: 'notification-outbox',
+    occurrence: 1,
   });
 
   const first = await runMonitorMultiplexerTick({
