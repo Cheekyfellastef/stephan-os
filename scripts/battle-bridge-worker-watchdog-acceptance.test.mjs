@@ -7,6 +7,7 @@ import {
   APPROVED_WORKER_TASK,
   WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY,
   assessCanonicalWorkerObservation,
+  publishAcceptanceProofTransaction,
   runBattleBridgeWorkerWatchdogAcceptance,
 } from './battle-bridge-worker-watchdog-acceptance.mjs';
 
@@ -71,6 +72,17 @@ function downObservation(timestampUtc = new Date().toISOString()) {
   };
 }
 
+function recoveredStatus(timestampUtc) {
+  return {
+    timestampUtc,
+    classification: 'WORKER_WATCHDOG_RECOVERED',
+    supervisorDetectedWorkerDown: true,
+    supervisorRestartedWorker: true,
+    workerRecovered: true,
+    workerFromMain: true,
+  };
+}
+
 function common(overrides = {}) {
   return {
     expectedHead,
@@ -78,7 +90,14 @@ function common(overrides = {}) {
     paths,
     expectedPaths: paths,
     readSourceIdentity: () => ({ ok: true, sourceHead: expectedHead, branch: 'main' }),
-    installWatchdog: () => ({ ok: true, data: { installed: true, taskName: APPROVED_WATCHDOG_TASK } }),
+    installWatchdog: () => ({
+      ok: true,
+      data: { installed: true, taskName: APPROVED_WATCHDOG_TASK, startedNow: false },
+    }),
+    startWatchdog: () => ({
+      ok: true,
+      data: { installed: true, taskName: APPROVED_WATCHDOG_TASK, startedNow: true },
+    }),
     readWatchdogStatus: async () => null,
     sleep: async () => {},
     ...overrides,
@@ -115,86 +134,73 @@ test('canonical worker observation binds task, command, heartbeat, repository an
   assert.equal(canonicalPreMergeAllowed.headSha, previousHead);
 });
 
-test('runs one verified kill from a canonical pre-merge worker to exact-head recovery and Shared Workspace proof', async () => {
+test('kills once, starts the installed watchdog task and requires fresh task-published recovery before exact-head proof', async () => {
+  const nowMs = Date.now();
+  const timestampUtc = new Date(nowMs).toISOString();
   const observations = [
-    healthyObservation(101, new Date().toISOString(), previousHead),
-    downObservation(),
-    healthyObservation(202),
+    healthyObservation(101, timestampUtc, previousHead),
+    downObservation(timestampUtc),
+    healthyObservation(202, timestampUtc),
   ];
-  const killed = [];
+  const statuses = [
+    { timestampUtc: new Date(nowMs - 1_000).toISOString(), classification: 'WORKER_WATCHDOG_HEALTHY' },
+    recoveredStatus(timestampUtc),
+  ];
+  const actions = [];
   const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
+    now: new Date(nowMs),
+    clock: () => nowMs,
     inspectWorker: () => ({ ok: true, data: observations.shift() }),
-    killWorker: (pid) => { killed.push(pid); return { ok: true, pid }; },
-    runWatchdog: async () => ({
-      ok: true,
-      classification: 'WORKER_WATCHDOG_RECOVERED',
-      initialAssessment: { healthy: false },
-      finalAssessment: { healthy: true },
-      startResult: { data: { started: true, taskName: APPROVED_WORKER_TASK } },
-    }),
+    killWorker: (pid) => { actions.push(`kill:${pid}`); return { ok: true, pid }; },
+    startWatchdog: () => {
+      actions.push('start-installed-watchdog');
+      return { ok: true, data: { installed: true, taskName: APPROVED_WATCHDOG_TASK, startedNow: true } };
+    },
+    readWatchdogStatus: async () => statuses.shift() || recoveredStatus(timestampUtc),
     publishProof: async ({ evidence }) => ({
-      ok: evidence.workerKilledObserved === true,
+      ok: evidence.watchdogStartedThroughScheduledTask === true,
       proofWrittenToSharedWorkspace: true,
+      publicationState: 'COMMITTED',
       proofRefs: ['receipts/battle-bridge-worker-watchdog-acceptance/proof.json'],
     }),
   }));
 
-  assert.deepEqual(killed, [101]);
+  assert.deepEqual(actions, ['kill:101', 'start-installed-watchdog']);
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'WORKER_WATCHDOG_ACCEPTANCE_PASS');
-  assert.equal(result.watchdogRecoveryRoute, 'direct-watchdog-run');
+  assert.equal(result.watchdogRecoveryRoute, 'installed-scheduled-task');
+  assert.equal(result.watchdogStartedThroughScheduledTask, true);
   assert.equal(result.initialHead, previousHead);
   assert.equal(result.recoveredHead, expectedHead);
   assert.equal(result.initialPid, 101);
   assert.equal(result.recoveredPid, 202);
-  assert.equal(result.workerKilled, true);
   assert.equal(result.workerKilledObserved, true);
   assert.equal(result.supervisorDetectedWorkerDown, true);
   assert.equal(result.supervisorRestartedWorker, true);
   assert.equal(result.workerRecovered, true);
   assert.equal(result.workerFromMain, true);
   assert.equal(result.proofWrittenToSharedWorkspace, true);
+  assert.equal(result.publicationState, 'COMMITTED');
   assert.equal(result.visiblePowerShellRequired, false);
 });
 
-test('accepts fresh installed-watchdog status when the scheduled task wins the recovery race', async () => {
-  const killedAtMs = Date.now();
-  const timestampUtc = new Date(killedAtMs).toISOString();
-  const observations = [
-    healthyObservation(101, timestampUtc, previousHead),
-    downObservation(timestampUtc),
-    healthyObservation(202, timestampUtc),
-  ];
-  let directRunCalls = 0;
+test('fails closed if the installed watchdog Scheduled Task start is not proven', async () => {
+  const nowMs = Date.now();
+  const timestampUtc = new Date(nowMs).toISOString();
+  const observations = [healthyObservation(101, timestampUtc, previousHead), downObservation(timestampUtc)];
   const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
-    now: new Date(killedAtMs),
-    inspectWorker: () => ({ ok: true, data: observations.shift() }),
+    now: new Date(nowMs),
+    clock: () => nowMs,
+    inspectWorker: () => ({ ok: true, data: observations.shift() || downObservation(timestampUtc) }),
     killWorker: (pid) => ({ ok: true, pid }),
-    clock: () => killedAtMs,
-    runWatchdog: async () => {
-      directRunCalls += 1;
-      return { ok: false, classification: 'WORKER_WATCHDOG_LIVE_LOCK' };
-    },
-    readWatchdogStatus: async () => ({
-      timestampUtc,
-      classification: 'WORKER_WATCHDOG_RECOVERED',
-      supervisorDetectedWorkerDown: true,
-      supervisorRestartedWorker: true,
-      workerRecovered: true,
-      workerFromMain: true,
-    }),
-    publishProof: async () => ({
+    startWatchdog: () => ({
       ok: true,
-      proofWrittenToSharedWorkspace: true,
-      proofRefs: ['receipts/battle-bridge-worker-watchdog-acceptance/proof.json'],
+      data: { installed: true, taskName: APPROVED_WATCHDOG_TASK, startedNow: false },
     }),
   }));
-
-  assert.equal(result.ok, true);
-  assert.equal(result.watchdogRecoveryRoute, 'installed-watchdog-status');
-  assert.equal(result.initialPid, 101);
-  assert.equal(result.recoveredPid, 202);
-  assert.equal(directRunCalls, 0);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'INSTALLED_WATCHDOG_START_NOT_PROVEN');
+  assert.equal(result.workerKilledObserved, true);
 });
 
 test('fails before kill when the observed worker is not canonical and healthy', async () => {
@@ -219,19 +225,17 @@ test('fails closed when exact source head does not match the expiring mailbox co
   assert.equal(result.expectedHeadMatch, false);
 });
 
-test('does not claim acceptance when neither direct nor published watchdog proof shows recovery', async () => {
-  const observations = [healthyObservation(101), downObservation()];
+test('does not claim acceptance without fresh installed-task recovery status', async () => {
+  const nowMs = Date.now();
+  const timestampUtc = new Date(nowMs).toISOString();
+  const observations = [healthyObservation(101, timestampUtc), downObservation(timestampUtc)];
   const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
-    inspectWorker: () => ({ ok: true, data: observations.shift() || downObservation() }),
+    now: new Date(nowMs),
+    clock: () => nowMs,
+    inspectWorker: () => ({ ok: true, data: observations.shift() || downObservation(timestampUtc) }),
     killWorker: (pid) => ({ ok: true, pid }),
-    runWatchdog: async () => ({
-      ok: true,
-      classification: 'WORKER_WATCHDOG_HEALTHY',
-      initialAssessment: { healthy: true },
-      finalAssessment: { healthy: true },
-    }),
     readWatchdogStatus: async () => ({
-      timestampUtc: new Date().toISOString(),
+      timestampUtc,
       classification: 'WORKER_WATCHDOG_HEALTHY',
       supervisorDetectedWorkerDown: false,
       supervisorRestartedWorker: false,
@@ -240,11 +244,77 @@ test('does not claim acceptance when neither direct nor published watchdog proof
     }),
   }));
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'WATCHDOG_RECOVERY_NOT_PROVEN');
+  assert.equal(result.blocker, 'INSTALLED_WATCHDOG_RECOVERY_NOT_PROVEN');
   assert.equal(result.workerKilledObserved, true);
 });
 
-test('authority is fixed to one verified canonical worker kill with no generic execution', async () => {
+test('publication stages non-PASS proof and event before atomically committing PASS through current status', async () => {
+  const calls = [];
+  const store = {
+    createSharedWorkspaceProofRecord: (record) => ({ recordKind: 'proof', ...record }),
+    createSharedWorkspaceEventRecord: (record) => ({ recordKind: 'event', ...record }),
+    createSharedWorkspaceStatusRecord: (record) => ({ recordKind: 'status', ...record }),
+    writeAtomicJson: async (_root, target, record) => {
+      calls.push({ operation: 'write', target: target.join('/'), record });
+      return { ok: true, path: target.join('/') };
+    },
+    appendWorkspaceJsonl: async (_root, target, record) => {
+      calls.push({ operation: 'append', target: target.join('/'), record });
+      return { ok: true, path: target.join('/') };
+    },
+  };
+  const result = await publishAcceptanceProofTransaction({
+    paths,
+    now: new Date('2026-07-17T16:00:00.000Z'),
+    evidence: { finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS', workerRecovered: true },
+    store,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.publicationState, 'COMMITTED');
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].record.status, 'WORKER_WATCHDOG_ACCEPTANCE_EVIDENCE_READY');
+  assert.equal(calls[0].record.publicationState, 'STAGED');
+  assert.equal(calls[0].record.acceptancePass, false);
+  assert.equal(calls[1].record.eventKind, 'battle-bridge-worker-watchdog-acceptance-evidence-ready');
+  assert.equal(calls[1].record.publicationState, 'STAGED');
+  assert.equal(calls[1].record.acceptancePass, false);
+  assert.equal(calls[2].record.status, 'WORKER_WATCHDOG_ACCEPTANCE_PASS');
+  assert.equal(calls[2].record.publicationState, 'COMMITTED');
+  assert.equal(calls[2].record.acceptancePass, true);
+});
+
+test('publication failure leaves no durable PASS record', async () => {
+  const calls = [];
+  const store = {
+    createSharedWorkspaceProofRecord: (record) => ({ recordKind: 'proof', ...record }),
+    createSharedWorkspaceEventRecord: (record) => ({ recordKind: 'event', ...record }),
+    createSharedWorkspaceStatusRecord: (record) => ({ recordKind: 'status', ...record }),
+    writeAtomicJson: async (_root, target, record) => {
+      calls.push({ operation: 'write', target: target.join('/'), record });
+      return { ok: true, path: target.join('/') };
+    },
+    appendWorkspaceJsonl: async (_root, target, record) => {
+      calls.push({ operation: 'append', target: target.join('/'), record });
+      return { ok: false, reason: 'TEST_FAILURE' };
+    },
+  };
+
+  await assert.rejects(
+    publishAcceptanceProofTransaction({
+      paths,
+      now: new Date('2026-07-17T16:00:00.000Z'),
+      evidence: { finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS', workerRecovered: true },
+      store,
+    }),
+    /ACCEPTANCE_EVIDENCE_EVENT_WRITE_FAILED/,
+  );
+  assert.equal(calls.length, 2);
+  assert.equal(calls.some((call) => call.record.acceptancePass === true), false);
+  assert.equal(calls.some((call) => call.record.status === 'WORKER_WATCHDOG_ACCEPTANCE_PASS'), false);
+});
+
+test('authority is fixed to one verified canonical worker kill with no generic execution or direct watchdog bypass', async () => {
   assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.maximumWorkerKillsPerRun, 1);
   assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.processKillAllowed, true);
   assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.processKillScope, 'verified-canonical-worker-only');
@@ -257,7 +327,7 @@ test('authority is fixed to one verified canonical worker kill with no generic e
   const source = await readFile(sourcePath, 'utf8');
   assert.match(source, /install-battle-bridge-worker-watchdog\.ps1/);
   assert.match(source, /probe-mission-orchestrator-worker-watchdog\.ps1/);
+  assert.match(source, /args\.push\('-StartNow'\)/);
   assert.match(source, /killFn\(pid, 'SIGTERM'\)/);
-  assert.match(source, /restartCooldownMs:\s*0/);
-  assert.doesNotMatch(source, /Invoke-Expression|cmd\.exe|Restart-Computer|shutdown\.exe|git\.exe', \['(?:reset|clean|checkout|push|rebase)/i);
+  assert.doesNotMatch(source, /runBattleBridgeWorkerWatchdog|Invoke-Expression|cmd\.exe|Restart-Computer|shutdown\.exe|git\.exe', \['(?:reset|clean|checkout|push|rebase)/i);
 });
