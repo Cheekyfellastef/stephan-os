@@ -61,7 +61,17 @@ jobs:
         run: npm run stephanos:monitor-multiplexer:test
 
       - name: Monitor multiplexer canary proof
-        run: npm run stephanos:monitor-multiplexer:canary:test
+        id: monitor-canary-proof
+        run: npm run stephanos:monitor-multiplexer:canary:test 2>&1 | tee monitor-multiplexer-canary-proof.log
+
+      - name: Upload monitor multiplexer canary failure
+        if: failure() && steps.monitor-canary-proof.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-multiplexer-canary-failure
+          path: monitor-multiplexer-canary-proof.log
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Monitor multiplexer mailbox route proof
         run: node --test shared/agents/monitorMultiplexerMailboxRoute.test.mjs
