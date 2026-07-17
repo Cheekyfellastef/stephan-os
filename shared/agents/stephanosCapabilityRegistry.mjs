@@ -23,6 +23,19 @@ function descriptor(input) {
   });
 }
 
+function compactDescriptor(capability) {
+  return Object.freeze({
+    capabilityId: capability.capabilityId,
+    category: capability.category,
+    ownerIssue: capability.ownerIssue,
+    discoveryRoute: capability.discoveryRoute,
+    statusSource: capability.statusSource,
+    operations: capability.operations,
+    requiresOperatorApproval: capability.requiresOperatorApproval,
+    runtimeMutationAllowed: capability.runtimeMutationAllowed,
+  });
+}
+
 export const STEPHANOS_CAPABILITIES = Object.freeze([
   descriptor({
     capabilityId: 'shared-agent-workspace',
@@ -164,6 +177,29 @@ export function validateStephanosCapabilityRegistry(capabilities = STEPHANOS_CAP
   });
 }
 
+function bootstrapProjection() {
+  return Object.freeze({
+    requiredBeforeCapabilityDenial: true,
+    sequence: Object.freeze([
+      'READ_CAPABILITY_REGISTRY',
+      'READ_SHARED_WORKSPACE_STATUS',
+      'CHECK_ACTIVE_EXECUTION_LANE',
+      'SELECT_ALLOWLISTED_ROUTE',
+    ]),
+    failClosedWhenDiscoveryUnavailable: true,
+    duplicateActiveExecutionAllowed: false,
+  });
+}
+
+function safetyProjection() {
+  return Object.freeze({
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    liveOpenClawUpdateAllowed: false,
+    secretOrAbsolutePathPublicationAllowed: false,
+  });
+}
+
 export function buildStephanosCapabilityRegistryProjection({
   sourceHead = '',
   generatedAtUtc = new Date(0).toISOString(),
@@ -176,25 +212,30 @@ export function buildStephanosCapabilityRegistryProjection({
     branch: 'main',
     sourceHead: SHA_PATTERN.test(String(sourceHead || '')) ? String(sourceHead).toLowerCase() : '',
     generatedAtUtc: String(generatedAtUtc || ''),
-    bootstrap: Object.freeze({
-      requiredBeforeCapabilityDenial: true,
-      sequence: Object.freeze([
-        'READ_CAPABILITY_REGISTRY',
-        'READ_SHARED_WORKSPACE_STATUS',
-        'CHECK_ACTIVE_EXECUTION_LANE',
-        'SELECT_ALLOWLISTED_ROUTE',
-      ]),
-      failClosedWhenDiscoveryUnavailable: true,
-      duplicateActiveExecutionAllowed: false,
-    }),
+    bootstrap: bootstrapProjection(),
     capabilities: STEPHANOS_CAPABILITIES,
-    safety: Object.freeze({
-      arbitraryShellAllowed: false,
-      destructiveGitAllowed: false,
-      liveOpenClawUpdateAllowed: false,
-      secretOrAbsolutePathPublicationAllowed: false,
-    }),
+    safety: safetyProjection(),
     validation,
+    finalVerdict: validation.finalVerdict,
+  });
+}
+
+export function buildStephanosCapabilityRegistrySummary({
+  sourceHead = '',
+  generatedAtUtc = new Date(0).toISOString(),
+} = {}) {
+  const validation = validateStephanosCapabilityRegistry();
+  return Object.freeze({
+    schemaVersion: STEPHANOS_CAPABILITY_REGISTRY_SCHEMA,
+    registryVersion: STEPHANOS_CAPABILITY_REGISTRY_VERSION,
+    repository: STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY,
+    branch: 'main',
+    sourceHead: SHA_PATTERN.test(String(sourceHead || '')) ? String(sourceHead).toLowerCase() : '',
+    generatedAtUtc: String(generatedAtUtc || ''),
+    bootstrap: bootstrapProjection(),
+    capabilities: Object.freeze(STEPHANOS_CAPABILITIES.map(compactDescriptor)),
+    safety: safetyProjection(),
+    capabilityCount: validation.capabilityCount,
     finalVerdict: validation.finalVerdict,
   });
 }
