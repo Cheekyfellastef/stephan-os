@@ -6,7 +6,7 @@ const source = await readFile(new URL('./battle-bridge-post-sync-refresh.mjs', i
 
 test('fresh coordinator compares immutable heads through fixed shell-free git argv', () => {
   assert.match(source, /merge-base', '--is-ancestor'/);
-  assert.match(source, /diff', '--name-only', '--diff-filter=ACMRT'/);
+  assert.match(source, /diff', '--name-status', '--find-renames', '--diff-filter=ACDMRT'/);
   assert.match(source, /shell: false/);
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression/);
 });
