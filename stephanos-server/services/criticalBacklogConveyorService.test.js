@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -111,7 +111,7 @@ test('multiple active missions fail closed and never create another lane', async
   assert.equal(store.records.length, 2);
 });
 
-test('publication emits an event only on a state change', async () => {
+test('publication emits one idempotent event file for one state change', async () => {
   const paths = await roots();
   const projection = {
     decision: 'WAIT_ACTIVE_MISSION',
@@ -126,6 +126,7 @@ test('publication emits an event only on a state change', async () => {
   const second = await publishCriticalBacklogProjection(projection, { paths, now: new Date(now.getTime() + 60_000) });
   assert.equal(first.changed, true);
   assert.equal(second.changed, false);
-  const events = (await readFile(join(paths.workspaceRoot, 'events', 'critical-backlog-conveyor.jsonl'), 'utf8')).trim().split('\n');
+  const events = await readdir(join(paths.workspaceRoot, 'events', 'critical-backlog-conveyor'));
   assert.equal(events.length, 1);
+  assert.match(events[0], /^critical-backlog-[a-f0-9]{20}\.json$/);
 });
