@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -42,8 +42,11 @@ test('request validation requires a matching exact source head and bounded reque
   assert.ok(unsafe.errors.includes('REQUEST_ID_INVALID'));
 });
 
-test('real canary proves 13 monitors, batching, isolation, restart, dedupe and retirement', async () => {
+test('real canary proves 13 monitors without counting pre-existing outbox records', async () => {
   const root = await workspace();
+  await mkdir(join(root, 'outbox'), { recursive: true });
+  await writeFile(join(root, 'outbox', 'monitor-notify-existing.json'), '{}\n', 'utf8');
+
   const result = await runMonitorMultiplexerCanary({
     root,
     repoRoot: process.cwd(),
@@ -63,11 +66,14 @@ test('real canary proves 13 monitors, batching, isolation, restart, dedupe and r
   assert.equal(result.notificationCount, MONITOR_MULTIPLEXER_CANARY_MONITOR_COUNT);
   assert.equal(result.externalTaskSlotsRequired, 1);
   assert.equal(result.maxConcurrencyObserved, 3);
+  assert.equal(result.receiptCount, 3);
   assert.equal(result.proofWrittenToSharedWorkspace, true);
   assert.ok(Object.values(result.checks).every(Boolean));
+  assert.equal(result.proofRefs.filter((ref) => ref.startsWith('receipts/')).length, 3);
 
   const outbox = (await readdir(join(root, 'outbox'))).filter((name) => name.endsWith('.json'));
-  assert.equal(outbox.length, 2);
+  assert.equal(outbox.length, 3);
+  assert.ok(outbox.includes('monitor-notify-existing.json'));
   const proof = (await readdir(join(root, 'proof'))).filter((name) => name.includes('monitor-multiplexer-canary'));
   assert.ok(proof.length >= 1);
 });
