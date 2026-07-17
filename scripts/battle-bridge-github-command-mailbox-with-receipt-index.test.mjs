@@ -69,11 +69,72 @@ test('sidecar refreshes the authoritative Shared Workspace index before and afte
   assert.equal(result.mailboxVerdict, 'NO_COMMAND_READY');
   assert.equal(result.indexBeforeVerdict, 'MAILBOX_RECEIPT_INDEX_READY');
   assert.equal(result.indexAfterVerdict, 'MAILBOX_RECEIPT_INDEX_READY');
+  assert.equal(result.indexHeartbeatIntervalMs, 15_000);
+  assert.equal(result.indexHeartbeatRefreshCount, 0);
   assert.equal(result.recentReceiptCount, 1);
   assert.equal(result.arbitraryFilesystemAccess, false);
   assert.equal(result.arbitraryShellAllowed, false);
   assert.equal(result.destructiveGitAllowed, false);
   assert.equal(result.sourceMutationAccess, false);
+}));
+
+test('sidecar refreshes an ACCEPTED receipt during a long mailbox poll on a bounded heartbeat', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
+  const calls = [];
+  const times = [
+    new Date('2026-07-17T20:20:00.000Z'),
+    new Date('2026-07-17T20:20:15.000Z'),
+    new Date('2026-07-17T20:20:16.000Z'),
+  ];
+  let heartbeatCallback = null;
+  let cleared = false;
+  const timer = { unrefCalled: false, unref() { this.unrefCalled = true; } };
+  const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
+    platform: 'win32',
+    sourceRepoRoot: repoRoot,
+    canonicalRepoRoot: repoRoot,
+    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    now: () => times.shift() || new Date('2026-07-17T20:20:17.000Z'),
+    heartbeatIntervalMs: 15_000,
+    setIntervalFn: (callback, intervalMs) => {
+      assert.equal(intervalMs, 15_000);
+      heartbeatCallback = callback;
+      return timer;
+    },
+    clearIntervalFn: (value) => {
+      assert.equal(value, timer);
+      cleared = true;
+    },
+    refreshIndex: async (input) => {
+      calls.push(`index:${input.timestampUtc}`);
+      return {
+        ok: true,
+        finalVerdict: 'MAILBOX_RECEIPT_INDEX_READY',
+        projection: {
+          activeReceipt: input.timestampUtc === '2026-07-17T20:20:15.000Z' ? { requestId: 'active-request-1' } : null,
+          recentReceipts: [],
+        },
+      };
+    },
+    runMailbox: async () => {
+      calls.push('mailbox:start');
+      heartbeatCallback();
+      await Promise.resolve();
+      calls.push('mailbox:end');
+      return { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE' };
+    },
+  });
+  assert.deepEqual(calls, [
+    'index:2026-07-17T20:20:00.000Z',
+    'mailbox:start',
+    'index:2026-07-17T20:20:15.000Z',
+    'mailbox:end',
+    'index:2026-07-17T20:20:16.000Z',
+  ]);
+  assert.equal(timer.unrefCalled, true);
+  assert.equal(cleared, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.indexHeartbeatIntervalMs, 15_000);
+  assert.equal(result.indexHeartbeatRefreshCount, 1);
 }));
 
 test('sidecar still refreshes the index after a mailbox exception and returns a bounded blocker', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
