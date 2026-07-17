@@ -8,6 +8,7 @@ import {
 } from './stephanosCapabilityRegistry.mjs';
 
 const head = '704f64a1662de33bfd3ac2ff6531ad296bf5e846';
+const MACHINE_PATH_PATTERN = /(?:^|["'\s])(?:[A-Za-z]:[\\/]|\\\\|\/(?:users|home|workspace|tmp)\/)/i;
 
 test('registry is deterministic, unique and fail-closed', () => {
   const validation = validateStephanosCapabilityRegistry();
@@ -23,7 +24,7 @@ test('projection exposes the universal bootstrap and core routes without machine
   assert.equal(projection.bootstrap.duplicateActiveExecutionAllowed, false);
   assert.equal(projection.safety.arbitraryShellAllowed, false);
   assert.equal(projection.safety.destructiveGitAllowed, false);
-  assert.doesNotMatch(JSON.stringify(projection), /[A-Za-z]:\\|\\\\|\/(?:users|home|workspace|tmp)\//i);
+  assert.doesNotMatch(JSON.stringify(projection), MACHINE_PATH_PATTERN);
 });
 
 test('mailbox and shared workspace are first-class discoverable capabilities', () => {
@@ -32,4 +33,19 @@ test('mailbox and shared workspace are first-class discoverable capabilities', (
   assert.ok(mailbox.operations.includes('READ_CAPABILITY_REGISTRY'));
   assert.ok(mailbox.operations.includes('READ_SHARED_WORKSPACE_STATUS'));
   assert.equal(workspace.discoveryRoute, 'mailbox:READ_SHARED_WORKSPACE_STATUS');
+});
+
+test('nested Windows, UNC and local absolute paths fail closed', () => {
+  for (const discoveryRoute of [
+    'C:\\Users\\Stephan\\secret',
+    '\\\\battle-bridge\\private-share',
+    '/home/stephan/private',
+  ]) {
+    const capabilities = STEPHANOS_CAPABILITIES.map((capability, index) => index === 0
+      ? { ...capability, discoveryRoute }
+      : capability);
+    const validation = validateStephanosCapabilityRegistry(capabilities);
+    assert.equal(validation.valid, false);
+    assert.match(validation.errors.join(','), /absolute-path-forbidden:shared-agent-workspace/);
+  }
 });
