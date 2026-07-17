@@ -174,13 +174,14 @@ test('dispatches both acceptance canaries only through their named bounded handl
   assert.equal(monitor.result.finalVerdict, 'MONITOR_MULTIPLEXER_CANARY_PASS');
 });
 
-test('receipt always records the safety boundary', () => {
+test('receipt records exact expected head and the safety boundary', () => {
   const receipt = buildBattleBridgeGitHubCommandReceipt({
     command: command(),
     state: 'DONE',
     acceptedAt: now.toISOString(),
     heartbeatAt: now.toISOString(),
   });
+  assert.equal(receipt.expectedHead, command().expectedHead);
   assert.equal(receipt.arbitraryShellAllowed, false);
   assert.equal(receipt.destructiveGitAllowed, false);
   assert.equal(receipt.liveOpenClawUpdateAllowed, false);

@@ -197,6 +197,7 @@ export function buildBattleBridgeGitHubCommandReceipt({
     repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
+    expectedHead: String(command?.expectedHead || ''),
     state: String(state || ''),
     acceptedAt: String(acceptedAt || ''),
     heartbeatAt: String(heartbeatAt || ''),
