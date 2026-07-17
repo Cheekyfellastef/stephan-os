@@ -8,10 +8,12 @@ import {
   MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE,
   buildMonitorMultiplexerContract,
   classifyMonitorDue,
+  createMonitorMultiplexerTestStorageAdapter,
   createMonitorRegistry,
   runMonitorMultiplexerTick,
   validateMonitorDefinition,
 } from './monitorMultiplexer.mjs';
+import { writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
 
 async function workspace() {
   return mkdtemp(join(tmpdir(), 'monitor-mux-'));
@@ -178,6 +180,61 @@ test('one handler failure does not stop the other monitors', async () => {
   assert.equal(result.executions.filter((item) => item.result.state === 'PASS').length, 9);
   assert.equal(result.executions.filter((item) => item.result.state === 'FAIL').length, 1);
   assert.equal(result.registryStatus.failedCount, 1);
+});
+
+test('failed outbox write cannot durably suppress the pending notification', async () => {
+  const root = await workspace();
+  const monitors = [monitor(1)];
+  const handlers = {
+    'handler-1': async () => ({
+      state: 'PASS',
+      summary: 'stable pass',
+      proofRefs: ['proof/monitor-1.json'],
+    }),
+  };
+  let failed = false;
+  const testStorageAdapter = createMonitorMultiplexerTestStorageAdapter({
+    writeAtomicJson: async (workspaceRoot, segments, record, options) => {
+      if (!failed && segments[0] === 'outbox') {
+        failed = true;
+        return { ok: false, reason: 'INJECTED_OUTBOX_WRITE_FAILURE' };
+      }
+      return writeAtomicJson(workspaceRoot, segments, record, options);
+    },
+  });
+
+  const first = await runMonitorMultiplexerTick({
+    root,
+    repoRoot: process.cwd(),
+    monitors,
+    handlers,
+    testStorageAdapter,
+    nowMs: Date.parse('2026-07-17T12:00:00.000Z'),
+  });
+  assert.equal(first.ok, false);
+  assert.equal(first.finalVerdict, 'MONITOR_MULTIPLEXER_PUBLISH_BLOCKED');
+  assert.equal(first.receipt.fingerprintCommitted, false);
+  await assert.rejects(readFile(join(root, 'status', 'monitor-monitor-1.json'), 'utf8'));
+
+  const second = await runMonitorMultiplexerTick({
+    root,
+    repoRoot: process.cwd(),
+    monitors,
+    handlers,
+    nowMs: Date.parse('2026-07-17T12:00:01.000Z'),
+  });
+  assert.equal(second.ok, true);
+  assert.equal(second.notificationRecord.itemCount, 1);
+
+  const third = await runMonitorMultiplexerTick({
+    root,
+    repoRoot: process.cwd(),
+    monitors,
+    handlers,
+    nowMs: Date.parse('2026-07-17T12:00:31.000Z'),
+  });
+  assert.equal(third.ok, true);
+  assert.equal(third.notificationRecord, null);
 });
 
 test('restart reads durable state and suppresses duplicate notifications', async () => {
