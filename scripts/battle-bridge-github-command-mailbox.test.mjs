@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  createSanitizedMailboxReceiptProjection,
   parseBoundedGitHubJson,
   serializeBoundedReceiptJson,
 } from './battle-bridge-github-command-mailbox.mjs';
@@ -17,17 +18,49 @@ test('parses a GitHub issue-comment response larger than the diagnostic truncati
 });
 
 test('fails closed when the GitHub response exceeds the bounded intake limit', () => {
-  assert.throws(
-    () => parseBoundedGitHubJson(JSON.stringify({ body: 'x'.repeat(256) }), 128),
-    /GITHUB_RESPONSE_TOO_LARGE/,
-  );
+  assert.throws(() => parseBoundedGitHubJson(JSON.stringify({ body: 'x'.repeat(256) }), 128), /GITHUB_RESPONSE_TOO_LARGE/);
 });
 
 test('classifies invalid JSON without exposing truncated parser input', () => {
-  assert.throws(
-    () => parseBoundedGitHubJson('{"comments":'),
-    /GITHUB_RESPONSE_JSON_INVALID/,
-  );
+  assert.throws(() => parseBoundedGitHubJson('{"comments":'), /GITHUB_RESPONSE_JSON_INVALID/);
+});
+
+test('sanitized receipt projection preserves watchdog evidence but removes machine paths and raw payloads', () => {
+  const projection = createSanitizedMailboxReceiptProjection({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1291-watchdog-acceptance-20260717T1710Z',
+    operation: 'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    state: 'BLOCKED',
+    blocker: 'INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY',
+    proofRefs: [
+      'receipts/github-command-mailbox/req-1291-watchdog-acceptance-20260717T1710Z.json',
+      'C:\\Users\\Stephan Callear\\secret.json',
+      '../escape.json',
+    ],
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      operation: 'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+      requestId: 'req-1291-watchdog-acceptance-20260717T1710Z',
+      result: {
+        ok: false,
+        blocker: 'INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY',
+        sourceHead: 'ff7f1194eff9e6146a6e27104d71b91b631ccacf',
+        initialPid: 123,
+        rawPayload: 'must-not-survive',
+        localPath: 'C:\\Users\\Stephan Callear\\Documents',
+      },
+    },
+  });
+  assert.equal(projection.state, 'BLOCKED');
+  assert.equal(projection.operationResult.blocker, 'INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY');
+  assert.equal(projection.operationResult.sourceHead, 'ff7f1194eff9e6146a6e27104d71b91b631ccacf');
+  assert.equal(projection.operationResult.initialPid, 123);
+  assert.deepEqual(projection.proofRefs, ['receipts/github-command-mailbox/req-1291-watchdog-acceptance-20260717T1710Z.json']);
+  assert.equal('rawPayload' in projection.operationResult, false);
+  assert.equal('localPath' in projection.operationResult, false);
+  assert.equal(projection.arbitraryFilesystemAccess, false);
+  assert.doesNotMatch(JSON.stringify(projection), /C:\\Users|\.\.\//i);
 });
 
 test('oversized GitHub receipt becomes valid structured JSON rather than a sliced document', () => {
@@ -62,33 +95,21 @@ test('oversized GitHub receipt becomes valid structured JSON rather than a slice
   const parsed = JSON.parse(json);
   assert.equal(parsed.githubProjectionTruncated, true);
   assert.equal(parsed.result.result.finalVerdict, 'WORKER_WATCHDOG_ACCEPTANCE_PASS');
-  assert.equal(parsed.result.result.initialPid, 101);
-  assert.equal(parsed.result.result.recoveredPid, 202);
   assert.equal(parsed.result.result.workerKilledObserved, true);
-  assert.equal(parsed.result.result.supervisorDetectedWorkerDown, true);
-  assert.equal(parsed.result.result.supervisorRestartedWorker, true);
-  assert.equal(parsed.result.result.workerRecovered, true);
-  assert.equal(parsed.result.result.workerFromMain, true);
-  assert.equal(parsed.result.result.proofWrittenToSharedWorkspace, true);
   assert.ok(Buffer.byteLength(json, 'utf8') <= 4096);
 });
 
-test('runner wires capability registry, sanitized workspace reads and bounded watchdog acceptance', async () => {
+test('runner wires capability, workspace, fixed receipt and watchdog operations', async () => {
   const source = await readFile(runnerPath, 'utf8');
   assert.match(source, /buildStephanosCapabilityRegistrySummary/);
   assert.match(source, /createSanitizedSharedWorkspaceProjection/);
   assert.match(source, /runBattleBridgeWorkerWatchdogAcceptance/);
-  assert.match(source, /readCapabilityRegistry/);
-  assert.match(source, /readSharedWorkspaceStatus/);
-  assert.match(source, /runWorkerWatchdogAcceptance/);
-  assert.match(source, /expectedHead: command\.expectedHead/);
-  assert.match(source, /EXPECTED_HEAD_MISMATCH/);
-  assert.match(source, /SHARED_WORKSPACE_LATEST_STATUS_READY/);
-  assert.match(source, /projection\.currentStatus !== null/);
+  assert.match(source, /readMailboxReceipt/);
+  assert.match(source, /targetRequestId/);
+  assert.match(source, /join\(canonicalReceiptRoot, `\$\{targetRequestId\}\.json`\)/);
+  assert.match(source, /MAILBOX_RECEIPT_NOT_FOUND/);
+  assert.match(source, /MAILBOX_RECEIPT_ID_MISMATCH/);
   assert.match(source, /arbitraryFilesystemAccess:\s*false/);
-  assert.match(source, /commandExecutionAccess:\s*false/);
-  assert.match(source, /sourceMutationAccess:\s*false/);
-  assert.match(source, /Documents', 'Stephanos-openclaw-workspace/);
   assert.doesNotMatch(source, /Invoke-Expression|cmd\.exe|git\.exe', \['(?:reset|clean|checkout|push|rebase)/i);
 });
 
