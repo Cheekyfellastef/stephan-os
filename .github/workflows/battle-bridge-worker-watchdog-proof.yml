@@ -102,8 +102,14 @@ jobs:
       - name: Test watchdog executor and acceptance lane
         run: node --test scripts/battle-bridge-worker-watchdog.test.mjs scripts/battle-bridge-worker-watchdog-acceptance.test.mjs
 
-      - name: Test mailbox contract, capability registry and runner
-        run: node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs shared/agents/stephanosCapabilityRegistry.test.mjs scripts/battle-bridge-github-command-mailbox.test.mjs
+      - name: Test mailbox command contract
+        run: node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
+
+      - name: Test capability registry
+        run: node --test shared/agents/stephanosCapabilityRegistry.test.mjs
+
+      - name: Test mailbox Windows runner
+        run: node --test scripts/battle-bridge-github-command-mailbox.test.mjs
 
       - name: Test participant bridge contract and live relay
         run: node --test shared/agents/chatGptParticipantBridgeV1.test.mjs scripts/chatgpt-shared-workspace-github-relay.test.mjs
