@@ -27,10 +27,10 @@ test('installer exposes only StartNow and registers hidden limited fixed task', 
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression|Start-Process powershell/i);
 });
 
-test('GitHub sync headless launcher pins the canonical fixed executor', async () => {
+test('GitHub sync headless launcher pins the canonical sync-and-refresh coordinator', async () => {
   const source = await readFile(hiddenLauncherPath, 'utf8');
   assert.match(source, /Documents\\GitHub\\stephan-os/);
-  assert.match(source, /battle-bridge-github-sync-executor\.mjs/);
+  assert.match(source, /battle-bridge-github-sync-and-refresh\.mjs/);
   assert.match(source, /Get-Command node\.exe/);
   assert.match(source, /\*> \$null/);
   assert.doesNotMatch(source, /\[string\]\s*\$|Invoke-Expression|Start-Process|cmd\.exe/i);
