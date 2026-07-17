@@ -65,12 +65,36 @@ const NO_RUNTIME_EXACT = new Set([
   'README.md',
 ]);
 
+const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
+  'main.js',
+  'modules/command-deck/command-deck.js',
+  'system/module_loader.js',
+  'system/workspace.js',
+]);
+
 function normalizePath(value) {
   const path = String(value ?? '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
   if (!path || path.startsWith('/') || path.startsWith('//') || /^[A-Za-z]:\//.test(path)) return '';
   if (path.split('/').some((part) => part === '..' || part === '')) return '';
   if (!SAFE_RELATIVE_PATH.test(path)) return '';
   return path;
+}
+
+export function parseGitChangedPathStatus(stdout) {
+  const paths = [];
+  for (const line of String(stdout ?? '').split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+    const parts = line.split('\t');
+    const status = parts.shift() || '';
+    if (!/^[ACDMRT][0-9]*$/.test(status)) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_CHANGED_PATH_STATUS_INVALID', paths: Object.freeze([]) });
+    }
+    const expectedPathCount = /^[CR]/.test(status) ? 2 : 1;
+    if (parts.length !== expectedPathCount || parts.some((entry) => !String(entry ?? '').trim())) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_CHANGED_PATH_STATUS_INVALID', paths: Object.freeze([]) });
+    }
+    paths.push(...parts);
+  }
+  return Object.freeze({ ok: true, paths: Object.freeze([...new Set(paths)]) });
 }
 
 function isTestOrDocumentation(path) {
@@ -88,7 +112,8 @@ function isOpenClawPath(path) {
 }
 
 function isUiPath(path) {
-  return path.startsWith('stephanos-ui/')
+  return LAUNCHER_CRITICAL_SOURCE_PATHS.has(path)
+    || path.startsWith('stephanos-ui/')
     || path.startsWith('system/apps/')
     || (path.startsWith('apps/') && !path.startsWith('apps/stephanos/dist/'))
     || path.startsWith('shared/ai/')
