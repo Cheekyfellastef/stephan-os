@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { parseBoundedGitHubJson } from './battle-bridge-github-command-mailbox.mjs';
+
+const runnerPath = new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url);
 
 test('parses a GitHub issue-comment response larger than the diagnostic truncation limit', () => {
   const body = 'x'.repeat(424_551);
@@ -22,4 +25,20 @@ test('classifies invalid JSON without exposing truncated parser input', () => {
     () => parseBoundedGitHubJson('{"comments":'),
     /GITHUB_RESPONSE_JSON_INVALID/,
   );
+});
+
+test('runner wires capability registry and sanitized workspace reads without generic execution', async () => {
+  const source = await readFile(runnerPath, 'utf8');
+  assert.match(source, /buildStephanosCapabilityRegistryProjection/);
+  assert.match(source, /createSanitizedSharedWorkspaceProjection/);
+  assert.match(source, /readCapabilityRegistry/);
+  assert.match(source, /readSharedWorkspaceStatus/);
+  assert.match(source, /EXPECTED_HEAD_MISMATCH/);
+  assert.match(source, /arbitraryFilesystemAccess:\s*false/);
+  assert.match(source, /commandExecutionAccess:\s*false/);
+  assert.match(source, /sourceMutationAccess:\s*false/);
+  assert.match(source, /Documents', 'Stephanos-openclaw-workspace/);
+  assert.match(source, /receiptRef/);
+  assert.doesNotMatch(source, /postReceipt\(\{ \.\.\.receipt, receiptPath \}\)/);
+  assert.doesNotMatch(source, /Invoke-Expression|cmd\.exe|git\.exe', \['(?:reset|clean|checkout|push|rebase)/i);
 });
