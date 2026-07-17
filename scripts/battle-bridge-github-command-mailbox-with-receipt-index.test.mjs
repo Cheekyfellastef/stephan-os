@@ -137,6 +137,34 @@ test('sidecar refreshes an ACCEPTED receipt during a long mailbox poll on a boun
   assert.equal(result.indexHeartbeatRefreshCount, 1);
 }));
 
+test('an index refresh exception cannot prevent the mailbox from polling', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
+  let refreshCount = 0;
+  let mailboxCalls = 0;
+  const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
+    platform: 'win32',
+    sourceRepoRoot: repoRoot,
+    canonicalRepoRoot: repoRoot,
+    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    refreshIndex: async () => {
+      refreshCount += 1;
+      if (refreshCount === 1) throw new Error('disk unavailable');
+      return { ok: true, finalVerdict: 'MAILBOX_RECEIPT_INDEX_READY', projection: { recentReceipts: [] } };
+    },
+    runMailbox: async () => {
+      mailboxCalls += 1;
+      return { ok: true, verdict: 'NO_COMMAND_READY' };
+    },
+  });
+  assert.equal(refreshCount, 2);
+  assert.equal(mailboxCalls, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAILBOX_RECEIPT_INDEX_REFRESH_FAILED');
+  assert.equal(result.indexBlocker, 'MAILBOX_RECEIPT_INDEX_REFRESH_FAILED');
+  assert.equal(result.mailboxBlocker, '');
+  assert.equal(result.mailboxVerdict, 'NO_COMMAND_READY');
+  assert.equal(result.finalVerdict, 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED');
+}));
+
 test('sidecar still refreshes the index after a mailbox exception and returns a bounded blocker', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
   let refreshCount = 0;
   const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
@@ -153,6 +181,8 @@ test('sidecar still refreshes the index after a mailbox exception and returns a 
   assert.equal(refreshCount, 2);
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'MAILBOX_RUNNER_FAILED');
+  assert.equal(result.mailboxBlocker, 'MAILBOX_RUNNER_FAILED');
+  assert.equal(result.indexBlocker, '');
   assert.equal(result.finalVerdict, 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED');
 }));
 
