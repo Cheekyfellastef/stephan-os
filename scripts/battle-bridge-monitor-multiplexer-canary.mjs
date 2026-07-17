@@ -29,13 +29,16 @@ function fixedGit(args) {
   };
 }
 
-function parseBoundedArguments(argv = []) {
-  const expected = argv.find((arg) => arg.startsWith('--expected-head='));
-  const request = argv.find((arg) => arg.startsWith('--request-id='));
+export function parseMonitorMultiplexerCanaryArguments(argv = []) {
+  const expectedFlags = argv.filter((arg) => arg.startsWith('--expected-head='));
+  const requestFlags = argv.filter((arg) => arg.startsWith('--request-id='));
   const unknown = argv.filter((arg) => !arg.startsWith('--expected-head=') && !arg.startsWith('--request-id='));
-  const expectedHead = String(expected || '').slice('--expected-head='.length).trim().toLowerCase();
-  const requestId = String(request || '').slice('--request-id='.length).trim();
   if (unknown.length > 0) return { ok: false, blocker: 'CANARY_ARGUMENT_NOT_ALLOWED' };
+  if (expectedFlags.length !== 1) return { ok: false, blocker: 'CANARY_EXPECTED_HEAD_REQUIRED_ONCE' };
+  if (requestFlags.length > 1) return { ok: false, blocker: 'CANARY_REQUEST_ID_ALLOWED_ONCE' };
+
+  const expectedHead = expectedFlags[0].slice('--expected-head='.length).trim().toLowerCase();
+  const requestId = String(requestFlags[0] || '').slice('--request-id='.length).trim();
   if (!SHA.test(expectedHead)) return { ok: false, blocker: 'CANARY_EXPECTED_HEAD_INVALID' };
   if (requestId && !SAFE_REQUEST.test(requestId)) return { ok: false, blocker: 'CANARY_REQUEST_ID_INVALID' };
   return {
@@ -100,7 +103,7 @@ export async function runBattleBridgeMonitorMultiplexerCanary({
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const parsed = parseBoundedArguments(process.argv.slice(2));
+  const parsed = parseMonitorMultiplexerCanaryArguments(process.argv.slice(2));
   if (!parsed.ok) {
     process.stdout.write(`${JSON.stringify({ ...parsed, finalVerdict: 'MONITOR_MULTIPLEXER_CANARY_BLOCKED' }, null, 2)}\n`);
     process.exitCode = 1;
