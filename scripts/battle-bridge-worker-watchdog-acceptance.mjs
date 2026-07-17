@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -11,8 +12,12 @@ export const APPROVED_WORKER_TASK = 'Stephanos Mission Orchestrator Worker';
 export const APPROVED_WATCHDOG_TASK = 'Stephanos Mission Orchestrator Worker Watchdog';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
-const DOWN_PROBE_ATTEMPTS = 5;
+const DOWN_PROBE_ATTEMPTS = 10;
 const DOWN_PROBE_INTERVAL_MS = 500;
+const RECOVERY_STATUS_ATTEMPTS = 20;
+const RECOVERY_STATUS_INTERVAL_MS = 1_000;
+const FINAL_WORKER_PROBE_ATTEMPTS = 10;
+const FINAL_WORKER_PROBE_INTERVAL_MS = 1_000;
 const HEARTBEAT_MAX_AGE_MS = 120_000;
 
 export const WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY = Object.freeze({
@@ -56,8 +61,8 @@ function blocked(blocker, details = {}) {
   });
 }
 
-function runFixedJson(executable, args, { cwd, spawnSyncFn = spawnSync, timeout = 120_000 } = {}) {
-  const result = spawnSyncFn(executable, args, {
+function spawnFixed(executable, args, { cwd, spawnSyncFn = spawnSync, timeout = 120_000 } = {}) {
+  return spawnSyncFn(executable, args, {
     cwd,
     encoding: 'utf8',
     shell: false,
@@ -65,6 +70,10 @@ function runFixedJson(executable, args, { cwd, spawnSyncFn = spawnSync, timeout 
     timeout,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+}
+
+function runFixedJson(executable, args, options = {}) {
+  const result = spawnFixed(executable, args, options);
   if (result.error || result.status !== 0) {
     return Object.freeze({ ok: false, status: result.status ?? null });
   }
@@ -73,6 +82,12 @@ function runFixedJson(executable, args, { cwd, spawnSyncFn = spawnSync, timeout 
   } catch {
     return Object.freeze({ ok: false, status: result.status ?? null });
   }
+}
+
+function runFixedText(executable, args, options = {}) {
+  const result = spawnFixed(executable, args, options);
+  if (result.error || result.status !== 0) return '';
+  return text(result.stdout);
 }
 
 export function resolveCanonicalWorkerWatchdogAcceptancePaths({ env = process.env, home = os.homedir() } = {}) {
@@ -84,11 +99,12 @@ export function resolveCanonicalWorkerWatchdogAcceptancePaths({ env = process.en
     workspaceRoot,
     installerPath: path.resolve(repoRoot, 'scripts', 'windows', 'install-battle-bridge-worker-watchdog.ps1'),
     probePath: path.resolve(repoRoot, 'scripts', 'windows', 'probe-mission-orchestrator-worker-watchdog.ps1'),
+    watchdogStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-worker-watchdog-current.json'),
   });
 }
 
 export function validateCanonicalWorkerWatchdogAcceptancePaths({ paths, expectedPaths }) {
-  for (const key of ['repoRoot', 'workspaceRoot', 'installerPath', 'probePath']) {
+  for (const key of ['repoRoot', 'workspaceRoot', 'installerPath', 'probePath', 'watchdogStatusPath']) {
     if (path.resolve(paths?.[key] || '') !== path.resolve(expectedPaths?.[key] || '')) {
       return Object.freeze({ ok: false, blocker: `NON_CANONICAL_${key.replace(/([A-Z])/g, '_$1').toUpperCase()}` });
     }
@@ -136,28 +152,12 @@ export function assessCanonicalWorkerObservation(observation = {}, {
 
 export function createCanonicalSourceIdentityReader({ repoRoot, spawnSyncFn = spawnSync } = {}) {
   return () => {
-    const head = runFixedJson('git.exe', ['rev-parse', 'HEAD'], { cwd: repoRoot, spawnSyncFn });
-    const branch = runFixedJson('git.exe', ['branch', '--show-current'], { cwd: repoRoot, spawnSyncFn });
-    if (head.ok || branch.ok) {
-      return Object.freeze({ ok: false, blocker: 'SOURCE_IDENTITY_READER_CONTRACT_ERROR' });
-    }
-    const direct = (args) => {
-      const result = spawnSyncFn('git.exe', args, {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        shell: false,
-        windowsHide: true,
-        timeout: 120_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      return result.error || result.status !== 0 ? '' : text(result.stdout);
-    };
-    const sourceHead = direct(['rev-parse', 'HEAD']).toLowerCase();
-    const branchName = direct(['branch', '--show-current']);
+    const sourceHead = runFixedText('git.exe', ['rev-parse', 'HEAD'], { cwd: repoRoot, spawnSyncFn }).toLowerCase();
+    const branch = runFixedText('git.exe', ['branch', '--show-current'], { cwd: repoRoot, spawnSyncFn });
     return Object.freeze({
-      ok: SHA_40.test(sourceHead) && branchName === 'main',
+      ok: SHA_40.test(sourceHead) && branch === 'main',
       sourceHead,
-      branch: branchName,
+      branch,
     });
   };
 }
@@ -198,9 +198,55 @@ export function createVerifiedWorkerKiller({ killFn = process.kill } = {}) {
   };
 }
 
+export function createFixedWatchdogStatusReader({ paths } = {}) {
+  return async () => {
+    try {
+      return JSON.parse(await readFile(paths.watchdogStatusPath, 'utf8'));
+    } catch {
+      return null;
+    }
+  };
+}
+
 async function defaultRunWatchdog() {
   const { runBattleBridgeWorkerWatchdog } = await import('./battle-bridge-worker-watchdog.mjs');
-  return runBattleBridgeWorkerWatchdog();
+  return runBattleBridgeWorkerWatchdog({ restartCooldownMs: 0 });
+}
+
+function directWatchdogRecoveryEvidence(result) {
+  const proven = result?.ok === true
+    && result?.classification === 'WORKER_WATCHDOG_RECOVERED'
+    && result?.initialAssessment?.healthy === false
+    && result?.startResult?.data?.started === true
+    && result?.startResult?.data?.taskName === APPROVED_WORKER_TASK
+    && result?.finalAssessment?.healthy === true;
+  return proven ? Object.freeze({ ok: true, route: 'direct-watchdog-run' }) : null;
+}
+
+function publishedWatchdogRecoveryEvidence(status, killedAtMs) {
+  const timestampMs = Date.parse(text(status?.timestampUtc));
+  const proven = Number.isFinite(timestampMs)
+    && timestampMs >= killedAtMs
+    && status?.classification === 'WORKER_WATCHDOG_RECOVERED'
+    && status?.supervisorDetectedWorkerDown === true
+    && status?.supervisorRestartedWorker === true
+    && status?.workerRecovered === true
+    && status?.workerFromMain === true;
+  return proven ? Object.freeze({ ok: true, route: 'installed-watchdog-status' }) : null;
+}
+
+async function proveWatchdogRecovery({ runWatchdog, readWatchdogStatus, killedAtMs, sleep }) {
+  const directResult = await runWatchdog();
+  const directEvidence = directWatchdogRecoveryEvidence(directResult);
+  if (directEvidence) return Object.freeze({ ...directEvidence, directResult });
+
+  for (let attempt = 1; attempt <= RECOVERY_STATUS_ATTEMPTS; attempt += 1) {
+    await sleep(RECOVERY_STATUS_INTERVAL_MS);
+    const status = await readWatchdogStatus();
+    const publishedEvidence = publishedWatchdogRecoveryEvidence(status, killedAtMs);
+    if (publishedEvidence) return Object.freeze({ ...publishedEvidence, directResult, status, attempt });
+  }
+  return Object.freeze({ ok: false, directResult });
 }
 
 async function defaultPublishAcceptanceProof({ paths, now, evidence }) {
@@ -287,8 +333,10 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   inspectWorker = createFixedWorkerInspector({ paths }),
   killWorker = createVerifiedWorkerKiller(),
   runWatchdog = defaultRunWatchdog,
+  readWatchdogStatus = createFixedWatchdogStatusReader({ paths }),
   publishProof = defaultPublishAcceptanceProof,
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
+  clock = () => Date.now(),
 } = {}) {
   if (platform !== 'win32') return blocked('WINDOWS_REQUIRED');
   if (!SHA_40.test(text(expectedHead))) return blocked('EXPECTED_HEAD_REQUIRED');
@@ -320,6 +368,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   if (!killed?.ok || killed.pid !== initialPid) {
     return blocked('VERIFIED_WORKER_KILL_FAILED', { sourceHead: source.sourceHead, expectedHeadMatch: true, initialPid });
   }
+  const killedAtMs = clock();
 
   let workerKilledObserved = false;
   for (let attempt = 1; attempt <= DOWN_PROBE_ATTEMPTS; attempt += 1) {
@@ -336,13 +385,13 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     return blocked('WORKER_TERMINATION_NOT_OBSERVED', { sourceHead: source.sourceHead, expectedHeadMatch: true, initialPid });
   }
 
-  const watchdog = await runWatchdog();
-  const supervisorDetectedWorkerDown = watchdog?.initialAssessment?.healthy === false;
-  const supervisorRestartedWorker = watchdog?.classification === 'WORKER_WATCHDOG_RECOVERED'
-    && watchdog?.startResult?.data?.started === true
-    && watchdog?.startResult?.data?.taskName === APPROVED_WORKER_TASK;
-  const watchdogRecovered = watchdog?.finalAssessment?.healthy === true;
-  if (!watchdog?.ok || !supervisorDetectedWorkerDown || !supervisorRestartedWorker || !watchdogRecovered) {
+  const watchdogRecovery = await proveWatchdogRecovery({
+    runWatchdog,
+    readWatchdogStatus,
+    killedAtMs,
+    sleep,
+  });
+  if (!watchdogRecovery.ok) {
     return blocked('WATCHDOG_RECOVERY_NOT_PROVEN', {
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
@@ -351,15 +400,21 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     });
   }
 
-  const finalProbe = inspectWorker();
-  if (!finalProbe?.ok) return blocked('FINAL_WORKER_PROBE_FAILED', { sourceHead: source.sourceHead, expectedHeadMatch: true, initialPid, workerKilledObserved });
-  const final = assessCanonicalWorkerObservation(finalProbe.data, {
-    expectedHead,
-    nowMs: Date.now(),
-    expectedRepoRoot: paths.repoRoot,
-  });
-  const recoveredPid = final.pid;
-  if (!final.ok || recoveredPid === initialPid) {
+  let final = null;
+  for (let attempt = 1; attempt <= FINAL_WORKER_PROBE_ATTEMPTS; attempt += 1) {
+    const finalProbe = inspectWorker();
+    if (finalProbe?.ok) {
+      final = assessCanonicalWorkerObservation(finalProbe.data, {
+        expectedHead,
+        nowMs: clock(),
+        expectedRepoRoot: paths.repoRoot,
+      });
+      if (final.ok && final.pid !== initialPid) break;
+    }
+    await sleep(FINAL_WORKER_PROBE_INTERVAL_MS);
+  }
+  const recoveredPid = final?.pid || 0;
+  if (!final?.ok || recoveredPid === initialPid) {
     return blocked('RECOVERED_WORKER_IDENTITY_NOT_PROVEN', {
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
@@ -376,6 +431,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     branch: 'main',
     expectedHeadMatch: true,
     watchdogInstalled: true,
+    watchdogRecoveryRoute: watchdogRecovery.route,
     initialPid,
     recoveredPid,
     workerKilled: true,
@@ -389,7 +445,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   });
   let publication;
   try {
-    publication = await publishProof({ paths, now: new Date(), evidence });
+    publication = await publishProof({ paths, now: new Date(clock()), evidence });
   } catch {
     return blocked('SHARED_WORKSPACE_ACCEPTANCE_PUBLICATION_FAILED', evidence);
   }
