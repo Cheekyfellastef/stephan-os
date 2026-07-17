@@ -114,6 +114,7 @@ export function validateCanonicalWorkerWatchdogAcceptancePaths({ paths, expected
 
 export function assessCanonicalWorkerObservation(observation = {}, {
   expectedHead = '',
+  requireExactHead = true,
   nowMs = Date.now(),
   expectedRepoRoot = '',
 } = {}) {
@@ -124,6 +125,8 @@ export function assessCanonicalWorkerObservation(observation = {}, {
   const taskStatus = text(observation?.scheduledTask?.status).toLowerCase();
   const observedRepoRoot = normalizePath(observation?.heartbeat?.repositoryRoot);
   const canonicalRepoRoot = normalizePath(expectedRepoRoot);
+  const observedHead = text(observation?.heartbeat?.headSha).toLowerCase();
+  const normalizedExpectedHead = text(expectedHead).toLowerCase();
   const blockers = [];
 
   if (text(observation?.scheduledTask?.taskName) !== APPROVED_WORKER_TASK) blockers.push('WORKER_TASK_IDENTITY_NOT_APPROVED');
@@ -136,15 +139,16 @@ export function assessCanonicalWorkerObservation(observation = {}, {
   if (text(observation?.heartbeat?.taskName) !== APPROVED_WORKER_TASK) blockers.push('WORKER_HEARTBEAT_TASK_IDENTITY_NOT_APPROVED');
   if (!Number.isInteger(heartbeatPid) || heartbeatPid !== processPid) blockers.push('WORKER_HEARTBEAT_PID_MISMATCH');
   if (text(observation?.heartbeat?.branch).toLowerCase() !== 'main') blockers.push('WORKER_HEARTBEAT_BRANCH_NOT_MAIN');
-  if (!SHA_40.test(text(observation?.heartbeat?.headSha)) || text(observation?.heartbeat?.headSha).toLowerCase() !== text(expectedHead).toLowerCase()) {
-    blockers.push('WORKER_HEARTBEAT_HEAD_MISMATCH');
-  }
+  if (!SHA_40.test(observedHead)) blockers.push('WORKER_HEARTBEAT_HEAD_INVALID');
+  else if (requireExactHead && observedHead !== normalizedExpectedHead) blockers.push('WORKER_HEARTBEAT_HEAD_MISMATCH');
   if (!canonicalRepoRoot || observedRepoRoot !== canonicalRepoRoot) blockers.push('WORKER_HEARTBEAT_REPOSITORY_NOT_CANONICAL');
   if (heartbeatAgeMs === null || heartbeatAgeMs < 0 || heartbeatAgeMs > HEARTBEAT_MAX_AGE_MS) blockers.push('WORKER_HEARTBEAT_NOT_FRESH');
 
   return Object.freeze({
     ok: blockers.length === 0,
     pid: Number.isInteger(processPid) && processPid > 0 ? processPid : 0,
+    headSha: SHA_40.test(observedHead) ? observedHead : '',
+    exactHeadMatch: SHA_40.test(observedHead) && observedHead === normalizedExpectedHead,
     heartbeatAgeMs,
     blockers: Object.freeze(blockers),
   });
@@ -236,6 +240,10 @@ function publishedWatchdogRecoveryEvidence(status, killedAtMs) {
 }
 
 async function proveWatchdogRecovery({ runWatchdog, readWatchdogStatus, killedAtMs, sleep }) {
+  const statusBeforeDirectRun = await readWatchdogStatus();
+  const earlyPublishedEvidence = publishedWatchdogRecoveryEvidence(statusBeforeDirectRun, killedAtMs);
+  if (earlyPublishedEvidence) return Object.freeze({ ...earlyPublishedEvidence, status: statusBeforeDirectRun, attempt: 0 });
+
   const directResult = await runWatchdog();
   const directEvidence = directWatchdogRecoveryEvidence(directResult);
   if (directEvidence) return Object.freeze({ ...directEvidence, directResult });
@@ -358,6 +366,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   if (!initialProbe?.ok) return blocked('INITIAL_WORKER_PROBE_FAILED', { sourceHead: source.sourceHead, expectedHeadMatch: true });
   const initial = assessCanonicalWorkerObservation(initialProbe.data, {
     expectedHead,
+    requireExactHead: false,
     nowMs: now.getTime(),
     expectedRepoRoot: paths.repoRoot,
   });
@@ -406,6 +415,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     if (finalProbe?.ok) {
       final = assessCanonicalWorkerObservation(finalProbe.data, {
         expectedHead,
+        requireExactHead: true,
         nowMs: clock(),
         expectedRepoRoot: paths.repoRoot,
       });
@@ -432,6 +442,8 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     expectedHeadMatch: true,
     watchdogInstalled: true,
     watchdogRecoveryRoute: watchdogRecovery.route,
+    initialHead: initial.headSha,
+    recoveredHead: final.headSha,
     initialPid,
     recoveredPid,
     workerKilled: true,
