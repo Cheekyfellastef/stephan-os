@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   MONITOR_MULTIPLEXER_CANARY_MONITOR_COUNT,
+  receiptRefForPublishedTick,
   runMonitorMultiplexerCanary,
   validateMonitorMultiplexerCanaryRequest,
 } from './monitorMultiplexerCanary.mjs';
@@ -40,6 +41,19 @@ test('request validation requires a matching exact source head and bounded reque
   });
   assert.equal(unsafe.valid, false);
   assert.ok(unsafe.errors.includes('REQUEST_ID_INVALID'));
+});
+
+test('receipt proof reference requires a successful durable receipt write', () => {
+  const receipt = { receiptId: 'monitor-mux-receipt-0001' };
+  assert.equal(receiptRefForPublishedTick({
+    receipt,
+    writes: [{ ok: false, reason: 'RECEIPT_WRITE_FAILED' }],
+  }), '');
+  assert.equal(receiptRefForPublishedTick({
+    receipt,
+    writes: [{ ok: true }],
+  }), 'receipts/monitor-mux-receipt-0001.json');
+  assert.equal(receiptRefForPublishedTick({ receipt, writes: [] }), '');
 });
 
 test('real canary proves 13 monitors without counting pre-existing outbox records', async () => {
