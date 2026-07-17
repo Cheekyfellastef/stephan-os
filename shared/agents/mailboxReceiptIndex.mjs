@@ -1,6 +1,7 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir } from 'node:fs/promises';
 
 import {
+  DEFAULT_STALE_AFTER_MS,
   createSharedWorkspaceStatusRecord,
   resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
@@ -197,19 +198,26 @@ export async function loadMailboxReceiptsFromSharedWorkspace({
     if (error?.code === 'ENOENT') return { ok: true, reason: 'MAILBOX_RECEIPT_DIRECTORY_EMPTY', receipts: [] };
     return { ok: false, reason: 'MAILBOX_RECEIPT_DIRECTORY_READ_FAILED', receipts: [] };
   }
-  const safeNames = names
-    .filter((name) => name.endsWith('.json') && REQUEST_ID_PATTERN.test(name.slice(0, -5)))
-    .sort()
-    .slice(-Math.max(1, Math.min(MAILBOX_RECEIPT_INDEX_MAX_FILES, Number(maxFiles) || MAILBOX_RECEIPT_INDEX_MAX_FILES)));
-  const receipts = [];
-  for (const name of safeNames) {
+  const candidates = [];
+  for (const name of names.filter((item) => item.endsWith('.json') && REQUEST_ID_PATTERN.test(item.slice(0, -5)))) {
     const file = resolveSharedWorkspacePath({ root, repoRoot, segments: ['receipts', 'github-command-mailbox', name] });
     if (!file.ok) continue;
     try {
-      const payload = await readFile(file.path, 'utf8');
+      const info = await lstat(file.path);
+      if (info.isFile()) candidates.push({ name, path: file.path, mtimeMs: info.mtimeMs });
+    } catch {}
+  }
+  const boundedFileCount = Math.max(1, Math.min(MAILBOX_RECEIPT_INDEX_MAX_FILES, Number(maxFiles) || MAILBOX_RECEIPT_INDEX_MAX_FILES));
+  const newestCandidates = candidates
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name))
+    .slice(0, boundedFileCount);
+  const receipts = [];
+  for (const candidate of newestCandidates) {
+    try {
+      const payload = await readFile(candidate.path, 'utf8');
       if (Buffer.byteLength(payload, 'utf8') > MAILBOX_RECEIPT_INDEX_MAX_FILE_BYTES) continue;
       const receipt = JSON.parse(payload);
-      if (String(receipt?.requestId || '') === name.slice(0, -5)) receipts.push(receipt);
+      if (String(receipt?.requestId || '') === candidate.name.slice(0, -5)) receipts.push(receipt);
     } catch {}
   }
   return { ok: true, reason: 'MAILBOX_RECEIPTS_LOADED', receipts };
@@ -238,7 +246,12 @@ export async function refreshMailboxReceiptIndex({
   };
 }
 
-export async function readMailboxReceiptIndex({ root, repoRoot } = {}) {
+export async function readMailboxReceiptIndex({
+  root,
+  repoRoot,
+  nowMs = Date.now(),
+  staleAfterMs = DEFAULT_STALE_AFTER_MS,
+} = {}) {
   const resolved = resolveSharedWorkspacePath({ root, repoRoot, segments: ['status', MAILBOX_RECEIPT_INDEX_FILENAME] });
   if (!resolved.ok) return { ok: false, blocker: resolved.reason, finalVerdict: 'MAILBOX_RECEIPT_INDEX_BLOCKED' };
   let payload;
@@ -254,17 +267,31 @@ export async function readMailboxReceiptIndex({ root, repoRoot } = {}) {
   try { record = JSON.parse(payload); } catch {
     return { ok: false, blocker: 'MAILBOX_RECEIPT_INDEX_JSON_INVALID', finalVerdict: 'MAILBOX_RECEIPT_INDEX_BLOCKED' };
   }
-  const validation = validateSharedWorkspaceRecord(record);
+  const validation = validateSharedWorkspaceRecord(record, { nowMs, staleAfterMs });
   if (!validation.valid
     || record?.statusId !== MAILBOX_RECEIPT_INDEX_STATUS_ID
     || record?.receiptIndexSchemaVersion !== MAILBOX_RECEIPT_INDEX_SCHEMA_VERSION) {
     return { ok: false, blocker: 'MAILBOX_RECEIPT_INDEX_RECORD_INVALID', finalVerdict: 'MAILBOX_RECEIPT_INDEX_BLOCKED' };
   }
+  const projection = createMailboxReceiptIndexProjection(record);
+  if (validation.stale) {
+    return {
+      ok: false,
+      blocker: 'MAILBOX_RECEIPT_INDEX_STALE',
+      finalVerdict: 'MAILBOX_RECEIPT_INDEX_STALE',
+      stale: true,
+      projection,
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+    };
+  }
   return {
     ok: true,
     blocker: '',
     finalVerdict: 'MAILBOX_RECEIPT_INDEX_READ_READY',
-    projection: createMailboxReceiptIndexProjection(record),
+    stale: false,
+    projection,
     arbitraryFilesystemAccess: false,
     commandExecutionAccess: false,
     sourceMutationAccess: false,
