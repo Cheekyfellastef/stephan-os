@@ -7,6 +7,8 @@ on:
       - 'shared/agents/mailboxReceiptIndex.test.mjs'
       - 'shared/agents/mailboxReceiptIndexAccess.mjs'
       - 'shared/agents/mailboxReceiptIndexAccess.test.mjs'
+      - 'shared/agents/mailboxReceiptIndexGitHubMirror.mjs'
+      - 'shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs'
       - 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
@@ -17,6 +19,7 @@ on:
     branches: [main]
     paths:
       - 'shared/agents/mailboxReceiptIndex.mjs'
+      - 'shared/agents/mailboxReceiptIndexGitHubMirror.mjs'
       - '.github/workflows/mailbox-receipt-index.yml'
   workflow_dispatch:
 
@@ -49,6 +52,7 @@ jobs:
           node --test
           shared/agents/mailboxReceiptIndex.test.mjs
           shared/agents/mailboxReceiptIndexAccess.test.mjs
+          shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs
           scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
           shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
 
@@ -88,8 +92,8 @@ jobs:
           script: |
             const path = await import('node:path');
             const { pathToFileURL } = await import('node:url');
-            const moduleUrl = `${pathToFileURL(path.resolve('shared/agents/mailboxReceiptIndex.mjs')).href}?run=${Date.now()}`;
-            const receiptIndex = await import(moduleUrl);
+            const moduleUrl = `${pathToFileURL(path.resolve('shared/agents/mailboxReceiptIndexGitHubMirror.mjs')).href}?run=${Date.now()}`;
+            const receiptIndexMirror = await import(moduleUrl);
             const issueNumber = 1507;
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
@@ -97,12 +101,14 @@ jobs:
               issue_number: issueNumber,
               per_page: 100,
             });
-            const ownerReceipts = comments.filter((comment) => comment.user?.login === context.repo.owner);
-            const record = receiptIndex.createMailboxReceiptIndexFromGitHubComments(ownerReceipts, {
+            const record = receiptIndexMirror.createTrustedMailboxReceiptIndexFromGitHubComments(comments, {
+              ownerLogin: context.repo.owner,
               timestampUtc: new Date().toISOString(),
             });
-            const body = receiptIndex.buildMailboxReceiptIndexGitHubBody(record);
-            const existing = receiptIndex.findMailboxReceiptIndexComment(comments);
+            const body = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBody(record);
+            const existing = receiptIndexMirror.findTrustedMailboxReceiptIndexComment(comments, {
+              ownerLogin: context.repo.owner,
+            });
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
