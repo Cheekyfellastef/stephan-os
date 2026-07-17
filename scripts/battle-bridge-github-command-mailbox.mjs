@@ -6,6 +6,11 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mjs';
 import { runBattleBridgeDiagnostics } from '../shared/agents/codexDispatchHostOps.mjs';
+import { createSanitizedSharedWorkspaceProjection } from '../shared/agents/chatGptParticipantBridgeV1.mjs';
+import {
+  buildStephanosCapabilityRegistrySummary,
+  validateStephanosCapabilityRegistry,
+} from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
@@ -16,10 +21,13 @@ import {
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
-const workspaceRoot = resolve(process.env.STEPHANOS_SHARED_WORKSPACE_ROOT || join(homedir(), 'Documents', 'Stephanos', 'shared-agent-workspace'));
-const receiptRoot = join(workspaceRoot, 'github-command-mailbox');
-const statePath = join(receiptRoot, 'state.json');
+const mailboxWorkspaceRoot = resolve(process.env.STEPHANOS_SHARED_WORKSPACE_ROOT || join(homedir(), 'Documents', 'Stephanos', 'shared-agent-workspace'));
+const sharedWorkspaceRoot = resolve(process.env.STEPHANOS_SHARED_AGENT_WORKSPACE || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'));
+const mailboxStateRoot = join(mailboxWorkspaceRoot, 'github-command-mailbox');
+const canonicalReceiptRoot = join(sharedWorkspaceRoot, 'receipts', 'github-command-mailbox');
+const statePath = join(mailboxStateRoot, 'state.json');
 const MAX_GITHUB_JSON_BYTES = 2 * 1024 * 1024;
+const MAX_GITHUB_RECEIPT_JSON_BYTES = 9 * 1024;
 
 function bounded(value, limit = 12000) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
@@ -59,20 +67,77 @@ export function parseBoundedGitHubJson(stdout, maxBytes = MAX_GITHUB_JSON_BYTES)
   }
 }
 
+export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
+  const fullJson = JSON.stringify(receipt, null, 2);
+  const fullBytes = Buffer.byteLength(fullJson, 'utf8');
+  if (fullBytes <= maxBytes) return fullJson;
+
+  const execution = receipt?.result || {};
+  const operationResult = execution?.result || {};
+  const compactReceipt = {
+    schemaVersion: String(receipt?.schemaVersion || ''),
+    requestId: String(receipt?.requestId || ''),
+    operation: String(receipt?.operation || ''),
+    repository: String(receipt?.repository || ''),
+    issueNumber: Number(receipt?.issueNumber || 0),
+    branch: String(receipt?.branch || ''),
+    state: String(receipt?.state || ''),
+    acceptedAt: String(receipt?.acceptedAt || ''),
+    heartbeatAt: String(receipt?.heartbeatAt || ''),
+    completedAt: String(receipt?.completedAt || ''),
+    blocker: String(receipt?.blocker || operationResult?.blocker || ''),
+    proofRefs: Array.isArray(receipt?.proofRefs) ? receipt.proofRefs.slice(0, 20).map(String) : [],
+    result: {
+      ok: execution?.ok !== false,
+      verdict: String(execution?.verdict || ''),
+      operation: String(execution?.operation || receipt?.operation || ''),
+      requestId: String(execution?.requestId || receipt?.requestId || ''),
+      result: {
+        ok: operationResult?.ok !== false,
+        blocker: String(operationResult?.blocker || ''),
+        finalVerdict: String(operationResult?.finalVerdict || ''),
+        sourceHead: String(operationResult?.sourceHead || ''),
+        branch: String(operationResult?.branch || ''),
+        expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+        githubProjectionTruncated: true,
+        originalBytes: fullBytes,
+      },
+    },
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    liveOpenClawUpdateAllowed: false,
+    githubProjectionTruncated: true,
+  };
+  const compactJson = JSON.stringify(compactReceipt, null, 2);
+  if (Buffer.byteLength(compactJson, 'utf8') > maxBytes) {
+    throw new Error(`GITHUB_RECEIPT_PROJECTION_TOO_LARGE:${fullBytes}:${maxBytes}`);
+  }
+  return compactJson;
+}
+
 function loadState() {
   try { return JSON.parse(readFileSync(statePath, 'utf8')); } catch { return { consumedRequestIds: [] }; }
 }
 
 function saveState(state) {
-  mkdirSync(receiptRoot, { recursive: true });
+  mkdirSync(mailboxStateRoot, { recursive: true });
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
 
 function writeReceipt(receipt) {
-  mkdirSync(receiptRoot, { recursive: true });
-  const path = join(receiptRoot, `${receipt.requestId}.json`);
-  writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
-  return path;
+  mkdirSync(mailboxStateRoot, { recursive: true });
+  mkdirSync(canonicalReceiptRoot, { recursive: true });
+  const filename = `${receipt.requestId}.json`;
+  const legacyPath = join(mailboxStateRoot, filename);
+  const canonicalPath = join(canonicalReceiptRoot, filename);
+  const payload = `${JSON.stringify(receipt, null, 2)}\n`;
+  writeFileSync(legacyPath, payload, 'utf8');
+  writeFileSync(canonicalPath, payload, 'utf8');
+  return {
+    path: canonicalPath,
+    legacyPath,
+    ref: `receipts/github-command-mailbox/${filename}`,
+  };
 }
 
 function ghJson(args) {
@@ -89,7 +154,7 @@ function postReceipt(receipt) {
   const body = [
     '<!-- stephanos-battle-bridge-command-receipt -->',
     '```json',
-    bounded(receipt, 10000),
+    serializeBoundedReceiptJson(receipt),
     '```',
   ].join('\n');
   return run('gh.exe', ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
@@ -102,11 +167,73 @@ async function installUnattendedSync() {
   return { ...result, installer, fixedCommand: true, arbitraryShellAllowed: false };
 }
 
-async function readDeploymentStatus() {
+function readCanonicalSourceIdentity(command = {}) {
   const source = run('git.exe', ['rev-parse', 'HEAD'], { timeout: 120000 });
   const branch = run('git.exe', ['branch', '--show-current'], { timeout: 120000 });
+  const sourceHead = source.stdout.trim().toLowerCase();
+  const branchName = branch.stdout.trim();
+  if (!source.ok || !branch.ok || !/^[0-9a-f]{40}$/.test(sourceHead)) {
+    return { ok: false, blocker: 'SOURCE_IDENTITY_READ_FAILED', sourceHead: '', branch: branchName || '' };
+  }
+  if (branchName !== 'main') {
+    return { ok: false, blocker: 'SOURCE_BRANCH_NOT_MAIN', sourceHead, branch: branchName };
+  }
+  const expectedHead = String(command.expectedHead || '').trim().toLowerCase();
+  if (expectedHead && expectedHead !== sourceHead) {
+    return { ok: false, blocker: 'EXPECTED_HEAD_MISMATCH', sourceHead, expectedHead, branch: branchName };
+  }
+  return { ok: true, sourceHead, expectedHead, expectedHeadMatch: !expectedHead || expectedHead === sourceHead, branch: branchName };
+}
+
+async function readDeploymentStatus(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
   const task = run('powershell.exe', ['-NoProfile', '-Command', "Get-ScheduledTask -TaskName 'Stephanos Battle Bridge GitHub Sync' -ErrorAction SilentlyContinue | Select-Object TaskName,State | ConvertTo-Json -Compress"], { timeout: 120000 });
-  return { ok: source.ok && branch.ok, sourceHead: source.stdout.trim(), branch: branch.stdout.trim(), task };
+  return { ...identity, task };
+}
+
+async function readCapabilityRegistry(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const registry = buildStephanosCapabilityRegistrySummary({
+    sourceHead: identity.sourceHead,
+    generatedAtUtc: new Date().toISOString(),
+  });
+  const validation = validateStephanosCapabilityRegistry();
+  return {
+    ok: validation.valid,
+    blocker: validation.valid ? '' : 'CAPABILITY_REGISTRY_INVALID',
+    finalVerdict: validation.finalVerdict,
+    sourceHead: identity.sourceHead,
+    branch: identity.branch,
+    expectedHeadMatch: identity.expectedHeadMatch,
+    registry,
+  };
+}
+
+async function readSharedWorkspaceStatus(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const projection = await createSanitizedSharedWorkspaceProjection({
+    workspaceRoot: sharedWorkspaceRoot,
+    repoRoot,
+    timestampUtc: new Date().toISOString(),
+  });
+  const ready = projection.aggregationOk === true
+    && projection.aggregationVerdict === 'SHARED_WORKSPACE_LATEST_STATUS_READY'
+    && projection.currentStatus !== null;
+  return {
+    ok: ready,
+    blocker: ready ? '' : 'SHARED_WORKSPACE_STATUS_NOT_READY',
+    finalVerdict: ready ? 'SHARED_WORKSPACE_STATUS_READY' : 'SHARED_WORKSPACE_STATUS_BLOCKED',
+    workspaceVerdict: projection.aggregationVerdict,
+    sourceHead: identity.sourceHead,
+    branch: identity.branch,
+    expectedHeadMatch: identity.expectedHeadMatch,
+    projection,
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  };
 }
 
 export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
@@ -125,14 +252,17 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
 
   const acceptedAt = now().toISOString();
   let receipt = buildBattleBridgeGitHubCommandReceipt({ command: selected.command, state: 'ACCEPTED', acceptedAt, heartbeatAt: acceptedAt, proofRefs: [selected.commentUrl] });
-  const receiptPath = writeReceipt(receipt);
-  postReceipt({ ...receipt, receiptPath });
+  const receiptLocation = writeReceipt(receipt);
+  const receiptRef = receiptLocation.ref;
+  postReceipt({ ...receipt, receiptRef });
 
   const execution = await executeBattleBridgeGitHubCommand(selected.command, {
     updateStephanos: (command) => updateStephanosFromChat({ operatorApproval: command.operatorApproval, expectedBranch: 'main' }),
     installUnattendedSync,
     runDiagnostics: () => runBattleBridgeDiagnostics(),
     readDeploymentStatus,
+    readCapabilityRegistry,
+    readSharedWorkspaceStatus,
   });
 
   const completedAt = now().toISOString();
@@ -144,14 +274,14 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     completedAt,
     result: execution,
     blocker: execution.blocker || execution.result?.blocker || '',
-    proofRefs: [selected.commentUrl, receiptPath],
+    proofRefs: [selected.commentUrl, receiptRef],
   });
   writeReceipt(receipt);
   state.consumedRequestIds = [...new Set([...(state.consumedRequestIds || []), selected.command.requestId])].slice(-500);
   state.lastReceipt = receipt;
   saveState(state);
-  postReceipt({ ...receipt, receiptPath });
-  return { ...receipt, receiptPath };
+  postReceipt({ ...receipt, receiptRef });
+  return { ...receipt, receiptPath: receiptLocation.path, receiptRef };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
