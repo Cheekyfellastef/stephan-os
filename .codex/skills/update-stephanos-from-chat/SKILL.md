@@ -36,6 +36,20 @@ node scripts/stephanos-chat-update.mjs sync --operator-approved
 
 Use `node` directly. Do not route this workflow through `npm`, `npm.cmd`, PowerShell, or a handwritten shell sequence.
 
+## Execution-surface preflight
+
+This skill is valid only on a real attached Battle Bridge Windows execution surface. Before running any command, verify a fresh execution-surface handshake proving:
+
+- attached/connected state;
+- Windows platform;
+- `can_local_windows_proof: true`;
+- a real surface receipt;
+- a fresh heartbeat.
+
+A plain GitHub `@codex` mention launches cloud Codex and is not a Battle Bridge route, regardless of prompt wording. Never use it for this skill.
+
+If the handshake is missing, stale, Linux, or otherwise mismatched, run nothing and return exactly `BATTLE_BRIDGE_EXECUTION_SURFACE_NOT_ATTACHED` or `BLOCKED_ROUTE_CAPABILITY_MISMATCH`. Do not create a cloud substitute, do not claim a task receipt, and do not create a duplicate task.
+
 ## Approval rule
 
 Treat a direct imperative from Stephan such as `Update Stephanos now` as approval for one exact bounded update to the latest canonical `origin/main` observed immediately after this run fetches it.

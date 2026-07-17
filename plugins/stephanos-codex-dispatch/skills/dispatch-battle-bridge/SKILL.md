@@ -26,6 +26,22 @@ Use `dispatch_codex_task` only after the operator explicitly asks for work that 
 
 Do not dispatch ordinary code writing merely because Codex is available.
 
+## Hard execution-surface gate
+
+A plain GitHub `@codex` mention is a cloud Codex launch surface. It must never be used for work requiring Windows, the Battle Bridge, localhost services, Task Scheduler, watchdog/service state, canonical Windows checkout proof, or exact served-runtime proof. Writing “use Windows” in the prompt does not change the execution surface.
+
+Before dispatching any task requiring `can_local_windows_proof`, require a fresh execution-surface handshake containing:
+
+- a real Battle Bridge surface receipt;
+- attached/connected state;
+- Windows platform proof;
+- `can_local_windows_proof: true`;
+- a fresh heartbeat.
+
+If any field is absent or stale, fail closed as `BATTLE_BRIDGE_EXECUTION_SURFACE_NOT_ATTACHED` or `BLOCKED_ROUTE_CAPABILITY_MISMATCH`. Do not create a cloud/Linux substitute, do not emit a plain GitHub `@codex` mention, and do not create a duplicate task.
+
+When the handshake is valid, route exactly one bounded task through `REMOTE_CODEX_BATTLE_BRIDGE`, then require a real task receipt and heartbeat before claiming that execution started.
+
 ## Phone and iPad Codex Remote route
 
 When this local MCP tool surface is not present but the chat is attached to the Battle Bridge through Codex Remote, use the repository skill `update-stephanos-from-chat` and its exact source-controlled Node entrypoint. Do not use `npm`, `npm.cmd`, handwritten PowerShell, or a pasted shell wall. Do not pin a request for the latest canonical main to an older merge head.
