@@ -146,5 +146,7 @@ test('Remote Codex reset skill stays bounded to one authenticated reset action',
   assert.match(skill, /earliest-expiring/i);
   assert.match(skill, /press exactly one/i);
   assert.match(skill, /BLOCKED_RESET_UI_MISMATCH/);
-  assert.doesNotMatch(skill, /export cookies|read credentials|generic browser automation/i);
+  assert.match(skill, /Generic browser automation is forbidden/);
+  assert.match(skill, /Do not execute arbitrary JavaScript/);
+  assert.match(skill, /Do not navigate to unrelated account, billing, security, cookie, session, or credential surfaces/);
 });
