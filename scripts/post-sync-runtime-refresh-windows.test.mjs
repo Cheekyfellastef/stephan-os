@@ -34,8 +34,10 @@ test('worker restart requires task-owned process stop and a fresh exact-head hea
   assert.match(restartSource, /mission-orchestrator-worker-heartbeat\.json/);
   assert.match(restartSource, /headSha -ne \$ExpectedSourceHead/);
   assert.match(restartSource, /MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT/);
-  assert.match(restartSource, /MISSION_WORKER_TASK_OR_PROCESS_DID_NOT_STOP/);
-  assert.match(restartSource, /MISSION_WORKER_PROCESS_OUTSIDE_RUNNING_TASK/);
+  assert.match(restartSource, /MISSION_WORKER_TASK_DID_NOT_STOP/);
+  assert.match(restartSource, /MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP/);
+  assert.match(restartSource, /Stop-Process -Id \$oldWorker\.ProcessId -Force/);
+  assert.doesNotMatch(restartSource, /MISSION_WORKER_TASK_OR_PROCESS_DID_NOT_STOP|MISSION_WORKER_PROCESS_OUTSIDE_RUNNING_TASK/);
   assert.match(restartSource, /unrelatedTasksChanged = \$false/);
 });
 
