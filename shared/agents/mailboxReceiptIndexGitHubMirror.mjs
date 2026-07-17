@@ -30,8 +30,7 @@ function validIdentity(record, schemaVersion) {
 export function extractTrustedMailboxCommandComment(comment = {}, ownerLogin = '') {
   if (!ownerLogin || comment?.user?.login !== ownerLogin) return null;
   const body = String(comment?.body || '');
-  const pattern = new RegExp(`\\`\\`\\`${MAILBOX_RECEIPT_GITHUB_COMMAND_MARKER}\\s*([\\s\\S]*?)\\`\\`\\``, 'i');
-  const match = body.match(pattern);
+  const match = body.match(/```stephanos-battle-bridge-command\s*([\s\S]*?)```/i);
   if (!match) return null;
   const command = parseJson(match[1]);
   if (!validIdentity(command, COMMAND_SCHEMA)) return null;
@@ -46,7 +45,7 @@ export function extractTrustedMailboxReceiptComment(comment = {}, ownerLogin = '
   if (!ownerLogin || comment?.user?.login !== ownerLogin) return null;
   const body = String(comment?.body || '');
   if (!body.includes(`<!-- ${MAILBOX_RECEIPT_GITHUB_RECEIPT_MARKER} -->`)) return null;
-  const match = body.match(/````?json\s*([\s\S]*?)````?/i) || body.match(/```json\s*([\s\S]*?)```/i);
+  const match = body.match(/```json\s*([\s\S]*?)```/i);
   if (!match) return null;
   const receipt = parseJson(match[1]);
   if (!validIdentity(receipt, RECEIPT_SCHEMA)) return null;
