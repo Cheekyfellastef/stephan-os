@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mailbox-receipt-index-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  group: mailbox-receipt-index-${{ github.event.pull_request.number || 'mirror' }}
   cancel-in-progress: true
 
 jobs:
@@ -106,9 +106,7 @@ jobs:
               timestampUtc: new Date().toISOString(),
             });
             const body = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBody(record);
-            const existing = receiptIndexMirror.findTrustedMailboxReceiptIndexComment(comments, {
-              ownerLogin: context.repo.owner,
-            });
+            const existing = receiptIndexMirror.findTrustedMailboxReceiptIndexComment(comments);
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
