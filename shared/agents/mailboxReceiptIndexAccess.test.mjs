@@ -16,6 +16,7 @@ async function fixture(fn) {
   const root = await mkdtemp(join(tmpdir(), 'mailbox-index-access-'));
   const repoRoot = join(root, 'repo');
   const workspaceRoot = join(root, 'workspace');
+  const timestampUtc = new Date().toISOString();
   await mkdir(repoRoot, { recursive: true });
   const receiptRoot = join(workspaceRoot, 'receipts', 'github-command-mailbox');
   await mkdir(receiptRoot, { recursive: true });
@@ -26,9 +27,9 @@ async function fixture(fn) {
     branch: 'main',
     expectedHead: HEAD,
     state: 'DONE',
-    acceptedAt: '2026-07-17T20:00:00.000Z',
-    heartbeatAt: '2026-07-17T20:00:01.000Z',
-    completedAt: '2026-07-17T20:00:01.000Z',
+    acceptedAt: timestampUtc,
+    heartbeatAt: timestampUtc,
+    completedAt: timestampUtc,
     proofRefs: ['receipts/github-command-mailbox/mailbox-index-access-20260717T2000Z.json'],
     result: {
       ok: true,
@@ -43,7 +44,7 @@ async function fixture(fn) {
     },
   };
   await writeFile(join(receiptRoot, `${receipt.requestId}.json`), `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
-  await refreshMailboxReceiptIndex({ root: workspaceRoot, repoRoot, timestampUtc: '2026-07-17T20:00:02.000Z' });
+  await refreshMailboxReceiptIndex({ root: workspaceRoot, repoRoot, timestampUtc });
   try { return await fn({ repoRoot, workspaceRoot }); }
   finally { await rm(root, { recursive: true, force: true }); }
 }
