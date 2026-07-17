@@ -5,21 +5,33 @@ import { parseBoundedGitHubJson } from './battle-bridge-github-command-mailbox.m
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-command-mailbox-hidden.ps1', import.meta.url);
+const windowlessLauncherPath = new URL('./windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url);
 
 test('mailbox task uses the fixed windowless launcher instead of allocating a Node console', async () => {
-  const [installer, hiddenLauncher] = await Promise.all([
+  const [installer, hiddenLauncher, windowlessLauncher] = await Promise.all([
     readFile(installerPath, 'utf8'),
     readFile(hiddenLauncherPath, 'utf8'),
+    readFile(windowlessLauncherPath, 'utf8'),
   ]);
 
   assert.match(installer, /New-ScheduledTaskAction -Execute \$wscriptExe/);
   assert.match(installer, /run-stephanos-scheduled-task-windowless\.vbs/);
+  assert.match(installer, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
+  assert.match(installer, /receiptIndexEnabled = \$true/);
   assert.match(installer, /\/\/B \/\/NoLogo/);
   assert.match(installer, /github-command-mailbox/);
   assert.doesNotMatch(installer, /New-ScheduledTaskAction -Execute \$(?:node|nodeExe|npm)/);
 
+  assert.match(
+    windowlessLauncher,
+    /Case "github-command-mailbox"\s+targetPath = fileSystem\.BuildPath\(repoRoot, "scripts\\windows\\run-battle-bridge-github-command-mailbox-hidden\.ps1"\)\s+command = Quote\(powershellExe\) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote\(targetPath\)/,
+  );
+  assert.match(windowlessLauncher, /shell\.Run\(command, 0, True\)/);
+  assert.doesNotMatch(windowlessLauncher, /WScript\.Arguments\(1\)|cmd\.exe|Invoke-Expression/i);
+
   assert.match(hiddenLauncher, /Documents\\GitHub\\stephan-os/);
-  assert.match(hiddenLauncher, /battle-bridge-github-command-mailbox\.mjs/);
+  assert.match(hiddenLauncher, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
+  assert.doesNotMatch(hiddenLauncher, /scripts\\battle-bridge-github-command-mailbox\.mjs/);
   assert.match(hiddenLauncher, /Get-Command node\.exe/);
   assert.match(hiddenLauncher, /\*> \$null/);
   assert.doesNotMatch(hiddenLauncher, /\[string\]\s*\$|Invoke-Expression|Start-Process|cmd\.exe/i);

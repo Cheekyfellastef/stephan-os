@@ -18,7 +18,7 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne [System.IO.Path]::GetFullPath($
     throw "Installer must run from the canonical checkout: $expectedRepoRoot"
 }
 
-$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox.mjs')).Path
+$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-with-receipt-index.mjs')).Path
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
 if (-not (Test-Path -LiteralPath $wscriptExe -PathType Leaf)) { throw "Windowless task host is missing: $wscriptExe" }
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -40,14 +40,14 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
-if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub command mailbox task')) {
+if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub command mailbox task with Shared Workspace receipt index')) {
     Register-ScheduledTask `
         -TaskName $taskName `
         -Action $action `
         -Trigger @($logonTrigger, $intervalTrigger) `
         -Principal $principal `
         -Settings $settings `
-        -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
+        -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507 and publishes a bounded Shared Workspace receipt index. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
         -Force | Out-Null
     if ($StartNow) {
         Start-ScheduledTask -TaskName $taskName
@@ -61,6 +61,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     executable = $wscriptExe
     launcherPath = $launcherPath
     runnerPath = $runnerPath
+    receiptIndexEnabled = $true
     intervalMinutes = 5
     atLogon = $true
     hidden = $true
