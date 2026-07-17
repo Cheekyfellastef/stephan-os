@@ -26,7 +26,7 @@ function fail(blocker, details = {}) {
 export function extractBattleBridgeGitHubCommand(body = '') {
   const text = String(body || '');
   const fence = '```';
-  const pattern = new RegExp(`${fence}${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\s*([\s\S]*?)${fence}`, 'i');
+  const pattern = new RegExp(`${fence}${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\\s*([\\s\\S]*?)${fence}`, 'i');
   const match = text.match(pattern);
   if (!match) return fail('COMMAND_MARKER_MISSING');
   try {
