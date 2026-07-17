@@ -2,18 +2,15 @@
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runMonitorMultiplexerCanary } from '../shared/agents/monitorMultiplexerCanary.mjs';
+import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 
 const SHA = /^[0-9a-f]{40}$/i;
 const SAFE_REQUEST = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
-const sharedWorkspaceRoot = resolve(
-  process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
-    || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
-);
 
 function fixedGit(args) {
   const result = spawnSync('git.exe', args, {
@@ -52,10 +49,30 @@ export function parseMonitorMultiplexerCanaryArguments(argv = [], {
   };
 }
 
+export function resolveMonitorMultiplexerCanaryWorkspace({ env = process.env } = {}) {
+  const resolved = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      blocker: resolved.reason,
+      finalVerdict: 'MONITOR_MULTIPLEXER_CANARY_BLOCKED',
+      arbitraryFilesystemAccess: false,
+    };
+  }
+  return {
+    ok: true,
+    root: resolved.root,
+    source: resolved.source,
+    safeDisplayPath: resolved.safeDisplayPath,
+    arbitraryFilesystemAccess: false,
+  };
+}
+
 export async function runBattleBridgeMonitorMultiplexerCanary({
   expectedHead,
   requestId,
   platform = process.platform,
+  env = process.env,
 } = {}) {
   if (platform !== 'win32') {
     return { ok: false, blocker: 'WINDOWS_REQUIRED', finalVerdict: 'MONITOR_MULTIPLEXER_CANARY_BLOCKED' };
@@ -69,6 +86,9 @@ export async function runBattleBridgeMonitorMultiplexerCanary({
   if (!SAFE_REQUEST.test(String(requestId || ''))) {
     return { ok: false, blocker: 'CANARY_REQUEST_ID_INVALID', finalVerdict: 'MONITOR_MULTIPLEXER_CANARY_BLOCKED' };
   }
+
+  const workspace = resolveMonitorMultiplexerCanaryWorkspace({ env });
+  if (!workspace.ok) return workspace;
 
   const head = fixedGit(['rev-parse', 'HEAD']);
   const branch = fixedGit(['branch', '--show-current']);
@@ -85,7 +105,7 @@ export async function runBattleBridgeMonitorMultiplexerCanary({
   }
 
   const result = await runMonitorMultiplexerCanary({
-    root: sharedWorkspaceRoot,
+    root: workspace.root,
     repoRoot,
     expectedHead: sourceHead,
     sourceHead,
@@ -95,6 +115,7 @@ export async function runBattleBridgeMonitorMultiplexerCanary({
     ...result,
     branch: branchName,
     expectedHeadMatch: result.expectedHeadMatch === true,
+    workspaceSource: workspace.source,
     visiblePowerShellRequired: false,
     fixedRunner: true,
     arbitraryShellAllowed: false,
