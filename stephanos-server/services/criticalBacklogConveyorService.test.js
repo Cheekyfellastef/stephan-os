@@ -73,6 +73,21 @@ test('subsequent ticks wait on the same active mission without duplicate creatio
   assert.equal(second.publication.changed, false);
 });
 
+test('mission creation fails closed when the preflight status cannot be published', async () => {
+  const paths = await roots();
+  const store = inMemoryMissionStore();
+  const result = await ensureCriticalBacklogMission({
+    paths,
+    now,
+    ...store,
+    publishProjection: async () => ({ ok: false, reason: 'workspace-unavailable' }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'CREATE_NEXT_MISSION_PUBLICATION_BLOCKED');
+  assert.equal(result.createdMission, false);
+  assert.equal(store.records.length, 0);
+});
+
 test('external active mission prevents critical mission creation', async () => {
   const paths = await roots();
   const store = inMemoryMissionStore([{ missionId: 'external-active-mission', currentPhase: 'CHECK_PULL_REQUEST' }]);
