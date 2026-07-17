@@ -13,6 +13,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_SHARED_WORKSPACE_STATUS',
   'READ_CRITICAL_BACKLOG_STATUS',
   'READ_MAILBOX_RECEIPT',
+  'READ_MAILBOX_RECEIPT_INDEX',
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
 ]);
@@ -143,6 +144,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readSharedWorkspaceStatus,
   readCriticalBacklogStatus,
   readMailboxReceipt,
+  readMailboxReceiptIndex,
   runWorkerWatchdogAcceptance,
   runMonitorMultiplexerAcceptance,
 } = {}) {
@@ -155,6 +157,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_SHARED_WORKSPACE_STATUS: readSharedWorkspaceStatus,
     READ_CRITICAL_BACKLOG_STATUS: readCriticalBacklogStatus,
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
+    READ_MAILBOX_RECEIPT_INDEX: readMailboxReceiptIndex,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
   };
@@ -197,6 +200,7 @@ export function buildBattleBridgeGitHubCommandReceipt({
     repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
+    expectedHead: String(command?.expectedHead || ''),
     state: String(state || ''),
     acceptedAt: String(acceptedAt || ''),
     heartbeatAt: String(heartbeatAt || ''),
