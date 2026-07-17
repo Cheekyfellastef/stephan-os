@@ -9,6 +9,8 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'INSTALL_UNATTENDED_GITHUB_SYNC',
   'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
   'READ_DEPLOYMENT_STATUS',
+  'READ_CAPABILITY_REGISTRY',
+  'READ_SHARED_WORKSPACE_STATUS',
 ]);
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
@@ -125,12 +127,16 @@ export async function executeBattleBridgeGitHubCommand(command, {
   installUnattendedSync,
   runDiagnostics,
   readDeploymentStatus,
+  readCapabilityRegistry,
+  readSharedWorkspaceStatus,
 } = {}) {
   const handlers = {
     UPDATE_STEPHANOS_FROM_CHAT: updateStephanos,
     INSTALL_UNATTENDED_GITHUB_SYNC: installUnattendedSync,
     RUN_BATTLE_BRIDGE_DIAGNOSTICS: runDiagnostics,
     READ_DEPLOYMENT_STATUS: readDeploymentStatus,
+    READ_CAPABILITY_REGISTRY: readCapabilityRegistry,
+    READ_SHARED_WORKSPACE_STATUS: readSharedWorkspaceStatus,
   };
   const handler = handlers[command?.operation];
   if (typeof handler !== 'function') {
