@@ -49,12 +49,11 @@ test('extracts and accepts an owner-authored bounded command', () => {
   assert.equal(validated.command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
 });
 
-test('control-plane, receipt index, critical backlog, receipt read and acceptance commands are allowlisted', () => {
+test('control-plane, critical backlog, receipt read and acceptance commands are allowlisted', () => {
   for (const operation of [
     'READ_CAPABILITY_REGISTRY',
     'READ_SHARED_WORKSPACE_STATUS',
     'READ_CRITICAL_BACKLOG_STATUS',
-    'READ_MAILBOX_RECEIPT_INDEX',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
     'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
   ]) {
@@ -77,7 +76,7 @@ test('receipt target is mandatory, path-safe and forbidden on all other operatio
   assert.equal(validateBattleBridgeGitHubCommand(command({
     operation: 'READ_MAILBOX_RECEIPT', targetRequestId: '../state.json',
   }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'COMMAND_TARGET_REQUEST_ID_INVALID');
-  assert.equal(validateBattleBridgeGitHubCommand(command({ operation: 'READ_MAILBOX_RECEIPT_INDEX', targetRequestId: 'req-1507-other1' }), {
+  assert.equal(validateBattleBridgeGitHubCommand(command({ targetRequestId: 'req-1507-other1' }), {
     authorLogin: 'Cheekyfellastef', now,
   }).blocker, 'COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED');
 });
@@ -115,7 +114,7 @@ test('dispatches only through the named injected handler', async () => {
   assert.equal(result.result.expectedHead, command().expectedHead);
 });
 
-test('dispatches registry, workspace, receipt index and critical backlog reads through distinct bounded handlers', async () => {
+test('dispatches registry, workspace and critical backlog reads through distinct bounded handlers', async () => {
   const calls = [];
   const registryResult = await executeBattleBridgeGitHubCommand(command({ operation: 'READ_CAPABILITY_REGISTRY' }), {
     readCapabilityRegistry: async () => { calls.push('registry'); return { ok: true, finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS' }; },
@@ -123,19 +122,15 @@ test('dispatches registry, workspace, receipt index and critical backlog reads t
   const workspaceResult = await executeBattleBridgeGitHubCommand(command({ operation: 'READ_SHARED_WORKSPACE_STATUS' }), {
     readSharedWorkspaceStatus: async () => { calls.push('workspace'); return { ok: true, finalVerdict: 'SHARED_WORKSPACE_STATUS_READY' }; },
   });
-  const receiptIndexResult = await executeBattleBridgeGitHubCommand(command({ operation: 'READ_MAILBOX_RECEIPT_INDEX' }), {
-    readMailboxReceiptIndex: async () => { calls.push('receipt-index'); return { ok: true, finalVerdict: 'MAILBOX_RECEIPT_INDEX_READ_READY' }; },
-  });
   const backlogResult = await executeBattleBridgeGitHubCommand(command({ operation: 'READ_CRITICAL_BACKLOG_STATUS' }), {
     readCriticalBacklogStatus: async () => {
       calls.push('critical-backlog');
       return { ok: true, finalVerdict: 'CRITICAL_BACKLOG_STATUS_READY', decision: 'WAIT_ACTIVE_MISSION' };
     },
   });
-  assert.deepEqual(calls, ['registry', 'workspace', 'receipt-index', 'critical-backlog']);
+  assert.deepEqual(calls, ['registry', 'workspace', 'critical-backlog']);
   assert.equal(registryResult.result.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
   assert.equal(workspaceResult.result.finalVerdict, 'SHARED_WORKSPACE_STATUS_READY');
-  assert.equal(receiptIndexResult.result.finalVerdict, 'MAILBOX_RECEIPT_INDEX_READ_READY');
   assert.equal(backlogResult.result.finalVerdict, 'CRITICAL_BACKLOG_STATUS_READY');
   assert.equal(backlogResult.result.decision, 'WAIT_ACTIVE_MISSION');
 });
