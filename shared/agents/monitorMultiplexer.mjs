@@ -77,24 +77,73 @@ function forbiddenKeys(value, prefix = '') {
   ]);
 }
 
+export const MONITOR_MULTIPLEXER_TEST_RECORD_KINDS = Object.freeze([
+  'notification-outbox',
+  'monitor-status',
+  'monitor-proof',
+  'monitor-event',
+  'registry-status',
+  'receipt',
+]);
+
 export function createMonitorMultiplexerTestStorageAdapter(input = {}) {
+  const recordKind = MONITOR_MULTIPLEXER_TEST_RECORD_KINDS.includes(input.recordKind)
+    ? input.recordKind
+    : '';
   return Object.freeze({
     schemaVersion: MONITOR_MULTIPLEXER_TEST_STORAGE_SCHEMA,
-    writeAtomicJson: typeof input.writeAtomicJson === 'function' ? input.writeAtomicJson : writeAtomicJson,
-    appendWorkspaceJsonl: typeof input.appendWorkspaceJsonl === 'function' ? input.appendWorkspaceJsonl : appendWorkspaceJsonl,
+    recordKind,
+    occurrence: clamp(input.occurrence, 1, 1, MONITOR_MULTIPLEXER_MAX_MONITORS * 4),
     testOnly: true,
     acceptsExternalPath: false,
     acceptsCommand: false,
+    valid: Boolean(recordKind),
   });
 }
 
+function recordKindFor(segments = []) {
+  if (segments[0] === 'outbox') return 'notification-outbox';
+  if (segments[0] === 'proof') return 'monitor-proof';
+  if (segments[0] === 'events') return 'monitor-event';
+  if (segments[0] === 'receipts') return 'receipt';
+  if (segments[0] === 'status' && segments[1] === 'monitor-multiplexer-registry.json') return 'registry-status';
+  if (segments[0] === 'status') return 'monitor-status';
+  return 'unknown';
+}
+
 function storageFor(input) {
-  const candidate = input.testStorageAdapter;
-  if (candidate?.schemaVersion === MONITOR_MULTIPLEXER_TEST_STORAGE_SCHEMA
-      && candidate.testOnly === true
-      && typeof candidate.writeAtomicJson === 'function'
-      && typeof candidate.appendWorkspaceJsonl === 'function') return candidate;
-  return Object.freeze({ writeAtomicJson, appendWorkspaceJsonl, testOnly: false });
+  const fault = input.testStorageAdapter?.schemaVersion === MONITOR_MULTIPLEXER_TEST_STORAGE_SCHEMA
+    && input.testStorageAdapter.testOnly === true
+    && input.testStorageAdapter.valid === true
+    ? input.testStorageAdapter
+    : null;
+  let matchingOccurrence = 0;
+  const invoke = async (operation, root, segments, record, options) => {
+    const recordKind = recordKindFor(segments);
+    if (fault && recordKind === fault.recordKind) {
+      matchingOccurrence += 1;
+      if (matchingOccurrence === fault.occurrence) {
+        return Object.freeze({
+          ok: false,
+          reason: 'INJECTED_TEST_WRITE_FAILURE',
+          recordKind,
+          testFault: true,
+        });
+      }
+    }
+    try {
+      return await operation(root, segments, record, options);
+    } catch {
+      return Object.freeze({ ok: false, reason: 'MONITOR_STORAGE_WRITE_FAILED', recordKind });
+    }
+  };
+  return Object.freeze({
+    writeAtomicJson: (...args) => invoke(writeAtomicJson, ...args),
+    appendWorkspaceJsonl: (...args) => invoke(appendWorkspaceJsonl, ...args),
+    testOnly: Boolean(fault),
+    acceptsExternalPath: false,
+    acceptsCommand: false,
+  });
 }
 
 export function validateMonitorDefinition(input = {}) {
