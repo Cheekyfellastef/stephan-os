@@ -14,7 +14,7 @@ export const APPROVED_WATCHDOG_TASK = 'Stephanos Mission Orchestrator Worker Wat
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const DOWN_PROBE_ATTEMPTS = 10;
 const DOWN_PROBE_INTERVAL_MS = 500;
-const RECOVERY_STATUS_ATTEMPTS = 20;
+const RECOVERY_STATUS_ATTEMPTS = 30;
 const RECOVERY_STATUS_INTERVAL_MS = 1_000;
 const FINAL_WORKER_PROBE_ATTEMPTS = 10;
 const FINAL_WORKER_PROBE_INTERVAL_MS = 1_000;
@@ -166,15 +166,19 @@ export function createCanonicalSourceIdentityReader({ repoRoot, spawnSyncFn = sp
   };
 }
 
-export function createFixedWatchdogInstaller({ paths, spawnSyncFn = spawnSync } = {}) {
-  return () => runFixedJson('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-File',
-    paths.installerPath,
-  ], { cwd: paths.repoRoot, spawnSyncFn });
+export function createFixedWatchdogInstaller({ paths, startNow = false, spawnSyncFn = spawnSync } = {}) {
+  return () => {
+    const args = [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      paths.installerPath,
+    ];
+    if (startNow) args.push('-StartNow');
+    return runFixedJson('powershell.exe', args, { cwd: paths.repoRoot, spawnSyncFn });
+  };
 }
 
 export function createFixedWorkerInspector({ paths, spawnSyncFn = spawnSync } = {}) {
@@ -212,121 +216,131 @@ export function createFixedWatchdogStatusReader({ paths } = {}) {
   };
 }
 
-async function defaultRunWatchdog() {
-  const { runBattleBridgeWorkerWatchdog } = await import('./battle-bridge-worker-watchdog.mjs');
-  return runBattleBridgeWorkerWatchdog({ restartCooldownMs: 0 });
+function statusTimestampMs(status) {
+  const parsed = Date.parse(text(status?.timestampUtc));
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-function directWatchdogRecoveryEvidence(result) {
-  const proven = result?.ok === true
-    && result?.classification === 'WORKER_WATCHDOG_RECOVERED'
-    && result?.initialAssessment?.healthy === false
-    && result?.startResult?.data?.started === true
-    && result?.startResult?.data?.taskName === APPROVED_WORKER_TASK
-    && result?.finalAssessment?.healthy === true;
-  return proven ? Object.freeze({ ok: true, route: 'direct-watchdog-run' }) : null;
-}
-
-function publishedWatchdogRecoveryEvidence(status, killedAtMs) {
-  const timestampMs = Date.parse(text(status?.timestampUtc));
-  const proven = Number.isFinite(timestampMs)
+function publishedWatchdogRecoveryEvidence(status, { killedAtMs, baselineStatusTimestampMs }) {
+  const timestampMs = statusTimestampMs(status);
+  const newerThanBaseline = baselineStatusTimestampMs === null || (timestampMs !== null && timestampMs > baselineStatusTimestampMs);
+  const proven = timestampMs !== null
     && timestampMs >= killedAtMs
+    && newerThanBaseline
     && status?.classification === 'WORKER_WATCHDOG_RECOVERED'
     && status?.supervisorDetectedWorkerDown === true
     && status?.supervisorRestartedWorker === true
     && status?.workerRecovered === true
     && status?.workerFromMain === true;
-  return proven ? Object.freeze({ ok: true, route: 'installed-watchdog-status' }) : null;
+  return proven ? Object.freeze({ ok: true, route: 'installed-scheduled-task', timestampMs }) : null;
 }
 
-async function proveWatchdogRecovery({ runWatchdog, readWatchdogStatus, killedAtMs, sleep }) {
-  const statusBeforeDirectRun = await readWatchdogStatus();
-  const earlyPublishedEvidence = publishedWatchdogRecoveryEvidence(statusBeforeDirectRun, killedAtMs);
-  if (earlyPublishedEvidence) return Object.freeze({ ...earlyPublishedEvidence, status: statusBeforeDirectRun, attempt: 0 });
-
-  const directResult = await runWatchdog();
-  const directEvidence = directWatchdogRecoveryEvidence(directResult);
-  if (directEvidence) return Object.freeze({ ...directEvidence, directResult });
-
+async function proveInstalledWatchdogRecovery({
+  readWatchdogStatus,
+  killedAtMs,
+  baselineStatusTimestampMs,
+  sleep,
+}) {
   for (let attempt = 1; attempt <= RECOVERY_STATUS_ATTEMPTS; attempt += 1) {
     await sleep(RECOVERY_STATUS_INTERVAL_MS);
     const status = await readWatchdogStatus();
-    const publishedEvidence = publishedWatchdogRecoveryEvidence(status, killedAtMs);
-    if (publishedEvidence) return Object.freeze({ ...publishedEvidence, directResult, status, attempt });
+    const evidence = publishedWatchdogRecoveryEvidence(status, { killedAtMs, baselineStatusTimestampMs });
+    if (evidence) return Object.freeze({ ...evidence, status, attempt });
   }
-  return Object.freeze({ ok: false, directResult });
+  return Object.freeze({ ok: false });
 }
 
-async function defaultPublishAcceptanceProof({ paths, now, evidence }) {
+export async function publishAcceptanceProofTransaction({ paths, now, evidence, store } = {}) {
+  const workspaceStore = store || await import('../shared/agents/sharedAgentWorkspaceStore.mjs');
   const {
     appendWorkspaceJsonl,
     createSharedWorkspaceEventRecord,
     createSharedWorkspaceProofRecord,
     createSharedWorkspaceStatusRecord,
     writeAtomicJson,
-  } = await import('../shared/agents/sharedAgentWorkspaceStore.mjs');
+  } = workspaceStore;
   const timestampUtc = now.toISOString();
   const stamp = isoStamp(now);
-  const filename = `${stamp}-worker-watchdog-acceptance-pass.json`;
-  const receiptRef = path.posix.join('receipts', 'battle-bridge-worker-watchdog-acceptance', filename);
-  const proofRefs = [receiptRef];
-  const summary = 'The verified canonical Mission Orchestrator Worker was terminated once and the installed watchdog detected, restarted and recovered it on canonical main.';
-  const proof = Object.freeze({
+  const filename = `${stamp}-worker-watchdog-acceptance-evidence.json`;
+  const proofRef = path.posix.join('receipts', 'battle-bridge-worker-watchdog-acceptance', filename);
+  const eventRef = path.posix.join('events', 'battle-bridge-worker-watchdog-acceptance.jsonl');
+  const statusRef = path.posix.join('status', 'battle-bridge-worker-watchdog-acceptance-current.json');
+  const proofRefs = [proofRef, eventRef, statusRef];
+  const stagedSummary = 'Worker watchdog acceptance evidence is staged; acceptance is not committed until the final current-status write succeeds.';
+  const passSummary = 'The installed Mission Orchestrator Worker watchdog Scheduled Task detected, restarted and recovered the verified worker on canonical main.';
+
+  const stagedProof = Object.freeze({
     ...createSharedWorkspaceProofRecord({
       proofId: `battle-bridge-worker-watchdog-acceptance-${stamp}`,
       timestampUtc,
-      status: 'WORKER_WATCHDOG_ACCEPTANCE_PASS',
-      summary,
+      status: 'WORKER_WATCHDOG_ACCEPTANCE_EVIDENCE_READY',
+      summary: stagedSummary,
       refs: proofRefs,
     }),
     correlationId: 'issue-1291-worker-watchdog-acceptance',
     relatedIssue: '#1291',
     proofRefs,
-    receiptType: 'battle-bridge-worker-watchdog-acceptance-receipt',
+    receiptType: 'battle-bridge-worker-watchdog-acceptance-evidence',
+    publicationState: 'STAGED',
+    acceptancePass: false,
     ...evidence,
   });
   const proofWrite = await writeAtomicJson(
     paths.workspaceRoot,
     ['receipts', 'battle-bridge-worker-watchdog-acceptance', filename],
-    proof,
+    stagedProof,
     { repoRoot: paths.repoRoot, nowMs: now.getTime() },
   );
-  if (!proofWrite.ok) throw new Error('ACCEPTANCE_PROOF_WRITE_FAILED');
-  const status = Object.freeze({
-    ...createSharedWorkspaceStatusRecord({
-      statusId: 'battle-bridge-worker-watchdog-acceptance-current',
-      timestampUtc,
-      status: 'WORKER_WATCHDOG_ACCEPTANCE_PASS',
-      summary,
-      proofRefs,
-    }),
-    ...evidence,
-  });
-  const statusWrite = await writeAtomicJson(
-    paths.workspaceRoot,
-    ['status', 'battle-bridge-worker-watchdog-acceptance-current.json'],
-    status,
-    { repoRoot: paths.repoRoot, nowMs: now.getTime() },
-  );
-  if (!statusWrite.ok) throw new Error('ACCEPTANCE_STATUS_WRITE_FAILED');
-  const event = Object.freeze({
+  if (!proofWrite.ok) throw new Error('ACCEPTANCE_EVIDENCE_WRITE_FAILED');
+
+  const stagedEvent = Object.freeze({
     ...createSharedWorkspaceEventRecord({
       eventId: `battle-bridge-worker-watchdog-acceptance-${stamp}`,
       timestampUtc,
-      eventKind: 'battle-bridge-worker-watchdog-acceptance',
-      summary,
+      eventKind: 'battle-bridge-worker-watchdog-acceptance-evidence-ready',
+      summary: stagedSummary,
     }),
     proofRefs,
+    publicationState: 'STAGED',
+    acceptancePass: false,
     ...evidence,
   });
   const eventWrite = await appendWorkspaceJsonl(
     paths.workspaceRoot,
     ['events', 'battle-bridge-worker-watchdog-acceptance.jsonl'],
-    event,
+    stagedEvent,
     { repoRoot: paths.repoRoot, nowMs: now.getTime() },
   );
-  if (!eventWrite.ok) throw new Error('ACCEPTANCE_EVENT_WRITE_FAILED');
-  return Object.freeze({ ok: true, proofRefs, proofWrittenToSharedWorkspace: true });
+  if (!eventWrite.ok) throw new Error('ACCEPTANCE_EVIDENCE_EVENT_WRITE_FAILED');
+
+  const committedStatus = Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'battle-bridge-worker-watchdog-acceptance-current',
+      timestampUtc,
+      status: 'WORKER_WATCHDOG_ACCEPTANCE_PASS',
+      summary: passSummary,
+      proofRefs,
+    }),
+    publicationState: 'COMMITTED',
+    acceptancePass: true,
+    stagedProofRef: proofRef,
+    stagedEventRef: eventRef,
+    ...evidence,
+  });
+  const statusWrite = await writeAtomicJson(
+    paths.workspaceRoot,
+    ['status', 'battle-bridge-worker-watchdog-acceptance-current.json'],
+    committedStatus,
+    { repoRoot: paths.repoRoot, nowMs: now.getTime() },
+  );
+  if (!statusWrite.ok) throw new Error('ACCEPTANCE_COMMIT_STATUS_WRITE_FAILED');
+
+  return Object.freeze({
+    ok: true,
+    proofRefs,
+    proofWrittenToSharedWorkspace: true,
+    publicationState: 'COMMITTED',
+  });
 }
 
 export async function runBattleBridgeWorkerWatchdogAcceptance({
@@ -337,12 +351,12 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   paths = resolveCanonicalWorkerWatchdogAcceptancePaths({ env }),
   expectedPaths = resolveCanonicalWorkerWatchdogAcceptancePaths({ env }),
   readSourceIdentity = createCanonicalSourceIdentityReader({ repoRoot: paths.repoRoot }),
-  installWatchdog = createFixedWatchdogInstaller({ paths }),
+  installWatchdog = createFixedWatchdogInstaller({ paths, startNow: false }),
+  startWatchdog = createFixedWatchdogInstaller({ paths, startNow: true }),
   inspectWorker = createFixedWorkerInspector({ paths }),
   killWorker = createVerifiedWorkerKiller(),
-  runWatchdog = defaultRunWatchdog,
   readWatchdogStatus = createFixedWatchdogStatusReader({ paths }),
-  publishProof = defaultPublishAcceptanceProof,
+  publishProof = publishAcceptanceProofTransaction,
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
   clock = () => Date.now(),
 } = {}) {
@@ -358,7 +372,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   }
 
   const install = installWatchdog();
-  if (!install?.ok || install.data?.installed !== true || install.data?.taskName !== APPROVED_WATCHDOG_TASK) {
+  if (!install?.ok || install.data?.installed !== true || install.data?.taskName !== APPROVED_WATCHDOG_TASK || install.data?.startedNow !== false) {
     return blocked('WATCHDOG_INSTALLATION_NOT_PROVEN', { sourceHead: source.sourceHead, expectedHeadMatch: true });
   }
 
@@ -372,6 +386,8 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   });
   if (!initial.ok) return blocked('INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY', { sourceHead: source.sourceHead, expectedHeadMatch: true });
 
+  const baselineStatus = await readWatchdogStatus();
+  const baselineStatusTimestampMs = statusTimestampMs(baselineStatus);
   const initialPid = initial.pid;
   const killed = killWorker(initialPid);
   if (!killed?.ok || killed.pid !== initialPid) {
@@ -394,14 +410,27 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     return blocked('WORKER_TERMINATION_NOT_OBSERVED', { sourceHead: source.sourceHead, expectedHeadMatch: true, initialPid });
   }
 
-  const watchdogRecovery = await proveWatchdogRecovery({
-    runWatchdog,
+  const start = startWatchdog();
+  if (!start?.ok
+    || start.data?.installed !== true
+    || start.data?.taskName !== APPROVED_WATCHDOG_TASK
+    || start.data?.startedNow !== true) {
+    return blocked('INSTALLED_WATCHDOG_START_NOT_PROVEN', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      initialPid,
+      workerKilledObserved,
+    });
+  }
+
+  const watchdogRecovery = await proveInstalledWatchdogRecovery({
     readWatchdogStatus,
     killedAtMs,
+    baselineStatusTimestampMs,
     sleep,
   });
   if (!watchdogRecovery.ok) {
-    return blocked('WATCHDOG_RECOVERY_NOT_PROVEN', {
+    return blocked('INSTALLED_WATCHDOG_RECOVERY_NOT_PROVEN', {
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
       initialPid,
@@ -441,6 +470,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     branch: 'main',
     expectedHeadMatch: true,
     watchdogInstalled: true,
+    watchdogStartedThroughScheduledTask: true,
     watchdogRecoveryRoute: watchdogRecovery.route,
     initialHead: initial.headSha,
     recoveredHead: final.headSha,
@@ -461,7 +491,9 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   } catch {
     return blocked('SHARED_WORKSPACE_ACCEPTANCE_PUBLICATION_FAILED', evidence);
   }
-  if (!publication?.ok || publication.proofWrittenToSharedWorkspace !== true) {
+  if (!publication?.ok
+    || publication.proofWrittenToSharedWorkspace !== true
+    || publication.publicationState !== 'COMMITTED') {
     return blocked('SHARED_WORKSPACE_ACCEPTANCE_PUBLICATION_FAILED', evidence);
   }
 
@@ -469,6 +501,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     ok: true,
     ...evidence,
     proofWrittenToSharedWorkspace: true,
+    publicationState: 'COMMITTED',
     proofRefs: Object.freeze([...(publication.proofRefs || [])]),
   });
 }
