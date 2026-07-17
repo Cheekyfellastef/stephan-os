@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   createSharedWorkspaceProofRecord,
   writeAtomicJson,
@@ -24,6 +25,15 @@ function hash(value, length = 16) {
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function listOutbox(root) {
+  try {
+    return (await readdir(join(root, 'outbox')))
+      .filter((name) => name.startsWith('monitor-notify-') && name.endsWith('.json'));
+  } catch {
+    return [];
+  }
 }
 
 export function validateMonitorMultiplexerCanaryRequest(input = {}) {
@@ -98,6 +108,11 @@ function durableMonitorFieldsPresent(executions = []) {
   ));
 }
 
+function receiptRef(result) {
+  const receiptId = String(result?.receipt?.receiptId || '');
+  return receiptId ? `receipts/${receiptId}.json` : '';
+}
+
 export async function runMonitorMultiplexerCanary(input = {}) {
   const request = validateMonitorMultiplexerCanaryRequest(input);
   if (!request.valid) {
@@ -110,6 +125,7 @@ export async function runMonitorMultiplexerCanary(input = {}) {
     });
   }
 
+  const baselineOutbox = new Set(await listOutbox(input.root));
   const baseMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const firstTimestampUtc = new Date(baseMs).toISOString();
   const retryMs = baseMs + 1_000;
@@ -150,15 +166,18 @@ export async function runMonitorMultiplexerCanary(input = {}) {
     timestampUtc: restartTimestampUtc,
   });
 
-  let outboxFiles = [];
-  try {
-    outboxFiles = (await readdir(`${input.root}/outbox`)).filter((name) => name.startsWith('monitor-notify-') && name.endsWith('.json'));
-  } catch {}
-
+  const outboxFiles = await listOutbox(input.root);
+  const newOutboxFiles = outboxFiles.filter((name) => !baselineOutbox.has(name));
+  const expectedOutboxFiles = (retry.notificationRecords || []).map((record) => `${record.messageId}.json`);
   const retryFailures = retry.executions?.filter((execution) => execution.result?.state === 'FAIL') || [];
   const retryPasses = retry.executions?.filter((execution) => execution.result?.state === 'PASS') || [];
   const retiredSkipped = restart.skipped?.filter((entry) => entry.due?.reason === 'MONITOR_RETIRED') || [];
   const recurringRunCounts = restart.executions?.map((execution) => execution.statusRecord?.runCount) || [];
+  const tickReceiptRefs = [
+    receiptRef(forcedOutboxFailure),
+    receiptRef(retry),
+    receiptRef(restart),
+  ].filter(Boolean);
 
   const checks = Object.freeze({
     exactHeadPass: request.expectedHead === request.sourceHead,
@@ -182,12 +201,15 @@ export async function runMonitorMultiplexerCanary(input = {}) {
       && recurringRunCounts.every((count) => count === 2),
     oneShotRetirementPass: retiredSkipped.length === 2,
     perMonitorDurabilityPass: durableMonitorFieldsPresent(retry.executions),
-    sharedWorkspaceOutboxPass: outboxFiles.length === 2,
+    sharedWorkspaceOutboxPass: newOutboxFiles.length === expectedOutboxFiles.length
+      && expectedOutboxFiles.every((name) => newOutboxFiles.includes(name)),
+    sharedWorkspaceReceiptsPass: tickReceiptRefs.length === 3,
   });
 
   const checksPass = Object.values(checks).every(Boolean);
   const proofId = `monitor-multiplexer-canary-${request.canaryId}`;
   const proofRef = `proof/${proofId}.json`;
+  const proofRefs = [proofRef, ...tickReceiptRefs];
   const proofRecord = Object.freeze({
     ...createSharedWorkspaceProofRecord({
       proofId,
@@ -199,8 +221,8 @@ export async function runMonitorMultiplexerCanary(input = {}) {
       summary: checksPass
         ? 'Real monitor multiplexer canary passed its bounded acceptance checks.'
         : 'Monitor multiplexer canary did not satisfy every bounded acceptance check.',
-      refs: [proofRef],
-      proofRefs: [proofRef],
+      refs: proofRefs,
+      proofRefs,
     }),
     schema: MONITOR_MULTIPLEXER_CANARY_SCHEMA,
     sourceHead: request.sourceHead,
@@ -238,8 +260,9 @@ export async function runMonitorMultiplexerCanary(input = {}) {
     notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE,
     externalTaskSlotsRequired: 1,
     maxConcurrencyObserved: concurrencyProbe.maximum,
+    receiptCount: tickReceiptRefs.length,
     checks,
-    proofRefs: [proofRef],
+    proofRefs,
     proofWrittenToSharedWorkspace: proofWrite.ok === true,
     blocker: ok ? '' : (!checksPass ? 'MONITOR_MULTIPLEXER_CANARY_CHECK_FAILED' : proofWrite.reason),
     arbitraryShellAllowed: false,
