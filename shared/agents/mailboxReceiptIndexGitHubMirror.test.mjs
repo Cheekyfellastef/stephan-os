@@ -105,19 +105,24 @@ test('compact receipt recovers its exact expected head from the matching trusted
   assert.equal(record.recentReceipts[0].finalVerdict, 'MONITOR_MULTIPLEXER_CANARY_PASS');
 });
 
-test('single index comment selection ignores an untrusted marker occupant', () => {
+test('single index comment selection ignores attacker and owner lookalikes', () => {
   const attacker = {
     id: 10,
     user: { login: 'attacker' },
     body: `<!-- ${MAILBOX_RECEIPT_INDEX_GITHUB_MARKER} -->`,
   };
-  const trusted = {
+  const ownerLookalike = {
     id: 11,
+    user: { login: OWNER },
+    body: `<!-- ${MAILBOX_RECEIPT_INDEX_GITHUB_MARKER} -->`,
+  };
+  const trusted = {
+    id: 12,
     user: { login: 'github-actions[bot]' },
     body: `<!-- ${MAILBOX_RECEIPT_INDEX_GITHUB_MARKER} -->`,
   };
-  assert.equal(findTrustedMailboxReceiptIndexComment([attacker, trusted], { ownerLogin: OWNER }), trusted);
-  assert.equal(findTrustedMailboxReceiptIndexComment([attacker], { ownerLogin: OWNER }), null);
+  assert.equal(findTrustedMailboxReceiptIndexComment([attacker, ownerLookalike, trusted]), trusted);
+  assert.equal(findTrustedMailboxReceiptIndexComment([attacker, ownerLookalike]), null);
 });
 
 test('trusted mirror body remains bounded and excludes raw machine data', () => {
