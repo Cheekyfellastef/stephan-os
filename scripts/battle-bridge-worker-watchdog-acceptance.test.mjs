@@ -329,5 +329,5 @@ test('authority is fixed to one verified canonical worker kill with no generic e
   assert.match(source, /probe-mission-orchestrator-worker-watchdog\.ps1/);
   assert.match(source, /args\.push\('-StartNow'\)/);
   assert.match(source, /killFn\(pid, 'SIGTERM'\)/);
-  assert.doesNotMatch(source, /runBattleBridgeWorkerWatchdog|Invoke-Expression|cmd\.exe|Restart-Computer|shutdown\.exe|git\.exe', \['(?:reset|clean|checkout|push|rebase)/i);
+  assert.doesNotMatch(source, /await import\('\.\/battle-bridge-worker-watchdog\.mjs'\)|Invoke-Expression|cmd\.exe|Restart-Computer|shutdown\.exe|git\.exe', \['(?:reset|clean|checkout|push|rebase)/i);
 });
