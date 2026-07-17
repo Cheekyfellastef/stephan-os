@@ -30,6 +30,10 @@ test('coordinator resumes exact-head target checkpoints without replaying comple
   assert.match(source, /loadResumeResults/);
   assert.match(source, /completedResults/);
   assert.match(source, /checkpoint-\$\{results\.length\}/);
+  assert.ok(
+    source.indexOf('loadResumeResults(paths.workspaceRoot')
+      < source.indexOf("phase: 'plan'"),
+  );
 });
 
 test('CLI accepts only before and after SHAs and emits one result marker', () => {
