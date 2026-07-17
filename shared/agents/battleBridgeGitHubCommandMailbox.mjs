@@ -13,6 +13,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_SHARED_WORKSPACE_STATUS',
   'READ_MAILBOX_RECEIPT',
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
 ]);
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
@@ -26,7 +27,7 @@ function fail(blocker, details = {}) {
 export function extractBattleBridgeGitHubCommand(body = '') {
   const text = String(body || '');
   const fence = '```';
-  const pattern = new RegExp(`${fence}${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\\s*([\\s\\S]*?)${fence}`, 'i');
+  const pattern = new RegExp(`${fence}${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\s*([\s\S]*?)${fence}`, 'i');
   const match = text.match(pattern);
   if (!match) return fail('COMMAND_MARKER_MISSING');
   try {
@@ -141,6 +142,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readSharedWorkspaceStatus,
   readMailboxReceipt,
   runWorkerWatchdogAcceptance,
+  runMonitorMultiplexerAcceptance,
 } = {}) {
   const handlers = {
     UPDATE_STEPHANOS_FROM_CHAT: updateStephanos,
@@ -151,6 +153,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_SHARED_WORKSPACE_STATUS: readSharedWorkspaceStatus,
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
+    RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
   };
   const handler = handlers[command?.operation];
   if (typeof handler !== 'function') {
