@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  createSanitizedCriticalBacklogStatusProjection,
   createSanitizedMailboxReceiptProjection,
   parseBoundedGitHubJson,
   serializeBoundedReceiptJson,
@@ -63,6 +64,94 @@ test('sanitized receipt projection preserves watchdog evidence but removes machi
   assert.doesNotMatch(JSON.stringify(projection), /C:\\Users|\.\.\//i);
 });
 
+test('monitor evidence remains available after backlog reader reconciliation', () => {
+  const projection = createSanitizedMailboxReceiptProjection({
+    operation: 'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      result: {
+        ok: true,
+        finalVerdict: 'MONITOR_MULTIPLEXER_CANARY_PASS',
+        monitorCount: 4,
+        executedCount: 4,
+        notificationCount: 1,
+        notificationSurface: 'shared-workspace',
+        receiptCount: 4,
+      },
+    },
+  });
+  assert.equal(projection.operationResult.monitorCount, 4);
+  assert.equal(projection.operationResult.executedCount, 4);
+  assert.equal(projection.operationResult.notificationCount, 1);
+  assert.equal(projection.operationResult.notificationSurface, 'shared-workspace');
+  assert.equal(projection.operationResult.receiptCount, 4);
+});
+
+test('critical backlog projection preserves only fixed bounded fields', () => {
+  const projection = createSanitizedCriticalBacklogStatusProjection({
+    decision: 'WAIT_ACTIVE_MISSION',
+    selectedItemId: 'worker-watchdog-self-heal',
+    activeMissionId: 'critical-1291-worker-watchdog-repair',
+    activePhase: 'AGENT_IMPLEMENTATION',
+    completedItemIds: ['done-one', '../escape'],
+    remainingItemIds: ['post-sync-runtime-refresh'],
+    exactNextAction: 'Continue critical-1291-worker-watchdog-repair until it reaches a terminal state.',
+    oneActiveMissionEnforced: true,
+    duplicateCodexDispatchAllowed: false,
+    mergeAuthority: false,
+    exactHeadApprovalRequired: true,
+    localPath: 'C:\\Users\\Stephan Callear\\Documents',
+    rawPayload: { secret: true },
+  });
+  assert.equal(projection.decision, 'WAIT_ACTIVE_MISSION');
+  assert.equal(projection.selectedItemId, 'worker-watchdog-self-heal');
+  assert.equal(projection.activeMissionId, 'critical-1291-worker-watchdog-repair');
+  assert.equal(projection.activePhase, 'AGENT_IMPLEMENTATION');
+  assert.deepEqual(projection.completedItemIds, ['done-one']);
+  assert.deepEqual(projection.remainingItemIds, ['post-sync-runtime-refresh']);
+  assert.equal(projection.oneActiveMissionEnforced, true);
+  assert.equal(projection.duplicateCodexDispatchAllowed, false);
+  assert.equal(projection.mergeAuthority, false);
+  assert.equal(projection.exactHeadApprovalRequired, true);
+  assert.equal('localPath' in projection, false);
+  assert.equal('rawPayload' in projection, false);
+  assert.doesNotMatch(JSON.stringify(projection), /C:\\Users|\.\.\//i);
+});
+
+test('critical backlog receipt projection survives a fixed receipt read', () => {
+  const projection = createSanitizedMailboxReceiptProjection({
+    requestId: 'req-1507-read-critical-backlog-status',
+    operation: 'READ_CRITICAL_BACKLOG_STATUS',
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      result: {
+        ok: true,
+        finalVerdict: 'CRITICAL_BACKLOG_STATUS_READY',
+        decision: 'WAIT_ACTIVE_MISSION',
+        selectedItemId: 'worker-watchdog-self-heal',
+        activeMissionId: 'critical-1291-worker-watchdog-repair',
+        activePhase: 'AGENT_IMPLEMENTATION',
+        completedItemIds: [],
+        remainingItemIds: ['worker-watchdog-self-heal', 'post-sync-runtime-refresh'],
+        exactNextAction: 'Continue critical-1291-worker-watchdog-repair until it reaches a terminal state.',
+        oneActiveMissionEnforced: true,
+        duplicateCodexDispatchAllowed: false,
+        mergeAuthority: false,
+        exactHeadApprovalRequired: true,
+      },
+    },
+  });
+  assert.equal(projection.operationResult.decision, 'WAIT_ACTIVE_MISSION');
+  assert.equal(projection.operationResult.activeMissionId, 'critical-1291-worker-watchdog-repair');
+  assert.equal(projection.operationResult.oneActiveMissionEnforced, true);
+  assert.equal(projection.operationResult.duplicateCodexDispatchAllowed, false);
+  assert.equal(projection.operationResult.mergeAuthority, false);
+});
+
 test('oversized GitHub receipt becomes valid structured JSON rather than a sliced document', () => {
   const json = serializeBoundedReceiptJson({
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
@@ -99,11 +188,15 @@ test('oversized GitHub receipt becomes valid structured JSON rather than a slice
   assert.ok(Buffer.byteLength(json, 'utf8') <= 4096);
 });
 
-test('runner wires capability, workspace, fixed receipt and watchdog operations', async () => {
+test('runner wires monitor, capability, workspace, critical backlog, fixed receipt and watchdog operations', async () => {
   const source = await readFile(runnerPath, 'utf8');
+  assert.match(source, /runBattleBridgeMonitorMultiplexerCanary/);
   assert.match(source, /buildStephanosCapabilityRegistrySummary/);
   assert.match(source, /createSanitizedSharedWorkspaceProjection/);
   assert.match(source, /runBattleBridgeWorkerWatchdogAcceptance/);
+  assert.match(source, /readCriticalBacklogStatus/);
+  assert.match(source, /criticalBacklogStatusPath/);
+  assert.match(source, /critical-backlog-conveyor-current\.json/);
   assert.match(source, /readMailboxReceipt/);
   assert.match(source, /targetRequestId/);
   assert.match(source, /join\(canonicalReceiptRoot, `\$\{targetRequestId\}\.json`\)/);
