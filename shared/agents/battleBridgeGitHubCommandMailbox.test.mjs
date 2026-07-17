@@ -49,10 +49,13 @@ test('extracts and accepts an owner-authored bounded command', () => {
   assert.equal(validated.command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
 });
 
-test('control-plane read operations are first-class allowlisted commands', () => {
-  assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes('READ_CAPABILITY_REGISTRY'));
-  assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes('READ_SHARED_WORKSPACE_STATUS'));
-  for (const operation of ['READ_CAPABILITY_REGISTRY', 'READ_SHARED_WORKSPACE_STATUS']) {
+test('control-plane and explicit watchdog acceptance operations are first-class allowlisted commands', () => {
+  for (const operation of [
+    'READ_CAPABILITY_REGISTRY',
+    'READ_SHARED_WORKSPACE_STATUS',
+    'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  ]) {
+    assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
     const validated = validateBattleBridgeGitHubCommand(command({ operation }), { authorLogin: 'Cheekyfellastef', now });
     assert.equal(validated.verdict, 'COMMAND_ACCEPTED');
   }
@@ -102,6 +105,26 @@ test('dispatches registry and workspace reads through distinct bounded handlers'
   assert.deepEqual(calls, ['registry', 'workspace']);
   assert.equal(registryResult.result.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
   assert.equal(workspaceResult.result.finalVerdict, 'SHARED_WORKSPACE_STATUS_READY');
+});
+
+test('dispatches watchdog acceptance only through its named bounded handler', async () => {
+  const calls = [];
+  const result = await executeBattleBridgeGitHubCommand(command({ operation: 'RUN_WORKER_WATCHDOG_ACCEPTANCE' }), {
+    runWorkerWatchdogAcceptance: async (input) => {
+      calls.push(input.expectedHead);
+      return {
+        ok: true,
+        finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS',
+        workerKilledObserved: true,
+        workerRecovered: true,
+      };
+    },
+  });
+  assert.deepEqual(calls, [command().expectedHead]);
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'WORKER_WATCHDOG_ACCEPTANCE_PASS');
+  assert.equal(result.result.workerKilledObserved, true);
+  assert.equal(result.result.workerRecovered, true);
 });
 
 test('receipt always records the safety boundary', () => {
