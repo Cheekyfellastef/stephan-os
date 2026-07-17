@@ -7,13 +7,14 @@ import { refreshMailboxReceiptIndex } from '../shared/agents/mailboxReceiptIndex
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { runBattleBridgeGitHubCommandMailbox } from './battle-bridge-github-command-mailbox.mjs';
 
-const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
+const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
   platform = process.platform,
   env = process.env,
   now = () => new Date(),
+  sourceRepoRoot = defaultRepoRoot,
+  canonicalRepoRoot = '',
   runMailbox = runBattleBridgeGitHubCommandMailbox,
   refreshIndex = refreshMailboxReceiptIndex,
 } = {}) {
@@ -24,14 +25,16 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
       finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
     });
   }
-  if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
+  const actualRepoRoot = resolve(sourceRepoRoot);
+  const expectedRepoRoot = resolve(canonicalRepoRoot || resolve(env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os'));
+  if (actualRepoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
     return Object.freeze({
       ok: false,
       blocker: 'CANONICAL_CHECKOUT_REQUIRED',
       finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
     });
   }
-  const workspace = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
+  const workspace = resolveSharedWorkspaceRuntimeConfig({ repoRoot: actualRepoRoot, env });
   if (!workspace.ok) {
     return Object.freeze({
       ok: false,
@@ -46,7 +49,7 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
   const beforeTimestampUtc = now().toISOString();
   const before = await refreshIndex({
     root: workspace.root,
-    repoRoot,
+    repoRoot: actualRepoRoot,
     timestampUtc: beforeTimestampUtc,
   });
 
@@ -65,7 +68,7 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
   const afterTimestampUtc = now().toISOString();
   const after = await refreshIndex({
     root: workspace.root,
-    repoRoot,
+    repoRoot: actualRepoRoot,
     timestampUtc: afterTimestampUtc,
   });
 
