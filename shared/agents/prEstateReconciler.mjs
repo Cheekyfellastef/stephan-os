@@ -15,8 +15,8 @@ export const PR_DISPOSITIONS = Object.freeze({
 const VALID_DISPOSITIONS = new Set(Object.values(PR_DISPOSITIONS));
 const PLACEHOLDER_PATTERN = /codex generated this pull request, but encountered an unexpected error after generation/i;
 const GENERIC_PLACEHOLDER_TITLE_KEY = 'codex generated pull request';
-const ACCEPTANCE_PATTERN = /(?:live|windows|battle bridge|browser|runtime|on-headset|whatsapp|quest).*acceptance|acceptance.*(?:required|pending|remain|gate)|live proof.*required|browser proof.*required/i;
-const APPROVAL_PATTERN = /exact[- ]head.*approval|required.*operator approval|do not merge without.*approval|merge.*explicit approval/i;
+const ACCEPTANCE_PATTERN = /(?:acceptance|live proof|browser proof)[^\n]{0,120}(?:required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not yet)|(?:required|pending|awaiting|outstanding|needed|not yet)[^\n]{0,120}(?:acceptance|live proof|browser proof)/i;
+const APPROVAL_PATTERN = /do not merge without[^\n]{0,120}approval|(?:approval)[^\n]{0,120}(?:required|pending|awaiting|outstanding|not yet)|(?:required|pending|awaiting|outstanding|not yet)[^\n]{0,120}(?:operator|exact[- ]head|explicit)?[^\n]{0,40}approval/i;
 const SAFE_FAMILY_ID = /^[a-z0-9][a-z0-9-]{0,100}$/;
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
@@ -77,6 +77,8 @@ function normalizePr(input = {}, recordIndex = 0) {
   const invalidAheadBy = aheadField.present && (!Number.isInteger(aheadBy) || aheadBy < 0);
   const invalidBehindBy = behindField.present && (!Number.isInteger(behindBy) || behindBy < 0);
   const comparisonEvidenceInvalid = invalidAheadBy || invalidBehindBy;
+  const headSha = asText(input.headSha ?? input.headRefOid ?? input.head_sha, '');
+  const exactHeadKnown = FULL_SHA_PATTERN.test(headSha);
   const explicitContained = asBooleanOrNull(input.headContainedInBase);
   const compareKnown = !comparisonEvidenceInvalid && (aheadBy !== null || explicitContained !== null);
   const containmentContradiction = !comparisonEvidenceInvalid
@@ -96,7 +98,8 @@ function normalizePr(input = {}, recordIndex = 0) {
     url: asText(input.url, ''),
     isDraft: input.isDraft === true || input.draft === true,
     headRefName: asText(input.headRefName ?? input.head, ''),
-    headSha: asText(input.headSha ?? input.headRefOid ?? input.head_sha, ''),
+    headSha,
+    exactHeadKnown,
     baseRefName: asText(input.baseRefName ?? input.base, 'main'),
     createdAt: asText(input.createdAt ?? input.created_at, ''),
     updatedAt: asText(input.updatedAt ?? input.updated_at, ''),
@@ -124,6 +127,9 @@ function normalizeFamily(input = {}) {
   const members = unique((Array.isArray(input.members) ? input.members : input.prs || [])
     .map((value) => asPositiveInteger(value, null)).filter(Number.isInteger)).sort((a, b) => a - b);
   const canonicalPr = asPositiveInteger(input.canonicalPr, null);
+  if (canonicalPr !== null && !members.includes(canonicalPr)) {
+    throw new Error(`canonical PR #${canonicalPr} is not a member of family ${id}`);
+  }
   const supersededBy = {};
   for (const [key, value] of Object.entries(input.supersededBy || {})) {
     const prNumber = asPositiveInteger(key, null);
@@ -196,6 +202,8 @@ function deriveImplicitFamilies(prs, familyByPr) {
 function evidenceFor(pr, family, placeholder) {
   return {
     compareKnown: pr.compareKnown,
+    exactHeadKnown: pr.exactHeadKnown,
+    headSha: pr.headSha,
     comparisonEvidenceInvalid: pr.comparisonEvidenceInvalid,
     invalidAheadBy: pr.invalidAheadBy,
     invalidBehindBy: pr.invalidBehindBy,
@@ -236,6 +244,9 @@ function classifyPr(pr, family) {
   }
 
   if (pr.dispositionHint) {
+    if ([PR_DISPOSITIONS.ALREADY_IN_MAIN, PR_DISPOSITIONS.PLACEHOLDER_FAILED, PR_DISPOSITIONS.SUPERSEDED].includes(pr.dispositionHint) && !pr.exactHeadKnown) {
+      return ambiguous('terminal disposition hint is not tied to a valid full head SHA', 'exact-head-evidence-required');
+    }
     if (pr.dispositionHint === PR_DISPOSITIONS.ALREADY_IN_MAIN) {
       if (pr.headContainedInBase !== true || pr.uniqueDelta === true) {
         return ambiguous('already-in-main hint lacks non-conflicting containment evidence', 'containment-evidence-required');
@@ -266,18 +277,21 @@ function classifyPr(pr, family) {
       return ambiguous('placeholder compare evidence conflicts with an explicit no-unique-delta claim', 'conflicting-placeholder-delta-evidence');
     }
     if (pr.headContainedInBase) {
+      if (!pr.exactHeadKnown) return ambiguous('placeholder terminal evidence is not tied to a valid full head SHA', 'exact-head-evidence-required');
       return { disposition: PR_DISPOSITIONS.PLACEHOLDER_FAILED, reason: 'Codex placeholder branch has no commits unique to current base', blockers: [] };
     }
     return { disposition: PR_DISPOSITIONS.RECOVER_UNIQUE_WORK, reason: 'Codex placeholder branch still has commits unique to current base', blockers: ['inspect-and-recover-placeholder-delta'] };
   }
 
   if (pr.headContainedInBase) {
+    if (!pr.exactHeadKnown) return ambiguous('containment evidence is not tied to a valid full head SHA', 'exact-head-evidence-required');
     if (pr.uniqueDelta === true) return ambiguous('containment evidence conflicts with an explicit unique delta', 'conflicting-unique-delta-evidence');
     return { disposition: PR_DISPOSITIONS.ALREADY_IN_MAIN, reason: 'compare evidence shows no commits unique to the PR head', blockers: [] };
   }
 
   if (explicitSupersededBy !== null) {
     if (pr.patchEquivalentTo === explicitSupersededBy || pr.uniqueDelta === false) {
+      if (!pr.exactHeadKnown) return ambiguous('supersession evidence is not tied to a valid full head SHA', 'exact-head-evidence-required');
       return { disposition: PR_DISPOSITIONS.SUPERSEDED, reason: `evidence shows PR is covered by canonical PR #${explicitSupersededBy}`, blockers: [] };
     }
     if (pr.uniqueDelta === true) {
@@ -295,7 +309,10 @@ function classifyPr(pr, family) {
   if (familySize > 1) {
     if (canonicalPr === null) return ambiguous(`duplicate family ${family.id} has no selected canonical survivor`, 'canonical-selection-required');
     if (pr.uniqueDelta === true) return { disposition: PR_DISPOSITIONS.RECOVER_UNIQUE_WORK, reason: `non-canonical family member has unique work relative to #${canonicalPr}`, blockers: ['transplant-unique-delta'] };
-    if (pr.uniqueDelta === false || pr.patchEquivalentTo === canonicalPr) return { disposition: PR_DISPOSITIONS.SUPERSEDED, reason: `non-canonical family member is fully covered by #${canonicalPr}`, blockers: [] };
+    if (pr.uniqueDelta === false || pr.patchEquivalentTo === canonicalPr) {
+      if (!pr.exactHeadKnown) return ambiguous('supersession evidence is not tied to a valid full head SHA', 'exact-head-evidence-required');
+      return { disposition: PR_DISPOSITIONS.SUPERSEDED, reason: `non-canonical family member is fully covered by #${canonicalPr}`, blockers: [] };
+    }
     return ambiguous(`non-canonical family member requires comparison with #${canonicalPr}`, 'unique-delta-analysis-required');
   }
 
@@ -459,6 +476,9 @@ export function validatePrEstateLedger(ledger = {}) {
     }
     if (entry.evidence?.containmentContradiction === true && entry.disposition !== PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED) {
       errors.push(`terminal-with-contradictory-containment:${entry.number}`);
+    }
+    if ([PR_DISPOSITIONS.ALREADY_IN_MAIN, PR_DISPOSITIONS.PLACEHOLDER_FAILED, PR_DISPOSITIONS.SUPERSEDED].includes(entry.disposition) && entry.evidence?.exactHeadKnown !== true) {
+      errors.push(`terminal-without-exact-head:${entry.number}`);
     }
     if (entry.disposition === PR_DISPOSITIONS.ALREADY_IN_MAIN && (entry.evidence?.headContainedInBase !== true || entry.evidence?.uniqueDelta === true)) {
       errors.push(`already-in-main-without-containment:${entry.number}`);
