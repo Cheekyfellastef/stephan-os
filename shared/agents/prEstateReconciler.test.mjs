@@ -178,6 +178,22 @@ test('distinguishes completed gates from pending gates', () => {
   assert.equal(pendingApproval.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
 });
 
+test('rejects contradictory supersession evidence', () => {
+  const explicit = build(
+    [{ number: 87, state: 'open', title: 'Contradictory supersession', patchEquivalentTo: 88, uniqueDelta: true }],
+    [{ id: 'contradictory-supersession', members: [87, 88], canonicalPr: 88, supersededBy: { 87: 88 } }],
+  );
+  assert.equal(explicit.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  assert.match(explicit.entries[0].blockers.join(' '), /contradictory-supersession-evidence/);
+});
+
+test('rejects malformed families collections in the pure model', () => {
+  assert.throws(
+    () => buildPrEstateLedger({ repository: 'owner/repo', pullRequests: [], families: {} }),
+    /families array is required/,
+  );
+});
+
 test('ledger validation rejects forged terminal evidence', () => {
   const ledger = build([{ number: 78, state: 'open', title: 'Unknown work' }]);
   ledger.entries[0].disposition = PR_DISPOSITIONS.SUPERSEDED;
