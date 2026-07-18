@@ -4,7 +4,7 @@
   "repository": "Cheekyfellastef/stephan-os",
   "notes": "Seeded high-confidence families only. A family membership is not proof that a PR is superseded or already in main. Compare evidence remains mandatory.",
   "families": [
-    { "id": "codex-capacity-governor", "label": "Codex capacity governor", "members": [1544, 1545], "canonicalPr": 1545, "selectionBasis": "clean replacement PR identified during July 18 recovery" },
+    { "id": "codex-capacity-governor", "label": "Codex capacity governor", "members": [1544, 1545], "canonicalPr": 1545, "supersededBy": { "1544": 1545 }, "selectionBasis": "11 substantive files verified byte-identical; #1544 closed unmerged with branch preserved on 2026-07-18" },
     { "id": "verification-harness-battle-bridge", "label": "Verification Harness and Battle Bridge hardening", "members": [1397, 1444, 1445, 1446, 1447] },
     { "id": "windows-child-ignition-blocker", "label": "Windows child ignition blocker surfacing", "members": [1368, 1369, 1377, 1378, 1379] },
     { "id": "openclaw-ignite-whatsapp-repair", "label": "OpenClaw Ignite and WhatsApp repair chain", "members": [1453, 1454, 1455, 1456, 1457, 1458, 1459, 1460] },
