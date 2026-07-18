@@ -19,7 +19,11 @@ function collectFromGh(repository, includeCompare) {
   if (!includeCompare) return pullRequests;
   return pullRequests.map((pr) => {
     const base = encodeURIComponent(pr.baseRefName || 'main');
-    const head = encodeURIComponent(pr.headRefName);
+    const capturedHeadSha = String(pr.headRefOid || '').trim();
+    if (!/^[0-9a-f]{40}$/i.test(capturedHeadSha)) {
+      return { ...pr, compareError: 'captured headRefOid is missing or invalid' };
+    }
+    const head = encodeURIComponent(capturedHeadSha);
     try {
       const comparison = ghJson(['api', `repos/${repository}/compare/${base}...${head}`]);
       return {
@@ -50,6 +54,9 @@ if (!inputPath && !has('--from-gh')) {
 
 try {
   const input = inputPath ? readJson(inputPath) : { pullRequests: collectFromGh(repository, has('--compare')) };
+  if (!Array.isArray(input) && !Array.isArray(input?.pullRequests)) {
+    throw new Error('prepared snapshot must be an array or an object with a pullRequests array');
+  }
   const familyDocument = readJson(familiesPath);
   const ledger = buildPrEstateLedger({
     repository,
