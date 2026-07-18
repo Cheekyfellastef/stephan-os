@@ -16,6 +16,6 @@
     { "id": "source-pack-projection", "label": "OpenClaw Source Pack projection", "members": [1162, 1163] },
     { "id": "mission-console-registration", "label": "Mission Console registration diagnostics", "members": [1128, 1130] },
     { "id": "build-timestamp", "label": "Stephanos build timestamp", "members": [200, 201] },
-    { "id": "wealth-simulation-sandbox", "label": "Wealth simulation sandbox", "members": [129, 130] }
+    { "id": "wealth-simulation-sandbox", "label": "Wealth simulation sandbox", "members": [129, 130], "canonicalPr": 130, "supersededBy": { "129": 130 }, "selectionBasis": "all 10 changed files verified byte-identical; #129 closed unmerged with branch preserved on 2026-07-18; #130 retained for source-first recovery or explicit retirement" }
   ]
 }
