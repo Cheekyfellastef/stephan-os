@@ -14,6 +14,7 @@ export const PR_DISPOSITIONS = Object.freeze({
 
 const VALID_DISPOSITIONS = new Set(Object.values(PR_DISPOSITIONS));
 const PLACEHOLDER_PATTERN = /codex generated this pull request, but encountered an unexpected error after generation/i;
+const GENERIC_PLACEHOLDER_TITLE = /^codex-generated pull request$/i;
 const ACCEPTANCE_PATTERN = /(?:live|windows|battle bridge|browser|runtime|on-headset|whatsapp|quest).*acceptance|acceptance.*(?:required|pending|remain|gate)|live proof.*required|browser proof.*required/i;
 const APPROVAL_PATTERN = /exact[- ]head.*approval|required.*operator approval|do not merge without.*approval|merge.*explicit approval/i;
 const SAFE_FAMILY_ID = /^[a-z0-9][a-z0-9-]{0,100}$/;
@@ -23,25 +24,18 @@ function asText(value, fallback = '') {
   const text = String(value).trim();
   return text || fallback;
 }
-
 function asInteger(value, fallback = null) {
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : fallback;
 }
-
 function asBooleanOrNull(value) {
   return value === true ? true : (value === false ? false : null);
 }
-
-function unique(values) {
-  return [...new Set(values)];
-}
-
+function unique(values) { return [...new Set(values)]; }
 function normalizeLabels(labels) {
   if (!Array.isArray(labels)) return [];
   return unique(labels.map((label) => asText(label?.name ?? label, '')).filter(Boolean)).sort();
 }
-
 function normalizeFiles(files) {
   if (!Array.isArray(files)) return [];
   return unique(files.map((file) => asText(file?.path ?? file?.filename ?? file, '')).filter(Boolean)).sort();
@@ -49,20 +43,19 @@ function normalizeFiles(files) {
 
 function normalizePr(input = {}) {
   const number = asInteger(input.number ?? input.prNumber, null);
-  const state = asText(input.state, 'open').toLowerCase();
-  const body = asText(input.body, '');
-  const title = asText(input.title, '');
   const aheadBy = asInteger(input.aheadBy ?? input.ahead_by, null);
   const behindBy = asInteger(input.behindBy ?? input.behind_by, null);
   const explicitContained = asBooleanOrNull(input.headContainedInBase);
   const compareKnown = aheadBy !== null || explicitContained !== null;
-  const headContainedInBase = explicitContained === true || (aheadBy === 0 && compareKnown);
-
+  const containmentContradiction = explicitContained === false && aheadBy === 0;
+  const headContainedInBase = containmentContradiction
+    ? false
+    : (explicitContained === true || (explicitContained === null && aheadBy === 0));
   return {
     number,
-    state,
-    title,
-    body,
+    state: asText(input.state, 'open').toLowerCase(),
+    title: asText(input.title, ''),
+    body: asText(input.body, ''),
     url: asText(input.url, ''),
     isDraft: input.isDraft === true || input.draft === true,
     headRefName: asText(input.headRefName ?? input.head, ''),
@@ -76,6 +69,7 @@ function normalizePr(input = {}) {
     aheadBy,
     behindBy,
     compareKnown,
+    containmentContradiction,
     headContainedInBase,
     patchEquivalentTo: asInteger(input.patchEquivalentTo, null),
     uniqueDelta: asBooleanOrNull(input.uniqueDelta),
@@ -87,7 +81,8 @@ function normalizePr(input = {}) {
 function normalizeFamily(input = {}) {
   const id = asText(input.id, '');
   if (!SAFE_FAMILY_ID.test(id)) throw new Error(`invalid PR estate family id: ${id || '<empty>'}`);
-  const members = unique((Array.isArray(input.members) ? input.members : input.prs || []).map((value) => asInteger(value, null)).filter(Number.isInteger)).sort((a, b) => a - b);
+  const members = unique((Array.isArray(input.members) ? input.members : input.prs || [])
+    .map((value) => asInteger(value, null)).filter(Number.isInteger)).sort((a, b) => a - b);
   const canonicalPr = asInteger(input.canonicalPr, null);
   const supersededBy = {};
   for (const [key, value] of Object.entries(input.supersededBy || {})) {
@@ -124,11 +119,10 @@ function buildFamilyMaps(families) {
 function titleKey(title) {
   return asText(title, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
-
 function deriveImplicitFamilies(prs, familyByPr) {
   const groups = new Map();
   for (const pr of prs) {
-    if (familyByPr.has(pr.number)) continue;
+    if (familyByPr.has(pr.number) || GENERIC_PLACEHOLDER_TITLE.test(pr.title)) continue;
     const key = titleKey(pr.title);
     if (!key) continue;
     const group = groups.get(key) || [];
@@ -139,64 +133,83 @@ function deriveImplicitFamilies(prs, familyByPr) {
   for (const [key, members] of groups) {
     if (members.length < 2) continue;
     const id = `title-${key.replace(/\s+/g, '-').slice(0, 80)}`;
-    const family = { id, label: `Exact-title duplicate: ${key}`, members: members.sort((a, b) => a - b), canonicalPr: null, supersededBy: {}, selectionBasis: 'exact-title-match', notes: 'Implicit family; canonical selection requires review.' };
+    const family = {
+      id,
+      label: `Exact-title duplicate: ${key}`,
+      members: members.sort((a, b) => a - b),
+      canonicalPr: null,
+      supersededBy: {},
+      selectionBasis: 'exact-title-match',
+      notes: 'Implicit family; canonical selection requires review.',
+    };
     for (const number of members) implicitByPr.set(number, family);
   }
   return implicitByPr;
 }
 
-function evidenceFor(pr, family) {
+function evidenceFor(pr, family, placeholder) {
   return {
     compareKnown: pr.compareKnown,
     aheadBy: pr.aheadBy,
     behindBy: pr.behindBy,
     headContainedInBase: pr.headContainedInBase,
+    containmentContradiction: pr.containmentContradiction,
     changedFileCount: pr.changedFiles.length,
     patchEquivalentTo: pr.patchEquivalentTo,
     uniqueDelta: pr.uniqueDelta,
+    placeholderFailureMarker: placeholder,
     familyCanonicalPr: family?.canonicalPr ?? null,
     explicitSupersededBy: family?.supersededBy?.[pr.number] ?? null,
   };
 }
 
+function ambiguous(reason, blocker) {
+  return { disposition: PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED, reason, blockers: [blocker] };
+}
+
 function classifyPr(pr, family) {
-  const bodyAndTitle = `${pr.title}\n${pr.body}`;
-  const placeholder = PLACEHOLDER_PATTERN.test(bodyAndTitle);
-  const acceptanceGate = ACCEPTANCE_PATTERN.test(bodyAndTitle);
-  const approvalGate = APPROVAL_PATTERN.test(bodyAndTitle);
+  const placeholder = PLACEHOLDER_PATTERN.test(`${pr.title}\n${pr.body}`);
+  const acceptanceGate = ACCEPTANCE_PATTERN.test(`${pr.title}\n${pr.body}`);
+  const approvalGate = APPROVAL_PATTERN.test(`${pr.title}\n${pr.body}`);
   const explicitSupersededBy = family?.supersededBy?.[pr.number] ?? null;
   const canonicalPr = family?.canonicalPr ?? null;
   const familySize = family?.members?.length ?? 1;
-  const reasons = [];
 
   if (pr.number === null || pr.state !== 'open') {
-    return {
-      disposition: PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED,
-      reason: pr.number === null ? 'missing valid PR number' : `expected open PR evidence, received state=${pr.state}`,
-      blockers: ['invalid-or-non-open-pr-record'],
-    };
+    return ambiguous(pr.number === null ? 'missing valid PR number' : `expected open PR evidence, received state=${pr.state}`, 'invalid-or-non-open-pr-record');
+  }
+  if (pr.containmentContradiction) {
+    return ambiguous('compare evidence contradicts explicit containment evidence', 'contradictory-containment-evidence');
   }
 
   if (pr.dispositionHint) {
-    if ([PR_DISPOSITIONS.ALREADY_IN_MAIN, PR_DISPOSITIONS.PLACEHOLDER_FAILED].includes(pr.dispositionHint) && !pr.compareKnown) {
-      return { disposition: PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED, reason: 'terminal disposition hint lacks compare evidence', blockers: ['compare-evidence-required'] };
+    if (pr.dispositionHint === PR_DISPOSITIONS.ALREADY_IN_MAIN && pr.headContainedInBase !== true) {
+      return ambiguous('already-in-main hint lacks proven containment', 'containment-evidence-required');
     }
-    if (pr.dispositionHint === PR_DISPOSITIONS.SUPERSEDED && !explicitSupersededBy && !pr.patchEquivalentTo) {
-      return { disposition: PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED, reason: 'superseded hint lacks canonical target evidence', blockers: ['canonical-survivor-required'] };
+    if (pr.dispositionHint === PR_DISPOSITIONS.PLACEHOLDER_FAILED) {
+      if (!placeholder) return ambiguous('placeholder-failed hint lacks Codex failure marker', 'placeholder-failure-marker-required');
+      if (pr.headContainedInBase !== true || pr.uniqueDelta === true) {
+        return ambiguous('placeholder-failed hint lacks non-conflicting no-unique-delta evidence', 'placeholder-no-unique-delta-evidence-required');
+      }
+    }
+    if (pr.dispositionHint === PR_DISPOSITIONS.SUPERSEDED) {
+      const target = explicitSupersededBy ?? canonicalPr;
+      if (!target) return ambiguous('superseded hint lacks canonical target evidence', 'canonical-survivor-required');
+      if (!(pr.patchEquivalentTo === target || pr.uniqueDelta === false)) {
+        return ambiguous('superseded hint lacks equivalence or explicit no-unique-delta evidence', 'patch-equivalence-or-unique-delta-required');
+      }
     }
     return { disposition: pr.dispositionHint, reason: 'explicit validated disposition hint', blockers: [] };
   }
 
   if (placeholder) {
-    if (!pr.compareKnown) return { disposition: PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED, reason: 'Codex placeholder PR has no branch-to-main compare evidence', blockers: ['placeholder-branch-delta-unknown'] };
+    if (!pr.compareKnown) return ambiguous('Codex placeholder PR has no branch-to-main compare evidence', 'placeholder-branch-delta-unknown');
     if (pr.headContainedInBase) return { disposition: PR_DISPOSITIONS.PLACEHOLDER_FAILED, reason: 'Codex placeholder branch has no commits unique to current base', blockers: [] };
     return { disposition: PR_DISPOSITIONS.RECOVER_UNIQUE_WORK, reason: 'Codex placeholder branch still has commits unique to current base', blockers: ['inspect-and-recover-placeholder-delta'] };
   }
-
   if (pr.headContainedInBase) {
     return { disposition: PR_DISPOSITIONS.ALREADY_IN_MAIN, reason: 'compare evidence shows no commits unique to the PR head', blockers: [] };
   }
-
   if (explicitSupersededBy !== null) {
     if (pr.patchEquivalentTo === explicitSupersededBy || pr.uniqueDelta === false) {
       return { disposition: PR_DISPOSITIONS.SUPERSEDED, reason: `evidence shows PR is covered by canonical PR #${explicitSupersededBy}`, blockers: [] };
@@ -204,28 +217,24 @@ function classifyPr(pr, family) {
     if (pr.uniqueDelta === true) {
       return { disposition: PR_DISPOSITIONS.RECOVER_UNIQUE_WORK, reason: `PR has unique work not yet proven in canonical PR #${explicitSupersededBy}`, blockers: ['transplant-unique-delta'] };
     }
-    return { disposition: PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED, reason: `family marks PR as superseded by #${explicitSupersededBy}, but equivalence evidence is missing`, blockers: ['patch-equivalence-or-unique-delta-required'] };
+    return ambiguous(`family marks PR as superseded by #${explicitSupersededBy}, but equivalence evidence is missing`, 'patch-equivalence-or-unique-delta-required');
   }
-
   if (canonicalPr === pr.number) {
     if (acceptanceGate) return { disposition: PR_DISPOSITIONS.WAITING_ACCEPTANCE, reason: 'canonical family survivor is explicitly waiting for live acceptance proof', blockers: ['acceptance-proof-required'] };
     if (approvalGate) return { disposition: PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL, reason: 'canonical family survivor is explicitly waiting for operator approval', blockers: ['operator-approval-required'] };
     return { disposition: PR_DISPOSITIONS.ACTIVE_CANONICAL, reason: 'selected canonical survivor for its capability family', blockers: [] };
   }
-
   if (familySize > 1) {
-    if (canonicalPr === null) {
-      return { disposition: PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED, reason: `duplicate family ${family.id} has no selected canonical survivor`, blockers: ['canonical-selection-required'] };
-    }
+    if (canonicalPr === null) return ambiguous(`duplicate family ${family.id} has no selected canonical survivor`, 'canonical-selection-required');
     if (pr.uniqueDelta === true) return { disposition: PR_DISPOSITIONS.RECOVER_UNIQUE_WORK, reason: `non-canonical family member has unique work relative to #${canonicalPr}`, blockers: ['transplant-unique-delta'] };
     if (pr.uniqueDelta === false || pr.patchEquivalentTo === canonicalPr) return { disposition: PR_DISPOSITIONS.SUPERSEDED, reason: `non-canonical family member is fully covered by #${canonicalPr}`, blockers: [] };
-    return { disposition: PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED, reason: `non-canonical family member requires comparison with #${canonicalPr}`, blockers: ['unique-delta-analysis-required'] };
+    return ambiguous(`non-canonical family member requires comparison with #${canonicalPr}`, 'unique-delta-analysis-required');
   }
-
   if (acceptanceGate) return { disposition: PR_DISPOSITIONS.WAITING_ACCEPTANCE, reason: 'PR explicitly documents an outstanding live acceptance gate', blockers: ['acceptance-proof-required'] };
   if (approvalGate) return { disposition: PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL, reason: 'PR explicitly documents an outstanding operator approval gate', blockers: ['operator-approval-required'] };
   if (pr.activeHint) return { disposition: PR_DISPOSITIONS.ACTIVE_CANONICAL, reason: 'explicit active canonical hint', blockers: [] };
 
+  const reasons = [];
   if (!pr.compareKnown) reasons.push('branch-to-main compare evidence missing');
   if (pr.mergeable === 'UNKNOWN') reasons.push('mergeability evidence missing');
   return {
@@ -249,7 +258,8 @@ function familyStatus(entries, family) {
 }
 
 export function buildPrEstateLedger(input = {}) {
-  const normalizedPrs = (Array.isArray(input.pullRequests) ? input.pullRequests : []).map(normalizePr).filter((pr) => pr.state === 'open');
+  if (!Array.isArray(input.pullRequests)) throw new Error('pullRequests array is required');
+  const normalizedPrs = input.pullRequests.map(normalizePr).filter((pr) => pr.state === 'open');
   const { byId: explicitFamiliesById, byPr: explicitFamilyByPr } = buildFamilyMaps(input.families || []);
   const implicitFamilyByPr = deriveImplicitFamilies(normalizedPrs, explicitFamilyByPr);
   const allFamiliesById = new Map(explicitFamiliesById);
@@ -257,6 +267,7 @@ export function buildPrEstateLedger(input = {}) {
 
   const entries = normalizedPrs.map((pr) => {
     const family = explicitFamilyByPr.get(pr.number) || implicitFamilyByPr.get(pr.number) || null;
+    const placeholder = PLACEHOLDER_PATTERN.test(`${pr.title}\n${pr.body}`);
     const result = classifyPr(pr, family);
     return {
       number: pr.number,
@@ -268,7 +279,7 @@ export function buildPrEstateLedger(input = {}) {
       disposition: result.disposition,
       reason: result.reason,
       blockers: result.blockers,
-      evidence: evidenceFor(pr, family),
+      evidence: evidenceFor(pr, family, placeholder),
       headRefName: pr.headRefName,
       headSha: pr.headSha,
       baseRefName: pr.baseRefName,
@@ -284,9 +295,8 @@ export function buildPrEstateLedger(input = {}) {
     group.push(entry);
     familyGroups.set(id, group);
   }
-
   const families = [...familyGroups.entries()].map(([id, familyEntries]) => {
-    const family = allFamiliesById.get(id) || { id, label: familyEntries[0]?.title || id, members: familyEntries.map((entry) => entry.number), canonicalPr: familyEntries[0]?.canonicalPr ?? null, selectionBasis: '', notes: '' };
+    const family = allFamiliesById.get(id) || { id, label: familyEntries[0]?.title || id, members: familyEntries.map((entry) => entry.number), canonicalPr: familyEntries[0]?.canonicalPr ?? null, selectionBasis: '' };
     const summary = familyStatus(familyEntries, family);
     return {
       id,
@@ -302,22 +312,17 @@ export function buildPrEstateLedger(input = {}) {
 
   const dispositionCounts = Object.fromEntries(Object.values(PR_DISPOSITIONS).map((value) => [value, 0]));
   for (const entry of entries) dispositionCounts[entry.disposition] += 1;
-
   const recoveryPriority = {
     [PR_DISPOSITIONS.RECOVER_UNIQUE_WORK]: 1,
     [PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED]: 2,
     [PR_DISPOSITIONS.WAITING_ACCEPTANCE]: 3,
     [PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL]: 4,
     [PR_DISPOSITIONS.ACTIVE_CANONICAL]: 5,
-    [PR_DISPOSITIONS.SUPERSEDED]: 6,
-    [PR_DISPOSITIONS.PLACEHOLDER_FAILED]: 7,
-    [PR_DISPOSITIONS.ALREADY_IN_MAIN]: 8,
   };
   const recoveryQueue = entries
     .filter((entry) => ![PR_DISPOSITIONS.ALREADY_IN_MAIN, PR_DISPOSITIONS.SUPERSEDED, PR_DISPOSITIONS.PLACEHOLDER_FAILED].includes(entry.disposition))
-    .sort((a, b) => recoveryPriority[a.disposition] - recoveryPriority[b.disposition] || b.number - a.number)
+    .sort((a, b) => (recoveryPriority[a.disposition] ?? 99) - (recoveryPriority[b.disposition] ?? 99) || b.number - a.number)
     .map((entry) => ({ number: entry.number, familyId: entry.familyId, disposition: entry.disposition, nextAction: entry.blockers[0] || 'continue-canonical-lane' }));
-
   const blockers = unique(families.flatMap((family) => family.blockers.map((blocker) => `${family.id}:${blocker}`)));
   const finalVerdict = blockers.length === 0 && recoveryQueue.every((item) => [PR_DISPOSITIONS.ACTIVE_CANONICAL, PR_DISPOSITIONS.WAITING_ACCEPTANCE, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL].includes(item.disposition))
     ? 'PR_ESTATE_CONTROLLED'
@@ -335,13 +340,7 @@ export function buildPrEstateLedger(input = {}) {
     families,
     entries,
     recoveryQueue,
-    safety: {
-      readOnly: true,
-      closesPullRequests: false,
-      deletesBranches: false,
-      mergesPullRequests: false,
-      unknownEvidenceFailsClosed: true,
-    },
+    safety: { readOnly: true, closesPullRequests: false, deletesBranches: false, mergesPullRequests: false, unknownEvidenceFailsClosed: true },
   };
 }
 
@@ -355,8 +354,21 @@ export function validatePrEstateLedger(ledger = {}) {
   for (const entry of ledger.entries || []) {
     if (!Number.isInteger(entry.number)) errors.push('invalid-pr-number');
     if (!VALID_DISPOSITIONS.has(entry.disposition)) errors.push(`invalid-disposition:${entry.number}`);
-    if (entry.disposition === PR_DISPOSITIONS.ALREADY_IN_MAIN && entry.evidence?.headContainedInBase !== true) errors.push(`already-in-main-without-containment:${entry.number}`);
-    if (entry.disposition === PR_DISPOSITIONS.SUPERSEDED && !entry.canonicalPr && !entry.evidence?.explicitSupersededBy) errors.push(`superseded-without-canonical:${entry.number}`);
+    if (entry.evidence?.containmentContradiction === true && [PR_DISPOSITIONS.ALREADY_IN_MAIN, PR_DISPOSITIONS.PLACEHOLDER_FAILED].includes(entry.disposition)) {
+      errors.push(`terminal-with-contradictory-containment:${entry.number}`);
+    }
+    if (entry.disposition === PR_DISPOSITIONS.ALREADY_IN_MAIN && entry.evidence?.headContainedInBase !== true) {
+      errors.push(`already-in-main-without-containment:${entry.number}`);
+    }
+    if (entry.disposition === PR_DISPOSITIONS.PLACEHOLDER_FAILED) {
+      if (entry.evidence?.placeholderFailureMarker !== true) errors.push(`placeholder-failed-without-marker:${entry.number}`);
+      if (entry.evidence?.headContainedInBase !== true || entry.evidence?.uniqueDelta === true) errors.push(`placeholder-failed-without-no-unique-delta:${entry.number}`);
+    }
+    if (entry.disposition === PR_DISPOSITIONS.SUPERSEDED) {
+      const target = entry.evidence?.explicitSupersededBy ?? entry.canonicalPr;
+      if (!target) errors.push(`superseded-without-canonical:${entry.number}`);
+      if (!(entry.evidence?.patchEquivalentTo === target || entry.evidence?.uniqueDelta === false)) errors.push(`superseded-without-equivalence:${entry.number}`);
+    }
   }
   return { valid: errors.length === 0, errors, finalVerdict: errors.length ? 'PR_ESTATE_LEDGER_INVALID' : 'PR_ESTATE_LEDGER_VALID' };
 }
