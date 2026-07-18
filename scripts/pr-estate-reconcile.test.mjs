@@ -75,6 +75,7 @@ test('CLI rejects malformed prepared snapshots instead of certifying an empty es
   assert.doesNotMatch(result.stdout, /PR_ESTATE_CONTROLLED/);
 });
 
+
 test('CLI rejects malformed family documents instead of erasing family constraints', () => {
   const directory = mkdtempSync(join(tmpdir(), 'stephanos-pr-estate-malformed-families-'));
   const snapshot = join(directory, 'snapshot.json');
@@ -108,6 +109,9 @@ test('CLI compares the captured exact head SHA rather than the mutable branch na
   const apiArgs = JSON.parse(readFileSync(capture, 'utf8'));
   assert.deepEqual(apiArgs, ['api', `repos/owner/repo/compare/main...${headSha}`]);
   assert.doesNotMatch(apiArgs.join(' '), /mutable-branch-name/);
+  const ledger = JSON.parse(result.stdout);
+  assert.equal(ledger.entries[0].evidence.comparedHeadSha, headSha);
+  assert.equal(ledger.entries[0].evidence.comparisonHeadMatches, true);
 });
 
 test('CLI aborts compare collection when the captured head SHA is invalid', () => {
