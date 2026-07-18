@@ -2,7 +2,12 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { buildPrEstateLedger, renderPrEstateReport, validatePrEstateLedger } from '../shared/agents/prEstateReconciler.mjs';
+import {
+  buildPrEstateLedger,
+  renderPrEstateReport,
+  requireCapturedHeadSha,
+  validatePrEstateLedger,
+} from '../shared/agents/prEstateReconciler.mjs';
 
 function valueAfter(name) {
   const index = process.argv.indexOf(name);
@@ -19,23 +24,16 @@ function collectFromGh(repository, includeCompare) {
   if (!includeCompare) return pullRequests;
   return pullRequests.map((pr) => {
     const base = encodeURIComponent(pr.baseRefName || 'main');
-    const capturedHeadSha = String(pr.headRefOid || '').trim();
-    if (!/^[0-9a-f]{40}$/i.test(capturedHeadSha)) {
-      return { ...pr, compareError: 'captured headRefOid is missing or invalid' };
-    }
+    const capturedHeadSha = requireCapturedHeadSha(pr.headRefOid, pr.number ?? 'unknown');
     const head = encodeURIComponent(capturedHeadSha);
-    try {
-      const comparison = ghJson(['api', `repos/${repository}/compare/${base}...${head}`]);
-      return {
-        ...pr,
-        aheadBy: comparison.ahead_by,
-        behindBy: comparison.behind_by,
-        headContainedInBase: Number(comparison.ahead_by) === 0,
-        changedFiles: Array.isArray(comparison.files) ? comparison.files.map((file) => file.filename) : [],
-      };
-    } catch (error) {
-      return { ...pr, compareError: String(error?.message || error) };
-    }
+    const comparison = ghJson(['api', `repos/${repository}/compare/${base}...${head}`]);
+    return {
+      ...pr,
+      aheadBy: comparison.ahead_by,
+      behindBy: comparison.behind_by,
+      headContainedInBase: Number(comparison.ahead_by) === 0,
+      changedFiles: Array.isArray(comparison.files) ? comparison.files.map((file) => file.filename) : [],
+    };
   });
 }
 
