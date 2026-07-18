@@ -8,8 +8,11 @@ import {
   validatePrEstateLedger,
 } from './prEstateReconciler.mjs';
 
+const DEFAULT_HEAD_SHA = 'a'.repeat(40);
+
 function build(pullRequests, families = []) {
-  return buildPrEstateLedger({ repository: 'owner/repo', generatedAt: '2026-07-18T16:00:00Z', pullRequests, families });
+  const normalizedPullRequests = pullRequests.map((pr) => ({ headSha: DEFAULT_HEAD_SHA, ...pr }));
+  return buildPrEstateLedger({ repository: 'owner/repo', generatedAt: '2026-07-18T16:00:00Z', pullRequests: normalizedPullRequests, families });
 }
 
 const placeholderBody = 'Codex generated this pull request, but encountered an unexpected error after generation.';
@@ -119,7 +122,7 @@ test('placeholder-failed hints require the failure marker and no unique delta', 
 test('superseded hints require a canonical target plus equivalence evidence', () => {
   const ledger = build(
     [{ number: 75, state: 'open', title: 'Earlier', dispositionHint: PR_DISPOSITIONS.SUPERSEDED }],
-    [{ id: 'hint-family', members: [75], canonicalPr: 76, supersededBy: { 75: 76 } }],
+    [{ id: 'hint-family', members: [75, 76], canonicalPr: 76, supersededBy: { 75: 76 } }],
   );
   assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
 });
@@ -142,6 +145,37 @@ test('requires a captured exact head SHA before compare collection', () => {
   assert.equal(requireCapturedHeadSha(sha, 80), sha);
   assert.throws(() => requireCapturedHeadSha('', 80), /PR #80 captured headRefOid is missing or invalid/);
   assert.throws(() => requireCapturedHeadSha('branch-name', 80), /missing or invalid/);
+});
+
+test('requires terminal prepared evidence to identify the exact PR head', () => {
+  const missing = build([{ number: 79, state: 'open', title: 'Contained without SHA', aheadBy: 0, headSha: '' }]);
+  assert.equal(missing.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  assert.match(missing.entries[0].blockers.join(' '), /exact-head-evidence-required/);
+
+  const malformed = build([{ number: 80, state: 'open', title: 'Contained with branch name', aheadBy: 0, headSha: 'branch-name' }]);
+  assert.equal(malformed.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  assert.match(malformed.entries[0].blockers.join(' '), /exact-head-evidence-required/);
+});
+
+test('rejects a configured canonical PR outside its family members', () => {
+  assert.throws(
+    () => build([{ number: 81, state: 'open', title: 'Family member' }], [{ id: 'bad-family', members: [81], canonicalPr: 82 }]),
+    /canonical PR #82 is not a member of family bad-family/,
+  );
+});
+
+test('distinguishes completed gates from pending gates', () => {
+  const completedAcceptance = build([{ number: 83, state: 'open', title: 'Browser proof', body: 'Browser acceptance passed on the exact head.' }]);
+  assert.notEqual(completedAcceptance.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+
+  const completedApproval = build([{ number: 84, state: 'open', title: 'Approved change', body: 'Exact-head approval was granted by the operator.' }]);
+  assert.notEqual(completedApproval.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+
+  const pendingAcceptance = build([{ number: 85, state: 'open', title: 'Quest proof', body: 'Live acceptance remains pending on the Quest headset.' }]);
+  assert.equal(pendingAcceptance.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+
+  const pendingApproval = build([{ number: 86, state: 'open', title: 'Approval gate', body: 'Exact-head operator approval is still required.' }]);
+  assert.equal(pendingApproval.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
 });
 
 test('ledger validation rejects forged terminal evidence', () => {
