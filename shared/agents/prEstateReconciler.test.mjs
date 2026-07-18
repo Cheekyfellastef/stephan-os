@@ -11,7 +11,25 @@ import {
 const DEFAULT_HEAD_SHA = 'a'.repeat(40);
 
 function build(pullRequests, families = []) {
-  const normalizedPullRequests = pullRequests.map((pr) => ({ headSha: DEFAULT_HEAD_SHA, ...pr }));
+  const withHeads = pullRequests.map((pr) => ({ headSha: DEFAULT_HEAD_SHA, ...pr }));
+  const headByPr = new Map(withHeads.filter((pr) => Number.isInteger(pr.number)).map((pr) => [pr.number, pr.headSha]));
+  const familyByPr = new Map();
+  for (const family of families) for (const number of family.members || family.prs || []) familyByPr.set(Number(number), family);
+  const normalizedPullRequests = withHeads.map((pr) => {
+    const comparisonPresent = ['aheadBy', 'ahead_by', 'behindBy', 'behind_by', 'headContainedInBase'].some((key) => Object.prototype.hasOwnProperty.call(pr, key));
+    const family = familyByPr.get(pr.number);
+    const target = family?.supersededBy?.[pr.number] ?? ((family?.canonicalPr && family.canonicalPr !== pr.number) ? family.canonicalPr : null);
+    const supersessionClaimed = target && (pr.patchEquivalentTo === target || pr.uniqueDelta === false);
+    return {
+      ...(comparisonPresent && !Object.prototype.hasOwnProperty.call(pr, 'comparedHeadSha') ? { comparedHeadSha: pr.headSha } : {}),
+      ...(supersessionClaimed && !Object.prototype.hasOwnProperty.call(pr, 'supersessionSourceHeadSha') ? {
+        supersessionSourceHeadSha: pr.headSha,
+        supersessionTargetPr: target,
+        supersessionTargetHeadSha: headByPr.get(target) || '',
+      } : {}),
+      ...pr,
+    };
+  });
   return buildPrEstateLedger({ repository: 'owner/repo', generatedAt: '2026-07-18T16:00:00Z', pullRequests: normalizedPullRequests, families });
 }
 
@@ -147,6 +165,7 @@ test('requires a captured exact head SHA before compare collection', () => {
   assert.throws(() => requireCapturedHeadSha('branch-name', 80), /missing or invalid/);
 });
 
+
 test('requires terminal prepared evidence to identify the exact PR head', () => {
   const missing = build([{ number: 79, state: 'open', title: 'Contained without SHA', aheadBy: 0, headSha: '' }]);
   assert.equal(missing.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
@@ -164,6 +183,34 @@ test('rejects a configured canonical PR outside its family members', () => {
   );
 });
 
+test('rejects malformed supersededBy family mappings', () => {
+  const pullRequests = [
+    { number: 90, state: 'open', title: 'Earlier' },
+    { number: 91, state: 'open', title: 'Canonical' },
+    { number: 92, state: 'open', title: 'Other member' },
+  ];
+  assert.throws(
+    () => build(pullRequests, [{ id: 'source-outside', members: [90, 91], canonicalPr: 91, supersededBy: { 99: 91 } }]),
+    /superseded PR #99 is not a member/,
+  );
+  assert.throws(
+    () => build(pullRequests, [{ id: 'target-outside', members: [90, 91], canonicalPr: 91, supersededBy: { 90: 99 } }]),
+    /superseding PR #99 is not a member/,
+  );
+  assert.throws(
+    () => build(pullRequests, [{ id: 'wrong-target', members: [90, 91, 92], canonicalPr: 91, supersededBy: { 90: 92 } }]),
+    /superseding PR #92 is not canonical PR #91/,
+  );
+  assert.throws(
+    () => build(pullRequests, [{ id: 'missing-canonical', members: [90, 91], supersededBy: { 90: 91 } }]),
+    /requires canonicalPr/,
+  );
+  assert.throws(
+    () => build(pullRequests, [{ id: 'self-supersession', members: [90, 91], canonicalPr: 91, supersededBy: { 91: 91 } }]),
+    /cannot supersede itself/,
+  );
+});
+
 test('distinguishes completed gates from pending gates', () => {
   const completedAcceptance = build([{ number: 83, state: 'open', title: 'Browser proof', body: 'Browser acceptance passed on the exact head.' }]);
   assert.notEqual(completedAcceptance.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
@@ -177,6 +224,7 @@ test('distinguishes completed gates from pending gates', () => {
   const pendingApproval = build([{ number: 86, state: 'open', title: 'Approval gate', body: 'Exact-head operator approval is still required.' }]);
   assert.equal(pendingApproval.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
 });
+
 
 test('rejects contradictory supersession evidence', () => {
   const explicit = build(
@@ -192,6 +240,50 @@ test('rejects malformed families collections in the pure model', () => {
     () => buildPrEstateLedger({ repository: 'owner/repo', pullRequests: [], families: {} }),
     /families array is required/,
   );
+});
+
+
+test('binds prepared comparison evidence to the declared exact head', () => {
+  const stale = build([{ number: 88, state: 'open', title: 'Stale compare', aheadBy: 0, comparedHeadSha: 'b'.repeat(40) }]);
+  assert.equal(stale.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  assert.match(stale.entries[0].blockers.join(' '), /comparison-head-mismatch/);
+  const current = build([{ number: 89, state: 'open', title: 'Current compare', aheadBy: 0 }]);
+  assert.equal(current.entries[0].disposition, PR_DISPOSITIONS.ALREADY_IN_MAIN);
+  assert.equal(current.entries[0].evidence.comparisonHeadMatches, true);
+});
+
+test('rejects malformed explicit containment booleans', () => {
+  for (const value of ['false', null, 0, {}]) {
+    const ledger = build([{ number: 90, state: 'open', title: 'Malformed containment', aheadBy: 0, headContainedInBase: value }]);
+    assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+    assert.equal(ledger.entries[0].evidence.invalidHeadContainedInBase, true);
+  }
+});
+
+test('requires supersession proof to match both current exact heads', () => {
+  const families = [{ id: 'paired-heads', members: [91, 92], canonicalPr: 92, supersededBy: { 91: 92 } }];
+  const staleSource = build([
+    { number: 91, state: 'open', title: 'Earlier', patchEquivalentTo: 92, supersessionSourceHeadSha: 'b'.repeat(40) },
+    { number: 92, state: 'open', title: 'Canonical' },
+  ], families);
+  assert.equal(staleSource.entries.find((entry) => entry.number === 91).disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  const staleTarget = build([
+    { number: 91, state: 'open', title: 'Earlier', patchEquivalentTo: 92, supersessionTargetHeadSha: 'b'.repeat(40) },
+    { number: 92, state: 'open', title: 'Canonical' },
+  ], families);
+  assert.equal(staleTarget.entries.find((entry) => entry.number === 91).disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+});
+
+test('rejects malformed family members and supersededBy containers', () => {
+  assert.throws(() => build([], [{ id: 'bad-members', members: [1, 'nope'] }]), /invalid family member/);
+  assert.throws(() => build([], [{ id: 'bad-map', members: [1], supersededBy: [] }]), /supersededBy must be an object/);
+});
+
+test('completed gates override retained historical pending wording', () => {
+  const acceptance = build([{ number: 93, state: 'open', title: 'Quest proof', body: 'Live acceptance required on Quest; this acceptance is now complete.' }]);
+  assert.notEqual(acceptance.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  const approval = build([{ number: 94, state: 'open', title: 'Merge gate', body: 'The prior do not merge without approval gate is complete.' }]);
+  assert.notEqual(approval.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
 });
 
 test('ledger validation rejects forged terminal evidence', () => {
