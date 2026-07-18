@@ -243,6 +243,11 @@ function classifyPr(pr, family) {
     return ambiguous('compare evidence contradicts explicit containment evidence', 'contradictory-containment-evidence');
   }
 
+  const supersessionTarget = explicitSupersededBy ?? (familySize > 1 ? canonicalPr : null);
+  if (pr.uniqueDelta === true && supersessionTarget !== null && pr.patchEquivalentTo === supersessionTarget) {
+    return ambiguous('patch equivalence contradicts an explicit unique delta', 'contradictory-supersession-evidence');
+  }
+
   if (pr.dispositionHint) {
     if ([PR_DISPOSITIONS.ALREADY_IN_MAIN, PR_DISPOSITIONS.PLACEHOLDER_FAILED, PR_DISPOSITIONS.SUPERSEDED].includes(pr.dispositionHint) && !pr.exactHeadKnown) {
       return ambiguous('terminal disposition hint is not tied to a valid full head SHA', 'exact-head-evidence-required');
@@ -261,6 +266,7 @@ function classifyPr(pr, family) {
     if (pr.dispositionHint === PR_DISPOSITIONS.SUPERSEDED) {
       const target = explicitSupersededBy ?? canonicalPr;
       if (!target) return ambiguous('superseded hint lacks canonical target evidence', 'canonical-survivor-required');
+      if (pr.uniqueDelta === true) return ambiguous('superseded hint conflicts with an explicit unique delta', 'contradictory-supersession-evidence');
       if (!(pr.patchEquivalentTo === target || pr.uniqueDelta === false)) {
         return ambiguous('superseded hint lacks equivalence or explicit no-unique-delta evidence', 'patch-equivalence-or-unique-delta-required');
       }
@@ -290,12 +296,13 @@ function classifyPr(pr, family) {
   }
 
   if (explicitSupersededBy !== null) {
+    if (pr.uniqueDelta === true) {
+      if (pr.patchEquivalentTo === explicitSupersededBy) return ambiguous('patch equivalence contradicts an explicit unique delta', 'contradictory-supersession-evidence');
+      return { disposition: PR_DISPOSITIONS.RECOVER_UNIQUE_WORK, reason: `PR has unique work not yet proven in canonical PR #${explicitSupersededBy}`, blockers: ['transplant-unique-delta'] };
+    }
     if (pr.patchEquivalentTo === explicitSupersededBy || pr.uniqueDelta === false) {
       if (!pr.exactHeadKnown) return ambiguous('supersession evidence is not tied to a valid full head SHA', 'exact-head-evidence-required');
       return { disposition: PR_DISPOSITIONS.SUPERSEDED, reason: `evidence shows PR is covered by canonical PR #${explicitSupersededBy}`, blockers: [] };
-    }
-    if (pr.uniqueDelta === true) {
-      return { disposition: PR_DISPOSITIONS.RECOVER_UNIQUE_WORK, reason: `PR has unique work not yet proven in canonical PR #${explicitSupersededBy}`, blockers: ['transplant-unique-delta'] };
     }
     return ambiguous(`family marks PR as superseded by #${explicitSupersededBy}, but equivalence evidence is missing`, 'patch-equivalence-or-unique-delta-required');
   }
@@ -308,7 +315,10 @@ function classifyPr(pr, family) {
 
   if (familySize > 1) {
     if (canonicalPr === null) return ambiguous(`duplicate family ${family.id} has no selected canonical survivor`, 'canonical-selection-required');
-    if (pr.uniqueDelta === true) return { disposition: PR_DISPOSITIONS.RECOVER_UNIQUE_WORK, reason: `non-canonical family member has unique work relative to #${canonicalPr}`, blockers: ['transplant-unique-delta'] };
+    if (pr.uniqueDelta === true) {
+      if (pr.patchEquivalentTo === canonicalPr) return ambiguous('patch equivalence contradicts an explicit unique delta', 'contradictory-supersession-evidence');
+      return { disposition: PR_DISPOSITIONS.RECOVER_UNIQUE_WORK, reason: `non-canonical family member has unique work relative to #${canonicalPr}`, blockers: ['transplant-unique-delta'] };
+    }
     if (pr.uniqueDelta === false || pr.patchEquivalentTo === canonicalPr) {
       if (!pr.exactHeadKnown) return ambiguous('supersession evidence is not tied to a valid full head SHA', 'exact-head-evidence-required');
       return { disposition: PR_DISPOSITIONS.SUPERSEDED, reason: `non-canonical family member is fully covered by #${canonicalPr}`, blockers: [] };
@@ -351,6 +361,7 @@ export function requireCapturedHeadSha(value, prNumber = 'unknown') {
 
 export function buildPrEstateLedger(input = {}) {
   if (!Array.isArray(input.pullRequests)) throw new Error('pullRequests array is required');
+  if (input.families !== undefined && !Array.isArray(input.families)) throw new Error('families array is required');
   const normalizedPrs = input.pullRequests.map((pr, index) => normalizePr(pr, index));
   const { byId: explicitFamiliesById, byPr: explicitFamilyByPr } = buildFamilyMaps(input.families || []);
   const implicitFamilyByPr = deriveImplicitFamilies(normalizedPrs, explicitFamilyByPr);
@@ -489,6 +500,7 @@ export function validatePrEstateLedger(ledger = {}) {
     }
     if (entry.disposition === PR_DISPOSITIONS.SUPERSEDED) {
       const target = entry.evidence?.explicitSupersededBy ?? entry.canonicalPr;
+      if (entry.evidence?.uniqueDelta === true) errors.push(`superseded-with-unique-delta:${entry.number}`);
       if (!target) errors.push(`superseded-without-canonical:${entry.number}`);
       if (!(entry.evidence?.patchEquivalentTo === target || entry.evidence?.uniqueDelta === false)) errors.push(`superseded-without-equivalence:${entry.number}`);
     }
