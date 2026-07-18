@@ -32,6 +32,7 @@ function collectFromGh(repository, includeCompare) {
       aheadBy: comparison.ahead_by,
       behindBy: comparison.behind_by,
       headContainedInBase: Number(comparison.ahead_by) === 0,
+      comparedHeadSha: capturedHeadSha,
       changedFiles: Array.isArray(comparison.files) ? comparison.files.map((file) => file.filename) : [],
     };
   });
