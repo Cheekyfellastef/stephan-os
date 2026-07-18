@@ -56,6 +56,9 @@ try {
     throw new Error('prepared snapshot must be an array or an object with a pullRequests array');
   }
   const familyDocument = readJson(familiesPath);
+  if (!Array.isArray(familyDocument) && !Array.isArray(familyDocument?.families)) {
+    throw new Error('family document must be an array or an object with a families array');
+  }
   const ledger = buildPrEstateLedger({
     repository,
     generatedAt,
