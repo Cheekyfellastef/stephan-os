@@ -11,6 +11,10 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_DEPLOYMENT_STATUS',
   'READ_CAPABILITY_REGISTRY',
   'READ_SHARED_WORKSPACE_STATUS',
+  'READ_CRITICAL_BACKLOG_STATUS',
+  'READ_MAILBOX_RECEIPT',
+  'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
 ]);
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
@@ -64,6 +68,13 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   if (command.expectedHead && !SHA_PATTERN.test(String(command.expectedHead))) {
     return fail('COMMAND_EXPECTED_HEAD_INVALID');
   }
+  const targetRequestId = String(command.targetRequestId || '');
+  if (command.operation === 'READ_MAILBOX_RECEIPT' && !REQUEST_ID_PATTERN.test(targetRequestId)) {
+    return fail('COMMAND_TARGET_REQUEST_ID_INVALID');
+  }
+  if (command.operation !== 'READ_MAILBOX_RECEIPT' && targetRequestId) {
+    return fail('COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED');
+  }
 
   const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
   const expiresAtMs = new Date(command.expiresAt || '').getTime();
@@ -87,6 +98,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead: String(command.expectedHead || ''),
+      targetRequestId: command.operation === 'READ_MAILBOX_RECEIPT' ? targetRequestId : '',
       expiresAt: new Date(expiresAtMs).toISOString(),
     }),
   });
@@ -129,6 +141,10 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readDeploymentStatus,
   readCapabilityRegistry,
   readSharedWorkspaceStatus,
+  readCriticalBacklogStatus,
+  readMailboxReceipt,
+  runWorkerWatchdogAcceptance,
+  runMonitorMultiplexerAcceptance,
 } = {}) {
   const handlers = {
     UPDATE_STEPHANOS_FROM_CHAT: updateStephanos,
@@ -137,6 +153,10 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_DEPLOYMENT_STATUS: readDeploymentStatus,
     READ_CAPABILITY_REGISTRY: readCapabilityRegistry,
     READ_SHARED_WORKSPACE_STATUS: readSharedWorkspaceStatus,
+    READ_CRITICAL_BACKLOG_STATUS: readCriticalBacklogStatus,
+    READ_MAILBOX_RECEIPT: readMailboxReceipt,
+    RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
+    RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
   };
   const handler = handlers[command?.operation];
   if (typeof handler !== 'function') {
@@ -177,6 +197,7 @@ export function buildBattleBridgeGitHubCommandReceipt({
     repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
+    expectedHead: String(command?.expectedHead || ''),
     state: String(state || ''),
     acceptedAt: String(acceptedAt || ''),
     heartbeatAt: String(heartbeatAt || ''),

@@ -49,13 +49,36 @@ test('extracts and accepts an owner-authored bounded command', () => {
   assert.equal(validated.command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
 });
 
-test('control-plane read operations are first-class allowlisted commands', () => {
-  assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes('READ_CAPABILITY_REGISTRY'));
-  assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes('READ_SHARED_WORKSPACE_STATUS'));
-  for (const operation of ['READ_CAPABILITY_REGISTRY', 'READ_SHARED_WORKSPACE_STATUS']) {
+test('control-plane, critical backlog, receipt read and acceptance commands are allowlisted', () => {
+  for (const operation of [
+    'READ_CAPABILITY_REGISTRY',
+    'READ_SHARED_WORKSPACE_STATUS',
+    'READ_CRITICAL_BACKLOG_STATUS',
+    'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+  ]) {
+    assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
     const validated = validateBattleBridgeGitHubCommand(command({ operation }), { authorLogin: 'Cheekyfellastef', now });
     assert.equal(validated.verdict, 'COMMAND_ACCEPTED');
   }
+  const receiptRead = validateBattleBridgeGitHubCommand(command({
+    operation: 'READ_MAILBOX_RECEIPT',
+    targetRequestId: 'req-1291-watchdog-acceptance-20260717T1710Z',
+  }), { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(receiptRead.verdict, 'COMMAND_ACCEPTED');
+  assert.equal(receiptRead.command.targetRequestId, 'req-1291-watchdog-acceptance-20260717T1710Z');
+});
+
+test('receipt target is mandatory, path-safe and forbidden on all other operations', () => {
+  assert.equal(validateBattleBridgeGitHubCommand(command({ operation: 'READ_MAILBOX_RECEIPT' }), {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'COMMAND_TARGET_REQUEST_ID_INVALID');
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    operation: 'READ_MAILBOX_RECEIPT', targetRequestId: '../state.json',
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'COMMAND_TARGET_REQUEST_ID_INVALID');
+  assert.equal(validateBattleBridgeGitHubCommand(command({ targetRequestId: 'req-1507-other1' }), {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED');
 });
 
 test('rejects non-owner, expired, wrong repository, wrong branch and arbitrary operation', () => {
@@ -91,7 +114,7 @@ test('dispatches only through the named injected handler', async () => {
   assert.equal(result.result.expectedHead, command().expectedHead);
 });
 
-test('dispatches registry and workspace reads through distinct bounded handlers', async () => {
+test('dispatches registry, workspace and critical backlog reads through distinct bounded handlers', async () => {
   const calls = [];
   const registryResult = await executeBattleBridgeGitHubCommand(command({ operation: 'READ_CAPABILITY_REGISTRY' }), {
     readCapabilityRegistry: async () => { calls.push('registry'); return { ok: true, finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS' }; },
@@ -99,18 +122,66 @@ test('dispatches registry and workspace reads through distinct bounded handlers'
   const workspaceResult = await executeBattleBridgeGitHubCommand(command({ operation: 'READ_SHARED_WORKSPACE_STATUS' }), {
     readSharedWorkspaceStatus: async () => { calls.push('workspace'); return { ok: true, finalVerdict: 'SHARED_WORKSPACE_STATUS_READY' }; },
   });
-  assert.deepEqual(calls, ['registry', 'workspace']);
+  const backlogResult = await executeBattleBridgeGitHubCommand(command({ operation: 'READ_CRITICAL_BACKLOG_STATUS' }), {
+    readCriticalBacklogStatus: async () => {
+      calls.push('critical-backlog');
+      return { ok: true, finalVerdict: 'CRITICAL_BACKLOG_STATUS_READY', decision: 'WAIT_ACTIVE_MISSION' };
+    },
+  });
+  assert.deepEqual(calls, ['registry', 'workspace', 'critical-backlog']);
   assert.equal(registryResult.result.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
   assert.equal(workspaceResult.result.finalVerdict, 'SHARED_WORKSPACE_STATUS_READY');
+  assert.equal(backlogResult.result.finalVerdict, 'CRITICAL_BACKLOG_STATUS_READY');
+  assert.equal(backlogResult.result.decision, 'WAIT_ACTIVE_MISSION');
 });
 
-test('receipt always records the safety boundary', () => {
+test('dispatches a receipt read only through the named bounded handler', async () => {
+  const targetRequestId = 'req-1291-watchdog-acceptance-20260717T1710Z';
+  const calls = [];
+  const result = await executeBattleBridgeGitHubCommand(command({
+    operation: 'READ_MAILBOX_RECEIPT',
+    targetRequestId,
+  }), {
+    readMailboxReceipt: async (input) => {
+      calls.push(input.targetRequestId);
+      return { ok: true, finalVerdict: 'MAILBOX_RECEIPT_READ_READY', targetRequestId };
+    },
+  });
+  assert.deepEqual(calls, [targetRequestId]);
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'MAILBOX_RECEIPT_READ_READY');
+});
+
+test('dispatches both acceptance canaries only through their named bounded handlers', async () => {
+  const calls = [];
+  const watchdog = await executeBattleBridgeGitHubCommand(command({ operation: 'RUN_WORKER_WATCHDOG_ACCEPTANCE' }), {
+    runWorkerWatchdogAcceptance: async (input) => {
+      calls.push(`watchdog:${input.expectedHead}`);
+      return { ok: true, finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS' };
+    },
+  });
+  const monitor = await executeBattleBridgeGitHubCommand(command({ operation: 'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE' }), {
+    runMonitorMultiplexerAcceptance: async (input) => {
+      calls.push(`monitor:${input.requestId}`);
+      return { ok: true, finalVerdict: 'MONITOR_MULTIPLEXER_CANARY_PASS' };
+    },
+  });
+  assert.deepEqual(calls, [
+    `watchdog:${command().expectedHead}`,
+    `monitor:${command().requestId}`,
+  ]);
+  assert.equal(watchdog.result.finalVerdict, 'WORKER_WATCHDOG_ACCEPTANCE_PASS');
+  assert.equal(monitor.result.finalVerdict, 'MONITOR_MULTIPLEXER_CANARY_PASS');
+});
+
+test('receipt records exact expected head and the safety boundary', () => {
   const receipt = buildBattleBridgeGitHubCommandReceipt({
     command: command(),
     state: 'DONE',
     acceptedAt: now.toISOString(),
     heartbeatAt: now.toISOString(),
   });
+  assert.equal(receipt.expectedHead, command().expectedHead);
   assert.equal(receipt.arbitraryShellAllowed, false);
   assert.equal(receipt.destructiveGitAllowed, false);
   assert.equal(receipt.liveOpenClawUpdateAllowed, false);

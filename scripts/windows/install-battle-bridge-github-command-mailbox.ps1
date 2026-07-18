@@ -9,6 +9,7 @@ Set-StrictMode -Version Latest
 $taskName = 'Stephanos Battle Bridge GitHub Command Mailbox'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
+$launcherPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs')).Path
 if (-not $env:USERPROFILE) {
     throw 'USERPROFILE is required to resolve the canonical Battle Bridge checkout.'
 }
@@ -17,15 +18,13 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne [System.IO.Path]::GetFullPath($
     throw "Installer must run from the canonical checkout: $expectedRepoRoot"
 }
 
-$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox.mjs')).Path
-$nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
-if (-not $nodeCommand) {
-    $nodeCommand = Get-Command node -ErrorAction Stop
-}
-$nodeExe = $nodeCommand.Source
+$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-with-receipt-index.mjs')).Path
+$wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
+if (-not (Test-Path -LiteralPath $wscriptExe -PathType Leaf)) { throw "Windowless task host is missing: $wscriptExe" }
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$escapedRunnerPath = $runnerPath.Replace('"', '""')
-$action = New-ScheduledTaskAction -Execute $nodeExe -Argument "`"$escapedRunnerPath`""
+$escapedLauncherPath = $launcherPath.Replace('"', '""')
+$actionArguments = "//B //NoLogo `"$escapedLauncherPath`" github-command-mailbox"
+$action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger `
     -Once `
@@ -41,14 +40,14 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
-if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub command mailbox task')) {
+if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub command mailbox task with Shared Workspace receipt index')) {
     Register-ScheduledTask `
         -TaskName $taskName `
         -Action $action `
         -Trigger @($logonTrigger, $intervalTrigger) `
         -Principal $principal `
         -Settings $settings `
-        -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
+        -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507 and publishes a bounded Shared Workspace receipt index. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
         -Force | Out-Null
     if ($StartNow) {
         Start-ScheduledTask -TaskName $taskName
@@ -59,8 +58,10 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     taskName = $taskName
     installed = $true
     currentUser = $currentUser
-    executable = $nodeExe
+    executable = $wscriptExe
+    launcherPath = $launcherPath
     runnerPath = $runnerPath
+    receiptIndexEnabled = $true
     intervalMinutes = 5
     atLogon = $true
     hidden = $true
@@ -69,4 +70,5 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     arbitraryShellAllowed = $false
     destructiveGitAllowed = $false
     liveOpenClawUpdateAllowed = $false
+    headlessLauncher = $true
 } | ConvertTo-Json -Depth 4

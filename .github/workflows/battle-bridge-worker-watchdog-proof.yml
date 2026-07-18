@@ -4,9 +4,12 @@ on:
   pull_request:
     paths:
       - 'scripts/battle-bridge-worker-watchdog*.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox*.mjs'
       - 'scripts/chatgpt-shared-workspace-github-relay*.mjs'
       - 'scripts/remote-codex-task-visibility-observer*.mjs'
       - 'scripts/remote-codex-github-mirror-publisher*.mjs'
+      - 'shared/agents/battleBridgeGitHubCommandMailbox*.mjs'
+      - 'shared/agents/stephanosCapabilityRegistry*.mjs'
       - 'shared/agents/chatGptParticipantBridgeV1*.mjs'
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
@@ -17,9 +20,12 @@ on:
   push:
     paths:
       - 'scripts/battle-bridge-worker-watchdog*.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox*.mjs'
       - 'scripts/chatgpt-shared-workspace-github-relay*.mjs'
       - 'scripts/remote-codex-task-visibility-observer*.mjs'
       - 'scripts/remote-codex-github-mirror-publisher*.mjs'
+      - 'shared/agents/battleBridgeGitHubCommandMailbox*.mjs'
+      - 'shared/agents/stephanosCapabilityRegistry*.mjs'
       - 'shared/agents/chatGptParticipantBridgeV1*.mjs'
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
@@ -50,10 +56,14 @@ jobs:
         run: |
           node --check scripts/battle-bridge-worker-watchdog-policy.mjs
           node --check scripts/battle-bridge-worker-watchdog.mjs
+          node --check scripts/battle-bridge-worker-watchdog-acceptance.mjs
           node --check scripts/battle-bridge-worker-watchdog-runner.mjs
+          node --check scripts/battle-bridge-github-command-mailbox.mjs
           node --check scripts/chatgpt-shared-workspace-github-relay.mjs
           node --check scripts/remote-codex-task-visibility-observer.mjs
           node --check scripts/remote-codex-github-mirror-publisher.mjs
+          node --check shared/agents/battleBridgeGitHubCommandMailbox.mjs
+          node --check shared/agents/stephanosCapabilityRegistry.mjs
           node --check shared/agents/chatGptParticipantBridgeV1.mjs
           node --check shared/agents/remoteCodexTaskVisibility.mjs
           node --check scripts/mission-orchestrator-worker-heartbeat.mjs
@@ -89,8 +99,32 @@ jobs:
       - name: Test supervised worker
         run: node --test scripts/mission-orchestrator-worker-supervised.test.mjs
 
-      - name: Test watchdog executor
-        run: node --test scripts/battle-bridge-worker-watchdog.test.mjs
+      - name: Test watchdog executor and acceptance lane
+        run: node --test scripts/battle-bridge-worker-watchdog.test.mjs scripts/battle-bridge-worker-watchdog-acceptance.test.mjs
+
+      - name: Test mailbox command contract
+        id: mailbox-contract
+        shell: bash
+        run: |
+          set +e
+          node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs 2>&1 | tee mailbox-command-contract.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+
+      - name: Upload mailbox command contract failure
+        if: failure() && steps.mailbox-contract.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mailbox-command-contract-failure
+          path: mailbox-command-contract.log
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Test capability registry
+        run: node --test shared/agents/stephanosCapabilityRegistry.test.mjs
+
+      - name: Test mailbox Windows runner
+        run: node --test scripts/battle-bridge-github-command-mailbox.test.mjs
 
       - name: Test participant bridge contract and live relay
         run: node --test shared/agents/chatGptParticipantBridgeV1.test.mjs scripts/chatgpt-shared-workspace-github-relay.test.mjs
