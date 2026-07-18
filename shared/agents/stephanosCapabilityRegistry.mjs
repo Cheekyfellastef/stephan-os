@@ -79,6 +79,8 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
       'READ_DEPLOYMENT_STATUS',
       'READ_CAPABILITY_REGISTRY',
       'READ_SHARED_WORKSPACE_STATUS',
+      'READ_MAILBOX_RECEIPT',
+      'RUN_WORKER_WATCHDOG_ACCEPTANCE',
     ],
     requiresOperatorApproval: true,
     runtimeMutationAllowed: true,
