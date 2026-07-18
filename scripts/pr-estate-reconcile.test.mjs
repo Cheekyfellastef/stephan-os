@@ -75,6 +75,19 @@ test('CLI rejects malformed prepared snapshots instead of certifying an empty es
   assert.doesNotMatch(result.stdout, /PR_ESTATE_CONTROLLED/);
 });
 
+test('CLI rejects malformed family documents instead of erasing family constraints', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'stephanos-pr-estate-malformed-families-'));
+  const snapshot = join(directory, 'snapshot.json');
+  const families = join(directory, 'families.json');
+  writeJson(snapshot, { pullRequests: [{ number: 102, state: 'open', title: 'Active lane', headSha: 'c'.repeat(40), activeHint: true }] });
+  writeJson(families, { familyDefinitions: [] });
+
+  const result = runCli(['--input', snapshot, '--families', families]);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /family document must be an array or an object with a families array/);
+  assert.doesNotMatch(result.stdout, /PR_ESTATE_CONTROLLED/);
+});
+
 test('CLI compares the captured exact head SHA rather than the mutable branch name', () => {
   const directory = mkdtempSync(join(tmpdir(), 'stephanos-pr-estate-captured-sha-'));
   installFakeGh(directory);
