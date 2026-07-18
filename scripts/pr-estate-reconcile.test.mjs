@@ -22,34 +22,36 @@ function runCli(args, options = {}) {
 
 function installFakeGh(directory) {
   const fakeModule = join(directory, 'fake-gh.mjs');
-  writeFileSync(fakeModule, `
-import { writeFileSync } from 'node:fs';
-const args = process.argv.slice(2);
-const mode = process.env.FAKE_GH_MODE || 'valid';
-const head = process.env.GH_HEAD_SHA || '${'a'.repeat(40)}';
-if (args[0] === 'pr' && args[1] === 'list') {
-  process.stdout.write(JSON.stringify([{
-    number: 101,
-    title: 'Contained test PR',
-    body: '',
-    url: 'https://example.invalid/101',
-    isDraft: false,
-    headRefName: 'mutable-branch-name',
-    headRefOid: mode === 'invalid-sha' ? 'not-a-sha' : head,
-    baseRefName: 'main',
-    createdAt: '2026-07-18T00:00:00Z',
-    updatedAt: '2026-07-18T00:00:00Z',
-    mergeable: 'MERGEABLE',
-    labels: [],
-  }]));
-} else if (args[0] === 'api') {
-  if (process.env.GH_CAPTURE_PATH) writeFileSync(process.env.GH_CAPTURE_PATH, JSON.stringify(args), 'utf8');
-  process.stdout.write(JSON.stringify({ ahead_by: 0, behind_by: 3, files: [] }));
-} else {
-  process.stderr.write('unexpected fake gh arguments: ' + JSON.stringify(args));
-  process.exit(9);
-}
-`, 'utf8');
+  const fakeSource = [
+    "import { writeFileSync } from 'node:fs';",
+    'const args = process.argv.slice(2);',
+    "const mode = process.env.FAKE_GH_MODE || 'valid';",
+    `const head = process.env.GH_HEAD_SHA || '${'a'.repeat(40)}';`,
+    "if (args[0] === 'pr' && args[1] === 'list') {",
+    '  process.stdout.write(JSON.stringify([{',
+    '    number: 101,',
+    "    title: 'Contained test PR',",
+    "    body: '',",
+    "    url: 'https://example.invalid/101',",
+    '    isDraft: false,',
+    "    headRefName: 'mutable-branch-name',",
+    "    headRefOid: mode === 'invalid-sha' ? 'not-a-sha' : head,",
+    "    baseRefName: 'main',",
+    "    createdAt: '2026-07-18T00:00:00Z',",
+    "    updatedAt: '2026-07-18T00:00:00Z',",
+    "    mergeable: 'MERGEABLE',",
+    '    labels: [],',
+    '  }]));',
+    "} else if (args[0] === 'api') {",
+    "  if (process.env.GH_CAPTURE_PATH) writeFileSync(process.env.GH_CAPTURE_PATH, JSON.stringify(args), 'utf8');",
+    '  process.stdout.write(JSON.stringify({ ahead_by: 0, behind_by: 3, files: [] }));',
+    '} else {',
+    "  process.stderr.write('unexpected fake gh arguments: ' + JSON.stringify(args));",
+    '  process.exit(9);',
+    '}',
+    '',
+  ].join('\n');
+  writeFileSync(fakeModule, fakeSource, 'utf8');
 
   if (process.platform === 'win32') {
     writeFileSync(join(directory, 'gh.cmd'), `@echo off\r\n"${process.execPath}" "${fakeModule}" %*\r\n`, 'utf8');
