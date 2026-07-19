@@ -11,96 +11,16 @@ import {
   normalizeLabels,
   readAliasedField,
 } from './prEstateContracts.mjs';
+import {
+  acceptanceGateIsPending,
+  approvalGateIsPending,
+} from './prEstateGateEvidence.mjs';
 
 const CONTROLLED_DISPOSITION_HINTS = new Set([
   PR_DISPOSITIONS.ACTIVE_CANONICAL,
   PR_DISPOSITIONS.WAITING_ACCEPTANCE,
   PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL,
 ]);
-
-const GATE_SEGMENT_SPLIT_PATTERN = /(?<=[.!?])\s+|\n+|\s*;\s*|\s+(?:while|whereas|but|and)\s+/i;
-const SAME_GATE_REFERENCE_PATTERN = /\b(?:this|that|the same|same|aforementioned)\b/i;
-const ACCEPTANCE_GATE_TERMS = [
-  /\bacceptance\b/i,
-  /\blive\s+proof\b/i,
-  /\bbrowser\s+proof\b/i,
-];
-const APPROVAL_GATE_TERMS = [
-  /\bapproval\b/i,
-  /\bmerge\s+gate\b/i,
-];
-
-function aroundTerm(term, statusSource) {
-  return new RegExp(
-    `(?:${term.source})[^\\n.!?]{0,120}(?:${statusSource})|(?:${statusSource})[^\\n.!?]{0,120}(?:${term.source})`,
-    'i',
-  );
-}
-
-function gateDefinitions(terms, {
-  pendingStatus,
-  completedStatus,
-  negatedCompletedStatus,
-  specialPending = null,
-}) {
-  return terms.map((term, index) => ({
-    term,
-    pending: aroundTerm(term, pendingStatus),
-    completed: aroundTerm(term, completedStatus),
-    negatedCompleted: aroundTerm(term, negatedCompletedStatus),
-    specialPending: index === 0 ? specialPending : null,
-  }));
-}
-
-const ACCEPTANCE_GATE_DEFINITIONS = gateDefinitions(ACCEPTANCE_GATE_TERMS, {
-  pendingStatus: String.raw`\b(?:required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not\s+yet)\b`,
-  completedStatus: String.raw`\b(?:passed|complete(?:d)?|satisfied|verified|done)\b`,
-  negatedCompletedStatus: String.raw`\b(?:not(?:\s+yet)?|never)\s+(?:been\s+)?(?:passed|complete(?:d)?|satisfied|verified|done)\b`,
-});
-
-const APPROVAL_GATE_DEFINITIONS = gateDefinitions(APPROVAL_GATE_TERMS, {
-  pendingStatus: String.raw`\b(?:required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not\s+yet)\b`,
-  completedStatus: String.raw`\b(?:granted|approved|complete(?:d)?|satisfied|done)\b`,
-  negatedCompletedStatus: String.raw`\b(?:not(?:\s+yet)?|never)\s+(?:been\s+)?(?:granted|approved|complete(?:d)?|satisfied|done)\b`,
-  specialPending: /do not merge without[^\n.!?]{0,120}approval/i,
-});
-
-function termMentionCount(segment, term) {
-  return [...String(segment || '').matchAll(new RegExp(term.source, 'gi'))].length;
-}
-
-function gateIsPending(text, definitions) {
-  const segments = String(text || '')
-    .split(GATE_SEGMENT_SPLIT_PATTERN)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-
-  for (const definition of definitions) {
-    for (let index = 0; index < segments.length; index += 1) {
-      const segment = segments[index];
-      const mentionsTerm = definition.term.test(segment);
-      const specialPending = definition.specialPending?.test(segment) === true;
-      if (!mentionsTerm && !specialPending) continue;
-
-      const negatedCompletion = definition.negatedCompleted.test(segment);
-      const pending = specialPending || negatedCompletion || definition.pending.test(segment);
-      if (!pending) continue;
-
-      const completedHere = definition.completed.test(segment)
-        && !negatedCompletion
-        && termMentionCount(segment, definition.term) === 1;
-      if (completedHere) continue;
-
-      const nextSegment = segments[index + 1] || '';
-      const completedNext = SAME_GATE_REFERENCE_PATTERN.test(nextSegment)
-        && definition.term.test(nextSegment)
-        && definition.completed.test(nextSegment)
-        && !definition.negatedCompleted.test(nextSegment);
-      if (!completedNext) return true;
-    }
-  }
-  return false;
-}
 
 export function normalizePr(input = {}, recordIndex = 0) {
   const number = asPositiveInteger(input.number ?? input.prNumber, null);
@@ -141,6 +61,12 @@ export function normalizePr(input = {}, recordIndex = 0) {
   const uniqueDelta = asBooleanOrNull(uniqueDeltaField.value);
   const invalidUniqueDelta = uniqueDeltaField.present && typeof uniqueDeltaField.value !== 'boolean';
 
+  const dispositionHintField = readAliasedField(input, ['dispositionHint']);
+  const dispositionHint = VALID_DISPOSITIONS.has(dispositionHintField.value)
+    ? dispositionHintField.value
+    : '';
+  const invalidDispositionHint = dispositionHintField.present && !VALID_DISPOSITIONS.has(dispositionHintField.value);
+
   return {
     recordIndex,
     number,
@@ -180,7 +106,8 @@ export function normalizePr(input = {}, recordIndex = 0) {
     supersessionTargetPr: asPositiveInteger(input.supersessionTargetPr ?? input.comparedCanonicalPr ?? input.supersession_target_pr, null),
     supersessionTargetHeadSha: asText(input.supersessionTargetHeadSha ?? input.comparedCanonicalHeadSha ?? input.supersession_target_head_sha, ''),
     activeHint: input.activeHint === true,
-    dispositionHint: VALID_DISPOSITIONS.has(input.dispositionHint) ? input.dispositionHint : '',
+    dispositionHint,
+    invalidDispositionHint,
   };
 }
 
@@ -212,13 +139,14 @@ function supersessionProof(pr, targetPr, canonicalRecord) {
 export function classifyPr(pr, family, canonicalRecord) {
   const bodyAndTitle = `${pr.title}\n${pr.body}`;
   const placeholder = PLACEHOLDER_PATTERN.test(bodyAndTitle);
-  const acceptanceGate = gateIsPending(bodyAndTitle, ACCEPTANCE_GATE_DEFINITIONS);
-  const approvalGate = gateIsPending(bodyAndTitle, APPROVAL_GATE_DEFINITIONS);
+  const acceptanceGate = acceptanceGateIsPending(bodyAndTitle);
+  const approvalGate = approvalGateIsPending(bodyAndTitle);
   const explicitSupersededBy = family?.supersededBy?.[pr.number] ?? null;
   const canonicalPr = family?.canonicalPr ?? null;
   const familySize = family?.members?.length ?? 1;
 
   if (pr.number === null || pr.state !== 'open') return ambiguous(pr.number === null ? 'missing valid PR number' : `expected open PR evidence, received state=${pr.state}`, 'invalid-or-non-open-pr-record');
+  if (pr.invalidDispositionHint) return ambiguous('disposition hint is present but unsupported', 'invalid-disposition-hint');
   if (pr.comparisonEvidenceInvalid || pr.invalidUniqueDelta) return ambiguous('evidence contains a malformed value', 'invalid-comparison-evidence');
   if (pr.comparisonEvidencePresent && (!pr.exactHeadKnown || !pr.comparisonHeadKnown)) return ambiguous('comparison evidence lacks a valid exact head SHA', 'exact-head-evidence-required');
   if (pr.comparisonHeadMismatch) return ambiguous('comparison evidence is not tied to the declared PR head', 'comparison-head-mismatch');
@@ -309,6 +237,7 @@ export function evidenceFor(pr, family, placeholder, canonicalRecord) {
     invalidBehindBy: pr.invalidBehindBy,
     invalidHeadContainedInBase: pr.invalidHeadContainedInBase,
     invalidUniqueDelta: pr.invalidUniqueDelta,
+    invalidDispositionHint: pr.invalidDispositionHint,
     aheadBy: pr.aheadBy,
     behindBy: pr.behindBy,
     headContainedInBase: pr.headContainedInBase,
