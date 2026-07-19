@@ -154,6 +154,7 @@ function ambiguous(reason, blocker) {
 
 function supersessionProof(pr, targetPr, canonicalRecord) {
   if (!targetPr) return { valid: false, blocker: 'canonical-survivor-required', reason: 'supersession has no canonical target' };
+  if (pr.number === targetPr) return { valid: false, blocker: 'self-supersession-target', reason: 'supersession cannot target the source PR itself' };
   if (pr.uniqueDelta === true) return { valid: false, blocker: 'contradictory-supersession-evidence', reason: 'supersession evidence conflicts with an explicit unique delta' };
   if (!(pr.patchEquivalentTo === targetPr || pr.uniqueDelta === false)) {
     return { valid: false, blocker: 'patch-equivalence-or-unique-delta-required', reason: 'supersession lacks equivalence or explicit no-unique-delta evidence' };
