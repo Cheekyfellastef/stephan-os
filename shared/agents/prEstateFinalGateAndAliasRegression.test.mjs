@@ -51,7 +51,7 @@ test('conflicting numeric aliases fail closed', () => {
   });
 
   assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
-  assert.deepEqual(ledger.entries[0].blockers, ['invalid-comparison-evidence']);
+  assert.deepEqual(ledger.entries[0].blockers, ['conflicting-evidence-alias']);
   assert.equal(ledger.entries[0].evidence.comparisonAliasConflict, true);
 });
 
@@ -64,6 +64,6 @@ test('conflicting compared-head aliases fail closed', () => {
   });
 
   assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
-  assert.deepEqual(ledger.entries[0].blockers, ['invalid-comparison-evidence']);
+  assert.deepEqual(ledger.entries[0].blockers, ['conflicting-evidence-alias']);
   assert.equal(ledger.entries[0].evidence.comparisonAliasConflict, true);
 });
