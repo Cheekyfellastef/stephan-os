@@ -12,6 +12,7 @@ import {
   canonicalLaneEvidence,
   evaluateExactHeadReviewDispatch,
   isCanonicalReviewLaneComment,
+  parseOptionalManualPrNumber,
 } from './exactHeadReviewDispatchCoordinator.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -261,12 +262,21 @@ test('a later trusted controller revocation supersedes stale canonical-lane evid
     coordinatorComment({
       id: 74,
       body: 'Programme Completion Controller\nThis PR is queued and no longer the canonical implementation lane.',
-      createdAt: '2026-07-19T16:03:00Z',
+      createdAt: '2026-07-19T16:02:00Z',
     }),
   ], options);
   assert.equal(evidence.confirmed, false);
   assert.equal(evidence.revoked, true);
   assert.equal(evidence.commentId, 74);
+});
+
+test('manual PR numbers accept only safe positive decimal digits', () => {
+  assert.equal(parseOptionalManualPrNumber(''), null);
+  assert.equal(parseOptionalManualPrNumber('1559'), 1559);
+  assert.equal(parseOptionalManualPrNumber(' 1559 '), 1559);
+  for (const malformed of ['0', '-1', '+1559', '1e3', '1.0', '1559x', '9007199254740992']) {
+    assert.throws(() => parseOptionalManualPrNumber(malformed), /positive decimal integer/);
+  }
 });
 
 test('ignores forged coordinator markers for dispatch, receipt and escalation state', () => {
@@ -362,7 +372,7 @@ test('wires the trusted coordinator identity through the runner and trusted work
   const workflow = fs.readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8');
   assert.match(runner, /bounded GitHub token actor must match trusted coordinator/);
   assert.match(runner, /trustedCoordinatorLogin:\s*coordinatorLogin/);
-  assert.match(runner, /STEPHANOS_EXACT_HEAD_REVIEW_PR must be a positive integer when provided/);
+  assert.match(runner, /parseOptionalManualPrNumber\(process\.env\.STEPHANOS_EXACT_HEAD_REVIEW_PR\)/);
   assert.match(runner, /const numbers = \(await listOpenPullRequests/);
   assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);
   assert.match(workflow, /STEPHANOS_REVIEW_COORDINATOR_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);

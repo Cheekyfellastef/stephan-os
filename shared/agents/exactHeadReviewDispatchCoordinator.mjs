@@ -1,5 +1,5 @@
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.2';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.3';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -84,7 +84,21 @@ function newest(items = []) {
   return [...items].sort((left, right) => (
     (asTime(right?.createdAt ?? right?.created_at ?? right?.submittedAt ?? right?.submitted_at) ?? 0)
       - (asTime(left?.createdAt ?? left?.created_at ?? left?.submittedAt ?? left?.submitted_at) ?? 0)
+      || (Number(right?.id) || 0) - (Number(left?.id) || 0)
   ))[0] || null;
+}
+
+export function parseOptionalManualPrNumber(value) {
+  const normalized = text(value);
+  if (!normalized) return null;
+  if (!/^[1-9][0-9]*$/.test(normalized)) {
+    throw new Error('STEPHANOS_EXACT_HEAD_REVIEW_PR must be a positive decimal integer when provided');
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error('STEPHANOS_EXACT_HEAD_REVIEW_PR must be a safe positive decimal integer');
+  }
+  return parsed;
 }
 
 function itemTimestamp(item) {

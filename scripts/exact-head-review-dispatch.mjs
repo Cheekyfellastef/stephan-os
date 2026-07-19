@@ -10,6 +10,7 @@ import {
   buildReviewReceiptComment,
   canonicalLaneEvidence,
   evaluateExactHeadReviewDispatch,
+  parseOptionalManualPrNumber,
 } from '../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
 
 const API_VERSION = '2022-11-28';
@@ -222,11 +223,7 @@ async function main() {
   }
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
-  const manualPrInput = text(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
-  const manualPrNumber = positiveInteger(manualPrInput);
-  if (manualPrInput && !manualPrNumber) {
-    throw new Error('STEPHANOS_EXACT_HEAD_REVIEW_PR must be a positive integer when provided');
-  }
+  const manualPrNumber = parseOptionalManualPrNumber(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
   const requestedNumbers = candidatePrNumbers(event, manualPrNumber);
   const contexts = await discoverCanonicalContexts({
     owner,
