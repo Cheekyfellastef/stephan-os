@@ -1,5 +1,4 @@
 const GATE_SEGMENT_SPLIT_PATTERN = /(?<=[.!?])\s+|\n+|\s*;\s*|\s+(?:while|whereas|but|and)\s+/i;
-const SAME_GATE_REFERENCE_PATTERN = /\b(?:this|that|the same|same|aforementioned)\b/i;
 const HISTORICAL_GATE_PATTERN = /\b(?:prior|previous|earlier)\b/i;
 
 const ACCEPTANCE_GATE_TERMS = [
@@ -19,6 +18,13 @@ function aroundTerm(term, statusSource) {
   );
 }
 
+function hasSameGateReference(segment, term) {
+  return new RegExp(
+    `\\b(?:this|that|the\\s+same|same|aforementioned)\\s+(?:${term.source})`,
+    'i',
+  ).test(segment);
+}
+
 function gateDefinitions(terms, {
   pendingStatus,
   completedStatus,
@@ -34,7 +40,7 @@ function gateDefinitions(terms, {
   }));
 }
 
-const NEGATION_PREFIX = String.raw`\b(?:hasn['’]t|haven['’]t|hadn['’]t|isn['’]t|wasn['’]t|weren['’]t|didn['’]t|doesn['’]t|don['’]t|not(?:\s+yet)?|never)\s+(?:been\s+)?`;
+const NEGATION_PREFIX = String.raw`\b(?:hasn['’]t|haven['’]t|hadn['’]t|isn['’]t|wasn['’]t|weren['’]t|didn['’]t|doesn['’]t|don['’]t|not|never)\s+(?:yet\s+)?(?:been\s+)?`;
 
 const ACCEPTANCE_GATE_DEFINITIONS = gateDefinitions(ACCEPTANCE_GATE_TERMS, {
   pendingStatus: String.raw`\b(?:required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not\s+yet)\b`,
@@ -51,7 +57,7 @@ const APPROVAL_GATE_DEFINITIONS = gateDefinitions(APPROVAL_GATE_TERMS, {
 
 function isExplicitSameGateCompletion(segment, definition, { specialPending = false } = {}) {
   if (definition.negatedCompleted.test(segment) || !definition.completed.test(segment)) return false;
-  if (SAME_GATE_REFERENCE_PATTERN.test(segment)) return true;
+  if (hasSameGateReference(segment, definition.term)) return true;
   return specialPending && HISTORICAL_GATE_PATTERN.test(segment);
 }
 
@@ -75,7 +81,7 @@ function gateIsPending(text, definitions) {
       if (isExplicitSameGateCompletion(segment, definition, { specialPending })) continue;
 
       const nextSegment = segments[index + 1] || '';
-      const completedNext = SAME_GATE_REFERENCE_PATTERN.test(nextSegment)
+      const completedNext = hasSameGateReference(nextSegment, definition.term)
         && definition.term.test(nextSegment)
         && isExplicitSameGateCompletion(nextSegment, definition);
       if (!completedNext) return true;
