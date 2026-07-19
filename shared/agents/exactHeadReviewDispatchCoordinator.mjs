@@ -1,5 +1,5 @@
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.1';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.2';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -31,16 +31,17 @@ export const EXACT_HEAD_REVIEW_MARKERS = Object.freeze({
 export const DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS = 10 * 60 * 1000;
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const KNOWN_CODEX_REVIEWER_LOGINS = new Set([
-  'chatgpt-codex-connector',
-  'chatgpt-codex-connector[bot]',
-  'codex',
-  'codex[bot]',
-]);
+const TRUSTED_CODEX_REVIEWER = Object.freeze({
+  login: 'chatgpt-codex-connector[bot]',
+  type: 'bot',
+  id: 199175422,
+});
 const ACTIVE_LANE_REFERENCE_PATTERN = /\bactive lane:\s*PR\s*#(\d+)\b/gi;
 const PR_THEN_LANE_REFERENCE_PATTERN = /\bPR\s*#(\d+)\b(?=[^\n.]{0,120}\b(?:sole|single|canonical|active)\b[^\n.]{0,80}\b(?:implementation|review|github)?\s*lane\b)/gi;
 const LANE_THEN_PR_REFERENCE_PATTERN = /\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\b(?:implementation|review|github)?\s*lane\b[^\n.]{0,60}\bPR\s*#(\d+)\b/gi;
 const SELF_REFERENTIAL_LANE_PATTERN = /(?:\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b[^\n.]{0,120}\b(?:sole|single|canonical|active)\b[^\n.]{0,80}\blane\b|\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\blane\b[^\n.]{0,80}\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b)/i;
+const SELF_REFERENTIAL_PR_PATTERN = /^\s*(?:[-*]\s*)?(?:this\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b|this\s+lane\b)/i;
+const NEGATIVE_LANE_STATE_PATTERN = /\bnon[- ]canonical\b|\bqueued\b|\bsupersed(?:e|ed|ing)\b|\bno longer\b[^\n.]{0,100}\b(?:canonical|active|sole|single|lane)\b|\bnot\b[^\n.]{0,100}\b(?:canonical|active|sole|single)\b[^\n.]{0,60}\blane\b/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -107,7 +108,10 @@ function reviewedCommitPrefix(body) {
 }
 
 function isKnownCodexReviewer(item) {
-  return KNOWN_CODEX_REVIEWER_LOGINS.has(normalizedLogin(actorLogin(item)));
+  const actor = item?.user ?? item?.author ?? {};
+  return normalizedLogin(actor?.login) === TRUSTED_CODEX_REVIEWER.login
+    && normalizedLogin(actor?.type) === TRUSTED_CODEX_REVIEWER.type
+    && Number(actor?.id) === TRUSTED_CODEX_REVIEWER.id;
 }
 
 function reviewMatchesHead(item, headSha) {
@@ -146,31 +150,53 @@ function latestRunByWorkflow(workflowRuns, headSha, requiredWorkflows) {
   return latestByName;
 }
 
-export function isCanonicalReviewLaneComment(comment, { prNumber: candidatePrNumber, trustedCoordinatorLogin } = {}) {
+function revokesCanonicalLane(value, prNumber) {
+  const segments = value.split(/\r?\n|(?<=[.!?])\s+/).map((segment) => segment.trim()).filter(Boolean);
+  return segments.some((segment) => {
+    if (!NEGATIVE_LANE_STATE_PATTERN.test(segment)) return false;
+    const explicitReferences = [...segment.matchAll(/\bPR\s*#(\d+)\b/gi)].map((match) => Number(match[1]));
+    const targetsCurrentPr = explicitReferences.length
+      ? explicitReferences.includes(prNumber)
+      : SELF_REFERENTIAL_PR_PATTERN.test(segment);
+    return targetsCurrentPr;
+  });
+}
+
+function canonicalReviewLaneCommentState(comment, { prNumber: candidatePrNumber, trustedCoordinatorLogin } = {}) {
   const value = commentBody(comment);
   const prNumber = Number(candidatePrNumber);
-  if (!value || !Number.isSafeInteger(prNumber) || prNumber <= 0) return false;
-  if (!isTrustedCoordinatorActor(comment, trustedCoordinatorLogin)) return false;
+  if (!value || !Number.isSafeInteger(prNumber) || prNumber <= 0) return null;
+  if (!isTrustedCoordinatorActor(comment, trustedCoordinatorLogin)) return null;
   if (value.includes(`<!-- ${EXACT_HEAD_REVIEW_MARKERS.AUTO}`)) return true;
-  if (!/Programme Completion Controller/i.test(value)) return false;
-  if (!/sole active implementation lane|single active(?: GitHub)? implementation lane|sole canonical implementation lane|canonical implementation lane|canonical-lane receipt|active lane:\s*PR\s*#/i.test(value)) return false;
+  if (!/Programme Completion Controller/i.test(value)) return null;
+  if (revokesCanonicalLane(value, prNumber)) return false;
+  if (!/sole active implementation lane|single active(?: GitHub)? implementation lane|sole canonical implementation lane|canonical implementation lane|canonical-lane receipt|active lane:\s*PR\s*#/i.test(value)) return null;
 
   const referencedPrs = [
     ...value.matchAll(ACTIVE_LANE_REFERENCE_PATTERN),
     ...value.matchAll(PR_THEN_LANE_REFERENCE_PATTERN),
     ...value.matchAll(LANE_THEN_PR_REFERENCE_PATTERN),
   ].map((match) => Number(match[1]));
-  if (referencedPrs.length) return referencedPrs.every((reference) => reference === prNumber);
-  return SELF_REFERENTIAL_LANE_PATTERN.test(value);
+  if (referencedPrs.length) return referencedPrs.every((reference) => reference === prNumber) || null;
+  return SELF_REFERENTIAL_LANE_PATTERN.test(value) || null;
+}
+
+export function isCanonicalReviewLaneComment(comment, options = {}) {
+  return canonicalReviewLaneCommentState(comment, options) === true;
 }
 
 export function canonicalLaneEvidence(comments = [], { prNumber, trustedCoordinatorLogin } = {}) {
-  const matches = comments.filter((comment) => isCanonicalReviewLaneComment(comment, { prNumber, trustedCoordinatorLogin }));
-  const latest = newest(matches);
+  const states = comments.map((comment) => ({
+    comment,
+    state: canonicalReviewLaneCommentState(comment, { prNumber, trustedCoordinatorLogin }),
+  })).filter(({ state }) => state !== null);
+  const latestComment = newest(states.map(({ comment }) => comment));
+  const latest = states.find(({ comment }) => comment === latestComment) ?? null;
   return Object.freeze({
-    confirmed: Boolean(latest),
-    commentId: latest?.id ?? null,
-    timestamp: latest ? (latest?.createdAt ?? latest?.created_at ?? null) : null,
+    confirmed: latest?.state === true,
+    revoked: latest?.state === false,
+    commentId: latest?.comment?.id ?? null,
+    timestamp: latest ? (latest.comment?.createdAt ?? latest.comment?.created_at ?? null) : null,
   });
 }
 

@@ -19,6 +19,11 @@ const OLD_HEAD = 'b'.repeat(40);
 const NOW = '2026-07-19T16:30:00Z';
 const TRUSTED_COORDINATOR = 'Cheekyfellastef';
 const UNTRUSTED_ACTOR = 'untrusted-commenter';
+const TRUSTED_CODEX_REVIEWER = Object.freeze({
+  login: 'chatgpt-codex-connector[bot]',
+  type: 'Bot',
+  id: 199175422,
+});
 
 function successfulRuns(headSha = HEAD) {
   return REQUIRED_EXACT_HEAD_WORKFLOWS.map((name, index) => ({
@@ -95,7 +100,7 @@ test('ignores dispatch and review evidence tied to an older head', () => {
   const result = evaluateExactHeadReviewDispatch(baseInput({
     comments: [
       { id: 1, body: marker(EXACT_HEAD_REVIEW_MARKERS.DISPATCH, OLD_HEAD), createdAt: '2026-07-19T16:00:00Z' },
-      { id: 2, body: `Codex Review\n\n**Reviewed commit:** \`${OLD_HEAD.slice(0, 10)}\``, user: { login: 'chatgpt-codex-connector[bot]' }, createdAt: '2026-07-19T16:01:00Z' },
+      { id: 2, body: `Codex Review\n\n**Reviewed commit:** \`${OLD_HEAD.slice(0, 10)}\``, user: TRUSTED_CODEX_REVIEWER, createdAt: '2026-07-19T16:01:00Z' },
     ],
   }));
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
@@ -105,7 +110,7 @@ test('records a matching Codex receipt once and then remains terminal for that h
   const external = {
     id: 91,
     body: `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
-    user: { login: 'chatgpt-codex-connector[bot]' },
+    user: TRUSTED_CODEX_REVIEWER,
     createdAt: '2026-07-19T16:29:30Z',
   };
   const record = evaluateExactHeadReviewDispatch(baseInput({ comments: [external] }));
@@ -124,32 +129,41 @@ test('records a matching Codex receipt once and then remains terminal for that h
 
 test('accepts a review object only when its exact commit matches', () => {
   const matching = evaluateExactHeadReviewDispatch(baseInput({
-    reviews: [{ id: 22, commitId: HEAD, body: 'Automated review', user: { login: 'codex[bot]' }, submittedAt: '2026-07-19T16:29:00Z' }],
+    reviews: [{ id: 22, commitId: HEAD, body: 'Automated review', user: TRUSTED_CODEX_REVIEWER, submittedAt: '2026-07-19T16:29:00Z' }],
   }));
   assert.equal(matching.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
 
   const stale = evaluateExactHeadReviewDispatch(baseInput({
-    reviews: [{ id: 23, commitId: OLD_HEAD, body: 'Automated review', user: { login: 'codex[bot]' }, submittedAt: '2026-07-19T16:29:00Z' }],
+    reviews: [{ id: 23, commitId: OLD_HEAD, body: 'Automated review', user: TRUSTED_CODEX_REVIEWER, submittedAt: '2026-07-19T16:29:00Z' }],
   }));
   assert.equal(stale.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
-test('accepts exact Codex reviewer logins and rejects lookalike receipt actors', () => {
-  const lookalike = evaluateExactHeadReviewDispatch(baseInput({
-    comments: [{
-      id: 24,
-      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
-      user: { login: 'fake-chatgpt-codex-connector' },
-      createdAt: '2026-07-19T16:29:00Z',
-    }],
-  }));
-  assert.equal(lookalike.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+test('accepts only the authenticated Codex GitHub App identity', () => {
+  const untrustedActors = [
+    { login: 'fake-chatgpt-codex-connector', type: 'Bot', id: 199175422 },
+    { login: 'chatgpt-codex-connector', type: 'User', id: 199175422 },
+    { login: 'codex', type: 'User', id: 199175422 },
+    { login: 'chatgpt-codex-connector[bot]', type: 'User', id: 199175422 },
+    { login: 'chatgpt-codex-connector[bot]', type: 'Bot', id: 12345 },
+  ];
+  for (const [index, user] of untrustedActors.entries()) {
+    const result = evaluateExactHeadReviewDispatch(baseInput({
+      comments: [{
+        id: 24 + index,
+        body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+        user,
+        createdAt: '2026-07-19T16:29:00Z',
+      }],
+    }));
+    assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+  }
 
   const exactBot = evaluateExactHeadReviewDispatch(baseInput({
     comments: [{
       id: 25,
       body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
-      user: { login: 'chatgpt-codex-connector[bot]' },
+      user: TRUSTED_CODEX_REVIEWER,
       createdAt: '2026-07-19T16:29:00Z',
     }],
   }));
@@ -189,6 +203,8 @@ test('recognizes explicit auto markers and bounded canonical controller receipts
   assert.equal(isCanonicalReviewLaneComment(trustedComment(`<!-- ${EXACT_HEAD_REVIEW_MARKERS.AUTO} -->`), options), true);
   assert.equal(isCanonicalReviewLaneComment(trustedComment('Programme Completion Controller canonical-lane receipt\nThis PR is the sole active implementation lane.'), options), true);
   assert.equal(isCanonicalReviewLaneComment(trustedComment('Programme Completion Controller\nThis PR remains draft and non-canonical.'), options), false);
+  assert.equal(isCanonicalReviewLaneComment(trustedComment('Programme Completion Controller\nThis PR is not the canonical implementation lane.'), options), false);
+  assert.equal(isCanonicalReviewLaneComment(trustedComment('Programme Completion Controller\nPR #1559 is superseded by PR #1560.'), options), false);
   assert.equal(isCanonicalReviewLaneComment(trustedComment([
     'Programme Completion Controller canonical-lane receipt',
     'This PR is the sole active implementation lane.',
@@ -234,6 +250,25 @@ test('authenticates canonical-lane evidence and binds explicit lane references t
   assert.equal(matchingPr.commentId, 72);
 });
 
+test('a later trusted controller revocation supersedes stale canonical-lane evidence', () => {
+  const options = { prNumber: 1559, trustedCoordinatorLogin: TRUSTED_COORDINATOR };
+  const evidence = canonicalLaneEvidence([
+    coordinatorComment({
+      id: 73,
+      body: 'Programme Completion Controller\nActive lane: PR #1559',
+      createdAt: '2026-07-19T16:02:00Z',
+    }),
+    coordinatorComment({
+      id: 74,
+      body: 'Programme Completion Controller\nThis PR is queued and no longer the canonical implementation lane.',
+      createdAt: '2026-07-19T16:03:00Z',
+    }),
+  ], options);
+  assert.equal(evidence.confirmed, false);
+  assert.equal(evidence.revoked, true);
+  assert.equal(evidence.commentId, 74);
+});
+
 test('ignores forged coordinator markers for dispatch, receipt and escalation state', () => {
   const forgedDispatch = evaluateExactHeadReviewDispatch(baseInput({
     comments: [{
@@ -249,7 +284,7 @@ test('ignores forged coordinator markers for dispatch, receipt and escalation st
     id: 81,
     body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
     createdAt: '2026-07-19T16:29:10Z',
-    user: { login: 'chatgpt-codex-connector[bot]' },
+    user: TRUSTED_CODEX_REVIEWER,
   };
   const forgedReceipt = evaluateExactHeadReviewDispatch(baseInput({
     comments: [
@@ -286,7 +321,7 @@ test('accepts review receipts only after successful exact-head workflow completi
     id: 90,
     body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
     createdAt: '2026-07-19T16:23:59Z',
-    user: { login: 'chatgpt-codex-connector[bot]' },
+    user: TRUSTED_CODEX_REVIEWER,
   };
   const staleDurableReceipt = coordinatorComment({
     id: 91,
@@ -327,6 +362,9 @@ test('wires the trusted coordinator identity through the runner and trusted work
   const workflow = fs.readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8');
   assert.match(runner, /bounded GitHub token actor must match trusted coordinator/);
   assert.match(runner, /trustedCoordinatorLogin:\s*coordinatorLogin/);
+  assert.match(runner, /STEPHANOS_EXACT_HEAD_REVIEW_PR must be a positive integer when provided/);
+  assert.match(runner, /const numbers = \(await listOpenPullRequests/);
+  assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);
   assert.match(workflow, /STEPHANOS_REVIEW_COORDINATOR_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:\s*\$\{\{ secrets\.STEPHANOS_REVIEW_DISPATCH_TOKEN \}\}/);
   assert.doesNotMatch(workflow, /\|\|\s*github\.token/);

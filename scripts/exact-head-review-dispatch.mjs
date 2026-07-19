@@ -109,7 +109,11 @@ function mapComment(comment) {
   return {
     id: comment?.id ?? null,
     body: text(comment?.body),
-    user: { login: text(comment?.user?.login) },
+    user: {
+      login: text(comment?.user?.login),
+      type: text(comment?.user?.type),
+      id: comment?.user?.id ?? null,
+    },
     createdAt: comment?.created_at ?? null,
     updatedAt: comment?.updated_at ?? null,
   };
@@ -120,7 +124,11 @@ function mapReview(review) {
     id: review?.id ?? null,
     body: text(review?.body),
     commitId: text(review?.commit_id),
-    user: { login: text(review?.user?.login) },
+    user: {
+      login: text(review?.user?.login),
+      type: text(review?.user?.type),
+      id: review?.user?.id ?? null,
+    },
     submittedAt: review?.submitted_at ?? null,
   };
 }
@@ -183,10 +191,10 @@ async function postPrComment({ owner, repo, token, prNumber, body }) {
   return result?.id ?? null;
 }
 
-async function discoverCanonicalContexts({ owner, repo, repository, token, requestedNumbers, trustedCoordinatorLogin: coordinatorLogin }) {
-  const numbers = requestedNumbers.length
-    ? requestedNumbers
-    : (await listOpenPullRequests({ owner, repo, token })).map((pr) => positiveInteger(pr?.number)).filter(Boolean);
+async function discoverCanonicalContexts({ owner, repo, repository, token, trustedCoordinatorLogin: coordinatorLogin }) {
+  const numbers = (await listOpenPullRequests({ owner, repo, token }))
+    .map((pr) => positiveInteger(pr?.number))
+    .filter(Boolean);
   const contexts = [];
   for (const prNumber of [...new Set(numbers)]) {
     const context = await loadPrContext({
@@ -214,14 +222,17 @@ async function main() {
   }
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
-  const manualPrNumber = positiveInteger(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
+  const manualPrInput = text(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
+  const manualPrNumber = positiveInteger(manualPrInput);
+  if (manualPrInput && !manualPrNumber) {
+    throw new Error('STEPHANOS_EXACT_HEAD_REVIEW_PR must be a positive integer when provided');
+  }
   const requestedNumbers = candidatePrNumbers(event, manualPrNumber);
   const contexts = await discoverCanonicalContexts({
     owner,
     repo,
     repository,
     token,
-    requestedNumbers,
     trustedCoordinatorLogin: coordinatorLogin,
   });
 
@@ -236,6 +247,11 @@ async function main() {
   }
 
   const [context] = contexts;
+  if (requestedNumbers.length && !requestedNumbers.includes(context.pr.number)) {
+    console.log('EXACT_HEAD_REVIEW_DISPATCH_DECISION=REQUESTED_PR_NOT_CANONICAL');
+    appendOutput('decision', 'REQUESTED_PR_NOT_CANONICAL');
+    return;
+  }
   const timeoutMinutes = positiveInteger(process.env.STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES, Math.round(DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS / 60000));
   const decision = evaluateExactHeadReviewDispatch({
     now: new Date().toISOString(),
