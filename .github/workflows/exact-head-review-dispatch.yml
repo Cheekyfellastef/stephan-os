@@ -1,0 +1,99 @@
+name: Exact-Head Review Dispatch
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/exact-head-review-dispatch.yml'
+      - 'scripts/exact-head-review-dispatch.mjs'
+      - 'shared/agents/exactHeadReviewDispatchCoordinator.mjs'
+      - 'shared/agents/exactHeadReviewDispatchCoordinator.test.mjs'
+      - 'package.json'
+  workflow_run:
+    workflows:
+      - OpenClaw GitHub Operator
+      - PR Clean Guard
+      - Build Stephanos UI
+      - Battle Bridge Publisher Proof
+      - Codex Dispatch Queue Proof
+    types:
+      - completed
+  issue_comment:
+    types:
+      - created
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Optional PR number to evaluate; canonical-lane proof is still required
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exact-head-review-dispatch-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run coordinator regressions
+        run: npm run stephanos:exact-head-review:test
+
+      - name: Parse review coordinator sources
+        run: |
+          node --check shared/agents/exactHeadReviewDispatchCoordinator.mjs
+          node --check scripts/exact-head-review-dispatch.mjs
+
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD
+
+  coordinate:
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Check out trusted default-branch coordinator
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Evaluate and advance exact-head review state
+        env:
+          GITHUB_TOKEN: ${{ secrets.STEPHANOS_REVIEW_DISPATCH_TOKEN || github.token }}
+          STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
+          STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
+        run: node scripts/exact-head-review-dispatch.mjs
