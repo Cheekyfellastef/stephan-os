@@ -212,6 +212,11 @@ test('recognizes explicit auto markers and bounded canonical controller receipts
     'PR #1555 remains draft and non-canonical.',
     'Issue #1418 is queued until this lane reaches terminal state.',
   ].join('\n')), options), true);
+  assert.equal(isCanonicalReviewLaneComment(trustedComment([
+    'Programme Completion Controller canonical-lane receipt',
+    'Active lane: PR #1559.',
+    'PR #1558 is superseded by PR #1559.',
+  ].join('\n')), options), true);
 
   const evidence = canonicalLaneEvidence([
     { id: 1, body: 'unrelated', createdAt: '2026-07-19T10:00:00Z', user: { login: TRUSTED_COORDINATOR } },
@@ -341,6 +346,10 @@ test('accepts review receipts only after successful exact-head workflow completi
   const early = evaluateExactHeadReviewDispatch(baseInput({ comments: [earlyExternal, staleDurableReceipt] }));
   assert.equal(early.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 
+  const ambiguousSameSecond = { ...earlyExternal, id: 95, createdAt: '2026-07-19T16:24:00Z' };
+  const ambiguous = evaluateExactHeadReviewDispatch(baseInput({ comments: [ambiguousSameSecond] }));
+  assert.equal(ambiguous.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
   const postWorkflowExternal = { ...earlyExternal, id: 92, createdAt: '2026-07-19T16:24:01Z' };
   const beforeExternalMarker = coordinatorComment({
     id: 93,
@@ -349,6 +358,40 @@ test('accepts review receipts only after successful exact-head workflow completi
   });
   const causal = evaluateExactHeadReviewDispatch(baseInput({ comments: [postWorkflowExternal, beforeExternalMarker] }));
   assert.equal(causal.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+});
+
+test('orders same-second durable receipts causally and treats review IDs as incomparable', () => {
+  const externalComment = {
+    id: 100,
+    body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+    createdAt: '2026-07-19T16:29:30Z',
+    user: TRUSTED_CODEX_REVIEWER,
+  };
+  const earlierMarker = coordinatorComment({
+    id: 99,
+    body: marker(EXACT_HEAD_REVIEW_MARKERS.RECEIPT),
+    createdAt: '2026-07-19T16:29:30Z',
+  });
+  const earlier = evaluateExactHeadReviewDispatch(baseInput({ comments: [externalComment, earlierMarker] }));
+  assert.equal(earlier.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+
+  const laterMarker = coordinatorComment({
+    id: 101,
+    body: marker(EXACT_HEAD_REVIEW_MARKERS.RECEIPT),
+    createdAt: '2026-07-19T16:29:30Z',
+  });
+  const later = evaluateExactHeadReviewDispatch(baseInput({ comments: [externalComment, laterMarker] }));
+  assert.equal(later.decision, EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED);
+
+  const externalReview = {
+    id: 200,
+    commitId: HEAD,
+    body: 'Automated review',
+    submittedAt: '2026-07-19T16:29:30Z',
+    user: TRUSTED_CODEX_REVIEWER,
+  };
+  const incomparable = evaluateExactHeadReviewDispatch(baseInput({ reviews: [externalReview], comments: [laterMarker] }));
+  assert.equal(incomparable.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
 });
 
 test('requires workflow completion timestamps and ignores pre-proof dispatch markers', () => {

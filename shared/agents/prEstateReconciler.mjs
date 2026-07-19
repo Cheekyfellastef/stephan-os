@@ -222,6 +222,9 @@ export function validatePrEstateLedger(ledger = {}) {
     }
 
     if (entry.disposition === PR_DISPOSITIONS.ALREADY_IN_MAIN) {
+      if (evidence.baseRefName !== 'main') {
+        errors.push(`already-in-main-without-main-base:${identity}`);
+      }
       if (evidence.compareKnown !== true || evidence.comparisonHeadMatches !== true) {
         errors.push(`already-in-main-without-exact-compare:${identity}`);
       }
@@ -231,6 +234,7 @@ export function validatePrEstateLedger(ledger = {}) {
     }
 
     if (entry.disposition === PR_DISPOSITIONS.PLACEHOLDER_FAILED) {
+      if (evidence.baseRefName !== 'main') errors.push(`placeholder-failed-without-main-base:${identity}`);
       if (evidence.placeholderFailureMarker !== true) errors.push(`placeholder-failed-without-marker:${identity}`);
       if (evidence.compareKnown !== true || evidence.comparisonHeadMatches !== true) {
         errors.push(`placeholder-failed-without-exact-compare:${identity}`);

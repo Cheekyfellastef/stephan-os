@@ -18,7 +18,7 @@ Similarity is discovery evidence, not closure evidence. A shared title, task lin
 
 ## Fail-closed evidence rules
 
-- `ALREADY_IN_MAIN` requires explicit compare evidence showing no commits unique to the PR head.
+- `ALREADY_IN_MAIN` requires explicit comparison with `main` showing no commits unique to the PR head; containment in another base branch is not mainline evidence.
 - `SUPERSEDED` requires a named canonical PR plus patch-equivalence or explicit no-unique-delta evidence.
 - `PLACEHOLDER_FAILED` requires both the Codex failure marker and compare evidence proving no unique commits.
 - Unknown branch state, missing compare evidence or conflicting canonical candidates yields `AMBIGUOUS_REVIEW_REQUIRED`.
@@ -58,6 +58,6 @@ The estate is controlled when every open PR is canonical, waiting on a real gate
 
 The review coordinator treats comments as evidence only when the comment actor matches the configured trusted coordinator login. Canonical-lane references must identify the PR being evaluated; a controller comment that names another PR as the active lane cannot make the current PR canonical. The latest trusted controller state is authoritative, with comment ID breaking GitHub's second-resolution timestamp ties, so a later queued, superseded, non-canonical or no-longer-active declaration revokes stale positive lane evidence. Every coordination pass scans all open PRs to preserve single-canonical-lane enforcement before a requested PR may advance, and manual PR numbers accept only safe positive decimal digits.
 
-Review receipts are causally ordered as well as head-bound. Every required workflow must have a successful exact-head completion timestamp, an external Codex receipt from the exact authenticated Codex GitHub App identity must be created at or after the latest of those completions, and the durable coordinator receipt must follow that external receipt. Plain-user aliases, lookalike actors and pre-proof or unauthenticated dispatch, receipt and escalation markers are ignored fail-closed.
+Review receipts are causally ordered as well as head-bound. Every required workflow must have a successful exact-head completion timestamp, an external Codex receipt from the exact authenticated Codex GitHub App identity must be created strictly after the latest of those completions, and the durable coordinator receipt must follow that external receipt. Same-second issue comments are ordered by comment ID; a same-second review and issue comment are incomparable and fail closed until a later durable receipt exists. Plain-user aliases, lookalike actors and pre-proof or unauthenticated dispatch, receipt and escalation markers are ignored fail-closed.
 
 Every mandatory proof workflow runs for every pull-request head; path filtering may not make a required proof permanently absent. Coordinator mutation also requires the dedicated bounded coordinator secret and refuses the built-in workflow token fallback.

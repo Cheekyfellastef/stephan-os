@@ -1,5 +1,5 @@
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.3';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.4';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -41,7 +41,7 @@ const PR_THEN_LANE_REFERENCE_PATTERN = /\bPR\s*#(\d+)\b(?=[^\n.]{0,120}\b(?:sole
 const LANE_THEN_PR_REFERENCE_PATTERN = /\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\b(?:implementation|review|github)?\s*lane\b[^\n.]{0,60}\bPR\s*#(\d+)\b/gi;
 const SELF_REFERENTIAL_LANE_PATTERN = /(?:\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b[^\n.]{0,120}\b(?:sole|single|canonical|active)\b[^\n.]{0,80}\blane\b|\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\blane\b[^\n.]{0,80}\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b)/i;
 const SELF_REFERENTIAL_PR_PATTERN = /^\s*(?:[-*]\s*)?(?:this\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b|this\s+lane\b)/i;
-const NEGATIVE_LANE_STATE_PATTERN = /\bnon[- ]canonical\b|\bqueued\b|\bsupersed(?:e|ed|ing)\b|\bno longer\b[^\n.]{0,100}\b(?:canonical|active|sole|single|lane)\b|\bnot\b[^\n.]{0,100}\b(?:canonical|active|sole|single)\b[^\n.]{0,60}\blane\b/i;
+const NEGATIVE_LANE_STATE_PATTERN = /\bnon[- ]canonical\b|\bqueued\b|\bsuperseded\b|\bno longer\b[^\n.]{0,100}\b(?:canonical|active|sole|single|lane)\b|\bnot\b[^\n.]{0,100}\b(?:canonical|active|sole|single)\b[^\n.]{0,60}\blane\b/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -105,14 +105,29 @@ function itemTimestamp(item) {
   return asTime(item?.createdAt ?? item?.created_at ?? item?.submittedAt ?? item?.submitted_at);
 }
 
-function markerComment(comments, kind, headSha, { trustedCoordinatorLogin, notBeforeMs = null } = {}) {
+function itemCausallyFollows(candidate, precedent) {
+  const candidateTime = itemTimestamp(candidate);
+  const precedentTime = itemTimestamp(precedent);
+  if (candidateTime === null || precedentTime === null) return false;
+  if (candidateTime !== precedentTime) return candidateTime > precedentTime;
+  const precedentIsComment = precedent?.createdAt !== undefined || precedent?.created_at !== undefined;
+  const candidateId = Number(candidate?.id);
+  const precedentId = Number(precedent?.id);
+  return precedentIsComment
+    && Number.isSafeInteger(candidateId)
+    && Number.isSafeInteger(precedentId)
+    && candidateId > precedentId;
+}
+
+function markerComment(comments, kind, headSha, { trustedCoordinatorLogin, notBeforeMs = null, afterItem = null } = {}) {
   const marker = markerFor(kind, headSha);
   return newest((comments || []).filter((comment) => {
     if (!isTrustedCoordinatorActor(comment, trustedCoordinatorLogin)) return false;
     if (!commentBody(comment).includes(marker)) return false;
+    if (afterItem && !itemCausallyFollows(comment, afterItem)) return false;
     if (notBeforeMs === null) return true;
     const timestamp = itemTimestamp(comment);
-    return timestamp !== null && timestamp >= notBeforeMs;
+    return timestamp !== null && timestamp > notBeforeMs;
   }));
 }
 
@@ -142,7 +157,7 @@ function latestExternalReceipt(comments, reviews, headSha, notBeforeMs) {
     ...(reviews || []).filter((item) => reviewMatchesHead(item, headSha)),
   ].filter((item) => {
     const timestamp = itemTimestamp(item);
-    return timestamp !== null && timestamp >= notBeforeMs;
+    return timestamp !== null && timestamp > notBeforeMs;
   }));
 }
 
@@ -165,12 +180,18 @@ function latestRunByWorkflow(workflowRuns, headSha, requiredWorkflows) {
 }
 
 function revokesCanonicalLane(value, prNumber) {
-  const segments = value.split(/\r?\n|(?<=[.!?])\s+/).map((segment) => segment.trim()).filter(Boolean);
+  const segments = value.split(/\r?\n|(?<=[.!?;])\s+/).map((segment) => segment.trim()).filter(Boolean);
   return segments.some((segment) => {
-    if (!NEGATIVE_LANE_STATE_PATTERN.test(segment)) return false;
-    const explicitReferences = [...segment.matchAll(/\bPR\s*#(\d+)\b/gi)].map((match) => Number(match[1]));
-    const targetsCurrentPr = explicitReferences.length
-      ? explicitReferences.includes(prNumber)
+    const negativeMatch = segment.match(NEGATIVE_LANE_STATE_PATTERN);
+    if (!negativeMatch) return false;
+    const explicitReferences = [...segment.matchAll(/\bPR\s*#(\d+)\b/gi)].map((match) => ({
+      number: Number(match[1]),
+      index: match.index ?? 0,
+    }));
+    const precedingReferences = explicitReferences.filter(({ index }) => index <= (negativeMatch.index ?? 0));
+    const subjectReference = precedingReferences.at(-1) ?? explicitReferences[0] ?? null;
+    const targetsCurrentPr = subjectReference
+      ? subjectReference.number === prNumber
       : SELF_REFERENTIAL_PR_PATTERN.test(segment);
     return targetsCurrentPr;
   });
@@ -310,7 +331,8 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
   const recordedReceipt = externalReceipt && externalReceiptTime !== null
     ? markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.RECEIPT, headSha, {
       trustedCoordinatorLogin,
-      notBeforeMs: Math.max(workflowsCompletedAtMs, externalReceiptTime),
+      notBeforeMs: workflowsCompletedAtMs,
+      afterItem: externalReceipt,
     })
     : null;
   if (externalReceipt && !recordedReceipt) {

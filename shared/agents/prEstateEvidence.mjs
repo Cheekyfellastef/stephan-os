@@ -202,10 +202,12 @@ export function classifyPr(pr, family, canonicalRecord) {
       return { disposition: PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL, reason: 'outstanding operator approval gate overrides controlled disposition hint', blockers: ['operator-approval-required'] };
     }
     if (pr.dispositionHint === PR_DISPOSITIONS.ALREADY_IN_MAIN) {
+      if (pr.baseRefName !== 'main') return ambiguous('already-in-main hint was compared against a non-main base', 'branch-to-main-compare-required');
       if (!pr.compareKnown || !pr.headContainedInBase || pr.uniqueDelta === true) return ambiguous('already-in-main hint lacks exact non-conflicting containment evidence', 'containment-evidence-required');
     }
     if (pr.dispositionHint === PR_DISPOSITIONS.PLACEHOLDER_FAILED) {
       if (!placeholder) return ambiguous('placeholder-failed hint lacks Codex failure marker', 'placeholder-failure-marker-required');
+      if (pr.baseRefName !== 'main') return ambiguous('placeholder-failed hint was compared against a non-main base', 'branch-to-main-compare-required');
       if (!pr.compareKnown || !pr.headContainedInBase || pr.uniqueDelta === true) return ambiguous('placeholder-failed hint lacks exact no-unique-delta evidence', 'placeholder-no-unique-delta-evidence-required');
     }
     if (pr.dispositionHint === PR_DISPOSITIONS.SUPERSEDED) {
@@ -217,6 +219,7 @@ export function classifyPr(pr, family, canonicalRecord) {
 
   if (placeholder) {
     if (!pr.compareKnown) return ambiguous('Codex placeholder PR has no branch-to-main compare evidence tied to the exact head', 'placeholder-branch-delta-unknown');
+    if (pr.baseRefName !== 'main') return ambiguous('Codex placeholder compare evidence targets a non-main base', 'branch-to-main-compare-required');
     if (pr.headContainedInBase && pr.uniqueDelta === true) return ambiguous('placeholder containment evidence conflicts with an explicit unique delta', 'conflicting-placeholder-delta-evidence');
     if (!pr.headContainedInBase && pr.uniqueDelta === false) return ambiguous('placeholder compare evidence conflicts with an explicit no-unique-delta claim', 'conflicting-placeholder-delta-evidence');
     if (pr.headContainedInBase) return { disposition: PR_DISPOSITIONS.PLACEHOLDER_FAILED, reason: 'Codex placeholder branch has no commits unique to current base', blockers: [] };
@@ -224,6 +227,7 @@ export function classifyPr(pr, family, canonicalRecord) {
   }
 
   if (pr.headContainedInBase) {
+    if (pr.baseRefName !== 'main') return ambiguous('containment evidence targets a non-main base and cannot prove the PR is already in main', 'branch-to-main-compare-required');
     if (pr.uniqueDelta === true) return ambiguous('containment evidence conflicts with an explicit unique delta', 'conflicting-unique-delta-evidence');
     return { disposition: PR_DISPOSITIONS.ALREADY_IN_MAIN, reason: 'exact compare evidence shows no commits unique to the PR head', blockers: [] };
   }
@@ -266,6 +270,7 @@ export function evidenceFor(pr, family, placeholder, canonicalRecord) {
     compareKnown: pr.compareKnown,
     comparisonEvidencePresent: pr.comparisonEvidencePresent,
     comparedHeadSha: pr.comparedHeadSha,
+    baseRefName: pr.baseRefName,
     comparisonHeadKnown: pr.comparisonHeadKnown,
     comparisonHeadMatches: pr.comparisonHeadMatches,
     comparisonHeadMismatch: pr.comparisonHeadMismatch,
