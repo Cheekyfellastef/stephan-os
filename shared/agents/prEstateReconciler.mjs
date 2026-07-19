@@ -198,6 +198,13 @@ export function validatePrEstateLedger(ledger = {}) {
     if (entry.state !== 'open') errors.push(`non-open-pr-record:${identity}`);
     if (!VALID_DISPOSITIONS.has(entry.disposition)) errors.push(`invalid-disposition:${identity}`);
 
+    const aliasConflict = evidence.evidenceAliasConflict === true
+      || evidence.identityAliasConflict === true
+      || evidence.comparisonAliasConflict === true
+      || evidence.supersessionAliasConflict === true;
+    if (aliasConflict && entry.disposition !== PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED) {
+      errors.push(`non-ambiguous-with-conflicting-evidence-alias:${identity}`);
+    }
     if (evidence.comparisonEvidenceInvalid === true && entry.disposition !== PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED) {
       errors.push(`terminal-with-invalid-comparison-evidence:${identity}`);
     }
