@@ -50,13 +50,13 @@ const ACCEPTANCE_COMPLETED_STATUS = String.raw`\b(?:passed|complete(?:d)?|satisf
 const APPROVAL_COMPLETED_STATUS = String.raw`\b(?:granted|approved|complete(?:d)?|satisfied|done)\b`;
 
 const ACCEPTANCE_GATE_DEFINITIONS = gateDefinitions(ACCEPTANCE_GATE_TERMS, {
-  pendingStatus: String.raw`\b(?:required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not\s+yet)\b`,
+  pendingStatus: String.raw`\b(?:requires?|required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not\s+yet)\b`,
   completedStatus: ACCEPTANCE_COMPLETED_STATUS,
   negatedCompletedStatus: `${NEGATION_PREFIX}(?:passed|complete(?:d)?|satisfied|verified|done)\\b`,
 });
 
 const APPROVAL_GATE_DEFINITIONS = gateDefinitions(APPROVAL_GATE_TERMS, {
-  pendingStatus: String.raw`\b(?:required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not\s+yet)\b`,
+  pendingStatus: String.raw`\b(?:requires?|required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not\s+yet)\b`,
   completedStatus: APPROVAL_COMPLETED_STATUS,
   negatedCompletedStatus: `${NEGATION_PREFIX}(?:granted|approved|complete(?:d)?|satisfied|done)\\b`,
   specialPending: /do not merge without[^\n.!?]{0,120}approval/i,

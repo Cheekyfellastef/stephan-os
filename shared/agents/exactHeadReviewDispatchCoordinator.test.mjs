@@ -119,7 +119,7 @@ test('ignores dispatch and review evidence tied to an older head', () => {
   const result = evaluateExactHeadReviewDispatch(baseInput({
     comments: [
       { id: 1, body: marker(EXACT_HEAD_REVIEW_MARKERS.DISPATCH, OLD_HEAD), createdAt: '2026-07-19T16:00:00Z' },
-      { id: 2, body: `Codex Review\n\n**Reviewed commit:** \`${OLD_HEAD.slice(0, 10)}\``, user: TRUSTED_CODEX_REVIEWER, createdAt: '2026-07-19T16:01:00Z' },
+      { id: 2, body: `Codex Review\n\n**Reviewed commit:** \`${OLD_HEAD}\``, user: TRUSTED_CODEX_REVIEWER, createdAt: '2026-07-19T16:01:00Z' },
     ],
   }));
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
@@ -128,7 +128,7 @@ test('ignores dispatch and review evidence tied to an older head', () => {
 test('records a matching Codex receipt once and then remains terminal for that head', () => {
   const external = {
     id: 91,
-    body: `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+    body: `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${HEAD}\``,
     user: TRUSTED_CODEX_REVIEWER,
     createdAt: '2026-07-19T16:29:30Z',
   };
@@ -170,7 +170,7 @@ test('accepts only the authenticated Codex GitHub App identity', () => {
     const result = evaluateExactHeadReviewDispatch(baseInput({
       comments: [{
         id: 24 + index,
-        body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+        body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
         user,
         createdAt: '2026-07-19T16:29:00Z',
       }],
@@ -181,12 +181,22 @@ test('accepts only the authenticated Codex GitHub App identity', () => {
   const exactBot = evaluateExactHeadReviewDispatch(baseInput({
     comments: [{
       id: 25,
-      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
       user: TRUSTED_CODEX_REVIEWER,
       createdAt: '2026-07-19T16:29:00Z',
     }],
   }));
   assert.equal(exactBot.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+
+  const ambiguousPrefix = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [{
+      id: 30,
+      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 12)}\``,
+      user: TRUSTED_CODEX_REVIEWER,
+      createdAt: '2026-07-19T16:29:00Z',
+    }],
+  }));
+  assert.equal(ambiguousPrefix.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
 test('escalates once when a posted request has no receipt after the bounded timeout', () => {
@@ -357,7 +367,7 @@ test('ignores forged coordinator markers for dispatch, receipt and escalation st
 
   const external = {
     id: 81,
-    body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+    body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
     createdAt: '2026-07-19T16:29:10Z',
     user: TRUSTED_CODEX_REVIEWER,
   };
@@ -394,7 +404,7 @@ test('ignores forged coordinator markers for dispatch, receipt and escalation st
 test('accepts review receipts only after successful exact-head workflow completion', () => {
   const earlyExternal = {
     id: 90,
-    body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+    body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
     createdAt: '2026-07-19T16:23:59Z',
     user: TRUSTED_CODEX_REVIEWER,
   };
@@ -423,7 +433,7 @@ test('accepts review receipts only after successful exact-head workflow completi
 test('orders same-second durable receipts causally and treats review IDs as incomparable', () => {
   const externalComment = {
     id: 100,
-    body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+    body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
     createdAt: '2026-07-19T16:29:30Z',
     user: TRUSTED_CODEX_REVIEWER,
   };

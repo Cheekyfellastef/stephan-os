@@ -87,6 +87,9 @@ test('classifies a non-placeholder PR as already in main only with containment e
 test('preserves explicit live acceptance gates', () => {
   const ledger = build([{ number: 30, state: 'open', title: 'Quest scaffold', body: 'Live acceptance required on the Quest headset.' }]);
   assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+
+  const approval = build([{ number: 31, state: 'open', title: 'Approval gate', body: 'This requires operator approval.' }]);
+  assert.equal(approval.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
 });
 
 test('detects multiple active canonical candidates in one family', () => {

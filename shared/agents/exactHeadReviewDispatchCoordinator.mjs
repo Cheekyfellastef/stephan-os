@@ -1,5 +1,5 @@
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.5';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.6';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -137,8 +137,8 @@ function markerComment(comments, kind, headSha, { trustedCoordinatorLogin, notBe
   }));
 }
 
-function reviewedCommitPrefix(body) {
-  const match = text(body).match(/Reviewed commit:\*?\*?\s*`?([0-9a-f]{7,40})`?/i);
+function reviewedCommitSha(body) {
+  const match = text(body).match(/Reviewed commit:\*?\*?\s*`?([0-9a-f]{40})`?(?![0-9a-f])/i);
   return match?.[1]?.toLowerCase() || '';
 }
 
@@ -153,8 +153,7 @@ function reviewMatchesHead(item, headSha) {
   if (!isKnownCodexReviewer(item)) return false;
   const commitId = text(item?.commitId ?? item?.commit_id);
   if (commitId && sameSha(commitId, headSha)) return true;
-  const prefix = reviewedCommitPrefix(commentBody(item));
-  return prefix.length >= 7 && text(headSha).toLowerCase().startsWith(prefix);
+  return sameSha(reviewedCommitSha(commentBody(item)), headSha);
 }
 
 function latestExternalReceipt(comments, reviews, headSha, notBeforeMs) {
