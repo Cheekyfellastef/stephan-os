@@ -61,7 +61,8 @@ export function normalizePr(input = {}, recordIndex = 0) {
   const comparisonAliasConflict = aheadField.conflicting
     || behindField.conflicting
     || containedField.conflicting
-    || comparedHeadField.conflicting;
+    || comparedHeadField.conflicting
+    || baseField.conflicting;
   const supersessionAliasConflict = supersessionSourceField.conflicting
     || supersessionTargetPrField.conflicting
     || supersessionTargetHeadField.conflicting;

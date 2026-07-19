@@ -126,3 +126,26 @@ test('missing base and state evidence remain unknown instead of being synthesize
   assert.deepEqual(unknownState.blockers, ['invalid-or-non-open-pr-record']);
   assert.equal(unknownState.state, '');
 });
+
+test('conflicting base-reference aliases fail closed', () => {
+  const ledger = build([{
+    number: 307,
+    state: 'open',
+    title: 'Conflicting comparison base',
+    headSha: HEAD_SHA,
+    baseRefName: 'main',
+    base: 'release',
+    aheadBy: 0,
+    comparedHeadSha: HEAD_SHA,
+  }]);
+
+  const [entry] = ledger.entries;
+  assert.equal(entry.disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  assert.deepEqual(entry.blockers, ['conflicting-evidence-alias']);
+  assert.equal(entry.evidence.comparisonAliasConflict, true);
+
+  entry.disposition = PR_DISPOSITIONS.ALREADY_IN_MAIN;
+  const validation = validatePrEstateLedger(ledger);
+  assert.equal(validation.valid, false);
+  assert.match(validation.errors.join(' '), /non-ambiguous-with-conflicting-evidence-alias:307/);
+});

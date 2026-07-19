@@ -22,7 +22,7 @@ Similarity is discovery evidence, not closure evidence. A shared title, task lin
 - `SUPERSEDED` requires a named canonical PR plus patch-equivalence or explicit no-unique-delta evidence.
 - `PLACEHOLDER_FAILED` requires both the Codex failure marker and compare evidence proving no unique commits.
 - Prepared snapshots must state both PR state and comparison base explicitly; missing values are never synthesized as `open` or `main`.
-- Unknown branch state, missing compare evidence or conflicting canonical candidates yields `AMBIGUOUS_REVIEW_REQUIRED`.
+- Unknown branch state, missing compare evidence, conflicting evidence aliases (including base references) or conflicting canonical candidates yields `AMBIGUOUS_REVIEW_REQUIRED`.
 
 ## Usage
 
