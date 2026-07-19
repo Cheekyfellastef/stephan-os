@@ -42,12 +42,12 @@ function gateDefinitions(terms, {
   negatedCompletedStatus,
   specialPending = null,
 }) {
-  return terms.map((term) => ({
+  return terms.map((term, index) => ({
     term,
     pending: aroundTerm(term, pendingStatus),
     completed: aroundTerm(term, completedStatus),
     negatedCompleted: aroundTerm(term, negatedCompletedStatus),
-    specialPending,
+    specialPending: index === 0 ? specialPending : null,
   }));
 }
 
