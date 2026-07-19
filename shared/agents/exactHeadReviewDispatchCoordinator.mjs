@@ -36,9 +36,7 @@ const TRUSTED_CODEX_REVIEWER = Object.freeze({
   type: 'bot',
   id: 199175422,
 });
-const ACTIVE_LANE_REFERENCE_PATTERN = /\bactive lane:\s*PR\s*#(\d+)\b/gi;
-const PR_THEN_LANE_REFERENCE_PATTERN = /\bPR\s*#(\d+)\b(?=[^\n.]{0,120}\b(?:sole|single|canonical|active)\b[^\n.]{0,80}\b(?:implementation|review|github)?\s*lane\b)/gi;
-const LANE_THEN_PR_REFERENCE_PATTERN = /\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\b(?:implementation|review|github)?\s*lane\b[^\n.]{0,60}\bPR\s*#(\d+)\b/gi;
+const POSITIVE_LANE_STATE_PATTERN = /\b(?:sole active implementation lane|single active(?: GitHub)? implementation lane|sole canonical implementation lane|canonical implementation lane|canonical-lane receipt|active lane)\b/gi;
 const SELF_REFERENTIAL_LANE_PATTERN = /(?:\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b[^\n.]{0,120}\b(?:sole|single|canonical|active)\b[^\n.]{0,80}\blane\b|\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\blane\b[^\n.]{0,80}\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b)/i;
 const SELF_REFERENTIAL_PR_PATTERN = /^\s*(?:[-*]\s*)?(?:this\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b|this\s+lane\b)/i;
 const NEGATIVE_LANE_STATE_PATTERN = /\bnon[- ]canonical\b|\bqueued\b|\bsuperseded\b|\bno longer\b[^\n.]{0,100}\b(?:canonical|active|sole|single|lane)\b|\bnot\b[^\n.]{0,100}\b(?:canonical|active|sole|single)\b[^\n.]{0,60}\blane\b/i;
@@ -197,6 +195,26 @@ function revokesCanonicalLane(value, prNumber) {
   });
 }
 
+function positiveCanonicalLaneSubjects(value) {
+  const subjects = [];
+  const segments = value.split(/\r?\n|(?<=[.!?;])\s+/).map((segment) => segment.trim()).filter(Boolean);
+  for (const segment of segments) {
+    const explicitReferences = [...segment.matchAll(/\bPR\s*#(\d+)\b/gi)].map((match) => ({
+      number: Number(match[1]),
+      index: match.index ?? 0,
+    }));
+    for (const positiveMatch of segment.matchAll(POSITIVE_LANE_STATE_PATTERN)) {
+      const phraseIndex = positiveMatch.index ?? 0;
+      const phraseEnd = phraseIndex + positiveMatch[0].length;
+      const preceding = explicitReferences.filter(({ index }) => index < phraseIndex).at(-1);
+      const following = explicitReferences.find(({ index }) => index >= phraseEnd);
+      const subject = preceding ?? following ?? null;
+      if (subject) subjects.push(subject.number);
+    }
+  }
+  return subjects;
+}
+
 function canonicalReviewLaneCommentState(comment, { prNumber: candidatePrNumber, trustedCoordinatorLogin } = {}) {
   const value = commentBody(comment);
   const prNumber = Number(candidatePrNumber);
@@ -207,11 +225,7 @@ function canonicalReviewLaneCommentState(comment, { prNumber: candidatePrNumber,
   if (revokesCanonicalLane(value, prNumber)) return false;
   if (!/sole active implementation lane|single active(?: GitHub)? implementation lane|sole canonical implementation lane|canonical implementation lane|canonical-lane receipt|active lane:\s*PR\s*#/i.test(value)) return null;
 
-  const referencedPrs = [
-    ...value.matchAll(ACTIVE_LANE_REFERENCE_PATTERN),
-    ...value.matchAll(PR_THEN_LANE_REFERENCE_PATTERN),
-    ...value.matchAll(LANE_THEN_PR_REFERENCE_PATTERN),
-  ].map((match) => Number(match[1]));
+  const referencedPrs = positiveCanonicalLaneSubjects(value);
   if (referencedPrs.length) return referencedPrs.every((reference) => reference === prNumber) || null;
   return SELF_REFERENTIAL_LANE_PATTERN.test(value) || null;
 }

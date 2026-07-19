@@ -11,7 +11,7 @@ import {
 const DEFAULT_HEAD_SHA = 'a'.repeat(40);
 
 function build(pullRequests, families = []) {
-  const withHeads = pullRequests.map((pr) => ({ headSha: DEFAULT_HEAD_SHA, ...pr }));
+  const withHeads = pullRequests.map((pr) => ({ headSha: DEFAULT_HEAD_SHA, baseRefName: 'main', ...pr }));
   const headByPr = new Map(withHeads.filter((pr) => Number.isInteger(pr.number)).map((pr) => [pr.number, pr.headSha]));
   const familyByPr = new Map();
   for (const family of families) for (const number of family.members || family.prs || []) familyByPr.set(Number(number), family);

@@ -99,3 +99,30 @@ test('non-main containment cannot certify mainline terminal dispositions', () =>
   assert.match(validation.errors.join(' '), /already-in-main-without-main-base:303/);
   assert.match(validation.errors.join(' '), /placeholder-failed-without-main-base:304/);
 });
+
+test('missing base and state evidence remain unknown instead of being synthesized', () => {
+  const ledger = build([{
+    number: 305,
+    state: 'open',
+    title: 'Unknown comparison base',
+    headSha: HEAD_SHA,
+    aheadBy: 0,
+    comparedHeadSha: HEAD_SHA,
+  }, {
+    number: 306,
+    title: 'Unknown PR state',
+    headSha: HEAD_SHA,
+    baseRefName: 'main',
+    aheadBy: 0,
+    comparedHeadSha: HEAD_SHA,
+  }]);
+
+  const unknownBase = ledger.entries.find((entry) => entry.number === 305);
+  const unknownState = ledger.entries.find((entry) => entry.number === 306);
+  assert.equal(unknownBase.disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  assert.deepEqual(unknownBase.blockers, ['branch-to-main-compare-required']);
+  assert.equal(unknownBase.evidence.baseRefKnown, false);
+  assert.equal(unknownState.disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  assert.deepEqual(unknownState.blockers, ['invalid-or-non-open-pr-record']);
+  assert.equal(unknownState.state, '');
+});

@@ -20,7 +20,8 @@ function ghJson(args) { return JSON.parse(gh(args)); }
 
 function collectFromGh(repository, includeCompare) {
   if (!repository) throw new Error('--repository owner/name is required with --from-gh');
-  const pullRequests = ghJson(['pr', 'list', '--repo', repository, '--state', 'open', '--limit', '1000', '--json', 'number,title,body,url,isDraft,headRefName,headRefOid,baseRefName,createdAt,updatedAt,mergeable,labels']);
+  const pullRequests = ghJson(['pr', 'list', '--repo', repository, '--state', 'open', '--limit', '1000', '--json', 'number,title,body,url,isDraft,headRefName,headRefOid,baseRefName,createdAt,updatedAt,mergeable,labels'])
+    .map((pr) => ({ ...pr, state: 'open' }));
   if (!includeCompare) return pullRequests;
   return pullRequests.map((pr) => {
     const base = encodeURIComponent(pr.baseRefName || 'main');

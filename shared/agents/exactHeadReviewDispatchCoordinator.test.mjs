@@ -217,6 +217,9 @@ test('recognizes explicit auto markers and bounded canonical controller receipts
     'Active lane: PR #1559.',
     'PR #1558 is superseded by PR #1559.',
   ].join('\n')), options), true);
+  assert.equal(isCanonicalReviewLaneComment(trustedComment(
+    'Programme Completion Controller\nPR #1558 is superseded by PR #1559, the sole canonical implementation lane.',
+  ), options), true);
 
   const evidence = canonicalLaneEvidence([
     { id: 1, body: 'unrelated', createdAt: '2026-07-19T10:00:00Z', user: { login: TRUSTED_COORDINATOR } },
@@ -418,6 +421,7 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(runner, /parseOptionalManualPrNumber\(process\.env\.STEPHANOS_EXACT_HEAD_REVIEW_PR\)/);
   assert.match(runner, /const numbers = \(await listOpenPullRequests/);
   assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);
+  assert.match(runner, /GitHub pagination exceeded.*refusing partial evidence/);
   assert.match(workflow, /STEPHANOS_REVIEW_COORDINATOR_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:\s*\$\{\{ secrets\.STEPHANOS_REVIEW_DISPATCH_TOKEN \}\}/);
   assert.doesNotMatch(workflow, /\|\|\s*github\.token/);

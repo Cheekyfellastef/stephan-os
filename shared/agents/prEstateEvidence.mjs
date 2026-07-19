@@ -31,6 +31,7 @@ export function normalizePr(input = {}, recordIndex = 0) {
   const comparedHeadField = readAliasedField(input, ['comparedHeadSha', 'compared_head_sha']);
   const uniqueDeltaField = readAliasedField(input, ['uniqueDelta']);
   const dispositionHintField = readAliasedField(input, ['dispositionHint']);
+  const baseField = readAliasedField(input, ['baseRefName', 'base']);
   const supersessionSourceField = readAliasedField(input, [
     'supersessionSourceHeadSha',
     'comparedSourceHeadSha',
@@ -103,7 +104,7 @@ export function normalizePr(input = {}, recordIndex = 0) {
   return {
     recordIndex,
     number,
-    state: asText(input.state, 'open').toLowerCase(),
+    state: asText(input.state, '').toLowerCase(),
     title: asText(input.title, ''),
     body: asText(input.body, ''),
     url: asText(input.url, ''),
@@ -111,7 +112,8 @@ export function normalizePr(input = {}, recordIndex = 0) {
     headRefName: asText(input.headRefName ?? input.head, ''),
     headSha,
     exactHeadKnown,
-    baseRefName: asText(input.baseRefName ?? input.base, 'main'),
+    baseRefName: asText(baseField.value, ''),
+    baseRefKnown: baseField.present && Boolean(asText(baseField.value, '')),
     createdAt: asText(input.createdAt ?? input.created_at, ''),
     updatedAt: asText(input.updatedAt ?? input.updated_at, ''),
     mergeable: asText(input.mergeable, 'UNKNOWN').toUpperCase(),
@@ -271,6 +273,7 @@ export function evidenceFor(pr, family, placeholder, canonicalRecord) {
     comparisonEvidencePresent: pr.comparisonEvidencePresent,
     comparedHeadSha: pr.comparedHeadSha,
     baseRefName: pr.baseRefName,
+    baseRefKnown: pr.baseRefKnown,
     comparisonHeadKnown: pr.comparisonHeadKnown,
     comparisonHeadMatches: pr.comparisonHeadMatches,
     comparisonHeadMismatch: pr.comparisonHeadMismatch,

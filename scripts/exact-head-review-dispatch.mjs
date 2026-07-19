@@ -15,6 +15,7 @@ import {
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-exact-head-review-dispatch-v1';
+const MAX_GITHUB_PAGES = 20;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -86,12 +87,15 @@ async function githubRequest(path, { method = 'GET', body = null, token, accept 
 async function githubPages(path, { token, itemKey = null } = {}) {
   const separator = path.includes('?') ? '&' : '?';
   const items = [];
-  for (let page = 1; page <= 20; page += 1) {
+  for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
     const payload = await githubRequest(`${path}${separator}per_page=100&page=${page}`, { token });
     const pageItems = itemKey ? payload?.[itemKey] : payload;
     if (!Array.isArray(pageItems)) throw new Error(`GitHub pagination payload for ${path} is not an array`);
     items.push(...pageItems);
     if (pageItems.length < 100) break;
+    if (page === MAX_GITHUB_PAGES) {
+      throw new Error(`GitHub pagination exceeded ${MAX_GITHUB_PAGES * 100} records for ${path}; refusing partial evidence`);
+    }
   }
   return items;
 }
