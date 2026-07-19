@@ -64,10 +64,26 @@ export function unique(values) {
 }
 
 export function readAliasedField(input, names) {
-  for (const name of names) {
-    if (hasOwn(input, name)) return { present: true, value: input[name], name };
+  const present = names
+    .filter((name) => hasOwn(input, name))
+    .map((name) => ({ name, value: input[name] }));
+  if (!present.length) {
+    return {
+      present: false,
+      value: undefined,
+      name: '',
+      aliases: [],
+      conflicting: false,
+    };
   }
-  return { present: false, value: undefined, name: '' };
+  const [first] = present;
+  return {
+    present: true,
+    value: first.value,
+    name: first.name,
+    aliases: present.map((item) => item.name),
+    conflicting: present.some((item) => !Object.is(item.value, first.value)),
+  };
 }
 
 export function normalizeLabels(labels) {
