@@ -62,7 +62,11 @@
     "stephanos:chat:diagnostics": "node scripts/stephanos-chat-update.mjs diagnostics",
     "stephanos:monitor-multiplexer:test": "node --test shared/agents/monitorMultiplexer.test.mjs",
     "stephanos:monitor-multiplexer:canary:test": "node --test shared/agents/monitorMultiplexerCanary.test.mjs scripts/battle-bridge-monitor-multiplexer-canary.test.mjs",
-    "stephanos:codex-dispatch:test": "node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs shared/agents/codexDispatchHostOps.test.mjs shared/agents/stephanosChatUpdate.test.mjs shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/remote-codex-github-mirror-publisher.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs"
+    "stephanos:codex-dispatch:test": "node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs shared/agents/codexDispatchHostOps.test.mjs shared/agents/stephanosChatUpdate.test.mjs shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/remote-codex-github-mirror-publisher.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs",
+    "stephanos:exact-head-review:run": "node scripts/exact-head-review-dispatch.mjs",
+    "stephanos:exact-head-review:test": "node --test shared/agents/exactHeadReviewDispatchCoordinator.test.mjs",
+    "stephanos:pr-estate:reconcile": "node scripts/pr-estate-reconcile.mjs",
+    "stephanos:pr-estate:test": "node --test shared/agents/prEstateReconciler.test.mjs shared/agents/prEstateCurrentHeadSafetyRegression.test.mjs scripts/pr-estate-reconcile.test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
