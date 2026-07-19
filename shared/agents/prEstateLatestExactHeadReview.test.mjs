@@ -103,21 +103,77 @@ test('same-sentence completed merge gate does not erase pending exact-head appro
   assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
 });
 
+test('completion in an until-clause does not erase the pending gate subject', () => {
+  const ledger = build([{
+    number: 7,
+    state: 'open',
+    title: 'Subject-scoped acceptance evidence',
+    body: 'Quest acceptance remains pending until desktop verification is completed.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('contracted acceptance negation remains pending', () => {
+  const ledger = build([{
+    number: 8,
+    state: 'open',
+    title: 'Contracted acceptance negation',
+    body: "Quest acceptance hasn't been completed.",
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('contracted approval negation remains pending', () => {
+  const ledger = build([{
+    number: 9,
+    state: 'open',
+    title: 'Contracted approval negation',
+    body: "Exact-head approval wasn't granted.",
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
+test('explicit unsupported disposition hints fail closed', () => {
+  const ledger = build([{
+    number: 12,
+    state: 'open',
+    title: 'Malformed disposition hint',
+    headSha: SOURCE_SHA,
+    dispositionHint: 'ACTIVE_CANONCAL',
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  assert.deepEqual(ledger.entries[0].blockers, ['invalid-disposition-hint']);
+  assert.equal(ledger.entries[0].evidence.invalidDispositionHint, true);
+});
+
 function buildSupersededLedger() {
   return build(
     [
       {
-        number: 10,
+        number: 20,
         state: 'open',
         title: 'Earlier implementation',
         headSha: SOURCE_SHA,
-        patchEquivalentTo: 11,
+        patchEquivalentTo: 21,
         supersessionSourceHeadSha: SOURCE_SHA,
-        supersessionTargetPr: 11,
+        supersessionTargetPr: 21,
         supersessionTargetHeadSha: CANONICAL_SHA,
       },
       {
-        number: 11,
+        number: 21,
         state: 'open',
         title: 'Canonical implementation',
         headSha: CANONICAL_SHA,
@@ -125,9 +181,9 @@ function buildSupersededLedger() {
     ],
     [{
       id: 'canonical-pair',
-      members: [10, 11],
-      canonicalPr: 11,
-      supersededBy: { 10: 11 },
+      members: [20, 21],
+      canonicalPr: 21,
+      supersededBy: { 20: 21 },
     }],
   );
 }
@@ -136,7 +192,7 @@ test('persisted supersession evidence must match the canonical ledger entry head
   const ledger = buildSupersededLedger();
   assert.equal(validatePrEstateLedger(ledger).valid, true);
 
-  const canonical = ledger.entries.find((entry) => entry.number === 11);
+  const canonical = ledger.entries.find((entry) => entry.number === 21);
   canonical.headSha = 'c'.repeat(40);
 
   const validation = validatePrEstateLedger(ledger);
@@ -147,7 +203,7 @@ test('persisted supersession evidence must match the canonical ledger entry head
 
 test('persisted supersession evidence fails closed when the canonical entry is missing', () => {
   const ledger = buildSupersededLedger();
-  ledger.entries = ledger.entries.filter((entry) => entry.number !== 11);
+  ledger.entries = ledger.entries.filter((entry) => entry.number !== 21);
 
   const validation = validatePrEstateLedger(ledger);
   assert.equal(validation.valid, false);
@@ -156,7 +212,7 @@ test('persisted supersession evidence fails closed when the canonical entry is m
 
 test('persisted ledgers reject duplicate canonical PR entries', () => {
   const ledger = buildSupersededLedger();
-  const canonical = ledger.entries.find((entry) => entry.number === 11);
+  const canonical = ledger.entries.find((entry) => entry.number === 21);
   canonical.headSha = 'c'.repeat(40);
   ledger.entries.push({
     ...canonical,
@@ -165,5 +221,5 @@ test('persisted ledgers reject duplicate canonical PR entries', () => {
 
   const validation = validatePrEstateLedger(ledger);
   assert.equal(validation.valid, false);
-  assert.match(validation.errors.join(' '), /duplicate-pr-number:11/);
+  assert.match(validation.errors.join(' '), /duplicate-pr-number:21/);
 });
