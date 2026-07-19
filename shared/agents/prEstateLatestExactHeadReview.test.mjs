@@ -145,9 +145,65 @@ test('contracted approval negation remains pending', () => {
   assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
 });
 
-test('explicit unsupported disposition hints fail closed', () => {
+test('contracted acceptance negation with yet remains pending', () => {
+  const ledger = build([{
+    number: 10,
+    state: 'open',
+    title: 'Contracted acceptance yet negation',
+    body: "Quest acceptance hasn't yet been completed.",
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('contracted approval negation with yet remains pending', () => {
+  const ledger = build([{
+    number: 11,
+    state: 'open',
+    title: 'Contracted approval yet negation',
+    body: "Exact-head approval wasn't yet granted.",
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
+test('demonstrative for another subject does not close acceptance', () => {
   const ledger = build([{
     number: 12,
+    state: 'open',
+    title: 'Demonstrative acceptance subject',
+    body: 'Quest acceptance remains pending until this desktop verification is completed.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('demonstrative for another subject does not close approval', () => {
+  const ledger = build([{
+    number: 13,
+    state: 'open',
+    title: 'Demonstrative approval subject',
+    body: 'Exact-head approval remains pending until this deployment verification is completed.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
+test('explicit unsupported disposition hints fail closed', () => {
+  const ledger = build([{
+    number: 14,
     state: 'open',
     title: 'Malformed disposition hint',
     headSha: SOURCE_SHA,
