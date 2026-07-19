@@ -9,6 +9,14 @@ export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'Codex Dispatch Queue Proof',
 ]);
 
+export const REQUIRED_EXACT_HEAD_WORKFLOW_PATHS = Object.freeze({
+  'OpenClaw GitHub Operator': '.github/workflows/openclaw-github-operator.yml',
+  'PR Clean Guard': '.github/workflows/pr-clean.yml',
+  'Build Stephanos UI': '.github/workflows/build-stephanos-ui.yml',
+  'Battle Bridge Publisher Proof': '.github/workflows/battle-bridge-publisher-proof.yml',
+  'Codex Dispatch Queue Proof': '.github/workflows/codex-dispatch-queue-proof.yml',
+});
+
 export const EXACT_HEAD_REVIEW_DECISION = Object.freeze({
   INVALID_INPUT: 'INVALID_INPUT',
   INELIGIBLE: 'INELIGIBLE',
@@ -165,6 +173,9 @@ function latestRunByWorkflow(workflowRuns, headSha, requiredWorkflows) {
     const name = text(run?.name);
     const runHead = text(run?.headSha ?? run?.head_sha);
     if (!requiredWorkflows.includes(name) || !sameSha(runHead, headSha)) continue;
+    const requiredPath = text(REQUIRED_EXACT_HEAD_WORKFLOW_PATHS[name]);
+    const runPath = text(run?.workflowPath ?? run?.path);
+    if (requiredPath && runPath !== requiredPath) continue;
     const prior = latestByName.get(name);
     const priorTime = asTime(prior?.updatedAt ?? prior?.updated_at ?? prior?.createdAt ?? prior?.created_at) ?? 0;
     const runTime = asTime(run?.updatedAt ?? run?.updated_at ?? run?.createdAt ?? run?.created_at) ?? 0;
@@ -206,6 +217,17 @@ function positiveCanonicalLaneSubjects(value) {
     for (const positiveMatch of segment.matchAll(POSITIVE_LANE_STATE_PATTERN)) {
       const phraseIndex = positiveMatch.index ?? 0;
       const phraseEnd = phraseIndex + positiveMatch[0].length;
+      const prefix = segment.slice(0, phraseIndex);
+      const passiveSupersession = prefix.match(/\bPR\s*#(\d+)\b\s+is\s+superseded\s+by\s+PR\s*#(\d+)\b\s*,?\s*(?:and\s+)?(?:is\s+)?(?:the\s+)?$/i);
+      if (passiveSupersession) {
+        subjects.push(Number(passiveSupersession[2]));
+        continue;
+      }
+      const activeSupersession = prefix.match(/\bPR\s*#(\d+)\b\s+supersedes\s+PR\s*#(\d+)\b\s+and\s+(?:remains\s+|is\s+)?(?:the\s+)?$/i);
+      if (activeSupersession) {
+        subjects.push(Number(activeSupersession[1]));
+        continue;
+      }
       const preceding = explicitReferences.filter(({ index }) => index < phraseIndex).at(-1);
       const following = explicitReferences.find(({ index }) => index >= phraseEnd);
       const subject = preceding ?? following ?? null;

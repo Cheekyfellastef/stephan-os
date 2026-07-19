@@ -38,7 +38,7 @@ From authenticated GitHub CLI, including branch-to-main compare evidence:
 npm run stephanos:pr-estate:reconcile -- --from-gh --compare --repository Cheekyfellastef/stephan-os --output tmp/pr-estate-ledger.json --human-output tmp/pr-estate-report.md
 ```
 
-The command is intentionally read-only. A reconciliation-required exit is expected until every family has a safe disposition.
+The command is intentionally read-only. A reconciliation-required exit is expected until every family has a safe disposition. GitHub collection requests one overflow sentinel and refuses to certify an estate above its 1,000-record bound.
 
 ## Cleanup protocol
 
@@ -61,4 +61,4 @@ The review coordinator treats comments as evidence only when the comment actor m
 
 Review receipts are causally ordered as well as head-bound. Every required workflow must have a successful exact-head completion timestamp, an external Codex receipt from the exact authenticated Codex GitHub App identity must be created strictly after the latest of those completions, and the durable coordinator receipt must follow that external receipt. Same-second issue comments are ordered by comment ID; a same-second review and issue comment are incomparable and fail closed until a later durable receipt exists. Plain-user aliases, lookalike actors and pre-proof or unauthenticated dispatch, receipt and escalation markers are ignored fail-closed.
 
-Every mandatory proof workflow runs for every pull-request head; path filtering may not make a required proof permanently absent. Coordinator mutation also requires the dedicated bounded coordinator secret and refuses the built-in workflow token fallback.
+Every mandatory proof workflow runs for every pull-request head; path filtering may not make a required proof permanently absent, and successful runs are bound to their source-controlled workflow paths rather than display names alone. Coordinator mutation also requires the dedicated bounded coordinator secret and refuses the built-in workflow token fallback.

@@ -9,6 +9,8 @@ import {
   validatePrEstateLedger,
 } from '../shared/agents/prEstateReconciler.mjs';
 
+const MAX_OPEN_PULL_REQUESTS = 1000;
+
 function valueAfter(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : '';
@@ -20,8 +22,11 @@ function ghJson(args) { return JSON.parse(gh(args)); }
 
 function collectFromGh(repository, includeCompare) {
   if (!repository) throw new Error('--repository owner/name is required with --from-gh');
-  const pullRequests = ghJson(['pr', 'list', '--repo', repository, '--state', 'open', '--limit', '1000', '--json', 'number,title,body,url,isDraft,headRefName,headRefOid,baseRefName,createdAt,updatedAt,mergeable,labels'])
+  const pullRequests = ghJson(['pr', 'list', '--repo', repository, '--state', 'open', '--limit', String(MAX_OPEN_PULL_REQUESTS + 1), '--json', 'number,title,body,url,isDraft,headRefName,headRefOid,baseRefName,createdAt,updatedAt,mergeable,labels'])
     .map((pr) => ({ ...pr, state: 'open' }));
+  if (pullRequests.length > MAX_OPEN_PULL_REQUESTS) {
+    throw new Error(`open PR estate exceeds ${MAX_OPEN_PULL_REQUESTS} records; refusing truncated collection`);
+  }
   if (!includeCompare) return pullRequests;
   return pullRequests.map((pr) => {
     const base = encodeURIComponent(pr.baseRefName || 'main');

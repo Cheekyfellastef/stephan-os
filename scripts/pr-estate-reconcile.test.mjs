@@ -28,6 +28,10 @@ function installFakeGh(directory) {
     "const mode = process.env.FAKE_GH_MODE || 'valid';",
     `const head = process.env.GH_HEAD_SHA || '${'a'.repeat(40)}';`,
     "if (args[0] === 'pr' && args[1] === 'list') {",
+    "  if (mode === 'overflow') {",
+    "    process.stdout.write(JSON.stringify(Array.from({ length: 1001 }, (_, index) => ({ number: index + 1 }))));",
+    '    process.exit(0);',
+    '  }',
     '  process.stdout.write(JSON.stringify([{',
     '    number: 101,',
     "    title: 'Contained test PR',",
@@ -149,4 +153,23 @@ test('CLI aborts compare collection when the captured head SHA is invalid', () =
   assert.equal(result.status, 2);
   assert.match(result.stderr, /captured headRefOid is missing or invalid/);
   assert.equal(existsSync(capture), false);
+});
+
+test('CLI refuses a truncated open PR estate', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'stephanos-pr-estate-overflow-'));
+  const fakeGhEnv = installFakeGh(directory);
+  const families = join(directory, 'families.json');
+  writeJson(families, { families: [] });
+
+  const result = runCli(['--from-gh', '--repository', 'owner/repo', '--families', families], {
+    env: {
+      PATH: `${directory}${delimiter}${process.env.PATH || ''}`,
+      ...fakeGhEnv,
+      FAKE_GH_MODE: 'overflow',
+    },
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /open PR estate exceeds 1000 records; refusing truncated collection/);
+  assert.doesNotMatch(result.stdout, /PR_ESTATE_CONTROLLED/);
 });

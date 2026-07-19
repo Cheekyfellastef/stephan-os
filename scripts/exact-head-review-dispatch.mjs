@@ -142,6 +142,7 @@ function mapWorkflowRun(run) {
   return {
     id: run?.id ?? null,
     name: text(run?.name),
+    workflowPath: text(run?.path),
     headSha: text(run?.head_sha),
     status: text(run?.status),
     conclusion: text(run?.conclusion),

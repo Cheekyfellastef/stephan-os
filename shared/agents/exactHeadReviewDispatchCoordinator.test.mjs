@@ -6,6 +6,7 @@ import {
   EXACT_HEAD_REVIEW_DECISION,
   EXACT_HEAD_REVIEW_MARKERS,
   REQUIRED_EXACT_HEAD_WORKFLOWS,
+  REQUIRED_EXACT_HEAD_WORKFLOW_PATHS,
   buildMissingReceiptEscalationComment,
   buildReviewDispatchComment,
   buildReviewReceiptComment,
@@ -30,6 +31,7 @@ function successfulRuns(headSha = HEAD) {
   return REQUIRED_EXACT_HEAD_WORKFLOWS.map((name, index) => ({
     id: index + 1,
     name,
+    workflowPath: REQUIRED_EXACT_HEAD_WORKFLOW_PATHS[name],
     headSha,
     status: 'completed',
     conclusion: 'success',
@@ -95,6 +97,22 @@ test('blocks review dispatch when a required workflow fails', () => {
   const result = evaluateExactHeadReviewDispatch(baseInput({ workflowRuns: runs }));
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_WORKFLOWS);
   assert.deepEqual(result.failedWorkflows, [REQUIRED_EXACT_HEAD_WORKFLOWS[4]]);
+});
+
+test('binds required workflow proofs to source-controlled workflow paths', () => {
+  const runs = successfulRuns();
+  const requiredName = REQUIRED_EXACT_HEAD_WORKFLOWS[1];
+  runs[1] = { ...runs[1], conclusion: 'failure', updatedAt: '2026-07-19T16:20:00Z' };
+  runs.push({
+    ...runs[1],
+    id: 99,
+    workflowPath: '.github/workflows/lookalike-pr-clean.yml',
+    conclusion: 'success',
+    updatedAt: '2026-07-19T16:29:00Z',
+  });
+  const result = evaluateExactHeadReviewDispatch(baseInput({ workflowRuns: runs }));
+  assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_WORKFLOWS);
+  assert.deepEqual(result.failedWorkflows, [requiredName]);
 });
 
 test('ignores dispatch and review evidence tied to an older head', () => {
@@ -220,6 +238,12 @@ test('recognizes explicit auto markers and bounded canonical controller receipts
   assert.equal(isCanonicalReviewLaneComment(trustedComment(
     'Programme Completion Controller\nPR #1558 is superseded by PR #1559, the sole canonical implementation lane.',
   ), options), true);
+  assert.equal(isCanonicalReviewLaneComment(trustedComment(
+    'Programme Completion Controller\nPR #1559 supersedes PR #1558 and is the sole canonical implementation lane.',
+  ), options), true);
+  assert.equal(isCanonicalReviewLaneComment(trustedComment(
+    'Programme Completion Controller\nPR #1559 supersedes PR #1558 and is the sole canonical implementation lane.',
+  ), { ...options, prNumber: 1558 }), false);
 
   const evidence = canonicalLaneEvidence([
     { id: 1, body: 'unrelated', createdAt: '2026-07-19T10:00:00Z', user: { login: TRUSTED_COORDINATOR } },
