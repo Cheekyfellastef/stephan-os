@@ -23,25 +23,54 @@ const CONTROLLED_DISPOSITION_HINTS = new Set([
 ]);
 
 export function normalizePr(input = {}, recordIndex = 0) {
-  const number = asPositiveInteger(input.number ?? input.prNumber, null);
-  const headSha = asText(input.headSha ?? input.headRefOid ?? input.head_sha, '');
-  const exactHeadKnown = FULL_SHA_PATTERN.test(headSha);
-
+  const numberField = readAliasedField(input, ['number', 'prNumber']);
+  const headField = readAliasedField(input, ['headSha', 'headRefOid', 'head_sha']);
   const aheadField = readAliasedField(input, ['aheadBy', 'ahead_by']);
   const behindField = readAliasedField(input, ['behindBy', 'behind_by']);
   const containedField = readAliasedField(input, ['headContainedInBase']);
   const comparedHeadField = readAliasedField(input, ['comparedHeadSha', 'compared_head_sha']);
+  const uniqueDeltaField = readAliasedField(input, ['uniqueDelta']);
+  const dispositionHintField = readAliasedField(input, ['dispositionHint']);
+  const supersessionSourceField = readAliasedField(input, [
+    'supersessionSourceHeadSha',
+    'comparedSourceHeadSha',
+    'supersession_source_head_sha',
+  ]);
+  const supersessionTargetPrField = readAliasedField(input, [
+    'supersessionTargetPr',
+    'comparedCanonicalPr',
+    'supersession_target_pr',
+  ]);
+  const supersessionTargetHeadField = readAliasedField(input, [
+    'supersessionTargetHeadSha',
+    'comparedCanonicalHeadSha',
+    'supersession_target_head_sha',
+  ]);
+
+  const number = asPositiveInteger(numberField.value, null);
+  const headSha = asText(headField.value, '');
+  const exactHeadKnown = FULL_SHA_PATTERN.test(headSha);
   const aheadBy = asInteger(aheadField.value, null);
   const behindBy = asInteger(behindField.value, null);
   const explicitContained = asBooleanOrNull(containedField.value);
   const comparedHeadSha = asText(comparedHeadField.value, '');
-  const invalidAheadBy = aheadField.present && (!Number.isInteger(aheadBy) || aheadBy < 0);
-  const invalidBehindBy = behindField.present && (!Number.isInteger(behindBy) || behindBy < 0);
-  const invalidHeadContainedInBase = containedField.present && typeof containedField.value !== 'boolean';
+  const uniqueDelta = asBooleanOrNull(uniqueDeltaField.value);
+
+  const identityAliasConflict = numberField.conflicting || headField.conflicting;
   const comparisonAliasConflict = aheadField.conflicting
     || behindField.conflicting
     || containedField.conflicting
     || comparedHeadField.conflicting;
+  const supersessionAliasConflict = supersessionSourceField.conflicting
+    || supersessionTargetPrField.conflicting
+    || supersessionTargetHeadField.conflicting;
+  const evidenceAliasConflict = identityAliasConflict
+    || comparisonAliasConflict
+    || supersessionAliasConflict;
+
+  const invalidAheadBy = aheadField.present && (!Number.isInteger(aheadBy) || aheadBy < 0);
+  const invalidBehindBy = behindField.present && (!Number.isInteger(behindBy) || behindBy < 0);
+  const invalidHeadContainedInBase = containedField.present && typeof containedField.value !== 'boolean';
   const comparisonEvidencePresent = aheadField.present || behindField.present || containedField.present;
   const comparisonEvidenceInvalid = invalidAheadBy
     || invalidBehindBy
@@ -64,15 +93,12 @@ export function normalizePr(input = {}, recordIndex = 0) {
   const headContainedInBase = compareKnown
     && (explicitContained === true || (explicitContained === null && aheadBy === 0));
 
-  const uniqueDeltaField = readAliasedField(input, ['uniqueDelta']);
-  const uniqueDelta = asBooleanOrNull(uniqueDeltaField.value);
   const invalidUniqueDelta = uniqueDeltaField.present && typeof uniqueDeltaField.value !== 'boolean';
-
-  const dispositionHintField = readAliasedField(input, ['dispositionHint']);
   const dispositionHint = VALID_DISPOSITIONS.has(dispositionHintField.value)
     ? dispositionHintField.value
     : '';
-  const invalidDispositionHint = dispositionHintField.present && !VALID_DISPOSITIONS.has(dispositionHintField.value);
+  const invalidDispositionHint = dispositionHintField.present
+    && !VALID_DISPOSITIONS.has(dispositionHintField.value);
 
   return {
     recordIndex,
@@ -98,7 +124,10 @@ export function normalizePr(input = {}, recordIndex = 0) {
     comparisonEvidencePresent,
     compareKnown,
     comparisonEvidenceInvalid,
+    evidenceAliasConflict,
+    identityAliasConflict,
     comparisonAliasConflict,
+    supersessionAliasConflict,
     invalidAheadBy,
     invalidBehindBy,
     invalidHeadContainedInBase,
@@ -110,9 +139,9 @@ export function normalizePr(input = {}, recordIndex = 0) {
     patchEquivalentTo: asPositiveInteger(input.patchEquivalentTo, null),
     uniqueDelta,
     invalidUniqueDelta,
-    supersessionSourceHeadSha: asText(input.supersessionSourceHeadSha ?? input.comparedSourceHeadSha ?? input.supersession_source_head_sha, ''),
-    supersessionTargetPr: asPositiveInteger(input.supersessionTargetPr ?? input.comparedCanonicalPr ?? input.supersession_target_pr, null),
-    supersessionTargetHeadSha: asText(input.supersessionTargetHeadSha ?? input.comparedCanonicalHeadSha ?? input.supersession_target_head_sha, ''),
+    supersessionSourceHeadSha: asText(supersessionSourceField.value, ''),
+    supersessionTargetPr: asPositiveInteger(supersessionTargetPrField.value, null),
+    supersessionTargetHeadSha: asText(supersessionTargetHeadField.value, ''),
     activeHint: input.activeHint === true,
     dispositionHint,
     invalidDispositionHint,
@@ -153,6 +182,7 @@ export function classifyPr(pr, family, canonicalRecord) {
   const canonicalPr = family?.canonicalPr ?? null;
   const familySize = family?.members?.length ?? 1;
 
+  if (pr.evidenceAliasConflict) return ambiguous('evidence aliases contain conflicting values', 'conflicting-evidence-alias');
   if (pr.number === null || pr.state !== 'open') return ambiguous(pr.number === null ? 'missing valid PR number' : `expected open PR evidence, received state=${pr.state}`, 'invalid-or-non-open-pr-record');
   if (pr.invalidDispositionHint) return ambiguous('disposition hint is present but unsupported', 'invalid-disposition-hint');
   if (pr.comparisonEvidenceInvalid || pr.invalidUniqueDelta) return ambiguous('evidence contains a malformed value', 'invalid-comparison-evidence');
@@ -241,7 +271,10 @@ export function evidenceFor(pr, family, placeholder, canonicalRecord) {
     exactHeadKnown: pr.exactHeadKnown,
     headSha: pr.headSha,
     comparisonEvidenceInvalid: pr.comparisonEvidenceInvalid,
+    evidenceAliasConflict: pr.evidenceAliasConflict,
+    identityAliasConflict: pr.identityAliasConflict,
     comparisonAliasConflict: pr.comparisonAliasConflict,
+    supersessionAliasConflict: pr.supersessionAliasConflict,
     invalidAheadBy: pr.invalidAheadBy,
     invalidBehindBy: pr.invalidBehindBy,
     invalidHeadContainedInBase: pr.invalidHeadContainedInBase,
