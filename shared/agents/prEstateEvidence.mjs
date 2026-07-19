@@ -1,7 +1,9 @@
 import {
   ACCEPTANCE_COMPLETE_PATTERN,
+  ACCEPTANCE_NEGATED_COMPLETE_PATTERN,
   ACCEPTANCE_PENDING_PATTERN,
   APPROVAL_COMPLETE_PATTERN,
+  APPROVAL_NEGATED_COMPLETE_PATTERN,
   APPROVAL_PENDING_PATTERN,
   FULL_SHA_PATTERN,
   PLACEHOLDER_PATTERN,
@@ -15,6 +17,12 @@ import {
   normalizeLabels,
   readAliasedField,
 } from './prEstateContracts.mjs';
+
+const CONTROLLED_DISPOSITION_HINTS = new Set([
+  PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  PR_DISPOSITIONS.WAITING_ACCEPTANCE,
+  PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL,
+]);
 
 export function normalizePr(input = {}, recordIndex = 0) {
   const number = asPositiveInteger(input.number ?? input.prNumber, null);
@@ -126,8 +134,12 @@ function supersessionProof(pr, targetPr, canonicalRecord) {
 export function classifyPr(pr, family, canonicalRecord) {
   const bodyAndTitle = `${pr.title}\n${pr.body}`;
   const placeholder = PLACEHOLDER_PATTERN.test(bodyAndTitle);
-  const acceptanceGate = ACCEPTANCE_PENDING_PATTERN.test(bodyAndTitle) && !ACCEPTANCE_COMPLETE_PATTERN.test(bodyAndTitle);
-  const approvalGate = APPROVAL_PENDING_PATTERN.test(bodyAndTitle) && !APPROVAL_COMPLETE_PATTERN.test(bodyAndTitle);
+  const acceptanceNegatedComplete = ACCEPTANCE_NEGATED_COMPLETE_PATTERN.test(bodyAndTitle);
+  const approvalNegatedComplete = APPROVAL_NEGATED_COMPLETE_PATTERN.test(bodyAndTitle);
+  const acceptanceGate = acceptanceNegatedComplete
+    || (ACCEPTANCE_PENDING_PATTERN.test(bodyAndTitle) && !ACCEPTANCE_COMPLETE_PATTERN.test(bodyAndTitle));
+  const approvalGate = approvalNegatedComplete
+    || (APPROVAL_PENDING_PATTERN.test(bodyAndTitle) && !APPROVAL_COMPLETE_PATTERN.test(bodyAndTitle));
   const explicitSupersededBy = family?.supersededBy?.[pr.number] ?? null;
   const canonicalPr = family?.canonicalPr ?? null;
   const familySize = family?.members?.length ?? 1;
@@ -139,6 +151,9 @@ export function classifyPr(pr, family, canonicalRecord) {
   if (pr.containmentContradiction) return ambiguous('compare evidence contradicts explicit containment evidence', 'contradictory-containment-evidence');
 
   if (pr.dispositionHint) {
+    if (CONTROLLED_DISPOSITION_HINTS.has(pr.dispositionHint) && canonicalPr !== null && canonicalPr !== pr.number) {
+      return ambiguous(`controlled disposition hint conflicts with configured canonical PR #${canonicalPr}`, 'noncanonical-controlled-disposition-hint');
+    }
     if (pr.dispositionHint === PR_DISPOSITIONS.ALREADY_IN_MAIN) {
       if (!pr.compareKnown || !pr.headContainedInBase || pr.uniqueDelta === true) return ambiguous('already-in-main hint lacks exact non-conflicting containment evidence', 'containment-evidence-required');
     }
