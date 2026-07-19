@@ -38,8 +38,15 @@ export function normalizePr(input = {}, recordIndex = 0) {
   const invalidAheadBy = aheadField.present && (!Number.isInteger(aheadBy) || aheadBy < 0);
   const invalidBehindBy = behindField.present && (!Number.isInteger(behindBy) || behindBy < 0);
   const invalidHeadContainedInBase = containedField.present && typeof containedField.value !== 'boolean';
+  const comparisonAliasConflict = aheadField.conflicting
+    || behindField.conflicting
+    || containedField.conflicting
+    || comparedHeadField.conflicting;
   const comparisonEvidencePresent = aheadField.present || behindField.present || containedField.present;
-  const comparisonEvidenceInvalid = invalidAheadBy || invalidBehindBy || invalidHeadContainedInBase;
+  const comparisonEvidenceInvalid = invalidAheadBy
+    || invalidBehindBy
+    || invalidHeadContainedInBase
+    || comparisonAliasConflict;
   const comparisonHeadKnown = FULL_SHA_PATTERN.test(comparedHeadSha);
   const comparisonHeadMatches = comparisonEvidencePresent
     && exactHeadKnown
@@ -91,6 +98,7 @@ export function normalizePr(input = {}, recordIndex = 0) {
     comparisonEvidencePresent,
     compareKnown,
     comparisonEvidenceInvalid,
+    comparisonAliasConflict,
     invalidAheadBy,
     invalidBehindBy,
     invalidHeadContainedInBase,
@@ -233,6 +241,7 @@ export function evidenceFor(pr, family, placeholder, canonicalRecord) {
     exactHeadKnown: pr.exactHeadKnown,
     headSha: pr.headSha,
     comparisonEvidenceInvalid: pr.comparisonEvidenceInvalid,
+    comparisonAliasConflict: pr.comparisonAliasConflict,
     invalidAheadBy: pr.invalidAheadBy,
     invalidBehindBy: pr.invalidBehindBy,
     invalidHeadContainedInBase: pr.invalidHeadContainedInBase,
