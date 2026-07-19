@@ -154,6 +154,12 @@ export function classifyPr(pr, family, canonicalRecord) {
     if (CONTROLLED_DISPOSITION_HINTS.has(pr.dispositionHint) && canonicalPr !== null && canonicalPr !== pr.number) {
       return ambiguous(`controlled disposition hint conflicts with configured canonical PR #${canonicalPr}`, 'noncanonical-controlled-disposition-hint');
     }
+    if (CONTROLLED_DISPOSITION_HINTS.has(pr.dispositionHint) && acceptanceGate) {
+      return { disposition: PR_DISPOSITIONS.WAITING_ACCEPTANCE, reason: 'outstanding acceptance gate overrides controlled disposition hint', blockers: ['acceptance-proof-required'] };
+    }
+    if (CONTROLLED_DISPOSITION_HINTS.has(pr.dispositionHint) && approvalGate) {
+      return { disposition: PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL, reason: 'outstanding operator approval gate overrides controlled disposition hint', blockers: ['operator-approval-required'] };
+    }
     if (pr.dispositionHint === PR_DISPOSITIONS.ALREADY_IN_MAIN) {
       if (!pr.compareKnown || !pr.headContainedInBase || pr.uniqueDelta === true) return ambiguous('already-in-main hint lacks exact non-conflicting containment evidence', 'containment-evidence-required');
     }
