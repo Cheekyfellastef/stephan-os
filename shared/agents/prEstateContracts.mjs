@@ -22,8 +22,10 @@ export const PLACEHOLDER_PATTERN = /codex generated this pull request, but encou
 export const GENERIC_PLACEHOLDER_TITLE_KEY = 'codex generated pull request';
 export const ACCEPTANCE_PENDING_PATTERN = /(?:acceptance|live proof|browser proof)[^\n]{0,120}(?:required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not yet)|(?:required|pending|awaiting|outstanding|needed|not yet)[^\n]{0,120}(?:acceptance|live proof|browser proof)/i;
 export const ACCEPTANCE_COMPLETE_PATTERN = /(?:acceptance|live proof|browser proof)[^\n]{0,120}(?:passed|complete(?:d)?|satisfied|verified|done)|(?:passed|complete(?:d)?|satisfied|verified|done)[^\n]{0,120}(?:acceptance|live proof|browser proof)/i;
+export const ACCEPTANCE_NEGATED_COMPLETE_PATTERN = /(?:acceptance|live proof|browser proof)[^\n]{0,120}\b(?:not(?:\s+yet)?|never)\s+(?:been\s+)?(?:passed|complete(?:d)?|satisfied|verified|done)|\b(?:not(?:\s+yet)?|never)\s+(?:been\s+)?(?:passed|complete(?:d)?|satisfied|verified|done)[^\n]{0,120}(?:acceptance|live proof|browser proof)/i;
 export const APPROVAL_PENDING_PATTERN = /do not merge without[^\n]{0,120}approval|(?:approval)[^\n]{0,120}(?:required|pending|awaiting|outstanding|remain(?:s|ing)?|not yet)|(?:required|pending|awaiting|outstanding|remain(?:s|ing)?|not yet)[^\n]{0,120}(?:operator|exact[- ]head|explicit)?[^\n]{0,40}approval/i;
 export const APPROVAL_COMPLETE_PATTERN = /(?:approval|merge gate)[^\n]{0,120}(?:granted|complete(?:d)?|satisfied|approved|done)|(?:granted|complete(?:d)?|satisfied|approved|done)[^\n]{0,120}(?:approval|merge gate)/i;
+export const APPROVAL_NEGATED_COMPLETE_PATTERN = /(?:approval|merge gate)[^\n]{0,120}\b(?:not(?:\s+yet)?|never)\s+(?:been\s+)?(?:granted|complete(?:d)?|satisfied|approved|done)|\b(?:not(?:\s+yet)?|never)\s+(?:been\s+)?(?:granted|complete(?:d)?|satisfied|approved|done)[^\n]{0,120}(?:approval|merge gate)/i;
 export const SAFE_FAMILY_ID = /^[a-z0-9][a-z0-9-]{0,100}$/;
 export const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
