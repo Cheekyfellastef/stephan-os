@@ -1,5 +1,6 @@
 const GATE_SEGMENT_SPLIT_PATTERN = /(?<=[.!?])\s+|\n+|\s*;\s*|\s+(?:while|whereas|but|and)\s+/i;
 const HISTORICAL_GATE_PATTERN = /\b(?:prior|previous|earlier)\b/i;
+const FUTURE_CONDITION_PATTERN = /\b(?:until|unless|once|when|after|before)\b/i;
 
 const ACCEPTANCE_GATE_TERMS = [
   /\bacceptance\b/i,
@@ -56,6 +57,7 @@ const APPROVAL_GATE_DEFINITIONS = gateDefinitions(APPROVAL_GATE_TERMS, {
 });
 
 function isExplicitSameGateCompletion(segment, definition, { specialPending = false } = {}) {
+  if (FUTURE_CONDITION_PATTERN.test(segment)) return false;
   if (definition.negatedCompleted.test(segment) || !definition.completed.test(segment)) return false;
   if (hasSameGateReference(segment, definition.term)) return true;
   return specialPending && HISTORICAL_GATE_PATTERN.test(segment);
