@@ -127,8 +127,7 @@ export function isCanonicalReviewLaneComment(body) {
   if (!value) return false;
   if (value.includes(`<!-- ${EXACT_HEAD_REVIEW_MARKERS.AUTO}`)) return true;
   if (!/Programme Completion Controller/i.test(value)) return false;
-  if (/\bnon-canonical\b|\bqueued behind\b|\bqueued until\b/i.test(value)) return false;
-  return /sole active implementation lane|canonical implementation lane|canonical-lane receipt|active lane:\s*PR\s*#/i.test(value);
+  return /sole active implementation lane|sole canonical implementation lane|canonical implementation lane|canonical-lane receipt|active lane:\s*PR\s*#/i.test(value);
 }
 
 export function canonicalLaneEvidence(comments = []) {
