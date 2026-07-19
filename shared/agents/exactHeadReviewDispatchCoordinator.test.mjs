@@ -497,6 +497,7 @@ test('wires the trusted coordinator identity through the runner and trusted work
 test('runs every required proof workflow for every pull request head', () => {
   const workflowPaths = [
     '../../.github/workflows/openclaw-github-operator.yml',
+    '../../.github/workflows/pr-clean.yml',
     '../../.github/workflows/build-stephanos-ui.yml',
     '../../.github/workflows/battle-bridge-publisher-proof.yml',
     '../../.github/workflows/codex-dispatch-queue-proof.yml',
@@ -512,6 +513,11 @@ test('runs every required proof workflow for every pull request head', () => {
       block.push(line);
     }
     assert.doesNotMatch(block.join('\n'), /^\s+paths:\s*$/m, `${path} must not path-filter required PR proof`);
+    assert.match(
+      source,
+      /ref:\s*\$\{\{[^\n]*github\.event\.pull_request\.head\.sha/,
+      `${path} must check out the exact pull request head`,
+    );
   }
 });
 
