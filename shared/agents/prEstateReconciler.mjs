@@ -181,11 +181,15 @@ export function validatePrEstateLedger(ledger = {}) {
   if (!Array.isArray(ledger.families)) errors.push('families-missing');
   if (!Array.isArray(ledger.recoveryQueue)) errors.push('recovery-queue-missing');
 
-  const entryByNumber = new Map(
-    (ledger.entries || [])
-      .filter((entry) => Number.isInteger(entry?.number))
-      .map((entry) => [entry.number, entry]),
-  );
+  const entryByNumber = new Map();
+  for (const entry of ledger.entries || []) {
+    if (!Number.isInteger(entry?.number)) continue;
+    if (entryByNumber.has(entry.number)) {
+      errors.push(`duplicate-pr-number:${entry.number}`);
+      continue;
+    }
+    entryByNumber.set(entry.number, entry);
+  }
 
   for (const entry of ledger.entries || []) {
     const identity = entry.number ?? `record-${entry.recordIndex ?? 'unknown'}`;
