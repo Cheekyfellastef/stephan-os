@@ -221,16 +221,23 @@ export function validatePrEstateLedger(ledger = {}) {
     }
 
     if (entry.disposition === PR_DISPOSITIONS.SUPERSEDED) {
-      const target = evidence.explicitSupersededBy ?? entry.canonicalPr;
+      const canonicalTarget = entry.canonicalPr;
+      const explicitTarget = evidence.explicitSupersededBy ?? null;
       if (evidence.uniqueDelta === true) errors.push(`superseded-with-unique-delta:${identity}`);
-      if (!target) errors.push(`superseded-without-canonical:${identity}`);
-      if (!(evidence.patchEquivalentTo === target || evidence.uniqueDelta === false)) {
+      if (!canonicalTarget) errors.push(`superseded-without-canonical:${identity}`);
+      if (evidence.familyCanonicalPr !== undefined && evidence.familyCanonicalPr !== null && evidence.familyCanonicalPr !== canonicalTarget) {
+        errors.push(`superseded-with-family-canonical-mismatch:${identity}`);
+      }
+      if (explicitTarget !== null && explicitTarget !== canonicalTarget) {
+        errors.push(`superseded-target-not-canonical:${identity}`);
+      }
+      if (!(evidence.patchEquivalentTo === canonicalTarget || evidence.uniqueDelta === false)) {
         errors.push(`superseded-without-equivalence:${identity}`);
       }
       if (!sameSha(evidence.supersessionSourceHeadSha, entry.headSha)) {
         errors.push(`superseded-without-current-source-head:${identity}`);
       }
-      if (evidence.supersessionTargetPr !== target) {
+      if (evidence.supersessionTargetPr !== canonicalTarget) {
         errors.push(`superseded-with-wrong-target-pr:${identity}`);
       }
       if (!sameSha(evidence.supersessionTargetHeadSha, evidence.canonicalCurrentHeadSha)) {
