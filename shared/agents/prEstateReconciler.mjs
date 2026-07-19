@@ -181,6 +181,12 @@ export function validatePrEstateLedger(ledger = {}) {
   if (!Array.isArray(ledger.families)) errors.push('families-missing');
   if (!Array.isArray(ledger.recoveryQueue)) errors.push('recovery-queue-missing');
 
+  const entryByNumber = new Map(
+    (ledger.entries || [])
+      .filter((entry) => Number.isInteger(entry?.number))
+      .map((entry) => [entry.number, entry]),
+  );
+
   for (const entry of ledger.entries || []) {
     const identity = entry.number ?? `record-${entry.recordIndex ?? 'unknown'}`;
     const evidence = entry.evidence || {};
@@ -223,6 +229,7 @@ export function validatePrEstateLedger(ledger = {}) {
     if (entry.disposition === PR_DISPOSITIONS.SUPERSEDED) {
       const canonicalTarget = entry.canonicalPr;
       const explicitTarget = evidence.explicitSupersededBy ?? null;
+      const canonicalEntry = Number.isInteger(canonicalTarget) ? entryByNumber.get(canonicalTarget) : null;
       if (evidence.uniqueDelta === true) errors.push(`superseded-with-unique-delta:${identity}`);
       if (!canonicalTarget) errors.push(`superseded-without-canonical:${identity}`);
       if (evidence.familyCanonicalPr !== undefined && evidence.familyCanonicalPr !== null && evidence.familyCanonicalPr !== canonicalTarget) {
@@ -240,8 +247,15 @@ export function validatePrEstateLedger(ledger = {}) {
       if (evidence.supersessionTargetPr !== canonicalTarget) {
         errors.push(`superseded-with-wrong-target-pr:${identity}`);
       }
-      if (!sameSha(evidence.supersessionTargetHeadSha, evidence.canonicalCurrentHeadSha)) {
-        errors.push(`superseded-without-current-target-head:${identity}`);
+      if (!canonicalEntry) {
+        errors.push(`superseded-canonical-entry-missing:${identity}`);
+      } else {
+        if (!sameSha(evidence.supersessionTargetHeadSha, canonicalEntry.headSha)) {
+          errors.push(`superseded-without-current-target-head:${identity}`);
+        }
+        if (!sameSha(evidence.canonicalCurrentHeadSha, canonicalEntry.headSha)) {
+          errors.push(`superseded-with-stale-canonical-evidence:${identity}`);
+        }
       }
     }
   }
