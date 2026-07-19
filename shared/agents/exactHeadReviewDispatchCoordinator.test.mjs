@@ -156,6 +156,12 @@ test('recognizes explicit auto markers and bounded canonical controller receipts
   assert.equal(isCanonicalReviewLaneComment(`<!-- ${EXACT_HEAD_REVIEW_MARKERS.AUTO} -->`), true);
   assert.equal(isCanonicalReviewLaneComment('Programme Completion Controller canonical-lane receipt\nThis PR is the sole active implementation lane.'), true);
   assert.equal(isCanonicalReviewLaneComment('Programme Completion Controller\nThis PR remains draft and non-canonical.'), false);
+  assert.equal(isCanonicalReviewLaneComment([
+    'Programme Completion Controller canonical-lane receipt',
+    'This PR is the sole active implementation lane.',
+    'PR #1555 remains draft and non-canonical.',
+    'Issue #1418 is queued until this lane reaches terminal state.',
+  ].join('\n')), true);
 
   const evidence = canonicalLaneEvidence([
     { id: 1, body: 'unrelated', createdAt: '2026-07-19T10:00:00Z' },
