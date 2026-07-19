@@ -216,6 +216,20 @@ test('fails closed without canonical lane evidence or for an external head repos
   assert.equal(fork.decision, EXACT_HEAD_REVIEW_DECISION.INELIGIBLE);
 });
 
+test('requires explicit PR identity and eligibility evidence', () => {
+  for (const number of [null, '', 0, -1, 1.5]) {
+    const result = evaluateExactHeadReviewDispatch(baseInput({ pr: { ...baseInput().pr, number } }));
+    assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.INVALID_INPUT);
+  }
+
+  for (const field of ['sameRepository', 'state', 'baseRef']) {
+    const pr = { ...baseInput().pr };
+    delete pr[field];
+    const result = evaluateExactHeadReviewDispatch(baseInput({ pr }));
+    assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.INELIGIBLE);
+  }
+});
+
 test('recognizes explicit auto markers and bounded canonical controller receipts only', () => {
   const options = { prNumber: 1559, trustedCoordinatorLogin: TRUSTED_COORDINATOR };
   const trustedComment = (body) => ({ body, user: { login: TRUSTED_COORDINATOR } });
@@ -300,6 +314,25 @@ test('a later trusted controller revocation supersedes stale canonical-lane evid
   assert.equal(evidence.confirmed, false);
   assert.equal(evidence.revoked, true);
   assert.equal(evidence.commentId, 74);
+});
+
+test('an explicit trusted reassignment revokes the previously active lane', () => {
+  const options = { prNumber: 1559, trustedCoordinatorLogin: TRUSTED_COORDINATOR };
+  const evidence = canonicalLaneEvidence([
+    coordinatorComment({
+      id: 75,
+      body: 'Programme Completion Controller\nActive lane: PR #1559',
+      createdAt: '2026-07-19T16:04:00Z',
+    }),
+    coordinatorComment({
+      id: 76,
+      body: 'Programme Completion Controller\nActive lane: PR #1560',
+      createdAt: '2026-07-19T16:05:00Z',
+    }),
+  ], options);
+  assert.equal(evidence.confirmed, false);
+  assert.equal(evidence.revoked, true);
+  assert.equal(evidence.commentId, 76);
 });
 
 test('manual PR numbers accept only safe positive decimal digits', () => {
@@ -485,4 +518,8 @@ test('renders exact-head dispatch, receipt and escalation comments with durable 
   const escalation = buildMissingReceiptEscalationComment({ prNumber: 1559, headSha: HEAD, timeoutMinutes: 10, dispatchCommentId: 40 });
   assert.match(escalation, new RegExp(EXACT_HEAD_REVIEW_MARKERS.ESCALATION));
   assert.match(escalation, /Duplicate review dispatch is rejected/);
+
+  assert.throws(() => buildReviewDispatchComment({ prNumber: 0, headSha: HEAD }), /valid PR number/);
+  assert.throws(() => buildReviewReceiptComment({ prNumber: -1, headSha: HEAD }), /valid PR number/);
+  assert.throws(() => buildMissingReceiptEscalationComment({ prNumber: '', headSha: HEAD }), /valid PR number/);
 });

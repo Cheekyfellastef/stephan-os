@@ -1,5 +1,5 @@
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.4';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.5';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -248,7 +248,7 @@ function canonicalReviewLaneCommentState(comment, { prNumber: candidatePrNumber,
   if (!/sole active implementation lane|single active(?: GitHub)? implementation lane|sole canonical implementation lane|canonical implementation lane|canonical-lane receipt|active lane:\s*PR\s*#/i.test(value)) return null;
 
   const referencedPrs = positiveCanonicalLaneSubjects(value);
-  if (referencedPrs.length) return referencedPrs.every((reference) => reference === prNumber) || null;
+  if (referencedPrs.length) return referencedPrs.every((reference) => reference === prNumber);
   return SELF_REFERENTIAL_LANE_PATTERN.test(value) || null;
 }
 
@@ -275,6 +275,7 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
   const nowMs = asTime(input.now ?? new Date().toISOString());
   const pr = input.pr || {};
   const headSha = text(pr.headSha ?? pr.head_sha).toLowerCase();
+  const candidatePrNumber = Number(pr.number);
   const requiredWorkflows = Array.isArray(input.requiredWorkflows) && input.requiredWorkflows.length
     ? [...new Set(input.requiredWorkflows.map((value) => text(value)).filter(Boolean))]
     : [...REQUIRED_EXACT_HEAD_WORKFLOWS];
@@ -285,7 +286,7 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
   const base = {
     schemaVersion: EXACT_HEAD_REVIEW_DISPATCH_SCHEMA,
     version: EXACT_HEAD_REVIEW_DISPATCH_VERSION,
-    prNumber: Number.isInteger(Number(pr.number)) ? Number(pr.number) : null,
+    prNumber: Number.isSafeInteger(candidatePrNumber) && candidatePrNumber > 0 ? candidatePrNumber : null,
     exactHead: headSha,
     requiredWorkflows,
     actionRequired: false,
@@ -300,9 +301,9 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
   }
 
   const canonicalConfirmed = input.canonicalLaneConfirmed === true;
-  const sameRepository = pr.sameRepository !== false;
-  const open = text(pr.state, 'open').toLowerCase() === 'open';
-  const baseRef = text(pr.baseRef ?? pr.base_ref, 'main');
+  const sameRepository = pr.sameRepository === true;
+  const open = text(pr.state).toLowerCase() === 'open';
+  const baseRef = text(pr.baseRef ?? pr.base_ref);
   if (!canonicalConfirmed || !sameRepository || !open || baseRef !== 'main') {
     return Object.freeze({
       ...base,
@@ -434,7 +435,7 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
 
 export function buildReviewDispatchComment({ prNumber, headSha, workflowNames = REQUIRED_EXACT_HEAD_WORKFLOWS } = {}) {
   const head = text(headSha).toLowerCase();
-  if (!Number.isInteger(Number(prNumber)) || !FULL_SHA_PATTERN.test(head)) throw new Error('valid PR number and exact head SHA are required');
+  if (!Number.isSafeInteger(Number(prNumber)) || Number(prNumber) <= 0 || !FULL_SHA_PATTERN.test(head)) throw new Error('valid PR number and exact head SHA are required');
   return [
     markerFor(EXACT_HEAD_REVIEW_MARKERS.DISPATCH, head),
     '@codex review',
@@ -454,7 +455,7 @@ export function buildReviewDispatchComment({ prNumber, headSha, workflowNames = 
 
 export function buildReviewReceiptComment({ prNumber, headSha, externalReceiptId = null } = {}) {
   const head = text(headSha).toLowerCase();
-  if (!Number.isInteger(Number(prNumber)) || !FULL_SHA_PATTERN.test(head)) throw new Error('valid PR number and exact head SHA are required');
+  if (!Number.isSafeInteger(Number(prNumber)) || Number(prNumber) <= 0 || !FULL_SHA_PATTERN.test(head)) throw new Error('valid PR number and exact head SHA are required');
   return [
     markerFor(EXACT_HEAD_REVIEW_MARKERS.RECEIPT, head),
     '## Exact-head review receipt recorded',
@@ -469,7 +470,7 @@ export function buildReviewReceiptComment({ prNumber, headSha, externalReceiptId
 
 export function buildMissingReceiptEscalationComment({ prNumber, headSha, timeoutMinutes = 10, dispatchCommentId = null } = {}) {
   const head = text(headSha).toLowerCase();
-  if (!Number.isInteger(Number(prNumber)) || !FULL_SHA_PATTERN.test(head)) throw new Error('valid PR number and exact head SHA are required');
+  if (!Number.isSafeInteger(Number(prNumber)) || Number(prNumber) <= 0 || !FULL_SHA_PATTERN.test(head)) throw new Error('valid PR number and exact head SHA are required');
   return [
     markerFor(EXACT_HEAD_REVIEW_MARKERS.ESCALATION, head),
     '## Exact-head review receipt delay',
