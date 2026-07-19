@@ -50,6 +50,14 @@ function authToken() {
   );
 }
 
+function trustedCoordinatorLogin(repositoryOwner) {
+  const login = text(process.env.STEPHANOS_REVIEW_COORDINATOR_LOGIN, repositoryOwner);
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(login)) {
+    throw new Error('STEPHANOS_REVIEW_COORDINATOR_LOGIN must name one GitHub actor');
+  }
+  return login;
+}
+
 async function githubRequest(path, { method = 'GET', body = null, token, accept = 'application/vnd.github+json' } = {}) {
   const response = await fetch(`https://api.github.com${path}`, {
     method,
@@ -128,6 +136,7 @@ function mapWorkflowRun(run) {
     runAttempt: Number(run?.run_attempt ?? 0),
     createdAt: run?.created_at ?? null,
     updatedAt: run?.updated_at ?? null,
+    completedAt: run?.updated_at ?? null,
     htmlUrl: text(run?.html_url),
   };
 }
@@ -136,7 +145,7 @@ async function listOpenPullRequests({ owner, repo, token }) {
   return githubPages(`/repos/${owner}/${repo}/pulls?state=open&sort=updated&direction=desc`, { token });
 }
 
-async function loadPrContext({ owner, repo, repository, token, prNumber }) {
+async function loadPrContext({ owner, repo, repository, token, prNumber, trustedCoordinatorLogin: coordinatorLogin }) {
   const pr = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { token });
   const comments = (await githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token })).map(mapComment);
   const reviews = (await githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { token })).map(mapReview);
@@ -144,7 +153,10 @@ async function loadPrContext({ owner, repo, repository, token, prNumber }) {
     `/repos/${owner}/${repo}/actions/runs?head_sha=${encodeURIComponent(text(pr?.head?.sha))}&event=pull_request`,
     { token, itemKey: 'workflow_runs' },
   )).map(mapWorkflowRun);
-  const laneEvidence = canonicalLaneEvidence(comments);
+  const laneEvidence = canonicalLaneEvidence(comments, {
+    prNumber,
+    trustedCoordinatorLogin: coordinatorLogin,
+  });
   return {
     rawPr: pr,
     comments,
@@ -171,13 +183,20 @@ async function postPrComment({ owner, repo, token, prNumber, body }) {
   return result?.id ?? null;
 }
 
-async function discoverCanonicalContexts({ owner, repo, repository, token, requestedNumbers }) {
+async function discoverCanonicalContexts({ owner, repo, repository, token, requestedNumbers, trustedCoordinatorLogin: coordinatorLogin }) {
   const numbers = requestedNumbers.length
     ? requestedNumbers
     : (await listOpenPullRequests({ owner, repo, token })).map((pr) => positiveInteger(pr?.number)).filter(Boolean);
   const contexts = [];
   for (const prNumber of [...new Set(numbers)]) {
-    const context = await loadPrContext({ owner, repo, repository, token, prNumber });
+    const context = await loadPrContext({
+      owner,
+      repo,
+      repository,
+      token,
+      prNumber,
+      trustedCoordinatorLogin: coordinatorLogin,
+    });
     if (context.canonicalLaneConfirmed) contexts.push(context);
   }
   return contexts;
@@ -188,11 +207,23 @@ async function main() {
   const { owner, repo } = repositoryParts(repository);
   const token = authToken();
   if (!token) throw new Error('a bounded GitHub token is required');
+  const coordinatorLogin = trustedCoordinatorLogin(owner);
+  const authenticatedUser = await githubRequest('/user', { token });
+  if (text(authenticatedUser?.login).toLowerCase() !== coordinatorLogin.toLowerCase()) {
+    throw new Error(`bounded GitHub token actor must match trusted coordinator ${coordinatorLogin}`);
+  }
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
   const manualPrNumber = positiveInteger(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
   const requestedNumbers = candidatePrNumbers(event, manualPrNumber);
-  const contexts = await discoverCanonicalContexts({ owner, repo, repository, token, requestedNumbers });
+  const contexts = await discoverCanonicalContexts({
+    owner,
+    repo,
+    repository,
+    token,
+    requestedNumbers,
+    trustedCoordinatorLogin: coordinatorLogin,
+  });
 
   if (contexts.length === 0) {
     console.log('EXACT_HEAD_REVIEW_DISPATCH_DECISION=NO_CANONICAL_LANE');
@@ -209,6 +240,7 @@ async function main() {
   const decision = evaluateExactHeadReviewDispatch({
     now: new Date().toISOString(),
     receiptTimeoutMs: timeoutMinutes * 60 * 1000,
+    trustedCoordinatorLogin: coordinatorLogin,
     canonicalLaneConfirmed: context.canonicalLaneConfirmed,
     pr: context.pr,
     workflowRuns: context.workflowRuns,

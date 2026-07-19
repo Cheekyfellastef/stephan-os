@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -54,12 +54,27 @@ function installFakeGh(directory) {
   writeFileSync(fakeModule, fakeSource, 'utf8');
 
   if (process.platform === 'win32') {
-    writeFileSync(join(directory, 'gh.cmd'), `@echo off\r\n"${process.execPath}" "${fakeModule}" %*\r\n`, 'utf8');
+    const fakeExecutable = join(directory, 'gh.exe');
+    const preload = join(directory, 'fake-gh-preload.cjs');
+    copyFileSync(process.execPath, fakeExecutable);
+    writeFileSync(preload, [
+      "const { spawnSync } = require('node:child_process');",
+      "const { basename } = require('node:path');",
+      "if (basename(process.execPath).toLowerCase() === 'gh.exe') {",
+      "  const ghArgs = [basename(process.argv[1] || ''), ...process.argv.slice(2)];",
+      `  const result = spawnSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(fakeModule)}, ...ghArgs], { stdio: 'inherit', env: process.env });`,
+      '  process.exit(Number.isInteger(result.status) ? result.status : 1);',
+      '}',
+      '',
+    ].join('\n'), 'utf8');
+    const inheritedOptions = String(process.env.NODE_OPTIONS || '').trim();
+    return { NODE_OPTIONS: `${inheritedOptions} --require=${JSON.stringify(preload)}`.trim() };
   } else {
     const launcher = join(directory, 'gh');
     writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "${fakeModule}" "$@"\n`, 'utf8');
     chmodSync(launcher, 0o755);
   }
+  return {};
 }
 
 test('CLI rejects malformed prepared snapshots instead of certifying an empty estate', () => {
@@ -91,7 +106,7 @@ test('CLI rejects malformed family documents instead of erasing family constrain
 
 test('CLI compares the captured exact head SHA rather than the mutable branch name', () => {
   const directory = mkdtempSync(join(tmpdir(), 'stephanos-pr-estate-captured-sha-'));
-  installFakeGh(directory);
+  const fakeGhEnv = installFakeGh(directory);
   const families = join(directory, 'families.json');
   const capture = join(directory, 'gh-api-args.json');
   const headSha = 'b'.repeat(40);
@@ -100,6 +115,7 @@ test('CLI compares the captured exact head SHA rather than the mutable branch na
   const result = runCli(['--from-gh', '--repository', 'owner/repo', '--compare', '--families', families], {
     env: {
       PATH: `${directory}${delimiter}${process.env.PATH || ''}`,
+      ...fakeGhEnv,
       GH_CAPTURE_PATH: capture,
       GH_HEAD_SHA: headSha,
     },
@@ -116,7 +132,7 @@ test('CLI compares the captured exact head SHA rather than the mutable branch na
 
 test('CLI aborts compare collection when the captured head SHA is invalid', () => {
   const directory = mkdtempSync(join(tmpdir(), 'stephanos-pr-estate-invalid-sha-'));
-  installFakeGh(directory);
+  const fakeGhEnv = installFakeGh(directory);
   const families = join(directory, 'families.json');
   const capture = join(directory, 'gh-api-args.json');
   writeJson(families, { families: [] });
@@ -124,6 +140,7 @@ test('CLI aborts compare collection when the captured head SHA is invalid', () =
   const result = runCli(['--from-gh', '--repository', 'owner/repo', '--compare', '--families', families], {
     env: {
       PATH: `${directory}${delimiter}${process.env.PATH || ''}`,
+      ...fakeGhEnv,
       GH_CAPTURE_PATH: capture,
       FAKE_GH_MODE: 'invalid-sha',
     },

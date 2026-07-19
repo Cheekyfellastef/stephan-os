@@ -95,5 +95,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.STEPHANOS_REVIEW_DISPATCH_TOKEN || github.token }}
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
+          STEPHANOS_REVIEW_COORDINATOR_LOGIN: ${{ github.repository_owner }}
           STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
         run: node scripts/exact-head-review-dispatch.mjs

@@ -1,5 +1,5 @@
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.0';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.1';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -32,6 +32,10 @@ export const DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS = 10 * 60 * 1000;
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const KNOWN_CODEX_REVIEWER_PATTERN = /(?:^|\[)(?:chatgpt-codex-connector|codex)(?:\[bot\])?$/i;
+const ACTIVE_LANE_REFERENCE_PATTERN = /\bactive lane:\s*PR\s*#(\d+)\b/gi;
+const PR_THEN_LANE_REFERENCE_PATTERN = /\bPR\s*#(\d+)\b(?=[^\n.]{0,120}\b(?:sole|single|canonical|active)\b[^\n.]{0,80}\b(?:implementation|review|github)?\s*lane\b)/gi;
+const LANE_THEN_PR_REFERENCE_PATTERN = /\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\b(?:implementation|review|github)?\s*lane\b[^\n.]{0,60}\bPR\s*#(\d+)\b/gi;
+const SELF_REFERENTIAL_LANE_PATTERN = /(?:\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b[^\n.]{0,120}\b(?:sole|single|canonical|active)\b[^\n.]{0,80}\blane\b|\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\blane\b[^\n.]{0,80}\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b)/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -61,6 +65,15 @@ function actorLogin(item) {
   return text(item?.user?.login ?? item?.author?.login);
 }
 
+function normalizedLogin(value) {
+  return text(value).toLowerCase();
+}
+
+function isTrustedCoordinatorActor(item, trustedCoordinatorLogin) {
+  const trusted = normalizedLogin(trustedCoordinatorLogin);
+  return Boolean(trusted) && normalizedLogin(actorLogin(item)) === trusted;
+}
+
 function newest(items = []) {
   return [...items].sort((left, right) => (
     (asTime(right?.createdAt ?? right?.created_at ?? right?.submittedAt ?? right?.submitted_at) ?? 0)
@@ -72,9 +85,15 @@ function itemTimestamp(item) {
   return asTime(item?.createdAt ?? item?.created_at ?? item?.submittedAt ?? item?.submitted_at);
 }
 
-function markerComment(comments, kind, headSha) {
+function markerComment(comments, kind, headSha, { trustedCoordinatorLogin, notBeforeMs = null } = {}) {
   const marker = markerFor(kind, headSha);
-  return newest((comments || []).filter((comment) => commentBody(comment).includes(marker)));
+  return newest((comments || []).filter((comment) => {
+    if (!isTrustedCoordinatorActor(comment, trustedCoordinatorLogin)) return false;
+    if (!commentBody(comment).includes(marker)) return false;
+    if (notBeforeMs === null) return true;
+    const timestamp = itemTimestamp(comment);
+    return timestamp !== null && timestamp >= notBeforeMs;
+  }));
 }
 
 function reviewedCommitPrefix(body) {
@@ -97,11 +116,14 @@ function reviewMatchesHead(item, headSha) {
   return prefix.length >= 7 && text(headSha).toLowerCase().startsWith(prefix);
 }
 
-function latestExternalReceipt(comments, reviews, headSha) {
+function latestExternalReceipt(comments, reviews, headSha, notBeforeMs) {
   return newest([
     ...(comments || []).filter((item) => reviewMatchesHead(item, headSha)),
     ...(reviews || []).filter((item) => reviewMatchesHead(item, headSha)),
-  ]);
+  ].filter((item) => {
+    const timestamp = itemTimestamp(item);
+    return timestamp !== null && timestamp >= notBeforeMs;
+  }));
 }
 
 function latestRunByWorkflow(workflowRuns, headSha, requiredWorkflows) {
@@ -122,16 +144,26 @@ function latestRunByWorkflow(workflowRuns, headSha, requiredWorkflows) {
   return latestByName;
 }
 
-export function isCanonicalReviewLaneComment(body) {
-  const value = text(body);
-  if (!value) return false;
+export function isCanonicalReviewLaneComment(comment, { prNumber: candidatePrNumber, trustedCoordinatorLogin } = {}) {
+  const value = commentBody(comment);
+  const prNumber = Number(candidatePrNumber);
+  if (!value || !Number.isSafeInteger(prNumber) || prNumber <= 0) return false;
+  if (!isTrustedCoordinatorActor(comment, trustedCoordinatorLogin)) return false;
   if (value.includes(`<!-- ${EXACT_HEAD_REVIEW_MARKERS.AUTO}`)) return true;
   if (!/Programme Completion Controller/i.test(value)) return false;
-  return /sole active implementation lane|sole canonical implementation lane|canonical implementation lane|canonical-lane receipt|active lane:\s*PR\s*#/i.test(value);
+  if (!/sole active implementation lane|single active(?: GitHub)? implementation lane|sole canonical implementation lane|canonical implementation lane|canonical-lane receipt|active lane:\s*PR\s*#/i.test(value)) return false;
+
+  const referencedPrs = [
+    ...value.matchAll(ACTIVE_LANE_REFERENCE_PATTERN),
+    ...value.matchAll(PR_THEN_LANE_REFERENCE_PATTERN),
+    ...value.matchAll(LANE_THEN_PR_REFERENCE_PATTERN),
+  ].map((match) => Number(match[1]));
+  if (referencedPrs.length) return referencedPrs.every((reference) => reference === prNumber);
+  return SELF_REFERENTIAL_LANE_PATTERN.test(value);
 }
 
-export function canonicalLaneEvidence(comments = []) {
-  const matches = comments.filter((comment) => isCanonicalReviewLaneComment(commentBody(comment)));
+export function canonicalLaneEvidence(comments = [], { prNumber, trustedCoordinatorLogin } = {}) {
+  const matches = comments.filter((comment) => isCanonicalReviewLaneComment(comment, { prNumber, trustedCoordinatorLogin }));
   const latest = newest(matches);
   return Object.freeze({
     confirmed: Boolean(latest),
@@ -150,6 +182,7 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
   const receiptTimeoutMs = Number.isFinite(Number(input.receiptTimeoutMs)) && Number(input.receiptTimeoutMs) > 0
     ? Number(input.receiptTimeoutMs)
     : DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS;
+  const trustedCoordinatorLogin = normalizedLogin(input.trustedCoordinatorLogin);
   const base = {
     schemaVersion: EXACT_HEAD_REVIEW_DISPATCH_SCHEMA,
     version: EXACT_HEAD_REVIEW_DISPATCH_VERSION,
@@ -163,8 +196,8 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     implementationDispatchAllowed: false,
   };
 
-  if (nowMs === null || !Number.isInteger(base.prNumber) || !FULL_SHA_PATTERN.test(headSha)) {
-    return Object.freeze({ ...base, decision: EXACT_HEAD_REVIEW_DECISION.INVALID_INPUT, reason: 'valid time, PR number and exact 40-character head SHA are required' });
+  if (nowMs === null || !Number.isInteger(base.prNumber) || !FULL_SHA_PATTERN.test(headSha) || !trustedCoordinatorLogin) {
+    return Object.freeze({ ...base, decision: EXACT_HEAD_REVIEW_DECISION.INVALID_INPUT, reason: 'valid time, PR number, exact 40-character head SHA and trusted coordinator login are required' });
   }
 
   const canonicalConfirmed = input.canonicalLaneConfirmed === true;
@@ -193,14 +226,22 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
       && text(run.status).toLowerCase() === 'completed'
       && text(run.conclusion).toLowerCase() !== 'success';
   });
+  const unboundWorkflows = requiredWorkflows.filter((name) => {
+    const run = latestRuns.get(name);
+    return run
+      && text(run.status).toLowerCase() === 'completed'
+      && text(run.conclusion).toLowerCase() === 'success'
+      && asTime(run.completedAt ?? run.completed_at ?? run.updatedAt ?? run.updated_at) === null;
+  });
 
-  if (missingWorkflows.length || pendingWorkflows.length) {
+  if (missingWorkflows.length || pendingWorkflows.length || unboundWorkflows.length) {
     return Object.freeze({
       ...base,
       decision: EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS,
-      reason: 'required exact-head workflows are missing or still running',
+      reason: 'required exact-head workflows are missing, still running or lack completion timestamps',
       missingWorkflows: Object.freeze(missingWorkflows),
       pendingWorkflows: Object.freeze(pendingWorkflows),
+      unboundWorkflows: Object.freeze(unboundWorkflows),
       failedWorkflows: Object.freeze(failedWorkflows),
     });
   }
@@ -218,8 +259,18 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
 
   const comments = Array.isArray(input.comments) ? input.comments : [];
   const reviews = Array.isArray(input.reviews) ? input.reviews : [];
-  const externalReceipt = latestExternalReceipt(comments, reviews, headSha);
-  const recordedReceipt = markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.RECEIPT, headSha);
+  const workflowsCompletedAtMs = Math.max(...requiredWorkflows.map((name) => {
+    const run = latestRuns.get(name);
+    return asTime(run?.completedAt ?? run?.completed_at ?? run?.updatedAt ?? run?.updated_at);
+  }));
+  const externalReceipt = latestExternalReceipt(comments, reviews, headSha, workflowsCompletedAtMs);
+  const externalReceiptTime = itemTimestamp(externalReceipt);
+  const recordedReceipt = externalReceipt && externalReceiptTime !== null
+    ? markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.RECEIPT, headSha, {
+      trustedCoordinatorLogin,
+      notBeforeMs: Math.max(workflowsCompletedAtMs, externalReceiptTime),
+    })
+    : null;
   if (externalReceipt && !recordedReceipt) {
     return Object.freeze({
       ...base,
@@ -239,7 +290,10 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     });
   }
 
-  const dispatch = markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.DISPATCH, headSha);
+  const dispatch = markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.DISPATCH, headSha, {
+    trustedCoordinatorLogin,
+    notBeforeMs: workflowsCompletedAtMs,
+  });
   if (!dispatch) {
     return Object.freeze({
       ...base,
@@ -251,7 +305,10 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
 
   const dispatchTime = itemTimestamp(dispatch);
   const ageMs = dispatchTime === null ? receiptTimeoutMs : Math.max(0, nowMs - dispatchTime);
-  const escalation = markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.ESCALATION, headSha);
+  const escalation = markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.ESCALATION, headSha, {
+    trustedCoordinatorLogin,
+    notBeforeMs: dispatchTime,
+  });
   if (ageMs >= receiptTimeoutMs && !escalation) {
     return Object.freeze({
       ...base,

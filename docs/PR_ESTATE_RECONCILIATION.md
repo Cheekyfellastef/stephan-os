@@ -53,3 +53,9 @@ The command is intentionally read-only. A reconciliation-required exit is expect
 ## Completion
 
 The estate is controlled when every open PR is canonical, waiting on a real gate, or terminally disposed with evidence, and no capability family has more than one active implementation lane.
+
+## Exact-head review coordination
+
+The review coordinator treats comments as evidence only when the comment actor matches the configured trusted coordinator login. Canonical-lane references must identify the PR being evaluated; a controller comment that names another PR as the active lane cannot make the current PR canonical.
+
+Review receipts are causally ordered as well as head-bound. Every required workflow must have a successful exact-head completion timestamp, an external Codex receipt must be created at or after the latest of those completions, and the durable coordinator receipt must follow that external receipt. Pre-proof or unauthenticated dispatch, receipt and escalation markers are ignored fail-closed.
