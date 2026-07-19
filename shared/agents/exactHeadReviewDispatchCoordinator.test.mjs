@@ -328,6 +328,29 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(runner, /bounded GitHub token actor must match trusted coordinator/);
   assert.match(runner, /trustedCoordinatorLogin:\s*coordinatorLogin/);
   assert.match(workflow, /STEPHANOS_REVIEW_COORDINATOR_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);
+  assert.match(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:\s*\$\{\{ secrets\.STEPHANOS_REVIEW_DISPATCH_TOKEN \}\}/);
+  assert.doesNotMatch(workflow, /\|\|\s*github\.token/);
+});
+
+test('runs every required proof workflow for every pull request head', () => {
+  const workflowPaths = [
+    '../../.github/workflows/openclaw-github-operator.yml',
+    '../../.github/workflows/build-stephanos-ui.yml',
+    '../../.github/workflows/battle-bridge-publisher-proof.yml',
+    '../../.github/workflows/codex-dispatch-queue-proof.yml',
+  ];
+  for (const path of workflowPaths) {
+    const source = fs.readFileSync(new URL(path, import.meta.url), 'utf8');
+    const lines = source.split(/\r?\n/);
+    const start = lines.findIndex((line) => /^  pull_request:\s*$/.test(line));
+    assert.notEqual(start, -1, `${path} must define a pull_request trigger`);
+    const block = [];
+    for (const line of lines.slice(start + 1)) {
+      if (line.trim() && !line.startsWith('    ')) break;
+      block.push(line);
+    }
+    assert.doesNotMatch(block.join('\n'), /^\s+paths:\s*$/m, `${path} must not path-filter required PR proof`);
+  }
 });
 
 test('renders exact-head dispatch, receipt and escalation comments with durable markers', () => {

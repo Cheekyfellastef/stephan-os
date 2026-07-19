@@ -2,27 +2,6 @@ name: Codex Dispatch Queue Proof
 
 on:
   pull_request:
-    paths:
-      - 'shared/agents/codexDispatchQueue.mjs'
-      - 'shared/agents/codexDispatchQueue.test.mjs'
-      - 'shared/agents/automatedCodexDispatcher.mjs'
-      - 'shared/agents/automatedCodexDispatcher.test.mjs'
-      - 'shared/agents/localCodexExecIntegration.mjs'
-      - 'shared/agents/localCodexExecIntegration.test.mjs'
-      - 'shared/agents/codexDispatchMcp.test.mjs'
-      - 'shared/agents/codexDispatchHostOps.mjs'
-      - 'shared/agents/codexDispatchHostOps.test.mjs'
-      - 'shared/agents/platformLoopIntegration.mjs'
-      - 'shared/agents/platformLoopIntegration.test.mjs'
-      - 'shared/agents/missionOrchestratorV1.test.mjs'
-      - 'shared/agents/verificationHarness.mjs'
-      - 'shared/agents/verificationHarness.test.mjs'
-      - 'shared/agents/verificationHarnessWorkspace.test.mjs'
-      - 'scripts/stephanos-codex-dispatch-*.mjs'
-      - 'scripts/windows/*stephanos-codex-dispatch*.ps1'
-      - 'plugins/stephanos-codex-dispatch/**'
-      - 'package.json'
-      - '.github/workflows/codex-dispatch-queue-proof.yml'
 
 permissions:
   contents: read

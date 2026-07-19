@@ -23,26 +23,6 @@ on:
       - 'package.json'
       - 'apps/stephanos/app.json'
   pull_request:
-    paths:
-      - 'stephanos-ui/**'
-      - 'shared/ai/**'
-      - 'shared/runtime/**'
-      - 'system/apps/app_validator.js'
-      - 'scripts/**'
-      - 'windows/**'
-      - '!scripts/codex-patch-escrow-attest.mjs'
-      - '!scripts/codex-patch-escrow-export.mjs'
-      - '!scripts/codex-patch-escrow-prepare.mjs'
-      - '!scripts/codex-patch-escrow-publish-validated.mjs'
-      - '!scripts/codex-patch-escrow-publisher.mjs'
-      - '!scripts/codex-patch-escrow-validate-prepared.mjs'
-      - '!scripts/codex-patch-escrow-validated-artifact.mjs'
-      - '!scripts/battle-bridge-github-sync-*.mjs'
-      - '!scripts/windows/install-battle-bridge-github-sync.ps1'
-      - '!scripts/windows/status-battle-bridge-github-sync.ps1'
-      - '!scripts/windows/uninstall-battle-bridge-github-sync.ps1'
-      - 'package.json'
-      - 'apps/stephanos/app.json'
 
 jobs:
   build:
