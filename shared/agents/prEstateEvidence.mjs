@@ -1,10 +1,4 @@
 import {
-  ACCEPTANCE_COMPLETE_PATTERN,
-  ACCEPTANCE_NEGATED_COMPLETE_PATTERN,
-  ACCEPTANCE_PENDING_PATTERN,
-  APPROVAL_COMPLETE_PATTERN,
-  APPROVAL_NEGATED_COMPLETE_PATTERN,
-  APPROVAL_PENDING_PATTERN,
   FULL_SHA_PATTERN,
   PLACEHOLDER_PATTERN,
   PR_DISPOSITIONS,
@@ -23,6 +17,82 @@ const CONTROLLED_DISPOSITION_HINTS = new Set([
   PR_DISPOSITIONS.WAITING_ACCEPTANCE,
   PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL,
 ]);
+
+const GATE_SEGMENT_SPLIT_PATTERN = /(?<=[.!?])\s+|\n+/;
+const ACCEPTANCE_GATE_TERMS = [
+  /\bacceptance\b/i,
+  /\blive\s+proof\b/i,
+  /\bbrowser\s+proof\b/i,
+];
+const APPROVAL_GATE_TERMS = [
+  /\bapproval\b/i,
+  /\bmerge\s+gate\b/i,
+];
+
+function aroundTerm(term, statusSource) {
+  return new RegExp(
+    `(?:${term.source})[^\\n.!?]{0,120}(?:${statusSource})|(?:${statusSource})[^\\n.!?]{0,120}(?:${term.source})`,
+    'i',
+  );
+}
+
+function gateDefinitions(terms, {
+  pendingStatus,
+  completedStatus,
+  negatedCompletedStatus,
+  specialPending = null,
+}) {
+  return terms.map((term) => ({
+    term,
+    pending: aroundTerm(term, pendingStatus),
+    completed: aroundTerm(term, completedStatus),
+    negatedCompleted: aroundTerm(term, negatedCompletedStatus),
+    specialPending,
+  }));
+}
+
+const ACCEPTANCE_GATE_DEFINITIONS = gateDefinitions(ACCEPTANCE_GATE_TERMS, {
+  pendingStatus: String.raw`\b(?:required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not\s+yet)\b`,
+  completedStatus: String.raw`\b(?:passed|complete(?:d)?|satisfied|verified|done)\b`,
+  negatedCompletedStatus: String.raw`\b(?:not(?:\s+yet)?|never)\s+(?:been\s+)?(?:passed|complete(?:d)?|satisfied|verified|done)\b`,
+});
+
+const APPROVAL_GATE_DEFINITIONS = gateDefinitions(APPROVAL_GATE_TERMS, {
+  pendingStatus: String.raw`\b(?:required|pending|remain(?:s|ing)?|needed|outstanding|awaiting|not\s+yet)\b`,
+  completedStatus: String.raw`\b(?:granted|approved|complete(?:d)?|satisfied|done)\b`,
+  negatedCompletedStatus: String.raw`\b(?:not(?:\s+yet)?|never)\s+(?:been\s+)?(?:granted|approved|complete(?:d)?|satisfied|done)\b`,
+  specialPending: /do not merge without[^\n.!?]{0,120}approval/i,
+});
+
+function gateIsPending(text, definitions) {
+  const segments = String(text || '')
+    .split(GATE_SEGMENT_SPLIT_PATTERN)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  for (const definition of definitions) {
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index];
+      const mentionsTerm = definition.term.test(segment);
+      const specialPending = definition.specialPending?.test(segment) === true;
+      if (!mentionsTerm && !specialPending) continue;
+
+      const negatedCompletion = definition.negatedCompleted.test(segment);
+      const pending = specialPending || negatedCompletion || definition.pending.test(segment);
+      if (!pending) continue;
+
+      const completedHere = definition.completed.test(segment) && !negatedCompletion;
+      if (completedHere) continue;
+
+      const nextSegment = segments[index + 1] || '';
+      const completedNext = definition.term.test(nextSegment)
+        && definition.completed.test(nextSegment)
+        && !definition.negatedCompleted.test(nextSegment);
+      if (!completedNext) return true;
+    }
+  }
+  return false;
+}
 
 export function normalizePr(input = {}, recordIndex = 0) {
   const number = asPositiveInteger(input.number ?? input.prNumber, null);
@@ -134,12 +204,8 @@ function supersessionProof(pr, targetPr, canonicalRecord) {
 export function classifyPr(pr, family, canonicalRecord) {
   const bodyAndTitle = `${pr.title}\n${pr.body}`;
   const placeholder = PLACEHOLDER_PATTERN.test(bodyAndTitle);
-  const acceptanceNegatedComplete = ACCEPTANCE_NEGATED_COMPLETE_PATTERN.test(bodyAndTitle);
-  const approvalNegatedComplete = APPROVAL_NEGATED_COMPLETE_PATTERN.test(bodyAndTitle);
-  const acceptanceGate = acceptanceNegatedComplete
-    || (ACCEPTANCE_PENDING_PATTERN.test(bodyAndTitle) && !ACCEPTANCE_COMPLETE_PATTERN.test(bodyAndTitle));
-  const approvalGate = approvalNegatedComplete
-    || (APPROVAL_PENDING_PATTERN.test(bodyAndTitle) && !APPROVAL_COMPLETE_PATTERN.test(bodyAndTitle));
+  const acceptanceGate = gateIsPending(bodyAndTitle, ACCEPTANCE_GATE_DEFINITIONS);
+  const approvalGate = gateIsPending(bodyAndTitle, APPROVAL_GATE_DEFINITIONS);
   const explicitSupersededBy = family?.supersededBy?.[pr.number] ?? null;
   const canonicalPr = family?.canonicalPr ?? null;
   const familySize = family?.members?.length ?? 1;
