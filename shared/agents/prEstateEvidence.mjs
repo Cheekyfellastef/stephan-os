@@ -18,7 +18,8 @@ const CONTROLLED_DISPOSITION_HINTS = new Set([
   PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL,
 ]);
 
-const GATE_SEGMENT_SPLIT_PATTERN = /(?<=[.!?])\s+|\n+/;
+const GATE_SEGMENT_SPLIT_PATTERN = /(?<=[.!?])\s+|\n+|\s*;\s*|\s+(?:while|whereas|but|and)\s+/i;
+const SAME_GATE_REFERENCE_PATTERN = /\b(?:this|that|the same|same|aforementioned)\b/i;
 const ACCEPTANCE_GATE_TERMS = [
   /\bacceptance\b/i,
   /\blive\s+proof\b/i,
@@ -64,6 +65,10 @@ const APPROVAL_GATE_DEFINITIONS = gateDefinitions(APPROVAL_GATE_TERMS, {
   specialPending: /do not merge without[^\n.!?]{0,120}approval/i,
 });
 
+function termMentionCount(segment, term) {
+  return [...String(segment || '').matchAll(new RegExp(term.source, 'gi'))].length;
+}
+
 function gateIsPending(text, definitions) {
   const segments = String(text || '')
     .split(GATE_SEGMENT_SPLIT_PATTERN)
@@ -81,11 +86,14 @@ function gateIsPending(text, definitions) {
       const pending = specialPending || negatedCompletion || definition.pending.test(segment);
       if (!pending) continue;
 
-      const completedHere = definition.completed.test(segment) && !negatedCompletion;
+      const completedHere = definition.completed.test(segment)
+        && !negatedCompletion
+        && termMentionCount(segment, definition.term) === 1;
       if (completedHere) continue;
 
       const nextSegment = segments[index + 1] || '';
-      const completedNext = definition.term.test(nextSegment)
+      const completedNext = SAME_GATE_REFERENCE_PATTERN.test(nextSegment)
+        && definition.term.test(nextSegment)
         && definition.completed.test(nextSegment)
         && !definition.negatedCompleted.test(nextSegment);
       if (!completedNext) return true;
