@@ -134,6 +134,28 @@ test('accepts a review object only when its exact commit matches', () => {
   assert.equal(stale.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
+test('accepts exact Codex reviewer logins and rejects lookalike receipt actors', () => {
+  const lookalike = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [{
+      id: 24,
+      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+      user: { login: 'fake-chatgpt-codex-connector' },
+      createdAt: '2026-07-19T16:29:00Z',
+    }],
+  }));
+  assert.equal(lookalike.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const exactBot = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [{
+      id: 25,
+      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 10)}\``,
+      user: { login: 'chatgpt-codex-connector[bot]' },
+      createdAt: '2026-07-19T16:29:00Z',
+    }],
+  }));
+  assert.equal(exactBot.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+});
+
 test('escalates once when a posted request has no receipt after the bounded timeout', () => {
   const dispatch = coordinatorComment({ id: 40, body: marker(EXACT_HEAD_REVIEW_MARKERS.DISPATCH), createdAt: '2026-07-19T16:25:00Z' });
   const result = evaluateExactHeadReviewDispatch(baseInput({ now: '2026-07-19T16:40:00Z', comments: [dispatch], receiptTimeoutMs: 10 * 60 * 1000 }));

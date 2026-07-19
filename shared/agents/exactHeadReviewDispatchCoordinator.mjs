@@ -31,7 +31,12 @@ export const EXACT_HEAD_REVIEW_MARKERS = Object.freeze({
 export const DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS = 10 * 60 * 1000;
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const KNOWN_CODEX_REVIEWER_PATTERN = /(?:^|\[)(?:chatgpt-codex-connector|codex)(?:\[bot\])?$/i;
+const KNOWN_CODEX_REVIEWER_LOGINS = new Set([
+  'chatgpt-codex-connector',
+  'chatgpt-codex-connector[bot]',
+  'codex',
+  'codex[bot]',
+]);
 const ACTIVE_LANE_REFERENCE_PATTERN = /\bactive lane:\s*PR\s*#(\d+)\b/gi;
 const PR_THEN_LANE_REFERENCE_PATTERN = /\bPR\s*#(\d+)\b(?=[^\n.]{0,120}\b(?:sole|single|canonical|active)\b[^\n.]{0,80}\b(?:implementation|review|github)?\s*lane\b)/gi;
 const LANE_THEN_PR_REFERENCE_PATTERN = /\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\b(?:implementation|review|github)?\s*lane\b[^\n.]{0,60}\bPR\s*#(\d+)\b/gi;
@@ -102,10 +107,7 @@ function reviewedCommitPrefix(body) {
 }
 
 function isKnownCodexReviewer(item) {
-  const login = actorLogin(item);
-  return KNOWN_CODEX_REVIEWER_PATTERN.test(login)
-    || /chatgpt-codex-connector/i.test(login)
-    || /^codex(?:\[bot\])?$/i.test(login);
+  return KNOWN_CODEX_REVIEWER_LOGINS.has(normalizedLogin(actorLogin(item)));
 }
 
 function reviewMatchesHead(item, headSha) {
