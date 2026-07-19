@@ -75,6 +75,34 @@ test('completed earlier merge gate does not erase pending exact-head approval', 
   assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
 });
 
+test('same-sentence desktop completion does not erase pending Quest acceptance', () => {
+  const ledger = build([{
+    number: 5,
+    state: 'open',
+    title: 'Clause-scoped acceptance evidence',
+    body: 'Quest acceptance remains pending while desktop acceptance is completed.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('same-sentence completed merge gate does not erase pending exact-head approval', () => {
+  const ledger = build([{
+    number: 6,
+    state: 'open',
+    title: 'Clause-scoped approval evidence',
+    body: 'The earlier merge gate is completed while exact-head approval remains pending.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
 function buildSupersededLedger() {
   return build(
     [
