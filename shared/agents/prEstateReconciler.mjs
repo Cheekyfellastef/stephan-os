@@ -208,6 +208,9 @@ export function validatePrEstateLedger(ledger = {}) {
     if (evidence.comparisonEvidenceInvalid === true && entry.disposition !== PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED) {
       errors.push(`terminal-with-invalid-comparison-evidence:${identity}`);
     }
+    if (evidence.invalidUniqueDelta === true && entry.disposition !== PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED) {
+      errors.push(`non-ambiguous-with-invalid-unique-delta:${identity}`);
+    }
     if (evidence.comparisonHeadMismatch === true && entry.disposition !== PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED) {
       errors.push(`terminal-with-stale-comparison-head:${identity}`);
     }
@@ -243,6 +246,7 @@ export function validatePrEstateLedger(ledger = {}) {
       const canonicalEntry = Number.isInteger(canonicalTarget) ? entryByNumber.get(canonicalTarget) : null;
       if (evidence.uniqueDelta === true) errors.push(`superseded-with-unique-delta:${identity}`);
       if (!canonicalTarget) errors.push(`superseded-without-canonical:${identity}`);
+      if (entry.number === canonicalTarget) errors.push(`superseded-targets-self:${identity}`);
       if (evidence.familyCanonicalPr !== undefined && evidence.familyCanonicalPr !== null && evidence.familyCanonicalPr !== canonicalTarget) {
         errors.push(`superseded-with-family-canonical-mismatch:${identity}`);
       }
