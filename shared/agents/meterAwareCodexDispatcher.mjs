@@ -28,6 +28,7 @@ export function buildCapacityTaskFromQueueRecord(record = {}, input = {}) {
     taskClass: input.taskClass || CODEX_TASK_CLASS.FOCUSED_REPAIR,
     capabilityValue: input.capabilityValue === undefined ? 70 : input.capabilityValue,
     complexityMultiplier: input.complexityMultiplier === undefined ? 1 : input.complexityMultiplier,
+    urgent: input.urgent === true,
     zeroCostCapable: input.zeroCostCapable,
     battleBridgeCapable: input.battleBridgeCapable,
     preferredRoute: input.preferredRoute,
