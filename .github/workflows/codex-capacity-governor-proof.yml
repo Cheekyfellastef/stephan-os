@@ -9,6 +9,11 @@ on:
       - 'shared/agents/meterAwareCodexDispatcher.test.mjs'
       - 'shared/agents/codexCapacityDashboardProjection.mjs'
       - 'shared/agents/codexCapacityDashboardProjection.test.mjs'
+      - 'shared/agents/codexBankedResetBattleBridgeExecutor.mjs'
+      - 'shared/agents/codexBankedResetBattleBridgeExecutor.test.mjs'
+      - 'shared/agents/battleBridgeGitHubCommandMailbox.mjs'
+      - 'shared/agents/battleBridgeGitHubCommandMailbox.test.mjs'
+      - 'scripts/windows/invoke-codex-banked-reset-ui.ps1'
       - '.codex/skills/redeem-banked-codex-reset/SKILL.md'
       - 'docs/CODEX_CAPACITY_GOVERNOR_V1.md'
       - '.github/workflows/codex-capacity-governor-proof.yml'
@@ -45,8 +50,19 @@ jobs:
       - name: Dashboard projection proof
         run: node --test shared/agents/codexCapacityDashboardProjection.test.mjs
 
+      - name: Battle Bridge reset mailbox proof
+        run: node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs shared/agents/codexBankedResetBattleBridgeExecutor.test.mjs
+
+      - name: Reset executor static safety proof
+        run: |
+          ! grep -nE 'Invoke-Expression|Start-Process|DownloadString|WebClient|HttpClient|--remote-debugging-port|javascript:|document\.' scripts/windows/invoke-codex-banked-reset-ui.ps1
+          grep -q 'singlePressOnly = \$true' scripts/windows/invoke-codex-banked-reset-ui.ps1
+          grep -q 'repeatedPressAllowed = \$false' scripts/windows/invoke-codex-banked-reset-ui.ps1
+          grep -q '\$patternObject.Invoke()' scripts/windows/invoke-codex-banked-reset-ui.ps1
+          test "$(grep -c '\$patternObject.Invoke()' scripts/windows/invoke-codex-banked-reset-ui.ps1)" -eq 1
+
       - name: Syntax proof
-        run: node --check shared/agents/codexCapacityGovernorV1.mjs && node --check shared/agents/meterAwareCodexDispatcher.mjs && node --check shared/agents/codexCapacityDashboardProjection.mjs
+        run: node --check shared/agents/codexCapacityGovernorV1.mjs && node --check shared/agents/meterAwareCodexDispatcher.mjs && node --check shared/agents/codexCapacityDashboardProjection.mjs && node --check shared/agents/battleBridgeGitHubCommandMailbox.mjs && node --check shared/agents/codexBankedResetBattleBridgeExecutor.mjs
 
       - name: Diff check
         if: always()
