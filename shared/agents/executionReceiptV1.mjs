@@ -201,7 +201,7 @@ function classifyWorkspaceExecutionReceiptHistory(entries) {
   return null;
 }
 
-async function removeStaleLeaseLock(lockPath, staleAfterMs) {
+async function removeStaleExecutionReceiptLock(lockPath, staleAfterMs) {
   try {
     const lockStat = await stat(lockPath);
     if (Date.now() - lockStat.mtimeMs <= staleAfterMs) return false;
@@ -212,11 +212,11 @@ async function removeStaleLeaseLock(lockPath, staleAfterMs) {
   }
 }
 
-async function acquireExecutionReceiptLeaseLock(root, leaseKey, options = {}) {
+async function acquireExecutionReceiptFileLock(root, segments, reasons, options = {}) {
   const resolved = resolveSharedWorkspacePath({
     root,
     repoRoot: options.repoRoot,
-    segments: ['receipt-locks', `${leaseKey}.lock`],
+    segments,
   });
   if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason });
 
@@ -240,7 +240,7 @@ async function acquireExecutionReceiptLeaseLock(root, leaseKey, options = {}) {
   try {
     await mkdir(dirname(resolved.path), { recursive: true });
   } catch (error) {
-    return Object.freeze({ ok: false, reason: 'EXECUTION_RECEIPT_LEASE_LOCK_FAILED', errorCode: error?.code || '' });
+    return Object.freeze({ ok: false, reason: reasons.failed, errorCode: error?.code || '' });
   }
 
   while (true) {
@@ -252,7 +252,7 @@ async function acquireExecutionReceiptLeaseLock(root, leaseKey, options = {}) {
       handle = null;
       return Object.freeze({
         ok: true,
-        reason: 'EXECUTION_RECEIPT_LEASE_LOCK_ACQUIRED',
+        reason: reasons.acquired,
         async release() {
           try {
             const owner = JSON.parse(await readFile(resolved.path, 'utf8'));
@@ -270,15 +270,92 @@ async function acquireExecutionReceiptLeaseLock(root, leaseKey, options = {}) {
         try { await unlink(resolved.path); } catch { /* stale cleanup handles leftovers */ }
       }
       if (error?.code !== 'EEXIST') {
-        return Object.freeze({ ok: false, reason: 'EXECUTION_RECEIPT_LEASE_LOCK_FAILED', errorCode: error?.code || '' });
+        return Object.freeze({ ok: false, reason: reasons.failed, errorCode: error?.code || '' });
       }
-      if (await removeStaleLeaseLock(resolved.path, staleAfterMs)) continue;
+      if (await removeStaleExecutionReceiptLock(resolved.path, staleAfterMs)) continue;
       if (Date.now() - startedAt >= timeoutMs) {
-        return Object.freeze({ ok: false, reason: 'EXECUTION_RECEIPT_LEASE_LOCK_TIMEOUT' });
+        return Object.freeze({ ok: false, reason: reasons.timeout });
       }
       await delay(Math.min(retryMs, Math.max(1, timeoutMs - (Date.now() - startedAt))));
     }
   }
+}
+
+async function acquireExecutionReceiptLeaseLock(root, leaseKey, options = {}) {
+  return acquireExecutionReceiptFileLock(root, ['receipt-locks', `${leaseKey}.lock`], {
+    acquired: 'EXECUTION_RECEIPT_LEASE_LOCK_ACQUIRED',
+    failed: 'EXECUTION_RECEIPT_LEASE_LOCK_FAILED',
+    timeout: 'EXECUTION_RECEIPT_LEASE_LOCK_TIMEOUT',
+  }, options);
+}
+
+async function acquireExecutionReceiptHistoryLock(root, options = {}) {
+  return acquireExecutionReceiptFileLock(root, ['receipt-locks', 'history', 'execution-receipts.lock'], {
+    acquired: 'EXECUTION_RECEIPT_HISTORY_LOCK_ACQUIRED',
+    failed: 'EXECUTION_RECEIPT_HISTORY_LOCK_FAILED',
+    timeout: 'EXECUTION_RECEIPT_HISTORY_LOCK_TIMEOUT',
+  }, {
+    ...options,
+    executionReceiptLockTimeoutMs: options.executionReceiptHistoryLockTimeoutMs
+      ?? options.executionReceiptLockTimeoutMs,
+    executionReceiptLockRetryMs: options.executionReceiptHistoryLockRetryMs
+      ?? options.executionReceiptLockRetryMs,
+    executionReceiptStaleLockMs: options.executionReceiptHistoryStaleLockMs
+      ?? options.executionReceiptStaleLockMs,
+  });
+}
+
+async function confirmCurrentExecutionReceipt(root, converted, options = {}) {
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot: options.repoRoot,
+    segments: ['receipts', `${converted.record.executionReceipt.leaseKey}.json`],
+  });
+  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason });
+
+  const canonical = JSON.stringify(converted.record);
+  try {
+    const existing = JSON.parse(await readFile(resolved.path, 'utf8'));
+    if (JSON.stringify(existing) === canonical) {
+      return Object.freeze({
+        ok: true,
+        reason: 'EXECUTION_RECEIPT_CURRENT_PROJECTION_CONFIRMED',
+        path: resolved.path,
+        repaired: false,
+      });
+    }
+  } catch {
+    // Missing, malformed, or unreadable projections are repaired atomically below.
+  }
+
+  const write = await writeAtomicJson(
+    root,
+    ['receipts', `${converted.record.executionReceipt.leaseKey}.json`],
+    converted.record,
+    options,
+  );
+  if (!write.ok) return Object.freeze({ ok: false, reason: write.reason, write });
+  try {
+    const persisted = JSON.parse(await readFile(write.path, 'utf8'));
+    if (JSON.stringify(persisted) !== canonical) {
+      return Object.freeze({ ok: false, reason: 'EXECUTION_RECEIPT_CURRENT_PROJECTION_VERIFY_FAILED', write });
+    }
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      reason: 'EXECUTION_RECEIPT_CURRENT_PROJECTION_VERIFY_FAILED',
+      errorCode: error?.code || '',
+      write,
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    reason: 'EXECUTION_RECEIPT_CURRENT_PROJECTION_CONFIRMED',
+    path: write.path,
+    bytes: write.bytes,
+    repaired: true,
+    write,
+  });
 }
 
 export function createExecutionReceipt(input = {}) {
@@ -642,36 +719,58 @@ export async function appendExecutionReceipt(root, receipt, options = {}) {
   if (!leaseLock.ok) return Object.freeze({ ok: false, reason: leaseLock.reason, leaseLock });
 
   try {
-    const existing = await readExecutionReceiptHistory(root, { leaseKey: receipt.leaseKey }, options);
-    if (!existing.ok) return Object.freeze({ ok: false, reason: existing.reason, existing });
-    const sameId = existing.receipts.find((item) => item.receiptId === receipt.receiptId);
-    if (sameId) {
-      if (JSON.stringify(sameId) === JSON.stringify(receipt)) {
-        return Object.freeze({ ok: true, reason: 'EXECUTION_RECEIPT_ALREADY_APPENDED', receipt });
+    const historyLock = await acquireExecutionReceiptHistoryLock(root, options);
+    if (!historyLock.ok) return Object.freeze({ ok: false, reason: historyLock.reason, historyLock });
+
+    let canonicalCurrent = converted;
+    let history = null;
+    let idempotent = false;
+    try {
+      const existing = await readExecutionReceiptHistory(root, { leaseKey: receipt.leaseKey }, options);
+      if (!existing.ok) return Object.freeze({ ok: false, reason: existing.reason, existing });
+      const sameId = existing.receipts.find((item) => item.receiptId === receipt.receiptId);
+      if (sameId) {
+        if (JSON.stringify(sameId) === JSON.stringify(receipt)) {
+          canonicalCurrent = toSharedWorkspaceExecutionReceipt(existing.latestReceipt);
+          if (!canonicalCurrent.ok) {
+            return Object.freeze({ ok: false, reason: canonicalCurrent.reason, canonicalCurrent });
+          }
+          idempotent = true;
+        } else {
+          return Object.freeze({ ok: false, reason: 'EXECUTION_RECEIPT_ID_CONFLICT', receipt });
+        }
+      } else {
+        const sameExecution = existing.receipts
+          .filter((item) => item.executionId === receipt.executionId)
+          .sort((left, right) => left.sequence - right.sequence);
+        if (sameExecution.length > 0) {
+          const transition = classifyExecutionReceiptTransition(sameExecution.at(-1), receipt);
+          if (!transition.accepted) return Object.freeze({ ok: false, reason: transition.refusalReason, transition });
+        } else if (receipt.sequence !== 1) {
+          return Object.freeze({ ok: false, reason: 'sequence-must-start-at-1' });
+        }
+
+        const setClassification = classifyExecutionReceiptSet([...existing.receipts, receipt]);
+        if (setClassification.finalVerdict !== 'EXECUTION_RECEIPT_SET_PASS') {
+          return Object.freeze({ ok: false, reason: setClassification.finalVerdict, setClassification });
+        }
+
+        history = await appendWorkspaceJsonl(root, ['receipts', 'execution-receipts.jsonl'], converted.record, options);
+        if (!history.ok) return Object.freeze({ ok: false, reason: history.reason, history });
       }
-      return Object.freeze({ ok: false, reason: 'EXECUTION_RECEIPT_ID_CONFLICT', receipt });
+    } finally {
+      await historyLock.release();
     }
 
-    const sameExecution = existing.receipts
-      .filter((item) => item.executionId === receipt.executionId)
-      .sort((left, right) => left.sequence - right.sequence);
-    if (sameExecution.length > 0) {
-      const transition = classifyExecutionReceiptTransition(sameExecution.at(-1), receipt);
-      if (!transition.accepted) return Object.freeze({ ok: false, reason: transition.refusalReason, transition });
-    } else if (receipt.sequence !== 1) {
-      return Object.freeze({ ok: false, reason: 'sequence-must-start-at-1' });
-    }
-
-    const setClassification = classifyExecutionReceiptSet([...existing.receipts, receipt]);
-    if (setClassification.finalVerdict !== 'EXECUTION_RECEIPT_SET_PASS') {
-      return Object.freeze({ ok: false, reason: setClassification.finalVerdict, setClassification });
-    }
-
-    const history = await appendWorkspaceJsonl(root, ['receipts', 'execution-receipts.jsonl'], converted.record, options);
-    if (!history.ok) return Object.freeze({ ok: false, reason: history.reason, history });
-    const current = await writeAtomicJson(root, ['receipts', `${receipt.leaseKey}.json`], converted.record, options);
+    const current = await confirmCurrentExecutionReceipt(root, canonicalCurrent, options);
     if (!current.ok) return Object.freeze({ ok: false, reason: current.reason, history, current });
-    return Object.freeze({ ok: true, reason: 'EXECUTION_RECEIPT_APPENDED', history, current, receipt });
+    return Object.freeze({
+      ok: true,
+      reason: idempotent ? 'EXECUTION_RECEIPT_ALREADY_APPENDED' : 'EXECUTION_RECEIPT_APPENDED',
+      history,
+      current,
+      receipt,
+    });
   } finally {
     await leaseLock.release();
   }
@@ -722,10 +821,11 @@ export function executionReceiptFromCodexQueueRecord(queueRecord = {}, input = {
     timestampUtc,
     heartbeatExpiresAtUtc: input.heartbeatExpiresAtUtc,
     heartbeatMs: input.heartbeatMs,
-    blocker: input.blocker
-      || queueRecord.blockerMetadata?.reason
-      || queueRecord.integrationState?.blocker
-      || (waitingOperatorApproval ? 'WAITING_OPERATOR_APPROVAL' : ''),
+    blocker: waitingOperatorApproval
+      ? 'WAITING_OPERATOR_APPROVAL'
+      : input.blocker
+        || queueRecord.blockerMetadata?.reason
+        || queueRecord.integrationState?.blocker,
     operatorActionRequired: waitingOperatorApproval || input.operatorActionRequired === true,
     proofRefs,
     expectedNextAction: input.expectedNextAction || (terminal(state) ? '' : 'publish next Codex queue transition'),

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -41,7 +41,7 @@ const BASE = {
   expectedNextAction: 'start implementation',
 };
 function receipt(overrides = {}) { return createExecutionReceipt({ ...BASE, ...overrides }); }
-function queueBase() {
+function queueBase(overrides = {}) {
   return createCodexQueueRecord({
     issueNumber: 1568,
     branch: BASE.branch,
@@ -50,6 +50,7 @@ function queueBase() {
     proofRequirements: { refs: BASE.proofRefs },
     integrationState: { automatedCodexDispatchProven: true },
     createdAt: BASE.timestampUtc,
+    ...overrides,
   });
 }
 function transition(record, status, timestamp, input = {}) {
@@ -58,10 +59,16 @@ function transition(record, status, timestamp, input = {}) {
   return result.record;
 }
 async function appendInChildProcess(root, candidate) {
+  const inputDirectory = join(root, 'child-inputs');
+  const candidatePath = join(inputDirectory, `${candidate.receiptId}.json`);
+  await mkdir(inputDirectory, { recursive: true });
+  await writeFile(candidatePath, JSON.stringify(candidate));
   const worker = `
-    const [root, candidateJson, repoRoot, moduleUrl] = process.argv.slice(1);
+    const [root, candidatePath, repoRoot, moduleUrl] = process.argv.slice(1);
+    const { readFile } = await import('node:fs/promises');
     const { appendExecutionReceipt } = await import(moduleUrl);
-    const result = await appendExecutionReceipt(root, JSON.parse(candidateJson), { repoRoot });
+    const candidate = JSON.parse(await readFile(candidatePath, 'utf8'));
+    const result = await appendExecutionReceipt(root, candidate, { repoRoot });
     process.stdout.write(JSON.stringify({ ok: result.ok, reason: result.reason }));
   `;
   const child = spawn(process.execPath, [
@@ -69,7 +76,7 @@ async function appendInChildProcess(root, candidate) {
     '--eval',
     worker,
     root,
-    JSON.stringify(candidate),
+    candidatePath,
     resolve('.'),
     pathToFileURL(resolve('shared/agents/executionReceiptV1.mjs')).href,
   ], { cwd: resolve('.'), windowsHide: true });
@@ -167,6 +174,48 @@ test('Shared Workspace append, transition and idempotent replay preserve canonic
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('idempotent replay repairs a missing current-by-lease projection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'execution-receipt-missing-current-'));
+  const currentPath = join(root, 'receipts', `${BASE.leaseKey}.json`);
+  try {
+    const first = receipt();
+    assert.equal((await appendExecutionReceipt(root, first, { repoRoot: resolve('.') })).ok, true);
+    await rm(currentPath, { force: true });
+
+    const replay = await appendExecutionReceipt(root, first, { repoRoot: resolve('.') });
+    assert.equal(replay.ok, true);
+    assert.equal(replay.reason, 'EXECUTION_RECEIPT_ALREADY_APPENDED');
+    assert.equal(replay.current.repaired, true);
+    const persisted = JSON.parse(await readFile(currentPath, 'utf8'));
+    assert.deepEqual(persisted, toSharedWorkspaceExecutionReceipt(first).record);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('idempotent replay replaces a stale current-by-lease projection with canonical latest history', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'execution-receipt-stale-current-'));
+  const currentPath = join(root, 'receipts', `${BASE.leaseKey}.json`);
+  try {
+    const first = receipt();
+    const second = receipt({
+      state: 'accepted',
+      sequence: 2,
+      predecessorReceiptId: first.receiptId,
+      timestampUtc: '2026-07-20T10:01:00.000Z',
+      expectedNextAction: 'start worker',
+    });
+    assert.equal((await appendExecutionReceipt(root, first, { repoRoot: resolve('.') })).ok, true);
+    assert.equal((await appendExecutionReceipt(root, second, { repoRoot: resolve('.') })).ok, true);
+    await writeFile(currentPath, `${JSON.stringify(toSharedWorkspaceExecutionReceipt(first).record, null, 2)}\n`);
+
+    const replay = await appendExecutionReceipt(root, first, { repoRoot: resolve('.') });
+    assert.equal(replay.ok, true);
+    assert.equal(replay.reason, 'EXECUTION_RECEIPT_ALREADY_APPENDED');
+    assert.equal(replay.current.repaired, true);
+    const persisted = JSON.parse(await readFile(currentPath, 'utf8'));
+    assert.deepEqual(persisted, toSharedWorkspaceExecutionReceipt(second).record);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('persistence refuses a duplicate active execution before overwriting current state', async () => {
   const root = await mkdtemp(join(tmpdir(), 'execution-receipt-duplicate-'));
   try {
@@ -181,20 +230,47 @@ test('persistence refuses a duplicate active execution before overwriting curren
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('concurrent worker processes serialize the full same-lease append transaction', async () => {
+test('cross-process same-lease concurrency stress preserves one canonical active execution', async () => {
   const root = await mkdtemp(join(tmpdir(), 'execution-receipt-concurrent-'));
   try {
-    const candidates = [
-      receipt({ executionId: 'execution-concurrent-a', receiptId: 'execution-concurrent-a-1' }),
-      receipt({ executionId: 'execution-concurrent-b', receiptId: 'execution-concurrent-b-1' }),
-    ];
+    const workerCount = 12;
+    const candidates = Array.from({ length: workerCount }, (_, index) => receipt({
+      executionId: `execution-concurrent-${index}`,
+      receiptId: `execution-concurrent-${index}-1`,
+    }));
     const results = await Promise.all(candidates.map((candidate) => appendInChildProcess(root, candidate)));
     assert.equal(results.filter((result) => result.reason === 'EXECUTION_RECEIPT_APPENDED').length, 1);
-    assert.equal(results.filter((result) => result.reason === 'DUPLICATE_ACTIVE_EXECUTION_LEASE').length, 1);
+    assert.equal(results.filter((result) => result.reason === 'DUPLICATE_ACTIVE_EXECUTION_LEASE').length, workerCount - 1);
     const current = await readCurrentExecutionReceipt(root, { leaseKey: BASE.leaseKey }, { repoRoot: resolve('.') });
     assert.equal(current.ok, true);
     assert.equal(current.receipts.length, 1);
     assert.equal(candidates.some((candidate) => candidate.executionId === current.receipt.executionId), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('cross-process different-lease shared-history stress keeps large JSONL records whole', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'execution-receipt-shared-history-'));
+  try {
+    const workerCount = 8;
+    const largeProofPayload = 'x'.repeat(1024 * 1024);
+    const candidates = Array.from({ length: workerCount }, (_, index) => receipt({
+      executionId: `execution-shared-history-${index}`,
+      receiptId: `execution-shared-history-${index}-1`,
+      leaseKey: `issue-1568-shared-history-${index}`,
+      proofRefs: [`proof/${largeProofPayload}-${index}`],
+    }));
+    const results = await Promise.all(candidates.map((candidate) => appendInChildProcess(root, candidate)));
+    assert.equal(results.filter((result) => result.reason === 'EXECUTION_RECEIPT_APPENDED').length, workerCount);
+
+    const payload = await readFile(join(root, 'receipts', 'execution-receipts.jsonl'), 'utf8');
+    const lines = payload.split('\n').filter(Boolean);
+    assert.equal(lines.length, workerCount);
+    const records = lines.map((line) => JSON.parse(line));
+    assert.deepEqual(
+      new Set(records.map((record) => record.executionReceipt.leaseKey)),
+      new Set(candidates.map((candidate) => candidate.leaseKey)),
+    );
+    assert.equal(records.every((record) => record.executionReceipt.proofRefs[0].length > 1024 * 1024), true);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -219,6 +295,33 @@ test('same-lease lock has deterministic contention refusal and stale-lock recove
       repoRoot: resolve('.'),
       executionReceiptLockTimeoutMs: 1_000,
       executionReceiptStaleLockMs: 1,
+    });
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.reason, 'EXECUTION_RECEIPT_APPENDED');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('workspace history lock has deterministic contention refusal and stale-lock recovery', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'execution-receipt-history-lock-'));
+  const lockDirectory = join(root, 'receipt-locks', 'history');
+  const lockPath = join(lockDirectory, 'execution-receipts.lock');
+  try {
+    await mkdir(lockDirectory, { recursive: true });
+    await writeFile(lockPath, `${JSON.stringify({ token: 'abandoned-history-lock' })}\n`);
+    const blocked = await appendExecutionReceipt(root, receipt(), {
+      repoRoot: resolve('.'),
+      executionReceiptHistoryLockTimeoutMs: 0,
+      executionReceiptHistoryStaleLockMs: 60_000,
+    });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.reason, 'EXECUTION_RECEIPT_HISTORY_LOCK_TIMEOUT');
+
+    const staleTime = new Date(Date.now() - 60_000);
+    await utimes(lockPath, staleTime, staleTime);
+    const recovered = await appendExecutionReceipt(root, receipt(), {
+      repoRoot: resolve('.'),
+      executionReceiptHistoryLockTimeoutMs: 1_000,
+      executionReceiptHistoryStaleLockMs: 1,
     });
     assert.equal(recovered.ok, true);
     assert.equal(recovered.reason, 'EXECUTION_RECEIPT_APPENDED');
@@ -308,12 +411,18 @@ test('Codex dispatch queue adapter rejects invalid source evidence before projec
   assert.equal(invalid, null);
 });
 
-test('Codex dispatch queue approval wait emits a deterministic blocker', () => {
-  const waiting = transition(queueBase(), CODEX_QUEUE_STATUS.WAITING_OPERATOR_APPROVAL, '2026-07-20T10:00:01.000Z');
+test('Codex dispatch queue approval wait blocker wins over conflicting metadata', () => {
+  const waiting = transition(
+    queueBase({ integrationState: { automatedCodexDispatchProven: false } }),
+    CODEX_QUEUE_STATUS.WAITING_OPERATOR_APPROVAL,
+    '2026-07-20T10:00:01.000Z',
+    { blockerMetadata: { reason: 'QUEUE_METADATA_BLOCKER' } },
+  );
   const adapted = executionReceiptFromCodexQueueRecord(waiting, {
     repository: BASE.repository,
     sourceHead: HEAD,
     sequence: 1,
+    blocker: 'CALLER_BLOCKER',
   });
   assert.equal(adapted.operatorActionRequired, true);
   assert.equal(adapted.blocker, 'WAITING_OPERATOR_APPROVAL');
