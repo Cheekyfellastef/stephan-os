@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import { buildCodexCapacityDashboardProjection } from './codexCapacityDashboardProjection.mjs';
 import { CODEX_AVAILABILITY, CODEX_TASK_CLASS, createMeterObservation } from './codexCapacityGovernorV1.mjs';
 
+const NOW = '2026-07-17T12:00:00.000Z';
+
 test('dashboard shows capacity, banked reset expiry, route, and stack velocity', () => {
   const dashboard = buildCodexCapacityDashboardProjection({
-    nowUtc: '2026-07-17T12:00:00.000Z',
+    nowUtc: NOW,
     observation: createMeterObservation({
-      observedAtUtc: '2026-07-17T12:00:00.000Z',
+      observedAtUtc: NOW,
       remainingPercent: 0,
       availability: CODEX_AVAILABILITY.METER_STALLED,
       confidence: 'high',
@@ -30,4 +32,28 @@ test('dashboard shows capacity, banked reset expiry, route, and stack velocity',
   assert.equal(dashboard.forecast.dispatchAllowed, false);
   assert.equal(dashboard.stackVelocity.currentSlicesPerWeek, 2);
   assert.match(dashboard.summary, /earliest-expiring banked reset/i);
+});
+
+test('dashboard next reset excludes expired observations and matches the prepared action', () => {
+  const dashboard = buildCodexCapacityDashboardProjection({
+    nowUtc: NOW,
+    observation: createMeterObservation({
+      observedAtUtc: NOW,
+      remainingPercent: 0,
+      availability: CODEX_AVAILABILITY.METER_STALLED,
+      confidence: 'high',
+      naturalResetAtUtc: '2026-07-20T20:25:00.000Z',
+      bankedResets: [
+        { resetId: 'reset-expired', expiresAtUtc: '2026-07-17T11:00:00.000Z' },
+        { resetId: 'reset-live', expiresAtUtc: '2026-07-18T12:00:00.000Z' },
+      ],
+    }),
+    tasks: [{ taskId: 'task-large', taskClass: CODEX_TASK_CLASS.MULTI_MODULE_IMPLEMENTATION }],
+    standingOperatorPolicyActive: true,
+  });
+  assert.equal(dashboard.bankedResets.count, 2);
+  assert.equal(dashboard.bankedResets.nextResetId, 'reset-live');
+  assert.equal(dashboard.bankedResets.nextExpiryUtc, '2026-07-18T12:00:00.000Z');
+  assert.equal(dashboard.bankedResets.actionReady, true);
+  assert.match(dashboard.summary, /reset-live/);
 });
