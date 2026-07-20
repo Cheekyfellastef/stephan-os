@@ -98,6 +98,43 @@ test('earliest-expiring reset is redeemed only when meter is blocked, demand exi
   assert.equal(plan.action.credentialsMayBeReadOrExported, false);
 });
 
+test('standalone reset planner rejects stale, low-confidence, and missing-time meter truth', () => {
+  const resetInput = {
+    remainingPercent: 0,
+    availability: CODEX_AVAILABILITY.METER_STALLED,
+    naturalResetAtUtc: '2026-07-20T20:25:00.000Z',
+    bankedResets: [{ resetId: 'reset-1', expiresAtUtc: '2026-07-18T12:00:00.000Z' }],
+  };
+  const stale = planBankedReset({
+    observation: freshObservation({ ...resetInput, observedAtUtc: '2026-07-17T11:00:00.000Z' }),
+    nowUtc: NOW,
+    queueDemandPercent: 30,
+    standingOperatorPolicyActive: true,
+  });
+  assert.equal(stale.decision, CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_HOLD);
+  assert.equal(stale.action, null);
+  assert.match(stale.reason, /stale/i);
+
+  const lowConfidence = planBankedReset({
+    observation: freshObservation({ ...resetInput, confidence: 'low' }),
+    nowUtc: NOW,
+    queueDemandPercent: 30,
+    standingOperatorPolicyActive: true,
+  });
+  assert.equal(lowConfidence.decision, CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_HOLD);
+  assert.equal(lowConfidence.action, null);
+  assert.match(lowConfidence.reason, /high-confidence/i);
+
+  const missingTime = planBankedReset({
+    observation: freshObservation(resetInput),
+    queueDemandPercent: 30,
+    standingOperatorPolicyActive: true,
+  });
+  assert.equal(missingTime.decision, CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_HOLD);
+  assert.equal(missingTime.action, null);
+  assert.match(missingTime.reason, /valid current time/i);
+});
+
 test('banked reset is held when natural reset is imminent', () => {
   const plan = planBankedReset({
     observation: freshObservation({
@@ -166,7 +203,7 @@ test('stale and low-confidence meter truth fail closed before dispatch', () => {
   assert.match(lowConfidence.reason, /confidence/i);
 });
 
-test('protected task classes may consume their matching reserve but preserve all others', () => {
+test('protected task classes may consume only their matching reserve', () => {
   const exactHead = buildCodexCapacityProjection({
     nowUtc: NOW,
     observation: freshObservation({ remainingPercent: 20 }),
@@ -179,7 +216,7 @@ test('protected task classes may consume their matching reserve but preserve all
   const exactHeadFits = buildCodexCapacityProjection({
     nowUtc: NOW,
     observation: freshObservation({ remainingPercent: 25 }),
-    tasks: [{ taskId: 'review', taskClass: CODEX_TASK_CLASS.EXACT_HEAD_REVIEW }],
+    tasks: [{ taskId: 'review', taskClass: CODEX_TASK_CLASS.EXACT_HEAD_REVIEW, urgent: true }],
   });
   assert.equal(exactHeadFits.reservedPercent, 17);
   assert.equal(exactHeadFits.safelySchedulablePercent, 8);
@@ -188,7 +225,7 @@ test('protected task classes may consume their matching reserve but preserve all
   const windowsProof = buildCodexCapacityProjection({
     nowUtc: NOW,
     observation: freshObservation({ remainingPercent: 33 }),
-    tasks: [{ taskId: 'windows', taskClass: CODEX_TASK_CLASS.WINDOWS_RUNTIME_PROOF }],
+    tasks: [{ taskId: 'windows', taskClass: CODEX_TASK_CLASS.WINDOWS_RUNTIME_PROOF, urgent: true }],
   });
   assert.equal(windowsProof.reservedPercent, 18);
   assert.equal(windowsProof.safelySchedulablePercent, 15);
