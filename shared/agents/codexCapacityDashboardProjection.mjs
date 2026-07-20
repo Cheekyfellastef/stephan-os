@@ -8,7 +8,7 @@ function rounded(value) {
 
 export function buildCodexCapacityDashboardProjection(input = {}) {
   const capacity = input.capacityProjection || buildCodexCapacityProjection(input);
-  const nextReset = capacity.observation.bankedResets[0] || null;
+  const nextReset = capacity.resetPlan?.selectedReset || null;
   const nextTask = capacity.nextCodexTask || null;
   const summary = capacity.resetPlan?.action
     ? `Codex is waiting for the earliest-expiring banked reset ${capacity.resetPlan.action.resetId} before the next high-value task.`
