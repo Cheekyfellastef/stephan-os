@@ -232,7 +232,7 @@ function reserveTotal(reserves = DEFAULT_CAPACITY_RESERVES) {
 function reserveForTask(reserves, task) {
   let reserved = reserveTotal(reserves);
   if (!task) return reserved;
-  if (task.urgent) {
+  if (task.urgent && task.taskClass === CODEX_TASK_CLASS.FOCUSED_REPAIR) {
     reserved -= reserveValue(reserves, 'emergencyRepairPercent', DEFAULT_CAPACITY_RESERVES.emergencyRepairPercent);
   }
   if (task.taskClass === CODEX_TASK_CLASS.EXACT_HEAD_REVIEW) {
@@ -283,8 +283,25 @@ export function planBankedReset(input = {}) {
   const observation = input.observation?.kind === 'stephanos.codex_capacity.meter_observation'
     ? input.observation
     : createMeterObservation(input.observation || input);
-  const nowUtc = text(input.nowUtc || observation.observedAtUtc, new Date().toISOString());
+  const nowUtc = text(input.nowUtc);
   const nowMs = timestamp(nowUtc);
+  const maxMeterAgeMinutes = clamp(
+    input.maxMeterAgeMinutes === undefined ? DEFAULT_METER_MAX_AGE_MINUTES : input.maxMeterAgeMinutes,
+    1,
+    120,
+  );
+  const resetMeterTruth = meterTrust(observation, nowUtc, maxMeterAgeMinutes);
+  const resetMeterTrusted = resetMeterTruth.fresh && observation.confidence === 'high';
+  if (!Number.isFinite(nowMs)) {
+    return Object.freeze({
+      decision: CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_HOLD,
+      selectedReset: null,
+      action: null,
+      reason: 'A valid current time is required before banked-reset planning.',
+      meterTruth: resetMeterTruth,
+      finalVerdict: 'CODEX_BANKED_RESET_PLAN_READY',
+    });
+  }
   const naturalResetMs = timestamp(observation.naturalResetAtUtc);
   const resets = observation.bankedResets.filter((reset) => timestamp(reset.expiresAtUtc) > nowMs);
   const expired = observation.bankedResets.filter((reset) => timestamp(reset.expiresAtUtc) <= nowMs);
@@ -293,8 +310,8 @@ export function planBankedReset(input = {}) {
   const threshold = clamp(input.redeemThresholdPercent === undefined ? 5 : input.redeemThresholdPercent, 0, 25);
   const expiryGuardHours = clamp(input.expiryGuardHours === undefined ? 24 : input.expiryGuardHours, 1, 168);
   const naturalResetGuardHours = clamp(input.naturalResetGuardHours === undefined ? 2 : input.naturalResetGuardHours, 0, 24);
-  const hoursToNaturalReset = Number.isFinite(naturalResetMs) && Number.isFinite(nowMs) ? (naturalResetMs - nowMs) / HOUR_MS : null;
-  const hoursToExpiry = nextReset && Number.isFinite(nowMs) ? (timestamp(nextReset.expiresAtUtc) - nowMs) / HOUR_MS : null;
+  const hoursToNaturalReset = Number.isFinite(naturalResetMs) ? (naturalResetMs - nowMs) / HOUR_MS : null;
+  const hoursToExpiry = nextReset ? (timestamp(nextReset.expiresAtUtc) - nowMs) / HOUR_MS : null;
   const meterBlocked = observation.availability === CODEX_AVAILABILITY.METER_STALLED
     || (observation.availability === CODEX_AVAILABILITY.AVAILABLE && observation.remainingPercent <= threshold);
   const meaningfulDemand = queueDemandPercent > observation.remainingPercent;
@@ -303,8 +320,9 @@ export function planBankedReset(input = {}) {
   const expiryBeforeNaturalReset = hoursToExpiry !== null && (hoursToNaturalReset === null || hoursToExpiry < hoursToNaturalReset);
   const canUsePolicy = input.standingOperatorPolicyActive === true;
   const latestSafeExecutionMs = nextReset ? timestamp(nextReset.expiresAtUtc) - HOUR_MS : NaN;
-  const safetyWindowOpen = Number.isFinite(nowMs) && Number.isFinite(latestSafeExecutionMs) && latestSafeExecutionMs > nowMs;
+  const safetyWindowOpen = Number.isFinite(latestSafeExecutionMs) && latestSafeExecutionMs > nowMs;
   const shouldRedeem = Boolean(nextReset)
+    && resetMeterTrusted
     && canUsePolicy
     && input.activeCodexTask !== true
     && meaningfulDemand
@@ -319,6 +337,7 @@ export function planBankedReset(input = {}) {
       action: null,
       reason: expired.length ? 'No unexpired banked Codex reset remains.' : 'No banked Codex reset is available.',
       expiredResetIds: expired.map((reset) => reset.resetId),
+      meterTruth: resetMeterTruth,
       finalVerdict: 'CODEX_BANKED_RESET_PLAN_READY',
     });
   }
@@ -336,12 +355,17 @@ export function planBankedReset(input = {}) {
       reason: meterBlocked
         ? 'Codex capacity is blocked or at the conservative redemption threshold and queued high-value demand exceeds remaining capacity.'
         : 'The earliest banked reset is near expiry before the natural reset and queued demand exceeds remaining capacity.',
+      meterTruth: resetMeterTruth,
       finalVerdict: 'CODEX_BANKED_RESET_PLAN_READY',
     });
   }
 
   let reason = 'Hold the earliest-expiring banked reset until Codex is blocked or near empty and useful queued work needs the capacity.';
-  if (!canUsePolicy) reason = 'A standing operator policy must explicitly authorize automatic banked-reset redemption.';
+  if (!resetMeterTrusted) {
+    reason = !resetMeterTruth.fresh
+      ? 'The Codex meter observation is missing, future-dated, or stale; refresh it before banked-reset planning.'
+      : 'Banked-reset redemption requires a high-confidence meter observation.';
+  } else if (!canUsePolicy) reason = 'A standing operator policy must explicitly authorize automatic banked-reset redemption.';
   else if (input.activeCodexTask === true) reason = 'Do not change capacity state while a Codex task is active.';
   else if (!meaningfulDemand) reason = 'Queued Codex demand does not exceed current remaining capacity.';
   else if (naturalResetSoon) reason = 'The natural meter reset is imminent; preserve the banked reset.';
@@ -354,6 +378,7 @@ export function planBankedReset(input = {}) {
     reason,
     hoursToExpiry,
     hoursToNaturalReset,
+    meterTruth: resetMeterTruth,
     finalVerdict: 'CODEX_BANKED_RESET_PLAN_READY',
   });
 }
@@ -403,7 +428,8 @@ export function buildCodexCapacityProjection(input = {}) {
   const meterTruth = meterTrust(observation, evaluationUtc, maxMeterAgeMinutes);
   const resetPlan = planBankedReset({
     observation,
-    nowUtc: evaluationUtc || observation.observedAtUtc,
+    nowUtc: evaluationUtc,
+    maxMeterAgeMinutes,
     queueDemandPercent: queuedCodexDemandPercent,
     activeCodexTask: input.activeCodexTask,
     standingOperatorPolicyActive: meterTruth.trusted && input.standingOperatorPolicyActive,
