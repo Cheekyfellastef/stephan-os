@@ -5,6 +5,7 @@ on:
     paths:
       - 'shared/agents/codexCapacityGovernorV1.mjs'
       - 'shared/agents/codexCapacityGovernorV1.test.mjs'
+      - 'shared/agents/codexCapacityGovernorV1.regression.test.mjs'
       - 'shared/agents/meterAwareCodexDispatcher.mjs'
       - 'shared/agents/meterAwareCodexDispatcher.test.mjs'
       - 'shared/agents/codexCapacityDashboardProjection.mjs'
@@ -42,7 +43,7 @@ jobs:
           node-version: '22'
 
       - name: Capacity governor and reset policy proof
-        run: node --test shared/agents/codexCapacityGovernorV1.test.mjs
+        run: node --test shared/agents/codexCapacityGovernorV1.test.mjs shared/agents/codexCapacityGovernorV1.regression.test.mjs
 
       - name: Meter-aware dispatcher proof
         run: node --test shared/agents/meterAwareCodexDispatcher.test.mjs
