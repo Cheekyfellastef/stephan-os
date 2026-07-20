@@ -1,0 +1,53 @@
+name: Codex Capacity Governor Proof
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/codexCapacityGovernorV1.mjs'
+      - 'shared/agents/codexCapacityGovernorV1.test.mjs'
+      - 'shared/agents/meterAwareCodexDispatcher.mjs'
+      - 'shared/agents/meterAwareCodexDispatcher.test.mjs'
+      - 'shared/agents/codexCapacityDashboardProjection.mjs'
+      - 'shared/agents/codexCapacityDashboardProjection.test.mjs'
+      - '.codex/skills/redeem-banked-codex-reset/SKILL.md'
+      - 'docs/CODEX_CAPACITY_GOVERNOR_V1.md'
+      - '.github/workflows/codex-capacity-governor-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-capacity-governor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Capacity governor and reset policy proof
+        run: node --test shared/agents/codexCapacityGovernorV1.test.mjs
+
+      - name: Meter-aware dispatcher proof
+        run: node --test shared/agents/meterAwareCodexDispatcher.test.mjs
+
+      - name: Dashboard projection proof
+        run: node --test shared/agents/codexCapacityDashboardProjection.test.mjs
+
+      - name: Syntax proof
+        run: node --check shared/agents/codexCapacityGovernorV1.mjs && node --check shared/agents/meterAwareCodexDispatcher.mjs && node --check shared/agents/codexCapacityDashboardProjection.mjs
+
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD
