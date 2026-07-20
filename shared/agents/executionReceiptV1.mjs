@@ -6,6 +6,7 @@ import {
   validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
+import { validateCodexQueueRecord } from './codexDispatchQueue.mjs';
 
 export const EXECUTION_RECEIPT_SCHEMA_VERSION = 'stephanos.execution-receipt.v1';
 export const EXECUTION_RECEIPT_KIND = 'stephanos.execution.receipt';
@@ -121,10 +122,34 @@ function stateFromQueueStatus(status) {
     WAITING_PROOF: 'progress',
     PROOF_RECEIVED: 'progress',
     VERIFIED: 'progress',
-    BLOCKED: 'stalled',
+    BLOCKED: 'failed',
     FAILED: 'failed',
     DONE: 'completed',
-  })[text(status).toUpperCase()] || 'queued';
+  })[text(status).toUpperCase()] || '';
+}
+
+function identityMatches(receipt, filters = {}) {
+  if (!receipt || typeof receipt !== 'object') return false;
+  if (filters.executionId && receipt.executionId !== filters.executionId) return false;
+  if (filters.leaseKey && receipt.leaseKey !== filters.leaseKey) return false;
+  return true;
+}
+
+function withoutExpectedHead(filters = {}) {
+  const { expectedHead: _ignored, ...rest } = filters;
+  return rest;
+}
+
+function blockedHistory(reason, details = {}) {
+  return Object.freeze({
+    ok: false,
+    reason,
+    receipts: Object.freeze([]),
+    receipt: null,
+    latestReceipt: null,
+    projection: projectExecutionReceipt(null),
+    ...details,
+  });
 }
 
 export function createExecutionReceipt(input = {}) {
@@ -206,18 +231,23 @@ export function validateExecutionReceipt(receipt = {}, options = {}) {
   if (options.branch && receipt.branch !== options.branch) errors.push('branch-mismatch');
   if (options.expectedHead && receipt.sourceHead !== String(options.expectedHead).toLowerCase()) errors.push('head-mismatch');
   if (options.executionId && receipt.executionId !== options.executionId) errors.push('execution-mismatch');
+  if (options.leaseKey && receipt.leaseKey !== options.leaseKey) errors.push('lease-mismatch');
+  const uniqueErrors = [...new Set(errors)];
   return Object.freeze({
-    valid: errors.length === 0,
-    errors: Object.freeze(errors),
-    refusalReason: errors[0] || '',
-    finalVerdict: errors.length ? 'EXECUTION_RECEIPT_BLOCKED' : 'EXECUTION_RECEIPT_PASS',
+    valid: uniqueErrors.length === 0,
+    errors: Object.freeze(uniqueErrors),
+    refusalReason: uniqueErrors[0] || '',
+    finalVerdict: uniqueErrors.length ? 'EXECUTION_RECEIPT_BLOCKED' : 'EXECUTION_RECEIPT_PASS',
   });
 }
 
 export function classifyExecutionReceiptTransition(previous, next, options = {}) {
   const previousValidation = validateExecutionReceipt(previous, options);
   const nextValidation = validateExecutionReceipt(next, options);
-  const errors = [...previousValidation.errors.map((error) => `previous:${error}`), ...nextValidation.errors.map((error) => `next:${error}`)];
+  const errors = [
+    ...previousValidation.errors.map((error) => `previous:${error}`),
+    ...nextValidation.errors.map((error) => `next:${error}`),
+  ];
   const identityFields = ['repository', 'issueNumber', 'prNumber', 'branch', 'workerId', 'workerType', 'executionId', 'leaseKey'];
   for (const field of identityFields) if (previous?.[field] !== next?.[field]) errors.push(`${field}-changed`);
   if (terminal(previous?.state)) errors.push(previous?.state === next?.state ? 'terminal-state-already-recorded' : 'conflicting-terminal-state');
@@ -225,11 +255,12 @@ export function classifyExecutionReceiptTransition(previous, next, options = {})
   if (next?.predecessorReceiptId !== previous?.receiptId) errors.push('predecessor-mismatch');
   if (!EXECUTION_RECEIPT_TRANSITIONS[previous?.state]?.includes(next?.state)) errors.push('invalid-state-transition');
   if (timestampMs(next?.timestampUtc) <= timestampMs(previous?.timestampUtc)) errors.push('non-monotonic-timestamp');
+  const uniqueErrors = [...new Set(errors)];
   return Object.freeze({
-    accepted: errors.length === 0,
-    errors: Object.freeze([...new Set(errors)]),
-    refusalReason: errors[0] || '',
-    finalVerdict: errors.length ? 'EXECUTION_TRANSITION_BLOCKED' : 'EXECUTION_TRANSITION_ACCEPTED',
+    accepted: uniqueErrors.length === 0,
+    errors: Object.freeze(uniqueErrors),
+    refusalReason: uniqueErrors[0] || '',
+    finalVerdict: uniqueErrors.length ? 'EXECUTION_TRANSITION_BLOCKED' : 'EXECUTION_TRANSITION_ACCEPTED',
   });
 }
 
@@ -240,26 +271,45 @@ export function classifyExecutionReceiptSet(receipts = [], options = {}) {
     const validation = validateExecutionReceipt(receipt, options);
     (validation.valid ? valid : invalid).push({ receipt, validation });
   }
+
+  const chainErrors = [];
   const latestByExecution = new Map();
+  const byExecution = new Map();
   for (const entry of valid) {
-    const current = latestByExecution.get(entry.receipt.executionId);
-    if (!current || entry.receipt.sequence > current.receipt.sequence) latestByExecution.set(entry.receipt.executionId, entry);
+    const chain = byExecution.get(entry.receipt.executionId) || [];
+    chain.push(entry.receipt);
+    byExecution.set(entry.receipt.executionId, chain);
   }
+  for (const [executionId, chain] of byExecution.entries()) {
+    chain.sort((left, right) => left.sequence - right.sequence || timestampMs(left.timestampUtc) - timestampMs(right.timestampUtc));
+    if (chain[0]?.sequence !== 1) chainErrors.push(`${executionId}:sequence-must-start-at-1`);
+    for (let index = 1; index < chain.length; index += 1) {
+      const transition = classifyExecutionReceiptTransition(chain[index - 1], chain[index], options);
+      for (const error of transition.errors) chainErrors.push(`${executionId}:${error}`);
+    }
+    if (chain.length) latestByExecution.set(executionId, chain.at(-1));
+  }
+
   const activeByLease = new Map();
-  for (const entry of latestByExecution.values()) {
-    if (terminal(entry.receipt.state)) continue;
-    const executions = activeByLease.get(entry.receipt.leaseKey) || [];
-    executions.push(entry.receipt.executionId);
-    activeByLease.set(entry.receipt.leaseKey, executions);
+  for (const receipt of latestByExecution.values()) {
+    if (terminal(receipt.state)) continue;
+    const executions = activeByLease.get(receipt.leaseKey) || [];
+    executions.push(receipt.executionId);
+    activeByLease.set(receipt.leaseKey, executions);
   }
   const duplicateLeases = [...activeByLease.entries()]
     .filter(([, executionIds]) => new Set(executionIds).size > 1)
     .map(([leaseKey, executionIds]) => Object.freeze({ leaseKey, executionIds: Object.freeze([...new Set(executionIds)]) }));
+
+  const blocked = invalid.length > 0 || chainErrors.length > 0;
   return Object.freeze({
     validReceipts: Object.freeze(valid.map((entry) => entry.receipt)),
     invalidReceipts: Object.freeze(invalid.map((entry) => entry.receipt)),
+    chainErrors: Object.freeze([...new Set(chainErrors)]),
     duplicateLeases: Object.freeze(duplicateLeases),
-    finalVerdict: duplicateLeases.length ? 'DUPLICATE_ACTIVE_EXECUTION_LEASE' : (invalid.length ? 'EXECUTION_RECEIPT_SET_BLOCKED' : 'EXECUTION_RECEIPT_SET_PASS'),
+    finalVerdict: duplicateLeases.length
+      ? 'DUPLICATE_ACTIVE_EXECUTION_LEASE'
+      : (blocked ? 'EXECUTION_RECEIPT_SET_BLOCKED' : 'EXECUTION_RECEIPT_SET_PASS'),
   });
 }
 
@@ -366,9 +416,92 @@ export function toSharedWorkspaceExecutionReceipt(receipt) {
   return Object.freeze({ ok: workspaceValidation.valid, reason: workspaceValidation.refusalReason, validation: workspaceValidation, record });
 }
 
+export async function readExecutionReceiptHistory(root, filters = {}, options = {}) {
+  const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: ['receipts', 'execution-receipts.jsonl'] });
+  if (!resolved.ok) return blockedHistory(resolved.reason);
+  let payload = '';
+  try {
+    payload = await readFile(resolved.path, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({ ok: true, reason: 'NO_EXECUTION_RECEIPTS', receipts: Object.freeze([]), latestReceipt: null });
+    }
+    return blockedHistory('EXECUTION_RECEIPT_READ_FAILED');
+  }
+
+  const entries = [];
+  const lines = payload.split('\n').filter(Boolean);
+  for (let index = 0; index < lines.length; index += 1) {
+    let record;
+    try {
+      record = JSON.parse(lines[index]);
+    } catch {
+      return blockedHistory('MALFORMED_EXECUTION_RECEIPT_HISTORY', { lineNumber: index + 1 });
+    }
+    const workspaceValidation = validateSharedWorkspaceRecord(record, options);
+    if (!workspaceValidation.valid) {
+      return blockedHistory(workspaceValidation.refusalReason || 'INVALID_SHARED_WORKSPACE_RECEIPT', { lineNumber: index + 1 });
+    }
+    const receipt = record.executionReceipt;
+    if (!identityMatches(receipt, filters)) continue;
+    const validation = validateExecutionReceipt(receipt, withoutExpectedHead(filters));
+    if (!validation.valid) {
+      return blockedHistory(validation.refusalReason, { lineNumber: index + 1, invalidReceipt: receipt });
+    }
+    entries.push({ receipt, lineNumber: index + 1 });
+  }
+
+  if (entries.length === 0) {
+    return Object.freeze({ ok: true, reason: 'NO_EXECUTION_RECEIPTS', receipts: Object.freeze([]), latestReceipt: null });
+  }
+  const receipts = entries.map((entry) => entry.receipt);
+  const setClassification = classifyExecutionReceiptSet(receipts, withoutExpectedHead(filters));
+  if (setClassification.finalVerdict !== 'EXECUTION_RECEIPT_SET_PASS') {
+    return blockedHistory(setClassification.finalVerdict, { setClassification });
+  }
+  const latestReceipt = entries.at(-1).receipt;
+  const latestValidation = validateExecutionReceipt(latestReceipt, filters);
+  if (!latestValidation.valid) {
+    return blockedHistory(latestValidation.refusalReason, { invalidReceipt: latestReceipt, lineNumber: entries.at(-1).lineNumber });
+  }
+  return Object.freeze({
+    ok: true,
+    reason: 'EXECUTION_RECEIPTS_READ',
+    receipts: Object.freeze(receipts),
+    latestReceipt,
+    setClassification,
+  });
+}
+
 export async function appendExecutionReceipt(root, receipt, options = {}) {
   const converted = toSharedWorkspaceExecutionReceipt(receipt);
   if (!converted.ok) return Object.freeze({ ok: false, reason: converted.reason, validation: converted.validation });
+
+  const existing = await readExecutionReceiptHistory(root, { leaseKey: receipt.leaseKey }, options);
+  if (!existing.ok) return Object.freeze({ ok: false, reason: existing.reason, existing });
+  const sameId = existing.receipts.find((item) => item.receiptId === receipt.receiptId);
+  if (sameId) {
+    if (JSON.stringify(sameId) === JSON.stringify(receipt)) {
+      return Object.freeze({ ok: true, reason: 'EXECUTION_RECEIPT_ALREADY_APPENDED', receipt });
+    }
+    return Object.freeze({ ok: false, reason: 'EXECUTION_RECEIPT_ID_CONFLICT', receipt });
+  }
+
+  const sameExecution = existing.receipts
+    .filter((item) => item.executionId === receipt.executionId)
+    .sort((left, right) => left.sequence - right.sequence);
+  if (sameExecution.length > 0) {
+    const transition = classifyExecutionReceiptTransition(sameExecution.at(-1), receipt);
+    if (!transition.accepted) return Object.freeze({ ok: false, reason: transition.refusalReason, transition });
+  } else if (receipt.sequence !== 1) {
+    return Object.freeze({ ok: false, reason: 'sequence-must-start-at-1' });
+  }
+
+  const setClassification = classifyExecutionReceiptSet([...existing.receipts, receipt]);
+  if (setClassification.finalVerdict !== 'EXECUTION_RECEIPT_SET_PASS') {
+    return Object.freeze({ ok: false, reason: setClassification.finalVerdict, setClassification });
+  }
+
   const history = await appendWorkspaceJsonl(root, ['receipts', 'execution-receipts.jsonl'], converted.record, options);
   if (!history.ok) return Object.freeze({ ok: false, reason: history.reason, history });
   const current = await writeAtomicJson(root, ['receipts', `${receipt.leaseKey}.json`], converted.record, options);
@@ -376,41 +509,29 @@ export async function appendExecutionReceipt(root, receipt, options = {}) {
   return Object.freeze({ ok: true, reason: 'EXECUTION_RECEIPT_APPENDED', history, current, receipt });
 }
 
-export async function readExecutionReceiptHistory(root, filters = {}, options = {}) {
-  const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: ['receipts', 'execution-receipts.jsonl'] });
-  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason, receipts: Object.freeze([]) });
-  let payload = '';
-  try {
-    payload = await readFile(resolved.path, 'utf8');
-  } catch (error) {
-    if (error?.code === 'ENOENT') return Object.freeze({ ok: true, reason: 'NO_EXECUTION_RECEIPTS', receipts: Object.freeze([]) });
-    return Object.freeze({ ok: false, reason: 'EXECUTION_RECEIPT_READ_FAILED', receipts: Object.freeze([]) });
-  }
-  const receipts = [];
-  for (const line of payload.split('\n').filter(Boolean)) {
-    try {
-      const record = JSON.parse(line);
-      if (!validateSharedWorkspaceRecord(record, options).valid) continue;
-      const receipt = record.executionReceipt;
-      if (!validateExecutionReceipt(receipt, filters).valid) continue;
-      if (filters.executionId && receipt.executionId !== filters.executionId) continue;
-      if (filters.leaseKey && receipt.leaseKey !== filters.leaseKey) continue;
-      receipts.push(receipt);
-    } catch {}
-  }
-  receipts.sort((left, right) => left.sequence - right.sequence || left.timestampUtc.localeCompare(right.timestampUtc));
-  return Object.freeze({ ok: true, reason: 'EXECUTION_RECEIPTS_READ', receipts: Object.freeze(receipts) });
-}
-
 export async function readCurrentExecutionReceipt(root, filters = {}, options = {}) {
   const history = await readExecutionReceiptHistory(root, filters, options);
-  if (!history.ok || history.receipts.length === 0) return Object.freeze({ ...history, receipt: null, projection: projectExecutionReceipt(null, options) });
-  const receipt = history.receipts.at(-1);
-  return Object.freeze({ ...history, receipt, projection: projectExecutionReceipt(receipt, options) });
+  if (!history.ok || !history.latestReceipt) {
+    return Object.freeze({
+      ...history,
+      receipt: null,
+      projection: history.ok
+        ? projectExecutionReceipt(null, options)
+        : Object.freeze({ ...projectExecutionReceipt(null, options), blocker: history.reason }),
+    });
+  }
+  return Object.freeze({
+    ...history,
+    receipt: history.latestReceipt,
+    projection: projectExecutionReceipt(history.latestReceipt, { ...options, ...filters }),
+  });
 }
 
 export function executionReceiptFromCodexQueueRecord(queueRecord = {}, input = {}) {
+  const queueValidation = validateCodexQueueRecord(queueRecord);
+  if (!queueValidation.valid) return null;
   const state = stateFromQueueStatus(queueRecord.status);
+  if (!state) return null;
   const historyEntry = Array.isArray(queueRecord.history) ? queueRecord.history.at(-1) : null;
   const timestampUtc = text(input.timestampUtc || historyEntry?.timestamp || queueRecord.createdAt);
   const proofRefs = list(input.proofRefs || queueRecord.proofRequirements?.refs);
