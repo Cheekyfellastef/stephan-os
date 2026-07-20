@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFile, mkdtemp, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   appendExecutionReceipt,
   buildExecutionWorkerAdapterContract,
@@ -54,6 +57,32 @@ function transition(record, status, timestamp, input = {}) {
   assert.equal(result.valid, true, result.errors?.join(',') || result.error);
   return result.record;
 }
+async function appendInChildProcess(root, candidate) {
+  const worker = `
+    const [root, candidateJson, repoRoot, moduleUrl] = process.argv.slice(1);
+    const { appendExecutionReceipt } = await import(moduleUrl);
+    const result = await appendExecutionReceipt(root, JSON.parse(candidateJson), { repoRoot });
+    process.stdout.write(JSON.stringify({ ok: result.ok, reason: result.reason }));
+  `;
+  const child = spawn(process.execPath, [
+    '--input-type=module',
+    '--eval',
+    worker,
+    root,
+    JSON.stringify(candidate),
+    resolve('.'),
+    pathToFileURL(resolve('shared/agents/executionReceiptV1.mjs')).href,
+  ], { cwd: resolve('.'), windowsHide: true });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const [exitCode] = await once(child, 'close');
+  assert.equal(exitCode, 0, stderr);
+  return JSON.parse(stdout);
+}
 
 // Core schema and transition safety.
 test('canonical receipt validates and is exact-head bound', () => {
@@ -68,6 +97,16 @@ test('unknown state and malformed identities fail closed', () => {
   assert.equal(result.valid, false);
   assert.equal(result.errors.includes('invalid-worker-id'), true);
   assert.equal(result.errors.includes('invalid-state'), true);
+});
+
+test('proof references must contain normalized nonempty safe evidence', () => {
+  for (const proofRefs of [[null], [''], ['   '], [null, '   ']]) {
+    const invalid = { ...receipt(), proofRefs };
+    const validation = validateExecutionReceipt(invalid);
+    assert.equal(validation.valid, false);
+    assert.equal(validation.refusalReason, 'missing-proof-refs');
+    assert.equal(toSharedWorkspaceExecutionReceipt(invalid).ok, false);
+  }
 });
 
 test('transition rejects out-of-order receipts and cross-repository mutation', () => {
@@ -142,6 +181,50 @@ test('persistence refuses a duplicate active execution before overwriting curren
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('concurrent worker processes serialize the full same-lease append transaction', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'execution-receipt-concurrent-'));
+  try {
+    const candidates = [
+      receipt({ executionId: 'execution-concurrent-a', receiptId: 'execution-concurrent-a-1' }),
+      receipt({ executionId: 'execution-concurrent-b', receiptId: 'execution-concurrent-b-1' }),
+    ];
+    const results = await Promise.all(candidates.map((candidate) => appendInChildProcess(root, candidate)));
+    assert.equal(results.filter((result) => result.reason === 'EXECUTION_RECEIPT_APPENDED').length, 1);
+    assert.equal(results.filter((result) => result.reason === 'DUPLICATE_ACTIVE_EXECUTION_LEASE').length, 1);
+    const current = await readCurrentExecutionReceipt(root, { leaseKey: BASE.leaseKey }, { repoRoot: resolve('.') });
+    assert.equal(current.ok, true);
+    assert.equal(current.receipts.length, 1);
+    assert.equal(candidates.some((candidate) => candidate.executionId === current.receipt.executionId), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('same-lease lock has deterministic contention refusal and stale-lock recovery', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'execution-receipt-stale-lock-'));
+  const lockDirectory = join(root, 'receipt-locks');
+  const lockPath = join(lockDirectory, `${BASE.leaseKey}.lock`);
+  try {
+    await mkdir(lockDirectory, { recursive: true });
+    await writeFile(lockPath, `${JSON.stringify({ token: 'abandoned-lock' })}\n`);
+    const blocked = await appendExecutionReceipt(root, receipt(), {
+      repoRoot: resolve('.'),
+      executionReceiptLockTimeoutMs: 0,
+      executionReceiptStaleLockMs: 60_000,
+    });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.reason, 'EXECUTION_RECEIPT_LEASE_LOCK_TIMEOUT');
+
+    const staleTime = new Date(Date.now() - 60_000);
+    await utimes(lockPath, staleTime, staleTime);
+    const recovered = await appendExecutionReceipt(root, receipt(), {
+      repoRoot: resolve('.'),
+      executionReceiptLockTimeoutMs: 1_000,
+      executionReceiptStaleLockMs: 1,
+    });
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.reason, 'EXECUTION_RECEIPT_APPENDED');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('newest invalid receipt blocks current projection instead of falling back to older state', async () => {
   const root = await mkdtemp(join(tmpdir(), 'execution-receipt-invalid-latest-'));
   try {
@@ -160,10 +243,81 @@ test('newest invalid receipt blocks current projection instead of falling back t
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('malformed nested execution identity is validated before identity filtering', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'execution-receipt-invalid-nested-identity-'));
+  try {
+    const first = receipt();
+    assert.equal((await appendExecutionReceipt(root, first, { repoRoot: resolve('.') })).ok, true);
+    const second = receipt({
+      state: 'accepted',
+      sequence: 2,
+      predecessorReceiptId: first.receiptId,
+      timestampUtc: '2026-07-20T10:01:00.000Z',
+      expectedNextAction: 'start worker',
+    });
+    const converted = toSharedWorkspaceExecutionReceipt(second);
+    assert.equal(converted.ok, true);
+    const poisoned = {
+      ...converted.record,
+      executionReceipt: { ...second, executionId: 'execution-poisoned' },
+    };
+    await appendFile(join(root, 'receipts', 'execution-receipts.jsonl'), `${JSON.stringify(poisoned)}\n`);
+    const current = await readCurrentExecutionReceipt(
+      root,
+      { executionId: first.executionId, leaseKey: first.leaseKey },
+      { repoRoot: resolve('.') },
+    );
+    assert.equal(current.ok, false);
+    assert.equal(current.receipt, null);
+    assert.equal(current.reason, 'DUPLICATE_ACTIVE_EXECUTION_LEASE');
+    assert.equal(current.projection.operationalState, 'UNKNOWN');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('missing nested execution receipt blocks filtered reads instead of falling back', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'execution-receipt-missing-nested-'));
+  try {
+    const first = receipt();
+    assert.equal((await appendExecutionReceipt(root, first, { repoRoot: resolve('.') })).ok, true);
+    const second = receipt({
+      state: 'accepted',
+      sequence: 2,
+      predecessorReceiptId: first.receiptId,
+      timestampUtc: '2026-07-20T10:01:00.000Z',
+      expectedNextAction: 'start worker',
+    });
+    const converted = toSharedWorkspaceExecutionReceipt(second);
+    assert.equal(converted.ok, true);
+    const { executionReceipt: _removed, ...poisoned } = converted.record;
+    await appendFile(join(root, 'receipts', 'execution-receipts.jsonl'), `${JSON.stringify(poisoned)}\n`);
+    const current = await readCurrentExecutionReceipt(
+      root,
+      { executionId: first.executionId, leaseKey: first.leaseKey },
+      { repoRoot: resolve('.') },
+    );
+    assert.equal(current.ok, false);
+    assert.equal(current.reason, 'unbounded-schema');
+    assert.equal(current.receipt, null);
+    assert.equal(current.projection.operationalState, 'UNKNOWN');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 // First producer adapter safety.
 test('Codex dispatch queue adapter rejects invalid source evidence before projecting state', () => {
   const invalid = executionReceiptFromCodexQueueRecord({ jobId: 'partial', status: 'RUNNING' }, { repository: BASE.repository, sourceHead: HEAD });
   assert.equal(invalid, null);
+});
+
+test('Codex dispatch queue approval wait emits a deterministic blocker', () => {
+  const waiting = transition(queueBase(), CODEX_QUEUE_STATUS.WAITING_OPERATOR_APPROVAL, '2026-07-20T10:00:01.000Z');
+  const adapted = executionReceiptFromCodexQueueRecord(waiting, {
+    repository: BASE.repository,
+    sourceHead: HEAD,
+    sequence: 1,
+  });
+  assert.equal(adapted.operatorActionRequired, true);
+  assert.equal(adapted.blocker, 'WAITING_OPERATOR_APPROVAL');
+  assert.equal(validateExecutionReceipt(adapted).valid, true);
 });
 
 test('Codex dispatch queue adapter accepts a canonical RUNNING record', () => {
