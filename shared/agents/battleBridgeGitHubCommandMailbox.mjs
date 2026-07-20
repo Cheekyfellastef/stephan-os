@@ -1,3 +1,10 @@
+import {
+  CODEX_BANKED_RESET_EXECUTION_SURFACE,
+  CODEX_BANKED_RESET_OPERATION,
+  CODEX_BANKED_RESET_POLICY_REF,
+  executeCodexBankedResetOnBattleBridge,
+} from './codexBankedResetBattleBridgeExecutor.mjs';
+
 export const BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE = 1507;
@@ -15,14 +22,67 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_MAILBOX_RECEIPT',
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+  CODEX_BANKED_RESET_OPERATION,
 ]);
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const MAX_FUTURE_WINDOW_MS = 6 * 60 * 60 * 1000;
+const RESET_COMMAND_FIELDS = Object.freeze([
+  'resetId',
+  'resetExpiresAtUtc',
+  'latestSafeExecutionUtc',
+  'standingOperatorPolicyRef',
+  'executionSurface',
+  'fixedUiActionOnly',
+  'singlePressOnly',
+]);
+const FORBIDDEN_RESET_COMMAND_FIELDS = Object.freeze([
+  'url', 'uri', 'selector', 'xpath', 'javascript', 'script', 'command', 'executable',
+  'args', 'arguments', 'profilePath', 'userDataDir', 'cookie', 'cookies', 'token', 'credential',
+]);
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
+}
+
+function hasValue(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function validateResetFields(command, { nowMs, expiresAtMs }) {
+  for (const field of FORBIDDEN_RESET_COMMAND_FIELDS) {
+    if (hasValue(command[field])) return fail('RESET_COMMAND_UNSAFE_FIELD_PRESENT', { field });
+  }
+  if (!RESET_ID_PATTERN.test(String(command.resetId || ''))) return fail('RESET_COMMAND_RESET_ID_INVALID');
+  if (command.standingOperatorPolicyRef !== CODEX_BANKED_RESET_POLICY_REF) return fail('RESET_COMMAND_POLICY_MISMATCH');
+  if (command.executionSurface !== CODEX_BANKED_RESET_EXECUTION_SURFACE) return fail('RESET_COMMAND_EXECUTION_SURFACE_MISMATCH');
+  if (command.fixedUiActionOnly !== true) return fail('RESET_COMMAND_FIXED_UI_ACTION_REQUIRED');
+  if (command.singlePressOnly !== true) return fail('RESET_COMMAND_SINGLE_PRESS_REQUIRED');
+
+  const resetExpiresAtMs = Date.parse(String(command.resetExpiresAtUtc || ''));
+  const latestSafeExecutionMs = Date.parse(String(command.latestSafeExecutionUtc || ''));
+  if (!Number.isFinite(resetExpiresAtMs) || !Number.isFinite(latestSafeExecutionMs)) {
+    return fail('RESET_COMMAND_TIME_INVALID');
+  }
+  if (resetExpiresAtMs <= nowMs) return fail('RESET_COMMAND_SELECTED_RESET_EXPIRED');
+  if (latestSafeExecutionMs <= nowMs) return fail('RESET_COMMAND_ACTION_EXPIRED');
+  if (latestSafeExecutionMs > expiresAtMs) return fail('RESET_COMMAND_LATEST_SAFE_AFTER_COMMAND_EXPIRY');
+  if (latestSafeExecutionMs > resetExpiresAtMs) return fail('RESET_COMMAND_LATEST_SAFE_AFTER_RESET_EXPIRY');
+
+  return Object.freeze({
+    ok: true,
+    reset: Object.freeze({
+      resetId: String(command.resetId),
+      resetExpiresAtUtc: new Date(resetExpiresAtMs).toISOString(),
+      latestSafeExecutionUtc: new Date(latestSafeExecutionMs).toISOString(),
+      standingOperatorPolicyRef: CODEX_BANKED_RESET_POLICY_REF,
+      executionSurface: CODEX_BANKED_RESET_EXECUTION_SURFACE,
+      fixedUiActionOnly: true,
+      singlePressOnly: true,
+    }),
+  });
 }
 
 export function extractBattleBridgeGitHubCommand(body = '') {
@@ -86,6 +146,16 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     return fail('COMMAND_EXPIRY_TOO_FAR_AHEAD');
   }
 
+  let reset = null;
+  if (command.operation === CODEX_BANKED_RESET_OPERATION) {
+    const resetValidation = validateResetFields(command, { nowMs, expiresAtMs });
+    if (!resetValidation.ok) return resetValidation;
+    reset = resetValidation.reset;
+  } else {
+    const unexpectedResetField = RESET_COMMAND_FIELDS.find((field) => hasValue(command[field]));
+    if (unexpectedResetField) return fail('RESET_COMMAND_FIELD_NOT_ALLOWED', { field: unexpectedResetField });
+  }
+
   return Object.freeze({
     ok: true,
     verdict: 'COMMAND_ACCEPTED',
@@ -100,6 +170,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       expectedHead: String(command.expectedHead || ''),
       targetRequestId: command.operation === 'READ_MAILBOX_RECEIPT' ? targetRequestId : '',
       expiresAt: new Date(expiresAtMs).toISOString(),
+      ...(reset || {}),
     }),
   });
 }
@@ -145,6 +216,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readMailboxReceipt,
   runWorkerWatchdogAcceptance,
   runMonitorMultiplexerAcceptance,
+  redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
 } = {}) {
   const handlers = {
     UPDATE_STEPHANOS_FROM_CHAT: updateStephanos,
@@ -157,6 +229,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
+    [CODEX_BANKED_RESET_OPERATION]: redeemBankedCodexReset,
   };
   const handler = handlers[command?.operation];
   if (typeof handler !== 'function') {
@@ -198,6 +271,12 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
+    resetId: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetId || '') : '',
+    resetExpiresAtUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetExpiresAtUtc || '') : '',
+    latestSafeExecutionUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.latestSafeExecutionUtc || '') : '',
+    standingOperatorPolicyRef: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.standingOperatorPolicyRef || '') : '',
+    fixedUiActionOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.fixedUiActionOnly === true : false,
+    singlePressOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.singlePressOnly === true : false,
     state: String(state || ''),
     acceptedAt: String(acceptedAt || ''),
     heartbeatAt: String(heartbeatAt || ''),
@@ -208,5 +287,7 @@ export function buildBattleBridgeGitHubCommandReceipt({
     arbitraryShellAllowed: false,
     destructiveGitAllowed: false,
     liveOpenClawUpdateAllowed: false,
+    arbitraryBrowserAutomationAllowed: false,
+    credentialsMayBeReadOrExported: false,
   });
 }
