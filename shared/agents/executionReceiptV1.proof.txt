@@ -1,0 +1,10 @@
+EXECUTION_RECEIPT_V1_LOCAL_PROOF
+BRANCH=goal-1568-execution-receipts-v1
+BASE_HEAD=7faa9609d0a75847fd3ba935c7244761e47db8a7
+COMMAND=node --test shared/agents/executionReceiptV1.test.mjs
+TESTS=8
+PASS=8
+FAIL=0
+LOCAL_SYNTAX_CHECK=node --check shared/agents/executionReceiptV1.mjs
+LOCAL_SYNTAX_RESULT=PASS
+NOTE=GitHub exact-head CI remains authoritative after PR publication.
