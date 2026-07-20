@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, stat, unlink } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { lstat, mkdir, readFile, readdir, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
+import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   appendWorkspaceJsonl,
@@ -50,6 +51,9 @@ export const DEFAULT_EXECUTION_HEARTBEAT_MS = 2 * 60 * 1000;
 export const DEFAULT_EXECUTION_RECEIPT_LOCK_TIMEOUT_MS = 5 * 1000;
 export const DEFAULT_EXECUTION_RECEIPT_LOCK_RETRY_MS = 25;
 export const DEFAULT_EXECUTION_RECEIPT_STALE_LOCK_MS = 5 * 60 * 1000;
+
+const EXECUTION_RECEIPT_LOCK_SCHEMA_VERSION = 'stephanos.execution-receipt-lock.v1';
+const EXECUTION_RECEIPT_LOCK_HOSTNAME = hostname().toLowerCase();
 
 const REQUIRED_KEYS = Object.freeze([
   'schemaVersion',
@@ -201,15 +205,197 @@ function classifyWorkspaceExecutionReceiptHistory(entries) {
   return null;
 }
 
-async function removeStaleExecutionReceiptLock(lockPath, staleAfterMs) {
+function executionReceiptLockOwnerFileName(token) {
+  return `owner-${token}.json`;
+}
+
+function executionReceiptLockOwnerIsValid(owner, ownerFileName) {
+  return Boolean(
+    owner
+    && typeof owner === 'object'
+    && owner.schemaVersion === EXECUTION_RECEIPT_LOCK_SCHEMA_VERSION
+    && SAFE_ID.test(text(owner.token))
+    && ownerFileName === executionReceiptLockOwnerFileName(owner.token)
+    && Number.isSafeInteger(owner.pid)
+    && owner.pid > 0
+    && text(owner.hostname)
+    && Number.isFinite(timestampMs(owner.acquiredAtUtc))
+  );
+}
+
+function legacyExecutionReceiptLockOwnerIsValid(owner) {
+  return Boolean(
+    owner
+    && typeof owner === 'object'
+    && SAFE_ID.test(text(owner.token))
+    && Number.isSafeInteger(owner.pid)
+    && owner.pid > 0
+    && Number.isFinite(timestampMs(owner.acquiredAtUtc))
+  );
+}
+
+function executionReceiptLockOwnerLiveness(owner, { legacy = false } = {}) {
+  const ownerHostname = text(owner?.hostname, legacy ? EXECUTION_RECEIPT_LOCK_HOSTNAME : '').toLowerCase();
+  if (!ownerHostname || ownerHostname !== EXECUTION_RECEIPT_LOCK_HOSTNAME) return 'unknown';
   try {
-    const lockStat = await stat(lockPath);
-    if (Date.now() - lockStat.mtimeMs <= staleAfterMs) return false;
+    process.kill(owner.pid, 0);
+    return 'alive';
+  } catch (error) {
+    if (error?.code === 'ESRCH') return 'dead';
+    if (error?.code === 'EPERM') return 'alive';
+    return 'unknown';
+  }
+}
+
+async function readExecutionReceiptDirectoryLockEvidence(lockPath) {
+  const directoryEntries = await readdir(lockPath, { withFileTypes: true });
+  const entries = [];
+  for (const directoryEntry of directoryEntries) {
+    const entryPath = join(lockPath, directoryEntry.name);
+    let entryStat;
+    try {
+      entryStat = await lstat(entryPath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return null;
+      throw error;
+    }
+    entries.push(Object.freeze({
+      name: directoryEntry.name,
+      path: entryPath,
+      isFile: entryStat.isFile(),
+      mtimeMs: entryStat.mtimeMs,
+    }));
+  }
+
+  const ownerEntry = entries.length === 1 && entries[0].isFile ? entries[0] : null;
+  let owner = null;
+  if (ownerEntry) {
+    try {
+      owner = JSON.parse(await readFile(ownerEntry.path, 'utf8'));
+    } catch {
+      owner = null;
+    }
+  }
+  return Object.freeze({
+    entries: Object.freeze(entries),
+    ownerEntry,
+    owner,
+    validOwner: Boolean(ownerEntry && executionReceiptLockOwnerIsValid(owner, ownerEntry.name)),
+    newestMtimeMs: entries.length
+      ? Math.max(...entries.map((entry) => entry.mtimeMs))
+      : (await stat(lockPath)).mtimeMs,
+  });
+}
+
+async function removeOwnedExecutionReceiptDirectoryLock(lockPath, ownerEntry, owner) {
+  try {
+    const currentOwner = JSON.parse(await readFile(ownerEntry.path, 'utf8'));
+    if (
+      currentOwner?.token !== owner.token
+      || currentOwner?.pid !== owner.pid
+      || text(currentOwner?.hostname).toLowerCase() !== text(owner.hostname).toLowerCase()
+    ) return false;
+    await unlink(ownerEntry.path);
+  } catch {
+    return false;
+  }
+  try {
+    await rmdir(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function removeInvalidExpiredExecutionReceiptDirectoryLock(lockPath, evidence, staleAfterMs) {
+  if (!evidence || Date.now() - evidence.newestMtimeMs <= staleAfterMs) return false;
+  if (evidence.entries.some((entry) => !entry.isFile)) return false;
+  for (const entry of evidence.entries) {
+    try {
+      await unlink(entry.path);
+    } catch {
+      return false;
+    }
+  }
+  try {
+    await rmdir(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function removeStaleExecutionReceiptLock(lockPath, staleAfterMs) {
+  let lockStat;
+  try {
+    lockStat = await lstat(lockPath);
+  } catch (error) {
+    return error?.code === 'ENOENT';
+  }
+
+  if (lockStat.isDirectory()) {
+    let evidence;
+    try {
+      evidence = await readExecutionReceiptDirectoryLockEvidence(lockPath);
+    } catch {
+      return false;
+    }
+    if (!evidence) return true;
+    if (!evidence.validOwner) {
+      return removeInvalidExpiredExecutionReceiptDirectoryLock(lockPath, evidence, staleAfterMs);
+    }
+    if (executionReceiptLockOwnerLiveness(evidence.owner) !== 'dead') return false;
+    return removeOwnedExecutionReceiptDirectoryLock(lockPath, evidence.ownerEntry, evidence.owner);
+  }
+
+  if (!lockStat.isFile()) return false;
+  let legacyOwner = null;
+  let legacyPayload = '';
+  try {
+    legacyPayload = await readFile(lockPath, 'utf8');
+    legacyOwner = JSON.parse(legacyPayload);
+  } catch {
+    legacyOwner = null;
+  }
+  const validLegacyOwner = legacyExecutionReceiptLockOwnerIsValid(legacyOwner);
+  if (validLegacyOwner && executionReceiptLockOwnerLiveness(legacyOwner, { legacy: true }) !== 'dead') return false;
+  if (!validLegacyOwner && Date.now() - lockStat.mtimeMs <= staleAfterMs) return false;
+  try {
+    const currentStat = await lstat(lockPath);
+    if (!currentStat.isFile()) return false;
+    const currentPayload = await readFile(lockPath, 'utf8');
+    if (currentPayload !== legacyPayload || currentStat.mtimeMs !== lockStat.mtimeMs) return false;
     await unlink(lockPath);
     return true;
   } catch (error) {
     return error?.code === 'ENOENT';
   }
+}
+
+function startExecutionReceiptLockHeartbeat(ownerPath, token, heartbeatMs) {
+  let stopped = false;
+  let inFlight = null;
+  const heartbeat = async () => {
+    if (stopped || inFlight) return;
+    inFlight = (async () => {
+      const currentOwner = JSON.parse(await readFile(ownerPath, 'utf8'));
+      if (currentOwner?.token !== token) throw new Error('execution receipt lock ownership changed');
+      const now = new Date();
+      await utimes(ownerPath, now, now);
+    })().catch(() => {
+      stopped = true;
+    }).finally(() => {
+      inFlight = null;
+    });
+    await inFlight;
+  };
+  const timer = setInterval(() => { void heartbeat(); }, heartbeatMs);
+  timer.unref?.();
+  return async () => {
+    stopped = true;
+    clearInterval(timer);
+    if (inFlight) await inFlight;
+  };
 }
 
 async function acquireExecutionReceiptFileLock(root, segments, reasons, options = {}) {
@@ -234,8 +420,24 @@ async function acquireExecutionReceiptFileLock(root, segments, reasons, options 
     DEFAULT_EXECUTION_RECEIPT_STALE_LOCK_MS,
     1,
   );
+  const maximumHeartbeatMs = Math.max(1, Math.floor(staleAfterMs / 3));
+  const heartbeatMs = Math.min(
+    boundedDuration(options.executionReceiptLockHeartbeatMs, maximumHeartbeatMs, 1),
+    maximumHeartbeatMs,
+  );
   const startedAt = Date.now();
   const token = `${process.pid}-${randomUUID()}`;
+  const ownerFileName = executionReceiptLockOwnerFileName(token);
+  const ownerPath = join(resolved.path, ownerFileName);
+  const acquiredAtUtc = new Date().toISOString();
+  const owner = Object.freeze({
+    schemaVersion: EXECUTION_RECEIPT_LOCK_SCHEMA_VERSION,
+    token,
+    pid: process.pid,
+    hostname: EXECUTION_RECEIPT_LOCK_HOSTNAME,
+    acquiredAtUtc,
+    processStartedAtUtc: new Date(Date.now() - (process.uptime() * 1000)).toISOString(),
+  });
 
   try {
     await mkdir(dirname(resolved.path), { recursive: true });
@@ -244,20 +446,30 @@ async function acquireExecutionReceiptFileLock(root, segments, reasons, options 
   }
 
   while (true) {
-    let handle;
+    let lockDirectoryCreated = false;
     try {
-      handle = await open(resolved.path, 'wx', 0o600);
-      await handle.writeFile(`${JSON.stringify({ token, pid: process.pid, acquiredAtUtc: new Date().toISOString() })}\n`);
-      await handle.close();
-      handle = null;
+      await mkdir(resolved.path, { mode: 0o700 });
+      lockDirectoryCreated = true;
+      await writeFile(ownerPath, `${JSON.stringify(owner)}\n`, { flag: 'wx', mode: 0o600 });
+      const stopHeartbeat = startExecutionReceiptLockHeartbeat(ownerPath, token, heartbeatMs);
       return Object.freeze({
         ok: true,
         reason: reasons.acquired,
         async release() {
+          await stopHeartbeat();
           try {
-            const owner = JSON.parse(await readFile(resolved.path, 'utf8'));
-            if (owner?.token !== token) return false;
-            await unlink(resolved.path);
+            const currentOwner = JSON.parse(await readFile(ownerPath, 'utf8'));
+            if (
+              currentOwner?.token !== token
+              || currentOwner?.pid !== process.pid
+              || text(currentOwner?.hostname).toLowerCase() !== EXECUTION_RECEIPT_LOCK_HOSTNAME
+            ) return false;
+            await unlink(ownerPath);
+          } catch {
+            return false;
+          }
+          try {
+            await rmdir(resolved.path);
             return true;
           } catch {
             return false;
@@ -265,11 +477,20 @@ async function acquireExecutionReceiptFileLock(root, segments, reasons, options 
         },
       });
     } catch (error) {
-      if (handle) {
-        try { await handle.close(); } catch { /* best-effort close */ }
-        try { await unlink(resolved.path); } catch { /* stale cleanup handles leftovers */ }
+      if (lockDirectoryCreated) {
+        try { await unlink(ownerPath); } catch { /* ownership-safe cleanup below */ }
+        try { await rmdir(resolved.path); } catch { /* stale cleanup handles leftovers */ }
       }
-      if (error?.code !== 'EEXIST') {
+      let lockExists = false;
+      try {
+        await lstat(resolved.path);
+        lockExists = true;
+      } catch (statError) {
+        if (statError?.code !== 'ENOENT') {
+          return Object.freeze({ ok: false, reason: reasons.failed, errorCode: statError?.code || '' });
+        }
+      }
+      if (!lockExists && error?.code !== 'EEXIST') {
         return Object.freeze({ ok: false, reason: reasons.failed, errorCode: error?.code || '' });
       }
       if (await removeStaleExecutionReceiptLock(resolved.path, staleAfterMs)) continue;
@@ -289,7 +510,7 @@ async function acquireExecutionReceiptLeaseLock(root, leaseKey, options = {}) {
   }, options);
 }
 
-async function acquireExecutionReceiptHistoryLock(root, options = {}) {
+export async function acquireExecutionReceiptHistoryLock(root, options = {}) {
   return acquireExecutionReceiptFileLock(root, ['receipt-locks', 'history', 'execution-receipts.lock'], {
     acquired: 'EXECUTION_RECEIPT_HISTORY_LOCK_ACQUIRED',
     failed: 'EXECUTION_RECEIPT_HISTORY_LOCK_FAILED',
@@ -302,6 +523,8 @@ async function acquireExecutionReceiptHistoryLock(root, options = {}) {
       ?? options.executionReceiptLockRetryMs,
     executionReceiptStaleLockMs: options.executionReceiptHistoryStaleLockMs
       ?? options.executionReceiptStaleLockMs,
+    executionReceiptLockHeartbeatMs: options.executionReceiptHistoryLockHeartbeatMs
+      ?? options.executionReceiptLockHeartbeatMs,
   });
 }
 
@@ -501,9 +724,13 @@ export function classifyExecutionReceiptSet(receipts = [], options = {}) {
     byExecution.set(entry.receipt.executionId, chain);
   }
   for (const [executionId, chain] of byExecution.entries()) {
-    chain.sort((left, right) => left.sequence - right.sequence || timestampMs(left.timestampUtc) - timestampMs(right.timestampUtc));
     if (chain[0]?.sequence !== 1) chainErrors.push(`${executionId}:sequence-must-start-at-1`);
     for (let index = 1; index < chain.length; index += 1) {
+      if (chain[index].sequence === chain[index - 1].sequence) {
+        chainErrors.push(`${executionId}:duplicate-sequence-position`);
+      } else if (chain[index].sequence < chain[index - 1].sequence) {
+        chainErrors.push(`${executionId}:backward-sequence-order`);
+      }
       const transition = classifyExecutionReceiptTransition(chain[index - 1], chain[index], options);
       for (const error of transition.errors) chainErrors.push(`${executionId}:${error}`);
     }
@@ -741,8 +968,7 @@ export async function appendExecutionReceipt(root, receipt, options = {}) {
         }
       } else {
         const sameExecution = existing.receipts
-          .filter((item) => item.executionId === receipt.executionId)
-          .sort((left, right) => left.sequence - right.sequence);
+          .filter((item) => item.executionId === receipt.executionId);
         if (sameExecution.length > 0) {
           const transition = classifyExecutionReceiptTransition(sameExecution.at(-1), receipt);
           if (!transition.accepted) return Object.freeze({ ok: false, reason: transition.refusalReason, transition });
