@@ -20,9 +20,13 @@ function freshObservation(input = {}) {
 }
 
 test('queue record becomes a capacity task without creating a second queue', () => {
-  const task = buildCapacityTaskFromQueueRecord({ jobId: 'job-1351', issueNumber: 1351, prompt: 'Build meter governor' });
+  const task = buildCapacityTaskFromQueueRecord(
+    { jobId: 'job-1351', issueNumber: 1351, prompt: 'Build meter governor' },
+    { urgent: true },
+  );
   assert.equal(task.taskId, 'job-1351');
   assert.equal(task.taskClass, CODEX_TASK_CLASS.FOCUSED_REPAIR);
+  assert.equal(task.urgent, true);
   assert.match(task.title, /Build meter governor/);
 });
 
@@ -81,6 +85,24 @@ test('stale, low-confidence, and non-executable meter states never invoke the di
     assert.equal(decision.dispatcherInvoked, false);
     assert.equal(calls, 0);
   }
+});
+
+test('urgent repair classification reaches the governor and may consume only the emergency reserve', () => {
+  let calls = 0;
+  const decision = createMeterAwareDispatchDecision({
+    queueRecord: { jobId: 'job-urgent', issueNumber: 1351, prompt: 'Urgent focused repair' },
+    taskProfile: { taskClass: CODEX_TASK_CLASS.FOCUSED_REPAIR, urgent: true },
+    capacity: { nowUtc: NOW, observation: freshObservation({ remainingPercent: 25 }) },
+    dispatcher: ({ capacityProjection }) => {
+      calls += 1;
+      assert.equal(capacityProjection.reservedPercent, 15);
+      assert.equal(capacityProjection.safelySchedulablePercent, 10);
+      return { decision: 'DISPATCHED', finalVerdict: 'CODEX_JOB_DISPATCHED', record: { jobId: 'job-urgent' } };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(decision.dispatcherInvoked, true);
+  assert.equal(decision.finalVerdict, 'CODEX_JOB_DISPATCHED');
 });
 
 test('sufficient fresh trusted capacity invokes the approved dispatcher exactly once', () => {
