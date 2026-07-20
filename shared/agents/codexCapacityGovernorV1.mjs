@@ -62,6 +62,7 @@ export const DEFAULT_CAPACITY_RESERVES = Object.freeze({
 });
 
 export const DEFAULT_METER_MAX_AGE_MINUTES = 15;
+export const DEFAULT_MIN_TASK_COST_SAMPLES = 3;
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -117,17 +118,24 @@ function routeForTask(task = {}) {
   return CODEX_ROUTE.CODEX;
 }
 
+function explicitFiniteNumber(value) {
+  return value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value));
+}
+
 export function createMeterObservation(input = {}) {
-  const remainingPercent = clamp(input.remainingPercent, 0, 100);
-  const availability = Object.values(CODEX_AVAILABILITY).includes(input.availability)
-    ? input.availability
-    : (remainingPercent <= 0 ? CODEX_AVAILABILITY.METER_STALLED : CODEX_AVAILABILITY.UNKNOWN);
+  const remainingPercentObserved = explicitFiniteNumber(input.remainingPercent);
+  const availabilityObserved = Object.values(CODEX_AVAILABILITY).includes(input.availability);
+  const remainingPercent = remainingPercentObserved ? clamp(input.remainingPercent, 0, 100) : null;
+  const availability = availabilityObserved ? input.availability : CODEX_AVAILABILITY.UNKNOWN;
   return Object.freeze({
     schemaVersion: CODEX_CAPACITY_GOVERNOR_SCHEMA_VERSION,
     kind: 'stephanos.codex_capacity.meter_observation',
     observedAtUtc: text(input.observedAtUtc || input.timestampUtc, 'pending'),
     remainingPercent,
+    remainingPercentObserved,
     availability,
+    availabilityObserved,
+    complete: remainingPercentObserved && availabilityObserved,
     naturalResetAtUtc: text(input.naturalResetAtUtc || input.resetAtUtc),
     bankedResets: sortedBankedResets(input.bankedResets),
     source: text(input.source, 'operator-or-browser-observation'),
@@ -168,7 +176,7 @@ export function createTaskConsumptionReceipt(input = {}) {
   });
 }
 
-export function buildTaskCostModel(receipts = []) {
+export function buildTaskCostModel(receipts = [], { minSamples = DEFAULT_MIN_TASK_COST_SAMPLES } = {}) {
   const groups = new Map();
   for (const rawReceipt of Array.isArray(receipts) ? receipts : []) {
     const receipt = rawReceipt?.kind === 'stephanos.codex_capacity.task_consumption_receipt'
@@ -177,14 +185,22 @@ export function buildTaskCostModel(receipts = []) {
     if (!groups.has(receipt.taskClass)) groups.set(receipt.taskClass, []);
     groups.get(receipt.taskClass).push(receipt.observedConsumptionPercent);
   }
+  const requiredSamples = Math.max(1, Math.floor(number(minSamples, DEFAULT_MIN_TASK_COST_SAMPLES)));
   const taskClasses = {};
   for (const taskClass of Object.values(CODEX_TASK_CLASS)) {
     const samples = groups.get(taskClass) || [];
+    const defaultPercent = DEFAULT_TASK_COST_PERCENT[taskClass];
+    const enoughSamples = samples.length >= requiredSamples;
+    const observedP50 = samples.length ? percentile(samples, 0.5) : defaultPercent;
+    const observedP80 = samples.length ? percentile(samples, 0.8) : defaultPercent;
     taskClasses[taskClass] = Object.freeze({
       sampleCount: samples.length,
-      p50Percent: samples.length ? percentile(samples, 0.5) : DEFAULT_TASK_COST_PERCENT[taskClass],
-      p80Percent: samples.length ? percentile(samples, 0.8) : DEFAULT_TASK_COST_PERCENT[taskClass],
-      source: samples.length ? 'observed' : 'conservative-default',
+      minimumSampleCount: requiredSamples,
+      p50Percent: enoughSamples ? Math.max(defaultPercent, observedP50) : defaultPercent,
+      p80Percent: enoughSamples ? Math.max(defaultPercent, observedP80) : defaultPercent,
+      source: enoughSamples
+        ? ((observedP50 < defaultPercent || observedP80 < defaultPercent) ? 'observed-with-conservative-floor' : 'observed')
+        : (samples.length ? 'conservative-default-insufficient-samples' : 'conservative-default'),
     });
   }
   return Object.freeze({
@@ -192,6 +208,7 @@ export function buildTaskCostModel(receipts = []) {
     kind: 'stephanos.codex_capacity.task_cost_model',
     taskClasses: Object.freeze(taskClasses),
     totalSamples: [...groups.values()].reduce((sum, samples) => sum + samples.length, 0),
+    minimumSampleCount: requiredSamples,
     finalVerdict: 'CODEX_TASK_COST_MODEL_READY',
   });
 }
@@ -250,26 +267,57 @@ function meterTrust(observation, nowUtc, maxAgeMinutes) {
   const ageMs = Number.isFinite(nowMs) && Number.isFinite(observedMs) ? nowMs - observedMs : NaN;
   const fresh = Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= maxAgeMinutes * MINUTE_MS;
   const confidenceTrusted = observation.confidence === 'high' || observation.confidence === 'medium';
+  const remainingPercentObserved = observation.remainingPercentObserved === true
+    || (observation.remainingPercentObserved === undefined && explicitFiniteNumber(observation.remainingPercent));
+  const availabilityObserved = observation.availabilityObserved === true
+    || (observation.availabilityObserved === undefined && Object.values(CODEX_AVAILABILITY).includes(observation.availability));
+  const complete = remainingPercentObserved
+    && availabilityObserved
+    && Number.isFinite(Number(observation.remainingPercent));
   return Object.freeze({
     fresh,
     confidenceTrusted,
+    remainingPercentObserved,
+    availabilityObserved,
+    complete,
     ageMinutes: Number.isFinite(ageMs) ? ageMs / MINUTE_MS : null,
-    trusted: fresh && confidenceTrusted,
+    trusted: fresh && confidenceTrusted && complete,
   });
+}
+
+function completedResetIdsFrom(input = {}) {
+  const ids = new Set(
+    (Array.isArray(input.completedResetIds) ? input.completedResetIds : [])
+      .map((value) => text(value))
+      .filter(Boolean),
+  );
+  for (const receipt of Array.isArray(input.resetCompletionReceipts) ? input.resetCompletionReceipts : []) {
+    const completed = receipt?.ok === true
+      || receipt?.state === 'DONE'
+      || receipt?.finalVerdict === 'CODEX_BANKED_RESET_CONFIRMED';
+    if (completed) {
+      const resetId = text(receipt?.resetId || receipt?.result?.resetId || receipt?.result?.result?.resetId);
+      if (resetId) ids.add(resetId);
+    }
+  }
+  return ids;
 }
 
 export function createResetRedemptionAction(input = {}) {
   const reset = input.reset || {};
+  const resetExpiresAtUtc = text(reset.expiresAtUtc);
   return Object.freeze({
     schemaVersion: CODEX_CAPACITY_GOVERNOR_SCHEMA_VERSION,
     kind: 'stephanos.codex_capacity.banked_reset_action',
     operation: 'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
     resetId: text(reset.resetId),
-    expiresAtUtc: text(reset.expiresAtUtc),
+    expiresAtUtc: resetExpiresAtUtc,
+    resetExpiresAtUtc,
     executeAtOrAfterUtc: text(input.executeAtOrAfterUtc || input.nowUtc, 'pending'),
     latestSafeExecutionUtc: text(input.latestSafeExecutionUtc || reset.expiresAtUtc),
-    executionSurface: 'REMOTE_CODEX_AUTHENTICATED_BROWSER',
+    executionSurface: 'BATTLE_BRIDGE_AUTHENTICATED_CODEX_UI',
     fixedUiActionOnly: true,
+    singlePressOnly: true,
     genericBrowserAutomationAllowed: false,
     credentialsMayBeReadOrExported: false,
     standingOperatorPolicyRef: text(input.standingOperatorPolicyRef, 'operator-policy/codex-banked-reset-v1'),
@@ -291,7 +339,7 @@ export function planBankedReset(input = {}) {
     120,
   );
   const resetMeterTruth = meterTrust(observation, nowUtc, maxMeterAgeMinutes);
-  const resetMeterTrusted = resetMeterTruth.fresh && observation.confidence === 'high';
+  const resetMeterTrusted = resetMeterTruth.trusted && observation.confidence === 'high';
   if (!Number.isFinite(nowMs)) {
     return Object.freeze({
       decision: CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_HOLD,
@@ -302,19 +350,25 @@ export function planBankedReset(input = {}) {
       finalVerdict: 'CODEX_BANKED_RESET_PLAN_READY',
     });
   }
+  const completedResetIds = completedResetIdsFrom(input);
   const naturalResetMs = timestamp(observation.naturalResetAtUtc);
-  const resets = observation.bankedResets.filter((reset) => timestamp(reset.expiresAtUtc) > nowMs);
+  const unexpired = observation.bankedResets.filter((reset) => timestamp(reset.expiresAtUtc) > nowMs);
+  const completedAvailable = unexpired.filter((reset) => completedResetIds.has(reset.resetId));
+  const resets = unexpired.filter((reset) => !completedResetIds.has(reset.resetId));
   const expired = observation.bankedResets.filter((reset) => timestamp(reset.expiresAtUtc) <= nowMs);
   const nextReset = resets[0] || null;
+  const remainingPercent = resetMeterTruth.complete ? Number(observation.remainingPercent) : null;
   const queueDemandPercent = Math.max(0, number(input.queueDemandPercent, 0));
   const threshold = clamp(input.redeemThresholdPercent === undefined ? 5 : input.redeemThresholdPercent, 0, 25);
   const expiryGuardHours = clamp(input.expiryGuardHours === undefined ? 24 : input.expiryGuardHours, 1, 168);
   const naturalResetGuardHours = clamp(input.naturalResetGuardHours === undefined ? 2 : input.naturalResetGuardHours, 0, 24);
   const hoursToNaturalReset = Number.isFinite(naturalResetMs) ? (naturalResetMs - nowMs) / HOUR_MS : null;
   const hoursToExpiry = nextReset ? (timestamp(nextReset.expiresAtUtc) - nowMs) / HOUR_MS : null;
-  const meterBlocked = observation.availability === CODEX_AVAILABILITY.METER_STALLED
-    || (observation.availability === CODEX_AVAILABILITY.AVAILABLE && observation.remainingPercent <= threshold);
-  const meaningfulDemand = queueDemandPercent > observation.remainingPercent;
+  const meterBlocked = resetMeterTruth.complete && (
+    observation.availability === CODEX_AVAILABILITY.METER_STALLED
+    || (observation.availability === CODEX_AVAILABILITY.AVAILABLE && remainingPercent <= threshold)
+  );
+  const meaningfulDemand = resetMeterTruth.complete && queueDemandPercent > remainingPercent;
   const naturalResetSoon = hoursToNaturalReset !== null && hoursToNaturalReset >= 0 && hoursToNaturalReset <= naturalResetGuardHours;
   const expiryPressure = hoursToExpiry !== null && hoursToExpiry <= expiryGuardHours;
   const expiryBeforeNaturalReset = hoursToExpiry !== null && (hoursToNaturalReset === null || hoursToExpiry < hoursToNaturalReset);
@@ -328,14 +382,20 @@ export function planBankedReset(input = {}) {
     && meaningfulDemand
     && !naturalResetSoon
     && safetyWindowOpen
-    && (meterBlocked || (expiryPressure && expiryBeforeNaturalReset && observation.remainingPercent <= Math.max(threshold, 10)));
+    && (meterBlocked || (expiryPressure && expiryBeforeNaturalReset && remainingPercent <= Math.max(threshold, 10)));
 
   if (!nextReset) {
+    const completionBlocked = completedAvailable.length > 0;
     return Object.freeze({
-      decision: expired.length ? CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_EXPIRED : CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_HOLD,
+      decision: expired.length && !completionBlocked
+        ? CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_EXPIRED
+        : CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_HOLD,
       selectedReset: null,
       action: null,
-      reason: expired.length ? 'No unexpired banked Codex reset remains.' : 'No banked Codex reset is available.',
+      reason: completionBlocked
+        ? 'A completion receipt already exists for every unexpired banked reset currently visible; do not redeem one again.'
+        : (expired.length ? 'No unexpired banked Codex reset remains.' : 'No banked Codex reset is available.'),
+      completedResetIds: [...completedResetIds],
       expiredResetIds: expired.map((reset) => reset.resetId),
       meterTruth: resetMeterTruth,
       finalVerdict: 'CODEX_BANKED_RESET_PLAN_READY',
@@ -355,13 +415,16 @@ export function planBankedReset(input = {}) {
       reason: meterBlocked
         ? 'Codex capacity is blocked or at the conservative redemption threshold and queued high-value demand exceeds remaining capacity.'
         : 'The earliest banked reset is near expiry before the natural reset and queued demand exceeds remaining capacity.',
+      completedResetIds: [...completedResetIds],
       meterTruth: resetMeterTruth,
       finalVerdict: 'CODEX_BANKED_RESET_PLAN_READY',
     });
   }
 
   let reason = 'Hold the earliest-expiring banked reset until Codex is blocked or near empty and useful queued work needs the capacity.';
-  if (!resetMeterTrusted) {
+  if (!resetMeterTruth.complete) {
+    reason = 'The Codex meter observation is incomplete; an explicit remaining percentage and availability state are required before banked-reset planning.';
+  } else if (!resetMeterTrusted) {
     reason = !resetMeterTruth.fresh
       ? 'The Codex meter observation is missing, future-dated, or stale; refresh it before banked-reset planning.'
       : 'Banked-reset redemption requires a high-confidence meter observation.';
@@ -376,6 +439,7 @@ export function planBankedReset(input = {}) {
     selectedReset: nextReset,
     action: null,
     reason,
+    completedResetIds: [...completedResetIds],
     hoursToExpiry,
     hoursToNaturalReset,
     meterTruth: resetMeterTruth,
@@ -417,7 +481,8 @@ export function buildCodexCapacityProjection(input = {}) {
   const reserves = Object.freeze({ ...DEFAULT_CAPACITY_RESERVES, ...(input.reserves || {}) });
   const configuredReservedPercent = reserveTotal(reserves);
   const reservedPercent = reserveForTask(reserves, nextCodexTask);
-  const safelySchedulablePercent = Math.max(0, observation.remainingPercent - reservedPercent);
+  const observedRemainingPercent = Number.isFinite(Number(observation.remainingPercent)) ? Number(observation.remainingPercent) : 0;
+  const safelySchedulablePercent = Math.max(0, observedRemainingPercent - reservedPercent);
   const shortfallPercent = Math.max(0, queuedCodexDemandPercent - safelySchedulablePercent);
   const evaluationUtc = text(input.nowUtc);
   const maxMeterAgeMinutes = clamp(
@@ -434,6 +499,8 @@ export function buildCodexCapacityProjection(input = {}) {
     activeCodexTask: input.activeCodexTask,
     standingOperatorPolicyActive: meterTruth.trusted && input.standingOperatorPolicyActive,
     standingOperatorPolicyRef: input.standingOperatorPolicyRef,
+    completedResetIds: input.completedResetIds,
+    resetCompletionReceipts: input.resetCompletionReceipts,
     redeemThresholdPercent: input.redeemThresholdPercent,
     expiryGuardHours: input.expiryGuardHours,
     naturalResetGuardHours: input.naturalResetGuardHours,
@@ -450,7 +517,9 @@ export function buildCodexCapacityProjection(input = {}) {
   } else if (!meterTruth.trusted) {
     decision = CODEX_CAPACITY_DECISION.CODEX_CAPACITY_UNKNOWN;
     route = CODEX_ROUTE.BLOCKED;
-    if (!Number.isFinite(timestamp(evaluationUtc)) || !Number.isFinite(timestamp(observation.observedAtUtc))) {
+    if (!meterTruth.complete) {
+      reason = 'An explicit remaining percentage and availability state are required before Codex dispatch.';
+    } else if (!Number.isFinite(timestamp(evaluationUtc)) || !Number.isFinite(timestamp(observation.observedAtUtc))) {
       reason = 'A valid evaluation time and meter observation timestamp are required before Codex dispatch.';
     } else if (!meterTruth.confidenceTrusted) {
       reason = 'Current Codex meter confidence is too low; refresh the usage observation before dispatch.';
@@ -502,7 +571,7 @@ export function buildCodexCapacityProjection(input = {}) {
     resetPlan,
     stackVelocity: velocity,
     exactNextAction: resetPlan.decision === CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_REDEEM_NOW
-      ? 'Redeem the selected banked reset through the fixed Remote Codex browser action, capture before/after meter proof, then recalculate the queue.'
+      ? 'Redeem the selected banked reset through the fixed Battle Bridge authenticated Codex UI action, capture before/after meter proof, then recalculate the queue.'
       : (decision === CODEX_CAPACITY_DECISION.CODEX_DISPATCH_ALLOWED
         ? 'Dispatch only the highest-value Codex-suitable task and record a before/after capacity receipt.'
         : reason),
