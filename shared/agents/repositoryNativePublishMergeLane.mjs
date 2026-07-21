@@ -54,7 +54,7 @@ export function publishApprovalToken(branch) {
 }
 
 export function mergeApprovalToken() {
-  throw new Error('Deterministic merge approval tokens are disabled. Use a challenge-bound operator approval receipt.');
+  throw new Error('Deterministic merge approval tokens are disabled. Merge approval exists only as a GitHub protected-environment release.');
 }
 
 export function validatePublishLaneRequest(input = {}) {
@@ -77,12 +77,12 @@ export function validatePublishLaneRequest(input = {}) {
   }
 
   return {
-    schemaVersion: 'repository-native-publish-merge-lane.v2',
+    schemaVersion: 'repository-native-publish-merge-lane.v3',
     branch,
     files: scope.files,
     approvalTokenRequired: publishApprovalToken(branch),
     mergeAuthority: false,
-    mergeApprovalMechanism: 'challenge-bound-operator-receipt-only',
+    mergeApprovalMechanism: 'github-protected-environment-only',
     blockers,
     finalVerdict: blockers.length ? 'PUBLISH_LANE_BLOCKED' : 'PUBLISH_LANE_READY',
   };
@@ -104,15 +104,15 @@ export function buildPullRequestBody({ goal, proofCommand, proofResult, filesCha
     `\`${headSha}\``,
     '',
     '## Merge Boundary',
-    '- This publication lane has no merge authority.',
-    '- A separate challenge-bound direct operator approval receipt is required for the exact PR and head.',
+    '- This publication lane has no ready or merge authority.',
+    '- Merge can proceed only through the trusted default-branch workflow after GitHub protected-environment approval for this exact PR head.',
   ].join('\n');
 }
 
 export function buildCompletionPacket({ branch, prNumber, headSha, mergeCommit, proofCommand, proofResult, finalStatus }) {
   const status = String(finalStatus || '').trim();
   return {
-    schemaVersion: 'repository-native-publish-merge-lane.completion.v2',
+    schemaVersion: 'repository-native-publish-merge-lane.completion.v3',
     branch: String(branch || ''),
     prNumber: Number.isInteger(prNumber) ? prNumber : Number.parseInt(prNumber, 10),
     headSha: SHA_PATTERN.test(String(headSha || '')) ? headSha : String(headSha || ''),
