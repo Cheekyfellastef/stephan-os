@@ -56,10 +56,13 @@ function hasValue(value) {
   return value !== undefined && value !== null && value !== '';
 }
 
+function unsafeAutomationField(command) {
+  return FORBIDDEN_RESET_COMMAND_FIELDS.find((field) => hasValue(command[field])) || '';
+}
+
 function validateResetFields(command, { nowMs, expiresAtMs }) {
-  for (const field of FORBIDDEN_RESET_COMMAND_FIELDS) {
-    if (hasValue(command[field])) return fail('RESET_COMMAND_UNSAFE_FIELD_PRESENT', { field });
-  }
+  const unsafeField = unsafeAutomationField(command);
+  if (unsafeField) return fail('RESET_COMMAND_UNSAFE_FIELD_PRESENT', { field: unsafeField });
   if (!RESET_ID_PATTERN.test(String(command.resetId || ''))) return fail('RESET_COMMAND_RESET_ID_INVALID');
   if (command.standingOperatorPolicyRef !== CODEX_BANKED_RESET_POLICY_REF) return fail('RESET_COMMAND_POLICY_MISMATCH');
   if (command.executionSurface !== CODEX_BANKED_RESET_EXECUTION_SURFACE) return fail('RESET_COMMAND_EXECUTION_SURFACE_MISMATCH');
@@ -132,6 +135,10 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   }
   if (command.expectedHead && !SHA_PATTERN.test(String(command.expectedHead))) {
     return fail('COMMAND_EXPECTED_HEAD_INVALID');
+  }
+  if (command.operation === CODEX_BANKED_RESET_STATUS_OPERATION) {
+    const unsafeField = unsafeAutomationField(command);
+    if (unsafeField) return fail('RESET_STATUS_COMMAND_UNSAFE_FIELD_PRESENT', { field: unsafeField });
   }
   const targetRequestId = String(command.targetRequestId || '');
   if (command.operation === 'READ_MAILBOX_RECEIPT' && !REQUEST_ID_PATTERN.test(targetRequestId)) {
