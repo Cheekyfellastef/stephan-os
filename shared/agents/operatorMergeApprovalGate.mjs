@@ -15,6 +15,7 @@ export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'Battle Bridge Publisher Proof',
   'Codex Dispatch Queue Proof',
   'OpenClaw GitHub Operator',
+  'Protected Operator Merge Source Proof',
 ]);
 
 function text(value) {
