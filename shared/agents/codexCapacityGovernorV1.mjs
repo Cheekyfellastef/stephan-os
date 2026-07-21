@@ -292,13 +292,15 @@ function completedResetIdsFrom(input = {}) {
       .filter(Boolean),
   );
   for (const receipt of Array.isArray(input.resetCompletionReceipts) ? input.resetCompletionReceipts : []) {
-    const completed = receipt?.ok === true
-      || receipt?.state === 'DONE'
-      || receipt?.finalVerdict === 'CODEX_BANKED_RESET_CONFIRMED';
-    if (completed) {
-      const resetId = text(receipt?.resetId || receipt?.result?.resetId || receipt?.result?.result?.resetId);
-      if (resetId) ids.add(resetId);
-    }
+    const finalVerdict = text(
+      receipt?.finalVerdict
+      || receipt?.result?.finalVerdict
+      || receipt?.result?.result?.finalVerdict,
+    );
+    const resetId = text(receipt?.resetId || receipt?.result?.resetId || receipt?.result?.result?.resetId);
+    const confirmed = finalVerdict === 'CODEX_BANKED_RESET_CONFIRMED'
+      && (receipt?.ok === true || receipt?.state === 'DONE' || receipt?.result?.ok === true);
+    if (confirmed && resetId) ids.add(resetId);
   }
   return ids;
 }
