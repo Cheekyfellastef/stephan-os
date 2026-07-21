@@ -97,7 +97,7 @@ test('builds one fixed PowerShell file invocation with shell disabled', () => {
   assert.equal(result.args.some((value) => /https?:|javascript|selector|cookie|token/i.test(String(value))), false);
 });
 
-test('normalizes only a proven single press with usage and meter evidence as success', () => {
+test('normalizes only a proven single press with changed before-and-after meter evidence as success', () => {
   const success = normalizeCodexBankedResetExecutionResult(successfulProof(), command());
   assert.equal(success.ok, true);
   assert.equal(success.confirmationEvidencePresent, true);
@@ -114,9 +114,12 @@ test('normalizes only a proven single press with usage and meter evidence as suc
     { usageSurfaceMatched: false },
     { meterBefore: '' },
     { meterAfter: '', resetControlDisappeared: false },
+    { meterAfter: '', resetControlDisappeared: true },
+    { meterAfter: 'Codex usage remaining 0%', meterRestored: true, resetControlDisappeared: true },
   ]) {
     const blocked = normalizeCodexBankedResetExecutionResult(successfulProof(override), command());
     assert.equal(blocked.ok, false);
+    assert.equal(blocked.confirmationEvidencePresent, false);
   }
 });
 
