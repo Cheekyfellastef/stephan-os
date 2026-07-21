@@ -36,7 +36,7 @@ function tempRepo() {
   const root = mkdtempSync(join(tmpdir(), 'codex-reset-executor-'));
   const scripts = join(root, 'scripts', 'windows');
   mkdirSync(scripts, { recursive: true });
-  writeFileSync(join(scripts, 'invoke-codex-banked-reset-ui.ps1'), '# test fixture\n');
+  writeFileSync(join(scripts, 'invoke-codex-banked-reset-ui-with-navigation.ps1'), '# test fixture\n');
   return root;
 }
 
@@ -50,6 +50,11 @@ function successfulProof(overrides = {}) {
     observedAtUtc: '2026-07-20T22:31:00.000Z',
     completedAtUtc: '2026-07-20T22:31:10.000Z',
     usageSurfaceMatched: true,
+    navigationAttempted: true,
+    profileMenuOpened: true,
+    usagePanelOpened: true,
+    matchedProfileControl: 'Profile menu',
+    matchedUsageControl: '1 reset available',
     meterBefore: 'Codex usage remaining 0%',
     meterAfter: 'Codex usage remaining 100%',
     pressAttempted: true,
@@ -85,6 +90,7 @@ test('builds one fixed PowerShell file invocation with shell disabled', () => {
   assert.equal(result.executable, 'powershell.exe');
   assert.equal(result.shell, false);
   assert.equal(result.args.filter((value) => value === '-File').length, 1);
+  assert.match(result.scriptPath, /invoke-codex-banked-reset-ui-with-navigation\.ps1$/);
   assert.ok(result.args.includes('banked-reset-1'));
   assert.equal(result.args.some((value) => /https?:|javascript|selector|cookie|token/i.test(String(value))), false);
 });
@@ -93,6 +99,7 @@ test('normalizes only a proven single press with usage and meter evidence as suc
   const success = normalizeCodexBankedResetExecutionResult(successfulProof(), command());
   assert.equal(success.ok, true);
   assert.equal(success.confirmationEvidencePresent, true);
+  assert.equal(success.usagePanelOpened, true);
 
   for (const override of [
     { pressAttempted: false },

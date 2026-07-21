@@ -39,6 +39,12 @@ function sanitizeText(value, limit = 500) {
     .slice(0, limit);
 }
 
+function safeTextList(value, { limit = 10, itemLimit = 240 } = {}) {
+  return Array.isArray(value)
+    ? [...new Set(value.map((item) => sanitizeText(item, itemLimit)).filter(Boolean))].slice(0, limit)
+    : [];
+}
+
 export function validateCodexBankedResetExecutionCommand(command = {}, { now = new Date() } = {}) {
   if (command.operation !== CODEX_BANKED_RESET_OPERATION) return blocked('RESET_OPERATION_MISMATCH');
   if (!SAFE_REQUEST_ID_PATTERN.test(String(command.requestId || ''))) return blocked('RESET_REQUEST_ID_INVALID');
@@ -88,7 +94,7 @@ export function buildCodexBankedResetPowerShellInvocation(command = {}, {
   if (!validation.ok) return validation;
   if (platform !== 'win32') return blocked('WINDOWS_REQUIRED');
 
-  const scriptPath = join(resolve(repoRoot), 'scripts', 'windows', 'invoke-codex-banked-reset-ui.ps1');
+  const scriptPath = join(resolve(repoRoot), 'scripts', 'windows', 'invoke-codex-banked-reset-ui-with-navigation.ps1');
   if (!existsSync(scriptPath)) return blocked('RESET_EXECUTOR_SCRIPT_MISSING', { scriptPath });
   const normalized = validation.command;
   return Object.freeze({
@@ -141,6 +147,11 @@ export function normalizeCodexBankedResetExecutionResult(raw = {}, command = {})
     observedAtUtc: iso(result.observedAtUtc),
     completedAtUtc: iso(result.completedAtUtc),
     matchedWindow: sanitizeText(result.matchedWindow, 160),
+    matchedProfileControl: sanitizeText(result.matchedProfileControl, 120),
+    matchedUsageControl: sanitizeText(result.matchedUsageControl, 160),
+    navigationAttempted: result.navigationAttempted === true,
+    profileMenuOpened: result.profileMenuOpened === true,
+    usagePanelOpened: result.usagePanelOpened === true,
     matchedButton: sanitizeText(result.matchedButton, 120),
     matchedExpiryText: sanitizeText(result.matchedExpiryText, 160),
     meterBefore,
@@ -159,9 +170,7 @@ export function normalizeCodexBankedResetExecutionResult(raw = {}, command = {})
     arbitraryBrowserAutomationAllowed: false,
     credentialsMayBeReadOrExported: false,
     repeatedPressAllowed: false,
-    proofRefs: Array.isArray(result.proofRefs)
-      ? result.proofRefs.map((value) => sanitizeText(value, 240)).filter(Boolean).slice(0, 10)
-      : [],
+    proofRefs: safeTextList(result.proofRefs),
   });
   return safe;
 }

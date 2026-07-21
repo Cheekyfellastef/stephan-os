@@ -75,7 +75,7 @@ export function buildCodexBankedResetStatusPowerShellInvocation(command = {}, {
   const validation = validateCodexBankedResetStatusCommand(command, { now });
   if (!validation.ok) return validation;
   if (platform !== 'win32') return blocked('WINDOWS_REQUIRED');
-  const scriptPath = join(resolve(repoRoot), 'scripts', 'windows', 'read-codex-banked-reset-status.ps1');
+  const scriptPath = join(resolve(repoRoot), 'scripts', 'windows', 'read-codex-banked-reset-status-with-navigation.ps1');
   if (!existsSync(scriptPath)) return blocked('RESET_STATUS_READER_SCRIPT_MISSING', { scriptPath });
   return Object.freeze({
     ok: true,
@@ -120,6 +120,13 @@ export function normalizeCodexBankedResetStatusResult(raw = {}, command = {}) {
     requestId: sanitizeText(result.requestId || command.requestId, 120),
     observedAtUtc: iso(result.observedAtUtc),
     matchedWindow: sanitizeText(result.matchedWindow, 160),
+    matchedProfileControl: sanitizeText(result.matchedProfileControl, 120),
+    matchedUsageControl: sanitizeText(result.matchedUsageControl, 160),
+    navigationAttempted: result.navigationAttempted === true,
+    profileMenuOpened: result.profileMenuOpened === true,
+    usagePanelOpened: result.usagePanelOpened === true,
+    profileCandidates: safeTextList(result.profileCandidates, { limit: 10, itemLimit: 120 }),
+    usageCandidates: safeTextList(result.usageCandidates, { limit: 10, itemLimit: 120 }),
     meterSummary,
     expiryTexts,
     resetButtons,
