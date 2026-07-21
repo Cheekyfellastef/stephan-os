@@ -104,7 +104,7 @@ test('enough samples remain floored by conservative default', () => {
   assert.equal(model.taskClasses.FOCUSED_REPAIR.source, 'observed-with-conservative-floor');
 });
 
-test('completion receipt prevents the same reset being prepared again', () => {
+test('confirmed completion receipt prevents the same reset being prepared again', () => {
   const result = plan({
     resetCompletionReceipts: [{
       ok: true,
@@ -116,6 +116,20 @@ test('completion receipt prevents the same reset being prepared again', () => {
   assert.equal(result.action, null);
   assert.match(result.reason, /completion receipt/i);
   assert.deepEqual(result.completedResetIds, [RESET.resetId]);
+});
+
+test('failed or ambiguous reset receipt never suppresses a legitimate redemption', () => {
+  for (const receipt of [
+    { ok: false, finalVerdict: 'CODEX_BANKED_RESET_EXECUTION_BLOCKED', resetId: RESET.resetId },
+    { ok: true, finalVerdict: 'CODEX_BANKED_RESET_EXECUTION_BLOCKED', resetId: RESET.resetId },
+    { state: 'DONE', finalVerdict: 'CODEX_BANKED_RESET_EXECUTION_BLOCKED', resetId: RESET.resetId },
+    { ok: true, resetId: RESET.resetId },
+  ]) {
+    const result = plan({ resetCompletionReceipts: [receipt] });
+    assert.equal(result.decision, CODEX_CAPACITY_DECISION.CODEX_BANKED_RESET_REDEEM_NOW);
+    assert.equal(result.action?.resetId, RESET.resetId);
+    assert.deepEqual(result.completedResetIds, []);
+  }
 });
 
 test('completed reset IDs pass through the capacity projection', () => {
