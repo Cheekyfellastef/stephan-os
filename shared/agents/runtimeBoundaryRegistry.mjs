@@ -96,7 +96,7 @@ export function defaultRuntimeRoot({ env = process.env, homeDir = os.homedir() }
 }
 
 export function defaultOpenClawWorkspaceRoot({ env = process.env, homeDir = os.homedir() } = {}) {
-  const configured = env.STEPHANOS_OPENCLAW_WORKSPACE || env.STEPHANOS_SHARED_WORKSPACE;
+  const configured = env.STEPHANOS_SHARED_WORKSPACE || env.STEPHANOS_OPENCLAW_WORKSPACE;
   return path.resolve(configured || path.join(homeDir, 'Documents', 'Stephanos-openclaw-workspace'));
 }
 
