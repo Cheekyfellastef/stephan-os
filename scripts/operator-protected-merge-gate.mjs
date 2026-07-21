@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process';
 import {
   OPERATOR_MERGE_ENVIRONMENT,
   OPERATOR_MERGE_GATE_JOB,
-  OPERATOR_MERGE_WORKFLOW_PATH,
   PROTECTED_APPROVAL_MARKER,
   buildProtectedApprovalReceipt,
   extractJsonObjects,
@@ -62,16 +61,23 @@ function flattenPages(value) {
   return value.flatMap((entry) => (Array.isArray(entry) ? flattenPages(entry) : [entry]));
 }
 
+function appendFields(args, fields) {
+  for (const field of fields) {
+    const [name, value, typed = false] = field;
+    args.push(typed ? '-F' : '-f', `${name}=${value}`);
+  }
+}
+
 function api(endpoint, { paginate = false, method = 'GET', fields = [] } = {}) {
   const args = ['api', endpoint, '--method', method];
   if (paginate) args.push('--paginate', '--slurp');
-  for (const [name, value] of fields) args.push('-f', `${name}=${value}`);
+  appendFields(args, fields);
   return parseJson(runRequired('gh', args, `GitHub API request failed: ${method} ${endpoint}`).stdout, `GitHub API returned invalid JSON: ${endpoint}`);
 }
 
 function apiNoContent(endpoint, { method = 'POST', fields = [] } = {}) {
   const args = ['api', endpoint, '--method', method];
-  for (const [name, value] of fields) args.push('-f', `${name}=${value}`);
+  appendFields(args, fields);
   return runRequired('gh', args, `GitHub API request failed: ${method} ${endpoint}`);
 }
 
@@ -111,7 +117,7 @@ function collectEvidence() {
       ['query', threadQuery],
       ['owner', owner],
       ['repo', repo],
-      ['number', String(prNumber)],
+      ['number', prNumber, true],
     ],
   });
   const threads = threadPayload?.data?.repository?.pullRequest?.reviewThreads?.nodes || [];
