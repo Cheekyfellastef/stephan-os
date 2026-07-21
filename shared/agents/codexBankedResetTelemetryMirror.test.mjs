@@ -45,11 +45,19 @@ test('rejects untrusted receipt authors', () => {
   assert.equal(extractTrustedCodexResetReceipt(comment(raw, { login: 'attacker' }), { ownerLogin }), null);
 });
 
-test('projects a read-only status receipt with zero press telemetry', () => {
+test('projects a read-only status receipt with zero press telemetry and labeled navigation evidence', () => {
   const status = receipt('READ_CODEX_BANKED_RESET_STATUS', {
     ok: true,
     finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
     observedAtUtc: '2026-07-21T09:01:00.000Z',
+    matchedWindow: 'ChatGPT',
+    matchedProfileControl: 'Profile menu',
+    matchedUsageControl: '',
+    matchedUsageLabel: '1 reset available',
+    usageControlResolution: 'labeled-ancestor',
+    navigationAttempted: true,
+    profileMenuOpened: true,
+    usagePanelOpened: true,
     meterSummary: 'Codex weekly remaining 0%',
     expiryTexts: ['Banked reset expires 24 Jul 2026'],
     resetButtons: ['Use reset'],
@@ -63,6 +71,8 @@ test('projects a read-only status receipt with zero press telemetry', () => {
   const record = createCodexBankedResetTelemetryRecord([comment(status)], { ownerLogin, timestampUtc: '2026-07-21T09:02:00.000Z' });
   assert.equal(record.status, 'STATUS_READY');
   assert.equal(record.pressAttempted, false);
+  assert.equal(record.latestStatus.matchedUsageLabel, '1 reset available');
+  assert.equal(record.latestStatus.usageControlResolution, 'labeled-ancestor');
   assert.equal(record.latestStatus.meterSummary, 'Codex weekly remaining 0%');
   assert.deepEqual(record.latestStatus.resetButtons, ['Use reset']);
 });
@@ -72,6 +82,8 @@ test('distinguishes one attempted but unconfirmed press', () => {
     ok: false,
     blocker: 'RESET_CONFIRMATION_NOT_PROVEN',
     finalVerdict: 'CODEX_BANKED_RESET_EXECUTION_BLOCKED',
+    matchedUsageLabel: '1 reset available',
+    usageControlResolution: 'labeled-ancestor',
     pressAttempted: true,
     pressCount: 1,
     meterBefore: 'Codex weekly remaining 0%',
@@ -89,6 +101,8 @@ test('distinguishes one attempted but unconfirmed press', () => {
   });
   const projection = projectCodexResetExecutionReceipt(execution);
   assert.equal(projection.status, 'ATTEMPTED_NOT_CONFIRMED');
+  assert.equal(projection.matchedUsageLabel, '1 reset available');
+  assert.equal(projection.usageControlResolution, 'labeled-ancestor');
   assert.equal(projection.pressAttempted, true);
   assert.equal(projection.pressCount, 1);
   assert.equal(projection.meterRestored, false);
@@ -102,6 +116,9 @@ test('confirms exactly one successful press with before and after proof', () => 
     observedAtUtc: '2026-07-21T09:10:00.000Z',
     completedAtUtc: '2026-07-21T09:10:08.000Z',
     matchedWindow: 'Codex usage',
+    matchedProfileControl: 'Profile menu',
+    matchedUsageLabel: '1 reset available',
+    usageControlResolution: 'labeled-ancestor',
     matchedButton: 'Use reset',
     matchedExpiryText: 'Banked reset expires 24 Jul 2026',
     meterBefore: 'Codex weekly remaining 0%',
@@ -130,6 +147,8 @@ test('confirms exactly one successful press with before and after proof', () => 
   assert.equal(record.pressCount, 1);
   assert.equal(record.meterRestored, true);
   assert.equal(record.confirmationEvidencePresent, true);
+  assert.equal(record.latestExecution.matchedUsageLabel, '1 reset available');
+  assert.equal(record.latestExecution.usageControlResolution, 'labeled-ancestor');
   assert.equal(record.latestExecution.meterAfter, 'Codex weekly remaining 100%');
   assert.match(buildCodexBankedResetTelemetryIssueBody(record), /"status": "CONFIRMED"/);
 });
