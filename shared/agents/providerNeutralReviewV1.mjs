@@ -73,7 +73,7 @@ const CODEX_UNAVAILABLE_STATES = new Set([
   'unavailable',
   'meter-stalled',
   'blocked-by-meter',
-  'codeX-blocked-by-meter'.toLowerCase(),
+  'codex-blocked-by-meter',
 ]);
 
 function text(value, fallback = '') {
@@ -176,7 +176,7 @@ export function createProviderNeutralReviewReceipt(input = {}) {
   const findings = Array.isArray(input.findings)
     ? input.findings.map((finding) => normalizeFinding(finding))
     : [];
-  const issueNumber = positiveInteger(input.issueNumber, 1574);
+  const issueNumber = positiveInteger(input.issueNumber);
   const prNumber = positiveInteger(input.prNumber);
   const sourceHead = text(input.sourceHead).toLowerCase();
   const timestampUtc = text(input.timestampUtc, new Date(0).toISOString());
@@ -434,6 +434,7 @@ export function selectProviderNeutralReviewRoute(input = {}) {
     || (codexProviders.length > 0 && codexProviders.every((provider) => provider.state !== 'available'));
   const candidates = providers
     .filter((provider) => provider.providerId && provider.provider)
+    .filter((provider) => PROVIDER_NEUTRAL_REVIEWER_CLASSES.includes(provider.reviewerClass))
     .filter((provider) => provider.state === 'available')
     .filter((provider) => providerSupportsRisk(provider, riskTier))
     .map((provider) => {
