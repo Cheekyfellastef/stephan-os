@@ -39,11 +39,14 @@ test('migration manifest is non-destructive', () => {
   assert.equal(manifest.migrations[0].rootKind, 'openclaw-workspace');
 });
 
-test('acceptance packet checks repository cleanliness and read-only migration plan', () => {
+test('acceptance packet checks repository cleanliness, native exit codes and read-only migration plan', () => {
   const script = buildAcceptancePowerShell({ runtimeRoot: 'C:\\Runtime', openClawWorkspaceRoot: 'C:\\OpenClaw' });
   assert.match(script, /git status --porcelain=v1/);
   assert.match(script, /migrate-dream-runtime-boundary\.mjs/);
-  assert.match(script, /sourceCleanAfter/);
+  assert.match(script, /\$testExitCode = \$LASTEXITCODE/);
+  assert.match(script, /\$planExitCode = \$LASTEXITCODE/);
+  assert.match(script, /verificationPassed/);
+  assert.match(script, /verdict = if \(\$verificationPassed -and \$sourceCleanAfter\)/);
   assert.doesNotMatch(script, /git reset|git clean|git stash|git rebase/i);
 });
 
