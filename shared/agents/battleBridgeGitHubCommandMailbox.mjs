@@ -4,6 +4,10 @@ import {
   CODEX_BANKED_RESET_POLICY_REF,
   executeCodexBankedResetOnBattleBridge,
 } from './codexBankedResetBattleBridgeExecutor.mjs';
+import {
+  CODEX_BANKED_RESET_STATUS_OPERATION,
+  readCodexBankedResetStatusOnBattleBridge,
+} from './codexBankedResetStatusBattleBridgeReader.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -22,6 +26,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_MAILBOX_RECEIPT',
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+  CODEX_BANKED_RESET_STATUS_OPERATION,
   CODEX_BANKED_RESET_OPERATION,
 ]);
 
@@ -216,6 +221,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readMailboxReceipt,
   runWorkerWatchdogAcceptance,
   runMonitorMultiplexerAcceptance,
+  readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
   redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
 } = {}) {
   const handlers = {
@@ -229,6 +235,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
+    [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
     [CODEX_BANKED_RESET_OPERATION]: redeemBankedCodexReset,
   };
   const handler = handlers[command?.operation];
@@ -277,6 +284,7 @@ export function buildBattleBridgeGitHubCommandReceipt({
     standingOperatorPolicyRef: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.standingOperatorPolicyRef || '') : '',
     fixedUiActionOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.fixedUiActionOnly === true : false,
     singlePressOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.singlePressOnly === true : false,
+    readOnly: command?.operation === CODEX_BANKED_RESET_STATUS_OPERATION,
     state: String(state || ''),
     acceptedAt: String(acceptedAt || ''),
     heartbeatAt: String(heartbeatAt || ''),
