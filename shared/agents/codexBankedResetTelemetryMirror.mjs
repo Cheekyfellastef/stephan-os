@@ -115,8 +115,7 @@ export function projectCodexResetExecutionReceipt(receipt = {}) {
   const resetControlDisappeared = result.resetControlDisappeared === true;
   const meterBefore = safeText(result.meterBefore, 200);
   const meterAfter = safeText(result.meterAfter, 200);
-  const confirmationEvidencePresent = result.confirmationEvidencePresent === true
-    || (Boolean(meterBefore) && (Boolean(meterAfter) || resetControlDisappeared));
+  const confirmationEvidencePresent = Boolean(meterBefore) && Boolean(meterAfter) && meterBefore !== meterAfter;
   const confirmed = result.ok === true
     && result.finalVerdict === 'CODEX_BANKED_RESET_CONFIRMED'
     && pressAttempted
