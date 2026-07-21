@@ -109,7 +109,34 @@ test('distinguishes one attempted but unconfirmed press', () => {
   assert.equal(projection.repeatedPressAllowed, false);
 });
 
-test('confirms exactly one successful press with before and after proof', () => {
+test('rejects a claimed confirmation when before and after meter readings are equal', () => {
+  const execution = receipt('REDEEM_BANKED_CODEX_RATE_LIMIT_RESET', {
+    ok: true,
+    finalVerdict: 'CODEX_BANKED_RESET_CONFIRMED',
+    pressAttempted: true,
+    pressCount: 1,
+    meterBefore: 'Codex weekly remaining 0%',
+    meterAfter: 'Codex weekly remaining 0%',
+    meterRestored: true,
+    resetControlDisappeared: true,
+    confirmationEvidencePresent: true,
+    usageSurfaceMatched: true,
+  }, {
+    requestId: 'reset-false-confirmation-001',
+    resetId: 'banked-reset-001',
+    resetExpiresAtUtc: '2026-07-24T20:00:00.000Z',
+    latestSafeExecutionUtc: '2026-07-21T10:00:00.000Z',
+    fixedUiActionOnly: true,
+    singlePressOnly: true,
+  });
+  const projection = projectCodexResetExecutionReceipt(execution);
+  assert.equal(projection.status, 'ATTEMPTED_NOT_CONFIRMED');
+  assert.equal(projection.confirmationEvidencePresent, false);
+  assert.equal(projection.pressCount, 1);
+  assert.equal(projection.repeatedPressAllowed, false);
+});
+
+test('confirms exactly one successful press with changed before and after proof', () => {
   const execution = receipt('REDEEM_BANKED_CODEX_RATE_LIMIT_RESET', {
     ok: true,
     finalVerdict: 'CODEX_BANKED_RESET_CONFIRMED',
