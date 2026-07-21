@@ -157,6 +157,12 @@ function Test-CodexEligibleInteractiveElement {
         if (-not $Element.Current.IsEnabled -or $Element.Current.IsOffscreen) { return $false }
         $type = Convert-ToCodexSafeText $Element.Current.ControlType.ProgrammaticName 100
         if ($type -notmatch 'ControlType\.(Button|MenuItem|Hyperlink|ListItem|Custom|Group)') { return $false }
+        if ($type -match 'ControlType\.(Custom|Group)') {
+            $rect = $Element.Current.BoundingRectangle
+            $width = [double]$rect.Right - [double]$rect.Left
+            $height = [double]$rect.Bottom - [double]$rect.Top
+            if ($width -gt 900 -or $height -gt 260) { return $false }
+        }
         return Test-CodexUiElementInvocable $Element
     } catch {
         return $false
@@ -347,15 +353,23 @@ function Select-CodexLabeledUsageControl {
 function Test-CodexUsagePanelEvidence {
     param([array]$Snapshot)
 
-    $strong = @($Snapshot | Where-Object {
-        $_.Name -match '(?i)banked reset|rate.?limit reset|reset(s)? available|usage dashboard|weekly|five.?day|5.?day|credits? balance'
+    $meter = @($Snapshot | Where-Object {
+        $_.Name -match '\b\d{1,3}\s*%' -and
+        $_.Name -match '(?i)usage|remaining|meter|limit|codex|weekly|five.?day|5.?day'
     })
-    if ($strong.Count -gt 0) { return $true }
+    if ($meter.Count -eq 0) { return $false }
 
-    $usage = @($Snapshot | Where-Object {
-        $_.Name -match '(?i)codex usage|usage summary|remaining' -or $_.AutomationId -match '(?i)usage|limit|reset'
+    $resetAction = @($Snapshot | Where-Object {
+        $_.Enabled -and -not $_.Offscreen -and
+        $_.Type -match 'ControlType\.(Button|MenuItem|Hyperlink|ListItem)' -and
+        $_.Name -match '(?i)\b(redeem|apply|use|reset)\b' -and
+        $_.Name -notmatch '(?i)billing|purchase|buy credits|add credits|auto.?top.?up'
     })
-    return $usage.Count -ge 2
+    $expiry = @($Snapshot | Where-Object {
+        $_.Name -match '(?i)expire|expiry|expires' -and
+        $_.Name -match '(?i)\b20\d{2}\b|\bjan(?:uary)?\b|\bfeb(?:ruary)?\b|\bmar(?:ch)?\b|\bapr(?:il)?\b|\bmay\b|\bjun(?:e)?\b|\bjul(?:y)?\b|\baug(?:ust)?\b|\bsep(?:tember)?\b|\boct(?:ober)?\b|\bnov(?:ember)?\b|\bdec(?:ember)?\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b'
+    })
+    return $resetAction.Count -gt 0 -or $expiry.Count -gt 0
 }
 
 function Open-CodexUsagePanel {
