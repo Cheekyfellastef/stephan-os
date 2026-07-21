@@ -27,7 +27,7 @@ function tempRepo() {
   const root = mkdtempSync(join(tmpdir(), 'codex-reset-status-reader-'));
   const scripts = join(root, 'scripts', 'windows');
   mkdirSync(scripts, { recursive: true });
-  writeFileSync(join(scripts, 'read-codex-banked-reset-status.ps1'), '# test fixture\n');
+  writeFileSync(join(scripts, 'read-codex-banked-reset-status-with-navigation.ps1'), '# test fixture\n');
   return root;
 }
 
@@ -48,6 +48,7 @@ test('builds one fixed read-only PowerShell invocation with shell disabled', () 
   assert.equal(result.shell, false);
   assert.equal(result.readOnly, true);
   assert.equal(result.pressCount, 0);
+  assert.match(result.scriptPath, /read-codex-banked-reset-status-with-navigation\.ps1$/);
   assert.equal(result.args.some((value) => /https?:|javascript|selector|cookie|token/i.test(String(value))), false);
 });
 
@@ -66,6 +67,11 @@ test('normalizes only read-only usage-surface proof as success', () => {
     finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
     observedAtUtc: '2026-07-20T22:31:00.000Z',
     matchedWindow: 'ChatGPT - Codex Usage',
+    matchedProfileControl: 'Profile menu',
+    matchedUsageControl: '1 reset available',
+    navigationAttempted: true,
+    profileMenuOpened: true,
+    usagePanelOpened: true,
     meterSummary: 'Codex weekly usage remaining 0%',
     expiryTexts: ['Banked reset expires 25 Jul 2026'],
     resetButtons: ['Use reset'],
@@ -77,6 +83,7 @@ test('normalizes only read-only usage-surface proof as success', () => {
   }, command());
   assert.equal(success.ok, true);
   assert.equal(success.readOnly, true);
+  assert.equal(success.usagePanelOpened, true);
   assert.equal(success.expiryTexts[0], 'Banked reset expires 25 Jul 2026');
 
   for (const override of [
@@ -116,6 +123,9 @@ test('executes exactly once and returns bounded status proof', () => {
           usageSurfaceMatched: true,
           pressAttempted: false,
           pressCount: 0,
+          navigationAttempted: true,
+          profileMenuOpened: true,
+          usagePanelOpened: true,
           meterSummary: 'Codex weekly usage remaining 0%',
           expiryTexts: ['Banked reset expires 25 Jul 2026'],
           resetButtons: ['Use reset'],
@@ -127,4 +137,5 @@ test('executes exactly once and returns bounded status proof', () => {
   assert.equal(calls, 1);
   assert.equal(result.ok, true);
   assert.equal(result.pressCount, 0);
+  assert.equal(result.usagePanelOpened, true);
 });
