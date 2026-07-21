@@ -118,11 +118,18 @@ export function buildCodexBankedResetPowerShellInvocation(command = {}, {
 
 export function normalizeCodexBankedResetExecutionResult(raw = {}, command = {}) {
   const result = raw && typeof raw === 'object' ? raw : {};
+  const meterBefore = sanitizeText(result.meterBefore, 200);
+  const meterAfter = sanitizeText(result.meterAfter, 200);
+  const usageSurfaceMatched = result.usageSurfaceMatched === true;
+  const resetControlDisappeared = result.resetControlDisappeared === true;
+  const confirmationEvidencePresent = Boolean(meterBefore) && (Boolean(meterAfter) || resetControlDisappeared);
   const ok = result.ok === true
     && result.finalVerdict === 'CODEX_BANKED_RESET_CONFIRMED'
+    && usageSurfaceMatched
     && result.pressAttempted === true
     && result.pressCount === 1
-    && result.meterRestored === true;
+    && result.meterRestored === true
+    && confirmationEvidencePresent;
   const safe = Object.freeze({
     schemaVersion: CODEX_BANKED_RESET_EXECUTOR_SCHEMA_VERSION,
     ok,
@@ -136,15 +143,16 @@ export function normalizeCodexBankedResetExecutionResult(raw = {}, command = {})
     matchedWindow: sanitizeText(result.matchedWindow, 160),
     matchedButton: sanitizeText(result.matchedButton, 120),
     matchedExpiryText: sanitizeText(result.matchedExpiryText, 160),
-    meterBefore: sanitizeText(result.meterBefore, 200),
-    meterAfter: sanitizeText(result.meterAfter, 200),
+    meterBefore,
+    meterAfter,
     pressAttempted: result.pressAttempted === true,
     pressCount: Number(result.pressCount || 0),
     meterRestored: result.meterRestored === true,
-    resetControlDisappeared: result.resetControlDisappeared === true,
+    resetControlDisappeared,
     desktopInteractive: result.desktopInteractive === true,
     appWindowFound: result.appWindowFound === true,
-    usageSurfaceMatched: result.usageSurfaceMatched === true,
+    usageSurfaceMatched,
+    confirmationEvidencePresent,
     fixedUiActionOnly: true,
     singlePressOnly: true,
     arbitraryShellAllowed: false,
