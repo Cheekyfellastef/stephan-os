@@ -19,6 +19,16 @@ jobs:
         with:
           node-version: 24
       - name: Prove protected merge boundary
-        run: npm run stephanos:operator-merge-approval:test
+        run: |
+          set -o pipefail
+          npm run stephanos:operator-merge-approval:test 2>&1 | tee operator-merge-test.log
+      - name: Upload bounded test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-merge-test-log
+          path: operator-merge-test.log
+          if-no-files-found: error
+          retention-days: 3
       - name: Check changed-file whitespace
         run: git diff --check "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
