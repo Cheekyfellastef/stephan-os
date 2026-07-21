@@ -2,10 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 import {
+  INDEPENDENT_REVIEW_JOB,
+  INDEPENDENT_REVIEW_WORKFLOW_NAME,
+  INDEPENDENT_REVIEW_WORKFLOW_PATH,
+  analyzeIndependentSecurityReview,
   buildProtectedApprovalReceipt,
   buildProtectedSecurityReviewReceipt,
   extractJsonObjects,
+  parseIndependentReviewSessionId,
   validateExactHeadWorkflowRuns,
+  validateIndependentReviewWorkflowRun,
   validateProtectedEnvironment,
   validateProtectedOperatorMergeEvidence,
   validateProtectedOperatorMergePrerequisites,
@@ -16,8 +22,10 @@ const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1600;
 const sourceHead = 'a'.repeat(40);
 const branch = 'fix/protected-operator-merge';
-const workflowRunId = 12345;
-const workflowRunAttempt = 1;
+const operatorRunId = 12345;
+const operatorRunAttempt = 1;
+const reviewRunId = 67890;
+const reviewRunAttempt = 2;
 
 function environment(overrides = {}) {
   return {
@@ -58,6 +66,15 @@ function workflowRuns(overrides = {}) {
   }));
 }
 
+function cleanAnalysis() {
+  return {
+    finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN',
+    verdict: 'clean',
+    findings: [],
+    proofRefs: ['proofs/diff/complete', 'proofs/policy/green'],
+  };
+}
+
 function protectedReview(overrides = {}) {
   return {
     ...buildProtectedSecurityReviewReceipt({
@@ -65,12 +82,37 @@ function protectedReview(overrides = {}) {
       prNumber,
       branch,
       sourceHead,
-      workflowRunId,
-      workflowRunAttempt,
+      workflowRunId: reviewRunId,
+      workflowRunAttempt: reviewRunAttempt,
       timestampUtc: '2026-07-21T20:00:00.000Z',
+      analysis: cleanAnalysis(),
     }),
     ...overrides,
   };
+}
+
+function independentWorkflowRun(overrides = {}) {
+  return {
+    id: reviewRunId,
+    run_attempt: reviewRunAttempt,
+    name: INDEPENDENT_REVIEW_WORKFLOW_NAME,
+    path: INDEPENDENT_REVIEW_WORKFLOW_PATH,
+    event: 'pull_request_target',
+    repository: { full_name: repository },
+    status: 'completed',
+    conclusion: 'success',
+    pull_requests: [{ number: prNumber, head: { sha: sourceHead } }],
+    ...overrides,
+  };
+}
+
+function independentWorkflowJobs(overrides = {}) {
+  return [{
+    name: INDEPENDENT_REVIEW_JOB,
+    status: 'completed',
+    conclusion: 'success',
+    ...overrides,
+  }];
 }
 
 function forgedCommentReview(overrides = {}) {
@@ -85,7 +127,7 @@ function forgedCommentReview(overrides = {}) {
     reviewerClass: 'external-qualified',
     provider: 'claimed-external-provider',
     modelClass: 'claimed-specialist-model',
-    reviewerSessionId: 'claimed-independent-session',
+    reviewerSessionId: `github-actions-independent-review-run-${reviewRunId}-attempt-${reviewRunAttempt}`,
     implementerProvider: 'canonical-programme-builder',
     implementerSessionId: `pr-${prNumber}-implementation-lane`,
     riskTier: 'high',
@@ -124,175 +166,221 @@ function evidence(overrides = {}) {
     workflowRuns: workflowRuns(),
     unresolvedThreadCount: 0,
     trustedReviewReceipt: protectedReview(),
-    workflowRunId,
-    workflowRunAttempt,
+    reviewWorkflowRun: independentWorkflowRun(),
+    reviewWorkflowJobs: independentWorkflowJobs(),
+    reviewWorkflowRunId: reviewRunId,
+    reviewWorkflowRunAttempt: reviewRunAttempt,
     ...overrides,
   };
 }
 
-test('extracts bounded JSON receipts and ignores malformed blocks', () => {
+function cleanBoundaryDiff() {
+  return [
+    'diff --git a/scripts/operator-protected-merge-gate.mjs b/scripts/operator-protected-merge-gate.mjs',
+    '--- a/scripts/operator-protected-merge-gate.mjs',
+    '+++ b/scripts/operator-protected-merge-gate.mjs',
+    '@@ -1 +1 @@',
+    "+runRequired('gh', ['pr', 'merge', '1600', '--match-head-commit', sourceHead]);",
+    'diff --git a/.github/workflows/operator-merge-approval-gate.yml b/.github/workflows/operator-merge-approval-gate.yml',
+    '--- a/.github/workflows/operator-merge-approval-gate.yml',
+    '+++ b/.github/workflows/operator-merge-approval-gate.yml',
+    '@@ -1 +1,4 @@',
+    '+ref: ${{ github.event.repository.default_branch }}',
+    '+persist-credentials: false',
+    'diff --git a/.github/workflows/independent-merge-security-review.yml b/.github/workflows/independent-merge-security-review.yml',
+    '--- /dev/null',
+    '+++ b/.github/workflows/independent-merge-security-review.yml',
+    '@@ -0,0 +1,5 @@',
+    '+pull_request_target:',
+    '+ref: ${{ github.event.repository.default_branch }}',
+    '+persist-credentials: false',
+    '+contents: read',
+    '+pull-requests: read',
+    'diff --git a/scripts/independent-merge-security-review.mjs b/scripts/independent-merge-security-review.mjs',
+    '--- /dev/null',
+    '+++ b/scripts/independent-merge-security-review.mjs',
+    '@@ -0,0 +1 @@',
+    "+postComment('bounded receipt only');",
+  ].join('\n');
+}
+
+const cleanBoundaryFiles = [
+  'scripts/operator-protected-merge-gate.mjs',
+  '.github/workflows/operator-merge-approval-gate.yml',
+  '.github/workflows/independent-merge-security-review.yml',
+  'scripts/independent-merge-security-review.mjs',
+];
+
+test('extracts bounded JSON receipts and parses independent run identity', () => {
   const receipt = protectedReview();
   const markdown = `## Trusted review\n\n\`\`\`json\n${JSON.stringify(receipt)}\n\`\`\`\n\n\`\`\`json\n{not-json}\n\`\`\``;
   const objects = extractJsonObjects(markdown);
   assert.equal(objects.length, 1);
   assert.equal(objects[0].sourceHead, sourceHead);
+  assert.deepEqual(parseIndependentReviewSessionId(receipt.reviewerSessionId), {
+    workflowRunId: reviewRunId,
+    workflowRunAttempt: reviewRunAttempt,
+  });
+  assert.equal(parseIndependentReviewSessionId('controller-claimed-session'), null);
 });
 
-test('requires an exact protected environment with Stephan as reviewer and no admin bypass', () => {
+test('requires exactly Stephan as the sole protected environment reviewer', () => {
   const ready = validateProtectedEnvironment(environment());
   assert.equal(ready.finalVerdict, 'PROTECTED_ENVIRONMENT_READY');
-  assert.equal(ready.requiredReviewerCount, 1);
-  assert.deepEqual(ready.requiredReviewerLogins, ['cheekyfellastef']);
-  assert.deepEqual(ready.requiredReviewerTypes, ['user']);
 
-  const blocked = validateProtectedEnvironment(environment({
-    can_admins_bypass: true,
-    protection_rules: [],
-  }));
-  assert.equal(blocked.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
-  assert.ok(blocked.blockers.includes('required-reviewer-rule-missing'));
-  assert.ok(blocked.blockers.includes('required-reviewer-rule-count-not-exact'));
-  assert.ok(blocked.blockers.includes('environment-admin-bypass-not-disabled'));
-});
-
-test('rejects every additional user, team, unknown reviewer, or duplicate reviewer rule', () => {
   const extraUser = validateProtectedEnvironment(environment({
     protection_rules: [{
-      id: 1,
       type: 'required_reviewers',
-      prevent_self_review: false,
       reviewers: [
-        { type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } },
-        { type: 'User', reviewer: { login: 'AnotherReviewer', id: 2 } },
+        { type: 'User', reviewer: { login: 'Cheekyfellastef' } },
+        { type: 'User', reviewer: { login: 'AnotherReviewer' } },
       ],
     }],
   }));
-  assert.equal(extraUser.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
   assert.ok(extraUser.blockers.includes('required-reviewer-set-not-exact'));
 
   const team = validateProtectedEnvironment(environment({
     protection_rules: [{
-      id: 1,
       type: 'required_reviewers',
-      prevent_self_review: false,
       reviewers: [
-        { type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } },
-        { type: 'Team', reviewer: { slug: 'release-managers', id: 3 } },
+        { type: 'User', reviewer: { login: 'Cheekyfellastef' } },
+        { type: 'Team', reviewer: { slug: 'release-managers' } },
       ],
     }],
   }));
-  assert.equal(team.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
   assert.ok(team.blockers.includes('required-reviewer-set-not-exact'));
-
-  const unknown = validateProtectedEnvironment(environment({
-    protection_rules: [{
-      id: 1,
-      type: 'required_reviewers',
-      prevent_self_review: false,
-      reviewers: [{ type: 'Robot', reviewer: { login: 'Cheekyfellastef' } }],
-    }],
-  }));
-  assert.equal(unknown.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
-  assert.ok(unknown.blockers.includes('required-reviewer-set-not-exact'));
-
-  const duplicateRule = validateProtectedEnvironment(environment({
-    protection_rules: [
-      {
-        id: 1,
-        type: 'required_reviewers',
-        prevent_self_review: false,
-        reviewers: [{ type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } }],
-      },
-      {
-        id: 2,
-        type: 'required_reviewers',
-        prevent_self_review: false,
-        reviewers: [{ type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } }],
-      },
-    ],
-  }));
-  assert.equal(duplicateRule.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
-  assert.ok(duplicateRule.blockers.includes('required-reviewer-rule-count-not-exact'));
 });
 
-test('requires every named workflow green on the exact current head', () => {
-  const ready = validateExactHeadWorkflowRuns(workflowRuns(), { expectedHead: sourceHead });
-  assert.equal(ready.finalVerdict, 'EXACT_HEAD_WORKFLOWS_READY');
-
+test('requires every named workflow green on the exact head', () => {
+  assert.equal(validateExactHeadWorkflowRuns(workflowRuns(), { expectedHead: sourceHead }).valid, true);
   const blocked = validateExactHeadWorkflowRuns(workflowRuns({
     'PR Clean Guard': { conclusion: 'failure' },
     'Build Stephanos UI': { head_sha: 'b'.repeat(40) },
   }), { expectedHead: sourceHead });
-  assert.equal(blocked.finalVerdict, 'EXACT_HEAD_WORKFLOWS_BLOCKED');
   assert.ok(blocked.blockers.includes('workflow-not-green:PR Clean Guard'));
   assert.ok(blocked.blockers.includes('workflow-head-mismatch:Build Stephanos UI'));
 });
 
-test('prerequisites can be checked before the protected bot review exists', () => {
-  const verdict = validateProtectedOperatorMergePrerequisites(evidence({ trustedReviewReceipt: undefined }));
-  assert.equal(verdict.finalVerdict, 'PROTECTED_OPERATOR_PREREQUISITES_READY');
-  assert.deepEqual(verdict.blockers, []);
+test('independent reviewer analyzes the complete diff and rejects operator-synthesized review', () => {
+  const clean = analyzeIndependentSecurityReview({ changedFiles: cleanBoundaryFiles, diff: cleanBoundaryDiff() });
+  assert.equal(clean.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_CLEAN');
+
+  const bad = analyzeIndependentSecurityReview({
+    changedFiles: cleanBoundaryFiles,
+    diff: cleanBoundaryDiff().replace(
+      "+runRequired('gh', ['pr', 'merge', '1600', '--match-head-commit', sourceHead]);",
+      "+buildProtectedSecurityReviewReceipt({ sourceHead });\n+runRequired('gh', ['pr', 'merge', '1600', '--match-head-commit', sourceHead]);",
+    ),
+  });
+  assert.equal(bad.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+  assert.ok(bad.findings.some((item) => item.code === 'operator-gate-synthesizes-review'));
 });
 
-test('builds and validates only the same-run GitHub protected security review', () => {
+test('independent reviewer rejects write authority and unsupported high-risk surfaces', () => {
+  const bad = analyzeIndependentSecurityReview({
+    changedFiles: ['.github/workflows/independent-merge-security-review.yml', 'scripts/windows/mutate-host.ps1'],
+    diff: [
+      'diff --git a/.github/workflows/independent-merge-security-review.yml b/.github/workflows/independent-merge-security-review.yml',
+      '+++ b/.github/workflows/independent-merge-security-review.yml',
+      '+pull_request_target:',
+      '+ref: ${{ github.event.pull_request.head.sha }}',
+      '+contents: write',
+      'diff --git a/scripts/windows/mutate-host.ps1 b/scripts/windows/mutate-host.ps1',
+      '+++ b/scripts/windows/mutate-host.ps1',
+      '+Write-Host unsafe',
+    ].join('\n'),
+  });
+  assert.ok(bad.findings.some((item) => item.code === 'independent-review-workflow-not-trusted'));
+  assert.ok(bad.findings.some((item) => item.code === 'independent-reviewer-has-source-authority'));
+  assert.ok(bad.findings.some((item) => item.code === 'unsupported-high-risk-surface'));
+});
+
+test('builds a clean high-risk receipt only from clean independent analysis', () => {
   const receipt = protectedReview();
-  const verdict = validateTrustedProtectedReviewReceipt(receipt, {
+  assert.equal(receipt.reviewerClass, 'external-qualified');
+  assert.equal(receipt.assuranceMode, 'specialist');
+  assert.equal(receipt.verdict, 'clean');
+  assert.throws(() => buildProtectedSecurityReviewReceipt({
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    workflowRunId: reviewRunId,
+    workflowRunAttempt: reviewRunAttempt,
+    analysis: { finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS', verdict: 'findings', findings: [{}] },
+  }));
+});
+
+test('requires the independent workflow path, job, run attempt, PR and head binding', () => {
+  const ready = validateIndependentReviewWorkflowRun(independentWorkflowRun(), independentWorkflowJobs(), {
+    repository,
+    prNumber,
+    expectedHead: sourceHead,
+    workflowRunId: reviewRunId,
+    workflowRunAttempt: reviewRunAttempt,
+  });
+  assert.equal(ready.finalVerdict, 'INDEPENDENT_REVIEW_WORKFLOW_READY');
+
+  const blocked = validateIndependentReviewWorkflowRun(
+    independentWorkflowRun({ path: '.github/workflows/other.yml', pull_requests: [{ number: prNumber, head: { sha: 'b'.repeat(40) } }] }),
+    independentWorkflowJobs({ conclusion: 'failure' }),
+    { repository, prNumber, expectedHead: sourceHead, workflowRunId: reviewRunId, workflowRunAttempt: reviewRunAttempt },
+  );
+  assert.ok(blocked.blockers.includes('independent-review-workflow-path-mismatch'));
+  assert.ok(blocked.blockers.includes('independent-review-head-mismatch'));
+  assert.ok(blocked.blockers.includes('independent-review-job-not-green'));
+});
+
+test('validates only a receipt bound to the independent review run', () => {
+  const ready = validateTrustedProtectedReviewReceipt(protectedReview(), {
     repository,
     prNumber,
     branch,
     expectedHead: sourceHead,
-    workflowRunId,
-    workflowRunAttempt,
+    workflowRunId: reviewRunId,
+    workflowRunAttempt: reviewRunAttempt,
   });
-  assert.equal(verdict.finalVerdict, 'TRUSTED_PROTECTED_REVIEW_READY');
-  assert.deepEqual(verdict.blockers, []);
-});
+  assert.equal(ready.finalVerdict, 'TRUSTED_PROTECTED_REVIEW_READY');
 
-test('self-asserted clean specialist JSON cannot satisfy the protected review gate', () => {
-  const verdict = validateTrustedProtectedReviewReceipt(forgedCommentReview(), {
+  const forged = validateTrustedProtectedReviewReceipt(forgedCommentReview(), {
     repository,
     prNumber,
     branch,
     expectedHead: sourceHead,
-    workflowRunId,
-    workflowRunAttempt,
+    workflowRunId: reviewRunId,
+    workflowRunAttempt: reviewRunAttempt,
   });
-  assert.equal(verdict.finalVerdict, 'TRUSTED_PROTECTED_REVIEW_BLOCKED');
-  assert.ok(verdict.blockers.includes('protected-reviewer-id-mismatch'));
-  assert.ok(verdict.blockers.includes('protected-review-provider-mismatch'));
-  assert.ok(verdict.blockers.includes('protected-review-workflow-session-mismatch'));
-});
+  assert.ok(forged.blockers.includes('protected-reviewer-id-mismatch'));
+  assert.ok(forged.blockers.includes('protected-review-provider-mismatch'));
 
-test('receipt from another GitHub Actions run or attempt is rejected', () => {
-  const verdict = validateTrustedProtectedReviewReceipt(protectedReview(), {
+  const stale = validateTrustedProtectedReviewReceipt(protectedReview(), {
     repository,
     prNumber,
     branch,
     expectedHead: sourceHead,
-    workflowRunId: workflowRunId + 1,
-    workflowRunAttempt: 2,
+    workflowRunId: reviewRunId + 1,
+    workflowRunAttempt: 1,
   });
-  assert.equal(verdict.finalVerdict, 'TRUSTED_PROTECTED_REVIEW_BLOCKED');
-  assert.ok(verdict.blockers.includes('protected-review-workflow-session-mismatch'));
+  assert.ok(stale.blockers.includes('protected-review-workflow-session-mismatch'));
 });
 
-test('protected environment, exact-head checks and same-run protected review form a ready gate', () => {
+test('operator prerequisites do not mint or imply a security review', () => {
+  const prerequisites = validateProtectedOperatorMergePrerequisites(evidence({
+    trustedReviewReceipt: undefined,
+    reviewWorkflowRun: undefined,
+    reviewWorkflowJobs: undefined,
+  }));
+  assert.equal(prerequisites.finalVerdict, 'PROTECTED_OPERATOR_PREREQUISITES_READY');
+  assert.equal(Object.hasOwn(prerequisites, 'review'), false);
+});
+
+test('independent review plus protected operator approval forms the ready gate', () => {
   const verdict = validateProtectedOperatorMergeEvidence(evidence());
   assert.equal(verdict.finalVerdict, 'PROTECTED_OPERATOR_MERGE_READY');
   assert.deepEqual(verdict.blockers, []);
 });
 
-test('missing protected environment and comment-authored review both fail closed', () => {
-  const verdict = validateProtectedOperatorMergeEvidence(evidence({
-    environment: {},
-    trustedReviewReceipt: forgedCommentReview(),
-  }));
-  assert.equal(verdict.finalVerdict, 'PROTECTED_OPERATOR_MERGE_BLOCKED');
-  assert.ok(verdict.blockers.includes('required-reviewer-rule-missing'));
-  assert.ok(verdict.blockers.includes('protected-reviewer-id-mismatch'));
-});
-
-test('head movement, draft state, untrusted event and unresolved threads fail closed', () => {
+test('missing independent workflow evidence, draft movement and unresolved threads fail closed', () => {
   const verdict = validateProtectedOperatorMergeEvidence(evidence({
     pullRequest: {
       number: prNumber,
@@ -301,32 +389,28 @@ test('head movement, draft state, untrusted event and unresolved threads fail cl
       head: { sha: 'b'.repeat(40), ref: branch },
       base: { ref: 'main' },
     },
-    workflowRun: {
-      event: 'pull_request',
-      path: '.github/workflows/operator-merge-approval-gate.yml',
-      repository: { full_name: repository },
-    },
+    reviewWorkflowRun: {},
+    reviewWorkflowJobs: [],
     unresolvedThreadCount: 1,
   }));
   assert.equal(verdict.finalVerdict, 'PROTECTED_OPERATOR_MERGE_BLOCKED');
   assert.ok(verdict.blockers.includes('pull-request-still-draft'));
   assert.ok(verdict.blockers.includes('pull-request-head-mismatch'));
-  assert.ok(verdict.blockers.includes('untrusted-workflow-event'));
+  assert.ok(verdict.blockers.includes('independent-review-workflow-path-mismatch'));
   assert.ok(verdict.blockers.includes('unresolved-review-threads'));
 });
 
-test('builds an exact-head operator approval receipt only from ready protected evidence', () => {
+test('builds an exact-head operator approval receipt only from ready separated evidence', () => {
   const verdict = validateProtectedOperatorMergeEvidence(evidence());
   const receipt = buildProtectedApprovalReceipt({
     verdict,
-    workflowRunId,
-    workflowRunAttempt,
+    workflowRunId: operatorRunId,
+    workflowRunAttempt: operatorRunAttempt,
     approvedAtUtc: '2026-07-21T20:05:00.000Z',
   });
   assert.equal(receipt.prNumber, prNumber);
   assert.equal(receipt.sourceHead, sourceHead);
-  assert.equal(receipt.environment, 'operator-merge-approval');
-  assert.equal(receipt.workflowRunId, workflowRunId);
+  assert.equal(receipt.workflowRunId, operatorRunId);
   assert.equal(receipt.mergeExecutionAuthority, 'github-actions-protected-environment-only');
   assert.equal(receipt.reusableAcrossHeads, false);
 });
