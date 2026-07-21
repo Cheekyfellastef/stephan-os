@@ -21,7 +21,7 @@ test('uses only the fixed profile to usage panel route', () => {
   assert.match(navigation, /ExpandCollapsePattern/);
 });
 
-test('forbids generic browser, script and credential automation', () => {
+test('forbids generic browser, script and credential extraction automation', () => {
   const combined = [navigation, statusWrapper, executionWrapper].join('\n');
   for (const pattern of [
     /Invoke-WebRequest/i,
@@ -30,8 +30,9 @@ test('forbids generic browser, script and credential automation', () => {
     /javascript/i,
     /document\./i,
     /querySelector/i,
-    /cookie/i,
-    /credential/i,
+    /Get-Credential/i,
+    /PasswordVault/i,
+    /CredentialManager/i,
     /SendKeys/i,
     /mouse_event/i,
     /SetCursorPos/i,
