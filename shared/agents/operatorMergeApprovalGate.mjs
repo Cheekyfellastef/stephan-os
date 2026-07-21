@@ -1,4 +1,7 @@
-import { validateProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
+import {
+  createProviderNeutralReviewReceipt,
+  validateProviderNeutralReviewReceipt,
+} from './providerNeutralReviewV1.mjs';
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 
@@ -7,7 +10,13 @@ export const OPERATOR_MERGE_REVIEWER = 'Cheekyfellastef';
 export const OPERATOR_MERGE_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
 export const OPERATOR_MERGE_GATE_JOB = 'operator-approval-gate';
 export const OPERATOR_MERGE_EXECUTOR_JOB = 'operator-approved-exact-head-merge';
+export const PROTECTED_REVIEW_MARKER = '<!-- stephanos-protected-security-review -->';
 export const PROTECTED_APPROVAL_MARKER = '<!-- stephanos-protected-operator-approval -->';
+export const PROTECTED_REVIEWER_ID = 'github-actions-protected-security-gate';
+export const PROTECTED_REVIEWER_CLASS = 'external-qualified';
+export const PROTECTED_REVIEW_PROVIDER = 'github-protected-environment-security';
+export const PROTECTED_REVIEW_MODEL_CLASS = 'human-plus-deterministic';
+export const PROGRAMME_CONTROL_ISSUE = 1568;
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'Build Stephanos UI',
   'PR Clean Guard',
@@ -48,6 +57,14 @@ function reviewerLogins(environment = {}) {
     .filter((entry) => text(entry?.type).toLowerCase() === 'user')
     .map((entry) => text(entry?.reviewer?.login).toLowerCase())
     .filter(Boolean));
+}
+
+function trustedReviewerSessionId(workflowRunId, workflowRunAttempt) {
+  return `github-actions-run-${integer(workflowRunId)}-attempt-${integer(workflowRunAttempt)}`;
+}
+
+function implementationSessionId(prNumber) {
+  return `pr-${integer(prNumber)}-implementation-lane`;
 }
 
 export function extractJsonObjects(markdown = '') {
@@ -122,43 +139,99 @@ export function validateExactHeadWorkflowRuns(runs = [], options = {}) {
   });
 }
 
-export function findCleanSpecialistReview(markdownBodies = [], options = {}) {
-  const candidates = [];
-  for (const body of Array.isArray(markdownBodies) ? markdownBodies : []) {
-    candidates.push(...extractJsonObjects(body));
+export function buildProtectedSecurityReviewReceipt(input = {}) {
+  const repository = text(input.repository);
+  const prNumber = integer(input.prNumber);
+  const sourceHead = text(input.sourceHead).toLowerCase();
+  const branch = text(input.branch);
+  const workflowRunId = integer(input.workflowRunId);
+  const workflowRunAttempt = integer(input.workflowRunAttempt);
+  const timestampUtc = text(input.timestampUtc || new Date().toISOString());
+  if (!repository || !prNumber || !SHA_PATTERN.test(sourceHead) || !branch || !workflowRunId || !workflowRunAttempt) {
+    throw new Error('Protected security review receipt requires repository, PR, branch, exact head and workflow run identity.');
   }
-  const validations = candidates.map((receipt) => ({
-    receipt,
-    validation: validateProviderNeutralReviewReceipt(receipt, {
-      repository: options.repository,
-      prNumber: options.prNumber,
-      branch: options.branch,
-      expectedHead: options.expectedHead,
-      riskTier: 'high',
-    }),
-  }));
-  const accepted = validations.find(({ receipt, validation }) => (
-    validation.valid
-    && receipt.verdict === 'clean'
-    && receipt.riskTier === 'high'
-    && receipt.assuranceMode === 'specialist'
-    && validation.findingCounts.p0 === 0
-    && validation.findingCounts.p1 === 0
-    && validation.findingCounts.p2 === 0
-  ));
-  return Object.freeze({
-    valid: Boolean(accepted),
-    receipt: accepted?.receipt || null,
-    attemptedReceiptCount: validations.length,
-    refusalReasons: Object.freeze(validations
-      .filter(({ validation }) => !validation.valid)
-      .map(({ validation }) => validation.refusalReason)
-      .filter(Boolean)),
-    finalVerdict: accepted ? 'SPECIALIST_REVIEW_READY' : 'SPECIALIST_REVIEW_BLOCKED',
+  return createProviderNeutralReviewReceipt({
+    receiptId: `protected-review-pr${prNumber}-run${workflowRunId}-attempt${workflowRunAttempt}`,
+    repository,
+    issueNumber: PROGRAMME_CONTROL_ISSUE,
+    prNumber,
+    branch,
+    sourceHead,
+    reviewerId: PROTECTED_REVIEWER_ID,
+    reviewerClass: PROTECTED_REVIEWER_CLASS,
+    provider: PROTECTED_REVIEW_PROVIDER,
+    modelClass: PROTECTED_REVIEW_MODEL_CLASS,
+    reviewerSessionId: trustedReviewerSessionId(workflowRunId, workflowRunAttempt),
+    implementerProvider: 'canonical-programme-builder',
+    implementerSessionId: implementationSessionId(prNumber),
+    riskTier: 'high',
+    assuranceMode: 'specialist',
+    reviewScope: [
+      'protected-environment-human-release',
+      'trusted-default-branch-gate',
+      'exact-head-workflows',
+      'review-thread-resolution',
+      'merge-authority-separation',
+    ],
+    findings: [],
+    verdict: 'clean',
+    timestampUtc,
+    proofRefs: [
+      `proofs/operator-merge/run-${workflowRunId}`,
+      `proofs/operator-merge/head-${sourceHead.slice(0, 12)}`,
+      `proofs/operator-merge/environment-${OPERATOR_MERGE_ENVIRONMENT}`,
+    ],
+    quorumChecks: [],
+    blocker: '',
   });
 }
 
-export function validateProtectedOperatorMergeEvidence(input = {}) {
+export function validateTrustedProtectedReviewReceipt(receipt = {}, options = {}) {
+  const repository = text(options.repository);
+  const prNumber = integer(options.prNumber);
+  const branch = text(options.branch);
+  const expectedHead = text(options.expectedHead).toLowerCase();
+  const workflowRunId = integer(options.workflowRunId);
+  const workflowRunAttempt = integer(options.workflowRunAttempt);
+  const validation = validateProviderNeutralReviewReceipt(receipt, {
+    repository,
+    prNumber,
+    branch,
+    expectedHead,
+    riskTier: 'high',
+  });
+  const blockers = [...validation.errors];
+
+  if (receipt.issueNumber !== PROGRAMME_CONTROL_ISSUE) blockers.push('protected-review-issue-mismatch');
+  if (receipt.reviewerId !== PROTECTED_REVIEWER_ID) blockers.push('protected-reviewer-id-mismatch');
+  if (receipt.reviewerClass !== PROTECTED_REVIEWER_CLASS) blockers.push('protected-reviewer-class-mismatch');
+  if (receipt.provider !== PROTECTED_REVIEW_PROVIDER) blockers.push('protected-review-provider-mismatch');
+  if (receipt.modelClass !== PROTECTED_REVIEW_MODEL_CLASS) blockers.push('protected-review-model-class-mismatch');
+  if (receipt.reviewerSessionId !== trustedReviewerSessionId(workflowRunId, workflowRunAttempt)) {
+    blockers.push('protected-review-workflow-session-mismatch');
+  }
+  if (receipt.implementerProvider !== 'canonical-programme-builder'
+    || receipt.implementerSessionId !== implementationSessionId(prNumber)) {
+    blockers.push('protected-review-implementation-binding-mismatch');
+  }
+  if (receipt.riskTier !== 'high' || receipt.assuranceMode !== 'specialist') {
+    blockers.push('protected-review-assurance-mismatch');
+  }
+  if (receipt.verdict !== 'clean' || receipt.findings?.length !== 0 || receipt.blocker !== '') {
+    blockers.push('protected-review-not-clean');
+  }
+  if (!workflowRunId || !workflowRunAttempt) blockers.push('protected-review-workflow-identity-missing');
+
+  return Object.freeze({
+    valid: blockers.length === 0,
+    receipt,
+    validation,
+    blockers: Object.freeze([...new Set(blockers)]),
+    finalVerdict: blockers.length ? 'TRUSTED_PROTECTED_REVIEW_BLOCKED' : 'TRUSTED_PROTECTED_REVIEW_READY',
+  });
+}
+
+export function validateProtectedOperatorMergePrerequisites(input = {}) {
   const repository = text(input.repository);
   const expectedPrNumber = integer(input.prNumber);
   const expectedHead = text(input.sourceHead).toLowerCase();
@@ -187,25 +260,44 @@ export function validateProtectedOperatorMergeEvidence(input = {}) {
 
   const workflows = validateExactHeadWorkflowRuns(input.workflowRuns, { expectedHead });
   if (!workflows.valid) blockers.push(...workflows.blockers);
-
-  const review = findCleanSpecialistReview(input.reviewBodies, {
-    repository,
-    prNumber: expectedPrNumber,
-    branch: expectedBranch,
-    expectedHead,
-  });
-  if (!review.valid) blockers.push('clean-high-risk-specialist-review-missing');
-
   if (integer(input.unresolvedThreadCount) !== 0) blockers.push('unresolved-review-threads');
 
   return Object.freeze({
-    schemaVersion: 'stephanos.protected-operator-merge-evidence.v1',
+    schemaVersion: 'stephanos.protected-operator-merge-prerequisites.v1',
     repository,
     prNumber: expectedPrNumber,
     sourceHead: expectedHead,
     branch: expectedBranch,
     environment,
     workflows,
+    blockers: Object.freeze([...new Set(blockers)]),
+    finalVerdict: blockers.length
+      ? 'PROTECTED_OPERATOR_PREREQUISITES_BLOCKED'
+      : 'PROTECTED_OPERATOR_PREREQUISITES_READY',
+  });
+}
+
+export function validateProtectedOperatorMergeEvidence(input = {}) {
+  const prerequisites = validateProtectedOperatorMergePrerequisites(input);
+  const review = validateTrustedProtectedReviewReceipt(input.trustedReviewReceipt, {
+    repository: prerequisites.repository,
+    prNumber: prerequisites.prNumber,
+    branch: prerequisites.branch,
+    expectedHead: prerequisites.sourceHead,
+    workflowRunId: input.workflowRunId,
+    workflowRunAttempt: input.workflowRunAttempt,
+  });
+  const blockers = [...prerequisites.blockers];
+  if (!review.valid) blockers.push(...review.blockers);
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.protected-operator-merge-evidence.v2',
+    repository: prerequisites.repository,
+    prNumber: prerequisites.prNumber,
+    sourceHead: prerequisites.sourceHead,
+    branch: prerequisites.branch,
+    environment: prerequisites.environment,
+    workflows: prerequisites.workflows,
     review,
     blockers: Object.freeze([...new Set(blockers)]),
     finalVerdict: blockers.length ? 'PROTECTED_OPERATOR_MERGE_BLOCKED' : 'PROTECTED_OPERATOR_MERGE_READY',
