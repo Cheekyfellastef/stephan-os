@@ -49,14 +49,26 @@ function latestByName(runs = []) {
   return latest;
 }
 
-function reviewerLogins(environment = {}) {
+function reviewerConfiguration(environment = {}) {
   const rules = Array.isArray(environment.protection_rules) ? environment.protection_rules : [];
-  const requiredRule = rules.find((rule) => rule?.type === 'required_reviewers');
+  const requiredRules = rules.filter((rule) => rule?.type === 'required_reviewers');
+  const requiredRule = requiredRules[0] || null;
   const reviewers = Array.isArray(requiredRule?.reviewers) ? requiredRule.reviewers : [];
-  return Object.freeze(reviewers
-    .filter((entry) => text(entry?.type).toLowerCase() === 'user')
-    .map((entry) => text(entry?.reviewer?.login).toLowerCase())
-    .filter(Boolean));
+  const normalizedReviewers = reviewers.map((entry) => Object.freeze({
+    type: text(entry?.type).toLowerCase(),
+    login: text(entry?.reviewer?.login).toLowerCase(),
+    slug: text(entry?.reviewer?.slug).toLowerCase(),
+  }));
+  const userLogins = normalizedReviewers
+    .filter((entry) => entry.type === 'user' && entry.login)
+    .map((entry) => entry.login);
+  return Object.freeze({
+    requiredRules: Object.freeze(requiredRules),
+    requiredRule,
+    reviewers: Object.freeze(reviewers),
+    normalizedReviewers: Object.freeze(normalizedReviewers),
+    userLogins: Object.freeze(userLogins),
+  });
 }
 
 function trustedReviewerSessionId(workflowRunId, workflowRunAttempt) {
@@ -85,13 +97,26 @@ export function validateProtectedEnvironment(environment = {}, options = {}) {
   const expectedName = text(options.expectedName || OPERATOR_MERGE_ENVIRONMENT);
   const expectedReviewer = text(options.expectedReviewer || OPERATOR_MERGE_REVIEWER).toLowerCase();
   const blockers = [];
-  const rules = Array.isArray(environment.protection_rules) ? environment.protection_rules : [];
-  const requiredRule = rules.find((rule) => rule?.type === 'required_reviewers');
-  const logins = reviewerLogins(environment);
+  const configuration = reviewerConfiguration(environment);
+  const {
+    requiredRules,
+    requiredRule,
+    reviewers,
+    normalizedReviewers,
+    userLogins,
+  } = configuration;
+  const soleReviewer = normalizedReviewers[0] || null;
 
   if (text(environment.name) !== expectedName) blockers.push('protected-environment-name-mismatch');
   if (!requiredRule) blockers.push('required-reviewer-rule-missing');
-  if (!logins.includes(expectedReviewer)) blockers.push('required-operator-reviewer-missing');
+  if (requiredRules.length !== 1) blockers.push('required-reviewer-rule-count-not-exact');
+  if (!userLogins.includes(expectedReviewer)) blockers.push('required-operator-reviewer-missing');
+  if (reviewers.length !== 1
+    || soleReviewer?.type !== 'user'
+    || soleReviewer?.login !== expectedReviewer
+    || Boolean(soleReviewer?.slug)) {
+    blockers.push('required-reviewer-set-not-exact');
+  }
   if (environment.can_admins_bypass !== false) blockers.push('environment-admin-bypass-not-disabled');
   if (environment?.deployment_branch_policy?.protected_branches !== true
     || environment?.deployment_branch_policy?.custom_branch_policies !== false) {
@@ -101,7 +126,9 @@ export function validateProtectedEnvironment(environment = {}, options = {}) {
   return Object.freeze({
     valid: blockers.length === 0,
     environment: text(environment.name),
-    requiredReviewerLogins: logins,
+    requiredReviewerLogins: userLogins,
+    requiredReviewerCount: reviewers.length,
+    requiredReviewerTypes: Object.freeze(normalizedReviewers.map((entry) => entry.type)),
     preventSelfReview: requiredRule?.prevent_self_review === true,
     blockers: Object.freeze(blockers),
     finalVerdict: blockers.length ? 'PROTECTED_ENVIRONMENT_BLOCKED' : 'PROTECTED_ENVIRONMENT_READY',
