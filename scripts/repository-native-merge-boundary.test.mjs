@@ -45,6 +45,7 @@ test('only the protected GitHub Actions script can issue trusted review and merg
   assert.match(source, /PROTECTED_REVIEW_MARKER/);
   assert.match(source, /buildProtectedSecurityReviewReceipt/);
   assert.match(source, /matchingBotComment/);
+  assert.match(source, /candidate\.reviewerSessionId/);
   assert.match(source, /candidate\.workflowRunId/);
   assert.match(source, /candidate\.workflowRunAttempt/);
   assert.match(source, /validateProtectedOperatorMergeEvidence/);
@@ -52,6 +53,7 @@ test('only the protected GitHub Actions script can issue trusted review and merg
   assert.match(source, /--match-head-commit/);
   assert.match(source, /'pr', 'merge'/);
   assert.doesNotMatch(source, /reviewBodies/);
-  assert.doesNotMatch(source, /approvalReceipt/);
+  assert.doesNotMatch(source, /request\.approvalReceipt/);
+  assert.doesNotMatch(source, /request\.trustedReviewReceipt/);
   assert.doesNotMatch(source, /nonce/);
 });
