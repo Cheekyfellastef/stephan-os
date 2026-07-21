@@ -53,8 +53,8 @@ export function publishApprovalToken(branch) {
   return `APPROVE_REPOSITORY_NATIVE_PUBLISH_MERGE:${branch}`;
 }
 
-export function mergeApprovalToken(prNumber, headSha) {
-  return `APPROVE_REPOSITORY_NATIVE_EXACT_HEAD_MERGE:${prNumber}:${headSha}`;
+export function mergeApprovalToken() {
+  throw new Error('Deterministic merge approval tokens are disabled. Use a challenge-bound operator approval receipt.');
 }
 
 export function validatePublishLaneRequest(input = {}) {
@@ -77,10 +77,12 @@ export function validatePublishLaneRequest(input = {}) {
   }
 
   return {
-    schemaVersion: 'repository-native-publish-merge-lane.v1',
+    schemaVersion: 'repository-native-publish-merge-lane.v2',
     branch,
     files: scope.files,
     approvalTokenRequired: publishApprovalToken(branch),
+    mergeAuthority: false,
+    mergeApprovalMechanism: 'challenge-bound-operator-receipt-only',
     blockers,
     finalVerdict: blockers.length ? 'PUBLISH_LANE_BLOCKED' : 'PUBLISH_LANE_READY',
   };
@@ -100,13 +102,17 @@ export function buildPullRequestBody({ goal, proofCommand, proofResult, filesCha
     '',
     '## Exact Head SHA',
     `\`${headSha}\``,
+    '',
+    '## Merge Boundary',
+    '- This publication lane has no merge authority.',
+    '- A separate challenge-bound direct operator approval receipt is required for the exact PR and head.',
   ].join('\n');
 }
 
 export function buildCompletionPacket({ branch, prNumber, headSha, mergeCommit, proofCommand, proofResult, finalStatus }) {
   const status = String(finalStatus || '').trim();
   return {
-    schemaVersion: 'repository-native-publish-merge-lane.completion.v1',
+    schemaVersion: 'repository-native-publish-merge-lane.completion.v2',
     branch: String(branch || ''),
     prNumber: Number.isInteger(prNumber) ? prNumber : Number.parseInt(prNumber, 10),
     headSha: SHA_PATTERN.test(String(headSha || '')) ? headSha : String(headSha || ''),
