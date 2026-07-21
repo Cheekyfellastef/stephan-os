@@ -12,28 +12,42 @@ const executionWrapper = read('scripts/windows/invoke-codex-banked-reset-ui-with
 const statusReader = read('shared/agents/codexBankedResetStatusBattleBridgeReader.mjs');
 const executor = read('shared/agents/codexBankedResetBattleBridgeExecutor.mjs');
 
- test('uses only the fixed profile to usage panel route', () => {
+test('uses only the fixed profile to usage panel route', () => {
   assert.match(navigation, /function Open-CodexUsagePanel/);
   assert.match(navigation, /profile menu|open profile|user menu|account menu/i);
-  assert.match(navigation, /banked reset|reset\(s\)\?\\s\+available|usage summary|usage dashboard|codex usage/i);
+  assert.match(navigation, /banked reset|usage summary|usage dashboard|codex usage/i);
   assert.match(navigation, /InvokePattern/);
   assert.match(navigation, /SelectionItemPattern/);
   assert.match(navigation, /ExpandCollapsePattern/);
 });
 
-test('finds reset summary labels on same-process popup surfaces and resolves an invocable ancestor', () => {
+test('finds reset summary labels only on newly visible same-process popup surfaces', () => {
   assert.match(navigation, /function Get-CodexProcessSnapshot/);
   assert.match(navigation, /Current\.ProcessId -ne \$ProcessId/);
+  assert.match(navigation, /function Get-CodexNewlyVisibleSnapshot/);
+  assert.match(navigation, /BLOCKED_RESET_PROFILE_POPUP_NOT_OBSERVED/);
+  assert.match(navigation, /profile-popup-delta-scanned/);
+});
+
+test('resolves a bounded invocable ancestor even when its own accessible name is empty', () => {
   assert.match(navigation, /function Get-CodexInvocableAncestor/);
   assert.match(navigation, /TreeWalker\]::RawViewWalker/);
+  assert.match(navigation, /MaximumDepth = 5/);
+  assert.match(navigation, /-AllowUnnamed -FallbackName \$label\.Name/);
   assert.match(navigation, /labeled-ancestor/);
-  assert.match(navigation, /same-process-popup-scanned/);
+  assert.match(navigation, /\$width -gt 900 -or \$height -gt 260/);
   assert.match(navigation, /matchedUsageLabel/);
   assert.match(navigation, /usageControlResolution/);
 });
 
+test('requires structural usage-panel proof rather than matching reset words alone', () => {
+  assert.match(navigation, /function Test-CodexUsagePanelEvidence/);
+  assert.match(navigation, /\\b\\d\{1,3\}\\s\*%/);
+  assert.match(navigation, /\$resetAction\.Count -gt 0 -or \$expiry\.Count -gt 0/);
+  assert.match(navigation, /BLOCKED_RESET_USAGE_PANEL_NOT_PROVEN/);
+});
+
 test('keeps labeled-ancestor selection bounded and fail closed', () => {
-  assert.match(navigation, /MaximumDepth = 5/);
   assert.match(navigation, /BLOCKED_RESET_USAGE_LABEL_NOT_INVOCABLE/);
   assert.match(navigation, /BLOCKED_RESET_USAGE_CONTROL_AMBIGUOUS/);
   assert.match(navigation, /billing\|security\|privacy\|upgrade\|purchase\|buy credits\|add credits\|auto\.\?top\.\?up/i);
