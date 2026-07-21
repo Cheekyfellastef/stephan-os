@@ -108,6 +108,30 @@ function Get-CodexProcessSnapshot {
     return @($itemsByKey.Values)
 }
 
+function Get-CodexNewlyVisibleSnapshot {
+    param(
+        [array]$Before,
+        [array]$After
+    )
+
+    $beforeVisibleKeys = @{}
+    foreach ($item in $Before) {
+        if (-not $item.Enabled -or $item.Offscreen) { continue }
+        $key = Get-CodexUiElementKey $item.Element
+        if ($key) { $beforeVisibleKeys[$key] = $true }
+    }
+
+    $newlyVisible = @()
+    foreach ($item in $After) {
+        if (-not $item.Enabled -or $item.Offscreen) { continue }
+        $key = Get-CodexUiElementKey $item.Element
+        if ($key -and -not $beforeVisibleKeys.ContainsKey($key)) {
+            $newlyVisible += $item
+        }
+    }
+    return @($newlyVisible)
+}
+
 function Test-CodexUiElementInvocable {
     param([System.Windows.Automation.AutomationElement]$Element)
 
@@ -504,7 +528,21 @@ function Open-CodexUsagePanel {
     }
 
     Start-Sleep -Milliseconds 900
-    $menuSnapshot = Get-CodexProcessSnapshot -Root $root -ProcessId $selectedWindow.ProcessId
+    $menuSnapshotAll = Get-CodexProcessSnapshot -Root $root -ProcessId $selectedWindow.ProcessId
+    $menuSnapshot = Get-CodexNewlyVisibleSnapshot -Before $snapshot -After $menuSnapshotAll
+    if ($menuSnapshot.Count -eq 0) {
+        return [pscustomobject]@{
+            ok = $false
+            blocker = 'BLOCKED_RESET_PROFILE_POPUP_NOT_OBSERVED'
+            navigationAttempted = $true
+            profileMenuOpened = $true
+            usagePanelOpened = $false
+            matchedWindow = $selectedWindow.Name
+            matchedProfileControl = Convert-ToCodexSafeText $profileControl.Name 120
+            proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'profile-popup-delta-empty')
+        }
+    }
+
     $usageSelection = Select-CodexUiCandidate $menuSnapshot {
         param($item)
         $interactiveType = $item.Type -match 'ControlType\.(Button|MenuItem|Hyperlink|ListItem)'
@@ -546,7 +584,7 @@ function Open-CodexUsagePanel {
             usageControlResolution = $usageControlResolution
             usageCandidates = @($usageSelection.Candidates | ForEach-Object { Convert-ToCodexSafeText $_.Name 120 })
             usageLabelCandidates = @($usageSelection.LabelCandidates | ForEach-Object { Convert-ToCodexSafeText $_.Name 120 })
-            proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'same-process-popup-scanned')
+            proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'same-process-popup-scanned', 'profile-popup-delta-scanned')
         }
     }
 
@@ -567,7 +605,7 @@ function Open-CodexUsagePanel {
             matchedUsageControl = Convert-ToCodexSafeText $usageControl.Name 160
             matchedUsageLabel = $matchedUsageLabel
             usageControlResolution = $usageControlResolution
-            proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'same-process-popup-scanned')
+            proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'same-process-popup-scanned', 'profile-popup-delta-scanned')
         }
     }
 
@@ -585,7 +623,7 @@ function Open-CodexUsagePanel {
             matchedUsageControl = Convert-ToCodexSafeText $usageControl.Name 160
             matchedUsageLabel = $matchedUsageLabel
             usageControlResolution = $usageControlResolution
-            proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'same-process-popup-scanned', 'usage-control-invoked')
+            proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'same-process-popup-scanned', 'profile-popup-delta-scanned', 'usage-control-invoked')
         }
     }
 
@@ -600,7 +638,7 @@ function Open-CodexUsagePanel {
         matchedUsageControl = Convert-ToCodexSafeText $usageControl.Name 160
         matchedUsageLabel = $matchedUsageLabel
         usageControlResolution = $usageControlResolution
-        proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'same-process-popup-scanned', 'usage-panel-opened')
+        proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'same-process-popup-scanned', 'profile-popup-delta-scanned', 'usage-panel-opened')
     }
 }
 
