@@ -110,3 +110,43 @@ test('symbolic links fail closed', async (t) => {
   assert.equal(plan.ok, false);
   assert.equal(plan.blocker, 'DREAM_MIGRATION_SYMLINK_BLOCKED');
 });
+
+test('destination ancestor symbolic links fail closed', async (t) => {
+  const { repoRoot, env, root } = await fixture();
+  const outside = path.join(root, 'outside-destination');
+  await fs.mkdir(outside, { recursive: true });
+  await fs.mkdir(env.STEPHANOS_OPENCLAW_WORKSPACE, { recursive: true });
+  try {
+    await fs.symlink(outside, path.join(env.STEPHANOS_OPENCLAW_WORKSPACE, 'memory'), 'dir');
+  } catch (error) {
+    if (error?.code === 'EPERM') return t.skip('symlink creation not permitted');
+    throw error;
+  }
+  const plan = await planDreamRuntimeMigration({ repoRoot, env });
+  assert.equal(plan.ok, false);
+  assert.equal(plan.blocker, 'DREAM_MIGRATION_DESTINATION_SYMLINK_BLOCKED');
+});
+
+test('migration blocks when a source changes during the copy window', async () => {
+  const { repoRoot, env } = await fixture();
+  const mutatedSource = path.join(repoRoot, 'memory', '.dreams', 'events.jsonl');
+  let mutated = false;
+  const fsImpl = {
+    ...fs,
+    async copyFile(source, destination, flags) {
+      await fs.copyFile(source, destination, flags);
+      if (!mutated) {
+        mutated = true;
+        await fs.writeFile(mutatedSource, '{"event":2}\n');
+      }
+    },
+  };
+  const result = await executeDreamRuntimeMigration({
+    repoRoot,
+    env,
+    fsImpl,
+    operatorApproval: DREAM_RUNTIME_MIGRATION_APPROVAL,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_CHANGED_DURING_COPY');
+});
