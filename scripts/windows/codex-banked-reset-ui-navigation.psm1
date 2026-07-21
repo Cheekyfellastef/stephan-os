@@ -9,13 +9,20 @@ function Convert-ToCodexSafeText {
 }
 
 function New-CodexUiSnapshotItem {
-    param([System.Windows.Automation.AutomationElement]$Element)
+    param(
+        [System.Windows.Automation.AutomationElement]$Element,
+        [switch]$AllowUnnamed,
+        [string]$FallbackName = ''
+    )
 
     try {
         $name = Convert-ToCodexSafeText $Element.Current.Name 220
         $automationId = Convert-ToCodexSafeText $Element.Current.AutomationId 160
         $className = Convert-ToCodexSafeText $Element.Current.ClassName 120
-        if (-not $name -and -not $automationId) { return $null }
+        if (-not $name -and $FallbackName) {
+            $name = Convert-ToCodexSafeText $FallbackName 220
+        }
+        if (-not $name -and -not $automationId -and -not $AllowUnnamed) { return $null }
         $rect = $Element.Current.BoundingRectangle
         return [pscustomobject]@{
             Element = $Element
@@ -252,7 +259,7 @@ function Select-CodexLabeledUsageControl {
         $resolved = Get-CodexInvocableAncestor -LabelElement $label.Element -WindowElement $WindowElement
         if ($null -eq $resolved) { continue }
 
-        $controlItem = New-CodexUiSnapshotItem $resolved.Element
+        $controlItem = New-CodexUiSnapshotItem -Element $resolved.Element -AllowUnnamed -FallbackName $label.Name
         if ($null -eq $controlItem) { continue }
         $key = Get-CodexUiElementKey $resolved.Element
         if (-not $key) { continue }
