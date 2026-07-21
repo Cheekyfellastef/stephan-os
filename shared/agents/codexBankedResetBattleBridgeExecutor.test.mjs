@@ -112,6 +112,12 @@ test('normalizes only a proven single press with changed before-and-after meter 
     { meterRestored: false },
     { finalVerdict: 'OTHER' },
     { usageSurfaceMatched: false },
+  ]) {
+    const blocked = normalizeCodexBankedResetExecutionResult(successfulProof(override), command());
+    assert.equal(blocked.ok, false);
+  }
+
+  for (const override of [
     { meterBefore: '' },
     { meterAfter: '', resetControlDisappeared: false },
     { meterAfter: '', resetControlDisappeared: true },
