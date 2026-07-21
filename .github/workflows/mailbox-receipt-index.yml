@@ -9,6 +9,7 @@ on:
       - 'shared/agents/mailboxReceiptIndexAccess.test.mjs'
       - 'shared/agents/mailboxReceiptIndexGitHubMirror.mjs'
       - 'shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs'
+      - 'shared/agents/mailboxReceiptTruthIssue.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs'
       - 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
@@ -53,6 +54,7 @@ jobs:
           shared/agents/mailboxReceiptIndex.test.mjs
           shared/agents/mailboxReceiptIndexAccess.test.mjs
           shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs
+          shared/agents/mailboxReceiptTruthIssue.test.mjs
           scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
           shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
 
@@ -86,7 +88,7 @@ jobs:
           ref: main
           fetch-depth: 1
 
-      - name: Update the single compact receipt index comment
+      - name: Update compact receipt truth surfaces
         uses: actions/github-script@v7
         with:
           script: |
@@ -94,33 +96,45 @@ jobs:
             const { pathToFileURL } = await import('node:url');
             const moduleUrl = `${pathToFileURL(path.resolve('shared/agents/mailboxReceiptIndexGitHubMirror.mjs')).href}?run=${Date.now()}`;
             const receiptIndexMirror = await import(moduleUrl);
-            const issueNumber = 1507;
+            const mailboxIssueNumber = receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_ISSUE;
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issueNumber,
+              issue_number: mailboxIssueNumber,
               per_page: 100,
             });
             const record = receiptIndexMirror.createTrustedMailboxReceiptIndexFromGitHubComments(comments, {
               ownerLogin: context.repo.owner,
               timestampUtc: new Date().toISOString(),
             });
-            const body = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBody(record);
+            const commentBody = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBody(record);
             const existing = receiptIndexMirror.findTrustedMailboxReceiptIndexComment(comments);
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 comment_id: existing.id,
-                body,
+                body: commentBody,
               });
               core.info(`Updated receipt index comment ${existing.id}.`);
             } else {
               const created = await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: issueNumber,
-                body,
+                issue_number: mailboxIssueNumber,
+                body: commentBody,
               });
               core.info(`Created receipt index comment ${created.data.id}.`);
             }
+
+            const truthIssueNumber = receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_TRUTH_ISSUE;
+            const truthBody = receiptIndexMirror.buildTrustedMailboxReceiptTruthIssueBody(record);
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: truthIssueNumber,
+              title: receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_TRUTH_TITLE,
+              body: truthBody,
+              state: 'open',
+            });
+            core.info(`Updated receipt truth issue ${truthIssueNumber}.`);

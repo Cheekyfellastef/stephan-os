@@ -10,6 +10,9 @@ export const MAILBOX_RECEIPT_GITHUB_RECEIPT_MARKER = 'stephanos-battle-bridge-co
 export const MAILBOX_RECEIPT_GITHUB_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const MAILBOX_RECEIPT_GITHUB_ISSUE = 1507;
 export const MAILBOX_RECEIPT_GITHUB_INDEX_AUTHOR = 'github-actions[bot]';
+export const MAILBOX_RECEIPT_GITHUB_TRUTH_ISSUE = 1575;
+export const MAILBOX_RECEIPT_GITHUB_TRUTH_TITLE = 'Telemetry: Battle Bridge mailbox receipt truth';
+export const MAILBOX_RECEIPT_GITHUB_TRUTH_MARKER = 'stephanos-battle-bridge-receipt-index-truth';
 
 const COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
 const RECEIPT_SCHEMA = 'stephanos.battle-bridge-github-command-receipt.v1';
@@ -82,4 +85,11 @@ export function findTrustedMailboxReceiptIndexComment(comments = []) {
 
 export function buildTrustedMailboxReceiptIndexGitHubBody(record = {}) {
   return buildMailboxReceiptIndexGitHubBody(record);
+}
+
+export function buildTrustedMailboxReceiptTruthIssueBody(record = {}) {
+  return buildMailboxReceiptIndexGitHubBody(record).replace(
+    `<!-- ${MAILBOX_RECEIPT_INDEX_GITHUB_MARKER} -->`,
+    `<!-- ${MAILBOX_RECEIPT_GITHUB_TRUTH_MARKER} -->`,
+  );
 }
