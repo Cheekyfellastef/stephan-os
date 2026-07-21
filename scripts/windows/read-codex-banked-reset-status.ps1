@@ -132,8 +132,7 @@ $meterTexts = @($snapshot | Where-Object {
     $_.Name -match '\b\d{1,3}\s*%' -and $_.Name -match '(?i)usage|remaining|meter|limit|codex|weekly|five.day|5.day'
 } | Select-Object -ExpandProperty Name -Unique -First 6)
 $expiryTexts = @($snapshot | Where-Object {
-    $_.Name -match '(?i)expire|expiry|expires|banked reset|rate.limit reset' -and
-    $_.Name -match '(?i)\b20\d{2}\b|\bjan(?:uary)?\b|\bfeb(?:ruary)?\b|\bmar(?:ch)?\b|\bapr(?:il)?\b|\bmay\b|\bjun(?:e)?\b|\bjul(?:y)?\b|\baug(?:ust)?\b|\bsep(?:tember)?\b|\boct(?:ober)?\b|\bnov(?:ember)?\b|\bdec(?:ember)?\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b'
+    $_.Name -match '(?i)expire|expiry|expires|banked reset|rate.limit reset'
 } | Select-Object -ExpandProperty Name -Unique -First 12)
 $resetButtons = @($snapshot | Where-Object {
     $_.Type -eq 'ControlType.Button' -and $_.Enabled -and -not $_.Offscreen -and
