@@ -33,10 +33,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Validate protected environment, exact-head checks, specialist review and threads
+      - name: Validate protected environment, exact head, exact base, specialist review and threads
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/operator-protected-merge-gate.mjs approve
+        run: node scripts/operator-protected-merge-gate-v2.mjs approve
 
   operator-approved-exact-head-merge:
     name: operator-approved-exact-head-merge
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Revalidate the unchanged exact head and merge
+      - name: Revalidate the unchanged exact head and exact base and merge
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/operator-protected-merge-gate.mjs merge
+        run: node scripts/operator-protected-merge-gate-v2.mjs merge
