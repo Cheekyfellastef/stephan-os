@@ -101,6 +101,23 @@ test('accepts read-only Codex reset status commands without reset authority fiel
   assert.equal(validated.command.resetId, undefined);
 });
 
+test('read-only status commands reject generic automation and credential fields', () => {
+  for (const [field, value] of [
+    ['url', 'https://example.com'],
+    ['selector', '#button'],
+    ['javascript', 'document.body.click()'],
+    ['command', 'powershell -enc ...'],
+    ['profilePath', 'C:/Users/test'],
+    ['token', 'secret'],
+  ]) {
+    const result = validateBattleBridgeGitHubCommand(statusCommand({ [field]: value }), {
+      authorLogin: 'Cheekyfellastef', now,
+    });
+    assert.equal(result.blocker, 'RESET_STATUS_COMMAND_UNSAFE_FIELD_PRESENT');
+    assert.equal(result.field, field);
+  }
+});
+
 test('accepts exactly one bounded banked reset command and preserves fixed fields', () => {
   const validated = validateBattleBridgeGitHubCommand(resetCommand(), {
     authorLogin: 'Cheekyfellastef', now,
