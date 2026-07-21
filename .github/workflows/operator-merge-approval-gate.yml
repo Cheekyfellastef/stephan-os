@@ -1,24 +1,64 @@
-name: Operator Merge Approval Gate
+name: Protected Operator Merge
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
-permissions:
-  contents: read
+concurrency:
+  group: protected-operator-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
 
 jobs:
-  approval-gate-proof:
+  operator-approval-gate:
+    name: operator-approval-gate
     runs-on: ubuntu-latest
+    environment:
+      name: operator-merge-approval
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+      issues: write
+      pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out trusted default-branch gate code
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 1
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Prove fail-closed merge boundary
-        run: npm run stephanos:operator-merge-approval:test
-      - name: Check changed-file whitespace
-        run: git diff --check "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
+      - name: Validate protected environment, exact-head checks, specialist review and threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/operator-protected-merge-gate.mjs approve
+
+  operator-approved-exact-head-merge:
+    name: operator-approved-exact-head-merge
+    needs: [operator-approval-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      deployments: read
+      issues: read
+      pull-requests: write
+    steps:
+      - name: Check out trusted default-branch merge code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Revalidate the unchanged exact head and merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/operator-protected-merge-gate.mjs merge
