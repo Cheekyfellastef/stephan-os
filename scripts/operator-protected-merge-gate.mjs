@@ -105,6 +105,7 @@ const branch = String(event?.pull_request?.head?.ref || '').trim();
 const baseBranch = String(event?.pull_request?.base?.ref || '').trim();
 const runId = integer(process.env.GITHUB_RUN_ID);
 const runAttempt = integer(process.env.GITHUB_RUN_ATTEMPT);
+const expectedReviewerSessionId = `github-actions-run-${runId}-attempt-${runAttempt}`;
 if (!owner || !repo || !prNumber || !/^[a-f0-9]{40}$/.test(sourceHead) || !branch || baseBranch !== 'main') {
   fail('Pull request target identity is incomplete or unsafe.', { repository, prNumber, sourceHead, branch, baseBranch });
 }
@@ -138,17 +139,22 @@ function collectRawEvidence() {
   };
 }
 
+function receiptMatchesCurrentRun(candidate, kind) {
+  if (candidate?.kind !== kind) return false;
+  if (integer(candidate.prNumber) !== prNumber) return false;
+  if (String(candidate.sourceHead || '').toLowerCase() !== sourceHead) return false;
+  if (kind === 'stephanos.provider-neutral.review') {
+    return candidate.reviewerSessionId === expectedReviewerSessionId;
+  }
+  return integer(candidate.workflowRunId) === runId
+    && integer(candidate.workflowRunAttempt) === runAttempt;
+}
+
 function matchingBotComment(comments, marker, kind) {
   for (const comment of comments) {
     if (String(comment?.user?.login || '') !== actionsBotLogin) continue;
     if (!String(comment?.body || '').includes(marker)) continue;
-    const receipt = extractJsonObjects(comment.body).find((candidate) => (
-      candidate?.kind === kind
-      && integer(candidate.workflowRunId) === runId
-      && integer(candidate.workflowRunAttempt) === runAttempt
-      && integer(candidate.prNumber) === prNumber
-      && String(candidate.sourceHead || '').toLowerCase() === sourceHead
-    ));
+    const receipt = extractJsonObjects(comment.body).find((candidate) => receiptMatchesCurrentRun(candidate, kind));
     if (receipt) return { comment, receipt };
   }
   return null;
