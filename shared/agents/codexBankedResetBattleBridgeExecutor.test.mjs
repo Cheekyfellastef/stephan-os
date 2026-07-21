@@ -54,7 +54,9 @@ function successfulProof(overrides = {}) {
     profileMenuOpened: true,
     usagePanelOpened: true,
     matchedProfileControl: 'Profile menu',
-    matchedUsageControl: '1 reset available',
+    matchedUsageControl: '',
+    matchedUsageLabel: '1 reset available',
+    usageControlResolution: 'labeled-ancestor',
     meterBefore: 'Codex usage remaining 0%',
     meterAfter: 'Codex usage remaining 100%',
     pressAttempted: true,
@@ -100,6 +102,8 @@ test('normalizes only a proven single press with usage and meter evidence as suc
   assert.equal(success.ok, true);
   assert.equal(success.confirmationEvidencePresent, true);
   assert.equal(success.usagePanelOpened, true);
+  assert.equal(success.matchedUsageLabel, '1 reset available');
+  assert.equal(success.usageControlResolution, 'labeled-ancestor');
 
   for (const override of [
     { pressAttempted: false },
@@ -116,7 +120,7 @@ test('normalizes only a proven single press with usage and meter evidence as suc
   }
 });
 
-test('executes the fixed invocation and parses bounded JSON proof', () => {
+test('executes the fixed invocation and parses bounded labeled ancestry proof', () => {
   const root = tempRepo();
   const seen = [];
   const result = executeCodexBankedResetOnBattleBridge(command(), {
@@ -137,6 +141,8 @@ test('executes the fixed invocation and parses bounded JSON proof', () => {
     },
   });
   assert.equal(result.ok, true);
+  assert.equal(result.matchedUsageLabel, '1 reset available');
+  assert.equal(result.usageControlResolution, 'labeled-ancestor');
   assert.equal(seen.length, 1);
   assert.equal(seen[0].exe, 'powershell.exe');
   assert.equal(seen[0].options.shell, false);
