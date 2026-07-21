@@ -37,15 +37,19 @@ test('summary remains machine-readable and bounded for GitHub receipts', () => {
   assert.doesNotMatch(json, MACHINE_PATH_PATTERN);
 });
 
-test('mailbox receipt reads, watchdog acceptance and shared workspace are discoverable capabilities', () => {
+test('mailbox receipt reads, watchdog acceptance, shared workspace and post-sync refresh are discoverable capabilities', () => {
   const mailbox = findStephanosCapability('battle-bridge-github-command-mailbox');
   const workspace = findStephanosCapability('shared-agent-workspace');
+  const refresh = findStephanosCapability('post-sync-runtime-refresh-coordinator');
   assert.ok(mailbox.operations.includes('READ_CAPABILITY_REGISTRY'));
   assert.ok(mailbox.operations.includes('READ_SHARED_WORKSPACE_STATUS'));
   assert.ok(mailbox.operations.includes('READ_MAILBOX_RECEIPT'));
   assert.ok(mailbox.operations.includes('RUN_WORKER_WATCHDOG_ACCEPTANCE'));
   assert.equal(mailbox.runtimeMutationAllowed, true);
   assert.equal(workspace.discoveryRoute, 'mailbox:READ_SHARED_WORKSPACE_STATUS');
+  assert.ok(refresh.operations.includes('RESTART_BACKEND_8787'));
+  assert.ok(refresh.operations.includes('RESTART_MISSION_WORKER'));
+  assert.equal(refresh.liveOpenClawUpdateAllowed, false);
 });
 
 test('nested Windows, UNC and local absolute paths fail closed', () => {

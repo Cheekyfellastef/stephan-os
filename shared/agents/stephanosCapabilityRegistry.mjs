@@ -1,5 +1,5 @@
 export const STEPHANOS_CAPABILITY_REGISTRY_SCHEMA = 'stephanos.capability-registry.v1';
-export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.0.2';
+export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.1.0';
 export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 const SAFE_CAPABILITY_ID = /^[a-z0-9][a-z0-9.-]{2,80}$/;
@@ -96,6 +96,16 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
     runtimeMutationAllowed: true,
   }),
   descriptor({
+    capabilityId: 'post-sync-runtime-refresh-coordinator',
+    category: 'runtime-deployment',
+    purpose: 'Loads the newly deployed checkout in a fresh process, refreshes only affected registered runtimes, and requires exact-head proof before sync completion.',
+    ownerIssue: 1507,
+    discoveryRoute: 'shared-workspace:post-sync-runtime-refresh-current',
+    statusSource: 'shared-agent-workspace',
+    operations: ['CLASSIFY_CHANGED_PATHS', 'REFRESH_UI_4173', 'RESTART_BACKEND_8787', 'RESTART_MISSION_WORKER', 'NATURAL_RELOAD_PROOF'],
+    runtimeMutationAllowed: true,
+  }),
+  descriptor({
     capabilityId: 'mission-orchestrator-worker',
     category: 'programme-orchestration',
     purpose: 'Advances goals, proof requests and next-action packets while preserving operator approval boundaries.',
@@ -159,17 +169,18 @@ export function validateStephanosCapabilityRegistry(capabilities = STEPHANOS_CAP
   const errors = [];
   const seen = new Set();
   for (const capability of capabilities) {
-    if (!SAFE_CAPABILITY_ID.test(String(capability?.capabilityId || ''))) errors.push('invalid-capability-id');
-    if (seen.has(capability?.capabilityId)) errors.push(`duplicate-capability-id:${capability.capabilityId}`);
-    seen.add(capability?.capabilityId);
-    if (!Number.isInteger(capability?.ownerIssue) || capability.ownerIssue <= 0) errors.push(`invalid-owner-issue:${capability?.capabilityId || 'unknown'}`);
-    if (!String(capability?.purpose || '').trim()) errors.push(`missing-purpose:${capability?.capabilityId || 'unknown'}`);
-    if (!String(capability?.discoveryRoute || '').trim()) errors.push(`missing-discovery-route:${capability?.capabilityId || 'unknown'}`);
-    if (!Array.isArray(capability?.operations)) errors.push(`invalid-operations:${capability?.capabilityId || 'unknown'}`);
-    if (capability?.arbitraryShellAllowed !== false) errors.push(`arbitrary-shell-forbidden:${capability?.capabilityId || 'unknown'}`);
-    if (capability?.destructiveGitAllowed !== false) errors.push(`destructive-git-forbidden:${capability?.capabilityId || 'unknown'}`);
-    if (capability?.liveOpenClawUpdateAllowed !== false) errors.push(`live-openclaw-update-forbidden:${capability?.capabilityId || 'unknown'}`);
-    if (ABSOLUTE_PATH_PATTERN.test(JSON.stringify(capability))) errors.push(`absolute-path-forbidden:${capability?.capabilityId || 'unknown'}`);
+    const capabilityId = String(capability?.capabilityId || '');
+    if (!SAFE_CAPABILITY_ID.test(capabilityId)) errors.push('invalid-capability-id');
+    if (seen.has(capabilityId)) errors.push(`duplicate-capability-id:${capabilityId}`);
+    seen.add(capabilityId);
+    if (!Number.isInteger(capability?.ownerIssue) || capability.ownerIssue <= 0) errors.push(`invalid-owner-issue:${capabilityId || 'unknown'}`);
+    if (!String(capability?.purpose || '').trim()) errors.push(`missing-purpose:${capabilityId || 'unknown'}`);
+    if (!String(capability?.discoveryRoute || '').trim()) errors.push(`missing-discovery-route:${capabilityId || 'unknown'}`);
+    if (!Array.isArray(capability?.operations)) errors.push(`invalid-operations:${capabilityId || 'unknown'}`);
+    if (capability?.arbitraryShellAllowed !== false) errors.push(`arbitrary-shell-forbidden:${capabilityId || 'unknown'}`);
+    if (capability?.destructiveGitAllowed !== false) errors.push(`destructive-git-forbidden:${capabilityId || 'unknown'}`);
+    if (capability?.liveOpenClawUpdateAllowed !== false) errors.push(`live-openclaw-update-forbidden:${capabilityId || 'unknown'}`);
+    if (ABSOLUTE_PATH_PATTERN.test(JSON.stringify(capability))) errors.push(`absolute-path-forbidden:${capabilityId || 'unknown'}`);
   }
   return Object.freeze({
     valid: errors.length === 0,
@@ -182,12 +193,7 @@ export function validateStephanosCapabilityRegistry(capabilities = STEPHANOS_CAP
 function bootstrapProjection() {
   return Object.freeze({
     requiredBeforeCapabilityDenial: true,
-    sequence: Object.freeze([
-      'READ_CAPABILITY_REGISTRY',
-      'READ_SHARED_WORKSPACE_STATUS',
-      'CHECK_ACTIVE_EXECUTION_LANE',
-      'SELECT_ALLOWLISTED_ROUTE',
-    ]),
+    sequence: Object.freeze(['READ_CAPABILITY_REGISTRY', 'READ_SHARED_WORKSPACE_STATUS', 'CHECK_ACTIVE_EXECUTION_LANE', 'SELECT_ALLOWLISTED_ROUTE']),
     failClosedWhenDiscoveryUnavailable: true,
     duplicateActiveExecutionAllowed: false,
   });
@@ -202,10 +208,7 @@ function safetyProjection() {
   });
 }
 
-export function buildStephanosCapabilityRegistryProjection({
-  sourceHead = '',
-  generatedAtUtc = new Date(0).toISOString(),
-} = {}) {
+export function buildStephanosCapabilityRegistryProjection({ sourceHead = '', generatedAtUtc = new Date(0).toISOString() } = {}) {
   const validation = validateStephanosCapabilityRegistry();
   return Object.freeze({
     schemaVersion: STEPHANOS_CAPABILITY_REGISTRY_SCHEMA,
@@ -222,10 +225,7 @@ export function buildStephanosCapabilityRegistryProjection({
   });
 }
 
-export function buildStephanosCapabilityRegistrySummary({
-  sourceHead = '',
-  generatedAtUtc = new Date(0).toISOString(),
-} = {}) {
+export function buildStephanosCapabilityRegistrySummary({ sourceHead = '', generatedAtUtc = new Date(0).toISOString() } = {}) {
   const validation = validateStephanosCapabilityRegistry();
   return Object.freeze({
     schemaVersion: STEPHANOS_CAPABILITY_REGISTRY_SCHEMA,
