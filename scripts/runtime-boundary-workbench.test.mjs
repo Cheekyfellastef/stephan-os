@@ -25,6 +25,7 @@ test('migration manifest is non-destructive', () => {
     entries: {
       dreams: {
         key: 'dreams',
+        rootKind: 'openclaw-workspace',
         legacyPrefixes: ['memory/.dreams/'],
         resolvedExternalPath: '/runtime/memory/dreams',
         preservation: 'required',
@@ -35,11 +36,13 @@ test('migration manifest is non-destructive', () => {
   const manifest = buildMigrationManifest([], registry);
   assert.equal(manifest.safety.destructiveGitCommandsAllowed, false);
   assert.equal(manifest.safety.sha256Required, true);
+  assert.equal(manifest.migrations[0].rootKind, 'openclaw-workspace');
 });
 
-test('acceptance packet checks repository cleanliness', () => {
-  const script = buildAcceptancePowerShell({ runtimeRoot: 'C:\\Runtime' });
+test('acceptance packet checks repository cleanliness and read-only migration plan', () => {
+  const script = buildAcceptancePowerShell({ runtimeRoot: 'C:\\Runtime', openClawWorkspaceRoot: 'C:\\OpenClaw' });
   assert.match(script, /git status --porcelain=v1/);
+  assert.match(script, /migrate-dream-runtime-boundary\.mjs/);
   assert.match(script, /sourceCleanAfter/);
   assert.doesNotMatch(script, /git reset|git clean|git stash|git rebase/i);
 });
