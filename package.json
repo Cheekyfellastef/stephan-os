@@ -50,7 +50,6 @@
     "stephanos:pr:prepare": "node scripts/guard-pr-clean.mjs --prepare",
     "stephanos:browser-proof": "node scripts/browser-proof-runner.mjs",
     "stephanos:publish-merge": "node scripts/repository-native-publish-merge-lane.mjs",
-    "stephanos:approved-merge": "node scripts/repository-native-approved-merge.mjs",
     "stephanos:operator-merge-approval:test": "node --test shared/agents/operatorMergeApprovalGate.test.mjs shared/agents/repositoryNativePublishMergeLane.test.mjs scripts/repository-native-merge-boundary.test.mjs",
     "stephanos:battle-bridge:concierge": "node scripts/battle-bridge-build-concierge-v2.mjs",
     "stephanos:verify:pr-publication": "node scripts/verify-pr-publication.mjs",
