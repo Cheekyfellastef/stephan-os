@@ -275,8 +275,9 @@ export async function updateStephanosFromChat({
 
   const normalizedExpectedHead = String(expectedHead || '').trim().toLowerCase();
   const normalizedAfterHead = String(sync.afterHead || '').trim().toLowerCase();
-  const expectedHeadMatch = !normalizedExpectedHead || normalizedAfterHead === normalizedExpectedHead;
-  if (!expectedHeadMatch) {
+  const expectedHeadSupplied = /^[0-9a-f]{40}$/i.test(normalizedExpectedHead);
+  const expectedHeadMatch = expectedHeadSupplied && normalizedAfterHead === normalizedExpectedHead;
+  if (expectedHeadSupplied && !expectedHeadMatch) {
     return Object.freeze({
       ok: false,
       schemaVersion: STEPHANOS_CHAT_UPDATE_SCHEMA,
