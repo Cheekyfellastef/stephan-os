@@ -149,6 +149,8 @@ export function normalizeCodexBankedResetExecutionResult(raw = {}, command = {})
     matchedWindow: sanitizeText(result.matchedWindow, 160),
     matchedProfileControl: sanitizeText(result.matchedProfileControl, 120),
     matchedUsageControl: sanitizeText(result.matchedUsageControl, 160),
+    matchedUsageLabel: sanitizeText(result.matchedUsageLabel, 160),
+    usageControlResolution: sanitizeText(result.usageControlResolution, 80),
     navigationAttempted: result.navigationAttempted === true,
     profileMenuOpened: result.profileMenuOpened === true,
     usagePanelOpened: result.usagePanelOpened === true,
