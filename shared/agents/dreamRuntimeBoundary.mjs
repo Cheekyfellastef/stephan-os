@@ -83,6 +83,28 @@ async function exists(target, fsImpl) {
   }
 }
 
+async function assertNoSymbolicLinkInPath(target, fsImpl) {
+  const resolved = path.resolve(target);
+  const parsed = path.parse(resolved);
+  const segments = path.relative(parsed.root, resolved).split(path.sep).filter(Boolean);
+  let current = parsed.root;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    let stat;
+    try {
+      stat = await fsImpl.lstat(current);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) {
+      const error = new Error(`Symbolic link not allowed in Dream migration destination: ${current}`);
+      error.code = 'DREAM_MIGRATION_DESTINATION_SYMLINK_BLOCKED';
+      throw error;
+    }
+  }
+}
+
 async function collectFiles(root, fsImpl, current = root, output = []) {
   if (!(await exists(root, fsImpl))) return output;
   const stat = await fsImpl.lstat(current);
@@ -143,6 +165,7 @@ export async function planDreamRuntimeMigration({
         if (!pathIsInside(mapping.destinationPath, destinationPath)) {
           return Object.freeze({ ...boundary, ok: false, blocker: 'DREAM_MIGRATION_DESTINATION_ESCAPE', mode: 'plan', entries: Object.freeze(entries), copyRequired: 0, alreadyVerified: 0, conflicts: 0 });
         }
+        await assertNoSymbolicLinkInPath(destinationPath, fsImpl);
         const sourceStat = await fsImpl.stat(sourcePath);
         const sourceSha256 = await sha256File(sourcePath, { fsImpl });
         let state = 'copy-required';
@@ -201,6 +224,12 @@ async function writeReceipt(receipt, { fsImpl, receiptRoot }) {
   return receiptPath;
 }
 
+function sourceSnapshotMatches(initialPlan, finalPlan) {
+  if (initialPlan.entries.length !== finalPlan.entries.length) return false;
+  const initial = new Map(initialPlan.entries.map((entry) => [`${entry.mappingId}:${entry.relativePath}`, entry.sourceSha256]));
+  return finalPlan.entries.every((entry) => initial.get(`${entry.mappingId}:${entry.relativePath}`) === entry.sourceSha256);
+}
+
 export async function executeDreamRuntimeMigration({
   repoRoot,
   env = process.env,
@@ -233,8 +262,12 @@ export async function executeDreamRuntimeMigration({
   try {
     for (const entry of plan.entries) {
       if (entry.state !== 'copy-required') continue;
-      await fsImpl.mkdir(path.dirname(entry.destinationPath), { recursive: true });
+      const destinationParent = path.dirname(entry.destinationPath);
+      await assertNoSymbolicLinkInPath(destinationParent, fsImpl);
+      await fsImpl.mkdir(destinationParent, { recursive: true });
+      await assertNoSymbolicLinkInPath(entry.destinationPath, fsImpl);
       await fsImpl.copyFile(entry.sourcePath, entry.destinationPath, fs.constants.COPYFILE_EXCL);
+      await assertNoSymbolicLinkInPath(entry.destinationPath, fsImpl);
       const destinationSha256 = await sha256File(entry.destinationPath, { fsImpl });
       if (destinationSha256 !== entry.sourceSha256) {
         return Object.freeze({
@@ -251,17 +284,54 @@ export async function executeDreamRuntimeMigration({
       copied.push(Object.freeze({ ...entry, destinationSha256, state: 'copied-and-verified' }));
     }
   } catch (error) {
+    const destinationRace = error?.code === 'EEXIST';
     return Object.freeze({
       ok: false,
       status: 'BLOCKED',
-      finalVerdict: error?.code === 'EEXIST' ? 'DREAM_MIGRATION_DESTINATION_RACE' : 'DREAM_MIGRATION_COPY_FAILED',
-      blocker: error?.code === 'EEXIST' ? 'DREAM_MIGRATION_DESTINATION_RACE' : 'DREAM_MIGRATION_COPY_FAILED',
+      finalVerdict: destinationRace ? 'DREAM_MIGRATION_DESTINATION_RACE' : (error?.code || 'DREAM_MIGRATION_COPY_FAILED'),
+      blocker: destinationRace ? 'DREAM_MIGRATION_DESTINATION_RACE' : (error?.code || 'DREAM_MIGRATION_COPY_FAILED'),
       error: error?.message || String(error),
       copied: Object.freeze(copied),
       sourceRemovalPerformed: false,
       destructiveGitOperationPerformed: false,
     });
   }
+
+  const finalPlan = await planDreamRuntimeMigration({ repoRoot, env, homeDir, fsImpl });
+  const sourceStable = sourceSnapshotMatches(plan, finalPlan);
+  if (!sourceStable) {
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_SOURCE_CHANGED_DURING_COPY',
+      blocker: 'DREAM_MIGRATION_SOURCE_CHANGED_DURING_COPY',
+      boundary: plan,
+      revalidation: finalPlan,
+      copied: Object.freeze(copied),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
+  if (!finalPlan.ok || finalPlan.copyRequired !== 0 || finalPlan.conflicts !== 0) {
+    const blocker = finalPlan.blocker || 'DREAM_MIGRATION_DESTINATION_CHANGED_DURING_COPY';
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: blocker,
+      blocker,
+      boundary: plan,
+      revalidation: finalPlan,
+      copied: Object.freeze(copied),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
+
+  const copiedKeys = new Set(copied.map((entry) => `${entry.mappingId}:${entry.relativePath}`));
+  const receiptFiles = finalPlan.entries.map((entry) => Object.freeze({
+    ...entry,
+    state: copiedKeys.has(`${entry.mappingId}:${entry.relativePath}`) ? 'copied-and-verified' : 'already-verified',
+  }));
   const completedAtUtc = now().toISOString();
   const receipt = Object.freeze({
     schemaVersion: DREAM_RUNTIME_BOUNDARY_SCHEMA,
@@ -271,13 +341,10 @@ export async function executeDreamRuntimeMigration({
     workspaceRoot: plan.workspaceRoot,
     dreamMemoryRoot: plan.dreamMemoryRoot,
     copiedCount: copied.length,
-    alreadyVerifiedCount: plan.alreadyVerified,
+    alreadyVerifiedCount: finalPlan.entries.length - copied.length,
     sourceRemovalPerformed: false,
     destructiveGitOperationPerformed: false,
-    files: Object.freeze([
-      ...plan.entries.filter((entry) => entry.state === 'already-verified'),
-      ...copied,
-    ]),
+    files: Object.freeze(receiptFiles),
     finalVerdict: 'DREAM_RUNTIME_COPY_HASH_VERIFIED',
   });
   const receiptPath = await writeReceipt(receipt, { fsImpl, receiptRoot: plan.receiptRoot });
@@ -286,7 +353,7 @@ export async function executeDreamRuntimeMigration({
     status: 'DONE',
     finalVerdict: 'DREAM_RUNTIME_COPY_HASH_VERIFIED',
     blocker: '',
-    boundary: plan,
+    boundary: finalPlan,
     copied: Object.freeze(copied),
     receipt,
     receiptPath,
