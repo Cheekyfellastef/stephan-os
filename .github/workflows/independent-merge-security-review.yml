@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Review the complete exact-head diff without mutation authority
+      - name: Review the complete exact-head and exact-base diff without mutation authority
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/independent-merge-security-review.mjs
+        run: node scripts/independent-merge-security-review-v2.mjs
