@@ -40,6 +40,26 @@ function tempRepo() {
   return root;
 }
 
+function successfulProof(overrides = {}) {
+  return {
+    ok: true,
+    finalVerdict: 'CODEX_BANKED_RESET_CONFIRMED',
+    requestId: command().requestId,
+    resetId: command().resetId,
+    resetExpiresAtUtc: command().resetExpiresAtUtc,
+    observedAtUtc: '2026-07-20T22:31:00.000Z',
+    completedAtUtc: '2026-07-20T22:31:10.000Z',
+    usageSurfaceMatched: true,
+    meterBefore: 'Codex usage remaining 0%',
+    meterAfter: 'Codex usage remaining 100%',
+    pressAttempted: true,
+    pressCount: 1,
+    meterRestored: true,
+    resetControlDisappeared: true,
+    ...overrides,
+  };
+}
+
 test('validates the exact reset authority packet', () => {
   const result = validateCodexBankedResetExecutionCommand(command(), { now });
   assert.equal(result.ok, true);
@@ -69,21 +89,10 @@ test('builds one fixed PowerShell file invocation with shell disabled', () => {
   assert.equal(result.args.some((value) => /https?:|javascript|selector|cookie|token/i.test(String(value))), false);
 });
 
-test('normalizes only a proven single press and restored meter as success', () => {
-  const success = normalizeCodexBankedResetExecutionResult({
-    ok: true,
-    finalVerdict: 'CODEX_BANKED_RESET_CONFIRMED',
-    requestId: command().requestId,
-    resetId: command().resetId,
-    resetExpiresAtUtc: command().resetExpiresAtUtc,
-    observedAtUtc: '2026-07-20T22:31:00.000Z',
-    completedAtUtc: '2026-07-20T22:31:10.000Z',
-    pressAttempted: true,
-    pressCount: 1,
-    meterRestored: true,
-    resetControlDisappeared: true,
-  }, command());
+test('normalizes only a proven single press with usage and meter evidence as success', () => {
+  const success = normalizeCodexBankedResetExecutionResult(successfulProof(), command());
   assert.equal(success.ok, true);
+  assert.equal(success.confirmationEvidencePresent, true);
 
   for (const override of [
     { pressAttempted: false },
@@ -91,15 +100,11 @@ test('normalizes only a proven single press and restored meter as success', () =
     { pressCount: 2 },
     { meterRestored: false },
     { finalVerdict: 'OTHER' },
+    { usageSurfaceMatched: false },
+    { meterBefore: '' },
+    { meterAfter: '', resetControlDisappeared: false },
   ]) {
-    const blocked = normalizeCodexBankedResetExecutionResult({
-      ok: true,
-      finalVerdict: 'CODEX_BANKED_RESET_CONFIRMED',
-      pressAttempted: true,
-      pressCount: 1,
-      meterRestored: true,
-      ...override,
-    }, command());
+    const blocked = normalizeCodexBankedResetExecutionResult(successfulProof(override), command());
     assert.equal(blocked.ok, false);
   }
 });
@@ -116,20 +121,9 @@ test('executes the fixed invocation and parses bounded JSON proof', () => {
       return {
         status: 0,
         stdout: JSON.stringify({
-          ok: true,
-          finalVerdict: 'CODEX_BANKED_RESET_CONFIRMED',
-          requestId: command().requestId,
-          resetId: command().resetId,
-          resetExpiresAtUtc: command().resetExpiresAtUtc,
-          observedAtUtc: '2026-07-20T22:31:00.000Z',
-          completedAtUtc: '2026-07-20T22:31:10.000Z',
+          ...successfulProof(),
           desktopInteractive: true,
           appWindowFound: true,
-          usageSurfaceMatched: true,
-          pressAttempted: true,
-          pressCount: 1,
-          meterRestored: true,
-          resetControlDisappeared: true,
         }),
         stderr: '',
       };
@@ -154,6 +148,8 @@ test('never retries an uncertain press result', () => {
           ok: false,
           blocker: 'BLOCKED_RESET_CONFIRMATION_NOT_PROVEN',
           finalVerdict: 'CODEX_BANKED_RESET_EXECUTION_BLOCKED',
+          usageSurfaceMatched: true,
+          meterBefore: 'Codex usage remaining 0%',
           pressAttempted: true,
           pressCount: 1,
           meterRestored: false,
