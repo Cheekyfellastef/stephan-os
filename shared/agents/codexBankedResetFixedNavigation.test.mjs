@@ -9,6 +9,8 @@ const read = (path) => readFileSync(resolve(root, path), 'utf8');
 const navigation = read('scripts/windows/codex-banked-reset-ui-navigation.psm1');
 const statusWrapper = read('scripts/windows/read-codex-banked-reset-status-with-navigation.ps1');
 const executionWrapper = read('scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1');
+const statusCore = read('scripts/windows/read-codex-banked-reset-status.ps1');
+const executionCore = read('scripts/windows/invoke-codex-banked-reset-ui.ps1');
 const statusReader = read('shared/agents/codexBankedResetStatusBattleBridgeReader.mjs');
 const executor = read('shared/agents/codexBankedResetBattleBridgeExecutor.mjs');
 
@@ -53,8 +55,24 @@ test('keeps labeled-ancestor selection bounded and fail closed', () => {
   assert.match(navigation, /billing\|security\|privacy\|upgrade\|purchase\|buy credits\|add credits\|auto\.\?top\.\?up/i);
 });
 
+test('live cores scan all UIA surfaces owned by the selected ChatGPT process', () => {
+  assert.match(statusCore, /function Get-ProcessSnapshot/);
+  assert.match(executionCore, /function Get-ProcessSnapshot/);
+  assert.match(statusCore, /Current\.ProcessId -ne \$ProcessId/);
+  assert.match(executionCore, /Current\.ProcessId -ne \$ProcessId/);
+  assert.match(statusCore, /same-process-usage-surface-scanned/);
+  assert.match(executionCore, /same-process-usage-surface-scanned/);
+});
+
+test('live executor requires changed meter proof and never treats disappearance alone as success', () => {
+  assert.match(executionCore, /\$meterRestored = \$meterChanged/);
+  assert.doesNotMatch(executionCore, /\$meterChanged\s+-or\s+\$resetControlDisappeared/);
+  assert.match(executionCore, /meter-change-confirmed/);
+  assert.match(executor, /Boolean\(meterBefore\) && Boolean\(meterAfter\) && meterBefore !== meterAfter/);
+});
+
 test('forbids generic browser, script and credential extraction automation', () => {
-  const combined = [navigation, statusWrapper, executionWrapper].join('\n');
+  const combined = [navigation, statusWrapper, executionWrapper, statusCore, executionCore].join('\n');
   for (const pattern of [
     /Invoke-WebRequest/i,
     /Start-Process/i,
