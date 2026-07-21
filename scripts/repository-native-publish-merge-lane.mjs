@@ -7,7 +7,6 @@ import {
   normalizeRepoPath,
   validatePublishLaneRequest,
 } from '../shared/agents/repositoryNativePublishMergeLane.mjs';
-import { requiredOperatorApprovalStatement } from '../shared/agents/operatorMergeApprovalGate.mjs';
 
 function emit(packet, exitCode = 0) {
   process.stdout.write(`${JSON.stringify(packet, null, 2)}\n`);
@@ -121,10 +120,10 @@ emit({
     mergeCommit: '',
     proofCommand: proof.command,
     proofResult,
-    finalStatus: 'AWAITING_OPERATOR_APPROVAL',
+    finalStatus: 'AWAITING_PROTECTED_OPERATOR_APPROVAL',
   }),
   mergeAuthority: false,
-  approvalGate: 'challenge-bound-operator-receipt-only',
-  requiredOperatorStatement: requiredOperatorApprovalStatement(prNumber, headSha),
-  nextAction: 'Obtain a direct operator challenge response, validate it through the approved merge executor, then revalidate the unchanged exact head.',
+  approvalGate: 'github-protected-environment-only',
+  protectedEnvironment: 'operator-merge-approval',
+  nextAction: 'Complete independent exact-head review, mark the unchanged PR ready, then wait for GitHub protected-environment approval.',
 });
