@@ -31,7 +31,7 @@ const BASE = Object.freeze({
   findings: [],
   verdict: 'clean',
   timestampUtc: '2026-07-21T16:00:00.000Z',
-  proofRefs: ['reviews/pr-1577-provider-neutral.json'],
+  proofRefs: ['proof/provider-neutral-review-pr-1577.json'],
   quorumChecks: [],
   blocker: '',
 });
