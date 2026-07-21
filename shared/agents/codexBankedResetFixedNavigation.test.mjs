@@ -12,13 +12,31 @@ const executionWrapper = read('scripts/windows/invoke-codex-banked-reset-ui-with
 const statusReader = read('shared/agents/codexBankedResetStatusBattleBridgeReader.mjs');
 const executor = read('shared/agents/codexBankedResetBattleBridgeExecutor.mjs');
 
-test('uses only the fixed profile to usage panel route', () => {
+ test('uses only the fixed profile to usage panel route', () => {
   assert.match(navigation, /function Open-CodexUsagePanel/);
   assert.match(navigation, /profile menu|open profile|user menu|account menu/i);
-  assert.match(navigation, /reset\(s\)\?\\s\+available|usage summary|usage dashboard|codex usage/i);
+  assert.match(navigation, /banked reset|reset\(s\)\?\\s\+available|usage summary|usage dashboard|codex usage/i);
   assert.match(navigation, /InvokePattern/);
   assert.match(navigation, /SelectionItemPattern/);
   assert.match(navigation, /ExpandCollapsePattern/);
+});
+
+test('finds reset summary labels on same-process popup surfaces and resolves an invocable ancestor', () => {
+  assert.match(navigation, /function Get-CodexProcessSnapshot/);
+  assert.match(navigation, /Current\.ProcessId -ne \$ProcessId/);
+  assert.match(navigation, /function Get-CodexInvocableAncestor/);
+  assert.match(navigation, /TreeWalker\]::RawViewWalker/);
+  assert.match(navigation, /labeled-ancestor/);
+  assert.match(navigation, /same-process-popup-scanned/);
+  assert.match(navigation, /matchedUsageLabel/);
+  assert.match(navigation, /usageControlResolution/);
+});
+
+test('keeps labeled-ancestor selection bounded and fail closed', () => {
+  assert.match(navigation, /MaximumDepth = 5/);
+  assert.match(navigation, /BLOCKED_RESET_USAGE_LABEL_NOT_INVOCABLE/);
+  assert.match(navigation, /BLOCKED_RESET_USAGE_CONTROL_AMBIGUOUS/);
+  assert.match(navigation, /billing\|security\|privacy\|upgrade\|purchase\|buy credits\|add credits\|auto\.\?top\.\?up/i);
 });
 
 test('forbids generic browser, script and credential extraction automation', () => {
@@ -50,9 +68,13 @@ test('wraps the existing status and single-press cores without replacing them', 
   assert.match(executionWrapper, /repeatedPressAllowed = \$false/);
 });
 
-test('routes both Battle Bridge adapters through fixed-navigation wrappers', () => {
+test('routes both Battle Bridge adapters through fixed-navigation wrappers and preserves ancestry evidence', () => {
   assert.match(statusReader, /read-codex-banked-reset-status-with-navigation\.ps1/);
   assert.match(executor, /invoke-codex-banked-reset-ui-with-navigation\.ps1/);
+  assert.match(statusReader, /matchedUsageLabel/);
+  assert.match(statusReader, /usageControlResolution/);
+  assert.match(executor, /matchedUsageLabel/);
+  assert.match(executor, /usageControlResolution/);
   assert.match(statusReader, /shell: false/);
   assert.match(executor, /shell: false/);
 });
