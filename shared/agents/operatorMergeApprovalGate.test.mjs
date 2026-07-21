@@ -141,6 +141,9 @@ test('extracts bounded JSON receipts and ignores malformed blocks', () => {
 test('requires an exact protected environment with Stephan as reviewer and no admin bypass', () => {
   const ready = validateProtectedEnvironment(environment());
   assert.equal(ready.finalVerdict, 'PROTECTED_ENVIRONMENT_READY');
+  assert.equal(ready.requiredReviewerCount, 1);
+  assert.deepEqual(ready.requiredReviewerLogins, ['cheekyfellastef']);
+  assert.deepEqual(ready.requiredReviewerTypes, ['user']);
 
   const blocked = validateProtectedEnvironment(environment({
     can_admins_bypass: true,
@@ -148,7 +151,68 @@ test('requires an exact protected environment with Stephan as reviewer and no ad
   }));
   assert.equal(blocked.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
   assert.ok(blocked.blockers.includes('required-reviewer-rule-missing'));
+  assert.ok(blocked.blockers.includes('required-reviewer-rule-count-not-exact'));
   assert.ok(blocked.blockers.includes('environment-admin-bypass-not-disabled'));
+});
+
+test('rejects every additional user, team, unknown reviewer, or duplicate reviewer rule', () => {
+  const extraUser = validateProtectedEnvironment(environment({
+    protection_rules: [{
+      id: 1,
+      type: 'required_reviewers',
+      prevent_self_review: false,
+      reviewers: [
+        { type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } },
+        { type: 'User', reviewer: { login: 'AnotherReviewer', id: 2 } },
+      ],
+    }],
+  }));
+  assert.equal(extraUser.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
+  assert.ok(extraUser.blockers.includes('required-reviewer-set-not-exact'));
+
+  const team = validateProtectedEnvironment(environment({
+    protection_rules: [{
+      id: 1,
+      type: 'required_reviewers',
+      prevent_self_review: false,
+      reviewers: [
+        { type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } },
+        { type: 'Team', reviewer: { slug: 'release-managers', id: 3 } },
+      ],
+    }],
+  }));
+  assert.equal(team.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
+  assert.ok(team.blockers.includes('required-reviewer-set-not-exact'));
+
+  const unknown = validateProtectedEnvironment(environment({
+    protection_rules: [{
+      id: 1,
+      type: 'required_reviewers',
+      prevent_self_review: false,
+      reviewers: [{ type: 'Robot', reviewer: { login: 'Cheekyfellastef' } }],
+    }],
+  }));
+  assert.equal(unknown.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
+  assert.ok(unknown.blockers.includes('required-reviewer-set-not-exact'));
+
+  const duplicateRule = validateProtectedEnvironment(environment({
+    protection_rules: [
+      {
+        id: 1,
+        type: 'required_reviewers',
+        prevent_self_review: false,
+        reviewers: [{ type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } }],
+      },
+      {
+        id: 2,
+        type: 'required_reviewers',
+        prevent_self_review: false,
+        reviewers: [{ type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } }],
+      },
+    ],
+  }));
+  assert.equal(duplicateRule.finalVerdict, 'PROTECTED_ENVIRONMENT_BLOCKED');
+  assert.ok(duplicateRule.blockers.includes('required-reviewer-rule-count-not-exact'));
 });
 
 test('requires every named workflow green on the exact current head', () => {
