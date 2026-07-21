@@ -41,6 +41,7 @@ function workflowRuns(overrides = {}) {
     'Battle Bridge Publisher Proof',
     'Codex Dispatch Queue Proof',
     'OpenClaw GitHub Operator',
+    'Protected Operator Merge Source Proof',
   ];
   return names.map((name, index) => ({
     id: index + 10,
