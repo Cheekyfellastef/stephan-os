@@ -15,6 +15,7 @@ import {
   CODEX_BANKED_RESET_OPERATION,
   CODEX_BANKED_RESET_POLICY_REF,
 } from './codexBankedResetBattleBridgeExecutor.mjs';
+import { CODEX_BANKED_RESET_STATUS_OPERATION } from './codexBankedResetStatusBattleBridgeReader.mjs';
 
 const now = new Date('2026-07-20T22:30:00.000Z');
 
@@ -48,6 +49,14 @@ function resetCommand(overrides = {}) {
   });
 }
 
+function statusCommand(overrides = {}) {
+  return command({
+    requestId: 'codex-reset-status-20260720-001',
+    operation: CODEX_BANKED_RESET_STATUS_OPERATION,
+    ...overrides,
+  });
+}
+
 function comment(payload = command(), overrides = {}) {
   return {
     id: 100,
@@ -76,10 +85,20 @@ test('control-plane and banked reset commands are allowlisted', () => {
     'READ_CRITICAL_BACKLOG_STATUS',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
     'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+    CODEX_BANKED_RESET_STATUS_OPERATION,
     CODEX_BANKED_RESET_OPERATION,
   ]) {
     assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
   }
+});
+
+test('accepts read-only Codex reset status commands without reset authority fields', () => {
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  assert.equal(validated.verdict, 'COMMAND_ACCEPTED');
+  assert.equal(validated.command.operation, CODEX_BANKED_RESET_STATUS_OPERATION);
+  assert.equal(validated.command.resetId, undefined);
 });
 
 test('accepts exactly one bounded banked reset command and preserves fixed fields', () => {
@@ -129,11 +148,13 @@ test('rejects reset commands without policy, fixed surface, single press and saf
 });
 
 test('forbids reset-only fields on every other mailbox operation', () => {
-  const result = validateBattleBridgeGitHubCommand(command({ resetId: 'banked-reset-1' }), {
-    authorLogin: 'Cheekyfellastef', now,
-  });
-  assert.equal(result.blocker, 'RESET_COMMAND_FIELD_NOT_ALLOWED');
-  assert.equal(result.field, 'resetId');
+  for (const operation of ['UPDATE_STEPHANOS_FROM_CHAT', CODEX_BANKED_RESET_STATUS_OPERATION]) {
+    const result = validateBattleBridgeGitHubCommand(command({ operation, resetId: 'banked-reset-1' }), {
+      authorLogin: 'Cheekyfellastef', now,
+    });
+    assert.equal(result.blocker, 'RESET_COMMAND_FIELD_NOT_ALLOWED');
+    assert.equal(result.field, 'resetId');
+  }
 });
 
 test('receipt target is mandatory, path-safe and forbidden on all other operations', () => {
@@ -166,6 +187,28 @@ test('selects only an unconsumed valid command', () => {
   });
   assert.equal(selected.verdict, 'COMMAND_READY');
   assert.equal(selected.command.requestId, 'req-1507-new2');
+});
+
+test('dispatches read-only reset status only through its named handler', async () => {
+  const calls = [];
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    readCodexBankedResetStatus: async (input) => {
+      calls.push(input.operation);
+      return {
+        ok: true,
+        finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
+        readOnly: true,
+        pressAttempted: false,
+        pressCount: 0,
+      };
+    },
+  });
+  assert.deepEqual(calls, [CODEX_BANKED_RESET_STATUS_OPERATION]);
+  assert.equal(result.ok, true);
+  assert.equal(result.result.pressCount, 0);
 });
 
 test('dispatches reset only through the named bounded handler', async () => {
@@ -218,7 +261,23 @@ test('receipt records exact reset authority and safety boundary', () => {
   assert.equal(receipt.resetId, 'banked-reset-1');
   assert.equal(receipt.fixedUiActionOnly, true);
   assert.equal(receipt.singlePressOnly, true);
+  assert.equal(receipt.readOnly, false);
   assert.equal(receipt.arbitraryShellAllowed, false);
   assert.equal(receipt.arbitraryBrowserAutomationAllowed, false);
   assert.equal(receipt.credentialsMayBeReadOrExported, false);
+});
+
+test('status receipt is explicitly read-only and has no reset authority', () => {
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  const receipt = buildBattleBridgeGitHubCommandReceipt({
+    command: validated.command,
+    state: 'DONE',
+    acceptedAt: now.toISOString(),
+    heartbeatAt: now.toISOString(),
+  });
+  assert.equal(receipt.readOnly, true);
+  assert.equal(receipt.resetId, '');
+  assert.equal(receipt.singlePressOnly, false);
 });
