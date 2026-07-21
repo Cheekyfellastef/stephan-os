@@ -53,6 +53,7 @@ function routeInput(overrides = {}) {
     providers: [
       {
         providerId: 'remote-codex-reviewer',
+        provider: 'openai-codex',
         reviewerClass: 'remote-codex',
         state: 'unavailable',
         sessionId: 'codex-review-session',
@@ -65,6 +66,7 @@ function routeInput(overrides = {}) {
       },
       {
         providerId: 'chatgpt-github-reviewer',
+        provider: 'chatgpt-github',
         reviewerClass: 'github-first',
         state: 'available',
         sessionId: 'review-session-2',
@@ -102,8 +104,19 @@ test('rejects stale review evidence after an exact-head change', () => {
 });
 
 test('rejects a same-session implementer review presented as independent', () => {
+  const candidate = review({ reviewerSessionId: BASE.implementerSessionId });
+  const validation = validateProviderNeutralReviewReceipt(candidate);
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes('reviewer-not-independent'));
+});
+
+test('rejects a same-session implementer review presented as specialist', () => {
   const candidate = review({
+    reviewerClass: 'external-qualified',
+    provider: BASE.implementerProvider,
     reviewerSessionId: BASE.implementerSessionId,
+    riskTier: 'high',
+    assuranceMode: 'specialist',
   });
   const validation = validateProviderNeutralReviewReceipt(candidate);
   assert.equal(validation.valid, false);
@@ -131,6 +144,7 @@ test('forbids deterministic quorum from satisfying a high-risk specialist gate',
   assert.equal(validation.valid, false);
   assert.ok(validation.errors.includes('high-risk-deterministic-quorum-forbidden'));
   assert.ok(validation.errors.includes('high-risk-specialist-required'));
+  assert.ok(validation.errors.includes('high-risk-specialist-assurance-required'));
 });
 
 test('rejects malformed or contradictory finding evidence', () => {
@@ -144,11 +158,28 @@ test('rejects malformed or contradictory finding evidence', () => {
   assert.ok(validation.errors.includes('clean-verdict-with-findings'));
 });
 
+test('accepts findings on source-controlled dot paths', () => {
+  const candidate = review({
+    findings: [{ severity: 'P2', code: 'workflow-note', summary: 'Workflow note.', path: '.github/workflows/proof.yml' }],
+    verdict: 'findings',
+  });
+  const validation = validateProviderNeutralReviewReceipt(candidate);
+  assert.equal(validation.valid, true, validation.errors.join(','));
+  assert.deepEqual(validation.findingCounts, { p0: 0, p1: 0, p2: 1 });
+});
+
+test('uses only proof namespaces accepted by canonical execution receipts', () => {
+  const validation = validateProviderNeutralReviewReceipt(review({ proofRefs: ['reviews/pr-1577.json'] }));
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes('unsafe-proof-ref'));
+});
+
 test('routes around exhausted Codex capacity without declaring the work unbuildable', () => {
   const selection = selectProviderNeutralReviewRoute(routeInput());
   assert.equal(selection.decision, 'ROUTE_SELECTED');
   assert.equal(selection.capacityClassification, 'PROVIDER_CAPACITY_UNAVAILABLE');
   assert.equal(selection.selectedProvider.providerId, 'chatgpt-github-reviewer');
+  assert.equal(selection.selectedProvider.provider, 'chatgpt-github');
   assert.equal(selection.selectedProvider.reviewerClass, 'github-first');
   assert.equal(selection.selectedProvider.assuranceMode, 'independent');
   assert.equal(selection.duplicateDispatchAllowed, false);
@@ -161,9 +192,80 @@ test('routes around exhausted Codex capacity without declaring the work unbuilda
   });
 });
 
+test('honours an explicit meter-stalled capacity state when no Codex adapter is listed', () => {
+  const selection = selectProviderNeutralReviewRoute(routeInput({
+    codexCapacityState: 'meter-stalled',
+    providers: [routeInput().providers[1]],
+  }));
+  assert.equal(selection.decision, 'ROUTE_SELECTED');
+  assert.equal(selection.capacityClassification, 'PROVIDER_CAPACITY_UNAVAILABLE');
+});
+
+test('does not mistake a renamed adapter for an independent provider session', () => {
+  const selection = selectProviderNeutralReviewRoute(routeInput({
+    providers: [
+      {
+        providerId: 'renamed-github-review-adapter',
+        provider: 'chatgpt-github',
+        reviewerClass: 'github-first',
+        state: 'available',
+        sessionId: 'implementation-session-1',
+        qualifiedRiskTiers: ['standard'],
+        supportsIndependentReview: true,
+        supportsDeterministicQuorum: false,
+        proofQualityRank: 100,
+      },
+    ],
+  }));
+  assert.equal(selection.decision, 'NO_QUALIFIED_REVIEW_ROUTE');
+  assert.equal(selection.selectedProvider, null);
+});
+
+test('prefers an independent reviewer over a higher-ranked same-session deterministic quorum', () => {
+  const selection = selectProviderNeutralReviewRoute(routeInput({
+    providers: [
+      {
+        providerId: 'same-session-harness',
+        provider: 'chatgpt-github',
+        reviewerClass: 'deterministic-harness',
+        state: 'available',
+        sessionId: 'implementation-session-1',
+        qualifiedRiskTiers: ['standard'],
+        supportsIndependentReview: true,
+        supportsDeterministicQuorum: true,
+        proofQualityRank: 1000,
+        costRank: 0,
+        latencyRank: 0,
+      },
+      {
+        providerId: 'external-independent-reviewer',
+        provider: 'external-review-provider',
+        reviewerClass: 'external-qualified',
+        state: 'available',
+        sessionId: 'external-review-session',
+        qualifiedRiskTiers: ['standard'],
+        supportsIndependentReview: true,
+        supportsDeterministicQuorum: false,
+        proofQualityRank: 10,
+        costRank: 100,
+        latencyRank: 100,
+      },
+    ],
+  }));
+  assert.equal(selection.decision, 'ROUTE_SELECTED');
+  assert.equal(selection.selectedProvider.providerId, 'external-independent-reviewer');
+  assert.equal(selection.selectedProvider.assuranceMode, 'independent');
+});
+
 test('does not dispatch a duplicate review when one is already active for the exact head', () => {
   const selection = selectProviderNeutralReviewRoute(routeInput({
-    activeReviewJobs: [{ prNumber: BASE.prNumber, sourceHead: HEAD, state: 'started' }],
+    activeReviewJobs: [{
+      repository: BASE.repository,
+      prNumber: BASE.prNumber,
+      branch: BASE.branch,
+      sourceHead: HEAD,
+      state: 'started',
+    }],
   }));
   assert.equal(selection.decision, 'WAIT_EXISTING_REVIEW');
   assert.equal(selection.reason, 'active-review-job-already-exists');
@@ -177,6 +279,7 @@ test('requires a specialist route for high-risk work when only local fallback is
     providers: [
       {
         providerId: 'remote-codex-reviewer',
+        provider: 'openai-codex',
         reviewerClass: 'remote-codex',
         state: 'unavailable',
         sessionId: 'codex-review-session',
@@ -185,6 +288,7 @@ test('requires a specialist route for high-risk work when only local fallback is
       },
       {
         providerId: 'openclaw-local-reviewer',
+        provider: 'openclaw-local',
         reviewerClass: 'openclaw-local-readonly',
         state: 'available',
         sessionId: 'local-review-session',
@@ -197,6 +301,26 @@ test('requires a specialist route for high-risk work when only local fallback is
   assert.equal(selection.decision, 'SPECIALIST_REVIEW_REQUIRED');
   assert.equal(selection.capacityClassification, 'PROVIDER_CAPACITY_UNAVAILABLE');
   assert.equal(selection.selectedProvider, null);
+});
+
+test('selects an independent specialist assurance route for high-risk work', () => {
+  const selection = selectProviderNeutralReviewRoute(routeInput({
+    riskTier: 'high',
+    providers: [
+      {
+        providerId: 'external-specialist-reviewer',
+        provider: 'external-security-review',
+        reviewerClass: 'external-qualified',
+        state: 'available',
+        sessionId: 'specialist-review-session',
+        qualifiedRiskTiers: ['high'],
+        supportsIndependentReview: true,
+        proofQualityRank: 80,
+      },
+    ],
+  }));
+  assert.equal(selection.decision, 'ROUTE_SELECTED');
+  assert.equal(selection.selectedProvider.assuranceMode, 'specialist');
 });
 
 test('keeps provider switching bound to the same repository PR branch and full head', () => {
@@ -215,6 +339,7 @@ test('converts a valid review into a valid canonical execution receipt', () => {
     prNumber: BASE.prNumber,
     branch: BASE.branch,
     expectedHead: HEAD,
+    riskTier: 'standard',
   });
   assert.equal(converted.ok, true, converted.executionValidation?.errors?.join(','));
   assert.equal(converted.receipt.workerType, 'github-first');
@@ -222,6 +347,22 @@ test('converts a valid review into a valid canonical execution receipt', () => {
   assert.equal(converted.receipt.phase, 'provider-neutral-review-clean');
   assert.equal(converted.receipt.sourceHead, HEAD);
   assert.deepEqual(converted.receipt.proofRefs, BASE.proofRefs);
+});
+
+test('converts a blocked review to a failed execution receipt with its blocker preserved', () => {
+  const candidate = review({
+    verdict: 'blocked',
+    blocker: 'review-provider-unavailable',
+  });
+  const converted = providerNeutralReviewToExecutionReceipt(candidate, {
+    expectedHead: HEAD,
+    operatorActionRequired: true,
+  });
+  assert.equal(converted.ok, true, converted.executionValidation?.errors?.join(','));
+  assert.equal(converted.receipt.state, 'failed');
+  assert.equal(converted.receipt.phase, 'provider-neutral-review-blocked');
+  assert.equal(converted.receipt.blocker, 'review-provider-unavailable');
+  assert.equal(converted.receipt.operatorActionRequired, true);
 });
 
 test('fails conversion closed when the review is not bound to the expected head', () => {
