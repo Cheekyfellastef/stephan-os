@@ -56,7 +56,7 @@ const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,100}$/i;
 const SAFE_REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const SAFE_BRANCH = /^[a-z0-9][a-z0-9._/-]{0,180}$/i;
 const SAFE_SCOPE = /^[a-z0-9][a-z0-9._:/-]{0,120}$/i;
-const SAFE_PATH = /^[a-z0-9][a-z0-9._/-]{0,240}$/i;
+const SAFE_PATH = /^(?:[a-z0-9]|\.[a-z0-9])[a-z0-9._/-]{0,240}$/i;
 const SAFE_PROOF_SEGMENT = /^[a-z0-9][a-z0-9._-]{0,100}$/i;
 const TERMINAL_REVIEW_JOB_STATES = new Set(['completed', 'failed', 'cancelled']);
 const SPECIALIST_REVIEWER_CLASSES = new Set([
@@ -68,6 +68,12 @@ const REQUIRED_QUORUM_CHECKS = Object.freeze([
   'exact-head-ci',
   'focused-tests',
   'policy-review',
+]);
+const CODEX_UNAVAILABLE_STATES = new Set([
+  'unavailable',
+  'meter-stalled',
+  'blocked-by-meter',
+  'codeX-blocked-by-meter'.toLowerCase(),
 ]);
 
 function text(value, fallback = '') {
@@ -100,34 +106,36 @@ function isSafeProofRef(value) {
   if (!normalized || normalized.startsWith('/') || normalized.startsWith('//') || /^[a-z]:\//i.test(normalized)) return false;
   if (normalized.split('/').some((part) => part === '..')) return false;
   return SAFE_PROOF_SEGMENT.test(normalized)
-    || /^(proof|proofs|receipts|reviews|evidence\/receipts)\//.test(normalized);
+    || /^(proof|proofs|receipts|evidence\/receipts)\//.test(normalized);
 }
 
 function normalizeFinding(input = {}) {
-  const severity = text(input.severity).toUpperCase();
   return Object.freeze({
-    severity,
+    severity: text(input.severity).toUpperCase(),
     code: safeId(input.code),
     summary: text(input.summary),
     path: text(input.path).replace(/\\/g, '/'),
   });
 }
 
-function normalizeProvider(provider = {}) {
-  const reviewerClass = text(provider.reviewerClass).toLowerCase();
-  const state = text(provider.state, 'unknown').toLowerCase();
-  const qualifiedRiskTiers = [...new Set(list(provider.qualifiedRiskTiers).map((item) => item.toLowerCase()))];
+function normalizeProvider(input = {}) {
+  const reviewerClass = text(input.reviewerClass).toLowerCase();
+  const state = text(input.state, 'unknown').toLowerCase();
+  const providerId = safeId(input.providerId);
   return Object.freeze({
-    providerId: safeId(provider.providerId),
+    providerId,
+    provider: safeId(input.provider, providerId),
     reviewerClass,
     state: PROVIDER_NEUTRAL_PROVIDER_STATES.includes(state) ? state : 'unknown',
-    sessionId: safeId(provider.sessionId),
-    qualifiedRiskTiers: Object.freeze(qualifiedRiskTiers),
-    supportsIndependentReview: provider.supportsIndependentReview === true,
-    supportsDeterministicQuorum: provider.supportsDeterministicQuorum === true,
-    proofQualityRank: Number.isFinite(provider.proofQualityRank) ? provider.proofQualityRank : 0,
-    costRank: Number.isFinite(provider.costRank) ? provider.costRank : 100,
-    latencyRank: Number.isFinite(provider.latencyRank) ? provider.latencyRank : 100,
+    sessionId: safeId(input.sessionId),
+    qualifiedRiskTiers: Object.freeze([
+      ...new Set(list(input.qualifiedRiskTiers).map((item) => item.toLowerCase())),
+    ]),
+    supportsIndependentReview: input.supportsIndependentReview === true,
+    supportsDeterministicQuorum: input.supportsDeterministicQuorum === true,
+    proofQualityRank: Number.isFinite(input.proofQualityRank) ? input.proofQualityRank : 0,
+    costRank: Number.isFinite(input.costRank) ? input.costRank : 100,
+    latencyRank: Number.isFinite(input.latencyRank) ? input.latencyRank : 100,
   });
 }
 
@@ -137,17 +145,20 @@ function providerIsCodex(provider) {
 
 function providerSupportsRisk(provider, riskTier) {
   if (!provider.qualifiedRiskTiers.includes(riskTier)) return false;
-  if (riskTier === 'high' && !SPECIALIST_REVIEWER_CLASSES.has(provider.reviewerClass)) return false;
-  return true;
+  return riskTier !== 'high' || SPECIALIST_REVIEWER_CLASSES.has(provider.reviewerClass);
 }
 
 function providerCanReviewIndependently(provider, input) {
   if (!provider.supportsIndependentReview) return false;
-  if (!provider.sessionId || !input.implementerSessionId) return true;
+  if (!provider.provider || !provider.sessionId) return false;
   return !(
-    provider.providerId === input.implementerProvider
+    provider.provider === input.implementerProvider
     && provider.sessionId === input.implementerSessionId
   );
+}
+
+function assuranceRank(mode) {
+  return mode === 'specialist' || mode === 'independent' ? 0 : 1;
 }
 
 function reviewExecutionWorkerType(reviewerClass) {
@@ -156,7 +167,7 @@ function reviewExecutionWorkerType(reviewerClass) {
     'remote-codex': 'remote-codex',
     'battle-bridge-codex': 'battle-bridge-codex',
     'openclaw-local-readonly': 'openclaw',
-    'external-qualified': 'github-first',
+    'external-qualified': 'orchestration-engine',
     'deterministic-harness': 'orchestration-engine',
   })[reviewerClass] || 'orchestration-engine';
 }
@@ -168,7 +179,6 @@ export function createProviderNeutralReviewReceipt(input = {}) {
   const issueNumber = positiveInteger(input.issueNumber, 1574);
   const prNumber = positiveInteger(input.prNumber);
   const sourceHead = text(input.sourceHead).toLowerCase();
-  const reviewerId = safeId(input.reviewerId, 'unknown-reviewer');
   const timestampUtc = text(input.timestampUtc, new Date(0).toISOString());
   const verdict = PROVIDER_NEUTRAL_REVIEW_VERDICTS.includes(text(input.verdict).toLowerCase())
     ? text(input.verdict).toLowerCase()
@@ -182,7 +192,7 @@ export function createProviderNeutralReviewReceipt(input = {}) {
     prNumber,
     branch: text(input.branch),
     sourceHead,
-    reviewerId,
+    reviewerId: safeId(input.reviewerId, 'unknown-reviewer'),
     reviewerClass: text(input.reviewerClass).toLowerCase(),
     provider: safeId(input.provider),
     modelClass: safeId(input.modelClass),
@@ -269,16 +279,15 @@ export function validateProviderNeutralReviewReceipt(receipt = {}, options = {})
   if (receipt.verdict === 'blocked' && !text(receipt.blocker)) errors.push('blocked-without-blocker');
   if (receipt.verdict !== 'blocked' && text(receipt.blocker)) errors.push('unexpected-blocker');
 
-  if (receipt.assuranceMode === 'independent') {
+  if (receipt.assuranceMode === 'independent' || receipt.assuranceMode === 'specialist') {
     if (
       receipt.provider === receipt.implementerProvider
       && receipt.reviewerSessionId === receipt.implementerSessionId
     ) errors.push('reviewer-not-independent');
     if (quorumChecks.length !== 0) errors.push('unexpected-quorum-checks');
   }
-  if (receipt.assuranceMode === 'specialist') {
-    if (!SPECIALIST_REVIEWER_CLASSES.has(receipt.reviewerClass)) errors.push('invalid-specialist-reviewer');
-    if (quorumChecks.length !== 0) errors.push('unexpected-quorum-checks');
+  if (receipt.assuranceMode === 'specialist' && !SPECIALIST_REVIEWER_CLASSES.has(receipt.reviewerClass)) {
+    errors.push('invalid-specialist-reviewer');
   }
   if (receipt.assuranceMode === 'deterministic-quorum') {
     if (receipt.riskTier === 'high') errors.push('high-risk-deterministic-quorum-forbidden');
@@ -286,8 +295,9 @@ export function validateProviderNeutralReviewReceipt(receipt = {}, options = {})
       if (!quorumChecks.includes(required)) errors.push(`missing-quorum-check:${required}`);
     }
   }
-  if (receipt.riskTier === 'high' && !SPECIALIST_REVIEWER_CLASSES.has(receipt.reviewerClass)) {
-    errors.push('high-risk-specialist-required');
+  if (receipt.riskTier === 'high') {
+    if (!SPECIALIST_REVIEWER_CLASSES.has(receipt.reviewerClass)) errors.push('high-risk-specialist-required');
+    if (receipt.assuranceMode !== 'specialist') errors.push('high-risk-specialist-assurance-required');
   }
 
   if (options.repository && receipt.repository !== options.repository) errors.push('repository-mismatch');
@@ -303,9 +313,9 @@ export function validateProviderNeutralReviewReceipt(receipt = {}, options = {})
     errors: Object.freeze(uniqueErrors),
     refusalReason: uniqueErrors[0] || '',
     findingCounts: Object.freeze({
-      p0: Array.isArray(receipt.findings) ? receipt.findings.filter((finding) => finding.severity === 'P0').length : 0,
-      p1: Array.isArray(receipt.findings) ? receipt.findings.filter((finding) => finding.severity === 'P1').length : 0,
-      p2: Array.isArray(receipt.findings) ? receipt.findings.filter((finding) => finding.severity === 'P2').length : 0,
+      p0: Array.isArray(receipt.findings) ? receipt.findings.filter((finding) => finding?.severity === 'P0').length : 0,
+      p1: Array.isArray(receipt.findings) ? receipt.findings.filter((finding) => finding?.severity === 'P1').length : 0,
+      p2: Array.isArray(receipt.findings) ? receipt.findings.filter((finding) => finding?.severity === 'P2').length : 0,
     }),
     finalVerdict: uniqueErrors.length ? 'PROVIDER_NEUTRAL_REVIEW_BLOCKED' : 'PROVIDER_NEUTRAL_REVIEW_PASS',
   });
@@ -318,6 +328,7 @@ export function providerNeutralReviewToExecutionReceipt(reviewReceipt, input = {
     prNumber: input.prNumber,
     branch: input.branch,
     expectedHead: input.expectedHead,
+    riskTier: input.riskTier,
   });
   if (!validation.valid) {
     return Object.freeze({
@@ -330,6 +341,7 @@ export function providerNeutralReviewToExecutionReceipt(reviewReceipt, input = {
   }
 
   const sequence = positiveInteger(input.sequence, 1);
+  const blocked = reviewReceipt.verdict === 'blocked';
   const executionReceipt = createExecutionReceipt({
     receiptId: safeId(input.receiptId, reviewReceipt.receiptId),
     repository: reviewReceipt.repository,
@@ -341,14 +353,14 @@ export function providerNeutralReviewToExecutionReceipt(reviewReceipt, input = {
     workerType: reviewExecutionWorkerType(reviewReceipt.reviewerClass),
     executionId: safeId(input.executionId, `review-${reviewReceipt.prNumber}-${reviewReceipt.sourceHead.slice(0, 12)}`),
     leaseKey: safeId(input.leaseKey, `review-pr-${reviewReceipt.prNumber}`),
-    state: 'completed',
-    phase: reviewReceipt.verdict === 'clean' ? 'provider-neutral-review-clean' : `provider-neutral-review-${reviewReceipt.verdict}`,
+    state: blocked ? 'failed' : 'completed',
+    phase: `provider-neutral-review-${reviewReceipt.verdict}`,
     sequence,
     predecessorReceiptId: sequence === 1 ? '' : safeId(input.predecessorReceiptId),
     timestampUtc: reviewReceipt.timestampUtc,
     heartbeatExpiresAtUtc: reviewReceipt.timestampUtc,
-    blocker: '',
-    operatorActionRequired: false,
+    blocker: blocked ? reviewReceipt.blocker : '',
+    operatorActionRequired: blocked && input.operatorActionRequired === true,
     proofRefs: reviewReceipt.proofRefs,
     expectedNextAction: '',
   });
@@ -399,6 +411,8 @@ export function selectProviderNeutralReviewRoute(input = {}) {
   const activeForHead = activeReviewJobs.find((job) => (
     positiveInteger(job?.prNumber) === prNumber
     && text(job?.sourceHead).toLowerCase() === sourceHead
+    && (!text(job?.repository) || text(job.repository) === repository)
+    && (!text(job?.branch) || text(job.branch) === branch)
     && !TERMINAL_REVIEW_JOB_STATES.has(text(job?.state).toLowerCase())
   ));
   if (activeForHead) {
@@ -415,9 +429,11 @@ export function selectProviderNeutralReviewRoute(input = {}) {
 
   const providers = (Array.isArray(input.providers) ? input.providers : []).map((provider) => normalizeProvider(provider));
   const codexProviders = providers.filter(providerIsCodex);
-  const codexUnavailable = codexProviders.length > 0 && codexProviders.every((provider) => provider.state !== 'available');
+  const explicitCodexState = text(input.codexCapacityState).toLowerCase();
+  const codexUnavailable = CODEX_UNAVAILABLE_STATES.has(explicitCodexState)
+    || (codexProviders.length > 0 && codexProviders.every((provider) => provider.state !== 'available'));
   const candidates = providers
-    .filter((provider) => provider.providerId)
+    .filter((provider) => provider.providerId && provider.provider)
     .filter((provider) => provider.state === 'available')
     .filter((provider) => providerSupportsRisk(provider, riskTier))
     .map((provider) => {
@@ -425,11 +441,15 @@ export function selectProviderNeutralReviewRoute(input = {}) {
       const deterministicQuorum = !independent
         && riskTier !== 'high'
         && provider.supportsDeterministicQuorum;
-      return Object.freeze({ ...provider, assuranceMode: independent ? 'independent' : (deterministicQuorum ? 'deterministic-quorum' : '') });
+      const assuranceMode = riskTier === 'high'
+        ? (independent ? 'specialist' : '')
+        : (independent ? 'independent' : (deterministicQuorum ? 'deterministic-quorum' : ''));
+      return Object.freeze({ ...provider, assuranceMode });
     })
     .filter((provider) => provider.assuranceMode)
     .sort((left, right) => (
-      right.proofQualityRank - left.proofQualityRank
+      assuranceRank(left.assuranceMode) - assuranceRank(right.assuranceMode)
+      || right.proofQualityRank - left.proofQualityRank
       || left.costRank - right.costRank
       || left.latencyRank - right.latencyRank
       || left.providerId.localeCompare(right.providerId)
@@ -448,6 +468,7 @@ export function selectProviderNeutralReviewRoute(input = {}) {
         : 'PROVIDER_CAPACITY_AVAILABLE_OR_NOT_REQUIRED',
       selectedProvider: Object.freeze({
         providerId: selectedProvider.providerId,
+        provider: selectedProvider.provider,
         reviewerClass: selectedProvider.reviewerClass,
         sessionId: selectedProvider.sessionId,
         assuranceMode: selectedProvider.assuranceMode,
