@@ -7,7 +7,7 @@ import {
   analyzeIndependentSecurityReview,
   buildProtectedSecurityReviewReceipt,
   validateExactHeadWorkflowRuns,
-} from '../shared/agents/operatorMergeApprovalGate.mjs';
+} from '../shared/agents/operatorMergeApprovalGateV2.mjs';
 import {
   bindIndependentReviewReceiptToBase,
   validateMainRefBaseBinding,
