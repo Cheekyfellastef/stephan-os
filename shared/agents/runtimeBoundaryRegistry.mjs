@@ -10,21 +10,28 @@ export const RUNTIME_BOUNDARY_CLASSIFICATIONS = Object.freeze({
   BLOCKED_RUNTIME_BOUNDARY_MISCONFIGURED: 'BLOCKED_RUNTIME_BOUNDARY_MISCONFIGURED',
 });
 
+export const RUNTIME_ROOT_KINDS = Object.freeze({
+  RUNTIME: 'runtime-root',
+  OPENCLAW_WORKSPACE: 'openclaw-workspace',
+});
+
 export const RUNTIME_PATH_REGISTRY = Object.freeze({
   dreams: Object.freeze({
     key: 'dreams',
     legacyPrefixes: Object.freeze(['memory/.dreams/', 'memory/dreaming/']),
-    externalRelativePath: 'memory/dreams',
-    producer: 'Stephanos dreaming agents',
+    rootKind: RUNTIME_ROOT_KINDS.OPENCLAW_WORKSPACE,
+    externalRelativePath: 'memory',
+    producer: 'OpenClaw workspace-relative dreaming agents',
     trackedExpectation: 'external-untracked',
     deterministicRegeneration: false,
     preservation: 'required',
     reconciliation: 'copy-hash-verify-before-switch',
-    verifier: 'runtime-boundary-workbench',
+    verifier: 'dream-runtime-boundary',
   }),
   receipts: Object.freeze({
     key: 'receipts',
     legacyPrefixes: Object.freeze(['receipts/', 'proof/', 'proofs/']),
+    rootKind: RUNTIME_ROOT_KINDS.RUNTIME,
     externalRelativePath: 'receipts',
     producer: 'Stephanos/OpenClaw proof publishers',
     trackedExpectation: 'external-untracked',
@@ -36,6 +43,7 @@ export const RUNTIME_PATH_REGISTRY = Object.freeze({
   status: Object.freeze({
     key: 'status',
     legacyPrefixes: Object.freeze(['status/', 'heartbeat/', 'heartbeats/']),
+    rootKind: RUNTIME_ROOT_KINDS.RUNTIME,
     externalRelativePath: 'status',
     producer: 'workers, supervisors and monitors',
     trackedExpectation: 'external-untracked',
@@ -47,6 +55,7 @@ export const RUNTIME_PATH_REGISTRY = Object.freeze({
   logs: Object.freeze({
     key: 'logs',
     legacyPrefixes: Object.freeze(['logs/']),
+    rootKind: RUNTIME_ROOT_KINDS.RUNTIME,
     externalRelativePath: 'logs',
     producer: 'runtime services',
     trackedExpectation: 'external-untracked',
@@ -58,6 +67,7 @@ export const RUNTIME_PATH_REGISTRY = Object.freeze({
   cache: Object.freeze({
     key: 'cache',
     legacyPrefixes: Object.freeze(['.cache/', 'cache/', 'tmp/']),
+    rootKind: RUNTIME_ROOT_KINDS.RUNTIME,
     externalRelativePath: 'cache',
     producer: 'runtime services and build helpers',
     trackedExpectation: 'external-untracked',
@@ -69,6 +79,7 @@ export const RUNTIME_PATH_REGISTRY = Object.freeze({
   uiBuildStaging: Object.freeze({
     key: 'uiBuildStaging',
     legacyPrefixes: Object.freeze(['apps/stephanos/dist/']),
+    rootKind: RUNTIME_ROOT_KINDS.RUNTIME,
     externalRelativePath: 'build-staging/stephanos-ui',
     producer: 'Stephanos UI build',
     trackedExpectation: 'external-staging-deliberate-publish',
@@ -84,10 +95,25 @@ export function defaultRuntimeRoot({ env = process.env, homeDir = os.homedir() }
   return path.resolve(configured || path.join(homeDir, 'Stephanos', 'shared-agent-workspace', 'runtime'));
 }
 
+export function defaultOpenClawWorkspaceRoot({ env = process.env, homeDir = os.homedir() } = {}) {
+  const configured = env.STEPHANOS_OPENCLAW_WORKSPACE || env.STEPHANOS_SHARED_WORKSPACE;
+  return path.resolve(configured || path.join(homeDir, 'Documents', 'Stephanos-openclaw-workspace'));
+}
+
+export function runtimeRootForEntry(entry, options = {}) {
+  if (entry?.rootKind === RUNTIME_ROOT_KINDS.OPENCLAW_WORKSPACE) {
+    return defaultOpenClawWorkspaceRoot(options);
+  }
+  if (entry?.rootKind === RUNTIME_ROOT_KINDS.RUNTIME) {
+    return defaultRuntimeRoot(options);
+  }
+  throw new Error(`Unknown runtime root kind: ${entry?.rootKind || '<missing>'}`);
+}
+
 export function getRuntimePath(key, options = {}) {
   const entry = RUNTIME_PATH_REGISTRY[key];
   if (!entry) throw new Error(`Unknown runtime path key: ${key}`);
-  const root = defaultRuntimeRoot(options);
+  const root = runtimeRootForEntry(entry, options);
   const resolved = path.resolve(root, entry.externalRelativePath);
   const relative = path.relative(root, resolved);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
@@ -145,13 +171,16 @@ export function classifyRepositoryDirt(statusLines = []) {
 
 export function registryAsSerializableObject(options = {}) {
   const runtimeRoot = defaultRuntimeRoot(options);
+  const openClawWorkspaceRoot = defaultOpenClawWorkspaceRoot(options);
   return {
     schemaVersion: 1,
     runtimeRoot,
+    openClawWorkspaceRoot,
     sourcePolicy: 'source-in-git-runtime-outside-git',
     unknownPathsFailClosed: true,
     entries: Object.fromEntries(Object.entries(RUNTIME_PATH_REGISTRY).map(([key, entry]) => [key, {
       ...entry,
+      resolvedRoot: runtimeRootForEntry(entry, options),
       resolvedExternalPath: getRuntimePath(key, options),
     }])),
   };
