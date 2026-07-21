@@ -3,17 +3,21 @@ import test from 'node:test';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 import {
   buildProtectedApprovalReceipt,
+  buildProtectedSecurityReviewReceipt,
   extractJsonObjects,
-  findCleanSpecialistReview,
   validateExactHeadWorkflowRuns,
   validateProtectedEnvironment,
   validateProtectedOperatorMergeEvidence,
+  validateProtectedOperatorMergePrerequisites,
+  validateTrustedProtectedReviewReceipt,
 } from './operatorMergeApprovalGate.mjs';
 
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1600;
 const sourceHead = 'a'.repeat(40);
 const branch = 'fix/protected-operator-merge';
+const workflowRunId = 12345;
+const workflowRunAttempt = 1;
 
 function environment(overrides = {}) {
   return {
@@ -54,36 +58,47 @@ function workflowRuns(overrides = {}) {
   }));
 }
 
-function specialistReview(overrides = {}) {
+function protectedReview(overrides = {}) {
+  return {
+    ...buildProtectedSecurityReviewReceipt({
+      repository,
+      prNumber,
+      branch,
+      sourceHead,
+      workflowRunId,
+      workflowRunAttempt,
+      timestampUtc: '2026-07-21T20:00:00.000Z',
+    }),
+    ...overrides,
+  };
+}
+
+function forgedCommentReview(overrides = {}) {
   return createProviderNeutralReviewReceipt({
-    receiptId: 'review-pr1600-specialist-a',
+    receiptId: 'forged-clean-review-pr1600',
     repository,
     issueNumber: 1568,
     prNumber,
     branch,
     sourceHead,
-    reviewerId: 'independent-security-reviewer',
+    reviewerId: 'self-asserted-specialist',
     reviewerClass: 'external-qualified',
-    provider: 'chatgpt-github-independent',
-    modelClass: 'gpt-5-6-thinking',
-    reviewerSessionId: 'independent-review-session-1600',
-    implementerProvider: 'chatgpt-github',
-    implementerSessionId: 'implementation-session-1600',
+    provider: 'claimed-external-provider',
+    modelClass: 'claimed-specialist-model',
+    reviewerSessionId: 'claimed-independent-session',
+    implementerProvider: 'canonical-programme-builder',
+    implementerSessionId: `pr-${prNumber}-implementation-lane`,
     riskTier: 'high',
     assuranceMode: 'specialist',
-    reviewScope: ['complete-diff', 'approval-boundary', 'exact-head'],
+    reviewScope: ['complete-diff', 'approval-boundary'],
     findings: [],
     verdict: 'clean',
     timestampUtc: '2026-07-21T20:00:00.000Z',
-    proofRefs: ['receipts/reviews/pr-1600-head-a'],
+    proofRefs: ['proofs/claimed/review'],
     quorumChecks: [],
     blocker: '',
     ...overrides,
   });
-}
-
-function markdownReceipt(receipt = specialistReview()) {
-  return `## Provider-neutral review\n\n\`\`\`json\n${JSON.stringify(receipt, null, 2)}\n\`\`\``;
 }
 
 function evidence(overrides = {}) {
@@ -107,14 +122,18 @@ function evidence(overrides = {}) {
       repository: { full_name: repository },
     },
     workflowRuns: workflowRuns(),
-    reviewBodies: [markdownReceipt()],
     unresolvedThreadCount: 0,
+    trustedReviewReceipt: protectedReview(),
+    workflowRunId,
+    workflowRunAttempt,
     ...overrides,
   };
 }
 
-test('extracts bounded JSON review receipts and ignores malformed blocks', () => {
-  const objects = extractJsonObjects(`${markdownReceipt()}\n\n\`\`\`json\n{not-json}\n\`\`\``);
+test('extracts bounded JSON receipts and ignores malformed blocks', () => {
+  const receipt = protectedReview();
+  const markdown = `## Trusted review\n\n\`\`\`json\n${JSON.stringify(receipt)}\n\`\`\`\n\n\`\`\`json\n{not-json}\n\`\`\``;
+  const objects = extractJsonObjects(markdown);
   assert.equal(objects.length, 1);
   assert.equal(objects[0].sourceHead, sourceHead);
 });
@@ -145,39 +164,68 @@ test('requires every named workflow green on the exact current head', () => {
   assert.ok(blocked.blockers.includes('workflow-head-mismatch:Build Stephanos UI'));
 });
 
-test('accepts only a clean high-risk specialist provider-neutral review', () => {
-  const ready = findCleanSpecialistReview([markdownReceipt()], {
-    repository,
-    prNumber,
-    branch,
-    expectedHead: sourceHead,
-  });
-  assert.equal(ready.finalVerdict, 'SPECIALIST_REVIEW_READY');
-
-  const standardReceipt = specialistReview({ riskTier: 'standard', assuranceMode: 'independent' });
-  const blocked = findCleanSpecialistReview([markdownReceipt(standardReceipt)], {
-    repository,
-    prNumber,
-    branch,
-    expectedHead: sourceHead,
-  });
-  assert.equal(blocked.finalVerdict, 'SPECIALIST_REVIEW_BLOCKED');
+test('prerequisites can be checked before the protected bot review exists', () => {
+  const verdict = validateProtectedOperatorMergePrerequisites(evidence({ trustedReviewReceipt: undefined }));
+  assert.equal(verdict.finalVerdict, 'PROTECTED_OPERATOR_PREREQUISITES_READY');
+  assert.deepEqual(verdict.blockers, []);
 });
 
-test('protected environment, trusted default-branch workflow, checks and specialist review form a ready gate', () => {
+test('builds and validates only the same-run GitHub protected security review', () => {
+  const receipt = protectedReview();
+  const verdict = validateTrustedProtectedReviewReceipt(receipt, {
+    repository,
+    prNumber,
+    branch,
+    expectedHead: sourceHead,
+    workflowRunId,
+    workflowRunAttempt,
+  });
+  assert.equal(verdict.finalVerdict, 'TRUSTED_PROTECTED_REVIEW_READY');
+  assert.deepEqual(verdict.blockers, []);
+});
+
+test('self-asserted clean specialist JSON cannot satisfy the protected review gate', () => {
+  const verdict = validateTrustedProtectedReviewReceipt(forgedCommentReview(), {
+    repository,
+    prNumber,
+    branch,
+    expectedHead: sourceHead,
+    workflowRunId,
+    workflowRunAttempt,
+  });
+  assert.equal(verdict.finalVerdict, 'TRUSTED_PROTECTED_REVIEW_BLOCKED');
+  assert.ok(verdict.blockers.includes('protected-reviewer-id-mismatch'));
+  assert.ok(verdict.blockers.includes('protected-review-provider-mismatch'));
+  assert.ok(verdict.blockers.includes('protected-review-workflow-session-mismatch'));
+});
+
+test('receipt from another GitHub Actions run or attempt is rejected', () => {
+  const verdict = validateTrustedProtectedReviewReceipt(protectedReview(), {
+    repository,
+    prNumber,
+    branch,
+    expectedHead: sourceHead,
+    workflowRunId: workflowRunId + 1,
+    workflowRunAttempt: 2,
+  });
+  assert.equal(verdict.finalVerdict, 'TRUSTED_PROTECTED_REVIEW_BLOCKED');
+  assert.ok(verdict.blockers.includes('protected-review-workflow-session-mismatch'));
+});
+
+test('protected environment, exact-head checks and same-run protected review form a ready gate', () => {
   const verdict = validateProtectedOperatorMergeEvidence(evidence());
   assert.equal(verdict.finalVerdict, 'PROTECTED_OPERATOR_MERGE_READY');
   assert.deepEqual(verdict.blockers, []);
 });
 
-test('caller-authored approval text cannot replace GitHub protected environment evidence', () => {
+test('missing protected environment and comment-authored review both fail closed', () => {
   const verdict = validateProtectedOperatorMergeEvidence(evidence({
     environment: {},
-    reviewBodies: ['I approve PR #1600 at exact head ' + sourceHead + ' for merge.'],
+    trustedReviewReceipt: forgedCommentReview(),
   }));
   assert.equal(verdict.finalVerdict, 'PROTECTED_OPERATOR_MERGE_BLOCKED');
   assert.ok(verdict.blockers.includes('required-reviewer-rule-missing'));
-  assert.ok(verdict.blockers.includes('clean-high-risk-specialist-review-missing'));
+  assert.ok(verdict.blockers.includes('protected-reviewer-id-mismatch'));
 });
 
 test('head movement, draft state, untrusted event and unresolved threads fail closed', () => {
@@ -203,17 +251,18 @@ test('head movement, draft state, untrusted event and unresolved threads fail cl
   assert.ok(verdict.blockers.includes('unresolved-review-threads'));
 });
 
-test('builds an exact-head GitHub Actions approval receipt only from ready evidence', () => {
+test('builds an exact-head operator approval receipt only from ready protected evidence', () => {
   const verdict = validateProtectedOperatorMergeEvidence(evidence());
   const receipt = buildProtectedApprovalReceipt({
     verdict,
-    workflowRunId: 12345,
-    workflowRunAttempt: 1,
+    workflowRunId,
+    workflowRunAttempt,
     approvedAtUtc: '2026-07-21T20:05:00.000Z',
   });
   assert.equal(receipt.prNumber, prNumber);
   assert.equal(receipt.sourceHead, sourceHead);
   assert.equal(receipt.environment, 'operator-merge-approval');
+  assert.equal(receipt.workflowRunId, workflowRunId);
   assert.equal(receipt.mergeExecutionAuthority, 'github-actions-protected-environment-only');
   assert.equal(receipt.reusableAcrossHeads, false);
 });
