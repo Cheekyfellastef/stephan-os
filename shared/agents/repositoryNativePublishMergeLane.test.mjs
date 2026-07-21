@@ -37,20 +37,20 @@ test('source scope can explicitly allow dist while still blocking secrets and en
   assert.ok(verdict.blockers.some((blocker) => blocker.includes('Secrets')));
 });
 
-test('publish request is approval gated and deterministic but has no merge authority', () => {
-  const branch = 'publish/shared-workspace-v2';
+test('publish request is gated but has no ready or merge authority', () => {
+  const branch = 'publish/shared-workspace-v3';
   const verdict = validatePublishLaneRequest({
     branch,
     baseBranch: 'main',
     approvalToken: publishApprovalToken(branch),
-    goal: 'Ship Shared Workspace V2',
+    goal: 'Ship Shared Workspace V3',
     proofCommand: ['npm', 'test'],
     changedFiles: ['shared/workspace/model.mjs', 'shared/workspace/model.test.mjs'],
   });
   assert.equal(verdict.finalVerdict, 'PUBLISH_LANE_READY');
   assert.deepEqual(verdict.files, ['shared/workspace/model.mjs', 'shared/workspace/model.test.mjs']);
   assert.equal(verdict.mergeAuthority, false);
-  assert.equal(verdict.mergeApprovalMechanism, 'challenge-bound-operator-receipt-only');
+  assert.equal(verdict.mergeApprovalMechanism, 'github-protected-environment-only');
 });
 
 test('publish request rejects missing approval token and main branch', () => {
@@ -67,19 +67,20 @@ test('publish request rejects missing approval token and main branch', () => {
   assert.ok(verdict.blockers.some((blocker) => blocker.includes('approval')));
 });
 
-test('PR body includes goal proof files exact head and explicit no-merge boundary', () => {
+test('PR body includes goal proof files exact head and explicit protected merge boundary', () => {
   const headSha = 'a'.repeat(40);
   const body = buildPullRequestBody({
-    goal: 'Publish lane V2',
+    goal: 'Publish lane V3',
     proofCommand: 'node --test shared/agents/repositoryNativePublishMergeLane.test.mjs',
     proofResult: 'PASS exitCode=0',
     filesChanged: ['shared/agents/repositoryNativePublishMergeLane.mjs'],
     headSha,
   });
-  assert.match(body, /## Goal\nPublish lane V2/);
+  assert.match(body, /## Goal\nPublish lane V3/);
   assert.match(body, /## Proof/);
   assert.match(body, new RegExp(headSha));
-  assert.match(body, /has no merge authority/);
+  assert.match(body, /has no ready or merge authority/);
+  assert.match(body, /protected-environment approval/);
 });
 
 test('deterministic merge approval tokens are disabled fail closed', () => {
@@ -91,13 +92,13 @@ test('deterministic merge approval tokens are disabled fail closed', () => {
 
 test('completion packet contains stable required fields', () => {
   const packet = buildCompletionPacket({
-    branch: 'publish/lane-v2',
+    branch: 'publish/lane-v3',
     prNumber: '1313',
     headSha: 'c'.repeat(40),
     mergeCommit: '',
     proofCommand: ['npm', 'test'],
     proofResult: 'PASS exitCode=0',
-    finalStatus: 'AWAITING_OPERATOR_APPROVAL',
+    finalStatus: 'AWAITING_PROTECTED_OPERATOR_APPROVAL',
   });
   assert.deepEqual(Object.keys(packet), [
     'schemaVersion',
@@ -110,5 +111,5 @@ test('completion packet contains stable required fields', () => {
     'finalStatus',
   ]);
   assert.equal(packet.prNumber, 1313);
-  assert.equal(packet.finalStatus, 'AWAITING_OPERATOR_APPROVAL');
+  assert.equal(packet.finalStatus, 'AWAITING_PROTECTED_OPERATOR_APPROVAL');
 });
