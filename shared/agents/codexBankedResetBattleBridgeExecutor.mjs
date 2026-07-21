@@ -128,7 +128,7 @@ export function normalizeCodexBankedResetExecutionResult(raw = {}, command = {})
   const meterAfter = sanitizeText(result.meterAfter, 200);
   const usageSurfaceMatched = result.usageSurfaceMatched === true;
   const resetControlDisappeared = result.resetControlDisappeared === true;
-  const confirmationEvidencePresent = Boolean(meterBefore) && (Boolean(meterAfter) || resetControlDisappeared);
+  const confirmationEvidencePresent = Boolean(meterBefore) && Boolean(meterAfter) && meterBefore !== meterAfter;
   const ok = result.ok === true
     && result.finalVerdict === 'CODEX_BANKED_RESET_CONFIRMED'
     && usageSurfaceMatched
