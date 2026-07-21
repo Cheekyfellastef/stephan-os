@@ -10,7 +10,7 @@ const packageFile = new URL('../package.json', import.meta.url);
 test('ordinary publication path cannot mark ready or merge', async () => {
   const source = await readFile(publishScript, 'utf8');
   assert.match(source, /--draft/);
-  assert.match(source, /AWAITING_OPERATOR_APPROVAL/);
+  assert.match(source, /AWAITING_PROTECTED_OPERATOR_APPROVAL/);
   assert.match(source, /mergeAuthority: false/);
   assert.doesNotMatch(source, /\['pr', 'ready'/);
   assert.doesNotMatch(source, /\['pr', 'merge'/);
