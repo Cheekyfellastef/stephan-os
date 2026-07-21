@@ -101,7 +101,7 @@ foreach ($window in $topWindows) {
         try { $processName = (Get-Process -Id $processId -ErrorAction Stop).ProcessName } catch { continue }
         if ($allowedProcessNames -notcontains $processName) { continue }
         if ($windowName -notmatch '(?i)codex|chatgpt|openai') { continue }
-        $windowCandidates += [pscustomobject]@{ Element = $window; Name = $windowName; ProcessName = $processName }
+        $windowCandidates += [pscustomobject]@{ Element = $window; Name = $windowName; ProcessName = $processName; ProcessId = $processId }
     } catch { continue }
 }
 
@@ -111,14 +111,17 @@ if ($windowCandidates.Count -eq 0) {
         appWindowFound = $false
     }
 }
-
-function Get-Elements([System.Windows.Automation.AutomationElement]$Window) {
-    return $Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $trueCondition)
+if ($windowCandidates.Count -ne 1) {
+    Block 'BLOCKED_RESET_MULTIPLE_APP_WINDOWS' @{
+        desktopInteractive = $true
+        appWindowFound = $true
+    }
 }
 
-function Get-ElementSnapshot([System.Windows.Automation.AutomationElementCollection]$Elements) {
+function Get-SurfaceSnapshot([System.Windows.Automation.AutomationElement]$Surface) {
+    $elements = $Surface.FindAll([System.Windows.Automation.TreeScope]::Descendants, $trueCondition)
     $items = @()
-    foreach ($element in $Elements) {
+    foreach ($element in $elements) {
         try {
             $name = Convert-ToSafeText $element.Current.Name 220
             if (-not $name) { continue }
@@ -137,7 +140,20 @@ function Get-ElementSnapshot([System.Windows.Automation.AutomationElementCollect
             }
         } catch { continue }
     }
-    return $items
+    return @($items)
+}
+
+function Get-ProcessSnapshot([int]$ProcessId) {
+    $items = @()
+    foreach ($surface in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $trueCondition)) {
+        try {
+            if ([int]$surface.Current.ProcessId -ne $ProcessId) { continue }
+        } catch {
+            continue
+        }
+        $items += @(Get-SurfaceSnapshot $surface)
+    }
+    return @($items)
 }
 
 function Get-ExpiryTokens([datetime]$ExpiryUtc) {
@@ -165,14 +181,14 @@ function Get-MeterSummary($Snapshot) {
 }
 
 function Find-Target($Snapshot, [string[]]$ExpiryTokens) {
-    $usageMatches = @($Snapshot | Where-Object { $_.Name -match '(?i)usage|remaining|meter|limit|banked reset|rate.limit reset' })
-    if ($usageMatches.Count -eq 0) {
-        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_USAGE_SURFACE_NOT_PROVEN'; UsageMatched = $false }
+    $meterSummary = Get-MeterSummary $Snapshot
+    if (-not $meterSummary) {
+        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_USAGE_SURFACE_NOT_PROVEN'; UsageMatched = $false; MeterSummary = '' }
     }
 
     $activeTaskMatches = @($Snapshot | Where-Object { $_.Name -match '(?i)(codex|task|job).*(running|working|in progress)|running.*(codex|task|job)' })
     if ($activeTaskMatches.Count -gt 0) {
-        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_ACTIVE_CODEX_TASK'; UsageMatched = $true }
+        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_ACTIVE_CODEX_TASK'; UsageMatched = $true; MeterSummary = $meterSummary }
     }
 
     $expiryMatches = @($Snapshot | Where-Object {
@@ -180,97 +196,75 @@ function Find-Target($Snapshot, [string[]]$ExpiryTokens) {
         ($ExpiryTokens | Where-Object { $name -like "*$_*" }).Count -gt 0
     })
     if ($expiryMatches.Count -eq 0) {
-        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_EXPIRY_NOT_VISIBLE'; UsageMatched = $true }
+        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_EXPIRY_NOT_VISIBLE'; UsageMatched = $true; MeterSummary = $meterSummary }
     }
 
     $buttons = @($Snapshot | Where-Object {
-        $_.Type -eq 'ControlType.Button' -and $_.Enabled -and -not $_.Offscreen -and
-        $_.Name -match '(?i)\b(redeem|apply|use|reset)\b'
+        $_.Type -match 'ControlType\.(Button|MenuItem|Hyperlink|ListItem)' -and $_.Enabled -and -not $_.Offscreen -and
+        $_.Name -match '(?i)\b(redeem|apply|use|reset)\b' -and
+        $_.Name -notmatch '(?i)billing|purchase|buy credits|add credits|auto.?top.?up'
     })
     if ($buttons.Count -eq 0) {
-        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_BUTTON_NOT_FOUND'; UsageMatched = $true; ExpiryText = $expiryMatches[0].Name }
+        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_BUTTON_NOT_FOUND'; UsageMatched = $true; MeterSummary = $meterSummary; ExpiryText = $expiryMatches[0].Name }
     }
 
-    $nearButtons = @()
+    $buttonMatches = @()
     foreach ($button in $buttons) {
+        $nearestExpiry = $null
+        $nearestDistance = [double]::PositiveInfinity
         foreach ($expiry in $expiryMatches) {
             $verticalDistance = [Math]::Abs((($button.Top + $button.Bottom) / 2) - (($expiry.Top + $expiry.Bottom) / 2))
-            if ($verticalDistance -le 180) {
-                $nearButtons += $button
-                break
+            if ($verticalDistance -le 180 -and $verticalDistance -lt $nearestDistance) {
+                $nearestExpiry = $expiry
+                $nearestDistance = $verticalDistance
             }
         }
+        if ($null -ne $nearestExpiry) {
+            $buttonMatches += [pscustomobject]@{ Button = $button; Expiry = $nearestExpiry; Distance = $nearestDistance }
+        }
     }
-    $nearButtons = @($nearButtons | Sort-Object Name, Top, Left -Unique)
-    if ($nearButtons.Count -ne 1) {
+
+    $buttonMatches = @($buttonMatches | Sort-Object @{ Expression = { $_.Button.Name } }, @{ Expression = { $_.Button.Top } }, @{ Expression = { $_.Button.Left } }, Distance -Unique)
+    if ($buttonMatches.Count -ne 1) {
         return [pscustomobject]@{
-            Blocker = if ($nearButtons.Count -eq 0) { 'BLOCKED_RESET_BUTTON_NOT_BOUND_TO_EXPIRY' } else { 'BLOCKED_RESET_UI_AMBIGUOUS' }
+            Blocker = if ($buttonMatches.Count -eq 0) { 'BLOCKED_RESET_BUTTON_NOT_BOUND_TO_EXPIRY' } else { 'BLOCKED_RESET_UI_AMBIGUOUS' }
             UsageMatched = $true
+            MeterSummary = $meterSummary
             ExpiryText = $expiryMatches[0].Name
-            CandidateCount = $nearButtons.Count
+            CandidateCount = $buttonMatches.Count
         }
     }
 
     return [pscustomobject]@{
         Blocker = ''
         UsageMatched = $true
-        ExpiryText = $expiryMatches[0].Name
-        Button = $nearButtons[0]
+        MeterSummary = $meterSummary
+        ExpiryText = $buttonMatches[0].Expiry.Name
+        Button = $buttonMatches[0].Button
         CandidateCount = 1
     }
 }
 
+$selectedWindow = $windowCandidates[0]
 $expiryTokens = Get-ExpiryTokens $ResetExpiresAtUtc
-$selectedWindow = $null
-$selectedSnapshot = $null
-$target = $null
-
-foreach ($candidate in $windowCandidates) {
-    $snapshot = Get-ElementSnapshot (Get-Elements $candidate.Element)
-    $candidateTarget = Find-Target $snapshot $expiryTokens
-    if (-not $candidateTarget.Blocker) {
-        if ($null -ne $selectedWindow) {
-            Block 'BLOCKED_RESET_MULTIPLE_MATCHING_WINDOWS' @{
-                desktopInteractive = $true
-                appWindowFound = $true
-                usageSurfaceMatched = $true
-            }
-        }
-        $selectedWindow = $candidate
-        $selectedSnapshot = $snapshot
-        $target = $candidateTarget
-    }
-}
-
-if ($null -eq $selectedWindow) {
-    $first = $windowCandidates[0]
-    $firstSnapshot = Get-ElementSnapshot (Get-Elements $first.Element)
-    $firstTarget = Find-Target $firstSnapshot $expiryTokens
-    Block $firstTarget.Blocker @{
+$selectedSnapshot = Get-ProcessSnapshot $selectedWindow.ProcessId
+$target = Find-Target $selectedSnapshot $expiryTokens
+if ($target.Blocker) {
+    Block $target.Blocker @{
         desktopInteractive = $true
         appWindowFound = $true
-        usageSurfaceMatched = [bool]$firstTarget.UsageMatched
-        matchedWindow = Convert-ToSafeText $first.Name 160
-        matchedExpiryText = Convert-ToSafeText $firstTarget.ExpiryText 160
-        candidateButtonCount = [int]($firstTarget.CandidateCount)
-        meterBefore = Get-MeterSummary $firstSnapshot
+        usageSurfaceMatched = [bool]$target.UsageMatched
+        matchedWindow = Convert-ToSafeText $selectedWindow.Name 160
+        matchedExpiryText = Convert-ToSafeText $target.ExpiryText 160
+        candidateButtonCount = [int]$target.CandidateCount
+        meterBefore = Convert-ToSafeText $target.MeterSummary 200
+        proofRefs = @('battle-bridge-ui-automation', 'same-process-usage-surface-scanned')
     }
 }
 
-$meterBefore = Get-MeterSummary $selectedSnapshot
+$meterBefore = Convert-ToSafeText $target.MeterSummary 200
 $buttonName = Convert-ToSafeText $target.Button.Name 120
 $expiryText = Convert-ToSafeText $target.ExpiryText 160
-
-if (-not $target.UsageMatched) {
-    Block 'BLOCKED_RESET_USAGE_SURFACE_NOT_PROVEN' @{
-        desktopInteractive = $true
-        appWindowFound = $true
-        usageSurfaceMatched = $false
-        matchedWindow = Convert-ToSafeText $selectedWindow.Name 160
-        matchedButton = $buttonName
-        matchedExpiryText = $expiryText
-    }
-}
 if (-not $meterBefore) {
     Block 'BLOCKED_RESET_METER_BEFORE_NOT_PROVEN' @{
         desktopInteractive = $true
@@ -279,6 +273,7 @@ if (-not $meterBefore) {
         matchedWindow = Convert-ToSafeText $selectedWindow.Name 160
         matchedButton = $buttonName
         matchedExpiryText = $expiryText
+        proofRefs = @('battle-bridge-ui-automation', 'same-process-usage-surface-scanned')
     }
 }
 
@@ -297,6 +292,7 @@ try {
             matchedButton = $buttonName
             matchedExpiryText = $expiryText
             meterBefore = $meterBefore
+            proofRefs = @('battle-bridge-ui-automation', 'same-process-usage-surface-scanned')
         }
     }
 
@@ -313,16 +309,17 @@ try {
         pressAttempted = $true
         pressCount = 1
         error = Convert-ToSafeText $_.Exception.Message 300
+        proofRefs = @('battle-bridge-ui-automation', 'same-process-usage-surface-scanned', 'single-press-attempted-no-retry')
     }
 }
 
 Start-Sleep -Seconds 8
-$afterSnapshot = Get-ElementSnapshot (Get-Elements $selectedWindow.Element)
+$afterSnapshot = Get-ProcessSnapshot $selectedWindow.ProcessId
 $meterAfter = Get-MeterSummary $afterSnapshot
 $afterTarget = Find-Target $afterSnapshot $expiryTokens
 $resetControlDisappeared = $afterTarget.Blocker -in @('BLOCKED_RESET_EXPIRY_NOT_VISIBLE', 'BLOCKED_RESET_BUTTON_NOT_FOUND', 'BLOCKED_RESET_BUTTON_NOT_BOUND_TO_EXPIRY')
 $meterChanged = [bool]($meterBefore -and $meterAfter -and $meterBefore -ne $meterAfter)
-$meterRestored = $meterChanged -or $resetControlDisappeared
+$meterRestored = $meterChanged
 
 if (-not $meterRestored) {
     Block 'BLOCKED_RESET_CONFIRMATION_NOT_PROVEN' @{
@@ -337,8 +334,8 @@ if (-not $meterRestored) {
         pressAttempted = $true
         pressCount = 1
         meterRestored = $false
-        resetControlDisappeared = $false
-        proofRefs = @('battle-bridge-ui-automation', 'single-press-attempted-no-retry')
+        resetControlDisappeared = [bool]$resetControlDisappeared
+        proofRefs = @('battle-bridge-ui-automation', 'same-process-usage-surface-scanned', 'single-press-attempted-no-retry')
     }
 }
 
@@ -360,5 +357,5 @@ Write-Outcome ([ordered]@{
     pressCount = 1
     meterRestored = $true
     resetControlDisappeared = [bool]$resetControlDisappeared
-    proofRefs = @('battle-bridge-ui-automation', 'single-press-confirmed')
+    proofRefs = @('battle-bridge-ui-automation', 'same-process-usage-surface-scanned', 'single-press-confirmed', 'meter-change-confirmed')
 }) 0

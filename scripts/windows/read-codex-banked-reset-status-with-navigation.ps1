@@ -51,8 +51,11 @@ function Write-BlockedStatus([string]$Blocker, [object]$Navigation = $null) {
         matchedWindow = Convert-ToSafeText (Get-PropertyValue $Navigation 'matchedWindow' '') 160
         matchedProfileControl = Convert-ToSafeText (Get-PropertyValue $Navigation 'matchedProfileControl' '') 120
         matchedUsageControl = Convert-ToSafeText (Get-PropertyValue $Navigation 'matchedUsageControl' '') 160
+        matchedUsageLabel = Convert-ToSafeText (Get-PropertyValue $Navigation 'matchedUsageLabel' '') 160
+        usageControlResolution = Convert-ToSafeText (Get-PropertyValue $Navigation 'usageControlResolution' '') 80
         profileCandidates = @((Get-PropertyValue $Navigation 'profileCandidates' @()) | ForEach-Object { Convert-ToSafeText $_ 120 })
         usageCandidates = @((Get-PropertyValue $Navigation 'usageCandidates' @()) | ForEach-Object { Convert-ToSafeText $_ 120 })
+        usageLabelCandidates = @((Get-PropertyValue $Navigation 'usageLabelCandidates' @()) | ForEach-Object { Convert-ToSafeText $_ 120 })
         proofRefs = @(Get-PropertyValue $Navigation 'proofRefs' @('codex-usage-panel-fixed-navigation'))
         arbitraryShellAllowed = $false
         arbitraryBrowserAutomationAllowed = $false
@@ -90,6 +93,8 @@ $payload | Add-Member -NotePropertyName profileMenuOpened -NotePropertyValue ([b
 $payload | Add-Member -NotePropertyName usagePanelOpened -NotePropertyValue ([bool](Get-PropertyValue $navigation 'usagePanelOpened' $false)) -Force
 $payload | Add-Member -NotePropertyName matchedProfileControl -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'matchedProfileControl' '') 120) -Force
 $payload | Add-Member -NotePropertyName matchedUsageControl -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'matchedUsageControl' '') 160) -Force
+$payload | Add-Member -NotePropertyName matchedUsageLabel -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'matchedUsageLabel' '') 160) -Force
+$payload | Add-Member -NotePropertyName usageControlResolution -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'usageControlResolution' '') 80) -Force
 $proofRefs = @($payload.proofRefs) + @(Get-PropertyValue $navigation 'proofRefs' @())
 $payload | Add-Member -NotePropertyName proofRefs -NotePropertyValue @($proofRefs | Select-Object -Unique) -Force
 [Console]::Out.WriteLine(($payload | ConvertTo-Json -Depth 8 -Compress))

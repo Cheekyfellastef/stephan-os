@@ -6,11 +6,15 @@ on:
       - 'scripts/windows/codex-banked-reset-ui-navigation.psm1'
       - 'scripts/windows/read-codex-banked-reset-status-with-navigation.ps1'
       - 'scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1'
+      - 'scripts/windows/read-codex-banked-reset-status.ps1'
+      - 'scripts/windows/invoke-codex-banked-reset-ui.ps1'
       - 'shared/agents/codexBankedResetStatusBattleBridgeReader.mjs'
       - 'shared/agents/codexBankedResetStatusBattleBridgeReader.test.mjs'
       - 'shared/agents/codexBankedResetBattleBridgeExecutor.mjs'
       - 'shared/agents/codexBankedResetBattleBridgeExecutor.test.mjs'
       - 'shared/agents/codexBankedResetFixedNavigation.test.mjs'
+      - 'shared/agents/codexBankedResetTelemetryMirror.mjs'
+      - 'shared/agents/codexBankedResetTelemetryMirror.test.mjs'
       - '.github/workflows/codex-reset-fixed-navigation.yml'
   workflow_dispatch:
 
@@ -34,7 +38,9 @@ jobs:
           $files = @(
             'scripts/windows/codex-banked-reset-ui-navigation.psm1',
             'scripts/windows/read-codex-banked-reset-status-with-navigation.ps1',
-            'scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1'
+            'scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1',
+            'scripts/windows/read-codex-banked-reset-status.ps1',
+            'scripts/windows/invoke-codex-banked-reset-ui.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null

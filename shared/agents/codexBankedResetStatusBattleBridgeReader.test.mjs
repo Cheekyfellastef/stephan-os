@@ -61,14 +61,16 @@ test('fails closed outside Windows', () => {
   assert.equal(result.blocker, 'WINDOWS_REQUIRED');
 });
 
-test('normalizes only read-only usage-surface proof as success', () => {
+test('normalizes only read-only usage-surface proof as success and preserves labeled ancestry', () => {
   const success = normalizeCodexBankedResetStatusResult({
     ok: true,
     finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
     observedAtUtc: '2026-07-20T22:31:00.000Z',
     matchedWindow: 'ChatGPT - Codex Usage',
     matchedProfileControl: 'Profile menu',
-    matchedUsageControl: '1 reset available',
+    matchedUsageControl: '',
+    matchedUsageLabel: '1 reset available',
+    usageControlResolution: 'labeled-ancestor',
     navigationAttempted: true,
     profileMenuOpened: true,
     usagePanelOpened: true,
@@ -84,6 +86,8 @@ test('normalizes only read-only usage-surface proof as success', () => {
   assert.equal(success.ok, true);
   assert.equal(success.readOnly, true);
   assert.equal(success.usagePanelOpened, true);
+  assert.equal(success.matchedUsageLabel, '1 reset available');
+  assert.equal(success.usageControlResolution, 'labeled-ancestor');
   assert.equal(success.expiryTexts[0], 'Banked reset expires 25 Jul 2026');
 
   for (const override of [
@@ -104,7 +108,7 @@ test('normalizes only read-only usage-surface proof as success', () => {
   }
 });
 
-test('executes exactly once and returns bounded status proof', () => {
+test('executes exactly once and returns bounded labeled status proof', () => {
   let calls = 0;
   const result = readCodexBankedResetStatusOnBattleBridge(command(), {
     platform: 'win32',
@@ -126,6 +130,8 @@ test('executes exactly once and returns bounded status proof', () => {
           navigationAttempted: true,
           profileMenuOpened: true,
           usagePanelOpened: true,
+          matchedUsageLabel: '1 reset available',
+          usageControlResolution: 'labeled-ancestor',
           meterSummary: 'Codex weekly usage remaining 0%',
           expiryTexts: ['Banked reset expires 25 Jul 2026'],
           resetButtons: ['Use reset'],
@@ -138,4 +144,6 @@ test('executes exactly once and returns bounded status proof', () => {
   assert.equal(result.ok, true);
   assert.equal(result.pressCount, 0);
   assert.equal(result.usagePanelOpened, true);
+  assert.equal(result.matchedUsageLabel, '1 reset available');
+  assert.equal(result.usageControlResolution, 'labeled-ancestor');
 });

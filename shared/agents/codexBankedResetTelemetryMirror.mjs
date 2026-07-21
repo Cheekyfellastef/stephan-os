@@ -81,6 +81,16 @@ export function projectCodexResetStatusReceipt(receipt = {}) {
     completedAt: safeTimestamp(receipt.completedAt),
     observedAtUtc: safeTimestamp(result.observedAtUtc),
     matchedWindow: safeText(result.matchedWindow, 160),
+    matchedProfileControl: safeText(result.matchedProfileControl, 120),
+    matchedUsageControl: safeText(result.matchedUsageControl, 160),
+    matchedUsageLabel: safeText(result.matchedUsageLabel, 160),
+    usageControlResolution: safeText(result.usageControlResolution, 80),
+    navigationAttempted: result.navigationAttempted === true,
+    profileMenuOpened: result.profileMenuOpened === true,
+    usagePanelOpened: result.usagePanelOpened === true,
+    profileCandidates: safeTextList(result.profileCandidates, { limit: 10, itemLimit: 120 }),
+    usageCandidates: safeTextList(result.usageCandidates, { limit: 10, itemLimit: 120 }),
+    usageLabelCandidates: safeTextList(result.usageLabelCandidates, { limit: 10, itemLimit: 120 }),
     meterSummary: safeText(result.meterSummary, 300),
     expiryTexts: safeTextList(result.expiryTexts),
     resetButtons: safeTextList(result.resetButtons, { itemLimit: 120 }),
@@ -105,8 +115,7 @@ export function projectCodexResetExecutionReceipt(receipt = {}) {
   const resetControlDisappeared = result.resetControlDisappeared === true;
   const meterBefore = safeText(result.meterBefore, 200);
   const meterAfter = safeText(result.meterAfter, 200);
-  const confirmationEvidencePresent = result.confirmationEvidencePresent === true
-    || (Boolean(meterBefore) && (Boolean(meterAfter) || resetControlDisappeared));
+  const confirmationEvidencePresent = Boolean(meterBefore) && Boolean(meterAfter) && meterBefore !== meterAfter;
   const confirmed = result.ok === true
     && result.finalVerdict === 'CODEX_BANKED_RESET_CONFIRMED'
     && pressAttempted
@@ -127,6 +136,13 @@ export function projectCodexResetExecutionReceipt(receipt = {}) {
     completedAt: safeTimestamp(receipt.completedAt || result.completedAtUtc),
     observedAtUtc: safeTimestamp(result.observedAtUtc),
     matchedWindow: safeText(result.matchedWindow, 160),
+    matchedProfileControl: safeText(result.matchedProfileControl, 120),
+    matchedUsageControl: safeText(result.matchedUsageControl, 160),
+    matchedUsageLabel: safeText(result.matchedUsageLabel, 160),
+    usageControlResolution: safeText(result.usageControlResolution, 80),
+    navigationAttempted: result.navigationAttempted === true,
+    profileMenuOpened: result.profileMenuOpened === true,
+    usagePanelOpened: result.usagePanelOpened === true,
     matchedButton: safeText(result.matchedButton, 120),
     matchedExpiryText: safeText(result.matchedExpiryText, 160),
     meterBefore,

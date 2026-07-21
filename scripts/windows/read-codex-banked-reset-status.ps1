@@ -75,7 +75,7 @@ foreach ($window in $topWindows) {
         try { $processName = (Get-Process -Id $processId -ErrorAction Stop).ProcessName } catch { continue }
         if ($allowedProcessNames -notcontains $processName) { continue }
         if ($windowName -notmatch '(?i)codex|chatgpt|openai') { continue }
-        $windowCandidates += [pscustomobject]@{ Element = $window; Name = $windowName; ProcessName = $processName }
+        $windowCandidates += [pscustomobject]@{ Element = $window; Name = $windowName; ProcessName = $processName; ProcessId = $processId }
     } catch { continue }
 }
 
@@ -85,49 +85,47 @@ if ($windowCandidates.Count -eq 0) {
         appWindowFound = $false
     }
 }
+if ($windowCandidates.Count -ne 1) {
+    Block 'BLOCKED_RESET_STATUS_MULTIPLE_APP_WINDOWS' @{
+        desktopInteractive = $true
+        appWindowFound = $true
+    }
+}
 
-function Get-Snapshot([System.Windows.Automation.AutomationElement]$Window) {
-    $elements = $Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $trueCondition)
+function Get-SurfaceSnapshot([System.Windows.Automation.AutomationElement]$Surface) {
+    $elements = $Surface.FindAll([System.Windows.Automation.TreeScope]::Descendants, $trueCondition)
     $items = @()
     foreach ($element in $elements) {
         try {
             $name = Convert-ToSafeText $element.Current.Name 220
             if (-not $name) { continue }
+            $typeName = Convert-ToSafeText $element.Current.ControlType.ProgrammaticName 100
             $items += [pscustomobject]@{
                 Name = $name
-                Type = Convert-ToSafeText $element.Current.ControlType.ProgrammaticName 100
+                Type = $typeName
                 Enabled = [bool]$element.Current.IsEnabled
                 Offscreen = [bool]$element.Current.IsOffscreen
             }
         } catch { continue }
     }
-    return $items
+    return @($items)
 }
 
-$matching = @()
-foreach ($candidate in $windowCandidates) {
-    $snapshot = Get-Snapshot $candidate.Element
-    $usageMatches = @($snapshot | Where-Object { $_.Name -match '(?i)usage|remaining|meter|limit|banked reset|rate.limit reset' })
-    if ($usageMatches.Count -eq 0) { continue }
-    $matching += [pscustomobject]@{ Window = $candidate; Snapshot = $snapshot }
-}
-
-if ($matching.Count -eq 0) {
-    Block 'BLOCKED_RESET_STATUS_USAGE_SURFACE_NOT_FOUND' @{
-        desktopInteractive = $true
-        appWindowFound = $true
+function Get-ProcessSnapshot([int]$ProcessId) {
+    $items = @()
+    foreach ($surface in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $trueCondition)) {
+        try {
+            if ([int]$surface.Current.ProcessId -ne $ProcessId) { continue }
+        } catch {
+            continue
+        }
+        $items += @(Get-SurfaceSnapshot $surface)
     }
-}
-if ($matching.Count -gt 1) {
-    Block 'BLOCKED_RESET_STATUS_MULTIPLE_USAGE_WINDOWS' @{
-        desktopInteractive = $true
-        appWindowFound = $true
-        usageSurfaceMatched = $true
-    }
+    return @($items)
 }
 
-$selected = $matching[0]
-$snapshot = $selected.Snapshot
+$selected = $windowCandidates[0]
+$snapshot = Get-ProcessSnapshot $selected.ProcessId
 $meterTexts = @($snapshot | Where-Object {
     $_.Name -match '\b\d{1,3}\s*%' -and $_.Name -match '(?i)usage|remaining|meter|limit|codex|weekly|five.day|5.day'
 } | Select-Object -ExpandProperty Name -Unique -First 6)
@@ -135,12 +133,50 @@ $expiryTexts = @($snapshot | Where-Object {
     $_.Name -match '(?i)expire|expiry|expires|banked reset|rate.limit reset'
 } | Select-Object -ExpandProperty Name -Unique -First 12)
 $resetButtons = @($snapshot | Where-Object {
-    $_.Type -eq 'ControlType.Button' -and $_.Enabled -and -not $_.Offscreen -and
-    $_.Name -match '(?i)\b(redeem|apply|use|reset)\b'
+    $_.Type -match 'ControlType\.(Button|MenuItem|Hyperlink|ListItem)' -and $_.Enabled -and -not $_.Offscreen -and
+    $_.Name -match '(?i)\b(redeem|apply|use|reset)\b' -and
+    $_.Name -notmatch '(?i)billing|purchase|buy credits|add credits|auto.?top.?up'
 } | Select-Object -ExpandProperty Name -Unique -First 12)
 $activeTask = @($snapshot | Where-Object {
     $_.Name -match '(?i)(codex|task|job).*(running|working|in progress)|running.*(codex|task|job)'
 }).Count -gt 0
+
+if ($meterTexts.Count -eq 0) {
+    Block 'BLOCKED_RESET_STATUS_METER_NOT_FOUND' @{
+        desktopInteractive = $true
+        appWindowFound = $true
+        usageSurfaceMatched = $false
+        matchedWindow = Convert-ToSafeText $selected.Name 160
+        expiryTexts = @($expiryTexts | ForEach-Object { Convert-ToSafeText $_ 220 })
+        resetButtons = @($resetButtons | ForEach-Object { Convert-ToSafeText $_ 120 })
+        activeCodexTask = [bool]$activeTask
+        proofRefs = @('battle-bridge-ui-automation-read-only', 'same-process-usage-surface-scanned')
+    }
+}
+if ($expiryTexts.Count -eq 0) {
+    Block 'BLOCKED_RESET_STATUS_EXPIRY_NOT_FOUND' @{
+        desktopInteractive = $true
+        appWindowFound = $true
+        usageSurfaceMatched = $true
+        matchedWindow = Convert-ToSafeText $selected.Name 160
+        meterSummary = Convert-ToSafeText ($meterTexts -join ' | ') 300
+        resetButtons = @($resetButtons | ForEach-Object { Convert-ToSafeText $_ 120 })
+        activeCodexTask = [bool]$activeTask
+        proofRefs = @('battle-bridge-ui-automation-read-only', 'same-process-usage-surface-scanned')
+    }
+}
+if ($resetButtons.Count -eq 0) {
+    Block 'BLOCKED_RESET_STATUS_BUTTON_NOT_FOUND' @{
+        desktopInteractive = $true
+        appWindowFound = $true
+        usageSurfaceMatched = $true
+        matchedWindow = Convert-ToSafeText $selected.Name 160
+        meterSummary = Convert-ToSafeText ($meterTexts -join ' | ') 300
+        expiryTexts = @($expiryTexts | ForEach-Object { Convert-ToSafeText $_ 220 })
+        activeCodexTask = [bool]$activeTask
+        proofRefs = @('battle-bridge-ui-automation-read-only', 'same-process-usage-surface-scanned')
+    }
+}
 
 Write-Outcome ([ordered]@{
     ok = $true
@@ -150,10 +186,10 @@ Write-Outcome ([ordered]@{
     desktopInteractive = $true
     appWindowFound = $true
     usageSurfaceMatched = $true
-    matchedWindow = Convert-ToSafeText $selected.Window.Name 160
+    matchedWindow = Convert-ToSafeText $selected.Name 160
     meterSummary = Convert-ToSafeText ($meterTexts -join ' | ') 300
     expiryTexts = @($expiryTexts | ForEach-Object { Convert-ToSafeText $_ 220 })
     resetButtons = @($resetButtons | ForEach-Object { Convert-ToSafeText $_ 120 })
     activeCodexTask = [bool]$activeTask
-    proofRefs = @('battle-bridge-ui-automation-read-only', 'codex-usage-surface-observed')
+    proofRefs = @('battle-bridge-ui-automation-read-only', 'same-process-usage-surface-scanned', 'codex-usage-surface-observed')
 }) 0
