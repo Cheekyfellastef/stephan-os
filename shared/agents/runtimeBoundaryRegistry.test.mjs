@@ -20,6 +20,15 @@ test('runtime roots honour explicit configuration', () => {
   assert.equal(defaultOpenClawWorkspaceRoot({ env, homeDir: '/ignored' }), path.resolve('/tmp/openclaw-workspace'));
 });
 
+test('OpenClaw workspace precedence matches the live ignition supervisor', () => {
+  const env = {
+    STEPHANOS_SHARED_WORKSPACE: '/tmp/live-ignition-workspace',
+    STEPHANOS_OPENCLAW_WORKSPACE: '/tmp/fallback-openclaw-workspace',
+  };
+  assert.equal(defaultOpenClawWorkspaceRoot({ env }), path.resolve('/tmp/live-ignition-workspace'));
+  assert.equal(getRuntimePath('dreams', { env }), path.resolve('/tmp/live-ignition-workspace/memory'));
+});
+
 test('runtime path adapter resolves approved keys beneath their authoritative roots', () => {
   const env = {
     STEPHANOS_RUNTIME_ROOT: '/tmp/stephanos-runtime',
