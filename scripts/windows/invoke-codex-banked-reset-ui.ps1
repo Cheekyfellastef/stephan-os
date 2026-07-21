@@ -166,9 +166,13 @@ function Get-MeterSummary($Snapshot) {
 
 function Find-Target($Snapshot, [string[]]$ExpiryTokens) {
     $usageMatches = @($Snapshot | Where-Object { $_.Name -match '(?i)usage|remaining|meter|limit|banked reset|rate.limit reset' })
+    if ($usageMatches.Count -eq 0) {
+        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_USAGE_SURFACE_NOT_PROVEN'; UsageMatched = $false }
+    }
+
     $activeTaskMatches = @($Snapshot | Where-Object { $_.Name -match '(?i)(codex|task|job).*(running|working|in progress)|running.*(codex|task|job)' })
     if ($activeTaskMatches.Count -gt 0) {
-        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_ACTIVE_CODEX_TASK'; UsageMatched = $usageMatches.Count -gt 0 }
+        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_ACTIVE_CODEX_TASK'; UsageMatched = $true }
     }
 
     $expiryMatches = @($Snapshot | Where-Object {
@@ -176,7 +180,7 @@ function Find-Target($Snapshot, [string[]]$ExpiryTokens) {
         ($ExpiryTokens | Where-Object { $name -like "*$_*" }).Count -gt 0
     })
     if ($expiryMatches.Count -eq 0) {
-        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_EXPIRY_NOT_VISIBLE'; UsageMatched = $usageMatches.Count -gt 0 }
+        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_EXPIRY_NOT_VISIBLE'; UsageMatched = $true }
     }
 
     $buttons = @($Snapshot | Where-Object {
@@ -184,15 +188,14 @@ function Find-Target($Snapshot, [string[]]$ExpiryTokens) {
         $_.Name -match '(?i)\b(redeem|apply|use|reset)\b'
     })
     if ($buttons.Count -eq 0) {
-        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_BUTTON_NOT_FOUND'; UsageMatched = $usageMatches.Count -gt 0; ExpiryText = $expiryMatches[0].Name }
+        return [pscustomobject]@{ Blocker = 'BLOCKED_RESET_BUTTON_NOT_FOUND'; UsageMatched = $true; ExpiryText = $expiryMatches[0].Name }
     }
 
     $nearButtons = @()
     foreach ($button in $buttons) {
         foreach ($expiry in $expiryMatches) {
             $verticalDistance = [Math]::Abs((($button.Top + $button.Bottom) / 2) - (($expiry.Top + $expiry.Bottom) / 2))
-            $horizontalOverlap = [Math]::Min($button.Right, $expiry.Right) - [Math]::Max($button.Left, $expiry.Left)
-            if ($verticalDistance -le 240 -or $horizontalOverlap -ge -80) {
+            if ($verticalDistance -le 180) {
                 $nearButtons += $button
                 break
             }
@@ -202,7 +205,7 @@ function Find-Target($Snapshot, [string[]]$ExpiryTokens) {
     if ($nearButtons.Count -ne 1) {
         return [pscustomobject]@{
             Blocker = if ($nearButtons.Count -eq 0) { 'BLOCKED_RESET_BUTTON_NOT_BOUND_TO_EXPIRY' } else { 'BLOCKED_RESET_UI_AMBIGUOUS' }
-            UsageMatched = $usageMatches.Count -gt 0
+            UsageMatched = $true
             ExpiryText = $expiryMatches[0].Name
             CandidateCount = $nearButtons.Count
         }
@@ -210,7 +213,7 @@ function Find-Target($Snapshot, [string[]]$ExpiryTokens) {
 
     return [pscustomobject]@{
         Blocker = ''
-        UsageMatched = $usageMatches.Count -gt 0
+        UsageMatched = $true
         ExpiryText = $expiryMatches[0].Name
         Button = $nearButtons[0]
         CandidateCount = 1
@@ -258,6 +261,27 @@ $meterBefore = Get-MeterSummary $selectedSnapshot
 $buttonName = Convert-ToSafeText $target.Button.Name 120
 $expiryText = Convert-ToSafeText $target.ExpiryText 160
 
+if (-not $target.UsageMatched) {
+    Block 'BLOCKED_RESET_USAGE_SURFACE_NOT_PROVEN' @{
+        desktopInteractive = $true
+        appWindowFound = $true
+        usageSurfaceMatched = $false
+        matchedWindow = Convert-ToSafeText $selectedWindow.Name 160
+        matchedButton = $buttonName
+        matchedExpiryText = $expiryText
+    }
+}
+if (-not $meterBefore) {
+    Block 'BLOCKED_RESET_METER_BEFORE_NOT_PROVEN' @{
+        desktopInteractive = $true
+        appWindowFound = $true
+        usageSurfaceMatched = $true
+        matchedWindow = Convert-ToSafeText $selectedWindow.Name 160
+        matchedButton = $buttonName
+        matchedExpiryText = $expiryText
+    }
+}
+
 try {
     $patternObject = $null
     $hasInvoke = $target.Button.Element.TryGetCurrentPattern(
@@ -268,7 +292,7 @@ try {
         Block 'BLOCKED_RESET_BUTTON_NOT_INVOCABLE' @{
             desktopInteractive = $true
             appWindowFound = $true
-            usageSurfaceMatched = [bool]$target.UsageMatched
+            usageSurfaceMatched = $true
             matchedWindow = Convert-ToSafeText $selectedWindow.Name 160
             matchedButton = $buttonName
             matchedExpiryText = $expiryText
@@ -281,7 +305,7 @@ try {
     Block 'BLOCKED_RESET_PRESS_FAILED' @{
         desktopInteractive = $true
         appWindowFound = $true
-        usageSurfaceMatched = [bool]$target.UsageMatched
+        usageSurfaceMatched = $true
         matchedWindow = Convert-ToSafeText $selectedWindow.Name 160
         matchedButton = $buttonName
         matchedExpiryText = $expiryText
@@ -304,7 +328,7 @@ if (-not $meterRestored) {
     Block 'BLOCKED_RESET_CONFIRMATION_NOT_PROVEN' @{
         desktopInteractive = $true
         appWindowFound = $true
-        usageSurfaceMatched = [bool]$target.UsageMatched
+        usageSurfaceMatched = $true
         matchedWindow = Convert-ToSafeText $selectedWindow.Name 160
         matchedButton = $buttonName
         matchedExpiryText = $expiryText
@@ -326,7 +350,7 @@ Write-Outcome ([ordered]@{
     completedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     desktopInteractive = $true
     appWindowFound = $true
-    usageSurfaceMatched = [bool]$target.UsageMatched
+    usageSurfaceMatched = $true
     matchedWindow = Convert-ToSafeText $selectedWindow.Name 160
     matchedButton = $buttonName
     matchedExpiryText = $expiryText
