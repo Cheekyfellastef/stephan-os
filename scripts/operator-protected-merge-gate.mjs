@@ -7,8 +7,9 @@ import {
   PROTECTED_APPROVAL_MARKER,
   PROTECTED_REVIEW_MARKER,
   buildProtectedApprovalReceipt,
-  buildProtectedSecurityReviewReceipt,
   extractJsonObjects,
+  parseIndependentReviewSessionId,
+  validateIndependentReviewWorkflowRun,
   validateProtectedOperatorMergeEvidence,
   validateProtectedOperatorMergePrerequisites,
 } from '../shared/agents/operatorMergeApprovalGate.mjs';
@@ -105,7 +106,6 @@ const branch = String(event?.pull_request?.head?.ref || '').trim();
 const baseBranch = String(event?.pull_request?.base?.ref || '').trim();
 const runId = integer(process.env.GITHUB_RUN_ID);
 const runAttempt = integer(process.env.GITHUB_RUN_ATTEMPT);
-const expectedReviewerSessionId = `github-actions-run-${runId}-attempt-${runAttempt}`;
 if (!owner || !repo || !prNumber || !/^[a-f0-9]{40}$/.test(sourceHead) || !branch || baseBranch !== 'main') {
   fail('Pull request target identity is incomplete or unsafe.', { repository, prNumber, sourceHead, branch, baseBranch });
 }
@@ -117,7 +117,7 @@ function collectRawEvidence() {
   const workflowRun = api(`repos/${owner}/${repo}/actions/runs/${runId}`);
   const workflowRunsPayload = api(`repos/${owner}/${repo}/actions/runs?head_sha=${sourceHead}&per_page=100`);
   const comments = flattenPages(api(`repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`, { paginate: true }));
-  const threadQuery = `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}`;
+  const threadQuery = `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}`;
   const threadPayload = api('graphql', {
     method: 'POST',
     fields: [
@@ -127,7 +127,11 @@ function collectRawEvidence() {
       ['number', prNumber, true],
     ],
   });
-  const threads = threadPayload?.data?.repository?.pullRequest?.reviewThreads?.nodes || [];
+  const reviewThreads = threadPayload?.data?.repository?.pullRequest?.reviewThreads;
+  if (!reviewThreads || reviewThreads.pageInfo?.hasNextPage) {
+    fail('Review-thread evidence is missing or exceeds the bounded first page.');
+  }
+  const threads = reviewThreads.nodes || [];
   return {
     environment,
     pullRequest,
@@ -139,23 +143,58 @@ function collectRawEvidence() {
   };
 }
 
-function receiptMatchesCurrentRun(candidate, kind) {
-  if (candidate?.kind !== kind) return false;
-  if (integer(candidate.prNumber) !== prNumber) return false;
-  if (String(candidate.sourceHead || '').toLowerCase() !== sourceHead) return false;
-  if (kind === 'stephanos.provider-neutral.review') {
-    return candidate.reviewerSessionId === expectedReviewerSessionId;
-  }
-  return integer(candidate.workflowRunId) === runId
+function approvalReceiptMatchesCurrentRun(candidate) {
+  return candidate?.kind === 'stephanos.protected-operator-approval'
+    && integer(candidate.prNumber) === prNumber
+    && String(candidate.sourceHead || '').toLowerCase() === sourceHead
+    && integer(candidate.workflowRunId) === runId
     && integer(candidate.workflowRunAttempt) === runAttempt;
 }
 
-function matchingBotComment(comments, marker, kind) {
-  for (const comment of comments) {
+function matchingApprovalComment(comments) {
+  for (const comment of [...comments].reverse()) {
     if (String(comment?.user?.login || '') !== actionsBotLogin) continue;
-    if (!String(comment?.body || '').includes(marker)) continue;
-    const receipt = extractJsonObjects(comment.body).find((candidate) => receiptMatchesCurrentRun(candidate, kind));
+    if (!String(comment?.body || '').includes(PROTECTED_APPROVAL_MARKER)) continue;
+    const receipt = extractJsonObjects(comment.body).find(approvalReceiptMatchesCurrentRun);
     if (receipt) return { comment, receipt };
+  }
+  return null;
+}
+
+function independentReviewCandidate(comment) {
+  if (String(comment?.user?.login || '') !== actionsBotLogin) return null;
+  if (!String(comment?.body || '').includes(PROTECTED_REVIEW_MARKER)) return null;
+  const receipt = extractJsonObjects(comment.body).find((candidate) => (
+    candidate?.kind === 'stephanos.provider-neutral.review'
+      && integer(candidate.prNumber) === prNumber
+      && String(candidate.sourceHead || '').toLowerCase() === sourceHead
+  ));
+  const identity = parseIndependentReviewSessionId(receipt?.reviewerSessionId);
+  return receipt && identity ? { comment, receipt, identity } : null;
+}
+
+function loadIndependentReview(comments) {
+  for (const comment of [...comments].reverse()) {
+    const candidate = independentReviewCandidate(comment);
+    if (!candidate) continue;
+    const reviewWorkflowRun = api(`repos/${owner}/${repo}/actions/runs/${candidate.identity.workflowRunId}`);
+    const jobsPayload = api(`repos/${owner}/${repo}/actions/runs/${candidate.identity.workflowRunId}/jobs?per_page=100`);
+    const reviewWorkflowJobs = jobsPayload?.jobs || [];
+    const workflowValidation = validateIndependentReviewWorkflowRun(reviewWorkflowRun, reviewWorkflowJobs, {
+      repository,
+      prNumber,
+      expectedHead: sourceHead,
+      workflowRunId: candidate.identity.workflowRunId,
+      workflowRunAttempt: candidate.identity.workflowRunAttempt,
+    });
+    if (workflowValidation.valid) {
+      return {
+        ...candidate,
+        reviewWorkflowRun,
+        reviewWorkflowJobs,
+        workflowValidation,
+      };
+    }
   }
   return null;
 }
@@ -167,7 +206,7 @@ function postComment(body) {
   });
 }
 
-function evidenceInput(raw, trustedReviewReceipt) {
+function evidenceInput(raw, independentReview) {
   return {
     repository,
     prNumber,
@@ -179,9 +218,11 @@ function evidenceInput(raw, trustedReviewReceipt) {
     workflowRun: raw.workflowRun,
     workflowRuns: raw.workflowRuns,
     unresolvedThreadCount: raw.unresolvedThreadCount,
-    trustedReviewReceipt,
-    workflowRunId: runId,
-    workflowRunAttempt: runAttempt,
+    trustedReviewReceipt: independentReview?.receipt,
+    reviewWorkflowRun: independentReview?.reviewWorkflowRun,
+    reviewWorkflowJobs: independentReview?.reviewWorkflowJobs,
+    reviewWorkflowRunId: independentReview?.identity?.workflowRunId,
+    reviewWorkflowRunAttempt: independentReview?.identity?.workflowRunAttempt,
   };
 }
 
@@ -190,48 +231,23 @@ if (mode === 'approve') {
     fail('Approval evidence may be issued only by the protected environment gate job.', { job: process.env.GITHUB_JOB });
   }
 
-  let raw = collectRawEvidence();
+  const raw = collectRawEvidence();
   const prerequisites = validateProtectedOperatorMergePrerequisites(evidenceInput(raw, null));
   if (prerequisites.finalVerdict !== 'PROTECTED_OPERATOR_PREREQUISITES_READY') {
     fail('Protected operator prerequisites are incomplete or stale.', { prerequisites });
   }
 
-  let protectedReview = matchingBotComment(
-    raw.comments,
-    PROTECTED_REVIEW_MARKER,
-    'stephanos.provider-neutral.review',
-  );
-  if (!protectedReview) {
-    const reviewReceipt = buildProtectedSecurityReviewReceipt({
-      repository,
-      prNumber,
-      sourceHead,
-      branch,
-      workflowRunId: runId,
-      workflowRunAttempt: runAttempt,
-      timestampUtc: new Date().toISOString(),
-    });
-    const reviewBody = `${PROTECTED_REVIEW_MARKER}\n## GitHub-protected high-risk security review passed\n\n\`\`\`json\n${JSON.stringify(reviewReceipt, null, 2)}\n\`\`\`\n\nThis clean specialist receipt was created by trusted default-branch GitHub Actions code only after the protected human environment released the job. PR comments and controller-authored JSON cannot satisfy this gate.`;
-    postComment(reviewBody);
-    raw = collectRawEvidence();
-    protectedReview = matchingBotComment(
-      raw.comments,
-      PROTECTED_REVIEW_MARKER,
-      'stephanos.provider-neutral.review',
-    );
+  const independentReview = loadIndependentReview(raw.comments);
+  if (!independentReview) {
+    fail('A clean authenticated independent exact-head security review is missing. The operator environment may not synthesize it.');
   }
-  if (!protectedReview) fail('Trusted GitHub Actions security review receipt was not durably observable.');
 
-  const verdict = validateProtectedOperatorMergeEvidence(evidenceInput(raw, protectedReview.receipt));
+  const verdict = validateProtectedOperatorMergeEvidence(evidenceInput(raw, independentReview));
   if (verdict.finalVerdict !== 'PROTECTED_OPERATOR_MERGE_READY') {
     fail('Protected operator approval evidence is incomplete or stale.', { verdict });
   }
 
-  const existingApproval = matchingBotComment(
-    raw.comments,
-    PROTECTED_APPROVAL_MARKER,
-    'stephanos.protected-operator-approval',
-  );
+  const existingApproval = matchingApprovalComment(raw.comments);
   if (!existingApproval) {
     const approvalReceipt = buildProtectedApprovalReceipt({
       verdict,
@@ -239,18 +255,20 @@ if (mode === 'approve') {
       workflowRunAttempt: runAttempt,
       approvedAtUtc: new Date().toISOString(),
     });
-    const approvalBody = `${PROTECTED_APPROVAL_MARKER}\n## GitHub-protected operator approval passed\n\n\`\`\`json\n${JSON.stringify(approvalReceipt, null, 2)}\n\`\`\`\n\nThis receipt was produced by trusted default-branch GitHub Actions code only after the protected environment released the job. It is bound to this PR, workflow run and exact head.`;
+    const approvalBody = `${PROTECTED_APPROVAL_MARKER}\n## GitHub-protected operator approval passed\n\n\`\`\`json\n${JSON.stringify(approvalReceipt, null, 2)}\n\`\`\`\n\nThis receipt was produced by trusted default-branch GitHub Actions code only after the protected environment released the job. It authorises merge for this PR, workflow run and exact head only. The independent security review was produced by a separate earlier workflow run.`;
     postComment(approvalBody);
   }
 
   emit({
-    finalStatus: 'PROTECTED_REVIEW_AND_OPERATOR_APPROVAL_RECORDED',
+    finalStatus: 'INDEPENDENT_REVIEW_AND_OPERATOR_APPROVAL_RECORDED',
     repository,
     prNumber,
     sourceHead,
     workflowRunId: runId,
     workflowRunAttempt: runAttempt,
-    protectedReviewReceipt: protectedReview.receipt,
+    independentReviewWorkflowRunId: independentReview.identity.workflowRunId,
+    independentReviewWorkflowRunAttempt: independentReview.identity.workflowRunAttempt,
+    independentReviewReceipt: independentReview.receipt,
   });
 }
 
@@ -264,22 +282,12 @@ if (!gateJob || gateJob.status !== 'completed' || gateJob.conclusion !== 'succes
 }
 
 const raw = collectRawEvidence();
-const protectedReview = matchingBotComment(
-  raw.comments,
-  PROTECTED_REVIEW_MARKER,
-  'stephanos.provider-neutral.review',
-);
-const protectedApproval = matchingBotComment(
-  raw.comments,
-  PROTECTED_APPROVAL_MARKER,
-  'stephanos.protected-operator-approval',
-);
-if (!protectedReview) fail('Same-run GitHub Actions protected security review receipt is missing.');
+const independentReview = loadIndependentReview(raw.comments);
+const protectedApproval = matchingApprovalComment(raw.comments);
+if (!independentReview) fail('Authenticated independent exact-head security review receipt is missing.');
 if (!protectedApproval) fail('Same-run GitHub Actions protected operator approval receipt is missing.');
 
-const immediatelyBeforeMerge = validateProtectedOperatorMergeEvidence(
-  evidenceInput(raw, protectedReview.receipt),
-);
+const immediatelyBeforeMerge = validateProtectedOperatorMergeEvidence(evidenceInput(raw, independentReview));
 if (immediatelyBeforeMerge.finalVerdict !== 'PROTECTED_OPERATOR_MERGE_READY') {
   fail('Exact-head evidence changed after protected approval.', { verdict: immediatelyBeforeMerge });
 }
@@ -297,7 +305,7 @@ if (merged?.merged !== true || String(merged?.head?.sha || '').toLowerCase() !==
 }
 
 emit({
-  schemaVersion: 'stephanos.protected-operator-merge-completion.v2',
+  schemaVersion: 'stephanos.protected-operator-merge-completion.v3',
   finalStatus: 'MERGED',
   repository,
   prNumber,
@@ -305,7 +313,8 @@ emit({
   mergeCommit: merged.merge_commit_sha,
   workflowRunId: runId,
   workflowRunAttempt: runAttempt,
-  protectedReviewCommentId: integer(protectedReview.comment.id),
+  independentReviewCommentId: integer(independentReview.comment.id),
+  independentReviewWorkflowRunId: independentReview.identity.workflowRunId,
   protectedApprovalCommentId: integer(protectedApproval.comment.id),
   environment: OPERATOR_MERGE_ENVIRONMENT,
 });
