@@ -35,16 +35,23 @@ test('trusted gate runs from pull_request_target and checks out only default-bra
   assert.match(workflow, /operator-approved-exact-head-merge/);
 });
 
-test('only the GitHub Actions protected gate script contains exact-head merge authority', async () => {
+test('only the protected GitHub Actions script can issue trusted review and merge receipts', async () => {
   const source = await readFile(protectedMergeScript, 'utf8');
   assert.match(source, /GITHUB_ACTIONS !== 'true'/);
   assert.match(source, /GITHUB_EVENT_NAME !== 'pull_request_target'/);
   assert.match(source, /OPERATOR_MERGE_GATE_JOB/);
+  assert.match(source, /OPERATOR_MERGE_EXECUTOR_JOB/);
   assert.match(source, /github-actions\[bot\]/);
+  assert.match(source, /PROTECTED_REVIEW_MARKER/);
+  assert.match(source, /buildProtectedSecurityReviewReceipt/);
+  assert.match(source, /matchingBotComment/);
+  assert.match(source, /candidate\.workflowRunId/);
+  assert.match(source, /candidate\.workflowRunAttempt/);
   assert.match(source, /validateProtectedOperatorMergeEvidence/);
   assert.match(source, /actions\/runs\/\$\{runId\}\/jobs/);
   assert.match(source, /--match-head-commit/);
   assert.match(source, /'pr', 'merge'/);
+  assert.doesNotMatch(source, /reviewBodies/);
   assert.doesNotMatch(source, /approvalReceipt/);
   assert.doesNotMatch(source, /nonce/);
 });
