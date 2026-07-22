@@ -2,12 +2,18 @@ import { analyzeIndependentSecurityReview } from './operatorMergeApprovalGate.mj
 
 export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   'scripts/operator-protected-merge-gate-v2.mjs',
+  'scripts/operator-protected-merge-head-status-v1.mjs',
   'scripts/independent-merge-security-review-v2.mjs',
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+  'shared/agents/operatorMergeHeadStatusV1.mjs',
 ]);
 
 const OPERATOR_EXECUTOR_PATHS = Object.freeze([
   'scripts/operator-protected-merge-gate-v2.mjs',
+]);
+
+const HEAD_STATUS_EXECUTOR_PATHS = Object.freeze([
+  'scripts/operator-protected-merge-head-status-v1.mjs',
 ]);
 
 const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
@@ -16,6 +22,10 @@ const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
 
 const BASE_BINDING_PATHS = Object.freeze([
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+]);
+
+const HEAD_STATUS_VALIDATOR_PATHS = Object.freeze([
+  'shared/agents/operatorMergeHeadStatusV1.mjs',
 ]);
 
 function text(value) {
@@ -88,6 +98,25 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
     }
   }
 
+  for (const path of HEAD_STATUS_EXECUTOR_PATHS.filter((item) => changedFiles.includes(item))) {
+    const patch = diffForPath(diff, path);
+    const additions = addedLines(patch);
+    if (/['"]pr['"]\s*,\s*['"](?:ready|merge)['"]|\bgh\s+pr\s+(?:ready|merge)\b|repos\/[^^\s]+\/contents|git\s+(?:push|reset|clean|rebase)|\b(?:eval|execSync)\s*\(|shell\s*:\s*true/.test(additions)) {
+      findings.push(finding(
+        'head-status-executor-gained-unrelated-mutation-authority',
+        'The exact-head status publisher may only publish its fixed status context and may not gain merge, content-write, destructive Git or arbitrary command authority.',
+        path,
+      ));
+    }
+    if (/process\.argv\[(?:3|[4-9][0-9]*)\]|process\.env\.(?:HEAD_STATUS_CONTEXT|HEAD_STATUS_SHA)|context\s*:\s*process\.env|sha\s*:\s*process\.env/.test(additions)) {
+      findings.push(finding(
+        'head-status-executor-gained-arbitrary-identity-input',
+        'The exact-head status publisher must derive SHA and context from trusted event data and fixed source constants.',
+        path,
+      ));
+    }
+  }
+
   for (const path of INDEPENDENT_REVIEWER_PATHS.filter((item) => changedFiles.includes(item))) {
     const patch = diffForPath(diff, path);
     const additions = addedLines(patch);
@@ -111,6 +140,18 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
       findings.push(finding(
         'base-binding-module-gained-command-authority',
         'The exact-base binding module must remain a pure validation and receipt-binding surface.',
+        path,
+      ));
+    }
+  }
+
+  for (const path of HEAD_STATUS_VALIDATOR_PATHS.filter((item) => changedFiles.includes(item))) {
+    const patch = diffForPath(diff, path);
+    const additions = addedLines(patch);
+    if (/node:child_process|\bspawnSync\b|\bexecSync\b|\beval\s*\(|\bgh\b|fetch\s*\(|git\s+(?:push|reset|clean|rebase)/.test(additions)) {
+      findings.push(finding(
+        'head-status-validator-gained-command-authority',
+        'The exact-head status contract must remain a pure validation and payload-construction surface.',
         path,
       ));
     }
