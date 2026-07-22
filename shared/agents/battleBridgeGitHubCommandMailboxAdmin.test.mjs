@@ -138,14 +138,14 @@ test('main protection readback preserves every previous required context and app
   assert.equal(validateMainProtection(protection({
     required_status_checks: {
       strict: true,
-      contexts: ['Build Stephanos UI', OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK],
+      contexts: ['Build Stephanos UI', 'Independent Security Review', OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK],
       checks: [],
     },
   }), { previousStatusChecks }).blocker, 'MAIN_EXISTING_REQUIRED_CHECK_APP_BINDING_DROPPED');
   assert.equal(validateMainProtection(protection({
     required_status_checks: {
       strict: true,
-      contexts: ['Build Stephanos UI', OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK],
+      contexts: ['Build Stephanos UI', 'Independent Security Review', OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK],
       checks: [{ context: 'Independent Security Review', app_id: 99999 }],
     },
   }), { previousStatusChecks }).blocker, 'MAIN_EXISTING_REQUIRED_CHECK_APP_BINDING_DROPPED');
