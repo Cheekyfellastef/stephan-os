@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateOperatorMergeHeadStatusReadback } from './operatorMergeHeadStatusV1.mjs';
 
 export const OPERATOR_MERGE_PROTECTION_OPERATION = 'ACTIVATE_OPERATOR_MERGE_PROTECTION';
 export const OPERATOR_MERGE_PROTECTION_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -142,9 +143,19 @@ function requiredReviewersRule(environment = {}) {
   return list(environment?.protection_rules).filter((rule) => rule?.type === 'required_reviewers');
 }
 
-export function validateOperatorMergeEnvironment(environment = {}) {
+function normalizedWaitTimer(value) {
+  const numeric = Number(value ?? 0);
+  return Number.isInteger(numeric) && numeric >= 0 ? numeric : null;
+}
+
+export function validateOperatorMergeEnvironment(environment = {}, { expectedWaitTimer = 0 } = {}) {
   if (environment?.name !== OPERATOR_MERGE_PROTECTION_ENVIRONMENT) return fail('ENVIRONMENT_NAME_MISMATCH');
   if (environment?.can_admins_bypass !== false) return fail('ENVIRONMENT_ADMIN_BYPASS_NOT_DISABLED');
+  const observedWaitTimer = normalizedWaitTimer(environment?.wait_timer);
+  const requiredWaitTimer = normalizedWaitTimer(expectedWaitTimer);
+  if (observedWaitTimer === null || requiredWaitTimer === null || observedWaitTimer !== requiredWaitTimer) {
+    return fail('ENVIRONMENT_WAIT_TIMER_NOT_PRESERVED', { expectedWaitTimer: requiredWaitTimer, observedWaitTimer });
+  }
   const rules = requiredReviewersRule(environment);
   if (rules.length !== 1) return fail('ENVIRONMENT_REQUIRED_REVIEWER_RULE_COUNT_INVALID', { count: rules.length });
   const rule = rules[0];
@@ -165,6 +176,8 @@ export function validateOperatorMergeEnvironment(environment = {}) {
     name: environment.name,
     reviewer: reviewer.reviewer.login,
     reviewerType: reviewer.type,
+    waitTimer: observedWaitTimer,
+    waitTimerPreserved: true,
     preventSelfReview: false,
     canAdminsBypass: false,
     protectedBranches: true,
@@ -346,9 +359,9 @@ function canarySuffix(requestId) {
     .slice(-48) || 'bounded-canary';
 }
 
-function environmentBody(userId) {
+function environmentBody(userId, preservedWaitTimer) {
   return {
-    wait_timer: 0,
+    wait_timer: preservedWaitTimer,
     prevent_self_review: false,
     can_admins_bypass: false,
     reviewers: [{ type: 'User', id: userId }],
@@ -416,13 +429,19 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
   }
 
   const environmentPath = `repos/${OPERATOR_MERGE_PROTECTION_REPOSITORY}/environments/${encodeURIComponent(OPERATOR_MERGE_PROTECTION_ENVIRONMENT)}`;
+  const environmentBeforeResponse = await request({ path: environmentPath });
+  if (!environmentBeforeResponse?.ok && Number(environmentBeforeResponse?.status || 0) !== 404) {
+    return fail('ENVIRONMENT_READ_FAILED', { status: Number(environmentBeforeResponse?.status || 0) });
+  }
+  const preservedWaitTimer = normalizedWaitTimer(environmentBeforeResponse?.ok ? environmentBeforeResponse.data?.wait_timer : 0);
+  if (preservedWaitTimer === null) return fail('ENVIRONMENT_WAIT_TIMER_INVALID');
   const environmentUpdate = await requestOrFail(request, {
-    method: 'PUT', path: environmentPath, body: environmentBody(userId),
+    method: 'PUT', path: environmentPath, body: environmentBody(userId, preservedWaitTimer),
   }, 'ENVIRONMENT_UPDATE_FAILED');
   if (!environmentUpdate.ok) return environmentUpdate;
   const environmentRead = await requestOrFail(request, { path: environmentPath }, 'ENVIRONMENT_READBACK_FAILED');
   if (!environmentRead.ok) return environmentRead;
-  const environment = validateOperatorMergeEnvironment(environmentRead.data);
+  const environment = validateOperatorMergeEnvironment(environmentRead.data, { expectedWaitTimer: preservedWaitTimer });
   if (!environment.ok) return environment;
 
   const protectionPath = `repos/${OPERATOR_MERGE_PROTECTION_REPOSITORY}/branches/${OPERATOR_MERGE_PROTECTION_BRANCH}/protection`;
@@ -521,21 +540,40 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
         if (!jobs.ok) return jobs;
         const gateJob = list(jobs.data?.jobs).find((job) => job?.name === OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK);
         if (gateJob?.status === 'waiting') {
-          waitingJobId = Number(gateJob.id || 0);
-          canaryProof = freeze({
-            prNumber: canaryPrNumber,
-            branch: canaryBranch,
-            baseSha,
-            headSha: canaryHead,
-            workflowRunId,
-            waitingJobId,
-            waitingJobName: gateJob.name,
-            waitingJobStatus: gateJob.status,
-            requiredStatusCheck: OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK,
-            draft: true,
-            merged: false,
+          const expectedRunUrl = `https://github.com/${OPERATOR_MERGE_PROTECTION_REPOSITORY}/actions/runs/${workflowRunId}`;
+          const statuses = await request({
+            path: `repos/${OPERATOR_MERGE_PROTECTION_REPOSITORY}/commits/${canaryHead}/statuses?per_page=100`,
           });
-          break;
+          const headStatus = statuses?.ok
+            ? validateOperatorMergeHeadStatusReadback(statuses.data, {
+              expectedState: 'pending',
+              expectedSha: canaryHead,
+              expectedRunUrl,
+            })
+            : null;
+          if (headStatus?.ok) {
+            waitingJobId = Number(gateJob.id || 0);
+            canaryProof = freeze({
+              prNumber: canaryPrNumber,
+              branch: canaryBranch,
+              baseSha,
+              headSha: canaryHead,
+              workflowRunId,
+              waitingJobId,
+              waitingJobName: gateJob.name,
+              waitingJobStatus: gateJob.status,
+              requiredStatusCheck: OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK,
+              headStatus: freeze({
+                context: headStatus.context,
+                state: headStatus.state,
+                sha: headStatus.sha,
+                targetUrl: headStatus.targetUrl,
+              }),
+              draft: true,
+              merged: false,
+            });
+            break;
+          }
         }
         if (gateJob && ['in_progress', 'completed'].includes(gateJob.status)) {
           return fail('CANARY_NOT_HELD_FOR_OPERATOR_APPROVAL', {
@@ -545,7 +583,7 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
       }
       if (attempt < pollAttempts - 1) await sleep(pollDelayMs);
     }
-    if (!canaryProof) return fail('CANARY_WAITING_APPROVAL_NOT_OBSERVED', { canaryPrNumber, workflowRunId });
+    if (!canaryProof) return fail('CANARY_EXACT_HEAD_PENDING_STATUS_NOT_OBSERVED', { canaryPrNumber, workflowRunId, canaryHead });
   } finally {
     if (canaryPrNumber > 0) {
       const close = await request({
