@@ -14,6 +14,7 @@ export const OPERATOR_MERGE_PROTECTION_BOOTSTRAP_PR = 1580;
 export const OPERATOR_MERGE_PROTECTION_BOOTSTRAP_MERGE = 'e606ff30d3dc2e796357a3240604b412cb672a00';
 export const OPERATOR_MERGE_PROTECTION_RECEIPT_ISSUE = 1568;
 export const OPERATOR_MERGE_PROTECTION_WORKFLOW = 'operator-merge-approval-gate.yml';
+export const OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK = 'operator-approval-gate';
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -171,19 +172,34 @@ export function validateOperatorMergeEnvironment(environment = {}) {
   });
 }
 
+function uniqueStrings(values) {
+  return [...new Set(values.map(String).filter(Boolean))];
+}
+
+function requiredStatusCheckContexts(protection = {}) {
+  const current = protection?.required_status_checks;
+  return uniqueStrings([
+    ...list(current?.contexts),
+    ...list(current?.checks).map((check) => check?.context),
+  ]);
+}
+
 function statusChecks(existing = {}) {
   const current = existing?.required_status_checks;
-  if (!current) return null;
-  const contexts = list(current.contexts).map(String).filter(Boolean);
-  const checks = list(current.checks)
+  const contexts = uniqueStrings([
+    ...list(current?.contexts),
+    ...list(current?.checks).map((check) => check?.context),
+    OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK,
+  ]);
+  const checks = list(current?.checks)
     .map((check) => ({
       context: String(check?.context || ''),
       ...(Number.isInteger(check?.app_id) ? { app_id: check.app_id } : {}),
     }))
     .filter((check) => check.context);
   return {
-    strict: current.strict === true,
-    contexts: contexts.length ? contexts : checks.map((check) => check.context),
+    strict: true,
+    contexts,
     ...(checks.length ? { checks } : {}),
   };
 }
@@ -255,6 +271,10 @@ export function buildPreservingMainProtection(existing = {}) {
 export function validateMainProtection(protection = {}, { previousApprovalCount = 0 } = {}) {
   if (protection?.enforce_admins?.enabled !== true) return fail('MAIN_ADMIN_ENFORCEMENT_NOT_ENABLED');
   if (!protection?.required_pull_request_reviews) return fail('MAIN_PULL_REQUEST_REQUIREMENT_MISSING');
+  if (protection?.required_status_checks?.strict !== true
+    || !requiredStatusCheckContexts(protection).includes(OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK)) {
+    return fail('MAIN_REQUIRED_OPERATOR_GATE_CHECK_MISSING');
+  }
   if (protection?.allow_force_pushes?.enabled === true) return fail('MAIN_FORCE_PUSHES_ALLOWED');
   if (protection?.allow_deletions?.enabled === true) return fail('MAIN_DELETION_ALLOWED');
   const approvalCount = Number(protection.required_pull_request_reviews.required_approving_review_count || 0);
@@ -269,6 +289,8 @@ export function validateMainProtection(protection = {}, { previousApprovalCount 
     finalVerdict: 'MAIN_PROTECTION_VALID',
     enforceAdmins: true,
     pullRequestRequired: true,
+    requiredStatusCheck: OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK,
+    strictStatusChecks: true,
     approvingReviewCount: approvalCount,
     forcePushesAllowed: false,
     deletionsAllowed: false,
@@ -385,6 +407,7 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
   const suffix = canarySuffix(command.requestId);
   const canaryBranch = `canary/operator-merge-no-approval-${suffix}`;
   const canaryPath = `docs/canaries/operator-merge-no-approval-${suffix}.md`;
+  let canaryBranchCreated = false;
   let canaryPrNumber = 0;
   let canaryHead = '';
   let workflowRunId = 0;
@@ -406,6 +429,7 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
       body: { ref: `refs/heads/${canaryBranch}`, sha: baseSha },
     }, 'CANARY_BRANCH_CREATE_FAILED');
     if (!branchCreate.ok) return branchCreate;
+    canaryBranchCreated = true;
 
     const canaryContent = [
       '# Operator merge no-approval canary',
@@ -457,7 +481,7 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
           path: `repos/${OPERATOR_MERGE_PROTECTION_REPOSITORY}/actions/runs/${workflowRunId}/jobs?filter=latest&per_page=100`,
         }, 'CANARY_WORKFLOW_JOBS_READ_FAILED');
         if (!jobs.ok) return jobs;
-        const gateJob = list(jobs.data?.jobs).find((job) => job?.name === 'operator-approval-gate');
+        const gateJob = list(jobs.data?.jobs).find((job) => job?.name === OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK);
         if (gateJob?.status === 'waiting') {
           waitingJobId = Number(gateJob.id || 0);
           canaryProof = freeze({
@@ -469,6 +493,7 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
             waitingJobId,
             waitingJobName: gateJob.name,
             waitingJobStatus: gateJob.status,
+            requiredStatusCheck: OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK,
             draft: true,
             merged: false,
           });
@@ -492,7 +517,7 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
       });
       if (!close?.ok) cleanupBlocker = 'CANARY_PR_CLOSE_FAILED';
     }
-    if (canaryBranch) {
+    if (canaryBranchCreated) {
       const remove = await request({
         method: 'DELETE',
         path: `repos/${OPERATOR_MERGE_PROTECTION_REPOSITORY}/git/refs/heads/${canaryBranch}`,
