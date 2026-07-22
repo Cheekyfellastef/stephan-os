@@ -132,29 +132,36 @@ test('preserves a bounded retry count and sanitized navigation error without cha
   assert.equal(blocked.pressCount, 0);
 });
 
-test('suppresses secret-shaped exception telemetry before truncating a durable receipt result', () => {
-  const result = readCodexBankedResetStatusOnBattleBridge(command(), {
-    platform: 'win32',
-    repoRoot: tempRepo(),
-    now,
-    spawn: () => ({
-      status: 1,
-      stdout: JSON.stringify({
-        ok: false,
-        blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
-        finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
-        error: `${'x'.repeat(320)} session token`,
-        navigationRetryCount: 1,
-        pressAttempted: false,
-        pressCount: 0,
+test('suppresses secret and authorization diagnostics before durable receipt publication', () => {
+  for (const diagnostic of [
+    `${'x'.repeat(320)} session token`,
+    'Authorization: Bearer ghp_examplevalue',
+    'oauth grant failed for github_pat_examplevalue',
+    'AWS access key AKIA1234567890ABCDEF rejected',
+  ]) {
+    const result = readCodexBankedResetStatusOnBattleBridge(command(), {
+      platform: 'win32',
+      repoRoot: tempRepo(),
+      now,
+      spawn: () => ({
+        status: 1,
+        stdout: JSON.stringify({
+          ok: false,
+          blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
+          finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
+          error: diagnostic,
+          navigationRetryCount: 1,
+          pressAttempted: false,
+          pressCount: 0,
+        }),
+        stderr: '',
       }),
-      stderr: '',
-    }),
-  });
-  assert.equal(result.ok, false);
-  assert.equal(result.error, '');
-  assert.equal(result.pressAttempted, false);
-  assert.equal(result.pressCount, 0);
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, '');
+    assert.equal(result.pressAttempted, false);
+    assert.equal(result.pressCount, 0);
+  }
 });
 
 test('executes the fixed outer invocation exactly once and returns bounded labeled status proof', () => {
