@@ -11,11 +11,18 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
 const SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/:\-]{0,239}$/;
 const SECRET_PATTERN = /secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|\.env\b|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY/i;
+const DIAGNOSTIC_SECRET_PATTERN = /secret|token|session|password|credential|authorization|bearer|oauth|client[_ -]?secret|access[_ -]?key|private[_-]?key|api[_-]?key|x-api-key|x-auth-token|cookie|set-cookie|\.env\b|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|sk-[A-Za-z0-9]+|(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|ASCA)[A-Z0-9]{16}|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY/i;
 const ALLOWED_OPERATIONS = new Set([CODEX_BANKED_RESET_STATUS_OPERATION, CODEX_BANKED_RESET_OPERATION]);
 
 function safeText(value, limit = 300) {
   const text = String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!text || SECRET_PATTERN.test(text)) return '';
+  return text.slice(0, limit);
+}
+
+function safeDiagnosticText(value, limit = 300) {
+  const text = String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text || DIAGNOSTIC_SECRET_PATTERN.test(text)) return '';
   return text.slice(0, limit);
 }
 
@@ -99,7 +106,7 @@ export function projectCodexResetStatusReceipt(receipt = {}) {
     desktopInteractive: result.desktopInteractive === true,
     appWindowFound: result.appWindowFound === true,
     usageSurfaceMatched: result.usageSurfaceMatched === true,
-    error: safeText(result.error, 300),
+    error: safeDiagnosticText(result.error, 300),
     readOnly: true,
     pressAttempted,
     pressCount,
