@@ -298,6 +298,21 @@ export async function executeDreamRuntimeMigration({
   }
 
   const finalPlan = await planDreamRuntimeMigration({ repoRoot, env, homeDir, fsImpl });
+  if (!finalPlan.ok && finalPlan.blocker !== 'DREAM_MIGRATION_DESTINATION_CONFLICT') {
+    const blocker = finalPlan.blocker || 'DREAM_MIGRATION_FINAL_PLAN_BLOCKED';
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: blocker,
+      blocker,
+      boundary: plan,
+      revalidation: finalPlan,
+      copied: Object.freeze(copied),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
+
   const sourceStable = sourceSnapshotMatches(plan, finalPlan);
   if (!sourceStable) {
     return Object.freeze({
@@ -312,7 +327,7 @@ export async function executeDreamRuntimeMigration({
       destructiveGitOperationPerformed: false,
     });
   }
-  if (!finalPlan.ok || finalPlan.copyRequired !== 0 || finalPlan.conflicts !== 0) {
+  if (finalPlan.copyRequired !== 0 || finalPlan.conflicts !== 0) {
     const blocker = finalPlan.blocker || 'DREAM_MIGRATION_DESTINATION_CHANGED_DURING_COPY';
     return Object.freeze({
       ok: false,
