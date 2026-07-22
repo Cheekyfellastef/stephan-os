@@ -1,4 +1,4 @@
-export const OPERATOR_MERGE_HEAD_STATUS_CONTEXT = 'stephanos/operator-approval-gate';
+export const OPERATOR_MERGE_HEAD_STATUS_CONTEXT = 'operator-approval-gate';
 export const OPERATOR_MERGE_HEAD_STATUS_PENDING_JOB = 'operator-approval-head-status-pending';
 export const OPERATOR_MERGE_HEAD_STATUS_SUCCESS_JOB = 'operator-approval-head-status-success';
 export const OPERATOR_MERGE_HEAD_STATUS_GATE_JOB = 'operator-approval-gate';
