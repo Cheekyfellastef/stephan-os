@@ -8,6 +8,10 @@ import {
   CODEX_BANKED_RESET_STATUS_OPERATION,
   readCodexBankedResetStatusOnBattleBridge,
 } from './codexBankedResetStatusBattleBridgeReader.mjs';
+import {
+  OPERATOR_MERGE_PROTECTION_OPERATION,
+  activateOperatorMergeProtectionOnBattleBridge,
+} from './battleBridgeGitHubCommandMailboxAdmin.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -26,6 +30,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_MAILBOX_RECEIPT',
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+  OPERATOR_MERGE_PROTECTION_OPERATION,
   CODEX_BANKED_RESET_STATUS_OPERATION,
   CODEX_BANKED_RESET_OPERATION,
 ]);
@@ -228,6 +233,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readMailboxReceipt,
   runWorkerWatchdogAcceptance,
   runMonitorMultiplexerAcceptance,
+  activateOperatorMergeProtection = activateOperatorMergeProtectionOnBattleBridge,
   readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
   redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
 } = {}) {
@@ -242,6 +248,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
+    [OPERATOR_MERGE_PROTECTION_OPERATION]: activateOperatorMergeProtection,
     [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
     [CODEX_BANKED_RESET_OPERATION]: redeemBankedCodexReset,
   };
