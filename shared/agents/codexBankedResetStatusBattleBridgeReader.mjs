@@ -9,6 +9,7 @@ export const CODEX_BANKED_RESET_STATUS_EXECUTION_SURFACE = 'BATTLE_BRIDGE_AUTHEN
 
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const SECRET_PATTERN = /secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|\.env\b|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY/i;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 
 function blocked(blocker, details = {}) {
@@ -32,6 +33,11 @@ function sanitizeText(value, limit = 300) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, limit);
+}
+
+function sanitizeDiagnosticText(value, limit = 300) {
+  const text = sanitizeText(value, limit);
+  return text && !SECRET_PATTERN.test(text) ? text : '';
 }
 
 function safeTextList(value, { limit = 20, itemLimit = 220 } = {}) {
@@ -138,7 +144,7 @@ export function normalizeCodexBankedResetStatusResult(raw = {}, command = {}) {
     desktopInteractive: result.desktopInteractive === true,
     appWindowFound: result.appWindowFound === true,
     usageSurfaceMatched,
-    error: sanitizeText(result.error, 300),
+    error: sanitizeDiagnosticText(result.error, 300),
     readOnly: true,
     pressAttempted: false,
     pressCount: 0,
@@ -165,7 +171,7 @@ export function readCodexBankedResetStatusOnBattleBridge(command = {}, {
     timeout: 120_000,
     maxBuffer: MAX_OUTPUT_BYTES,
   });
-  if (result?.error) return blocked('RESET_STATUS_READER_PROCESS_FAILED', { error: sanitizeText(result.error.message, 300) });
+  if (result?.error) return blocked('RESET_STATUS_READER_PROCESS_FAILED', { error: sanitizeDiagnosticText(result.error.message, 300) });
   const stdout = String(result?.stdout || '');
   if (Buffer.byteLength(stdout, 'utf8') > MAX_OUTPUT_BYTES) return blocked('RESET_STATUS_READER_OUTPUT_TOO_LARGE');
   let parsed;
@@ -173,8 +179,8 @@ export function readCodexBankedResetStatusOnBattleBridge(command = {}, {
     parsed = JSON.parse(stdout || '{}');
   } catch (error) {
     return blocked('RESET_STATUS_READER_OUTPUT_INVALID', {
-      error: sanitizeText(error?.message, 300),
-      stderr: sanitizeText(result?.stderr, 500),
+      error: sanitizeDiagnosticText(error?.message, 300),
+      stderr: sanitizeDiagnosticText(result?.stderr, 500),
     });
   }
   const normalized = normalizeCodexBankedResetStatusResult(parsed, invocation.command);
