@@ -114,6 +114,16 @@ test('preloads UI Automation before importing the typed navigation module and co
   assert.match(executionWrapper, /BLOCKED_RESET_EXECUTOR_CORE_LAUNCH_FAILED/);
 });
 
+test('allows exactly one bounded retry only for read-only status navigation', () => {
+  assert.match(statusWrapper, /navigationRetryCount/);
+  assert.match(statusWrapper, /Start-Sleep -Milliseconds 350/);
+  assert.match(statusWrapper, /navigation-exception-retry-pass/);
+  assert.match(statusWrapper, /navigation-exception-retry-failed/);
+  assert.equal((statusWrapper.match(/Open-CodexUsagePanel/g) || []).length, 2);
+  assert.doesNotMatch(executionWrapper, /navigationRetryCount|navigation-exception-retry|Start-Sleep -Milliseconds 350/);
+  assert.equal((executionWrapper.match(/Open-CodexUsagePanel/g) || []).length, 1);
+});
+
 test('keeps the complete UIA chain in STA mode rather than explicitly noninteractive mode', () => {
   for (const source of [statusWrapper, executionWrapper, statusReader, executor]) {
     assert.match(source, /-Sta/);
