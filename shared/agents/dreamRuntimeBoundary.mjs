@@ -10,6 +10,7 @@ import {
 
 export const DREAM_RUNTIME_BOUNDARY_SCHEMA = 'stephanos.dream-runtime-boundary.v1';
 export const DREAM_RUNTIME_MIGRATION_APPROVAL = 'operator-approved-dream-migration';
+export const DREAM_RUNTIME_SECURE_COPY_CAPABILITY = 'stephanos.dream-runtime-secure-copy.v1';
 
 export const DREAM_RUNTIME_LEGACY_MAPPINGS = Object.freeze([
   Object.freeze({
@@ -230,12 +231,30 @@ function sourceSnapshotMatches(initialPlan, finalPlan) {
   return finalPlan.entries.every((entry) => initial.get(`${entry.mappingId}:${entry.relativePath}`) === entry.sourceSha256);
 }
 
+function secureCopyCapabilityIsValid(capability) {
+  return capability?.schemaVersion === DREAM_RUNTIME_SECURE_COPY_CAPABILITY
+    && capability?.descriptorBound === true
+    && capability?.noFollowAncestors === true
+    && typeof capability?.copyFileExclusive === 'function';
+}
+
+function secureCopyEvidenceIsValid(evidence, entry, approvedRoot) {
+  return evidence?.ok === true
+    && evidence?.schemaVersion === DREAM_RUNTIME_SECURE_COPY_CAPABILITY
+    && evidence?.descriptorBound === true
+    && evidence?.noFollowAncestors === true
+    && normalizeComparable(evidence?.sourcePath) === normalizeComparable(entry.sourcePath)
+    && normalizeComparable(evidence?.destinationPath) === normalizeComparable(entry.destinationPath)
+    && normalizeComparable(evidence?.approvedRoot) === normalizeComparable(approvedRoot);
+}
+
 export async function executeDreamRuntimeMigration({
   repoRoot,
   env = process.env,
   homeDir = os.homedir(),
   fsImpl = fs,
   operatorApproval = '',
+  secureCopyCapability = null,
   now = () => new Date(),
 } = {}) {
   if (operatorApproval !== DREAM_RUNTIME_MIGRATION_APPROVAL) {
@@ -258,6 +277,19 @@ export async function executeDreamRuntimeMigration({
       destructiveGitOperationPerformed: false,
     });
   }
+  if (plan.copyRequired > 0 && !secureCopyCapabilityIsValid(secureCopyCapability)) {
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_SECURE_COPY_UNAVAILABLE',
+      blocker: 'DREAM_MIGRATION_SECURE_COPY_UNAVAILABLE',
+      boundary: plan,
+      copied: Object.freeze([]),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+      nextOperatorAction: 'Run read-only plan mode only. Copy mode remains disabled until a descriptor-bound no-follow copier is supplied and verified.',
+    });
+  }
   const copied = [];
   try {
     for (const entry of plan.entries) {
@@ -266,7 +298,17 @@ export async function executeDreamRuntimeMigration({
       await assertNoSymbolicLinkInPath(destinationParent, fsImpl);
       await fsImpl.mkdir(destinationParent, { recursive: true });
       await assertNoSymbolicLinkInPath(entry.destinationPath, fsImpl);
-      await fsImpl.copyFile(entry.sourcePath, entry.destinationPath, fs.constants.COPYFILE_EXCL);
+      const secureCopyEvidence = await secureCopyCapability.copyFileExclusive({
+        sourcePath: entry.sourcePath,
+        destinationPath: entry.destinationPath,
+        approvedRoot: plan.dreamMemoryRoot,
+        expectedSourceSha256: entry.sourceSha256,
+      });
+      if (!secureCopyEvidenceIsValid(secureCopyEvidence, entry, plan.dreamMemoryRoot)) {
+        const error = new Error(`Secure Dream copy evidence was invalid for ${entry.destinationPath}`);
+        error.code = 'DREAM_MIGRATION_SECURE_COPY_EVIDENCE_INVALID';
+        throw error;
+      }
       await assertNoSymbolicLinkInPath(entry.destinationPath, fsImpl);
       const destinationSha256 = await sha256File(entry.destinationPath, { fsImpl });
       if (destinationSha256 !== entry.sourceSha256) {
@@ -281,7 +323,16 @@ export async function executeDreamRuntimeMigration({
           destructiveGitOperationPerformed: false,
         });
       }
-      copied.push(Object.freeze({ ...entry, destinationSha256, state: 'copied-and-verified' }));
+      copied.push(Object.freeze({
+        ...entry,
+        destinationSha256,
+        state: 'copied-and-verified',
+        secureCopy: Object.freeze({
+          schemaVersion: secureCopyEvidence.schemaVersion,
+          descriptorBound: true,
+          noFollowAncestors: true,
+        }),
+      }));
     }
   } catch (error) {
     const destinationRace = error?.code === 'EEXIST';
