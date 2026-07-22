@@ -164,7 +164,10 @@ $payload | Add-Member -NotePropertyName matchedProfileControl -NotePropertyValue
 $payload | Add-Member -NotePropertyName matchedUsageControl -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'matchedUsageControl' '') 160) -Force
 $payload | Add-Member -NotePropertyName matchedUsageLabel -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'matchedUsageLabel' '') 160) -Force
 $payload | Add-Member -NotePropertyName usageControlResolution -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'usageControlResolution' '') 80) -Force
-$payload | Add-Member -NotePropertyName error -NotePropertyValue (Convert-ToSafeDiagnosticText (Get-PropertyValue $navigation 'error' '') 300) -Force
+$navigationError = Convert-ToSafeDiagnosticText (Get-PropertyValue $navigation 'error' '') 300
+$coreError = Convert-ToSafeDiagnosticText (Get-PropertyValue $payload 'error' '') 300
+$effectiveError = if ($navigationError) { $navigationError } else { $coreError }
+$payload | Add-Member -NotePropertyName error -NotePropertyValue $effectiveError -Force
 $proofRefs = @($payload.proofRefs) + @(Get-PropertyValue $navigation 'proofRefs' @())
 $payload | Add-Member -NotePropertyName proofRefs -NotePropertyValue @($proofRefs | Select-Object -Unique) -Force
 [Console]::Out.WriteLine(($payload | ConvertTo-Json -Depth 8 -Compress))
