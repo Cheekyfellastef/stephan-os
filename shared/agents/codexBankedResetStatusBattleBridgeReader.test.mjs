@@ -132,7 +132,7 @@ test('preserves a bounded retry count and sanitized navigation error without cha
   assert.equal(blocked.pressCount, 0);
 });
 
-test('suppresses secret-shaped exception telemetry before returning a durable receipt result', () => {
+test('suppresses secret-shaped exception telemetry before truncating a durable receipt result', () => {
   const result = readCodexBankedResetStatusOnBattleBridge(command(), {
     platform: 'win32',
     repoRoot: tempRepo(),
@@ -143,7 +143,7 @@ test('suppresses secret-shaped exception telemetry before returning a durable re
         ok: false,
         blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
         finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
-        error: 'Bearer token abc123',
+        error: `${'x'.repeat(320)} session token`,
         navigationRetryCount: 1,
         pressAttempted: false,
         pressCount: 0,
