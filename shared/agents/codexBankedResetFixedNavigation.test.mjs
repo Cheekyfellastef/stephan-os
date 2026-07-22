@@ -123,6 +123,8 @@ test('allows exactly one bounded retry only for read-only status navigation', ()
   assert.match(statusWrapper, /\$script:SecretPattern/);
   assert.match(statusWrapper, /authorization\|bearer\|oauth/i);
   assert.match(statusReader, /authorization\|bearer\|oauth/i);
+  assert.match(statusWrapper, /AKIA\|ASIA/);
+  assert.match(statusReader, /AKIA\|ASIA/);
   assert.match(statusWrapper, /Add-Member -NotePropertyName error -NotePropertyValue \$firstNavigationError/);
   assert.match(statusWrapper, /\$payload \| Add-Member -NotePropertyName error -NotePropertyValue \(Convert-ToSafeDiagnosticText \(Get-PropertyValue \$navigation 'error' ''\) 300\) -Force/);
   const diagnosticStart = statusWrapper.indexOf('function Convert-ToSafeDiagnosticText');
