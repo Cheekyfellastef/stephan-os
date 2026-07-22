@@ -14,15 +14,16 @@ import {
 } from './battleBridgeGitHubCommandMailboxAdmin.mjs';
 
 function environment(waitTimer = 0) {
+  const protectionRules = [{
+    type: 'required_reviewers',
+    prevent_self_review: false,
+    reviewers: [{ type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } }],
+  }, { type: 'branch_policy' }];
+  if (waitTimer > 0) protectionRules.push({ type: 'wait_timer', wait_timer: waitTimer });
   return {
     name: OPERATOR_MERGE_PROTECTION_ENVIRONMENT,
-    wait_timer: waitTimer,
     can_admins_bypass: false,
-    protection_rules: [{
-      type: 'required_reviewers',
-      prevent_self_review: false,
-      reviewers: [{ type: 'User', reviewer: { login: 'Cheekyfellastef', id: 267490109 } }],
-    }, { type: 'branch_policy' }],
+    protection_rules: protectionRules,
     deployment_branch_policy: { protected_branches: true, custom_branch_policies: false },
   };
 }
