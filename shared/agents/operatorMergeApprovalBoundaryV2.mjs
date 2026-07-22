@@ -101,7 +101,7 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
   for (const path of HEAD_STATUS_EXECUTOR_PATHS.filter((item) => changedFiles.includes(item))) {
     const patch = diffForPath(diff, path);
     const additions = addedLines(patch);
-    if (/['"]pr['"]\s*,\s*['"](?:ready|merge)['"]|\bgh\s+pr\s+(?:ready|merge)\b|repos\/[^^\s]+\/contents|git\s+(?:push|reset|clean|rebase)|\b(?:eval|execSync)\s*\(|shell\s*:\s*true/.test(additions)) {
+    if (/['"]pr['"]\s*,\s*['"](?:ready|merge)['"]|\bgh\s+pr\s+(?:ready|merge)\b|repos\/[^\s]+\/contents|git\s+(?:push|reset|clean|rebase)|\b(?:eval|execSync)\s*\(|shell\s*:\s*true/.test(additions)) {
       findings.push(finding(
         'head-status-executor-gained-unrelated-mutation-authority',
         'The exact-head status publisher may only publish its fixed status context and may not gain merge, content-write, destructive Git or arbitrary command authority.',
