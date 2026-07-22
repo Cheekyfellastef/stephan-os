@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$script:SecretPattern = '(?i)secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|\.env\b|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY'
+$script:SecretPattern = '(?i)secret|token|session|password|credential|authorization|bearer|oauth|client[_ -]?secret|access[_ -]?key|private[_-]?key|api[_-]?key|x-api-key|x-auth-token|cookie|set-cookie|\.env\b|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|sk-[A-Za-z0-9]+|AKIA[A-Z0-9]{16}|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY'
 
 function Convert-ToSafeText([object]$Value, [int]$Limit = 220) {
     $text = [string]$Value
