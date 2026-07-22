@@ -150,3 +150,42 @@ test('migration blocks when a source changes during the copy window', async () =
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_CHANGED_DURING_COPY');
 });
+
+test('final revalidation preserves a destination symlink blocker before snapshot comparison', async (t) => {
+  const { repoRoot, env, root } = await fixture();
+  const outside = path.join(root, 'late-symlink-destination');
+  const destinationMemory = path.join(env.STEPHANOS_OPENCLAW_WORKSPACE, 'memory');
+  await fs.mkdir(outside, { recursive: true });
+
+  let copyCount = 0;
+  const fsImpl = {
+    ...fs,
+    async copyFile(source, destination, flags) {
+      await fs.copyFile(source, destination, flags);
+      copyCount += 1;
+      if (copyCount === 2) {
+        await fs.rm(destinationMemory, { recursive: true, force: true });
+        try {
+          await fs.symlink(outside, destinationMemory, 'dir');
+        } catch (error) {
+          if (error?.code === 'EPERM') {
+            t.skip('symlink creation not permitted');
+            return;
+          }
+          throw error;
+        }
+      }
+    },
+  };
+
+  const result = await executeDreamRuntimeMigration({
+    repoRoot,
+    env,
+    fsImpl,
+    operatorApproval: DREAM_RUNTIME_MIGRATION_APPROVAL,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_DESTINATION_SYMLINK_BLOCKED');
+  assert.equal(result.finalVerdict, 'DREAM_MIGRATION_DESTINATION_SYMLINK_BLOCKED');
+});
