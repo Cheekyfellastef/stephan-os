@@ -103,7 +103,7 @@ export function buildCodexBankedResetPowerShellInvocation(command = {}, {
     executable: 'powershell.exe',
     args: Object.freeze([
       '-NoProfile',
-      '-NonInteractive',
+      '-Sta',
       '-ExecutionPolicy', 'Bypass',
       '-File', scriptPath,
       '-RequestId', normalized.requestId,
