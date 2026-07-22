@@ -119,6 +119,9 @@ test('allows exactly one bounded retry only for read-only status navigation', ()
   assert.match(statusWrapper, /Start-Sleep -Milliseconds 350/);
   assert.match(statusWrapper, /navigation-exception-retry-pass/);
   assert.match(statusWrapper, /navigation-exception-retry-failed/);
+  assert.match(statusWrapper, /function Convert-ToSafeDiagnosticText/);
+  assert.match(statusWrapper, /\$script:SecretPattern/);
+  assert.match(statusWrapper, /Add-Member -NotePropertyName error -NotePropertyValue \$firstNavigationError/);
   assert.equal((statusWrapper.match(/Open-CodexUsagePanel/g) || []).length, 2);
   assert.doesNotMatch(executionWrapper, /navigationRetryCount|navigation-exception-retry|Start-Sleep -Milliseconds 350/);
   assert.equal((executionWrapper.match(/Open-CodexUsagePanel/g) || []).length, 1);
