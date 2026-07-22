@@ -12,8 +12,32 @@ concurrency:
 permissions: {}
 
 jobs:
+  operator-approval-head-status-pending:
+    name: operator-approval-head-status-pending
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Check out trusted default-branch status publisher
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Publish pending protected-approval status on the exact PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/operator-protected-merge-head-status-v1.mjs pending
+
   operator-approval-gate:
     name: operator-approval-gate
+    needs: [operator-approval-head-status-pending]
     runs-on: ubuntu-latest
     environment:
       name: operator-merge-approval
@@ -38,9 +62,33 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/operator-protected-merge-gate-v2.mjs approve
 
+  operator-approval-head-status-success:
+    name: operator-approval-head-status-success
+    needs: [operator-approval-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Check out trusted default-branch status publisher
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Publish successful protected-approval status on the exact PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/operator-protected-merge-head-status-v1.mjs success
+
   operator-approved-exact-head-merge:
     name: operator-approved-exact-head-merge
-    needs: [operator-approval-gate]
+    needs: [operator-approval-head-status-success]
     runs-on: ubuntu-latest
     permissions:
       actions: read
