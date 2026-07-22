@@ -12,6 +12,7 @@ const executionWrapper = read('scripts/windows/invoke-codex-banked-reset-ui-with
 const statusCore = read('scripts/windows/read-codex-banked-reset-status.ps1');
 const executionCore = read('scripts/windows/invoke-codex-banked-reset-ui.ps1');
 const statusReader = read('shared/agents/codexBankedResetStatusBattleBridgeReader.mjs');
+const telemetryMirror = read('shared/agents/codexBankedResetTelemetryMirror.mjs');
 const executor = read('shared/agents/codexBankedResetBattleBridgeExecutor.mjs');
 
 test('uses only the fixed profile to usage panel route', () => {
@@ -123,10 +124,15 @@ test('allows exactly one bounded retry only for read-only status navigation', ()
   assert.match(statusWrapper, /\$script:SecretPattern/);
   assert.match(statusWrapper, /authorization\|bearer\|oauth/i);
   assert.match(statusReader, /authorization\|bearer\|oauth/i);
+  assert.match(telemetryMirror, /authorization\|bearer\|oauth/i);
   assert.match(statusWrapper, /AKIA\|ASIA/);
   assert.match(statusReader, /AKIA\|ASIA/);
+  assert.match(telemetryMirror, /AKIA\|ASIA/);
   assert.match(statusWrapper, /Add-Member -NotePropertyName error -NotePropertyValue \$firstNavigationError/);
-  assert.match(statusWrapper, /\$payload \| Add-Member -NotePropertyName error -NotePropertyValue \(Convert-ToSafeDiagnosticText \(Get-PropertyValue \$navigation 'error' ''\) 300\) -Force/);
+  assert.match(statusWrapper, /\$navigationError = Convert-ToSafeDiagnosticText/);
+  assert.match(statusWrapper, /\$coreError = Convert-ToSafeDiagnosticText/);
+  assert.match(statusWrapper, /\$effectiveError = if \(\$navigationError\) \{ \$navigationError \} else \{ \$coreError \}/);
+  assert.match(telemetryMirror, /error: safeDiagnosticText\(result\.error, 300\)/);
   const diagnosticStart = statusWrapper.indexOf('function Convert-ToSafeDiagnosticText');
   const diagnosticEnd = statusWrapper.indexOf('function Get-PropertyValue');
   const diagnosticSource = statusWrapper.slice(diagnosticStart, diagnosticEnd);
