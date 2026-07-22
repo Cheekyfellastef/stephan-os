@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
   DREAM_RUNTIME_MIGRATION_APPROVAL,
+  DREAM_RUNTIME_SECURE_COPY_CAPABILITY,
   executeDreamRuntimeMigration,
   pathIsInside,
   planDreamRuntimeMigration,
@@ -30,6 +32,29 @@ async function fixture() {
       STEPHANOS_RUNTIME_ROOT: runtimeRoot,
     },
   };
+}
+
+function testSecureCopyCapability({ afterCopy = null, evidence = {} } = {}) {
+  return Object.freeze({
+    schemaVersion: DREAM_RUNTIME_SECURE_COPY_CAPABILITY,
+    descriptorBound: true,
+    noFollowAncestors: true,
+    async copyFileExclusive(input) {
+      await fs.mkdir(path.dirname(input.destinationPath), { recursive: true });
+      await fs.copyFile(input.sourcePath, input.destinationPath, fsConstants.COPYFILE_EXCL);
+      if (afterCopy) await afterCopy(input);
+      return Object.freeze({
+        ok: true,
+        schemaVersion: DREAM_RUNTIME_SECURE_COPY_CAPABILITY,
+        descriptorBound: true,
+        noFollowAncestors: true,
+        sourcePath: input.sourcePath,
+        destinationPath: input.destinationPath,
+        approvedRoot: input.approvedRoot,
+        ...evidence,
+      });
+    },
+  });
 }
 
 test('Dream runtime boundary resolves workspace-relative outputs outside Git', async () => {
@@ -64,6 +89,32 @@ test('migration plan inventories deterministic copy and hash evidence', async ()
   assert.equal(plan.entries.every((entry) => /^[0-9a-f]{64}$/.test(entry.sourceSha256)), true);
 });
 
+test('copy-required migration fails closed without a descriptor-bound no-follow copier', async () => {
+  const { repoRoot, env } = await fixture();
+  let unsafeCopyCalled = false;
+  const fsImpl = {
+    ...fs,
+    async copyFile() {
+      unsafeCopyCalled = true;
+      throw new Error('unsafe copy path must never run');
+    },
+  };
+  const result = await executeDreamRuntimeMigration({
+    repoRoot,
+    env,
+    fsImpl,
+    operatorApproval: DREAM_RUNTIME_MIGRATION_APPROVAL,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SECURE_COPY_UNAVAILABLE');
+  assert.equal(unsafeCopyCalled, false);
+  assert.equal(result.copied.length, 0);
+  await assert.rejects(
+    fs.lstat(path.join(env.STEPHANOS_OPENCLAW_WORKSPACE, 'memory', '.dreams', 'events.jsonl')),
+    { code: 'ENOENT' },
+  );
+});
+
 test('copy migration requires explicit approval and never removes source', async () => {
   const { repoRoot, env } = await fixture();
   const denied = await executeDreamRuntimeMigration({ repoRoot, env });
@@ -73,11 +124,13 @@ test('copy migration requires explicit approval and never removes source', async
     repoRoot,
     env,
     operatorApproval: DREAM_RUNTIME_MIGRATION_APPROVAL,
+    secureCopyCapability: testSecureCopyCapability(),
     now: () => new Date('2026-07-21T18:45:00.000Z'),
   });
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'DREAM_RUNTIME_COPY_HASH_VERIFIED');
   assert.equal(result.copied.length, 2);
+  assert.equal(result.copied.every((entry) => entry.secureCopy?.descriptorBound === true), true);
   assert.equal(result.sourceRemovalPerformed, false);
   assert.equal(await fs.readFile(path.join(repoRoot, 'memory', '.dreams', 'events.jsonl'), 'utf8'), '{"event":1}\n');
   assert.equal(await fs.readFile(path.join(env.STEPHANOS_OPENCLAW_WORKSPACE, 'memory', '.dreams', 'events.jsonl'), 'utf8'), '{"event":1}\n');
@@ -131,20 +184,18 @@ test('migration blocks when a source changes during the copy window', async () =
   const { repoRoot, env } = await fixture();
   const mutatedSource = path.join(repoRoot, 'memory', '.dreams', 'events.jsonl');
   let mutated = false;
-  const fsImpl = {
-    ...fs,
-    async copyFile(source, destination, flags) {
-      await fs.copyFile(source, destination, flags);
+  const secureCopyCapability = testSecureCopyCapability({
+    async afterCopy() {
       if (!mutated) {
         mutated = true;
         await fs.writeFile(mutatedSource, '{"event":2}\n');
       }
     },
-  };
+  });
   const result = await executeDreamRuntimeMigration({
     repoRoot,
     env,
-    fsImpl,
+    secureCopyCapability,
     operatorApproval: DREAM_RUNTIME_MIGRATION_APPROVAL,
   });
   assert.equal(result.ok, false);
@@ -159,10 +210,8 @@ test('final revalidation preserves a destination symlink blocker before snapshot
 
   let copyCount = 0;
   let symlinkCreated = true;
-  const fsImpl = {
-    ...fs,
-    async copyFile(source, destination, flags) {
-      await fs.copyFile(source, destination, flags);
+  const secureCopyCapability = testSecureCopyCapability({
+    async afterCopy() {
       copyCount += 1;
       if (copyCount === 2) {
         await fs.rm(destinationMemory, { recursive: true, force: true });
@@ -177,12 +226,12 @@ test('final revalidation preserves a destination symlink blocker before snapshot
         }
       }
     },
-  };
+  });
 
   const result = await executeDreamRuntimeMigration({
     repoRoot,
     env,
-    fsImpl,
+    secureCopyCapability,
     operatorApproval: DREAM_RUNTIME_MIGRATION_APPROVAL,
   });
 
