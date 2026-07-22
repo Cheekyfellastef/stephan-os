@@ -11,6 +11,29 @@ function number(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function nullableBoolean(value) {
+  if (value === true || value === false) return value;
+  return null;
+}
+
+function sha(value) {
+  const normalized = text(value).toLowerCase();
+  return /^[a-f0-9]{40}$/.test(normalized) ? normalized : null;
+}
+
+function integer(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function status(value) {
+  return text(value, 'unknown').toLowerCase();
+}
+
+function freeze(value) {
+  return Object.freeze(value);
+}
+
 export const GOAL_DASHBOARD_REFRESH_TRUTH = 'MANUAL_REFRESH_REQUIRED';
 export const GOAL_DASHBOARD_PROJECTION_SOURCE = 'static-goal-dashboard-seed';
 
@@ -87,12 +110,94 @@ export const STATIC_GOAL_DASHBOARD_GOALS = Object.freeze([
     proofIndex: 3,
     nextAction: 'Do not claim automated dispatch; use manual dispatch until integration capabilities are available.',
   }),
+  Object.freeze({
+    issue: '#1385',
+    title: 'Live Goal Dashboard index and merge update awareness',
+    status: 'Active',
+    currentOwner: 'GitHub-first ChatGPT',
+    nextOwner: 'CI and review',
+    handoffState: 'projection contract -> draft PR proof',
+    milestone: 'V2_CANONICAL_GOAL_INDEX_PROJECTION_READY',
+    operatorNeeded: 'No',
+    proofIndex: 1,
+    nextAction: 'Build the honest linked-PR projection contract and keep unavailable live sources explicitly unknown.',
+  }),
+  Object.freeze({
+    issue: '#1568',
+    title: 'Canonical execution receipts for implementation workers',
+    status: 'Remediation isolated',
+    currentOwner: 'Security repair lane',
+    nextOwner: 'Independent review',
+    handoffState: 'PR #1581 review repair -> exact-head approval',
+    milestone: 'APP_BOUND_REQUIRED_CHECK_REPAIR_PENDING',
+    operatorNeeded: 'No',
+    proofIndex: 0,
+    linkedPr: {
+      number: 1581,
+      state: 'open',
+      draft: false,
+      mergeable: true,
+      headSha: '4857085caa008e0bca60a9b5015fdd8a16b2e83e',
+      exactHeadMergeHold: 'blocked-by-unresolved-security-review',
+    },
+    nextAction: 'Repair PR #1581 independently without blocking unrelated programme building.',
+  }),
+  Object.freeze({
+    issue: '#1574',
+    title: 'Provider-neutral build and review continuity',
+    status: 'Queued',
+    currentOwner: 'Programme Completion Controller',
+    nextOwner: 'GitHub-first worker',
+    handoffState: 'queued policy goal -> later bounded implementation',
+    milestone: 'PROVIDER_NEUTRAL_CONTINUITY_QUEUED',
+    operatorNeeded: 'No',
+    proofIndex: 0,
+    nextAction: 'Keep this queued while the Goal Dashboard product lane advances.',
+  }),
 ]);
 
-export function buildGoalDashboardStatusProjection(input = {}) {
-  const liveGoalCandidates = Array.isArray(input.buildConcierge?.createdGoalCandidates) ? input.buildConcierge.createdGoalCandidates : [];
-  const goals = Array.isArray(input.goals) && input.goals.length ? input.goals : STATIC_GOAL_DASHBOARD_GOALS;
-  const normalizedGoals = goals.map((goal) => ({
+function normalizeLinkedPr(goal = {}) {
+  const linkedPr = goal.linkedPr || {};
+  return freeze({
+    number: integer(linkedPr.number ?? goal.prNumber),
+    state: status(linkedPr.state ?? goal.prState),
+    draft: linkedPr.draft === true || goal.prDraft === true,
+    mergeable: nullableBoolean(linkedPr.mergeable ?? goal.prMergeable),
+    headSha: sha(linkedPr.headSha ?? goal.headSha),
+    mergeSha: sha(linkedPr.mergeSha ?? goal.mergeSha),
+    exactHeadMergeHold: text(linkedPr.exactHeadMergeHold ?? goal.exactHeadMergeHold, 'unknown'),
+  });
+}
+
+function normalizeProof(goal = {}) {
+  const proof = goal.proof || {};
+  return freeze({
+    lastProofStatus: text(proof.lastProofStatus ?? goal.lastProofStatus, 'unknown'),
+    browserProof: text(proof.browserProof ?? goal.browserProof, 'unknown'),
+    automationReceipt: text(proof.automationReceipt ?? goal.automationReceipt, 'unknown'),
+  });
+}
+
+function normalizeTruth(goal = {}) {
+  const truth = goal.truth || {};
+  return freeze({
+    github: text(truth.github ?? goal.githubTruth, 'unknown'),
+    local: text(truth.local ?? goal.localTruth, 'unknown'),
+    automation: text(truth.automation ?? goal.automationTruth, 'unknown'),
+  });
+}
+
+function normalizeLastUpdated(goal = {}) {
+  const updated = goal.lastUpdated || {};
+  return freeze({
+    source: text(updated.source ?? goal.lastUpdatedSource, 'unknown'),
+    at: text(updated.at ?? goal.lastUpdatedAt, 'unknown'),
+  });
+}
+
+function normalizeGoal(goal = {}) {
+  const nextAction = text(goal.nextAction, 'Manual refresh required before claiming progress.');
+  return freeze({
     issue: text(goal.issue, 'untracked'),
     title: text(goal.title, 'Untitled goal'),
     status: text(goal.status, 'Unknown'),
@@ -102,21 +207,45 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     milestone: text(goal.milestone, 'unknown'),
     operatorNeeded: text(goal.operatorNeeded, 'unknown'),
     proofIndex: number(goal.proofIndex, 0),
-    nextAction: text(goal.nextAction, 'Manual refresh required before claiming progress.'),
-  }));
+    linkedPr: normalizeLinkedPr(goal),
+    proof: normalizeProof(goal),
+    truth: normalizeTruth(goal),
+    lastUpdated: normalizeLastUpdated(goal),
+    manualRefreshRequired: goal.manualRefreshRequired !== false,
+    nextAction,
+    nextOperatorAction: text(goal.nextOperatorAction, nextAction),
+  });
+}
+
+export function buildGoalDashboardStatusProjection(input = {}) {
+  const liveGoalCandidates = Array.isArray(input.buildConcierge?.createdGoalCandidates) ? input.buildConcierge.createdGoalCandidates : [];
+  const goals = Array.isArray(input.goals) && input.goals.length ? input.goals : STATIC_GOAL_DASHBOARD_GOALS;
+  const githubAdapterVerified = input.githubAdapter?.verified === true;
+  const localAdapterVerified = input.localAdapter?.verified === true;
+  const automationReceiptVerified = input.automationReceipt?.verified === true;
+  const manualRefreshRequired = !githubAdapterVerified || !localAdapterVerified;
+  const normalizedGoals = goals.map(normalizeGoal);
 
   return Object.freeze({
     schemaVersion: 'stephanos.goal-dashboard-status-projection.v1',
-    projectionSource: GOAL_DASHBOARD_PROJECTION_SOURCE,
+    projectionSource: text(input.projectionSource, githubAdapterVerified ? 'verified-readonly-goal-status-adapter' : GOAL_DASHBOARD_PROJECTION_SOURCE),
     readOnly: true,
-    refreshTruth: GOAL_DASHBOARD_REFRESH_TRUTH,
-    liveAutomationClaim: 'none',
-    githubTruth: 'not-live-readonly-static-seed',
-    localAutomationTruth: 'not-live-readonly-static-seed',
+    refreshTruth: manualRefreshRequired ? GOAL_DASHBOARD_REFRESH_TRUTH : 'VERIFIED_READONLY_SOURCES_CURRENT',
+    liveAutomationClaim: automationReceiptVerified ? 'receipt-backed-readonly' : 'none',
+    githubTruth: githubAdapterVerified ? 'live-readonly-adapter-verified' : 'not-live-readonly-static-seed',
+    localAutomationTruth: localAdapterVerified ? 'local-readonly-receipt-verified' : 'not-live-readonly-static-seed',
+    sourceTruth: freeze({
+      githubVerified: githubAdapterVerified,
+      localVerified: localAdapterVerified,
+      automationReceiptVerified,
+    }),
     totalGoals: normalizedGoals.length,
     activeGoalCount: normalizedGoals.filter((goal) => /active/i.test(goal.status)).length,
     blockedGoalCount: normalizedGoals.filter((goal) => /blocked/i.test(goal.status)).length,
-    manualRefreshRequired: true,
+    linkedPrCount: normalizedGoals.filter((goal) => goal.linkedPr.number !== null).length,
+    mergedPrCount: normalizedGoals.filter((goal) => goal.linkedPr.state === 'merged').length,
+    unknownPrStateCount: normalizedGoals.filter((goal) => goal.linkedPr.number !== null && goal.linkedPr.state === 'unknown').length,
+    manualRefreshRequired,
     goals: normalizedGoals,
     buildConcierge: Object.freeze({
       roadmap: buildConciergeRoadmap(input.buildConcierge || {}),
@@ -131,6 +260,8 @@ export function buildGoalDashboardStatusProjection(input = {}) {
       queue: buildConciergeQueue({ ...(input.buildConcierge || {}), goals: [...(Array.isArray(input.buildConcierge?.goals) ? input.buildConcierge.goals : []), ...liveGoalCandidates] }),
       antiStallMergeLane: buildConciergeAntiStallMergeLane(input.buildConcierge?.antiStallMergeLane || input.antiStallMergeLane || {}),
     }),
-    nextAction: 'Refresh the static Goal Dashboard seed manually before making live GitHub/local automation claims.',
+    nextAction: manualRefreshRequired
+      ? 'Refresh the static Goal Dashboard seed manually before making live GitHub/local automation claims.'
+      : 'Render the verified read-only goal and linked-PR projection without inferring unreceipted automation.',
   });
 }
