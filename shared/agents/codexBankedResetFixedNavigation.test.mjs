@@ -12,6 +12,7 @@ const executionWrapper = read('scripts/windows/invoke-codex-banked-reset-ui-with
 const statusCore = read('scripts/windows/read-codex-banked-reset-status.ps1');
 const executionCore = read('scripts/windows/invoke-codex-banked-reset-ui.ps1');
 const statusReader = read('shared/agents/codexBankedResetStatusBattleBridgeReader.mjs');
+const telemetryMirror = read('shared/agents/codexBankedResetTelemetryMirror.mjs');
 const executor = read('shared/agents/codexBankedResetBattleBridgeExecutor.mjs');
 
 test('uses only the fixed profile to usage panel route', () => {
@@ -112,6 +113,33 @@ test('preloads UI Automation before importing the typed navigation module and co
   }
   assert.match(statusWrapper, /BLOCKED_RESET_STATUS_CORE_LAUNCH_FAILED/);
   assert.match(executionWrapper, /BLOCKED_RESET_EXECUTOR_CORE_LAUNCH_FAILED/);
+});
+
+test('allows exactly one bounded retry only for read-only status navigation', () => {
+  assert.match(statusWrapper, /navigationRetryCount/);
+  assert.match(statusWrapper, /Start-Sleep -Milliseconds 350/);
+  assert.match(statusWrapper, /navigation-exception-retry-pass/);
+  assert.match(statusWrapper, /navigation-exception-retry-failed/);
+  assert.match(statusWrapper, /function Convert-ToSafeDiagnosticText/);
+  assert.match(statusWrapper, /\$script:SecretPattern/);
+  assert.match(statusWrapper, /authorization\|bearer\|oauth/i);
+  assert.match(statusReader, /authorization\|bearer\|oauth/i);
+  assert.match(telemetryMirror, /authorization\|bearer\|oauth/i);
+  assert.match(statusWrapper, /AKIA\|ASIA/);
+  assert.match(statusReader, /AKIA\|ASIA/);
+  assert.match(telemetryMirror, /AKIA\|ASIA/);
+  assert.match(statusWrapper, /Add-Member -NotePropertyName error -NotePropertyValue \$firstNavigationError/);
+  assert.match(statusWrapper, /\$navigationError = Convert-ToSafeDiagnosticText/);
+  assert.match(statusWrapper, /\$coreError = Convert-ToSafeDiagnosticText/);
+  assert.match(statusWrapper, /\$effectiveError = if \(\$navigationError\) \{ \$navigationError \} else \{ \$coreError \}/);
+  assert.match(telemetryMirror, /error: safeDiagnosticText\(result\.error, 300\)/);
+  const diagnosticStart = statusWrapper.indexOf('function Convert-ToSafeDiagnosticText');
+  const diagnosticEnd = statusWrapper.indexOf('function Get-PropertyValue');
+  const diagnosticSource = statusWrapper.slice(diagnosticStart, diagnosticEnd);
+  assert.ok(diagnosticSource.indexOf('$text -match $script:SecretPattern') < diagnosticSource.indexOf('$text.Length -gt $Limit'));
+  assert.equal((statusWrapper.match(/Open-CodexUsagePanel/g) || []).length, 2);
+  assert.doesNotMatch(executionWrapper, /navigationRetryCount|navigation-exception-retry|Start-Sleep -Milliseconds 350/);
+  assert.equal((executionWrapper.match(/Open-CodexUsagePanel/g) || []).length, 1);
 });
 
 test('keeps the complete UIA chain in STA mode rather than explicitly noninteractive mode', () => {

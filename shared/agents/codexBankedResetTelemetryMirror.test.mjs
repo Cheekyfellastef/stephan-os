@@ -56,6 +56,7 @@ test('projects a read-only status receipt with zero press telemetry and labeled 
     matchedUsageLabel: '1 reset available',
     usageControlResolution: 'labeled-ancestor',
     navigationAttempted: true,
+    navigationRetryCount: 1,
     profileMenuOpened: true,
     usagePanelOpened: true,
     meterSummary: 'Codex weekly remaining 0%',
@@ -71,10 +72,48 @@ test('projects a read-only status receipt with zero press telemetry and labeled 
   const record = createCodexBankedResetTelemetryRecord([comment(status)], { ownerLogin, timestampUtc: '2026-07-21T09:02:00.000Z' });
   assert.equal(record.status, 'STATUS_READY');
   assert.equal(record.pressAttempted, false);
+  assert.equal(record.latestStatus.navigationRetryCount, 1);
   assert.equal(record.latestStatus.matchedUsageLabel, '1 reset available');
   assert.equal(record.latestStatus.usageControlResolution, 'labeled-ancestor');
   assert.equal(record.latestStatus.meterSummary, 'Codex weekly remaining 0%');
   assert.deepEqual(record.latestStatus.resetButtons, ['Use reset']);
+});
+
+test('projects bounded status error evidence and re-filters unsafe historical receipts', () => {
+  const safeStatus = receipt('READ_CODEX_BANKED_RESET_STATUS', {
+    ok: false,
+    blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
+    finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
+    navigationRetryCount: 8,
+    error: 'stale WebView element',
+    pressAttempted: false,
+    pressCount: 0,
+  }, { requestId: 'reset-status-safe-error-001' });
+  const safeRecord = createCodexBankedResetTelemetryRecord([comment(safeStatus)], { ownerLogin });
+  assert.equal(safeRecord.latestStatus.navigationRetryCount, 1);
+  assert.equal(safeRecord.latestStatus.error, 'stale WebView element');
+  assert.equal(safeRecord.latestStatus.pressCount, 0);
+
+  const unsafeDiagnostics = [
+    'session token secret-value',
+    'Authorization: Bearer ghp_examplevalue',
+    'oauth grant failed for github_pat_examplevalue',
+    'temporary AWS key ASIA1234567890ABCDEF rejected',
+  ];
+  for (const [index, diagnostic] of unsafeDiagnostics.entries()) {
+    const unsafeStatus = receipt('READ_CODEX_BANKED_RESET_STATUS', {
+      ok: false,
+      blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
+      finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
+      navigationRetryCount: 1,
+      error: diagnostic,
+      pressAttempted: false,
+      pressCount: 0,
+    }, { requestId: `reset-status-unsafe-error-00${index + 1}` });
+    const unsafeRecord = createCodexBankedResetTelemetryRecord([comment(unsafeStatus)], { ownerLogin });
+    assert.equal(unsafeRecord.latestStatus.error, '');
+    assert.equal(buildCodexBankedResetTelemetryIssueBody(unsafeRecord).includes(diagnostic), false);
+  }
 });
 
 test('distinguishes one attempted but unconfirmed press', () => {

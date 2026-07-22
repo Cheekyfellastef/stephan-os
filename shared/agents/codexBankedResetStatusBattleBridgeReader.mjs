@@ -9,6 +9,7 @@ export const CODEX_BANKED_RESET_STATUS_EXECUTION_SURFACE = 'BATTLE_BRIDGE_AUTHEN
 
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const SECRET_PATTERN = /secret|token|session|password|credential|authorization|bearer|oauth|client[_ -]?secret|access[_ -]?key|private[_-]?key|api[_-]?key|x-api-key|x-auth-token|cookie|set-cookie|\.env\b|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|sk-[A-Za-z0-9]+|(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|ASCA)[A-Z0-9]{16}|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY/i;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 
 function blocked(blocker, details = {}) {
@@ -32,6 +33,14 @@ function sanitizeText(value, limit = 300) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, limit);
+}
+
+function sanitizeDiagnosticText(value, limit = 300) {
+  const text = String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text && !SECRET_PATTERN.test(text) ? text.slice(0, limit) : '';
 }
 
 function safeTextList(value, { limit = 20, itemLimit = 220 } = {}) {
@@ -125,6 +134,7 @@ export function normalizeCodexBankedResetStatusResult(raw = {}, command = {}) {
     matchedUsageLabel: sanitizeText(result.matchedUsageLabel, 160),
     usageControlResolution: sanitizeText(result.usageControlResolution, 80),
     navigationAttempted: result.navigationAttempted === true,
+    navigationRetryCount: Math.max(0, Math.min(1, Number(result.navigationRetryCount || 0))),
     profileMenuOpened: result.profileMenuOpened === true,
     usagePanelOpened: result.usagePanelOpened === true,
     profileCandidates: safeTextList(result.profileCandidates, { limit: 10, itemLimit: 120 }),
@@ -137,6 +147,7 @@ export function normalizeCodexBankedResetStatusResult(raw = {}, command = {}) {
     desktopInteractive: result.desktopInteractive === true,
     appWindowFound: result.appWindowFound === true,
     usageSurfaceMatched,
+    error: sanitizeDiagnosticText(result.error, 300),
     readOnly: true,
     pressAttempted: false,
     pressCount: 0,
@@ -163,7 +174,7 @@ export function readCodexBankedResetStatusOnBattleBridge(command = {}, {
     timeout: 120_000,
     maxBuffer: MAX_OUTPUT_BYTES,
   });
-  if (result?.error) return blocked('RESET_STATUS_READER_PROCESS_FAILED', { error: sanitizeText(result.error.message, 300) });
+  if (result?.error) return blocked('RESET_STATUS_READER_PROCESS_FAILED', { error: sanitizeDiagnosticText(result.error.message, 300) });
   const stdout = String(result?.stdout || '');
   if (Buffer.byteLength(stdout, 'utf8') > MAX_OUTPUT_BYTES) return blocked('RESET_STATUS_READER_OUTPUT_TOO_LARGE');
   let parsed;
@@ -171,8 +182,8 @@ export function readCodexBankedResetStatusOnBattleBridge(command = {}, {
     parsed = JSON.parse(stdout || '{}');
   } catch (error) {
     return blocked('RESET_STATUS_READER_OUTPUT_INVALID', {
-      error: sanitizeText(error?.message, 300),
-      stderr: sanitizeText(result?.stderr, 500),
+      error: sanitizeDiagnosticText(error?.message, 300),
+      stderr: sanitizeDiagnosticText(result?.stderr, 500),
     });
   }
   const normalized = normalizeCodexBankedResetStatusResult(parsed, invocation.command);

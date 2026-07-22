@@ -74,6 +74,7 @@ test('normalizes only read-only usage-surface proof as success and preserves lab
     matchedUsageLabel: '1 reset available',
     usageControlResolution: 'labeled-ancestor',
     navigationAttempted: true,
+    navigationRetryCount: 1,
     profileMenuOpened: true,
     usagePanelOpened: true,
     meterSummary: 'Codex weekly usage remaining 0%',
@@ -88,6 +89,7 @@ test('normalizes only read-only usage-surface proof as success and preserves lab
   assert.equal(success.ok, true);
   assert.equal(success.readOnly, true);
   assert.equal(success.usagePanelOpened, true);
+  assert.equal(success.navigationRetryCount, 1);
   assert.equal(success.matchedUsageLabel, '1 reset available');
   assert.equal(success.usageControlResolution, 'labeled-ancestor');
   assert.equal(success.expiryTexts[0], 'Banked reset expires 25 Jul 2026');
@@ -110,7 +112,60 @@ test('normalizes only read-only usage-surface proof as success and preserves lab
   }
 });
 
-test('executes exactly once and returns bounded labeled status proof', () => {
+test('preserves a bounded retry count and sanitized navigation error without changing zero-press status', () => {
+  const blocked = normalizeCodexBankedResetStatusResult({
+    ok: false,
+    blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
+    finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
+    observedAtUtc: '2026-07-20T22:31:00.000Z',
+    desktopInteractive: true,
+    navigationRetryCount: 9,
+    error: '  stale   WebView\n element  ',
+    pressAttempted: false,
+    pressCount: 0,
+  }, command());
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.navigationRetryCount, 1);
+  assert.equal(blocked.error, 'stale WebView element');
+  assert.equal(blocked.readOnly, true);
+  assert.equal(blocked.pressAttempted, false);
+  assert.equal(blocked.pressCount, 0);
+});
+
+test('suppresses secret and authorization diagnostics before durable receipt publication', () => {
+  for (const diagnostic of [
+    `${'x'.repeat(320)} session token`,
+    'Authorization: Bearer ghp_examplevalue',
+    'oauth grant failed for github_pat_examplevalue',
+    'AWS access key AKIA1234567890ABCDEF rejected',
+    'temporary AWS key ASIA1234567890ABCDEF rejected',
+  ]) {
+    const result = readCodexBankedResetStatusOnBattleBridge(command(), {
+      platform: 'win32',
+      repoRoot: tempRepo(),
+      now,
+      spawn: () => ({
+        status: 1,
+        stdout: JSON.stringify({
+          ok: false,
+          blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
+          finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
+          error: diagnostic,
+          navigationRetryCount: 1,
+          pressAttempted: false,
+          pressCount: 0,
+        }),
+        stderr: '',
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, '');
+    assert.equal(result.pressAttempted, false);
+    assert.equal(result.pressCount, 0);
+  }
+});
+
+test('executes the fixed outer invocation exactly once and returns bounded labeled status proof', () => {
   let calls = 0;
   const result = readCodexBankedResetStatusOnBattleBridge(command(), {
     platform: 'win32',
@@ -132,6 +187,7 @@ test('executes exactly once and returns bounded labeled status proof', () => {
           pressAttempted: false,
           pressCount: 0,
           navigationAttempted: true,
+          navigationRetryCount: 1,
           profileMenuOpened: true,
           usagePanelOpened: true,
           matchedUsageLabel: '1 reset available',
@@ -147,6 +203,7 @@ test('executes exactly once and returns bounded labeled status proof', () => {
   assert.equal(calls, 1);
   assert.equal(result.ok, true);
   assert.equal(result.pressCount, 0);
+  assert.equal(result.navigationRetryCount, 1);
   assert.equal(result.usagePanelOpened, true);
   assert.equal(result.matchedUsageLabel, '1 reset available');
   assert.equal(result.usageControlResolution, 'labeled-ancestor');
