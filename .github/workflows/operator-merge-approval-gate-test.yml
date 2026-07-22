@@ -18,6 +18,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Parse trusted protected-merge executors
+        run: |
+          node --check scripts/operator-protected-merge-gate-v2.mjs
+          node --check scripts/operator-protected-merge-head-status-v1.mjs
       - name: Prove protected merge boundary
         run: |
           set -o pipefail
