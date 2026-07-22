@@ -8,6 +8,7 @@ import {
   activateOperatorMergeProtectionOnBattleBridge,
   buildPreservingMainProtection,
   createFixedGitHubApiRequester,
+  snapshotRequiredStatusChecks,
   validateMainProtection,
   validateOperatorMergeEnvironment,
 } from './battleBridgeGitHubCommandMailboxAdmin.mjs';
@@ -108,6 +109,46 @@ test('new main protection requires pull requests and the protected gate without 
   assert.equal(validateMainProtection(protection({
     required_pull_request_reviews: { required_approving_review_count: 1 },
   }), { previousApprovalCount: 0 }).blocker, 'MAIN_SECOND_HUMAN_APPROVAL_GATE_ADDED');
+});
+
+test('main protection readback preserves every previous required context and app binding', () => {
+  const previous = protection({
+    required_status_checks: {
+      strict: false,
+      contexts: ['Build Stephanos UI'],
+      checks: [{ context: 'Independent Security Review', app_id: 15368 }],
+    },
+  });
+  const previousStatusChecks = snapshotRequiredStatusChecks(previous);
+  const validReadback = protection({
+    required_status_checks: {
+      strict: true,
+      contexts: ['Build Stephanos UI', OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK],
+      checks: [{ context: 'Independent Security Review', app_id: 15368 }],
+    },
+  });
+  assert.equal(validateMainProtection(validReadback, { previousStatusChecks }).ok, true);
+  assert.equal(validateMainProtection(protection({
+    required_status_checks: {
+      strict: true,
+      contexts: [OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK],
+      checks: [{ context: 'Independent Security Review', app_id: 15368 }],
+    },
+  }), { previousStatusChecks }).blocker, 'MAIN_EXISTING_REQUIRED_CHECK_CONTEXT_DROPPED');
+  assert.equal(validateMainProtection(protection({
+    required_status_checks: {
+      strict: true,
+      contexts: ['Build Stephanos UI', OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK],
+      checks: [],
+    },
+  }), { previousStatusChecks }).blocker, 'MAIN_EXISTING_REQUIRED_CHECK_APP_BINDING_DROPPED');
+  assert.equal(validateMainProtection(protection({
+    required_status_checks: {
+      strict: true,
+      contexts: ['Build Stephanos UI', OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK],
+      checks: [{ context: 'Independent Security Review', app_id: 99999 }],
+    },
+  }), { previousStatusChecks }).blocker, 'MAIN_EXISTING_REQUIRED_CHECK_APP_BINDING_DROPPED');
 });
 
 test('fixed GitHub API requester rejects every unrelated path without invoking gh', async () => {
