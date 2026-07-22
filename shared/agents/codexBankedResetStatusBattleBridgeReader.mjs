@@ -36,8 +36,11 @@ function sanitizeText(value, limit = 300) {
 }
 
 function sanitizeDiagnosticText(value, limit = 300) {
-  const text = sanitizeText(value, limit);
-  return text && !SECRET_PATTERN.test(text) ? text : '';
+  const text = String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text && !SECRET_PATTERN.test(text) ? text.slice(0, limit) : '';
 }
 
 function safeTextList(value, { limit = 20, itemLimit = 220 } = {}) {
