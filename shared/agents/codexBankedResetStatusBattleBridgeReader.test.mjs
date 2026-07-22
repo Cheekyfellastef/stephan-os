@@ -138,6 +138,7 @@ test('suppresses secret and authorization diagnostics before durable receipt pub
     'Authorization: Bearer ghp_examplevalue',
     'oauth grant failed for github_pat_examplevalue',
     'AWS access key AKIA1234567890ABCDEF rejected',
+    'temporary AWS key ASIA1234567890ABCDEF rejected',
   ]) {
     const result = readCodexBankedResetStatusOnBattleBridge(command(), {
       platform: 'win32',
