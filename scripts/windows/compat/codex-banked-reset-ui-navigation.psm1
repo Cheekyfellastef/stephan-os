@@ -9,9 +9,10 @@ $script:BaseNavigationModule = Import-Module $baseModulePath -Force -PassThru -E
 
 # PowerShell unwraps a one-item function result into a scalar. Under StrictMode,
 # the base navigation module's later `.Count` check then throws. Replace only
-# the internal snapshot-delta helper and emit its result as one array object.
+# the internal snapshot-delta helper in the base module's persistent script
+# scope and emit its result as one array object.
 & $script:BaseNavigationModule {
-    function Get-CodexNewlyVisibleSnapshot {
+    function script:Get-CodexNewlyVisibleSnapshot {
         param(
             [array]$Before,
             [array]$After
