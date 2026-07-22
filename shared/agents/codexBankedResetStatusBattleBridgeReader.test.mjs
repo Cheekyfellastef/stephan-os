@@ -37,7 +37,7 @@ test('validates a bounded read-only status command', () => {
   assert.equal(result.command.readOnly, true);
 });
 
-test('builds one fixed read-only PowerShell invocation with shell disabled', () => {
+test('builds one fixed STA read-only PowerShell invocation with shell disabled', () => {
   const result = buildCodexBankedResetStatusPowerShellInvocation(command(), {
     platform: 'win32',
     repoRoot: tempRepo(),
@@ -49,6 +49,8 @@ test('builds one fixed read-only PowerShell invocation with shell disabled', () 
   assert.equal(result.readOnly, true);
   assert.equal(result.pressCount, 0);
   assert.match(result.scriptPath, /read-codex-banked-reset-status-with-navigation\.ps1$/);
+  assert.equal(result.args.includes('-Sta'), true);
+  assert.equal(result.args.includes('-NonInteractive'), false);
   assert.equal(result.args.some((value) => /https?:|javascript|selector|cookie|token/i.test(String(value))), false);
 });
 
@@ -118,6 +120,8 @@ test('executes exactly once and returns bounded labeled status proof', () => {
       calls += 1;
       assert.equal(exe, 'powershell.exe');
       assert.equal(options.shell, false);
+      assert.equal(args.includes('-Sta'), true);
+      assert.equal(args.includes('-NonInteractive'), false);
       return {
         status: 0,
         stdout: JSON.stringify({
