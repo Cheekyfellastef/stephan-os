@@ -63,6 +63,7 @@ jobs:
           node --check scripts/remote-codex-task-visibility-observer.mjs
           node --check scripts/remote-codex-github-mirror-publisher.mjs
           node --check shared/agents/battleBridgeGitHubCommandMailbox.mjs
+          node --check shared/agents/battleBridgeGitHubCommandMailboxAdmin.mjs
           node --check shared/agents/stephanosCapabilityRegistry.mjs
           node --check shared/agents/chatGptParticipantBridgeV1.mjs
           node --check shared/agents/remoteCodexTaskVisibility.mjs
@@ -107,7 +108,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs 2>&1 | tee mailbox-command-contract.log
+          node --test shared/agents/battleBridgeGitHubCommandMailbox*.test.mjs 2>&1 | tee mailbox-command-contract.log
           status=${PIPESTATUS[0]}
           exit "$status"
 
