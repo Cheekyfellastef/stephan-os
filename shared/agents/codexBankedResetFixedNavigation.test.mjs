@@ -122,6 +122,11 @@ test('allows exactly one bounded retry only for read-only status navigation', ()
   assert.match(statusWrapper, /function Convert-ToSafeDiagnosticText/);
   assert.match(statusWrapper, /\$script:SecretPattern/);
   assert.match(statusWrapper, /Add-Member -NotePropertyName error -NotePropertyValue \$firstNavigationError/);
+  assert.match(statusWrapper, /\$payload \| Add-Member -NotePropertyName error -NotePropertyValue \(Convert-ToSafeDiagnosticText \(Get-PropertyValue \$navigation 'error' ''\) 300\) -Force/);
+  const diagnosticStart = statusWrapper.indexOf('function Convert-ToSafeDiagnosticText');
+  const diagnosticEnd = statusWrapper.indexOf('function Get-PropertyValue');
+  const diagnosticSource = statusWrapper.slice(diagnosticStart, diagnosticEnd);
+  assert.ok(diagnosticSource.indexOf('$text -match $script:SecretPattern') < diagnosticSource.indexOf('$text.Length -gt $Limit'));
   assert.equal((statusWrapper.match(/Open-CodexUsagePanel/g) || []).length, 2);
   assert.doesNotMatch(executionWrapper, /navigationRetryCount|navigation-exception-retry|Start-Sleep -Milliseconds 350/);
   assert.equal((executionWrapper.match(/Open-CodexUsagePanel/g) || []).length, 1);
