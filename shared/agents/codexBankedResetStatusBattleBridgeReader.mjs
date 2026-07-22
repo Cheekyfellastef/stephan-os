@@ -9,7 +9,7 @@ export const CODEX_BANKED_RESET_STATUS_EXECUTION_SURFACE = 'BATTLE_BRIDGE_AUTHEN
 
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const SECRET_PATTERN = /secret|token|session|password|credential|authorization|bearer|oauth|client[_ -]?secret|access[_ -]?key|private[_-]?key|api[_-]?key|x-api-key|x-auth-token|cookie|set-cookie|\.env\b|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|sk-[A-Za-z0-9]+|AKIA[A-Z0-9]{16}|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY/i;
+const SECRET_PATTERN = /secret|token|session|password|credential|authorization|bearer|oauth|client[_ -]?secret|access[_ -]?key|private[_-]?key|api[_-]?key|x-api-key|x-auth-token|cookie|set-cookie|\.env\b|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|sk-[A-Za-z0-9]+|(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|ASCA)[A-Z0-9]{16}|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY/i;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 
 function blocked(blocker, details = {}) {
