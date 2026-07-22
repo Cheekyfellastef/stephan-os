@@ -17,8 +17,10 @@ function Convert-ToSafeText([object]$Value, [int]$Limit = 220) {
 }
 
 function Convert-ToSafeDiagnosticText([object]$Value, [int]$Limit = 220) {
-    $text = Convert-ToSafeText $Value $Limit
+    $text = [string]$Value
+    $text = ($text -replace '[\r\n\t]+', ' ' -replace '\s+', ' ').Trim()
     if (-not $text -or $text -match $script:SecretPattern) { return '' }
+    if ($text.Length -gt $Limit) { return $text.Substring(0, $Limit) }
     return $text
 }
 
@@ -162,6 +164,7 @@ $payload | Add-Member -NotePropertyName matchedProfileControl -NotePropertyValue
 $payload | Add-Member -NotePropertyName matchedUsageControl -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'matchedUsageControl' '') 160) -Force
 $payload | Add-Member -NotePropertyName matchedUsageLabel -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'matchedUsageLabel' '') 160) -Force
 $payload | Add-Member -NotePropertyName usageControlResolution -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'usageControlResolution' '') 80) -Force
+$payload | Add-Member -NotePropertyName error -NotePropertyValue (Convert-ToSafeDiagnosticText (Get-PropertyValue $navigation 'error' '') 300) -Force
 $proofRefs = @($payload.proofRefs) + @(Get-PropertyValue $navigation 'proofRefs' @())
 $payload | Add-Member -NotePropertyName proofRefs -NotePropertyValue @($proofRefs | Select-Object -Unique) -Force
 [Console]::Out.WriteLine(($payload | ConvertTo-Json -Depth 8 -Compress))
