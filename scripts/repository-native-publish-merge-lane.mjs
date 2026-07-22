@@ -4,7 +4,6 @@ import { spawnSync } from 'node:child_process';
 import {
   buildCompletionPacket,
   buildPullRequestBody,
-  mergeApprovalToken,
   normalizeRepoPath,
   validatePublishLaneRequest,
 } from '../shared/agents/repositoryNativePublishMergeLane.mjs';
@@ -52,6 +51,10 @@ try {
   fail('Publish lane request could not be read.', { error: error.message });
 }
 
+if (String(request.mergeApprovalToken || '').trim()) {
+  fail('Raw or deterministic merge approval tokens are disabled. Publication and merge are separate guarded operations.');
+}
+
 const validation = validatePublishLaneRequest(request);
 if (validation.finalVerdict !== 'PUBLISH_LANE_READY') {
   fail('Publish lane request failed source scope or approval validation.', { validation });
@@ -89,7 +92,7 @@ if (actualValidation.finalVerdict !== 'PUBLISH_LANE_READY') {
 }
 
 const proof = run(proofCommand[0], proofCommand.slice(1), repositoryRoot);
-const proofResult = proof.exitCode === 0 ? `PASS exitCode=0` : `FAIL exitCode=${proof.exitCode}`;
+const proofResult = proof.exitCode === 0 ? 'PASS exitCode=0' : `FAIL exitCode=${proof.exitCode}`;
 if (proof.exitCode !== 0) fail('Focused proof failed; publication refused.', { proofCommand: proof.command, proofResult, proof });
 
 runRequired('git', ['-C', repositoryRoot, 'add', '--', ...actualChangedFiles], repositoryRoot, 'Could not stage validated source files.');
@@ -99,42 +102,28 @@ runRequired('git', ['-C', repositoryRoot, 'push', '-u', 'origin', branch], repos
 
 const title = String(request.title || request.goal).trim();
 const body = buildPullRequestBody({ goal: request.goal, proofCommand: proof.command, proofResult, filesChanged: actualChangedFiles, headSha });
-const prCreateArgs = ['pr', 'create', '--base', baseBranch, '--head', branch, '--title', title, '--body', body];
+const prCreateArgs = ['pr', 'create', '--draft', '--base', baseBranch, '--head', branch, '--title', title, '--body', body];
 if (repository) prCreateArgs.splice(2, 0, '--repo', repository);
-const prCreate = runRequired('gh', prCreateArgs, repositoryRoot, 'Could not create pull request.');
-const prViewArgs = ['pr', 'view', branch, '--json', 'number,headRefOid,isDraft'];
+runRequired('gh', prCreateArgs, repositoryRoot, 'Could not create draft pull request.');
+const prViewArgs = ['pr', 'view', branch, '--json', 'number,headRefOid,isDraft,state'];
 if (repository) prViewArgs.splice(2, 0, '--repo', repository);
 const prPayload = parseJson(runRequired('gh', prViewArgs, repositoryRoot, 'Could not inspect pull request.').stdout, 'Pull request payload was not JSON.');
 const prNumber = prPayload.number;
 if (prPayload.headRefOid !== headSha) fail('Pull request head SHA did not match local exact head.', { prPayload, headSha });
-if (prPayload.isDraft) {
-  const readyArgs = ['pr', 'ready', String(prNumber)];
-  if (repository) readyArgs.splice(2, 0, '--repo', repository);
-  runRequired('gh', readyArgs, repositoryRoot, 'Could not mark pull request ready.');
-}
+if (!prPayload.isDraft || prPayload.state !== 'OPEN') fail('Publication lane must leave a new pull request open and draft.', { prPayload });
 
-if (String(request.mergeApprovalToken || '') !== mergeApprovalToken(prNumber, headSha)) {
-  fail('Exact-head merge approval token is required after PR creation.', {
+emit({
+  ...buildCompletionPacket({
+    branch,
     prNumber,
     headSha,
-    mergeApprovalTokenRequired: mergeApprovalToken(prNumber, headSha),
-  });
-}
-
-const mergeArgs = ['pr', 'merge', String(prNumber), '--squash', '--match-head-commit', headSha];
-if (repository) mergeArgs.splice(2, 0, '--repo', repository);
-runRequired('gh', mergeArgs, repositoryRoot, 'Exact-head merge failed.');
-const mergedViewArgs = ['pr', 'view', String(prNumber), '--json', 'mergeCommit,state'];
-if (repository) mergedViewArgs.splice(2, 0, '--repo', repository);
-const mergedPayload = parseJson(runRequired('gh', mergedViewArgs, repositoryRoot, 'Could not record merge evidence.').stdout, 'Merged pull request payload was not JSON.');
-const mergeCommit = mergedPayload.mergeCommit?.oid || '';
-
-emit(buildCompletionPacket({
-  branch,
-  prNumber,
-  headSha,
-  mergeCommit,
-  proofCommand: proof.command,
-  proofResult,
-  finalStatus: mergedPayload.state === 'MERGED' && mergeCommit ? 'MERGED' : 'MERGE_EVIDENCE_INCOMPLETE',
-}));
+    mergeCommit: '',
+    proofCommand: proof.command,
+    proofResult,
+    finalStatus: 'AWAITING_PROTECTED_OPERATOR_APPROVAL',
+  }),
+  mergeAuthority: false,
+  approvalGate: 'github-protected-environment-only',
+  protectedEnvironment: 'operator-merge-approval',
+  nextAction: 'Complete independent exact-head review, mark the unchanged PR ready, then wait for GitHub protected-environment approval.',
+});
