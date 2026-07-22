@@ -55,17 +55,20 @@ test('boundary fails closed when external workspace points inside repository', a
   assert.equal(boundary.blocker, 'DREAM_RUNTIME_ROOT_INSIDE_REPOSITORY');
 });
 
-test('read-only migration plan inventories source hash evidence without inspecting destinations', async () => {
+test('read-only migration plan reports source inventory and unknown destination readiness', async () => {
   const { repoRoot, env } = await fixture();
   const plan = await planDreamRuntimeMigration({ repoRoot, env });
   assert.equal(plan.ok, true);
   assert.equal(plan.mode, 'plan');
   assert.equal(plan.copyMode, 'disabled');
-  assert.equal(plan.destinationInspection, 'not-performed');
-  assert.equal(plan.copyRequired, 2);
-  assert.equal(plan.conflicts, 0);
-  assert.equal(plan.entries.every((entry) => entry.state === 'copy-disabled'), true);
-  assert.equal(plan.entries.every((entry) => entry.destinationSha256 === ''), true);
+  assert.equal(plan.destinationMetadataInspection, 'metadata-only-complete');
+  assert.equal(plan.destinationContentInspection, 'not-performed');
+  assert.equal(plan.sourceInventoryCount, 2);
+  assert.equal(plan.copyRequired, null);
+  assert.equal(plan.alreadyVerified, null);
+  assert.equal(plan.conflicts, null);
+  assert.equal(plan.entries.every((entry) => entry.state === 'source-inventoried-destination-unknown'), true);
+  assert.equal(plan.entries.every((entry) => entry.destinationSha256 === null), true);
   assert.equal(plan.entries.every((entry) => /^[0-9a-f]{64}$/.test(entry.sourceSha256)), true);
 });
 
@@ -84,6 +87,10 @@ test('planner does not read destination file contents', async () => {
   };
   const plan = await planDreamRuntimeMigration({ repoRoot, env, fsImpl });
   assert.equal(plan.ok, true);
+  assert.equal(plan.destinationMetadataInspection, 'metadata-only-complete');
+  assert.equal(plan.destinationContentInspection, 'not-performed');
+  assert.equal(plan.copyRequired, null);
+  assert.equal(plan.conflicts, null);
   assert.equal(destinationRead, false);
   assert.equal(await fs.readFile(destination, 'utf8'), 'destination-data-that-must-not-be-read\n');
 });
@@ -114,6 +121,7 @@ test('approved copy mode remains disabled and performs no filesystem copy', asyn
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_COPY_MODE_DISABLED');
   assert.equal(result.finalVerdict, 'DREAM_MIGRATION_COPY_MODE_DISABLED');
+  assert.equal(result.boundary.copyRequired, null);
   assert.equal(unsafeCopyCalled, false);
   assert.equal(result.copied.length, 0);
   assert.equal(result.sourceRemovalPerformed, false);
@@ -138,9 +146,11 @@ test('source symbolic links fail closed during read-only planning', async (t) =>
   const plan = await planDreamRuntimeMigration({ repoRoot, env });
   assert.equal(plan.ok, false);
   assert.equal(plan.blocker, 'DREAM_MIGRATION_SYMLINK_BLOCKED');
+  assert.equal(plan.copyRequired, null);
+  assert.equal(plan.conflicts, null);
 });
 
-test('destination ancestor symbolic links fail closed during read-only planning', async (t) => {
+test('destination ancestor symbolic links fail closed during metadata-only planning', async (t) => {
   const { repoRoot, env, root } = await fixture();
   const outside = path.join(root, 'outside-destination');
   await fs.mkdir(outside, { recursive: true });
@@ -154,4 +164,8 @@ test('destination ancestor symbolic links fail closed during read-only planning'
   const plan = await planDreamRuntimeMigration({ repoRoot, env });
   assert.equal(plan.ok, false);
   assert.equal(plan.blocker, 'DREAM_MIGRATION_DESTINATION_SYMLINK_BLOCKED');
+  assert.equal(plan.destinationMetadataInspection, 'metadata-only-partial');
+  assert.equal(plan.destinationContentInspection, 'not-performed');
+  assert.equal(plan.copyRequired, null);
+  assert.equal(plan.conflicts, null);
 });
