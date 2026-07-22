@@ -148,10 +148,16 @@ function normalizedWaitTimer(value) {
   return Number.isInteger(numeric) && numeric >= 0 ? numeric : null;
 }
 
+function environmentWaitTimer(environment = {}) {
+  const rules = list(environment?.protection_rules).filter((rule) => rule?.type === 'wait_timer');
+  if (rules.length > 1) return null;
+  return rules.length === 1 ? normalizedWaitTimer(rules[0]?.wait_timer) : 0;
+}
+
 export function validateOperatorMergeEnvironment(environment = {}, { expectedWaitTimer = 0 } = {}) {
   if (environment?.name !== OPERATOR_MERGE_PROTECTION_ENVIRONMENT) return fail('ENVIRONMENT_NAME_MISMATCH');
   if (environment?.can_admins_bypass !== false) return fail('ENVIRONMENT_ADMIN_BYPASS_NOT_DISABLED');
-  const observedWaitTimer = normalizedWaitTimer(environment?.wait_timer);
+  const observedWaitTimer = environmentWaitTimer(environment);
   const requiredWaitTimer = normalizedWaitTimer(expectedWaitTimer);
   if (observedWaitTimer === null || requiredWaitTimer === null || observedWaitTimer !== requiredWaitTimer) {
     return fail('ENVIRONMENT_WAIT_TIMER_NOT_PRESERVED', { expectedWaitTimer: requiredWaitTimer, observedWaitTimer });
@@ -433,7 +439,7 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
   if (!environmentBeforeResponse?.ok && Number(environmentBeforeResponse?.status || 0) !== 404) {
     return fail('ENVIRONMENT_READ_FAILED', { status: Number(environmentBeforeResponse?.status || 0) });
   }
-  const preservedWaitTimer = normalizedWaitTimer(environmentBeforeResponse?.ok ? environmentBeforeResponse.data?.wait_timer : 0);
+  const preservedWaitTimer = environmentBeforeResponse?.ok ? environmentWaitTimer(environmentBeforeResponse.data) : 0;
   if (preservedWaitTimer === null) return fail('ENVIRONMENT_WAIT_TIMER_INVALID');
   const environmentUpdate = await requestOrFail(request, {
     method: 'PUT', path: environmentPath, body: environmentBody(userId, preservedWaitTimer),
