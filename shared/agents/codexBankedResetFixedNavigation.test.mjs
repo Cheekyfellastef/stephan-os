@@ -35,7 +35,8 @@ test('finds reset summary labels only on newly visible same-process popup surfac
 
 test('normalizes a one-item popup delta into an array for both wrappers', () => {
   assert.match(navigationCompat, /Import-Module \$baseModulePath -Force -PassThru/);
-  assert.match(navigationCompat, /function Get-CodexNewlyVisibleSnapshot/);
+  assert.match(navigationCompat, /function script:Get-CodexNewlyVisibleSnapshot/);
+  assert.doesNotMatch(navigationCompat, /function Get-CodexNewlyVisibleSnapshot/);
   assert.match(navigationCompat, /foreach \(\$item in @\(\$Before\)\)/);
   assert.match(navigationCompat, /foreach \(\$item in @\(\$After\)\)/);
   assert.match(navigationCompat, /Write-Output -NoEnumerate @\(\$newlyVisible\)/);
