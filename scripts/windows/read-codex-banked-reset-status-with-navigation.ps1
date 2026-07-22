@@ -7,11 +7,18 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$script:SecretPattern = '(?i)secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|\.env\b|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY'
 
 function Convert-ToSafeText([object]$Value, [int]$Limit = 220) {
     $text = [string]$Value
     $text = ($text -replace '[\r\n\t]+', ' ' -replace '\s+', ' ').Trim()
     if ($text.Length -gt $Limit) { return $text.Substring(0, $Limit) }
+    return $text
+}
+
+function Convert-ToSafeDiagnosticText([object]$Value, [int]$Limit = 220) {
+    $text = Convert-ToSafeText $Value $Limit
+    if (-not $text -or $text -match $script:SecretPattern) { return '' }
     return $text
 }
 
@@ -54,7 +61,7 @@ function Write-BlockedStatus([string]$Blocker, [object]$Navigation = $null) {
         matchedUsageControl = Convert-ToSafeText (Get-PropertyValue $Navigation 'matchedUsageControl' '') 160
         matchedUsageLabel = Convert-ToSafeText (Get-PropertyValue $Navigation 'matchedUsageLabel' '') 160
         usageControlResolution = Convert-ToSafeText (Get-PropertyValue $Navigation 'usageControlResolution' '') 80
-        error = Convert-ToSafeText (Get-PropertyValue $Navigation 'error' '') 300
+        error = Convert-ToSafeDiagnosticText (Get-PropertyValue $Navigation 'error' '') 300
         profileCandidates = @((Get-PropertyValue $Navigation 'profileCandidates' @()) | ForEach-Object { Convert-ToSafeText $_ 120 })
         usageCandidates = @((Get-PropertyValue $Navigation 'usageCandidates' @()) | ForEach-Object { Convert-ToSafeText $_ 120 })
         usageLabelCandidates = @((Get-PropertyValue $Navigation 'usageLabelCandidates' @()) | ForEach-Object { Convert-ToSafeText $_ 120 })
@@ -80,7 +87,7 @@ try {
     Add-Type -AssemblyName UIAutomationTypes
 } catch {
     Write-BlockedStatus 'BLOCKED_RESET_UI_AUTOMATION_PRELOAD_FAILED' ([pscustomobject]@{
-        error = Convert-ToSafeText $_.Exception.Message 300
+        error = Convert-ToSafeDiagnosticText $_.Exception.Message 300
         proofRefs = @('codex-usage-panel-fixed-navigation', 'uia-preload-failed')
     })
 }
@@ -89,7 +96,7 @@ try {
     Import-Module $navigationModule -Force -ErrorAction Stop
 } catch {
     Write-BlockedStatus 'BLOCKED_RESET_NAVIGATION_MODULE_IMPORT_FAILED' ([pscustomobject]@{
-        error = Convert-ToSafeText $_.Exception.Message 300
+        error = Convert-ToSafeDiagnosticText $_.Exception.Message 300
         proofRefs = @('codex-usage-panel-fixed-navigation', 'navigation-module-import-failed')
     })
 }
@@ -100,15 +107,16 @@ $firstNavigationError = ''
 try {
     $navigation = Open-CodexUsagePanel
 } catch {
-    $firstNavigationError = Convert-ToSafeText $_.Exception.Message 300
+    $firstNavigationError = Convert-ToSafeDiagnosticText $_.Exception.Message 300
     $navigationRetryCount = 1
     Start-Sleep -Milliseconds 350
     try {
         $navigation = Open-CodexUsagePanel
     } catch {
-        $retryError = Convert-ToSafeText $_.Exception.Message 300
+        $retryError = Convert-ToSafeDiagnosticText $_.Exception.Message 300
+        $combinedRetryError = Convert-ToSafeDiagnosticText ("first: $firstNavigationError | retry: $retryError") 300
         Write-BlockedStatus 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION' ([pscustomobject]@{
-            error = Convert-ToSafeText ("first: $firstNavigationError | retry: $retryError") 300
+            error = $combinedRetryError
             navigationRetryCount = 1
             proofRefs = @('codex-usage-panel-fixed-navigation', 'navigation-exception-retry-failed')
         })
@@ -123,6 +131,7 @@ if ($null -eq $navigation) {
 }
 $navigation | Add-Member -NotePropertyName navigationRetryCount -NotePropertyValue $navigationRetryCount -Force
 if ($navigationRetryCount -eq 1) {
+    $navigation | Add-Member -NotePropertyName error -NotePropertyValue $firstNavigationError -Force
     $retryProofRefs = @((Get-PropertyValue $navigation 'proofRefs' @())) + @('navigation-exception-retry-pass')
     $navigation | Add-Member -NotePropertyName proofRefs -NotePropertyValue @($retryProofRefs | Select-Object -Unique) -Force
 }
@@ -135,13 +144,13 @@ try {
     $coreOutput = & $hostPath -NoProfile -Sta -ExecutionPolicy Bypass -File $coreScript -RequestId $RequestId
     $coreExitCode = $LASTEXITCODE
 } catch {
-    $navigation | Add-Member -NotePropertyName error -NotePropertyValue (Convert-ToSafeText $_.Exception.Message 300) -Force
+    $navigation | Add-Member -NotePropertyName error -NotePropertyValue (Convert-ToSafeDiagnosticText $_.Exception.Message 300) -Force
     Write-BlockedStatus 'BLOCKED_RESET_STATUS_CORE_LAUNCH_FAILED' $navigation
 }
 try {
     $payload = $coreOutput | ConvertFrom-Json -ErrorAction Stop
 } catch {
-    $navigation | Add-Member -NotePropertyName error -NotePropertyValue (Convert-ToSafeText $_.Exception.Message 300) -Force
+    $navigation | Add-Member -NotePropertyName error -NotePropertyValue (Convert-ToSafeDiagnosticText $_.Exception.Message 300) -Force
     Write-BlockedStatus 'BLOCKED_RESET_STATUS_CORE_OUTPUT_INVALID' $navigation
 }
 
