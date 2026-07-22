@@ -80,7 +80,7 @@ if ((Get-PropertyValue $navigation 'ok' $false) -ne $true) {
 }
 
 $hostPath = (Get-Process -Id $PID -ErrorAction Stop).Path
-$coreOutput = & $hostPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $coreScript -RequestId $RequestId
+$coreOutput = & $hostPath -NoProfile -Sta -ExecutionPolicy Bypass -File $coreScript -RequestId $RequestId
 $coreExitCode = $LASTEXITCODE
 try {
     $payload = $coreOutput | ConvertFrom-Json -ErrorAction Stop
