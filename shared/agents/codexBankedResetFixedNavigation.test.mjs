@@ -100,6 +100,27 @@ test('wraps the existing status and single-press cores without replacing them', 
   assert.match(executionWrapper, /repeatedPressAllowed = \$false/);
 });
 
+test('preloads UI Automation before importing the typed navigation module and converts launch failures into JSON blockers', () => {
+  for (const source of [statusWrapper, executionWrapper]) {
+    const addTypeIndex = source.indexOf('Add-Type -AssemblyName UIAutomationClient');
+    const importIndex = source.indexOf('Import-Module $navigationModule');
+    assert.ok(addTypeIndex >= 0);
+    assert.ok(importIndex > addTypeIndex);
+    assert.match(source, /BLOCKED_RESET_UI_AUTOMATION_PRELOAD_FAILED/);
+    assert.match(source, /BLOCKED_RESET_NAVIGATION_MODULE_IMPORT_FAILED/);
+    assert.match(source, /BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION/);
+  }
+  assert.match(statusWrapper, /BLOCKED_RESET_STATUS_CORE_LAUNCH_FAILED/);
+  assert.match(executionWrapper, /BLOCKED_RESET_EXECUTOR_CORE_LAUNCH_FAILED/);
+});
+
+test('keeps the complete UIA chain in STA mode rather than explicitly noninteractive mode', () => {
+  for (const source of [statusWrapper, executionWrapper, statusReader, executor]) {
+    assert.match(source, /-Sta/);
+    assert.doesNotMatch(source, /-NonInteractive/);
+  }
+});
+
 test('routes both Battle Bridge adapters through fixed-navigation wrappers and preserves ancestry evidence', () => {
   assert.match(statusReader, /read-codex-banked-reset-status-with-navigation\.ps1/);
   assert.match(executor, /invoke-codex-banked-reset-ui-with-navigation\.ps1/);

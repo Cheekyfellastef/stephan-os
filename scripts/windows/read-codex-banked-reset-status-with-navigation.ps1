@@ -73,15 +73,35 @@ if (-not (Test-Path -LiteralPath $coreScript -PathType Leaf)) {
     Write-BlockedStatus 'BLOCKED_RESET_STATUS_CORE_MISSING'
 }
 
-Import-Module $navigationModule -Force
-$navigation = Open-CodexUsagePanel
+try {
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+} catch {
+    Write-BlockedStatus 'BLOCKED_RESET_UI_AUTOMATION_PRELOAD_FAILED'
+}
+
+try {
+    Import-Module $navigationModule -Force -ErrorAction Stop
+} catch {
+    Write-BlockedStatus 'BLOCKED_RESET_NAVIGATION_MODULE_IMPORT_FAILED'
+}
+
+try {
+    $navigation = Open-CodexUsagePanel
+} catch {
+    Write-BlockedStatus 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION'
+}
 if ((Get-PropertyValue $navigation 'ok' $false) -ne $true) {
     Write-BlockedStatus (Convert-ToSafeText (Get-PropertyValue $navigation 'blocker' 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_FAILED') 160) $navigation
 }
 
-$hostPath = (Get-Process -Id $PID -ErrorAction Stop).Path
-$coreOutput = & $hostPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $coreScript -RequestId $RequestId
-$coreExitCode = $LASTEXITCODE
+try {
+    $hostPath = (Get-Process -Id $PID -ErrorAction Stop).Path
+    $coreOutput = & $hostPath -NoProfile -Sta -ExecutionPolicy Bypass -File $coreScript -RequestId $RequestId
+    $coreExitCode = $LASTEXITCODE
+} catch {
+    Write-BlockedStatus 'BLOCKED_RESET_STATUS_CORE_LAUNCH_FAILED' $navigation
+}
 try {
     $payload = $coreOutput | ConvertFrom-Json -ErrorAction Stop
 } catch {
