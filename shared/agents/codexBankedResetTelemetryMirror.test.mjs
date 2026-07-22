@@ -79,7 +79,7 @@ test('projects a read-only status receipt with zero press telemetry and labeled 
   assert.deepEqual(record.latestStatus.resetButtons, ['Use reset']);
 });
 
-test('projects bounded status error evidence and suppresses secret-shaped text', () => {
+test('projects bounded status error evidence and re-filters unsafe historical receipts', () => {
   const safeStatus = receipt('READ_CODEX_BANKED_RESET_STATUS', {
     ok: false,
     blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
@@ -94,17 +94,26 @@ test('projects bounded status error evidence and suppresses secret-shaped text',
   assert.equal(safeRecord.latestStatus.error, 'stale WebView element');
   assert.equal(safeRecord.latestStatus.pressCount, 0);
 
-  const unsafeStatus = receipt('READ_CODEX_BANKED_RESET_STATUS', {
-    ok: false,
-    blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
-    finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
-    navigationRetryCount: 1,
-    error: 'session token secret-value',
-    pressAttempted: false,
-    pressCount: 0,
-  }, { requestId: 'reset-status-unsafe-error-001' });
-  const unsafeRecord = createCodexBankedResetTelemetryRecord([comment(unsafeStatus)], { ownerLogin });
-  assert.equal(unsafeRecord.latestStatus.error, '');
+  const unsafeDiagnostics = [
+    'session token secret-value',
+    'Authorization: Bearer ghp_examplevalue',
+    'oauth grant failed for github_pat_examplevalue',
+    'temporary AWS key ASIA1234567890ABCDEF rejected',
+  ];
+  for (const [index, diagnostic] of unsafeDiagnostics.entries()) {
+    const unsafeStatus = receipt('READ_CODEX_BANKED_RESET_STATUS', {
+      ok: false,
+      blocker: 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION',
+      finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
+      navigationRetryCount: 1,
+      error: diagnostic,
+      pressAttempted: false,
+      pressCount: 0,
+    }, { requestId: `reset-status-unsafe-error-00${index + 1}` });
+    const unsafeRecord = createCodexBankedResetTelemetryRecord([comment(unsafeStatus)], { ownerLogin });
+    assert.equal(unsafeRecord.latestStatus.error, '');
+    assert.equal(buildCodexBankedResetTelemetryIssueBody(unsafeRecord).includes(diagnostic), false);
+  }
 });
 
 test('distinguishes one attempted but unconfirmed press', () => {
