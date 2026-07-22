@@ -39,14 +39,15 @@ test('migration manifest is non-destructive', () => {
   assert.equal(manifest.migrations[0].rootKind, 'openclaw-workspace');
 });
 
-test('acceptance packet checks repository cleanliness, native exit codes and read-only migration plan', () => {
+test('acceptance packet checks cleanliness, native exit codes and returns nonzero on failure', () => {
   const script = buildAcceptancePowerShell({ runtimeRoot: 'C:\\Runtime', openClawWorkspaceRoot: 'C:\\OpenClaw' });
   assert.match(script, /git status --porcelain=v1/);
   assert.match(script, /migrate-dream-runtime-boundary\.mjs/);
   assert.match(script, /\$testExitCode = \$LASTEXITCODE/);
   assert.match(script, /\$planExitCode = \$LASTEXITCODE/);
-  assert.match(script, /verificationPassed/);
-  assert.match(script, /verdict = if \(\$verificationPassed -and \$sourceCleanAfter\)/);
+  assert.match(script, /\$receiptPassed = \(\$verificationPassed -and \$sourceCleanAfter\)/);
+  assert.match(script, /verdict = if \(\$receiptPassed\)/);
+  assert.match(script, /if \(-not \$receiptPassed\) \{ exit 1 \}/);
   assert.doesNotMatch(script, /git reset|git clean|git stash|git rebase/i);
 });
 
@@ -65,4 +66,5 @@ test('workbench emits the complete accelerator packet', async () => {
     'runtime-producer-inventory.json',
     'test-plan.md',
   ]);
+  assert.match(await fs.readFile(path.join(outputRoot, 'runtime-boundary-plan.md'), 'utf8'), /Dream copy mode: disabled/);
 });
