@@ -100,7 +100,7 @@ if ((Get-PropertyValue $navigation 'ok' $false) -ne $true) {
 $hostPath = (Get-Process -Id $PID -ErrorAction Stop).Path
 $coreOutput = & $hostPath `
     -NoProfile `
-    -NonInteractive `
+    -Sta `
     -ExecutionPolicy Bypass `
     -File $coreScript `
     -RequestId $RequestId `
