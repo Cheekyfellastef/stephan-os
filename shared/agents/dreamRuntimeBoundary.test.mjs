@@ -158,6 +158,7 @@ test('final revalidation preserves a destination symlink blocker before snapshot
   await fs.mkdir(outside, { recursive: true });
 
   let copyCount = 0;
+  let symlinkCreated = true;
   const fsImpl = {
     ...fs,
     async copyFile(source, destination, flags) {
@@ -169,7 +170,7 @@ test('final revalidation preserves a destination symlink blocker before snapshot
           await fs.symlink(outside, destinationMemory, 'dir');
         } catch (error) {
           if (error?.code === 'EPERM') {
-            t.skip('symlink creation not permitted');
+            symlinkCreated = false;
             return;
           }
           throw error;
@@ -185,6 +186,7 @@ test('final revalidation preserves a destination symlink blocker before snapshot
     operatorApproval: DREAM_RUNTIME_MIGRATION_APPROVAL,
   });
 
+  if (!symlinkCreated) return t.skip('symlink creation not permitted');
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_DESTINATION_SYMLINK_BLOCKED');
   assert.equal(result.finalVerdict, 'DREAM_MIGRATION_DESTINATION_SYMLINK_BLOCKED');
