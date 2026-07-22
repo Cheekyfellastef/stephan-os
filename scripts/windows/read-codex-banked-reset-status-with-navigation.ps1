@@ -46,6 +46,7 @@ function Write-BlockedStatus([string]$Blocker, [object]$Navigation = $null) {
         pressAttempted = $false
         pressCount = 0
         navigationAttempted = [bool](Get-PropertyValue $Navigation 'navigationAttempted' $false)
+        navigationRetryCount = [int](Get-PropertyValue $Navigation 'navigationRetryCount' 0)
         profileMenuOpened = [bool](Get-PropertyValue $Navigation 'profileMenuOpened' $false)
         usagePanelOpened = [bool](Get-PropertyValue $Navigation 'usagePanelOpened' $false)
         matchedWindow = Convert-ToSafeText (Get-PropertyValue $Navigation 'matchedWindow' '') 160
@@ -53,6 +54,7 @@ function Write-BlockedStatus([string]$Blocker, [object]$Navigation = $null) {
         matchedUsageControl = Convert-ToSafeText (Get-PropertyValue $Navigation 'matchedUsageControl' '') 160
         matchedUsageLabel = Convert-ToSafeText (Get-PropertyValue $Navigation 'matchedUsageLabel' '') 160
         usageControlResolution = Convert-ToSafeText (Get-PropertyValue $Navigation 'usageControlResolution' '') 80
+        error = Convert-ToSafeText (Get-PropertyValue $Navigation 'error' '') 300
         profileCandidates = @((Get-PropertyValue $Navigation 'profileCandidates' @()) | ForEach-Object { Convert-ToSafeText $_ 120 })
         usageCandidates = @((Get-PropertyValue $Navigation 'usageCandidates' @()) | ForEach-Object { Convert-ToSafeText $_ 120 })
         usageLabelCandidates = @((Get-PropertyValue $Navigation 'usageLabelCandidates' @()) | ForEach-Object { Convert-ToSafeText $_ 120 })
@@ -77,19 +79,52 @@ try {
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
 } catch {
-    Write-BlockedStatus 'BLOCKED_RESET_UI_AUTOMATION_PRELOAD_FAILED'
+    Write-BlockedStatus 'BLOCKED_RESET_UI_AUTOMATION_PRELOAD_FAILED' ([pscustomobject]@{
+        error = Convert-ToSafeText $_.Exception.Message 300
+        proofRefs = @('codex-usage-panel-fixed-navigation', 'uia-preload-failed')
+    })
 }
 
 try {
     Import-Module $navigationModule -Force -ErrorAction Stop
 } catch {
-    Write-BlockedStatus 'BLOCKED_RESET_NAVIGATION_MODULE_IMPORT_FAILED'
+    Write-BlockedStatus 'BLOCKED_RESET_NAVIGATION_MODULE_IMPORT_FAILED' ([pscustomobject]@{
+        error = Convert-ToSafeText $_.Exception.Message 300
+        proofRefs = @('codex-usage-panel-fixed-navigation', 'navigation-module-import-failed')
+    })
 }
 
+$navigation = $null
+$navigationRetryCount = 0
+$firstNavigationError = ''
 try {
     $navigation = Open-CodexUsagePanel
 } catch {
-    Write-BlockedStatus 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION'
+    $firstNavigationError = Convert-ToSafeText $_.Exception.Message 300
+    $navigationRetryCount = 1
+    Start-Sleep -Milliseconds 350
+    try {
+        $navigation = Open-CodexUsagePanel
+    } catch {
+        $retryError = Convert-ToSafeText $_.Exception.Message 300
+        Write-BlockedStatus 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_EXCEPTION' ([pscustomobject]@{
+            error = Convert-ToSafeText ("first: $firstNavigationError | retry: $retryError") 300
+            navigationRetryCount = 1
+            proofRefs = @('codex-usage-panel-fixed-navigation', 'navigation-exception-retry-failed')
+        })
+    }
+}
+if ($null -eq $navigation) {
+    Write-BlockedStatus 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_NO_RESULT' ([pscustomobject]@{
+        error = $firstNavigationError
+        navigationRetryCount = $navigationRetryCount
+        proofRefs = @('codex-usage-panel-fixed-navigation', 'navigation-no-result')
+    })
+}
+$navigation | Add-Member -NotePropertyName navigationRetryCount -NotePropertyValue $navigationRetryCount -Force
+if ($navigationRetryCount -eq 1) {
+    $retryProofRefs = @((Get-PropertyValue $navigation 'proofRefs' @())) + @('navigation-exception-retry-pass')
+    $navigation | Add-Member -NotePropertyName proofRefs -NotePropertyValue @($retryProofRefs | Select-Object -Unique) -Force
 }
 if ((Get-PropertyValue $navigation 'ok' $false) -ne $true) {
     Write-BlockedStatus (Convert-ToSafeText (Get-PropertyValue $navigation 'blocker' 'BLOCKED_RESET_USAGE_PANEL_NAVIGATION_FAILED') 160) $navigation
@@ -100,15 +135,18 @@ try {
     $coreOutput = & $hostPath -NoProfile -Sta -ExecutionPolicy Bypass -File $coreScript -RequestId $RequestId
     $coreExitCode = $LASTEXITCODE
 } catch {
+    $navigation | Add-Member -NotePropertyName error -NotePropertyValue (Convert-ToSafeText $_.Exception.Message 300) -Force
     Write-BlockedStatus 'BLOCKED_RESET_STATUS_CORE_LAUNCH_FAILED' $navigation
 }
 try {
     $payload = $coreOutput | ConvertFrom-Json -ErrorAction Stop
 } catch {
+    $navigation | Add-Member -NotePropertyName error -NotePropertyValue (Convert-ToSafeText $_.Exception.Message 300) -Force
     Write-BlockedStatus 'BLOCKED_RESET_STATUS_CORE_OUTPUT_INVALID' $navigation
 }
 
 $payload | Add-Member -NotePropertyName navigationAttempted -NotePropertyValue ([bool](Get-PropertyValue $navigation 'navigationAttempted' $false)) -Force
+$payload | Add-Member -NotePropertyName navigationRetryCount -NotePropertyValue $navigationRetryCount -Force
 $payload | Add-Member -NotePropertyName profileMenuOpened -NotePropertyValue ([bool](Get-PropertyValue $navigation 'profileMenuOpened' $false)) -Force
 $payload | Add-Member -NotePropertyName usagePanelOpened -NotePropertyValue ([bool](Get-PropertyValue $navigation 'usagePanelOpened' $false)) -Force
 $payload | Add-Member -NotePropertyName matchedProfileControl -NotePropertyValue (Convert-ToSafeText (Get-PropertyValue $navigation 'matchedProfileControl' '') 120) -Force
