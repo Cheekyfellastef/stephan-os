@@ -100,6 +100,13 @@ test('wraps the existing status and single-press cores without replacing them', 
   assert.match(executionWrapper, /repeatedPressAllowed = \$false/);
 });
 
+test('keeps the complete UIA chain in STA mode rather than explicitly noninteractive mode', () => {
+  for (const source of [statusWrapper, executionWrapper, statusReader, executor]) {
+    assert.match(source, /-Sta/);
+    assert.doesNotMatch(source, /-NonInteractive/);
+  }
+});
+
 test('routes both Battle Bridge adapters through fixed-navigation wrappers and preserves ancestry evidence', () => {
   assert.match(statusReader, /read-codex-banked-reset-status-with-navigation\.ps1/);
   assert.match(executor, /invoke-codex-banked-reset-ui-with-navigation\.ps1/);
