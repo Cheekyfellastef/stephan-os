@@ -184,6 +184,22 @@ function requiredStatusCheckContexts(protection = {}) {
   ]);
 }
 
+function appBoundRequiredStatusChecks(protection = {}) {
+  return list(protection?.required_status_checks?.checks)
+    .map((check) => ({
+      context: String(check?.context || ''),
+      app_id: Number.isInteger(check?.app_id) ? check.app_id : null,
+    }))
+    .filter((check) => check.context && Number.isInteger(check.app_id));
+}
+
+export function snapshotRequiredStatusChecks(protection = {}) {
+  return freeze({
+    contexts: freeze(requiredStatusCheckContexts(protection)),
+    checks: freeze(appBoundRequiredStatusChecks(protection).map((check) => freeze(check))),
+  });
+}
+
 function statusChecks(existing = {}) {
   const current = existing?.required_status_checks;
   const contexts = uniqueStrings([
@@ -268,12 +284,31 @@ export function buildPreservingMainProtection(existing = {}) {
   });
 }
 
-export function validateMainProtection(protection = {}, { previousApprovalCount = 0 } = {}) {
+export function validateMainProtection(protection = {}, {
+  previousApprovalCount = 0,
+  previousStatusChecks = freeze({ contexts: freeze([]), checks: freeze([]) }),
+} = {}) {
   if (protection?.enforce_admins?.enabled !== true) return fail('MAIN_ADMIN_ENFORCEMENT_NOT_ENABLED');
   if (!protection?.required_pull_request_reviews) return fail('MAIN_PULL_REQUEST_REQUIREMENT_MISSING');
+  const currentContexts = requiredStatusCheckContexts(protection);
   if (protection?.required_status_checks?.strict !== true
-    || !requiredStatusCheckContexts(protection).includes(OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK)) {
+    || !currentContexts.includes(OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK)) {
     return fail('MAIN_REQUIRED_OPERATOR_GATE_CHECK_MISSING');
+  }
+  for (const context of uniqueStrings(list(previousStatusChecks?.contexts))) {
+    if (!currentContexts.includes(context)) {
+      return fail('MAIN_EXISTING_REQUIRED_CHECK_CONTEXT_DROPPED', { context });
+    }
+  }
+  const currentAppChecks = appBoundRequiredStatusChecks(protection);
+  for (const previousCheck of list(previousStatusChecks?.checks)) {
+    const context = String(previousCheck?.context || '');
+    const appId = Number(previousCheck?.app_id);
+    if (!context || !Number.isInteger(appId)) continue;
+    const preserved = currentAppChecks.some((check) => check.context === context && check.app_id === appId);
+    if (!preserved) {
+      return fail('MAIN_EXISTING_REQUIRED_CHECK_APP_BINDING_DROPPED', { context, appId });
+    }
   }
   if (protection?.allow_force_pushes?.enabled === true) return fail('MAIN_FORCE_PUSHES_ALLOWED');
   if (protection?.allow_deletions?.enabled === true) return fail('MAIN_DELETION_ALLOWED');
@@ -291,6 +326,8 @@ export function validateMainProtection(protection = {}, { previousApprovalCount 
     pullRequestRequired: true,
     requiredStatusCheck: OPERATOR_MERGE_PROTECTION_REQUIRED_CHECK,
     strictStatusChecks: true,
+    preservedRequiredContextCount: uniqueStrings(list(previousStatusChecks?.contexts)).length,
+    preservedAppBoundCheckCount: list(previousStatusChecks?.checks).length,
     approvingReviewCount: approvalCount,
     forcePushesAllowed: false,
     deletionsAllowed: false,
@@ -395,13 +432,14 @@ export async function activateOperatorMergeProtectionOnBattleBridge(command = {}
   }
   const protectionBefore = protectionBeforeResponse?.ok ? protectionBeforeResponse.data : {};
   const previousApprovalCount = Number(protectionBefore?.required_pull_request_reviews?.required_approving_review_count || 0);
+  const previousStatusChecks = snapshotRequiredStatusChecks(protectionBefore);
   const protectionUpdate = await requestOrFail(request, {
     method: 'PUT', path: protectionPath, body: buildPreservingMainProtection(protectionBefore),
   }, 'MAIN_PROTECTION_UPDATE_FAILED');
   if (!protectionUpdate.ok) return protectionUpdate;
   const protectionRead = await requestOrFail(request, { path: protectionPath }, 'MAIN_PROTECTION_READBACK_FAILED');
   if (!protectionRead.ok) return protectionRead;
-  const mainProtection = validateMainProtection(protectionRead.data, { previousApprovalCount });
+  const mainProtection = validateMainProtection(protectionRead.data, { previousApprovalCount, previousStatusChecks });
   if (!mainProtection.ok) return mainProtection;
 
   const suffix = canarySuffix(command.requestId);
