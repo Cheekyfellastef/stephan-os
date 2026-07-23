@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGoalDashboardStatusProjection } from './goalDashboardStatusProjection.mjs';
+import {
+  buildGoalDashboardStatusProjection,
+  GOAL_DASHBOARD_PROJECTION_SOURCE,
+  STATIC_GOAL_DASHBOARD_GOALS,
+} from './goalDashboardStatusProjection.mjs';
 
 const NOW = '2026-07-23T12:05:00.000Z';
 
@@ -89,4 +93,23 @@ test('empty and static projections cannot synthesize receipt-backed automation t
   assert.equal(seeded.sourceTruth.receiptEvidenceVerified, false);
   assert.equal(seeded.liveAutomationClaim, 'none');
   assert.equal(seeded.localAutomationTruth, 'local-readonly-adapter-verified');
+});
+
+test('verified adapter without a usable goal array preserves static fallback attribution', () => {
+  for (const goals of [undefined, null, {}, 'not-an-array']) {
+    const result = buildGoalDashboardStatusProjection({
+      now: NOW,
+      githubAdapter: { verified: true },
+      localAdapter: { verified: true },
+      goals,
+      projectionSource: 'verified-readonly-goal-status-adapter',
+    });
+    assert.equal(result.projectionSource, GOAL_DASHBOARD_PROJECTION_SOURCE);
+    assert.equal(result.githubTruth, 'not-live-readonly-static-seed');
+    assert.equal(result.sourceTruth.githubVerified, true);
+    assert.equal(result.sourceTruth.liveGoalsAccepted, false);
+    assert.equal(result.sourceTruth.adaptersCurrent, false);
+    assert.equal(result.totalGoals, STATIC_GOAL_DASHBOARD_GOALS.length);
+    assert.equal(result.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
+  }
 });
