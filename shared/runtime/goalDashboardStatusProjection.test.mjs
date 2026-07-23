@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildGoalDashboardStatusProjection,
   GOAL_DASHBOARD_FRESHNESS_WINDOW_MS,
+  GOAL_DASHBOARD_PROJECTION_SOURCE,
   GOAL_DASHBOARD_REFRESH_TRUTH,
   STATIC_GOAL_DASHBOARD_GOALS,
 } from './goalDashboardStatusProjection.mjs';
@@ -47,6 +48,15 @@ test('static projection remains read-only and fail-closed', () => {
   assert.equal(projection.manualRefreshRequired, true);
 });
 
+test('unverified projection source overrides fail closed to the static seed', () => {
+  const projection = buildGoalDashboardStatusProjection({
+    now: NOW,
+    projectionSource: 'verified-readonly-goal-status-adapter',
+  });
+  assert.equal(projection.projectionSource, GOAL_DASHBOARD_PROJECTION_SOURCE);
+  assert.equal(projection.githubTruth, 'not-live-readonly-static-seed');
+});
+
 test('security remediation seed stays isolated and deeply immutable', () => {
   const projection = buildGoalDashboardStatusProjection({ now: NOW });
   const productiveLane = projection.goals.find((goal) => goal.issue === '#1385');
@@ -58,7 +68,7 @@ test('security remediation seed stays isolated and deeply immutable', () => {
   assert.equal(remediationSeed.linkedPr.state, 'open');
 });
 
-test('linked PR normalization rejects malformed identity and unsupported state', () => {
+test('linked PR normalization rejects malformed identity, structured SHA and unsupported state', () => {
   for (const value of ['1581oops', 1581.9, '0', -1, '01']) {
     const projection = buildGoalDashboardStatusProjection({ now: NOW, goals: [{ issue: '#2001', linkedPr: { number: value, state: 'merged' }, manualRefreshRequired: false }] });
     assert.equal(projection.goals[0].linkedPr.number, null);
@@ -69,6 +79,17 @@ test('linked PR normalization rejects malformed identity and unsupported state',
   const unsupported = buildGoalDashboardStatusProjection({ now: NOW, goals: [{ issue: '#2007', linkedPr: { number: 2008, state: 'MERGD' }, manualRefreshRequired: false }] });
   assert.equal(unsupported.goals[0].linkedPr.state, 'unknown');
   assert.equal(unsupported.unknownPrStateCount, 1);
+
+  const structuredSha = buildGoalDashboardStatusProjection({
+    now: NOW,
+    goals: [{
+      issue: '#2010',
+      linkedPr: { number: 2011, headSha: ['a'.repeat(40)], mergeSha: { value: 'b'.repeat(40) } },
+      manualRefreshRequired: false,
+    }],
+  });
+  assert.equal(structuredSha.goals[0].linkedPr.headSha, null);
+  assert.equal(structuredSha.goals[0].linkedPr.mergeSha, null);
 });
 
 test('canonical draft value overrides compatibility fallback', () => {
@@ -89,6 +110,11 @@ test('verified adapters require affirmative, timestamped evidence and grant no e
   assert.equal(projection.readOnly, true);
 });
 
+test('verified adapters may supply a primitive projection source label', () => {
+  const projection = verifiedProjection(verifiedGoal(), { projectionSource: 'verified-custom-goal-adapter' });
+  assert.equal(projection.projectionSource, 'verified-custom-goal-adapter');
+});
+
 test('caller freshness flags cannot make unknown, negative or structured evidence current', () => {
   const unknown = verifiedProjection(verifiedGoal({ proof: {}, truth: {}, lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z' } }));
   assert.equal(unknown.sourceTruth.goalsCurrent, false);
@@ -101,8 +127,16 @@ test('caller freshness flags cannot make unknown, negative or structured evidenc
   }
 });
 
-test('compound negative and unsupported evidence states fail closed', () => {
-  for (const value of ['receipt-failed', 'current-stale', 'verified-unavailable', 'garbage-green']) {
+test('compound negative, negative receipt and unsupported evidence states fail closed', () => {
+  for (const value of [
+    'receipt-failed',
+    'receipt-rejected',
+    'receipt-expired',
+    'receipt-cancelled',
+    'current-stale',
+    'verified-unavailable',
+    'garbage-green',
+  ]) {
     const projection = verifiedProjection(verifiedGoal({ proof: { lastProofStatus: value }, truth: {} }));
     assert.equal(projection.sourceTruth.goalsCurrent, false, value);
     assert.equal(projection.refreshTruth, 'MANUAL_REFRESH_REQUIRED', value);
