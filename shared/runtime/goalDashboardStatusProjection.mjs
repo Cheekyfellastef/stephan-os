@@ -39,52 +39,9 @@ function integer(value) {
 }
 
 const SUPPORTED_LINKED_PR_STATES = new Set(['open', 'closed', 'merged', 'unknown']);
-const AFFIRMATIVE_EVIDENCE_TOKENS = new Set([
-  'verified',
-  'green',
-  'pass',
-  'passed',
-  'complete',
-  'completed',
-  'success',
-  'current',
-  'healthy',
-  'ready',
-]);
-const EVIDENCE_CONTEXT_TOKENS = new Set([
-  'adapter',
-  'automation',
-  'browser',
-  'ci',
-  'github',
-  'goal',
-  'linked',
-  'local',
-  'pr',
-  'proof',
-  'readonly',
-  'receipt',
-  'runtime',
-  'source',
-  'status',
-]);
-const NEGATIVE_EVIDENCE_TOKENS = new Set([
-  'blocked',
-  'cancelled',
-  'error',
-  'expired',
-  'fail',
-  'failed',
-  'failing',
-  'invalid',
-  'missing',
-  'none',
-  'rejected',
-  'stale',
-  'unavailable',
-  'unknown',
-  'unverified',
-]);
+const AFFIRMATIVE_EVIDENCE_TOKENS = new Set(['verified', 'green', 'pass', 'passed', 'complete', 'completed', 'success', 'current', 'healthy', 'ready']);
+const EVIDENCE_CONTEXT_TOKENS = new Set(['adapter', 'automation', 'browser', 'ci', 'github', 'goal', 'linked', 'local', 'pr', 'proof', 'readonly', 'receipt', 'runtime', 'source', 'status']);
+const NEGATIVE_EVIDENCE_TOKENS = new Set(['blocked', 'cancelled', 'error', 'expired', 'fail', 'failed', 'failing', 'invalid', 'missing', 'none', 'rejected', 'stale', 'unavailable', 'unknown', 'unverified']);
 
 function status(value) {
   if (typeof value !== 'string') return 'unknown';
@@ -99,11 +56,7 @@ function evidenceTokens(value) {
 
 function tokenEncodesNegativeState(token) {
   if (NEGATIVE_EVIDENCE_TOKENS.has(token)) return true;
-  return [...NEGATIVE_EVIDENCE_TOKENS].some((negative) => (
-    token.startsWith(negative)
-    && token.length > negative.length
-    && /^\d+$/.test(token.slice(negative.length))
-  ));
+  return [...NEGATIVE_EVIDENCE_TOKENS].some((negative) => token.startsWith(negative) && token.length > negative.length);
 }
 
 function affirmativeEvidence(value) {
@@ -113,21 +66,18 @@ function affirmativeEvidence(value) {
   if (tokens[0] === 'receipt' && tokens.length > 1) {
     const receiptTokens = tokens.slice(1);
     const affirmativeStatus = receiptTokens.some((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token))
-      && receiptTokens.every((token) => (
-        AFFIRMATIVE_EVIDENCE_TOKENS.has(token)
-        || EVIDENCE_CONTEXT_TOKENS.has(token)
-        || /^\d+$/.test(token)
-      ));
+      && receiptTokens.every((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token) || EVIDENCE_CONTEXT_TOKENS.has(token) || /^\d+$/.test(token));
     const identifier = receiptTokens.every((token) => /^[a-z0-9.]+$/.test(token))
       && receiptTokens.some((token) => /\d/.test(token));
     return affirmativeStatus || identifier;
   }
   return tokens.some((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token))
-    && tokens.every((token) => (
-      AFFIRMATIVE_EVIDENCE_TOKENS.has(token)
-      || EVIDENCE_CONTEXT_TOKENS.has(token)
-      || /^\d+$/.test(token)
-    ));
+    && tokens.every((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token) || EVIDENCE_CONTEXT_TOKENS.has(token) || /^\d+$/.test(token));
+}
+
+function negativeEvidence(value) {
+  const tokens = evidenceTokens(value);
+  return tokens.some(tokenEncodesNegativeState);
 }
 
 function receiptDerivedEvidence(value) {
@@ -135,31 +85,18 @@ function receiptDerivedEvidence(value) {
 }
 
 function currentEvidence(value, automationReceiptVerified) {
-  return affirmativeEvidence(value)
-    && (!receiptDerivedEvidence(value) || automationReceiptVerified);
+  return affirmativeEvidence(value) && (!receiptDerivedEvidence(value) || automationReceiptVerified);
 }
 
 function parseStrictIsoTimestamp(value) {
   const normalized = stringValue(value, '');
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(normalized);
   if (!match) return null;
-
   const [, yearText, monthText, dayText, hourText, minuteText, secondText, millisText = '000', zone, sign, offsetHourText, offsetMinuteText] = match;
-  const parts = [yearText, monthText, dayText, hourText, minuteText, secondText, millisText].map(Number);
-  const [year, month, day, hour, minute, second, millis] = parts;
+  const [year, month, day, hour, minute, second, millis] = [yearText, monthText, dayText, hourText, minuteText, secondText, millisText].map(Number);
   if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return null;
-
   const wallClock = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millis));
-  if (
-    wallClock.getUTCFullYear() !== year ||
-    wallClock.getUTCMonth() !== month - 1 ||
-    wallClock.getUTCDate() !== day ||
-    wallClock.getUTCHours() !== hour ||
-    wallClock.getUTCMinutes() !== minute ||
-    wallClock.getUTCSeconds() !== second ||
-    wallClock.getUTCMilliseconds() !== millis
-  ) return null;
-
+  if (wallClock.getUTCFullYear() !== year || wallClock.getUTCMonth() !== month - 1 || wallClock.getUTCDate() !== day || wallClock.getUTCHours() !== hour || wallClock.getUTCMinutes() !== minute || wallClock.getUTCSeconds() !== second || wallClock.getUTCMilliseconds() !== millis) return null;
   let offsetMinutes = 0;
   if (zone !== 'Z') {
     const offsetHours = Number(offsetHourText);
@@ -167,7 +104,6 @@ function parseStrictIsoTimestamp(value) {
     if (offsetHours > 23 || offsetMins > 59) return null;
     offsetMinutes = (offsetHours * 60 + offsetMins) * (sign === '+' ? 1 : -1);
   }
-
   const expected = wallClock.getTime() - offsetMinutes * 60_000;
   const parsed = Date.parse(normalized);
   return Number.isFinite(parsed) && parsed === expected ? parsed : null;
@@ -227,10 +163,7 @@ function normalizeTruth(goal = {}) {
 
 function normalizeLastUpdated(goal = {}) {
   const updated = goal.lastUpdated || {};
-  return freeze({
-    source: stringValue(updated.source ?? goal.lastUpdatedSource),
-    at: stringValue(updated.at ?? goal.lastUpdatedAt),
-  });
+  return freeze({ source: stringValue(updated.source ?? goal.lastUpdatedSource), at: stringValue(updated.at ?? goal.lastUpdatedAt) });
 }
 
 function normalizeGoal(goal = {}) {
@@ -255,16 +188,33 @@ function normalizeGoal(goal = {}) {
   });
 }
 
+function evidenceCollectionCurrent(values, automationReceiptVerified) {
+  const normalized = Object.values(values);
+  if (normalized.some(negativeEvidence)) return false;
+  return normalized.some((value) => currentEvidence(value, automationReceiptVerified));
+}
+
 function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified) {
   const timestampMs = parseStrictIsoTimestamp(goal.lastUpdated.at);
   const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
   const timestampCurrent = ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS && ageMs <= freshnessWindowMs;
-  const proofCurrent = Object.values(goal.proof).some((value) => currentEvidence(value, automationReceiptVerified));
-  const truthCurrent = Object.values(goal.truth).some((value) => currentEvidence(value, automationReceiptVerified));
   return goal.manualRefreshRequired === false
     && currentEvidence(goal.lastUpdated.source, automationReceiptVerified)
     && timestampCurrent
-    && (proofCurrent || truthCurrent);
+    && (evidenceCollectionCurrent(goal.proof, automationReceiptVerified) || evidenceCollectionCurrent(goal.truth, automationReceiptVerified));
+}
+
+function emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified) {
+  if (!input.resultFreshness || typeof input.resultFreshness !== 'object') return false;
+  const source = stringValue(input.resultFreshness.source);
+  const at = stringValue(input.resultFreshness.at);
+  const evidence = stringValue(input.resultFreshness.evidence);
+  const timestampMs = parseStrictIsoTimestamp(at);
+  const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
+  return currentEvidence(source, automationReceiptVerified)
+    && currentEvidence(evidence, automationReceiptVerified)
+    && ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS
+    && ageMs <= freshnessWindowMs;
 }
 
 export function buildGoalDashboardStatusProjection(input = {}) {
@@ -272,22 +222,18 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const githubAdapterVerified = input.githubAdapter?.verified === true;
   const localAdapterVerified = input.localAdapter?.verified === true;
   const automationReceiptVerified = input.automationReceipt?.verified === true;
-  const goals = githubAdapterVerified && Array.isArray(input.goals)
-    ? input.goals
-    : STATIC_GOAL_DASHBOARD_GOALS;
+  const goals = githubAdapterVerified && Array.isArray(input.goals) ? input.goals : STATIC_GOAL_DASHBOARD_GOALS;
   const requestedNow = typeof input.now === 'number' ? input.now : Date.parse(stringValue(input.now, ''));
   const nowMs = Number.isFinite(requestedNow) ? requestedNow : Date.now();
   const requestedWindow = Number(input.freshnessWindowMs);
-  const freshnessWindowMs = Number.isFinite(requestedWindow) && requestedWindow > 0
-    ? Math.min(requestedWindow, GOAL_DASHBOARD_FRESHNESS_WINDOW_MS)
-    : GOAL_DASHBOARD_FRESHNESS_WINDOW_MS;
+  const freshnessWindowMs = Number.isFinite(requestedWindow) && requestedWindow > 0 ? Math.min(requestedWindow, GOAL_DASHBOARD_FRESHNESS_WINDOW_MS) : GOAL_DASHBOARD_FRESHNESS_WINDOW_MS;
   const normalizedGoals = goals.map(normalizeGoal);
   const adaptersCurrent = githubAdapterVerified && localAdapterVerified;
-  const goalsCurrent = normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified));
+  const goalsCurrent = normalizedGoals.length > 0
+    ? normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified))
+    : emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified);
   const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
-  const projectionSource = githubAdapterVerified
-    ? stringValue(input.projectionSource, 'verified-readonly-goal-status-adapter')
-    : GOAL_DASHBOARD_PROJECTION_SOURCE;
+  const projectionSource = githubAdapterVerified ? stringValue(input.projectionSource, 'verified-readonly-goal-status-adapter') : GOAL_DASHBOARD_PROJECTION_SOURCE;
 
   return freeze({
     schemaVersion: 'stephanos.goal-dashboard-status-projection.v1',
@@ -298,9 +244,7 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     freshnessWindowMs,
     liveAutomationClaim: automationReceiptVerified ? 'receipt-backed-readonly' : 'none',
     githubTruth: githubAdapterVerified ? 'live-readonly-adapter-verified' : 'not-live-readonly-static-seed',
-    localAutomationTruth: localAdapterVerified
-      ? (automationReceiptVerified ? 'local-readonly-adapter-and-receipt-verified' : 'local-readonly-adapter-verified')
-      : 'not-live-readonly-static-seed',
+    localAutomationTruth: localAdapterVerified ? (automationReceiptVerified ? 'local-readonly-adapter-and-receipt-verified' : 'local-readonly-adapter-verified') : 'not-live-readonly-static-seed',
     sourceTruth: freeze({ githubVerified: githubAdapterVerified, localVerified: localAdapterVerified, automationReceiptVerified, adaptersCurrent, goalsCurrent }),
     totalGoals: normalizedGoals.length,
     activeGoalCount: normalizedGoals.filter((goal) => /active/i.test(goal.status)).length,
@@ -323,8 +267,6 @@ export function buildGoalDashboardStatusProjection(input = {}) {
       queue: buildConciergeQueue({ ...(input.buildConcierge || {}), goals: [...(Array.isArray(input.buildConcierge?.goals) ? input.buildConcierge.goals : []), ...liveGoalCandidates] }),
       antiStallMergeLane: buildConciergeAntiStallMergeLane(input.buildConcierge?.antiStallMergeLane || input.antiStallMergeLane || {}),
     }),
-    nextAction: manualRefreshRequired
-      ? 'Refresh stale goal or adapter truth before making live GitHub/local automation claims.'
-      : 'Render the verified read-only goal and linked-PR projection without inferring unreceipted automation.',
+    nextAction: manualRefreshRequired ? 'Refresh stale goal or adapter truth before making live GitHub/local automation claims.' : 'Render the verified read-only goal and linked-PR projection without inferring unreceipted automation.',
   });
 }
