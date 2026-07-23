@@ -244,19 +244,22 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const githubAdapterVerified = input.githubAdapter?.verified === true;
   const localAdapterVerified = input.localAdapter?.verified === true;
   const automationReceiptVerified = input.automationReceipt?.verified === true;
-  const goals = githubAdapterVerified && Array.isArray(input.goals) ? input.goals : STATIC_GOAL_DASHBOARD_GOALS;
+  const liveGoalsAccepted = githubAdapterVerified && Array.isArray(input.goals);
+  const goals = liveGoalsAccepted ? input.goals : STATIC_GOAL_DASHBOARD_GOALS;
   const requestedNow = typeof input.now === 'number' ? input.now : Date.parse(stringValue(input.now, ''));
   const nowMs = Number.isFinite(requestedNow) ? requestedNow : Date.now();
   const requestedWindow = Number(input.freshnessWindowMs);
   const freshnessWindowMs = Number.isFinite(requestedWindow) && requestedWindow > 0 ? Math.min(requestedWindow, GOAL_DASHBOARD_FRESHNESS_WINDOW_MS) : GOAL_DASHBOARD_FRESHNESS_WINDOW_MS;
   const normalizedGoals = goals.map(normalizeGoal);
   const receiptEvidenceVerified = hasValidatedReceiptEvidence(normalizedGoals, automationReceiptVerified);
-  const adaptersCurrent = githubAdapterVerified && localAdapterVerified;
-  const goalsCurrent = normalizedGoals.length > 0
+  const adaptersCurrent = liveGoalsAccepted && localAdapterVerified;
+  const goalsCurrent = liveGoalsAccepted && (normalizedGoals.length > 0
     ? normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified))
-    : emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified);
+    : emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified));
   const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
-  const projectionSource = githubAdapterVerified ? stringValue(input.projectionSource, 'verified-readonly-goal-status-adapter') : GOAL_DASHBOARD_PROJECTION_SOURCE;
+  const projectionSource = liveGoalsAccepted
+    ? stringValue(input.projectionSource, 'verified-readonly-goal-status-adapter')
+    : GOAL_DASHBOARD_PROJECTION_SOURCE;
 
   return freeze({
     schemaVersion: 'stephanos.goal-dashboard-status-projection.v1',
@@ -266,9 +269,9 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     freshnessVerdict: manualRefreshRequired ? 'STALE_REFRESH_REQUIRED' : 'CURRENT_VERIFIED_READONLY_SOURCES',
     freshnessWindowMs,
     liveAutomationClaim: receiptEvidenceVerified ? 'receipt-backed-readonly' : 'none',
-    githubTruth: githubAdapterVerified ? 'live-readonly-adapter-verified' : 'not-live-readonly-static-seed',
+    githubTruth: liveGoalsAccepted ? 'live-readonly-adapter-verified' : 'not-live-readonly-static-seed',
     localAutomationTruth: localAdapterVerified ? (receiptEvidenceVerified ? 'local-readonly-adapter-and-receipt-verified' : 'local-readonly-adapter-verified') : 'not-live-readonly-static-seed',
-    sourceTruth: freeze({ githubVerified: githubAdapterVerified, localVerified: localAdapterVerified, automationReceiptVerified, receiptEvidenceVerified, adaptersCurrent, goalsCurrent }),
+    sourceTruth: freeze({ githubVerified: githubAdapterVerified, liveGoalsAccepted, localVerified: localAdapterVerified, automationReceiptVerified, receiptEvidenceVerified, adaptersCurrent, goalsCurrent }),
     totalGoals: normalizedGoals.length,
     activeGoalCount: normalizedGoals.filter((goal) => /active/i.test(goal.status)).length,
     blockedGoalCount: normalizedGoals.filter((goal) => /blocked/i.test(goal.status)).length,
