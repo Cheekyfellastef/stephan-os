@@ -137,14 +137,14 @@ export const STATIC_GOAL_DASHBOARD_GOALS = Object.freeze([
     milestone: 'APP_BOUND_REQUIRED_CHECK_REPAIR_PENDING',
     operatorNeeded: 'No',
     proofIndex: 0,
-    linkedPr: {
+    linkedPr: Object.freeze({
       number: 1581,
       state: 'open',
       draft: false,
       mergeable: true,
       headSha: '4857085caa008e0bca60a9b5015fdd8a16b2e83e',
       exactHeadMergeHold: 'blocked-by-unresolved-security-review',
-    },
+    }),
     nextAction: 'Repair PR #1581 independently without blocking unrelated programme building.',
   }),
   Object.freeze({
@@ -253,7 +253,7 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     activeGoalCount: normalizedGoals.filter((goal) => /active/i.test(goal.status)).length,
     blockedGoalCount: normalizedGoals.filter((goal) => /blocked/i.test(goal.status)).length,
     linkedPrCount: normalizedGoals.filter((goal) => goal.linkedPr.number !== null).length,
-    mergedPrCount: normalizedGoals.filter((goal) => goal.linkedPr.state === 'merged').length,
+    mergedPrCount: normalizedGoals.filter((goal) => goal.linkedPr.number !== null && goal.linkedPr.state === 'merged').length,
     unknownPrStateCount: normalizedGoals.filter((goal) => goal.linkedPr.number !== null && goal.linkedPr.state === 'unknown').length,
     manualRefreshRequired,
     goals: normalizedGoals,
