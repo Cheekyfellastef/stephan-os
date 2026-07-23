@@ -75,7 +75,7 @@ function Write-BlockedStatus([string]$Blocker, [object]$Navigation = $null) {
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$navigationModule = Join-Path $scriptDir 'codex-banked-reset-ui-navigation.psm1'
+$navigationModule = Join-Path (Join-Path $scriptDir 'compat') 'codex-banked-reset-ui-navigation.psm1'
 $coreScript = Join-Path $scriptDir 'read-codex-banked-reset-status.ps1'
 if (-not (Test-Path -LiteralPath $navigationModule -PathType Leaf)) {
     Write-BlockedStatus 'BLOCKED_RESET_NAVIGATION_MODULE_MISSING'

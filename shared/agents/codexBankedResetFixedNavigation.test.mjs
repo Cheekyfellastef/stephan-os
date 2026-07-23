@@ -7,6 +7,7 @@ const root = resolve(process.cwd());
 const read = (path) => readFileSync(resolve(root, path), 'utf8');
 
 const navigation = read('scripts/windows/codex-banked-reset-ui-navigation.psm1');
+const navigationCompat = read('scripts/windows/compat/codex-banked-reset-ui-navigation.psm1');
 const statusWrapper = read('scripts/windows/read-codex-banked-reset-status-with-navigation.ps1');
 const executionWrapper = read('scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1');
 const statusCore = read('scripts/windows/read-codex-banked-reset-status.ps1');
@@ -30,6 +31,19 @@ test('finds reset summary labels only on newly visible same-process popup surfac
   assert.match(navigation, /function Get-CodexNewlyVisibleSnapshot/);
   assert.match(navigation, /BLOCKED_RESET_PROFILE_POPUP_NOT_OBSERVED/);
   assert.match(navigation, /profile-popup-delta-scanned/);
+});
+
+test('normalizes a one-item popup delta into an array for both wrappers', () => {
+  assert.match(navigationCompat, /Import-Module \$baseModulePath -Force -PassThru/);
+  assert.match(navigationCompat, /function script:Get-CodexNewlyVisibleSnapshot/);
+  assert.doesNotMatch(navigationCompat, /function Get-CodexNewlyVisibleSnapshot/);
+  assert.match(navigationCompat, /foreach \(\$item in @\(\$Before\)\)/);
+  assert.match(navigationCompat, /foreach \(\$item in @\(\$After\)\)/);
+  assert.match(navigationCompat, /Write-Output -NoEnumerate @\(\$newlyVisible\)/);
+  assert.match(navigationCompat, /& \$script:BaseNavigationModule/);
+  for (const source of [statusWrapper, executionWrapper]) {
+    assert.match(source, /Join-Path \(Join-Path \$scriptDir 'compat'\) 'codex-banked-reset-ui-navigation\.psm1'/);
+  }
 });
 
 test('resolves a bounded invocable ancestor even when its own accessible name is empty', () => {
@@ -73,7 +87,7 @@ test('live executor requires changed meter proof and never treats disappearance 
 });
 
 test('forbids generic browser, script and credential extraction automation', () => {
-  const combined = [navigation, statusWrapper, executionWrapper, statusCore, executionCore].join('\n');
+  const combined = [navigation, navigationCompat, statusWrapper, executionWrapper, statusCore, executionCore].join('\n');
   for (const pattern of [
     /Invoke-WebRequest/i,
     /Start-Process/i,
