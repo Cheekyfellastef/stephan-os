@@ -49,6 +49,7 @@ $script:BaseNavigationModule = Import-Module $baseModulePath -Force -PassThru -E
             $fallback = @($After | Where-Object {
                 $_.Enabled -and -not $_.Offscreen -and
                 $_.Name -notmatch $forbidden -and
+                $_.AutomationId -notmatch $forbidden -and
                 (
                     $_.Name -match $usageLabel -or
                     $_.AutomationId -match '(?i)usage|limit|reset'
