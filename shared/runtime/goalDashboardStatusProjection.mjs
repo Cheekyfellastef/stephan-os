@@ -22,8 +22,13 @@ function sha(value) {
 }
 
 function integer(value) {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  }
+  const normalized = text(value);
+  if (!/^[1-9]\d*$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function status(value) {
@@ -161,7 +166,7 @@ function normalizeLinkedPr(goal = {}) {
   return freeze({
     number: integer(linkedPr.number ?? goal.prNumber),
     state: status(linkedPr.state ?? goal.prState),
-    draft: linkedPr.draft === true || goal.prDraft === true,
+    draft: nullableBoolean(linkedPr.draft ?? goal.prDraft),
     mergeable: nullableBoolean(linkedPr.mergeable ?? goal.prMergeable),
     headSha: sha(linkedPr.headSha ?? goal.headSha),
     mergeSha: sha(linkedPr.mergeSha ?? goal.mergeSha),
@@ -223,14 +228,17 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const githubAdapterVerified = input.githubAdapter?.verified === true;
   const localAdapterVerified = input.localAdapter?.verified === true;
   const automationReceiptVerified = input.automationReceipt?.verified === true;
-  const manualRefreshRequired = !githubAdapterVerified || !localAdapterVerified;
   const normalizedGoals = goals.map(normalizeGoal);
+  const adaptersCurrent = githubAdapterVerified && localAdapterVerified;
+  const goalsCurrent = normalizedGoals.every((goal) => goal.manualRefreshRequired === false);
+  const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
 
   return Object.freeze({
     schemaVersion: 'stephanos.goal-dashboard-status-projection.v1',
     projectionSource: text(input.projectionSource, githubAdapterVerified ? 'verified-readonly-goal-status-adapter' : GOAL_DASHBOARD_PROJECTION_SOURCE),
     readOnly: true,
     refreshTruth: manualRefreshRequired ? GOAL_DASHBOARD_REFRESH_TRUTH : 'VERIFIED_READONLY_SOURCES_CURRENT',
+    freshnessVerdict: manualRefreshRequired ? 'STALE_REFRESH_REQUIRED' : 'CURRENT_VERIFIED_READONLY_SOURCES',
     liveAutomationClaim: automationReceiptVerified ? 'receipt-backed-readonly' : 'none',
     githubTruth: githubAdapterVerified ? 'live-readonly-adapter-verified' : 'not-live-readonly-static-seed',
     localAutomationTruth: localAdapterVerified ? 'local-readonly-receipt-verified' : 'not-live-readonly-static-seed',
@@ -238,6 +246,8 @@ export function buildGoalDashboardStatusProjection(input = {}) {
       githubVerified: githubAdapterVerified,
       localVerified: localAdapterVerified,
       automationReceiptVerified,
+      adaptersCurrent,
+      goalsCurrent,
     }),
     totalGoals: normalizedGoals.length,
     activeGoalCount: normalizedGoals.filter((goal) => /active/i.test(goal.status)).length,
@@ -261,7 +271,7 @@ export function buildGoalDashboardStatusProjection(input = {}) {
       antiStallMergeLane: buildConciergeAntiStallMergeLane(input.buildConcierge?.antiStallMergeLane || input.antiStallMergeLane || {}),
     }),
     nextAction: manualRefreshRequired
-      ? 'Refresh the static Goal Dashboard seed manually before making live GitHub/local automation claims.'
+      ? 'Refresh stale goal or adapter truth before making live GitHub/local automation claims.'
       : 'Render the verified read-only goal and linked-PR projection without inferring unreceipted automation.',
   });
 }
