@@ -25,7 +25,8 @@ function nullableBoolean(value) {
 }
 
 function sha(value) {
-  const normalized = text(value).toLowerCase();
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
   return /^[a-f0-9]{40}$/.test(normalized) ? normalized : null;
 }
 
@@ -69,13 +70,16 @@ const EVIDENCE_CONTEXT_TOKENS = new Set([
 ]);
 const NEGATIVE_EVIDENCE_TOKENS = new Set([
   'blocked',
+  'cancelled',
   'error',
+  'expired',
   'fail',
   'failed',
   'failing',
   'invalid',
   'missing',
   'none',
+  'rejected',
   'stale',
   'unavailable',
   'unknown',
@@ -97,7 +101,16 @@ function affirmativeEvidence(value) {
   if (!tokens.length || tokens.some((token) => NEGATIVE_EVIDENCE_TOKENS.has(token))) return false;
   if (tokens.length === 1) return AFFIRMATIVE_EVIDENCE_TOKENS.has(tokens[0]);
   if (tokens[0] === 'receipt' && tokens.length > 1) {
-    return tokens.slice(1).every((token) => /^[a-z0-9.]+$/.test(token));
+    const receiptTokens = tokens.slice(1);
+    const affirmativeStatus = receiptTokens.some((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token))
+      && receiptTokens.every((token) => (
+        AFFIRMATIVE_EVIDENCE_TOKENS.has(token)
+        || EVIDENCE_CONTEXT_TOKENS.has(token)
+        || /^\d+$/.test(token)
+      ));
+    const identifier = receiptTokens.every((token) => /^[a-z0-9.]+$/.test(token))
+      && receiptTokens.some((token) => /\d/.test(token));
+    return affirmativeStatus || identifier;
   }
   return tokens.some((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token))
     && tokens.every((token) => (
@@ -260,10 +273,13 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const adaptersCurrent = githubAdapterVerified && localAdapterVerified;
   const goalsCurrent = normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified));
   const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
+  const projectionSource = githubAdapterVerified
+    ? stringValue(input.projectionSource, 'verified-readonly-goal-status-adapter')
+    : GOAL_DASHBOARD_PROJECTION_SOURCE;
 
   return freeze({
     schemaVersion: 'stephanos.goal-dashboard-status-projection.v1',
-    projectionSource: text(input.projectionSource, githubAdapterVerified ? 'verified-readonly-goal-status-adapter' : GOAL_DASHBOARD_PROJECTION_SOURCE),
+    projectionSource,
     readOnly: true,
     refreshTruth: manualRefreshRequired ? GOAL_DASHBOARD_REFRESH_TRUTH : 'VERIFIED_READONLY_SOURCES_CURRENT',
     freshnessVerdict: manualRefreshRequired ? 'STALE_REFRESH_REQUIRED' : 'CURRENT_VERIFIED_READONLY_SOURCES',
