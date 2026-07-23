@@ -234,6 +234,11 @@ function emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVe
     && ageMs <= freshnessWindowMs;
 }
 
+function hasValidatedReceiptEvidence(goals, automationReceiptVerified) {
+  return automationReceiptVerified
+    && goals.some((goal) => validReceiptIdentifier(goal.proof.automationReceipt));
+}
+
 export function buildGoalDashboardStatusProjection(input = {}) {
   const liveGoalCandidates = Array.isArray(input.buildConcierge?.createdGoalCandidates) ? input.buildConcierge.createdGoalCandidates : [];
   const githubAdapterVerified = input.githubAdapter?.verified === true;
@@ -245,6 +250,7 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const requestedWindow = Number(input.freshnessWindowMs);
   const freshnessWindowMs = Number.isFinite(requestedWindow) && requestedWindow > 0 ? Math.min(requestedWindow, GOAL_DASHBOARD_FRESHNESS_WINDOW_MS) : GOAL_DASHBOARD_FRESHNESS_WINDOW_MS;
   const normalizedGoals = goals.map(normalizeGoal);
+  const receiptEvidenceVerified = hasValidatedReceiptEvidence(normalizedGoals, automationReceiptVerified);
   const adaptersCurrent = githubAdapterVerified && localAdapterVerified;
   const goalsCurrent = normalizedGoals.length > 0
     ? normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified))
@@ -259,10 +265,10 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     refreshTruth: manualRefreshRequired ? GOAL_DASHBOARD_REFRESH_TRUTH : 'VERIFIED_READONLY_SOURCES_CURRENT',
     freshnessVerdict: manualRefreshRequired ? 'STALE_REFRESH_REQUIRED' : 'CURRENT_VERIFIED_READONLY_SOURCES',
     freshnessWindowMs,
-    liveAutomationClaim: automationReceiptVerified ? 'receipt-backed-readonly' : 'none',
+    liveAutomationClaim: receiptEvidenceVerified ? 'receipt-backed-readonly' : 'none',
     githubTruth: githubAdapterVerified ? 'live-readonly-adapter-verified' : 'not-live-readonly-static-seed',
-    localAutomationTruth: localAdapterVerified ? (automationReceiptVerified ? 'local-readonly-adapter-and-receipt-verified' : 'local-readonly-adapter-verified') : 'not-live-readonly-static-seed',
-    sourceTruth: freeze({ githubVerified: githubAdapterVerified, localVerified: localAdapterVerified, automationReceiptVerified, adaptersCurrent, goalsCurrent }),
+    localAutomationTruth: localAdapterVerified ? (receiptEvidenceVerified ? 'local-readonly-adapter-and-receipt-verified' : 'local-readonly-adapter-verified') : 'not-live-readonly-static-seed',
+    sourceTruth: freeze({ githubVerified: githubAdapterVerified, localVerified: localAdapterVerified, automationReceiptVerified, receiptEvidenceVerified, adaptersCurrent, goalsCurrent }),
     totalGoals: normalizedGoals.length,
     activeGoalCount: normalizedGoals.filter((goal) => /active/i.test(goal.status)).length,
     blockedGoalCount: normalizedGoals.filter((goal) => /blocked/i.test(goal.status)).length,
