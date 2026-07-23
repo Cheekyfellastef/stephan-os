@@ -42,8 +42,9 @@ function integer(value) {
 const SUPPORTED_LINKED_PR_STATES = new Set(['open', 'closed', 'merged', 'unknown']);
 const AFFIRMATIVE_EVIDENCE_TOKENS = new Set(['verified', 'green', 'pass', 'passed', 'complete', 'completed', 'success', 'current', 'healthy', 'ready']);
 const EVIDENCE_CONTEXT_TOKENS = new Set(['adapter', 'automation', 'browser', 'ci', 'github', 'goal', 'linked', 'local', 'pr', 'proof', 'readonly', 'receipt', 'runtime', 'source', 'status']);
-const NEGATIVE_EVIDENCE_TOKENS = new Set(['blocked', 'cancelled', 'error', 'expired', 'fail', 'failed', 'failing', 'invalid', 'missing', 'none', 'rejected', 'stale', 'unavailable', 'unknown', 'unverified']);
+const NEGATIVE_EVIDENCE_TOKENS = new Set(['aborted', 'blocked', 'canceled', 'cancelled', 'denied', 'error', 'expired', 'fail', 'failed', 'failing', 'invalid', 'missing', 'none', 'pending', 'rejected', 'stale', 'stalled', 'stopped', 'timeout', 'unavailable', 'unknown', 'unverified']);
 const VERIFIED_RESULT_SOURCES = new Set(['verified-readonly-goal-status-adapter']);
+const RECEIPT_IDENTIFIER_PATTERN = /^receipt-(?:\d+|[0-9a-f]{12,64}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 
 function status(value) {
   if (typeof value !== 'string') return 'unknown';
@@ -56,23 +57,13 @@ function evidenceTokens(value) {
   return value.trim().toLowerCase().split(/[-_:]/).filter(Boolean);
 }
 
-function containsNegativeFragment(value) {
-  if (typeof value !== 'string') return false;
-  const normalized = value.trim().toLowerCase();
-  return [...NEGATIVE_EVIDENCE_TOKENS].some((negative) => normalized.includes(negative));
-}
-
 function tokenEncodesNegativeState(token) {
   if (NEGATIVE_EVIDENCE_TOKENS.has(token)) return true;
   return [...NEGATIVE_EVIDENCE_TOKENS].some((negative) => token.startsWith(negative) && token.length > negative.length);
 }
 
 function validReceiptIdentifier(value) {
-  if (typeof value !== 'string') return false;
-  const normalized = value.trim().toLowerCase();
-  if (!/^receipt-[a-z0-9]*\d[a-z0-9]*$/.test(normalized)) return false;
-  const suffix = normalized.slice('receipt-'.length);
-  return !containsNegativeFragment(suffix);
+  return typeof value === 'string' && RECEIPT_IDENTIFIER_PATTERN.test(value.trim().toLowerCase());
 }
 
 function affirmativeEvidence(value) {
@@ -87,12 +78,6 @@ function affirmativeEvidence(value) {
   }
   return tokens.some((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token))
     && tokens.every((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token) || EVIDENCE_CONTEXT_TOKENS.has(token) || /^\d+$/.test(token));
-}
-
-function negativeEvidence(value) {
-  const tokens = evidenceTokens(value);
-  if (tokens.some(tokenEncodesNegativeState)) return true;
-  return typeof value === 'string' && value.trim().toLowerCase().startsWith('receipt-') && containsNegativeFragment(value.slice('receipt-'.length));
 }
 
 function receiptDerivedEvidence(value) {
@@ -216,13 +201,20 @@ function normalizeGoal(goal = {}) {
   });
 }
 
+function evidenceEntryCurrent(key, value, automationReceiptVerified) {
+  if (key === 'automationReceipt') {
+    return automationReceiptVerified && validReceiptIdentifier(value);
+  }
+  return currentEvidence(value, automationReceiptVerified);
+}
+
 function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified) {
   const timestampMs = parseStrictIsoTimestamp(goal.lastUpdated.at);
   const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
   const timestampCurrent = ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS && ageMs <= freshnessWindowMs;
-  const evidenceValues = [...Object.values(goal.proof), ...Object.values(goal.truth)];
-  const evidenceCurrent = !evidenceValues.some(negativeEvidence)
-    && evidenceValues.some((value) => currentEvidence(value, automationReceiptVerified));
+  const evidenceEntries = [...Object.entries(goal.proof), ...Object.entries(goal.truth)];
+  const evidenceCurrent = evidenceEntries.length > 0
+    && evidenceEntries.every(([key, value]) => evidenceEntryCurrent(key, value, automationReceiptVerified));
   return goal.manualRefreshRequired === false
     && canonicalSource(goal.lastUpdated.source)
     && timestampCurrent
