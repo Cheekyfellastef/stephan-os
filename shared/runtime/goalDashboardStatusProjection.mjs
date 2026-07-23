@@ -87,7 +87,8 @@ const NEGATIVE_EVIDENCE_TOKENS = new Set([
 ]);
 
 function status(value) {
-  const normalized = text(value, 'unknown').toLowerCase();
+  if (typeof value !== 'string') return 'unknown';
+  const normalized = value.trim().toLowerCase();
   return SUPPORTED_LINKED_PR_STATES.has(normalized) ? normalized : 'unknown';
 }
 
@@ -96,9 +97,18 @@ function evidenceTokens(value) {
   return value.trim().toLowerCase().split(/[-_:]/).filter(Boolean);
 }
 
+function tokenEncodesNegativeState(token) {
+  if (NEGATIVE_EVIDENCE_TOKENS.has(token)) return true;
+  return [...NEGATIVE_EVIDENCE_TOKENS].some((negative) => (
+    token.startsWith(negative)
+    && token.length > negative.length
+    && /^\d+$/.test(token.slice(negative.length))
+  ));
+}
+
 function affirmativeEvidence(value) {
   const tokens = evidenceTokens(value);
-  if (!tokens.length || tokens.some((token) => NEGATIVE_EVIDENCE_TOKENS.has(token))) return false;
+  if (!tokens.length || tokens.some(tokenEncodesNegativeState)) return false;
   if (tokens.length === 1) return AFFIRMATIVE_EVIDENCE_TOKENS.has(tokens[0]);
   if (tokens[0] === 'receipt' && tokens.length > 1) {
     const receiptTokens = tokens.slice(1);
@@ -259,10 +269,12 @@ function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceip
 
 export function buildGoalDashboardStatusProjection(input = {}) {
   const liveGoalCandidates = Array.isArray(input.buildConcierge?.createdGoalCandidates) ? input.buildConcierge.createdGoalCandidates : [];
-  const goals = Array.isArray(input.goals) && input.goals.length ? input.goals : STATIC_GOAL_DASHBOARD_GOALS;
   const githubAdapterVerified = input.githubAdapter?.verified === true;
   const localAdapterVerified = input.localAdapter?.verified === true;
   const automationReceiptVerified = input.automationReceipt?.verified === true;
+  const goals = githubAdapterVerified && Array.isArray(input.goals)
+    ? input.goals
+    : STATIC_GOAL_DASHBOARD_GOALS;
   const requestedNow = typeof input.now === 'number' ? input.now : Date.parse(stringValue(input.now, ''));
   const nowMs = Number.isFinite(requestedNow) ? requestedNow : Date.now();
   const requestedWindow = Number(input.freshnessWindowMs);
