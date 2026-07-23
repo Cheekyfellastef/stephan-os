@@ -188,20 +188,17 @@ function normalizeGoal(goal = {}) {
   });
 }
 
-function evidenceCollectionCurrent(values, automationReceiptVerified) {
-  const normalized = Object.values(values);
-  if (normalized.some(negativeEvidence)) return false;
-  return normalized.some((value) => currentEvidence(value, automationReceiptVerified));
-}
-
 function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified) {
   const timestampMs = parseStrictIsoTimestamp(goal.lastUpdated.at);
   const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
   const timestampCurrent = ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS && ageMs <= freshnessWindowMs;
+  const evidenceValues = [...Object.values(goal.proof), ...Object.values(goal.truth)];
+  const evidenceCurrent = !evidenceValues.some(negativeEvidence)
+    && evidenceValues.some((value) => currentEvidence(value, automationReceiptVerified));
   return goal.manualRefreshRequired === false
     && currentEvidence(goal.lastUpdated.source, automationReceiptVerified)
     && timestampCurrent
-    && (evidenceCollectionCurrent(goal.proof, automationReceiptVerified) || evidenceCollectionCurrent(goal.truth, automationReceiptVerified));
+    && evidenceCurrent;
 }
 
 function emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified) {
