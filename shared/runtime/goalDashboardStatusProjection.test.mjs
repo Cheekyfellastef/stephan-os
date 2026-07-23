@@ -69,6 +69,20 @@ test('verified adapters preserve an explicit empty goal result but require resul
   assert.equal(stale.sourceTruth.goalsCurrent, false);
   assert.equal(stale.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
 
+  const forgedSource = buildGoalDashboardStatusProjection({
+    now: NOW,
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    goals: [],
+    resultFreshness: {
+      source: 'current',
+      at: '2026-07-23T12:00:00.000Z',
+      evidence: 'current',
+    },
+  });
+  assert.equal(forgedSource.sourceTruth.goalsCurrent, false);
+  assert.equal(forgedSource.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
+
   const current = buildGoalDashboardStatusProjection({
     now: NOW,
     githubAdapter: { verified: true },
