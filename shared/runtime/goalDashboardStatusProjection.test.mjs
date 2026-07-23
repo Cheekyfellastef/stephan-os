@@ -48,13 +48,28 @@ test('static projection remains read-only and fail-closed', () => {
   assert.equal(projection.manualRefreshRequired, true);
 });
 
-test('unverified projection source overrides fail closed to the static seed', () => {
+test('unverified projection source and goal overrides fail closed to the static seed', () => {
   const projection = buildGoalDashboardStatusProjection({
     now: NOW,
     projectionSource: 'verified-readonly-goal-status-adapter',
+    goals: [],
   });
   assert.equal(projection.projectionSource, GOAL_DASHBOARD_PROJECTION_SOURCE);
   assert.equal(projection.githubTruth, 'not-live-readonly-static-seed');
+  assert.equal(projection.totalGoals, STATIC_GOAL_DASHBOARD_GOALS.length);
+});
+
+test('verified adapters preserve an explicit empty goal result', () => {
+  const projection = buildGoalDashboardStatusProjection({
+    now: NOW,
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    goals: [],
+  });
+  assert.equal(projection.projectionSource, 'verified-readonly-goal-status-adapter');
+  assert.equal(projection.githubTruth, 'live-readonly-adapter-verified');
+  assert.equal(projection.totalGoals, 0);
+  assert.deepEqual(projection.goals, []);
 });
 
 test('security remediation seed stays isolated and deeply immutable', () => {
@@ -68,32 +83,35 @@ test('security remediation seed stays isolated and deeply immutable', () => {
   assert.equal(remediationSeed.linkedPr.state, 'open');
 });
 
-test('linked PR normalization rejects malformed identity, structured SHA and unsupported state', () => {
+test('linked PR normalization rejects malformed identity, structured SHA/state and unsupported state', () => {
   for (const value of ['1581oops', 1581.9, '0', -1, '01']) {
-    const projection = buildGoalDashboardStatusProjection({ now: NOW, goals: [{ issue: '#2001', linkedPr: { number: value, state: 'merged' }, manualRefreshRequired: false }] });
+    const projection = buildGoalDashboardStatusProjection({ now: NOW, githubAdapter: { verified: true }, goals: [{ issue: '#2001', linkedPr: { number: value, state: 'merged' }, manualRefreshRequired: false }] });
     assert.equal(projection.goals[0].linkedPr.number, null);
     assert.equal(projection.linkedPrCount, 0);
     assert.equal(projection.mergedPrCount, 0);
   }
 
-  const unsupported = buildGoalDashboardStatusProjection({ now: NOW, goals: [{ issue: '#2007', linkedPr: { number: 2008, state: 'MERGD' }, manualRefreshRequired: false }] });
+  const unsupported = buildGoalDashboardStatusProjection({ now: NOW, githubAdapter: { verified: true }, goals: [{ issue: '#2007', linkedPr: { number: 2008, state: 'MERGD' }, manualRefreshRequired: false }] });
   assert.equal(unsupported.goals[0].linkedPr.state, 'unknown');
   assert.equal(unsupported.unknownPrStateCount, 1);
 
-  const structuredSha = buildGoalDashboardStatusProjection({
+  const structured = buildGoalDashboardStatusProjection({
     now: NOW,
+    githubAdapter: { verified: true },
     goals: [{
       issue: '#2010',
-      linkedPr: { number: 2011, headSha: ['a'.repeat(40)], mergeSha: { value: 'b'.repeat(40) } },
+      linkedPr: { number: 2011, state: ['merged'], headSha: ['a'.repeat(40)], mergeSha: { value: 'b'.repeat(40) } },
       manualRefreshRequired: false,
     }],
   });
-  assert.equal(structuredSha.goals[0].linkedPr.headSha, null);
-  assert.equal(structuredSha.goals[0].linkedPr.mergeSha, null);
+  assert.equal(structured.goals[0].linkedPr.state, 'unknown');
+  assert.equal(structured.unknownPrStateCount, 1);
+  assert.equal(structured.goals[0].linkedPr.headSha, null);
+  assert.equal(structured.goals[0].linkedPr.mergeSha, null);
 });
 
 test('canonical draft value overrides compatibility fallback', () => {
-  const projection = buildGoalDashboardStatusProjection({ now: NOW, goals: [{ issue: '#2002', linkedPr: { number: 2003, draft: false }, prDraft: true, manualRefreshRequired: false }] });
+  const projection = buildGoalDashboardStatusProjection({ now: NOW, githubAdapter: { verified: true }, goals: [{ issue: '#2002', linkedPr: { number: 2003, draft: false }, prDraft: true, manualRefreshRequired: false }] });
   assert.equal(projection.goals[0].linkedPr.draft, false);
 });
 
@@ -127,12 +145,14 @@ test('caller freshness flags cannot make unknown, negative or structured evidenc
   }
 });
 
-test('compound negative, negative receipt and unsupported evidence states fail closed', () => {
+test('compound, coded and unsupported negative evidence states fail closed', () => {
   for (const value of [
     'receipt-failed',
     'receipt-rejected',
     'receipt-expired',
     'receipt-cancelled',
+    'receipt-error500',
+    'receipt-rejected1',
     'current-stale',
     'verified-unavailable',
     'garbage-green',
