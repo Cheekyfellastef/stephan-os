@@ -32,7 +32,8 @@ function sha(value) {
 
 function integer(value) {
   if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : null;
-  const normalized = text(value);
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
   if (!/^[1-9]\d*$/.test(normalized)) return null;
   const parsed = Number(normalized);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
@@ -55,22 +56,34 @@ function evidenceTokens(value) {
   return value.trim().toLowerCase().split(/[-_:]/).filter(Boolean);
 }
 
+function containsNegativeFragment(value) {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return [...NEGATIVE_EVIDENCE_TOKENS].some((negative) => normalized.includes(negative));
+}
+
 function tokenEncodesNegativeState(token) {
   if (NEGATIVE_EVIDENCE_TOKENS.has(token)) return true;
   return [...NEGATIVE_EVIDENCE_TOKENS].some((negative) => token.startsWith(negative) && token.length > negative.length);
+}
+
+function validReceiptIdentifier(value) {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  if (!/^receipt-[a-z0-9]*\d[a-z0-9]*$/.test(normalized)) return false;
+  const suffix = normalized.slice('receipt-'.length);
+  return !containsNegativeFragment(suffix);
 }
 
 function affirmativeEvidence(value) {
   const tokens = evidenceTokens(value);
   if (!tokens.length || tokens.some(tokenEncodesNegativeState)) return false;
   if (tokens.length === 1) return AFFIRMATIVE_EVIDENCE_TOKENS.has(tokens[0]);
-  if (tokens[0] === 'receipt' && tokens.length > 1) {
+  if (tokens[0] === 'receipt') {
     const receiptTokens = tokens.slice(1);
     const affirmativeStatus = receiptTokens.some((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token))
       && receiptTokens.every((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token) || EVIDENCE_CONTEXT_TOKENS.has(token) || /^\d+$/.test(token));
-    const identifier = receiptTokens.every((token) => /^[a-z0-9.]+$/.test(token))
-      && receiptTokens.some((token) => /\d/.test(token));
-    return affirmativeStatus || identifier;
+    return affirmativeStatus || validReceiptIdentifier(value);
   }
   return tokens.some((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token))
     && tokens.every((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token) || EVIDENCE_CONTEXT_TOKENS.has(token) || /^\d+$/.test(token));
@@ -78,7 +91,8 @@ function affirmativeEvidence(value) {
 
 function negativeEvidence(value) {
   const tokens = evidenceTokens(value);
-  return tokens.some(tokenEncodesNegativeState);
+  if (tokens.some(tokenEncodesNegativeState)) return true;
+  return typeof value === 'string' && value.trim().toLowerCase().startsWith('receipt-') && containsNegativeFragment(value.slice('receipt-'.length));
 }
 
 function receiptDerivedEvidence(value) {
@@ -87,6 +101,10 @@ function receiptDerivedEvidence(value) {
 
 function currentEvidence(value, automationReceiptVerified) {
   return affirmativeEvidence(value) && (!receiptDerivedEvidence(value) || automationReceiptVerified);
+}
+
+function canonicalSource(value) {
+  return typeof value === 'string' && VERIFIED_RESULT_SOURCES.has(value.trim().toLowerCase());
 }
 
 function parseStrictIsoTimestamp(value) {
@@ -206,7 +224,7 @@ function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceip
   const evidenceCurrent = !evidenceValues.some(negativeEvidence)
     && evidenceValues.some((value) => currentEvidence(value, automationReceiptVerified));
   return goal.manualRefreshRequired === false
-    && currentEvidence(goal.lastUpdated.source, automationReceiptVerified)
+    && canonicalSource(goal.lastUpdated.source)
     && timestampCurrent
     && evidenceCurrent;
 }
