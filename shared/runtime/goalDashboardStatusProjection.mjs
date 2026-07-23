@@ -31,8 +31,21 @@ function integer(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+const SUPPORTED_LINKED_PR_STATES = new Set(['open', 'closed', 'merged', 'unknown']);
+
 function status(value) {
-  return text(value, 'unknown').toLowerCase();
+  const normalized = text(value, 'unknown').toLowerCase();
+  return SUPPORTED_LINKED_PR_STATES.has(normalized) ? normalized : 'unknown';
+}
+
+function known(value) {
+  return text(value, 'unknown').toLowerCase() !== 'unknown';
+}
+
+function validTimestamp(value) {
+  const normalized = text(value);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/.test(normalized)) return false;
+  return Number.isFinite(Date.parse(normalized));
 }
 
 function freeze(value) {
@@ -222,6 +235,15 @@ function normalizeGoal(goal = {}) {
   });
 }
 
+function goalHasCurrentEvidence(goal) {
+  const proofCurrent = Object.values(goal.proof).some(known);
+  const truthCurrent = Object.values(goal.truth).some(known);
+  return goal.manualRefreshRequired === false
+    && known(goal.lastUpdated.source)
+    && validTimestamp(goal.lastUpdated.at)
+    && (proofCurrent || truthCurrent);
+}
+
 export function buildGoalDashboardStatusProjection(input = {}) {
   const liveGoalCandidates = Array.isArray(input.buildConcierge?.createdGoalCandidates) ? input.buildConcierge.createdGoalCandidates : [];
   const goals = Array.isArray(input.goals) && input.goals.length ? input.goals : STATIC_GOAL_DASHBOARD_GOALS;
@@ -230,7 +252,7 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const automationReceiptVerified = input.automationReceipt?.verified === true;
   const normalizedGoals = goals.map(normalizeGoal);
   const adaptersCurrent = githubAdapterVerified && localAdapterVerified;
-  const goalsCurrent = normalizedGoals.every((goal) => goal.manualRefreshRequired === false);
+  const goalsCurrent = normalizedGoals.every(goalHasCurrentEvidence);
   const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
 
   return Object.freeze({
@@ -241,7 +263,9 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     freshnessVerdict: manualRefreshRequired ? 'STALE_REFRESH_REQUIRED' : 'CURRENT_VERIFIED_READONLY_SOURCES',
     liveAutomationClaim: automationReceiptVerified ? 'receipt-backed-readonly' : 'none',
     githubTruth: githubAdapterVerified ? 'live-readonly-adapter-verified' : 'not-live-readonly-static-seed',
-    localAutomationTruth: localAdapterVerified ? 'local-readonly-receipt-verified' : 'not-live-readonly-static-seed',
+    localAutomationTruth: localAdapterVerified
+      ? (automationReceiptVerified ? 'local-readonly-adapter-and-receipt-verified' : 'local-readonly-adapter-verified')
+      : 'not-live-readonly-static-seed',
     sourceTruth: freeze({
       githubVerified: githubAdapterVerified,
       localVerified: localAdapterVerified,
