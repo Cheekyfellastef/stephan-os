@@ -16,6 +16,8 @@ test('falls back only to bounded same-process usage labels when the popup delta 
   assert.match(compatibilityModule, /if \(\$newlyVisible\.Count -eq 0\)/);
   assert.match(compatibilityModule, /\$fallback = @\(\$After \| Where-Object/);
   assert.match(compatibilityModule, /billing\|security\|privacy\|upgrade\|purchase\|buy credits\|add credits\|auto\.\?top\.\?up/i);
+  assert.match(compatibilityModule, /\.Name -notmatch \$forbidden/);
+  assert.match(compatibilityModule, /\.AutomationId -notmatch \$forbidden/);
   assert.match(compatibilityModule, /banked reset\|rate\.\?limit reset\|reset\(s\)\?\\s\+available\|usage summary\|usage dashboard\|codex usage\|\\busage\\b/i);
   assert.match(compatibilityModule, /\.AutomationId -match '\(\?i\)usage\|limit\|reset'/);
   assert.match(compatibilityModule, /\$script:CodexPopupFallbackUsed = \$true/);
