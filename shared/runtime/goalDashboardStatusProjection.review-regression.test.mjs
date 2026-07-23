@@ -45,3 +45,48 @@ test('populated goals require a canonical verified source identity', () => {
   assert.equal(current.sourceTruth.goalsCurrent, true);
   assert.equal(current.refreshTruth, 'VERIFIED_READONLY_SOURCES_CURRENT');
 });
+
+test('receipt-backed automation claims require a validated receipt in projected evidence', () => {
+  const noReceipt = projection({
+    proof: { lastProofStatus: 'passed' },
+    truth: {},
+  });
+  assert.equal(noReceipt.sourceTruth.goalsCurrent, true);
+  assert.equal(noReceipt.sourceTruth.automationReceiptVerified, true);
+  assert.equal(noReceipt.sourceTruth.receiptEvidenceVerified, false);
+  assert.equal(noReceipt.liveAutomationClaim, 'none');
+  assert.equal(noReceipt.localAutomationTruth, 'local-readonly-adapter-verified');
+
+  const validReceipt = projection();
+  assert.equal(validReceipt.sourceTruth.receiptEvidenceVerified, true);
+  assert.equal(validReceipt.liveAutomationClaim, 'receipt-backed-readonly');
+  assert.equal(validReceipt.localAutomationTruth, 'local-readonly-adapter-and-receipt-verified');
+});
+
+test('empty and static projections cannot synthesize receipt-backed automation truth', () => {
+  const empty = buildGoalDashboardStatusProjection({
+    now: NOW,
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    automationReceipt: { verified: true },
+    goals: [],
+    resultFreshness: {
+      source: 'verified-readonly-goal-status-adapter',
+      at: '2026-07-23T12:00:00.000Z',
+      evidence: 'current',
+    },
+  });
+  assert.equal(empty.sourceTruth.goalsCurrent, true);
+  assert.equal(empty.sourceTruth.receiptEvidenceVerified, false);
+  assert.equal(empty.liveAutomationClaim, 'none');
+  assert.equal(empty.localAutomationTruth, 'local-readonly-adapter-verified');
+
+  const seeded = buildGoalDashboardStatusProjection({
+    now: NOW,
+    localAdapter: { verified: true },
+    automationReceipt: { verified: true },
+  });
+  assert.equal(seeded.sourceTruth.receiptEvidenceVerified, false);
+  assert.equal(seeded.liveAutomationClaim, 'none');
+  assert.equal(seeded.localAutomationTruth, 'local-readonly-adapter-verified');
+});
