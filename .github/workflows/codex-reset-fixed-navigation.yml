@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/windows/codex-banked-reset-ui-navigation.psm1'
+      - 'scripts/windows/compat/codex-banked-reset-ui-navigation.psm1'
       - 'scripts/windows/read-codex-banked-reset-status-with-navigation.ps1'
       - 'scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1'
       - 'scripts/windows/read-codex-banked-reset-status.ps1'
@@ -37,6 +38,7 @@ jobs:
         run: |
           $files = @(
             'scripts/windows/codex-banked-reset-ui-navigation.psm1',
+            'scripts/windows/compat/codex-banked-reset-ui-navigation.psm1',
             'scripts/windows/read-codex-banked-reset-status-with-navigation.ps1',
             'scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1',
             'scripts/windows/read-codex-banked-reset-status.ps1',
