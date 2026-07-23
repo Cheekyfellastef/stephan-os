@@ -1,4 +1,9 @@
-import { buildConciergeAntiStallMergeLane, buildConciergePostMergeSync, buildConciergeQueue, buildConciergeRoadmap } from '../agents/battleBridgeBuildConciergeV2.mjs';
+import {
+  buildConciergeAntiStallMergeLane,
+  buildConciergePostMergeSync,
+  buildConciergeQueue,
+  buildConciergeRoadmap,
+} from '../agents/battleBridgeBuildConciergeV2.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -12,8 +17,7 @@ function number(value, fallback = 0) {
 }
 
 function nullableBoolean(value) {
-  if (value === true || value === false) return value;
-  return null;
+  return value === true || value === false ? value : null;
 }
 
 function sha(value) {
@@ -22,9 +26,7 @@ function sha(value) {
 }
 
 function integer(value) {
-  if (typeof value === 'number') {
-    return Number.isSafeInteger(value) && value > 0 ? value : null;
-  }
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : null;
   const normalized = text(value);
   if (!/^[1-9]\d*$/.test(normalized)) return null;
   const parsed = Number(normalized);
@@ -32,20 +34,49 @@ function integer(value) {
 }
 
 const SUPPORTED_LINKED_PR_STATES = new Set(['open', 'closed', 'merged', 'unknown']);
+const AFFIRMATIVE_EVIDENCE_PATTERN = /(?:^|[-_:])(verified|green|pass(?:ed)?|complete(?:d)?|success|current|healthy|ready|receipt)(?:$|[-_:])/i;
 
 function status(value) {
   const normalized = text(value, 'unknown').toLowerCase();
   return SUPPORTED_LINKED_PR_STATES.has(normalized) ? normalized : 'unknown';
 }
 
-function known(value) {
-  return text(value, 'unknown').toLowerCase() !== 'unknown';
+function affirmativeEvidence(value) {
+  return typeof value === 'string' && AFFIRMATIVE_EVIDENCE_PATTERN.test(value.trim());
 }
 
-function validTimestamp(value) {
+function parseStrictIsoTimestamp(value) {
   const normalized = text(value);
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/.test(normalized)) return false;
-  return Number.isFinite(Date.parse(normalized));
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(normalized);
+  if (!match) return null;
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, millisText = '000', zone, sign, offsetHourText, offsetMinuteText] = match;
+  const parts = [yearText, monthText, dayText, hourText, minuteText, secondText, millisText].map(Number);
+  const [year, month, day, hour, minute, second, millis] = parts;
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return null;
+
+  const wallClock = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millis));
+  if (
+    wallClock.getUTCFullYear() !== year ||
+    wallClock.getUTCMonth() !== month - 1 ||
+    wallClock.getUTCDate() !== day ||
+    wallClock.getUTCHours() !== hour ||
+    wallClock.getUTCMinutes() !== minute ||
+    wallClock.getUTCSeconds() !== second ||
+    wallClock.getUTCMilliseconds() !== millis
+  ) return null;
+
+  let offsetMinutes = 0;
+  if (zone !== 'Z') {
+    const offsetHours = Number(offsetHourText);
+    const offsetMins = Number(offsetMinuteText);
+    if (offsetHours > 23 || offsetMins > 59) return null;
+    offsetMinutes = (offsetHours * 60 + offsetMins) * (sign === '+' ? 1 : -1);
+  }
+
+  const expected = wallClock.getTime() - offsetMinutes * 60_000;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) && parsed === expected ? parsed : null;
 }
 
 function freeze(value) {
@@ -54,124 +85,19 @@ function freeze(value) {
 
 export const GOAL_DASHBOARD_REFRESH_TRUTH = 'MANUAL_REFRESH_REQUIRED';
 export const GOAL_DASHBOARD_PROJECTION_SOURCE = 'static-goal-dashboard-seed';
+export const GOAL_DASHBOARD_FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
+export const GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS = 60 * 1000;
 
 export const STATIC_GOAL_DASHBOARD_GOALS = Object.freeze([
-  Object.freeze({
-    issue: '#1278',
-    title: 'Clean /standalone /scout-coder /scout_coder wiring',
-    status: 'Active',
-    currentOwner: 'Codex',
-    nextOwner: 'OpenClaw',
-    handoffState: 'source command wiring -> local WhatsApp proof',
-    milestone: 'MILESTONE_2_COMMAND_WIRING_IMPLEMENTATION_NEEDED',
-    operatorNeeded: 'No',
-    proofIndex: 2,
-    nextAction: 'Build source-controlled command replacement, then prove real WhatsApp command behavior.',
-  }),
-  Object.freeze({
-    issue: '#1280',
-    title: 'Make /stephanos more alive and useful over WhatsApp',
-    status: 'Active',
-    currentOwner: 'ChatGPT',
-    nextOwner: 'Codex',
-    handoffState: 'awareness contract -> implementation packet',
-    milestone: 'MILESTONE_1_STEPHANOS_ALIVE_LANE_DESIGN_READY',
-    operatorNeeded: 'No',
-    proofIndex: 2,
-    nextAction: 'Define safe awareness sources and compact /stephanos reply contract.',
-  }),
-  Object.freeze({
-    issue: '#1281',
-    title: 'Professional PC ignition splash/autofix/boot concierge',
-    status: 'Waiting for proof',
-    currentOwner: 'OpenClaw',
-    nextOwner: 'Codex',
-    handoffState: 'Windows blocker inventory -> safe launcher implementation',
-    milestone: 'MILESTONE_1_IGNITION_BLOCKER_INVENTORY_READY',
-    operatorNeeded: 'Not yet',
-    proofIndex: 1,
-    nextAction: 'Run bounded Windows ignition inventory before building risky cleanup behavior.',
-  }),
-  Object.freeze({
-    issue: '#1282',
-    title: 'Goal Dashboard landing-page tile',
-    status: 'Waiting for browser proof',
-    currentOwner: 'OpenClaw',
-    nextOwner: 'Operator',
-    handoffState: 'landing tile code -> local browser proof',
-    milestone: 'MILESTONE_2_GOAL_DASHBOARD_LANDING_TILE_IMPLEMENTED',
-    operatorNeeded: 'Proof only',
-    proofIndex: 4,
-    nextAction: 'Launch the Stephanos UI locally and capture DOM/browser proof that Goal Dashboard appears beside existing tiles.',
-  }),
-  Object.freeze({
-    issue: '#1291',
-    title: 'Platform proof projection surfaced in Mission Operations',
-    status: 'Blocked - proof unknown',
-    currentOwner: 'Codex',
-    nextOwner: 'Operator',
-    handoffState: 'canonical projection -> operator-visible proof fields',
-    milestone: 'PLATFORM_STATUS_PROOF_FLOW_VISIBLE',
-    operatorNeeded: 'Manual dispatch explicit',
-    proofIndex: 3,
-    nextAction: 'Keep status blocked until support snapshot, UI reality, and command proof refs are present.',
-  }),
-  Object.freeze({
-    issue: '#1371',
-    title: 'Exact-head merge hold and platform loop proof state',
-    status: 'Manual dispatch required',
-    currentOwner: 'Operator',
-    nextOwner: 'Codex',
-    handoffState: 'missing integration blocker -> manual dispatch',
-    milestone: 'BLOCKED_BY_MISSING_INTEGRATION_VISIBLE',
-    operatorNeeded: 'Yes - dispatch manually',
-    proofIndex: 3,
-    nextAction: 'Do not claim automated dispatch; use manual dispatch until integration capabilities are available.',
-  }),
-  Object.freeze({
-    issue: '#1385',
-    title: 'Live Goal Dashboard index and merge update awareness',
-    status: 'Active',
-    currentOwner: 'GitHub-first ChatGPT',
-    nextOwner: 'CI and review',
-    handoffState: 'projection contract -> draft PR proof',
-    milestone: 'V2_CANONICAL_GOAL_INDEX_PROJECTION_READY',
-    operatorNeeded: 'No',
-    proofIndex: 1,
-    nextAction: 'Build the honest linked-PR projection contract and keep unavailable live sources explicitly unknown.',
-  }),
-  Object.freeze({
-    issue: '#1568',
-    title: 'Canonical execution receipts for implementation workers',
-    status: 'Remediation isolated',
-    currentOwner: 'Security repair lane',
-    nextOwner: 'Independent review',
-    handoffState: 'PR #1581 review repair -> exact-head approval',
-    milestone: 'APP_BOUND_REQUIRED_CHECK_REPAIR_PENDING',
-    operatorNeeded: 'No',
-    proofIndex: 0,
-    linkedPr: Object.freeze({
-      number: 1581,
-      state: 'open',
-      draft: false,
-      mergeable: true,
-      headSha: '4857085caa008e0bca60a9b5015fdd8a16b2e83e',
-      exactHeadMergeHold: 'blocked-by-unresolved-security-review',
-    }),
-    nextAction: 'Repair PR #1581 independently without blocking unrelated programme building.',
-  }),
-  Object.freeze({
-    issue: '#1574',
-    title: 'Provider-neutral build and review continuity',
-    status: 'Queued',
-    currentOwner: 'Programme Completion Controller',
-    nextOwner: 'GitHub-first worker',
-    handoffState: 'queued policy goal -> later bounded implementation',
-    milestone: 'PROVIDER_NEUTRAL_CONTINUITY_QUEUED',
-    operatorNeeded: 'No',
-    proofIndex: 0,
-    nextAction: 'Keep this queued while the Goal Dashboard product lane advances.',
-  }),
+  freeze({ issue: '#1278', title: 'Clean /standalone /scout-coder /scout_coder wiring', status: 'Active', currentOwner: 'Codex', nextOwner: 'OpenClaw', handoffState: 'source command wiring -> local WhatsApp proof', milestone: 'MILESTONE_2_COMMAND_WIRING_IMPLEMENTATION_NEEDED', operatorNeeded: 'No', proofIndex: 2, nextAction: 'Build source-controlled command replacement, then prove real WhatsApp command behavior.' }),
+  freeze({ issue: '#1280', title: 'Make /stephanos more alive and useful over WhatsApp', status: 'Active', currentOwner: 'ChatGPT', nextOwner: 'Codex', handoffState: 'awareness contract -> implementation packet', milestone: 'MILESTONE_1_STEPHANOS_ALIVE_LANE_DESIGN_READY', operatorNeeded: 'No', proofIndex: 2, nextAction: 'Define safe awareness sources and compact /stephanos reply contract.' }),
+  freeze({ issue: '#1281', title: 'Professional PC ignition splash/autofix/boot concierge', status: 'Waiting for proof', currentOwner: 'OpenClaw', nextOwner: 'Codex', handoffState: 'Windows blocker inventory -> safe launcher implementation', milestone: 'MILESTONE_1_IGNITION_BLOCKER_INVENTORY_READY', operatorNeeded: 'Not yet', proofIndex: 1, nextAction: 'Run bounded Windows ignition inventory before building risky cleanup behavior.' }),
+  freeze({ issue: '#1282', title: 'Goal Dashboard landing-page tile', status: 'Waiting for browser proof', currentOwner: 'OpenClaw', nextOwner: 'Operator', handoffState: 'landing tile code -> local browser proof', milestone: 'MILESTONE_2_GOAL_DASHBOARD_LANDING_TILE_IMPLEMENTED', operatorNeeded: 'Proof only', proofIndex: 4, nextAction: 'Launch the Stephanos UI locally and capture DOM/browser proof that Goal Dashboard appears beside existing tiles.' }),
+  freeze({ issue: '#1291', title: 'Platform proof projection surfaced in Mission Operations', status: 'Blocked - proof unknown', currentOwner: 'Codex', nextOwner: 'Operator', handoffState: 'canonical projection -> operator-visible proof fields', milestone: 'PLATFORM_STATUS_PROOF_FLOW_VISIBLE', operatorNeeded: 'Manual dispatch explicit', proofIndex: 3, nextAction: 'Keep status blocked until support snapshot, UI reality, and command proof refs are present.' }),
+  freeze({ issue: '#1371', title: 'Exact-head merge hold and platform loop proof state', status: 'Manual dispatch required', currentOwner: 'Operator', nextOwner: 'Codex', handoffState: 'missing integration blocker -> manual dispatch', milestone: 'BLOCKED_BY_MISSING_INTEGRATION_VISIBLE', operatorNeeded: 'Yes - dispatch manually', proofIndex: 3, nextAction: 'Do not claim automated dispatch; use manual dispatch until integration capabilities are available.' }),
+  freeze({ issue: '#1385', title: 'Live Goal Dashboard index and merge update awareness', status: 'Active', currentOwner: 'GitHub-first ChatGPT', nextOwner: 'CI and review', handoffState: 'projection contract -> draft PR proof', milestone: 'V2_CANONICAL_GOAL_INDEX_PROJECTION_READY', operatorNeeded: 'No', proofIndex: 1, nextAction: 'Build the honest linked-PR projection contract and keep unavailable live sources explicitly unknown.' }),
+  freeze({ issue: '#1568', title: 'Canonical execution receipts for implementation workers', status: 'Remediation isolated', currentOwner: 'Security repair lane', nextOwner: 'Independent review', handoffState: 'PR #1581 review repair -> exact-head approval', milestone: 'APP_BOUND_REQUIRED_CHECK_REPAIR_PENDING', operatorNeeded: 'No', proofIndex: 0, linkedPr: freeze({ number: 1581, state: 'open', draft: false, mergeable: true, headSha: '4857085caa008e0bca60a9b5015fdd8a16b2e83e', exactHeadMergeHold: 'blocked-by-unresolved-security-review' }), nextAction: 'Repair PR #1581 independently without blocking unrelated programme building.' }),
+  freeze({ issue: '#1574', title: 'Provider-neutral build and review continuity', status: 'Queued', currentOwner: 'Programme Completion Controller', nextOwner: 'GitHub-first worker', handoffState: 'queued policy goal -> later bounded implementation', milestone: 'PROVIDER_NEUTRAL_CONTINUITY_QUEUED', operatorNeeded: 'No', proofIndex: 0, nextAction: 'Keep this queued while the Goal Dashboard product lane advances.' }),
 ]);
 
 function normalizeLinkedPr(goal = {}) {
@@ -207,10 +133,7 @@ function normalizeTruth(goal = {}) {
 
 function normalizeLastUpdated(goal = {}) {
   const updated = goal.lastUpdated || {};
-  return freeze({
-    source: text(updated.source ?? goal.lastUpdatedSource, 'unknown'),
-    at: text(updated.at ?? goal.lastUpdatedAt, 'unknown'),
-  });
+  return freeze({ source: text(updated.source ?? goal.lastUpdatedSource, 'unknown'), at: text(updated.at ?? goal.lastUpdatedAt, 'unknown') });
 }
 
 function normalizeGoal(goal = {}) {
@@ -235,12 +158,15 @@ function normalizeGoal(goal = {}) {
   });
 }
 
-function goalHasCurrentEvidence(goal) {
-  const proofCurrent = Object.values(goal.proof).some(known);
-  const truthCurrent = Object.values(goal.truth).some(known);
+function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs) {
+  const timestampMs = parseStrictIsoTimestamp(goal.lastUpdated.at);
+  const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
+  const timestampCurrent = ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS && ageMs <= freshnessWindowMs;
+  const proofCurrent = Object.values(goal.proof).some(affirmativeEvidence);
+  const truthCurrent = Object.values(goal.truth).some(affirmativeEvidence);
   return goal.manualRefreshRequired === false
-    && known(goal.lastUpdated.source)
-    && validTimestamp(goal.lastUpdated.at)
+    && affirmativeEvidence(goal.lastUpdated.source)
+    && timestampCurrent
     && (proofCurrent || truthCurrent);
 }
 
@@ -250,29 +176,28 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const githubAdapterVerified = input.githubAdapter?.verified === true;
   const localAdapterVerified = input.localAdapter?.verified === true;
   const automationReceiptVerified = input.automationReceipt?.verified === true;
+  const requestedNow = typeof input.now === 'number' ? input.now : Date.parse(text(input.now));
+  const nowMs = Number.isFinite(requestedNow) ? requestedNow : Date.now();
+  const requestedWindow = Number(input.freshnessWindowMs);
+  const freshnessWindowMs = Number.isFinite(requestedWindow) && requestedWindow > 0 ? requestedWindow : GOAL_DASHBOARD_FRESHNESS_WINDOW_MS;
   const normalizedGoals = goals.map(normalizeGoal);
   const adaptersCurrent = githubAdapterVerified && localAdapterVerified;
-  const goalsCurrent = normalizedGoals.every(goalHasCurrentEvidence);
+  const goalsCurrent = normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs));
   const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
 
-  return Object.freeze({
+  return freeze({
     schemaVersion: 'stephanos.goal-dashboard-status-projection.v1',
     projectionSource: text(input.projectionSource, githubAdapterVerified ? 'verified-readonly-goal-status-adapter' : GOAL_DASHBOARD_PROJECTION_SOURCE),
     readOnly: true,
     refreshTruth: manualRefreshRequired ? GOAL_DASHBOARD_REFRESH_TRUTH : 'VERIFIED_READONLY_SOURCES_CURRENT',
     freshnessVerdict: manualRefreshRequired ? 'STALE_REFRESH_REQUIRED' : 'CURRENT_VERIFIED_READONLY_SOURCES',
+    freshnessWindowMs,
     liveAutomationClaim: automationReceiptVerified ? 'receipt-backed-readonly' : 'none',
     githubTruth: githubAdapterVerified ? 'live-readonly-adapter-verified' : 'not-live-readonly-static-seed',
     localAutomationTruth: localAdapterVerified
       ? (automationReceiptVerified ? 'local-readonly-adapter-and-receipt-verified' : 'local-readonly-adapter-verified')
       : 'not-live-readonly-static-seed',
-    sourceTruth: freeze({
-      githubVerified: githubAdapterVerified,
-      localVerified: localAdapterVerified,
-      automationReceiptVerified,
-      adaptersCurrent,
-      goalsCurrent,
-    }),
+    sourceTruth: freeze({ githubVerified: githubAdapterVerified, localVerified: localAdapterVerified, automationReceiptVerified, adaptersCurrent, goalsCurrent }),
     totalGoals: normalizedGoals.length,
     activeGoalCount: normalizedGoals.filter((goal) => /active/i.test(goal.status)).length,
     blockedGoalCount: normalizedGoals.filter((goal) => /blocked/i.test(goal.status)).length,
@@ -281,11 +206,11 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     unknownPrStateCount: normalizedGoals.filter((goal) => goal.linkedPr.number !== null && goal.linkedPr.state === 'unknown').length,
     manualRefreshRequired,
     goals: normalizedGoals,
-    buildConcierge: Object.freeze({
+    buildConcierge: freeze({
       roadmap: buildConciergeRoadmap(input.buildConcierge || {}),
       autoPickTruth: text(input.buildConcierge?.autoPickTruth || input.autoPickTruth, 'supplied-candidate-records-only'),
       postMergeSync: buildConciergePostMergeSync(input.buildConcierge?.postMergeSync || input.postMergeSync || {}),
-      liveAdapter: Object.freeze({
+      liveAdapter: freeze({
         available: input.buildConcierge?.liveAdapter?.available === true,
         route: text(input.buildConcierge?.liveAdapter?.route, '/api/build-concierge/goals'),
         status: input.buildConcierge?.liveAdapter?.available === true ? 'available' : 'blocked_unavailable',
