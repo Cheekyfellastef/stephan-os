@@ -12,6 +12,7 @@ test('goal dashboard status projection remains read-only static seed truth', () 
   assert.equal(projection.readOnly, true);
   assert.equal(projection.refreshTruth, GOAL_DASHBOARD_REFRESH_TRUTH);
   assert.equal(projection.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
+  assert.equal(projection.freshnessVerdict, 'STALE_REFRESH_REQUIRED');
   assert.equal(projection.liveAutomationClaim, 'none');
   assert.equal(projection.githubTruth, 'not-live-readonly-static-seed');
   assert.equal(projection.localAutomationTruth, 'not-live-readonly-static-seed');
@@ -81,6 +82,34 @@ test('linked PR fields and proof truth are represented without inventing missing
   assert.equal(projection.blockedGoalCount, 1);
 });
 
+test('linked PR number validation rejects partial, fractional and non-positive values', () => {
+  for (const value of ['1581oops', 1581.9, '0', -1, '01']) {
+    const projection = buildGoalDashboardStatusProjection({
+      goals: [{ issue: '#2001', linkedPr: { number: value }, manualRefreshRequired: false }],
+    });
+    assert.equal(projection.goals[0].linkedPr.number, null);
+    assert.equal(projection.linkedPrCount, 0);
+  }
+
+  const valid = buildGoalDashboardStatusProjection({
+    goals: [{ issue: '#2001', linkedPr: { number: '1581' }, manualRefreshRequired: false }],
+  });
+  assert.equal(valid.goals[0].linkedPr.number, 1581);
+});
+
+test('canonical linked PR draft value takes precedence over compatibility fallback', () => {
+  const projection = buildGoalDashboardStatusProjection({
+    goals: [{
+      issue: '#2002',
+      linkedPr: { number: 2003, draft: false },
+      prDraft: true,
+      manualRefreshRequired: false,
+    }],
+  });
+
+  assert.equal(projection.goals[0].linkedPr.draft, false);
+});
+
 test('verified read-only adapters remove the manual-refresh claim without granting execution authority', () => {
   const projection = buildGoalDashboardStatusProjection({
     githubAdapter: { verified: true },
@@ -96,13 +125,34 @@ test('verified read-only adapters remove the manual-refresh claim without granti
   });
 
   assert.equal(projection.refreshTruth, 'VERIFIED_READONLY_SOURCES_CURRENT');
+  assert.equal(projection.freshnessVerdict, 'CURRENT_VERIFIED_READONLY_SOURCES');
   assert.equal(projection.githubTruth, 'live-readonly-adapter-verified');
   assert.equal(projection.localAutomationTruth, 'local-readonly-receipt-verified');
   assert.equal(projection.liveAutomationClaim, 'receipt-backed-readonly');
   assert.equal(projection.manualRefreshRequired, false);
   assert.equal(projection.sourceTruth.githubVerified, true);
+  assert.equal(projection.sourceTruth.goalsCurrent, true);
   assert.equal(projection.mergedPrCount, 1);
   assert.equal(projection.readOnly, true);
+});
+
+test('verified adapters remain fail-closed while any normalized goal requires refresh', () => {
+  const projection = buildGoalDashboardStatusProjection({
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    goals: [{
+      issue: '#2004',
+      title: 'Stale goal truth',
+      status: 'Active',
+    }],
+  });
+
+  assert.equal(projection.goals[0].manualRefreshRequired, true);
+  assert.equal(projection.sourceTruth.adaptersCurrent, true);
+  assert.equal(projection.sourceTruth.goalsCurrent, false);
+  assert.equal(projection.manualRefreshRequired, true);
+  assert.equal(projection.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
+  assert.equal(projection.freshnessVerdict, 'STALE_REFRESH_REQUIRED');
 });
 
 test('standalone Goal Dashboard exposes V5 implemented guarded auto-pick truth', () => {
