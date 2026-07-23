@@ -173,17 +173,35 @@ test('negative evidence vetoes positive sibling evidence', () => {
   assert.equal(projection.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
 });
 
+test('every populated evidence field must be recognized as current', () => {
+  for (const goal of [
+    verifiedGoal({ proof: { lastProofStatus: 'passed', browserProof: 'garbage' }, truth: {} }),
+    verifiedGoal({ proof: { lastProofStatus: 'passed' }, truth: { github: 'linked-pr-verified', automation: 'pending' } }),
+  ]) {
+    const projection = verifiedProjection(goal);
+    assert.equal(projection.sourceTruth.goalsCurrent, false);
+    assert.equal(projection.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
+  }
+});
+
 test('compound, coded and unsupported negative evidence states fail closed', () => {
   for (const value of [
     'receipt-failed',
     'receipt-rejected',
     'receipt-expired',
     'receipt-cancelled',
+    'receipt-canceled',
+    'receipt-stalled',
     'receipt-error500',
     'receipt-rejected1',
     'receipt-error5xx',
     'receipt-rejected1a',
     'receipt-failed.v2',
+    'receipt-2002.failed',
+    'receipt-2rejected',
+    'receipt-abc123stale',
+    'receipt-2002canceled',
+    'receipt-2002stalled',
     'current-stale',
     'verified-unavailable',
     'garbage-green',
@@ -192,6 +210,26 @@ test('compound, coded and unsupported negative evidence states fail closed', () 
     assert.equal(projection.sourceTruth.goalsCurrent, false, value);
     assert.equal(projection.refreshTruth, 'MANUAL_REFRESH_REQUIRED', value);
   }
+});
+
+test('automation receipt proof requires a verified strict identifier', () => {
+  for (const value of [
+    'receipt-current',
+    'receipt-verified',
+    'receipt-abc123',
+    'receipt-2002.failed',
+    'receipt-2002canceled',
+    'receipt-2002stalled',
+  ]) {
+    const projection = verifiedProjection(verifiedGoal({ proof: { automationReceipt: value }, truth: {} }));
+    assert.equal(projection.sourceTruth.goalsCurrent, false, value);
+  }
+
+  const numeric = verifiedProjection(verifiedGoal({ proof: { automationReceipt: 'receipt-2002' }, truth: {} }));
+  assert.equal(numeric.sourceTruth.goalsCurrent, true);
+
+  const uuid = verifiedProjection(verifiedGoal({ proof: { automationReceipt: 'receipt-123e4567-e89b-42d3-a456-426614174000' }, truth: {} }));
+  assert.equal(uuid.sourceTruth.goalsCurrent, true);
 });
 
 test('receipt-derived evidence requires separate verified receipt truth', () => {
