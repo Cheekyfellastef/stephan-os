@@ -108,6 +108,20 @@ test('linked PR number validation rejects partial, fractional and non-positive v
   assert.equal(valid.goals[0].linkedPr.number, 1581);
 });
 
+test('unsupported linked PR states fail closed to unknown', () => {
+  const projection = buildGoalDashboardStatusProjection({
+    goals: [{
+      issue: '#2007',
+      linkedPr: { number: 2008, state: 'MERGD' },
+      manualRefreshRequired: false,
+    }],
+  });
+
+  assert.equal(projection.goals[0].linkedPr.state, 'unknown');
+  assert.equal(projection.unknownPrStateCount, 1);
+  assert.equal(projection.mergedPrCount, 0);
+});
+
 test('merged PR count requires a valid linked PR number', () => {
   const projection = buildGoalDashboardStatusProjection({
     goals: [
@@ -134,7 +148,7 @@ test('canonical linked PR draft value takes precedence over compatibility fallba
   assert.equal(projection.goals[0].linkedPr.draft, false);
 });
 
-test('verified read-only adapters remove the manual-refresh claim without granting execution authority', () => {
+test('verified read-only adapters require evidence-backed goal freshness and do not grant execution authority', () => {
   const projection = buildGoalDashboardStatusProjection({
     githubAdapter: { verified: true },
     localAdapter: { verified: true },
@@ -144,6 +158,9 @@ test('verified read-only adapters remove the manual-refresh claim without granti
       title: 'Verified source goal',
       status: 'Active',
       linkedPr: { number: 2003, state: 'merged', mergeSha: 'b'.repeat(40) },
+      proof: { lastProofStatus: 'ci-green', automationReceipt: 'receipt-2002' },
+      truth: { github: 'linked-pr-verified', local: 'runtime-receipt-verified', automation: 'receipt-verified' },
+      lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z' },
       manualRefreshRequired: false,
     }],
   });
@@ -151,13 +168,44 @@ test('verified read-only adapters remove the manual-refresh claim without granti
   assert.equal(projection.refreshTruth, 'VERIFIED_READONLY_SOURCES_CURRENT');
   assert.equal(projection.freshnessVerdict, 'CURRENT_VERIFIED_READONLY_SOURCES');
   assert.equal(projection.githubTruth, 'live-readonly-adapter-verified');
-  assert.equal(projection.localAutomationTruth, 'local-readonly-receipt-verified');
+  assert.equal(projection.localAutomationTruth, 'local-readonly-adapter-and-receipt-verified');
   assert.equal(projection.liveAutomationClaim, 'receipt-backed-readonly');
   assert.equal(projection.manualRefreshRequired, false);
   assert.equal(projection.sourceTruth.githubVerified, true);
   assert.equal(projection.sourceTruth.goalsCurrent, true);
   assert.equal(projection.mergedPrCount, 1);
   assert.equal(projection.readOnly, true);
+});
+
+test('caller-controlled freshness flags cannot declare unknown goal evidence current', () => {
+  const projection = buildGoalDashboardStatusProjection({
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    goals: [{
+      issue: '#2008',
+      title: 'Unproven source goal',
+      status: 'Active',
+      manualRefreshRequired: false,
+    }],
+  });
+
+  assert.equal(projection.goals[0].manualRefreshRequired, false);
+  assert.equal(projection.sourceTruth.adaptersCurrent, true);
+  assert.equal(projection.sourceTruth.goalsCurrent, false);
+  assert.equal(projection.manualRefreshRequired, true);
+  assert.equal(projection.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
+  assert.equal(projection.freshnessVerdict, 'STALE_REFRESH_REQUIRED');
+});
+
+test('local adapter truth remains distinct from automation receipt truth', () => {
+  const projection = buildGoalDashboardStatusProjection({
+    localAdapter: { verified: true },
+    goals: [{ issue: '#2009' }],
+  });
+
+  assert.equal(projection.localAutomationTruth, 'local-readonly-adapter-verified');
+  assert.equal(projection.sourceTruth.automationReceiptVerified, false);
+  assert.equal(projection.liveAutomationClaim, 'none');
 });
 
 test('verified adapters remain fail-closed while any normalized goal requires refresh', () => {
