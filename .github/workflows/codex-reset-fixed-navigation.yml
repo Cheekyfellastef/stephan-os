@@ -14,6 +14,7 @@ on:
       - 'shared/agents/codexBankedResetBattleBridgeExecutor.mjs'
       - 'shared/agents/codexBankedResetBattleBridgeExecutor.test.mjs'
       - 'shared/agents/codexBankedResetFixedNavigation.test.mjs'
+      - 'shared/agents/codexBankedResetProfilePopupFallback.test.mjs'
       - 'shared/agents/codexBankedResetTelemetryMirror.mjs'
       - 'shared/agents/codexBankedResetTelemetryMirror.test.mjs'
       - '.github/workflows/codex-reset-fixed-navigation.yml'
@@ -68,6 +69,7 @@ jobs:
         run: >-
           node --test
           shared/agents/codexBankedResetFixedNavigation.test.mjs
+          shared/agents/codexBankedResetProfilePopupFallback.test.mjs
           shared/agents/codexBankedResetStatusBattleBridgeReader.test.mjs
           shared/agents/codexBankedResetBattleBridgeExecutor.test.mjs
           shared/agents/codexBankedResetTelemetryMirror.test.mjs
