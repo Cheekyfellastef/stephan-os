@@ -11,6 +11,10 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+function stringValue(value, fallback = 'unknown') {
+  return typeof value === 'string' ? text(value, fallback) : fallback;
+}
+
 function number(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -34,19 +38,86 @@ function integer(value) {
 }
 
 const SUPPORTED_LINKED_PR_STATES = new Set(['open', 'closed', 'merged', 'unknown']);
-const AFFIRMATIVE_EVIDENCE_PATTERN = /(?:^|[-_:])(verified|green|pass(?:ed)?|complete(?:d)?|success|current|healthy|ready|receipt)(?:$|[-_:])/i;
+const AFFIRMATIVE_EVIDENCE_TOKENS = new Set([
+  'verified',
+  'green',
+  'pass',
+  'passed',
+  'complete',
+  'completed',
+  'success',
+  'current',
+  'healthy',
+  'ready',
+]);
+const EVIDENCE_CONTEXT_TOKENS = new Set([
+  'adapter',
+  'automation',
+  'browser',
+  'ci',
+  'github',
+  'goal',
+  'linked',
+  'local',
+  'pr',
+  'proof',
+  'readonly',
+  'receipt',
+  'runtime',
+  'source',
+  'status',
+]);
+const NEGATIVE_EVIDENCE_TOKENS = new Set([
+  'blocked',
+  'error',
+  'fail',
+  'failed',
+  'failing',
+  'invalid',
+  'missing',
+  'none',
+  'stale',
+  'unavailable',
+  'unknown',
+  'unverified',
+]);
 
 function status(value) {
   const normalized = text(value, 'unknown').toLowerCase();
   return SUPPORTED_LINKED_PR_STATES.has(normalized) ? normalized : 'unknown';
 }
 
+function evidenceTokens(value) {
+  if (typeof value !== 'string') return [];
+  return value.trim().toLowerCase().split(/[-_:]/).filter(Boolean);
+}
+
 function affirmativeEvidence(value) {
-  return typeof value === 'string' && AFFIRMATIVE_EVIDENCE_PATTERN.test(value.trim());
+  const tokens = evidenceTokens(value);
+  if (!tokens.length || tokens.some((token) => NEGATIVE_EVIDENCE_TOKENS.has(token))) return false;
+  if (tokens.length === 1) return AFFIRMATIVE_EVIDENCE_TOKENS.has(tokens[0]);
+  if (tokens[0] === 'receipt' && tokens.length > 1) {
+    return tokens.slice(1).every((token) => /^[a-z0-9.]+$/.test(token));
+  }
+  return tokens.some((token) => AFFIRMATIVE_EVIDENCE_TOKENS.has(token))
+    && tokens.every((token) => (
+      AFFIRMATIVE_EVIDENCE_TOKENS.has(token)
+      || EVIDENCE_CONTEXT_TOKENS.has(token)
+      || /^\d+$/.test(token)
+    ));
+}
+
+function receiptDerivedEvidence(value) {
+  return evidenceTokens(value).includes('receipt');
+}
+
+function currentEvidence(value, automationReceiptVerified) {
+  return affirmativeEvidence(value)
+    && (!receiptDerivedEvidence(value) || automationReceiptVerified);
 }
 
 function parseStrictIsoTimestamp(value) {
-  const normalized = text(value);
+  const normalized = stringValue(value, '');
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(normalized);
   if (!match) return null;
 
@@ -116,24 +187,27 @@ function normalizeLinkedPr(goal = {}) {
 function normalizeProof(goal = {}) {
   const proof = goal.proof || {};
   return freeze({
-    lastProofStatus: text(proof.lastProofStatus ?? goal.lastProofStatus, 'unknown'),
-    browserProof: text(proof.browserProof ?? goal.browserProof, 'unknown'),
-    automationReceipt: text(proof.automationReceipt ?? goal.automationReceipt, 'unknown'),
+    lastProofStatus: stringValue(proof.lastProofStatus ?? goal.lastProofStatus),
+    browserProof: stringValue(proof.browserProof ?? goal.browserProof),
+    automationReceipt: stringValue(proof.automationReceipt ?? goal.automationReceipt),
   });
 }
 
 function normalizeTruth(goal = {}) {
   const truth = goal.truth || {};
   return freeze({
-    github: text(truth.github ?? goal.githubTruth, 'unknown'),
-    local: text(truth.local ?? goal.localTruth, 'unknown'),
-    automation: text(truth.automation ?? goal.automationTruth, 'unknown'),
+    github: stringValue(truth.github ?? goal.githubTruth),
+    local: stringValue(truth.local ?? goal.localTruth),
+    automation: stringValue(truth.automation ?? goal.automationTruth),
   });
 }
 
 function normalizeLastUpdated(goal = {}) {
   const updated = goal.lastUpdated || {};
-  return freeze({ source: text(updated.source ?? goal.lastUpdatedSource, 'unknown'), at: text(updated.at ?? goal.lastUpdatedAt, 'unknown') });
+  return freeze({
+    source: stringValue(updated.source ?? goal.lastUpdatedSource),
+    at: stringValue(updated.at ?? goal.lastUpdatedAt),
+  });
 }
 
 function normalizeGoal(goal = {}) {
@@ -158,14 +232,14 @@ function normalizeGoal(goal = {}) {
   });
 }
 
-function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs) {
+function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified) {
   const timestampMs = parseStrictIsoTimestamp(goal.lastUpdated.at);
   const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
   const timestampCurrent = ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS && ageMs <= freshnessWindowMs;
-  const proofCurrent = Object.values(goal.proof).some(affirmativeEvidence);
-  const truthCurrent = Object.values(goal.truth).some(affirmativeEvidence);
+  const proofCurrent = Object.values(goal.proof).some((value) => currentEvidence(value, automationReceiptVerified));
+  const truthCurrent = Object.values(goal.truth).some((value) => currentEvidence(value, automationReceiptVerified));
   return goal.manualRefreshRequired === false
-    && affirmativeEvidence(goal.lastUpdated.source)
+    && currentEvidence(goal.lastUpdated.source, automationReceiptVerified)
     && timestampCurrent
     && (proofCurrent || truthCurrent);
 }
@@ -176,13 +250,15 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const githubAdapterVerified = input.githubAdapter?.verified === true;
   const localAdapterVerified = input.localAdapter?.verified === true;
   const automationReceiptVerified = input.automationReceipt?.verified === true;
-  const requestedNow = typeof input.now === 'number' ? input.now : Date.parse(text(input.now));
+  const requestedNow = typeof input.now === 'number' ? input.now : Date.parse(stringValue(input.now, ''));
   const nowMs = Number.isFinite(requestedNow) ? requestedNow : Date.now();
   const requestedWindow = Number(input.freshnessWindowMs);
-  const freshnessWindowMs = Number.isFinite(requestedWindow) && requestedWindow > 0 ? requestedWindow : GOAL_DASHBOARD_FRESHNESS_WINDOW_MS;
+  const freshnessWindowMs = Number.isFinite(requestedWindow) && requestedWindow > 0
+    ? Math.min(requestedWindow, GOAL_DASHBOARD_FRESHNESS_WINDOW_MS)
+    : GOAL_DASHBOARD_FRESHNESS_WINDOW_MS;
   const normalizedGoals = goals.map(normalizeGoal);
   const adaptersCurrent = githubAdapterVerified && localAdapterVerified;
-  const goalsCurrent = normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs));
+  const goalsCurrent = normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified));
   const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
 
   return freeze({
