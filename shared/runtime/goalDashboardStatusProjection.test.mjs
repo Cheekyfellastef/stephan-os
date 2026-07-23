@@ -49,27 +49,39 @@ test('static projection remains read-only and fail-closed', () => {
 });
 
 test('unverified projection source and goal overrides fail closed to the static seed', () => {
-  const projection = buildGoalDashboardStatusProjection({
-    now: NOW,
-    projectionSource: 'verified-readonly-goal-status-adapter',
-    goals: [],
-  });
+  const projection = buildGoalDashboardStatusProjection({ now: NOW, projectionSource: 'verified-readonly-goal-status-adapter', goals: [] });
   assert.equal(projection.projectionSource, GOAL_DASHBOARD_PROJECTION_SOURCE);
   assert.equal(projection.githubTruth, 'not-live-readonly-static-seed');
   assert.equal(projection.totalGoals, STATIC_GOAL_DASHBOARD_GOALS.length);
 });
 
-test('verified adapters preserve an explicit empty goal result', () => {
-  const projection = buildGoalDashboardStatusProjection({
+test('verified adapters preserve an explicit empty goal result but require result-level freshness evidence', () => {
+  const stale = buildGoalDashboardStatusProjection({
     now: NOW,
     githubAdapter: { verified: true },
     localAdapter: { verified: true },
     goals: [],
   });
-  assert.equal(projection.projectionSource, 'verified-readonly-goal-status-adapter');
-  assert.equal(projection.githubTruth, 'live-readonly-adapter-verified');
-  assert.equal(projection.totalGoals, 0);
-  assert.deepEqual(projection.goals, []);
+  assert.equal(stale.projectionSource, 'verified-readonly-goal-status-adapter');
+  assert.equal(stale.githubTruth, 'live-readonly-adapter-verified');
+  assert.equal(stale.totalGoals, 0);
+  assert.deepEqual(stale.goals, []);
+  assert.equal(stale.sourceTruth.goalsCurrent, false);
+  assert.equal(stale.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
+
+  const current = buildGoalDashboardStatusProjection({
+    now: NOW,
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    goals: [],
+    resultFreshness: {
+      source: 'verified-readonly-goal-status-adapter',
+      at: '2026-07-23T12:00:00.000Z',
+      evidence: 'current',
+    },
+  });
+  assert.equal(current.sourceTruth.goalsCurrent, true);
+  assert.equal(current.refreshTruth, 'VERIFIED_READONLY_SOURCES_CURRENT');
 });
 
 test('security remediation seed stays isolated and deeply immutable', () => {
@@ -90,19 +102,13 @@ test('linked PR normalization rejects malformed identity, structured SHA/state a
     assert.equal(projection.linkedPrCount, 0);
     assert.equal(projection.mergedPrCount, 0);
   }
-
   const unsupported = buildGoalDashboardStatusProjection({ now: NOW, githubAdapter: { verified: true }, goals: [{ issue: '#2007', linkedPr: { number: 2008, state: 'MERGD' }, manualRefreshRequired: false }] });
   assert.equal(unsupported.goals[0].linkedPr.state, 'unknown');
   assert.equal(unsupported.unknownPrStateCount, 1);
-
   const structured = buildGoalDashboardStatusProjection({
     now: NOW,
     githubAdapter: { verified: true },
-    goals: [{
-      issue: '#2010',
-      linkedPr: { number: 2011, state: ['merged'], headSha: ['a'.repeat(40)], mergeSha: { value: 'b'.repeat(40) } },
-      manualRefreshRequired: false,
-    }],
+    goals: [{ issue: '#2010', linkedPr: { number: 2011, state: ['merged'], headSha: ['a'.repeat(40)], mergeSha: { value: 'b'.repeat(40) } }, manualRefreshRequired: false }],
   });
   assert.equal(structured.goals[0].linkedPr.state, 'unknown');
   assert.equal(structured.unknownPrStateCount, 1);
@@ -137,12 +143,20 @@ test('caller freshness flags cannot make unknown, negative or structured evidenc
   const unknown = verifiedProjection(verifiedGoal({ proof: {}, truth: {}, lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z' } }));
   assert.equal(unknown.sourceTruth.goalsCurrent, false);
   assert.equal(unknown.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
-
   for (const value of [false, {}, [], ['ci-green'], 'none', 'stale', 'failed']) {
     const malformed = verifiedProjection(verifiedGoal({ proof: { lastProofStatus: value }, truth: {}, lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z' } }));
     assert.equal(malformed.sourceTruth.goalsCurrent, false);
     assert.equal(malformed.freshnessVerdict, 'STALE_REFRESH_REQUIRED');
   }
+});
+
+test('negative evidence vetoes positive sibling evidence', () => {
+  const projection = verifiedProjection(verifiedGoal({
+    proof: { lastProofStatus: 'failed', browserProof: 'passed' },
+    truth: { github: 'linked-pr-verified' },
+  }));
+  assert.equal(projection.sourceTruth.goalsCurrent, false);
+  assert.equal(projection.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
 });
 
 test('compound, coded and unsupported negative evidence states fail closed', () => {
@@ -153,6 +167,9 @@ test('compound, coded and unsupported negative evidence states fail closed', () 
     'receipt-cancelled',
     'receipt-error500',
     'receipt-rejected1',
+    'receipt-error5xx',
+    'receipt-rejected1a',
+    'receipt-failed.v2',
     'current-stale',
     'verified-unavailable',
     'garbage-green',
@@ -164,15 +181,11 @@ test('compound, coded and unsupported negative evidence states fail closed', () 
 });
 
 test('receipt-derived evidence requires separate verified receipt truth', () => {
-  const receiptOnlyGoal = verifiedGoal({
-    proof: { automationReceipt: 'receipt-2002' },
-    truth: {},
-  });
+  const receiptOnlyGoal = verifiedGoal({ proof: { automationReceipt: 'receipt-2002' }, truth: {} });
   const unverified = verifiedProjection(receiptOnlyGoal, { automationReceipt: { verified: false } });
   assert.equal(unverified.sourceTruth.automationReceiptVerified, false);
   assert.equal(unverified.sourceTruth.goalsCurrent, false);
   assert.equal(unverified.liveAutomationClaim, 'none');
-
   const verified = verifiedProjection(receiptOnlyGoal);
   assert.equal(verified.sourceTruth.goalsCurrent, true);
   assert.equal(verified.liveAutomationClaim, 'receipt-backed-readonly');
@@ -181,23 +194,15 @@ test('receipt-derived evidence requires separate verified receipt truth', () => 
 test('timestamps must be calendar-valid and inside the canonical freshness window', () => {
   const invalidCalendar = verifiedProjection(verifiedGoal({ lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-02-30T12:00:00.000Z' } }));
   assert.equal(invalidCalendar.sourceTruth.goalsCurrent, false);
-
   const old = verifiedProjection(verifiedGoal({ lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2000-01-01T00:00:00.000Z' } }));
   assert.equal(old.sourceTruth.goalsCurrent, false);
-
   const future = verifiedProjection(verifiedGoal({ lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:07:00.000Z' } }));
   assert.equal(future.sourceTruth.goalsCurrent, false);
-
   const offsetCurrent = verifiedProjection(verifiedGoal({ lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T13:00:00.000+01:00' } }));
   assert.equal(offsetCurrent.sourceTruth.goalsCurrent, true);
-
-  const enlarged = verifiedProjection(
-    verifiedGoal({ lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T11:35:00.000Z' } }),
-    { freshnessWindowMs: 60 * 60 * 1000 },
-  );
+  const enlarged = verifiedProjection(verifiedGoal({ lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T11:35:00.000Z' } }), { freshnessWindowMs: 60 * 60 * 1000 });
   assert.equal(enlarged.freshnessWindowMs, GOAL_DASHBOARD_FRESHNESS_WINDOW_MS);
   assert.equal(enlarged.sourceTruth.goalsCurrent, false);
-
   const smaller = verifiedProjection(verifiedGoal(), { freshnessWindowMs: 2 * 60 * 1000 });
   assert.equal(smaller.freshnessWindowMs, 2 * 60 * 1000);
   assert.equal(smaller.sourceTruth.goalsCurrent, false);
