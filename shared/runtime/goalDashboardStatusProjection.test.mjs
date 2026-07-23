@@ -89,19 +89,42 @@ test('verified adapters require affirmative, timestamped evidence and grant no e
   assert.equal(projection.readOnly, true);
 });
 
-test('caller freshness flags cannot make unknown or negative evidence current', () => {
+test('caller freshness flags cannot make unknown, negative or structured evidence current', () => {
   const unknown = verifiedProjection(verifiedGoal({ proof: {}, truth: {}, lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z' } }));
   assert.equal(unknown.sourceTruth.goalsCurrent, false);
   assert.equal(unknown.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
 
-  for (const value of [false, {}, 'none', 'stale', 'failed']) {
+  for (const value of [false, {}, [], ['ci-green'], 'none', 'stale', 'failed']) {
     const malformed = verifiedProjection(verifiedGoal({ proof: { lastProofStatus: value }, truth: {}, lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z' } }));
     assert.equal(malformed.sourceTruth.goalsCurrent, false);
     assert.equal(malformed.freshnessVerdict, 'STALE_REFRESH_REQUIRED');
   }
 });
 
-test('timestamps must be calendar-valid and inside the freshness window', () => {
+test('compound negative and unsupported evidence states fail closed', () => {
+  for (const value of ['receipt-failed', 'current-stale', 'verified-unavailable', 'garbage-green']) {
+    const projection = verifiedProjection(verifiedGoal({ proof: { lastProofStatus: value }, truth: {} }));
+    assert.equal(projection.sourceTruth.goalsCurrent, false, value);
+    assert.equal(projection.refreshTruth, 'MANUAL_REFRESH_REQUIRED', value);
+  }
+});
+
+test('receipt-derived evidence requires separate verified receipt truth', () => {
+  const receiptOnlyGoal = verifiedGoal({
+    proof: { automationReceipt: 'receipt-2002' },
+    truth: {},
+  });
+  const unverified = verifiedProjection(receiptOnlyGoal, { automationReceipt: { verified: false } });
+  assert.equal(unverified.sourceTruth.automationReceiptVerified, false);
+  assert.equal(unverified.sourceTruth.goalsCurrent, false);
+  assert.equal(unverified.liveAutomationClaim, 'none');
+
+  const verified = verifiedProjection(receiptOnlyGoal);
+  assert.equal(verified.sourceTruth.goalsCurrent, true);
+  assert.equal(verified.liveAutomationClaim, 'receipt-backed-readonly');
+});
+
+test('timestamps must be calendar-valid and inside the canonical freshness window', () => {
   const invalidCalendar = verifiedProjection(verifiedGoal({ lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-02-30T12:00:00.000Z' } }));
   assert.equal(invalidCalendar.sourceTruth.goalsCurrent, false);
 
@@ -113,6 +136,17 @@ test('timestamps must be calendar-valid and inside the freshness window', () => 
 
   const offsetCurrent = verifiedProjection(verifiedGoal({ lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T13:00:00.000+01:00' } }));
   assert.equal(offsetCurrent.sourceTruth.goalsCurrent, true);
+
+  const enlarged = verifiedProjection(
+    verifiedGoal({ lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T11:35:00.000Z' } }),
+    { freshnessWindowMs: 60 * 60 * 1000 },
+  );
+  assert.equal(enlarged.freshnessWindowMs, GOAL_DASHBOARD_FRESHNESS_WINDOW_MS);
+  assert.equal(enlarged.sourceTruth.goalsCurrent, false);
+
+  const smaller = verifiedProjection(verifiedGoal(), { freshnessWindowMs: 2 * 60 * 1000 });
+  assert.equal(smaller.freshnessWindowMs, 2 * 60 * 1000);
+  assert.equal(smaller.sourceTruth.goalsCurrent, false);
 });
 
 test('local adapter truth remains distinct from automation receipt truth', () => {
