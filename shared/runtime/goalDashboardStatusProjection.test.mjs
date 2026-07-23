@@ -39,6 +39,17 @@ test('static goal index keeps the security repair isolated while the productive 
   assert.match(remediationLane.nextAction, /without blocking unrelated programme building/i);
 });
 
+test('nested static linked PR seed cannot be mutated by an importer', () => {
+  const remediationSeed = STATIC_GOAL_DASHBOARD_GOALS.find((goal) => goal.issue === '#1568');
+
+  assert.equal(Object.isFrozen(remediationSeed), true);
+  assert.equal(Object.isFrozen(remediationSeed.linkedPr), true);
+  assert.throws(() => {
+    remediationSeed.linkedPr.state = 'merged';
+  }, TypeError);
+  assert.equal(remediationSeed.linkedPr.state, 'open');
+});
+
 test('linked PR fields and proof truth are represented without inventing missing evidence', () => {
   const projection = buildGoalDashboardStatusProjection({
     goals: [{
@@ -95,6 +106,19 @@ test('linked PR number validation rejects partial, fractional and non-positive v
     goals: [{ issue: '#2001', linkedPr: { number: '1581' }, manualRefreshRequired: false }],
   });
   assert.equal(valid.goals[0].linkedPr.number, 1581);
+});
+
+test('merged PR count requires a valid linked PR number', () => {
+  const projection = buildGoalDashboardStatusProjection({
+    goals: [
+      { issue: '#2005', linkedPr: { number: '1581oops', state: 'merged' }, manualRefreshRequired: false },
+      { issue: '#2006', linkedPr: { number: 1582, state: 'merged' }, manualRefreshRequired: false },
+    ],
+  });
+
+  assert.equal(projection.linkedPrCount, 1);
+  assert.equal(projection.mergedPrCount, 1);
+  assert.equal(projection.goals[0].linkedPr.number, null);
 });
 
 test('canonical linked PR draft value takes precedence over compatibility fallback', () => {
