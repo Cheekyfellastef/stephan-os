@@ -42,6 +42,7 @@ const SUPPORTED_LINKED_PR_STATES = new Set(['open', 'closed', 'merged', 'unknown
 const AFFIRMATIVE_EVIDENCE_TOKENS = new Set(['verified', 'green', 'pass', 'passed', 'complete', 'completed', 'success', 'current', 'healthy', 'ready']);
 const EVIDENCE_CONTEXT_TOKENS = new Set(['adapter', 'automation', 'browser', 'ci', 'github', 'goal', 'linked', 'local', 'pr', 'proof', 'readonly', 'receipt', 'runtime', 'source', 'status']);
 const NEGATIVE_EVIDENCE_TOKENS = new Set(['blocked', 'cancelled', 'error', 'expired', 'fail', 'failed', 'failing', 'invalid', 'missing', 'none', 'rejected', 'stale', 'unavailable', 'unknown', 'unverified']);
+const VERIFIED_RESULT_SOURCES = new Set(['verified-readonly-goal-status-adapter']);
 
 function status(value) {
   if (typeof value !== 'string') return 'unknown';
@@ -113,6 +114,15 @@ function freeze(value) {
   return Object.freeze(value);
 }
 
+function normalizeOptionalStrings(entries) {
+  const normalized = {};
+  for (const [key, value] of entries) {
+    if (value === null || value === undefined) continue;
+    normalized[key] = stringValue(value);
+  }
+  return freeze(normalized);
+}
+
 export const GOAL_DASHBOARD_REFRESH_TRUTH = 'MANUAL_REFRESH_REQUIRED';
 export const GOAL_DASHBOARD_PROJECTION_SOURCE = 'static-goal-dashboard-seed';
 export const GOAL_DASHBOARD_FRESHNESS_WINDOW_MS = 15 * 60 * 1000;
@@ -145,20 +155,20 @@ function normalizeLinkedPr(goal = {}) {
 
 function normalizeProof(goal = {}) {
   const proof = goal.proof || {};
-  return freeze({
-    lastProofStatus: stringValue(proof.lastProofStatus ?? goal.lastProofStatus),
-    browserProof: stringValue(proof.browserProof ?? goal.browserProof),
-    automationReceipt: stringValue(proof.automationReceipt ?? goal.automationReceipt),
-  });
+  return normalizeOptionalStrings([
+    ['lastProofStatus', proof.lastProofStatus ?? goal.lastProofStatus],
+    ['browserProof', proof.browserProof ?? goal.browserProof],
+    ['automationReceipt', proof.automationReceipt ?? goal.automationReceipt],
+  ]);
 }
 
 function normalizeTruth(goal = {}) {
   const truth = goal.truth || {};
-  return freeze({
-    github: stringValue(truth.github ?? goal.githubTruth),
-    local: stringValue(truth.local ?? goal.localTruth),
-    automation: stringValue(truth.automation ?? goal.automationTruth),
-  });
+  return normalizeOptionalStrings([
+    ['github', truth.github ?? goal.githubTruth],
+    ['local', truth.local ?? goal.localTruth],
+    ['automation', truth.automation ?? goal.automationTruth],
+  ]);
 }
 
 function normalizeLastUpdated(goal = {}) {
@@ -203,12 +213,12 @@ function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceip
 
 function emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified) {
   if (!input.resultFreshness || typeof input.resultFreshness !== 'object') return false;
-  const source = stringValue(input.resultFreshness.source);
+  const source = stringValue(input.resultFreshness.source).toLowerCase();
   const at = stringValue(input.resultFreshness.at);
   const evidence = stringValue(input.resultFreshness.evidence);
   const timestampMs = parseStrictIsoTimestamp(at);
   const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
-  return currentEvidence(source, automationReceiptVerified)
+  return VERIFIED_RESULT_SOURCES.has(source)
     && currentEvidence(evidence, automationReceiptVerified)
     && ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS
     && ageMs <= freshnessWindowMs;
