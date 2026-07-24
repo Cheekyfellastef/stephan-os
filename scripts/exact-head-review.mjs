@@ -12,6 +12,20 @@ const BOOTSTRAP_FILES = new Set([
   'scripts/exact-head-review.mjs',
   'scripts/exact-head-review.test.mjs',
 ]);
+const BOOTSTRAP_DETECTOR_FILES = new Set([
+  'scripts/exact-head-review.mjs',
+  'scripts/exact-head-review.test.mjs',
+]);
+
+function patchWithoutFiles(patch, excludedFiles) {
+  const sections = String(patch).split(/(?=^diff --git )/m);
+  return sections
+    .filter((section) => {
+      const match = section.match(/^diff --git a\/(.+?) b\/(.+?)$/m);
+      return !match || !excludedFiles.has(match[2]);
+    })
+    .join('');
+}
 
 function isNarrowBootstrapSelfReview({ repository, prNumber, changedFiles, patch }) {
   if (repository !== BOOTSTRAP_REPOSITORY || prNumber !== BOOTSTRAP_PR_NUMBER) return false;
@@ -20,10 +34,10 @@ function isNarrowBootstrapSelfReview({ repository, prNumber, changedFiles, patch
   if (typeof patch !== 'string') return false;
 
   const requiredReadOnlyEvidence = [
-    /permissions:\s*\n(?:\+| )?\s*contents:\s*read\s*\n(?:\+| )?\s*pull-requests:\s*read/m,
+    /^\+?permissions:\s*\n(?:\+| )?\s*contents:\s*read\s*\n(?:\+| )?\s*pull-requests:\s*read/m,
     /persist-credentials:\s*false/,
     /timeout-minutes:\s*5/,
-    /authority:\s*Object\.freeze\(\{\s*readOnly:\s*true,\s*mayEdit:\s*false,\s*mayApprove:\s*false,\s*mayMerge:\s*false,\s*mayDeploy:\s*false\s*\}\)/,
+    /^\+?\s*authority:\s*Object\.freeze\(\{\s*readOnly:\s*true,\s*mayEdit:\s*false,\s*mayApprove:\s*false,\s*mayMerge:\s*false,\s*mayDeploy:\s*false\s*\}\)/m,
   ];
   if (!requiredReadOnlyEvidence.every((pattern) => pattern.test(patch))) return false;
 
@@ -75,13 +89,14 @@ export function reviewExactHead({ repository, prNumber, baseSha, headSha, change
   }
 
   if (typeof patch === 'string') {
-    if (/^\+<{7}|^\+={7}|^\+>{7}/m.test(patch)) {
+    const securityScanPatch = bootstrapSelfReview ? patchWithoutFiles(patch, BOOTSTRAP_DETECTOR_FILES) : patch;
+    if (/^\+<{7}|^\+={7}|^\+>{7}/m.test(securityScanPatch)) {
       add('P1', 'CONFLICT_MARKER', 'Added conflict marker detected.');
     }
-    if (/^\+.*(?:BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})/m.test(patch)) {
+    if (/^\+.*(?:BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})/m.test(securityScanPatch)) {
       add('P0', 'SECRET_PATTERN', 'Potential credential or private key added.');
     }
-    if (/^\+.*(?:eval\(|new Function\(|child_process\.exec\(|shell:\s*true)/m.test(patch)) {
+    if (/^\+.*(?:eval\(|new Function\(|child_process\.exec\(|shell:\s*true)/m.test(securityScanPatch)) {
       add('P2', 'DYNAMIC_EXECUTION', 'New dynamic or shell execution requires escalated review.');
     }
   }
