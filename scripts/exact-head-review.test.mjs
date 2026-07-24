@@ -11,21 +11,6 @@ const base = {
   patch: 'diff --git a/shared/runtime/example.mjs b/shared/runtime/example.mjs\n+export const safe = true;\n',
 };
 
-const bootstrapPatch = `diff --git a/.github/workflows/stephanos-exact-head-review.yml b/.github/workflows/stephanos-exact-head-review.yml
-+permissions:
-+  contents: read
-+  pull-requests: read
-+timeout-minutes: 5
-+persist-credentials: false
-+authority: Object.freeze({ readOnly: true, mayEdit: false, mayApprove: false, mayMerge: false, mayDeploy: false })
-`;
-
-const bootstrapFiles = [
-  '.github/workflows/stephanos-exact-head-review.yml',
-  'scripts/exact-head-review.mjs',
-  'scripts/exact-head-review.test.mjs',
-];
-
 test('passes a bounded non-authority exact-head patch', () => {
   const receipt = reviewExactHead(base);
   assert.equal(receipt.verdict, 'STEPHANOS_REVIEW_PASS');
@@ -40,46 +25,29 @@ test('fails closed when full SHA evidence is absent', () => {
   assert.ok(receipt.findings.some(({ code }) => code === 'INVALID_SHA'));
 });
 
-test('escalates authority-sensitive workflow changes', () => {
+test('escalates every authority-sensitive workflow change', () => {
   const receipt = reviewExactHead({ ...base, changedFiles: ['.github/workflows/merge.yml'] });
   assert.ok(receipt.findings.some(({ code, severity }) => code === 'AUTHORITY_SURFACE_CHANGED' && severity === 'P2'));
 });
 
-test('allows only the exact read-only PR 1599 bootstrap surface', () => {
-  const receipt = reviewExactHead({
-    ...base,
-    prNumber: 1599,
-    changedFiles: bootstrapFiles,
-    patch: bootstrapPatch,
-  });
-  assert.equal(receipt.verdict, 'STEPHANOS_REVIEW_PASS');
-  assert.ok(receipt.findings.some(({ code, severity }) => code === 'BOOTSTRAP_SELF_REVIEW_EXCEPTION' && severity === 'INFO'));
-  assert.equal(receipt.findings.some(({ severity }) => severity === 'P2'), false);
+test('detects common child-process execution entry points', () => {
+  for (const call of ['exec(command)', 'execSync(command)', 'execFile(file)', 'spawn(command)', 'spawnSync(command)', 'fork(modulePath)']) {
+    const receipt = reviewExactHead({ ...base, patch: `+${call}\n` });
+    assert.ok(receipt.findings.some(({ code }) => code === 'DYNAMIC_EXECUTION'), call);
+  }
 });
 
-test('bootstrap exception fails closed for write authority or any extra file', () => {
-  const writeReceipt = reviewExactHead({
-    ...base,
-    prNumber: 1599,
-    changedFiles: bootstrapFiles,
-    patch: `${bootstrapPatch}\n+contents: write\n`,
-  });
-  assert.ok(writeReceipt.findings.some(({ code }) => code === 'AUTHORITY_SURFACE_CHANGED'));
-
-  const extraFileReceipt = reviewExactHead({
-    ...base,
-    prNumber: 1599,
-    changedFiles: [...bootstrapFiles, 'shared/runtime/unrelated.mjs'],
-    patch: bootstrapPatch,
-  });
-  assert.ok(extraFileReceipt.findings.some(({ code }) => code === 'AUTHORITY_SURFACE_CHANGED'));
-});
-
-test('blocks likely secrets and conflict markers', () => {
+test('blocks likely secrets and conflict markers without matching quoted detector fixtures', () => {
   const receipt = reviewExactHead({
     ...base,
     patch: '+<<<<<<< HEAD\n+-----BEGIN PRIVATE KEY-----\n',
   });
   assert.ok(receipt.findings.some(({ code }) => code === 'CONFLICT_MARKER'));
   assert.ok(receipt.findings.some(({ code }) => code === 'SECRET_PATTERN'));
+
+  const quotedFixture = reviewExactHead({
+    ...base,
+    patch: "+const fixture = '+-----BEGIN PRIVATE KEY-----';\n",
+  });
+  assert.equal(quotedFixture.findings.some(({ code }) => code === 'SECRET_PATTERN'), false);
 });
