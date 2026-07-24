@@ -10,7 +10,7 @@ function currentProjection(projectionSource) {
     now: NOW,
     githubAdapter: { verified: true },
     localAdapter: { verified: true },
-    automationReceipt: { verified: true },
+    automationReceipt: { verified: true, receiptId: 'receipt-2002' },
     projectionSource,
     goals: [{
       issue: '#2002',
@@ -34,6 +34,9 @@ test('accepted live goals normalize every non-verified source label', () => {
     'stale',
     'not-live-readonly-static-seed',
     'static-goal-dashboard-seed',
+    'verified-static-goal-dashboard-seed',
+    'verified-not-live-readonly-static-seed',
+    'verified-non-live-goal-adapter',
     'unknown',
     'custom-adapter',
     '',
