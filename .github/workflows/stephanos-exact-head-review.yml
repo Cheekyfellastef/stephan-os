@@ -1,0 +1,83 @@
+name: Stephanos Exact-Head Review
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: stephanos-exact-head-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  exact-head-review:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted reviewer
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Verify trusted reviewer source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.base.sha }}"
+
+      - name: Run trusted engine regressions
+        run: node --test scripts/exact-head-review.test.mjs
+
+      - name: Build immutable exact-head review input
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p review-proof
+
+          observed_before="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          test "${observed_before}" = "${HEAD_SHA}"
+
+          gh api --paginate "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" \
+            --jq '.[].filename' > review-proof/changed-files.txt
+          gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}" \
+            -H 'Accept: application/vnd.github.v3.diff' > review-proof/pull-request.patch
+
+          observed_after="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          test "${observed_after}" = "${HEAD_SHA}"
+
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const changedFiles = fs.readFileSync('review-proof/changed-files.txt', 'utf8').split(/\r?\n/).filter(Boolean);
+          const patch = fs.readFileSync('review-proof/pull-request.patch', 'utf8');
+          fs.writeFileSync('review-proof/input.json', JSON.stringify({
+            repository: process.env.REPOSITORY,
+            prNumber: Number(process.env.PR_NUMBER),
+            baseSha: process.env.BASE_SHA,
+            headSha: process.env.HEAD_SHA,
+            changedFiles,
+            patch,
+          }));
+          NODE
+
+      - name: Review exact head with trusted engine
+        run: node scripts/exact-head-review.mjs review-proof/input.json review-proof/receipt.json
+
+      - name: Upload SHA-bound review receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-head-review-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: review-proof/
+          if-no-files-found: error
+          retention-days: 30
