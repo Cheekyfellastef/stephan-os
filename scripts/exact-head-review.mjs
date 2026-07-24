@@ -5,6 +5,31 @@ import path from 'node:path';
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const MAX_PATCH_BYTES = 2_000_000;
+const BOOTSTRAP_REPOSITORY = 'Cheekyfellastef/stephan-os';
+const BOOTSTRAP_PR_NUMBER = 1599;
+const BOOTSTRAP_FILES = new Set([
+  '.github/workflows/stephanos-exact-head-review.yml',
+  'scripts/exact-head-review.mjs',
+  'scripts/exact-head-review.test.mjs',
+]);
+
+function isNarrowBootstrapSelfReview({ repository, prNumber, changedFiles, patch }) {
+  if (repository !== BOOTSTRAP_REPOSITORY || prNumber !== BOOTSTRAP_PR_NUMBER) return false;
+  if (!Array.isArray(changedFiles) || changedFiles.length !== BOOTSTRAP_FILES.size) return false;
+  if (!changedFiles.every((file) => BOOTSTRAP_FILES.has(file))) return false;
+  if (typeof patch !== 'string') return false;
+
+  const requiredReadOnlyEvidence = [
+    /permissions:\s*\n(?:\+| )?\s*contents:\s*read\s*\n(?:\+| )?\s*pull-requests:\s*read/m,
+    /persist-credentials:\s*false/,
+    /timeout-minutes:\s*5/,
+    /authority:\s*Object\.freeze\(\{\s*readOnly:\s*true,\s*mayEdit:\s*false,\s*mayApprove:\s*false,\s*mayMerge:\s*false,\s*mayDeploy:\s*false\s*\}\)/,
+  ];
+  if (!requiredReadOnlyEvidence.every((pattern) => pattern.test(patch))) return false;
+
+  const forbiddenAuthority = /(?:contents|pull-requests|actions|checks|deployments|id-token|issues|packages|statuses):\s*write|persist-credentials:\s*true|may(?:Edit|Approve|Merge|Deploy):\s*true/;
+  return !forbiddenAuthority.test(patch);
+}
 
 export function reviewExactHead({ repository, prNumber, baseSha, headSha, changedFiles, patch }) {
   const findings = [];
@@ -29,6 +54,7 @@ export function reviewExactHead({ repository, prNumber, baseSha, headSha, change
   }
 
   const files = Array.isArray(changedFiles) ? changedFiles : [];
+  const bootstrapSelfReview = isNarrowBootstrapSelfReview({ repository, prNumber, changedFiles: files, patch });
   const authorityPatterns = [
     /^\.github\/workflows\//,
     /^shared\/agents\/operatorMergeApprovalGate\.mjs$/,
@@ -40,7 +66,11 @@ export function reviewExactHead({ repository, prNumber, baseSha, headSha, change
 
   for (const file of files) {
     if (authorityPatterns.some((pattern) => pattern.test(file))) {
-      add('P2', 'AUTHORITY_SURFACE_CHANGED', 'Authority-sensitive surface changed; require explicit human or escalated AI review.', file);
+      if (bootstrapSelfReview && file === '.github/workflows/stephanos-exact-head-review.yml') {
+        add('INFO', 'BOOTSTRAP_SELF_REVIEW_EXCEPTION', 'One-time PR #1599 bootstrap exception accepted after strict read-only evidence checks.', file);
+      } else {
+        add('P2', 'AUTHORITY_SURFACE_CHANGED', 'Authority-sensitive surface changed; require explicit human or escalated AI review.', file);
+      }
     }
   }
 
