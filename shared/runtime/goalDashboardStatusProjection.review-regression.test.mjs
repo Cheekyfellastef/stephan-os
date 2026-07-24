@@ -68,6 +68,29 @@ test('empty and static projections cannot synthesize receipt-backed automation t
   assert.equal(empty.liveAutomationClaim, 'none');
 });
 
+test('empty-result receipt freshness binds to the exact verified receipt identifier', () => {
+  const matching = buildGoalDashboardStatusProjection({
+    now: NOW,
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    automationReceipt: { verified: true, receiptId: RECEIPT_ID },
+    goals: [],
+    resultFreshness: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z', evidence: RECEIPT_ID },
+  });
+  assert.equal(matching.sourceTruth.goalsCurrent, true);
+
+  const mismatch = buildGoalDashboardStatusProjection({
+    now: NOW,
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    automationReceipt: { verified: true, receiptId: RECEIPT_ID },
+    goals: [],
+    resultFreshness: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z', evidence: 'receipt-9999' },
+  });
+  assert.equal(mismatch.sourceTruth.goalsCurrent, false);
+  assert.equal(mismatch.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
+});
+
 test('verified adapter without a usable goal array preserves static fallback attribution', () => {
   for (const goals of [undefined, null, {}, 'not-an-array']) {
     const result = buildGoalDashboardStatusProjection({ now: NOW, githubAdapter: { verified: true }, localAdapter: { verified: true }, goals, projectionSource: 'verified-readonly-goal-status-adapter' });
@@ -79,7 +102,7 @@ test('verified adapter without a usable goal array preserves static fallback att
 });
 
 test('accepted live goals cannot retain negative or reserved projection sources', () => {
-  for (const projectionSource of [undefined, '', 'unknown', GOAL_DASHBOARD_PROJECTION_SOURCE, 'none', 'unavailable', 'stale', 'not-live-readonly-static-seed', 'verified-stale', 'verified-unavailable', 'verified-static-goal-dashboard-seed']) {
+  for (const projectionSource of [undefined, '', 'unknown', GOAL_DASHBOARD_PROJECTION_SOURCE, 'none', 'unavailable', 'stale', 'not-live-readonly-static-seed', 'verified-stale', 'verified-unavailable', 'verified-static-goal-dashboard-seed', 'verified-not-live-readonly-static-seed']) {
     const result = projection({}, { projectionSource });
     assert.equal(result.projectionSource, 'verified-readonly-goal-status-adapter', String(projectionSource));
     assert.equal(result.refreshTruth, 'VERIFIED_READONLY_SOURCES_CURRENT');
