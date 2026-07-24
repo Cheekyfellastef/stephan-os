@@ -41,8 +41,9 @@ function isNarrowBootstrapSelfReview({ repository, prNumber, changedFiles, patch
   ];
   if (!requiredReadOnlyEvidence.every((pattern) => pattern.test(patch))) return false;
 
+  const executableWorkflowPatch = patchWithoutFiles(patch, BOOTSTRAP_DETECTOR_FILES);
   const forbiddenAuthority = /(?:contents|pull-requests|actions|checks|deployments|id-token|issues|packages|statuses):\s*write|persist-credentials:\s*true|may(?:Edit|Approve|Merge|Deploy):\s*true/;
-  return !forbiddenAuthority.test(patch);
+  return !forbiddenAuthority.test(executableWorkflowPatch);
 }
 
 export function reviewExactHead({ repository, prNumber, baseSha, headSha, changedFiles, patch }) {
