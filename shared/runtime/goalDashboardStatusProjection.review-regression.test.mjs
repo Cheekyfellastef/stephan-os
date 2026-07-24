@@ -61,7 +61,7 @@ test('empty and static projections cannot synthesize receipt-backed automation t
     localAdapter: { verified: true },
     automationReceipt: { verified: true, receiptId: RECEIPT_ID },
     goals: [],
-    resultFreshness: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z', evidence: 'current' },
+    resultFreshness: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z', evidence: RECEIPT_ID },
   });
   assert.equal(empty.sourceTruth.goalsCurrent, true);
   assert.equal(empty.sourceTruth.receiptEvidenceVerified, false);
