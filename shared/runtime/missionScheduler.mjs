@@ -36,16 +36,21 @@ function detectCycles(goalsByIssue) {
   return cycles;
 }
 
-function classify(goal, goalsByIssue, activeIssues, stale) {
+function dependencyComplete(goal) {
+  return Boolean(goal && !goal.duplicateOf && !goal.supersededBy && COMPLETION_STATES.has(goal.state));
+}
+
+function classify(goal, goalsByIssue, activeIssues, rejectedActiveClaims, stale) {
   if (!goal.issue) return 'BLOCKED';
   if (goal.duplicateOf) return 'DUPLICATE';
   if (goal.supersededBy) return 'SUPERSEDED';
   if (TERMINAL_STATES.has(goal.state)) return goal.state === 'COMPLETE' ? 'CLOSE_READY' : goal.state;
   if (stale) return 'STALLED';
+  if (rejectedActiveClaims.has(goal)) return 'BLOCKED';
   if (activeIssues.has(goal.issue)) return 'ACTIVE';
   if (goal.approvalRequired || goal.route === 'OPERATOR_APPROVAL') return 'APPROVAL_REQUIRED';
   if (goal.prerequisites.some((issue) => !goalsByIssue.has(issue))) return 'BLOCKED';
-  if (goal.prerequisites.some((issue) => !COMPLETION_STATES.has(goalsByIssue.get(issue).state))) return 'WAITING_FOR_DEPENDENCY';
+  if (goal.prerequisites.some((issue) => !dependencyComplete(goalsByIssue.get(issue)))) return 'WAITING_FOR_DEPENDENCY';
   if (goal.state === 'IMPLEMENTED' && goal.proofState !== 'PASS') return 'IMPLEMENTED_NEEDS_PROOF';
   if (goal.proofState === 'PASS' && goal.activePr) return 'MERGE_READY';
   if (goal.route === 'WAITING_FOR_EXTERNAL_CONDITION') return 'WAITING_FOR_EXTERNAL_CONDITION';
@@ -65,16 +70,17 @@ export function buildMissionScheduler(input = {}) {
   const goalsByIssue = new Map(goals.filter((goal) => goal.issue).map((goal) => [goal.issue, goal]));
   const evidence = new Map(goals.map((goal) => { const at = goal.evidenceAt ? Date.parse(goal.evidenceAt) : NaN; return [goal, !Number.isFinite(at) || nowMs - at > freshnessMs || at - nowMs > 60_000]; }));
   const claimed = goals.filter((goal) => ACTIVE_STATES.has(goal.state));
-  const authoritative = []; const contradictions = [];
+  const authoritative = []; const rejectedActiveClaims = new Set(); const contradictions = [];
   for (const goal of claimed) {
-    if (evidence.get(goal)) contradictions.push({ code:'STALE_ACTIVE_EVIDENCE', issue:goal.issue });
-    else if (!goal.activePr && !goal.branch) contradictions.push({ code:'ACTIVE_LANE_IDENTITY_MISSING', issue:goal.issue });
+    if (!goal.issue) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_IDENTITY_MISSING', issue:null }); }
+    else if (evidence.get(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'STALE_ACTIVE_EVIDENCE', issue:goal.issue }); }
+    else if (!goal.activePr && !goal.branch) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_LANE_IDENTITY_MISSING', issue:goal.issue }); }
     else authoritative.push(goal);
   }
   if (authoritative.length > 1) contradictions.push({ code:'MULTIPLE_ACTIVE_LANES', issues:authoritative.map((goal) => goal.issue) });
   for (const cycle of detectCycles(goalsByIssue)) contradictions.push({ code:'DEPENDENCY_CYCLE', issues:cycle });
   const activeIssues = new Set(authoritative.map((goal) => goal.issue));
-  const portfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeIssues, evidence.get(goal)), evidenceFreshness:evidence.get(goal) ? 'STALE' : 'FRESH' }));
+  const portfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeIssues, rejectedActiveClaims, evidence.get(goal)), evidenceFreshness:evidence.get(goal) ? 'STALE' : 'FRESH' }));
   const ready = portfolio.filter((goal) => goal.lifecycle === 'READY').sort((a,b) => score(b) - score(a) || a.issue - b.issue);
   const approvalGoals = portfolio.filter((goal) => goal.lifecycle === 'APPROVAL_REQUIRED');
   const failClosed = contradictions.length > 0;
@@ -90,7 +96,7 @@ export function buildMissionScheduler(input = {}) {
     whyNow:failClosed ? `Scheduling failed closed: ${contradictions.map(({code}) => code).join(', ')}.` : active ? 'Existing fresh, identified active lane remains authoritative.' : selected ? `Highest eligible score ${score(selected)} after dependency, priority, critical-path and route checks.` : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.',
     selectedGoal:selected?.issue ? `#${selected.issue}` : null,
     selectedRoute:selected?.route ?? null,
-    nextEligible:ready.slice(selected ? 1 : 0, selected ? 4 : 3).map((goal) => `#${goal.issue}`),
+    nextEligible:failClosed ? [] : ready.slice(selected ? 1 : 0, selected ? 4 : 3).map((goal) => `#${goal.issue}`),
     operatorNeeded,
     operatorAction:operatorNeeded ? 'OPERATOR_APPROVAL_REQUIRED' : 'NO_OPERATOR_ACTION_REQUIRED',
     portfolio,
