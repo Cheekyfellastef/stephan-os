@@ -107,7 +107,8 @@ function liveProjectionSource(value) {
   const normalized = stringValue(value, canonical).trim();
   const lower = normalized.toLowerCase();
   const tokens = evidenceTokens(lower);
-  const reserved = tokens.some((token) => RESERVED_PROJECTION_SOURCE_TOKENS.has(token));
+  const containsHyphenatedNonLive = tokens.some((token, index) => token === 'non' && tokens[index + 1] === 'live');
+  const reserved = containsHyphenatedNonLive || tokens.some((token) => RESERVED_PROJECTION_SOURCE_TOKENS.has(token));
   return lower.startsWith('verified-') && !reserved && !tokens.some(tokenEncodesNegativeState)
     ? normalized
     : canonical;
@@ -258,7 +259,8 @@ function emptyResultCurrent(input, nowMs, freshnessWindowMs, verifiedReceiptId) 
   const projectedReceiptId = normalizeReceiptIdentifier(evidence);
   const receiptBound = projectedReceiptId !== null && verifiedReceiptId !== null && projectedReceiptId === verifiedReceiptId;
   return VERIFIED_RESULT_SOURCES.has(source)
-    && currentEvidence(evidence, receiptBound)
+    && receiptBound
+    && currentEvidence(evidence, true)
     && ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS
     && ageMs <= freshnessWindowMs;
 }
