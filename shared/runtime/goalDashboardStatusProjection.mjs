@@ -66,6 +66,15 @@ function validReceiptIdentifier(value) {
   return typeof value === 'string' && RECEIPT_IDENTIFIER_PATTERN.test(value.trim().toLowerCase());
 }
 
+function normalizeReceiptIdentifier(value) {
+  return validReceiptIdentifier(value) ? value.trim().toLowerCase() : null;
+}
+
+function verifiedReceiptIdentifier(receipt = {}) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) || receipt.verified !== true) return null;
+  return normalizeReceiptIdentifier(receipt.receiptId ?? receipt.id ?? receipt.receipt);
+}
+
 function affirmativeEvidence(value) {
   const tokens = evidenceTokens(value);
   if (!tokens.length || tokens.some(tokenEncodesNegativeState)) return false;
@@ -84,8 +93,8 @@ function receiptDerivedEvidence(value) {
   return evidenceTokens(value).includes('receipt');
 }
 
-function currentEvidence(value, automationReceiptVerified) {
-  return affirmativeEvidence(value) && (!receiptDerivedEvidence(value) || automationReceiptVerified);
+function currentEvidence(value, receiptBound) {
+  return affirmativeEvidence(value) && (!receiptDerivedEvidence(value) || receiptBound);
 }
 
 function canonicalSource(value) {
@@ -93,10 +102,13 @@ function canonicalSource(value) {
 }
 
 function liveProjectionSource(value) {
-  const normalized = stringValue(value, 'verified-readonly-goal-status-adapter').trim();
-  return normalized.toLowerCase().startsWith('verified-')
+  const canonical = 'verified-readonly-goal-status-adapter';
+  const normalized = stringValue(value, canonical).trim();
+  const lower = normalized.toLowerCase();
+  const tokens = evidenceTokens(lower);
+  return lower.startsWith('verified-') && !tokens.some(tokenEncodesNegativeState)
     ? normalized
-    : 'verified-readonly-goal-status-adapter';
+    : canonical;
 }
 
 function parseStrictIsoTimestamp(value) {
@@ -187,48 +199,54 @@ function normalizeLastUpdated(goal = {}) {
 }
 
 function normalizeGoal(goal = {}) {
-  const nextAction = text(goal.nextAction, 'Manual refresh required before claiming progress.');
+  const safeGoal = goal && typeof goal === 'object' && !Array.isArray(goal) ? goal : {};
+  const nextAction = text(safeGoal.nextAction, 'Manual refresh required before claiming progress.');
   return freeze({
-    issue: text(goal.issue, 'untracked'),
-    title: text(goal.title, 'Untitled goal'),
-    status: text(goal.status, 'Unknown'),
-    currentOwner: text(goal.currentOwner, 'unknown'),
-    nextOwner: text(goal.nextOwner, 'unknown'),
-    handoffState: text(goal.handoffState, 'unknown'),
-    milestone: text(goal.milestone, 'unknown'),
-    operatorNeeded: text(goal.operatorNeeded, 'unknown'),
-    proofIndex: number(goal.proofIndex, 0),
-    linkedPr: normalizeLinkedPr(goal),
-    proof: normalizeProof(goal),
-    truth: normalizeTruth(goal),
-    lastUpdated: normalizeLastUpdated(goal),
-    manualRefreshRequired: goal.manualRefreshRequired !== false,
+    issue: text(safeGoal.issue, 'untracked'),
+    title: text(safeGoal.title, 'Untitled goal'),
+    status: text(safeGoal.status, 'Unknown'),
+    currentOwner: text(safeGoal.currentOwner, 'unknown'),
+    nextOwner: text(safeGoal.nextOwner, 'unknown'),
+    handoffState: text(safeGoal.handoffState, 'unknown'),
+    milestone: text(safeGoal.milestone, 'unknown'),
+    operatorNeeded: text(safeGoal.operatorNeeded, 'unknown'),
+    proofIndex: number(safeGoal.proofIndex, 0),
+    linkedPr: normalizeLinkedPr(safeGoal),
+    proof: normalizeProof(safeGoal),
+    truth: normalizeTruth(safeGoal),
+    lastUpdated: normalizeLastUpdated(safeGoal),
+    manualRefreshRequired: safeGoal.manualRefreshRequired !== false,
     nextAction,
-    nextOperatorAction: text(goal.nextOperatorAction, nextAction),
+    nextOperatorAction: text(safeGoal.nextOperatorAction, nextAction),
   });
 }
 
-function evidenceEntryCurrent(key, value, automationReceiptVerified) {
-  if (key === 'automationReceipt') {
-    return automationReceiptVerified && validReceiptIdentifier(value);
-  }
-  return currentEvidence(value, automationReceiptVerified);
+function goalReceiptBound(goal, verifiedReceiptId) {
+  const projectedReceiptId = normalizeReceiptIdentifier(goal.proof.automationReceipt);
+  return projectedReceiptId !== null && verifiedReceiptId !== null && projectedReceiptId === verifiedReceiptId;
 }
 
-function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified) {
+function evidenceEntryCurrent(key, value, receiptBound) {
+  if (key === 'automationReceipt') return receiptBound;
+  if (key === 'automation') return receiptBound && currentEvidence(value, true);
+  return currentEvidence(value, receiptBound);
+}
+
+function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, verifiedReceiptId) {
   const timestampMs = parseStrictIsoTimestamp(goal.lastUpdated.at);
   const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
   const timestampCurrent = ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS && ageMs <= freshnessWindowMs;
+  const receiptBound = goalReceiptBound(goal, verifiedReceiptId);
   const evidenceEntries = [...Object.entries(goal.proof), ...Object.entries(goal.truth)];
   const evidenceCurrent = evidenceEntries.length > 0
-    && evidenceEntries.every(([key, value]) => evidenceEntryCurrent(key, value, automationReceiptVerified));
+    && evidenceEntries.every(([key, value]) => evidenceEntryCurrent(key, value, receiptBound));
   return goal.manualRefreshRequired === false
     && canonicalSource(goal.lastUpdated.source)
     && timestampCurrent
     && evidenceCurrent;
 }
 
-function emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified) {
+function emptyResultCurrent(input, nowMs, freshnessWindowMs, receiptVerified) {
   if (!input.resultFreshness || typeof input.resultFreshness !== 'object') return false;
   const source = stringValue(input.resultFreshness.source).toLowerCase();
   const at = stringValue(input.resultFreshness.at);
@@ -236,21 +254,22 @@ function emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVe
   const timestampMs = parseStrictIsoTimestamp(at);
   const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
   return VERIFIED_RESULT_SOURCES.has(source)
-    && currentEvidence(evidence, automationReceiptVerified)
+    && currentEvidence(evidence, receiptVerified)
     && ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS
     && ageMs <= freshnessWindowMs;
 }
 
-function hasValidatedReceiptEvidence(goals, automationReceiptVerified) {
-  return automationReceiptVerified
-    && goals.some((goal) => validReceiptIdentifier(goal.proof.automationReceipt));
+function hasValidatedReceiptEvidence(goals, verifiedReceiptId) {
+  return verifiedReceiptId !== null
+    && goals.some((goal) => goalReceiptBound(goal, verifiedReceiptId));
 }
 
 export function buildGoalDashboardStatusProjection(input = {}) {
   const liveGoalCandidates = Array.isArray(input.buildConcierge?.createdGoalCandidates) ? input.buildConcierge.createdGoalCandidates : [];
   const githubAdapterVerified = input.githubAdapter?.verified === true;
   const localAdapterVerified = input.localAdapter?.verified === true;
-  const automationReceiptVerified = input.automationReceipt?.verified === true;
+  const verifiedReceiptId = verifiedReceiptIdentifier(input.automationReceipt);
+  const automationReceiptVerified = verifiedReceiptId !== null;
   const liveGoalsAccepted = githubAdapterVerified && Array.isArray(input.goals);
   const goals = liveGoalsAccepted ? input.goals : STATIC_GOAL_DASHBOARD_GOALS;
   const requestedNow = typeof input.now === 'number' ? input.now : Date.parse(stringValue(input.now, ''));
@@ -258,10 +277,10 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const requestedWindow = Number(input.freshnessWindowMs);
   const freshnessWindowMs = Number.isFinite(requestedWindow) && requestedWindow > 0 ? Math.min(requestedWindow, GOAL_DASHBOARD_FRESHNESS_WINDOW_MS) : GOAL_DASHBOARD_FRESHNESS_WINDOW_MS;
   const normalizedGoals = goals.map(normalizeGoal);
-  const receiptEvidenceVerified = hasValidatedReceiptEvidence(normalizedGoals, automationReceiptVerified);
+  const receiptEvidenceVerified = hasValidatedReceiptEvidence(normalizedGoals, verifiedReceiptId);
   const adaptersCurrent = liveGoalsAccepted && localAdapterVerified;
   const goalsCurrent = liveGoalsAccepted && (normalizedGoals.length > 0
-    ? normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, automationReceiptVerified))
+    ? normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, verifiedReceiptId))
     : emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified));
   const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
   const projectionSource = liveGoalsAccepted
@@ -278,7 +297,7 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     liveAutomationClaim: receiptEvidenceVerified ? 'receipt-backed-readonly' : 'none',
     githubTruth: liveGoalsAccepted ? 'live-readonly-adapter-verified' : 'not-live-readonly-static-seed',
     localAutomationTruth: localAdapterVerified ? (receiptEvidenceVerified ? 'local-readonly-adapter-and-receipt-verified' : 'local-readonly-adapter-verified') : 'not-live-readonly-static-seed',
-    sourceTruth: freeze({ githubVerified: githubAdapterVerified, liveGoalsAccepted, localVerified: localAdapterVerified, automationReceiptVerified, receiptEvidenceVerified, adaptersCurrent, goalsCurrent }),
+    sourceTruth: freeze({ githubVerified: githubAdapterVerified, liveGoalsAccepted, localVerified: localAdapterVerified, automationReceiptVerified, verifiedReceiptId, receiptEvidenceVerified, adaptersCurrent, goalsCurrent }),
     totalGoals: normalizedGoals.length,
     activeGoalCount: normalizedGoals.filter((goal) => /active/i.test(goal.status)).length,
     blockedGoalCount: normalizedGoals.filter((goal) => /blocked/i.test(goal.status)).length,
