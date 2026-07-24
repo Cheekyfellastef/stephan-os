@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/windows/codex-banked-reset-ui-navigation.psm1'
+      - 'scripts/windows/compat/codex-banked-reset-ui-navigation.psm1'
       - 'scripts/windows/read-codex-banked-reset-status-with-navigation.ps1'
       - 'scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1'
       - 'scripts/windows/read-codex-banked-reset-status.ps1'
@@ -13,6 +14,7 @@ on:
       - 'shared/agents/codexBankedResetBattleBridgeExecutor.mjs'
       - 'shared/agents/codexBankedResetBattleBridgeExecutor.test.mjs'
       - 'shared/agents/codexBankedResetFixedNavigation.test.mjs'
+      - 'shared/agents/codexBankedResetProfilePopupFallback.test.mjs'
       - 'shared/agents/codexBankedResetTelemetryMirror.mjs'
       - 'shared/agents/codexBankedResetTelemetryMirror.test.mjs'
       - '.github/workflows/codex-reset-fixed-navigation.yml'
@@ -37,6 +39,7 @@ jobs:
         run: |
           $files = @(
             'scripts/windows/codex-banked-reset-ui-navigation.psm1',
+            'scripts/windows/compat/codex-banked-reset-ui-navigation.psm1',
             'scripts/windows/read-codex-banked-reset-status-with-navigation.ps1',
             'scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1',
             'scripts/windows/read-codex-banked-reset-status.ps1',
@@ -66,6 +69,7 @@ jobs:
         run: >-
           node --test
           shared/agents/codexBankedResetFixedNavigation.test.mjs
+          shared/agents/codexBankedResetProfilePopupFallback.test.mjs
           shared/agents/codexBankedResetStatusBattleBridgeReader.test.mjs
           shared/agents/codexBankedResetBattleBridgeExecutor.test.mjs
           shared/agents/codexBankedResetTelemetryMirror.test.mjs
