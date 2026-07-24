@@ -63,8 +63,9 @@ test('verified empty results require source-specific freshness evidence', () => 
     now: NOW,
     githubAdapter: { verified: true },
     localAdapter: { verified: true },
+    automationReceipt: { verified: true, receiptId: RECEIPT_ID },
     goals: [],
-    resultFreshness: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z', evidence: 'current' },
+    resultFreshness: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z', evidence: RECEIPT_ID },
   });
   assert.equal(current.sourceTruth.goalsCurrent, true);
 });
