@@ -45,6 +45,7 @@ const EVIDENCE_CONTEXT_TOKENS = new Set(['adapter', 'automation', 'browser', 'ci
 const NEGATIVE_EVIDENCE_TOKENS = new Set(['aborted', 'blocked', 'canceled', 'cancelled', 'denied', 'error', 'expired', 'fail', 'failed', 'failing', 'invalid', 'missing', 'none', 'pending', 'rejected', 'stale', 'stalled', 'stopped', 'timeout', 'unavailable', 'unknown', 'unverified']);
 const VERIFIED_RESULT_SOURCES = new Set(['verified-readonly-goal-status-adapter']);
 const RECEIPT_IDENTIFIER_PATTERN = /^receipt-(?:\d+|[0-9a-f]{12,64}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
+const RESERVED_NON_LIVE_PROJECTION_SOURCES = new Set(['', 'unknown', 'static-goal-dashboard-seed']);
 
 function status(value) {
   if (typeof value !== 'string') return 'unknown';
@@ -90,6 +91,13 @@ function currentEvidence(value, automationReceiptVerified) {
 
 function canonicalSource(value) {
   return typeof value === 'string' && VERIFIED_RESULT_SOURCES.has(value.trim().toLowerCase());
+}
+
+function liveProjectionSource(value) {
+  const normalized = stringValue(value, 'verified-readonly-goal-status-adapter').trim();
+  return RESERVED_NON_LIVE_PROJECTION_SOURCES.has(normalized.toLowerCase())
+    ? 'verified-readonly-goal-status-adapter'
+    : normalized;
 }
 
 function parseStrictIsoTimestamp(value) {
@@ -258,7 +266,7 @@ export function buildGoalDashboardStatusProjection(input = {}) {
     : emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified));
   const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
   const projectionSource = liveGoalsAccepted
-    ? stringValue(input.projectionSource, 'verified-readonly-goal-status-adapter')
+    ? liveProjectionSource(input.projectionSource)
     : GOAL_DASHBOARD_PROJECTION_SOURCE;
 
   return freeze({
