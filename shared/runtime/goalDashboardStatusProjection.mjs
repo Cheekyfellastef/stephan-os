@@ -43,6 +43,7 @@ const SUPPORTED_LINKED_PR_STATES = new Set(['open', 'closed', 'merged', 'unknown
 const AFFIRMATIVE_EVIDENCE_TOKENS = new Set(['verified', 'green', 'pass', 'passed', 'complete', 'completed', 'success', 'current', 'healthy', 'ready']);
 const EVIDENCE_CONTEXT_TOKENS = new Set(['adapter', 'automation', 'browser', 'ci', 'github', 'goal', 'linked', 'local', 'pr', 'proof', 'readonly', 'receipt', 'runtime', 'source', 'status']);
 const NEGATIVE_EVIDENCE_TOKENS = new Set(['aborted', 'blocked', 'canceled', 'cancelled', 'denied', 'error', 'expired', 'fail', 'failed', 'failing', 'invalid', 'missing', 'none', 'pending', 'rejected', 'stale', 'stalled', 'stopped', 'timeout', 'unavailable', 'unknown', 'unverified']);
+const RESERVED_PROJECTION_SOURCE_TOKENS = new Set(['not', 'nonlive', 'seed', 'static']);
 const VERIFIED_RESULT_SOURCES = new Set(['verified-readonly-goal-status-adapter']);
 const RECEIPT_IDENTIFIER_PATTERN = /^receipt-(?:\d+|[0-9a-f]{12,64}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 
@@ -106,7 +107,8 @@ function liveProjectionSource(value) {
   const normalized = stringValue(value, canonical).trim();
   const lower = normalized.toLowerCase();
   const tokens = evidenceTokens(lower);
-  return lower.startsWith('verified-') && !tokens.some(tokenEncodesNegativeState)
+  const reserved = tokens.some((token) => RESERVED_PROJECTION_SOURCE_TOKENS.has(token));
+  return lower.startsWith('verified-') && !reserved && !tokens.some(tokenEncodesNegativeState)
     ? normalized
     : canonical;
 }
@@ -246,15 +248,17 @@ function goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, verifiedReceiptI
     && evidenceCurrent;
 }
 
-function emptyResultCurrent(input, nowMs, freshnessWindowMs, receiptVerified) {
-  if (!input.resultFreshness || typeof input.resultFreshness !== 'object') return false;
+function emptyResultCurrent(input, nowMs, freshnessWindowMs, verifiedReceiptId) {
+  if (!input.resultFreshness || typeof input.resultFreshness !== 'object' || Array.isArray(input.resultFreshness)) return false;
   const source = stringValue(input.resultFreshness.source).toLowerCase();
   const at = stringValue(input.resultFreshness.at);
   const evidence = stringValue(input.resultFreshness.evidence);
   const timestampMs = parseStrictIsoTimestamp(at);
   const ageMs = timestampMs === null ? Number.POSITIVE_INFINITY : nowMs - timestampMs;
+  const projectedReceiptId = normalizeReceiptIdentifier(evidence);
+  const receiptBound = projectedReceiptId !== null && verifiedReceiptId !== null && projectedReceiptId === verifiedReceiptId;
   return VERIFIED_RESULT_SOURCES.has(source)
-    && currentEvidence(evidence, receiptVerified)
+    && currentEvidence(evidence, receiptBound)
     && ageMs >= -GOAL_DASHBOARD_MAX_FUTURE_SKEW_MS
     && ageMs <= freshnessWindowMs;
 }
@@ -281,7 +285,7 @@ export function buildGoalDashboardStatusProjection(input = {}) {
   const adaptersCurrent = liveGoalsAccepted && localAdapterVerified;
   const goalsCurrent = liveGoalsAccepted && (normalizedGoals.length > 0
     ? normalizedGoals.every((goal) => goalHasCurrentEvidence(goal, nowMs, freshnessWindowMs, verifiedReceiptId))
-    : emptyResultCurrent(input, nowMs, freshnessWindowMs, automationReceiptVerified));
+    : emptyResultCurrent(input, nowMs, freshnessWindowMs, verifiedReceiptId));
   const manualRefreshRequired = !adaptersCurrent || !goalsCurrent;
   const projectionSource = liveGoalsAccepted
     ? liveProjectionSource(input.projectionSource)
