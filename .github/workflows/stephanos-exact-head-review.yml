@@ -11,7 +11,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: stephanos-exact-head-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: ${{ github.event_name == 'pull_request_target' && format('stephanos-exact-head-review-pr-{0}', github.event.pull_request.number) || format('stephanos-exact-head-review-comment-{0}', github.event.comment.id) }}
   cancel-in-progress: true
 
 jobs:
