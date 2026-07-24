@@ -113,3 +113,40 @@ test('verified adapter without a usable goal array preserves static fallback att
     assert.equal(result.refreshTruth, 'MANUAL_REFRESH_REQUIRED');
   }
 });
+
+test('accepted live goals cannot retain reserved non-live projection sources', () => {
+  for (const projectionSource of [undefined, '', 'unknown', GOAL_DASHBOARD_PROJECTION_SOURCE]) {
+    const result = buildGoalDashboardStatusProjection({
+      now: NOW,
+      githubAdapter: { verified: true },
+      localAdapter: { verified: true },
+      automationReceipt: { verified: true },
+      goals: [{
+        issue: '#2002',
+        proof: { automationReceipt: 'receipt-2002' },
+        truth: {},
+        lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z' },
+        manualRefreshRequired: false,
+      }],
+      projectionSource,
+    });
+    assert.equal(result.projectionSource, 'verified-readonly-goal-status-adapter', String(projectionSource));
+    assert.equal(result.refreshTruth, 'VERIFIED_READONLY_SOURCES_CURRENT');
+  }
+
+  const custom = buildGoalDashboardStatusProjection({
+    now: NOW,
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    automationReceipt: { verified: true },
+    goals: [{
+      issue: '#2002',
+      proof: { automationReceipt: 'receipt-2002' },
+      truth: {},
+      lastUpdated: { source: 'verified-readonly-goal-status-adapter', at: '2026-07-23T12:00:00.000Z' },
+      manualRefreshRequired: false,
+    }],
+    projectionSource: 'verified-custom-goal-adapter',
+  });
+  assert.equal(custom.projectionSource, 'verified-custom-goal-adapter');
+});
