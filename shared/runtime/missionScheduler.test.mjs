@@ -48,6 +48,16 @@ test('stale active evidence fails closed instead of remaining authoritative', ()
   assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.equal(result.programmeStatus,'BLOCKED'); assert.ok(result.contradictions.some(({code}) => code === 'STALE_ACTIVE_EVIDENCE'));
 });
 
+test('unsafe active route fails closed', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'ACTIVE',activePr:1601,route:'BLOCKED_UNSAFE_OR_UNKNOWN'})] });
+  assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_ROUTE_NOT_EXECUTABLE'));
+});
+
+test('invalidated active goal fails closed', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'ACTIVE',activePr:1601,supersededBy:9})] });
+  assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.equal(result.portfolio[0].lifecycle,'SUPERSEDED'); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_GOAL_INVALIDATED'));
+});
+
 test('operator priority outranks ordinary score', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{priority:100}),goal(2,{operatorPriority:true,priority:1})] });
   assert.equal(result.selectedGoal,'#2');
@@ -73,6 +83,11 @@ test('invalidated closed prerequisite does not satisfy dependency', () => {
   assert.equal(result.portfolio.find(({issue}) => issue === 1).lifecycle,'DUPLICATE'); assert.equal(result.portfolio.find(({issue}) => issue === 2).lifecycle,'WAITING_FOR_DEPENDENCY'); assert.equal(result.selectedGoal,null);
 });
 
+test('stale completed prerequisite does not satisfy dependency', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'COMPLETE',evidenceAt:'2026-07-24T19:00:00.000Z'}),goal(2,{prerequisites:[1]})] });
+  assert.equal(result.portfolio.find(({issue}) => issue === 1).lifecycle,'STALLED'); assert.equal(result.portfolio.find(({issue}) => issue === 2).lifecycle,'WAITING_FOR_DEPENDENCY'); assert.equal(result.selectedGoal,null);
+});
+
 test('stale queued evidence is stalled and not selected', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{evidenceAt:'2026-07-24T19:00:00.000Z'})] });
   assert.equal(result.portfolio[0].evidenceFreshness,'STALE'); assert.equal(result.portfolio[0].lifecycle,'STALLED'); assert.equal(result.selectedGoal,null);
@@ -96,6 +111,11 @@ test('approval requirement asks operator even when goal is not selected', () => 
 test('freeze is idempotent across nested pre-frozen values', () => {
   const result = buildMissionScheduler({ now:NOW, proofRefs:Object.freeze(['receipt-1601']), goals:[] });
   assert.equal(result.failClosed,false); assert.deepEqual(result.decisionReceipt.proofRefs,['receipt-1601']); assert.ok(Object.isFrozen(result));
+});
+
+test('empty portfolio reports no evidence', () => {
+  const answer = answerMissionQuery({ now:NOW, goals:[] }, 'what is going on');
+  assert.equal(answer.evidenceFreshness,'NO_EVIDENCE');
 });
 
 test('chat query returns current lane rationale and lifecycle blockers', () => {
