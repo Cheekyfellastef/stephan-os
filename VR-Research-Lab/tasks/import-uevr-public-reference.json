@@ -1,0 +1,48 @@
+{
+  "id": "vr-research-import-uevr-public-reference-v1",
+  "title": "Import and index UEVR public reference repositories",
+  "status": "ready",
+  "executionSurface": "battle-bridge-windows",
+  "workingDirectory": "%USERPROFILE%\\Documents\\GitHub\\stephan-os",
+  "policy": {
+    "publicSourceOnly": true,
+    "preserveLicences": true,
+    "pinCommitShas": true,
+    "doNotVendorIntoProductRuntime": true,
+    "doNotImportGameAssets": true,
+    "derivedNotesMayBeCommitted": true
+  },
+  "upstreams": [
+    {
+      "name": "UEVR",
+      "repository": "https://github.com/praydog/UEVR.git",
+      "destination": "VR-Research-Lab/upstream-reference/uevr/UEVR"
+    },
+    {
+      "name": "UESDK",
+      "repository": "https://github.com/praydog/UESDK.git",
+      "destination": "VR-Research-Lab/upstream-reference/uevr/UESDK"
+    },
+    {
+      "name": "UEVR Frontend",
+      "repository": "https://github.com/praydog/uevr-frontend.git",
+      "destination": "VR-Research-Lab/upstream-reference/uevr/uevr-frontend"
+    }
+  ],
+  "steps": [
+    "Create the upstream-reference/uevr directory if missing.",
+    "Clone each missing repository without modifying upstream content.",
+    "For an existing clone, fetch origin without switching away from its pinned research commit automatically.",
+    "Record repository URL, current branch, HEAD SHA, fetch timestamp and detected licence files in a manifest.",
+    "Generate a file inventory grouped by rendering, OpenXR/OpenVR, camera, UObjectHook, UI, input, plugin API and injection frontend.",
+    "Write derived architecture notes under VR-Research-Lab/engine-architecture without copying proprietary game assets.",
+    "Keep cloned upstream repositories out of normal Stephanos product builds and test discovery."
+  ],
+  "acceptance": [
+    "All three canonical repositories are available locally or a precise blocker is reported.",
+    "Every repository is pinned by commit SHA.",
+    "Licence and attribution files remain intact.",
+    "A manifest and architecture-index report are produced.",
+    "No game assets or unclear third-party profile packages are imported."
+  ]
+}
