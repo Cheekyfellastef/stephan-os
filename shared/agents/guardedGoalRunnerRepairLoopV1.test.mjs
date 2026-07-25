@@ -21,9 +21,11 @@ function input(overrides = {}) {
     baseSha: BASE,
     expectedBaseSha: BASE,
     headSha: HEAD,
+    proofHeadSha: HEAD,
     activeLaneKnown: true,
     currentPrCount: 1,
     proofAvailable: true,
+    findingsEvidenceAvailable: true,
     findings: FINDINGS,
     allowedTests: ['node --test shared/runtime/goalDashboardStatusProjection.test.mjs'],
     workerAvailability: { githubFirstAvailable: true },
@@ -74,29 +76,49 @@ test('equivalent order is not duplicated and requires receipt binding to order a
   assert.equal(started.nextAction, 'OBSERVE_EXISTING_REPAIR');
 });
 
-test('head change waits for prior worker terminal evidence before rerouting', () => {
+test('head change waits for every prior worker terminal receipt before rerouting', () => {
   const old = evaluateGuardedRepairLoop(input());
+  const olderHead = 'e'.repeat(40);
+  const older = { ...old.repairOrder, headSha: olderHead, deduplicationKey: `${old.repairOrder.deduplicationKey}-older`, repairOrderId: 'older-order' };
   const nextHead = 'd'.repeat(40);
-  const waiting = evaluateGuardedRepairLoop(input({ headSha: nextHead, activeRepairOrders: [old.repairOrder] }));
+  const waiting = evaluateGuardedRepairLoop(input({ headSha: nextHead, proofHeadSha: nextHead, activeRepairOrders: [old.repairOrder, older] }));
   assert.equal(waiting.verdict, 'abort-stale-worker-active');
   assert.equal(waiting.nextAction, 'WAIT_FOR_STALE_WORKER_ABORT');
 
+  const stillWaiting = evaluateGuardedRepairLoop(input({
+    headSha: nextHead,
+    proofHeadSha: nextHead,
+    activeRepairOrders: [old.repairOrder, older],
+    receipts: [{ ...old.nextReceipt, state: 'aborted' }],
+  }));
+  assert.equal(stillWaiting.verdict, 'abort-stale-worker-active');
+
   const next = evaluateGuardedRepairLoop(input({
     headSha: nextHead,
-    activeRepairOrders: [old.repairOrder],
-    receipts: [{ ...old.nextReceipt, state: 'aborted' }],
+    proofHeadSha: nextHead,
+    activeRepairOrders: [old.repairOrder, older],
+    receipts: [
+      { ...old.nextReceipt, state: 'aborted' },
+      { state: 'complete', repairOrderId: older.repairOrderId, deduplicationKey: older.deduplicationKey, headSha: older.headSha },
+    ],
   }));
   assert.equal(next.verdict, 'known-blocker-repair-admitted');
   assert.notEqual(next.repairOrder.deduplicationKey, old.repairOrder.deduplicationKey);
   assert.equal(next.repairOrder.headSha, nextHead);
 });
 
-test('safety gates fail closed when evidence is omitted or contradictory', () => {
+test('safety gates fail closed when evidence is omitted, malformed or contradictory', () => {
   assert.equal(evaluateGuardedRepairLoop(input({ expectedBaseSha: 'c'.repeat(40) })).verdict, 'abort-stale-base');
+  assert.equal(evaluateGuardedRepairLoop(input({ expectedBaseSha: undefined })).verdict, 'abort-missing-proof');
   assert.equal(evaluateGuardedRepairLoop(input({ currentPrCount: 2 })).verdict, 'abort-conflicting-pr');
   assert.equal(evaluateGuardedRepairLoop(input({ currentPrCount: undefined })).verdict, 'abort-conflicting-pr');
   assert.equal(evaluateGuardedRepairLoop(input({ proofAvailable: false })).verdict, 'abort-missing-proof');
   assert.equal(evaluateGuardedRepairLoop(input({ proofAvailable: undefined })).verdict, 'abort-missing-proof');
+  assert.equal(evaluateGuardedRepairLoop(input({ proofHeadSha: 'c'.repeat(40) })).verdict, 'abort-missing-proof');
+  assert.equal(evaluateGuardedRepairLoop(input({ findingsEvidenceAvailable: undefined })).verdict, 'abort-missing-proof');
+  assert.equal(evaluateGuardedRepairLoop(input({ findings: undefined })).verdict, 'abort-missing-proof');
+  assert.equal(evaluateGuardedRepairLoop(input({ findings: [{ severity: 'P1', bounded: true }] })).verdict, 'abort-missing-proof');
+  assert.equal(evaluateGuardedRepairLoop(input({ findings: [{ id: 'bad', severity: 'UNKNOWN', bounded: true }] })).verdict, 'abort-missing-proof');
   assert.equal(evaluateGuardedRepairLoop(input({ repeatedBlockerCount: 2 })).verdict, 'abort-repeated-blocker');
   assert.equal(evaluateGuardedRepairLoop(input({ findings: [{ ...FINDINGS[0], bounded: false }] })).verdict, 'abort-unknown-blocker');
   assert.equal(evaluateGuardedRepairLoop(input({ findings: [{ ...FINDINGS[0], operatorJudgmentRequired: true }] })).verdict, 'abort-operator-judgment-required');
@@ -112,11 +134,14 @@ test('worker routing requires positive availability evidence and fails over neut
   assert.equal(routeGuardedRepairWorker({ runtimeRequired: true }).route, 'BLOCKED_UNSAFE_OR_UNKNOWN');
 });
 
-test('green exact head reaches approval gate but never grants automatic approval', () => {
+test('green exact head reaches approval gate only with exact-head proof', () => {
   const result = evaluateGuardedRepairLoop(input({ findings: [], ciGreen: true, mergeable: true }));
   assert.equal(result.verdict, 'safe-to-merge-with-expected-head');
   assert.equal(result.expectedHeadSha, HEAD);
   assert.equal(result.nextAction, 'REQUEST_EXACT_HEAD_MERGE_APPROVAL');
+
+  const stale = evaluateGuardedRepairLoop(input({ findings: [], headSha: 'c'.repeat(40), proofHeadSha: HEAD, ciGreen: true, mergeable: true }));
+  assert.equal(stale.verdict, 'abort-missing-proof');
 });
 
 test('runtime proof cannot bypass merge approval and is evaluated only after merge', () => {
