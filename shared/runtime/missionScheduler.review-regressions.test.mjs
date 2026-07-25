@@ -51,3 +51,22 @@ test('unsafe integer issue identities and prerequisites are rejected', () => {
   assert.equal(result.portfolio[1].lifecycle, 'BLOCKED');
   assert.equal(result.selectedGoal, null);
 });
+
+test('self-referential duplicate and supersession claims fail closed', () => {
+  for (const relation of ['duplicateOf', 'supersededBy']) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1556,{[relation]:1556})] });
+    assert.equal(result.portfolio[0].lifecycle, 'BLOCKED');
+    assert.deepEqual(result.portfolio[0].invalidInvalidationClaims, [relation]);
+    assert.equal(result.selectedGoal, null);
+  }
+});
+
+test('whyNow reports the lexicographic comparator rather than an obsolete weighted score', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[
+    goal(1,{operatorPriority:true,priority:1}),
+    goal(2,{priority:1_000_000}),
+  ] });
+  assert.equal(result.selectedGoal, '#1');
+  assert.match(result.whyNow, /lexicographic scheduler order/i);
+  assert.doesNotMatch(result.whyNow, /highest eligible score/i);
+});
