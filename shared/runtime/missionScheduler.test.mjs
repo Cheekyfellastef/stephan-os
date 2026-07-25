@@ -80,8 +80,8 @@ test('unknown and blocked states are never selected', () => {
   }
 });
 
-test('operator priority outranks ordinary score', () => {
-  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{priority:100}),goal(2,{operatorPriority:true,priority:1})] });
+test('operator priority lexicographically outranks unbounded ordinary score', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{priority:1000000}),goal(2,{operatorPriority:true,priority:1})] });
   assert.equal(result.selectedGoal,'#2');
 });
 
@@ -108,6 +108,37 @@ test('invalidated closed prerequisite does not satisfy dependency', () => {
 test('stale completed prerequisite does not satisfy dependency', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'COMPLETE',evidenceAt:'2026-07-24T19:00:00.000Z'}),goal(2,{prerequisites:[1]})] });
   assert.equal(result.portfolio.find(({issue}) => issue === 1).lifecycle,'STALLED'); assert.equal(result.portfolio.find(({issue}) => issue === 2).lifecycle,'WAITING_FOR_DEPENDENCY'); assert.equal(result.selectedGoal,null);
+});
+
+test('completed prerequisite with unmet dependency cannot unlock downstream work', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'QUEUED'}),goal(2,{state:'COMPLETE',prerequisites:[1]}),goal(3,{prerequisites:[2]})] });
+  assert.equal(result.portfolio.find(({issue}) => issue === 2).lifecycle,'WAITING_FOR_DEPENDENCY');
+  assert.equal(result.portfolio.find(({issue}) => issue === 3).lifecycle,'WAITING_FOR_DEPENDENCY');
+  assert.notEqual(result.selectedGoal,'#3');
+});
+
+test('active claim with unmet dependency fails closed', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'QUEUED'}),goal(2,{state:'ACTIVE',activePr:1601,prerequisites:[1]})] });
+  assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_DEPENDENCY_UNSATISFIED'));
+});
+
+test('dependency blocker takes precedence over approval request', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(2,{approvalRequired:true,prerequisites:[999]})] });
+  assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.operatorNeeded,false); assert.equal(result.operatorAction,'NO_OPERATOR_ACTION_REQUIRED');
+});
+
+test('merge readiness is restricted to implemented goals', () => {
+  for (const state of ['UNKNOWN','BLOCKED','STALLED','QUEUED']) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state,proofState:'PASS',activePr:1601})] });
+    assert.notEqual(result.portfolio[0].lifecycle,'MERGE_READY');
+  }
+  const implemented = buildMissionScheduler({ now:NOW, goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601})] });
+  assert.equal(implemented.portfolio[0].lifecycle,'MERGE_READY');
+});
+
+test('null portfolio entries normalize to blocked records without throwing', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[null] });
+  assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null);
 });
 
 test('stale queued evidence is stalled and not selected', () => {
