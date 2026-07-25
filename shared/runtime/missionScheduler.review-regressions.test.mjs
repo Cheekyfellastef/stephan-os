@@ -87,3 +87,33 @@ test('completed prerequisites remain gated by approval and non-executable routes
     assert.notEqual(result.selectedGoal, '#2');
   }
 });
+
+test('malformed approval gate values remain blocking evidence', () => {
+  for (const approvalRequired of ['true', 1, null]) {
+    const result = buildMissionScheduler({ now:NOW, goals:[
+      goal(1,{ state:'COMPLETE', approvalRequired }),
+      goal(2,{ prerequisites:[1] }),
+    ] });
+    assert.equal(result.portfolio[0].invalidApprovalRequired, true);
+    assert.equal(result.portfolio[0].lifecycle, 'BLOCKED');
+    assert.equal(result.portfolio[1].lifecycle, 'WAITING_FOR_DEPENDENCY');
+    assert.notEqual(result.selectedGoal, '#2');
+  }
+});
+
+test('explicitly malformed scheduler clocks fail closed', () => {
+  const cases = [
+    { now:'not-a-date' },
+    { freshnessMs:'not-a-number' },
+    { freshnessMs:0 },
+    { freshnessMs:-1 },
+  ];
+  for (const clock of cases) {
+    const result = buildMissionScheduler({ ...clock, goals:[goal(1)] });
+    assert.equal(result.failClosed, true);
+    assert.equal(result.programmeStatus, 'BLOCKED');
+    assert.equal(result.selectedGoal, null);
+    assert.ok(result.contradictions.some(({ code }) => code === 'INVALID_SCHEDULER_CLOCK'));
+    assert.equal(result.decisionReceipt.status, 'BLOCKED_FAIL_CLOSED');
+  }
+});
