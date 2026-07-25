@@ -16,7 +16,8 @@ function issueNumber(value) { const raw = typeof value === 'number' ? String(val
 function sha(value) { return typeof value === 'string' && SHA_RE.test(value.trim()) ? value.trim().toLowerCase() : null; }
 function positiveNumber(value, fallback = 0) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback; }
 
-function normalizeGoal(goal = {}) {
+function normalizeGoal(candidate = {}) {
+  const goal = candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? candidate : {};
   const number = issueNumber(goal.issue ?? goal.issueNumber);
   const rawPrerequisites = Array.isArray(goal.prerequisites) ? goal.prerequisites : [];
   const normalizedPrerequisites = rawPrerequisites.map(issueNumber);
@@ -40,8 +41,17 @@ function detectCycles(goalsByIssue) {
   return cycles;
 }
 
-function dependencyComplete(goal, stale) {
-  return Boolean(goal && !stale && !goal.duplicateOf && !goal.supersededBy && COMPLETION_STATES.has(goal.state));
+function dependencyComplete(goal, goalsByIssue, staleByGoal, seen = new Set()) {
+  if (!goal || !goal.issue || goal.invalidPrerequisites.length || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || !COMPLETION_STATES.has(goal.state)) return false;
+  if (seen.has(goal.issue)) return false;
+  const nextSeen = new Set(seen).add(goal.issue);
+  return goal.prerequisites.every((issue) => dependencyComplete(goalsByIssue.get(issue), goalsByIssue, staleByGoal, nextSeen));
+}
+
+function dependencyStatus(goal, goalsByIssue, staleByGoal) {
+  if (goal.prerequisites.some((issue) => !goalsByIssue.has(issue))) return 'MISSING';
+  if (goal.prerequisites.some((issue) => !dependencyComplete(goalsByIssue.get(issue), goalsByIssue, staleByGoal))) return 'INCOMPLETE';
+  return 'SATISFIED';
 }
 
 function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal, stale) {
@@ -50,19 +60,23 @@ function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleBy
   if (goal.supersededBy) return 'SUPERSEDED';
   if (stale) return 'STALLED';
   if (rejectedActiveClaims.has(goal)) return 'BLOCKED';
+  const dependencies = dependencyStatus(goal, goalsByIssue, staleByGoal);
+  if (dependencies === 'MISSING') return 'BLOCKED';
+  if (dependencies === 'INCOMPLETE') return 'WAITING_FOR_DEPENDENCY';
   if (activeGoals.has(goal)) return 'ACTIVE';
   if (TERMINAL_STATES.has(goal.state)) return goal.state === 'COMPLETE' ? 'CLOSE_READY' : goal.state;
   if (goal.approvalRequired || goal.route === 'OPERATOR_APPROVAL' || goal.state === 'APPROVAL_REQUIRED') return 'APPROVAL_REQUIRED';
-  if (goal.prerequisites.some((issue) => !goalsByIssue.has(issue))) return 'BLOCKED';
-  if (goal.prerequisites.some((issue) => { const dependency = goalsByIssue.get(issue); return !dependencyComplete(dependency, staleByGoal.get(dependency)); })) return 'WAITING_FOR_DEPENDENCY';
-  if (goal.state === 'IMPLEMENTED' && goal.proofState !== 'PASS') return 'IMPLEMENTED_NEEDS_PROOF';
-  if (goal.proofState === 'PASS' && goal.activePr) return 'MERGE_READY';
+  if (goal.state === 'IMPLEMENTED') return goal.proofState === 'PASS' && goal.activePr ? 'MERGE_READY' : 'IMPLEMENTED_NEEDS_PROOF';
   if (goal.route === 'WAITING_FOR_EXTERNAL_CONDITION') return 'WAITING_FOR_EXTERNAL_CONDITION';
   if (goal.route === 'BLOCKED_UNSAFE_OR_UNKNOWN') return 'BLOCKED';
   if (!RUNNABLE_STATES.has(goal.state)) return 'BLOCKED';
   return 'READY';
 }
-function score(goal) { return (goal.operatorPriority ? 1_000_000 : 0) + goal.priority * 10_000 + goal.criticalPathWeight * 100 + (goal.reversibility === 'HIGH' ? 20 : goal.reversibility === 'MEDIUM' ? 10 : 0) + (goal.route === 'CHATGPT_GITHUB' ? 5 : 0); }
+function score(goal) { return goal.priority * 10_000 + goal.criticalPathWeight * 100 + (goal.reversibility === 'HIGH' ? 20 : goal.reversibility === 'MEDIUM' ? 10 : 0) + (goal.route === 'CHATGPT_GITHUB' ? 5 : 0); }
+function compareReady(a, b) {
+  if (a.operatorPriority !== b.operatorPriority) return a.operatorPriority ? -1 : 1;
+  return score(b) - score(a) || a.issue - b.issue;
+}
 function lifecycleBlockers(portfolio) {
   const blocked = new Set(['BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED','IMPLEMENTED_NEEDS_PROOF']);
   return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, evidenceFreshness:goal.evidenceFreshness }));
@@ -87,13 +101,14 @@ export function buildMissionScheduler(input = {}) {
     else if (staleByGoal.get(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'STALE_ACTIVE_EVIDENCE', issue:goal.issue }); }
     else if (!goal.activePr && !goal.branch) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_LANE_IDENTITY_MISSING', issue:goal.issue }); }
     else if (goal.route === 'BLOCKED_UNSAFE_OR_UNKNOWN' || goal.route === 'WAITING_FOR_EXTERNAL_CONDITION') { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_ROUTE_NOT_EXECUTABLE', issue:goal.issue, route:goal.route }); }
+    else if (dependencyStatus(goal, goalsByIssue, staleByGoal) !== 'SATISFIED') { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_DEPENDENCY_UNSATISFIED', issue:goal.issue }); }
     else authoritative.push(goal);
   }
   if (authoritative.length > 1) contradictions.push({ code:'MULTIPLE_ACTIVE_LANES', issues:authoritative.map((goal) => goal.issue) });
   for (const cycle of detectCycles(goalsByIssue)) contradictions.push({ code:'DEPENDENCY_CYCLE', issues:cycle });
   const activeGoals = new Set(authoritative);
   const portfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal, staleByGoal.get(goal)), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
-  const ready = portfolio.filter((goal) => goal.lifecycle === 'READY').sort((a,b) => score(b) - score(a) || a.issue - b.issue);
+  const ready = portfolio.filter((goal) => goal.lifecycle === 'READY').sort(compareReady);
   const approvalGoals = portfolio.filter((goal) => goal.lifecycle === 'APPROVAL_REQUIRED');
   const failClosed = contradictions.length > 0;
   const activeClaim = !failClosed && authoritative.length === 1 ? authoritative[0] : null;
