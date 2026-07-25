@@ -18,9 +18,19 @@ test('missing prerequisite blocks readiness and appears in blocker read model', 
   assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null); assert.ok(result.blockers.some(({code,issue}) => code === 'GOAL_BLOCKED' && issue === 2));
 });
 
+test('malformed prerequisite fails closed at the goal boundary', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(2,{prerequisites:['unknown',0]})] });
+  assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null); assert.deepEqual(result.portfolio[0].invalidPrerequisites,['unknown','0']);
+});
+
 test('dependency cycle fails closed and receipt preserves safety truth', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{prerequisites:[2]}),goal(2,{prerequisites:[1]})] });
   assert.equal(result.failClosed,true); assert.equal(result.selectedGoal,null); assert.equal(result.decisionReceipt.status,'BLOCKED_FAIL_CLOSED'); assert.equal(result.decisionReceipt.route,'BLOCKED_UNSAFE_OR_UNKNOWN'); assert.ok(result.decisionReceipt.contradictionCodes.includes('DEPENDENCY_CYCLE'));
+});
+
+test('duplicate goal identities fail closed', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1),goal(1,{state:'ACTIVE',activePr:1601})] });
+  assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.deepEqual(result.nextEligible,[]); assert.ok(result.contradictions.some(({code,issue}) => code === 'DUPLICATE_GOAL_IDENTITY' && issue === 1));
 });
 
 test('exactly one fresh identified active lane remains authoritative', () => {
@@ -53,9 +63,21 @@ test('unsafe active route fails closed', () => {
   assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_ROUTE_NOT_EXECUTABLE'));
 });
 
+test('active approval route requires operator action', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'ACTIVE',activePr:1601,route:'OPERATOR_APPROVAL'})] });
+  assert.equal(result.activeGoal,'#1'); assert.equal(result.operatorNeeded,true); assert.equal(result.operatorAction,'OPERATOR_APPROVAL_REQUIRED');
+});
+
 test('invalidated active goal fails closed', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'ACTIVE',activePr:1601,supersededBy:9})] });
   assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.equal(result.portfolio[0].lifecycle,'SUPERSEDED'); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_GOAL_INVALIDATED'));
+});
+
+test('unknown and blocked states are never selected', () => {
+  for (const state of ['UNKNOWN','BLOCKED','STALLED']) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state})] });
+    assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null);
+  }
 });
 
 test('operator priority outranks ordinary score', () => {
