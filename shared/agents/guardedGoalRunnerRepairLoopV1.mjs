@@ -9,9 +9,9 @@ import {
 } from './executionReceiptV1.mjs';
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
-const SAFE_WORKER_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
+const SAFE_WORKER_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/;
 const BLOCKING = new Set(['P0', 'P1', 'P2']);
-const ACTIVE_EXECUTION_STATES = new Set(['accepted', 'started', 'progress']);
+const ACTIVE_EXECUTION_STATES = new Set(['queued', 'accepted', 'started', 'progress']);
 
 function text(value, fallback = '') { return typeof value === 'string' && value.trim() ? value.trim() : fallback; }
 function positiveInt(value) { const parsed = Number(value); return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null; }
@@ -23,7 +23,10 @@ function frozen(value) {
 }
 function shortHash(value) { return createHash('sha256').update(String(value)).digest('hex').slice(0, 12); }
 function exactHeadEvidence(flag, observedHead, headSha) { return flag === true && sha(observedHead) === headSha; }
-function safeWorkerId(value) { const normalized = text(value); return SAFE_WORKER_ID.test(normalized) ? normalized : null; }
+function safeWorkerId(value) {
+  const normalized = text(value).toLowerCase();
+  return SAFE_WORKER_ID.test(normalized) ? normalized : null;
+}
 function safeSourcePath(value) {
   const normalized = text(value).replace(/\\/g, '/');
   if (!normalized || normalized.startsWith('/') || normalized.startsWith('//') || /^[a-z]:\//i.test(normalized)) return null;
@@ -90,13 +93,19 @@ function terminalTruth(order, receipts, nowMs) {
   return chain.valid && Boolean(chain.receipt && EXECUTION_RECEIPT_TERMINAL_STATES.includes(chain.receipt.state));
 }
 
-function completedReceiptForLane(activeRepairOrders, receipts, lane, nowMs) {
-  for (const order of activeRepairOrders.filter((entry) => orderMatchesLane(entry, lane))) {
+function reconcileLaneCompletion(activeRepairOrders, receipts, lane, nowMs) {
+  const matching = activeRepairOrders.filter((entry) => orderMatchesLane(entry, lane));
+  if (!matching.length) return { completed: false, invalid: false, reason: '' };
+  let completed = false;
+  for (const order of matching) {
     const chain = receiptChain(receipts, order, nowMs);
     if (!chain.valid) return { completed: false, invalid: true, reason: chain.reason };
-    if (chain.receipt?.state === 'completed') return { completed: true, invalid: false, reason: '' };
+    if (!chain.receipt) return { completed: false, invalid: false, reason: 'missing-receipt' };
+    if (chain.stale && !EXECUTION_RECEIPT_TERMINAL_STATES.includes(chain.receipt.state)) return { completed: false, invalid: false, reason: 'stale-active-execution' };
+    if (!EXECUTION_RECEIPT_TERMINAL_STATES.includes(chain.receipt.state)) return { completed: false, invalid: false, reason: 'nonterminal-execution-owns-lane' };
+    if (chain.receipt.state === 'completed') completed = true;
   }
-  return { completed: false, invalid: false, reason: '' };
+  return { completed, invalid: false, reason: completed ? '' : 'no-completed-execution' };
 }
 
 function resolveAllowedFiles(input, findings) {
@@ -126,8 +135,7 @@ function buildOrder({ repository, issueNumber, prNumber, branch, baseSha, headSh
   return frozen({
     schemaVersion: 'stephanos.guarded-repair-order.v1', repairOrderId, repository, issueNumber, prNumber, branch, baseSha, headSha,
     findingIds: findings.map(({ id }) => id), findings, deduplicationKey, worker, assignedWorkerId: worker.workerId,
-    retryOrdinal, executionId: `${repairOrderId}-execution`, leaseKey: `${repairOrderId}-lease`,
-    allowedFiles,
+    retryOrdinal, executionId: `${repairOrderId}-execution`, leaseKey: `${repairOrderId}-lease`, allowedFiles,
     allowedTests: [...new Set((input.allowedTests ?? []).map(String).filter(Boolean))].sort(),
     mergePolicy: { automaticApproval: false, expectedHeadSha: headSha },
     abortConditions: ['head_changed', 'base_changed', 'conflicting_pr', 'unknown_blocker', 'operator_judgment_required', 'authority_expansion_requested'],
@@ -149,13 +157,16 @@ export function evaluateGuardedRepairLoop(rawInput = {}) {
   if (input.findingsEvidenceAvailable !== true || !Array.isArray(rawFindings) || rawFindings.some((finding) => !validFinding(finding))) return frozen({ verdict: 'abort-missing-proof', reason: 'A complete, valid exact-head blocking-finding set is required, including an evidenced empty set.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   if (Number(input.repeatedBlockerCount ?? 0) > 1) return frozen({ verdict: 'abort-repeated-blocker', reason: 'The same blocker exceeded the bounded repair budget.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
 
+  const contradictory = activeRepairOrders.find((entry) => entry?.prNumber === prNumber && sha(entry?.headSha) === headSha && !orderMatchesLane(entry, lane));
+  if (contradictory) return frozen({ verdict: 'abort-conflicting-repair-order', reason: 'A same-PR exact-head repair order has contradictory canonical lane identity.', repairOrder: contradictory, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+
   const findings = normalizeGuardedRepairFindings(rawFindings);
   const deduplicationKey = buildGuardedRepairDeduplicationKey({ repository, issueNumber, prNumber, headSha, findings });
 
   if (!findings.length) {
-    const completion = completedReceiptForLane(activeRepairOrders, receipts, lane, nowMs);
+    const completion = reconcileLaneCompletion(activeRepairOrders, receipts, lane, nowMs);
     if (completion.invalid) return frozen({ verdict: 'abort-invalid-canonical-receipt-chain', reason: completion.reason, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
-    if (!completion.completed) return frozen({ verdict: 'abort-missing-canonical-receipt', reason: 'A completed canonical receipt chain bound to this lane and exact head is required.', nextAction: 'WAIT_FOR_CANONICAL_EXECUTION_RECEIPT' });
+    if (!completion.completed) return frozen({ verdict: 'abort-missing-canonical-receipt', reason: `A reconciled completed canonical receipt chain is required (${completion.reason || 'missing'}).`, nextAction: 'WAIT_FOR_CANONICAL_EXECUTION_RECEIPT' });
     const ciExact = exactHeadEvidence(input.ciGreen, input.ciHeadSha, headSha);
     if (input.merged === true) {
       if (!exactHeadEvidence(input.operatorApprovalRecorded, input.approvalHeadSha, headSha) || positiveInt(input.approvalPrNumber) !== prNumber) return frozen({ verdict: 'abort-missing-exact-head-approval', reason: 'Merged completion requires explicit operator approval evidence for this PR and exact head.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
@@ -167,7 +178,7 @@ export function evaluateGuardedRepairLoop(rawInput = {}) {
       if (input.runtimeProofRequired === false) return frozen({ verdict: 'goal-green', reason: 'Approved exact head is merged with exact-head CI and canonical completion; no runtime proof is required.', nextAction: 'COMPLETE_AND_SELECT_NEXT_GOAL' });
       return frozen({ verdict: 'repair-published-awaiting-ci', reason: 'Runtime proof scope is unknown.', nextAction: 'WAIT_FOR_EXACT_HEAD_VERIFICATION' });
     }
-    if (ciExact && input.mergeable === true) return frozen({ verdict: 'safe-to-merge-with-expected-head', expectedHeadSha: headSha, reason: 'Exact-head CI and review are green, the PR is mergeable, finding-free and backed by a completed canonical chain.', nextAction: 'REQUEST_EXACT_HEAD_MERGE_APPROVAL' });
+    if (ciExact && input.mergeable === true) return frozen({ verdict: 'safe-to-merge-with-expected-head', expectedHeadSha: headSha, reason: 'Exact-head CI and review are green, the PR is mergeable, finding-free and backed by reconciled canonical completion.', nextAction: 'REQUEST_EXACT_HEAD_MERGE_APPROVAL' });
     return frozen({ verdict: 'repair-published-awaiting-ci', reason: 'Canonical implementation is complete, but exact-head verification or mergeability is incomplete.', nextAction: 'WAIT_FOR_EXACT_HEAD_VERIFICATION' });
   }
 
@@ -175,11 +186,6 @@ export function evaluateGuardedRepairLoop(rawInput = {}) {
   if (findings.some(({ bounded }) => !bounded)) return frozen({ verdict: 'abort-unknown-blocker', reason: 'At least one finding is unbounded or outside the approved lane.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   const authority = resolveAllowedFiles(input, findings);
   if (!authority.valid) return frozen({ verdict: 'abort-authority-expansion', reason: authority.reason, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
-
-  for (const order of activeRepairOrders.filter((entry) => entry?.prNumber === prNumber && sha(entry?.headSha) === headSha && !orderMatchesLane(entry, lane))) {
-    const chain = receiptChain(receipts, order, nowMs);
-    if (!chain.valid || !chain.receipt || !EXECUTION_RECEIPT_TERMINAL_STATES.includes(chain.receipt.state)) return frozen({ verdict: 'abort-conflicting-repair-order', reason: chain.reason || 'A same-PR exact-head execution has contradictory lane identity.', repairOrder: order, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
-  }
 
   const sameHead = activeRepairOrders.filter((order) => orderMatchesLane(order, lane));
   for (const order of sameHead.filter((entry) => entry.deduplicationKey !== deduplicationKey)) {
@@ -193,13 +199,13 @@ export function evaluateGuardedRepairLoop(rawInput = {}) {
   const invalid = chains.find(({ chain }) => !chain.valid);
   if (invalid) return frozen({ verdict: 'abort-invalid-canonical-receipt-chain', reason: invalid.chain.reason, repairOrder: invalid.order, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   const active = chains.find(({ chain }) => chain.receipt && ACTIVE_EXECUTION_STATES.has(chain.receipt.state) && !chain.stale);
-  if (active) return frozen({ verdict: 'repair-already-active', reason: 'Equivalent repair has fresh canonical active evidence.', repairOrder: active.order, executionReceipt: active.chain.receipt, nextAction: 'OBSERVE_EXISTING_REPAIR' });
+  if (active) return frozen({ verdict: 'repair-already-active', reason: 'Equivalent repair has fresh canonical ownership evidence.', repairOrder: active.order, executionReceipt: active.chain.receipt, nextAction: 'OBSERVE_EXISTING_REPAIR' });
   const stale = chains.find(({ chain }) => chain.receipt && ACTIVE_EXECUTION_STATES.has(chain.receipt.state) && chain.stale);
-  if (stale) return frozen({ verdict: 'repair-stale', reason: 'The active execution heartbeat expired and must terminate before retry.', repairOrder: stale.order, executionReceipt: stale.chain.receipt, nextAction: 'WAIT_FOR_STALE_WORKER_ABORT' });
+  if (stale) return frozen({ verdict: 'repair-stale', reason: 'The owning execution heartbeat expired and must terminate before retry.', repairOrder: stale.order, executionReceipt: stale.chain.receipt, nextAction: 'WAIT_FOR_STALE_WORKER_ABORT' });
   const stalled = chains.find(({ chain }) => chain.receipt?.state === 'stalled');
   if (stalled) return frozen({ verdict: 'repair-stalled', reason: stalled.chain.receipt.blocker, repairOrder: stalled.order, executionReceipt: stalled.chain.receipt, nextAction: stalled.chain.receipt.operatorActionRequired ? 'REQUEST_OPERATOR_DECISION' : 'OBSERVE_EXISTING_REPAIR' });
   const withoutReceipt = chains.filter(({ chain }) => !chain.receipt).sort((a, b) => Number(b.order.retryOrdinal ?? 1) - Number(a.order.retryOrdinal ?? 1))[0];
-  if (withoutReceipt) return frozen({ verdict: 'known-blocker-repair-admitted', reason: 'The newest equivalent order exists without active execution evidence; route its assigned worker only after persisting the queued receipt.', repairOrder: withoutReceipt.order, nextAction: 'ROUTE_OR_FAIL_OVER_WORKER' });
+  if (withoutReceipt) return frozen({ verdict: 'known-blocker-repair-admitted', reason: 'The newest equivalent order exists without execution evidence; persist its queued receipt before routing.', repairOrder: withoutReceipt.order, nextAction: 'ROUTE_OR_FAIL_OVER_WORKER' });
 
   for (const order of activeRepairOrders.filter((entry) => entry?.prNumber === prNumber && sha(entry?.headSha) !== headSha)) {
     const chain = receiptChain(receipts, order, nowMs);
