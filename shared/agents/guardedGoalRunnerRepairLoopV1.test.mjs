@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createExecutionReceipt, EXECUTION_RECEIPT_SCHEMA_VERSION } from './executionReceiptV1.mjs';
 import {
   buildGuardedRepairDeduplicationKey,
   evaluateGuardedRepairLoop,
@@ -8,6 +9,8 @@ import {
 
 const BASE = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);
+const BRANCH = 'fix/goal-dashboard-truth';
+const NOW = '2026-07-25T12:00:00.000Z';
 const FINDINGS = [
   { id: 'P2-source-label', severity: 'P2', type: 'review_finding', bounded: true, file: 'shared/runtime/goalDashboardStatusProjection.mjs' },
   { id: 'P2-receipt-binding', severity: 'P2', type: 'review_finding', bounded: true, file: 'shared/runtime/goalDashboardStatusProjection.test.mjs' },
@@ -15,9 +18,10 @@ const FINDINGS = [
 
 function input(overrides = {}) {
   return {
-    repository: 'Cheekyfellastef/stephan-os',
+    repository: 'cheekyfellastef/stephan-os',
     issueNumber: 1385,
     prNumber: 1582,
+    branch: BRANCH,
     baseSha: BASE,
     expectedBaseSha: BASE,
     headSha: HEAD,
@@ -27,10 +31,41 @@ function input(overrides = {}) {
     proofAvailable: true,
     findingsEvidenceAvailable: true,
     findings: FINDINGS,
+    receiptTimestampUtc: NOW,
+    receiptHeartbeatExpiresAtUtc: '2026-07-25T12:02:00.000Z',
+    proofRefs: ['proofs/pr-1582-review'],
     allowedTests: ['node --test shared/runtime/goalDashboardStatusProjection.test.mjs'],
     workerAvailability: { githubFirstAvailable: true },
     ...overrides,
   };
+}
+
+function admitted(overrides = {}) {
+  return evaluateGuardedRepairLoop(input(overrides));
+}
+
+function canonicalReceipt(order, state, overrides = {}) {
+  return createExecutionReceipt({
+    repository: order.repository,
+    issueNumber: order.issueNumber,
+    prNumber: order.prNumber,
+    branch: order.branch,
+    sourceHead: order.headSha,
+    workerId: `worker-${order.worker.workerType}`,
+    workerType: order.worker.workerType,
+    executionId: order.executionId,
+    leaseKey: order.leaseKey,
+    state,
+    phase: state,
+    sequence: 1,
+    timestampUtc: NOW,
+    heartbeatExpiresAtUtc: '2026-07-25T12:02:00.000Z',
+    blocker: state === 'stalled' ? 'WAITING_EXTERNAL_PROOF' : '',
+    operatorActionRequired: false,
+    proofRefs: ['proofs/pr-1582-review'],
+    expectedNextAction: ['completed', 'failed', 'cancelled'].includes(state) ? '' : 'Continue bounded repair.',
+    ...overrides,
+  });
 }
 
 test('deduplication key is exact-head and unambiguously finding-set bound', () => {
@@ -44,178 +79,139 @@ test('deduplication key is exact-head and unambiguously finding-set bound', () =
   assert.notEqual(commaA, commaB);
 });
 
-test('PR 1582 bounded review findings admit one GitHub-first repair immediately', () => {
-  const result = evaluateGuardedRepairLoop(input());
+test('new repair prepares the canonical queued receipt and does not claim execution', () => {
+  const result = admitted();
   assert.equal(result.verdict, 'known-blocker-repair-admitted');
-  assert.equal(result.repairOrder.worker.route, 'CHATGPT_GITHUB');
-  assert.equal(result.repairOrder.prNumber, 1582);
-  assert.deepEqual(result.repairOrder.findingIds, ['P2-receipt-binding', 'P2-source-label']);
-  assert.equal(result.repairOrder.mergePolicy.automaticApproval, false);
-  assert.equal(result.repairOrder.mergePolicy.expectedHeadSha, HEAD);
-  assert.equal(result.nextReceipt.state, 'repair_requested');
+  assert.equal(result.nextAction, 'PERSIST_CANONICAL_RECEIPT_THEN_ROUTE_WORKER');
+  assert.equal(result.nextReceipt.schemaVersion, EXECUTION_RECEIPT_SCHEMA_VERSION);
+  assert.equal(result.nextReceipt.state, 'queued');
+  assert.equal(result.nextReceipt.repository, result.repairOrder.repository);
+  assert.equal(result.nextReceipt.prNumber, result.repairOrder.prNumber);
+  assert.equal(result.nextReceipt.sourceHead, HEAD);
+  assert.equal(result.nextReceipt.executionId, result.repairOrder.executionId);
 });
 
-test('equivalent order is not duplicated and requires receipt binding to order and head', () => {
-  const admitted = evaluateGuardedRepairLoop(input());
-  const activeRepairOrders = [admitted.repairOrder];
-  const noWorkerReceipt = evaluateGuardedRepairLoop(input({ activeRepairOrders, receipts: [admitted.nextReceipt] }));
-  assert.equal(noWorkerReceipt.verdict, 'known-blocker-repair-admitted');
-  assert.equal(noWorkerReceipt.nextAction, 'ROUTE_OR_FAIL_OVER_WORKER');
-
-  const malformed = evaluateGuardedRepairLoop(input({
-    activeRepairOrders,
-    receipts: [{ ...admitted.nextReceipt, state: 'repair_started', workerTaskId: 'task', repairOrderId: 'wrong' }],
-  }));
-  assert.equal(malformed.verdict, 'known-blocker-repair-admitted');
-
-  const started = evaluateGuardedRepairLoop(input({
-    activeRepairOrders,
-    receipts: [{ ...admitted.nextReceipt, state: 'repair_started', workerTaskId: 'github-first-task-1582' }],
-  }));
-  assert.equal(started.verdict, 'repair-already-active');
-  assert.equal(started.nextAction, 'OBSERVE_EXISTING_REPAIR');
+test('ad-hoc historical repair objects cannot establish active execution', () => {
+  const first = admitted();
+  const result = admitted({
+    activeRepairOrders: [first.repairOrder],
+    receipts: [{ state: 'repair_started', repairOrderId: first.repairOrder.repairOrderId, deduplicationKey: first.repairOrder.deduplicationKey, headSha: HEAD, workerTaskId: 'task-1582' }],
+  });
+  assert.equal(result.verdict, 'known-blocker-repair-admitted');
+  assert.equal(result.nextAction, 'ROUTE_OR_FAIL_OVER_WORKER');
 });
 
-test('existing order refreshes its worker route when current availability requires failover', () => {
-  const admitted = evaluateGuardedRepairLoop(input());
-  const failedOver = evaluateGuardedRepairLoop(input({
-    activeRepairOrders: [admitted.repairOrder],
-    receipts: [admitted.nextReceipt],
-    workerAvailability: { githubFirstAvailable: false, remoteCodexAvailable: true },
-  }));
-  assert.equal(failedOver.verdict, 'known-blocker-repair-admitted');
-  assert.equal(failedOver.nextAction, 'ROUTE_OR_FAIL_OVER_WORKER');
-  assert.equal(failedOver.repairOrder.worker.route, 'REMOTE_CODEX');
+test('only an exact-bound canonical accepted or started receipt establishes active execution', () => {
+  const first = admitted();
+  for (const state of ['accepted', 'started', 'progress']) {
+    const receipt = canonicalReceipt(first.repairOrder, state);
+    const result = admitted({ activeRepairOrders: [first.repairOrder], receipts: [receipt] });
+    assert.equal(result.verdict, 'repair-already-active', state);
+    assert.equal(result.executionReceipt.state, state);
+  }
+
+  const wrongHead = canonicalReceipt(first.repairOrder, 'started', { sourceHead: 'c'.repeat(40) });
+  const rejected = admitted({ activeRepairOrders: [first.repairOrder], receipts: [wrongHead] });
+  assert.equal(rejected.verdict, 'known-blocker-repair-admitted');
 });
 
-test('same-head finding-set changes cannot create a concurrent repair', () => {
-  const admitted = evaluateGuardedRepairLoop(input());
+test('canonical stalled and terminal states remain distinct from active execution', () => {
+  const first = admitted();
+  const stalled = admitted({ activeRepairOrders: [first.repairOrder], receipts: [canonicalReceipt(first.repairOrder, 'stalled')] });
+  assert.equal(stalled.verdict, 'repair-stalled');
+
+  const failed = admitted({ activeRepairOrders: [first.repairOrder], receipts: [canonicalReceipt(first.repairOrder, 'failed')] });
+  assert.equal(failed.verdict, 'known-blocker-repair-admitted');
+  assert.equal(failed.nextAction, 'ROUTE_OR_FAIL_OVER_WORKER');
+});
+
+test('same-head finding-set changes wait for canonical terminal evidence', () => {
+  const first = admitted();
   const changedFindings = [...FINDINGS, { id: 'P1-new-review', severity: 'P1', bounded: true, file: 'shared/agents/guardedGoalRunnerRepairLoopV1.mjs' }];
-  const blocked = evaluateGuardedRepairLoop(input({
-    findings: changedFindings,
-    activeRepairOrders: [admitted.repairOrder],
-    receipts: [{ ...admitted.nextReceipt, state: 'repair_started', workerTaskId: 'task-1582' }],
-  }));
-  assert.equal(blocked.verdict, 'abort-active-finding-set-change');
-  assert.equal(blocked.nextAction, 'WAIT_FOR_ACTIVE_WORKER_RECONCILIATION');
-
-  const reconciled = evaluateGuardedRepairLoop(input({
-    findings: changedFindings,
-    activeRepairOrders: [admitted.repairOrder],
-    receipts: [{ ...admitted.nextReceipt, state: 'aborted' }],
-  }));
-  assert.equal(reconciled.verdict, 'known-blocker-repair-admitted');
-  assert.notEqual(reconciled.repairOrder.deduplicationKey, admitted.repairOrder.deduplicationKey);
-});
-
-test('returning to an old finding set cannot reroute while another same-head repair is active', () => {
-  const first = evaluateGuardedRepairLoop(input());
-  const changedFindings = [...FINDINGS, { id: 'P1-new-review', severity: 'P1', bounded: true, file: 'shared/agents/guardedGoalRunnerRepairLoopV1.mjs' }];
-  const second = evaluateGuardedRepairLoop(input({
+  const blocked = admitted({
     findings: changedFindings,
     activeRepairOrders: [first.repairOrder],
-    receipts: [{ ...first.nextReceipt, state: 'aborted' }],
-  }));
-  const reverted = evaluateGuardedRepairLoop(input({
-    activeRepairOrders: [first.repairOrder, second.repairOrder],
-    receipts: [
-      { ...first.nextReceipt, state: 'complete' },
-      { ...second.nextReceipt, state: 'repair_started', workerTaskId: 'task-second' },
-    ],
-  }));
-  assert.equal(reverted.verdict, 'abort-active-finding-set-change');
-  assert.equal(reverted.repairOrder.deduplicationKey, second.repairOrder.deduplicationKey);
+    receipts: [canonicalReceipt(first.repairOrder, 'started')],
+  });
+  assert.equal(blocked.verdict, 'abort-active-finding-set-change');
+
+  const reconciled = admitted({
+    findings: changedFindings,
+    activeRepairOrders: [first.repairOrder],
+    receipts: [canonicalReceipt(first.repairOrder, 'cancelled')],
+  });
+  assert.equal(reconciled.verdict, 'known-blocker-repair-admitted');
 });
 
-test('head change waits for every prior worker terminal receipt before rerouting', () => {
-  const old = evaluateGuardedRepairLoop(input());
-  const olderHead = 'e'.repeat(40);
-  const older = { ...old.repairOrder, headSha: olderHead, deduplicationKey: `${old.repairOrder.deduplicationKey}-older`, repairOrderId: 'older-order' };
+test('head movement waits for canonical terminal evidence from every prior order', () => {
+  const first = admitted();
   const nextHead = 'd'.repeat(40);
-  const waiting = evaluateGuardedRepairLoop(input({ headSha: nextHead, proofHeadSha: nextHead, activeRepairOrders: [old.repairOrder, older] }));
+  const waiting = admitted({ headSha: nextHead, proofHeadSha: nextHead, activeRepairOrders: [first.repairOrder], receipts: [canonicalReceipt(first.repairOrder, 'started')] });
   assert.equal(waiting.verdict, 'abort-stale-worker-active');
-  assert.equal(waiting.nextAction, 'WAIT_FOR_STALE_WORKER_ABORT');
 
-  const stillWaiting = evaluateGuardedRepairLoop(input({
-    headSha: nextHead,
-    proofHeadSha: nextHead,
-    activeRepairOrders: [old.repairOrder, older],
-    receipts: [{ ...old.nextReceipt, state: 'aborted' }],
-  }));
-  assert.equal(stillWaiting.verdict, 'abort-stale-worker-active');
-
-  const next = evaluateGuardedRepairLoop(input({
-    headSha: nextHead,
-    proofHeadSha: nextHead,
-    activeRepairOrders: [old.repairOrder, older],
-    receipts: [
-      { ...old.nextReceipt, state: 'aborted' },
-      { state: 'complete', repairOrderId: older.repairOrderId, deduplicationKey: older.deduplicationKey, headSha: older.headSha },
-    ],
-  }));
-  assert.equal(next.verdict, 'known-blocker-repair-admitted');
-  assert.notEqual(next.repairOrder.deduplicationKey, old.repairOrder.deduplicationKey);
-  assert.equal(next.repairOrder.headSha, nextHead);
+  const released = admitted({ headSha: nextHead, proofHeadSha: nextHead, activeRepairOrders: [first.repairOrder], receipts: [canonicalReceipt(first.repairOrder, 'cancelled')] });
+  assert.equal(released.verdict, 'known-blocker-repair-admitted');
 });
 
-test('safety gates fail closed when evidence is omitted, malformed or contradictory', () => {
-  assert.equal(evaluateGuardedRepairLoop(input({ expectedBaseSha: 'c'.repeat(40) })).verdict, 'abort-stale-base');
-  assert.equal(evaluateGuardedRepairLoop(input({ expectedBaseSha: undefined })).verdict, 'abort-missing-proof');
-  assert.equal(evaluateGuardedRepairLoop(input({ currentPrCount: 2 })).verdict, 'abort-conflicting-pr');
-  assert.equal(evaluateGuardedRepairLoop(input({ currentPrCount: undefined })).verdict, 'abort-conflicting-pr');
-  assert.equal(evaluateGuardedRepairLoop(input({ proofAvailable: false })).verdict, 'abort-missing-proof');
-  assert.equal(evaluateGuardedRepairLoop(input({ proofAvailable: undefined })).verdict, 'abort-missing-proof');
-  assert.equal(evaluateGuardedRepairLoop(input({ proofHeadSha: 'c'.repeat(40) })).verdict, 'abort-missing-proof');
-  assert.equal(evaluateGuardedRepairLoop(input({ findingsEvidenceAvailable: undefined })).verdict, 'abort-missing-proof');
-  assert.equal(evaluateGuardedRepairLoop(input({ findings: undefined })).verdict, 'abort-missing-proof');
-  assert.equal(evaluateGuardedRepairLoop(input({ findings: [{ severity: 'P1', bounded: true }] })).verdict, 'abort-missing-proof');
-  assert.equal(evaluateGuardedRepairLoop(input({ findings: [{ id: 'bad', severity: 'UNKNOWN', bounded: true }] })).verdict, 'abort-missing-proof');
-  assert.equal(evaluateGuardedRepairLoop(input({ repeatedBlockerCount: 2 })).verdict, 'abort-repeated-blocker');
-  assert.equal(evaluateGuardedRepairLoop(input({ findings: [{ ...FINDINGS[0], bounded: false }] })).verdict, 'abort-unknown-blocker');
-  assert.equal(evaluateGuardedRepairLoop(input({ findings: [{ ...FINDINGS[0], operatorJudgmentRequired: true }] })).verdict, 'abort-operator-judgment-required');
+test('review, merge approval and completion fail closed without a completed canonical receipt', () => {
+  const first = admitted();
+  const missing = admitted({ findings: [], ciGreen: true, mergeable: true, activeRepairOrders: [first.repairOrder], receipts: [canonicalReceipt(first.repairOrder, 'progress')] });
+  assert.equal(missing.verdict, 'abort-missing-canonical-receipt');
+
+  const complete = canonicalReceipt(first.repairOrder, 'completed');
+  const ready = admitted({ findings: [], ciGreen: true, mergeable: true, activeRepairOrders: [first.repairOrder], receipts: [complete] });
+  assert.equal(ready.verdict, 'safe-to-merge-with-expected-head');
+  assert.equal(ready.nextAction, 'REQUEST_EXACT_HEAD_MERGE_APPROVAL');
+
+  const green = admitted({ findings: [], merged: true, ciGreen: true, runtimeProofRequired: false, activeRepairOrders: [first.repairOrder], receipts: [complete] });
+  assert.equal(green.verdict, 'goal-green');
 });
 
-test('worker routing requires positive availability evidence and fails over neutrally', () => {
-  assert.equal(routeGuardedRepairWorker({ githubFirstAvailable: true }).route, 'CHATGPT_GITHUB');
+test('canonical receipt identity mismatches fail closed', () => {
+  const first = admitted();
+  const mismatches = [
+    { repository: 'other/repo' },
+    { issueNumber: 9999 },
+    { prNumber: 9999 },
+    { branch: 'other/branch' },
+    { sourceHead: 'c'.repeat(40) },
+    { executionId: 'other-execution' },
+    { leaseKey: 'other-lease' },
+  ];
+  for (const mismatch of mismatches) {
+    const result = admitted({ activeRepairOrders: [first.repairOrder], receipts: [canonicalReceipt(first.repairOrder, 'started', mismatch)] });
+    assert.notEqual(result.verdict, 'repair-already-active', JSON.stringify(mismatch));
+  }
+});
+
+test('safety gates fail closed when lane evidence is missing or contradictory', () => {
+  assert.equal(admitted({ branch: undefined }).verdict, 'abort-missing-proof');
+  assert.equal(admitted({ expectedBaseSha: 'c'.repeat(40) }).verdict, 'abort-stale-base');
+  assert.equal(admitted({ currentPrCount: 2 }).verdict, 'abort-conflicting-pr');
+  assert.equal(admitted({ proofAvailable: false }).verdict, 'abort-missing-proof');
+  assert.equal(admitted({ proofHeadSha: 'c'.repeat(40) }).verdict, 'abort-missing-proof');
+  assert.equal(admitted({ findingsEvidenceAvailable: false }).verdict, 'abort-missing-proof');
+  assert.equal(admitted({ findings: [{ severity: 'P1', bounded: true }] }).verdict, 'abort-missing-proof');
+  assert.equal(admitted({ repeatedBlockerCount: 2 }).verdict, 'abort-repeated-blocker');
+  assert.equal(admitted({ findings: [{ ...FINDINGS[0], bounded: false }] }).verdict, 'abort-unknown-blocker');
+  assert.equal(admitted({ findings: [{ ...FINDINGS[0], operatorJudgmentRequired: true }] }).verdict, 'abort-operator-judgment-required');
+});
+
+test('worker routing requires positive availability evidence and maps to canonical worker types', () => {
+  assert.deepEqual(routeGuardedRepairWorker({ githubFirstAvailable: true }).workerType, 'github-first');
   assert.equal(routeGuardedRepairWorker({}).route, 'BLOCKED_UNSAFE_OR_UNKNOWN');
-  assert.equal(routeGuardedRepairWorker({ githubFirstAvailable: false, remoteCodexAvailable: true }).route, 'REMOTE_CODEX');
-  assert.equal(routeGuardedRepairWorker({ githubFirstAvailable: false, openClawAvailable: true }).route, 'OPENCLAW_LOCAL');
-  assert.equal(routeGuardedRepairWorker({ runtimeRequired: true, openClawAvailable: true }).route, 'OPENCLAW_LOCAL');
-  assert.equal(routeGuardedRepairWorker({ runtimeRequired: true, remoteCodexAvailable: true }).route, 'REMOTE_CODEX');
-  assert.equal(routeGuardedRepairWorker({ runtimeRequired: true }).route, 'BLOCKED_UNSAFE_OR_UNKNOWN');
+  assert.equal(routeGuardedRepairWorker({ githubFirstAvailable: false, remoteCodexAvailable: true }).workerType, 'remote-codex');
+  assert.equal(routeGuardedRepairWorker({ githubFirstAvailable: false, openClawAvailable: true }).workerType, 'openclaw');
 });
 
-test('green exact head reaches approval gate only with exact-head proof', () => {
-  const result = evaluateGuardedRepairLoop(input({ findings: [], ciGreen: true, mergeable: true }));
-  assert.equal(result.verdict, 'safe-to-merge-with-expected-head');
-  assert.equal(result.expectedHeadSha, HEAD);
-  assert.equal(result.nextAction, 'REQUEST_EXACT_HEAD_MERGE_APPROVAL');
-
-  const stale = evaluateGuardedRepairLoop(input({ findings: [], headSha: 'c'.repeat(40), proofHeadSha: HEAD, ciGreen: true, mergeable: true }));
-  assert.equal(stale.verdict, 'abort-missing-proof');
-});
-
-test('runtime proof cannot bypass merge approval and is evaluated only after merge', () => {
-  const preMerge = evaluateGuardedRepairLoop(input({ findings: [], ciGreen: true, mergeable: true, runtimeProofRequired: true, runtimeProofGreen: true }));
+test('runtime proof remains behind completed implementation, merge and exact-head approval', () => {
+  const first = admitted();
+  const complete = canonicalReceipt(first.repairOrder, 'completed');
+  const preMerge = admitted({ findings: [], ciGreen: true, mergeable: true, runtimeProofRequired: true, runtimeProofGreen: true, activeRepairOrders: [first.repairOrder], receipts: [complete] });
   assert.equal(preMerge.verdict, 'safe-to-merge-with-expected-head');
-  assert.equal(preMerge.nextAction, 'REQUEST_EXACT_HEAD_MERGE_APPROVAL');
 
-  const noCi = evaluateGuardedRepairLoop(input({ findings: [], merged: true, ciGreen: false, runtimeProofRequired: true, runtimeProofGreen: true }));
-  assert.equal(noCi.verdict, 'repair-published-awaiting-ci');
-  const waiting = evaluateGuardedRepairLoop(input({ findings: [], merged: true, ciGreen: true, runtimeProofRequired: true, runtimeProofGreen: false }));
+  const waiting = admitted({ findings: [], merged: true, ciGreen: true, runtimeProofRequired: true, runtimeProofGreen: false, activeRepairOrders: [first.repairOrder], receipts: [complete] });
   assert.equal(waiting.verdict, 'repair-published-awaiting-ci');
-  const green = evaluateGuardedRepairLoop(input({ findings: [], merged: true, ciGreen: true, runtimeProofRequired: true, runtimeProofGreen: true }));
+  const green = admitted({ findings: [], merged: true, ciGreen: true, runtimeProofRequired: true, runtimeProofGreen: true, activeRepairOrders: [first.repairOrder], receipts: [complete] });
   assert.equal(green.verdict, 'goal-green');
-  assert.equal(green.nextAction, 'COMPLETE_AND_SELECT_NEXT_GOAL');
-});
-
-test('merged source-only repair completes only with explicit source-only classification', () => {
-  const green = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: false, ciGreen: true }));
-  assert.equal(green.verdict, 'goal-green');
-  assert.equal(green.nextAction, 'COMPLETE_AND_SELECT_NEXT_GOAL');
-
-  const waiting = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: false, ciGreen: false }));
-  assert.equal(waiting.verdict, 'repair-published-awaiting-ci');
-  const unknown = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: undefined, ciGreen: true }));
-  assert.equal(unknown.verdict, 'repair-published-awaiting-ci');
 });
