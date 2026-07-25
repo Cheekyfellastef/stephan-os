@@ -4,6 +4,7 @@ import { answerMissionQuery, buildMissionScheduler } from './missionScheduler.mj
 
 const NOW = '2026-07-24T21:00:00.000Z';
 const fresh = '2026-07-24T20:55:00.000Z';
+const PROOF_SHA = '1111111111111111111111111111111111111111';
 function goal(issue, overrides = {}) {
   return { issue, title:`Goal ${issue}`, state:'QUEUED', prerequisites:[], priority:1, criticalPathWeight:1, reversibility:'HIGH', route:'CHATGPT_GITHUB', evidenceAt:fresh, ...overrides };
 }
@@ -97,6 +98,11 @@ test('operator priority lexicographically outranks unbounded ordinary score', ()
   assert.equal(result.selectedGoal,'#2');
 });
 
+test('large finite priorities compare without weighted-score overflow', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{priority:1e307}),goal(2,{priority:1e308})] });
+  assert.equal(result.selectedGoal,'#2');
+});
+
 test('duplicate and superseded work is not selected', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{duplicateOf:10,priority:100}),goal(2,{supersededBy:11,priority:100}),goal(3)] });
   assert.equal(result.selectedGoal,'#3'); assert.equal(result.portfolio[0].lifecycle,'DUPLICATE'); assert.equal(result.portfolio[1].lifecycle,'SUPERSEDED');
@@ -151,7 +157,7 @@ test('merge readiness is restricted to implemented goals', () => {
     const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state,proofState:'PASS',activePr:1601})] });
     assert.notEqual(result.portfolio[0].lifecycle,'MERGE_READY');
   }
-  const implemented = buildMissionScheduler({ now:NOW, goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601})] });
+  const implemented = buildMissionScheduler({ now:NOW, proofHeadShas:[PROOF_SHA], goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROOF_SHA})] });
   assert.equal(implemented.portfolio[0].lifecycle,'MERGE_READY');
 });
 
