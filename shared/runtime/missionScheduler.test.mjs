@@ -23,6 +23,13 @@ test('malformed prerequisite fails closed at the goal boundary', () => {
   assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null); assert.deepEqual(result.portfolio[0].invalidPrerequisites,['unknown','0']);
 });
 
+test('malformed prerequisite container is preserved as blocked evidence', () => {
+  for (const prerequisites of ['999', { issue:999 }]) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(2,{prerequisites})] });
+    assert.equal(result.portfolio[0].invalidPrerequisiteContainer,true); assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null);
+  }
+});
+
 test('dependency cycle fails closed and receipt preserves safety truth', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{prerequisites:[2]}),goal(2,{prerequisites:[1]})] });
   assert.equal(result.failClosed,true); assert.equal(result.selectedGoal,null); assert.equal(result.decisionReceipt.status,'BLOCKED_FAIL_CLOSED'); assert.equal(result.decisionReceipt.route,'BLOCKED_UNSAFE_OR_UNKNOWN'); assert.ok(result.decisionReceipt.contradictionCodes.includes('DEPENDENCY_CYCLE'));
@@ -73,6 +80,11 @@ test('invalidated active goal fails closed', () => {
   assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.equal(result.portfolio[0].lifecycle,'SUPERSEDED'); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_GOAL_INVALIDATED'));
 });
 
+test('active claim with malformed dependencies fails closed', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'ACTIVE',activePr:1601,prerequisites:['unknown']})] });
+  assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_RELATION_EVIDENCE_INVALID'));
+});
+
 test('unknown and blocked states are never selected', () => {
   for (const state of ['UNKNOWN','BLOCKED','STALLED']) {
     const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state})] });
@@ -88,6 +100,13 @@ test('operator priority lexicographically outranks unbounded ordinary score', ()
 test('duplicate and superseded work is not selected', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{duplicateOf:10,priority:100}),goal(2,{supersededBy:11,priority:100}),goal(3)] });
   assert.equal(result.selectedGoal,'#3'); assert.equal(result.portfolio[0].lifecycle,'DUPLICATE'); assert.equal(result.portfolio[1].lifecycle,'SUPERSEDED');
+});
+
+test('malformed invalidation claims are preserved and blocked', () => {
+  for (const relation of [{duplicateOf:'unknown'},{supersededBy:0}]) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{priority:100,...relation}),goal(2)] });
+    assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,'#2'); assert.equal(result.portfolio[0].invalidInvalidationClaims.length,1);
+  }
 });
 
 test('superseded prerequisite does not satisfy dependency', () => {
@@ -134,6 +153,13 @@ test('merge readiness is restricted to implemented goals', () => {
   }
   const implemented = buildMissionScheduler({ now:NOW, goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601})] });
   assert.equal(implemented.portfolio[0].lifecycle,'MERGE_READY');
+});
+
+test('merge readiness respects blocked and waiting routes', () => {
+  for (const route of ['BLOCKED_UNSAFE_OR_UNKNOWN','WAITING_FOR_EXTERNAL_CONDITION','unknown-route']) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,route})] });
+    assert.notEqual(result.portfolio[0].lifecycle,'MERGE_READY'); assert.equal(result.selectedGoal,null);
+  }
 });
 
 test('null portfolio entries normalize to blocked records without throwing', () => {
