@@ -139,7 +139,7 @@ export function buildMissionScheduler(input = {}) {
   const failClosed = contradictions.length > 0;
   const activeClaim = !failClosed && authoritative.length === 1 ? authoritative[0] : null;
   const active = activeClaim ? portfolio[goals.indexOf(activeClaim)] : null;
-  const action = failClosed || active ? null : mergeReady[0] ?? closeReady[0] ?? ready[0] ?? null;
+  const action = failClosed || active ? null : mergeReady[0] ?? ready[0] ?? closeReady[0] ?? null;
   const operatorNeeded = approvalGoals.length > 0 || Boolean(active?.approvalRequired || active?.route === 'OPERATOR_APPROVAL' || action?.route === 'OPERATOR_APPROVAL');
   const blockers = freeze([...contradictions, ...lifecycleBlockers(portfolio)]);
   const programmeStatus = failClosed ? 'BLOCKED'
@@ -149,7 +149,7 @@ export function buildMissionScheduler(input = {}) {
     : action ? 'READY_TO_ADVANCE'
     : operatorNeeded ? 'APPROVAL_REQUIRED'
     : 'WAITING';
-  const actionable = [...mergeReady, ...closeReady, ...ready];
+  const actionable = [...mergeReady, ...ready, ...closeReady];
   return freeze({
     schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, blockers,
     programmeStatus,
