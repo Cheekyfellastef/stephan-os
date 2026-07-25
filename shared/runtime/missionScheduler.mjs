@@ -92,7 +92,19 @@ function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleBy
   return 'READY';
 }
 function score(goal) { return goal.priority * 10_000 + goal.criticalPathWeight * 100 + (goal.reversibility === 'HIGH' ? 20 : goal.reversibility === 'MEDIUM' ? 10 : 0) + (goal.route === 'CHATGPT_GITHUB' ? 5 : 0); }
-function compareReady(a, b) { if (a.operatorPriority !== b.operatorPriority) return a.operatorPriority ? -1 : 1; return score(b) - score(a) || a.issue - b.issue; }
+function compareDescendingNumber(a, b) { return a === b ? 0 : a > b ? -1 : 1; }
+function compareReady(a, b) {
+  if (a.operatorPriority !== b.operatorPriority) return a.operatorPriority ? -1 : 1;
+  const priorityOrder = compareDescendingNumber(a.priority, b.priority);
+  if (priorityOrder) return priorityOrder;
+  const criticalPathOrder = compareDescendingNumber(a.criticalPathWeight, b.criticalPathWeight);
+  if (criticalPathOrder) return criticalPathOrder;
+  const reversibilityRank = { HIGH:2, MEDIUM:1 };
+  const reversibilityOrder = compareDescendingNumber(reversibilityRank[a.reversibility] ?? 0, reversibilityRank[b.reversibility] ?? 0);
+  if (reversibilityOrder) return reversibilityOrder;
+  const githubFirstOrder = compareDescendingNumber(a.route === 'CHATGPT_GITHUB' ? 1 : 0, b.route === 'CHATGPT_GITHUB' ? 1 : 0);
+  return githubFirstOrder || a.issue - b.issue;
+}
 function lifecycleBlockers(portfolio) {
   const blocked = new Set(['BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED','IMPLEMENTED_NEEDS_PROOF']);
   return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer, invalidInvalidationClaims:goal.invalidInvalidationClaims, evidenceFreshness:goal.evidenceFreshness }));
