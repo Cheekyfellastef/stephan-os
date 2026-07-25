@@ -143,19 +143,22 @@ export function evaluateGuardedRepairLoop(input = {}) {
 
   if (!findings.length) {
     if (input.merged === true && input.runtimeProofRequired === true) {
+      if (input.ciGreen !== true) {
+        return frozen({ verdict: 'repair-published-awaiting-ci', reason: 'The exact merged head has not yet produced green CI proof.', nextAction: 'WAIT_FOR_EXACT_HEAD_VERIFICATION' });
+      }
       return frozen({
         verdict: input.runtimeProofGreen === true ? 'goal-green' : 'repair-published-awaiting-ci',
-        reason: input.runtimeProofGreen === true ? 'The approved exact head is merged and runtime proof is green.' : 'Post-merge runtime verification is incomplete.',
+        reason: input.runtimeProofGreen === true ? 'The approved exact head is merged, exact-head CI is green and runtime proof is green.' : 'Post-merge runtime verification is incomplete.',
         nextAction: input.runtimeProofGreen === true ? 'COMPLETE_AND_SELECT_NEXT_GOAL' : 'WAIT_FOR_EXACT_HEAD_VERIFICATION',
       });
     }
-    if (input.merged === true && input.runtimeProofRequired !== true && input.ciGreen === true) {
+    if (input.merged === true && input.runtimeProofRequired === false && input.ciGreen === true) {
       return frozen({ verdict: 'goal-green', reason: 'The approved exact head is merged, exact-head CI is green and no runtime proof is required.', nextAction: 'COMPLETE_AND_SELECT_NEXT_GOAL' });
     }
     if (input.ciGreen === true && input.mergeable === true && input.merged !== true) {
       return frozen({ verdict: 'safe-to-merge-with-expected-head', expectedHeadSha: headSha, reason: 'The exact head is green, mergeable and finding-free.', nextAction: 'REQUEST_EXACT_HEAD_MERGE_APPROVAL' });
     }
-    return frozen({ verdict: 'repair-published-awaiting-ci', reason: 'No actionable finding remains, but exact-head verification or merge state is incomplete.', nextAction: 'WAIT_FOR_EXACT_HEAD_VERIFICATION' });
+    return frozen({ verdict: 'repair-published-awaiting-ci', reason: 'No actionable finding remains, but exact-head verification, explicit proof scope or merge state is incomplete.', nextAction: 'WAIT_FOR_EXACT_HEAD_VERIFICATION' });
   }
 
   if (findings.some(({ operatorJudgmentRequired }) => operatorJudgmentRequired)) {
@@ -167,6 +170,16 @@ export function evaluateGuardedRepairLoop(input = {}) {
 
   const activeRepairOrders = Array.isArray(input.activeRepairOrders) ? input.activeRepairOrders : [];
   const receipts = Array.isArray(input.receipts) ? input.receipts : [];
+  const sameHeadConflicts = activeRepairOrders.filter((order) => (
+    order?.prNumber === prNumber
+    && sha(order?.headSha) === headSha
+    && order?.deduplicationKey !== deduplicationKey
+  ));
+  const nonterminalSameHead = sameHeadConflicts.find((order) => !hasTerminalReceipt(order, receipts));
+  if (nonterminalSameHead) {
+    return frozen({ verdict: 'abort-active-finding-set-change', reason: 'A nonterminal repair already owns this PR and exact head; reconcile or terminate it before admitting or rerouting another finding set.', repairOrder: nonterminalSameHead, nextAction: 'WAIT_FOR_ACTIVE_WORKER_RECONCILIATION' });
+  }
+
   const existing = activeRepairOrders.find((order) => order?.deduplicationKey === deduplicationKey);
   if (existing) {
     const receipt = latestReceipt(receipts, deduplicationKey);
@@ -189,16 +202,6 @@ export function evaluateGuardedRepairLoop(input = {}) {
       repairOrder: frozen({ ...existing, worker: refreshedWorker }),
       nextAction: 'ROUTE_OR_FAIL_OVER_WORKER',
     });
-  }
-
-  const sameHeadConflicts = activeRepairOrders.filter((order) => (
-    order?.prNumber === prNumber
-    && sha(order?.headSha) === headSha
-    && order?.deduplicationKey !== deduplicationKey
-  ));
-  const nonterminalSameHead = sameHeadConflicts.find((order) => !hasTerminalReceipt(order, receipts));
-  if (nonterminalSameHead) {
-    return frozen({ verdict: 'abort-active-finding-set-change', reason: 'A nonterminal repair already owns this PR and exact head; reconcile or terminate it before admitting a changed finding set.', repairOrder: nonterminalSameHead, nextAction: 'WAIT_FOR_ACTIVE_WORKER_RECONCILIATION' });
   }
 
   const staleActive = activeRepairOrders.filter((order) => order?.prNumber === prNumber && sha(order?.headSha) !== headSha);
