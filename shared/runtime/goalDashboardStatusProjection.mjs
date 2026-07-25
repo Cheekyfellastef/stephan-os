@@ -77,7 +77,10 @@ function normalizeReceiptIdentifier(value) {
 
 function verifiedReceiptIdentifier(receipt = {}) {
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) || receipt.verified !== true) return null;
-  return normalizeReceiptIdentifier(receipt.receiptId ?? receipt.id ?? receipt.receipt);
+  const identifier = normalizeReceiptIdentifier(receipt.receiptId ?? receipt.id ?? receipt.receipt);
+  if (identifier === null) return null;
+  const isLegacyReceiptId = identifier.startsWith('receipt-');
+  return isLegacyReceiptId || receipt.state === 'completed' ? identifier : null;
 }
 
 function affirmativeEvidence(value) {
