@@ -40,9 +40,11 @@ function normalizeGoal(candidate = {}) {
     ...(duplicateOfPresent && (!duplicateOf || duplicateOf === number) ? ['duplicateOf'] : []),
     ...(supersededByPresent && (!supersededBy || supersededBy === number) ? ['supersededBy'] : []),
   ];
+  const approvalRequiredPresent = hasOwn(goal, 'approvalRequired');
+  const invalidApprovalRequired = approvalRequiredPresent && typeof goal.approvalRequired !== 'boolean';
   const state = text(goal.state, 'UNKNOWN').toUpperCase();
   const route = ROUTES.has(goal.route) ? goal.route : 'BLOCKED_UNSAFE_OR_UNKNOWN';
-  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, invalidInvalidationClaims, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr:issueNumber(goal.activePr), branch:text(goal.branch) || null, headSha:sha(goal.headSha), proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null });
+  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, invalidInvalidationClaims, invalidApprovalRequired, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr:issueNumber(goal.activePr), branch:text(goal.branch) || null, headSha:sha(goal.headSha), proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null });
 }
 
 function detectCycles(goalsByIssue) {
@@ -57,10 +59,10 @@ function detectCycles(goalsByIssue) {
   for (const issue of goalsByIssue.keys()) visit(issue);
   return cycles;
 }
-function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
+function hasMalformedEvidence(goal) { return goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length || goal.invalidApprovalRequired; }
 function dependencyComplete(goal, goalsByIssue, staleByGoal, seen = new Set()) {
   const finalGateBlocked = goal?.approvalRequired === true || goal?.route === 'OPERATOR_APPROVAL' || goal?.route === 'WAITING_FOR_EXTERNAL_CONDITION' || goal?.route === 'BLOCKED_UNSAFE_OR_UNKNOWN';
-  if (!goal || !goal.issue || hasMalformedRelations(goal) || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || finalGateBlocked || !COMPLETION_STATES.has(goal.state)) return false;
+  if (!goal || !goal.issue || hasMalformedEvidence(goal) || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || finalGateBlocked || !COMPLETION_STATES.has(goal.state)) return false;
   if (seen.has(goal.issue)) return false;
   const nextSeen = new Set(seen).add(goal.issue);
   return goal.prerequisites.every((issue) => dependencyComplete(goalsByIssue.get(issue), goalsByIssue, staleByGoal, nextSeen));
@@ -72,7 +74,7 @@ function dependencyStatus(goal, goalsByIssue, staleByGoal) {
   return 'SATISFIED';
 }
 function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal, stale, provenHeads) {
-  if (!goal.issue || hasMalformedRelations(goal)) return 'BLOCKED';
+  if (!goal.issue || hasMalformedEvidence(goal)) return 'BLOCKED';
   if (goal.duplicateOf) return 'DUPLICATE';
   if (goal.supersededBy) return 'SUPERSEDED';
   if (stale) return 'STALLED';
@@ -117,14 +119,20 @@ function selectionRationale(goal) {
 }
 function lifecycleBlockers(portfolio) {
   const blocked = new Set(['BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED','IMPLEMENTED_NEEDS_PROOF']);
-  return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer, invalidInvalidationClaims:goal.invalidInvalidationClaims, evidenceFreshness:goal.evidenceFreshness }));
+  return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer, invalidInvalidationClaims:goal.invalidInvalidationClaims, invalidApprovalRequired:goal.invalidApprovalRequired, evidenceFreshness:goal.evidenceFreshness }));
 }
 
 export function buildMissionScheduler(input = {}) {
   const publicInputInvalid = !input || typeof input !== 'object' || Array.isArray(input);
   const source = publicInputInvalid ? {} : input;
-  const nowMs = Number.isFinite(Date.parse(source.now)) ? Date.parse(source.now) : Date.now();
-  const freshnessMs = Number.isFinite(Number(source.freshnessMs)) ? Number(source.freshnessMs) : 15 * 60 * 1000;
+  const nowPresent = hasOwn(source, 'now');
+  const parsedNowMs = Date.parse(source.now);
+  const nowInvalid = nowPresent && !Number.isFinite(parsedNowMs);
+  const nowMs = nowInvalid || !nowPresent ? Date.now() : parsedNowMs;
+  const freshnessPresent = hasOwn(source, 'freshnessMs');
+  const parsedFreshnessMs = Number(source.freshnessMs);
+  const freshnessInvalid = freshnessPresent && (!Number.isFinite(parsedFreshnessMs) || parsedFreshnessMs <= 0);
+  const freshnessMs = freshnessInvalid || !freshnessPresent ? 15 * 60 * 1000 : parsedFreshnessMs;
   const goalsContainerInvalid = hasOwn(source, 'goals') && !Array.isArray(source.goals);
   const proofHeadsContainerInvalid = hasOwn(source, 'proofHeadShas') && !Array.isArray(source.proofHeadShas);
   const rawProofHeads = Array.isArray(source.proofHeadShas) ? source.proofHeadShas : [];
@@ -140,13 +148,14 @@ export function buildMissionScheduler(input = {}) {
   const claimed = goals.filter((goal) => ACTIVE_STATES.has(goal.state));
   const authoritative = []; const rejectedActiveClaims = new Set(); const contradictions = [];
   if (publicInputInvalid) contradictions.push({ code:'INVALID_PUBLIC_INPUT' });
+  if (nowInvalid || freshnessInvalid) contradictions.push({ code:'INVALID_SCHEDULER_CLOCK', invalidNow:nowInvalid, invalidFreshnessMs:freshnessInvalid });
   if (goalsContainerInvalid) contradictions.push({ code:'INVALID_GOALS_CONTAINER' });
   if (proofHeadsContainerInvalid || invalidProofHeads.length) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads });
   for (const issue of duplicateIssueIds) contradictions.push({ code:'DUPLICATE_GOAL_IDENTITY', issue });
   for (const goal of claimed) {
     if (!goal.issue) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_IDENTITY_MISSING', issue:null }); }
     else if (issueCounts.get(goal.issue) > 1) { rejectedActiveClaims.add(goal); }
-    else if (hasMalformedRelations(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_RELATION_EVIDENCE_INVALID', issue:goal.issue }); }
+    else if (hasMalformedEvidence(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (goal.duplicateOf || goal.supersededBy) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_INVALIDATED', issue:goal.issue }); }
     else if (staleByGoal.get(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'STALE_ACTIVE_EVIDENCE', issue:goal.issue }); }
     else if (!goal.activePr && !goal.branch) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_LANE_IDENTITY_MISSING', issue:goal.issue }); }
