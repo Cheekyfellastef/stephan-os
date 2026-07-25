@@ -37,8 +37,8 @@ function normalizeGoal(candidate = {}) {
   const duplicateOf = issueNumber(goal.duplicateOf);
   const supersededBy = issueNumber(goal.supersededBy);
   const invalidInvalidationClaims = [
-    ...(duplicateOfPresent && !duplicateOf ? ['duplicateOf'] : []),
-    ...(supersededByPresent && !supersededBy ? ['supersededBy'] : []),
+    ...(duplicateOfPresent && (!duplicateOf || duplicateOf === number) ? ['duplicateOf'] : []),
+    ...(supersededByPresent && (!supersededBy || supersededBy === number) ? ['supersededBy'] : []),
   ];
   const state = text(goal.state, 'UNKNOWN').toUpperCase();
   const route = ROUTES.has(goal.route) ? goal.route : 'BLOCKED_UNSAFE_OR_UNKNOWN';
@@ -91,7 +91,6 @@ function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleBy
   if (!RUNNABLE_STATES.has(goal.state)) return 'BLOCKED';
   return 'READY';
 }
-function score(goal) { return goal.priority * 10_000 + goal.criticalPathWeight * 100 + (goal.reversibility === 'HIGH' ? 20 : goal.reversibility === 'MEDIUM' ? 10 : 0) + (goal.route === 'CHATGPT_GITHUB' ? 5 : 0); }
 function compareDescendingNumber(a, b) { return a === b ? 0 : a > b ? -1 : 1; }
 function compareReady(a, b) {
   if (a.operatorPriority !== b.operatorPriority) return a.operatorPriority ? -1 : 1;
@@ -104,6 +103,16 @@ function compareReady(a, b) {
   if (reversibilityOrder) return reversibilityOrder;
   const githubFirstOrder = compareDescendingNumber(a.route === 'CHATGPT_GITHUB' ? 1 : 0, b.route === 'CHATGPT_GITHUB' ? 1 : 0);
   return githubFirstOrder || a.issue - b.issue;
+}
+function selectionRationale(goal) {
+  const criteria = [
+    goal.operatorPriority ? 'operator priority' : null,
+    `priority ${goal.priority}`,
+    `critical-path weight ${goal.criticalPathWeight}`,
+    `reversibility ${goal.reversibility}`,
+    `route ${goal.route}`,
+  ].filter(Boolean);
+  return `Selected by lexicographic scheduler order: ${criteria.join(', ')}.`;
 }
 function lifecycleBlockers(portfolio) {
   const blocked = new Set(['BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED','IMPLEMENTED_NEEDS_PROOF']);
@@ -165,7 +174,7 @@ export function buildMissionScheduler(input = {}) {
     programmeStatus,
     activeGoal:active?.issue ? `#${active.issue}` : null,
     activeLane:active?.activePr ? `PR #${active.activePr}` : active?.branch ?? null,
-    whyNow:failClosed ? `Scheduling failed closed: ${contradictions.map(({code}) => code).join(', ')}.` : active ? 'Existing fresh, identified active lane remains authoritative.' : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? `Highest eligible score ${score(action)} after dependency, priority, critical-path and route checks.` : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.',
+    whyNow:failClosed ? `Scheduling failed closed: ${contradictions.map(({code}) => code).join(', ')}.` : active ? 'Existing fresh, identified active lane remains authoritative.' : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.',
     selectedGoal:action?.issue ? `#${action.issue}` : null,
     selectedRoute:action?.route ?? null,
     selectedLifecycle:action?.lifecycle ?? null,
