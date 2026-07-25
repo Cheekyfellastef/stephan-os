@@ -11,7 +11,7 @@ function project({ linkedPr = {}, receiptId = 'execution-1568-1', projectionSour
     now: NOW,
     githubAdapter: { verified: true },
     localAdapter: { verified: true },
-    automationReceipt: { verified: true, receiptId },
+    automationReceipt: { verified: true, receiptId, state: 'completed' },
     projectionSource,
     goals: [{
       issue: '#1582',
@@ -37,11 +37,30 @@ test('merged PR truth requires commit identity', () => {
   assert.equal(bound.mergedPrCount, 1);
 });
 
-test('canonical execution receipt identifiers bind current evidence', () => {
+test('canonical execution receipt identifiers require completed receipt state', () => {
   const result = project({ receiptId: 'execution-1568-1' });
   assert.equal(result.sourceTruth.automationReceiptVerified, true);
   assert.equal(result.sourceTruth.receiptEvidenceVerified, true);
   assert.equal(result.sourceTruth.goalsCurrent, true);
+
+  const failed = buildGoalDashboardStatusProjection({
+    now: NOW,
+    githubAdapter: { verified: true },
+    localAdapter: { verified: true },
+    automationReceipt: { verified: true, receiptId: 'execution-1568-1', state: 'failed' },
+    goals: [{
+      issue: '#1582',
+      title: 'Failed receipt',
+      status: 'Blocked',
+      manualRefreshRequired: false,
+      proof: { automationReceipt: 'execution-1568-1' },
+      truth: {},
+      lastUpdated: { source: SOURCE, at: '2026-07-25T11:55:00.000Z' },
+    }],
+  });
+  assert.equal(failed.sourceTruth.automationReceiptVerified, false);
+  assert.equal(failed.sourceTruth.goalsCurrent, false);
+  assert.equal(failed.liveAutomationClaim, 'none');
 });
 
 test('concatenated non-live source labels normalize to canonical live source', () => {
