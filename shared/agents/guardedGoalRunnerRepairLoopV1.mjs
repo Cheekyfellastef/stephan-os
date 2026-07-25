@@ -33,6 +33,15 @@ export const GUARDED_REPAIR_RECEIPT_STATES = Object.freeze([
   'aborted',
 ]);
 
+function validFinding(finding) {
+  return Boolean(
+    finding
+    && typeof finding === 'object'
+    && text(finding.id ?? finding.code)
+    && BLOCKING.has(text(finding.severity).toUpperCase()),
+  );
+}
+
 export function normalizeGuardedRepairFindings(findings = []) {
   return frozen(findings
     .map((finding = {}) => ({
@@ -90,42 +99,58 @@ function matchingReceipt(receipt, order, headSha) {
   );
 }
 
+function hasTerminalReceipt(order, receipts) {
+  const receipt = latestReceipt(receipts, order.deduplicationKey);
+  return Boolean(
+    receipt
+    && receipt.repairOrderId === order.repairOrderId
+    && sha(receipt.headSha) === sha(order.headSha)
+    && TERMINAL_RECEIPTS.has(receipt.state),
+  );
+}
+
 export function evaluateGuardedRepairLoop(input = {}) {
   const repository = text(input.repository).toLowerCase();
   const issueNumber = positiveInt(input.issueNumber);
   const prNumber = positiveInt(input.prNumber);
   const baseSha = sha(input.baseSha);
-  const expectedBaseSha = sha(input.expectedBaseSha ?? input.baseSha);
+  const expectedBaseSha = sha(input.expectedBaseSha);
   const headSha = sha(input.headSha);
-  const findings = normalizeGuardedRepairFindings(input.findings);
-  const deduplicationKey = buildGuardedRepairDeduplicationKey({ repository, issueNumber, prNumber, headSha, findings });
+  const proofHeadSha = sha(input.proofHeadSha);
+  const rawFindings = input.findings;
 
-  if (input.activeLaneKnown !== true || !repository || !issueNumber || !prNumber || !baseSha || !headSha) {
-    return frozen({ verdict: 'abort-missing-proof', reason: 'Canonical lane identity and full source SHAs are required.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+  if (input.activeLaneKnown !== true || !repository || !issueNumber || !prNumber || !baseSha || !expectedBaseSha || !headSha) {
+    return frozen({ verdict: 'abort-missing-proof', reason: 'Canonical lane identity and independently evidenced full source SHAs are required.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   }
   if (!Number.isSafeInteger(Number(input.currentPrCount)) || Number(input.currentPrCount) !== 1) {
     return frozen({ verdict: 'abort-conflicting-pr', reason: 'Exactly one evidenced PR must own the active implementation lane.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   }
   if (baseSha !== expectedBaseSha) {
-    return frozen({ verdict: 'abort-stale-base', reason: 'The observed base SHA no longer matches the expected base.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+    return frozen({ verdict: 'abort-stale-base', reason: 'The observed base SHA no longer matches the independently evidenced expected base.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   }
-  if (input.proofAvailable !== true) {
-    return frozen({ verdict: 'abort-missing-proof', reason: 'Required CI, review or runtime evidence is absent.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+  if (input.proofAvailable !== true || !proofHeadSha || proofHeadSha !== headSha) {
+    return frozen({ verdict: 'abort-missing-proof', reason: 'Required CI, review or runtime evidence is absent or not bound to the evaluated exact head.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+  }
+  if (input.findingsEvidenceAvailable !== true || !Array.isArray(rawFindings) || rawFindings.some((finding) => !validFinding(finding))) {
+    return frozen({ verdict: 'abort-missing-proof', reason: 'A complete, valid exact-head blocking-finding set is required, including an evidenced empty set.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   }
   if (Number(input.repeatedBlockerCount ?? 0) > 1) {
     return frozen({ verdict: 'abort-repeated-blocker', reason: 'The same blocker exceeded the bounded repair budget.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   }
 
+  const findings = normalizeGuardedRepairFindings(rawFindings);
+  const deduplicationKey = buildGuardedRepairDeduplicationKey({ repository, issueNumber, prNumber, headSha, findings });
+
   if (!findings.length) {
-    if (input.ciGreen === true && input.mergeable === true && input.merged !== true) {
-      return frozen({ verdict: 'safe-to-merge-with-expected-head', expectedHeadSha: headSha, reason: 'The exact head is green, mergeable and finding-free.', nextAction: 'REQUEST_EXACT_HEAD_MERGE_APPROVAL' });
-    }
     if (input.merged === true && input.runtimeProofRequired === true) {
       return frozen({
         verdict: input.runtimeProofGreen === true ? 'goal-green' : 'repair-published-awaiting-ci',
         reason: input.runtimeProofGreen === true ? 'The approved exact head is merged and runtime proof is green.' : 'Post-merge runtime verification is incomplete.',
         nextAction: input.runtimeProofGreen === true ? 'COMPLETE_AND_SELECT_NEXT_GOAL' : 'WAIT_FOR_EXACT_HEAD_VERIFICATION',
       });
+    }
+    if (input.ciGreen === true && input.mergeable === true && input.merged !== true) {
+      return frozen({ verdict: 'safe-to-merge-with-expected-head', expectedHeadSha: headSha, reason: 'The exact head is green, mergeable and finding-free.', nextAction: 'REQUEST_EXACT_HEAD_MERGE_APPROVAL' });
     }
     return frozen({ verdict: 'repair-published-awaiting-ci', reason: 'No actionable finding remains, but exact-head verification or merge state is incomplete.', nextAction: 'WAIT_FOR_EXACT_HEAD_VERIFICATION' });
   }
@@ -137,7 +162,7 @@ export function evaluateGuardedRepairLoop(input = {}) {
     return frozen({ verdict: 'abort-unknown-blocker', reason: 'At least one finding is unbounded or outside the approved lane.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   }
 
-  const activeRepairOrders = input.activeRepairOrders ?? [];
+  const activeRepairOrders = Array.isArray(input.activeRepairOrders) ? input.activeRepairOrders : [];
   const existing = activeRepairOrders.find((order) => order?.deduplicationKey === deduplicationKey);
   if (existing) {
     const receipt = latestReceipt(input.receipts ?? [], deduplicationKey);
@@ -150,15 +175,10 @@ export function evaluateGuardedRepairLoop(input = {}) {
     });
   }
 
-  const staleActive = activeRepairOrders.find((order) => order?.prNumber === prNumber && order?.headSha !== headSha);
-  if (staleActive) {
-    const staleReceipt = latestReceipt(input.receipts ?? [], staleActive.deduplicationKey);
-    const staleTerminal = staleReceipt
-      && staleReceipt.repairOrderId === staleActive.repairOrderId
-      && TERMINAL_RECEIPTS.has(staleReceipt.state);
-    if (!staleTerminal) {
-      return frozen({ verdict: 'abort-stale-worker-active', reason: 'The prior-head repair must publish terminal or aborted evidence before rerouting.', repairOrder: staleActive, nextAction: 'WAIT_FOR_STALE_WORKER_ABORT' });
-    }
+  const staleActive = activeRepairOrders.filter((order) => order?.prNumber === prNumber && sha(order?.headSha) !== headSha);
+  const nonterminalStale = staleActive.find((order) => !hasTerminalReceipt(order, input.receipts ?? []));
+  if (nonterminalStale) {
+    return frozen({ verdict: 'abort-stale-worker-active', reason: 'Every prior-head repair must publish terminal or aborted evidence before rerouting.', repairOrder: nonterminalStale, nextAction: 'WAIT_FOR_STALE_WORKER_ABORT' });
   }
 
   const worker = routeGuardedRepairWorker(input.workerAvailability ?? {});
