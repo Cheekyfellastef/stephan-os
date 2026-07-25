@@ -9,6 +9,7 @@ import {
 } from './executionReceiptV1.mjs';
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
+const SAFE_WORKER_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const BLOCKING = new Set(['P0', 'P1', 'P2']);
 const ACTIVE_EXECUTION_STATES = new Set(['accepted', 'started', 'progress']);
 
@@ -22,6 +23,14 @@ function frozen(value) {
 }
 function shortHash(value) { return createHash('sha256').update(String(value)).digest('hex').slice(0, 12); }
 function exactHeadEvidence(flag, observedHead, headSha) { return flag === true && sha(observedHead) === headSha; }
+function safeWorkerId(value) { const normalized = text(value); return SAFE_WORKER_ID.test(normalized) ? normalized : null; }
+function safeSourcePath(value) {
+  const normalized = text(value).replace(/\\/g, '/');
+  if (!normalized || normalized.startsWith('/') || normalized.startsWith('//') || /^[a-z]:\//i.test(normalized)) return null;
+  if (normalized.split('/').some((part) => part === '..')) return null;
+  if (/(^|\/)(dist|build|coverage|node_modules)(\/|$)/i.test(normalized)) return null;
+  return normalized;
+}
 
 export const GUARDED_REPAIR_RECEIPT_STATES = EXECUTION_RECEIPT_STATES;
 
@@ -32,7 +41,7 @@ function validFinding(finding) {
 export function normalizeGuardedRepairFindings(findings = []) {
   return frozen(findings.map((finding = {}) => ({
     id: text(finding.id ?? finding.code), code: text(finding.code ?? finding.id), severity: text(finding.severity).toUpperCase(),
-    type: text(finding.type, 'review_finding'), message: text(finding.message), file: text(finding.file) || null,
+    type: text(finding.type, 'review_finding'), message: text(finding.message), file: safeSourcePath(finding.file) || null,
     bounded: finding.bounded === true, operatorJudgmentRequired: finding.operatorJudgmentRequired === true,
   })).filter((finding) => finding.id && BLOCKING.has(finding.severity)).sort((a, b) => a.id.localeCompare(b.id)));
 }
@@ -47,11 +56,14 @@ export function buildGuardedRepairDeduplicationKey(input = {}) {
 }
 
 export function routeGuardedRepairWorker(availability = {}) {
-  if (availability.runtimeRequired !== true && availability.githubFirstAvailable === true) return frozen({ route: 'CHATGPT_GITHUB', workerType: 'github-first', workerId: 'worker-github-first', reason: 'Bounded repository repair uses the evidenced GitHub-first default.' });
-  if (availability.runtimeRequired === true && availability.openClawAvailable === true) return frozen({ route: 'OPENCLAW_LOCAL', workerType: 'openclaw', workerId: 'worker-openclaw', reason: 'The repair requires bounded local runtime access.' });
-  if (availability.remoteCodexAvailable === true) return frozen({ route: 'REMOTE_CODEX', workerType: 'remote-codex', workerId: 'worker-remote-codex', reason: availability.runtimeRequired === true ? 'Runtime access is required and the bounded local route is unavailable.' : 'GitHub-first execution is unavailable and a qualified provider-neutral fallback is evidenced.' });
-  if (availability.openClawAvailable === true) return frozen({ route: 'OPENCLAW_LOCAL', workerType: 'openclaw', workerId: 'worker-openclaw', reason: 'GitHub-first execution is unavailable and a qualified bounded local fallback is evidenced.' });
-  return frozen({ route: 'BLOCKED_UNSAFE_OR_UNKNOWN', workerType: null, workerId: null, reason: 'No qualified evidenced worker is available.' });
+  const githubWorkerId = safeWorkerId(availability.githubFirstWorkerId);
+  const openClawWorkerId = safeWorkerId(availability.openClawWorkerId);
+  const remoteCodexWorkerId = safeWorkerId(availability.remoteCodexWorkerId);
+  if (availability.runtimeRequired !== true && availability.githubFirstAvailable === true && githubWorkerId) return frozen({ route: 'CHATGPT_GITHUB', workerType: 'github-first', workerId: githubWorkerId, reason: 'Bounded repository repair uses the evidenced GitHub-first worker instance.' });
+  if (availability.runtimeRequired === true && availability.openClawAvailable === true && openClawWorkerId) return frozen({ route: 'OPENCLAW_LOCAL', workerType: 'openclaw', workerId: openClawWorkerId, reason: 'The repair requires bounded local runtime access.' });
+  if (availability.remoteCodexAvailable === true && remoteCodexWorkerId) return frozen({ route: 'REMOTE_CODEX', workerType: 'remote-codex', workerId: remoteCodexWorkerId, reason: availability.runtimeRequired === true ? 'Runtime access is required and the bounded local route is unavailable.' : 'GitHub-first execution is unavailable and a qualified provider-neutral fallback is evidenced.' });
+  if (availability.openClawAvailable === true && openClawWorkerId) return frozen({ route: 'OPENCLAW_LOCAL', workerType: 'openclaw', workerId: openClawWorkerId, reason: 'GitHub-first execution is unavailable and a qualified bounded local fallback is evidenced.' });
+  return frozen({ route: 'BLOCKED_UNSAFE_OR_UNKNOWN', workerType: null, workerId: null, reason: 'No qualified evidenced worker instance is available.' });
 }
 
 function orderMatchesLane(order, lane) {
@@ -66,6 +78,7 @@ function receiptChain(receipts, order, nowMs) {
   const classification = classifyExecutionReceiptSet(candidates, options);
   if (classification.finalVerdict !== 'EXECUTION_RECEIPT_SET_PASS') return { valid: false, receipt: null, stale: true, reason: classification.chainErrors[0] || classification.finalVerdict };
   const ordered = [...classification.validReceipts].sort((a, b) => a.sequence - b.sequence);
+  if (ordered[0]?.state !== 'queued') return { valid: false, receipt: null, stale: true, reason: 'execution-chain-must-start-queued' };
   const receipt = ordered.at(-1) ?? null;
   if (receipt && (receipt.prNumber !== order.prNumber || receipt.workerType !== order.worker.workerType || receipt.workerId !== order.assignedWorkerId)) return { valid: false, receipt: null, stale: true, reason: 'worker-or-pr-identity-mismatch' };
   const projection = projectExecutionReceipt(receipt, { ...options, nowMs });
@@ -86,6 +99,16 @@ function completedReceiptForLane(activeRepairOrders, receipts, lane, nowMs) {
   return { completed: false, invalid: false, reason: '' };
 }
 
+function resolveAllowedFiles(input, findings) {
+  const derived = [...new Set(findings.map(({ file }) => safeSourcePath(file)).filter(Boolean))].sort();
+  if (input.authorityExpansionRequested === true) return { valid: false, files: [], reason: 'authority-expansion-requested' };
+  if (input.allowedFiles === undefined) return { valid: true, files: derived, reason: '' };
+  if (!Array.isArray(input.allowedFiles)) return { valid: false, files: [], reason: 'invalid-allowed-files' };
+  const requested = [...new Set(input.allowedFiles.map(safeSourcePath).filter(Boolean))].sort();
+  if (requested.length !== input.allowedFiles.length || requested.some((path) => !derived.includes(path))) return { valid: false, files: [], reason: 'repair-authority-expansion' };
+  return { valid: true, files: requested, reason: '' };
+}
+
 function createQueuedReceipt(order, input) {
   return createExecutionReceipt({
     repository: order.repository, issueNumber: order.issueNumber, prNumber: order.prNumber, branch: order.branch, sourceHead: order.headSha,
@@ -97,14 +120,14 @@ function createQueuedReceipt(order, input) {
   });
 }
 
-function buildOrder({ repository, issueNumber, prNumber, branch, baseSha, headSha, findings, deduplicationKey, worker, input, retryOrdinal = 1 }) {
+function buildOrder({ repository, issueNumber, prNumber, branch, baseSha, headSha, findings, deduplicationKey, worker, allowedFiles, input, retryOrdinal = 1 }) {
   const identity = shortHash(`${deduplicationKey}:retry-${retryOrdinal}`);
   const repairOrderId = `repair-${issueNumber}-${prNumber}-${headSha.slice(0, 12)}-${identity}`;
   return frozen({
     schemaVersion: 'stephanos.guarded-repair-order.v1', repairOrderId, repository, issueNumber, prNumber, branch, baseSha, headSha,
     findingIds: findings.map(({ id }) => id), findings, deduplicationKey, worker, assignedWorkerId: worker.workerId,
     retryOrdinal, executionId: `${repairOrderId}-execution`, leaseKey: `${repairOrderId}-lease`,
-    allowedFiles: [...new Set((input.allowedFiles ?? findings.map(({ file }) => file)).filter(Boolean))].sort(),
+    allowedFiles,
     allowedTests: [...new Set((input.allowedTests ?? []).map(String).filter(Boolean))].sort(),
     mergePolicy: { automaticApproval: false, expectedHeadSha: headSha },
     abortConditions: ['head_changed', 'base_changed', 'conflicting_pr', 'unknown_blocker', 'operator_judgment_required', 'authority_expansion_requested'],
@@ -150,6 +173,13 @@ export function evaluateGuardedRepairLoop(rawInput = {}) {
 
   if (findings.some(({ operatorJudgmentRequired }) => operatorJudgmentRequired)) return frozen({ verdict: 'abort-operator-judgment-required', reason: 'A blocking finding requires operator judgment.', nextAction: 'REQUEST_OPERATOR_DECISION' });
   if (findings.some(({ bounded }) => !bounded)) return frozen({ verdict: 'abort-unknown-blocker', reason: 'At least one finding is unbounded or outside the approved lane.', nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+  const authority = resolveAllowedFiles(input, findings);
+  if (!authority.valid) return frozen({ verdict: 'abort-authority-expansion', reason: authority.reason, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+
+  for (const order of activeRepairOrders.filter((entry) => entry?.prNumber === prNumber && sha(entry?.headSha) === headSha && !orderMatchesLane(entry, lane))) {
+    const chain = receiptChain(receipts, order, nowMs);
+    if (!chain.valid || !chain.receipt || !EXECUTION_RECEIPT_TERMINAL_STATES.includes(chain.receipt.state)) return frozen({ verdict: 'abort-conflicting-repair-order', reason: chain.reason || 'A same-PR exact-head execution has contradictory lane identity.', repairOrder: order, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+  }
 
   const sameHead = activeRepairOrders.filter((order) => orderMatchesLane(order, lane));
   for (const order of sameHead.filter((entry) => entry.deduplicationKey !== deduplicationKey)) {
@@ -158,22 +188,18 @@ export function evaluateGuardedRepairLoop(rawInput = {}) {
     if (!chain.receipt || !EXECUTION_RECEIPT_TERMINAL_STATES.includes(chain.receipt.state) || chain.stale) return frozen({ verdict: 'abort-active-finding-set-change', reason: 'A nonterminal or stale execution already owns this lane and exact head.', repairOrder: order, nextAction: 'WAIT_FOR_ACTIVE_WORKER_RECONCILIATION' });
   }
 
-  const existing = sameHead.find((order) => order.deduplicationKey === deduplicationKey);
-  if (existing) {
-    const chain = receiptChain(receipts, existing, nowMs);
-    if (!chain.valid) return frozen({ verdict: 'abort-invalid-canonical-receipt-chain', reason: chain.reason, repairOrder: existing, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
-    if (chain.receipt && ACTIVE_EXECUTION_STATES.has(chain.receipt.state) && !chain.stale) return frozen({ verdict: 'repair-already-active', reason: 'Equivalent repair has fresh canonical active evidence.', repairOrder: existing, executionReceipt: chain.receipt, nextAction: 'OBSERVE_EXISTING_REPAIR' });
-    if (chain.receipt && ACTIVE_EXECUTION_STATES.has(chain.receipt.state) && chain.stale) return frozen({ verdict: 'repair-stale', reason: 'The active execution heartbeat expired and must terminate before retry.', repairOrder: existing, executionReceipt: chain.receipt, nextAction: 'WAIT_FOR_STALE_WORKER_ABORT' });
-    if (chain.receipt?.state === 'stalled') return frozen({ verdict: 'repair-stalled', reason: chain.receipt.blocker, repairOrder: existing, executionReceipt: chain.receipt, nextAction: chain.receipt.operatorActionRequired ? 'REQUEST_OPERATOR_DECISION' : 'OBSERVE_EXISTING_REPAIR' });
-    const worker = routeGuardedRepairWorker(input.workerAvailability ?? {});
-    if (worker.route === 'BLOCKED_UNSAFE_OR_UNKNOWN') return frozen({ verdict: 'abort-unknown-blocker', reason: worker.reason, worker, repairOrder: existing, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
-    if (chain.receipt && EXECUTION_RECEIPT_TERMINAL_STATES.includes(chain.receipt.state)) {
-      const retryOrdinal = Math.max(2, ...sameHead.filter((order) => order.deduplicationKey === deduplicationKey).map((order) => Number(order.retryOrdinal) + 1 || 2));
-      const retryOrder = buildOrder({ repository, issueNumber, prNumber, branch, baseSha, headSha, findings, deduplicationKey, worker, input, retryOrdinal });
-      return frozen({ verdict: 'known-blocker-repair-admitted', reason: 'Terminal execution requires a distinct retry execution and lease.', repairOrder: retryOrder, nextReceipt: createQueuedReceipt(retryOrder, input), nextAction: 'PERSIST_CANONICAL_RECEIPT_THEN_ROUTE_WORKER' });
-    }
-    return frozen({ verdict: 'known-blocker-repair-admitted', reason: 'The order exists without active execution evidence; route its assigned worker only after persisting the queued receipt.', repairOrder: existing, nextAction: 'ROUTE_OR_FAIL_OVER_WORKER' });
-  }
+  const equivalentOrders = sameHead.filter((order) => order.deduplicationKey === deduplicationKey);
+  const chains = equivalentOrders.map((order) => ({ order, chain: receiptChain(receipts, order, nowMs) }));
+  const invalid = chains.find(({ chain }) => !chain.valid);
+  if (invalid) return frozen({ verdict: 'abort-invalid-canonical-receipt-chain', reason: invalid.chain.reason, repairOrder: invalid.order, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+  const active = chains.find(({ chain }) => chain.receipt && ACTIVE_EXECUTION_STATES.has(chain.receipt.state) && !chain.stale);
+  if (active) return frozen({ verdict: 'repair-already-active', reason: 'Equivalent repair has fresh canonical active evidence.', repairOrder: active.order, executionReceipt: active.chain.receipt, nextAction: 'OBSERVE_EXISTING_REPAIR' });
+  const stale = chains.find(({ chain }) => chain.receipt && ACTIVE_EXECUTION_STATES.has(chain.receipt.state) && chain.stale);
+  if (stale) return frozen({ verdict: 'repair-stale', reason: 'The active execution heartbeat expired and must terminate before retry.', repairOrder: stale.order, executionReceipt: stale.chain.receipt, nextAction: 'WAIT_FOR_STALE_WORKER_ABORT' });
+  const stalled = chains.find(({ chain }) => chain.receipt?.state === 'stalled');
+  if (stalled) return frozen({ verdict: 'repair-stalled', reason: stalled.chain.receipt.blocker, repairOrder: stalled.order, executionReceipt: stalled.chain.receipt, nextAction: stalled.chain.receipt.operatorActionRequired ? 'REQUEST_OPERATOR_DECISION' : 'OBSERVE_EXISTING_REPAIR' });
+  const withoutReceipt = chains.filter(({ chain }) => !chain.receipt).sort((a, b) => Number(b.order.retryOrdinal ?? 1) - Number(a.order.retryOrdinal ?? 1))[0];
+  if (withoutReceipt) return frozen({ verdict: 'known-blocker-repair-admitted', reason: 'The newest equivalent order exists without active execution evidence; route its assigned worker only after persisting the queued receipt.', repairOrder: withoutReceipt.order, nextAction: 'ROUTE_OR_FAIL_OVER_WORKER' });
 
   for (const order of activeRepairOrders.filter((entry) => entry?.prNumber === prNumber && sha(entry?.headSha) !== headSha)) {
     const chain = receiptChain(receipts, order, nowMs);
@@ -182,9 +208,10 @@ export function evaluateGuardedRepairLoop(rawInput = {}) {
 
   const worker = routeGuardedRepairWorker(input.workerAvailability ?? {});
   if (worker.route === 'BLOCKED_UNSAFE_OR_UNKNOWN') return frozen({ verdict: 'abort-unknown-blocker', reason: worker.reason, worker, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
-  const repairOrder = buildOrder({ repository, issueNumber, prNumber, branch, baseSha, headSha, findings, deduplicationKey, worker, input });
+  const retryOrdinal = equivalentOrders.length ? Math.max(...equivalentOrders.map((order) => Number(order.retryOrdinal) || 1)) + 1 : 1;
+  const repairOrder = buildOrder({ repository, issueNumber, prNumber, branch, baseSha, headSha, findings, deduplicationKey, worker, allowedFiles: authority.files, input, retryOrdinal });
   const nextReceipt = createQueuedReceipt(repairOrder, input);
   const receiptValidation = validateExecutionReceipt(nextReceipt, { repository, issueNumber, branch, expectedHead: headSha, executionId: repairOrder.executionId, leaseKey: repairOrder.leaseKey });
   if (!receiptValidation.valid) return frozen({ verdict: 'abort-missing-canonical-receipt', reason: receiptValidation.refusalReason, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
-  return frozen({ verdict: 'known-blocker-repair-admitted', reason: 'A bounded exact-head blocker was admitted with a distinct canonical execution identity.', repairOrder, nextReceipt, nextAction: 'PERSIST_CANONICAL_RECEIPT_THEN_ROUTE_WORKER' });
+  return frozen({ verdict: 'known-blocker-repair-admitted', reason: retryOrdinal > 1 ? 'All prior equivalent executions are terminal; a distinct retry execution and lease were admitted.' : 'A bounded exact-head blocker was admitted with a distinct canonical execution identity.', repairOrder, nextReceipt, nextAction: 'PERSIST_CANONICAL_RECEIPT_THEN_ROUTE_WORKER' });
 }
