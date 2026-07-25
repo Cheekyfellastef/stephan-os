@@ -4,6 +4,7 @@ import { buildMissionScheduler } from './missionScheduler.mjs';
 
 const NOW = '2026-07-24T21:00:00.000Z';
 const fresh = '2026-07-24T20:55:00.000Z';
+const PROVEN_HEAD = '1111111111111111111111111111111111111111';
 function goal(issue, overrides = {}) {
   return { issue, title:`Goal ${issue}`, state:'QUEUED', prerequisites:[], priority:1, criticalPathWeight:1, reversibility:'HIGH', route:'CHATGPT_GITHUB', evidenceAt:fresh, ...overrides };
 }
@@ -25,7 +26,7 @@ test('omitted goals remains a valid empty programme', () => {
 });
 
 test('merge-ready work is surfaced in the top-level projection and receipt', () => {
-  const result = buildMissionScheduler({ now:NOW, goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601})] });
+  const result = buildMissionScheduler({ now:NOW, proofHeadShas:[PROVEN_HEAD], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD})] });
   assert.equal(result.programmeStatus, 'MERGE_READY');
   assert.equal(result.selectedGoal, '#1556');
   assert.equal(result.selectedLifecycle, 'MERGE_READY');
