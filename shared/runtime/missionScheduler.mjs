@@ -84,11 +84,11 @@ function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleBy
   const dependencies = dependencyStatus(goal, goalsByIssue, staleByGoal);
   if (dependencies === 'INVALID' || dependencies === 'MISSING') return 'BLOCKED';
   if (dependencies === 'INCOMPLETE') return 'WAITING_FOR_DEPENDENCY';
+  if (goal.route === 'WAITING_FOR_EXTERNAL_CONDITION') return 'WAITING_FOR_EXTERNAL_CONDITION';
+  if (goal.route === 'BLOCKED_UNSAFE_OR_UNKNOWN') return 'BLOCKED';
   if (activeGoals.has(goal)) return 'ACTIVE';
   if (TERMINAL_STATES.has(goal.state)) return goal.state === 'COMPLETE' ? 'CLOSE_READY' : goal.state;
   if (goal.approvalRequired || goal.route === 'OPERATOR_APPROVAL' || goal.state === 'APPROVAL_REQUIRED') return 'APPROVAL_REQUIRED';
-  if (goal.route === 'WAITING_FOR_EXTERNAL_CONDITION') return 'WAITING_FOR_EXTERNAL_CONDITION';
-  if (goal.route === 'BLOCKED_UNSAFE_OR_UNKNOWN') return 'BLOCKED';
   if (goal.state === 'IMPLEMENTED') return goal.proofState === 'PASS' && goal.activePr ? 'MERGE_READY' : 'IMPLEMENTED_NEEDS_PROOF';
   if (!RUNNABLE_STATES.has(goal.state)) return 'BLOCKED';
   return 'READY';
