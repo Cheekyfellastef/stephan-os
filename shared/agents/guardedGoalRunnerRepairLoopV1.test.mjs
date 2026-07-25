@@ -108,6 +108,25 @@ test('same-head finding-set changes cannot create a concurrent repair', () => {
   assert.notEqual(reconciled.repairOrder.deduplicationKey, admitted.repairOrder.deduplicationKey);
 });
 
+test('returning to an old finding set cannot reroute while another same-head repair is active', () => {
+  const first = evaluateGuardedRepairLoop(input());
+  const changedFindings = [...FINDINGS, { id: 'P1-new-review', severity: 'P1', bounded: true, file: 'shared/agents/guardedGoalRunnerRepairLoopV1.mjs' }];
+  const second = evaluateGuardedRepairLoop(input({
+    findings: changedFindings,
+    activeRepairOrders: [first.repairOrder],
+    receipts: [{ ...first.nextReceipt, state: 'aborted' }],
+  }));
+  const reverted = evaluateGuardedRepairLoop(input({
+    activeRepairOrders: [first.repairOrder, second.repairOrder],
+    receipts: [
+      { ...first.nextReceipt, state: 'complete' },
+      { ...second.nextReceipt, state: 'repair_started', workerTaskId: 'task-second' },
+    ],
+  }));
+  assert.equal(reverted.verdict, 'abort-active-finding-set-change');
+  assert.equal(reverted.repairOrder.deduplicationKey, second.repairOrder.deduplicationKey);
+});
+
 test('head change waits for every prior worker terminal receipt before rerouting', () => {
   const old = evaluateGuardedRepairLoop(input());
   const olderHead = 'e'.repeat(40);
@@ -181,18 +200,22 @@ test('runtime proof cannot bypass merge approval and is evaluated only after mer
   assert.equal(preMerge.verdict, 'safe-to-merge-with-expected-head');
   assert.equal(preMerge.nextAction, 'REQUEST_EXACT_HEAD_MERGE_APPROVAL');
 
-  const waiting = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: true, runtimeProofGreen: false }));
+  const noCi = evaluateGuardedRepairLoop(input({ findings: [], merged: true, ciGreen: false, runtimeProofRequired: true, runtimeProofGreen: true }));
+  assert.equal(noCi.verdict, 'repair-published-awaiting-ci');
+  const waiting = evaluateGuardedRepairLoop(input({ findings: [], merged: true, ciGreen: true, runtimeProofRequired: true, runtimeProofGreen: false }));
   assert.equal(waiting.verdict, 'repair-published-awaiting-ci');
-  const green = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: true, runtimeProofGreen: true }));
+  const green = evaluateGuardedRepairLoop(input({ findings: [], merged: true, ciGreen: true, runtimeProofRequired: true, runtimeProofGreen: true }));
   assert.equal(green.verdict, 'goal-green');
   assert.equal(green.nextAction, 'COMPLETE_AND_SELECT_NEXT_GOAL');
 });
 
-test('merged source-only repair completes when exact-head CI is green', () => {
+test('merged source-only repair completes only with explicit source-only classification', () => {
   const green = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: false, ciGreen: true }));
   assert.equal(green.verdict, 'goal-green');
   assert.equal(green.nextAction, 'COMPLETE_AND_SELECT_NEXT_GOAL');
 
   const waiting = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: false, ciGreen: false }));
   assert.equal(waiting.verdict, 'repair-published-awaiting-ci');
+  const unknown = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: undefined, ciGreen: true }));
+  assert.equal(unknown.verdict, 'repair-published-awaiting-ci');
 });
