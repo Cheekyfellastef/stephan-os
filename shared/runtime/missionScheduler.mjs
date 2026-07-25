@@ -59,7 +59,8 @@ function detectCycles(goalsByIssue) {
   for (const issue of goalsByIssue.keys()) visit(issue);
   return cycles;
 }
-function hasMalformedEvidence(goal) { return goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length || goal.invalidApprovalRequired; }
+function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
+function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired; }
 function dependencyComplete(goal, goalsByIssue, staleByGoal, seen = new Set()) {
   const finalGateBlocked = goal?.approvalRequired === true || goal?.route === 'OPERATOR_APPROVAL' || goal?.route === 'WAITING_FOR_EXTERNAL_CONDITION' || goal?.route === 'BLOCKED_UNSAFE_OR_UNKNOWN';
   if (!goal || !goal.issue || hasMalformedEvidence(goal) || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || finalGateBlocked || !COMPLETION_STATES.has(goal.state)) return false;
@@ -155,7 +156,8 @@ export function buildMissionScheduler(input = {}) {
   for (const goal of claimed) {
     if (!goal.issue) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_IDENTITY_MISSING', issue:null }); }
     else if (issueCounts.get(goal.issue) > 1) { rejectedActiveClaims.add(goal); }
-    else if (hasMalformedEvidence(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_EVIDENCE_INVALID', issue:goal.issue }); }
+    else if (goal.invalidApprovalRequired) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_APPROVAL_GATE_INVALID', issue:goal.issue }); }
+    else if (hasMalformedRelations(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_RELATION_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (goal.duplicateOf || goal.supersededBy) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_INVALIDATED', issue:goal.issue }); }
     else if (staleByGoal.get(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'STALE_ACTIVE_EVIDENCE', issue:goal.issue }); }
     else if (!goal.activePr && !goal.branch) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_LANE_IDENTITY_MISSING', issue:goal.issue }); }
