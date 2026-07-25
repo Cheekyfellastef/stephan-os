@@ -59,7 +59,8 @@ function detectCycles(goalsByIssue) {
 }
 function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
 function dependencyComplete(goal, goalsByIssue, staleByGoal, seen = new Set()) {
-  if (!goal || !goal.issue || hasMalformedRelations(goal) || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || !COMPLETION_STATES.has(goal.state)) return false;
+  const finalGateBlocked = goal?.approvalRequired === true || goal?.route === 'OPERATOR_APPROVAL' || goal?.route === 'WAITING_FOR_EXTERNAL_CONDITION' || goal?.route === 'BLOCKED_UNSAFE_OR_UNKNOWN';
+  if (!goal || !goal.issue || hasMalformedRelations(goal) || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || finalGateBlocked || !COMPLETION_STATES.has(goal.state)) return false;
   if (seen.has(goal.issue)) return false;
   const nextSeen = new Set(seen).add(goal.issue);
   return goal.prerequisites.every((issue) => dependencyComplete(goalsByIssue.get(issue), goalsByIssue, staleByGoal, nextSeen));
