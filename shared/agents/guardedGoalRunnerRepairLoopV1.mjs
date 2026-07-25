@@ -64,8 +64,9 @@ export function routeGuardedRepairWorker(availability = {}) {
   const remoteCodexWorkerId = safeWorkerId(availability.remoteCodexWorkerId);
   if (availability.runtimeRequired !== true && availability.githubFirstAvailable === true && githubWorkerId) return frozen({ route: 'CHATGPT_GITHUB', workerType: 'github-first', workerId: githubWorkerId, reason: 'Bounded repository repair uses the evidenced GitHub-first worker instance.' });
   if (availability.runtimeRequired === true && availability.openClawAvailable === true && openClawWorkerId) return frozen({ route: 'OPENCLAW_LOCAL', workerType: 'openclaw', workerId: openClawWorkerId, reason: 'The repair requires bounded local runtime access.' });
-  if (availability.remoteCodexAvailable === true && remoteCodexWorkerId) return frozen({ route: 'REMOTE_CODEX', workerType: 'remote-codex', workerId: remoteCodexWorkerId, reason: availability.runtimeRequired === true ? 'Runtime access is required and the bounded local route is unavailable.' : 'GitHub-first execution is unavailable and a qualified provider-neutral fallback is evidenced.' });
-  if (availability.openClawAvailable === true && openClawWorkerId) return frozen({ route: 'OPENCLAW_LOCAL', workerType: 'openclaw', workerId: openClawWorkerId, reason: 'GitHub-first execution is unavailable and a qualified bounded local fallback is evidenced.' });
+  if (availability.runtimeRequired === true && availability.remoteCodexAvailable === true && availability.remoteCodexRuntimeCapable === true && availability.remoteCodexSurfaceProofAvailable === true && remoteCodexWorkerId) return frozen({ route: 'REMOTE_CODEX', workerType: 'remote-codex', workerId: remoteCodexWorkerId, reason: 'The bounded local route is unavailable and a fresh runtime-capable Remote Codex execution-surface proof is evidenced.' });
+  if (availability.runtimeRequired !== true && availability.remoteCodexAvailable === true && remoteCodexWorkerId) return frozen({ route: 'REMOTE_CODEX', workerType: 'remote-codex', workerId: remoteCodexWorkerId, reason: 'GitHub-first execution is unavailable and a qualified provider-neutral fallback is evidenced.' });
+  if (availability.runtimeRequired !== true && availability.openClawAvailable === true && openClawWorkerId) return frozen({ route: 'OPENCLAW_LOCAL', workerType: 'openclaw', workerId: openClawWorkerId, reason: 'GitHub-first execution is unavailable and a qualified bounded local fallback is evidenced.' });
   return frozen({ route: 'BLOCKED_UNSAFE_OR_UNKNOWN', workerType: null, workerId: null, reason: 'No qualified evidenced worker instance is available.' });
 }
 
@@ -96,16 +97,19 @@ function terminalTruth(order, receipts, nowMs) {
 function reconcileLaneCompletion(activeRepairOrders, receipts, lane, nowMs) {
   const matching = activeRepairOrders.filter((entry) => orderMatchesLane(entry, lane));
   if (!matching.length) return { completed: false, invalid: false, reason: '' };
-  let completed = false;
+  const reconciled = [];
   for (const order of matching) {
     const chain = receiptChain(receipts, order, nowMs);
     if (!chain.valid) return { completed: false, invalid: true, reason: chain.reason };
     if (!chain.receipt) return { completed: false, invalid: false, reason: 'missing-receipt' };
     if (chain.stale && !EXECUTION_RECEIPT_TERMINAL_STATES.includes(chain.receipt.state)) return { completed: false, invalid: false, reason: 'stale-active-execution' };
     if (!EXECUTION_RECEIPT_TERMINAL_STATES.includes(chain.receipt.state)) return { completed: false, invalid: false, reason: 'nonterminal-execution-owns-lane' };
-    if (chain.receipt.state === 'completed') completed = true;
+    reconciled.push({ order, receipt: chain.receipt });
   }
-  return { completed, invalid: false, reason: completed ? '' : 'no-completed-execution' };
+  reconciled.sort((a, b) => Number(a.order.retryOrdinal ?? 1) - Number(b.order.retryOrdinal ?? 1));
+  const authoritative = reconciled.at(-1);
+  const completed = authoritative?.receipt.state === 'completed';
+  return { completed, invalid: false, reason: completed ? '' : `latest-retry-${authoritative?.receipt.state || 'missing'}` };
 }
 
 function resolveAllowedFiles(input, findings) {
@@ -200,12 +204,17 @@ export function evaluateGuardedRepairLoop(rawInput = {}) {
   if (invalid) return frozen({ verdict: 'abort-invalid-canonical-receipt-chain', reason: invalid.chain.reason, repairOrder: invalid.order, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
   const active = chains.find(({ chain }) => chain.receipt && ACTIVE_EXECUTION_STATES.has(chain.receipt.state) && !chain.stale);
   if (active) return frozen({ verdict: 'repair-already-active', reason: 'Equivalent repair has fresh canonical ownership evidence.', repairOrder: active.order, executionReceipt: active.chain.receipt, nextAction: 'OBSERVE_EXISTING_REPAIR' });
-  const stale = chains.find(({ chain }) => chain.receipt && ACTIVE_EXECUTION_STATES.has(chain.receipt.state) && chain.stale);
+  const stale = chains.find(({ chain }) => chain.receipt && (ACTIVE_EXECUTION_STATES.has(chain.receipt.state) || chain.receipt.state === 'stalled') && chain.stale);
   if (stale) return frozen({ verdict: 'repair-stale', reason: 'The owning execution heartbeat expired and must terminate before retry.', repairOrder: stale.order, executionReceipt: stale.chain.receipt, nextAction: 'WAIT_FOR_STALE_WORKER_ABORT' });
   const stalled = chains.find(({ chain }) => chain.receipt?.state === 'stalled');
   if (stalled) return frozen({ verdict: 'repair-stalled', reason: stalled.chain.receipt.blocker, repairOrder: stalled.order, executionReceipt: stalled.chain.receipt, nextAction: stalled.chain.receipt.operatorActionRequired ? 'REQUEST_OPERATOR_DECISION' : 'OBSERVE_EXISTING_REPAIR' });
   const withoutReceipt = chains.filter(({ chain }) => !chain.receipt).sort((a, b) => Number(b.order.retryOrdinal ?? 1) - Number(a.order.retryOrdinal ?? 1))[0];
-  if (withoutReceipt) return frozen({ verdict: 'known-blocker-repair-admitted', reason: 'The newest equivalent order exists without execution evidence; persist its queued receipt before routing.', repairOrder: withoutReceipt.order, nextAction: 'ROUTE_OR_FAIL_OVER_WORKER' });
+  if (withoutReceipt) {
+    const nextReceipt = createQueuedReceipt(withoutReceipt.order, input);
+    const receiptValidation = validateExecutionReceipt(nextReceipt, { repository, issueNumber, branch, expectedHead: headSha, executionId: withoutReceipt.order.executionId, leaseKey: withoutReceipt.order.leaseKey });
+    if (!receiptValidation.valid) return frozen({ verdict: 'abort-missing-canonical-receipt', reason: receiptValidation.refusalReason, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+    return frozen({ verdict: 'known-blocker-repair-admitted', reason: 'The newest equivalent order exists without execution evidence; its canonical queued receipt must be persisted before routing.', repairOrder: withoutReceipt.order, nextReceipt, nextAction: 'PERSIST_CANONICAL_RECEIPT_THEN_ROUTE_WORKER' });
+  }
 
   for (const order of activeRepairOrders.filter((entry) => entry?.prNumber === prNumber && sha(entry?.headSha) !== headSha)) {
     const chain = receiptChain(receipts, order, nowMs);
