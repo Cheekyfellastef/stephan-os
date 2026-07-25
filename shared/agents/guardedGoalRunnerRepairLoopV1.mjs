@@ -149,6 +149,9 @@ export function evaluateGuardedRepairLoop(input = {}) {
         nextAction: input.runtimeProofGreen === true ? 'COMPLETE_AND_SELECT_NEXT_GOAL' : 'WAIT_FOR_EXACT_HEAD_VERIFICATION',
       });
     }
+    if (input.merged === true && input.runtimeProofRequired !== true && input.ciGreen === true) {
+      return frozen({ verdict: 'goal-green', reason: 'The approved exact head is merged, exact-head CI is green and no runtime proof is required.', nextAction: 'COMPLETE_AND_SELECT_NEXT_GOAL' });
+    }
     if (input.ciGreen === true && input.mergeable === true && input.merged !== true) {
       return frozen({ verdict: 'safe-to-merge-with-expected-head', expectedHeadSha: headSha, reason: 'The exact head is green, mergeable and finding-free.', nextAction: 'REQUEST_EXACT_HEAD_MERGE_APPROVAL' });
     }
@@ -163,20 +166,43 @@ export function evaluateGuardedRepairLoop(input = {}) {
   }
 
   const activeRepairOrders = Array.isArray(input.activeRepairOrders) ? input.activeRepairOrders : [];
+  const receipts = Array.isArray(input.receipts) ? input.receipts : [];
   const existing = activeRepairOrders.find((order) => order?.deduplicationKey === deduplicationKey);
   if (existing) {
-    const receipt = latestReceipt(input.receipts ?? [], deduplicationKey);
+    const receipt = latestReceipt(receipts, deduplicationKey);
     const executionEvidenced = matchingReceipt(receipt, existing, headSha) && ACTIVE_RECEIPTS.has(receipt.state);
+    if (executionEvidenced) {
+      return frozen({
+        verdict: 'repair-already-active',
+        reason: 'An equivalent repair has accepted or started evidence bound to this order and head.',
+        repairOrder: existing,
+        nextAction: 'OBSERVE_EXISTING_REPAIR',
+      });
+    }
+    const refreshedWorker = routeGuardedRepairWorker(input.workerAvailability ?? {});
+    if (refreshedWorker.route === 'BLOCKED_UNSAFE_OR_UNKNOWN') {
+      return frozen({ verdict: 'abort-unknown-blocker', reason: refreshedWorker.reason, worker: refreshedWorker, repairOrder: existing, nextAction: 'STOP_AND_SURFACE_BLOCKER' });
+    }
     return frozen({
-      verdict: executionEvidenced ? 'repair-already-active' : 'known-blocker-repair-admitted',
-      reason: executionEvidenced ? 'An equivalent repair has accepted or started evidence bound to this order and head.' : 'The order exists, but worker execution is not yet evidenced.',
-      repairOrder: existing,
-      nextAction: executionEvidenced ? 'OBSERVE_EXISTING_REPAIR' : 'ROUTE_OR_FAIL_OVER_WORKER',
+      verdict: 'known-blocker-repair-admitted',
+      reason: 'The order exists without execution evidence; its worker route has been refreshed from current availability truth.',
+      repairOrder: frozen({ ...existing, worker: refreshedWorker }),
+      nextAction: 'ROUTE_OR_FAIL_OVER_WORKER',
     });
   }
 
+  const sameHeadConflicts = activeRepairOrders.filter((order) => (
+    order?.prNumber === prNumber
+    && sha(order?.headSha) === headSha
+    && order?.deduplicationKey !== deduplicationKey
+  ));
+  const nonterminalSameHead = sameHeadConflicts.find((order) => !hasTerminalReceipt(order, receipts));
+  if (nonterminalSameHead) {
+    return frozen({ verdict: 'abort-active-finding-set-change', reason: 'A nonterminal repair already owns this PR and exact head; reconcile or terminate it before admitting a changed finding set.', repairOrder: nonterminalSameHead, nextAction: 'WAIT_FOR_ACTIVE_WORKER_RECONCILIATION' });
+  }
+
   const staleActive = activeRepairOrders.filter((order) => order?.prNumber === prNumber && sha(order?.headSha) !== headSha);
-  const nonterminalStale = staleActive.find((order) => !hasTerminalReceipt(order, input.receipts ?? []));
+  const nonterminalStale = staleActive.find((order) => !hasTerminalReceipt(order, receipts));
   if (nonterminalStale) {
     return frozen({ verdict: 'abort-stale-worker-active', reason: 'Every prior-head repair must publish terminal or aborted evidence before rerouting.', repairOrder: nonterminalStale, nextAction: 'WAIT_FOR_STALE_WORKER_ABORT' });
   }
