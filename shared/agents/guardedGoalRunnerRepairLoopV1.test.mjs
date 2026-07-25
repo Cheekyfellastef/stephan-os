@@ -76,6 +76,38 @@ test('equivalent order is not duplicated and requires receipt binding to order a
   assert.equal(started.nextAction, 'OBSERVE_EXISTING_REPAIR');
 });
 
+test('existing order refreshes its worker route when current availability requires failover', () => {
+  const admitted = evaluateGuardedRepairLoop(input());
+  const failedOver = evaluateGuardedRepairLoop(input({
+    activeRepairOrders: [admitted.repairOrder],
+    receipts: [admitted.nextReceipt],
+    workerAvailability: { githubFirstAvailable: false, remoteCodexAvailable: true },
+  }));
+  assert.equal(failedOver.verdict, 'known-blocker-repair-admitted');
+  assert.equal(failedOver.nextAction, 'ROUTE_OR_FAIL_OVER_WORKER');
+  assert.equal(failedOver.repairOrder.worker.route, 'REMOTE_CODEX');
+});
+
+test('same-head finding-set changes cannot create a concurrent repair', () => {
+  const admitted = evaluateGuardedRepairLoop(input());
+  const changedFindings = [...FINDINGS, { id: 'P1-new-review', severity: 'P1', bounded: true, file: 'shared/agents/guardedGoalRunnerRepairLoopV1.mjs' }];
+  const blocked = evaluateGuardedRepairLoop(input({
+    findings: changedFindings,
+    activeRepairOrders: [admitted.repairOrder],
+    receipts: [{ ...admitted.nextReceipt, state: 'repair_started', workerTaskId: 'task-1582' }],
+  }));
+  assert.equal(blocked.verdict, 'abort-active-finding-set-change');
+  assert.equal(blocked.nextAction, 'WAIT_FOR_ACTIVE_WORKER_RECONCILIATION');
+
+  const reconciled = evaluateGuardedRepairLoop(input({
+    findings: changedFindings,
+    activeRepairOrders: [admitted.repairOrder],
+    receipts: [{ ...admitted.nextReceipt, state: 'aborted' }],
+  }));
+  assert.equal(reconciled.verdict, 'known-blocker-repair-admitted');
+  assert.notEqual(reconciled.repairOrder.deduplicationKey, admitted.repairOrder.deduplicationKey);
+});
+
 test('head change waits for every prior worker terminal receipt before rerouting', () => {
   const old = evaluateGuardedRepairLoop(input());
   const olderHead = 'e'.repeat(40);
@@ -154,4 +186,13 @@ test('runtime proof cannot bypass merge approval and is evaluated only after mer
   const green = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: true, runtimeProofGreen: true }));
   assert.equal(green.verdict, 'goal-green');
   assert.equal(green.nextAction, 'COMPLETE_AND_SELECT_NEXT_GOAL');
+});
+
+test('merged source-only repair completes when exact-head CI is green', () => {
+  const green = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: false, ciGreen: true }));
+  assert.equal(green.verdict, 'goal-green');
+  assert.equal(green.nextAction, 'COMPLETE_AND_SELECT_NEXT_GOAL');
+
+  const waiting = evaluateGuardedRepairLoop(input({ findings: [], merged: true, runtimeProofRequired: false, ciGreen: false }));
+  assert.equal(waiting.verdict, 'repair-published-awaiting-ci');
 });
