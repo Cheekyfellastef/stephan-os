@@ -70,3 +70,20 @@ test('whyNow reports the lexicographic comparator rather than an obsolete weight
   assert.match(result.whyNow, /lexicographic scheduler order/i);
   assert.doesNotMatch(result.whyNow, /highest eligible score/i);
 });
+
+test('completed prerequisites remain gated by approval and non-executable routes', () => {
+  const gates = [
+    { approvalRequired:true },
+    { route:'OPERATOR_APPROVAL' },
+    { route:'WAITING_FOR_EXTERNAL_CONDITION' },
+    { route:'BLOCKED_UNSAFE_OR_UNKNOWN' },
+  ];
+  for (const gate of gates) {
+    const result = buildMissionScheduler({ now:NOW, goals:[
+      goal(1,{ state:'COMPLETE', ...gate }),
+      goal(2,{ prerequisites:[1] }),
+    ] });
+    assert.equal(result.portfolio[1].lifecycle, 'WAITING_FOR_DEPENDENCY');
+    assert.notEqual(result.selectedGoal, '#2');
+  }
+});
