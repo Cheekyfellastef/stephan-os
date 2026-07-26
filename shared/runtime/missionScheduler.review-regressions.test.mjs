@@ -26,8 +26,13 @@ test('omitted goals remains a valid empty programme', () => {
   assert.equal(result.programmeStatus, 'WAITING');
 });
 
-test('merge-ready work is surfaced in the top-level projection and receipt', () => {
-  const result = buildMissionScheduler({ now:NOW, proofHeadShas:[PROVEN_HEAD], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD})] });
+test('exact-head proof requires exact-head operator approval before merge readiness', () => {
+  const awaiting = buildMissionScheduler({ now:NOW, proofHeadShas:[PROVEN_HEAD], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD})] });
+  assert.equal(awaiting.programmeStatus, 'APPROVAL_REQUIRED');
+  assert.equal(awaiting.operatorAction, 'OPERATOR_APPROVAL_REQUIRED');
+  assert.equal(awaiting.portfolio[0].lifecycle, 'APPROVAL_REQUIRED');
+
+  const result = buildMissionScheduler({ now:NOW, proofHeadShas:[PROVEN_HEAD], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD,operatorApprovalHeadSha:PROVEN_HEAD})] });
   assert.equal(result.programmeStatus, 'MERGE_READY');
   assert.equal(result.selectedGoal, '#1556');
   assert.equal(result.selectedLifecycle, 'MERGE_READY');
@@ -36,9 +41,11 @@ test('merge-ready work is surfaced in the top-level projection and receipt', () 
 });
 
 test('close-ready work is surfaced only after all flywheel outputs exist', () => {
-  const incomplete = buildMissionScheduler({ now:NOW, goals:[goal(1556,{state:'COMPLETE'})] });
-  assert.equal(incomplete.portfolio[0].lifecycle, 'FLYWHEEL_OUTPUTS_REQUIRED');
-  assert.equal(incomplete.selectedGoal, null);
+  for (const state of ['COMPLETE', 'CLOSED']) {
+    const incomplete = buildMissionScheduler({ now:NOW, goals:[goal(1556,{state})] });
+    assert.equal(incomplete.portfolio[0].lifecycle, 'FLYWHEEL_OUTPUTS_REQUIRED');
+    assert.equal(incomplete.selectedGoal, null);
+  }
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1556,{state:'COMPLETE',...flywheelOutputs})] });
   assert.equal(result.programmeStatus, 'CLOSE_READY');
   assert.equal(result.selectedGoal, '#1556');
@@ -73,6 +80,15 @@ test('whyNow reports the lexicographic comparator rather than an obsolete weight
   assert.equal(result.selectedGoal, '#1');
   assert.match(result.whyNow, /lexicographic scheduler order/i);
   assert.doesNotMatch(result.whyNow, /highest eligible score/i);
+});
+
+test('malformed operator-priority evidence fails closed instead of changing intent', () => {
+  for (const operatorPriority of ['true', 1, null]) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{operatorPriority}),goal(2,{priority:99})] });
+    assert.equal(result.failClosed, true);
+    assert.equal(result.selectedGoal, null);
+    assert.ok(result.contradictions.some(({code, issue}) => code === 'INVALID_OPERATOR_PRIORITY_EVIDENCE' && issue === 1));
+  }
 });
 
 test('completed prerequisites remain gated by approval and non-executable routes', () => {
