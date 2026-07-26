@@ -7,6 +7,8 @@ const ROUTES = new Set(['CHATGPT_GITHUB','OPENCLAW_LOCAL','BATTLE_BRIDGE_FIXED_T
 const CHAT_EVIDENCE_LIMIT = 20;
 const CHAT_NESTED_LIMIT = 20;
 const CHAT_STRING_LIMIT = 512;
+const CONTRADICTION_SUMMARY_LIMIT = 5;
+const AUTHORITY_BEARING_LIFECYCLES = new Set(['READY', 'MERGE_READY', 'CLOSE_READY', 'APPROVAL_REQUIRED']);
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -184,12 +186,19 @@ function selectionRationale(goal) {
   ].filter(Boolean);
   return `Selected by lexicographic scheduler order: ${criteria.join(', ')}.`;
 }
+function contradictionRationale(contradictions) {
+  const visibleCodes = contradictions.slice(0, CONTRADICTION_SUMMARY_LIMIT).map(({ code }) => code);
+  const hiddenCount = contradictions.length - visibleCodes.length;
+  const hiddenSummary = hiddenCount > 0 ? `, plus ${hiddenCount} more contradiction${hiddenCount === 1 ? '' : 's'}` : '';
+  return `Scheduling failed closed: ${visibleCodes.join(', ')}${hiddenSummary}.`;
+}
 function lifecycleBlockers(portfolio) {
   const blocked = new Set(['BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED','IMPLEMENTED_NEEDS_PROOF','FLYWHEEL_OUTPUTS_REQUIRED','STRUCTURAL_REVIEW_REQUIRED']);
   return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({
     code:`GOAL_${goal.lifecycle}`,
     issue:goal.issue,
     route:goal.route,
+    candidateLifecycle:goal.candidateLifecycle ?? null,
     prerequisites:goal.prerequisites,
     invalidPrerequisites:goal.invalidPrerequisites,
     invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer,
@@ -231,7 +240,8 @@ export function buildMissionScheduler(input = {}) {
   const normalizedProofHeads = rawProofHeads.map(sha);
   const invalidProofHeads = rawProofHeads.filter((_, index) => !normalizedProofHeads[index]).map(String);
   const provenHeads = new Set(normalizedProofHeads.filter(Boolean));
-  const goals = (Array.isArray(source.goals) ? source.goals : []).map(normalizeGoal);
+  const rawGoals = Array.isArray(source.goals) ? source.goals : [];
+  const goals = Array.from({ length:rawGoals.length }, (_, index) => normalizeGoal(rawGoals[index]));
   const issueCounts = new Map();
   for (const goal of goals) if (goal.issue) issueCounts.set(goal.issue, (issueCounts.get(goal.issue) ?? 0) + 1);
   const duplicateIssueIds = [...issueCounts].filter(([, count]) => count > 1).map(([issue]) => issue);
@@ -263,13 +273,14 @@ export function buildMissionScheduler(input = {}) {
   }
   if (authoritative.length > 1) contradictions.push({ code:'MULTIPLE_ACTIVE_LANES', issues:authoritative.map((goal) => goal.issue) });
   for (const cycle of detectCycles(goalsByIssue)) contradictions.push({ code:'DEPENDENCY_CYCLE', issues:cycle });
-  const activeGoals = new Set(contradictions.length === 0 && authoritative.length === 1 ? authoritative : []);
-  const portfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal, staleByGoal.get(goal), provenHeads), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
+  const failClosed = contradictions.length > 0;
+  const activeGoals = new Set(!failClosed && authoritative.length === 1 ? authoritative : []);
+  const classifiedPortfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal, staleByGoal.get(goal), provenHeads), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
+  const portfolio = failClosed ? classifiedPortfolio.map((goal) => AUTHORITY_BEARING_LIFECYCLES.has(goal.lifecycle) ? freeze({ ...goal, candidateLifecycle:goal.lifecycle, lifecycle:'BLOCKED' }) : goal) : classifiedPortfolio;
   const ready = portfolio.filter((goal) => goal.lifecycle === 'READY').sort(compareReady);
   const mergeReady = portfolio.filter((goal) => goal.lifecycle === 'MERGE_READY').sort(compareReady);
   const closeReady = portfolio.filter((goal) => goal.lifecycle === 'CLOSE_READY').sort(compareReady);
   const approvalGoals = portfolio.filter((goal) => goal.lifecycle === 'APPROVAL_REQUIRED');
-  const failClosed = contradictions.length > 0;
   const activeClaim = !failClosed && authoritative.length === 1 ? authoritative[0] : null;
   const active = activeClaim ? portfolio[goals.indexOf(activeClaim)] : null;
   const action = failClosed || active ? null : mergeReady[0] ?? ready[0] ?? closeReady[0] ?? null;
@@ -278,11 +289,11 @@ export function buildMissionScheduler(input = {}) {
   const programmeStatus = failClosed ? 'BLOCKED' : active ? 'IN_PROGRESS' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'READY_TO_ADVANCE' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING';
   const actionable = [...mergeReady, ...ready, ...closeReady];
   return freeze({
-    schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, blockers,
+    schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, contradictionsTotal:contradictions.length, blockers,
     programmeStatus,
     activeGoal:active?.issue ? `#${active.issue}` : null,
     activeLane:active?.activePr ? `PR #${active.activePr}` : active?.branch ?? null,
-    whyNow:failClosed ? `Scheduling failed closed: ${contradictions.map(({code}) => code).join(', ')}.` : active ? 'Existing fresh, identified active lane remains authoritative.' : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.',
+    whyNow:failClosed ? contradictionRationale(contradictions) : active ? 'Existing fresh, identified active lane remains authoritative.' : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.',
     selectedGoal:action?.issue ? `#${action.issue}` : null,
     selectedRoute:action?.route ?? null,
     selectedLifecycle:action?.lifecycle ?? null,
@@ -303,10 +314,11 @@ export function answerMissionQuery(input = {}, query = '') {
     programmeStatus:scheduler.programmeStatus,
     activeGoal:scheduler.activeGoal,
     activeLane:scheduler.activeLane,
-    whyNow:scheduler.whyNow,
+    whyNow:compactString(scheduler.whyNow),
     selectedGoal:scheduler.selectedGoal,
     selectedRoute:scheduler.selectedRoute,
     selectedLifecycle:scheduler.selectedLifecycle,
+    contradictionsTotal:scheduler.contradictionsTotal,
     blockers:scheduler.blockers.slice(0, CHAT_EVIDENCE_LIMIT).map(compactBlocker),
     blockersTotal,
     nextEligible:scheduler.nextEligible,
