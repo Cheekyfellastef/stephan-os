@@ -228,8 +228,9 @@ export function buildMissionScheduler(input = {}) {
   const publicInputInvalid = !input || typeof input !== 'object' || Array.isArray(input);
   const source = publicInputInvalid ? {} : input;
   const nowPresent = hasOwn(source, 'now');
-  const parsedNowMs = Date.parse(source.now);
-  const nowInvalid = nowPresent && !Number.isFinite(parsedNowMs);
+  const nowTypeInvalid = nowPresent && typeof source.now !== 'string';
+  const parsedNowMs = nowTypeInvalid ? NaN : Date.parse(source.now);
+  const nowInvalid = nowPresent && (nowTypeInvalid || !Number.isFinite(parsedNowMs));
   const nowMs = nowInvalid || !nowPresent ? Date.now() : parsedNowMs;
   const freshnessPresent = hasOwn(source, 'freshnessMs');
   const freshnessInvalid = freshnessPresent && (typeof source.freshnessMs !== 'number' || !Number.isFinite(source.freshnessMs) || source.freshnessMs <= 0);
