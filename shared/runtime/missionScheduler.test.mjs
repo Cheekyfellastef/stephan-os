@@ -58,7 +58,7 @@ test('active state without lane identity fails closed and is not next eligible',
 
 test('active lane without goal identity fails closed', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(null,{state:'ACTIVE',activePr:1601})] });
-  assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.equal(result.decisionReceipt.activeIssue,null); assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_GOAL_IDENTITY_MISSING'));
+  assert.equal(result.failClosed,true); assert.equal(result.activeGoal,null); assert.equal(result.decisionReceipt.activeIssue,null); assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.ok(result.contradictions.some(({code}) => code === 'INVALID_GOAL_IDENTITY'));
 });
 
 test('stale active evidence fails closed instead of remaining authoritative', () => {
