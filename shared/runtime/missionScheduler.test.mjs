@@ -157,7 +157,7 @@ test('merge readiness is restricted to implemented goals', () => {
     const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state,proofState:'PASS',activePr:1601})] });
     assert.notEqual(result.portfolio[0].lifecycle,'MERGE_READY');
   }
-  const implemented = buildMissionScheduler({ now:NOW, proofHeadShas:[PROOF_SHA], goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROOF_SHA})] });
+  const implemented = buildMissionScheduler({ now:NOW, proofHeadShas:[PROOF_SHA], goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROOF_SHA,operatorApprovalHeadSha:PROOF_SHA})] });
   assert.equal(implemented.portfolio[0].lifecycle,'MERGE_READY');
 });
 
