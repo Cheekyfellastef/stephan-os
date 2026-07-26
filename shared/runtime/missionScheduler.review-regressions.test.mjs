@@ -63,6 +63,17 @@ test('unsafe integer issue identities and prerequisites are rejected', () => {
   assert.equal(result.selectedGoal, null);
 });
 
+test('any unidentified goal fails the whole portfolio closed', () => {
+  for (const invalidIssue of [null, 'unknown', 0, '9007199254740992']) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(invalidIssue),goal(2,{priority:99})] });
+    assert.equal(result.failClosed, true);
+    assert.equal(result.programmeStatus, 'BLOCKED');
+    assert.equal(result.selectedGoal, null);
+    assert.deepEqual(result.nextEligible, []);
+    assert.ok(result.contradictions.some(({code, index}) => code === 'INVALID_GOAL_IDENTITY' && index === 0));
+  }
+});
+
 test('self-referential duplicate and supersession claims fail closed', () => {
   for (const relation of ['duplicateOf', 'supersededBy']) {
     const result = buildMissionScheduler({ now:NOW, goals:[goal(1556,{[relation]:1556})] });
