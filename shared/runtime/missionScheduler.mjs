@@ -244,9 +244,10 @@ export function buildMissionScheduler(input = {}) {
   if (goalsContainerInvalid) contradictions.push({ code:'INVALID_GOALS_CONTAINER' });
   if (proofHeadsContainerInvalid || invalidProofHeads.length) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads });
   for (const issue of duplicateIssueIds) contradictions.push({ code:'DUPLICATE_GOAL_IDENTITY', issue });
+  for (const [index, goal] of goals.entries()) if (!goal.issue) contradictions.push({ code:'INVALID_GOAL_IDENTITY', index });
   for (const goal of goals) if (goal.invalidOperatorPriority) contradictions.push({ code:'INVALID_OPERATOR_PRIORITY_EVIDENCE', issue:goal.issue });
   for (const goal of claimed) {
-    if (!goal.issue) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_IDENTITY_MISSING', issue:null }); }
+    if (!goal.issue) { rejectedActiveClaims.add(goal); }
     else if (issueCounts.get(goal.issue) > 1) { rejectedActiveClaims.add(goal); }
     else if (goal.invalidApprovalRequired) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_APPROVAL_GATE_INVALID', issue:goal.issue }); }
     else if (goal.invalidOperatorPriority) { rejectedActiveClaims.add(goal); }
