@@ -52,10 +52,7 @@ jobs:
       - name: Run Stephanos routing guardrails tests
         run: |
           node --test \
-            shared/runtime/missionScheduler.test.mjs \
-            shared/runtime/missionScheduler.exactHead.test.mjs \
-            shared/runtime/missionScheduler.review-regressions.test.mjs \
-            shared/runtime/missionScheduler.route-safety.test.mjs \
+            shared/runtime/missionScheduler*.test.mjs \
             shared/runtime/runtimeGuardrails.test.mjs \
             shared/runtime/runtimeStatusModel.test.mjs \
             shared/runtime/stephanosHomeNode.test.mjs \
