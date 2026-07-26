@@ -22,14 +22,17 @@ function goal(issue, overrides = {}) {
   };
 }
 
-test('merge readiness requires proof bound to the current exact head', () => {
+test('merge readiness requires proof and approval bound to the current exact head', () => {
   const candidate = goal(1, { state:'IMPLEMENTED', activePr:1601, proofState:'PASS', headSha:HEAD });
   const missing = buildMissionScheduler({ now:NOW, goals:[candidate], proofHeadShas:[] });
   const stale = buildMissionScheduler({ now:NOW, goals:[candidate], proofHeadShas:[OTHER_HEAD] });
-  const exact = buildMissionScheduler({ now:NOW, goals:[candidate], proofHeadShas:[HEAD] });
+  const awaitingApproval = buildMissionScheduler({ now:NOW, goals:[candidate], proofHeadShas:[HEAD] });
+  const exact = buildMissionScheduler({ now:NOW, goals:[{...candidate, operatorApprovalHeadSha:HEAD}], proofHeadShas:[HEAD] });
 
   assert.equal(missing.portfolio[0].lifecycle, 'IMPLEMENTED_NEEDS_PROOF');
   assert.equal(stale.portfolio[0].lifecycle, 'IMPLEMENTED_NEEDS_PROOF');
+  assert.equal(awaitingApproval.portfolio[0].lifecycle, 'APPROVAL_REQUIRED');
+  assert.equal(awaitingApproval.operatorAction, 'OPERATOR_APPROVAL_REQUIRED');
   assert.equal(exact.portfolio[0].lifecycle, 'MERGE_READY');
   assert.equal(exact.selectedGoal, '#1');
   assert.deepEqual(exact.decisionReceipt.proofHeadShas, [HEAD]);
