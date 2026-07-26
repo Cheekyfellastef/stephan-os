@@ -46,6 +46,8 @@ function normalizeGoal(candidate = {}) {
   ];
   const approvalRequiredPresent = hasOwn(goal, 'approvalRequired');
   const invalidApprovalRequired = approvalRequiredPresent && typeof goal.approvalRequired !== 'boolean';
+  const operatorPriorityPresent = hasOwn(goal, 'operatorPriority');
+  const invalidOperatorPriority = operatorPriorityPresent && typeof goal.operatorPriority !== 'boolean';
   const repairCycleCountPresent = hasOwn(goal, 'repairCycleCount');
   const invalidRepairCycleCount = repairCycleCountPresent && (!Number.isSafeInteger(goal.repairCycleCount) || goal.repairCycleCount < 0);
   const repairCycleCount = invalidRepairCycleCount || !repairCycleCountPresent ? 0 : goal.repairCycleCount;
@@ -64,6 +66,8 @@ function normalizeGoal(candidate = {}) {
   const convergenceEvidenceComplete = !convergenceReviewRequired || (structuralReviewProofRefs.length > 0 && modelTestProofRefs.length > 0);
   const state = text(goal.state, 'UNKNOWN').toUpperCase();
   const route = ROUTES.has(goal.route) ? goal.route : 'BLOCKED_UNSAFE_OR_UNKNOWN';
+  const headSha = sha(goal.headSha);
+  const operatorApprovalHeadSha = sha(goal.operatorApprovalHeadSha);
   return freeze({
     issue:number,
     title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'),
@@ -73,6 +77,7 @@ function normalizeGoal(candidate = {}) {
     invalidPrerequisiteContainer,
     invalidInvalidationClaims,
     invalidApprovalRequired,
+    invalidOperatorPriority,
     invalidRepairCycleCount,
     invalidFlywheelEvidenceContainers,
     priority:positiveNumber(goal.priority),
@@ -81,10 +86,12 @@ function normalizeGoal(candidate = {}) {
     route,
     activePr:issueNumber(goal.activePr),
     branch:text(goal.branch) || null,
-    headSha:sha(goal.headSha),
+    headSha,
     proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(),
     approvalRequired:goal.approvalRequired === true,
     operatorPriority:goal.operatorPriority === true,
+    operatorApprovalHeadSha,
+    exactHeadApprovalSatisfied:Boolean(headSha && operatorApprovalHeadSha === headSha),
     duplicateOf,
     supersededBy,
     evidenceAt:text(goal.evidenceAt) || null,
@@ -113,7 +120,7 @@ function detectCycles(goalsByIssue) {
   return cycles;
 }
 function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
-function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length; }
+function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length; }
 function completionOutputsSatisfied(goal) { return goal.flywheelOutputsComplete && goal.convergenceEvidenceComplete; }
 function dependencyComplete(goal, goalsByIssue, staleByGoal, seen = new Set()) {
   const finalGateBlocked = goal?.approvalRequired === true || goal?.route === 'OPERATOR_APPROVAL' || goal?.route === 'WAITING_FOR_EXTERNAL_CONDITION' || goal?.route === 'BLOCKED_UNSAFE_OR_UNKNOWN';
@@ -143,12 +150,13 @@ function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleBy
   if (activeGoals.has(goal)) return 'ACTIVE';
   if (goal.approvalRequired || goal.route === 'OPERATOR_APPROVAL' || goal.state === 'APPROVAL_REQUIRED') return 'APPROVAL_REQUIRED';
   if (TERMINAL_STATES.has(goal.state)) {
-    if (goal.state === 'COMPLETE' && !goal.flywheelOutputsComplete) return 'FLYWHEEL_OUTPUTS_REQUIRED';
+    if (COMPLETION_STATES.has(goal.state) && !goal.flywheelOutputsComplete) return 'FLYWHEEL_OUTPUTS_REQUIRED';
     return goal.state === 'COMPLETE' ? 'CLOSE_READY' : goal.state;
   }
   if (goal.state === 'IMPLEMENTED') {
     const exactHeadProven = Boolean(goal.headSha && provenHeads.has(goal.headSha));
-    return goal.proofState === 'PASS' && goal.activePr && exactHeadProven ? 'MERGE_READY' : 'IMPLEMENTED_NEEDS_PROOF';
+    if (!(goal.proofState === 'PASS' && goal.activePr && exactHeadProven)) return 'IMPLEMENTED_NEEDS_PROOF';
+    return goal.exactHeadApprovalSatisfied ? 'MERGE_READY' : 'APPROVAL_REQUIRED';
   }
   if (!RUNNABLE_STATES.has(goal.state)) return 'BLOCKED';
   return 'READY';
@@ -187,9 +195,11 @@ function lifecycleBlockers(portfolio) {
     invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer,
     invalidInvalidationClaims:goal.invalidInvalidationClaims,
     invalidApprovalRequired:goal.invalidApprovalRequired,
+    invalidOperatorPriority:goal.invalidOperatorPriority,
     invalidRepairCycleCount:goal.invalidRepairCycleCount,
     invalidFlywheelEvidenceContainers:goal.invalidFlywheelEvidenceContainers,
     flywheelOutputsComplete:goal.flywheelOutputsComplete,
+    exactHeadApprovalSatisfied:goal.exactHeadApprovalSatisfied,
     repairCycleCount:goal.repairCycleCount,
     convergenceReviewRequired:goal.convergenceReviewRequired,
     convergenceEvidenceComplete:goal.convergenceEvidenceComplete,
@@ -234,10 +244,12 @@ export function buildMissionScheduler(input = {}) {
   if (goalsContainerInvalid) contradictions.push({ code:'INVALID_GOALS_CONTAINER' });
   if (proofHeadsContainerInvalid || invalidProofHeads.length) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads });
   for (const issue of duplicateIssueIds) contradictions.push({ code:'DUPLICATE_GOAL_IDENTITY', issue });
+  for (const goal of goals) if (goal.invalidOperatorPriority) contradictions.push({ code:'INVALID_OPERATOR_PRIORITY_EVIDENCE', issue:goal.issue });
   for (const goal of claimed) {
     if (!goal.issue) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_IDENTITY_MISSING', issue:null }); }
     else if (issueCounts.get(goal.issue) > 1) { rejectedActiveClaims.add(goal); }
     else if (goal.invalidApprovalRequired) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_APPROVAL_GATE_INVALID', issue:goal.issue }); }
+    else if (goal.invalidOperatorPriority) { rejectedActiveClaims.add(goal); }
     else if (goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_FLYWHEEL_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (!goal.convergenceEvidenceComplete) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_STRUCTURAL_REVIEW_REQUIRED', issue:goal.issue }); }
     else if (hasMalformedRelations(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_RELATION_EVIDENCE_INVALID', issue:goal.issue }); }
@@ -269,7 +281,7 @@ export function buildMissionScheduler(input = {}) {
     programmeStatus,
     activeGoal:active?.issue ? `#${active.issue}` : null,
     activeLane:active?.activePr ? `PR #${active.activePr}` : active?.branch ?? null,
-    whyNow:failClosed ? `Scheduling failed closed: ${contradictions.map(({code}) => code).join(', ')}.` : active ? 'Existing fresh, identified active lane remains authoritative.' : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.',
+    whyNow:failClosed ? `Scheduling failed closed: ${contradictions.map(({code}) => code).join(', ')}.` : active ? 'Existing fresh, identified active lane remains authoritative.' : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.',
     selectedGoal:action?.issue ? `#${action.issue}` : null,
     selectedRoute:action?.route ?? null,
     selectedLifecycle:action?.lifecycle ?? null,
