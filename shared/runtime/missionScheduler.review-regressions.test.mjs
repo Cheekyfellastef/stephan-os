@@ -74,6 +74,36 @@ test('any unidentified goal fails the whole portfolio closed', () => {
   }
 });
 
+test('fail-closed portfolios withhold every authority-bearing lifecycle', () => {
+  const candidates = [
+    [goal(2), 'READY'],
+    [goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD,operatorApprovalHeadSha:PROVEN_HEAD}), 'MERGE_READY'],
+    [goal(2,{state:'COMPLETE',...flywheelOutputs}), 'CLOSE_READY'],
+    [goal(2,{approvalRequired:true}), 'APPROVAL_REQUIRED'],
+  ];
+  for (const [candidate, expectedCandidateLifecycle] of candidates) {
+    const result = buildMissionScheduler({ now:NOW, proofHeadShas:[PROVEN_HEAD], goals:[goal(null),candidate] });
+    assert.equal(result.failClosed, true);
+    assert.equal(result.portfolio[1].lifecycle, 'BLOCKED');
+    assert.equal(result.portfolio[1].candidateLifecycle, expectedCandidateLifecycle);
+    assert.equal(result.selectedGoal, null);
+    assert.equal(result.operatorNeeded, false);
+  }
+});
+
+test('sparse goal slots normalize to fail-closed identity evidence', () => {
+  const goals = new Array(2);
+  goals[1] = goal(2);
+  const result = buildMissionScheduler({ now:NOW, goals });
+  assert.equal(result.failClosed, true);
+  assert.equal(result.portfolio.length, 2);
+  assert.equal(result.portfolio[0].issue, null);
+  assert.equal(result.portfolio[0].lifecycle, 'BLOCKED');
+  assert.equal(result.portfolio[1].lifecycle, 'BLOCKED');
+  assert.equal(result.portfolio[1].candidateLifecycle, 'READY');
+  assert.ok(result.contradictions.some(({code, index}) => code === 'INVALID_GOAL_IDENTITY' && index === 0));
+});
+
 test('self-referential duplicate and supersession claims fail closed', () => {
   for (const relation of ['duplicateOf', 'supersededBy']) {
     const result = buildMissionScheduler({ now:NOW, goals:[goal(1556,{[relation]:1556})] });
@@ -173,5 +203,14 @@ test('chat projection bounds nested arrays and long evidence strings', () => {
   const result = answerMissionQuery({ now:NOW, proofRefs:[huge], goals:[goal(1,{prerequisites})] }, 'what is blocked');
   assert.equal(result.blockers[0].prerequisites.length, 20);
   assert.ok(result.proofRefs[0].length < 600);
+  assert.ok(JSON.stringify(result).length < 20_000);
+});
+
+test('fail-closed rationale is bounded and reports the full contradiction count', () => {
+  const goals = Array.from({length:1000}, () => null);
+  const result = answerMissionQuery({ now:NOW, goals }, 'what is blocked');
+  assert.equal(result.contradictionsTotal, 1000);
+  assert.ok(result.whyNow.length < 512);
+  assert.match(result.whyNow, /plus 995 more contradictions/);
   assert.ok(JSON.stringify(result).length < 20_000);
 });
