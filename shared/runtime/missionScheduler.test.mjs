@@ -10,7 +10,7 @@ function goal(issue, overrides = {}) {
 }
 
 test('completed prerequisite unlocks dependant and selects one lane', () => {
-  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'COMPLETE'}), goal(2,{prerequisites:[1],priority:5}), goal(3,{priority:2})] });
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'COMPLETE',resultProofRefs:['proof://goal-1-result'],reusableCapabilityId:'CAPABILITY_GOAL_1',sharedLessonId:'LESSON_GOAL_1'}), goal(2,{prerequisites:[1],priority:5}), goal(3,{priority:2})] });
   assert.equal(result.failClosed,false); assert.equal(result.selectedGoal,'#2'); assert.equal(result.selectedRoute,'CHATGPT_GITHUB'); assert.equal(result.operatorAction,'NO_OPERATOR_ACTION_REQUIRED');
 });
 
