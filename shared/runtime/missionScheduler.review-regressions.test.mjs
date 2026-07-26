@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildMissionScheduler } from './missionScheduler.mjs';
+import { buildMissionScheduler, answerMissionQuery } from './missionScheduler.mjs';
 
 const NOW = '2026-07-24T21:00:00.000Z';
 const fresh = '2026-07-24T20:55:00.000Z';
 const PROVEN_HEAD = '1111111111111111111111111111111111111111';
+const flywheelOutputs = { resultProofRefs:['proof:result'], reusableCapabilityId:'CAPABILITY_V1', sharedLessonId:'LESSON_V1' };
 function goal(issue, overrides = {}) {
   return { issue, title:`Goal ${issue}`, state:'QUEUED', prerequisites:[], priority:1, criticalPathWeight:1, reversibility:'HIGH', route:'CHATGPT_GITHUB', evidenceAt:fresh, ...overrides };
 }
@@ -34,8 +35,11 @@ test('merge-ready work is surfaced in the top-level projection and receipt', () 
   assert.equal(result.decisionReceipt.selectedIssue, 1556);
 });
 
-test('close-ready work is surfaced in the top-level projection and receipt', () => {
-  const result = buildMissionScheduler({ now:NOW, goals:[goal(1556,{state:'COMPLETE'})] });
+test('close-ready work is surfaced only after all flywheel outputs exist', () => {
+  const incomplete = buildMissionScheduler({ now:NOW, goals:[goal(1556,{state:'COMPLETE'})] });
+  assert.equal(incomplete.portfolio[0].lifecycle, 'FLYWHEEL_OUTPUTS_REQUIRED');
+  assert.equal(incomplete.selectedGoal, null);
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1556,{state:'COMPLETE',...flywheelOutputs})] });
   assert.equal(result.programmeStatus, 'CLOSE_READY');
   assert.equal(result.selectedGoal, '#1556');
   assert.equal(result.selectedLifecycle, 'CLOSE_READY');
@@ -80,7 +84,7 @@ test('completed prerequisites remain gated by approval and non-executable routes
   ];
   for (const gate of gates) {
     const result = buildMissionScheduler({ now:NOW, goals:[
-      goal(1,{ state:'COMPLETE', ...gate }),
+      goal(1,{ state:'COMPLETE', ...flywheelOutputs, ...gate }),
       goal(2,{ prerequisites:[1] }),
     ] });
     assert.equal(result.portfolio[1].lifecycle, 'WAITING_FOR_DEPENDENCY');
@@ -91,7 +95,7 @@ test('completed prerequisites remain gated by approval and non-executable routes
 test('malformed approval gate values remain blocking evidence', () => {
   for (const approvalRequired of ['true', 1, null]) {
     const result = buildMissionScheduler({ now:NOW, goals:[
-      goal(1,{ state:'COMPLETE', approvalRequired }),
+      goal(1,{ state:'COMPLETE', ...flywheelOutputs, approvalRequired }),
       goal(2,{ prerequisites:[1] }),
     ] });
     assert.equal(result.portfolio[0].invalidApprovalRequired, true);
@@ -105,6 +109,9 @@ test('explicitly malformed scheduler clocks fail closed', () => {
   const cases = [
     { now:'not-a-date' },
     { freshnessMs:'not-a-number' },
+    { freshnessMs:'900000' },
+    { freshnessMs:[900000] },
+    { freshnessMs:true },
     { freshnessMs:0 },
     { freshnessMs:-1 },
   ];
@@ -116,4 +123,28 @@ test('explicitly malformed scheduler clocks fail closed', () => {
     assert.ok(result.contradictions.some(({ code }) => code === 'INVALID_SCHEDULER_CLOCK'));
     assert.equal(result.decisionReceipt.status, 'BLOCKED_FAIL_CLOSED');
   }
+});
+
+test('third repair cycle requires structural review and model-test evidence', () => {
+  const blocked = buildMissionScheduler({ now:NOW, goals:[goal(1,{repairCycleCount:3})] });
+  assert.equal(blocked.portfolio[0].lifecycle, 'STRUCTURAL_REVIEW_REQUIRED');
+  assert.equal(blocked.selectedGoal, null);
+  const released = buildMissionScheduler({ now:NOW, goals:[goal(1,{repairCycleCount:3,structuralReviewProofRefs:['review:1'],modelTestProofRefs:['test:model']})] });
+  assert.equal(released.portfolio[0].lifecycle, 'READY');
+  assert.equal(released.selectedGoal, '#1');
+});
+
+test('malformed convergence evidence fails closed for an active claim', () => {
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'ACTIVE',activePr:1601,repairCycleCount:'3'})] });
+  assert.equal(result.failClosed, true);
+  assert.ok(result.contradictions.some(({ code }) => code === 'ACTIVE_FLYWHEEL_EVIDENCE_INVALID'));
+});
+
+test('chat projection bounds nested arrays and long evidence strings', () => {
+  const huge = 'x'.repeat(10_000);
+  const prerequisites = Array.from({length:1000}, (_, index) => index + 2);
+  const result = answerMissionQuery({ now:NOW, proofRefs:[huge], goals:[goal(1,{prerequisites})] }, 'what is blocked');
+  assert.equal(result.blockers[0].prerequisites.length, 20);
+  assert.ok(result.proofRefs[0].length < 600);
+  assert.ok(JSON.stringify(result).length < 20_000);
 });
