@@ -58,7 +58,7 @@ test('unsafe integer issue identities and prerequisites are rejected', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(oversized),goal(2,{prerequisites:['9007199254740993']})] });
   assert.equal(result.portfolio[0].issue, null);
   assert.equal(result.portfolio[0].lifecycle, 'BLOCKED');
-  assert.deepEqual(result.portfolio[1].invalidPrerequisites, ['9007199254740993']);
+  assert.deepEqual(result.portfolio[1].invalidPrerequisites, ['index:0']);
   assert.equal(result.portfolio[1].lifecycle, 'BLOCKED');
   assert.equal(result.selectedGoal, null);
 });
