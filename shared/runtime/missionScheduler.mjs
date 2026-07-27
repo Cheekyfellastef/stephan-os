@@ -12,6 +12,7 @@ const CONTRADICTION_SUMMARY_LIMIT = 5;
 const MAX_PORTFOLIO_GOALS = 1000;
 const MAX_PREREQUISITES_PER_GOAL = 1000;
 const MAX_TOTAL_PREREQUISITES = 10000;
+const MAX_EVIDENCE_ITEMS = 10000;
 const MAX_CYCLE_EVIDENCE = 20;
 const MAX_CYCLE_PATH_ISSUES = 20;
 const AUTHORITY_BEARING_LIFECYCLES = new Set(['READY', 'MERGE_READY', 'CLOSE_READY', 'APPROVAL_REQUIRED']);
@@ -30,18 +31,21 @@ function issueNumber(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 function sha(value) { return typeof value === 'string' && SHA_RE.test(value.trim()) ? value.trim().toLowerCase() : null; }
-function positiveNumber(value, fallback = 0) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback; }
+function positiveNumber(value, fallback = 0) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback; }
 function hasOwn(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
 function normalizeStringEvidenceArray(object, key) {
   const present = hasOwn(object, key);
-  const raw = present && Array.isArray(object[key]) ? object[key] : [];
+  const container = present ? object[key] : undefined;
+  const invalidContainer = present && !Array.isArray(container);
+  const boundExceeded = Array.isArray(container) && container.length > MAX_EVIDENCE_ITEMS;
+  const raw = Array.isArray(container) && !boundExceeded ? container : [];
   const values = [];
   const invalidEntries = [];
   for (let index = 0; index < raw.length; index += 1) {
     if (!hasOwn(raw, index) || typeof raw[index] !== 'string' || !raw[index].trim()) invalidEntries.push({ key, index });
     else values.push(raw[index].trim());
   }
-  return { values, invalidContainer:present && !Array.isArray(object[key]), invalidEntries };
+  return { values, invalidContainer, invalidEntries, boundExceeded, suppliedCount:Array.isArray(container) ? container.length : 0 };
 }
 function explicitTimestampMs(value) {
   if (typeof value !== 'string') return NaN;
@@ -89,6 +93,11 @@ function normalizeGoal(candidate = {}) {
     ...(structuralEvidence.invalidContainer ? ['structuralReviewProofRefs'] : []),
     ...(modelEvidence.invalidContainer ? ['modelTestProofRefs'] : []),
   ];
+  const boundExceededFlywheelEvidence = [
+    ...(resultEvidence.boundExceeded ? [{ key:'resultProofRefs', suppliedCount:resultEvidence.suppliedCount }] : []),
+    ...(structuralEvidence.boundExceeded ? [{ key:'structuralReviewProofRefs', suppliedCount:structuralEvidence.suppliedCount }] : []),
+    ...(modelEvidence.boundExceeded ? [{ key:'modelTestProofRefs', suppliedCount:modelEvidence.suppliedCount }] : []),
+  ];
   const invalidFlywheelEvidenceEntries = [...resultEvidence.invalidEntries, ...structuralEvidence.invalidEntries, ...modelEvidence.invalidEntries];
   const reusableCapabilityId = text(goal.reusableCapabilityId) || null;
   const sharedLessonId = text(goal.sharedLessonId) || null;
@@ -99,13 +108,13 @@ function normalizeGoal(candidate = {}) {
   const route = ROUTES.has(goal.route) ? goal.route : 'BLOCKED_UNSAFE_OR_UNKNOWN';
   const headSha = sha(goal.headSha);
   const operatorApprovalHeadSha = sha(goal.operatorApprovalHeadSha);
-  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, invalidFlywheelEvidenceEntries, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr:issueNumber(goal.activePr), branch:text(goal.branch) || null, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalHeadSha, exactHeadApprovalSatisfied:Boolean(headSha && operatorApprovalHeadSha === headSha), duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
+  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, boundExceededFlywheelEvidence, invalidFlywheelEvidenceEntries, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr:issueNumber(goal.activePr), branch:text(goal.branch) || null, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalHeadSha, exactHeadApprovalSatisfied:Boolean(headSha && operatorApprovalHeadSha === headSha), duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
 }
 
-function boundedCycle(path, start, dependency) {
-  const cycle = path.slice(start);
-  if (cycle.length + 1 <= MAX_CYCLE_PATH_ISSUES) return [...cycle, dependency];
-  return [...cycle.slice(0, MAX_CYCLE_PATH_ISSUES - 1), dependency];
+function cycleEvidence(path, start, dependency) {
+  const fullLength = path.length - start + 1;
+  if (fullLength <= MAX_CYCLE_PATH_ISSUES) return { issues:[...path.slice(start), dependency], truncated:false, totalIssues:fullLength };
+  return { issues:path.slice(start, start + MAX_CYCLE_PATH_ISSUES), truncated:true, totalIssues:fullLength, closesTo:dependency };
 }
 function detectCycles(goalsByIssue) {
   const state = new Map();
@@ -134,7 +143,7 @@ function detectCycles(goalsByIssue) {
         cyclesTotal += 1;
         if (cycles.length < MAX_CYCLE_EVIDENCE) {
           const start = path.indexOf(dependency);
-          cycles.push(boundedCycle(path, start, dependency));
+          cycles.push(cycleEvidence(path, start, dependency));
         }
       } else if (state.get(dependency) !== 2) stack.push({ issue:dependency, dependencies:null, index:0 });
     }
@@ -142,7 +151,7 @@ function detectCycles(goalsByIssue) {
   return { cycles, cyclesTotal };
 }
 function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.prerequisiteBoundExceeded || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
-function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.invalidFlywheelEvidenceEntries.length; }
+function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.boundExceededFlywheelEvidence.length || goal.invalidFlywheelEvidenceEntries.length; }
 function completionOutputsSatisfied(goal) { return goal.flywheelOutputsComplete && goal.convergenceEvidenceComplete; }
 function createDependencyAdjudicator(goalsByIssue, staleByGoal) {
   const memo = new Map(); const visiting = new Set();
@@ -204,7 +213,7 @@ function selectionRationale(goal) { const criteria = [goal.operatorPriority ? 'o
 function contradictionRationale(contradictions) { const visibleCodes = contradictions.slice(0, CONTRADICTION_SUMMARY_LIMIT).map(({ code }) => code); const hiddenCount = contradictions.length - visibleCodes.length; const hiddenSummary = hiddenCount > 0 ? `, plus ${hiddenCount} more contradiction${hiddenCount === 1 ? '' : 's'}` : ''; return `Scheduling failed closed: ${visibleCodes.join(', ')}${hiddenSummary}.`; }
 function lifecycleBlockers(portfolio) {
   const blocked = new Set(['BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED','IMPLEMENTED_NEEDS_PROOF','FLYWHEEL_OUTPUTS_REQUIRED','STRUCTURAL_REVIEW_REQUIRED']);
-  return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, candidateLifecycle:goal.candidateLifecycle ?? null, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer, prerequisiteBoundExceeded:goal.prerequisiteBoundExceeded, suppliedPrerequisiteCount:goal.suppliedPrerequisiteCount, invalidInvalidationClaims:goal.invalidInvalidationClaims, invalidApprovalRequired:goal.invalidApprovalRequired, invalidOperatorPriority:goal.invalidOperatorPriority, invalidRepairCycleCount:goal.invalidRepairCycleCount, invalidFlywheelEvidenceContainers:goal.invalidFlywheelEvidenceContainers, invalidFlywheelEvidenceEntries:goal.invalidFlywheelEvidenceEntries, flywheelOutputsComplete:goal.flywheelOutputsComplete, exactHeadApprovalSatisfied:goal.exactHeadApprovalSatisfied, repairCycleCount:goal.repairCycleCount, convergenceReviewRequired:goal.convergenceReviewRequired, convergenceEvidenceComplete:goal.convergenceEvidenceComplete, evidenceFreshness:goal.evidenceFreshness }));
+  return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, candidateLifecycle:goal.candidateLifecycle ?? null, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer, prerequisiteBoundExceeded:goal.prerequisiteBoundExceeded, suppliedPrerequisiteCount:goal.suppliedPrerequisiteCount, invalidInvalidationClaims:goal.invalidInvalidationClaims, invalidApprovalRequired:goal.invalidApprovalRequired, invalidOperatorPriority:goal.invalidOperatorPriority, invalidRepairCycleCount:goal.invalidRepairCycleCount, invalidFlywheelEvidenceContainers:goal.invalidFlywheelEvidenceContainers, boundExceededFlywheelEvidence:goal.boundExceededFlywheelEvidence, invalidFlywheelEvidenceEntries:goal.invalidFlywheelEvidenceEntries, flywheelOutputsComplete:goal.flywheelOutputsComplete, exactHeadApprovalSatisfied:goal.exactHeadApprovalSatisfied, repairCycleCount:goal.repairCycleCount, convergenceReviewRequired:goal.convergenceReviewRequired, convergenceEvidenceComplete:goal.convergenceEvidenceComplete, evidenceFreshness:goal.evidenceFreshness }));
 }
 function compactString(value) { const normalized = String(value); return normalized.length <= CHAT_STRING_LIMIT ? normalized : `${normalized.slice(0, CHAT_STRING_LIMIT)}…`; }
 function compactArray(values) { return Array.isArray(values) ? values.slice(0, CHAT_NESTED_LIMIT).map((entry) => typeof entry === 'string' ? compactString(entry) : entry) : values; }
@@ -222,13 +231,15 @@ export function buildMissionScheduler(input = {}) {
   const freshnessMs = freshnessInvalid || !freshnessPresent ? 15 * 60 * 1000 : source.freshnessMs;
   const goalsContainerInvalid = hasOwn(source, 'goals') && !Array.isArray(source.goals);
   const proofHeadsContainerInvalid = hasOwn(source, 'proofHeadShas') && !Array.isArray(source.proofHeadShas);
-  const rawProofHeads = Array.isArray(source.proofHeadShas) ? source.proofHeadShas : [];
+  const proofHeadsBoundExceeded = Array.isArray(source.proofHeadShas) && source.proofHeadShas.length > MAX_EVIDENCE_ITEMS;
+  const rawProofHeads = Array.isArray(source.proofHeadShas) && !proofHeadsBoundExceeded ? source.proofHeadShas : [];
   const normalizedProofHeads = Array.from({ length:rawProofHeads.length }, (_, index) => sha(rawProofHeads[index]));
   const invalidProofHeads = [];
   for (let index = 0; index < rawProofHeads.length; index += 1) if (!hasOwn(rawProofHeads, index) || !normalizedProofHeads[index]) invalidProofHeads.push({ index });
   const provenHeads = new Set(normalizedProofHeads.filter(Boolean));
   const proofRefEvidence = normalizeStringEvidenceArray(source, 'proofRefs');
   const proofRefsContainerInvalid = proofRefEvidence.invalidContainer;
+  const proofRefsBoundExceeded = proofRefEvidence.boundExceeded;
   const invalidProofRefs = proofRefEvidence.invalidEntries;
   const proofRefs = proofRefEvidence.values;
   const rawGoals = Array.isArray(source.goals) ? source.goals : [];
@@ -256,12 +267,13 @@ export function buildMissionScheduler(input = {}) {
   if (goalsContainerInvalid) contradictions.push({ code:'INVALID_GOALS_CONTAINER' });
   if (portfolioBoundExceeded) contradictions.push({ code:'PORTFOLIO_BOUND_EXCEEDED', suppliedGoalCount:rawGoals.length, maximumGoalCount:MAX_PORTFOLIO_GOALS });
   if (totalPrerequisiteBoundExceeded) contradictions.push({ code:'TOTAL_PREREQUISITE_BOUND_EXCEEDED', suppliedPrerequisiteCount:totalPrerequisites, maximumPrerequisiteCount:MAX_TOTAL_PREREQUISITES });
-  if (proofHeadsContainerInvalid || invalidProofHeads.length) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads });
-  if (proofRefsContainerInvalid || invalidProofRefs.length) contradictions.push({ code:'INVALID_PROOF_REFERENCE_EVIDENCE', invalidProofRefs });
+  if (proofHeadsContainerInvalid || invalidProofHeads.length || proofHeadsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads, boundExceeded:proofHeadsBoundExceeded, suppliedCount:Array.isArray(source.proofHeadShas) ? source.proofHeadShas.length : 0, maximumCount:MAX_EVIDENCE_ITEMS });
+  if (proofRefsContainerInvalid || invalidProofRefs.length || proofRefsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_REFERENCE_EVIDENCE', invalidProofRefs, boundExceeded:proofRefsBoundExceeded, suppliedCount:proofRefEvidence.suppliedCount, maximumCount:MAX_EVIDENCE_ITEMS });
   for (const issue of duplicateIssueIds) contradictions.push({ code:'DUPLICATE_GOAL_IDENTITY', issue });
   for (const [index, goal] of goals.entries()) if (!goal.issue) contradictions.push({ code:'INVALID_GOAL_IDENTITY', index });
   for (const goal of goals) if (goal.prerequisiteBoundExceeded) contradictions.push({ code:'PREREQUISITE_BOUND_EXCEEDED', issue:goal.issue, suppliedPrerequisiteCount:goal.suppliedPrerequisiteCount, maximumPrerequisiteCount:MAX_PREREQUISITES_PER_GOAL });
   for (const goal of goals) if (goal.invalidOperatorPriority) contradictions.push({ code:'INVALID_OPERATOR_PRIORITY_EVIDENCE', issue:goal.issue });
+  for (const goal of goals) if (goal.boundExceededFlywheelEvidence.length) contradictions.push({ code:'GOAL_PROOF_REFERENCE_EVIDENCE_BOUND_EXCEEDED', issue:goal.issue, evidence:goal.boundExceededFlywheelEvidence, maximumCount:MAX_EVIDENCE_ITEMS });
   for (const goal of goals) if (goal.invalidFlywheelEvidenceEntries.length) contradictions.push({ code:'INVALID_GOAL_PROOF_REFERENCE_EVIDENCE', issue:goal.issue, invalidEntries:goal.invalidFlywheelEvidenceEntries });
   for (const goal of goals) if (goal.evidenceAt && !Number.isFinite(explicitTimestampMs(goal.evidenceAt))) contradictions.push({ code:'INVALID_EVIDENCE_TIMESTAMP', issue:goal.issue });
   for (const goal of claimed) {
@@ -269,7 +281,7 @@ export function buildMissionScheduler(input = {}) {
     else if (issueCounts.get(goal.issue) > 1) rejectedActiveClaims.add(goal);
     else if (goal.invalidApprovalRequired) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_APPROVAL_GATE_INVALID', issue:goal.issue }); }
     else if (goal.invalidOperatorPriority) rejectedActiveClaims.add(goal);
-    else if (goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.invalidFlywheelEvidenceEntries.length) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_FLYWHEEL_EVIDENCE_INVALID', issue:goal.issue }); }
+    else if (goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.boundExceededFlywheelEvidence.length || goal.invalidFlywheelEvidenceEntries.length) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_FLYWHEEL_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (!goal.convergenceEvidenceComplete) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_STRUCTURAL_REVIEW_REQUIRED', issue:goal.issue }); }
     else if (hasMalformedRelations(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_RELATION_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (goal.duplicateOf || goal.supersededBy) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_INVALIDATED', issue:goal.issue }); }
@@ -281,8 +293,8 @@ export function buildMissionScheduler(input = {}) {
   }
   if (authoritative.length > 1) contradictions.push({ code:'MULTIPLE_ACTIVE_LANES', issues:authoritative.map((goal) => goal.issue) });
   if (!portfolioBoundExceeded && !totalPrerequisiteBoundExceeded) {
-    const cycleEvidence = detectCycles(goalsByIssue);
-    if (cycleEvidence.cyclesTotal > 0) contradictions.push({ code:'DEPENDENCY_CYCLE', cycles:cycleEvidence.cycles, cyclesTotal:cycleEvidence.cyclesTotal, cyclesShown:cycleEvidence.cycles.length, maximumCyclesShown:MAX_CYCLE_EVIDENCE, maximumIssuesPerCycle:MAX_CYCLE_PATH_ISSUES });
+    const cycleEvidenceResult = detectCycles(goalsByIssue);
+    if (cycleEvidenceResult.cyclesTotal > 0) contradictions.push({ code:'DEPENDENCY_CYCLE', cycles:cycleEvidenceResult.cycles, cyclesTotal:cycleEvidenceResult.cyclesTotal, cyclesShown:cycleEvidenceResult.cycles.length, maximumCyclesShown:MAX_CYCLE_EVIDENCE, maximumIssuesPerCycle:MAX_CYCLE_PATH_ISSUES });
   }
   const failClosed = contradictions.length > 0;
   const activeGoals = new Set(!failClosed && authoritative.length === 1 ? authoritative : []);
