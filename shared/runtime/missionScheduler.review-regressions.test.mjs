@@ -9,6 +9,7 @@ const flywheelOutputs = { resultProofRefs:['proof:result'], reusableCapabilityId
 function goal(issue, overrides = {}) {
   return { issue, title:`Goal ${issue}`, state:'QUEUED', prerequisites:[], priority:1, criticalPathWeight:1, reversibility:'HIGH', route:'CHATGPT_GITHUB', evidenceAt:fresh, ...overrides };
 }
+function binding(issue, activePr, headSha = PROVEN_HEAD) { return { issue, activePr, headSha }; }
 
 test('supplied non-array goals evidence fails closed', () => {
   for (const goals of [{}, 'not-a-portfolio', 42, null]) {
@@ -26,13 +27,13 @@ test('omitted goals remains a valid empty programme', () => {
   assert.equal(result.programmeStatus, 'WAITING');
 });
 
-test('exact-head proof requires exact-head operator approval before merge readiness', () => {
-  const awaiting = buildMissionScheduler({ now:NOW, proofHeadShas:[PROVEN_HEAD], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD})] });
+test('exact-head proof requires goal/PR/head-bound operator approval before merge readiness', () => {
+  const awaiting = buildMissionScheduler({ now:NOW, proofReceipts:[binding(1556,1601)], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD})] });
   assert.equal(awaiting.programmeStatus, 'APPROVAL_REQUIRED');
   assert.equal(awaiting.operatorAction, 'OPERATOR_APPROVAL_REQUIRED');
   assert.equal(awaiting.portfolio[0].lifecycle, 'APPROVAL_REQUIRED');
 
-  const result = buildMissionScheduler({ now:NOW, proofHeadShas:[PROVEN_HEAD], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD,operatorApprovalHeadSha:PROVEN_HEAD})] });
+  const result = buildMissionScheduler({ now:NOW, proofReceipts:[binding(1556,1601)], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD,operatorApprovalReceipt:binding(1556,1601)})] });
   assert.equal(result.programmeStatus, 'MERGE_READY');
   assert.equal(result.selectedGoal, '#1556');
   assert.equal(result.selectedLifecycle, 'MERGE_READY');
@@ -77,12 +78,12 @@ test('any unidentified goal fails the whole portfolio closed', () => {
 test('fail-closed portfolios withhold every authority-bearing lifecycle', () => {
   const candidates = [
     [goal(2), 'READY'],
-    [goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD,operatorApprovalHeadSha:PROVEN_HEAD}), 'MERGE_READY'],
+    [goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD,operatorApprovalReceipt:binding(2,1601)}), 'MERGE_READY'],
     [goal(2,{state:'COMPLETE',...flywheelOutputs}), 'CLOSE_READY'],
     [goal(2,{approvalRequired:true}), 'APPROVAL_REQUIRED'],
   ];
   for (const [candidate, expectedCandidateLifecycle] of candidates) {
-    const result = buildMissionScheduler({ now:NOW, proofHeadShas:[PROVEN_HEAD], goals:[goal(null),candidate] });
+    const result = buildMissionScheduler({ now:NOW, proofReceipts:[binding(2,1601)], goals:[goal(null),candidate] });
     assert.equal(result.failClosed, true);
     assert.equal(result.portfolio[1].lifecycle, 'BLOCKED');
     assert.equal(result.portfolio[1].candidateLifecycle, expectedCandidateLifecycle);
@@ -203,6 +204,15 @@ test('chat projection bounds nested arrays and long evidence strings', () => {
   const result = answerMissionQuery({ now:NOW, proofRefs:[huge], goals:[goal(1,{prerequisites})] }, 'what is blocked');
   assert.equal(result.blockers[0].prerequisites.length, 20);
   assert.ok(result.proofRefs[0].length < 600);
+  assert.ok(JSON.stringify(result).length < 20_000);
+});
+
+test('oversized branch lane identity fails closed and stays bounded in chat projection', () => {
+  const branch = `feature/${'x'.repeat(10_000)}`;
+  const result = answerMissionQuery({ now:NOW, goals:[goal(1,{state:'ACTIVE',branch})] }, 'what is blocked');
+  assert.equal(result.programmeStatus, 'BLOCKED');
+  assert.equal(result.activeLane, null);
+  assert.ok(result.blockers.some(({code}) => code === 'LANE_IDENTITY_BOUND_EXCEEDED'));
   assert.ok(JSON.stringify(result).length < 20_000);
 });
 
