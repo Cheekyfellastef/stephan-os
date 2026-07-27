@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SAFE_ID = /^[1-9][0-9]{0,19}$/;
@@ -62,7 +63,7 @@ export function recoverGitHubActionsFailureLog(input = {}, options = {}) {
     repository,
     runId,
     jobId,
-    command: ['gh.exe', ...args],
+    command: [options.ghExecutable || 'gh.exe', ...args],
     logFile: basename(paths.logPath),
     logPath: paths.logPath,
     bytes: Buffer.byteLength(stdout, 'utf8'),
@@ -82,7 +83,7 @@ function flag(name) {
   return index >= 0 ? process.argv[index + 1] : '';
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const result = recoverGitHubActionsFailureLog({
     repository: flag('--repo'),
     runId: flag('--run'),
