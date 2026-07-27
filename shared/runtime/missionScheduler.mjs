@@ -14,7 +14,7 @@ const AUTHORITY_BEARING_LIFECYCLES = new Set(['READY', 'MERGE_READY', 'CLOSE_REA
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  if (Array.isArray(value)) return Object.freeze(value.map(freeze));
+  if (Array.isArray(value)) return Object.freeze(Array.from({ length:value.length }, (_, index) => freeze(value[index])));
   for (const [key, entry] of Object.entries(value)) value[key] = freeze(entry);
   return Object.freeze(value);
 }
@@ -28,8 +28,21 @@ function issueNumber(value) {
 function sha(value) { return typeof value === 'string' && SHA_RE.test(value.trim()) ? value.trim().toLowerCase() : null; }
 function positiveNumber(value, fallback = 0) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback; }
 function hasOwn(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
-function normalizedStringArray(value) { return Array.isArray(value) ? value.map((entry) => text(entry)).filter(Boolean) : []; }
 function invalidArrayContainer(object, key) { return hasOwn(object, key) && !Array.isArray(object[key]); }
+function normalizeStringEvidenceArray(object, key) {
+  const present = hasOwn(object, key);
+  const raw = present && Array.isArray(object[key]) ? object[key] : [];
+  const values = [];
+  const invalidEntries = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    if (!hasOwn(raw, index) || typeof raw[index] !== 'string' || !raw[index].trim()) {
+      invalidEntries.push({ key, index });
+      continue;
+    }
+    values.push(raw[index].trim());
+  }
+  return { values, invalidContainer:present && !Array.isArray(object[key]), invalidEntries };
+}
 function explicitTimestampMs(value) {
   if (typeof value !== 'string') return NaN;
   const normalized = value.trim();
@@ -44,9 +57,10 @@ function normalizeGoal(candidate = {}) {
   const prerequisitesPresent = hasOwn(goal, 'prerequisites');
   const invalidPrerequisiteContainer = prerequisitesPresent && !Array.isArray(goal.prerequisites);
   const rawPrerequisites = Array.isArray(goal.prerequisites) ? goal.prerequisites : [];
-  const normalizedPrerequisites = rawPrerequisites.map(issueNumber);
+  const normalizedPrerequisites = Array.from({ length:rawPrerequisites.length }, (_, index) => issueNumber(rawPrerequisites[index]));
   const prerequisites = [...new Set(normalizedPrerequisites.filter(Boolean))];
-  const invalidPrerequisites = rawPrerequisites.filter((_, index) => !normalizedPrerequisites[index]).map(String);
+  const invalidPrerequisites = [];
+  for (let index = 0; index < rawPrerequisites.length; index += 1) if (!hasOwn(rawPrerequisites, index) || !normalizedPrerequisites[index]) invalidPrerequisites.push(`index:${index}`);
   const duplicateOfPresent = hasOwn(goal, 'duplicateOf') && goal.duplicateOf !== null && goal.duplicateOf !== undefined && goal.duplicateOf !== '';
   const supersededByPresent = hasOwn(goal, 'supersededBy') && goal.supersededBy !== null && goal.supersededBy !== undefined && goal.supersededBy !== '';
   const duplicateOf = issueNumber(goal.duplicateOf);
@@ -62,14 +76,18 @@ function normalizeGoal(candidate = {}) {
   const repairCycleCountPresent = hasOwn(goal, 'repairCycleCount');
   const invalidRepairCycleCount = repairCycleCountPresent && (!Number.isSafeInteger(goal.repairCycleCount) || goal.repairCycleCount < 0);
   const repairCycleCount = invalidRepairCycleCount || !repairCycleCountPresent ? 0 : goal.repairCycleCount;
-  const resultProofRefs = normalizedStringArray(goal.resultProofRefs);
-  const structuralReviewProofRefs = normalizedStringArray(goal.structuralReviewProofRefs);
-  const modelTestProofRefs = normalizedStringArray(goal.modelTestProofRefs);
+  const resultEvidence = normalizeStringEvidenceArray(goal, 'resultProofRefs');
+  const structuralEvidence = normalizeStringEvidenceArray(goal, 'structuralReviewProofRefs');
+  const modelEvidence = normalizeStringEvidenceArray(goal, 'modelTestProofRefs');
+  const resultProofRefs = resultEvidence.values;
+  const structuralReviewProofRefs = structuralEvidence.values;
+  const modelTestProofRefs = modelEvidence.values;
   const invalidFlywheelEvidenceContainers = [
-    ...(invalidArrayContainer(goal, 'resultProofRefs') ? ['resultProofRefs'] : []),
-    ...(invalidArrayContainer(goal, 'structuralReviewProofRefs') ? ['structuralReviewProofRefs'] : []),
-    ...(invalidArrayContainer(goal, 'modelTestProofRefs') ? ['modelTestProofRefs'] : []),
+    ...(resultEvidence.invalidContainer ? ['resultProofRefs'] : []),
+    ...(structuralEvidence.invalidContainer ? ['structuralReviewProofRefs'] : []),
+    ...(modelEvidence.invalidContainer ? ['modelTestProofRefs'] : []),
   ];
+  const invalidFlywheelEvidenceEntries = [...resultEvidence.invalidEntries, ...structuralEvidence.invalidEntries, ...modelEvidence.invalidEntries];
   const reusableCapabilityId = text(goal.reusableCapabilityId) || null;
   const sharedLessonId = text(goal.sharedLessonId) || null;
   const flywheelOutputsComplete = resultProofRefs.length > 0 && Boolean(reusableCapabilityId) && Boolean(sharedLessonId);
@@ -79,7 +97,7 @@ function normalizeGoal(candidate = {}) {
   const route = ROUTES.has(goal.route) ? goal.route : 'BLOCKED_UNSAFE_OR_UNKNOWN';
   const headSha = sha(goal.headSha);
   const operatorApprovalHeadSha = sha(goal.operatorApprovalHeadSha);
-  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr:issueNumber(goal.activePr), branch:text(goal.branch) || null, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalHeadSha, exactHeadApprovalSatisfied:Boolean(headSha && operatorApprovalHeadSha === headSha), duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
+  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, invalidFlywheelEvidenceEntries, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr:issueNumber(goal.activePr), branch:text(goal.branch) || null, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalHeadSha, exactHeadApprovalSatisfied:Boolean(headSha && operatorApprovalHeadSha === headSha), duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
 }
 
 function detectCycles(goalsByIssue) {
@@ -95,25 +113,19 @@ function detectCycles(goalsByIssue) {
   return cycles;
 }
 function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
-function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length; }
+function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.invalidFlywheelEvidenceEntries.length; }
 function completionOutputsSatisfied(goal) { return goal.flywheelOutputsComplete && goal.convergenceEvidenceComplete; }
 function createDependencyAdjudicator(goalsByIssue, staleByGoal) {
-  const memo = new Map();
-  const visiting = new Set();
+  const memo = new Map(); const visiting = new Set();
   function dependencyComplete(goal) {
     if (!goal?.issue) return false;
     if (memo.has(goal.issue)) return memo.get(goal.issue);
     if (visiting.has(goal.issue)) return false;
     const finalGateBlocked = goal.approvalRequired === true || goal.route === 'OPERATOR_APPROVAL' || goal.route === 'WAITING_FOR_EXTERNAL_CONDITION' || goal.route === 'BLOCKED_UNSAFE_OR_UNKNOWN';
-    if (hasMalformedEvidence(goal) || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || finalGateBlocked || !COMPLETION_STATES.has(goal.state) || !completionOutputsSatisfied(goal)) {
-      memo.set(goal.issue, false);
-      return false;
-    }
+    if (hasMalformedEvidence(goal) || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || finalGateBlocked || !COMPLETION_STATES.has(goal.state) || !completionOutputsSatisfied(goal)) { memo.set(goal.issue, false); return false; }
     visiting.add(goal.issue);
     const complete = goal.prerequisites.every((issue) => dependencyComplete(goalsByIssue.get(issue)));
-    visiting.delete(goal.issue);
-    memo.set(goal.issue, complete);
-    return complete;
+    visiting.delete(goal.issue); memo.set(goal.issue, complete); return complete;
   }
   return dependencyComplete;
 }
@@ -163,7 +175,7 @@ function selectionRationale(goal) { const criteria = [goal.operatorPriority ? 'o
 function contradictionRationale(contradictions) { const visibleCodes = contradictions.slice(0, CONTRADICTION_SUMMARY_LIMIT).map(({ code }) => code); const hiddenCount = contradictions.length - visibleCodes.length; const hiddenSummary = hiddenCount > 0 ? `, plus ${hiddenCount} more contradiction${hiddenCount === 1 ? '' : 's'}` : ''; return `Scheduling failed closed: ${visibleCodes.join(', ')}${hiddenSummary}.`; }
 function lifecycleBlockers(portfolio) {
   const blocked = new Set(['BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED','IMPLEMENTED_NEEDS_PROOF','FLYWHEEL_OUTPUTS_REQUIRED','STRUCTURAL_REVIEW_REQUIRED']);
-  return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, candidateLifecycle:goal.candidateLifecycle ?? null, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer, invalidInvalidationClaims:goal.invalidInvalidationClaims, invalidApprovalRequired:goal.invalidApprovalRequired, invalidOperatorPriority:goal.invalidOperatorPriority, invalidRepairCycleCount:goal.invalidRepairCycleCount, invalidFlywheelEvidenceContainers:goal.invalidFlywheelEvidenceContainers, flywheelOutputsComplete:goal.flywheelOutputsComplete, exactHeadApprovalSatisfied:goal.exactHeadApprovalSatisfied, repairCycleCount:goal.repairCycleCount, convergenceReviewRequired:goal.convergenceReviewRequired, convergenceEvidenceComplete:goal.convergenceEvidenceComplete, evidenceFreshness:goal.evidenceFreshness }));
+  return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, candidateLifecycle:goal.candidateLifecycle ?? null, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer, invalidInvalidationClaims:goal.invalidInvalidationClaims, invalidApprovalRequired:goal.invalidApprovalRequired, invalidOperatorPriority:goal.invalidOperatorPriority, invalidRepairCycleCount:goal.invalidRepairCycleCount, invalidFlywheelEvidenceContainers:goal.invalidFlywheelEvidenceContainers, invalidFlywheelEvidenceEntries:goal.invalidFlywheelEvidenceEntries, flywheelOutputsComplete:goal.flywheelOutputsComplete, exactHeadApprovalSatisfied:goal.exactHeadApprovalSatisfied, repairCycleCount:goal.repairCycleCount, convergenceReviewRequired:goal.convergenceReviewRequired, convergenceEvidenceComplete:goal.convergenceEvidenceComplete, evidenceFreshness:goal.evidenceFreshness }));
 }
 function compactString(value) { const normalized = String(value); return normalized.length <= CHAT_STRING_LIMIT ? normalized : `${normalized.slice(0, CHAT_STRING_LIMIT)}…`; }
 function compactArray(values) { return Array.isArray(values) ? values.slice(0, CHAT_NESTED_LIMIT).map((entry) => typeof entry === 'string' ? compactString(entry) : entry) : values; }
@@ -182,14 +194,14 @@ export function buildMissionScheduler(input = {}) {
   const goalsContainerInvalid = hasOwn(source, 'goals') && !Array.isArray(source.goals);
   const proofHeadsContainerInvalid = hasOwn(source, 'proofHeadShas') && !Array.isArray(source.proofHeadShas);
   const rawProofHeads = Array.isArray(source.proofHeadShas) ? source.proofHeadShas : [];
-  const normalizedProofHeads = rawProofHeads.map(sha);
-  const invalidProofHeads = rawProofHeads.filter((_, index) => !normalizedProofHeads[index]).map(String);
+  const normalizedProofHeads = Array.from({ length:rawProofHeads.length }, (_, index) => sha(rawProofHeads[index]));
+  const invalidProofHeads = [];
+  for (let index = 0; index < rawProofHeads.length; index += 1) if (!hasOwn(rawProofHeads, index) || !normalizedProofHeads[index]) invalidProofHeads.push({ index });
   const provenHeads = new Set(normalizedProofHeads.filter(Boolean));
-  const proofRefsContainerInvalid = hasOwn(source, 'proofRefs') && !Array.isArray(source.proofRefs);
-  const rawProofRefs = Array.isArray(source.proofRefs) ? source.proofRefs : [];
-  const normalizedProofRefs = rawProofRefs.map((entry) => typeof entry === 'string' && entry.trim() ? entry.trim() : null);
-  const invalidProofRefs = rawProofRefs.filter((_, index) => !normalizedProofRefs[index]).map((entry) => String(entry));
-  const proofRefs = normalizedProofRefs.filter(Boolean);
+  const proofRefEvidence = normalizeStringEvidenceArray(source, 'proofRefs');
+  const proofRefsContainerInvalid = proofRefEvidence.invalidContainer;
+  const invalidProofRefs = proofRefEvidence.invalidEntries;
+  const proofRefs = proofRefEvidence.values;
   const rawGoals = Array.isArray(source.goals) ? source.goals : [];
   const portfolioBoundExceeded = rawGoals.length > MAX_PORTFOLIO_GOALS;
   const goals = portfolioBoundExceeded ? [] : Array.from({ length:rawGoals.length }, (_, index) => normalizeGoal(rawGoals[index]));
@@ -210,13 +222,14 @@ export function buildMissionScheduler(input = {}) {
   for (const issue of duplicateIssueIds) contradictions.push({ code:'DUPLICATE_GOAL_IDENTITY', issue });
   for (const [index, goal] of goals.entries()) if (!goal.issue) contradictions.push({ code:'INVALID_GOAL_IDENTITY', index });
   for (const goal of goals) if (goal.invalidOperatorPriority) contradictions.push({ code:'INVALID_OPERATOR_PRIORITY_EVIDENCE', issue:goal.issue });
+  for (const goal of goals) if (goal.invalidFlywheelEvidenceEntries.length) contradictions.push({ code:'INVALID_GOAL_PROOF_REFERENCE_EVIDENCE', issue:goal.issue, invalidEntries:goal.invalidFlywheelEvidenceEntries });
   for (const goal of goals) if (goal.evidenceAt && !Number.isFinite(explicitTimestampMs(goal.evidenceAt))) contradictions.push({ code:'INVALID_EVIDENCE_TIMESTAMP', issue:goal.issue });
   for (const goal of claimed) {
     if (!goal.issue) rejectedActiveClaims.add(goal);
     else if (issueCounts.get(goal.issue) > 1) rejectedActiveClaims.add(goal);
     else if (goal.invalidApprovalRequired) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_APPROVAL_GATE_INVALID', issue:goal.issue }); }
     else if (goal.invalidOperatorPriority) rejectedActiveClaims.add(goal);
-    else if (goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_FLYWHEEL_EVIDENCE_INVALID', issue:goal.issue }); }
+    else if (goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.invalidFlywheelEvidenceEntries.length) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_FLYWHEEL_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (!goal.convergenceEvidenceComplete) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_STRUCTURAL_REVIEW_REQUIRED', issue:goal.issue }); }
     else if (hasMalformedRelations(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_RELATION_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (goal.duplicateOf || goal.supersededBy) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_INVALIDATED', issue:goal.issue }); }
