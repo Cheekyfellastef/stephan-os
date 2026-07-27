@@ -49,20 +49,38 @@ jobs:
         working-directory: stephanos-ui
         run: npm ci
 
-      - name: Run Stephanos routing guardrails tests
-        run: |
-          node --test \
-            shared/runtime/runtimeGuardrails.test.mjs \
-            shared/runtime/runtimeStatusModel.test.mjs \
-            shared/runtime/stephanosHomeNode.test.mjs \
-            shared/runtime/stephanosSessionMemory.test.mjs \
-            stephanos-server/tests/runtime-status-model.test.js \
-            stephanos-server/tests/provider-routing.test.js \
-            stephanos-ui/src/components/StatusPanel.render.test.mjs \
-            scripts/stephanos-build-utils.test.mjs \
-            scripts/windows-ignition-browser-surfaces.test.mjs \
-            scripts/run-battle-bridge-ignition.test.mjs \
-            scripts/refresh-stephanos-ui-4173.test.mjs
+      - name: Test runtime guardrails
+        run: node --test shared/runtime/runtimeGuardrails.test.mjs
+
+      - name: Test runtime status model
+        run: node --test shared/runtime/runtimeStatusModel.test.mjs
+
+      - name: Test Stephanos home node
+        run: node --test shared/runtime/stephanosHomeNode.test.mjs
+
+      - name: Test Stephanos session memory
+        run: node --test shared/runtime/stephanosSessionMemory.test.mjs
+
+      - name: Test server runtime status model
+        run: node --test stephanos-server/tests/runtime-status-model.test.js
+
+      - name: Test provider routing
+        run: node --test stephanos-server/tests/provider-routing.test.js
+
+      - name: Test StatusPanel rendering
+        run: node --test stephanos-ui/src/components/StatusPanel.render.test.mjs
+
+      - name: Test build utilities
+        run: node --test scripts/stephanos-build-utils.test.mjs
+
+      - name: Test Windows ignition browser surfaces
+        run: node --test scripts/windows-ignition-browser-surfaces.test.mjs
+
+      - name: Test Battle Bridge ignition
+        run: node --test scripts/run-battle-bridge-ignition.test.mjs
+
+      - name: Test UI refresh
+        run: node --test scripts/refresh-stephanos-ui-4173.test.mjs
 
       - name: Build Stephanos UI pipeline from repo root
         run: npm run stephanos:build
