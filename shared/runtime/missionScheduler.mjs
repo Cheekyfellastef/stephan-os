@@ -10,6 +10,8 @@ const CHAT_NESTED_LIMIT = 20;
 const CHAT_STRING_LIMIT = 512;
 const CONTRADICTION_SUMMARY_LIMIT = 5;
 const MAX_PORTFOLIO_GOALS = 1000;
+const MAX_PREREQUISITES_PER_GOAL = 1000;
+const MAX_TOTAL_PREREQUISITES = 10000;
 const AUTHORITY_BEARING_LIFECYCLES = new Set(['READY', 'MERGE_READY', 'CLOSE_READY', 'APPROVAL_REQUIRED']);
 
 function freeze(value) {
@@ -28,18 +30,14 @@ function issueNumber(value) {
 function sha(value) { return typeof value === 'string' && SHA_RE.test(value.trim()) ? value.trim().toLowerCase() : null; }
 function positiveNumber(value, fallback = 0) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback; }
 function hasOwn(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
-function invalidArrayContainer(object, key) { return hasOwn(object, key) && !Array.isArray(object[key]); }
 function normalizeStringEvidenceArray(object, key) {
   const present = hasOwn(object, key);
   const raw = present && Array.isArray(object[key]) ? object[key] : [];
   const values = [];
   const invalidEntries = [];
   for (let index = 0; index < raw.length; index += 1) {
-    if (!hasOwn(raw, index) || typeof raw[index] !== 'string' || !raw[index].trim()) {
-      invalidEntries.push({ key, index });
-      continue;
-    }
-    values.push(raw[index].trim());
+    if (!hasOwn(raw, index) || typeof raw[index] !== 'string' || !raw[index].trim()) invalidEntries.push({ key, index });
+    else values.push(raw[index].trim());
   }
   return { values, invalidContainer:present && !Array.isArray(object[key]), invalidEntries };
 }
@@ -56,7 +54,9 @@ function normalizeGoal(candidate = {}) {
   const number = issueNumber(goal.issue ?? goal.issueNumber);
   const prerequisitesPresent = hasOwn(goal, 'prerequisites');
   const invalidPrerequisiteContainer = prerequisitesPresent && !Array.isArray(goal.prerequisites);
-  const rawPrerequisites = Array.isArray(goal.prerequisites) ? goal.prerequisites : [];
+  const suppliedPrerequisiteCount = Array.isArray(goal.prerequisites) ? goal.prerequisites.length : 0;
+  const prerequisiteBoundExceeded = suppliedPrerequisiteCount > MAX_PREREQUISITES_PER_GOAL;
+  const rawPrerequisites = Array.isArray(goal.prerequisites) && !prerequisiteBoundExceeded ? goal.prerequisites : [];
   const normalizedPrerequisites = Array.from({ length:rawPrerequisites.length }, (_, index) => issueNumber(rawPrerequisites[index]));
   const prerequisites = [...new Set(normalizedPrerequisites.filter(Boolean))];
   const invalidPrerequisites = [];
@@ -97,22 +97,40 @@ function normalizeGoal(candidate = {}) {
   const route = ROUTES.has(goal.route) ? goal.route : 'BLOCKED_UNSAFE_OR_UNKNOWN';
   const headSha = sha(goal.headSha);
   const operatorApprovalHeadSha = sha(goal.operatorApprovalHeadSha);
-  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, invalidFlywheelEvidenceEntries, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr:issueNumber(goal.activePr), branch:text(goal.branch) || null, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalHeadSha, exactHeadApprovalSatisfied:Boolean(headSha && operatorApprovalHeadSha === headSha), duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
+  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, invalidFlywheelEvidenceEntries, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr:issueNumber(goal.activePr), branch:text(goal.branch) || null, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalHeadSha, exactHeadApprovalSatisfied:Boolean(headSha && operatorApprovalHeadSha === headSha), duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
 }
 
 function detectCycles(goalsByIssue) {
-  const visiting = new Set(); const visited = new Set(); const cycles = [];
-  function visit(issue, path = []) {
-    if (visiting.has(issue)) { const start = path.indexOf(issue); cycles.push([...path.slice(start), issue]); return; }
-    if (visited.has(issue)) return;
-    visiting.add(issue);
-    for (const dependency of goalsByIssue.get(issue)?.prerequisites ?? []) if (goalsByIssue.has(dependency)) visit(dependency, [...path, issue]);
-    visiting.delete(issue); visited.add(issue);
+  const state = new Map();
+  const cycles = [];
+  for (const root of goalsByIssue.keys()) {
+    if (state.get(root) === 2) continue;
+    const stack = [{ issue:root, dependencies:null, index:0 }];
+    const path = [];
+    while (stack.length) {
+      const frame = stack[stack.length - 1];
+      if (frame.dependencies === null) {
+        if (state.get(frame.issue) === 2) { stack.pop(); continue; }
+        state.set(frame.issue, 1);
+        path.push(frame.issue);
+        frame.dependencies = (goalsByIssue.get(frame.issue)?.prerequisites ?? []).filter((dependency) => goalsByIssue.has(dependency));
+      }
+      if (frame.index >= frame.dependencies.length) {
+        state.set(frame.issue, 2);
+        stack.pop();
+        path.pop();
+        continue;
+      }
+      const dependency = frame.dependencies[frame.index++];
+      if (state.get(dependency) === 1) {
+        const start = path.indexOf(dependency);
+        cycles.push([...path.slice(start), dependency]);
+      } else if (state.get(dependency) !== 2) stack.push({ issue:dependency, dependencies:null, index:0 });
+    }
   }
-  for (const issue of goalsByIssue.keys()) visit(issue);
   return cycles;
 }
-function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
+function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.prerequisiteBoundExceeded || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
 function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.invalidFlywheelEvidenceEntries.length; }
 function completionOutputsSatisfied(goal) { return goal.flywheelOutputsComplete && goal.convergenceEvidenceComplete; }
 function createDependencyAdjudicator(goalsByIssue, staleByGoal) {
@@ -130,7 +148,7 @@ function createDependencyAdjudicator(goalsByIssue, staleByGoal) {
   return dependencyComplete;
 }
 function dependencyStatus(goal, goalsByIssue, dependencyComplete) {
-  if (goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length) return 'INVALID';
+  if (goal.invalidPrerequisiteContainer || goal.prerequisiteBoundExceeded || goal.invalidPrerequisites.length) return 'INVALID';
   if (goal.prerequisites.some((issue) => !goalsByIssue.has(issue))) return 'MISSING';
   if (goal.prerequisites.some((issue) => !dependencyComplete(goalsByIssue.get(issue)))) return 'INCOMPLETE';
   return 'SATISFIED';
@@ -175,7 +193,7 @@ function selectionRationale(goal) { const criteria = [goal.operatorPriority ? 'o
 function contradictionRationale(contradictions) { const visibleCodes = contradictions.slice(0, CONTRADICTION_SUMMARY_LIMIT).map(({ code }) => code); const hiddenCount = contradictions.length - visibleCodes.length; const hiddenSummary = hiddenCount > 0 ? `, plus ${hiddenCount} more contradiction${hiddenCount === 1 ? '' : 's'}` : ''; return `Scheduling failed closed: ${visibleCodes.join(', ')}${hiddenSummary}.`; }
 function lifecycleBlockers(portfolio) {
   const blocked = new Set(['BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED','IMPLEMENTED_NEEDS_PROOF','FLYWHEEL_OUTPUTS_REQUIRED','STRUCTURAL_REVIEW_REQUIRED']);
-  return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, candidateLifecycle:goal.candidateLifecycle ?? null, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer, invalidInvalidationClaims:goal.invalidInvalidationClaims, invalidApprovalRequired:goal.invalidApprovalRequired, invalidOperatorPriority:goal.invalidOperatorPriority, invalidRepairCycleCount:goal.invalidRepairCycleCount, invalidFlywheelEvidenceContainers:goal.invalidFlywheelEvidenceContainers, invalidFlywheelEvidenceEntries:goal.invalidFlywheelEvidenceEntries, flywheelOutputsComplete:goal.flywheelOutputsComplete, exactHeadApprovalSatisfied:goal.exactHeadApprovalSatisfied, repairCycleCount:goal.repairCycleCount, convergenceReviewRequired:goal.convergenceReviewRequired, convergenceEvidenceComplete:goal.convergenceEvidenceComplete, evidenceFreshness:goal.evidenceFreshness }));
+  return portfolio.filter((goal) => blocked.has(goal.lifecycle)).map((goal) => ({ code:`GOAL_${goal.lifecycle}`, issue:goal.issue, route:goal.route, candidateLifecycle:goal.candidateLifecycle ?? null, prerequisites:goal.prerequisites, invalidPrerequisites:goal.invalidPrerequisites, invalidPrerequisiteContainer:goal.invalidPrerequisiteContainer, prerequisiteBoundExceeded:goal.prerequisiteBoundExceeded, suppliedPrerequisiteCount:goal.suppliedPrerequisiteCount, invalidInvalidationClaims:goal.invalidInvalidationClaims, invalidApprovalRequired:goal.invalidApprovalRequired, invalidOperatorPriority:goal.invalidOperatorPriority, invalidRepairCycleCount:goal.invalidRepairCycleCount, invalidFlywheelEvidenceContainers:goal.invalidFlywheelEvidenceContainers, invalidFlywheelEvidenceEntries:goal.invalidFlywheelEvidenceEntries, flywheelOutputsComplete:goal.flywheelOutputsComplete, exactHeadApprovalSatisfied:goal.exactHeadApprovalSatisfied, repairCycleCount:goal.repairCycleCount, convergenceReviewRequired:goal.convergenceReviewRequired, convergenceEvidenceComplete:goal.convergenceEvidenceComplete, evidenceFreshness:goal.evidenceFreshness }));
 }
 function compactString(value) { const normalized = String(value); return normalized.length <= CHAT_STRING_LIMIT ? normalized : `${normalized.slice(0, CHAT_STRING_LIMIT)}…`; }
 function compactArray(values) { return Array.isArray(values) ? values.slice(0, CHAT_NESTED_LIMIT).map((entry) => typeof entry === 'string' ? compactString(entry) : entry) : values; }
@@ -204,7 +222,17 @@ export function buildMissionScheduler(input = {}) {
   const proofRefs = proofRefEvidence.values;
   const rawGoals = Array.isArray(source.goals) ? source.goals : [];
   const portfolioBoundExceeded = rawGoals.length > MAX_PORTFOLIO_GOALS;
-  const goals = portfolioBoundExceeded ? [] : Array.from({ length:rawGoals.length }, (_, index) => normalizeGoal(rawGoals[index]));
+  let totalPrerequisites = 0;
+  let totalPrerequisiteBoundExceeded = false;
+  if (!portfolioBoundExceeded) {
+    for (const candidate of rawGoals) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || !Array.isArray(candidate.prerequisites)) continue;
+      if (candidate.prerequisites.length > MAX_PREREQUISITES_PER_GOAL) continue;
+      totalPrerequisites += candidate.prerequisites.length;
+      if (totalPrerequisites > MAX_TOTAL_PREREQUISITES) { totalPrerequisiteBoundExceeded = true; break; }
+    }
+  }
+  const goals = portfolioBoundExceeded || totalPrerequisiteBoundExceeded ? [] : Array.from({ length:rawGoals.length }, (_, index) => normalizeGoal(rawGoals[index]));
   const issueCounts = new Map();
   for (const goal of goals) if (goal.issue) issueCounts.set(goal.issue, (issueCounts.get(goal.issue) ?? 0) + 1);
   const duplicateIssueIds = [...issueCounts].filter(([, count]) => count > 1).map(([issue]) => issue);
@@ -217,10 +245,12 @@ export function buildMissionScheduler(input = {}) {
   if (nowInvalid || freshnessInvalid) contradictions.push({ code:'INVALID_SCHEDULER_CLOCK', invalidNow:nowInvalid, invalidFreshnessMs:freshnessInvalid });
   if (goalsContainerInvalid) contradictions.push({ code:'INVALID_GOALS_CONTAINER' });
   if (portfolioBoundExceeded) contradictions.push({ code:'PORTFOLIO_BOUND_EXCEEDED', suppliedGoalCount:rawGoals.length, maximumGoalCount:MAX_PORTFOLIO_GOALS });
+  if (totalPrerequisiteBoundExceeded) contradictions.push({ code:'TOTAL_PREREQUISITE_BOUND_EXCEEDED', suppliedPrerequisiteCount:totalPrerequisites, maximumPrerequisiteCount:MAX_TOTAL_PREREQUISITES });
   if (proofHeadsContainerInvalid || invalidProofHeads.length) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads });
   if (proofRefsContainerInvalid || invalidProofRefs.length) contradictions.push({ code:'INVALID_PROOF_REFERENCE_EVIDENCE', invalidProofRefs });
   for (const issue of duplicateIssueIds) contradictions.push({ code:'DUPLICATE_GOAL_IDENTITY', issue });
   for (const [index, goal] of goals.entries()) if (!goal.issue) contradictions.push({ code:'INVALID_GOAL_IDENTITY', index });
+  for (const goal of goals) if (goal.prerequisiteBoundExceeded) contradictions.push({ code:'PREREQUISITE_BOUND_EXCEEDED', issue:goal.issue, suppliedPrerequisiteCount:goal.suppliedPrerequisiteCount, maximumPrerequisiteCount:MAX_PREREQUISITES_PER_GOAL });
   for (const goal of goals) if (goal.invalidOperatorPriority) contradictions.push({ code:'INVALID_OPERATOR_PRIORITY_EVIDENCE', issue:goal.issue });
   for (const goal of goals) if (goal.invalidFlywheelEvidenceEntries.length) contradictions.push({ code:'INVALID_GOAL_PROOF_REFERENCE_EVIDENCE', issue:goal.issue, invalidEntries:goal.invalidFlywheelEvidenceEntries });
   for (const goal of goals) if (goal.evidenceAt && !Number.isFinite(explicitTimestampMs(goal.evidenceAt))) contradictions.push({ code:'INVALID_EVIDENCE_TIMESTAMP', issue:goal.issue });
@@ -240,7 +270,7 @@ export function buildMissionScheduler(input = {}) {
     else authoritative.push(goal);
   }
   if (authoritative.length > 1) contradictions.push({ code:'MULTIPLE_ACTIVE_LANES', issues:authoritative.map((goal) => goal.issue) });
-  if (!portfolioBoundExceeded) for (const cycle of detectCycles(goalsByIssue)) contradictions.push({ code:'DEPENDENCY_CYCLE', issues:cycle });
+  if (!portfolioBoundExceeded && !totalPrerequisiteBoundExceeded) for (const cycle of detectCycles(goalsByIssue)) contradictions.push({ code:'DEPENDENCY_CYCLE', issues:cycle });
   const failClosed = contradictions.length > 0;
   const activeGoals = new Set(!failClosed && authoritative.length === 1 ? authoritative : []);
   const classifiedPortfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal.get(goal), provenHeads, dependencyComplete), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
