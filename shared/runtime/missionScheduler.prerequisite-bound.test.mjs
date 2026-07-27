@@ -47,17 +47,33 @@ test('aggregate prerequisite receipts report the full supplied count including o
   assert.equal(contradiction?.maximumPrerequisiteCount, 10000);
 });
 
-test('cycle evidence is bounded while preserving the exact total', () => {
+test('cycle evidence is bounded and reports truthful DFS back-edge semantics', () => {
   const goals = Array.from({ length: 1000 }, (_, index) => goal(index + 1, [index + 1]));
   const result = buildMissionScheduler({ now: NOW, goals });
   const contradiction = result.contradictions.find(({ code }) => code === 'DEPENDENCY_CYCLE');
 
   assert.equal(result.failClosed, true);
   assert.equal(result.programmeStatus, 'BLOCKED');
-  assert.equal(contradiction?.cyclesTotal, 1000);
+  assert.equal(contradiction?.detectedBackEdges, 1000);
+  assert.equal(contradiction?.cycleEvidenceSemantics, 'DFS_BACK_EDGES_LOWER_BOUND');
+  assert.equal('cyclesTotal' in contradiction, false);
   assert.equal(contradiction?.cyclesShown, 20);
   assert.equal(contradiction?.cycles.length, 20);
   assert.ok(JSON.stringify(contradiction).length < 5000);
+});
+
+test('overlapping cycles do not mislabel DFS back edges as an exact cycle total', () => {
+  const result = buildMissionScheduler({ now: NOW, goals:[
+    goal(1, [2, 3]),
+    goal(2, [3]),
+    goal(3, [1]),
+  ] });
+  const contradiction = result.contradictions.find(({ code }) => code === 'DEPENDENCY_CYCLE');
+
+  assert.equal(result.failClosed, true);
+  assert.equal(contradiction?.detectedBackEdges, 1);
+  assert.equal(contradiction?.cycleEvidenceSemantics, 'DFS_BACK_EDGES_LOWER_BOUND');
+  assert.equal('cyclesTotal' in contradiction, false);
 });
 
 test('truncated long-cycle evidence preserves only real contiguous edges', () => {
