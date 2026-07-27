@@ -21,7 +21,7 @@ test('missing prerequisite blocks readiness and appears in blocker read model', 
 
 test('malformed prerequisite fails closed at the goal boundary', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(2,{prerequisites:['unknown',0]})] });
-  assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null); assert.deepEqual(result.portfolio[0].invalidPrerequisites,['unknown','0']);
+  assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null); assert.deepEqual(result.portfolio[0].invalidPrerequisites,['index:0','index:1']);
 });
 
 test('malformed prerequisite container is preserved as blocked evidence', () => {
