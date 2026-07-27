@@ -12,6 +12,8 @@ const CONTRADICTION_SUMMARY_LIMIT = 5;
 const MAX_PORTFOLIO_GOALS = 1000;
 const MAX_PREREQUISITES_PER_GOAL = 1000;
 const MAX_TOTAL_PREREQUISITES = 10000;
+const MAX_CYCLE_EVIDENCE = 20;
+const MAX_CYCLE_PATH_ISSUES = 20;
 const AUTHORITY_BEARING_LIFECYCLES = new Set(['READY', 'MERGE_READY', 'CLOSE_READY', 'APPROVAL_REQUIRED']);
 
 function freeze(value) {
@@ -100,9 +102,15 @@ function normalizeGoal(candidate = {}) {
   return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, invalidFlywheelEvidenceEntries, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr:issueNumber(goal.activePr), branch:text(goal.branch) || null, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalHeadSha, exactHeadApprovalSatisfied:Boolean(headSha && operatorApprovalHeadSha === headSha), duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
 }
 
+function boundedCycle(path, start, dependency) {
+  const cycle = path.slice(start);
+  if (cycle.length + 1 <= MAX_CYCLE_PATH_ISSUES) return [...cycle, dependency];
+  return [...cycle.slice(0, MAX_CYCLE_PATH_ISSUES - 1), dependency];
+}
 function detectCycles(goalsByIssue) {
   const state = new Map();
   const cycles = [];
+  let cyclesTotal = 0;
   for (const root of goalsByIssue.keys()) {
     if (state.get(root) === 2) continue;
     const stack = [{ issue:root, dependencies:null, index:0 }];
@@ -123,12 +131,15 @@ function detectCycles(goalsByIssue) {
       }
       const dependency = frame.dependencies[frame.index++];
       if (state.get(dependency) === 1) {
-        const start = path.indexOf(dependency);
-        cycles.push([...path.slice(start), dependency]);
+        cyclesTotal += 1;
+        if (cycles.length < MAX_CYCLE_EVIDENCE) {
+          const start = path.indexOf(dependency);
+          cycles.push(boundedCycle(path, start, dependency));
+        }
       } else if (state.get(dependency) !== 2) stack.push({ issue:dependency, dependencies:null, index:0 });
     }
   }
-  return cycles;
+  return { cycles, cyclesTotal };
 }
 function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.prerequisiteBoundExceeded || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
 function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.invalidFlywheelEvidenceEntries.length; }
@@ -227,10 +238,9 @@ export function buildMissionScheduler(input = {}) {
   if (!portfolioBoundExceeded) {
     for (const candidate of rawGoals) {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || !Array.isArray(candidate.prerequisites)) continue;
-      if (candidate.prerequisites.length > MAX_PREREQUISITES_PER_GOAL) continue;
       totalPrerequisites += candidate.prerequisites.length;
-      if (totalPrerequisites > MAX_TOTAL_PREREQUISITES) { totalPrerequisiteBoundExceeded = true; break; }
     }
+    totalPrerequisiteBoundExceeded = totalPrerequisites > MAX_TOTAL_PREREQUISITES;
   }
   const goals = portfolioBoundExceeded || totalPrerequisiteBoundExceeded ? [] : Array.from({ length:rawGoals.length }, (_, index) => normalizeGoal(rawGoals[index]));
   const issueCounts = new Map();
@@ -270,7 +280,10 @@ export function buildMissionScheduler(input = {}) {
     else authoritative.push(goal);
   }
   if (authoritative.length > 1) contradictions.push({ code:'MULTIPLE_ACTIVE_LANES', issues:authoritative.map((goal) => goal.issue) });
-  if (!portfolioBoundExceeded && !totalPrerequisiteBoundExceeded) for (const cycle of detectCycles(goalsByIssue)) contradictions.push({ code:'DEPENDENCY_CYCLE', issues:cycle });
+  if (!portfolioBoundExceeded && !totalPrerequisiteBoundExceeded) {
+    const cycleEvidence = detectCycles(goalsByIssue);
+    if (cycleEvidence.cyclesTotal > 0) contradictions.push({ code:'DEPENDENCY_CYCLE', cycles:cycleEvidence.cycles, cyclesTotal:cycleEvidence.cyclesTotal, cyclesShown:cycleEvidence.cycles.length, maximumCyclesShown:MAX_CYCLE_EVIDENCE, maximumIssuesPerCycle:MAX_CYCLE_PATH_ISSUES });
+  }
   const failClosed = contradictions.length > 0;
   const activeGoals = new Set(!failClosed && authoritative.length === 1 ? authoritative : []);
   const classifiedPortfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal.get(goal), provenHeads, dependencyComplete), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
