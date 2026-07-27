@@ -8,6 +8,7 @@ const PROOF_SHA = '1111111111111111111111111111111111111111';
 function goal(issue, overrides = {}) {
   return { issue, title:`Goal ${issue}`, state:'QUEUED', prerequisites:[], priority:1, criticalPathWeight:1, reversibility:'HIGH', route:'CHATGPT_GITHUB', evidenceAt:fresh, ...overrides };
 }
+function binding(issue, activePr, headSha = PROOF_SHA) { return { issue, activePr, headSha }; }
 
 test('completed prerequisite unlocks dependant and selects one lane', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'COMPLETE',resultProofRefs:['proof://goal-1-result'],reusableCapabilityId:'CAPABILITY_GOAL_1',sharedLessonId:'LESSON_GOAL_1'}), goal(2,{prerequisites:[1],priority:5}), goal(3,{priority:2})] });
@@ -157,7 +158,7 @@ test('merge readiness is restricted to implemented goals', () => {
     const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state,proofState:'PASS',activePr:1601})] });
     assert.notEqual(result.portfolio[0].lifecycle,'MERGE_READY');
   }
-  const implemented = buildMissionScheduler({ now:NOW, proofHeadShas:[PROOF_SHA], goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROOF_SHA,operatorApprovalHeadSha:PROOF_SHA})] });
+  const implemented = buildMissionScheduler({ now:NOW, proofReceipts:[binding(2,1601)], goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROOF_SHA,operatorApprovalReceipt:binding(2,1601)})] });
   assert.equal(implemented.portfolio[0].lifecycle,'MERGE_READY');
 });
 
