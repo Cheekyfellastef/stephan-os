@@ -1,4 +1,5 @@
 const SHA_RE = /^[0-9a-f]{40}$/i;
+const EXPLICIT_TZ_RE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const ACTIVE_STATES = new Set(['ACTIVE', 'IMPLEMENTING', 'CI_REVIEW', 'PROOF_RUNNING']);
 const RUNNABLE_STATES = new Set(['QUEUED', 'READY']);
 const COMPLETION_STATES = new Set(['COMPLETE', 'CLOSED']);
@@ -29,6 +30,13 @@ function positiveNumber(value, fallback = 0) { const parsed = Number(value); ret
 function hasOwn(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
 function normalizedStringArray(value) { return Array.isArray(value) ? value.map((entry) => text(entry)).filter(Boolean) : []; }
 function invalidArrayContainer(object, key) { return hasOwn(object, key) && !Array.isArray(object[key]); }
+function explicitTimestampMs(value) {
+  if (typeof value !== 'string') return NaN;
+  const normalized = value.trim();
+  if (!normalized || !EXPLICIT_TZ_RE.test(normalized)) return NaN;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
 
 function normalizeGoal(candidate = {}) {
   const goal = candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? candidate : {};
@@ -89,27 +97,40 @@ function detectCycles(goalsByIssue) {
 function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
 function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length; }
 function completionOutputsSatisfied(goal) { return goal.flywheelOutputsComplete && goal.convergenceEvidenceComplete; }
-function dependencyComplete(goal, goalsByIssue, staleByGoal, seen = new Set()) {
-  const finalGateBlocked = goal?.approvalRequired === true || goal?.route === 'OPERATOR_APPROVAL' || goal?.route === 'WAITING_FOR_EXTERNAL_CONDITION' || goal?.route === 'BLOCKED_UNSAFE_OR_UNKNOWN';
-  if (!goal || !goal.issue || hasMalformedEvidence(goal) || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || finalGateBlocked || !COMPLETION_STATES.has(goal.state) || !completionOutputsSatisfied(goal)) return false;
-  if (seen.has(goal.issue)) return false;
-  const nextSeen = new Set(seen).add(goal.issue);
-  return goal.prerequisites.every((issue) => dependencyComplete(goalsByIssue.get(issue), goalsByIssue, staleByGoal, nextSeen));
+function createDependencyAdjudicator(goalsByIssue, staleByGoal) {
+  const memo = new Map();
+  const visiting = new Set();
+  function dependencyComplete(goal) {
+    if (!goal?.issue) return false;
+    if (memo.has(goal.issue)) return memo.get(goal.issue);
+    if (visiting.has(goal.issue)) return false;
+    const finalGateBlocked = goal.approvalRequired === true || goal.route === 'OPERATOR_APPROVAL' || goal.route === 'WAITING_FOR_EXTERNAL_CONDITION' || goal.route === 'BLOCKED_UNSAFE_OR_UNKNOWN';
+    if (hasMalformedEvidence(goal) || staleByGoal.get(goal) || goal.duplicateOf || goal.supersededBy || finalGateBlocked || !COMPLETION_STATES.has(goal.state) || !completionOutputsSatisfied(goal)) {
+      memo.set(goal.issue, false);
+      return false;
+    }
+    visiting.add(goal.issue);
+    const complete = goal.prerequisites.every((issue) => dependencyComplete(goalsByIssue.get(issue)));
+    visiting.delete(goal.issue);
+    memo.set(goal.issue, complete);
+    return complete;
+  }
+  return dependencyComplete;
 }
-function dependencyStatus(goal, goalsByIssue, staleByGoal) {
+function dependencyStatus(goal, goalsByIssue, dependencyComplete) {
   if (goal.invalidPrerequisiteContainer || goal.invalidPrerequisites.length) return 'INVALID';
   if (goal.prerequisites.some((issue) => !goalsByIssue.has(issue))) return 'MISSING';
-  if (goal.prerequisites.some((issue) => !dependencyComplete(goalsByIssue.get(issue), goalsByIssue, staleByGoal))) return 'INCOMPLETE';
+  if (goal.prerequisites.some((issue) => !dependencyComplete(goalsByIssue.get(issue)))) return 'INCOMPLETE';
   return 'SATISFIED';
 }
-function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal, stale, provenHeads) {
+function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, stale, provenHeads, dependencyComplete) {
   if (!goal.issue || hasMalformedEvidence(goal)) return 'BLOCKED';
   if (!goal.convergenceEvidenceComplete) return 'STRUCTURAL_REVIEW_REQUIRED';
   if (goal.duplicateOf) return 'DUPLICATE';
   if (goal.supersededBy) return 'SUPERSEDED';
   if (stale) return 'STALLED';
   if (rejectedActiveClaims.has(goal)) return 'BLOCKED';
-  const dependencies = dependencyStatus(goal, goalsByIssue, staleByGoal);
+  const dependencies = dependencyStatus(goal, goalsByIssue, dependencyComplete);
   if (dependencies === 'INVALID' || dependencies === 'MISSING') return 'BLOCKED';
   if (dependencies === 'INCOMPLETE') return 'WAITING_FOR_DEPENDENCY';
   if (goal.route === 'WAITING_FOR_EXTERNAL_CONDITION') return 'WAITING_FOR_EXTERNAL_CONDITION';
@@ -152,9 +173,8 @@ export function buildMissionScheduler(input = {}) {
   const publicInputInvalid = !input || typeof input !== 'object' || Array.isArray(input);
   const source = publicInputInvalid ? {} : input;
   const nowPresent = hasOwn(source, 'now');
-  const nowTypeInvalid = nowPresent && typeof source.now !== 'string';
-  const parsedNowMs = nowTypeInvalid ? NaN : Date.parse(source.now);
-  const nowInvalid = nowPresent && (nowTypeInvalid || !Number.isFinite(parsedNowMs));
+  const parsedNowMs = nowPresent ? explicitTimestampMs(source.now) : NaN;
+  const nowInvalid = nowPresent && !Number.isFinite(parsedNowMs);
   const nowMs = nowInvalid || !nowPresent ? Date.now() : parsedNowMs;
   const freshnessPresent = hasOwn(source, 'freshnessMs');
   const freshnessInvalid = freshnessPresent && (typeof source.freshnessMs !== 'number' || !Number.isFinite(source.freshnessMs) || source.freshnessMs <= 0);
@@ -165,6 +185,11 @@ export function buildMissionScheduler(input = {}) {
   const normalizedProofHeads = rawProofHeads.map(sha);
   const invalidProofHeads = rawProofHeads.filter((_, index) => !normalizedProofHeads[index]).map(String);
   const provenHeads = new Set(normalizedProofHeads.filter(Boolean));
+  const proofRefsContainerInvalid = hasOwn(source, 'proofRefs') && !Array.isArray(source.proofRefs);
+  const rawProofRefs = Array.isArray(source.proofRefs) ? source.proofRefs : [];
+  const normalizedProofRefs = rawProofRefs.map((entry) => typeof entry === 'string' && entry.trim() ? entry.trim() : null);
+  const invalidProofRefs = rawProofRefs.filter((_, index) => !normalizedProofRefs[index]).map((entry) => String(entry));
+  const proofRefs = normalizedProofRefs.filter(Boolean);
   const rawGoals = Array.isArray(source.goals) ? source.goals : [];
   const portfolioBoundExceeded = rawGoals.length > MAX_PORTFOLIO_GOALS;
   const goals = portfolioBoundExceeded ? [] : Array.from({ length:rawGoals.length }, (_, index) => normalizeGoal(rawGoals[index]));
@@ -172,7 +197,8 @@ export function buildMissionScheduler(input = {}) {
   for (const goal of goals) if (goal.issue) issueCounts.set(goal.issue, (issueCounts.get(goal.issue) ?? 0) + 1);
   const duplicateIssueIds = [...issueCounts].filter(([, count]) => count > 1).map(([issue]) => issue);
   const goalsByIssue = new Map(goals.filter((goal) => goal.issue && issueCounts.get(goal.issue) === 1).map((goal) => [goal.issue, goal]));
-  const staleByGoal = new Map(goals.map((goal) => { const at = goal.evidenceAt ? Date.parse(goal.evidenceAt) : NaN; return [goal, !Number.isFinite(at) || nowMs - at > freshnessMs || at - nowMs > 60_000]; }));
+  const staleByGoal = new Map(goals.map((goal) => { const at = goal.evidenceAt ? explicitTimestampMs(goal.evidenceAt) : NaN; return [goal, !Number.isFinite(at) || nowMs - at > freshnessMs || at - nowMs > 60_000]; }));
+  const dependencyComplete = createDependencyAdjudicator(goalsByIssue, staleByGoal);
   const claimed = goals.filter((goal) => ACTIVE_STATES.has(goal.state));
   const authoritative = []; const rejectedActiveClaims = new Set(); const contradictions = [];
   if (publicInputInvalid) contradictions.push({ code:'INVALID_PUBLIC_INPUT' });
@@ -180,9 +206,11 @@ export function buildMissionScheduler(input = {}) {
   if (goalsContainerInvalid) contradictions.push({ code:'INVALID_GOALS_CONTAINER' });
   if (portfolioBoundExceeded) contradictions.push({ code:'PORTFOLIO_BOUND_EXCEEDED', suppliedGoalCount:rawGoals.length, maximumGoalCount:MAX_PORTFOLIO_GOALS });
   if (proofHeadsContainerInvalid || invalidProofHeads.length) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads });
+  if (proofRefsContainerInvalid || invalidProofRefs.length) contradictions.push({ code:'INVALID_PROOF_REFERENCE_EVIDENCE', invalidProofRefs });
   for (const issue of duplicateIssueIds) contradictions.push({ code:'DUPLICATE_GOAL_IDENTITY', issue });
   for (const [index, goal] of goals.entries()) if (!goal.issue) contradictions.push({ code:'INVALID_GOAL_IDENTITY', index });
   for (const goal of goals) if (goal.invalidOperatorPriority) contradictions.push({ code:'INVALID_OPERATOR_PRIORITY_EVIDENCE', issue:goal.issue });
+  for (const goal of goals) if (goal.evidenceAt && !Number.isFinite(explicitTimestampMs(goal.evidenceAt))) contradictions.push({ code:'INVALID_EVIDENCE_TIMESTAMP', issue:goal.issue });
   for (const goal of claimed) {
     if (!goal.issue) rejectedActiveClaims.add(goal);
     else if (issueCounts.get(goal.issue) > 1) rejectedActiveClaims.add(goal);
@@ -195,14 +223,14 @@ export function buildMissionScheduler(input = {}) {
     else if (staleByGoal.get(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'STALE_ACTIVE_EVIDENCE', issue:goal.issue }); }
     else if (!goal.activePr && !goal.branch) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_LANE_IDENTITY_MISSING', issue:goal.issue }); }
     else if (goal.route === 'BLOCKED_UNSAFE_OR_UNKNOWN' || goal.route === 'WAITING_FOR_EXTERNAL_CONDITION') { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_ROUTE_NOT_EXECUTABLE', issue:goal.issue, route:goal.route }); }
-    else if (dependencyStatus(goal, goalsByIssue, staleByGoal) !== 'SATISFIED') { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_DEPENDENCY_UNSATISFIED', issue:goal.issue }); }
+    else if (dependencyStatus(goal, goalsByIssue, dependencyComplete) !== 'SATISFIED') { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_DEPENDENCY_UNSATISFIED', issue:goal.issue }); }
     else authoritative.push(goal);
   }
   if (authoritative.length > 1) contradictions.push({ code:'MULTIPLE_ACTIVE_LANES', issues:authoritative.map((goal) => goal.issue) });
   if (!portfolioBoundExceeded) for (const cycle of detectCycles(goalsByIssue)) contradictions.push({ code:'DEPENDENCY_CYCLE', issues:cycle });
   const failClosed = contradictions.length > 0;
   const activeGoals = new Set(!failClosed && authoritative.length === 1 ? authoritative : []);
-  const classifiedPortfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal, staleByGoal.get(goal), provenHeads), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
+  const classifiedPortfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal.get(goal), provenHeads, dependencyComplete), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
   const portfolio = failClosed ? classifiedPortfolio.map((goal) => AUTHORITY_BEARING_LIFECYCLES.has(goal.lifecycle) ? freeze({ ...goal, candidateLifecycle:goal.lifecycle, lifecycle:'BLOCKED' }) : goal) : classifiedPortfolio;
   const ready = portfolio.filter((goal) => goal.lifecycle === 'READY').sort(compareReady);
   const mergeReady = portfolio.filter((goal) => goal.lifecycle === 'MERGE_READY').sort(compareReady);
@@ -215,7 +243,7 @@ export function buildMissionScheduler(input = {}) {
   const blockers = freeze([...contradictions, ...lifecycleBlockers(portfolio)]);
   const programmeStatus = failClosed ? 'BLOCKED' : active ? 'IN_PROGRESS' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'READY_TO_ADVANCE' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING';
   const actionable = [...mergeReady, ...ready, ...closeReady];
-  return freeze({ schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, contradictionsTotal:contradictions.length, blockers, programmeStatus, activeGoal:active?.issue ? `#${active.issue}` : null, activeLane:active?.activePr ? `PR #${active.activePr}` : active?.branch ?? null, whyNow:failClosed ? contradictionRationale(contradictions) : active ? 'Existing fresh, identified active lane remains authoritative.' : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.', selectedGoal:action?.issue ? `#${action.issue}` : null, selectedRoute:action?.route ?? null, selectedLifecycle:action?.lifecycle ?? null, nextEligible:failClosed ? [] : actionable.filter((goal) => goal !== action).slice(0,3).map((goal) => `#${goal.issue}`), operatorNeeded, operatorAction:operatorNeeded ? 'OPERATOR_APPROVAL_REQUIRED' : 'NO_OPERATOR_ACTION_REQUIRED', portfolio, decisionReceipt:{ correlationId:text(source.correlationId, `scheduler-${nowMs}`), decidedAt:new Date(nowMs).toISOString(), status:failClosed ? 'BLOCKED_FAIL_CLOSED' : active ? 'ACTIVE_LANE' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'LANE_SELECTED' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING', failClosed, contradictionCodes:contradictions.map(({code}) => code), selectedIssue:action?.issue ?? null, selectedLifecycle:action?.lifecycle ?? null, activeIssue:active?.issue ?? null, route:failClosed ? 'BLOCKED_UNSAFE_OR_UNKNOWN' : action?.route ?? active?.route ?? (operatorNeeded ? 'OPERATOR_APPROVAL' : 'WAITING_FOR_EXTERNAL_CONDITION'), proofRefs:Array.isArray(source.proofRefs) ? source.proofRefs.map(String) : [], proofHeadShas:[...provenHeads] } });
+  return freeze({ schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, contradictionsTotal:contradictions.length, blockers, programmeStatus, activeGoal:active?.issue ? `#${active.issue}` : null, activeLane:active?.activePr ? `PR #${active.activePr}` : active?.branch ?? null, whyNow:failClosed ? contradictionRationale(contradictions) : active ? 'Existing fresh, identified active lane remains authoritative.' : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.', selectedGoal:action?.issue ? `#${action.issue}` : null, selectedRoute:action?.route ?? null, selectedLifecycle:action?.lifecycle ?? null, nextEligible:failClosed ? [] : actionable.filter((goal) => goal !== action).slice(0,3).map((goal) => `#${goal.issue}`), operatorNeeded, operatorAction:operatorNeeded ? 'OPERATOR_APPROVAL_REQUIRED' : 'NO_OPERATOR_ACTION_REQUIRED', portfolio, decisionReceipt:{ correlationId:text(source.correlationId, `scheduler-${nowMs}`), decidedAt:new Date(nowMs).toISOString(), status:failClosed ? 'BLOCKED_FAIL_CLOSED' : active ? 'ACTIVE_LANE' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'LANE_SELECTED' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING', failClosed, contradictionCodes:contradictions.map(({code}) => code), selectedIssue:action?.issue ?? null, selectedLifecycle:action?.lifecycle ?? null, activeIssue:active?.issue ?? null, route:failClosed ? 'BLOCKED_UNSAFE_OR_UNKNOWN' : action?.route ?? active?.route ?? (operatorNeeded ? 'OPERATOR_APPROVAL' : 'WAITING_FOR_EXTERNAL_CONDITION'), proofRefs, proofHeadShas:[...provenHeads] } });
 }
 
 export function answerMissionQuery(input = {}, query = '') {
