@@ -24,16 +24,19 @@ function safeSegment(value) {
 
 export function parseFailureExcerpt(log = '') {
   const lines = String(log).split(/\r?\n/);
-  const interesting = lines.filter((line) => /(?:^|\s)(?:not ok|AssertionError|ERR_ASSERTION|error:|failed|failure)(?:\s|$)/i.test(line));
+  const interesting = lines.filter((line) => /(?:^|\s)(?:not ok|AssertionError(?::|\s)|ERR_ASSERTION|error:|failed|failure)(?:\s|$)/i.test(line));
   return bounded((interesting.length ? interesting : lines.slice(-80)).join('\n'), 12000);
 }
 
 export function buildFailureLogPaths({ workspaceRoot, repository, runId, jobId = '' }) {
   if (!workspaceRoot) throw new Error('workspaceRoot is required.');
-  if (!SAFE_REPOSITORY.test(text(repository))) throw new Error('repository must be owner/name.');
+  const normalizedRepository = text(repository);
+  if (!SAFE_REPOSITORY.test(normalizedRepository) || normalizedRepository.split('/').some((segment) => segment === '.' || segment === '..')) {
+    throw new Error('repository must be owner/name.');
+  }
   if (!SAFE_ID.test(text(runId))) throw new Error('runId must be a positive GitHub Actions run ID.');
   if (jobId && !SAFE_ID.test(text(jobId))) throw new Error('jobId must be a positive GitHub Actions job ID.');
-  const root = resolve(workspaceRoot, 'logs', 'github-actions', safeSegment(repository), `run-${runId}`);
+  const root = resolve(workspaceRoot, 'logs', 'github-actions', safeSegment(normalizedRepository), `run-${runId}`);
   const stem = jobId ? `job-${jobId}` : 'failed-jobs';
   return Object.freeze({ root, logPath: join(root, `${stem}.log`), receiptPath: join(root, `${stem}.receipt.json`) });
 }
