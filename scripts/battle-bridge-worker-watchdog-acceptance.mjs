@@ -10,6 +10,14 @@ export const WORKER_WATCHDOG_ACCEPTANCE_SCHEMA = 'stephanos.battle-bridge-worker
 export const WORKER_WATCHDOG_ACCEPTANCE_OPERATION = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
 export const APPROVED_WORKER_TASK = 'Stephanos Mission Orchestrator Worker';
 export const APPROVED_WATCHDOG_TASK = 'Stephanos Mission Orchestrator Worker Watchdog';
+export const INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS = Object.freeze({
+  scheduledTaskLaunchFailure: 'WORKER_WATCHDOG_SCHEDULED_TASK_LAUNCH_FAILURE',
+  hiddenWrapperFailure: 'WORKER_WATCHDOG_HIDDEN_WRAPPER_FAILURE',
+  runnerStartupFailure: 'WORKER_WATCHDOG_RUNNER_STARTUP_FAILURE',
+  workerRestartFailure: 'WORKER_WATCHDOG_WORKER_RESTART_FAILURE',
+  recoveryPublicationFailure: 'WORKER_WATCHDOG_RECOVERY_PUBLICATION_FAILURE',
+  success: 'WORKER_WATCHDOG_RECOVERY_SUCCESS',
+});
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const DOWN_PROBE_ATTEMPTS = 10;
@@ -18,6 +26,8 @@ const RECOVERY_STATUS_ATTEMPTS = 30;
 const RECOVERY_STATUS_INTERVAL_MS = 1_000;
 const FINAL_WORKER_PROBE_ATTEMPTS = 10;
 const FINAL_WORKER_PROBE_INTERVAL_MS = 1_000;
+const TASK_IDLE_ATTEMPTS = 30;
+const TASK_IDLE_INTERVAL_MS = 1_000;
 const HEARTBEAT_MAX_AGE_MS = 120_000;
 
 export const WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY = Object.freeze({
@@ -78,7 +88,7 @@ function runFixedJson(executable, args, options = {}) {
     return Object.freeze({ ok: false, status: result.status ?? null });
   }
   try {
-    return Object.freeze({ ok: true, data: JSON.parse(String(result.stdout || 'null')) });
+    return Object.freeze({ ok: true, data: JSON.parse(String(result.stdout || 'null').replace(/^\uFEFF/, '')) });
   } catch {
     return Object.freeze({ ok: false, status: result.status ?? null });
   }
@@ -98,13 +108,23 @@ export function resolveCanonicalWorkerWatchdogAcceptancePaths({ env = process.en
     repoRoot,
     workspaceRoot,
     installerPath: path.resolve(repoRoot, 'scripts', 'windows', 'install-battle-bridge-worker-watchdog.ps1'),
+    statusScriptPath: path.resolve(repoRoot, 'scripts', 'windows', 'status-battle-bridge-worker-watchdog.ps1'),
     probePath: path.resolve(repoRoot, 'scripts', 'windows', 'probe-mission-orchestrator-worker-watchdog.ps1'),
     watchdogStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-worker-watchdog-current.json'),
+    watchdogLaunchStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-worker-watchdog-launch-current.json'),
   });
 }
 
 export function validateCanonicalWorkerWatchdogAcceptancePaths({ paths, expectedPaths }) {
-  for (const key of ['repoRoot', 'workspaceRoot', 'installerPath', 'probePath', 'watchdogStatusPath']) {
+  for (const key of [
+    'repoRoot',
+    'workspaceRoot',
+    'installerPath',
+    'statusScriptPath',
+    'probePath',
+    'watchdogStatusPath',
+    'watchdogLaunchStatusPath',
+  ]) {
     if (path.resolve(paths?.[key] || '') !== path.resolve(expectedPaths?.[key] || '')) {
       return Object.freeze({ ok: false, blocker: `NON_CANONICAL_${key.replace(/([A-Z])/g, '_$1').toUpperCase()}` });
     }
@@ -194,6 +214,17 @@ export function createFixedWorkerInspector({ paths, spawnSyncFn = spawnSync } = 
   ], { cwd: paths.repoRoot, spawnSyncFn });
 }
 
+export function createFixedWatchdogInstallationInspector({ paths, spawnSyncFn = spawnSync } = {}) {
+  return () => runFixedJson('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    paths.statusScriptPath,
+  ], { cwd: paths.repoRoot, spawnSyncFn });
+}
+
 export function createVerifiedWorkerKiller({ killFn = process.kill } = {}) {
   return (pid) => {
     if (!Number.isInteger(pid) || pid <= 0) return Object.freeze({ ok: false, blocker: 'VERIFIED_WORKER_PID_REQUIRED' });
@@ -210,6 +241,16 @@ export function createFixedWatchdogStatusReader({ paths } = {}) {
   return async () => {
     try {
       return JSON.parse(await readFile(paths.watchdogStatusPath, 'utf8'));
+    } catch {
+      return null;
+    }
+  };
+}
+
+export function createFixedWatchdogLaunchStatusReader({ paths } = {}) {
+  return async () => {
+    try {
+      return JSON.parse((await readFile(paths.watchdogLaunchStatusPath, 'utf8')).replace(/^\uFEFF/, ''));
     } catch {
       return null;
     }
@@ -235,19 +276,152 @@ function publishedWatchdogRecoveryEvidence(status, { killedAtMs, baselineStatusT
   return proven ? Object.freeze({ ok: true, route: 'installed-scheduled-task', timestampMs }) : null;
 }
 
+function taskLastRunTimestampMs(installation) {
+  const parsed = Date.parse(text(installation?.data?.lastRunTimeUtc || installation?.data?.lastRunTime));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function freshAfter(status, thresholdMs) {
+  const timestampMs = statusTimestampMs(status);
+  return timestampMs !== null && timestampMs >= thresholdMs;
+}
+
+export function classifyInstalledWatchdogRecoveryBoundary({
+  startedAtMs,
+  baselineTaskLastRunTimeMs = null,
+  installation = null,
+  launchStatus = null,
+  watchdogStatus = null,
+  workerAssessment = null,
+} = {}) {
+  const taskLastRunTimeMs = taskLastRunTimestampMs(installation);
+  const taskLaunched = taskLastRunTimeMs !== null
+    && (baselineTaskLastRunTimeMs === null || taskLastRunTimeMs > baselineTaskLastRunTimeMs);
+  const launchFresh = freshAfter(launchStatus, startedAtMs);
+  const watchdogFresh = freshAfter(watchdogStatus, startedAtMs);
+  const exactRecoveryPublished = watchdogFresh
+    && watchdogStatus?.classification === 'WORKER_WATCHDOG_RECOVERED'
+    && watchdogStatus?.supervisorDetectedWorkerDown === true
+    && watchdogStatus?.supervisorRestartedWorker === true
+    && watchdogStatus?.workerRecovered === true
+    && watchdogStatus?.workerFromMain === true;
+
+  if (exactRecoveryPublished && workerAssessment?.ok === true) {
+    return Object.freeze({
+      ok: true,
+      classification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.success,
+      taskLaunched,
+      launchFresh,
+      watchdogFresh,
+    });
+  }
+  if (!taskLaunched && !launchFresh) {
+    return Object.freeze({
+      ok: false,
+      classification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure,
+      taskLaunched,
+      launchFresh,
+      watchdogFresh,
+    });
+  }
+  if (!launchFresh || launchStatus?.classification === 'WATCHDOG_HIDDEN_WRAPPER_FAILED') {
+    return Object.freeze({
+      ok: false,
+      classification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.hiddenWrapperFailure,
+      taskLaunched,
+      launchFresh,
+      watchdogFresh,
+    });
+  }
+  if (!watchdogFresh && (
+    launchStatus?.classification === 'WATCHDOG_RUNNER_FAILED'
+    || (launchStatus?.runnerStarted === true && launchStatus?.runnerCompleted !== true)
+  )) {
+    return Object.freeze({
+      ok: false,
+      classification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.runnerStartupFailure,
+      taskLaunched,
+      launchFresh,
+      watchdogFresh,
+    });
+  }
+  if (watchdogFresh && watchdogStatus?.classification !== 'WORKER_WATCHDOG_RECOVERED') {
+    return Object.freeze({
+      ok: false,
+      classification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure,
+      taskLaunched,
+      launchFresh,
+      watchdogFresh,
+      watchdogClassification: text(watchdogStatus?.classification),
+    });
+  }
+  if (workerAssessment?.ok === true || watchdogStatus?.classification === 'WORKER_WATCHDOG_RECOVERED') {
+    return Object.freeze({
+      ok: false,
+      classification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure,
+      taskLaunched,
+      launchFresh,
+      watchdogFresh,
+    });
+  }
+  return Object.freeze({
+    ok: false,
+    classification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure,
+    taskLaunched,
+    launchFresh,
+    watchdogFresh,
+  });
+}
+
 async function proveInstalledWatchdogRecovery({
   readWatchdogStatus,
   killedAtMs,
   baselineStatusTimestampMs,
   sleep,
 }) {
+  let latestStatus = null;
   for (let attempt = 1; attempt <= RECOVERY_STATUS_ATTEMPTS; attempt += 1) {
     await sleep(RECOVERY_STATUS_INTERVAL_MS);
     const status = await readWatchdogStatus();
+    latestStatus = status || latestStatus;
     const evidence = publishedWatchdogRecoveryEvidence(status, { killedAtMs, baselineStatusTimestampMs });
     if (evidence) return Object.freeze({ ...evidence, status, attempt });
   }
-  return Object.freeze({ ok: false });
+  return Object.freeze({ ok: false, status: latestStatus });
+}
+
+async function proveInstalledWatchdogHealthy({ readWatchdogStatus, startedAtMs, sleep }) {
+  let latestStatus = null;
+  for (let attempt = 1; attempt <= RECOVERY_STATUS_ATTEMPTS; attempt += 1) {
+    await sleep(RECOVERY_STATUS_INTERVAL_MS);
+    const status = await readWatchdogStatus();
+    latestStatus = status || latestStatus;
+    const timestampMs = statusTimestampMs(status);
+    if (timestampMs !== null
+      && timestampMs >= startedAtMs
+      && status?.classification === 'WORKER_WATCHDOG_HEALTHY'
+      && status?.supervisorRestartedWorker === false
+      && status?.workerRecovered === true
+      && status?.workerFromMain === true) {
+      return Object.freeze({ ok: true, status, timestampMs, attempt });
+    }
+  }
+  return Object.freeze({ ok: false, status: latestStatus });
+}
+
+async function waitForInstalledWatchdogIdle({ inspectWatchdogInstallation, sleep }) {
+  let installation = null;
+  for (let attempt = 1; attempt <= TASK_IDLE_ATTEMPTS; attempt += 1) {
+    installation = inspectWatchdogInstallation();
+    if (!installation?.ok || installation.data?.installed !== true) {
+      return Object.freeze({ ok: false, installation, attempt });
+    }
+    if (text(installation.data?.taskState).toLowerCase() !== 'running') {
+      return Object.freeze({ ok: true, installation, attempt });
+    }
+    await sleep(TASK_IDLE_INTERVAL_MS);
+  }
+  return Object.freeze({ ok: false, installation, attempt: TASK_IDLE_ATTEMPTS });
 }
 
 export async function publishAcceptanceProofTransaction({ paths, now, evidence, store } = {}) {
@@ -353,9 +527,11 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   readSourceIdentity = createCanonicalSourceIdentityReader({ repoRoot: paths.repoRoot }),
   installWatchdog = createFixedWatchdogInstaller({ paths, startNow: false }),
   startWatchdog = createFixedWatchdogInstaller({ paths, startNow: true }),
+  inspectWatchdogInstallation = createFixedWatchdogInstallationInspector({ paths }),
   inspectWorker = createFixedWorkerInspector({ paths }),
   killWorker = createVerifiedWorkerKiller(),
   readWatchdogStatus = createFixedWatchdogStatusReader({ paths }),
+  readWatchdogLaunchStatus = createFixedWatchdogLaunchStatusReader({ paths }),
   publishProof = publishAcceptanceProofTransaction,
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
   clock = () => Date.now(),
@@ -376,24 +552,107 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     return blocked('WATCHDOG_INSTALLATION_NOT_PROVEN', { sourceHead: source.sourceHead, expectedHeadMatch: true });
   }
 
+  const initialIdle = await waitForInstalledWatchdogIdle({ inspectWatchdogInstallation, sleep });
+  if (!initialIdle.ok) {
+    return blocked('WATCHDOG_TASK_RECONCILIATION_FAILED', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      taskState: text(initialIdle.installation?.data?.taskState),
+    });
+  }
+
   const initialProbe = inspectWorker();
   if (!initialProbe?.ok) return blocked('INITIAL_WORKER_PROBE_FAILED', { sourceHead: source.sourceHead, expectedHeadMatch: true });
-  const initial = assessCanonicalWorkerObservation(initialProbe.data, {
+  let initial = assessCanonicalWorkerObservation(initialProbe.data, {
     expectedHead,
     requireExactHead: false,
-    nowMs: now.getTime(),
+    nowMs: Math.max(now.getTime(), Number(clock()) || 0),
     expectedRepoRoot: paths.repoRoot,
   });
   if (!initial.ok) return blocked('INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY', { sourceHead: source.sourceHead, expectedHeadMatch: true });
 
-  const baselineStatus = await readWatchdogStatus();
+  const primeStartedAtMs = clock();
+  const primeStart = startWatchdog();
+  if (!primeStart?.ok
+    || primeStart.data?.installed !== true
+    || primeStart.data?.taskName !== APPROVED_WATCHDOG_TASK
+    || primeStart.data?.startedNow !== true) {
+    return blocked(INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure, {
+      recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure,
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      workerKilled: false,
+    });
+  }
+  const primedHealthy = await proveInstalledWatchdogHealthy({
+    readWatchdogStatus,
+    startedAtMs: primeStartedAtMs,
+    sleep,
+  });
+  if (!primedHealthy.ok) {
+    const primeIdleAfter = await waitForInstalledWatchdogIdle({ inspectWatchdogInstallation, sleep });
+    const launchStatus = await readWatchdogLaunchStatus();
+    const primeBoundary = classifyInstalledWatchdogRecoveryBoundary({
+      startedAtMs: primeStartedAtMs,
+      baselineTaskLastRunTimeMs: taskLastRunTimestampMs(initialIdle.installation),
+      installation: primeIdleAfter.installation,
+      launchStatus,
+      watchdogStatus: primedHealthy.status,
+      workerAssessment: initial,
+    });
+    const classification = primeBoundary.classification === INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure
+      ? INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure
+      : primeBoundary.classification;
+    return blocked(classification, {
+      recoveryClassification: classification,
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      workerKilled: false,
+      launchClassification: text(launchStatus?.classification),
+      watchdogClassification: text(primedHealthy.status?.classification),
+    });
+  }
+
+  const primedIdle = await waitForInstalledWatchdogIdle({ inspectWatchdogInstallation, sleep });
+  if (!primedIdle.ok) {
+    return blocked('WATCHDOG_TASK_RECONCILIATION_FAILED', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      taskState: text(primedIdle.installation?.data?.taskState),
+      workerKilled: false,
+    });
+  }
+
+  const readyProbe = inspectWorker();
+  if (!readyProbe?.ok) return blocked('INITIAL_WORKER_PROBE_FAILED', { sourceHead: source.sourceHead, expectedHeadMatch: true });
+  initial = assessCanonicalWorkerObservation(readyProbe.data, {
+    expectedHead,
+    requireExactHead: false,
+    nowMs: Math.max(now.getTime(), Number(clock()) || 0),
+    expectedRepoRoot: paths.repoRoot,
+  });
+  if (!initial.ok) return blocked('INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY', { sourceHead: source.sourceHead, expectedHeadMatch: true });
+
+  const sourceBeforeKill = readSourceIdentity();
+  if (!sourceBeforeKill?.ok
+    || sourceBeforeKill.branch !== 'main'
+    || text(sourceBeforeKill.sourceHead).toLowerCase() !== text(expectedHead).toLowerCase()) {
+    return blocked('HEAD_CHANGED', {
+      sourceHead: text(sourceBeforeKill?.sourceHead).toLowerCase(),
+      expectedHeadMatch: false,
+      workerKilled: false,
+    });
+  }
+
+  const baselineStatus = primedHealthy.status;
   const baselineStatusTimestampMs = statusTimestampMs(baselineStatus);
+  const baselineTaskLastRunTimeMs = taskLastRunTimestampMs(primedIdle.installation);
   const initialPid = initial.pid;
+  const killedAtMs = clock();
   const killed = killWorker(initialPid);
   if (!killed?.ok || killed.pid !== initialPid) {
     return blocked('VERIFIED_WORKER_KILL_FAILED', { sourceHead: source.sourceHead, expectedHeadMatch: true, initialPid });
   }
-  const killedAtMs = clock();
 
   let workerKilledObserved = false;
   for (let attempt = 1; attempt <= DOWN_PROBE_ATTEMPTS; attempt += 1) {
@@ -410,12 +669,14 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     return blocked('WORKER_TERMINATION_NOT_OBSERVED', { sourceHead: source.sourceHead, expectedHeadMatch: true, initialPid });
   }
 
+  const recoveryStartedAtMs = clock();
   const start = startWatchdog();
   if (!start?.ok
     || start.data?.installed !== true
     || start.data?.taskName !== APPROVED_WATCHDOG_TASK
     || start.data?.startedNow !== true) {
-    return blocked('INSTALLED_WATCHDOG_START_NOT_PROVEN', {
+    return blocked(INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure, {
+      recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure,
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
       initialPid,
@@ -429,14 +690,6 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     baselineStatusTimestampMs,
     sleep,
   });
-  if (!watchdogRecovery.ok) {
-    return blocked('INSTALLED_WATCHDOG_RECOVERY_NOT_PROVEN', {
-      sourceHead: source.sourceHead,
-      expectedHeadMatch: true,
-      initialPid,
-      workerKilledObserved,
-    });
-  }
 
   let final = null;
   for (let attempt = 1; attempt <= FINAL_WORKER_PROBE_ATTEMPTS; attempt += 1) {
@@ -453,8 +706,34 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     await sleep(FINAL_WORKER_PROBE_INTERVAL_MS);
   }
   const recoveredPid = final?.pid || 0;
+  if (!watchdogRecovery.ok) {
+    const recoveryIdle = await waitForInstalledWatchdogIdle({ inspectWatchdogInstallation, sleep });
+    const launchStatus = await readWatchdogLaunchStatus();
+    const recoveryBoundary = classifyInstalledWatchdogRecoveryBoundary({
+      startedAtMs: recoveryStartedAtMs,
+      baselineTaskLastRunTimeMs,
+      installation: recoveryIdle.installation,
+      launchStatus,
+      watchdogStatus: watchdogRecovery.status,
+      workerAssessment: final,
+    });
+    const classification = recoveryBoundary.ok
+      ? INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure
+      : recoveryBoundary.classification;
+    return blocked(classification, {
+      recoveryClassification: classification,
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      initialPid,
+      recoveredPid,
+      workerKilledObserved,
+      launchClassification: text(launchStatus?.classification),
+      watchdogClassification: text(watchdogRecovery.status?.classification),
+    });
+  }
   if (!final?.ok || recoveredPid === initialPid) {
-    return blocked('RECOVERED_WORKER_IDENTITY_NOT_PROVEN', {
+    return blocked(INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure, {
+      recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure,
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
       initialPid,
@@ -472,6 +751,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     watchdogInstalled: true,
     watchdogStartedThroughScheduledTask: true,
     watchdogRecoveryRoute: watchdogRecovery.route,
+    recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.success,
     initialHead: initial.headSha,
     recoveredHead: final.headSha,
     initialPid,

@@ -35,9 +35,15 @@ test('watchdog headless launcher pins the canonical fixed Node runner', async ()
   const source = await readFile(hiddenLauncherPath, 'utf8');
   assert.match(source, /Documents\\GitHub\\stephan-os/);
   assert.match(source, /battle-bridge-worker-watchdog-runner\.mjs/);
+  assert.match(source, /battle-bridge-worker-watchdog-launch-current\.json/);
+  assert.match(source, /WATCHDOG_HIDDEN_WRAPPER_STARTED/);
+  assert.match(source, /WATCHDOG_RUNNER_STARTING/);
+  assert.match(source, /WATCHDOG_RUNNER_COMPLETED/);
+  assert.match(source, /WATCHDOG_RUNNER_FAILED/);
   assert.match(source, /Get-Command node\.exe/);
-  assert.match(source, /\*> \$null/);
-  assert.doesNotMatch(source, /\[string\]\s*\$|Invoke-Expression|Start-Process|cmd\.exe/i);
+  assert.match(source, /ConvertFrom-Json/);
+  assert.equal(parameterBlock(source).trim(), '');
+  assert.doesNotMatch(source, /Invoke-Expression|Start-Process|cmd\.exe/i);
 });
 
 test('operator status script is read-only and surfaces watchdog plus worker heartbeat', async () => {
@@ -45,6 +51,7 @@ test('operator status script is read-only and surfaces watchdog plus worker hear
   assert.match(source, /Get-ScheduledTask/);
   assert.match(source, /Get-ScheduledTaskInfo/);
   assert.match(source, /battle-bridge-worker-watchdog-current\.json/);
+  assert.match(source, /battle-bridge-worker-watchdog-launch-current\.json/);
   assert.match(source, /mission-orchestrator-worker-heartbeat\.json/);
   assert.doesNotMatch(source, /Register-ScheduledTask|Unregister-ScheduledTask|Start-ScheduledTask|Stop-ScheduledTask|Stop-Process/);
 });

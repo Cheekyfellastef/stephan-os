@@ -83,6 +83,32 @@ test('healthy worker is a no-op and publishes Shared Workspace proof', async () 
   });
 });
 
+test('initial assessment samples time after the probe so a concurrently refreshed heartbeat is not falsely stale', async () => {
+  await withFixture(async ({ paths }) => {
+    const startedAt = new Date('2026-07-28T18:54:23.000Z');
+    const heartbeatTimestamp = new Date(startedAt.getTime() + 500).toISOString();
+    let starts = 0;
+    const probeAdapter = {
+      run(mode) {
+        if (mode === 'StartApprovedWorkerTask') starts += 1;
+        return { ok: true, data: workerObservation({ paths, timestampUtc: heartbeatTimestamp }) };
+      },
+    };
+    const result = await runBattleBridgeWorkerWatchdog({
+      paths,
+      expectedPaths: paths,
+      probeAdapter,
+      now: startedAt,
+      clock: () => startedAt.getTime() + 1_000,
+      sleep: async () => {},
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.classification, 'WORKER_WATCHDOG_HEALTHY');
+    assert.equal(result.decision.assessment.heartbeatAgeMs, 500);
+    assert.equal(starts, 0);
+  });
+});
+
 test('unhealthy fixed worker is started once and bounded probes can prove recovery without claiming canary kill evidence', async () => {
   await withFixture(async ({ paths }) => {
     let starts = 0;

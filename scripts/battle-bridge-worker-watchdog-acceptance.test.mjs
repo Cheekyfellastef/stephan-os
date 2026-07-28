@@ -5,8 +5,10 @@ import { readFile } from 'node:fs/promises';
 import {
   APPROVED_WATCHDOG_TASK,
   APPROVED_WORKER_TASK,
+  INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS,
   WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY,
   assessCanonicalWorkerObservation,
+  classifyInstalledWatchdogRecoveryBoundary,
   publishAcceptanceProofTransaction,
   runBattleBridgeWorkerWatchdogAcceptance,
 } from './battle-bridge-worker-watchdog-acceptance.mjs';
@@ -20,8 +22,10 @@ const paths = Object.freeze({
   repoRoot,
   workspaceRoot,
   installerPath: `${repoRoot}/scripts/windows/install-battle-bridge-worker-watchdog.ps1`,
+  statusScriptPath: `${repoRoot}/scripts/windows/status-battle-bridge-worker-watchdog.ps1`,
   probePath: `${repoRoot}/scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1`,
   watchdogStatusPath: `${workspaceRoot}/status/battle-bridge-worker-watchdog-current.json`,
+  watchdogLaunchStatusPath: `${workspaceRoot}/status/battle-bridge-worker-watchdog-launch-current.json`,
 });
 
 function healthyObservation(pid, timestampUtc = new Date().toISOString(), headSha = expectedHead) {
@@ -83,7 +87,32 @@ function recoveredStatus(timestampUtc) {
   };
 }
 
+function healthyStatus(timestampUtc) {
+  return {
+    timestampUtc,
+    classification: 'WORKER_WATCHDOG_HEALTHY',
+    supervisorDetectedWorkerDown: false,
+    supervisorRestartedWorker: false,
+    workerRecovered: true,
+    workerFromMain: true,
+  };
+}
+
+function completedLaunchStatus(timestampUtc) {
+  return {
+    timestampUtc,
+    classification: 'WATCHDOG_RUNNER_COMPLETED',
+    hiddenWrapperStarted: true,
+    runnerStarted: true,
+    runnerCompleted: true,
+    runnerExitCode: 0,
+    runnerResultParsed: true,
+  };
+}
+
 function common(overrides = {}) {
+  const installationBaseMs = Date.now();
+  let installationReads = 0;
   return {
     expectedHead,
     platform: 'win32',
@@ -98,7 +127,17 @@ function common(overrides = {}) {
       ok: true,
       data: { installed: true, taskName: APPROVED_WATCHDOG_TASK, startedNow: true },
     }),
-    readWatchdogStatus: async () => null,
+    inspectWatchdogInstallation: () => ({
+      ok: true,
+      data: {
+        installed: true,
+        taskState: 'Ready',
+        lastRunTimeUtc: new Date(installationBaseMs + (installationReads++ * 1_000)).toISOString(),
+        lastTaskResult: 0,
+      },
+    }),
+    readWatchdogStatus: async () => healthyStatus(new Date().toISOString()),
+    readWatchdogLaunchStatus: async () => completedLaunchStatus(new Date().toISOString()),
     sleep: async () => {},
     ...overrides,
   };
@@ -134,17 +173,97 @@ test('canonical worker observation binds task, command, heartbeat, repository an
   assert.equal(canonicalPreMergeAllowed.headSha, previousHead);
 });
 
+test('classifies a Scheduled Task launch failure before wrapper evidence exists', () => {
+  const startedAtMs = Date.parse('2026-07-28T19:00:00.000Z');
+  const result = classifyInstalledWatchdogRecoveryBoundary({
+    startedAtMs,
+    baselineTaskLastRunTimeMs: startedAtMs - 5_000,
+    installation: { ok: true, data: { lastRunTimeUtc: new Date(startedAtMs - 5_000).toISOString() } },
+  });
+  assert.equal(result.classification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure);
+});
+
+test('classifies a hidden-wrapper failure after the Scheduled Task advances without a wrapper receipt', () => {
+  const startedAtMs = Date.parse('2026-07-28T19:00:00.000Z');
+  const result = classifyInstalledWatchdogRecoveryBoundary({
+    startedAtMs,
+    baselineTaskLastRunTimeMs: startedAtMs - 5_000,
+    installation: { ok: true, data: { lastRunTimeUtc: new Date(startedAtMs + 1_000).toISOString(), lastTaskResult: 2 } },
+  });
+  assert.equal(result.classification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.hiddenWrapperFailure);
+});
+
+test('classifies a watchdog-runner startup failure from a fresh wrapper lifecycle receipt', () => {
+  const startedAtMs = Date.parse('2026-07-28T19:00:00.000Z');
+  const result = classifyInstalledWatchdogRecoveryBoundary({
+    startedAtMs,
+    baselineTaskLastRunTimeMs: startedAtMs - 5_000,
+    installation: { ok: true, data: { lastRunTimeUtc: new Date(startedAtMs + 1_000).toISOString(), lastTaskResult: 2 } },
+    launchStatus: {
+      timestampUtc: new Date(startedAtMs + 500).toISOString(),
+      classification: 'WATCHDOG_RUNNER_FAILED',
+      runnerStarted: true,
+      runnerCompleted: true,
+    },
+  });
+  assert.equal(result.classification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.runnerStartupFailure);
+});
+
+test('classifies an explicit worker restart failure such as the live cooldown receipt', () => {
+  const startedAtMs = Date.parse('2026-07-28T19:00:00.000Z');
+  const result = classifyInstalledWatchdogRecoveryBoundary({
+    startedAtMs,
+    baselineTaskLastRunTimeMs: startedAtMs - 5_000,
+    installation: { ok: true, data: { lastRunTimeUtc: new Date(startedAtMs + 1_000).toISOString(), lastTaskResult: 2 } },
+    launchStatus: completedLaunchStatus(new Date(startedAtMs + 500).toISOString()),
+    watchdogStatus: {
+      timestampUtc: new Date(startedAtMs + 750).toISOString(),
+      classification: 'WORKER_WATCHDOG_RECOVERY_COOLDOWN',
+    },
+    workerAssessment: { ok: false },
+  });
+  assert.equal(result.classification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure);
+  assert.equal(result.watchdogClassification, 'WORKER_WATCHDOG_RECOVERY_COOLDOWN');
+});
+
+test('classifies recovery publication failure when the worker recovered but exact publication is absent', () => {
+  const startedAtMs = Date.parse('2026-07-28T19:00:00.000Z');
+  const result = classifyInstalledWatchdogRecoveryBoundary({
+    startedAtMs,
+    baselineTaskLastRunTimeMs: startedAtMs - 5_000,
+    installation: { ok: true, data: { lastRunTimeUtc: new Date(startedAtMs + 1_000).toISOString(), lastTaskResult: 0 } },
+    launchStatus: completedLaunchStatus(new Date(startedAtMs + 500).toISOString()),
+    workerAssessment: { ok: true },
+  });
+  assert.equal(result.classification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure);
+});
+
+test('classifies successful recovery only from exact fresh publication plus positive worker proof', () => {
+  const startedAtMs = Date.parse('2026-07-28T19:00:00.000Z');
+  const result = classifyInstalledWatchdogRecoveryBoundary({
+    startedAtMs,
+    baselineTaskLastRunTimeMs: startedAtMs - 5_000,
+    installation: { ok: true, data: { lastRunTimeUtc: new Date(startedAtMs + 1_000).toISOString(), lastTaskResult: 0 } },
+    launchStatus: completedLaunchStatus(new Date(startedAtMs + 500).toISOString()),
+    watchdogStatus: recoveredStatus(new Date(startedAtMs + 750).toISOString()),
+    workerAssessment: { ok: true },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.classification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.success);
+});
+
 test('kills once, starts the installed watchdog task and requires fresh task-published recovery before exact-head proof', async () => {
   const nowMs = Date.now();
   const timestampUtc = new Date(nowMs).toISOString();
   const observations = [
     healthyObservation(101, timestampUtc, previousHead),
+    healthyObservation(101, timestampUtc, previousHead),
     downObservation(timestampUtc),
     healthyObservation(202, timestampUtc),
   ];
   const statuses = [
-    { timestampUtc: new Date(nowMs - 1_000).toISOString(), classification: 'WORKER_WATCHDOG_HEALTHY' },
-    recoveredStatus(timestampUtc),
+    healthyStatus(timestampUtc),
+    recoveredStatus(new Date(nowMs + 1_000).toISOString()),
   ];
   const actions = [];
   const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
@@ -165,10 +284,11 @@ test('kills once, starts the installed watchdog task and requires fresh task-pub
     }),
   }));
 
-  assert.deepEqual(actions, ['kill:101', 'start-installed-watchdog']);
-  assert.equal(result.ok, true);
+  assert.deepEqual(actions, ['start-installed-watchdog', 'kill:101', 'start-installed-watchdog']);
+  assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.finalVerdict, 'WORKER_WATCHDOG_ACCEPTANCE_PASS');
   assert.equal(result.watchdogRecoveryRoute, 'installed-scheduled-task');
+  assert.equal(result.recoveryClassification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.success);
   assert.equal(result.watchdogStartedThroughScheduledTask, true);
   assert.equal(result.initialHead, previousHead);
   assert.equal(result.recoveredHead, expectedHead);
@@ -187,19 +307,29 @@ test('kills once, starts the installed watchdog task and requires fresh task-pub
 test('fails closed if the installed watchdog Scheduled Task start is not proven', async () => {
   const nowMs = Date.now();
   const timestampUtc = new Date(nowMs).toISOString();
-  const observations = [healthyObservation(101, timestampUtc, previousHead), downObservation(timestampUtc)];
+  const observations = [
+    healthyObservation(101, timestampUtc, previousHead),
+    healthyObservation(101, timestampUtc, previousHead),
+    downObservation(timestampUtc),
+  ];
+  let starts = 0;
   const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
     now: new Date(nowMs),
     clock: () => nowMs,
     inspectWorker: () => ({ ok: true, data: observations.shift() || downObservation(timestampUtc) }),
     killWorker: (pid) => ({ ok: true, pid }),
-    startWatchdog: () => ({
-      ok: true,
-      data: { installed: true, taskName: APPROVED_WATCHDOG_TASK, startedNow: false },
-    }),
+    startWatchdog: () => {
+      starts += 1;
+      return {
+        ok: true,
+        data: { installed: true, taskName: APPROVED_WATCHDOG_TASK, startedNow: starts === 1 },
+      };
+    },
+    readWatchdogStatus: async () => healthyStatus(timestampUtc),
   }));
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'INSTALLED_WATCHDOG_START_NOT_PROVEN');
+  assert.equal(result.blocker, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure);
+  assert.equal(result.recoveryClassification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure);
   assert.equal(result.workerKilledObserved, true);
 });
 
@@ -225,26 +355,62 @@ test('fails closed when exact source head does not match the expiring mailbox co
   assert.equal(result.expectedHeadMatch, false);
 });
 
+test('stops with HEAD_CHANGED when canonical source moves after priming but before the worker kill', async () => {
+  const nowMs = Date.now();
+  const timestampUtc = new Date(nowMs).toISOString();
+  let sourceReads = 0;
+  let killCalls = 0;
+  const observations = [
+    healthyObservation(101, timestampUtc),
+    healthyObservation(101, timestampUtc),
+  ];
+  const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
+    now: new Date(nowMs),
+    clock: () => nowMs,
+    readSourceIdentity: () => {
+      sourceReads += 1;
+      return {
+        ok: true,
+        sourceHead: sourceReads === 1 ? expectedHead : '0'.repeat(40),
+        branch: 'main',
+      };
+    },
+    inspectWorker: () => ({ ok: true, data: observations.shift() || healthyObservation(101, timestampUtc) }),
+    readWatchdogStatus: async () => healthyStatus(timestampUtc),
+    killWorker: () => {
+      killCalls += 1;
+      return { ok: true, pid: 101 };
+    },
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'HEAD_CHANGED');
+  assert.equal(result.workerKilled, false);
+  assert.equal(killCalls, 0);
+});
+
 test('does not claim acceptance without fresh installed-task recovery status', async () => {
   const nowMs = Date.now();
   const timestampUtc = new Date(nowMs).toISOString();
-  const observations = [healthyObservation(101, timestampUtc), downObservation(timestampUtc)];
+  const observations = [
+    healthyObservation(101, timestampUtc),
+    healthyObservation(101, timestampUtc),
+    downObservation(timestampUtc),
+  ];
+  let statusReads = 0;
   const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
     now: new Date(nowMs),
     clock: () => nowMs,
     inspectWorker: () => ({ ok: true, data: observations.shift() || downObservation(timestampUtc) }),
     killWorker: (pid) => ({ ok: true, pid }),
-    readWatchdogStatus: async () => ({
-      timestampUtc,
-      classification: 'WORKER_WATCHDOG_HEALTHY',
-      supervisorDetectedWorkerDown: false,
-      supervisorRestartedWorker: false,
-      workerRecovered: true,
-      workerFromMain: true,
-    }),
+    readWatchdogStatus: async () => {
+      statusReads += 1;
+      return healthyStatus(new Date(nowMs + statusReads).toISOString());
+    },
+    readWatchdogLaunchStatus: async () => completedLaunchStatus(new Date(nowMs + 2_000).toISOString()),
   }));
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'INSTALLED_WATCHDOG_RECOVERY_NOT_PROVEN');
+  assert.equal(result.blocker, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure);
+  assert.equal(result.recoveryClassification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure);
   assert.equal(result.workerKilledObserved, true);
 });
 
