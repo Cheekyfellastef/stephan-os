@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import * as workspaceStore from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 import {
   APPROVED_WATCHDOG_TASK,
@@ -414,17 +415,49 @@ test('does not claim acceptance without fresh installed-task recovery status', a
   assert.equal(result.workerKilledObserved, true);
 });
 
+test('classifies a rejected final acceptance transaction as recovery publication failure without leaking PASS verdict', async () => {
+  const nowMs = Date.now();
+  const timestampUtc = new Date(nowMs).toISOString();
+  const observations = [
+    healthyObservation(101, timestampUtc),
+    healthyObservation(101, timestampUtc),
+    downObservation(timestampUtc),
+    healthyObservation(202, timestampUtc),
+  ];
+  const statuses = [
+    healthyStatus(timestampUtc),
+    recoveredStatus(new Date(nowMs + 1_000).toISOString()),
+  ];
+  const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
+    now: new Date(nowMs),
+    clock: () => nowMs,
+    inspectWorker: () => ({ ok: true, data: observations.shift() }),
+    killWorker: (pid) => ({ ok: true, pid }),
+    readWatchdogStatus: async () => statuses.shift() || recoveredStatus(new Date(nowMs + 1_000).toISOString()),
+    publishProof: async () => {
+      throw new Error('ACCEPTANCE_EVIDENCE_WRITE_FAILED:invalid-schema-version');
+    },
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.finalVerdict, 'WORKER_WATCHDOG_ACCEPTANCE_BLOCKED');
+  assert.equal(result.blocker, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure);
+  assert.equal(result.recoveryClassification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure);
+  assert.match(result.publicationFailure, /invalid-schema-version/);
+});
+
 test('publication stages non-PASS proof and event before atomically committing PASS through current status', async () => {
   const calls = [];
   const store = {
-    createSharedWorkspaceProofRecord: (record) => ({ recordKind: 'proof', ...record }),
-    createSharedWorkspaceEventRecord: (record) => ({ recordKind: 'event', ...record }),
-    createSharedWorkspaceStatusRecord: (record) => ({ recordKind: 'status', ...record }),
+    createSharedWorkspaceProofRecord: workspaceStore.createSharedWorkspaceProofRecord,
+    createSharedWorkspaceEventRecord: workspaceStore.createSharedWorkspaceEventRecord,
+    createSharedWorkspaceStatusRecord: workspaceStore.createSharedWorkspaceStatusRecord,
     writeAtomicJson: async (_root, target, record) => {
+      assert.equal(workspaceStore.validateSharedWorkspaceRecord(record).valid, true);
       calls.push({ operation: 'write', target: target.join('/'), record });
       return { ok: true, path: target.join('/') };
     },
     appendWorkspaceJsonl: async (_root, target, record) => {
+      assert.equal(workspaceStore.validateSharedWorkspaceRecord(record).valid, true);
       calls.push({ operation: 'append', target: target.join('/'), record });
       return { ok: true, path: target.join('/') };
     },
@@ -432,7 +465,11 @@ test('publication stages non-PASS proof and event before atomically committing P
   const result = await publishAcceptanceProofTransaction({
     paths,
     now: new Date('2026-07-17T16:00:00.000Z'),
-    evidence: { finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS', workerRecovered: true },
+    evidence: {
+      schemaVersion: 'stephanos.battle-bridge-worker-watchdog-acceptance.v1',
+      finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS',
+      workerRecovered: true,
+    },
     store,
   });
 
@@ -440,6 +477,10 @@ test('publication stages non-PASS proof and event before atomically committing P
   assert.equal(result.publicationState, 'COMMITTED');
   assert.equal(calls.length, 3);
   assert.equal(calls[0].record.status, 'WORKER_WATCHDOG_ACCEPTANCE_EVIDENCE_READY');
+  assert.equal(calls[0].record.schemaVersion, 'shared-agent-workspace-record.v1');
+  assert.equal(calls[0].record.acceptanceSchemaVersion, 'stephanos.battle-bridge-worker-watchdog-acceptance.v1');
+  assert.equal(calls[0].record.proofRefs.length, 1);
+  assert.equal(calls[0].record.publicationRefs.length, 3);
   assert.equal(calls[0].record.publicationState, 'STAGED');
   assert.equal(calls[0].record.acceptancePass, false);
   assert.equal(calls[1].record.eventKind, 'battle-bridge-worker-watchdog-acceptance-evidence-ready');
@@ -453,14 +494,16 @@ test('publication stages non-PASS proof and event before atomically committing P
 test('publication failure leaves no durable PASS record', async () => {
   const calls = [];
   const store = {
-    createSharedWorkspaceProofRecord: (record) => ({ recordKind: 'proof', ...record }),
-    createSharedWorkspaceEventRecord: (record) => ({ recordKind: 'event', ...record }),
-    createSharedWorkspaceStatusRecord: (record) => ({ recordKind: 'status', ...record }),
+    createSharedWorkspaceProofRecord: workspaceStore.createSharedWorkspaceProofRecord,
+    createSharedWorkspaceEventRecord: workspaceStore.createSharedWorkspaceEventRecord,
+    createSharedWorkspaceStatusRecord: workspaceStore.createSharedWorkspaceStatusRecord,
     writeAtomicJson: async (_root, target, record) => {
+      assert.equal(workspaceStore.validateSharedWorkspaceRecord(record).valid, true);
       calls.push({ operation: 'write', target: target.join('/'), record });
       return { ok: true, path: target.join('/') };
     },
     appendWorkspaceJsonl: async (_root, target, record) => {
+      assert.equal(workspaceStore.validateSharedWorkspaceRecord(record).valid, true);
       calls.push({ operation: 'append', target: target.join('/'), record });
       return { ok: false, reason: 'TEST_FAILURE' };
     },
@@ -470,7 +513,11 @@ test('publication failure leaves no durable PASS record', async () => {
     publishAcceptanceProofTransaction({
       paths,
       now: new Date('2026-07-17T16:00:00.000Z'),
-      evidence: { finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS', workerRecovered: true },
+      evidence: {
+        schemaVersion: 'stephanos.battle-bridge-worker-watchdog-acceptance.v1',
+        finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS',
+        workerRecovered: true,
+      },
       store,
     }),
     /ACCEPTANCE_EVIDENCE_EVENT_WRITE_FAILED/,

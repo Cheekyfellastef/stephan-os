@@ -63,10 +63,10 @@ function isoStamp(value) {
 
 function blocked(blocker, details = {}) {
   return Object.freeze({
+    ...details,
     ok: false,
     finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_BLOCKED',
     blocker,
-    ...details,
     authority: WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY,
   });
 }
@@ -439,7 +439,12 @@ export async function publishAcceptanceProofTransaction({ paths, now, evidence, 
   const proofRef = path.posix.join('receipts', 'battle-bridge-worker-watchdog-acceptance', filename);
   const eventRef = path.posix.join('events', 'battle-bridge-worker-watchdog-acceptance.jsonl');
   const statusRef = path.posix.join('status', 'battle-bridge-worker-watchdog-acceptance-current.json');
-  const proofRefs = [proofRef, eventRef, statusRef];
+  const proofRefs = [proofRef];
+  const publicationRefs = [proofRef, eventRef, statusRef];
+  const {
+    schemaVersion: acceptanceSchemaVersion,
+    ...acceptanceEvidence
+  } = evidence;
   const stagedSummary = 'Worker watchdog acceptance evidence is staged; acceptance is not committed until the final current-status write succeeds.';
   const passSummary = 'The installed Mission Orchestrator Worker watchdog Scheduled Task detected, restarted and recovered the verified worker on canonical main.';
 
@@ -454,10 +459,12 @@ export async function publishAcceptanceProofTransaction({ paths, now, evidence, 
     correlationId: 'issue-1291-worker-watchdog-acceptance',
     relatedIssue: '#1291',
     proofRefs,
+    publicationRefs,
     receiptType: 'battle-bridge-worker-watchdog-acceptance-evidence',
     publicationState: 'STAGED',
     acceptancePass: false,
-    ...evidence,
+    acceptanceSchemaVersion,
+    ...acceptanceEvidence,
   });
   const proofWrite = await writeAtomicJson(
     paths.workspaceRoot,
@@ -465,7 +472,7 @@ export async function publishAcceptanceProofTransaction({ paths, now, evidence, 
     stagedProof,
     { repoRoot: paths.repoRoot, nowMs: now.getTime() },
   );
-  if (!proofWrite.ok) throw new Error('ACCEPTANCE_EVIDENCE_WRITE_FAILED');
+  if (!proofWrite.ok) throw new Error(`ACCEPTANCE_EVIDENCE_WRITE_FAILED:${text(proofWrite.reason, 'unknown')}`);
 
   const stagedEvent = Object.freeze({
     ...createSharedWorkspaceEventRecord({
@@ -475,9 +482,11 @@ export async function publishAcceptanceProofTransaction({ paths, now, evidence, 
       summary: stagedSummary,
     }),
     proofRefs,
+    publicationRefs,
     publicationState: 'STAGED',
     acceptancePass: false,
-    ...evidence,
+    acceptanceSchemaVersion,
+    ...acceptanceEvidence,
   });
   const eventWrite = await appendWorkspaceJsonl(
     paths.workspaceRoot,
@@ -485,7 +494,7 @@ export async function publishAcceptanceProofTransaction({ paths, now, evidence, 
     stagedEvent,
     { repoRoot: paths.repoRoot, nowMs: now.getTime() },
   );
-  if (!eventWrite.ok) throw new Error('ACCEPTANCE_EVIDENCE_EVENT_WRITE_FAILED');
+  if (!eventWrite.ok) throw new Error(`ACCEPTANCE_EVIDENCE_EVENT_WRITE_FAILED:${text(eventWrite.reason, 'unknown')}`);
 
   const committedStatus = Object.freeze({
     ...createSharedWorkspaceStatusRecord({
@@ -499,7 +508,10 @@ export async function publishAcceptanceProofTransaction({ paths, now, evidence, 
     acceptancePass: true,
     stagedProofRef: proofRef,
     stagedEventRef: eventRef,
-    ...evidence,
+    committedStatusRef: statusRef,
+    publicationRefs,
+    acceptanceSchemaVersion,
+    ...acceptanceEvidence,
   });
   const statusWrite = await writeAtomicJson(
     paths.workspaceRoot,
@@ -507,11 +519,12 @@ export async function publishAcceptanceProofTransaction({ paths, now, evidence, 
     committedStatus,
     { repoRoot: paths.repoRoot, nowMs: now.getTime() },
   );
-  if (!statusWrite.ok) throw new Error('ACCEPTANCE_COMMIT_STATUS_WRITE_FAILED');
+  if (!statusWrite.ok) throw new Error(`ACCEPTANCE_COMMIT_STATUS_WRITE_FAILED:${text(statusWrite.reason, 'unknown')}`);
 
   return Object.freeze({
     ok: true,
     proofRefs,
+    publicationRefs,
     proofWrittenToSharedWorkspace: true,
     publicationState: 'COMMITTED',
   });
@@ -768,13 +781,21 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   let publication;
   try {
     publication = await publishProof({ paths, now: new Date(clock()), evidence });
-  } catch {
-    return blocked('SHARED_WORKSPACE_ACCEPTANCE_PUBLICATION_FAILED', evidence);
+  } catch (error) {
+    return blocked(INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure, {
+      ...evidence,
+      recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure,
+      publicationFailure: text(error?.message, 'UNKNOWN_ACCEPTANCE_PUBLICATION_FAILURE'),
+    });
   }
   if (!publication?.ok
     || publication.proofWrittenToSharedWorkspace !== true
     || publication.publicationState !== 'COMMITTED') {
-    return blocked('SHARED_WORKSPACE_ACCEPTANCE_PUBLICATION_FAILED', evidence);
+    return blocked(INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure, {
+      ...evidence,
+      recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure,
+      publicationFailure: 'ACCEPTANCE_PUBLICATION_COMMIT_NOT_PROVEN',
+    });
   }
 
   return Object.freeze({
@@ -783,6 +804,7 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     proofWrittenToSharedWorkspace: true,
     publicationState: 'COMMITTED',
     proofRefs: Object.freeze([...(publication.proofRefs || [])]),
+    publicationRefs: Object.freeze([...(publication.publicationRefs || [])]),
   });
 }
 
