@@ -53,6 +53,7 @@ jobs:
         run: |
           # These stateful routing suites share process-global fixtures, so serialize them to avoid cross-suite interference.
           node --test --test-concurrency=1 \
+            shared/runtime/missionScheduler*.test.mjs \
             shared/runtime/runtimeGuardrails.test.mjs \
             shared/runtime/runtimeStatusModel.test.mjs \
             shared/runtime/stephanosHomeNode.test.mjs \
