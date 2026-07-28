@@ -1,0 +1,95 @@
+name: Codex Banked Reset Telemetry
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/codexBankedResetTelemetryMirror.mjs'
+      - 'shared/agents/codexBankedResetTelemetryMirror.test.mjs'
+      - '.github/workflows/codex-banked-reset-telemetry.yml'
+  issue_comment:
+    types: [created, edited]
+  push:
+    branches: [main]
+    paths:
+      - 'shared/agents/codexBankedResetTelemetryMirror.mjs'
+      - '.github/workflows/codex-banked-reset-telemetry.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-banked-reset-telemetry-${{ github.event.pull_request.number || 'mirror' }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reset telemetry projection proof
+        run: node --test shared/agents/codexBankedResetTelemetryMirror.test.mjs
+      - name: Import structure proof
+        run: node scripts/guard-import-structure.mjs
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD
+
+  mirror:
+    if: >-
+      github.event_name != 'pull_request' &&
+      (
+        github.event_name != 'issue_comment' ||
+        (
+          github.event.issue.number == 1507 &&
+          github.event.comment.user.login == github.repository_owner &&
+          contains(github.event.comment.body, '<!-- stephanos-battle-bridge-command-receipt -->')
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted main source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Replace compact telemetry issue body from trusted receipts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const path = await import('node:path');
+            const { pathToFileURL } = await import('node:url');
+            const moduleUrl = `${pathToFileURL(path.resolve('shared/agents/codexBankedResetTelemetryMirror.mjs')).href}?run=${Date.now()}`;
+            const telemetry = await import(moduleUrl);
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: telemetry.CODEX_BANKED_RESET_MAILBOX_ISSUE,
+              per_page: 100,
+            });
+            const record = telemetry.createCodexBankedResetTelemetryRecord(comments, {
+              ownerLogin: context.repo.owner,
+              timestampUtc: new Date().toISOString(),
+            });
+            const body = telemetry.buildCodexBankedResetTelemetryIssueBody(record);
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: telemetry.CODEX_BANKED_RESET_TELEMETRY_ISSUE,
+              body,
+            });
+            core.info(`Updated Codex banked reset telemetry issue #${telemetry.CODEX_BANKED_RESET_TELEMETRY_ISSUE} with ${record.status}.`);

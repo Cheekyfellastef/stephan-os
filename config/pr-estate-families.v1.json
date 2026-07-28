@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "stephanos.pr-estate-families.v1",
+  "auditDate": "2026-07-18",
+  "repository": "Cheekyfellastef/stephan-os",
+  "notes": "Seeded high-confidence capability families only. A family membership is not proof that a PR is superseded or already in main. Compare evidence remains mandatory. Codex placeholder text is classified per PR and must never group unrelated capabilities into one family.",
+  "families": [
+    { "id": "codex-capacity-governor", "label": "Codex capacity governor", "members": [1544, 1545], "canonicalPr": 1545, "supersededBy": { "1544": 1545 }, "selectionBasis": "11 substantive files verified byte-identical; #1544 closed unmerged with branch preserved on 2026-07-18" },
+    { "id": "verification-harness-battle-bridge", "label": "Verification Harness and Battle Bridge hardening", "members": [1397, 1444, 1445, 1446, 1447] },
+    { "id": "windows-child-ignition-blocker", "label": "Windows child ignition blocker surfacing", "members": [1368, 1369, 1377, 1378, 1379] },
+    { "id": "openclaw-ignite-whatsapp-repair", "label": "OpenClaw Ignite and WhatsApp repair chain", "members": [1453, 1454, 1455, 1456, 1457, 1458, 1459, 1460] },
+    { "id": "github-operator-assistant", "label": "GitHub Operator Assistant", "members": [1449, 1450, 1451, 1452] },
+    { "id": "shared-agent-workspace-runtime-feed", "label": "Shared Agent Workspace runtime and feed", "members": [1435, 1436, 1443] },
+    { "id": "pr-publication-verifier", "label": "PR publication verifier", "members": [1461, 1462] },
+    { "id": "provider-execution-truth", "label": "Provider execution truth", "members": [207, 209, 325] },
+    { "id": "copy-support-snapshot", "label": "Copy Support Snapshot", "members": [211, 217] },
+    { "id": "source-pack-projection", "label": "OpenClaw Source Pack projection", "members": [1162, 1163] },
+    { "id": "mission-console-registration", "label": "Mission Console registration diagnostics", "members": [1128, 1130] },
+    { "id": "build-timestamp", "label": "Stephanos build timestamp", "members": [200, 201] },
+    { "id": "wealth-simulation-sandbox", "label": "Wealth simulation sandbox", "members": [129, 130], "canonicalPr": 130, "supersededBy": { "129": 130 }, "selectionBasis": "all 10 changed files verified byte-identical; #129 closed unmerged with branch preserved on 2026-07-18; #130 retained for source-first recovery or explicit retirement" }
+  ]
+}

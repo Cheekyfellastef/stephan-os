@@ -29,6 +29,9 @@ Select Case taskId
   Case "github-sync"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-github-sync-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
+  Case "github-command-mailbox"
+    targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-github-command-mailbox-hidden.ps1")
+    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
   Case "mission-worker"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\start-mission-orchestrator-worker.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)

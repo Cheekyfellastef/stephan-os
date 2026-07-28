@@ -8,10 +8,15 @@ import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mj
 import { runBattleBridgeDiagnostics } from '../shared/agents/codexDispatchHostOps.mjs';
 import { createSanitizedSharedWorkspaceProjection } from '../shared/agents/chatGptParticipantBridgeV1.mjs';
 import {
+  DEFAULT_STALE_AFTER_MS,
+  validateSharedWorkspaceRecord,
+} from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
   buildStephanosCapabilityRegistrySummary,
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
+import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
@@ -26,9 +31,24 @@ const mailboxWorkspaceRoot = resolve(process.env.STEPHANOS_SHARED_WORKSPACE_ROOT
 const sharedWorkspaceRoot = resolve(process.env.STEPHANOS_SHARED_AGENT_WORKSPACE || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'));
 const mailboxStateRoot = join(mailboxWorkspaceRoot, 'github-command-mailbox');
 const canonicalReceiptRoot = join(sharedWorkspaceRoot, 'receipts', 'github-command-mailbox');
+const criticalBacklogStatusPath = join(sharedWorkspaceRoot, 'status', 'critical-backlog-conveyor-current.json');
 const statePath = join(mailboxStateRoot, 'state.json');
 const MAX_GITHUB_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_GITHUB_RECEIPT_JSON_BYTES = 9 * 1024;
+const MAX_LOCAL_RECEIPT_BYTES = 256 * 1024;
+const MAX_CRITICAL_BACKLOG_STATUS_BYTES = 64 * 1024;
+const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const SAFE_PROOF_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
+const SAFE_CONVEYOR_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
+const SAFE_CONVEYOR_DECISIONS = new Set([
+  'CREATE_NEXT_MISSION',
+  'WAIT_ACTIVE_MISSION',
+  'WAIT_EXTERNAL_ACTIVE_MISSION',
+  'BLOCKED_BY_TERMINAL_MISSION',
+  'BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS',
+  'BLOCKED_BY_INVALID_BACKLOG',
+  'BACKLOG_COMPLETE',
+]);
 
 function bounded(value, limit = 12000) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
@@ -68,6 +88,122 @@ export function parseBoundedGitHubJson(stdout, maxBytes = MAX_GITHUB_JSON_BYTES)
   }
 }
 
+function safeProofRefs(value) {
+  return Array.isArray(value)
+    ? value.map(String).filter((ref) => SAFE_PROOF_REF_PATTERN.test(ref) && !ref.includes('..')).slice(0, 20)
+    : [];
+}
+
+function safeConveyorId(value) {
+  const normalized = String(value || '').trim();
+  return SAFE_CONVEYOR_ID_PATTERN.test(normalized) ? normalized : '';
+}
+
+function safeConveyorIds(value) {
+  return Array.isArray(value) ? [...new Set(value.map(safeConveyorId).filter(Boolean))].slice(0, 20) : [];
+}
+
+function safeConveyorDecision(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  return SAFE_CONVEYOR_DECISIONS.has(normalized) ? normalized : '';
+}
+
+function safeConveyorAction(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized.length > 500 || /[\\/]|[A-Za-z]:|\.\./.test(normalized)) return '';
+  return normalized;
+}
+
+function safeTimestamp(value) {
+  const ms = Date.parse(String(value || ''));
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+}
+
+function safeNonNegativeNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+}
+
+function conveyorProjection(operationResult = {}) {
+  return Object.freeze({
+    decision: safeConveyorDecision(operationResult?.decision),
+    selectedItemId: safeConveyorId(operationResult?.selectedItemId),
+    activeMissionId: safeConveyorId(operationResult?.activeMissionId),
+    activePhase: safeConveyorId(operationResult?.activePhase),
+    completedItemIds: safeConveyorIds(operationResult?.completedItemIds),
+    remainingItemIds: safeConveyorIds(operationResult?.remainingItemIds),
+    exactNextAction: safeConveyorAction(operationResult?.exactNextAction),
+    statusTimestampUtc: safeTimestamp(operationResult?.statusTimestampUtc),
+    statusAgeMs: safeNonNegativeNumber(operationResult?.statusAgeMs),
+    staleAfterMs: safeNonNegativeNumber(operationResult?.staleAfterMs),
+    oneActiveMissionEnforced: operationResult?.oneActiveMissionEnforced === true,
+    duplicateCodexDispatchAllowed: operationResult?.duplicateCodexDispatchAllowed === true,
+    mergeAuthority: operationResult?.mergeAuthority === true,
+    exactHeadApprovalRequired: operationResult?.exactHeadApprovalRequired === true,
+  });
+}
+
+export function createSanitizedMailboxReceiptProjection(receipt = {}) {
+  const execution = receipt?.result || {};
+  const operationResult = execution?.result || {};
+  return Object.freeze({
+    schemaVersion: String(receipt?.schemaVersion || ''),
+    requestId: String(receipt?.requestId || ''),
+    operation: String(receipt?.operation || ''),
+    state: String(receipt?.state || ''),
+    acceptedAt: String(receipt?.acceptedAt || ''),
+    heartbeatAt: String(receipt?.heartbeatAt || ''),
+    completedAt: String(receipt?.completedAt || ''),
+    blocker: String(receipt?.blocker || operationResult?.blocker || ''),
+    proofRefs: safeProofRefs(receipt?.proofRefs),
+    execution: Object.freeze({
+      ok: execution?.ok !== false,
+      verdict: String(execution?.verdict || ''),
+      operation: String(execution?.operation || receipt?.operation || ''),
+      requestId: String(execution?.requestId || receipt?.requestId || ''),
+    }),
+    operationResult: Object.freeze({
+      ok: operationResult?.ok !== false,
+      blocker: String(operationResult?.blocker || ''),
+      finalVerdict: String(operationResult?.finalVerdict || ''),
+      sourceHead: String(operationResult?.sourceHead || ''),
+      branch: String(operationResult?.branch || ''),
+      expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+      monitorCount: Number(operationResult?.monitorCount || 0),
+      executedCount: Number(operationResult?.executedCount || 0),
+      unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
+      expectedFailureCount: Number(operationResult?.expectedFailureCount || 0),
+      notificationBatchCount: Number(operationResult?.notificationBatchCount || 0),
+      notificationCount: Number(operationResult?.notificationCount || 0),
+      notificationSurface: String(operationResult?.notificationSurface || ''),
+      externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
+      maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
+      receiptCount: Number(operationResult?.receiptCount || 0),
+      watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
+      watchdogRecoveryRoute: String(operationResult?.watchdogRecoveryRoute || ''),
+      initialHead: String(operationResult?.initialHead || ''),
+      recoveredHead: String(operationResult?.recoveredHead || ''),
+      initialPid: Number(operationResult?.initialPid || 0),
+      recoveredPid: Number(operationResult?.recoveredPid || 0),
+      workerKilled: operationResult?.workerKilled === true,
+      workerKilledObserved: operationResult?.workerKilledObserved === true,
+      supervisorDetectedWorkerDown: operationResult?.supervisorDetectedWorkerDown === true,
+      supervisorRestartedWorker: operationResult?.supervisorRestartedWorker === true,
+      workerRecovered: operationResult?.workerRecovered === true,
+      workerFromMain: operationResult?.workerFromMain === true,
+      proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
+      publicationState: String(operationResult?.publicationState || ''),
+      visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
+      proofRefs: safeProofRefs(operationResult?.proofRefs),
+      ...conveyorProjection(operationResult),
+    }),
+    arbitraryFilesystemAccess: false,
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    sourceMutationAllowed: false,
+  });
+}
+
 export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
@@ -87,7 +223,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: String(receipt?.heartbeatAt || ''),
     completedAt: String(receipt?.completedAt || ''),
     blocker: String(receipt?.blocker || operationResult?.blocker || ''),
-    proofRefs: Array.isArray(receipt?.proofRefs) ? receipt.proofRefs.slice(0, 20).map(String) : [],
+    proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
       ok: execution?.ok !== false,
       verdict: String(execution?.verdict || ''),
@@ -100,6 +236,18 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: String(operationResult?.sourceHead || ''),
         branch: String(operationResult?.branch || ''),
         expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+        monitorCount: Number(operationResult?.monitorCount || 0),
+        executedCount: Number(operationResult?.executedCount || 0),
+        unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
+        expectedFailureCount: Number(operationResult?.expectedFailureCount || 0),
+        notificationBatchCount: Number(operationResult?.notificationBatchCount || 0),
+        notificationCount: Number(operationResult?.notificationCount || 0),
+        notificationSurface: String(operationResult?.notificationSurface || ''),
+        externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
+        maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
+        receiptCount: Number(operationResult?.receiptCount || 0),
+        targetRequestId: String(operationResult?.targetRequestId || ''),
+        receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
         recoveredPid: Number(operationResult?.recoveredPid || 0),
         workerKilledObserved: operationResult?.workerKilledObserved === true,
@@ -109,6 +257,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         workerFromMain: operationResult?.workerFromMain === true,
         proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
         visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
+        proofRefs: safeProofRefs(operationResult?.proofRefs),
+        ...conveyorProjection(operationResult),
         githubProjectionTruncated: true,
         originalBytes: fullBytes,
       },
@@ -246,6 +396,131 @@ async function readSharedWorkspaceStatus(command = {}) {
   };
 }
 
+export function createSanitizedCriticalBacklogStatusProjection(record = {}, {
+  nowMs = Date.now(),
+  staleAfterMs = DEFAULT_STALE_AFTER_MS,
+} = {}) {
+  const statusTimestampUtc = safeTimestamp(record?.timestampUtc || record?.statusTimestampUtc);
+  const recordMs = Date.parse(statusTimestampUtc);
+  return Object.freeze({
+    decision: safeConveyorDecision(record?.decision),
+    selectedItemId: safeConveyorId(record?.selectedItemId),
+    activeMissionId: safeConveyorId(record?.activeMissionId),
+    activePhase: safeConveyorId(record?.activePhase),
+    completedItemIds: safeConveyorIds(record?.completedItemIds),
+    remainingItemIds: safeConveyorIds(record?.remainingItemIds),
+    exactNextAction: safeConveyorAction(record?.exactNextAction),
+    statusTimestampUtc,
+    statusAgeMs: Number.isFinite(recordMs) ? Math.max(0, nowMs - recordMs) : 0,
+    staleAfterMs: safeNonNegativeNumber(staleAfterMs),
+    oneActiveMissionEnforced: record?.oneActiveMissionEnforced === true,
+    duplicateCodexDispatchAllowed: record?.duplicateCodexDispatchAllowed === true,
+    mergeAuthority: record?.mergeAuthority === true,
+    exactHeadApprovalRequired: record?.exactHeadApprovalRequired === true,
+  });
+}
+
+export function validateCriticalBacklogStatusRecord(record = {}, {
+  nowMs = Date.now(),
+  staleAfterMs = DEFAULT_STALE_AFTER_MS,
+} = {}) {
+  const validation = validateSharedWorkspaceRecord(record, { nowMs, staleAfterMs });
+  const projection = createSanitizedCriticalBacklogStatusProjection(record, { nowMs, staleAfterMs });
+  if (!validation.valid) {
+    return Object.freeze({ ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_RECORD_INVALID', validation, ...projection });
+  }
+  if (String(record?.statusId || '') !== 'critical-backlog-conveyor-current'
+    || String(record?.participantId || '') !== 'critical-backlog-conveyor') {
+    return Object.freeze({ ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_IDENTITY_MISMATCH', validation, ...projection });
+  }
+  if (!projection.decision) {
+    return Object.freeze({ ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_DECISION_INVALID', validation, ...projection });
+  }
+  if (validation.stale) {
+    return Object.freeze({ ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_STALE', validation, ...projection });
+  }
+  return Object.freeze({ ok: true, blocker: '', validation, ...projection });
+}
+
+async function readCriticalBacklogStatus(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  let payload;
+  try {
+    payload = readFileSync(criticalBacklogStatusPath, 'utf8');
+  } catch {
+    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_NOT_FOUND' };
+  }
+  if (Buffer.byteLength(payload, 'utf8') > MAX_CRITICAL_BACKLOG_STATUS_BYTES) {
+    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_TOO_LARGE' };
+  }
+  let record;
+  try {
+    record = JSON.parse(payload);
+  } catch {
+    return { ...identity, ok: false, blocker: 'CRITICAL_BACKLOG_STATUS_JSON_INVALID' };
+  }
+  const status = validateCriticalBacklogStatusRecord(record);
+  if (!status.ok) {
+    return {
+      ...identity,
+      ...status,
+      validation: undefined,
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+    };
+  }
+  return {
+    ...identity,
+    ...status,
+    validation: undefined,
+    ok: true,
+    finalVerdict: 'CRITICAL_BACKLOG_STATUS_READY',
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  };
+}
+
+async function readMailboxReceipt(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const targetRequestId = String(command.targetRequestId || '');
+  if (!SAFE_REQUEST_ID_PATTERN.test(targetRequestId)) {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TARGET_INVALID' };
+  }
+  const receiptPath = join(canonicalReceiptRoot, `${targetRequestId}.json`);
+  let payload;
+  try {
+    payload = readFileSync(receiptPath, 'utf8');
+  } catch {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
+  }
+  if (Buffer.byteLength(payload, 'utf8') > MAX_LOCAL_RECEIPT_BYTES) {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TOO_LARGE', targetRequestId };
+  }
+  let receipt;
+  try {
+    receipt = JSON.parse(payload);
+  } catch {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_JSON_INVALID', targetRequestId };
+  }
+  if (String(receipt?.requestId || '') !== targetRequestId) {
+    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
+  }
+  return {
+    ...identity,
+    ok: true,
+    finalVerdict: 'MAILBOX_RECEIPT_READ_READY',
+    targetRequestId,
+    receipt: createSanitizedMailboxReceiptProjection(receipt),
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  };
+}
+
 export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
   if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
@@ -273,7 +548,10 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     readDeploymentStatus,
     readCapabilityRegistry,
     readSharedWorkspaceStatus,
+    readCriticalBacklogStatus,
+    readMailboxReceipt,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
+    runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
   });
 
   const completedAt = now().toISOString();

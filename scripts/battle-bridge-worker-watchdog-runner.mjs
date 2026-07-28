@@ -3,15 +3,17 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { ensureCriticalBacklogMission } from '../stephanos-server/services/criticalBacklogConveyorService.js';
 import { runBattleBridgeWorkerWatchdog } from './battle-bridge-worker-watchdog.mjs';
 import { runChatGptSharedWorkspaceGitHubRelay } from './chatgpt-shared-workspace-github-relay.mjs';
 import { observeRemoteCodexTaskVisibility } from './remote-codex-task-visibility-observer.mjs';
 
-export const BATTLE_BRIDGE_WORKER_WATCHDOG_RUNNER_SCHEMA = 'stephanos.battle-bridge-worker-watchdog-runner-with-codex-visibility-and-chatgpt-relay.v1';
+export const BATTLE_BRIDGE_WORKER_WATCHDOG_RUNNER_SCHEMA = 'stephanos.battle-bridge-worker-watchdog-runner-with-critical-backlog.v1';
 
 export async function runBattleBridgeWorkerWatchdogRunner({
   visibilityObserver = observeRemoteCodexTaskVisibility,
   participantRelay = runChatGptSharedWorkspaceGitHubRelay,
+  backlogConveyor = ensureCriticalBacklogMission,
   workerWatchdog = runBattleBridgeWorkerWatchdog,
 } = {}) {
   let codexVisibility = null;
@@ -36,13 +38,25 @@ export async function runBattleBridgeWorkerWatchdogRunner({
     };
   }
 
+  let criticalBacklogConveyor = null;
+  try {
+    criticalBacklogConveyor = await backlogConveyor();
+  } catch (error) {
+    criticalBacklogConveyor = {
+      ok: false,
+      classification: 'CRITICAL_BACKLOG_CONVEYOR_FAILED',
+      reason: error?.message || String(error),
+    };
+  }
+
   const watchdog = await workerWatchdog();
   const visibilityOk = codexVisibility?.ok === true;
   const participantRelayOk = chatGptSharedWorkspaceRelay?.ok === true;
+  const criticalBacklogConveyorOk = criticalBacklogConveyor?.ok === true;
   const workerWatchdogOk = watchdog?.ok === true;
   return Object.freeze({
     ...watchdog,
-    ok: visibilityOk && participantRelayOk && workerWatchdogOk,
+    ok: visibilityOk && participantRelayOk && criticalBacklogConveyorOk && workerWatchdogOk,
     schemaVersion: BATTLE_BRIDGE_WORKER_WATCHDOG_RUNNER_SCHEMA,
     codexVisibility,
     codexVisibilityObserved: true,
@@ -50,6 +64,9 @@ export async function runBattleBridgeWorkerWatchdogRunner({
     chatGptSharedWorkspaceRelay,
     chatGptSharedWorkspaceRelayObserved: true,
     participantRelayOk,
+    criticalBacklogConveyor,
+    criticalBacklogConveyorObserved: true,
+    criticalBacklogConveyorOk,
     workerWatchdogOk,
   });
 }

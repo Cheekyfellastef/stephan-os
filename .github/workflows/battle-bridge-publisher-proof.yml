@@ -2,18 +2,6 @@ name: Battle Bridge Publisher Proof
 
 on:
   pull_request:
-    paths:
-      - 'scripts/battle-bridge-shared-workspace-publisher.mjs'
-      - 'scripts/battle-bridge-shared-workspace-publisher.test.mjs'
-      - 'scripts/guard-import-structure.mjs'
-      - 'tests/import-guard.test.mjs'
-      - 'shared/agents/sharedAgentWorkspaceStore.mjs'
-      - 'shared/agents/sharedAgentWorkspaceStore.test.mjs'
-      - 'shared/agents/verificationHarness.mjs'
-      - 'shared/agents/verificationHarness.test.mjs'
-      - 'shared/agents/verificationHarnessWorkspace.test.mjs'
-      - 'shared/agents/shared-workspace-dashboard-feed.test.mjs'
-      - '.github/workflows/battle-bridge-publisher-proof.yml'
 
 permissions:
   contents: read
@@ -46,6 +34,25 @@ jobs:
 
       - name: Repository import structure proof
         run: node scripts/guard-import-structure.mjs
+
+      - name: Monitor multiplexer proof
+        run: npm run stephanos:monitor-multiplexer:test
+
+      - name: Monitor multiplexer canary proof
+        id: monitor-canary-proof
+        run: npm run stephanos:monitor-multiplexer:canary:test 2>&1 | tee monitor-multiplexer-canary-proof.log
+
+      - name: Upload monitor multiplexer canary failure
+        if: failure() && steps.monitor-canary-proof.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-multiplexer-canary-failure
+          path: monitor-multiplexer-canary-proof.log
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Monitor multiplexer mailbox route proof
+        run: node --test shared/agents/monitorMultiplexerMailboxRoute.test.mjs
 
       - name: Shared Workspace and Verification Harness proof
         run: >-
