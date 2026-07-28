@@ -33,7 +33,7 @@ function Write-WatchdogLaunchStatus {
 
     $statusDirectory = Split-Path -Parent $launchStatusPath
     New-Item -ItemType Directory -Path $statusDirectory -Force | Out-Null
-    $temporaryPath = "$launchStatusPath.$PID.tmp"
+    $temporaryPath = "${launchStatusPath}.$PID.tmp"
     $record = [ordered]@{
         schemaVersion = 'stephanos.battle-bridge-worker-watchdog-launch.v1'
         timestampUtc = (Get-Date).ToUniversalTime().ToString('o')
