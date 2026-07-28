@@ -51,7 +51,8 @@ jobs:
 
       - name: Run Stephanos routing guardrails tests
         run: |
-          node --test \
+          # These stateful routing suites share process-global fixtures, so serialize them to avoid cross-suite interference.
+          node --test --test-concurrency=1 \
             shared/runtime/missionScheduler*.test.mjs \
             shared/runtime/runtimeGuardrails.test.mjs \
             shared/runtime/runtimeStatusModel.test.mjs \
