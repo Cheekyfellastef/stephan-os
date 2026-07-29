@@ -7,6 +7,11 @@ const KNOWN_LANE_STATES=new Set(['QUEUED','READY','ACTIVE','IMPLEMENTING','CI_RE
 const ACTIVE_MACHINERY_STATES=new Set(['ACTIVE','RUNNING','DISPATCHED','WAITING_PROOF']);
 const KNOWN_MACHINERY_STATES=new Set(['IDLE','READY','ACTIVE','RUNNING','DISPATCHED','WAITING_PROOF','STOPPED','COMPLETE','COMPLETED','BLOCKED','FAILED','CANCELLED']);
 const SCHEDULER_PROOF_CONTAINER_KEYS=['proofHeadShas','proofReceipts','proofRefs'];
+const SCHEDULER_PROOF_CONTRADICTION_KEYS=new Map([
+  ['INVALID_PROOF_HEAD_EVIDENCE','proofHeadShas'],
+  ['INVALID_PROOF_RECEIPT_EVIDENCE','proofReceipts'],
+  ['INVALID_PROOF_REFERENCE_EVIDENCE','proofRefs'],
+]);
 const DEFAULT_HEARTBEAT_MAX_AGE_MS=20*60*1000;
 const DEFAULT_RECEIPT_MAX_AGE_MS=2*60*60*1000;
 const DEFAULT_FUTURE_SKEW_MS=60*1000;
@@ -26,7 +31,13 @@ function validMachineryRecord(machine){return Boolean(machine&&typeof machine===
 const activeMachine=(machine)=>validMachineryRecord(machine)&&ACTIVE_MACHINERY_STATES.has(normalizedState(machine.state));
 function duplicateActiveMachinery(machinery){const groups=new Map();for(const machine of array(machinery).filter(activeMachine)){const kind=text(machine.kind)?.toLowerCase()??'unknown';groups.set(kind,[...(groups.get(kind)??[]),text(machine.id)??text(machine.name)??kind]);}return[...groups.entries()].filter(([,entries])=>entries.length>1).map(([kind,entries])=>({kind,entries}));}
 function validLease(lease,nowMs){const expiresAtMs=timestamp(lease?.expiresAt);return Boolean(lease&&typeof lease==='object'&&nowMs!==null&&text(lease.owner)&&text(lease.laneId)&&expiresAtMs!==null&&expiresAtMs>nowMs);}
-function schedulerProofContainerEvidence(receipts){for(const key of SCHEDULER_PROOF_CONTAINER_KEYS){if(hasOwn(receipts,key)&&!Array.isArray(receipts[key]))return{valid:false,reason:`scheduler-${key}-container-invalid`};}return{valid:true,reason:null};}
+function schedulerProofEvidence(receipts,now){
+  for(const key of SCHEDULER_PROOF_CONTAINER_KEYS){if(hasOwn(receipts,key)&&!Array.isArray(receipts[key]))return{valid:false,reason:`scheduler-${key}-container-invalid`};}
+  const scheduler=buildMissionScheduler({now,goals:[],proofHeadShas:receipts?.proofHeadShas,proofReceipts:receipts?.proofReceipts,proofRefs:receipts?.proofRefs});
+  const contradiction=scheduler.contradictions.find(({code})=>SCHEDULER_PROOF_CONTRADICTION_KEYS.has(code));
+  if(!contradiction)return{valid:true,reason:null};
+  return{valid:false,reason:`scheduler-${SCHEDULER_PROOF_CONTRADICTION_KEYS.get(contradiction.code)}-evidence-invalid`};
+}
 function schedulerReceiptEvidence(receipt,lane,nowMs,maxAgeMs,futureSkewMs){
   if(!receipt||typeof receipt!=='object'||Array.isArray(receipt))return{valid:false,reason:'missing-scheduler-receipt'};
   const allowed=new Set(['BLOCKED_FAIL_CLOSED','ACTIVE_LANE','MERGE_READY','CLOSE_READY','LANE_SELECTED','APPROVAL_REQUIRED','WAITING']);
@@ -37,7 +48,8 @@ function schedulerReceiptEvidence(receipt,lane,nowMs,maxAgeMs,futureSkewMs){
 }
 function executionReceiptEvidence(receipt,lane,lease,nowMs,maxAgeMs,futureSkewMs){
   if(!receipt||typeof receipt!=='object'||Array.isArray(receipt))return{valid:false,reason:'missing-execution-receipt'};
-  const options={expectedHead:sha(lane?.headSha),leaseKey:text(lease?.laneId)};
+  const expectedIssue=laneIssue(lane);if(!expectedIssue)return{valid:false,reason:'execution-receipt-active-lane-identity-unproven'};
+  const options={expectedHead:sha(lane?.headSha),leaseKey:text(lease?.laneId),issueNumber:expectedIssue};
   const validation=validateExecutionReceipt(receipt,options);
   if(!validation.valid)return{valid:false,reason:`execution-receipt-${validation.refusalReason||'contract-invalid'}`};
   if(text(receipt.workerId)!==text(lease?.owner))return{valid:false,reason:'execution-receipt-worker-lease-owner-mismatch'};
@@ -70,7 +82,7 @@ export function reconcileDurableFlywheelController(snapshot={},options={}){
   const machineryPresent=hasOwn(durableSnapshot.sharedWorkspace,'machineryInventory');const machineryValid=machineryPresent&&Array.isArray(durableSnapshot.sharedWorkspace.machineryInventory);if(!machineryValid)blockers.push('shared-workspace-machinery-inventory-unproven');
   const machinery=machineryValid?durableSnapshot.sharedWorkspace.machineryInventory:[];if(machineryValid&&machinery.some((machine)=>!validMachineryRecord(machine)))blockers.push('shared-workspace-machinery-entry-invalid');
   const duplicates=duplicateActiveMachinery(machinery);if(duplicates.length)blockers.push('duplicate-active-machinery');
-  const proofContainers=schedulerProofContainerEvidence(durableSnapshot.receipts);if(!proofContainers.valid)blockers.push(proofContainers.reason);
+  const proofEvidence=schedulerProofEvidence(durableSnapshot.receipts,suppliedNow);if(!proofEvidence.valid)blockers.push(proofEvidence.reason);
   const schedulerReceipt=schedulerReceiptEvidence(durableSnapshot.receipts?.scheduler,lanes.length===1?lanes[0]:null,nowMs,receiptMaxAgeMs,futureSkewMs);if(!schedulerReceipt.valid)blockers.push(schedulerReceipt.reason);
   if(lanes.length===1){const executionReceipt=executionReceiptEvidence(durableSnapshot.receipts?.execution,lanes[0],lease,nowMs,receiptMaxAgeMs,futureSkewMs);if(!executionReceipt.valid)blockers.push(executionReceipt.reason);}
   const runtimeProof=durableSnapshot.battleBridge?.proof;
