@@ -116,6 +116,69 @@ test('idle healthy controller lets scheduler select one goal', () => {
   assert.equal(result.nextAction, 'scheduler-may-select-one-runnable-goal');
 });
 
+test('missing authority-bearing inventories fail closed', () => {
+  const snapshot = healthy();
+  delete snapshot.github.implementationLanes;
+  delete snapshot.sharedWorkspace.machineryInventory;
+  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.blockers.includes('github-implementation-lanes-unproven'));
+  assert.ok(result.blockers.includes('shared-workspace-machinery-inventory-unproven'));
+});
+
+test('future-dated heartbeat and receipts fail closed', () => {
+  const snapshot = healthy();
+  snapshot.sharedWorkspace.controllerHeartbeat.at = '2027-07-29T13:55:00+01:00';
+  snapshot.receipts.scheduler.at = '2027-07-29T13:56:00+01:00';
+  snapshot.receipts.execution.at = '2027-07-29T13:57:00+01:00';
+  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.blockers.includes('controller-heartbeat-future-dated'));
+  assert.ok(result.blockers.includes('scheduler-receipt-future-dated'));
+  assert.ok(result.blockers.includes('execution-receipt-future-dated'));
+});
+
+test('active lane requires exact head identity', () => {
+  const snapshot = healthy();
+  snapshot.github.implementationLanes[0].headSha = 'not-a-sha';
+  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.blockers.includes('active-lane-head-unproven'));
+});
+
+test('valid lease without active lane blocks scheduler selection', () => {
+  const snapshot = healthy();
+  snapshot.github.implementationLanes = [];
+  snapshot.receipts.execution = null;
+  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.blockers.includes('valid-lease-without-active-lane'));
+  assert.equal(result.nextAction, 'publish-reconciliation-receipt-and-stop-without-mutation');
+});
+
+test('missing explicit reconciliation time fails closed deterministically', () => {
+  const snapshot = healthy();
+  delete snapshot.observedAt;
+  const first = reconcileDurableFlywheelController(snapshot);
+  const second = reconcileDurableFlywheelController(snapshot);
+  assert.equal(first.status, 'HOLD');
+  assert.ok(first.blockers.includes('reconciliation-time-unproven'));
+  assert.deepEqual(first, second);
+});
+
+test('future-dated Battle Bridge proof fails closed', () => {
+  const snapshot = healthy();
+  snapshot.github.implementationLanes[0].state = 'PROOF_RUNNING';
+  snapshot.battleBridge.proof = {
+    state:'OBSERVED',
+    at:'2027-07-29T13:58:00+01:00',
+    sourceHead:MAIN,
+  };
+  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.blockers.includes('battle-bridge-proof-future-dated'));
+});
+
 test('startup cycle reconstructs durable state and advances active lane once', async () => {
   const calls = [];
   const receipts = [];
@@ -179,6 +242,7 @@ test('receipt renderer preserves fail-closed authority posture', () => {
   const result = reconcileDurableFlywheelController(healthy(), { now:NOW });
   const receipt = renderDurableFlywheelReceipt(result);
   assert.match(receipt, /Durable Flywheel Reconciliation Receipt VNext/);
+  assert.match(receipt, /Observed-At: 2026-07-29T14:00:00\+01:00/);
   assert.match(receipt, /Merge-Authority: false/);
   assert.match(receipt, /Lease-Seizure-Allowed: false/);
   assert.match(receipt, /Blockers: none/);
