@@ -77,7 +77,8 @@ export function reconcileDurableFlywheelController(snapshot={},options={}){
   const mainHead=sha(durableSnapshot.github?.mainHead);if(!mainHead)blockers.push('github-main-head-unproven');
   const lanesPresent=hasOwn(durableSnapshot.github,'implementationLanes');const lanesValid=lanesPresent&&Array.isArray(durableSnapshot.github.implementationLanes);if(!lanesValid)blockers.push('github-implementation-lanes-unproven');
   const laneInventory=lanesValid?durableSnapshot.github.implementationLanes:[];if(lanesValid&&laneInventory.some((lane)=>!validLaneRecord(lane)))blockers.push('github-implementation-lane-entry-invalid');
-  const lanes=laneInventory.filter(activeLane);const terminalLanes=laneInventory.filter(terminalMergedLane);if(lanes.length>1)blockers.push('split-brain-multiple-active-implementation-lanes');if(terminalLanes.length>1)blockers.push('multiple-terminal-lanes-awaiting-reconciliation');
+  const activeStateLanes=laneInventory.filter((lane)=>lane&&typeof lane==='object'&&!Array.isArray(lane)&&ACTIVE_LANE_STATES.has(normalizedState(lane.state))&&!mergedLane(lane));
+  const lanes=laneInventory.filter(activeLane);const terminalLanes=laneInventory.filter(terminalMergedLane);if(activeStateLanes.length>1)blockers.push('split-brain-multiple-active-implementation-lanes');if(terminalLanes.length>1)blockers.push('multiple-terminal-lanes-awaiting-reconciliation');
   const lease=durableSnapshot.sharedWorkspace?.sourceMutationLease;const leaseValid=validLease(lease,nowMs);const terminalLeaseBound=terminalLanes.length===1&&leaseValid&&text(lease.laneId)===text(terminalLanes[0].id);
   if(lanes.length===1&&!leaseValid)blockers.push('active-lane-without-valid-source-mutation-lease');
   if(lanes.length===0&&leaseValid&&!terminalLeaseBound)blockers.push('valid-lease-without-active-lane');
