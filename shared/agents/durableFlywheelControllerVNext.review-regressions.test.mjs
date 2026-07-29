@@ -77,6 +77,30 @@ test('fail-closed scheduler receipt blocks active-lane advancement', async () =>
   assert.ok(result.reconciliation.blockers.includes('scheduler-receipt-fail-closed'));
 });
 
+test('non-active scheduler decisions block active-lane advancement', async () => {
+  for (const status of ['APPROVAL_REQUIRED','WAITING','LANE_SELECTED','MERGE_READY','CLOSE_READY']) {
+    const snapshot = activeSnapshot();
+    snapshot.receipts.scheduler = schedulerReceipt({ status });
+    let advances = 0;
+    const result = await runDurableFlywheelStartupCycle({
+      loadDurableSnapshot:async () => snapshot,
+      advanceActiveLane:async () => { advances += 1; },
+      publishReceipt:async () => {},
+    }, { now:NOW });
+    assert.equal(result.status, 'HOLD');
+    assert.equal(advances, 0);
+    assert.ok(result.reconciliation.blockers.includes('scheduler-receipt-active-lane-status-mismatch'));
+  }
+});
+
+test('ACTIVE_LANE scheduler decision must identify the active lane issue', () => {
+  const snapshot = activeSnapshot();
+  snapshot.receipts.scheduler = schedulerReceipt({ activeIssue:1700 });
+  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.blockers.includes('scheduler-receipt-active-lane-identity-mismatch'));
+});
+
 test('malformed scheduler proof containers reach canonical validation and prevent dispatch', async () => {
   const snapshot = idleSnapshot();
   snapshot.receipts.proofReceipts = { malformed:true };
@@ -87,9 +111,24 @@ test('malformed scheduler proof containers reach canonical validation and preven
     publishReceipt:async () => {},
   }, { now:NOW });
   assert.equal(dispatches, 0);
-  assert.equal(result.status, 'SCHEDULER_DECIDED');
-  assert.equal(result.schedulerDecision.failClosed, true);
-  assert.ok(result.schedulerDecision.contradictionCodes.length > 0);
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.reconciliation.blockers.includes('scheduler-proofReceipts-container-invalid'));
+});
+
+test('malformed scheduler proof containers prevent active-lane advancement', async () => {
+  for (const key of ['proofHeadShas','proofReceipts','proofRefs']) {
+    const snapshot = activeSnapshot();
+    snapshot.receipts[key] = { malformed:true };
+    let advances = 0;
+    const result = await runDurableFlywheelStartupCycle({
+      loadDurableSnapshot:async () => snapshot,
+      advanceActiveLane:async () => { advances += 1; },
+      publishReceipt:async () => {},
+    }, { now:NOW });
+    assert.equal(result.status, 'HOLD');
+    assert.equal(advances, 0);
+    assert.ok(result.reconciliation.blockers.includes(`scheduler-${key}-container-invalid`));
+  }
 });
 
 test('execution receipt must bind to active lease key', () => {
