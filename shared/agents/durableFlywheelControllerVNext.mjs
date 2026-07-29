@@ -5,6 +5,7 @@ const ACTIVE_LANE_STATES = new Set(['ACTIVE', 'IMPLEMENTING', 'CI_REVIEW', 'PROO
 const ACTIVE_MACHINERY_STATES = new Set(['ACTIVE', 'RUNNING', 'DISPATCHED', 'WAITING_PROOF']);
 const DEFAULT_HEARTBEAT_MAX_AGE_MS = 20 * 60 * 1000;
 const DEFAULT_RECEIPT_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_FUTURE_SKEW_MS = 60 * 1000;
 
 function text(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -26,13 +27,19 @@ function array(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function hasOwn(object, key) {
+  return Boolean(object && typeof object === 'object' && Object.prototype.hasOwnProperty.call(object, key));
+}
+
 function normalizedState(value) {
   return text(value)?.toUpperCase() ?? 'UNKNOWN';
 }
 
-function ageMs(at, nowMs) {
+function evidenceAge(at, nowMs, futureSkewMs) {
   const atMs = timestamp(at);
-  return atMs === null ? Number.POSITIVE_INFINITY : Math.max(0, nowMs - atMs);
+  if (atMs === null || nowMs === null) return { ageMs:Number.POSITIVE_INFINITY, future:false, valid:false };
+  if (atMs - nowMs > futureSkewMs) return { ageMs:Number.POSITIVE_INFINITY, future:true, valid:false };
+  return { ageMs:Math.max(0, nowMs - atMs), future:false, valid:true };
 }
 
 function activeLane(lane) {
@@ -61,18 +68,20 @@ function duplicateActiveMachinery(machinery) {
 }
 
 function validLease(lease, nowMs) {
-  if (!lease || typeof lease !== 'object') return false;
+  if (!lease || typeof lease !== 'object' || nowMs === null) return false;
   const owner = text(lease.owner);
   const laneId = text(lease.laneId);
   const expiresAtMs = timestamp(lease.expiresAt);
   return Boolean(owner && laneId && expiresAtMs !== null && expiresAtMs > nowMs);
 }
 
-function evidenceReceipt(receipt, expectedKind, nowMs, maxAgeMs) {
+function evidenceReceipt(receipt, expectedKind, nowMs, maxAgeMs, futureSkewMs) {
   if (!receipt || typeof receipt !== 'object') return { valid:false, reason:`missing-${expectedKind}-receipt` };
   if (normalizedState(receipt.state) !== 'COMPLETE') return { valid:false, reason:`${expectedKind}-receipt-not-complete` };
   if (text(receipt.kind)?.toLowerCase() !== expectedKind) return { valid:false, reason:`${expectedKind}-receipt-kind-mismatch` };
-  if (ageMs(receipt.at, nowMs) > maxAgeMs) return { valid:false, reason:`${expectedKind}-receipt-stale` };
+  const age = evidenceAge(receipt.at, nowMs, futureSkewMs);
+  if (age.future) return { valid:false, reason:`${expectedKind}-receipt-future-dated` };
+  if (!age.valid || age.ageMs > maxAgeMs) return { valid:false, reason:`${expectedKind}-receipt-stale` };
   return { valid:true, reason:null };
 }
 
@@ -117,35 +126,47 @@ function cycleReceipt({ reconciliation, scheduler = null, execution = null }) {
 }
 
 export function reconcileDurableFlywheelController(snapshot = {}, options = {}) {
-  const nowMs = timestamp(options.now ?? snapshot.observedAt) ?? Date.now();
+  const suppliedNow = options.now ?? snapshot.observedAt;
+  const nowMs = timestamp(suppliedNow);
   const heartbeatMaxAgeMs = Number.isFinite(options.heartbeatMaxAgeMs) ? options.heartbeatMaxAgeMs : DEFAULT_HEARTBEAT_MAX_AGE_MS;
   const receiptMaxAgeMs = Number.isFinite(options.receiptMaxAgeMs) ? options.receiptMaxAgeMs : DEFAULT_RECEIPT_MAX_AGE_MS;
+  const futureSkewMs = Number.isFinite(options.futureSkewMs) && options.futureSkewMs >= 0 ? options.futureSkewMs : DEFAULT_FUTURE_SKEW_MS;
   const blockers = [];
   const caveats = [];
+
+  if (nowMs === null) blockers.push('reconciliation-time-unproven');
 
   const mainHead = sha(snapshot.github?.mainHead);
   if (!mainHead) blockers.push('github-main-head-unproven');
 
-  const lanes = array(snapshot.github?.implementationLanes).filter(activeLane);
+  const implementationLanesPresent = hasOwn(snapshot.github, 'implementationLanes');
+  const implementationLanesValid = implementationLanesPresent && Array.isArray(snapshot.github.implementationLanes);
+  if (!implementationLanesValid) blockers.push('github-implementation-lanes-unproven');
+  const lanes = implementationLanesValid ? snapshot.github.implementationLanes.filter(activeLane) : [];
   if (lanes.length > 1) blockers.push('split-brain-multiple-active-implementation-lanes');
+  if (lanes.length === 1 && !sha(lanes[0].headSha)) blockers.push('active-lane-head-unproven');
 
   const lease = snapshot.sharedWorkspace?.sourceMutationLease;
   const leaseValid = validLease(lease, nowMs);
   if (lanes.length === 1 && !leaseValid) blockers.push('active-lane-without-valid-source-mutation-lease');
-  if (lanes.length === 0 && leaseValid) caveats.push('valid-lease-without-active-lane');
+  if (lanes.length === 0 && leaseValid) blockers.push('valid-lease-without-active-lane');
   if (lanes.length === 1 && leaseValid && text(lease.laneId) !== text(lanes[0].id)) blockers.push('lease-lane-binding-mismatch');
 
-  const heartbeatAgeMs = ageMs(snapshot.sharedWorkspace?.controllerHeartbeat?.at, nowMs);
-  if (heartbeatAgeMs > heartbeatMaxAgeMs) blockers.push('controller-heartbeat-stale-or-missing');
+  const heartbeat = evidenceAge(snapshot.sharedWorkspace?.controllerHeartbeat?.at, nowMs, futureSkewMs);
+  if (heartbeat.future) blockers.push('controller-heartbeat-future-dated');
+  else if (!heartbeat.valid || heartbeat.ageMs > heartbeatMaxAgeMs) blockers.push('controller-heartbeat-stale-or-missing');
 
-  const duplicates = duplicateActiveMachinery(snapshot.sharedWorkspace?.machineryInventory);
+  const machineryInventoryPresent = hasOwn(snapshot.sharedWorkspace, 'machineryInventory');
+  const machineryInventoryValid = machineryInventoryPresent && Array.isArray(snapshot.sharedWorkspace.machineryInventory);
+  if (!machineryInventoryValid) blockers.push('shared-workspace-machinery-inventory-unproven');
+  const duplicates = machineryInventoryValid ? duplicateActiveMachinery(snapshot.sharedWorkspace.machineryInventory) : [];
   if (duplicates.length) blockers.push('duplicate-active-machinery');
 
-  const schedulerReceipt = evidenceReceipt(snapshot.receipts?.scheduler, 'scheduler', nowMs, receiptMaxAgeMs);
+  const schedulerReceipt = evidenceReceipt(snapshot.receipts?.scheduler, 'scheduler', nowMs, receiptMaxAgeMs, futureSkewMs);
   if (!schedulerReceipt.valid) blockers.push(schedulerReceipt.reason);
 
   if (lanes.length === 1) {
-    const executionReceipt = evidenceReceipt(snapshot.receipts?.execution, 'execution', nowMs, receiptMaxAgeMs);
+    const executionReceipt = evidenceReceipt(snapshot.receipts?.execution, 'execution', nowMs, receiptMaxAgeMs, futureSkewMs);
     if (!executionReceipt.valid) blockers.push(executionReceipt.reason);
     const receiptLaneId = text(snapshot.receipts?.execution?.laneId);
     if (executionReceipt.valid && receiptLaneId !== text(lanes[0].id)) blockers.push('execution-receipt-lane-binding-mismatch');
@@ -154,7 +175,11 @@ export function reconcileDurableFlywheelController(snapshot = {}, options = {}) 
   const runtimeProof = snapshot.battleBridge?.proof;
   if (lanes.some((lane) => normalizedState(lane.state) === 'PROOF_RUNNING')) {
     if (!runtimeProof || normalizedState(runtimeProof.state) !== 'OBSERVED') blockers.push('battle-bridge-proof-missing');
-    if (runtimeProof && ageMs(runtimeProof.at, nowMs) > receiptMaxAgeMs) blockers.push('battle-bridge-proof-stale');
+    if (runtimeProof) {
+      const proofAge = evidenceAge(runtimeProof.at, nowMs, futureSkewMs);
+      if (proofAge.future) blockers.push('battle-bridge-proof-future-dated');
+      else if (!proofAge.valid || proofAge.ageMs > receiptMaxAgeMs) blockers.push('battle-bridge-proof-stale');
+    }
     if (runtimeProof && mainHead && sha(runtimeProof.sourceHead) !== mainHead) blockers.push('battle-bridge-proof-source-head-mismatch');
   }
 
@@ -170,11 +195,12 @@ export function reconcileDurableFlywheelController(snapshot = {}, options = {}) 
     status,
     authoritativeSources:['github', 'shared-workspace', 'battle-bridge-proofs', 'execution-receipts'],
     chatMemoryAuthoritative:false,
+    observedAt:text(suppliedNow),
     mainHead,
     activeLaneCount:lanes.length,
     activeLane:lanes.length === 1 ? { id:text(lanes[0].id), state:normalizedState(lanes[0].state), headSha:sha(lanes[0].headSha) } : null,
     lease:{ valid:leaseValid, owner:text(lease?.owner), laneId:text(lease?.laneId), expiresAt:text(lease?.expiresAt) },
-    heartbeat:{ ageMs:heartbeatAgeMs, fresh:heartbeatAgeMs <= heartbeatMaxAgeMs },
+    heartbeat:{ ageMs:heartbeat.ageMs, fresh:heartbeat.valid && heartbeat.ageMs <= heartbeatMaxAgeMs, futureDated:heartbeat.future },
     duplicateMachinery:duplicates,
     blockers,
     caveats,
@@ -240,6 +266,7 @@ export function renderDurableFlywheelReceipt(result) {
   return [
     'Durable Flywheel Reconciliation Receipt VNext',
     `Status: ${result.status}`,
+    `Observed-At: ${result.observedAt ?? 'unproven'}`,
     `Main-Head: ${result.mainHead ?? 'unproven'}`,
     `Active-Lanes: ${result.activeLaneCount}`,
     `Lease-Valid: ${result.lease?.valid === true}`,
