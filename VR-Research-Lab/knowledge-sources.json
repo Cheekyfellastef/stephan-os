@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "domain": "vr",
   "purpose": "Registry of external VR engineering sources admitted for provenance-preserving research ingestion. Registration does not promote every source claim into canonical knowledge.",
   "sources": [
@@ -13,14 +13,7 @@
       "licence": "MIT",
       "local_manifest": "VR-Research-Lab/examples/other-vr-mods/halo-mcc-vr/source-manifest.json",
       "local_extraction": "VR-Research-Lab/examples/other-vr-mods/halo-mcc-vr/knowledge-extraction.md",
-      "relevance": [
-        "native OpenXR flat-game conversion",
-        "shared multi-title runtime",
-        "per-title reverse-engineering evidence",
-        "capability gating and lifecycle ownership",
-        "exact artefact and headset proof",
-        "AI-assisted implementation under human judgement"
-      ],
+      "relevance": ["native OpenXR flat-game conversion", "shared multi-title runtime", "per-title reverse-engineering evidence", "capability gating and lifecycle ownership", "exact artefact and headset proof", "AI-assisted implementation under human judgement"],
       "programme_links": [1593, 1596, 1597, 1605, 1606, 1607],
       "refresh_owner": 1596,
       "promotion_rule": "Only evidence-linked, independently evaluated findings may enter the Capability Graph or Method Library."
@@ -35,14 +28,7 @@
       "licence": "All rights reserved",
       "local_manifest": "VR-Research-Lab/knowledge-sources/uevr/source-manifest.json",
       "local_extraction": "VR-Research-Lab/knowledge-sources/uevr/knowledge-extraction.md",
-      "relevance": [
-        "universal Unreal Engine 4 and 5 VR injection",
-        "native stereo and synchronized sequential rendering",
-        "automatic UI projection",
-        "runtime object and camera manipulation",
-        "OpenVR and OpenXR support",
-        "broad compatibility evidence across games"
-      ],
+      "relevance": ["universal Unreal Engine 4 and 5 VR injection", "native stereo and synchronized sequential rendering", "automatic UI projection", "runtime object and camera manipulation", "OpenVR and OpenXR support", "broad compatibility evidence across games"],
       "programme_links": [1591, 1593, 1596, 1597, 1605],
       "refresh_owner": 1596,
       "promotion_rule": "Study public behaviour, architecture and evidence, but do not copy or redistribute source or substantial documentation without separate permission."
@@ -57,14 +43,7 @@
       "licence": "MIT",
       "local_manifest": "VR-Research-Lab/knowledge-sources/reframework/source-manifest.json",
       "local_extraction": "VR-Research-Lab/knowledge-sources/reframework/knowledge-extraction.md",
-      "relevance": [
-        "engine-specific mod framework",
-        "generic 6DOF VR support",
-        "motion-control adapters",
-        "Lua scripting and native plugin architecture",
-        "DirectX 11 and 12 interception",
-        "reusable per-title overrides on a shared engine foundation"
-      ],
+      "relevance": ["engine-specific mod framework", "generic 6DOF VR support", "motion-control adapters", "Lua scripting and native plugin architecture", "DirectX 11 and 12 interception", "reusable per-title overrides on a shared engine foundation"],
       "programme_links": [1593, 1596, 1597, 1605, 1606],
       "refresh_owner": 1596,
       "promotion_rule": "Preserve MIT attribution and distinguish reusable framework patterns from game-specific bindings."
@@ -79,14 +58,7 @@
       "licence": "Apache-2.0 with per-file notices",
       "local_manifest": "VR-Research-Lab/knowledge-sources/openxr-sdk-source/source-manifest.json",
       "local_extraction": "VR-Research-Lab/knowledge-sources/openxr-sdk-source/knowledge-extraction.md",
-      "relevance": [
-        "authoritative OpenXR loader implementation",
-        "hello_xr reference application",
-        "API-layer examples",
-        "runtime discovery and negotiation",
-        "session, frame, space and action lifecycle",
-        "conformance-aligned implementation evidence"
-      ],
+      "relevance": ["authoritative OpenXR loader implementation", "hello_xr reference application", "API-layer examples", "runtime discovery and negotiation", "session, frame, space and action lifecycle", "conformance-aligned implementation evidence"],
       "programme_links": [1593, 1596, 1597, 1605],
       "refresh_owner": 1596,
       "promotion_rule": "Prefer this source over third-party explanations for OpenXR loader, API-layer and sample implementation behaviour; retain required notices."
@@ -101,14 +73,7 @@
       "licence": "Mixed per-file licensing and Khronos specification copyright",
       "local_manifest": "VR-Research-Lab/knowledge-sources/openxr-docs/source-manifest.json",
       "local_extraction": "VR-Research-Lab/knowledge-sources/openxr-docs/knowledge-extraction.md",
-      "relevance": [
-        "normative OpenXR specification",
-        "extension registry and lifecycle requirements",
-        "interaction profiles and action binding",
-        "spatial anchors and persistence",
-        "view configurations and composition layers",
-        "vendor and multi-vendor extension maturity"
-      ],
+      "relevance": ["normative OpenXR specification", "extension registry and lifecycle requirements", "interaction profiles and action binding", "spatial anchors and persistence", "view configurations and composition layers", "vendor and multi-vendor extension maturity"],
       "programme_links": [1593, 1596, 1597, 1605],
       "refresh_owner": 1596,
       "promotion_rule": "Treat normative specification text and each file's stated licence as authoritative; store compact references and derived engineering notes rather than wholesale copies."
@@ -123,17 +88,77 @@
       "licence": "MIT",
       "local_manifest": "VR-Research-Lab/knowledge-sources/quad-views-foveated/source-manifest.json",
       "local_extraction": "VR-Research-Lab/knowledge-sources/quad-views-foveated/knowledge-extraction.md",
-      "relevance": [
-        "OpenXR API-layer interposition",
-        "quad-view composition",
-        "eye-tracked and fixed foveated rendering",
-        "focus and peripheral resolution budgeting",
-        "runtime and headset compatibility handling",
-        "performance telemetry and configuration"
-      ],
+      "relevance": ["OpenXR API-layer interposition", "quad-view composition", "eye-tracked and fixed foveated rendering", "focus and peripheral resolution budgeting", "runtime and headset compatibility handling", "performance telemetry and configuration"],
       "programme_links": [1593, 1596, 1597, 1605],
       "refresh_owner": 1596,
       "promotion_rule": "Preserve MIT attribution, record application and runtime compatibility explicitly, and do not generalise quad-view support to applications that do not implement the required view configuration."
+    },
+    {
+      "source_id": "official-vorpx",
+      "title": "vorpX",
+      "priority": "P0",
+      "status": "registered-metadata-and-operational-evidence-only",
+      "canonical_source": "https://www.vorpx.com/",
+      "snapshot_version": "25.1.5",
+      "snapshot_date": "2026-01-13",
+      "licence": "Commercial proprietary",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/vorpx/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/vorpx/knowledge-extraction.md",
+      "relevance": ["profile-driven flat-game VR", "DirectVR automation", "geometry and depth-derived stereo", "commercial compatibility maintenance", "seated controller operation", "cloud and local profile methods"],
+      "programme_links": [1591, 1593, 1596, 1597, 1605],
+      "refresh_owner": 1596,
+      "promotion_rule": "Store public metadata, operator evidence and independent analysis only; do not mirror proprietary binaries, profiles or substantial documentation."
+    },
+    {
+      "source_id": "official-luke-ross-real-vr",
+      "title": "Luke Ross R.E.A.L. VR Framework",
+      "priority": "P0",
+      "status": "registered-public-metadata-and-historical-source-only",
+      "canonical_source": "https://www.patreon.com/realvr/posts/welcome-152405833",
+      "historical_repository": "LukeRoss00/gta5-real-mod",
+      "historical_snapshot_commit": "00749fc5824e619a54d1ab0a45d9c60160c96f93",
+      "licence": "Current framework proprietary; historical repository has no root licence established",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/luke-ross-real-vr/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/luke-ross-real-vr/knowledge-extraction.md",
+      "relevance": ["alternate-eye rendering", "common injector with per-game modules", "large AAA compatibility catalogue", "seated gamepad VR", "upscaler and driver compatibility", "legal and availability risk"],
+      "programme_links": [1591, 1593, 1596, 1597, 1605],
+      "refresh_owner": 1596,
+      "promotion_rule": "Promote methods and verified behaviour only; exclude paywalled, withdrawn, mirrored or otherwise unauthorised artefacts."
+    },
+    {
+      "source_id": "github-mutars-nomoreflat",
+      "title": "Mutar / NoMoreFlat VR",
+      "priority": "P0",
+      "status": "registered-pinned-open-source-family",
+      "repository": "mutars/starfield2vr",
+      "snapshot_commit": "c8a2b200710cdf70db22fd0fcac498cba02da676",
+      "supporting_repository": "mutars/anvilengine2vr",
+      "supporting_snapshot_commit": "bc25bf37932c9f0376c9d6f38ec497d62cb363d2",
+      "licence": "MIT for the two pinned repositories; inspect other releases individually",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/mutar-nomoreflat/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/mutar-nomoreflat/knowledge-extraction.md",
+      "relevance": ["Starfield VR implementation", "REFramework adaptation", "6DoF and room scale", "HUD and world-scale controls", "controller translation and haptics", "OpenXR/OpenVR transport", "engine-family adapters"],
+      "programme_links": [1591, 1593, 1595, 1596, 1597, 1605, 1606],
+      "refresh_owner": 1596,
+      "promotion_rule": "Prefer pinned source and exact releases; validate each additional repository, engine and title independently."
+    },
+    {
+      "source_id": "skyrim-vr-native-parity-ecosystem",
+      "title": "Skyrim VR Native Interaction and Modding Ecosystem",
+      "priority": "P0",
+      "status": "registered-native-parity-benchmark",
+      "canonical_source": "https://store.steampowered.com/app/611670/",
+      "skse64_snapshot_commit": "4c1b425415c15f4655c73abb4682023baeb99d48",
+      "higgs_snapshot_commit": "93bf67b1bc4c4a11a20ccaef0d5012781d0d7eee",
+      "vrik_version": "0.8.6",
+      "planck_version": "0.8.0",
+      "licence": "Mixed: proprietary game, GPL-3.0 HIGGS, and component-specific or creator-controlled terms",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/skyrim-vr-ecosystem/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/skyrim-vr-ecosystem/knowledge-extraction.md",
+      "relevance": ["native open-world VR baseline", "script-extender plugin ecosystem", "full-body IK and calibration", "gestures and physical holsters", "grabbing, collision and two-handing", "frame-rate-aware physics", "physical character kinetics", "mature mod-stack composition"],
+      "programme_links": [1591, 1592, 1593, 1594, 1596, 1597, 1605, 1606],
+      "refresh_owner": 1596,
+      "promotion_rule": "Use as the parity benchmark and attribute every capability to the exact game, framework, mod and version that provides it."
     }
   ]
 }
