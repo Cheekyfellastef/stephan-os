@@ -1,0 +1,23 @@
+{
+  "source_id": "github-praydog-uevr",
+  "repository": "praydog/UEVR",
+  "canonical_url": "https://github.com/praydog/UEVR",
+  "default_branch": "master",
+  "snapshot_commit": "74b76bc9428a906cbdc69de3ebc1905fd0e9cc57",
+  "captured_on": "2026-07-29",
+  "licence": {
+    "classification": "all-rights-reserved",
+    "evidence": "Root LICENSE at the pinned commit states Copyright 2022-2025 praydog; all rights reserved.",
+    "ingestion_policy": "Metadata, public behaviour, release notes and independently written architectural analysis only. Do not copy or redistribute source or substantial upstream documentation without separate permission."
+  },
+  "source_role": "Universal Unreal Engine flat-to-VR conversion reference",
+  "refresh_owner_issue": 1596,
+  "extraction_owner_issue": 1593,
+  "safe_acquisition": {
+    "metadata": true,
+    "public_repository_inspection": true,
+    "isolated_ephemeral_clone_for_analysis": true,
+    "source_copy_into_stephanos": false,
+    "binary_execution": false
+  }
+}
