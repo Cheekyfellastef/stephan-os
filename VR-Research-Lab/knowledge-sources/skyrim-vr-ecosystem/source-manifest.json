@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "source_id": "skyrim-vr-native-parity-ecosystem",
+  "title": "Skyrim VR Native Interaction and Modding Ecosystem",
+  "source_type": "native-vr-game-and-mature-modding-ecosystem",
+  "priority": "P0",
+  "status": "registered-native-parity-benchmark",
+  "canonical_sources": [
+    "https://elderscrolls.bethesda.net/en-EU/news/4YSRrlXtpuKeWIK6EMiG84/skyrim-vr-comes-to-steamvr",
+    "https://store.steampowered.com/app/611670/",
+    "https://github.com/ianpatt/skse64",
+    "https://github.com/adamhynek/higgs",
+    "https://www.nexusmods.com/skyrimspecialedition/mods/23416",
+    "https://www.nexusmods.com/skyrimspecialedition/mods/43930",
+    "https://www.nexusmods.com/skyrimspecialedition/mods/66025"
+  ],
+  "snapshot": {
+    "observed_date": "2026-07-29",
+    "skse64_commit": "4c1b425415c15f4655c73abb4682023baeb99d48",
+    "higgs_commit": "93bf67b1bc4c4a11a20ccaef0d5012781d0d7eee",
+    "vrik_version": "0.8.6",
+    "vrik_updated": "2026-07-12",
+    "higgs_version": "1.10.10",
+    "higgs_updated": "2026-01-13",
+    "planck_version": "0.8.0",
+    "planck_updated": "2026-06-13"
+  },
+  "licence_posture": {
+    "skyrim_vr_game": "Bethesda proprietary game; metadata and lawful operator observations only",
+    "skse64": "Public source with no root licence established by this registration; inspect file-level terms before reuse",
+    "higgs": "GPL-3.0",
+    "vrik": "Nexus-hosted creator-controlled distribution; metadata and documented APIs only unless permission permits more",
+    "planck": "Nexus-hosted creator-controlled distribution; metadata and behaviour evidence only unless permission permits more"
+  },
+  "evidence_scope": [
+    "native full-length open-world VR baseline",
+    "script-extender and plugin ecosystem architecture",
+    "full player-body inverse kinematics",
+    "body calibration, gestures and physical holsters",
+    "hand and weapon collision",
+    "two-handed weapon handling",
+    "realistic object grabbing, throwing and gravity-glove interaction",
+    "physics-step synchronization to headset frame rate",
+    "physical character animation and melee kinetics",
+    "mod APIs and cross-mod capability composition"
+  ],
+  "ingestion_policy": {
+    "allowed": [
+      "official game metadata",
+      "pinned GPL HIGGS source with licence compliance",
+      "public SKSE source inspection subject to file-level terms",
+      "public Nexus metadata, changelogs and documented interfaces",
+      "operator-owned mod-list, configuration, performance and headset evidence",
+      "independently authored parity rubrics and method extraction"
+    ],
+    "forbidden": [
+      "copying Bethesda game assets or binaries",
+      "mirroring Nexus files without permission",
+      "assuming source availability equals permission to reuse",
+      "using a mod-list result without preserving its exact component versions",
+      "flattening native-game, framework and individual-mod behaviour into one claim"
+    ]
+  },
+  "refresh_owner": 1596,
+  "extraction_owner": 1593,
+  "parity_owner": 1591,
+  "programme_links": [1591, 1592, 1593, 1594, 1596, 1597, 1605, 1606],
+  "promotion_rule": "Use Skyrim VR as the native interaction parity benchmark. Attribute each capability to the base game, SKSE layer or exact mod and version that actually provides it."
+}
