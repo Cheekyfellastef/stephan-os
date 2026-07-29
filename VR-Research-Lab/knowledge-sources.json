@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "domain": "vr",
   "purpose": "Registry of external VR engineering sources admitted for provenance-preserving research ingestion. Registration does not promote every source claim into canonical knowledge.",
   "sources": [
@@ -159,6 +159,22 @@
       "programme_links": [1591, 1592, 1593, 1594, 1596, 1597, 1605, 1606],
       "refresh_owner": 1596,
       "promotion_rule": "Use as the parity benchmark and attribute every capability to the exact game, framework, mod and version that provides it."
+    },
+    {
+      "source_id": "official-bethesda-starfield-creation-kit",
+      "title": "Starfield and Starfield Creation Kit",
+      "priority": "P0",
+      "status": "registered-authoritative-operational-source",
+      "canonical_source": "https://wiki.bethesda.net/wiki/Starfield/",
+      "snapshot_date": "2026-07-29",
+      "licence": "Proprietary Bethesda game and editor with documentation and per-file terms",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/starfield-creation-kit/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/starfield-creation-kit/knowledge-extraction.md",
+      "local_intake_contract": "VR-Research-Lab/docs/research-notes/battle-bridge-downloads-vr-source-intake.md",
+      "relevance": ["first Skyrim VR-quality target", "Creation Engine 2 authoring model", "record and plugin relationships", "script and event surfaces", "camera, actor, UI, interaction and vehicle research", "exact installed-build evidence", "Battle Bridge Downloads source intake"],
+      "programme_links": [1591, 1593, 1595, 1596, 1597, 1611],
+      "refresh_owner": 1596,
+      "promotion_rule": "Keep authoring, public implementation and observed runtime evidence distinct. Store derived knowledge and proof only; never publish Bethesda assets or editor/game binaries."
     }
   ]
 }
