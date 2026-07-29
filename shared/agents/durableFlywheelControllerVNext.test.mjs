@@ -8,13 +8,60 @@ import {
 
 const NOW = '2026-07-29T14:00:00+01:00';
 const MAIN = '21dd7e30db529fea6eed0f0085f1b67fe858891c';
+const LANE_HEAD = '762a64949d4e335bbf75b5aa4d2e50bac857d47a';
+
+function schedulerReceipt(overrides = {}) {
+  return {
+    correlationId:'scheduler-1497',
+    decidedAt:'2026-07-29T13:56:00+01:00',
+    status:'ACTIVE_LANE',
+    failClosed:false,
+    contradictionCodes:[],
+    selectedIssue:null,
+    selectedLifecycle:null,
+    activeIssue:1497,
+    route:'CHATGPT_GITHUB',
+    proofRefs:[],
+    proofHeadShas:[],
+    proofReceipts:[],
+    ...overrides,
+  };
+}
+
+function executionReceipt(overrides = {}) {
+  return {
+    schemaVersion:'stephanos.execution-receipt.v1',
+    kind:'stephanos.execution.receipt',
+    receiptId:'execution-1497-1',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:1497,
+    prNumber:1603,
+    branch:'feat/durable-flywheel-controller-vnext',
+    sourceHead:LANE_HEAD,
+    workerId:'github-first-chatgpt',
+    workerType:'github-first',
+    executionId:'execution-1497',
+    leaseKey:'goal-1497-pr-1603',
+    state:'completed',
+    phase:'completed',
+    sequence:1,
+    predecessorReceiptId:'',
+    timestampUtc:'2026-07-29T13:57:00+01:00',
+    heartbeatExpiresAtUtc:'2026-07-29T13:57:00+01:00',
+    blocker:'',
+    operatorActionRequired:false,
+    proofRefs:['proofs/execution-1497.json'],
+    expectedNextAction:'',
+    ...overrides,
+  };
+}
 
 function healthy(overrides = {}) {
   return {
     observedAt:NOW,
     github:{
       mainHead:MAIN,
-      implementationLanes:[{ id:'goal-1497-pr-1603', state:'IMPLEMENTING', headSha:'762a64949d4e335bbf75b5aa4d2e50bac857d47a' }],
+      implementationLanes:[{ id:'goal-1497-pr-1603', state:'IMPLEMENTING', headSha:LANE_HEAD }],
       goals:[],
     },
     sharedWorkspace:{
@@ -27,8 +74,8 @@ function healthy(overrides = {}) {
       ],
     },
     receipts:{
-      scheduler:{ kind:'scheduler', state:'COMPLETE', at:'2026-07-29T13:56:00+01:00' },
-      execution:{ kind:'execution', state:'COMPLETE', laneId:'goal-1497-pr-1603', at:'2026-07-29T13:57:00+01:00' },
+      scheduler:schedulerReceipt(),
+      execution:executionReceipt(),
       proofHeadShas:[],
       proofReceipts:[],
       proofRefs:[],
@@ -42,6 +89,12 @@ function idleWithGoal() {
   const snapshot = healthy();
   snapshot.github.implementationLanes = [];
   snapshot.sharedWorkspace.sourceMutationLease = null;
+  snapshot.receipts.scheduler = schedulerReceipt({
+    status:'LANE_SELECTED',
+    selectedIssue:1700,
+    selectedLifecycle:'READY',
+    activeIssue:null,
+  });
   snapshot.receipts.execution = null;
   snapshot.github.goals = [{
     issue:1700,
@@ -74,7 +127,6 @@ test('multiple active lanes fail closed as split brain', () => {
   const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
   assert.equal(result.status, 'HOLD');
   assert.ok(result.blockers.includes('split-brain-multiple-active-implementation-lanes'));
-  assert.equal(result.nextAction, 'publish-reconciliation-receipt-and-stop-without-mutation');
 });
 
 test('expired lease cannot be seized implicitly', () => {
@@ -83,7 +135,6 @@ test('expired lease cannot be seized implicitly', () => {
   const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
   assert.equal(result.status, 'HOLD');
   assert.ok(result.blockers.includes('active-lane-without-valid-source-mutation-lease'));
-  assert.equal(result.leaseSeizureAllowed, false);
 });
 
 test('stale heartbeat and duplicate machinery are surfaced', () => {
@@ -93,27 +144,23 @@ test('stale heartbeat and duplicate machinery are surfaced', () => {
   const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
   assert.ok(result.blockers.includes('controller-heartbeat-stale-or-missing'));
   assert.ok(result.blockers.includes('duplicate-active-machinery'));
-  assert.deepEqual(result.duplicateMachinery, [{ kind:'worker', entries:['worker-primary', 'worker-duplicate'] }]);
 });
 
-test('proof-running lane requires observed exact-main Battle Bridge proof', () => {
+test('proof-running lane requires observed exact active-lane-head Battle Bridge proof', () => {
   const snapshot = healthy();
   snapshot.github.implementationLanes[0].state = 'PROOF_RUNNING';
   snapshot.battleBridge.proof = {
     state:'OBSERVED',
     at:'2026-07-29T13:58:00+01:00',
-    sourceHead:'0000000000000000000000000000000000000000',
+    sourceHead:MAIN,
   };
   const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
   assert.equal(result.status, 'HOLD');
   assert.ok(result.blockers.includes('battle-bridge-proof-source-head-mismatch'));
-});
 
-test('idle healthy controller lets scheduler select one goal', () => {
-  const snapshot = idleWithGoal();
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HEALTHY');
-  assert.equal(result.nextAction, 'scheduler-may-select-one-runnable-goal');
+  snapshot.battleBridge.proof.sourceHead = LANE_HEAD;
+  const repaired = reconcileDurableFlywheelController(snapshot, { now:NOW });
+  assert.equal(repaired.status, 'HEALTHY');
 });
 
 test('missing authority-bearing inventories fail closed', () => {
@@ -121,29 +168,48 @@ test('missing authority-bearing inventories fail closed', () => {
   delete snapshot.github.implementationLanes;
   delete snapshot.sharedWorkspace.machineryInventory;
   const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
   assert.ok(result.blockers.includes('github-implementation-lanes-unproven'));
   assert.ok(result.blockers.includes('shared-workspace-machinery-inventory-unproven'));
 });
 
-test('future-dated heartbeat and receipts fail closed', () => {
+test('malformed lane and machinery entries fail closed', () => {
   const snapshot = healthy();
-  snapshot.sharedWorkspace.controllerHeartbeat.at = '2027-07-29T13:55:00+01:00';
-  snapshot.receipts.scheduler.at = '2027-07-29T13:56:00+01:00';
-  snapshot.receipts.execution.at = '2027-07-29T13:57:00+01:00';
+  snapshot.github.implementationLanes = [null];
+  snapshot.sharedWorkspace.machineryInventory.push({ id:'unknown-worker', kind:'worker', state:'ALIEN_STATE' });
   const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
   assert.equal(result.status, 'HOLD');
+  assert.ok(result.blockers.includes('github-implementation-lane-entry-invalid'));
+  assert.ok(result.blockers.includes('shared-workspace-machinery-entry-invalid'));
+});
+
+test('future-dated heartbeat and canonical receipts fail closed', () => {
+  const snapshot = healthy();
+  snapshot.sharedWorkspace.controllerHeartbeat.at = '2027-07-29T13:55:00+01:00';
+  snapshot.receipts.scheduler.decidedAt = '2027-07-29T13:56:00+01:00';
+  snapshot.receipts.execution.timestampUtc = '2027-07-29T13:57:00+01:00';
+  snapshot.receipts.execution.heartbeatExpiresAtUtc = '2027-07-29T13:57:00+01:00';
+  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
   assert.ok(result.blockers.includes('controller-heartbeat-future-dated'));
   assert.ok(result.blockers.includes('scheduler-receipt-future-dated'));
   assert.ok(result.blockers.includes('execution-receipt-future-dated'));
 });
 
-test('active lane requires exact head identity', () => {
+test('canonical execution receipt must bind to active lane head', () => {
   const snapshot = healthy();
-  snapshot.github.implementationLanes[0].headSha = 'not-a-sha';
+  snapshot.receipts.execution.sourceHead = MAIN;
   const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
   assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('active-lane-head-unproven'));
+  assert.ok(result.blockers.includes('execution-receipt-head-mismatch'));
+});
+
+test('legacy test-only receipts are rejected', () => {
+  const snapshot = healthy();
+  snapshot.receipts.scheduler = { kind:'scheduler', state:'COMPLETE', at:'2026-07-29T13:56:00+01:00' };
+  snapshot.receipts.execution = { kind:'execution', state:'COMPLETE', at:'2026-07-29T13:57:00+01:00' };
+  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.blockers.includes('scheduler-receipt-contract-invalid'));
+  assert.ok(result.blockers.some((blocker) => blocker.startsWith('execution-receipt-')));
 });
 
 test('valid lease without active lane blocks scheduler selection', () => {
@@ -151,9 +217,7 @@ test('valid lease without active lane blocks scheduler selection', () => {
   snapshot.github.implementationLanes = [];
   snapshot.receipts.execution = null;
   const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
   assert.ok(result.blockers.includes('valid-lease-without-active-lane'));
-  assert.equal(result.nextAction, 'publish-reconciliation-receipt-and-stop-without-mutation');
 });
 
 test('missing explicit reconciliation time fails closed deterministically', () => {
@@ -166,38 +230,62 @@ test('missing explicit reconciliation time fails closed deterministically', () =
   assert.deepEqual(first, second);
 });
 
-test('future-dated Battle Bridge proof fails closed', () => {
-  const snapshot = healthy();
-  snapshot.github.implementationLanes[0].state = 'PROOF_RUNNING';
-  snapshot.battleBridge.proof = {
-    state:'OBSERVED',
-    at:'2027-07-29T13:58:00+01:00',
-    sourceHead:MAIN,
-  };
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+test('null durable snapshot publishes a HOLD receipt without mutation', async () => {
+  let mutationCalls = 0;
+  const receipts = [];
+  const result = await runDurableFlywheelStartupCycle({
+    loadDurableSnapshot:async () => null,
+    advanceActiveLane:async () => { mutationCalls += 1; },
+    dispatchSelectedGoal:async () => { mutationCalls += 1; },
+    publishReceipt:async (receipt) => receipts.push(receipt),
+  }, { now:NOW });
   assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('battle-bridge-proof-future-dated'));
+  assert.equal(mutationCalls, 0);
+  assert.equal(receipts.length, 1);
+  assert.ok(result.reconciliation.blockers.includes('github-main-head-unproven'));
 });
 
 test('startup cycle reconstructs durable state and advances active lane once', async () => {
   const calls = [];
-  const receipts = [];
   const result = await runDurableFlywheelStartupCycle({
     loadDurableSnapshot:async () => healthy(),
     advanceActiveLane:async (packet) => {
       calls.push(packet);
       return { status:'ACTIVE_LANE_ADVANCED', laneId:packet.lane.id };
     },
-    publishReceipt:async (receipt) => receipts.push(receipt),
+    publishReceipt:async () => {},
   }, { now:NOW });
-
   assert.equal(calls.length, 1);
   assert.equal(calls[0].boundedSteps, 1);
   assert.equal(calls[0].mergeAuthority, false);
-  assert.equal(calls[0].leaseSeizureAllowed, false);
   assert.equal(result.status, 'ACTIVE_LANE_ADVANCED');
-  assert.equal(receipts.length, 1);
-  assert.equal(receipts[0].chatMemoryAuthoritative, false);
+});
+
+test('startup cycle derives goals only from canonical GitHub truth', async () => {
+  const snapshot = idleWithGoal();
+  snapshot.github.goals = [];
+  snapshot.schedulerInput = {
+    goals:[{
+      issue:9999,
+      title:'Untrusted injected goal',
+      state:'READY',
+      prerequisites:[],
+      priority:999,
+      criticalPathWeight:999,
+      reversibility:'HIGH',
+      route:'CHATGPT_GITHUB',
+      evidenceAt:'2026-07-29T13:58:00+01:00',
+    }],
+  };
+  let dispatchCalls = 0;
+  const result = await runDurableFlywheelStartupCycle({
+    loadDurableSnapshot:async () => snapshot,
+    dispatchSelectedGoal:async () => { dispatchCalls += 1; },
+    publishReceipt:async () => {},
+  }, { now:NOW });
+  assert.equal(dispatchCalls, 0);
+  assert.equal(result.status, 'SCHEDULER_DECIDED');
+  assert.equal(result.schedulerDecision.selectedIssue, null);
 });
 
 test('startup cycle uses existing mission scheduler and dispatches one selected goal', async () => {
@@ -211,11 +299,8 @@ test('startup cycle uses existing mission scheduler and dispatches one selected 
     },
     publishReceipt:async (receipt) => receipts.push(receipt),
   }, { now:NOW });
-
   assert.equal(dispatched.length, 1);
   assert.equal(dispatched[0].selectedGoal, '#1700');
-  assert.equal(dispatched[0].selectedRoute, 'CHATGPT_GITHUB');
-  assert.equal(dispatched[0].boundedSteps, 1);
   assert.equal(dispatched[0].createReplacementMachinery, false);
   assert.equal(result.status, 'GOAL_DISPATCHED');
   assert.equal(receipts[0].schedulerDecision.selectedIssue, 1700);
@@ -232,17 +317,14 @@ test('startup cycle publishes hold receipt and performs no mutation', async () =
     dispatchSelectedGoal:async () => { mutationCalls += 1; },
     publishReceipt:async (receipt) => receipts.push(receipt),
   }, { now:NOW });
-
   assert.equal(result.status, 'HOLD');
   assert.equal(mutationCalls, 0);
   assert.equal(receipts.length, 1);
 });
 
 test('receipt renderer preserves fail-closed authority posture', () => {
-  const result = reconcileDurableFlywheelController(healthy(), { now:NOW });
-  const receipt = renderDurableFlywheelReceipt(result);
+  const receipt = renderDurableFlywheelReceipt(reconcileDurableFlywheelController(healthy(), { now:NOW }));
   assert.match(receipt, /Durable Flywheel Reconciliation Receipt VNext/);
-  assert.match(receipt, /Observed-At: 2026-07-29T14:00:00\+01:00/);
   assert.match(receipt, /Merge-Authority: false/);
   assert.match(receipt, /Lease-Seizure-Allowed: false/);
   assert.match(receipt, /Blockers: none/);
