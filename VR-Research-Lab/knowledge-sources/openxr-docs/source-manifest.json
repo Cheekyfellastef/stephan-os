@@ -1,0 +1,23 @@
+{
+  "source_id": "github-khronos-openxr-docs",
+  "repository": "KhronosGroup/OpenXR-Docs",
+  "canonical_url": "https://github.com/KhronosGroup/OpenXR-Docs",
+  "default_branch": "main",
+  "snapshot_commit": "ee6fef15fb5378c5db39045059712ee65798065c",
+  "snapshot_release": "OpenXR Specification 1.1.61",
+  "captured_on": "2026-07-29",
+  "licence": {
+    "classification": "mixed-per-file-and-khronos-specification-copyright",
+    "ingestion_policy": "Treat each file header or adjacent .license file as controlling. Preserve compact references and independently written engineering notes rather than wholesale specification copies."
+  },
+  "source_role": "Normative OpenXR specification and extension registry",
+  "refresh_owner_issue": 1596,
+  "extraction_owner_issue": 1593,
+  "safe_acquisition": {
+    "metadata": true,
+    "public_repository_inspection": true,
+    "isolated_ephemeral_clone_for_analysis": true,
+    "compact_citation_and_paraphrase": true,
+    "wholesale_specification_copy": false
+  }
+}
