@@ -131,6 +131,27 @@ test('malformed scheduler proof containers prevent active-lane advancement', asy
   }
 });
 
+test('malformed proof-array entries prevent active-lane advancement', async () => {
+  const cases = [
+    ['proofHeadShas', ['not-a-sha']],
+    ['proofReceipts', [{ issue:1497, activePr:1603, headSha:'not-a-sha' }]],
+    ['proofRefs', ['']],
+  ];
+  for (const [key, value] of cases) {
+    const snapshot = activeSnapshot();
+    snapshot.receipts[key] = value;
+    let advances = 0;
+    const result = await runDurableFlywheelStartupCycle({
+      loadDurableSnapshot:async () => snapshot,
+      advanceActiveLane:async () => { advances += 1; },
+      publishReceipt:async () => {},
+    }, { now:NOW });
+    assert.equal(result.status, 'HOLD');
+    assert.equal(advances, 0);
+    assert.ok(result.reconciliation.blockers.includes(`scheduler-${key}-evidence-invalid`));
+  }
+});
+
 test('execution receipt must bind to active lease key', () => {
   const snapshot = activeSnapshot();
   snapshot.receipts.execution = executionReceipt({ leaseKey:'another-lane' });
@@ -145,4 +166,12 @@ test('execution receipt worker must match active lease owner', () => {
   const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
   assert.equal(result.status, 'HOLD');
   assert.ok(result.blockers.includes('execution-receipt-worker-lease-owner-mismatch'));
+});
+
+test('execution receipt must bind to the active issue', () => {
+  const snapshot = activeSnapshot();
+  snapshot.receipts.execution = executionReceipt({ issueNumber:1700, prNumber:9999 });
+  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.blockers.includes('execution-receipt-issue-mismatch'));
 });
