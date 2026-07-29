@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "domain": "vr",
   "purpose": "Registry of external VR engineering sources admitted for provenance-preserving research ingestion. Registration does not promote every source claim into canonical knowledge.",
   "sources": [
@@ -24,6 +24,116 @@
       "programme_links": [1593, 1596, 1597, 1605, 1606, 1607],
       "refresh_owner": 1596,
       "promotion_rule": "Only evidence-linked, independently evaluated findings may enter the Capability Graph or Method Library."
+    },
+    {
+      "source_id": "github-praydog-uevr",
+      "title": "UEVR",
+      "priority": "P0",
+      "status": "registered-metadata-and-analysis-only",
+      "repository": "praydog/UEVR",
+      "snapshot_commit": "74b76bc9428a906cbdc69de3ebc1905fd0e9cc57",
+      "licence": "All rights reserved",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/uevr/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/uevr/knowledge-extraction.md",
+      "relevance": [
+        "universal Unreal Engine 4 and 5 VR injection",
+        "native stereo and synchronized sequential rendering",
+        "automatic UI projection",
+        "runtime object and camera manipulation",
+        "OpenVR and OpenXR support",
+        "broad compatibility evidence across games"
+      ],
+      "programme_links": [1591, 1593, 1596, 1597, 1605],
+      "refresh_owner": 1596,
+      "promotion_rule": "Study public behaviour, architecture and evidence, but do not copy or redistribute source or substantial documentation without separate permission."
+    },
+    {
+      "source_id": "github-praydog-reframework",
+      "title": "REFramework",
+      "priority": "P0",
+      "status": "registered-pinned-snapshot",
+      "repository": "praydog/REFramework",
+      "snapshot_commit": "ec6c81fd39831b328027ae00e102bc9c9c3f8aa5",
+      "licence": "MIT",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/reframework/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/reframework/knowledge-extraction.md",
+      "relevance": [
+        "engine-specific mod framework",
+        "generic 6DOF VR support",
+        "motion-control adapters",
+        "Lua scripting and native plugin architecture",
+        "DirectX 11 and 12 interception",
+        "reusable per-title overrides on a shared engine foundation"
+      ],
+      "programme_links": [1593, 1596, 1597, 1605, 1606],
+      "refresh_owner": 1596,
+      "promotion_rule": "Preserve MIT attribution and distinguish reusable framework patterns from game-specific bindings."
+    },
+    {
+      "source_id": "github-khronos-openxr-sdk-source",
+      "title": "OpenXR SDK Source",
+      "priority": "P0",
+      "status": "registered-authoritative-pinned-snapshot",
+      "repository": "KhronosGroup/OpenXR-SDK-Source",
+      "snapshot_commit": "211e2f4f0b79932300a845f3a8ed75026dbfa4a3",
+      "licence": "Apache-2.0 with per-file notices",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/openxr-sdk-source/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/openxr-sdk-source/knowledge-extraction.md",
+      "relevance": [
+        "authoritative OpenXR loader implementation",
+        "hello_xr reference application",
+        "API-layer examples",
+        "runtime discovery and negotiation",
+        "session, frame, space and action lifecycle",
+        "conformance-aligned implementation evidence"
+      ],
+      "programme_links": [1593, 1596, 1597, 1605],
+      "refresh_owner": 1596,
+      "promotion_rule": "Prefer this source over third-party explanations for OpenXR loader, API-layer and sample implementation behaviour; retain required notices."
+    },
+    {
+      "source_id": "github-khronos-openxr-docs",
+      "title": "OpenXR Specification Source",
+      "priority": "P0",
+      "status": "registered-authoritative-reference",
+      "repository": "KhronosGroup/OpenXR-Docs",
+      "snapshot_commit": "ee6fef15fb5378c5db39045059712ee65798065c",
+      "licence": "Mixed per-file licensing and Khronos specification copyright",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/openxr-docs/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/openxr-docs/knowledge-extraction.md",
+      "relevance": [
+        "normative OpenXR specification",
+        "extension registry and lifecycle requirements",
+        "interaction profiles and action binding",
+        "spatial anchors and persistence",
+        "view configurations and composition layers",
+        "vendor and multi-vendor extension maturity"
+      ],
+      "programme_links": [1593, 1596, 1597, 1605],
+      "refresh_owner": 1596,
+      "promotion_rule": "Treat normative specification text and each file's stated licence as authoritative; store compact references and derived engineering notes rather than wholesale copies."
+    },
+    {
+      "source_id": "github-mbucchia-quad-views-foveated",
+      "title": "Quad-Views-Foveated",
+      "priority": "P1",
+      "status": "registered-pinned-snapshot-with-compatibility-caveat",
+      "repository": "mbucchia/Quad-Views-Foveated",
+      "snapshot_commit": "79855a001302472a0f6c0703567dfe8ebfa6f988",
+      "licence": "MIT",
+      "local_manifest": "VR-Research-Lab/knowledge-sources/quad-views-foveated/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/knowledge-sources/quad-views-foveated/knowledge-extraction.md",
+      "relevance": [
+        "OpenXR API-layer interposition",
+        "quad-view composition",
+        "eye-tracked and fixed foveated rendering",
+        "focus and peripheral resolution budgeting",
+        "runtime and headset compatibility handling",
+        "performance telemetry and configuration"
+      ],
+      "programme_links": [1593, 1596, 1597, 1605],
+      "refresh_owner": 1596,
+      "promotion_rule": "Preserve MIT attribution, record application and runtime compatibility explicitly, and do not generalise quad-view support to applications that do not implement the required view configuration."
     }
   ]
 }
