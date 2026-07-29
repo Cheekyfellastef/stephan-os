@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "domain": "vr",
+  "purpose": "Registry of external VR engineering sources admitted for provenance-preserving research ingestion. Registration does not promote every source claim into canonical knowledge.",
+  "sources": [
+    {
+      "source_id": "github-pancreations-halo-mcc-vr",
+      "title": "Halo MCC VR",
+      "priority": "P0",
+      "status": "registered-pinned-snapshot",
+      "repository": "pancreations/Halo-MCC-VR",
+      "snapshot_commit": "ba1407ae5e0fee09f16fa8b52e3c2f2740344ba6",
+      "licence": "MIT",
+      "local_manifest": "VR-Research-Lab/examples/other-vr-mods/halo-mcc-vr/source-manifest.json",
+      "local_extraction": "VR-Research-Lab/examples/other-vr-mods/halo-mcc-vr/knowledge-extraction.md",
+      "relevance": [
+        "native OpenXR flat-game conversion",
+        "shared multi-title runtime",
+        "per-title reverse-engineering evidence",
+        "capability gating and lifecycle ownership",
+        "exact artefact and headset proof",
+        "AI-assisted implementation under human judgement"
+      ],
+      "programme_links": [1593, 1596, 1597, 1605, 1606, 1607],
+      "refresh_owner": 1596,
+      "promotion_rule": "Only evidence-linked, independently evaluated findings may enter the Capability Graph or Method Library."
+    }
+  ]
+}
