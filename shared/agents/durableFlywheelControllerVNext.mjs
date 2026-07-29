@@ -1,3 +1,5 @@
+import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
+
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const ACTIVE_LANE_STATES = new Set(['ACTIVE', 'IMPLEMENTING', 'CI_REVIEW', 'PROOF_RUNNING']);
 const ACTIVE_MACHINERY_STATES = new Set(['ACTIVE', 'RUNNING', 'DISPATCHED', 'WAITING_PROOF']);
@@ -81,6 +83,39 @@ function freeze(value) {
   return Object.freeze(value);
 }
 
+function requireFunction(value, name) {
+  if (typeof value !== 'function') throw new TypeError(`${name} must be a function`);
+  return value;
+}
+
+function schedulerInputFromSnapshot(snapshot, now) {
+  const supplied = snapshot.schedulerInput && typeof snapshot.schedulerInput === 'object'
+    ? snapshot.schedulerInput
+    : {};
+  return {
+    ...supplied,
+    now: supplied.now ?? now ?? snapshot.observedAt,
+    goals: supplied.goals ?? array(snapshot.github?.goals),
+    proofHeadShas: supplied.proofHeadShas ?? array(snapshot.receipts?.proofHeadShas),
+    proofReceipts: supplied.proofReceipts ?? array(snapshot.receipts?.proofReceipts),
+    proofRefs: supplied.proofRefs ?? array(snapshot.receipts?.proofRefs),
+    correlationId: supplied.correlationId ?? text(snapshot.correlationId) ?? undefined,
+  };
+}
+
+function cycleReceipt({ reconciliation, scheduler = null, execution = null }) {
+  return freeze({
+    schema:'Stephanos Durable Flywheel Startup Cycle VNext',
+    status:reconciliation.status === 'HOLD'
+      ? 'HOLD'
+      : execution?.status ?? (scheduler ? 'SCHEDULER_DECIDED' : 'RECONCILED'),
+    chatMemoryAuthoritative:false,
+    reconciliation,
+    schedulerDecision:scheduler?.decisionReceipt ?? null,
+    execution:execution ?? null,
+  });
+}
+
 export function reconcileDurableFlywheelController(snapshot = {}, options = {}) {
   const nowMs = timestamp(options.now ?? snapshot.observedAt) ?? Date.now();
   const heartbeatMaxAgeMs = Number.isFinite(options.heartbeatMaxAgeMs) ? options.heartbeatMaxAgeMs : DEFAULT_HEARTBEAT_MAX_AGE_MS;
@@ -147,6 +182,57 @@ export function reconcileDurableFlywheelController(snapshot = {}, options = {}) 
     leaseSeizureAllowed:false,
     nextAction,
   });
+}
+
+export async function runDurableFlywheelStartupCycle(machinery = {}, options = {}) {
+  const loadDurableSnapshot = requireFunction(machinery.loadDurableSnapshot, 'loadDurableSnapshot');
+  const publishReceipt = requireFunction(machinery.publishReceipt, 'publishReceipt');
+  const snapshot = await loadDurableSnapshot();
+  const reconciliation = reconcileDurableFlywheelController(snapshot, options);
+
+  if (reconciliation.status === 'HOLD') {
+    const receipt = cycleReceipt({ reconciliation });
+    await publishReceipt(receipt);
+    return receipt;
+  }
+
+  if (reconciliation.activeLaneCount === 1) {
+    const advanceActiveLane = requireFunction(machinery.advanceActiveLane, 'advanceActiveLane');
+    const execution = await advanceActiveLane({
+      snapshot,
+      lane:reconciliation.activeLane,
+      lease:reconciliation.lease,
+      boundedSteps:1,
+      mergeAuthority:false,
+      leaseSeizureAllowed:false,
+    });
+    const receipt = cycleReceipt({ reconciliation, execution });
+    await publishReceipt(receipt);
+    return receipt;
+  }
+
+  const scheduler = buildMissionScheduler(schedulerInputFromSnapshot(snapshot, options.now));
+  if (scheduler.failClosed || !scheduler.selectedGoal) {
+    const receipt = cycleReceipt({ reconciliation, scheduler });
+    await publishReceipt(receipt);
+    return receipt;
+  }
+
+  const dispatchSelectedGoal = requireFunction(machinery.dispatchSelectedGoal, 'dispatchSelectedGoal');
+  const execution = await dispatchSelectedGoal({
+    snapshot,
+    selectedGoal:scheduler.selectedGoal,
+    selectedRoute:scheduler.selectedRoute,
+    selectedLifecycle:scheduler.selectedLifecycle,
+    schedulerReceipt:scheduler.decisionReceipt,
+    boundedSteps:1,
+    createReplacementMachinery:false,
+    mergeAuthority:false,
+    leaseSeizureAllowed:false,
+  });
+  const receipt = cycleReceipt({ reconciliation, scheduler, execution });
+  await publishReceipt(receipt);
+  return receipt;
 }
 
 export function renderDurableFlywheelReceipt(result) {
