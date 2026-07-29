@@ -305,6 +305,7 @@ export async function runBattleBridgeWorkerWatchdog({
   staleAfterMs = WORKER_WATCHDOG_LOCK_STALE_AFTER_MS,
   restartCooldownMs = WORKER_WATCHDOG_RESTART_COOLDOWN_MS,
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
+  clock = () => Date.now(),
 } = {}) {
   const pathValidation = validateCanonicalWorkerWatchdogPaths({ paths, expectedPaths });
   if (!pathValidation.ok) return Object.freeze({ ok: false, classification: 'WORKER_WATCHDOG_BLOCKED', pathValidation });
@@ -331,7 +332,8 @@ export async function runBattleBridgeWorkerWatchdog({
       const publication = await publishWatchdogRecords({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, now, classification: 'WORKER_WATCHDOG_PROBE_FAILED', probeError: initialProbe.error });
       return Object.freeze({ ok: false, classification: 'WORKER_WATCHDOG_PROBE_FAILED', initialProbe, publication });
     }
-    const decision = buildWorkerWatchdogRecoveryDecision({ ...initialProbe.data, nowMs: now.getTime(), related: 'issue:#1291' });
+    const initialObservedAtMs = Math.max(now.getTime(), Number(clock()) || 0);
+    const decision = buildWorkerWatchdogRecoveryDecision({ ...initialProbe.data, nowMs: initialObservedAtMs, related: 'issue:#1291' });
     const initialAssessment = decision.assessment;
     if (decision.action === 'NO_OP') {
       const publication = await publishWatchdogRecords({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, now, classification: 'WORKER_WATCHDOG_HEALTHY', initialAssessment, finalAssessment: initialAssessment });
@@ -384,7 +386,10 @@ export async function runBattleBridgeWorkerWatchdog({
         lastProbeError = recoveryProbe.error;
         continue;
       }
-      finalAssessment = assessMissionOrchestratorWorker({ ...recoveryProbe.data, nowMs: Date.now() });
+      finalAssessment = assessMissionOrchestratorWorker({
+        ...recoveryProbe.data,
+        nowMs: Math.max(now.getTime(), Number(clock()) || 0),
+      });
       if (finalAssessment.healthy) break;
     }
     const recovered = finalAssessment.healthy === true;
