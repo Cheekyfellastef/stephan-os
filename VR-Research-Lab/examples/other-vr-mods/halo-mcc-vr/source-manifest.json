@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "source_id": "github-pancreations-halo-mcc-vr",
+  "title": "Halo MCC VR",
+  "classification": [
+    "priority-vr-engineering-source",
+    "native-openxr",
+    "multi-title-runtime",
+    "ai-assisted-engineering",
+    "flat-game-vr-conversion",
+    "learning-flywheel-case-study"
+  ],
+  "upstream": {
+    "repository": "pancreations/Halo-MCC-VR",
+    "clone_url": "https://github.com/pancreations/Halo-MCC-VR.git",
+    "default_branch": "master",
+    "snapshot_commit": "ba1407ae5e0fee09f16fa8b52e3c2f2740344ba6",
+    "snapshot_date": "2026-07-29",
+    "known_good_release": "MCC_VR_ALPHA_0.3.0",
+    "accepted_runtime_source": "4b85134bdef1cd5785a4e9246bd5c92191fe6647"
+  },
+  "licence": {
+    "spdx": "MIT",
+    "copyright": "Copyright (c) 2026 pancreations",
+    "notice_path": "upstream/LICENSE"
+  },
+  "captured_files": [
+    "upstream/LICENSE",
+    "upstream/TITLE-RUNTIME-OWNERSHIP.md",
+    "upstream/EDITING-KIT-EVIDENCE.md",
+    "knowledge-extraction.md"
+  ],
+  "deferred_full_snapshot": {
+    "status": "not-vendored",
+    "reason": "Avoid a stale duplicate codebase in canonical knowledge. A bounded research worker should clone the pinned commit into an isolated research workspace when source-level analysis is required.",
+    "required_command": "git clone https://github.com/pancreations/Halo-MCC-VR.git && git checkout ba1407ae5e0fee09f16fa8b52e3c2f2740344ba6"
+  },
+  "refresh_policy": {
+    "owner_goal": 1596,
+    "candidate_only_until_verified": true,
+    "compare_upstream_head": true,
+    "preserve_revision_and_provenance": true,
+    "never_auto-promote_claims": true
+  },
+  "programme_links": [1593, 1596, 1597, 1605, 1606, 1607],
+  "trust": {
+    "source_type": "public third-party repository",
+    "code_execution": "prohibited during passive ingestion",
+    "binary_ingestion": "prohibited",
+    "game_files": "prohibited",
+    "claims_require_independent_verification": true
+  }
+}
