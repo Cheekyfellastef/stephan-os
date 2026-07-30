@@ -235,7 +235,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       .sort((left, right) => right.score - left.score || right.issue.number - left.issue.number);
     const linkedPrNumbers = new Set(ranked.flatMap(({ linkedPullRequests }) => linkedPullRequests.map((pr) => pr.number)));
     const orphanPrCards = pullRequests
-      .filter((pr) => !linkedPrNumbers.has(pr.number))
+      .filter((pr) => normalizedStatus(pr.supersededStatus) !== 'superseded' && !linkedPrNumbers.has(pr.number))
       .sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt))
       .map((pr) => orphanPrGoalCard(pr, observedAt));
     const rankedCards = [
