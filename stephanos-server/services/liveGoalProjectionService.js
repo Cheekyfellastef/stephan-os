@@ -150,6 +150,7 @@ function issueGoalCard(issue, linkedPullRequests = [], observedAt) {
 function receiptGoalCard(candidate = {}, observedAt) {
   const candidateId = text(candidate.candidateId || candidate.id || candidate.relatedGoal || candidate.title, 'receipt-goal');
   const status = text(candidate.status || candidate.state, 'QUEUED').toUpperCase();
+  const operatorActionRequired = candidate.operatorActionRequired === true || status === 'AWAITING_APPROVAL';
   return Object.freeze({
     issue: text(candidate.relatedGoal || candidate.issue || candidate.issueNumber, candidateId),
     issueNumber: null,
@@ -166,7 +167,7 @@ function receiptGoalCard(candidate = {}, observedAt) {
     nextOwner: text(candidate.nextOwner, 'Canonical dispatcher'),
     handoffState: text(candidate.handoffState, 'receipt → queue evaluation'),
     milestone: text(candidate.milestone, 'RECEIPT_BACKED_GOAL'),
-    operatorNeeded: 'No',
+    operatorNeeded: operatorActionRequired ? 'Yes · mission action required' : 'No',
     proofIndex: 1,
     nextAction: text(candidate.nextAction, 'Inspect the receipt-backed queue state before dispatch.'),
     proofTruth: { github: 'unknown', checks: 'unknown', review: 'unknown', runtime: 'receipt-provided', browser: 'unknown' },
@@ -264,9 +265,27 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
     importedAt: text(candidate.importedAt || candidate.createdAt || candidate.updatedAt, 'unknown'),
   }));
   const historicalCandidateKeys = new Set(list(historicalCandidates).flatMap((candidate) => candidateIdentityKeys(candidate)));
+  const blockedCandidates = list(queue.blockedCandidates);
+  const blockedByIdentity = new Map();
+  for (const blockedCandidate of blockedCandidates) {
+    const key = candidateIdentityKeys(blockedCandidate)[0];
+    if (key) blockedByIdentity.set(key, blockedCandidate);
+  }
+  const withQueueAdjudication = (candidate = {}) => {
+    const blockedCandidate = blockedByIdentity.get(candidateIdentityKeys(candidate)[0]);
+    if (!blockedCandidate) return candidate;
+    return {
+      ...candidate,
+      blockers: list(candidate.blockers).length ? candidate.blockers : blockedCandidate.blockers,
+      rejectionReasons: list(candidate.rejectionReasons).length ? candidate.rejectionReasons : blockedCandidate.rejectionReasons,
+      status: 'BLOCKED',
+      queueAdjudication: 'blocked',
+    };
+  };
   const receiptCandidates = [
-    ...list(queue.activeProofLane),
-    ...list(queue.queuedCandidates),
+    ...list(queue.activeProofLane).map(withQueueAdjudication),
+    ...list(queue.queuedCandidates).map(withQueueAdjudication),
+    ...blockedCandidates.map(withQueueAdjudication),
     ...list(missions).map((mission) => ({
       candidateId: mission.mission?.missionId || mission.missionId,
       title: mission.mission?.title || mission.title,
@@ -274,6 +293,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       currentOwner: mission.agent?.label || mission.activeAgent?.label,
       nextAction: mission.mission?.nextAction || mission.nextAction,
       updatedAt: mission.mission?.updatedAt || mission.updatedAt,
+      operatorActionRequired: mission.operatorActionRequired === true || normalizedStatus(mission.mission?.state || mission.state) === 'awaiting_approval',
       currentReceiptAuthority: true,
     })),
   ];
@@ -299,7 +319,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
     activePrCount: 0,
     blockedCount: currentReceiptCards.filter((card) => /BLOCKED|FAILED/.test(card.status)).length,
     readyCount: currentReceiptCards.filter((card) => /READY/.test(card.status)).length,
-    operatorAttentionCount: 0,
+    operatorAttentionCount: currentReceiptCards.filter((card) => card.operatorNeeded.startsWith('Yes')).length,
     cards,
     historicalReferenceCount: historicalReferences.length,
     historicalReferences,
