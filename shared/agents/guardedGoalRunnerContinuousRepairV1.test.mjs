@@ -61,8 +61,14 @@ function harness(states, extra = {}) {
         calls.history.push(context);
         return [];
       },
-      persistCycleReceipt:async (receipt) => calls.cycle.push(receipt),
-      persistExecutionReceipt:async (receipt) => calls.execution.push(receipt),
+      persistCycleReceipt:async (receipt) => {
+        calls.cycle.push(receipt);
+        return { ok:true };
+      },
+      persistExecutionReceipt:async (receipt) => {
+        calls.execution.push(receipt);
+        return { ok:true };
+      },
       dispatchRepair:async (order) => {
         calls.dispatch.push(order);
         return { accepted:true, workerTaskId:'worker-1' };
@@ -145,6 +151,7 @@ test('requests exact-head verification once and rehydrates the outstanding reque
   assert.equal(requested.status, 'WAITING_FOR_VERIFICATION');
   assert.equal(first.calls.verify.length, 1);
   assert.equal(requested.receipt.status, 'verification-requested');
+  assert.equal(requested.receipt.verificationPurpose, 'PRE_MERGE_EXACT_HEAD_CI');
 
   const resumed = harness([state], {
     attemptId:'attempt-2',
@@ -216,6 +223,7 @@ test('dispatch rejection terminalizes the queued execution chain', async () => {
   assert.equal(h.calls.execution[0].state, 'queued');
   assert.equal(h.calls.execution[1].state, 'failed');
   assert.equal(h.calls.execution[1].predecessorReceiptId, h.calls.execution[0].receiptId);
+  assert.equal(blocked.receipt.terminalExecutionPersisted, true);
 });
 
 test('verification rejection is persisted as the durable blocked state', async () => {
@@ -264,4 +272,143 @@ test('cycle identity binds the full lane and durable attempt', async () => {
   assert.notEqual(a.receipt.cycleId, b.receipt.cycleId);
   assert.notEqual(a.receipt.cycleId, c.receipt.cycleId);
   assert.equal(a.receipt.predecessorCycleId, null);
+});
+
+test('queued receipt persistence must be affirmed before dispatch', async () => {
+  const h = harness([snapshot()], {
+    persistExecutionReceipt:async (receipt) => {
+      h.calls.execution.push(receipt);
+      return { ok:false, reason:'workspace lock unavailable' };
+    },
+  });
+  const blocked = await runGuardedContinuousRepairCycle(h.options);
+  assert.equal(blocked.status, 'BLOCKED_EXECUTION_RECEIPT_PERSISTENCE');
+  assert.equal(blocked.receipt.status, 'blocked-execution-receipt-persistence');
+  assert.equal(blocked.receipt.dispatchAttempted, false);
+  assert.equal(h.calls.dispatch.length, 0);
+});
+
+test('terminal receipt persistence must be affirmed after dispatch rejection', async () => {
+  let persistenceAttempt = 0;
+  const h = harness([snapshot()], {
+    dispatchRepair:async (repairOrder) => {
+      h.calls.dispatch.push(repairOrder);
+      return { accepted:false, reason:'worker unavailable' };
+    },
+    persistExecutionReceipt:async (receipt) => {
+      persistenceAttempt += 1;
+      h.calls.execution.push(receipt);
+      return persistenceAttempt === 1 ? { ok:true } : { ok:false, reason:'terminal write failed' };
+    },
+  });
+  const blocked = await runGuardedContinuousRepairCycle(h.options);
+  assert.equal(blocked.status, 'BLOCKED_EXECUTION_RECEIPT_PERSISTENCE');
+  assert.equal(blocked.receipt.status, 'blocked-dispatch-rejected');
+  assert.equal(blocked.receipt.terminalExecutionPersisted, false);
+  assert.equal(blocked.receipt.terminalExecutionReceiptId, null);
+});
+
+test('verification lifecycle retires pre-merge purpose before post-merge runtime verification', async () => {
+  const repairOrder = order();
+  const preMerge = snapshot({
+    findings:[],
+    activeRepairOrders:[repairOrder],
+    receipts:completedChain(repairOrder),
+    ciGreen:false,
+    ciHeadSha:HEAD,
+    mergeable:true,
+  });
+  const first = harness([preMerge]);
+  const requested = await runGuardedContinuousRepairCycle(first.options);
+  const postMerge = snapshot({
+    findings:[],
+    activeRepairOrders:[repairOrder],
+    receipts:completedChain(repairOrder),
+    merged:true,
+    operatorApprovalRecorded:true,
+    approvalHeadSha:HEAD,
+    approvalPrNumber:1617,
+    ciGreen:true,
+    ciHeadSha:HEAD,
+    runtimeProofRequired:true,
+    runtimeProofGreen:false,
+    runtimeHeadSha:HEAD,
+  });
+  const resumed = harness([postMerge], {
+    attemptId:'attempt-2',
+    history:requested.history,
+  });
+  const runtimeRequest = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(runtimeRequest.status, 'WAITING_FOR_VERIFICATION');
+  assert.equal(resumed.calls.verify.length, 1);
+  assert.equal(resumed.calls.verify[0].purpose, 'POST_MERGE_RUNTIME');
+  assert.deepEqual(resumed.calls.cycle.map(({ status }) => [
+    status,
+  ]), [['verification-completed'], ['verification-requested']]);
+  assert.equal(runtimeRequest.receipt.verificationPurpose, 'POST_MERGE_RUNTIME');
+});
+
+test('accepted verification response without durable ID is rejected', async () => {
+  const repairOrder = order();
+  const h = harness([snapshot({
+    findings:[],
+    activeRepairOrders:[repairOrder],
+    receipts:completedChain(repairOrder),
+    ciGreen:false,
+    ciHeadSha:HEAD,
+    mergeable:true,
+  })], {
+    requestExactHeadVerification:async (request) => {
+      h.calls.verify.push(request);
+      return { accepted:true };
+    },
+  });
+  const blocked = await runGuardedContinuousRepairCycle(h.options);
+  assert.equal(blocked.status, 'BLOCKED_VERIFICATION_REJECTED');
+  assert.equal(blocked.receipt.verificationAccepted, false);
+  assert.equal(blocked.receipt.verificationId, null);
+});
+
+test('rejected dispatch attempts count against the durable exact-head budget', async () => {
+  const first = harness([snapshot()], {
+    dispatchRepair:async (repairOrder) => {
+      first.calls.dispatch.push(repairOrder);
+      return { accepted:false, reason:'worker unavailable' };
+    },
+  });
+  const rejected = await runGuardedContinuousRepairCycle(first.options);
+  assert.equal(rejected.status, 'BLOCKED_DISPATCH_REJECTED');
+
+  const resumed = harness([snapshot()], {
+    attemptId:'attempt-2',
+    history:rejected.history,
+    maxRepairsPerHead:1,
+  });
+  const blocked = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(blocked.status, 'BLOCKED_REPAIR_BUDGET');
+  assert.equal(resumed.calls.dispatch.length, 0);
+  assert.equal(resumed.calls.execution.length, 0);
+});
+
+test('rehydrated history requires canonical cycle IDs and an unbroken predecessor chain', async () => {
+  const first = harness([snapshot()]);
+  const prior = await runGuardedContinuousRepairCycle(first.options);
+  const tampered = prior.history.map((entry) => ({
+    ...entry,
+    predecessorCycleId:'spliced-cycle',
+  }));
+  const resumed = harness([snapshot()], {
+    attemptId:'attempt-2',
+    history:tampered,
+  });
+  const blocked = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(blocked.status, 'BLOCKED_HISTORY_INVALID');
+  assert.equal(resumed.calls.dispatch.length, 0);
+
+  const forgedId = harness([snapshot()], {
+    attemptId:'attempt-3',
+    history:prior.history.map((entry) => ({ ...entry, cycleId:'forged-cycle' })),
+  });
+  const forgedBlocked = await runGuardedContinuousRepairCycle(forgedId.options);
+  assert.equal(forgedBlocked.status, 'BLOCKED_HISTORY_INVALID');
 });
