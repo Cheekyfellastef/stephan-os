@@ -92,6 +92,24 @@ test('PR readiness requires the complete canonical workflow set on the unchanged
   assert.deepEqual(complete.pullRequests[0].missingRequiredChecks, []);
 });
 
+test('neutral and skipped exact-head workflows never count as successful proof', () => {
+  const headSha = '9'.repeat(40);
+  for (const conclusion of ['neutral', 'skipped']) {
+    const telemetry = normalizeGithubTelemetry({
+      available: true,
+      issues: [],
+      issueInventoryComplete: true,
+      pullRequests: [{ number: 51, headSha, body: 'Fixes #1497' }],
+      pullRequestInventoryComplete: true,
+      workflows: requiredChecks(headSha, conclusion).map((run, index) => ({ ...run, id: `${conclusion}-${index}`, prNumber: 51 })),
+    });
+    assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
+    assert.deepEqual(telemetry.pullRequests[0].missingRequiredChecks, []);
+    assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+    assert.equal(telemetry.pullRequests[0].blockers.includes('checks_not_passed_or_unknown'), true);
+  }
+});
+
 test('PR issue correlation accepts explicit closing references and rejects incidental mentions', () => {
   const headSha = 'e'.repeat(40);
   const telemetry = normalizeGithubTelemetry({
