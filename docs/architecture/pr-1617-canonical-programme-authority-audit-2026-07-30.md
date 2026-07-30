@@ -406,3 +406,18 @@ a new guard family:
 The model tests now include missing goal identity, malformed convergence
 evidence, malformed active approval evidence, unrelated and failed fresh
 proofs, and one exact affirmative progress proof.
+
+The subsequent exact-head adversarial pass confirmed that the structural rule
+must distinguish property absence from every explicitly supplied value,
+including `null`. The scheduler adapter now uses presence-based propagation for
+the complete scheduler-owned authority set during both durable reconstruction
+and active-lane overlay. It does not manufacture defaults for malformed
+prerequisites, route, approval, operator-priority, repair-cycle, or flywheel
+evidence containers; Mission Scheduler remains the only adjudicator.
+
+The same pass tightened the progress-time model. Every candidate progress
+timestamp—execution receipt, lease renewal, or exact-lane affirmative proof—is
+accepted only when it is valid and no more than the shared one-minute
+observation skew into the future. Future-dated evidence cannot reset progress
+age or conceal a stalled lane. Adversarial model tests cover the full null
+authority-field set and future-dated values from all three progress sources.

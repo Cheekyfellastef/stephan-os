@@ -29,6 +29,7 @@ export const DEFAULT_SOURCE_MUTATION_LEASE_MS = 2 * 60 * 60 * 1000;
 export const MAX_SOURCE_MUTATION_LEASE_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_CONTROLLER_HEARTBEAT_MAX_AGE_MS = 20 * 60 * 1000;
 export const DEFAULT_PROGRAMME_STALL_AFTER_MS = 30 * 60 * 1000;
+export const MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS = 60 * 1000;
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
@@ -113,6 +114,12 @@ function normalizedState(value) {
 
 function list(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function ownValueOr(object, key, fallback) {
+  return object && Object.prototype.hasOwnProperty.call(object, key)
+    ? object[key]
+    : fallback;
 }
 
 function unique(values) {
@@ -681,38 +688,24 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       issue: issueNumber,
       title: text(record.title, `Goal #${issueNumber}`),
       state: normalizedState(record.state ?? record.status ?? 'WAITING_FOR_EXTERNAL_CONDITION'),
-      prerequisites: Object.prototype.hasOwnProperty.call(record, 'prerequisites')
-        ? record.prerequisites
-        : [],
+      prerequisites: ownValueOr(record, 'prerequisites', []),
       priority: Number.isFinite(record.priority) ? record.priority : 0,
       criticalPathWeight: Number.isFinite(record.criticalPathWeight) ? record.criticalPathWeight : 0,
       reversibility: text(record.reversibility, 'UNKNOWN').toUpperCase(),
-      route: text(record.route, 'WAITING_FOR_EXTERNAL_CONDITION'),
+      route: ownValueOr(record, 'route', 'WAITING_FOR_EXTERNAL_CONDITION'),
       activePr: number(record.activePr ?? record.prNumber),
       branch: text(record.branch) || null,
       headSha: sha(record.headSha),
       proofState: text(record.proofState, 'UNKNOWN'),
-      approvalRequired: Object.prototype.hasOwnProperty.call(record, 'approvalRequired')
-        ? record.approvalRequired
-        : false,
-      operatorPriority: Object.prototype.hasOwnProperty.call(record, 'operatorPriority')
-        ? record.operatorPriority
-        : false,
-      evidenceAt: text(record.evidenceAt ?? record.timestampUtc, nowUtc),
-      resultProofRefs: Object.prototype.hasOwnProperty.call(record, 'resultProofRefs')
-        ? record.resultProofRefs
-        : [],
+      approvalRequired: ownValueOr(record, 'approvalRequired', false),
+      operatorPriority: ownValueOr(record, 'operatorPriority', false),
+      evidenceAt: ownValueOr(record, 'evidenceAt', record.timestampUtc),
+      resultProofRefs: ownValueOr(record, 'resultProofRefs', []),
       reusableCapabilityId: text(record.reusableCapabilityId) || null,
       sharedLessonId: text(record.sharedLessonId) || null,
-      repairCycleCount: Object.prototype.hasOwnProperty.call(record, 'repairCycleCount')
-        ? record.repairCycleCount
-        : 0,
-      structuralReviewProofRefs: Object.prototype.hasOwnProperty.call(record, 'structuralReviewProofRefs')
-        ? record.structuralReviewProofRefs
-        : [],
-      modelTestProofRefs: Object.prototype.hasOwnProperty.call(record, 'modelTestProofRefs')
-        ? record.modelTestProofRefs
-        : [],
+      repairCycleCount: ownValueOr(record, 'repairCycleCount', 0),
+      structuralReviewProofRefs: ownValueOr(record, 'structuralReviewProofRefs', []),
+      modelTestProofRefs: ownValueOr(record, 'modelTestProofRefs', []),
       duplicateOf: record.duplicateOf ?? null,
       supersededBy: record.supersededBy ?? null,
     });
@@ -723,26 +716,26 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       issue: lane.issueNumber,
       title: existing?.title ?? `Goal #${lane.issueNumber}`,
       state: 'ACTIVE',
-      prerequisites: existing?.prerequisites ?? [],
+      prerequisites: ownValueOr(existing, 'prerequisites', []),
       priority: existing?.priority ?? 0,
       criticalPathWeight: existing?.criticalPathWeight ?? 0,
       reversibility: existing?.reversibility ?? 'UNKNOWN',
-      route: existing?.route && existing.route !== 'WAITING_FOR_EXTERNAL_CONDITION'
+      route: ownValueOr(existing, 'route', 'WAITING_FOR_EXTERNAL_CONDITION') !== 'WAITING_FOR_EXTERNAL_CONDITION'
         ? existing.route
         : 'CHATGPT_GITHUB',
       activePr: lane.prNumber,
       branch: lane.branch,
       headSha: lane.headSha,
       proofState: existing?.proofState ?? 'UNKNOWN',
-      approvalRequired: existing?.approvalRequired ?? false,
-      operatorPriority: existing?.operatorPriority ?? false,
+      approvalRequired: ownValueOr(existing, 'approvalRequired', false),
+      operatorPriority: ownValueOr(existing, 'operatorPriority', false),
       evidenceAt: nowUtc,
-      resultProofRefs: existing?.resultProofRefs ?? [],
+      resultProofRefs: ownValueOr(existing, 'resultProofRefs', []),
       reusableCapabilityId: existing?.reusableCapabilityId ?? null,
       sharedLessonId: existing?.sharedLessonId ?? null,
-      repairCycleCount: existing?.repairCycleCount ?? 0,
-      structuralReviewProofRefs: existing?.structuralReviewProofRefs ?? [],
-      modelTestProofRefs: existing?.modelTestProofRefs ?? [],
+      repairCycleCount: ownValueOr(existing, 'repairCycleCount', 0),
+      structuralReviewProofRefs: ownValueOr(existing, 'structuralReviewProofRefs', []),
+      modelTestProofRefs: ownValueOr(existing, 'modelTestProofRefs', []),
       duplicateOf: existing?.duplicateOf ?? null,
       supersededBy: existing?.supersededBy ?? null,
     };
@@ -966,10 +959,20 @@ function everySuppliedAliasMatches(values, normalizer, expected) {
   return supplied.length > 0 && supplied.every((value) => normalizer(value) === expected);
 }
 
-function isAffirmativeLaneProgressProof(proof, lane) {
+function boundedProgressTimestamp(value, nowMs) {
+  const valueMs = timestamp(value);
+  return valueMs !== null
+    && nowMs !== null
+    && valueMs - nowMs <= MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+    ? valueMs
+    : null;
+}
+
+function isAffirmativeLaneProgressProof(proof, lane, nowMs) {
   if (!lane?.active || !proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
   if (proof.kind !== SHARED_WORKSPACE_RECORD_KINDS.PROOF) return false;
-  if (!validateSharedWorkspaceRecord(proof).valid) return false;
+  if (!validateSharedWorkspaceRecord(proof, { nowMs: nowMs ?? undefined }).valid) return false;
+  if (boundedProgressTimestamp(proof.timestampUtc ?? proof.at, nowMs) === null) return false;
   if (!AFFIRMATIVE_PROGRESS_PROOF_STATUSES.has(text(proof.status).toUpperCase())) return false;
   if (!everySuppliedAliasMatches([proof.issueNumber, proof.relatedIssue], number, lane.issueNumber)) return false;
   if (!everySuppliedAliasMatches([proof.prNumber, proof.relatedPr], number, lane.prNumber)) return false;
@@ -994,11 +997,11 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   if (safeProjection !== projection) blockers.push('programme-projection-missing');
   const lane = safeProjection.lane;
   const proofProgressTimes = list(safeProjection.battleBridgeProofs)
-    .filter((proof) => isAffirmativeLaneProgressProof(proof, lane))
-    .map((proof) => timestamp(proof.timestampUtc ?? proof.at));
+    .filter((proof) => isAffirmativeLaneProgressProof(proof, lane, nowMs))
+    .map((proof) => boundedProgressTimestamp(proof.timestampUtc ?? proof.at, nowMs));
   const progressTimes = [
-    timestamp(safeProjection.executionReceipt?.timestampUtc),
-    timestamp(safeProjection.mutationLease?.renewedAtUtc),
+    boundedProgressTimestamp(safeProjection.executionReceipt?.timestampUtc, nowMs),
+    boundedProgressTimestamp(safeProjection.mutationLease?.renewedAtUtc, nowMs),
     ...proofProgressTimes,
   ].filter(Number.isFinite);
   const lastProgressMs = progressTimes.length ? Math.max(...progressTimes) : null;

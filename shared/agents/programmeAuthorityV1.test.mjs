@@ -504,6 +504,51 @@ test('scheduler goals are constructed from durable records and the canonical lan
     goals: malformedActiveApproval.goals,
   });
   assert.ok(malformedActiveScheduler.contradictions.some(({ code }) => code === 'ACTIVE_APPROVAL_GATE_INVALID'));
+
+  const nullAuthorityFields = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    lane: lane(),
+    goalRecords: [goalRecord({
+      prerequisites: null,
+      route: null,
+      approvalRequired: null,
+      operatorPriority: null,
+      repairCycleCount: null,
+      resultProofRefs: null,
+      structuralReviewProofRefs: null,
+      modelTestProofRefs: null,
+    })],
+  });
+  assert.deepEqual({
+    prerequisites: nullAuthorityFields.goals[0].prerequisites,
+    route: nullAuthorityFields.goals[0].route,
+    approvalRequired: nullAuthorityFields.goals[0].approvalRequired,
+    operatorPriority: nullAuthorityFields.goals[0].operatorPriority,
+    repairCycleCount: nullAuthorityFields.goals[0].repairCycleCount,
+    resultProofRefs: nullAuthorityFields.goals[0].resultProofRefs,
+    structuralReviewProofRefs: nullAuthorityFields.goals[0].structuralReviewProofRefs,
+    modelTestProofRefs: nullAuthorityFields.goals[0].modelTestProofRefs,
+  }, {
+    prerequisites: null,
+    route: null,
+    approvalRequired: null,
+    operatorPriority: null,
+    repairCycleCount: null,
+    resultProofRefs: null,
+    structuralReviewProofRefs: null,
+    modelTestProofRefs: null,
+  });
+  const nullAuthorityScheduler = buildMissionScheduler({
+    now: NOW,
+    goals: nullAuthorityFields.goals,
+  });
+  assert.equal(nullAuthorityScheduler.failClosed, true);
+  assert.ok(nullAuthorityScheduler.contradictions.some(({ code }) => code === 'ACTIVE_APPROVAL_GATE_INVALID'));
+  assert.ok(nullAuthorityScheduler.blockers.some(({ invalidPrerequisiteContainer }) => invalidPrerequisiteContainer === true));
+  assert.ok(nullAuthorityScheduler.blockers.some(({ invalidRepairCycleCount }) => invalidRepairCycleCount === true));
+  assert.ok(nullAuthorityScheduler.blockers.some(({ invalidFlywheelEvidenceContainers }) => (
+    invalidFlywheelEvidenceContainers?.length === 3
+  )));
 });
 
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {
@@ -858,6 +903,24 @@ test('programme stall diagnosis reuses Monitor Multiplexer and never starts sche
   }, { nowUtc: NOW, stallAfterMs: 1_000 });
   assert.equal(exactProof.stalled, false);
   assert.equal(exactProof.lastProgressAtUtc, '2026-07-30T09:59:59.000Z');
+
+  const futureEvidence = diagnoseProgrammeStall({
+    ...stalledProjection,
+    controllerHeartbeat: { fresh: true, ageMs: 0 },
+    executionReceipt: receipt({ timestampUtc: '2099-01-01T00:00:00.000Z' }),
+    mutationLease: lease({ renewedAtUtc: '2099-01-01T00:00:00.000Z' }),
+    battleBridgeProofs: [proofRecord({
+      timestampUtc: '2099-01-01T00:00:00.000Z',
+      issueNumber: 1497,
+      prNumber: 1617,
+      headSha: HEAD,
+      repository: REPOSITORY,
+      branch: BRANCH,
+    })],
+  }, { nowUtc: NOW, stallAfterMs: 1_000 });
+  assert.equal(futureEvidence.stalled, true);
+  assert.ok(futureEvidence.blockers.includes('active-lane-progress-evidence-missing'));
+  assert.equal(futureEvidence.lastProgressAtUtc, null);
 
   const handler = createProgrammeStallMonitorHandler({
     loadProjection: async () => stalledProjection,
