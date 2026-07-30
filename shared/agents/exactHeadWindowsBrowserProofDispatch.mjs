@@ -26,6 +26,11 @@ export function buildExactHeadWindowsBrowserProofPacket(command = {}, timestampU
     branch: 'main',
     prompt: `PR #${command.prNumber}; expected head ${command.expectedHead}. ${prompt}`,
     requestedProofCommands: ['git rev-parse HEAD', 'npm run stephanos:browser-proof'],
+    exactHeadProof: {
+      repository: REPOSITORY,
+      prNumber: Number(command.prNumber),
+      expectedHead: String(command.expectedHead).toLowerCase(),
+    },
     createdAt: timestampUtc,
     approvalRequirements: {
       requiresOperatorApprovalBeforeDispatch: true,
