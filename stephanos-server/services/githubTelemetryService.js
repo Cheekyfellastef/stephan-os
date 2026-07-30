@@ -69,8 +69,9 @@ function checkObservedAt(check = {}) {
 }
 function checkRunSequence(check = {}) {
   const sequenceDomain = text(check.sequenceDomain || check.sequence_domain);
-  const isWorkflowRun = sequenceDomain === 'github-workflow-run';
+  const isWorkflowRun = sequenceDomain.startsWith('github-workflow-run:');
   return {
+    sequenceDomain: isWorkflowRun ? sequenceDomain : null,
     runNumber: isWorkflowRun ? positiveInteger(check.runNumber ?? check.run_number) : null,
     runAttempt: isWorkflowRun ? positiveInteger(check.runAttempt ?? check.run_attempt) : null,
     runId: isWorkflowRun
@@ -81,6 +82,9 @@ function checkRunSequence(check = {}) {
 function compareCheckRunSequence(left = {}, right = {}) {
   const leftSequence = checkRunSequence(left);
   const rightSequence = checkRunSequence(right);
+  if (!leftSequence.sequenceDomain
+    || !rightSequence.sequenceDomain
+    || leftSequence.sequenceDomain !== rightSequence.sequenceDomain) return null;
   if (leftSequence.runNumber !== null || rightSequence.runNumber !== null) {
     if (leftSequence.runNumber === null || rightSequence.runNumber === null) return null;
     if (leftSequence.runNumber !== rightSequence.runNumber) return leftSequence.runNumber - rightSequence.runNumber;
@@ -123,6 +127,15 @@ function selectLatestRequiredChecks(checks = [], headSha = '') {
       }
       continue;
     }
+    const currentSequence = checkRunSequence(check);
+    const previousSequence = checkRunSequence(previous);
+    const outcomesDiffer = canonicalCheckOutcome(previous) !== canonicalCheckOutcome(check);
+    const comparableWorkflowDefinition = currentSequence.sequenceDomain
+      && currentSequence.sequenceDomain === previousSequence.sequenceDomain;
+    if (outcomesDiffer && !comparableWorkflowDefinition) {
+      conflicts.add(name);
+      continue;
+    }
     const currentAt = checkObservedAt(check);
     const previousAt = checkObservedAt(previous);
     if (currentAt !== null && previousAt !== null && currentAt !== previousAt) {
@@ -132,7 +145,7 @@ function selectLatestRequiredChecks(checks = [], headSha = '') {
       }
       continue;
     }
-    if (canonicalCheckOutcome(previous) !== canonicalCheckOutcome(check)) {
+    if (outcomesDiffer) {
       conflicts.add(name);
       continue;
     }
@@ -195,12 +208,20 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     if (['failure', 'failed', 'timed_out', 'action_required'].includes(conclusion)) status = 'failed';
     if (conclusion === 'cancelled') status = 'cancelled';
     if (['neutral', 'skipped'].includes(conclusion)) status = 'unknown';
+    const workflowDefinition = text(
+      run.workflowId
+      ?? run.workflow_id
+      ?? run.workflowPath
+      ?? run.workflow_path
+      ?? run.path,
+    );
     return {
       id: text(run.id, `workflow-${index + 1}`),
       runId: positiveInteger(run.runId ?? run.run_id ?? run.id),
       runNumber: positiveInteger(run.runNumber ?? run.run_number),
       runAttempt: positiveInteger(run.runAttempt ?? run.run_attempt),
-      sequenceDomain: 'github-workflow-run',
+      sequenceDomain: workflowDefinition ? `github-workflow-run:${workflowDefinition}` : '',
+      workflowDefinition,
       name: text(run.name, 'unknown'),
       status,
       rawStatus: statusText,
