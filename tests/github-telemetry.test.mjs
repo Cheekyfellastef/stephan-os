@@ -10,6 +10,7 @@ function requiredChecks(headSha, conclusion = 'success') {
   return REQUIRED_EXACT_HEAD_WORKFLOWS.map((name, index) => ({
     name,
     headSha,
+    status: 'completed',
     conclusion,
     updatedAt: `2026-07-30T10:0${index}:00.000Z`,
   }));
@@ -37,7 +38,7 @@ test('GitHub notifications classify into required categories and count unread st
 
 test('GitHub telemetry projects complete PR and issue inventories, workflows, unavailable state, and no fabricated truth', () => {
   const headSha = 'a'.repeat(40);
-  const live = normalizeGithubTelemetry({ available: true, issues: [{ number: 1497, title: 'Goal: continuous repair', state: 'open', labels: [{ name: 'goal' }], assignees: [{ login: 'codex' }], updated_at: '2026-07-29T12:00:00Z' }, { number: 7, title: 'PR-shaped issue', pull_request: {} }], issueInventoryComplete: true, pullRequests: [{ number: 42, title: 'Goal API for #1497', body: 'Fixes #1497.', branch: 'work', headSha, checks: requiredChecks(headSha), approvalStatus: 'approved' }], pullRequestInventoryComplete: true, workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }, { id: 2, name: 'build', conclusion: 'success', prNumber: 42 }, { id: 3, name: 'deploy', conclusion: 'cancelled' }] });
+  const live = normalizeGithubTelemetry({ available: true, repository: { owner: 'owner', repo: 'repo', defaultBranch: 'main' }, issues: [{ number: 1497, title: 'Goal: continuous repair', state: 'open', labels: [{ name: 'goal' }], assignees: [{ login: 'codex' }], updated_at: '2026-07-29T12:00:00Z' }, { number: 7, title: 'PR-shaped issue', pull_request: {} }], issueInventoryComplete: true, pullRequests: [{ number: 42, title: 'Goal API for #1497', body: 'Fixes #1497.', base: { ref: 'main' }, branch: 'work', headSha, checks: requiredChecks(headSha), approvalStatus: 'approved' }], pullRequestInventoryComplete: true, workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }, { id: 2, name: 'build', conclusion: 'success', prNumber: 42 }, { id: 3, name: 'deploy', conclusion: 'cancelled' }] });
   assert.equal(live.pullRequests[0].checksStatus, 'passed');
   assert.deepEqual(live.pullRequests[0].relatedIssues, [1497]);
   assert.equal(live.issues[0].number, 1497);
@@ -110,15 +111,78 @@ test('neutral and skipped exact-head workflows never count as successful proof',
   }
 });
 
+test('synthetic passed statuses without completed-success conclusions never satisfy exact-head proof', () => {
+  const headSha = '8'.repeat(40);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{
+      number: 52,
+      headSha,
+      checks: requiredChecks(headSha).map(({ name, updatedAt }) => ({ name, headSha, status: 'passed', updatedAt })),
+    }],
+    pullRequestInventoryComplete: true,
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
+  assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+});
+
+test('newer workflow evidence overrides stale embedded checks for the same exact head', () => {
+  const headSha = '7'.repeat(40);
+  const staleChecks = requiredChecks(headSha).map((check) => ({ ...check, updatedAt: '2026-07-30T09:00:00.000Z' }));
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 53, headSha, checks: staleChecks }],
+    pullRequestInventoryComplete: true,
+    workflows: [{
+      id: 'new-failure',
+      name: REQUIRED_EXACT_HEAD_WORKFLOWS[0],
+      headSha,
+      prNumber: 53,
+      status: 'completed',
+      conclusion: 'failure',
+      updatedAt: '2026-07-30T11:00:00.000Z',
+    }],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+});
+
+test('conflicting exact-head evidence with unreconcilable freshness fails closed', () => {
+  const headSha = '6'.repeat(40);
+  const checks = requiredChecks(headSha).map(({ updatedAt, ...check }) => check);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 54, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [{
+      id: 'undated-failure',
+      name: REQUIRED_EXACT_HEAD_WORKFLOWS[0],
+      headSha,
+      prNumber: 54,
+      status: 'completed',
+      conclusion: 'failure',
+    }],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
+  assert.deepEqual(telemetry.pullRequests[0].conflictingRequiredChecks, [REQUIRED_EXACT_HEAD_WORKFLOWS[0]]);
+  assert.equal(telemetry.pullRequests[0].blockers.some((blocker) => blocker.startsWith('required_exact_head_checks_conflict:')), true);
+});
+
 test('PR issue correlation accepts explicit closing references and rejects incidental mentions', () => {
   const headSha = 'e'.repeat(40);
   const telemetry = normalizeGithubTelemetry({
     available: true,
-    repository: { owner: 'owner', repo: 'repo' },
+    repository: { owner: 'owner', repo: 'repo', defaultBranch: 'main' },
     issues: [],
     pullRequests: [
       { number: 60, title: 'Supersedes #123', body: 'Background context from #456.', branch: 'issue-789', headSha, checks: requiredChecks(headSha) },
-      { number: 61, title: 'Durable link', body: 'Fixes #1497 and resolves owner/repo#1619.', headSha, checks: requiredChecks(headSha) },
+      { number: 61, title: 'Durable link', body: 'Fixes #1497 and resolves owner/repo#1619.', base: { ref: 'main' }, headSha, checks: requiredChecks(headSha) },
       { number: 62, title: 'Adapter-provided link', relatedIssues: [1282], headSha, checks: requiredChecks(headSha) },
       { number: 63, title: 'Foreign durable link', body: 'Fixes other/repo#1497.', closingIssueReferences: [{ number: 1619, repository: 'other/repo' }], headSha, checks: requiredChecks(headSha) },
     ],
@@ -127,6 +191,23 @@ test('PR issue correlation accepts explicit closing references and rejects incid
   assert.deepEqual(telemetry.pullRequests[1].relatedIssues, [1497, 1619]);
   assert.deepEqual(telemetry.pullRequests[2].relatedIssues, [1282]);
   assert.deepEqual(telemetry.pullRequests[3].relatedIssues, []);
+});
+
+test('closing keywords bind only default-base PRs while canonical relations remain authoritative', () => {
+  const headSha = '5'.repeat(40);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    repository: { owner: 'owner', repo: 'repo', default_branch: 'main' },
+    issues: [],
+    pullRequests: [
+      { number: 64, body: 'Fixes #1497.', base: { ref: 'feature/prerequisite' }, headSha, checks: requiredChecks(headSha) },
+      { number: 65, body: 'Fixes #1497.', base: { ref: 'main' }, headSha, checks: requiredChecks(headSha) },
+      { number: 66, body: 'Fixes #1497.', base: { ref: 'feature/prerequisite' }, closingIssues: [{ number: 1619, repository: 'owner/repo' }], headSha, checks: requiredChecks(headSha) },
+    ],
+  });
+  assert.deepEqual(telemetry.pullRequests[0].relatedIssues, []);
+  assert.deepEqual(telemetry.pullRequests[1].relatedIssues, [1497]);
+  assert.deepEqual(telemetry.pullRequests[2].relatedIssues, [1619]);
 });
 
 test('execution chains use only explicit PR or durable issue identity, never matching title text', () => {
@@ -161,6 +242,7 @@ function telemetryFetchRecorder(calls, { forbiddenToken = '' } = {}) {
     if (url.includes('/pulls?')) return okJson([]);
     if (url.includes('/issues?')) return okJson([]);
     if (url.includes('/actions/runs')) return okJson({ workflow_runs: [] });
+    if (/\/repos\/owner\/repo(?:\?|$)/.test(url)) return okJson({ default_branch: 'main' });
     return okJson({});
   };
 }
