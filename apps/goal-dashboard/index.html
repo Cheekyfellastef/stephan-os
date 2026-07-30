@@ -1700,7 +1700,7 @@
         const dashboardGoals = liveProjection?.dashboardGoals || null;
         const goalSourceRank = dashboardGoals
           ? (dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 3 : (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS' ? 2 : 1))
-          : (missions.length ? 2 : null);
+          : (missions.length ? 2 : (!liveProjection ? 1 : null));
         if (goalSourceRank !== null && !beginGoalProjectionRender(goalSourceRank, 'approved-telemetry')) return true;
         currentGoalProjectionSource = goalSourceRank === 3 ? 'live-github' : (goalSourceRank === 2 ? 'live-backend' : 'unknown-backend');
         setTelemetryText('source-badge', sourceBadge);
@@ -1767,6 +1767,18 @@
             .sort((left, right) => approvedTimestamp(right) - approvedTimestamp(left))[0];
           renderDashboardSummary({ cards: liveGoals, sourceTruth: 'READ-ONLY MISSION RECEIPTS', freshnessVerdict: 'RECEIPT TIMESTAMPS VISIBLE', observedAt: latestReceiptObservedAt, nextAction: liveProjection?.nextOperatorAction });
           renderGoals(liveGoals, 'live-backend');
+        } else if (!liveProjection) {
+          renderDashboardSummary({
+            cards: [],
+            sourceTruth: 'UNKNOWN',
+            freshnessVerdict: 'NO_CURRENT_GOAL_RECORDS',
+            observedAt: '',
+            nextAction: 'Wait for a durable current mission receipt before advancing.',
+          });
+          setTelemetryText('goals-heading', 'Current goal truth unavailable');
+          setTelemetryText('goals-context', 'UNKNOWN · legacy mission feed returned no durable current records');
+          setDashboardSignal('mixed', 'No current mission receipts');
+          renderGoals([], 'live-unknown');
         }
         return true;
       }
