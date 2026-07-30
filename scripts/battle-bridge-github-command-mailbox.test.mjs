@@ -69,4 +69,7 @@ test('derives a deterministic Windows-safe receipt filename for colon-bearing re
   assert.doesNotMatch(filename, /[<>:"/\\|?*]/);
   assert.equal(createWindowsSafeMailboxReceiptFilename(requestId), filename);
   assert.equal(createWindowsSafeMailboxReceiptFilename('request-safe-0001'), 'request-safe-0001.json');
+  for (const requestId of ['CON.proof-0001', 'aux.command-0001', 'LPT9.receipt-0001', 'request-safe-0001.']) {
+    assert.match(createWindowsSafeMailboxReceiptFilename(requestId), /^request-[0-9a-f]{32}\.json$/);
+  }
 });
