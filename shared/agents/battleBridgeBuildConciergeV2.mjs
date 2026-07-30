@@ -189,6 +189,8 @@ export function buildConciergeAutoPick(input = {}) {
       candidateType: text(pr.candidateType || pr.type, PR_NUMBER.test(String(prNumber)) ? 'pull_request' : 'goal'),
       prNumber,
       title: text(pr.title, 'Untitled PR'),
+      createdAt: text(pr.createdAt || pr.created_at),
+      updatedAt: text(pr.updatedAt || pr.updated_at || pr.createdAt || pr.created_at),
       headSha,
       branch: text(pr.branch || pr.headRefName),
       changedFiles,
