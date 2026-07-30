@@ -127,7 +127,7 @@ function historyReceiptMatchesLane(entry, snapshot) {
     && entry.issueNumber === snapshot.issueNumber
     && entry.prNumber === snapshot.prNumber
     && text(entry.branch) === text(snapshot.branch)
-    && sha(entry.headSha)
+    && sha(entry.headSha) === sha(snapshot.headSha)
     && entry.mergeAuthority === false
     && entry.approvalAuthority === false
   );
@@ -186,8 +186,12 @@ function verificationPurpose(snapshot) {
   return 'POST_MERGE_RUNTIME_SCOPE';
 }
 
-function verificationRequestKey(snapshot, purpose) {
-  return `verify-${snapshot.prNumber}-${sha(snapshot.headSha)?.slice(0, 12) ?? 'unknown'}-${purpose.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+function verificationRequestKey(snapshot, purpose, attemptId, predecessorCycleId) {
+  const lifecycleId = createHash('sha256')
+    .update(JSON.stringify([attemptId, predecessorCycleId]))
+    .digest('hex')
+    .slice(0, 12);
+  return `verify-${snapshot.prNumber}-${sha(snapshot.headSha)?.slice(0, 12) ?? 'unknown'}-${purpose.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${lifecycleId}`;
 }
 
 function pendingVerificationIntent(history, snapshot, purpose) {
@@ -290,12 +294,16 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
   const attemptId = validAttemptId(options.attemptId);
   if (!attemptId) throw new TypeError('attemptId must be a durable non-empty identifier');
 
-  const maxIterations = Number.isSafeInteger(options.maxIterations) && options.maxIterations > 0
-    ? options.maxIterations
-    : 12;
-  const maxRepairsPerHead = Number.isSafeInteger(options.maxRepairsPerHead) && options.maxRepairsPerHead > 0
-    ? options.maxRepairsPerHead
-    : 4;
+  const maxIterationsProvided = Object.hasOwn(options, 'maxIterations');
+  const maxRepairsProvided = Object.hasOwn(options, 'maxRepairsPerHead');
+  if (maxIterationsProvided && (!Number.isSafeInteger(options.maxIterations) || options.maxIterations <= 0)) {
+    throw new TypeError('maxIterations must be a positive safe integer when supplied');
+  }
+  if (maxRepairsProvided && (!Number.isSafeInteger(options.maxRepairsPerHead) || options.maxRepairsPerHead <= 0)) {
+    throw new TypeError('maxRepairsPerHead must be a positive safe integer when supplied');
+  }
+  const maxIterations = maxIterationsProvided ? options.maxIterations : 12;
+  const maxRepairsPerHead = maxRepairsProvided ? options.maxRepairsPerHead : 4;
 
   let historySource;
   let historyLoadError = null;
@@ -545,7 +553,12 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
           previousReceipt:history.at(-1) ?? null,
         }, {
           verificationPurpose:purpose,
-          verificationRequestKey:verificationRequestKey(snapshot, purpose),
+          verificationRequestKey:verificationRequestKey(
+            snapshot,
+            purpose,
+            attemptId,
+            text(history.at(-1)?.cycleId),
+          ),
         });
         const persisted = await persistOutcome(persistCycleReceipt, intent);
         if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
