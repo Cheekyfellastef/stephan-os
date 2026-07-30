@@ -24,6 +24,12 @@ function repositorySlug(repository) {
   const repo = text(repository?.repo || repository?.name);
   return owner && repo ? lc(`${owner}/${repo}`) : '';
 }
+function repositoryDefaultBranch(repository) {
+  return text(repository?.defaultBranch || repository?.default_branch);
+}
+function pullRequestBaseBranch(pr = {}) {
+  return text(pr.baseBranch || pr.baseRefName || pr.base?.ref);
+}
 function durableIssueReferences(pr = {}, repository = null) {
   const localRepository = repositorySlug(repository);
   const references = [
@@ -34,20 +40,16 @@ function durableIssueReferences(pr = {}, repository = null) {
     const referencedRepository = repositorySlug(reference?.repository || reference?.repositoryUrl || reference?.repo);
     return !referencedRepository || (localRepository && referencedRepository === localRepository);
   }).map((reference) => positiveInteger(reference?.number ?? reference)).filter(Boolean);
-  for (const match of String(pr.body || '').matchAll(DURABLE_ISSUE_REFERENCE_PATTERN)) {
-    const referencedRepository = lc(match[1]);
-    if (referencedRepository && (!localRepository || referencedRepository !== localRepository)) continue;
-    const number = Number(match[2]);
-    if (Number.isSafeInteger(number) && number > 0) references.push(number);
+  const defaultBranch = repositoryDefaultBranch(repository);
+  if (defaultBranch && pullRequestBaseBranch(pr) === defaultBranch) {
+    for (const match of String(pr.body || '').matchAll(DURABLE_ISSUE_REFERENCE_PATTERN)) {
+      const referencedRepository = lc(match[1]);
+      if (referencedRepository && (!localRepository || referencedRepository !== localRepository)) continue;
+      const number = Number(match[2]);
+      if (Number.isSafeInteger(number) && number > 0) references.push(number);
+    }
   }
   return [...new Set(references)];
-}
-function normalizeChecks(checks = []) {
-  const states = list(checks).map((check) => lc(check.status || check.conclusion || check.state));
-  if (states.some((state) => ['failure', 'failed', 'timed_out', 'action_required'].includes(state))) return 'failed';
-  if (states.some((state) => ['queued', 'in_progress', 'pending', 'waiting'].includes(state))) return 'pending';
-  if (states.length && states.every((state) => ['success', 'passed', 'skipped', 'neutral'].includes(state))) return 'passed';
-  return 'unknown';
 }
 function normalizeLabels(labels = []) {
   return list(labels).map((label) => text(typeof label === 'string' ? label : label?.name)).filter(Boolean);
@@ -58,41 +60,63 @@ function normalizeAssignees(assignees = []) {
 function checkHeadSha(check = {}) {
   return text(check.headSha || check.head_sha || check.commit?.sha);
 }
-function latestWorkflowChecks(workflows = [], prNumber, headSha) {
-  const latestByName = new Map();
-  for (const workflow of list(workflows).filter((run) => run.prNumber === prNumber && checkHeadSha(run) === headSha)) {
-    const key = text(workflow.name, workflow.id);
-    const previous = latestByName.get(key);
-    const currentAt = Date.parse(workflow.updatedAt || 0);
-    const previousAt = Date.parse(previous?.updatedAt || 0);
-    if (!previous || (Number.isFinite(currentAt) && (!Number.isFinite(previousAt) || currentAt >= previousAt))) {
-      latestByName.set(key, workflow);
-    }
-  }
-  return [...latestByName.values()];
+function exactHeadWorkflowChecks(workflows = [], prNumber, headSha) {
+  return list(workflows).filter((run) => run.prNumber === prNumber && checkHeadSha(run) === headSha);
 }
-function evaluateRequiredExactHeadChecks(checks = [], headSha = '') {
-  if (!headSha) {
-    return { checks: [], status: 'unknown', missing: [...REQUIRED_EXACT_HEAD_WORKFLOWS] };
-  }
+function checkObservedAt(check = {}) {
+  const parsed = Date.parse(check.updatedAt || check.updated_at || check.completedAt || check.completed_at || '');
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function canonicalCheckOutcome(check = {}) {
+  const status = lc(check.rawStatus ?? check.status);
+  const conclusion = lc(check.rawConclusion ?? check.conclusion);
+  if (['failure', 'failed', 'timed_out', 'action_required', 'cancelled'].includes(conclusion)
+    || ['failure', 'failed', 'timed_out', 'action_required', 'cancelled'].includes(status)) return 'failed';
+  if (['queued', 'running', 'in_progress', 'pending', 'waiting', 'requested'].includes(status)) return 'pending';
+  if (status === 'completed' && conclusion === 'success') return 'passed';
+  return 'unknown';
+}
+function selectLatestRequiredChecks(checks = [], headSha = '') {
   const latestByName = new Map();
+  const conflicts = new Set();
   for (const check of list(checks).filter((candidate) => checkHeadSha(candidate) === headSha)) {
     const name = text(check.name);
     if (!REQUIRED_EXACT_HEAD_WORKFLOWS.includes(name)) continue;
     const previous = latestByName.get(name);
-    const currentAt = Date.parse(check.updatedAt || check.updated_at || check.completed_at || 0);
-    const previousAt = Date.parse(previous?.updatedAt || previous?.updated_at || previous?.completed_at || 0);
-    if (!previous || (Number.isFinite(currentAt) && (!Number.isFinite(previousAt) || currentAt >= previousAt))) {
+    if (!previous) {
+      latestByName.set(name, check);
+      continue;
+    }
+    const currentAt = checkObservedAt(check);
+    const previousAt = checkObservedAt(previous);
+    if (currentAt !== null && previousAt !== null && currentAt !== previousAt) {
+      if (currentAt > previousAt) latestByName.set(name, check);
+      conflicts.delete(name);
+      continue;
+    }
+    if (canonicalCheckOutcome(previous) !== canonicalCheckOutcome(check)) {
+      conflicts.add(name);
+      continue;
+    }
+    if (currentAt !== null && previousAt === null) {
       latestByName.set(name, check);
     }
   }
+  return { latestByName, conflicts: [...conflicts] };
+}
+function evaluateRequiredExactHeadChecks(checks = [], headSha = '') {
+  if (!headSha) {
+    return { checks: [], status: 'unknown', missing: [...REQUIRED_EXACT_HEAD_WORKFLOWS], conflicts: [] };
+  }
+  const { latestByName, conflicts } = selectLatestRequiredChecks(checks, headSha);
   const exactChecks = REQUIRED_EXACT_HEAD_WORKFLOWS.map((name) => latestByName.get(name)).filter(Boolean);
   const missing = REQUIRED_EXACT_HEAD_WORKFLOWS.filter((name) => !latestByName.has(name));
-  const failed = exactChecks.some((check) => ['failure', 'failed', 'timed_out', 'action_required', 'cancelled'].includes(lc(check.status || check.conclusion || check.state)));
-  const pending = exactChecks.some((check) => ['queued', 'running', 'in_progress', 'pending', 'waiting', 'requested'].includes(lc(check.status || check.conclusion || check.state)));
-  const allSuccessful = exactChecks.length > 0 && exactChecks.every((check) => ['success', 'passed'].includes(lc(check.conclusion || check.status || check.state)));
-  const status = failed ? 'failed' : (missing.length ? 'unknown' : (pending ? 'pending' : (allSuccessful ? 'passed' : 'unknown')));
-  return { checks: exactChecks, status, missing };
+  const outcomes = exactChecks.map(canonicalCheckOutcome);
+  const failed = outcomes.includes('failed');
+  const pending = outcomes.includes('pending');
+  const allSuccessful = exactChecks.length > 0 && outcomes.every((outcome) => outcome === 'passed');
+  const status = conflicts.length ? 'unknown' : (failed ? 'failed' : (missing.length ? 'unknown' : (pending ? 'pending' : (allSuccessful ? 'passed' : 'unknown'))));
+  return { checks: exactChecks, status, missing, conflicts };
 }
 export function classifyGithubNotification(notification = {}) {
   const reason = lc(notification.reason);
@@ -133,7 +157,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     if (['failure', 'failed', 'timed_out', 'action_required'].includes(conclusion)) status = 'failed';
     if (conclusion === 'cancelled') status = 'cancelled';
     if (['neutral', 'skipped'].includes(conclusion)) status = 'unknown';
-    return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, headSha: checkHeadSha(run), prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at) };
+    return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, rawStatus: statusText, conclusion, headSha: checkHeadSha(run), prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.completed_at || run.run_started_at) };
   });
   const pullRequests = list(raw.pullRequests || raw.prs).map((pr) => {
     const number = Number(pr.number || pr.prNumber || 0) || null;
@@ -144,13 +168,14 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
       headSha: checkHeadSha(check),
       updatedAt: text(check.updatedAt || check.updated_at || check.completed_at),
     }));
-    const workflowChecks = latestWorkflowChecks(workflows, number, headSha);
-    const checkEvaluation = evaluateRequiredExactHeadChecks(providedChecks.length ? providedChecks : workflowChecks, headSha);
+    const workflowChecks = exactHeadWorkflowChecks(workflows, number, headSha);
+    const checkEvaluation = evaluateRequiredExactHeadChecks([...providedChecks, ...workflowChecks], headSha);
     const checksStatus = checkEvaluation.status;
     const blockers = [...list(pr.blockers)];
     if (checksStatus !== 'passed') blockers.push('checks_not_passed_or_unknown');
     if (!headSha) blockers.push('head_sha_unknown');
     if (checkEvaluation.missing.length) blockers.push(`required_exact_head_checks_missing:${checkEvaluation.missing.join(',')}`);
+    if (checkEvaluation.conflicts.length) blockers.push(`required_exact_head_checks_conflict:${checkEvaluation.conflicts.join(',')}`);
     const branch = text(pr.branch || pr.headRefName || pr.head?.ref, 'unknown');
     return {
       number,
@@ -166,6 +191,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
       checksStatus,
       requiredChecks: [...REQUIRED_EXACT_HEAD_WORKFLOWS],
       missingRequiredChecks: checkEvaluation.missing,
+      conflictingRequiredChecks: checkEvaluation.conflicts,
       mergeReadiness: checksStatus === 'passed' ? text(pr.mergeReadiness, 'awaiting_exact_head_approval') : 'blocked_or_unknown',
       approvalStatus: text(pr.approvalStatus, 'unknown'),
       blockers: [...new Set(blockers)],
@@ -239,13 +265,14 @@ async function githubPaginatedArray(url, auth, fetchImpl = fetch) {
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
   const { owner, repo } = repoConfig;
   const fetchImpl = options.fetchImpl || fetch;
-  const [notifications, prs, issues, workflowRuns] = await Promise.all([
+  const [notifications, prs, issues, workflowRuns, repositoryMetadata] = await Promise.all([
     githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl),
     githubPaginatedArray(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open`, auth, fetchImpl),
     githubPaginatedArray(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&sort=updated&direction=desc`, auth, fetchImpl),
     githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, fetchImpl),
+    githubJson(`https://api.github.com/repos/${owner}/${repo}`, auth, fetchImpl),
   ]);
-  return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: repoConfig, notifications, pullRequests: prs, pullRequestInventoryComplete: true, issues, issueInventoryComplete: true, workflows: workflowRuns.workflow_runs || [] }, options);
+  return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: { ...repoConfig, defaultBranch: text(repositoryMetadata.default_branch) }, notifications, pullRequests: prs, pullRequestInventoryComplete: true, issues, issueInventoryComplete: true, workflows: workflowRuns.workflow_runs || [] }, options);
 }
 export async function readGithubTelemetry(options = {}) {
   if (options.adapterData) return normalizeGithubTelemetry(options.adapterData, options);
