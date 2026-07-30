@@ -1907,6 +1907,7 @@
         if (observedAt === null
           || observedAt > generatedAt + MAX_APPROVED_TELEMETRY_CLOCK_SKEW_MS
           || observedAt < generatedAt - MAX_APPROVED_TELEMETRY_AGE_MS) return false;
+        if (card.sourceTruth === 'READ-ONLY RECEIPT' && card.lastUpdatedAt === undefined) return false;
         if (card.lastUpdatedAt !== undefined) {
           const lastUpdatedAt = approvedTimestamp(card.lastUpdatedAt);
           if (lastUpdatedAt === null || lastUpdatedAt > observedAt + MAX_APPROVED_TELEMETRY_CLOCK_SKEW_MS) return false;
