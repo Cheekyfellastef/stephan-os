@@ -50,6 +50,17 @@ const EXECUTION_TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
 const ACTIVE_LANE_CONTROLLER_STATES = new Set(['ACTIVE_LANE']);
 const IDLE_SELECTION_CONTROLLER_STATES = new Set(['IDLE', 'RECONCILING']);
 const TERMINAL_LANE_CONTROLLER_STATES = new Set(['FINALIZING', 'RECONCILING']);
+const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
+  'COMPLETE',
+  'COMPLETED',
+  'MERGED',
+  'PASS',
+  'PASSED',
+  'PROVED',
+  'SUCCEEDED',
+  'SUCCESS',
+  'VERIFIED',
+]);
 
 export const PROGRAMME_AUTHORITY_COMPONENTS = Object.freeze([
   Object.freeze({ componentId: 'github-pr-evidence', source: 'stephanos-server/services/githubPrEvidenceService.js', ownership: 'github-lane-truth', reuse: true }),
@@ -655,6 +666,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
     if (
       record.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
       || record.kind !== SHARED_WORKSPACE_RECORD_KINDS.GOAL
+      || !SAFE_ID.test(text(record.goalId))
       || !envelope.valid
     ) {
       blockers.push(`goal-record-${index}-not-canonical-goal`);
@@ -687,12 +699,20 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
         ? record.operatorPriority
         : false,
       evidenceAt: text(record.evidenceAt ?? record.timestampUtc, nowUtc),
-      resultProofRefs: Array.isArray(record.resultProofRefs) ? record.resultProofRefs : [],
+      resultProofRefs: Object.prototype.hasOwnProperty.call(record, 'resultProofRefs')
+        ? record.resultProofRefs
+        : [],
       reusableCapabilityId: text(record.reusableCapabilityId) || null,
       sharedLessonId: text(record.sharedLessonId) || null,
-      repairCycleCount: Number.isSafeInteger(record.repairCycleCount) ? record.repairCycleCount : 0,
-      structuralReviewProofRefs: Array.isArray(record.structuralReviewProofRefs) ? record.structuralReviewProofRefs : [],
-      modelTestProofRefs: Array.isArray(record.modelTestProofRefs) ? record.modelTestProofRefs : [],
+      repairCycleCount: Object.prototype.hasOwnProperty.call(record, 'repairCycleCount')
+        ? record.repairCycleCount
+        : 0,
+      structuralReviewProofRefs: Object.prototype.hasOwnProperty.call(record, 'structuralReviewProofRefs')
+        ? record.structuralReviewProofRefs
+        : [],
+      modelTestProofRefs: Object.prototype.hasOwnProperty.call(record, 'modelTestProofRefs')
+        ? record.modelTestProofRefs
+        : [],
       duplicateOf: record.duplicateOf ?? null,
       supersededBy: record.supersededBy ?? null,
     });
@@ -714,7 +734,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       branch: lane.branch,
       headSha: lane.headSha,
       proofState: existing?.proofState ?? 'UNKNOWN',
-      approvalRequired: false,
+      approvalRequired: existing?.approvalRequired ?? false,
       operatorPriority: existing?.operatorPriority ?? false,
       evidenceAt: nowUtc,
       resultProofRefs: existing?.resultProofRefs ?? [],
@@ -941,6 +961,26 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   return freeze(projection);
 }
 
+function everySuppliedAliasMatches(values, normalizer, expected) {
+  const supplied = values.filter((value) => value !== undefined && value !== null && String(value).trim());
+  return supplied.length > 0 && supplied.every((value) => normalizer(value) === expected);
+}
+
+function isAffirmativeLaneProgressProof(proof, lane) {
+  if (!lane?.active || !proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
+  if (proof.kind !== SHARED_WORKSPACE_RECORD_KINDS.PROOF) return false;
+  if (!validateSharedWorkspaceRecord(proof).valid) return false;
+  if (!AFFIRMATIVE_PROGRESS_PROOF_STATUSES.has(text(proof.status).toUpperCase())) return false;
+  if (!everySuppliedAliasMatches([proof.issueNumber, proof.relatedIssue], number, lane.issueNumber)) return false;
+  if (!everySuppliedAliasMatches([proof.prNumber, proof.relatedPr], number, lane.prNumber)) return false;
+  if (!everySuppliedAliasMatches([proof.headSha, proof.sourceHead], sha, lane.headSha)) return false;
+  const repositories = [proof.repository, proof.repositoryFullName].filter((value) => text(value));
+  if (repositories.length && repositories.some((value) => text(value).toLowerCase() !== text(lane.repository).toLowerCase())) return false;
+  const branches = [proof.branch, proof.headBranch].filter((value) => text(value));
+  if (branches.length && branches.some((value) => text(value) !== lane.branch)) return false;
+  return true;
+}
+
 export function diagnoseProgrammeStall(projection = {}, options = {}) {
   const safeProjection = projection && typeof projection === 'object' && !Array.isArray(projection)
     ? projection
@@ -952,10 +992,14 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   const blockers = [];
   if (nowMs === null) blockers.push('stall-observation-time-invalid');
   if (safeProjection !== projection) blockers.push('programme-projection-missing');
+  const lane = safeProjection.lane;
+  const proofProgressTimes = list(safeProjection.battleBridgeProofs)
+    .filter((proof) => isAffirmativeLaneProgressProof(proof, lane))
+    .map((proof) => timestamp(proof.timestampUtc ?? proof.at));
   const progressTimes = [
     timestamp(safeProjection.executionReceipt?.timestampUtc),
     timestamp(safeProjection.mutationLease?.renewedAtUtc),
-    ...list(safeProjection.battleBridgeProofs).map((proof) => timestamp(proof?.timestampUtc ?? proof?.at)),
+    ...proofProgressTimes,
   ].filter(Number.isFinite);
   const lastProgressMs = progressTimes.length ? Math.max(...progressTimes) : null;
   const progressAgeMs = lastProgressMs === null || nowMs === null ? null : Math.max(0, nowMs - lastProgressMs);

@@ -389,3 +389,20 @@ Adversarial model tests cover a status record misfiled under `goals`, a
 non-boolean operator-priority claim, and a fresh controller heartbeat alongside
 stale durable lane progress. This strengthens the shared boundary instead of
 adding route- or caller-specific exceptions.
+
+The next exact-head review extended the same invariant rather than introducing
+a new guard family:
+
+- a goal-kind record must carry its own canonical `goalId`; a fallback ID from
+  another record kind cannot authorize scheduler reconstruction;
+- repair-cycle and all flywheel evidence containers cross the adapter without
+  coercion so Mission Scheduler remains their sole adjudicator;
+- active-lane overlay preserves approval evidence instead of manufacturing a
+  safe boolean;
+- only valid, affirmative proof records bound to the active issue, PR and exact
+  head can advance lane progress time. Conflicting repository or branch aliases
+  also fail closed.
+
+The model tests now include missing goal identity, malformed convergence
+evidence, malformed active approval evidence, unrelated and failed fresh
+proofs, and one exact affirmative progress proof.

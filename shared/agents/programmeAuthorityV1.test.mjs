@@ -5,6 +5,7 @@ import { createExecutionReceipt } from './executionReceiptV1.mjs';
 import {
   SHARED_WORKSPACE_RECORD_KINDS,
   SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+  createSharedWorkspaceProofRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
@@ -456,6 +457,18 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(nonGoal.goals.length, 0);
   assert.ok(nonGoal.blockers.includes('goal-record-0-not-canonical-goal'));
 
+  const goalKindWithoutGoalId = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [{
+      ...goalRecord(),
+      goalId: undefined,
+      statusId: 'status-shaped-goal',
+    }],
+  });
+  assert.equal(goalKindWithoutGoalId.valid, false);
+  assert.equal(goalKindWithoutGoalId.goals.length, 0);
+  assert.ok(goalKindWithoutGoalId.blockers.includes('goal-record-0-not-canonical-goal'));
+
   const malformedOperatorPriority = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     goalRecords: [goalRecord({ operatorPriority: 'yes' })],
@@ -467,6 +480,30 @@ test('scheduler goals are constructed from durable records and the canonical lan
   });
   assert.equal(malformedOperatorScheduler.portfolio[0].lifecycle, 'BLOCKED');
   assert.ok(malformedOperatorScheduler.blockers.some(({ code }) => code === 'INVALID_OPERATOR_PRIORITY_EVIDENCE'));
+
+  const malformedRepairCycle = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [goalRecord({ repairCycleCount: '3' })],
+  });
+  assert.equal(malformedRepairCycle.goals[0].repairCycleCount, '3');
+  const malformedRepairScheduler = buildMissionScheduler({
+    now: NOW,
+    goals: malformedRepairCycle.goals,
+  });
+  assert.equal(malformedRepairScheduler.portfolio[0].invalidRepairCycleCount, true);
+  assert.equal(malformedRepairScheduler.portfolio[0].lifecycle, 'BLOCKED');
+
+  const malformedActiveApproval = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    lane: lane(),
+    goalRecords: [goalRecord({ approvalRequired: 'yes' })],
+  });
+  assert.equal(malformedActiveApproval.goals[0].approvalRequired, 'yes');
+  const malformedActiveScheduler = buildMissionScheduler({
+    now: NOW,
+    goals: malformedActiveApproval.goals,
+  });
+  assert.ok(malformedActiveScheduler.contradictions.some(({ code }) => code === 'ACTIVE_APPROVAL_GATE_INVALID'));
 });
 
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {
@@ -753,7 +790,15 @@ test('programme stall diagnosis reuses Monitor Multiplexer and never starts sche
   const stalledProjection = {
     observedAtUtc: NOW,
     status: 'ACTIVE',
-    lane: { active: true, terminal: false },
+    lane: {
+      active: true,
+      terminal: false,
+      issueNumber: 1497,
+      prNumber: 1617,
+      headSha: HEAD,
+      repository: REPOSITORY,
+      branch: BRANCH,
+    },
     controllerHeartbeat: { fresh: false, ageMs: 3_600_000 },
     workerHeartbeat: { fresh: true, ageMs: 1_000 },
     executionReceipt: receipt({ timestampUtc: '2026-07-30T09:00:00.000Z' }),
@@ -774,6 +819,45 @@ test('programme stall diagnosis reuses Monitor Multiplexer and never starts sche
   assert.equal(freshControllerOnly.stalled, true);
   assert.ok(freshControllerOnly.blockers.includes('active-lane-progress-stale'));
   assert.equal(freshControllerOnly.lastProgressAtUtc, '2026-07-30T09:00:00.000Z');
+
+  const proofRecord = (overrides = {}) => ({
+    ...createSharedWorkspaceProofRecord({
+      proofId: 'programme-progress-proof',
+      participantId: 'battle-bridge',
+      timestampUtc: '2026-07-30T09:59:59.000Z',
+      correlationId: LANE_ID,
+      relatedIssue: '#1497',
+      relatedPr: '#1617',
+      proofRefs: ['proofs/programme-progress-proof.json'],
+      refs: ['proofs/programme-progress-proof.json'],
+      status: 'PASS',
+    }),
+    ...overrides,
+  });
+  const unrelatedAndFailedProofs = diagnoseProgrammeStall({
+    ...stalledProjection,
+    controllerHeartbeat: { fresh: true, ageMs: 0 },
+    battleBridgeProofs: [
+      proofRecord({ proofId: 'wrong-issue', relatedIssue: '#1' }),
+      proofRecord({ proofId: 'failed-proof', status: 'FAILED' }),
+    ],
+  }, { nowUtc: NOW, stallAfterMs: 1_000 });
+  assert.ok(unrelatedAndFailedProofs.blockers.includes('active-lane-progress-stale'));
+  assert.equal(unrelatedAndFailedProofs.lastProgressAtUtc, '2026-07-30T09:00:00.000Z');
+
+  const exactProof = diagnoseProgrammeStall({
+    ...stalledProjection,
+    controllerHeartbeat: { fresh: true, ageMs: 0 },
+    battleBridgeProofs: [proofRecord({
+      issueNumber: 1497,
+      prNumber: 1617,
+      headSha: HEAD,
+      repository: REPOSITORY,
+      branch: BRANCH,
+    })],
+  }, { nowUtc: NOW, stallAfterMs: 1_000 });
+  assert.equal(exactProof.stalled, false);
+  assert.equal(exactProof.lastProgressAtUtc, '2026-07-30T09:59:59.000Z');
 
   const handler = createProgrammeStallMonitorHandler({
     loadProjection: async () => stalledProjection,
