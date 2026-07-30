@@ -5,6 +5,7 @@ import {
   createReadyForIntegrationReceipt,
   evaluateConstructionLaneAdmission,
 } from './boundedParallelConstructionLanesV1.mjs';
+import { createVerifierResult } from './verificationHarness.mjs';
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -39,77 +40,96 @@ function activeLane(overrides = {}) {
   });
 }
 
-test('admits two independent isolated construction lanes', () => {
-  const result = evaluateConstructionLaneAdmission(candidate(), {
-    constructionLanes:[activeLane()],
+function inventory(overrides = {}) {
+  return {
+    constructionLanes:[],
+    integrationLane:null,
     completedGoalIds:[],
-  });
+    ...overrides,
+  };
+}
+
+function exactEvidence(evidenceKind, overrides = {}) {
+  const ref = overrides.ref ?? `proof/${evidenceKind.toLowerCase()}-lane-1618.json`;
+  return {
+    ...createVerifierResult({
+      checkId:`${evidenceKind.toLowerCase()}-lane-1618`,
+      verifierType:evidenceKind === 'TEST' ? 'BuildVerifier' : 'ProofReferenceVerifier',
+      status:'PASS',
+      target:'lane-1618',
+      evidence:[`${evidenceKind.toLowerCase()}Passed=true`],
+      timestampUtc:'2026-07-29T14:45:00Z',
+      finalVerdict:`CONSTRUCTION_${evidenceKind}_PASS`,
+      proofRefs:[ref],
+    }),
+    evidenceKind,
+    ref,
+    branch:'feat/whatsapp-merge-ready',
+    headSha:SHA_B,
+    ...overrides,
+  };
+}
+
+test('admits two independent isolated construction lanes', () => {
+  const result = evaluateConstructionLaneAdmission(candidate(), inventory({
+    constructionLanes:[activeLane()],
+  }));
   assert.equal(result.status, 'ADMITTED');
   assert.equal(result.mergeAuthority, false);
   assert.deepEqual(result.reasonCodes, []);
 });
 
 test('rejects overlapping path ownership into serial queue', () => {
-  const result = evaluateConstructionLaneAdmission(candidate(), {
+  const result = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:[activeLane({ ownership:{ paths:['shared/notifications'], contracts:['another-contract'] } })],
-    completedGoalIds:[],
-  });
+  }));
   assert.equal(result.status, 'SERIAL_QUEUE');
   assert.ok(result.reasonCodes.includes('PATH_OWNERSHIP_OVERLAP'));
 });
 
 test('rejects shared contract overlap even when paths differ', () => {
-  const result = evaluateConstructionLaneAdmission(candidate(), {
+  const result = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:[activeLane({ ownership:{ paths:['docs/status'], contracts:['merge-readiness-outbox-v1'] } })],
-    completedGoalIds:[],
-  });
+  }));
   assert.equal(result.status, 'SERIAL_QUEUE');
   assert.ok(result.reasonCodes.includes('CONTRACT_OWNERSHIP_OVERLAP'));
 });
 
 test('rejects overlap with the sole integration lane', () => {
-  const result = evaluateConstructionLaneAdmission(candidate(), {
-    constructionLanes:[],
-    completedGoalIds:[],
+  const result = evaluateConstructionLaneAdmission(candidate(), inventory({
     integrationLane:{
       id:'integration-1617',
       branch:'feat/durable-flywheel-controller-vnext',
       state:'CI_REVIEW',
       ownership:{ paths:['shared/notifications'], contracts:[] },
     },
-  });
+  }));
   assert.equal(result.status, 'SERIAL_QUEUE');
   assert.ok(result.reasonCodes.includes('INTEGRATION_LANE_PATH_OVERLAP'));
 });
 
 test('duplicate goal or branch fails closed', () => {
-  const duplicateGoal = evaluateConstructionLaneAdmission(candidate(), {
+  const duplicateGoal = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:[activeLane({ goalId:'1618' })],
-    completedGoalIds:[],
-  });
+  }));
   assert.ok(duplicateGoal.reasonCodes.includes('DUPLICATE_ACTIVE_GOAL'));
 
-  const duplicateBranch = evaluateConstructionLaneAdmission(candidate(), {
+  const duplicateBranch = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:[activeLane({ branch:'feat/whatsapp-merge-ready' })],
-    completedGoalIds:[],
-  });
+  }));
   assert.ok(duplicateBranch.reasonCodes.includes('DUPLICATE_ACTIVE_BRANCH'));
 });
 
 test('dependency-incomplete work remains in the serial queue', () => {
-  const result = evaluateConstructionLaneAdmission(candidate({ dependencies:['1617'] }), {
-    constructionLanes:[],
-    completedGoalIds:[],
-  });
+  const result = evaluateConstructionLaneAdmission(candidate({ dependencies:['1617'] }), inventory());
   assert.equal(result.status, 'SERIAL_QUEUE');
   assert.deepEqual(result.reasonCodes, ['DEPENDENCIES_INCOMPLETE']);
 });
 
 test('dependency-complete work may be admitted', () => {
-  const result = evaluateConstructionLaneAdmission(candidate({ dependencies:['1617'] }), {
-    constructionLanes:[],
+  const result = evaluateConstructionLaneAdmission(candidate({ dependencies:['1617'] }), inventory({
     completedGoalIds:['1617'],
-  });
+  }));
   assert.equal(result.status, 'ADMITTED');
 });
 
@@ -120,35 +140,29 @@ test('capacity is bounded', () => {
     branch:`feat/lane-${index}`,
     ownership:{ paths:[`isolated/${index}`], contracts:[`contract-${index}`] },
   }));
-  const result = evaluateConstructionLaneAdmission(candidate(), {
+  const result = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:lanes,
-    completedGoalIds:[],
-  }, { maxLanes:2 });
+  }), { maxLanes:2 });
   assert.equal(result.status, 'SERIAL_QUEUE');
   assert.deepEqual(result.reasonCodes, ['CONSTRUCTION_CAPACITY_FULL']);
 
   for (const maxLanes of ['1', 0, 1.5]) {
-    const invalidLimit = evaluateConstructionLaneAdmission(candidate(), {
-      constructionLanes:[],
-      completedGoalIds:[],
-    }, { maxLanes });
+    const invalidLimit = evaluateConstructionLaneAdmission(candidate(), inventory(), { maxLanes });
     assert.equal(invalidLimit.status, 'REJECTED');
     assert.deepEqual(invalidLimit.reasonCodes, ['CONSTRUCTION_CAPACITY_LIMIT_INVALID']);
   }
 });
 
 test('malformed active inventory fails closed', () => {
-  const result = evaluateConstructionLaneAdmission(candidate(), {
+  const result = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:[null],
-    completedGoalIds:[],
-  });
+  }));
   assert.equal(result.status, 'REJECTED');
   assert.deepEqual(result.reasonCodes, ['ACTIVE_LANE_INVENTORY_INVALID']);
 
-  const nonArray = evaluateConstructionLaneAdmission(candidate(), {
+  const nonArray = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:{ lane:'hidden' },
-    completedGoalIds:[],
-  });
+  }));
   assert.equal(nonArray.status, 'REJECTED');
   assert.deepEqual(nonArray.reasonCodes, ['ACTIVE_LANE_INVENTORY_INVALID']);
 
@@ -157,59 +171,77 @@ test('malformed active inventory fails closed', () => {
   });
   assert.equal(missing.status, 'REJECTED');
   assert.deepEqual(missing.reasonCodes, ['ACTIVE_LANE_INVENTORY_INVALID']);
+
+  const missingIntegration = evaluateConstructionLaneAdmission(candidate(), {
+    constructionLanes:[],
+    completedGoalIds:[],
+  });
+  assert.equal(missingIntegration.status, 'REJECTED');
+  assert.deepEqual(missingIntegration.reasonCodes, ['INTEGRATION_LANE_INVENTORY_INVALID']);
 });
 
 test('candidate cannot request merge, deploy, approval, lease seizure or runtime mutation', () => {
   for (const capability of ['MERGE', 'DEPLOY', 'APPROVE', 'LEASE_SEIZE', 'RUNTIME_MUTATE']) {
-    const result = evaluateConstructionLaneAdmission(candidate({ capabilities:[capability] }), {
-      constructionLanes:[],
-      completedGoalIds:[],
-    });
+    const result = evaluateConstructionLaneAdmission(candidate({ capabilities:[capability] }), inventory());
     assert.equal(result.status, 'REJECTED');
     assert.deepEqual(result.reasonCodes, ['CANDIDATE_CONTRACT_INVALID']);
   }
-  assert.equal(evaluateConstructionLaneAdmission(candidate({ capabilities:'MERGE' }), {
-    constructionLanes:[],
-    completedGoalIds:[],
-  }).status, 'REJECTED');
-  assert.equal(evaluateConstructionLaneAdmission(candidate({ dependencies:'1617' }), {
-    constructionLanes:[],
-    completedGoalIds:[],
-  }).status, 'REJECTED');
+  assert.equal(evaluateConstructionLaneAdmission(candidate({ capabilities:'MERGE' }), inventory()).status, 'REJECTED');
+  assert.equal(evaluateConstructionLaneAdmission(candidate({ dependencies:'1617' }), inventory()).status, 'REJECTED');
 });
 
 test('construction lease preserves bounded authority', () => {
-  const admission = evaluateConstructionLaneAdmission(candidate(), {
-    constructionLanes:[],
-    completedGoalIds:[],
-  });
+  const currentInventory = inventory();
+  const admission = evaluateConstructionLaneAdmission(candidate(), currentInventory);
+  assert.throws(() => createConstructionLaneLease(admission, {
+    laneId:'lane-other',
+    issuedAt:'2026-07-29T14:30:00Z',
+    expiresAt:'2026-07-29T15:30:00Z',
+    inventorySnapshot:currentInventory,
+  }), /exactly match/);
   const lease = createConstructionLaneLease(admission, {
     laneId:'lane-1618',
     issuedAt:'2026-07-29T14:30:00Z',
     expiresAt:'2026-07-29T15:30:00Z',
+    inventorySnapshot:currentInventory,
   });
   assert.equal(lease.mergeAuthority, false);
   assert.equal(lease.deploymentAuthority, false);
   assert.equal(lease.runtimeMutationAllowed, false);
   assert.deepEqual(lease.ownedPaths, ['shared/notifications/whatsapp']);
   assert.throws(() => createConstructionLaneLease(admission, {
-    laneId:'lane-other',
+    laneId:'lane-1618',
     issuedAt:'2026-07-29T14:30:00Z',
     expiresAt:'2026-07-29T15:30:00Z',
-  }), /exactly match/);
+    inventorySnapshot:currentInventory,
+  }), /already been consumed/);
   assert.throws(() => createConstructionLaneLease(structuredClone(admission), {
     laneId:'lane-1618',
     issuedAt:'2026-07-29T14:30:00Z',
     expiresAt:'2026-07-29T15:30:00Z',
+    inventorySnapshot:currentInventory,
   }), /returned by the evaluator/);
+
+  const staleInventory = inventory();
+  const staleAdmission = evaluateConstructionLaneAdmission(candidate(), staleInventory);
+  assert.throws(() => createConstructionLaneLease(staleAdmission, {
+    laneId:'lane-1618',
+    issuedAt:'2026-07-29T14:30:00Z',
+    expiresAt:'2026-07-29T15:30:00Z',
+    inventorySnapshot:inventory({
+      constructionLanes:[activeLane({
+        ownership:{ paths:['shared/notifications'], contracts:[] },
+      })],
+    }),
+  }), /inventory is stale/);
 });
 
 test('ready-for-integration receipt binds exact branch heads and records main drift', () => {
   const receipt = createReadyForIntegrationReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'2026-07-29T14:45:00Z',
-    testRefs:[{ ref:'node-test:bounded-parallel-construction-lanes-v1', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
-    proofRefs:[{ ref:'github:commit:proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+    testRefs:[exactEvidence('TEST')],
+    proofRefs:[exactEvidence('PROOF')],
   });
   assert.equal(receipt.status, 'READY_FOR_INTEGRATION');
   assert.equal(receipt.baseSha, SHA_A);
@@ -225,112 +257,118 @@ test('ready-for-integration receipt requires tests, proof and current main', () 
     observedAt:'2026-07-29T14:45:00Z',
     currentMainSha:SHA_C,
     testRefs:[],
-    proofRefs:[{ ref:'proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+    proofRefs:[exactEvidence('PROOF')],
   }), /non-empty/);
 });
 
 test('unknown states, dot-segment overlap and malformed integration ownership fail closed', () => {
-  const unknown = evaluateConstructionLaneAdmission(candidate(), {
+  const unknown = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:[activeLane({ state:'BUILDNG' })],
-    completedGoalIds:[],
-  });
+  }));
   assert.deepEqual(unknown.reasonCodes, ['ACTIVE_LANE_INVENTORY_INVALID']);
 
   const dotOverlap = evaluateConstructionLaneAdmission(candidate({
     ownership:{ paths:['shared/./notifications'], contracts:[] },
-  }), {
+  }), inventory({
     constructionLanes:[activeLane({
       ownership:{ paths:['shared/notifications/whatsapp'], contracts:[] },
     })],
-    completedGoalIds:[],
-  });
+  }));
   assert.ok(dotOverlap.reasonCodes.includes('PATH_OWNERSHIP_OVERLAP'));
 
-  const malformedIntegration = evaluateConstructionLaneAdmission(candidate(), {
-    constructionLanes:[],
-    completedGoalIds:[],
+  const malformedIntegration = evaluateConstructionLaneAdmission(candidate(), inventory({
     integrationLane:{
       id:'integration-1617',
       branch:'feat/integration',
       state:'BUILDING',
       ownership:{ paths:'shared/notifications', contracts:[] },
     },
-  });
+  }));
   assert.deepEqual(malformedIntegration.reasonCodes, ['INTEGRATION_LANE_INVENTORY_INVALID']);
 
   const windowsAbsolute = evaluateConstructionLaneAdmission(candidate({
     ownership:{ paths:['C:\\outside\\file'], contracts:[] },
-  }), {
-    constructionLanes:[],
-    completedGoalIds:[],
-  });
+  }), inventory());
   assert.deepEqual(windowsAbsolute.reasonCodes, ['CANDIDATE_CONTRACT_INVALID']);
+
+  const windowsDriveRelative = evaluateConstructionLaneAdmission(candidate({
+    ownership:{ paths:['C:outside\\file'], contracts:[] },
+  }), inventory());
+  assert.deepEqual(windowsDriveRelative.reasonCodes, ['CANDIDATE_CONTRACT_INVALID']);
+
+  const caseOnlyOverlap = evaluateConstructionLaneAdmission(candidate({
+    ownership:{ paths:['shared/Foo'], contracts:[] },
+  }), inventory({
+    constructionLanes:[activeLane({
+      ownership:{ paths:['shared/foo'], contracts:[] },
+    })],
+  }));
+  assert.ok(caseOnlyOverlap.reasonCodes.includes('PATH_OWNERSHIP_OVERLAP'));
 });
 
 test('ready-for-integration evidence is structured, exact-head bound and time-valid', () => {
   assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'2026-07-29T14:45:00Z',
-    testRefs:[{ ref:'test-old-head', branch:'feat/whatsapp-merge-ready', headSha:SHA_A }],
-    proofRefs:[{ ref:'proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+    testRefs:[exactEvidence('TEST', { headSha:SHA_A })],
+    proofRefs:[exactEvidence('PROOF')],
   }), /exact head/);
   assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'not-a-time',
-    testRefs:[{ ref:'test', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
-    proofRefs:[{ ref:'proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+    testRefs:[exactEvidence('TEST')],
+    proofRefs:[exactEvidence('PROOF')],
   }), /must be valid/);
   assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'2026-02-30T14:45:00Z',
-    testRefs:[{ ref:'test', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
-    proofRefs:[{ ref:'proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+    testRefs:[exactEvidence('TEST')],
+    proofRefs:[exactEvidence('PROOF')],
   }), /must be valid/);
+
+  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+    currentMainSha:SHA_C,
+    observedAt:'2026-07-29T14:45:00Z',
+    testRefs:[{ ref:'made-up', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+    proofRefs:[exactEvidence('PROOF')],
+  }), /exact head/);
 });
 
 test('candidate admission rejects terminal states', () => {
   for (const state of ['READY_FOR_INTEGRATION', 'FAILED', 'CANCELLED', 'SUPERSEDED', 'BLOCKED']) {
-    const result = evaluateConstructionLaneAdmission(candidate({ state }), {
-      constructionLanes:[],
-      completedGoalIds:[],
-    });
+    const result = evaluateConstructionLaneAdmission(candidate({ state }), inventory());
     assert.equal(result.status, 'REJECTED');
     assert.deepEqual(result.reasonCodes, ['CANDIDATE_STATE_NOT_ADMISSIBLE']);
   }
 });
 
 test('lane and integration identities cannot collide even with isolated ownership', () => {
-  const duplicateLane = evaluateConstructionLaneAdmission(candidate(), {
+  const duplicateLane = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:[activeLane({
       id:'lane-1618',
       ownership:{ paths:['isolated/ui'], contracts:['isolated-ui'] },
     })],
-    completedGoalIds:[],
-  });
+  }));
   assert.ok(duplicateLane.reasonCodes.includes('DUPLICATE_ACTIVE_LANE_ID'));
 
-  const integrationId = evaluateConstructionLaneAdmission(candidate(), {
-    constructionLanes:[],
-    completedGoalIds:[],
+  const integrationId = evaluateConstructionLaneAdmission(candidate(), inventory({
     integrationLane:{
       id:'lane-1618',
       branch:'feat/integration',
       state:'INTEGRATING',
       ownership:{ paths:['isolated/integration'], contracts:['isolated-integration'] },
     },
-  });
+  }));
   assert.ok(integrationId.reasonCodes.includes('INTEGRATION_LANE_ID_COLLISION'));
 
-  const integrationBranch = evaluateConstructionLaneAdmission(candidate(), {
-    constructionLanes:[],
-    completedGoalIds:[],
+  const integrationBranch = evaluateConstructionLaneAdmission(candidate(), inventory({
     integrationLane:{
       id:'integration-1617',
       branch:'feat/whatsapp-merge-ready',
       state:'INTEGRATING',
       ownership:{ paths:['isolated/integration'], contracts:['isolated-integration'] },
     },
-  });
+  }));
   assert.ok(integrationBranch.reasonCodes.includes('INTEGRATION_LANE_BRANCH_COLLISION'));
 });
 
@@ -339,8 +377,8 @@ test('terminal lane outcomes cannot be converted into readiness receipts', () =>
     assert.throws(() => createReadyForIntegrationReceipt(candidate({ state }), {
       currentMainSha:SHA_C,
       observedAt:'2026-07-29T14:45:00Z',
-      testRefs:[{ ref:'test', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
-      proofRefs:[{ ref:'proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+      testRefs:[exactEvidence('TEST')],
+      proofRefs:[exactEvidence('PROOF')],
     }), /not eligible/);
   }
 });
