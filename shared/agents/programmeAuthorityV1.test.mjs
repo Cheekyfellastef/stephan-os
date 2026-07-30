@@ -18,6 +18,7 @@ import {
   createProgrammeControllerHeartbeat,
   createProgrammeStallMonitorHandler,
   createSourceMutationLeaseRecord,
+  createSourceMutationLeaseReleaseRecord,
   createTerminalLaneEvidenceRecords,
   diagnoseProgrammeStall,
   projectProgrammeControllerHeartbeat,
@@ -232,6 +233,15 @@ test('source mutation lease validates, renews only the exact live owner, and nev
   assert.equal(conflictingLaneIdentity.valid, false);
   assert.ok(conflictingLaneIdentity.errors.includes('lane-id-issue-mismatch'));
   assert.ok(conflictingLaneIdentity.errors.includes('lane-id-pr-mismatch'));
+
+  const sharedPrefix = 'lease-release-key'.padEnd(50, 'a');
+  const firstRelease = createSourceMutationLeaseReleaseRecord(lease({
+    leaseId:`${sharedPrefix}-one`,
+  }), { timestampUtc:NOW });
+  const secondRelease = createSourceMutationLeaseReleaseRecord(lease({
+    leaseId:`${sharedPrefix}-two`,
+  }), { timestampUtc:NOW });
+  assert.notEqual(firstRelease.statusId, secondRelease.statusId);
 });
 
 test('execution receipt leaseKey is correlation only and cannot fabricate mutation authority', () => {
@@ -516,6 +526,24 @@ test('active projection requires the conveyor to affirm the exact active lane', 
     },
   });
   assert.equal(exact.status, 'ACTIVE');
+
+  const conflictingMission = buildAuthoritativeProgrammeProjection({
+    ...base,
+    criticalBacklog: {
+      decision:'WAIT_EXTERNAL_ACTIVE_MISSION',
+      activeMission:{
+        missionId:'goal-1497-pr-9999',
+        issueNumber:1497,
+        repository:'other/repo',
+        git:{ branch:'feat/other-lane' },
+        pullRequest:{ number:9999 },
+      },
+    },
+  });
+  assert.equal(conflictingMission.status, 'HOLD');
+  assert.ok(conflictingMission.blockers.includes('critical-backlog-active-lane-pr-mismatch'));
+  assert.ok(conflictingMission.blockers.includes('critical-backlog-active-lane-repository-mismatch'));
+  assert.ok(conflictingMission.blockers.includes('critical-backlog-active-lane-branch-mismatch'));
 });
 
 test('controller cycle and conveyor identity must affirm the exact idle selection', () => {
