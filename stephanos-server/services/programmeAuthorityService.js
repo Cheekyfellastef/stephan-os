@@ -813,6 +813,19 @@ function canonicalPositiveAlias(values) {
   return uniqueValues.length === 1 ? uniqueValues[0] : null;
 }
 
+function canonicalShaAlias(values) {
+  const supplied = values.filter((value) => (
+    value !== undefined
+    && value !== null
+    && String(value).trim()
+  ));
+  if (!supplied.length) return null;
+  const normalized = supplied.map((value) => text(value).toLowerCase());
+  if (normalized.some((value) => !SHA_40.test(value))) return null;
+  const uniqueValues = [...new Set(normalized)];
+  return uniqueValues.length === 1 ? uniqueValues[0] : null;
+}
+
 export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt) {
   const records = list(workspaceFeed?.records?.proofRecords);
   const proofHeadShas = [];
@@ -820,7 +833,7 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
   const proofRefs = [];
   for (const record of records) {
     if (!isAffirmativeProofRecord(record)) continue;
-    const headSha = text(record.headSha ?? record.sourceHead).toLowerCase();
+    const headSha = canonicalShaAlias([record.headSha, record.sourceHead]);
     const issue = canonicalPositiveAlias([record.issueNumber, record.relatedIssue]);
     const activePr = canonicalPositiveAlias([record.prNumber, record.relatedPr]);
     if (!issue || !activePr || !/^[0-9a-f]{40}$/.test(headSha)) continue;
@@ -1122,7 +1135,11 @@ function exactTerminalReceiptForIdentity(record, identity) {
   );
 }
 
-function exactTerminalProofForIdentity(record, identity) {
+function exactTerminalProofForIdentity(record, identity, expectedProof = null) {
+  const mergeFactsMatch = !expectedProof || (
+    text(record?.mergeCommitSha).toLowerCase() === text(expectedProof.mergeCommitSha).toLowerCase()
+    && safeNow(record?.mergedAtUtc) === safeNow(expectedProof.mergedAtUtc)
+  );
   return Boolean(
     record
     && validateSharedWorkspaceRecord(record).valid
@@ -1139,6 +1156,7 @@ function exactTerminalProofForIdentity(record, identity) {
     && record.status === 'MERGED'
     && SHA_40.test(text(record.mergeCommitSha))
     && Boolean(safeNow(record.mergedAtUtc))
+    && mergeFactsMatch
     && record.releaseOnlyExactLease === true
     && record.mergeAuthority === false
   );
@@ -1282,12 +1300,12 @@ export async function finalizeTerminalImplementationLane(input = {}, options = {
   let receiptPublication = null;
   let idempotent = false;
   if (existing.present) {
-    if (!exactTerminalReceipt(existing.value, records) || !exactTerminalProofForIdentity(existingProof.value, expected)) {
+    if (!exactTerminalReceipt(existing.value, records) || !exactTerminalProofForIdentity(existingProof.value, expected, records.proof)) {
       return Object.freeze({ ok: false, finalized: false, reason: 'TERMINAL_RECEIPT_IDENTITY_CONFLICT', plan });
     }
     idempotent = true;
   } else {
-    if (existingProof.present && !exactTerminalProofForIdentity(existingProof.value, expected)) {
+    if (existingProof.present && !exactTerminalProofForIdentity(existingProof.value, expected, records.proof)) {
       return Object.freeze({ ok: false, finalized: false, reason: 'TERMINAL_PROOF_IDENTITY_CONFLICT', plan });
     }
     if (existingProof.present) {
