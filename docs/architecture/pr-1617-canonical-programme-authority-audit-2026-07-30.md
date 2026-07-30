@@ -357,3 +357,35 @@ dispatcher, queue, GitHub adapter or merge authority.
 PR #1617 remains held. This prerequisite must receive fresh independent review
 and exact-head CI at the repaired head before it can be considered for merge or
 consumption by PR #1617.
+
+## Structural convergence review: typed authority and liveness separation
+
+Repeated exact-head review findings in the scheduler-adapter and stall-monitor
+invariant class required a structural review before another repair. The shared
+cause was boundary translation that made invalid evidence look valid:
+
+- the programme scheduler adapter accepted any object found in the `goals`
+  directory and reconstructed it as a goal;
+- boolean authority fields were normalized before the canonical scheduler
+  could reject malformed values;
+- a controller heartbeat timestamp was treated as lane progress even though
+  the heartbeat proves only controller liveness.
+
+The durable invariant is now:
+
+1. authority adapters accept only the canonical Shared Workspace schema and
+   exact goal kind before reconstructing scheduler input;
+2. authority-bearing fields are preserved until their canonical owner
+   validates them—translation must not coerce malformed evidence into a safe
+   default;
+3. liveness evidence and progress evidence are disjoint. Controller heartbeat
+   can hold an active lane when stale, but cannot refresh progress age. Lane
+   progress comes only from execution receipts, lease renewal, or bounded proof
+   publication;
+4. an active lane with no durable progress evidence is explicitly diagnosed,
+   rather than remaining indefinitely non-stalled.
+
+Adversarial model tests cover a status record misfiled under `goals`, a
+non-boolean operator-priority claim, and a fresh controller heartbeat alongside
+stale durable lane progress. This strengthens the shared boundary instead of
+adding route- or caller-specific exceptions.

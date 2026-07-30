@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 
 import { createExecutionReceipt } from './executionReceiptV1.mjs';
 import {
+  SHARED_WORKSPACE_RECORD_KINDS,
+  SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+} from './sharedAgentWorkspaceStore.mjs';
+import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
   CANONICAL_IMPLEMENTATION_LANE_SCHEMA,
   PROGRAMME_AUTHORITY_COMPONENTS,
@@ -42,6 +46,22 @@ const LANE_ID = 'goal-1497-pr-1617';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const BRANCH = 'feat/canonical-programme-authority-contracts';
 const OWNER = 'codex-pr-1617';
+
+function goalRecord(overrides = {}) {
+  return {
+    schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+    kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+    goalId: 'goal-1497',
+    participantId: 'codex',
+    timestampUtc: NOW,
+    issueNumber: 1497,
+    title: 'Durable controller',
+    status: 'READY',
+    prerequisites: [],
+    route: 'CHATGPT_GITHUB',
+    ...overrides,
+  };
+}
 
 function github(overrides = {}) {
   return {
@@ -379,15 +399,7 @@ test('scheduler goals are constructed from durable records and the canonical lan
   const goals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     lane: lane(),
-    goalRecords: [{
-      goalId: 'goal-1497',
-      issueNumber: 1497,
-      title: 'Durable controller',
-      timestampUtc: NOW,
-      status: 'READY',
-      prerequisites: [],
-      route: 'CHATGPT_GITHUB',
-    }],
+    goalRecords: [goalRecord()],
   });
   assert.equal(goals.valid, true);
   assert.equal(goals.goals.length, 1);
@@ -397,14 +409,15 @@ test('scheduler goals are constructed from durable records and the canonical lan
 
   const malformedDependencies = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
-    goalRecords: [{
+    goalRecords: [goalRecord({
+      goalId: 'goal-1284',
       issueNumber: 1284,
       title: 'Malformed durable relation evidence',
       state: 'READY',
       prerequisites: '#1286',
       route: 'CHATGPT_GITHUB',
       evidenceAt: NOW,
-    }],
+    })],
   });
   assert.equal(malformedDependencies.goals[0].prerequisites, '#1286');
   const malformedScheduler = buildMissionScheduler({
@@ -417,7 +430,7 @@ test('scheduler goals are constructed from durable records and the canonical lan
 
   const invalidated = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
-    goalRecords: [{
+    goalRecords: [goalRecord({
       issueNumber: 1497,
       title: 'Invalidated durable goal',
       state: 'READY',
@@ -426,10 +439,34 @@ test('scheduler goals are constructed from durable records and the canonical lan
       supersededBy: 1622,
       route: 'CHATGPT_GITHUB',
       evidenceAt: NOW,
-    }],
+    })],
   });
   assert.equal(invalidated.goals[0].duplicateOf, 1284);
   assert.equal(invalidated.goals[0].supersededBy, 1622);
+
+  const nonGoal = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [{
+      ...goalRecord(),
+      kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS,
+      statusId: 'status-ready',
+    }],
+  });
+  assert.equal(nonGoal.valid, false);
+  assert.equal(nonGoal.goals.length, 0);
+  assert.ok(nonGoal.blockers.includes('goal-record-0-not-canonical-goal'));
+
+  const malformedOperatorPriority = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [goalRecord({ operatorPriority: 'yes' })],
+  });
+  assert.equal(malformedOperatorPriority.goals[0].operatorPriority, 'yes');
+  const malformedOperatorScheduler = buildMissionScheduler({
+    now: NOW,
+    goals: malformedOperatorPriority.goals,
+  });
+  assert.equal(malformedOperatorScheduler.portfolio[0].lifecycle, 'BLOCKED');
+  assert.ok(malformedOperatorScheduler.blockers.some(({ code }) => code === 'INVALID_OPERATOR_PRIORITY_EVIDENCE'));
 });
 
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {
@@ -728,6 +765,15 @@ test('programme stall diagnosis reuses Monitor Multiplexer and never starts sche
   assert.equal(diagnosis.stalled, true);
   assert.equal(diagnosis.diagnosisOnly, true);
   assert.equal(diagnosis.schedulingAllowed, false);
+  assert.ok(diagnosis.blockers.includes('active-lane-progress-stale'));
+
+  const freshControllerOnly = diagnoseProgrammeStall({
+    ...stalledProjection,
+    controllerHeartbeat: { fresh: true, ageMs: 0 },
+  }, { nowUtc: NOW, stallAfterMs: 1_000 });
+  assert.equal(freshControllerOnly.stalled, true);
+  assert.ok(freshControllerOnly.blockers.includes('active-lane-progress-stale'));
+  assert.equal(freshControllerOnly.lastProgressAtUtc, '2026-07-30T09:00:00.000Z');
 
   const handler = createProgrammeStallMonitorHandler({
     loadProjection: async () => stalledProjection,

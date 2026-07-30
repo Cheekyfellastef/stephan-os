@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
+  SHARED_WORKSPACE_RECORD_KINDS,
+  SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceReceiptRecord,
   createSharedWorkspaceStatusRecord,
@@ -647,6 +649,17 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       blockers.push(`goal-record-${index}-invalid`);
       continue;
     }
+    const envelope = validateSharedWorkspaceRecord(record, {
+      nowMs: timestamp(nowUtc) ?? Date.now(),
+    });
+    if (
+      record.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+      || record.kind !== SHARED_WORKSPACE_RECORD_KINDS.GOAL
+      || !envelope.valid
+    ) {
+      blockers.push(`goal-record-${index}-not-canonical-goal`);
+      continue;
+    }
     const issueNumber = number(record.issueNumber ?? record.issue ?? record.relatedIssue ?? record.goalId?.match(/[1-9]\d*/)?.[0]);
     if (!issueNumber) {
       blockers.push(`goal-record-${index}-issue-invalid`);
@@ -667,8 +680,12 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       branch: text(record.branch) || null,
       headSha: sha(record.headSha),
       proofState: text(record.proofState, 'UNKNOWN'),
-      approvalRequired: record.approvalRequired === true,
-      operatorPriority: record.operatorPriority === true,
+      approvalRequired: Object.prototype.hasOwnProperty.call(record, 'approvalRequired')
+        ? record.approvalRequired
+        : false,
+      operatorPriority: Object.prototype.hasOwnProperty.call(record, 'operatorPriority')
+        ? record.operatorPriority
+        : false,
       evidenceAt: text(record.evidenceAt ?? record.timestampUtc, nowUtc),
       resultProofRefs: Array.isArray(record.resultProofRefs) ? record.resultProofRefs : [],
       reusableCapabilityId: text(record.reusableCapabilityId) || null,
@@ -936,9 +953,6 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   if (nowMs === null) blockers.push('stall-observation-time-invalid');
   if (safeProjection !== projection) blockers.push('programme-projection-missing');
   const progressTimes = [
-    safeProjection.controllerHeartbeat?.ageMs === null
-      ? null
-      : nowMs - safeProjection.controllerHeartbeat?.ageMs,
     timestamp(safeProjection.executionReceipt?.timestampUtc),
     timestamp(safeProjection.mutationLease?.renewedAtUtc),
     ...list(safeProjection.battleBridgeProofs).map((proof) => timestamp(proof?.timestampUtc ?? proof?.at)),
@@ -948,6 +962,7 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   if (safeProjection.lane?.active && safeProjection.controllerHeartbeat?.fresh !== true) blockers.push('controller-heartbeat-not-fresh');
   if (safeProjection.lane?.active && safeProjection.workerHeartbeat?.fresh !== true) blockers.push('worker-heartbeat-not-fresh');
   if (safeProjection.lane?.active && safeProjection.executionReceipt?.state === 'stalled') blockers.push('execution-receipt-reports-stall');
+  if (safeProjection.lane?.active && lastProgressMs === null) blockers.push('active-lane-progress-evidence-missing');
   if (safeProjection.lane?.active && !EXECUTION_TERMINAL_STATES.has(safeProjection.executionReceipt?.state) && progressAgeMs !== null && progressAgeMs > threshold) blockers.push('active-lane-progress-stale');
   if (safeProjection.lane?.terminal && safeProjection.mutationLease) blockers.push('terminal-lane-cleanup-pending');
   const stalled = blockers.length > 0;
