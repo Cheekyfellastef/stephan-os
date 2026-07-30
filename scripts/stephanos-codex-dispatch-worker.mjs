@@ -241,6 +241,9 @@ export function validateBrowserProofVerdict(lastMessage, task = {}) {
   if (evidence.consoleErrors.length > 0) {
     return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_CONSOLE_ERRORS' });
   }
+  if (!Array.isArray(payload.blockers) || payload.blockers.length > 0) {
+    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_BLOCKERS_REMAIN' });
+  }
   return Object.freeze({ ok: true, required: true, proofScenario: expectedScenario, evidence });
 }
 
