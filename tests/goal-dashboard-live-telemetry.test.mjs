@@ -565,8 +565,11 @@ test('approved telemetry rejects source-inconsistent counters and malformed nest
     { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, sourceTruth: 'READ-ONLY RECEIPT' })) } },
     { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, readyCount: 0 } },
     { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, activePrCount: 0 } },
+    { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, activePrCount: 50 } },
     { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, linkedPullRequests: [null] })) } },
     { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, platformProof: {} })) } },
+    { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, lastUpdatedAt: 'not-a-timestamp' })) } },
+    { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, lastUpdatedAt: '2026-07-30T10:05:00.000Z' })) } },
   ];
   for (const feed of malformedFeeds) {
     const { telemetry, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
