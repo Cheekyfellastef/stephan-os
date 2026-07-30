@@ -161,7 +161,7 @@ function receiptGoalCard(candidate = {}, observedAt) {
     sourceTruth: 'READ-ONLY RECEIPT',
     source: 'mission-operations-receipt',
     observedAt,
-    lastUpdatedAt: text(candidate.updatedAt || candidate.createdAt, observedAt),
+    lastUpdatedAt: text(candidate.updatedAt || candidate.createdAt),
     labels: [],
     currentOwner: text(candidate.currentOwner || candidate.owner, 'Build Concierge queue'),
     nextOwner: text(candidate.nextOwner, 'Canonical dispatcher'),
@@ -316,6 +316,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       const keys = candidateIdentityKeys(candidate);
       const key = keys[0] || text(candidate.title);
       if (keys.some((candidateKey) => historicalCandidateKeys.has(candidateKey)) && candidate.currentReceiptAuthority !== true) return false;
+      if (!Number.isFinite(Date.parse(candidate.updatedAt || candidate.createdAt || ''))) return false;
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
