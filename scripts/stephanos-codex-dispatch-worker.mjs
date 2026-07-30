@@ -212,6 +212,38 @@ export function classifyCodexExecution({
   });
 }
 
+export function validateBrowserProofVerdict(lastMessage, task = {}) {
+  if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
+  const expectedScenario = String(task.exactHeadProof.proofScenario || '');
+  let payload;
+  try {
+    const normalized = String(lastMessage || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    payload = JSON.parse(normalized);
+  } catch {
+    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_VERDICT_INVALID' });
+  }
+  if (payload?.verdict !== 'PASS' || payload?.proofScenario !== expectedScenario) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: payload?.verdict === 'FAIL' ? 'BROWSER_PROOF_FAILED' : 'BROWSER_PROOF_VERDICT_INVALID',
+    });
+  }
+  const evidence = payload.evidence || {};
+  const requiredTrue = [
+    'listeningDeckIframeIdentityPreserved',
+    'discoveryIframeIdentityPreserved',
+    'legacyRankingChanged',
+  ];
+  if (!requiredTrue.every((key) => evidence[key] === true) || !Array.isArray(evidence.consoleErrors)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_EVIDENCE_INCOMPLETE' });
+  }
+  if (evidence.consoleErrors.length > 0) {
+    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_CONSOLE_ERRORS' });
+  }
+  return Object.freeze({ ok: true, required: true, proofScenario: expectedScenario, evidence });
+}
+
 export function resolveCodexExecInvocation({
   platform = process.platform,
   env = process.env,
@@ -240,7 +272,10 @@ export function resolveCodexExecInvocation({
 }
 
 export function buildGuardedCodexPrompt(task) {
-  return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- The child Codex run is read-only and non-interactive. Do not request approval.\n- User configuration is not loaded for this child run, so local MCP and app tools are unavailable by construction.\n- Do not call MCP tools, app tools, or dispatch another Codex task. Use bounded shell diagnostics only.\n- Do not create generated output unless the exact requested proof cannot be completed without it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.\n- Return a structured PASS/FAIL report with remaining blockers.\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
+  const verdictContract = task.exactHeadProof
+    ? `\nMACHINE-READABLE FINAL VERDICT\nReturn only one JSON object as your final message. It must use exactly this evidence shape:\n{"verdict":"PASS|FAIL","proofScenario":"${task.exactHeadProof.proofScenario}","evidence":{"listeningDeckIframeIdentityPreserved":true|false,"discoveryIframeIdentityPreserved":true|false,"legacyRankingChanged":true|false,"consoleErrors":[]},"blockers":[]}\nPASS is forbidden unless every boolean is true and consoleErrors is an empty array.`
+    : '\nReturn a structured PASS/FAIL report with remaining blockers.';
+  return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- The child Codex run is read-only and non-interactive. Do not request approval.\n- User configuration is not loaded for this child run, so local MCP and app tools are unavailable by construction.\n- Do not call MCP tools, app tools, or dispatch another Codex task. Use bounded shell diagnostics only.\n- Do not create generated output unless the exact requested proof cannot be completed without it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.${verdictContract}\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
 }
 
 function streamToFile(stream, path) {
@@ -450,9 +485,13 @@ export async function runCodexWorker(taskPath, {
     lastMessage,
     stderr: stderrText,
   });
+  const browserProof = validateBrowserProofVerdict(lastMessage, task);
   const sourceHeadUnchanged = sourceHeadBefore.ok && sourceHeadAfter.ok && sourceHeadBefore.stdout === sourceHeadAfter.stdout;
-  const sourceSafe = sourceHeadUnchanged && !dirtDelta.sourceMutationDetected;
-  const passed = execution.passed && sourceSafe;
+  const expectedHead = exactHeadValidation.required ? exactHeadValidation.expectedHead : '';
+  const sourceHeadBound = !exactHeadValidation.required
+    || (sourceHeadBefore.stdout === expectedHead && sourceHeadAfter.stdout === expectedHead);
+  const sourceSafe = sourceHeadUnchanged && sourceHeadBound && !dirtDelta.sourceMutationDetected;
+  const passed = execution.passed && browserProof.ok && sourceSafe;
   const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
   let result = {
     schemaVersion: LOCAL_CODEX_TASK_SCHEMA,
@@ -472,6 +511,8 @@ export async function runCodexWorker(taskPath, {
     sourceHeadBefore: sourceHeadBefore.stdout,
     sourceHeadAfter: sourceHeadAfter.stdout,
     sourceHeadUnchanged,
+    sourceHeadBound,
+    browserProof,
     exit,
     execution,
     eventParsing: {
@@ -510,7 +551,7 @@ export async function runCodexWorker(taskPath, {
       ? 'Review the returned proof and decide whether the owning goal may advance.'
       : (!sourceSafe
         ? 'Inspect the task logs and source dirt. Do not auto-discard changes.'
-        : `Inspect the task logs and repair the precise runtime blocker: ${execution.reason || 'CODEX_EXEC_FAILED'}.`),
+        : `Inspect the task logs and repair the precise runtime blocker: ${browserProof.blocker || execution.reason || 'CODEX_EXEC_FAILED'}.`),
   };
   writeJson(resultPath, result);
   writeJson(statusPath, result);
