@@ -9,9 +9,14 @@ const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1] || '';
 function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', port = '' } = {}) {
   const telemetry = new Map();
   const grid = {
-    textContent: '',
+    _textContent: '',
     children: [],
     attrs: {},
+    get textContent() { return this._textContent; },
+    set textContent(value) {
+      this._textContent = value;
+      if (value === '') this.children.length = 0;
+    },
     setAttribute(key, value) { this.attrs[key] = value; },
     appendChild(node) { this.children.push(node); },
   };
@@ -39,7 +44,7 @@ function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', p
     AbortController: class { constructor() { this.signal = {}; } abort() {} },
   };
   vm.runInNewContext(script, context);
-  return { telemetry, grid };
+  return { telemetry, grid, context };
 }
 
 test('standalone Goal Dashboard static fallback remains honest when backend unavailable', async () => {
@@ -175,6 +180,97 @@ test('standalone Goal Dashboard prefers canonical live GitHub goal cards and ren
   assert.equal(telemetry.get('dashboard-visible-count').textContent, '1');
   assert.equal(telemetry.get('dashboard-ready-count').textContent, '1');
   assert.equal(telemetry.get('dashboard-priority-action').textContent, 'Request exact-head review.');
+});
+
+test('lower-ranked Shared Workspace polls cannot overwrite a live GitHub projection summary or cards', async () => {
+  const { telemetry, grid, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'live',
+    generatedAt: '2026-07-30T10:00:00.000Z',
+    currentAgentStates: { github: { state: 'adapter-provided' }, stephanos: { state: 'backend_reachable' } },
+    dashboardGoals: {
+      sourceTruth: 'LIVE READ-ONLY GITHUB',
+      freshnessVerdict: 'CURRENT_AT_REQUEST',
+      observedAt: '2026-07-30T10:00:00.000Z',
+      totalAvailable: 1,
+      displayedCount: 1,
+      activePrCount: 1,
+      blockedCount: 0,
+      readyCount: 1,
+      operatorAttentionCount: 0,
+      nextAction: 'Keep exact-head review current.',
+      cards: [{
+        issue: '#1627',
+        title: 'Goal Dashboard',
+        status: 'READY FOR REVIEW',
+        sourceTruth: 'LIVE READ-ONLY GITHUB',
+        observedAt: '2026-07-30T10:00:00.000Z',
+        currentOwner: 'Codex / review lane',
+        nextOwner: 'Independent reviewer',
+        operatorNeeded: 'No',
+        handoffState: 'exact head',
+        milestone: 'PR #1627',
+        proofIndex: 4,
+        nextAction: 'Keep exact-head review current.',
+      }],
+    },
+  });
+  const liveSource = telemetry.get('goal-data-source').textContent;
+  const liveCount = telemetry.get('dashboard-visible-count').textContent;
+  const liveAction = telemetry.get('dashboard-priority-action').textContent;
+
+  context.renderSharedWorkspaceDashboardFeed({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'ready',
+    lastRefreshUtc: '2026-07-30T10:00:15.000Z',
+    exactNextAction: 'Lower-ranked workspace action.',
+    projection: {
+      sourceTruth: 'CURRENT',
+      goals: [
+        { issue: '#1', title: 'Workspace one', statusTruth: 'CURRENT', proofTruth: 'CURRENT', blockers: [], exactNextAction: 'One.' },
+        { issue: '#2', title: 'Workspace two', statusTruth: 'CURRENT', proofTruth: 'CURRENT', blockers: [], exactNextAction: 'Two.' },
+      ],
+    },
+  });
+
+  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-github');
+  assert.equal(grid.children.length, 1);
+  assert.equal(telemetry.get('goal-data-source').textContent, liveSource);
+  assert.equal(telemetry.get('dashboard-visible-count').textContent, liveCount);
+  assert.equal(telemetry.get('dashboard-priority-action').textContent, liveAction);
+  assert.equal(telemetry.get('hero-truth-source').textContent, 'LIVE READ-ONLY GITHUB');
+});
+
+test('a failed live refresh lowers precedence so a current Shared Workspace projection can replace stale cards', async () => {
+  const { telemetry, grid, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'live',
+    dashboardGoals: {
+      sourceTruth: 'LIVE READ-ONLY GITHUB',
+      observedAt: '2026-07-30T10:00:00.000Z',
+      cards: [{ issue: '#1627', title: 'Last known GitHub card', status: 'VERIFYING', currentOwner: 'CI', nextOwner: 'Review', operatorNeeded: 'No', handoffState: 'checks', milestone: 'HEAD', proofIndex: 3, nextAction: 'Wait.' }],
+    },
+  });
+  context.markLiveTelemetryRefreshFailed();
+  assert.equal(telemetry.get('source-badge').textContent, 'STALE');
+
+  context.renderSharedWorkspaceDashboardFeed({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'ready',
+    lastRefreshUtc: '2026-07-30T10:01:00.000Z',
+    exactNextAction: 'Use current workspace truth.',
+    projection: {
+      sourceTruth: 'CURRENT',
+      goals: [{ issue: '#1282', title: 'Current workspace goal', statusTruth: 'CURRENT', proofTruth: 'CURRENT', blockers: [], exactNextAction: 'Continue.' }],
+    },
+  });
+  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
+  assert.match(grid.children[0].innerHTML, /Current workspace goal/);
+  assert.equal(telemetry.get('hero-truth-source').textContent, 'SHARED WORKSPACE FEED');
 });
 
 test('standalone Goal Dashboard does not claim live proof without backend data and gates non-local fetches', async () => {
