@@ -90,8 +90,10 @@ function selectLatestRequiredChecks(checks = [], headSha = '') {
     const currentAt = checkObservedAt(check);
     const previousAt = checkObservedAt(previous);
     if (currentAt !== null && previousAt !== null && currentAt !== previousAt) {
-      if (currentAt > previousAt) latestByName.set(name, check);
-      conflicts.delete(name);
+      if (currentAt > previousAt) {
+        latestByName.set(name, check);
+        conflicts.delete(name);
+      }
       continue;
     }
     if (canonicalCheckOutcome(previous) !== canonicalCheckOutcome(check)) {
