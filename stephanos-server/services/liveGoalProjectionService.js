@@ -10,6 +10,237 @@ import { buildConciergeExecutionEngineV9 } from '../../shared/agents/buildConcie
 function list(value) { return Array.isArray(value) ? value : []; }
 function text(value, fallback = 'unknown') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
 function unique(values = []) { return [...new Set(values.filter(Boolean).map(String))]; }
+function timestamp(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function normalizedStatus(value = '') { return text(value).trim().toLowerCase(); }
+function issueScore(issue, linkedPullRequests = []) {
+  const labels = list(issue.labels).map((label) => normalizedStatus(label));
+  const priorityLabel = labels.some((label) => /\b(p0|p1|priority|critical|active)\b/.test(label));
+  const goalLabel = labels.some((label) => /\b(goal|mission|programme)\b/.test(label));
+  const goalTitle = /\b(goal|mission|programme|dashboard|controller|repair|build)\b/i.test(text(issue.title, ''));
+  return (linkedPullRequests.length ? 1_000_000_000_000_000 : 0)
+    + (priorityLabel ? 100_000_000_000_000 : 0)
+    + (goalLabel ? 10_000_000_000_000 : 0)
+    + (goalTitle ? 1_000_000_000_000 : 0)
+    + timestamp(issue.updatedAt);
+}
+function prStatus(pr = {}) {
+  const checks = normalizedStatus(pr.checksStatus);
+  const approval = normalizedStatus(pr.approvalStatus);
+  if (checks === 'failed') return 'BLOCKED';
+  if (checks === 'pending') return 'VERIFYING';
+  if (checks === 'passed' && approval === 'approved') return 'REVIEW PASSED · RUNTIME PROOF UNKNOWN';
+  if (checks === 'passed') return 'READY FOR REVIEW';
+  if (pr.draft === true) return 'BUILDING';
+  return 'PR OPEN · PROOF UNKNOWN';
+}
+function prNextAction(pr = {}) {
+  const checks = normalizedStatus(pr.checksStatus);
+  const approval = normalizedStatus(pr.approvalStatus);
+  if (checks === 'failed') return `Repair failing checks on PR #${pr.number}; rerun exact-head verification.`;
+  if (checks === 'pending') return `Wait for PR #${pr.number} checks, then inspect the exact-head result.`;
+  if (checks === 'passed' && approval === 'approved') return `Run the required runtime/browser proof for PR #${pr.number}; GitHub review does not grant operator approval.`;
+  if (checks === 'passed') return `Request independent exact-head review for PR #${pr.number}; do not infer approval.`;
+  if (pr.draft === true) return `Continue the bounded build on PR #${pr.number}; checks and proof remain unknown.`;
+  return `Inspect PR #${pr.number} checks and proof; unknown remains unknown.`;
+}
+function prProofIndex(pr = {}) {
+  const checks = normalizedStatus(pr.checksStatus);
+  const approval = normalizedStatus(pr.approvalStatus);
+  if (checks === 'passed' && approval === 'approved') return 5;
+  if (checks === 'passed') return 4;
+  if (checks === 'pending' || checks === 'failed') return 3;
+  return 2;
+}
+function operatorNeededForPr(pr = {}) {
+  return false;
+}
+function issueGoalCard(issue, linkedPullRequests = [], observedAt) {
+  const linkedPr = [...linkedPullRequests].sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt))[0] || null;
+  const status = linkedPr ? prStatus(linkedPr) : 'QUEUED · NO ACTIVE PR';
+  const operatorNeeded = linkedPr ? operatorNeededForPr(linkedPr) : false;
+  return Object.freeze({
+    issue: `#${issue.number}`,
+    issueNumber: issue.number,
+    url: issue.url,
+    title: issue.title,
+    status,
+    statusTruth: 'CURRENT',
+    sourceTruth: 'LIVE READ-ONLY GITHUB',
+    source: 'github-readonly-adapter',
+    observedAt,
+    lastUpdatedAt: issue.updatedAt || observedAt,
+    labels: list(issue.labels),
+    currentOwner: linkedPr ? (operatorNeeded ? 'Operator' : 'Codex / review lane') : 'Programme queue',
+    nextOwner: linkedPr ? (operatorNeeded ? 'Guarded merge lane' : 'Independent reviewer') : 'Bounded construction lane',
+    handoffState: linkedPr ? `issue #${issue.number} → PR #${linkedPr.number} → ${linkedPr.checksStatus || 'checks unknown'}` : `issue #${issue.number} → no active PR`,
+    milestone: linkedPr ? `PR #${linkedPr.number} · ${linkedPr.headSha ? linkedPr.headSha.slice(0, 10) : 'HEAD UNKNOWN'}` : 'DURABLE GOAL RECORDED',
+    operatorNeeded: operatorNeeded ? 'Yes · exact-head decision' : 'No',
+    proofIndex: linkedPr ? prProofIndex(linkedPr) : 1,
+    nextAction: linkedPr ? prNextAction(linkedPr) : 'Select this durable goal through the canonical scheduler before starting a build lane.',
+    proofTruth: {
+      github: 'CURRENT',
+      checks: linkedPr?.checksStatus || 'unknown',
+      review: linkedPr?.approvalStatus || 'unknown',
+      runtime: 'unknown',
+      browser: 'unknown',
+    },
+    linkedPr: linkedPr ? {
+      number: linkedPr.number,
+      url: linkedPr.url,
+      branch: linkedPr.branch,
+      headSha: linkedPr.headSha,
+      draft: linkedPr.draft,
+      checksStatus: linkedPr.checksStatus,
+      approvalStatus: linkedPr.approvalStatus,
+      mergeReadiness: linkedPr.mergeReadiness,
+    } : null,
+  });
+}
+function receiptGoalCard(candidate = {}, observedAt) {
+  const candidateId = text(candidate.candidateId || candidate.id || candidate.relatedGoal || candidate.title, 'receipt-goal');
+  const status = text(candidate.status || candidate.state, 'QUEUED').toUpperCase();
+  return Object.freeze({
+    issue: text(candidate.relatedGoal || candidate.issue || candidate.issueNumber, candidateId),
+    issueNumber: null,
+    url: '',
+    title: text(candidate.title, 'Receipt-backed goal'),
+    status,
+    statusTruth: 'RECEIPT PROVIDED',
+    sourceTruth: 'READ-ONLY RECEIPT',
+    source: 'mission-operations-receipt',
+    observedAt,
+    lastUpdatedAt: text(candidate.updatedAt || candidate.createdAt, observedAt),
+    labels: [],
+    currentOwner: text(candidate.currentOwner || candidate.owner, 'Build Concierge queue'),
+    nextOwner: text(candidate.nextOwner, 'Canonical dispatcher'),
+    handoffState: text(candidate.handoffState, 'receipt → queue evaluation'),
+    milestone: text(candidate.milestone, 'RECEIPT_BACKED_GOAL'),
+    operatorNeeded: 'No',
+    proofIndex: 1,
+    nextAction: text(candidate.nextAction, 'Inspect the receipt-backed queue state before dispatch.'),
+    proofTruth: { github: 'unknown', checks: 'unknown', review: 'unknown', runtime: 'receipt-provided', browser: 'unknown' },
+    linkedPr: null,
+  });
+}
+function orphanPrGoalCard(pr = {}, observedAt) {
+  return Object.freeze({
+    issue: `PR #${pr.number}`,
+    issueNumber: null,
+    url: '',
+    title: pr.title,
+    status: 'BLOCKED · DURABLE GOAL LINK UNKNOWN',
+    statusTruth: 'CURRENT',
+    sourceTruth: 'LIVE READ-ONLY GITHUB',
+    source: 'github-readonly-adapter',
+    observedAt,
+    lastUpdatedAt: pr.updatedAt || observedAt,
+    labels: [],
+    currentOwner: 'Codex / review lane',
+    nextOwner: 'Programme controller',
+    handoffState: `PR #${pr.number} → no durable goal issue identified`,
+    milestone: `PR #${pr.number} · ${pr.headSha ? pr.headSha.slice(0, 10) : 'HEAD UNKNOWN'}`,
+    operatorNeeded: 'No',
+    proofIndex: 2,
+    nextAction: `Bind PR #${pr.number} to its durable GitHub goal issue before treating it as programme progress.`,
+    proofTruth: {
+      github: 'CURRENT',
+      checks: pr.checksStatus || 'unknown',
+      review: pr.approvalStatus || 'unknown',
+      runtime: 'unknown',
+      browser: 'unknown',
+    },
+    linkedPr: {
+      number: pr.number,
+      url: pr.url,
+      branch: pr.branch,
+      headSha: pr.headSha,
+      draft: pr.draft,
+      checksStatus: pr.checksStatus,
+      approvalStatus: pr.approvalStatus,
+      mergeReadiness: pr.mergeReadiness,
+    },
+  });
+}
+
+export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, missions = [], observedAt = new Date().toISOString(), limit = 12 } = {}) {
+  const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 24) : 12;
+  if (githubTelemetry.adapterAvailable === true) {
+    const pullRequests = list(githubTelemetry.pullRequests);
+    const openIssues = list(githubTelemetry.issues).filter((issue) => normalizedStatus(issue.state) === 'open');
+    const ranked = openIssues
+      .map((issue) => {
+        const linkedPullRequests = pullRequests.filter((pr) => list(pr.relatedIssues).includes(issue.number));
+        return { issue, linkedPullRequests, score: issueScore(issue, linkedPullRequests) };
+      })
+      .sort((left, right) => right.score - left.score || right.issue.number - left.issue.number);
+    const linkedPrNumbers = new Set(ranked.flatMap(({ linkedPullRequests }) => linkedPullRequests.map((pr) => pr.number)));
+    const orphanPrCards = pullRequests
+      .filter((pr) => !linkedPrNumbers.has(pr.number))
+      .sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt))
+      .map((pr) => orphanPrGoalCard(pr, observedAt));
+    const rankedCards = [
+      ...ranked.filter(({ linkedPullRequests }) => linkedPullRequests.length).map(({ issue, linkedPullRequests }) => issueGoalCard(issue, linkedPullRequests, observedAt)),
+      ...orphanPrCards,
+      ...ranked.filter(({ linkedPullRequests }) => !linkedPullRequests.length).map(({ issue, linkedPullRequests }) => issueGoalCard(issue, linkedPullRequests, observedAt)),
+    ];
+    const cards = rankedCards.slice(0, safeLimit);
+    const operatorAttention = cards.filter((card) => card.operatorNeeded.startsWith('Yes'));
+    return Object.freeze({
+      schemaVersion: 'stephanos.live-dashboard-goals.v1',
+      sourceTruth: 'LIVE READ-ONLY GITHUB',
+      freshnessVerdict: 'CURRENT_AT_REQUEST',
+      observedAt,
+      totalAvailable: rankedCards.length,
+      displayedCount: cards.length,
+      activePrCount: new Set(cards.map((card) => card.linkedPr?.number).filter(Boolean)).size,
+      blockedCount: cards.filter((card) => card.status.startsWith('BLOCKED')).length,
+      readyCount: cards.filter((card) => card.status.startsWith('READY')).length,
+      operatorAttentionCount: operatorAttention.length,
+      cards,
+      nextAction: operatorAttention[0]?.nextAction || cards[0]?.nextAction || 'No open goal issues were returned by the verified read-only GitHub adapter.',
+    });
+  }
+
+  const receiptCandidates = [
+    ...list(queue.activeProofLane),
+    ...list(queue.queuedCandidates),
+    ...list(missions).map((mission) => ({
+      candidateId: mission.mission?.missionId || mission.missionId,
+      title: mission.mission?.title || mission.title,
+      status: mission.mission?.state || mission.state,
+      currentOwner: mission.agent?.label || mission.activeAgent?.label,
+      nextAction: mission.mission?.nextAction || mission.nextAction,
+      updatedAt: mission.mission?.updatedAt || mission.updatedAt,
+    })),
+  ];
+  const seen = new Set();
+  const cards = receiptCandidates
+    .filter((candidate) => {
+      const key = text(candidate.candidateId || candidate.id || candidate.title);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, safeLimit)
+    .map((candidate) => receiptGoalCard(candidate, observedAt));
+  return Object.freeze({
+    schemaVersion: 'stephanos.live-dashboard-goals.v1',
+    sourceTruth: cards.length ? 'READ-ONLY RECEIPTS' : 'UNKNOWN',
+    freshnessVerdict: cards.length ? 'RECEIPT_TIMESTAMPS_VISIBLE' : 'NO_CURRENT_GOAL_RECORDS',
+    observedAt,
+    totalAvailable: cards.length,
+    displayedCount: cards.length,
+    activePrCount: 0,
+    blockedCount: cards.filter((card) => /BLOCKED|FAILED/.test(card.status)).length,
+    readyCount: cards.filter((card) => /READY/.test(card.status)).length,
+    operatorAttentionCount: 0,
+    cards,
+    nextAction: cards[0]?.nextAction || 'Configure the read-only GitHub adapter or publish current canonical mission receipts.',
+  });
+}
 
 export function buildLiveGoalProjection(input = {}) {
   const now = input.now instanceof Date ? input.now : new Date();
@@ -45,6 +276,7 @@ export function buildLiveGoalProjection(input = {}) {
   const githubTruth = githubTelemetry.adapterAvailable === true ? 'adapter-provided' : (queue.autoPick?.liveGithubProof === 'adapter-provided' || queue.autoPick?.liveGithubProof === 'receipt-provided' ? queue.autoPick.liveGithubProof : 'unknown');
   const localProofTruth = receipts.some((receipt) => /proof|command/i.test(`${receipt.receiptType || ''} ${receipt.status || ''}`)) ? 'receipt-provided' : 'unknown';
   const browserProofTruth = buildConcierge.browserProofPacket?.browserProofStatus || buildConcierge.proofPacketSummary?.browserProof || 'unknown';
+  const dashboardGoals = buildLiveDashboardGoals({ githubTelemetry, queue, missions: list(feed.missions), observedAt: now.toISOString() });
   const staleWarnings = [];
   if (feed.projectionSource === 'static-goal-dashboard-seed' || feed.githubTruth === 'not-live-readonly-static-seed') staleWarnings.push('Static goal-dashboard seed is not presented as live truth.');
   if (githubTruth === 'unknown') staleWarnings.push('GitHub truth is unknown; no receipt/adapter supplied live GitHub proof.');
@@ -70,6 +302,7 @@ export function buildLiveGoalProjection(input = {}) {
     },
     importedGoals: { status: importedGoals.receipts?.length ? 'present' : 'none', verificationState: importedGoals.receipts?.length ? 'imported_unverified' : 'none', receipts: list(importedGoals.receipts), candidates: list(importedGoals.candidates) },
     githubTelemetry,
+    dashboardGoals,
     executionChains: buildExecutionChains({ goals: queuedCandidates, githubTelemetry }),
     sourceTruth,
     backendStatus: input.backendStatus || { status: backendHealthy ? 'live' : 'unknown', healthRoute: '/api/health' },
