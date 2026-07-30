@@ -98,6 +98,23 @@ test('dashboard goal cards fall back to bounded current receipts without claimin
   assert.equal(dashboardGoals.cards[0].proofTruth.github, 'unknown');
 });
 
+test('receipt totals preserve the full current estate before display truncation', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: { adapterAvailable: false },
+    queue: {
+      queuedCandidates: Array.from({ length: 13 }, (_, index) => ({
+        candidateId: `receipt-${index + 1}`,
+        title: `Receipt goal ${index + 1}`,
+        state: 'QUEUED',
+      })),
+    },
+  });
+  assert.equal(dashboardGoals.totalAvailable, 13);
+  assert.equal(dashboardGoals.displayedCount, 12);
+  assert.equal(dashboardGoals.cards.length, 12);
+});
+
 test('dashboard conservatively aggregates every unsuperseded PR linked to one goal', () => {
   const dashboardGoals = buildLiveDashboardGoals({
     observedAt: '2026-07-30T10:00:00.000Z',
@@ -140,6 +157,32 @@ test('dashboard surfaces open PRs without a durable issue link as an explicit bl
   assert.match(dashboardGoals.cards[0].nextAction, /durable GitHub goal issue/);
   assert.equal(dashboardGoals.activePrCount, 1);
   assert.equal(dashboardGoals.blockedCount, 1);
+});
+
+test('active PR totals preserve the full verified estate before card truncation', () => {
+  const pullRequests = Array.from({ length: 13 }, (_, index) => ({
+    number: 1701 + index,
+    title: `Unlinked implementation ${index + 1}`,
+    relatedIssues: [],
+    checksStatus: 'passed',
+    approvalStatus: 'unknown',
+    headSha: String(index + 1).padStart(40, '0'),
+  }));
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issueInventoryObserved: true,
+      issueInventoryComplete: true,
+      pullRequestInventoryComplete: true,
+      issues: [],
+      pullRequests,
+    },
+  });
+  assert.equal(dashboardGoals.totalAvailable, 13);
+  assert.equal(dashboardGoals.activePrCount, 13);
+  assert.equal(dashboardGoals.displayedCount, 12);
+  assert.equal(dashboardGoals.cards.length, 12);
 });
 
 test('GitHub review approval never fabricates runtime proof or exact-head operator approval', () => {
