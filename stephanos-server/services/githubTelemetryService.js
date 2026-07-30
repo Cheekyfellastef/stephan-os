@@ -1,11 +1,11 @@
 import { providerSecretStore } from './providerSecretStore.js';
 import { resolveGithubRepoConfig } from './githubPrEvidenceService.js';
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
-import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
+import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../../shared/agents/operatorMergeApprovalGate.mjs';
 
 export const GITHUB_TELEMETRY_SCHEMA = 'stephanos.github.telemetry.v1';
 const WORKFLOW_STATES = new Set(['running', 'queued', 'failed', 'passed', 'cancelled']);
-const DURABLE_ISSUE_REFERENCE_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:[a-z0-9_.-]+\/[a-z0-9_.-]+)?#(\d{1,10})\b/gi;
+const DURABLE_ISSUE_REFERENCE_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([a-z0-9_.-]+\/[a-z0-9_.-]+))?#(\d{1,10})\b/gi;
 const GITHUB_PAGE_SIZE = 100;
 const MAX_GITHUB_PAGES = 100;
 function text(value, fallback = '') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
@@ -16,14 +16,28 @@ function positiveInteger(value) {
   const number = Number(value);
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
-function durableIssueReferences(pr = {}) {
+function repositorySlug(repository) {
+  if (typeof repository === 'string') return lc(repository).replace(/^github\.com\//, '');
+  const fullName = text(repository?.full_name || repository?.fullName);
+  if (fullName) return lc(fullName);
+  const owner = text(repository?.owner?.login || repository?.owner);
+  const repo = text(repository?.repo || repository?.name);
+  return owner && repo ? lc(`${owner}/${repo}`) : '';
+}
+function durableIssueReferences(pr = {}, repository = null) {
+  const localRepository = repositorySlug(repository);
   const references = [
     ...list(pr.relatedIssues),
     ...list(pr.closingIssues),
     ...list(pr.closingIssueReferences),
-  ].map((reference) => positiveInteger(reference?.number ?? reference)).filter(Boolean);
+  ].filter((reference) => {
+    const referencedRepository = repositorySlug(reference?.repository || reference?.repositoryUrl || reference?.repo);
+    return !referencedRepository || (localRepository && referencedRepository === localRepository);
+  }).map((reference) => positiveInteger(reference?.number ?? reference)).filter(Boolean);
   for (const match of String(pr.body || '').matchAll(DURABLE_ISSUE_REFERENCE_PATTERN)) {
-    const number = Number(match[1]);
+    const referencedRepository = lc(match[1]);
+    if (referencedRepository && (!localRepository || referencedRepository !== localRepository)) continue;
+    const number = Number(match[2]);
     if (Number.isSafeInteger(number) && number > 0) references.push(number);
   }
   return [...new Set(references)];
@@ -146,7 +160,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
       draft: pr.draft === true,
       mergeable: typeof pr.mergeable === 'boolean' ? pr.mergeable : null,
       updatedAt: text(pr.updatedAt || pr.updated_at),
-      relatedIssues: durableIssueReferences(pr),
+      relatedIssues: durableIssueReferences(pr, raw.repository),
       checks: checkEvaluation.checks,
       checksStatus,
       requiredChecks: [...REQUIRED_EXACT_HEAD_WORKFLOWS],
