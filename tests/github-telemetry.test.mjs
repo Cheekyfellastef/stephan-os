@@ -4,7 +4,7 @@ import { answerLiveTelemetryQuestion, buildExecutionChains, classifyGithubNotifi
 import { resolveGithubAuth } from '../stephanos-server/services/githubAuthResolver.js';
 import { fetchGithubPrEvidence } from '../stephanos-server/services/githubPrEvidenceService.js';
 import { buildLiveGoalProjection } from '../stephanos-server/services/liveGoalProjectionService.js';
-import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../shared/agents/operatorMergeApprovalGate.mjs';
+import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
 
 function requiredChecks(headSha, conclusion = 'success') {
   return REQUIRED_EXACT_HEAD_WORKFLOWS.map((name, index) => ({
@@ -70,6 +70,8 @@ test('live projection correlates goals to PR workflow chain and command deck ans
 test('PR readiness requires the complete canonical workflow set on the unchanged exact head', () => {
   const currentHead = 'c'.repeat(40);
   const staleHead = 'd'.repeat(40);
+  assert.equal(REQUIRED_EXACT_HEAD_WORKFLOWS.includes('Exact-Head Review Dispatch'), false);
+  assert.equal(REQUIRED_EXACT_HEAD_WORKFLOWS.includes('Protected Operator Merge Source Proof'), false);
   const incomplete = normalizeGithubTelemetry({
     available: true,
     issues: [],
@@ -528,7 +530,14 @@ test('notification permission failure degrades advisory counts without discardin
   assert.equal(telemetry.issueInventoryComplete, true);
   assert.equal(telemetry.issueCount, 1);
   assert.equal(telemetry.notificationStatus, 'unavailable');
-  assert.equal(telemetry.blockers.includes('github_notifications_unavailable'), true);
+  assert.equal(telemetry.blockers.includes('github_notifications_unavailable'), false);
+  assert.equal(telemetry.warnings.includes('github_notifications_unavailable'), true);
+  const projection = buildLiveGoalProjection({
+    backendStatus: { status: 'live', ok: true },
+    missionOperationsFeed: { status: 'empty', missions: [], errors: [] },
+    githubTelemetry: telemetry,
+  });
+  assert.equal(projection.blockers.includes('github_notifications_unavailable'), false);
 });
 
 test('GitHub telemetry paginates workflow runs beyond the first page', async () => {
@@ -558,7 +567,43 @@ test('GitHub telemetry paginates workflow runs beyond the first page', async () 
     },
   });
   assert.equal(telemetry.workflows.length, 101);
+  assert.equal(telemetry.workflowInventoryComplete, true);
   assert.equal(calls.some((url) => url.includes('/actions/runs') && url.includes('page=2')), true);
+});
+
+test('workflow history cap degrades only workflow evidence without disabling repository truth', async () => {
+  const fullPage = Array.from({ length: 100 }, (_, index) => ({
+    id: index + 1,
+    name: `Historical workflow ${index + 1}`,
+    status: 'completed',
+    conclusion: 'success',
+    head_sha: 'a'.repeat(40),
+  }));
+  const telemetry = await readGithubTelemetry({
+    env: { GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'repo-token' },
+    secretStoreToken: '',
+    fetchImpl: async (url) => {
+      if (url.includes('/notifications')) return okJson([]);
+      if (url.includes('/pulls?')) return okJson([]);
+      if (url.includes('/issues?')) return okJson([{ number: 1, title: 'Current goal', state: 'open' }]);
+      if (url.includes('/actions/runs')) return okJson({ workflow_runs: fullPage });
+      if (/\/repos\/owner\/repo(?:\?|$)/.test(url)) return okJson({ default_branch: 'main' });
+      return okJson({});
+    },
+  });
+  assert.equal(telemetry.status, 'live');
+  assert.equal(telemetry.adapterAvailable, true);
+  assert.equal(telemetry.issueInventoryComplete, true);
+  assert.equal(telemetry.workflowInventoryComplete, false);
+  assert.equal(telemetry.workflows.length, 10_000);
+  assert.equal(telemetry.blockers.some((blocker) => blocker.startsWith('github_adapter_error:')), false);
+  assert.equal(telemetry.warnings.includes('github_workflow_inventory_incomplete'), true);
+  const projection = buildLiveGoalProjection({
+    backendStatus: { status: 'live', ok: true },
+    missionOperationsFeed: { status: 'empty', missions: [], errors: [] },
+    githubTelemetry: telemetry,
+  });
+  assert.equal(projection.blockers.includes('github_workflow_inventory_incomplete'), false);
 });
 
 test('GitHub telemetry paginates open issue inventory to exhaustion before claiming completeness', async () => {
