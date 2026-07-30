@@ -78,18 +78,15 @@ function compareCheckRunSequence(left = {}, right = {}) {
   const leftSequence = checkRunSequence(left);
   const rightSequence = checkRunSequence(right);
   if (leftSequence.runNumber !== null || rightSequence.runNumber !== null) {
-    if (leftSequence.runNumber === null) return -1;
-    if (rightSequence.runNumber === null) return 1;
+    if (leftSequence.runNumber === null || rightSequence.runNumber === null) return null;
     if (leftSequence.runNumber !== rightSequence.runNumber) return leftSequence.runNumber - rightSequence.runNumber;
     if (leftSequence.runAttempt !== null || rightSequence.runAttempt !== null) {
-      if (leftSequence.runAttempt === null) return -1;
-      if (rightSequence.runAttempt === null) return 1;
+      if (leftSequence.runAttempt === null || rightSequence.runAttempt === null) return null;
       if (leftSequence.runAttempt !== rightSequence.runAttempt) return leftSequence.runAttempt - rightSequence.runAttempt;
     }
   }
   if (leftSequence.runId !== null || rightSequence.runId !== null) {
-    if (leftSequence.runId === null) return -1;
-    if (rightSequence.runId === null) return 1;
+    if (leftSequence.runId === null || rightSequence.runId === null) return null;
     if (leftSequence.runId !== rightSequence.runId) return leftSequence.runId - rightSequence.runId;
   }
   return leftSequence.runNumber !== null || leftSequence.runId !== null ? 0 : null;
