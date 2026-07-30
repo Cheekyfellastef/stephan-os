@@ -7,7 +7,9 @@ import process from 'node:process';
 export const MISSION_WORKER_HEARTBEAT_SCHEMA = 'stephanos.mission-orchestrator-worker-heartbeat.v1';
 export const MISSION_WORKER_TASK_NAME = 'Stephanos Mission Orchestrator Worker';
 export const MISSION_WORKER_HEARTBEAT_FILE = 'mission-orchestrator-worker-heartbeat.json';
+export const DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS = 120_000;
 const SHA_40 = /^[0-9a-f]{40}$/i;
+const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -55,6 +57,57 @@ export function createMissionWorkerHeartbeatRecord({
     lastTickVerdict: text(lastTickVerdict, 'MISSION_WORKER_RUNNING'),
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
+  });
+}
+
+export function projectMissionWorkerHeartbeat(record = {}, {
+  nowUtc = new Date().toISOString(),
+  maxAgeMs = DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
+} = {}) {
+  const errors = [];
+  const heartbeatTimestamp = text(record?.timestampUtc);
+  const observationTimestamp = text(nowUtc);
+  const heartbeatMs = EXPLICIT_TIMEZONE.test(heartbeatTimestamp) ? Date.parse(heartbeatTimestamp) : Number.NaN;
+  const nowMs = EXPLICIT_TIMEZONE.test(observationTimestamp) ? Date.parse(observationTimestamp) : Number.NaN;
+  const boundedMaxAgeMs = Number.isFinite(maxAgeMs) && maxAgeMs > 0
+    ? maxAgeMs
+    : DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS;
+  if (!record || typeof record !== 'object' || Array.isArray(record)) errors.push('invalid-record');
+  if (record?.schemaVersion !== MISSION_WORKER_HEARTBEAT_SCHEMA) errors.push('invalid-worker-heartbeat-schema');
+  if (!Number.isFinite(heartbeatMs)) errors.push('invalid-worker-heartbeat-time');
+  if (!Number.isFinite(nowMs)) errors.push('invalid-observation-time');
+  if (text(record?.branch).toLowerCase() !== 'main') errors.push('worker-branch-not-main');
+  if (!SHA_40.test(text(record?.headSha))) errors.push('invalid-worker-head');
+  if (text(record?.taskName) !== MISSION_WORKER_TASK_NAME) errors.push('worker-task-not-allowlisted');
+  if (!Number.isInteger(record?.pid) || record.pid <= 0) errors.push('invalid-worker-pid');
+  if (record?.sourceMutationAllowed !== false) errors.push('worker-source-mutation-forbidden');
+  if (record?.arbitraryShellAllowed !== false) errors.push('worker-arbitrary-shell-forbidden');
+  if (Number.isFinite(heartbeatMs) && Number.isFinite(nowMs) && heartbeatMs - nowMs > 60_000) errors.push('future-worker-heartbeat');
+  const ageMs = Number.isFinite(heartbeatMs) && Number.isFinite(nowMs)
+    ? Math.max(0, nowMs - heartbeatMs)
+    : null;
+  const valid = errors.length === 0;
+  const fresh = valid && ageMs <= boundedMaxAgeMs;
+  return Object.freeze({
+    valid,
+    fresh,
+    stale: valid && !fresh,
+    ageMs,
+    timestampUtc: Number.isFinite(heartbeatMs) ? new Date(heartbeatMs).toISOString() : null,
+    repositoryRoot: text(record?.repositoryRoot),
+    branch: text(record?.branch).toLowerCase(),
+    headSha: text(record?.headSha).toLowerCase(),
+    taskName: text(record?.taskName),
+    pid: Number.isInteger(record?.pid) ? record.pid : null,
+    lastTickVerdict: text(record?.lastTickVerdict),
+    errors: Object.freeze([...new Set(errors)]),
+    authority: 'mission-worker-only',
+    controllerHeartbeatAuthority: false,
+    finalVerdict: !valid
+      ? 'MISSION_WORKER_HEARTBEAT_BLOCKED'
+      : fresh
+        ? 'MISSION_WORKER_HEARTBEAT_FRESH'
+        : 'MISSION_WORKER_HEARTBEAT_STALE',
   });
 }
 

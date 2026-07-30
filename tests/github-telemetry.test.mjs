@@ -129,7 +129,18 @@ test('PR evidence uses shared resolver authority and gh CLI fallback after expli
       const authorization = String(init.headers?.Authorization || '');
       calls.push({ url, authorization });
       if (url.includes('/pulls/7') && !url.includes('/files') && authorization === 'Bearer bad-env-token') return forbidden();
-      if (url.includes('/pulls/7') && !url.includes('/files')) return okJson({ number: 7, html_url: 'https://github.com/owner/repo/pull/7', title: 'PR', state: 'open', merged: false, head: { sha: 'a'.repeat(40) }, base: { ref: 'main' } });
+      if (url.includes('/pulls/7') && !url.includes('/files')) return okJson({
+        number: 7,
+        html_url: 'https://github.com/owner/repo/pull/7',
+        title: 'PR',
+        state: 'open',
+        merged: false,
+        merged_at: null,
+        closed_at: null,
+        merge_commit_sha: null,
+        head: { ref: 'feature/exact-head', sha: 'a'.repeat(40) },
+        base: { ref: 'main', sha: 'b'.repeat(40) },
+      });
       if (url.includes('/files')) return okJson([{ filename: 'README.md' }]);
       if (url.includes('/check-runs')) return okJson({ check_runs: [{ name: 'build', conclusion: 'success' }] });
       return okJson({});
@@ -138,6 +149,12 @@ test('PR evidence uses shared resolver authority and gh CLI fallback after expli
   assert.equal(payload.status, 'fetched');
   assert.equal(payload.authAuthority, 'gh-cli');
   assert.equal(payload.checksStatus, 'passed');
+  assert.equal(payload.repository, 'owner/repo');
+  assert.equal(payload.headBranch, 'feature/exact-head');
+  assert.equal(payload.baseSha, 'b'.repeat(40));
+  assert.equal(payload.mergedAt, '');
+  assert.equal(payload.closedAt, '');
+  assert.equal(payload.mergeCommitSha, '');
   assert.equal(JSON.stringify(payload).includes('gh-token'), false);
   assert.equal(calls.some((call) => call.authorization === 'Bearer bad-env-token'), true);
   assert.equal(calls.some((call) => call.authorization === 'Bearer gh-token'), true);

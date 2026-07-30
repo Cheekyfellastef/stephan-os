@@ -209,7 +209,12 @@ diagnosis/handler registered for the existing Monitor Multiplexer.
    production composition/mutation adapter:
    - read and publish the lease and controller heartbeat in the configured
      external Shared Workspace;
+   - expose and reuse the execution-receipt module's existing durable
+     Shared Workspace operation-lock implementation to serialize lease claim,
+     renewal and release; the guard is not lease or ownership authority;
    - call `fetchGithubPrEvidence` for the lease-bound PR;
+   - before lease acquisition, accept only scalar lane/issue/PR/repository
+     selectors and derive the exact head and branch from fetched GitHub truth;
    - read execution receipts, Battle Bridge/current workspace records, Mission
      Worker heartbeat and Critical Backlog Conveyor status;
    - call the existing Mission Scheduler and pure projection;
@@ -234,8 +239,9 @@ existing source contracts.
 | --- | --- | --- |
 | `stephanos.canonical-implementation-lane.v1` | `shared/agents/programmeAuthorityV1.mjs` | Projection/receipt only; derived from sources, never chat memory |
 | `stephanos.source-mutation-lease.v1` | pure contract in shared module; I/O in service | `status/source-mutation-lease-current.json` |
+| `stephanos.source-mutation-lease-release.v1` | exact-bound release record from the same lease authority | `status/source-lease-release-<lease>-<head>.json` |
 | `stephanos.programme-controller-heartbeat.v1` | pure contract in shared module; I/O in service | `status/programme-controller-heartbeat.json` |
-| `stephanos.terminal-lane-finalization.v1` | pure validation/receipt plus service finalizer | `receipts/terminal-lane-<laneId>.json` |
+| `stephanos.terminal-lane-finalization.v1` | pure validation/receipt plus service finalizer | `proof/terminal-pr-<pr>-<head>.json` and `receipts/terminal-pr-<pr>-<head>.json` |
 | `stephanos.programme-stall-diagnosis.v1` | shared pure diagnosis and Monitor Multiplexer handler | existing monitor status/proof/event paths |
 | `stephanos.authoritative-programme-projection.v1` | shared pure builder plus server composition service | projection receipt returned/published by the controller |
 

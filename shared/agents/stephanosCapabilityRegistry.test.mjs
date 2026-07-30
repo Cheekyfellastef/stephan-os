@@ -52,6 +52,16 @@ test('mailbox receipt reads, watchdog acceptance, shared workspace and post-sync
   assert.equal(refresh.liveOpenClawUpdateAllowed, false);
 });
 
+test('programme stall monitoring is registered as diagnosis on the existing monitor runtime', () => {
+  const monitor = findStephanosCapability('programme-stall-monitor');
+  assert.equal(monitor.category, 'programme-monitoring');
+  assert.equal(monitor.statusSource, 'monitor-multiplexer');
+  assert.equal(monitor.discoveryRoute, 'shared-workspace:monitor-programme-stall-monitor');
+  assert.ok(monitor.operations.includes('DIAGNOSE_PROGRAMME_STALL'));
+  assert.ok(monitor.operations.includes('PUBLISH_MONITOR_RESULT'));
+  assert.equal(monitor.runtimeMutationAllowed, false);
+});
+
 test('nested Windows, UNC and local absolute paths fail closed', () => {
   for (const discoveryRoute of [
     'C:\\Users\\Stephan\\secret',

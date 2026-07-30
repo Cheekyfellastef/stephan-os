@@ -62,9 +62,10 @@ export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth
   if (checksStatus !== 'passed') missingProof.push('checks');
   const mergeReadiness = pr.merged ? 'already-merged' : (checksStatus === 'failed' ? 'needs-amendment' : (checksStatus === 'passed' ? 'merge-candidate' : 'needs-proof'));
   return {
-    status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo, prNumber: Number(pr.number || prNumber),
+    status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo, repository: `${owner}/${repo}`, prNumber: Number(pr.number || prNumber),
     prUrl: asText(pr.html_url, ''), prTitle: asText(pr.title, ''), prState: asText(pr.state, 'unknown'), merged: pr.merged === true,
-    headSha: asText(pr.head?.sha, ''), baseBranch: asText(pr.base?.ref, ''),
+    headSha: asText(pr.head?.sha, ''), headBranch: asText(pr.head?.ref, ''), baseBranch: asText(pr.base?.ref, ''), baseSha: asText(pr.base?.sha, ''),
+    mergedAt: asText(pr.merged_at, ''), closedAt: asText(pr.closed_at, ''), mergeCommitSha: asText(pr.merge_commit_sha, ''),
     changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks,
     buildStatus: checksStatus === 'passed' ? 'passed' : 'unknown', verifyStatus: checksStatus === 'passed' ? 'passed' : 'unknown', browserProofStatus: 'unknown',
     codexTaskPresent: 'unknown', codexTaskRefs: [], retrievedAt: new Date().toISOString(), evidenceWarnings: [], missingProof,
