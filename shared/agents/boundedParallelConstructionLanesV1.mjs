@@ -1,10 +1,13 @@
 const SHA_RE = /^[0-9a-f]{40}$/i;
+const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
+const SAFE_BRANCH = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const TERMINAL_STATES = new Set(['READY_FOR_INTEGRATION', 'BLOCKED', 'SUPERSEDED', 'FAILED', 'CANCELLED']);
 const ACTIVE_STATES = new Set(['ADMITTED', 'BUILDING', 'TESTING', 'PROOF_RUNNING']);
 const KNOWN_STATES = new Set([...ACTIVE_STATES, ...TERMINAL_STATES]);
 const INTEGRATION_STATES = new Set([...KNOWN_STATES, 'CI_REVIEW', 'INTEGRATING']);
 const FORBIDDEN_CAPABILITIES = new Set(['MERGE', 'DEPLOY', 'APPROVE', 'LEASE_SEIZE', 'RUNTIME_MUTATE']);
 const DEFAULT_MAX_LANES = 4;
+const MAX_CONSTRUCTION_LEASE_MS = 24 * 60 * 60 * 1000;
 const EXACT_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/i;
 const ADMITTED_DECISIONS = new WeakMap();
 
@@ -117,9 +120,10 @@ function normalizeLane(candidate = {}) {
 }
 
 function laneInvalid(lane) {
-  return !lane.id
-    || !lane.goalId
-    || !lane.branch
+  return !SAFE_ID.test(lane.id ?? '')
+    || !SAFE_ID.test(lane.goalId ?? '')
+    || !SAFE_BRANCH.test(lane.branch ?? '')
+    || lane.branch.includes('..')
     || !lane.baseSha
     || lane.ownership.invalidPaths
     || lane.ownership.invalidContracts
@@ -143,7 +147,9 @@ function normalizeIntegrationLane(candidate) {
   const ownership = normalizeOwnership(candidate.ownership);
   const terminal = TERMINAL_STATES.has(state);
   const invalid = !id
-    || !branch
+    || !SAFE_ID.test(id)
+    || !SAFE_BRANCH.test(branch ?? '')
+    || branch.includes('..')
     || !INTEGRATION_STATES.has(state)
     || ownership.invalidPaths
     || ownership.invalidContracts
@@ -347,7 +353,10 @@ export function createConstructionLaneLease(admission, options = {}) {
   const expiresAt = text(options.expiresAt);
   const issuedAtMs = timestamp(issuedAt);
   const expiresAtMs = timestamp(expiresAt);
-  if (issuedAtMs === null || expiresAtMs === null || expiresAtMs <= issuedAtMs) {
+  if (issuedAtMs === null
+    || expiresAtMs === null
+    || expiresAtMs <= issuedAtMs
+    || expiresAtMs - issuedAtMs > MAX_CONSTRUCTION_LEASE_MS) {
     throw new TypeError('issuedAt and expiresAt must be valid increasing timestamps');
   }
   reservation.consumed = true;
@@ -382,6 +391,7 @@ function exactHeadEvidenceRefs(values, lane, name, evidenceKind) {
       || value.evidenceKind !== evidenceKind
       || !ref
       || !array(value.proofRefs).includes(ref)
+      || timestamp(value.timestampUtc) === null
       || text(value.branch) !== lane.branch
       || sha(value.headSha) !== lane.headSha) {
       throw new TypeError(`${name} evidence must match the lane branch and exact head`);
