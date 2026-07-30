@@ -1689,7 +1689,10 @@
         const rawMissions = Array.isArray(feed.missions) ? feed.missions : [];
         const missions = liveProjection
           ? rawMissions
-          : rawMissions.filter((mission) => approvedTimestamp(mission?.mission?.updatedAt || mission?.updatedAt) !== null);
+          : rawMissions.filter((mission) => {
+            const observedAt = approvedTimestamp(mission?.mission?.updatedAt || mission?.updatedAt);
+            return observedAt !== null && observedAt <= Date.now() + MAX_APPROVED_TELEMETRY_CLOCK_SKEW_MS;
+          });
         if (!liveProjection && missions.length !== rawMissions.length) return false;
         const sourceBadge = liveProjection?.sourceTruth === 'mixed' ? 'MIXED' : (liveProjection?.sourceTruth === 'live' ? 'LIVE' : 'UNKNOWN');
         const heartbeat = liveProjection?.heartbeat || {};
