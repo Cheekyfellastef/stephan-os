@@ -139,6 +139,7 @@ test('newer workflow evidence overrides stale embedded checks for the same exact
     pullRequestInventoryComplete: true,
     workflows: [{
       id: 'new-failure',
+      workflow_id: 101,
       name: REQUIRED_EXACT_HEAD_WORKFLOWS[0],
       headSha,
       prNumber: 53,
@@ -147,7 +148,8 @@ test('newer workflow evidence overrides stale embedded checks for the same exact
       updatedAt: '2026-07-30T11:00:00.000Z',
     }],
   });
-  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
+  assert.deepEqual(telemetry.pullRequests[0].conflictingRequiredChecks, [REQUIRED_EXACT_HEAD_WORKFLOWS[0]]);
   assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
 });
 
@@ -205,8 +207,8 @@ test('canonical workflow rerun sequence outranks completion timestamps', () => {
     pullRequests: [{ number: 56, headSha, checks }],
     pullRequestInventoryComplete: true,
     workflows: [
-      { id: 7001, run_number: 41, name: workflowName, headSha, prNumber: 56, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T10:00:00.000Z' },
-      { id: 6999, run_number: 40, name: workflowName, headSha, prNumber: 56, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T11:00:00.000Z' },
+      { id: 7001, workflow_id: 102, run_number: 41, name: workflowName, headSha, prNumber: 56, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T10:00:00.000Z' },
+      { id: 6999, workflow_id: 102, run_number: 40, name: workflowName, headSha, prNumber: 56, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T11:00:00.000Z' },
     ],
   });
   assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
@@ -235,10 +237,10 @@ test('check-run run numbers cannot compete with workflow-run sequence metadata',
     pullRequests: [{ number: 59, headSha, checks }],
     pullRequestInventoryComplete: true,
     workflows: [
-      { id: 6001, run_number: 10, name: workflowName, headSha, prNumber: 59, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T11:00:00.000Z' },
+      { id: 6001, workflow_id: 103, run_number: 10, name: workflowName, headSha, prNumber: 59, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T11:00:00.000Z' },
     ],
   });
-  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
   assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
 });
 
@@ -253,8 +255,8 @@ test('canonical workflow run ID breaks rerun order when run numbers are unavaila
     pullRequests: [{ number: 57, headSha, checks }],
     pullRequestInventoryComplete: true,
     workflows: [
-      { id: 8002, name: workflowName, headSha, prNumber: 57, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T10:00:00.000Z' },
-      { id: 8001, name: workflowName, headSha, prNumber: 57, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T11:00:00.000Z' },
+      { id: 8002, workflow_id: 104, name: workflowName, headSha, prNumber: 57, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T10:00:00.000Z' },
+      { id: 8001, workflow_id: 104, name: workflowName, headSha, prNumber: 57, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T11:00:00.000Z' },
     ],
   });
   assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
@@ -274,10 +276,10 @@ test('mixed sequenced and unsequenced workflow evidence reconciles by freshness 
     pullRequests: [{ number: 58, headSha, checks }],
     pullRequestInventoryComplete: true,
     workflows: [
-      { id: 9001, run_number: 40, name: workflowName, headSha, prNumber: 58, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T10:00:00.000Z' },
+      { id: 9001, workflow_id: 105, run_number: 40, name: workflowName, headSha, prNumber: 58, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T10:00:00.000Z' },
     ],
   });
-  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
   assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
 });
 
@@ -294,11 +296,50 @@ test('check-run IDs never compete with workflow-run IDs as one sequence domain',
     pullRequests: [{ number: 59, headSha, checks }],
     pullRequestInventoryComplete: true,
     workflows: [
-      { id: 1000000000000, name: workflowName, headSha, prNumber: 59, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T10:00:00.000Z' },
+      { id: 1000000000000, workflow_id: 106, name: workflowName, headSha, prNumber: 59, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T10:00:00.000Z' },
     ],
   });
-  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
   assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+});
+
+test('workflow rerun sequence fails closed across workflow definitions sharing one display name', () => {
+  const headSha = 'b'.repeat(40);
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const checks = requiredChecks(headSha).filter((check) => check.name !== workflowName);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 64, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 6401, workflow_id: 201, run_number: 100, name: workflowName, headSha, prNumber: 64, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T10:00:00.000Z' },
+      { id: 6402, workflow_id: 202, run_number: 1, name: workflowName, headSha, prNumber: 64, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T11:00:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
+  assert.deepEqual(telemetry.pullRequests[0].conflictingRequiredChecks, [workflowName]);
+});
+
+test('later check-run success cannot override an incomparable workflow-run failure', () => {
+  const headSha = 'c'.repeat(40);
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const checks = requiredChecks(headSha).map((check) => check.name === workflowName
+    ? { ...check, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T11:00:00.000Z' }
+    : check);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 65, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 6501, workflow_id: 203, run_number: 8, name: workflowName, headSha, prNumber: 65, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T10:30:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
+  assert.deepEqual(telemetry.pullRequests[0].conflictingRequiredChecks, [workflowName]);
 });
 
 test('PR issue correlation accepts explicit closing references and rejects incidental mentions', () => {
