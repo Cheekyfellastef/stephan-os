@@ -45,6 +45,7 @@ const intelligenceUi = {
   tasteSignals: document.getElementById('taste-signal-strip'),
   tasteConfidence: document.getElementById('taste-confidence-chip'),
   tasteCopy: document.getElementById('taste-compass-copy'),
+  tasteMeter: document.getElementById('taste-compass-meter'),
 };
 
 const tileEventBridge = (() => { try { return createTileEventBridge({ tileId: 'music-tile', tileSource: 'music-cockpit' }); } catch { return null; } })();
@@ -163,7 +164,8 @@ async function startSurpriseJourney() {
   if (title) title.textContent = 'Opening the next door…';
   if (subtitle) subtitle.textContent = `Reading your ${seedArtist} signal`;
   try {
-    await buildJourney();
+    const buildOutcome = await buildJourney();
+    if (!buildOutcome?.ok) return;
     const doorwayTrack = state.candidates?.[0] || null;
     if (doorwayTrack && !state.listeningDeck.some((track) => `${track.id}` === `${doorwayTrack.id}`)) {
       state.listeningDeck.unshift(doorwayTrack);
@@ -176,6 +178,8 @@ async function startSurpriseJourney() {
     } else {
       ui.status.textContent = 'No evidence-backed doorway track was available. Try an artist in Advanced Studio.';
     }
+  } catch (error) {
+    setTerminalStatus(`Journey not ready: ${String(error?.message || error)}. Your existing listening room was not reported as ready.`);
   } finally {
     button.disabled = false;
     button.classList.remove('is-loading');
@@ -237,11 +241,11 @@ function getNoveltyStatement(track = {}) {
 
 function renderMusicIntelligenceCentre() {
   const track = state.candidates?.[0] || state.listeningDeck?.[0] || null;
-  const positiveSignals = Object.entries(state.tasteDNA || {})
+  const positiveSignalEntries = Object.entries(state.tasteDNA || {})
     .filter(([, meta]) => meta?.polarity !== 'negative' && Number(meta?.weight || 0) > 0)
     .sort((a, b) => Number(b[1]?.weight || 0) - Number(a[1]?.weight || 0))
-    .slice(0, 3)
-    .map(([name]) => name);
+    .slice(0, 3);
+  const positiveSignals = positiveSignalEntries.map(([name]) => name);
   const ratingCount = Object.keys(state.ratings || {}).length;
 
   if (intelligenceUi.tasteSignals) {
@@ -254,7 +258,19 @@ function renderMusicIntelligenceCentre() {
   }
   if (intelligenceUi.tasteCopy) {
     const signalText = positiveSignals.length ? positiveSignals.join(', ') : 'no positive signals yet';
-    intelligenceUi.tasteCopy.textContent = `Current compass: ${signalText}. Based on stored weights and ${ratingCount} track rating${ratingCount === 1 ? '' : 's'}; AI suggestions still require approval.`;
+    intelligenceUi.tasteCopy.textContent = `Current compass: ${signalText}. Bars are relative to the strongest current stored signal; based on ${ratingCount} track rating${ratingCount === 1 ? '' : 's'}. AI suggestions still require approval.`;
+  }
+  if (intelligenceUi.tasteMeter) {
+    const strongestWeight = Number(positiveSignalEntries[0]?.[1]?.weight || 0);
+    intelligenceUi.tasteMeter.hidden = positiveSignalEntries.length === 0;
+    intelligenceUi.tasteMeter.innerHTML = positiveSignalEntries.map(([name, meta]) => {
+      const weight = Number(meta?.weight || 0);
+      const relativeStrength = strongestWeight > 0
+        ? Math.max(0, Math.min(100, Math.round((weight / strongestWeight) * 100)))
+        : 0;
+      const label = `${name}: stored weight ${weight.toFixed(2)}, ${relativeStrength}% of the strongest positive signal`;
+      return `<span style="--strength: ${relativeStrength}%" role="img" aria-label="${escapeHtml(label)}"></span>`;
+    }).join('');
   }
 
   if (!track) {
@@ -475,50 +491,114 @@ function ensureTrait(trait, polarity = 'positive', weight = 1, category = 'exper
 function addCustomTrait() { const name = ui.addTraitName?.value?.trim(); if (!name) return; const polarity = ui.addTraitType?.value === 'negative' ? 'negative' : 'positive'; ensureTrait(name, polarity, Number(ui.addTraitWeight?.value || 1), 'experimental'); ui.addTraitName.value = ''; saveState(); renderAll(); }
 function applyFeedback(id, text) { const result = parseFeedback(text); const track = state.listeningDeck.find((item) => `${item.id}` === `${id}`); const lower = String(text || '').toLowerCase(); const unverifiedSignal = /(not a real song|can't find it|could not find it|made up|hallucinated|artist is real but song isn't|artist is real however|not on spotify|not on youtube)/i.test(lower); if (unverifiedSignal && track?.aiSuggested) { const likelyHallucinated = /(not a real song|made up|hallucinated|artist is real but song isn't|artist is real however)/i.test(lower); track.candidateVerificationStatus = likelyHallucinated ? AI_CANDIDATE_STATUSES.likelyHallucinated : AI_CANDIDATE_STATUSES.notFound; track.verificationNote = 'User could not verify this track. Artist/reference may be real, title may be AI-generated.'; track.aiFitScore = Number(track.aiFitScore || 0) - 50; state.aiCandidateAudit = Array.isArray(state.aiCandidateAudit) ? state.aiCandidateAudit : []; state.aiCandidateAudit.push({ id: track.id, artist: track.artist || '', title: track.title || '', status: track.candidateVerificationStatus, feedback: String(text || ''), at: new Date().toISOString() }); state.feedbackHistory.push({ id, ...result, at: new Date().toISOString(), verificationOnly: true }); emitPresenceEvent({ kind: likelyHallucinated ? 'music.ai_candidate_hallucinated' : 'music.ai_candidate_unverified', severity: 'warning', summary: likelyHallucinated ? 'AI candidate likely hallucinated.' : 'AI candidate could not be verified.', impact: track.verificationNote, suggestedAction: 'Replace with verified link or keep as search-only candidate.' }); state.lastFeedbackInterpreted = result; state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); return; } state.feedbackHistory.push({ id, ...result, at: new Date().toISOString() }); const bump = (trait, polarity, delta) => { ensureTrait(trait, polarity, delta, polarity === 'negative' ? 'avoid' : 'core'); const rec = state.tasteDNA[trait]; rec.weight = Number((rec.weight + delta).toFixed(2)); rec.contributions += 1; rec.updatedAt = new Date().toISOString(); }; result.plus.forEach((trait) => bump(trait, 'positive', 0.6)); result.minus.forEach((trait) => bump(trait, 'negative', 0.8)); state.lastFeedbackInterpreted = result; emitPresenceEvent({ kind: 'feedback_applied', severity: 'notice', summary: 'Music feedback applied to Taste DNA', impact: 'Taste DNA weights updated from feedback.', suggestedAction: 'Review strongest positive and negative signals.' }); state.candidates = rankCandidatesByTaste(buildSeededCandidates(parseArtists(ui.artistInput?.value || '')[0] || 'anyma'), buildTasteWeightsForState()); saveState(); renderAll(); }
 function buildTasteWeightsForState() { const learned = buildTasteWeights(state); for (const [trait, meta] of Object.entries(state.tasteDNA || {})) { if (meta.polarity === 'negative') learned.rejectWeights[trait.toLowerCase()] = Number(((learned.rejectWeights[trait.toLowerCase()] || 0) + Number(meta.weight || 0)).toFixed(2)); else learned.positiveWeights[trait.toLowerCase()] = Number(((learned.positiveWeights[trait.toLowerCase()] || 0) + Number(meta.weight || 0)).toFixed(2)); } return learned; }
-async function buildJourney() { const artists = parseArtists(ui.artistInput?.value || ''); if (!artists.length) { setTerminalStatus('Enter an artist to build a journey.'); return; } const term = artists[0]; const normalized = normalizeArtistAlias(term); logBuildJourney('buildJourney:start', { artist: term }); logBuildJourney('input value', { value: ui.artistInput?.value || '' }); logBuildJourney('normalized artist key', { normalizedArtistKey: normalized }); setTerminalStatus(`Building journey for: ${term}`); state.sessionCounter = Number(state.sessionCounter || 0) + 1; try { let rawCandidates = []; let resolverFailed = false; try { rawCandidates = buildSeededCandidates(term, { includeSeen: false }); } catch (error) { resolverFailed = true; logBuildJourney('caught error message and stack', { message: String(error?.message || error), stack: String(error?.stack || '') }); rawCandidates = buildSeededCandidates('unknown artist', { includeSeen: false }); }
-  logBuildJourney('candidate count from resolver', { count: Array.isArray(rawCandidates) ? rawCandidates.length : 0 });
-  logBuildJourney('first candidate shape', { first: rawCandidates?.[0] || null });
-  const normalizedCandidates = normalizeCandidates(rawCandidates, normalized);
-  state.candidates = rankCandidatesByTaste(normalizedCandidates, buildTasteWeightsForState()); const builtCount = state.candidates.length;
-  try {
-    const pipeline = await runMusicDiscoveryPipeline({ query: term, tasteDNA: state.tasteDNA, aiHints: state.aiSmarterJourney || [], localCandidates: state.candidates || [] });
-    state.discoveryPipeline = { ...pipeline, generatedAt: new Date().toISOString(), artistProfile: pipeline.artistProfile || null };
-  } catch (pipelineError) {
-    state.discoveryPipeline = {
-      query: term,
-      summary: 'Discovery Pipeline v2 unavailable; showing legacy/local discovery results.',
-      verifiedCandidates: [],
-      searchLeads: [],
-      aiSuggestions: [],
-      fallbackCandidates: [],
-      warnings: [`Discovery Pipeline error: ${String(pipelineError?.message || pipelineError)}`],
-      resultCount: 0,
-      targetCount: DEFAULT_DISCOVERY_RESULT_TARGET,
-      generatedAt: new Date().toISOString(),
-    };
+async function buildJourney() {
+  const artists = parseArtists(ui.artistInput?.value || '');
+  if (!artists.length) {
+    const message = 'Enter an artist to build a journey.';
+    setTerminalStatus(message);
+    return Object.freeze({ ok: false, message, candidateCount: 0 });
   }
-  logBuildJourney('ranked candidate count', { count: state.candidates.length });
-  if (!state.listeningDeck.length && state.candidates.length) state.listeningDeck = [state.candidates[0]];
-  const meta = state.lastDiscoveryMeta || {}; const status = meta.artistVerificationStatus || 'unresolved';
-  let finalStatus = 'No candidates found';
-  if (!state.candidates.length) finalStatus = 'No candidates found';
-  else if (resolverFailed) finalStatus = `Build failed: resolver exception, fallback used`;
-  else if (normalized === 'Y do I') finalStatus = 'Y do I recognised. Local candidate bank limited; showing Spotify search-led candidates.';
-  else if (status === 'fallback-only' || status === 'unresolved') finalStatus = 'No artist bank found, broad fallback used';
-  else finalStatus = `Built ${state.candidates.length} candidates for ${meta.canonicalArtist || term} — see Discovery Pipeline.`;
-  emitPresenceEvent({ kind: 'journey_built', severity: 'info', summary: `Journey built for ${term}`, impact: `${state.candidates.length} candidates ready.`, suggestedAction: 'Start journey and rate tracks.' });
-  saveState(); safeRenderAll('buildJourney'); setTerminalStatus(finalStatus);
- } catch (error) { const message = `Build failed: ${String(error?.message || error)}, fallback used`; logBuildJourney('caught error message and stack', { message: String(error?.message || error), stack: String(error?.stack || '') }); setTerminalStatus(message); safeRenderAll('buildJourney-error'); }
+
+  const term = artists[0];
+  const normalized = normalizeArtistAlias(term);
+  logBuildJourney('buildJourney:start', { artist: term });
+  logBuildJourney('input value', { value: ui.artistInput?.value || '' });
+  logBuildJourney('normalized artist key', { normalizedArtistKey: normalized });
+  setTerminalStatus(`Building journey for: ${term}`);
+  state.sessionCounter = Number(state.sessionCounter || 0) + 1;
+
+  try {
+    let rawCandidates = [];
+    let resolverFailed = false;
+    try {
+      rawCandidates = buildSeededCandidates(term, { includeSeen: false });
+    } catch (error) {
+      resolverFailed = true;
+      logBuildJourney('caught error message and stack', {
+        message: String(error?.message || error),
+        stack: String(error?.stack || ''),
+      });
+      rawCandidates = buildSeededCandidates('unknown artist', { includeSeen: false });
+    }
+
+    logBuildJourney('candidate count from resolver', { count: Array.isArray(rawCandidates) ? rawCandidates.length : 0 });
+    logBuildJourney('first candidate shape', { first: rawCandidates?.[0] || null });
+    const normalizedCandidates = normalizeCandidates(rawCandidates, normalized);
+    state.candidates = rankCandidatesByTaste(normalizedCandidates, buildTasteWeightsForState());
+
+    try {
+      const pipeline = await runMusicDiscoveryPipeline({
+        query: term,
+        tasteDNA: state.tasteDNA,
+        aiHints: state.aiSmarterJourney || [],
+        localCandidates: state.candidates || [],
+      });
+      state.discoveryPipeline = {
+        ...pipeline,
+        generatedAt: new Date().toISOString(),
+        artistProfile: pipeline.artistProfile || null,
+      };
+    } catch (pipelineError) {
+      state.discoveryPipeline = {
+        query: term,
+        summary: 'Discovery Pipeline v2 unavailable; showing legacy/local discovery results.',
+        verifiedCandidates: [],
+        searchLeads: [],
+        aiSuggestions: [],
+        fallbackCandidates: [],
+        warnings: [`Discovery Pipeline error: ${String(pipelineError?.message || pipelineError)}`],
+        resultCount: 0,
+        targetCount: DEFAULT_DISCOVERY_RESULT_TARGET,
+        generatedAt: new Date().toISOString(),
+      };
+    }
+
+    logBuildJourney('ranked candidate count', { count: state.candidates.length });
+    if (!state.listeningDeck.length && state.candidates.length) state.listeningDeck = [state.candidates[0]];
+    const meta = state.lastDiscoveryMeta || {};
+    const status = meta.artistVerificationStatus || 'unresolved';
+    let finalStatus = 'No candidates found';
+    if (!state.candidates.length) finalStatus = 'No candidates found';
+    else if (resolverFailed) finalStatus = 'Build failed: resolver exception, fallback used';
+    else if (normalized === 'Y do I') finalStatus = 'Y do I recognised. Local candidate bank limited; showing Spotify search-led candidates.';
+    else if (status === 'fallback-only' || status === 'unresolved') finalStatus = 'No artist bank found, broad fallback used';
+    else finalStatus = `Built ${state.candidates.length} candidates for ${meta.canonicalArtist || term} — see Discovery Pipeline.`;
+
+    emitPresenceEvent({
+      kind: 'journey_built',
+      severity: 'info',
+      summary: `Journey built for ${term}`,
+      impact: `${state.candidates.length} candidates ready.`,
+      suggestedAction: 'Start journey and rate tracks.',
+    });
+    saveState();
+    if (!safeRenderAll('buildJourney')) {
+      const message = 'Build failed while rendering the journey.';
+      setTerminalStatus(message);
+      return Object.freeze({ ok: false, message, candidateCount: state.candidates.length });
+    }
+    setTerminalStatus(finalStatus);
+    return Object.freeze({ ok: !resolverFailed, message: finalStatus, candidateCount: state.candidates.length });
+  } catch (error) {
+    const message = `Build failed: ${String(error?.message || error)}, fallback used`;
+    logBuildJourney('caught error message and stack', {
+      message: String(error?.message || error),
+      stack: String(error?.stack || ''),
+    });
+    setTerminalStatus(message);
+    safeRenderAll('buildJourney-error');
+    return Object.freeze({ ok: false, message, candidateCount: state.candidates.length });
+  }
 }
 function startJourney() { const artists = parseArtists(ui.artistInput?.value || ''); if (!artists.length) { ui.status.textContent = 'Enter an artist to build a journey.'; return; } const term = artists[0]; if (!state.candidates.length) state.candidates = rankCandidatesByTaste(buildSeededCandidates(term), buildTasteWeightsForState()); if (!state.listeningDeck.length) state.listeningDeck = state.candidates.slice(0, 3); ui.status.textContent = `Starting journey for: ${term}.`; saveState(); renderAll(); }
 function addTrackByUrl() { const raw = String(ui.addTrackUrlInput?.value || '').trim(); if (!raw) return; const spotify = resolveSpotifyReference(raw); const youtube = normalizeYouTubeUrl(raw); if (spotify.valid && spotify.type !== 'track') { ui.status.textContent = 'Paste a Spotify track URL to create a playable card.'; return; } if (!spotify.valid && !youtube) { ui.status.textContent = spotify.reason === 'search-url' ? 'This is a Spotify search link, not a playable track link. Open a result in Spotify and paste the track URL.' : 'Paste a valid Spotify track URL or YouTube URL.'; return; } const track = { id: `manual-${Date.now()}`, title: spotify.valid ? 'Spotify track' : 'YouTube track', artist: 'Unknown', spotifyUrl: spotify.valid ? spotify.openUrl : null, spotifyUri: spotify.valid ? spotify.uri : null, candidateVerificationStatus: spotify.valid ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.unverified, youtubeUrl: youtube || null, lane: 'Manual URL import' }; state.listeningDeck.unshift(track); ui.addTrackUrlInput.value = ''; ui.status.textContent = spotify.valid ? 'Spotify track verified. Listening Deck card updated.' : 'Add track by URL: added YouTube URL to Listening Deck.'; saveState(); renderListeningDeck(); }
 function resetAll() { localStorage.removeItem(STORAGE_KEY); Object.assign(state, loadState()); ui.status.textContent = 'Reset complete.'; renderAll(); }
-function renderAll() { renderTasteDNA(); renderCandidates(); renderListeningDeck(); renderDiscoveryResults(); renderAiSuggestions(); renderPendingTasteDnaChanges(); renderAppliedTasteDnaChanges(); renderImmersionSession(); renderJourneyQueue(); renderActiveJourneySummary(); renderMusicIntelligenceCentre(); enhanceListeningDeckCards(); }
+function renderAll() { renderTasteDNA(); renderCandidates(); renderListeningDeck(); renderDiscoveryResults(); renderAiSuggestions(); renderPendingTasteDnaChanges(); renderAppliedTasteDnaChanges(); renderImmersionSession(); renderJourneyQueue(); renderActiveJourneySummary(); renderMusicIntelligenceCentre(); }
 function renderTasteDNA() { const anchors = Object.entries(state.tasteDNA).filter(([,meta]) => meta?.polarity !== 'negative' && Number(meta?.weight || 0) > 0).map(([name]) => name).filter(Boolean); ui.positiveAnchors.innerHTML = `<h3>✨ Positive anchors</h3>${anchors.length ? anchors.slice(0, 10).map((name) => `<div class="meta">${name}</div>`).join('') : '<div class="music-empty-state">🎯 No positive anchors yet. Rate tracks or add custom traits to shape your sound.</div>'}`; ui.rejectPatterns.innerHTML = '<h3>🚫 Reject patterns</h3>'; const counts = RATING_VALUES.reduce((acc, val) => ({ ...acc, [val]: 0 }), {}); for (const value of Object.values(state.ratings)) counts[value] = (counts[value] || 0) + 1; ui.ratingCounts.innerHTML = `<h3>Rating counts</h3><div class="card">${Object.entries(counts).map(([k,v]) => `<div>${k}: ${v}</div>`).join('')}</div>`; const weights = buildTasteWeightsForState(); const topPositive = topSignals(weights.positiveWeights); const topReject = topSignals(weights.rejectWeights); const recent = Object.entries(state.tasteDNA).sort((a,b)=>String(b[1].updatedAt||'').localeCompare(String(a[1].updatedAt||''))).slice(0,5).map(([k])=>k); ui.learningSignals.innerHTML = `<h3>🧬 Learning Signals</h3><div class="card dna-grid"><div><strong>Strongest positive</strong>${topPositive.map(([k,v])=>`<div class="dna-row dna-row--positive"><span>${k}</span><strong>+${v.toFixed(2)}</strong></div>`).join('') || '<div class="meta">None</div>'}</div><div><strong>Strongest negative</strong>${topReject.map(([k,v])=>`<div class="dna-row dna-row--negative"><span>${k}</span><strong>-${v.toFixed(2)}</strong></div>`).join('') || '<div class="meta">None</div>'}</div><div><strong>Recently changed</strong>${recent.map((x)=>`<div class="meta">${x}</div>`).join('') || '<div class="meta">None</div>'}</div><div class="meta"><strong>Ratings contributed</strong> ${Object.keys(state.ratings).length}</div><div class="meta"><strong>Last feedback interpreted</strong> ${state.lastFeedbackInterpreted?.raw || 'none yet'}</div></div>`; ui.traitRows.innerHTML = Object.entries(state.tasteDNA).map(([name, meta]) => `<div class="card trait-row"><strong>${name}</strong><div class="meta">${meta.polarity} · ${meta.category} · tracks ${meta.contributions}</div><div class="actions"><button data-action="weight-dec" data-trait="${name}">-</button><span data-weight="${name}">${Number(meta.weight).toFixed(2)}</span><button data-action="weight-inc" data-trait="${name}">+</button><input type="range" min="-5" max="10" step="0.2" value="${Number(meta.weight)}" data-action="weight-slider" data-trait="${name}" /></div></div>`).join(''); ui.traitRows.querySelectorAll('[data-action="weight-inc"]').forEach((btn)=>btn.addEventListener('click',()=>adjustTraitWeight(btn.dataset.trait,0.5))); ui.traitRows.querySelectorAll('[data-action="weight-dec"]').forEach((btn)=>btn.addEventListener('click',()=>adjustTraitWeight(btn.dataset.trait,-0.5))); ui.traitRows.querySelectorAll('[data-action="weight-slider"]').forEach((input)=>input.addEventListener('input',()=>setTraitWeight(input.dataset.trait, Number(input.value)))); }
 function adjustTraitWeight(name, delta) { if (!state.tasteDNA[name]) return; state.tasteDNA[name].weight = Number((state.tasteDNA[name].weight + delta).toFixed(2)); state.tasteDNA[name].updatedAt = new Date().toISOString(); state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); }
 function setTraitWeight(name, value) { if (!state.tasteDNA[name]) return; state.tasteDNA[name].weight = Number(value.toFixed(2)); state.tasteDNA[name].updatedAt = new Date().toISOString(); state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); }
 function renderCandidates() { ui.candidateList.innerHTML = state.candidates.length ? state.candidates.map((track) => `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'}</div><div class="meta">Local score: ${(track.tasteScore ?? 0).toFixed(2)}</div><div class="meta">AI fit score: ${Number(track.aiFitScore ?? 0).toFixed(0)}</div><div class="meta">Why this surfaced: Matched traits: ${track.why?.positiveHits?.join(', ') || 'none'}. Avoid flags: ${track.why?.rejectHits?.join(', ') || 'none'}. Final reason: ${track.aiReason || track.reason || 'Local taste match'}.</div><div class="actions"><button data-action="enqueue" data-id="${track.id}">Add to listening queue</button>${mediaActionLinks(track)}</div></article>`).join('') : '<div class="card">No candidates yet. Press Build Journey.</div>'; ui.candidateList.querySelectorAll('[data-action="enqueue"]').forEach((btn)=>btn.addEventListener('click',()=>{ const id = btn.getAttribute('data-id'); const found = state.candidates.find((t) => `${t.id}` === `${id}`); if (found && !state.listeningDeck.some((t) => t.id === found.id)) { state.listeningDeck.push(found); ui.status.textContent = `Added ${found?.title || 'track'} to Listening Deck.`; } else { ui.status.textContent = `${found?.title || 'Track'} is already in Listening Deck.`; } state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); })); }
-function renderListeningDeck() { ui.listeningDeck.innerHTML = state.listeningDeck.length ? state.listeningDeck.map((track) => listeningCardMarkup(track)).join('') : '<div class="music-empty-state">🎵 Listening Deck is empty. Press <strong>Start Journey</strong> or add a track URL to begin.</div>'; ui.listeningDeck.querySelectorAll('[data-rate]').forEach((btn)=>btn.addEventListener('click',()=>{ state.ratings[btn.dataset.id] = Number(btn.dataset.rate); emitPresenceEvent({ kind: 'track_rated', severity: 'info', summary: `Track rated: ${btn.dataset.id} = ${btn.dataset.rate}`, impact: 'Taste DNA may strengthen from recent ratings.', suggestedAction: 'Build a new journey using updated Taste DNA.' }); state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); })); ui.listeningDeck.querySelectorAll('[data-tag]').forEach((btn)=>btn.addEventListener('click',()=>{ const { id, tag } = btn.dataset; const list = new Set(state.tags[id] || []); list.has(tag) ? list.delete(tag) : list.add(tag); state.tags[id] = Array.from(list); saveState(); renderAll(); })); ui.listeningDeck.querySelectorAll('[data-action="apply-feedback"]').forEach((btn)=>btn.addEventListener('click',()=>{ const id = btn.dataset.id; const field = ui.listeningDeck.querySelector(`[data-feedback-input="${id}"]`); state.trackFeedback[id] = field?.value || ''; applyFeedback(id, field?.value || ''); })); ui.listeningDeck.querySelectorAll('[data-action="save-spotify-link"]').forEach((btn)=>btn.addEventListener('click',()=>saveTrackSpotifyLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="save-youtube-link"]').forEach((btn)=>btn.addEventListener('click',()=>saveTrackYouTubeLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="resolve-spotify-link"]').forEach((btn)=>btn.addEventListener('click',()=>resolveSpotifyLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="resolve-youtube-link"]').forEach((btn)=>btn.addEventListener('click',()=>resolveYouTubeLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="ai-interpret-feedback"]').forEach((btn)=>btn.addEventListener('click',()=>{ const track=state.listeningDeck.find((t)=>`${t.id}`===`${btn.dataset.id}`); const field = ui.listeningDeck.querySelector(`[data-feedback-input="${btn.dataset.id}"]`); askAiInterpretFeedback(track, field?.value || state.trackFeedback[btn.dataset.id] || ''); })); ui.listeningDeck.querySelectorAll('[data-action="ai-why-worked"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'why-worked','Ask AI why this worked'))); ui.listeningDeck.querySelectorAll('[data-action="ai-more-like"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'more-like-this','More like this'))); ui.listeningDeck.querySelectorAll('[data-action="ai-less-like"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'less-like-this','Less like this'))); ui.listeningDeck.querySelectorAll('[data-action="ai-same-energy-darker"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'same-energy-darker','Same energy, darker'))); ui.listeningDeck.querySelectorAll('[data-action="ai-same-vocal-more-pressure"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'same-vocal-more-club-pressure','Same vocal, more club pressure'))); ui.listeningDeck.querySelectorAll('[data-action="ai-same-pressure-more-ghost"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'same-club-pressure-more-ghost','Same club pressure, more ghost'))); ui.listeningDeck.querySelectorAll('[data-action="ai-more-universal-nation"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'more-universal-nation-spine','More Universal Nation spine'))); ui.listeningDeck.querySelectorAll('[data-action="ai-less-cheese"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'less-cheese','Less cheese'))); ui.listeningDeck.querySelectorAll('[data-action="ai-less-goa"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'less-goa','Less Goa'))); ui.listeningDeck.querySelectorAll('[data-action="ai-more-echo-reverb"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'more-echo-reverb','More echo/reverb'))); ui.listeningDeck.querySelectorAll('[data-action="ai-why-failed"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'why-this-failed','Ask AI why this failed'))); ui.listeningDeck.querySelectorAll('[data-action="mark-verified"]').forEach((btn)=>btn.addEventListener('click',()=>markCandidateVerified(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="mark-not-found"]').forEach((btn)=>btn.addEventListener('click',()=>markCandidateNotFound(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="mark-hallucinated"]').forEach((btn)=>btn.addEventListener('click',()=>markCandidateHallucinated(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="replace-verified-track"]').forEach((btn)=>btn.addEventListener('click',()=>replaceWithVerifiedTrack(btn.dataset.id))); }
+function renderListeningDeck() { ui.listeningDeck.innerHTML = state.listeningDeck.length ? state.listeningDeck.map((track) => listeningCardMarkup(track)).join('') : '<div class="music-empty-state">🎵 Listening Deck is empty. Press <strong>Start Journey</strong> or add a track URL to begin.</div>'; ui.listeningDeck.querySelectorAll('[data-rate]').forEach((btn)=>btn.addEventListener('click',()=>{ state.ratings[btn.dataset.id] = Number(btn.dataset.rate); emitPresenceEvent({ kind: 'track_rated', severity: 'info', summary: `Track rated: ${btn.dataset.id} = ${btn.dataset.rate}`, impact: 'Taste DNA may strengthen from recent ratings.', suggestedAction: 'Build a new journey using updated Taste DNA.' }); state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); })); ui.listeningDeck.querySelectorAll('[data-tag]').forEach((btn)=>btn.addEventListener('click',()=>{ const { id, tag } = btn.dataset; const list = new Set(state.tags[id] || []); list.has(tag) ? list.delete(tag) : list.add(tag); state.tags[id] = Array.from(list); saveState(); renderAll(); })); ui.listeningDeck.querySelectorAll('[data-action="apply-feedback"]').forEach((btn)=>btn.addEventListener('click',()=>{ const id = btn.dataset.id; const field = ui.listeningDeck.querySelector(`[data-feedback-input="${id}"]`); state.trackFeedback[id] = field?.value || ''; applyFeedback(id, field?.value || ''); })); ui.listeningDeck.querySelectorAll('[data-action="save-spotify-link"]').forEach((btn)=>btn.addEventListener('click',()=>saveTrackSpotifyLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="save-youtube-link"]').forEach((btn)=>btn.addEventListener('click',()=>saveTrackYouTubeLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="resolve-spotify-link"]').forEach((btn)=>btn.addEventListener('click',()=>resolveSpotifyLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="resolve-youtube-link"]').forEach((btn)=>btn.addEventListener('click',()=>resolveYouTubeLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="ai-interpret-feedback"]').forEach((btn)=>btn.addEventListener('click',()=>{ const track=state.listeningDeck.find((t)=>`${t.id}`===`${btn.dataset.id}`); const field = ui.listeningDeck.querySelector(`[data-feedback-input="${btn.dataset.id}"]`); askAiInterpretFeedback(track, field?.value || state.trackFeedback[btn.dataset.id] || ''); })); ui.listeningDeck.querySelectorAll('[data-action="ai-why-worked"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'why-worked','Ask AI why this worked'))); ui.listeningDeck.querySelectorAll('[data-action="ai-more-like"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'more-like-this','More like this'))); ui.listeningDeck.querySelectorAll('[data-action="ai-less-like"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'less-like-this','Less like this'))); ui.listeningDeck.querySelectorAll('[data-action="ai-same-energy-darker"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'same-energy-darker','Same energy, darker'))); ui.listeningDeck.querySelectorAll('[data-action="ai-same-vocal-more-pressure"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'same-vocal-more-club-pressure','Same vocal, more club pressure'))); ui.listeningDeck.querySelectorAll('[data-action="ai-same-pressure-more-ghost"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'same-club-pressure-more-ghost','Same club pressure, more ghost'))); ui.listeningDeck.querySelectorAll('[data-action="ai-more-universal-nation"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'more-universal-nation-spine','More Universal Nation spine'))); ui.listeningDeck.querySelectorAll('[data-action="ai-less-cheese"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'less-cheese','Less cheese'))); ui.listeningDeck.querySelectorAll('[data-action="ai-less-goa"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'less-goa','Less Goa'))); ui.listeningDeck.querySelectorAll('[data-action="ai-more-echo-reverb"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'more-echo-reverb','More echo/reverb'))); ui.listeningDeck.querySelectorAll('[data-action="ai-why-failed"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'why-this-failed','Ask AI why this failed'))); ui.listeningDeck.querySelectorAll('[data-action="mark-verified"]').forEach((btn)=>btn.addEventListener('click',()=>markCandidateVerified(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="mark-not-found"]').forEach((btn)=>btn.addEventListener('click',()=>markCandidateNotFound(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="mark-hallucinated"]').forEach((btn)=>btn.addEventListener('click',()=>markCandidateHallucinated(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="replace-verified-track"]').forEach((btn)=>btn.addEventListener('click',()=>replaceWithVerifiedTrack(btn.dataset.id))); enhanceListeningDeckCards(); }
 function listeningCardMarkup(track) { const spotifyRef = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); const verifiedCandidate = isVerifiedCandidateTrack(track); const hasPlayableSpotifyTrack = verifiedCandidate && spotifyRef.valid && spotifyRef.type === 'track'; const embed = hasPlayableSpotifyTrack ? spotifyRef.embedUrl : null; const spotifyOpenUrl = hasPlayableSpotifyTrack ? spotifyRef.openUrl : '';  const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); const rating = state.ratings[track.id]; const tags = state.tags[track.id] || []; const message = state.linkMessages?.[track.id] || ''; const status = getCandidateVerificationStatus(track); const aiVerificationBadge = track.aiSuggested ? `<span class="music-badge">${status === AI_CANDIDATE_STATUSES.unverified ? 'AI suggestion · unverified' : `AI suggestion · ${status}`}</span>` : ''; return `<article class="music-card player-deck-card"><div class="music-card-header"><div><div class="music-card-title">${escapeHtml(getDisplayTrackTitle(track))}</div><div class="music-card-meta">${track.artist || 'Unknown Artist'} · rating ${rating ?? 'unrated'}</div></div><span class="music-badge">▶ deck</span>${aiVerificationBadge}</div>${embed ? `<iframe src="${embed}" width="100%" height="152" style="border:0" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : `<div class="meta">${track.aiSuggested && status === AI_CANDIDATE_STATUSES.unverified ? 'Unverified AI candidate. Search before treating as real.' : (status === AI_CANDIDATE_STATUSES.likelyHallucinated ? 'Likely hallucinated candidate. Do not recommend again unless verified.' : 'Needs verified Spotify link')}</div>${track.verificationNote ? `<div class="meta">${track.verificationNote}</div>` : ''}`}<div class="actions media-controls">${spotifyOpenUrl ? `<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${spotifyOpenUrl}">Open in Spotify</a>` : ''}<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${buildSpotifySearchUrl(track)}">Find on Spotify</a>${youtubeUrl ? `<a class="media-btn youtube" target="_blank" rel="noopener noreferrer" href="${youtubeUrl}">Open in YouTube</a>` : ''}<a class="media-btn youtube" target="_blank" rel="noopener noreferrer" href="${buildYouTubeSearchUrl(track)}">Find on YouTube</a>${track.aiSuggested ? `<div class="meta"><strong>Candidate Verification</strong></div><button type="button" data-action="mark-verified" data-id="${track.id}">Mark verified</button><button type="button" title="Mark not found" data-action="mark-not-found" data-id="${track.id}">Mark as not found</button><button type="button" data-action="mark-hallucinated" data-id="${track.id}">Mark hallucinated</button><button type="button" data-action="replace-verified-track" data-id="${track.id}">Replace with verified link</button>` : ''}</div><div class="links-editor"><label>Spotify URL<input data-link-input="spotify-${track.id}" placeholder="https://open.spotify.com/track/..." /></label><button data-action="save-spotify-link" data-id="${track.id}">Save Spotify link</button>${spotifyOpenUrl ? '' : `<button data-action="resolve-spotify-link" data-id="${track.id}">Resolve Spotify Link</button>`}<label>YouTube URL<input data-link-input="youtube-${track.id}" placeholder="https://www.youtube.com/watch?v=..." /></label><button data-action="save-youtube-link" data-id="${track.id}">Save YouTube link</button>${youtubeUrl ? '' : `<button data-action="resolve-youtube-link" data-id="${track.id}">Resolve YouTube Link</button>`}${message ? `<div class="meta">${message}</div>` : ''}</div><div class="actions">${RATING_VALUES.map((value) => `<button class="rating" data-id="${track.id}" data-rate="${value}">${value}</button>`).join('')}</div><div class="tags">${DEFAULT_POSITIVE_TRAITS.concat(DEFAULT_NEGATIVE_TRAITS).map((tag) => `<button class="tag" data-id="${track.id}" data-tag="${tag}">${tag}${tags.includes(tag) ? ' ✓' : ''}</button>`).join('')}</div><textarea data-feedback-input="${track.id}" class="feedback-input" placeholder="Tell the taste engine what you hear…">${state.trackFeedback[track.id] || ''}</textarea><div class="actions"><button type="button" data-action="apply-feedback" data-id="${track.id}">Apply feedback to Taste DNA</button><button type="button" data-action="ai-interpret-feedback" data-id="${track.id}">Ask AI to interpret feedback</button><button type="button" data-action="ai-why-worked" data-id="${track.id}">Ask AI why this worked</button><button type="button" data-action="ai-more-like" data-id="${track.id}">More like this</button><button type="button" data-action="ai-less-like" data-id="${track.id}">Less like this</button><button type="button" data-action="ai-same-energy-darker" data-id="${track.id}">Same energy, darker</button><button type="button" data-action="ai-same-vocal-more-pressure" data-id="${track.id}">Same vocal, more club pressure</button><button type="button" data-action="ai-same-pressure-more-ghost" data-id="${track.id}">Same club pressure, more ghost</button><button type="button" data-action="ai-more-universal-nation" data-id="${track.id}">More Universal Nation spine</button><button type="button" data-action="ai-less-cheese" data-id="${track.id}">Less cheese</button><button type="button" data-action="ai-less-goa" data-id="${track.id}">Less Goa</button><button type="button" data-action="ai-more-echo-reverb" data-id="${track.id}">More echo/reverb</button><button type="button" data-action="ai-why-failed" data-id="${track.id}">Ask AI why this failed</button></div></article>`; }
 function saveTrackSpotifyLink(trackId) { const field = ui.listeningDeck.querySelector(`[data-link-input="spotify-${trackId}"]`); const value = String(field?.value || '').trim(); const parsed = resolveSpotifyReference(value); state.linkMessages = state.linkMessages || {}; if (!parsed.valid || parsed.type !== 'track') { if (parsed.reason === 'search-url') state.linkMessages[trackId] = 'Spotify search link or invalid link. Open a result in Spotify and paste the track URL.'; else if (parsed.valid && parsed.type !== 'track') state.linkMessages[trackId] = 'Paste a Spotify track URL to create a playable card.'; else state.linkMessages[trackId] = 'Spotify search link or invalid link. Paste a valid Spotify track URL.'; saveState(); renderListeningDeck(); return; } const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return; track.spotifyUrl = parsed.openUrl; track.spotifyUri = parsed.uri; track.candidateVerificationStatus = track.aiSuggested ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.verified; state.linkMessages[trackId] = 'Spotify track verified. Listening Deck card updated.'; saveState(); renderListeningDeck(); }
 function markCandidateVerified(trackId) { const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return; track.candidateVerificationStatus = AI_CANDIDATE_STATUSES.verified; state.linkMessages = state.linkMessages || {}; state.linkMessages[trackId] = 'Marked verified.'; saveState(); renderListeningDeck(); }
