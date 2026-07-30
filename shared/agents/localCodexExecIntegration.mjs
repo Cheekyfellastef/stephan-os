@@ -118,6 +118,11 @@ export function createLocalCodexExecIntegration({
         taskType: 'battle-bridge-proof',
         prompt: String(packet.prompt),
         requestedProofCommands: Array.isArray(packet.requestedProofCommands) ? packet.requestedProofCommands.map(String) : [],
+        exactHeadProof: packet.exactHeadProof ? {
+          repository: String(packet.exactHeadProof.repository || ''),
+          prNumber: Number(packet.exactHeadProof.prNumber || 0),
+          expectedHead: String(packet.exactHeadProof.expectedHead || '').toLowerCase(),
+        } : null,
         approvalRequirements: { ...(packet.approvalRequirements || {}) },
         repoRoot: paths.repoRoot,
         workspaceRoot: paths.workspaceRoot,
