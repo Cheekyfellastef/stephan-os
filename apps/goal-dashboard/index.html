@@ -1428,6 +1428,7 @@
       const grid = document.getElementById('goal-grid');
       const platformGrid = document.getElementById('platform-grid');
       let currentGoalSourceRank = -1;
+      let currentGoalProjectionLane = 'none';
       let currentGoalProjectionSource = 'none';
 
 
@@ -1515,14 +1516,40 @@
         return new Date(parsed).toISOString().replace('T', ' ').replace('.000Z', 'Z');
       }
 
-      function beginGoalProjectionRender(sourceRank = 0) {
-        if (!grid || sourceRank < currentGoalSourceRank) return false;
+      function beginGoalProjectionRender(sourceRank = 0, projectionLane = 'unknown') {
+        if (!grid) return false;
+        const sameFreshnessLane = projectionLane === currentGoalProjectionLane;
+        if (!sameFreshnessLane && sourceRank < currentGoalSourceRank) return false;
         currentGoalSourceRank = sourceRank;
+        currentGoalProjectionLane = projectionLane;
         return true;
+      }
+
+      function captureGoalGridFocus() {
+        const active = document.activeElement;
+        if (!active || typeof grid?.contains !== 'function' || !grid.contains(active)) return null;
+        const card = active.closest?.('.goal-card');
+        const links = Array.from(card?.querySelectorAll?.('a.goal-link') || []);
+        return {
+          issue: card?.getAttribute?.('data-issue') || '',
+          href: active.getAttribute?.('href') || '',
+          linkIndex: Math.max(0, links.indexOf(active)),
+        };
+      }
+
+      function restoreGoalGridFocus(focusSnapshot) {
+        if (!focusSnapshot) return;
+        const cards = Array.from(grid?.querySelectorAll?.('.goal-card') || grid?.children || []);
+        const card = cards.find((candidate) => candidate.getAttribute?.('data-issue') === focusSnapshot.issue);
+        const links = Array.from(card?.querySelectorAll?.('a.goal-link') || []);
+        const target = links.find((link) => link.getAttribute?.('href') === focusSnapshot.href) || links[focusSnapshot.linkIndex];
+        if (!target?.focus) return;
+        try { target.focus({ preventScroll: true }); } catch { target.focus(); }
       }
 
       function renderGoals(goalRecords = goals, sourceState = 'static-seed') {
         if (!grid) return false;
+        const focusSnapshot = captureGoalGridFocus();
         grid.textContent = '';
         grid.setAttribute('data-goal-dashboard-source-state', sourceState);
         if (!goalRecords.length) {
@@ -1538,6 +1565,7 @@
             <div class="goal-body"><p class="next-action"><span>TRUTHFUL EMPTY STATE</span><br />Do not substitute the historical seed for a verified empty live result.</p></div>
           `;
           grid.appendChild(empty);
+          restoreGoalGridFocus(focusSnapshot);
           return true;
         }
         goalRecords.forEach((goal, cardIndex) => {
@@ -1590,6 +1618,7 @@
         `;
         grid.appendChild(card);
         });
+        restoreGoalGridFocus(focusSnapshot);
         return true;
       }
 
@@ -1651,8 +1680,8 @@
         const goalSourceRank = dashboardGoals
           ? (dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 3 : (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS' ? 2 : 1))
           : (missions.length ? 2 : null);
-        if (goalSourceRank !== null && !beginGoalProjectionRender(goalSourceRank)) return true;
-        currentGoalProjectionSource = goalSourceRank === 3 ? 'live-github' : 'live-backend';
+        if (goalSourceRank !== null && !beginGoalProjectionRender(goalSourceRank, 'approved-telemetry')) return true;
+        currentGoalProjectionSource = goalSourceRank === 3 ? 'live-github' : (goalSourceRank === 2 ? 'live-backend' : 'unknown-backend');
         setTelemetryText('source-badge', sourceBadge);
         setTelemetryText('goal-data-source', `${sourceBadge} backend telemetry · ${APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT}`);
         setTelemetryText('github-state', liveProjection?.currentAgentStates?.github?.state || concierge.queue?.autoPick?.liveGithubProof || 'unknown');
@@ -1684,10 +1713,15 @@
         setTelemetryText('telemetry-blocker', 'Live backend telemetry loaded from the approved read-only projection. GitHub is labelled live only when its adapter is present; local and browser proof remain unknown without canonical receipts.');
         setDashboardSignal(sourceBadge === 'LIVE' ? 'live' : 'mixed', sourceBadge === 'LIVE' ? 'Current read-only truth' : 'Mixed truth · inspect source');
         if (dashboardGoals) {
+          const dashboardSourceState = dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB'
+            ? 'live-github'
+            : (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS' ? 'live-receipts' : 'live-unknown');
           renderDashboardSummary(dashboardGoals);
-          setTelemetryText('goals-heading', dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'Current GitHub goal lanes' : 'Current receipt-backed goal lanes');
+          setTelemetryText('goals-heading', dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB'
+            ? 'Current GitHub goal lanes'
+            : (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS' ? 'Current receipt-backed goal lanes' : 'Current goal truth unavailable'));
           setTelemetryText('goals-context', `${dashboardGoals.sourceTruth} · observed ${compactObservedAt(dashboardGoals.observedAt)} · no inferred proof`);
-          renderGoals(Array.isArray(dashboardGoals.cards) ? dashboardGoals.cards : [], dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'live-github' : 'live-receipts');
+          renderGoals(Array.isArray(dashboardGoals.cards) ? dashboardGoals.cards : [], dashboardSourceState);
         } else if (missions.length) {
           const liveGoals = missions.map((mission) => ({
             issue: mission.mission?.missionId || 'live-mission',
@@ -1713,7 +1747,7 @@
       function renderSharedWorkspaceDashboardFeed(feed) {
         if (!feed || ![SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION, 'stephanos.backend.shared-workspace-dashboard-feed.v1'].includes(feed.schemaVersion)) return false;
         const sourceRank = ['ready', 'stale'].includes(feed.state) ? 2 : 1;
-        if (!beginGoalProjectionRender(sourceRank)) return true;
+        if (!beginGoalProjectionRender(sourceRank, 'shared-workspace')) return true;
         currentGoalProjectionSource = 'shared-workspace';
         const projection = feed.projection || buildLandingGoalDashboardProjection();
         renderLandingPlatformProjection(projection, feed);
@@ -1779,7 +1813,7 @@
       }
 
       function markStaticTelemetryFallback() {
-        if (!beginGoalProjectionRender(0)) return false;
+        if (!beginGoalProjectionRender(0, 'static-fallback')) return false;
         currentGoalProjectionSource = 'static-fallback';
         setTelemetryText('source-badge', 'STATIC_FALLBACK');
         setTelemetryText('goal-data-source', `Seeded / source-controlled · ${BACKEND_UNAVAILABLE_STATIC_SEED_ONLY}`);
@@ -1799,7 +1833,7 @@
       }
 
       function markLiveTelemetryRefreshFailed() {
-        if (!['live-github', 'live-backend'].includes(currentGoalProjectionSource)) return;
+        if (currentGoalProjectionLane !== 'approved-telemetry' || currentGoalProjectionSource === 'stale-approved-telemetry') return;
         currentGoalSourceRank = Math.min(currentGoalSourceRank, 1);
         currentGoalProjectionSource = 'stale-approved-telemetry';
         setTelemetryText('source-badge', 'STALE');
