@@ -1428,6 +1428,7 @@
       const grid = document.getElementById('goal-grid');
       const platformGrid = document.getElementById('platform-grid');
       let currentGoalSourceRank = -1;
+      let liveTelemetryRendered = false;
 
 
       function resolveSharedWorkspaceDashboardFeedEndpoint() {
@@ -1570,8 +1571,8 @@
                 <div><span>Proof schema</span>${escapeHtml(goal.platformProof.schemaVersion)}</div>
                 <div><span>Status</span>${escapeHtml(goal.platformProof.status)}</div>
                 <div><span>Claim</span>${escapeHtml(goal.platformProof.currentClaim)}</div>
-                <div><span>Proof refs</span>${goal.platformProof.proofRefs.length ? goal.platformProof.proofRefs.join(', ') : 'unknown'}</div>
-                <div><span>Blockers</span>${goal.platformProof.blockers.length ? goal.platformProof.blockers.join(', ') : 'none'}</div>
+                <div><span>Proof refs</span>${goal.platformProof.proofRefs.length ? escapeHtml(goal.platformProof.proofRefs.join(', ')) : 'unknown'}</div>
+                <div><span>Blockers</span>${goal.platformProof.blockers.length ? escapeHtml(goal.platformProof.blockers.join(', ')) : 'none'}</div>
                 <div><span>Dispatch</span>${goal.platformProof.manualDispatchRequired ? 'manual dispatch required' : 'canonical dispatcher only'}</div>
                 <div><span>Merge hold</span>${escapeHtml(goal.platformProof.exactHeadMergeHold)}</div>
                 <div><span>Live claims</span>${escapeHtml(goal.platformProof.liveClaims)}</div>
@@ -1642,6 +1643,7 @@
         const heartbeat = liveProjection?.heartbeat || {};
         const githubTelemetry = liveProjection?.githubTelemetry || feed.githubTelemetry || {};
         const dashboardGoals = liveProjection?.dashboardGoals || null;
+        liveTelemetryRendered = true;
         setTelemetryText('source-badge', sourceBadge);
         setTelemetryText('goal-data-source', `${sourceBadge} backend telemetry · ${APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT}`);
         setTelemetryText('github-state', liveProjection?.currentAgentStates?.github?.state || concierge.queue?.autoPick?.liveGithubProof || 'unknown');
@@ -1673,11 +1675,10 @@
         setTelemetryText('telemetry-blocker', 'Live backend telemetry loaded from the approved read-only projection. GitHub is labelled live only when its adapter is present; local and browser proof remain unknown without canonical receipts.');
         setDashboardSignal(sourceBadge === 'LIVE' ? 'live' : 'mixed', sourceBadge === 'LIVE' ? 'Current read-only truth' : 'Mixed truth · inspect source');
         if (dashboardGoals) {
-          const sourceRank = dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 3 : dashboardGoals.cards?.length ? 2 : 1;
           renderDashboardSummary(dashboardGoals);
           setTelemetryText('goals-heading', dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'Current GitHub goal lanes' : 'Current receipt-backed goal lanes');
           setTelemetryText('goals-context', `${dashboardGoals.sourceTruth} · observed ${compactObservedAt(dashboardGoals.observedAt)} · no inferred proof`);
-          renderGoals(Array.isArray(dashboardGoals.cards) ? dashboardGoals.cards : [], dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'live-github' : 'live-receipts', sourceRank);
+          renderGoals(Array.isArray(dashboardGoals.cards) ? dashboardGoals.cards : [], dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'live-github' : 'live-receipts', 3);
         } else if (missions.length) {
           const liveGoals = missions.map((mission) => ({
             issue: mission.mission?.missionId || 'live-mission',
@@ -1781,6 +1782,15 @@
         renderDashboardSummary({ cards: goals, sourceTruth: 'STATIC REFERENCE', freshnessVerdict: 'BACKEND UNAVAILABLE', observedAt: '', nextAction: 'Restore the approved read-only backend sources before treating these reference cards as current.' });
       }
 
+      function markLiveTelemetryRefreshFailed() {
+        if (!liveTelemetryRendered) return;
+        setTelemetryText('source-badge', 'STALE');
+        setTelemetryText('dashboard-freshness', 'LAST KNOWN · LIVE REFRESH FAILED');
+        setTelemetryText('hero-truth-source', 'STALE LAST KNOWN');
+        setTelemetryText('goals-context', 'Last known cards retained · live refresh failed · do not treat as current');
+        setDashboardSignal('mixed', 'Live refresh failed · last known state');
+      }
+
       function shouldAttemptLiveTelemetry() {
         return ['localhost', '127.0.0.1', ''].includes(window.location.hostname) || window.location.protocol === 'file:';
       }
@@ -1805,6 +1815,7 @@
         window.setTimeout(async () => {
           const feed = await fetchApprovedLiveTelemetry();
           if (feed) renderLiveMissionOperationsTelemetry(feed);
+          else markLiveTelemetryRefreshFailed();
           scheduleApprovedLiveTelemetryPoll(interval);
         }, Math.max(15000, Number(interval) || 30000));
       }
