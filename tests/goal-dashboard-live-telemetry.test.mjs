@@ -410,6 +410,24 @@ test('legacy mission telemetry without a durable evidence timestamp is rejected'
   assert.doesNotMatch(grid.children.map((child) => child.innerHTML).join(''), /Timestamp-free legacy mission/);
 });
 
+test('legacy mission telemetry with a future evidence timestamp is rejected', async () => {
+  const { grid, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  const rendered = context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.mission-operations-feed.v1',
+    missions: [{
+      mission: {
+        missionId: '#1282',
+        title: 'Future-dated legacy mission',
+        state: 'running',
+        updatedAt: '2099-07-30T08:15:00.000Z',
+      },
+    }],
+  });
+  assert.equal(rendered, false);
+  assert.doesNotMatch(grid.children.map((child) => child.innerHTML).join(''), /Future-dated legacy mission/);
+});
+
 test('goal cards render links for every unsuperseded PR supplied by the projection', async () => {
   const { grid, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
   await new Promise((resolve) => setImmediate(resolve));
