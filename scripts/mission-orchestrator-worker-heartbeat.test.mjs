@@ -78,6 +78,18 @@ test('worker heartbeat projection remains worker-only liveness authority', () =>
   });
   assert.equal(wrongRepository.valid, false);
   assert.ok(wrongRepository.errors.includes('worker-repository-mismatch'));
+
+  const failedTick = projectMissionWorkerHeartbeat({
+    ...record,
+    lastTickVerdict: 'MISSION_WORKER_TICK_FAILED',
+  }, {
+    nowUtc: '2026-07-15T03:01:00.000Z',
+    expectedRepositoryRoot: '/home/stephan/Documents/GitHub/stephan-os',
+    expectedHeadSha: HEAD,
+  });
+  assert.equal(failedTick.valid, false);
+  assert.equal(failedTick.fresh, false);
+  assert.ok(failedTick.errors.includes('worker-last-tick-not-affirmative'));
 });
 
 test('heartbeat writer performs one atomic write only at the canonical path', async () => {

@@ -53,11 +53,9 @@ const SOURCE_MUTATION_LEASE_OPERATION_GUARD_FILE = 'source-mutation-lease-operat
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const AFFIRMATIVE_PROOF_STATUSES = new Set([
-  'ACCEPTED',
   'COMPLETE',
   'COMPLETED',
   'MERGED',
-  'OBSERVED',
   'PASS',
   'PASSED',
   'PROVED',

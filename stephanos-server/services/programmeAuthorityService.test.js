@@ -590,6 +590,15 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
   assert.deepEqual(failed.proofReceipts, []);
   assert.deepEqual(failed.proofRefs, []);
 
+  for (const nonAffirmativeStatus of ['OBSERVED', 'ACCEPTED']) {
+    const nonAffirmative = buildAffirmativeSchedulerProofSources({
+      records: { proofRecords: [{ ...proof, status: nonAffirmativeStatus }] },
+    }, null);
+    assert.deepEqual(nonAffirmative.proofHeadShas, []);
+    assert.deepEqual(nonAffirmative.proofReceipts, []);
+    assert.deepEqual(nonAffirmative.proofRefs, []);
+  }
+
   const passed = buildAffirmativeSchedulerProofSources({
     records: { proofRecords: [{ ...proof, status: 'PASS' }] },
   }, null);

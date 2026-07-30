@@ -10,6 +10,11 @@ export const MISSION_WORKER_HEARTBEAT_FILE = 'mission-orchestrator-worker-heartb
 export const DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS = 120_000;
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const AFFIRMATIVE_WORKER_TICK_VERDICTS = new Set([
+  'MISSION_WORKER_RUNNING',
+  'MISSION_WORKER_TICK_RUNNING',
+  'MISSION_WORKER_TICK_PASS',
+]);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -90,6 +95,9 @@ export function projectMissionWorkerHeartbeat(record = {}, {
   else if (text(record?.headSha).toLowerCase() !== normalizedExpectedHead) errors.push('worker-head-mismatch');
   if (text(record?.taskName) !== MISSION_WORKER_TASK_NAME) errors.push('worker-task-not-allowlisted');
   if (!Number.isInteger(record?.pid) || record.pid <= 0) errors.push('invalid-worker-pid');
+  if (!AFFIRMATIVE_WORKER_TICK_VERDICTS.has(text(record?.lastTickVerdict))) {
+    errors.push('worker-last-tick-not-affirmative');
+  }
   if (record?.sourceMutationAllowed !== false) errors.push('worker-source-mutation-forbidden');
   if (record?.arbitraryShellAllowed !== false) errors.push('worker-arbitrary-shell-forbidden');
   if (Number.isFinite(heartbeatMs) && Number.isFinite(nowMs) && heartbeatMs - nowMs > 60_000) errors.push('future-worker-heartbeat');
