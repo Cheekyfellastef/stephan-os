@@ -7,6 +7,7 @@ const html = readFileSync(new URL('../apps/goal-dashboard/index.html', import.me
 const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1] || '';
 
 function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', port = '' } = {}) {
+  let activeElement = null;
   const telemetry = new Map();
   const grid = {
     _textContent: '',
@@ -19,11 +20,37 @@ function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', p
     },
     setAttribute(key, value) { this.attrs[key] = value; },
     appendChild(node) { this.children.push(node); },
+    contains(node) { return node?.insideGrid === true; },
+    querySelectorAll(selector) { return selector === '.goal-card' ? this.children : []; },
   };
   const document = {
+    get activeElement() { return activeElement; },
+    set activeElement(value) { activeElement = value; },
     getElementById(id) { return id === 'goal-grid' ? grid : null; },
     createElement(tag) {
-      return { tag, className: '', attrs: {}, innerHTML: '', setAttribute(key, value) { this.attrs[key] = value; } };
+      return {
+        tag,
+        className: '',
+        attrs: {},
+        innerHTML: '',
+        setAttribute(key, value) { this.attrs[key] = value; },
+        getAttribute(key) { return this.attrs[key] || ''; },
+        querySelectorAll(selector) {
+          if (selector !== 'a.goal-link') return [];
+          const links = [];
+          for (const match of String(this.innerHTML).matchAll(/<a class="goal-link" href="([^"]+)"[^>]*>([^<]+)<\/a>/g)) {
+            const link = {
+              insideGrid: true,
+              textContent: match[2],
+              getAttribute(key) { return key === 'href' ? match[1] : ''; },
+              closest: () => this,
+              focus: () => { activeElement = link; },
+            };
+            links.push(link);
+          }
+          return links;
+        },
+      };
     },
     querySelector(selector) {
       const match = String(selector).match(/data-live-telemetry-field="([^"]+)"/);
@@ -41,10 +68,17 @@ function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', p
       setTimeout: (_fn) => 1,
       clearTimeout: () => {},
     },
+    URL,
     AbortController: class { constructor() { this.signal = {}; } abort() {} },
   };
   vm.runInNewContext(script, context);
-  return { telemetry, grid, context };
+  return {
+    telemetry,
+    grid,
+    context,
+    setActiveElement(value) { activeElement = value; },
+    getActiveElement() { return activeElement; },
+  };
 }
 
 test('standalone Goal Dashboard static fallback remains honest when backend unavailable', async () => {
@@ -241,6 +275,83 @@ test('lower-ranked Shared Workspace polls cannot overwrite a live GitHub project
   assert.equal(telemetry.get('dashboard-visible-count').textContent, liveCount);
   assert.equal(telemetry.get('dashboard-priority-action').textContent, liveAction);
   assert.equal(telemetry.get('hero-truth-source').textContent, 'LIVE READ-ONLY GITHUB');
+});
+
+test('newer degraded approved telemetry invalidates older live GitHub readiness on the same lane', async () => {
+  const { telemetry, grid, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'live',
+    dashboardGoals: {
+      sourceTruth: 'LIVE READ-ONLY GITHUB',
+      observedAt: '2026-07-30T10:00:00.000Z',
+      cards: [{ issue: '#1627', title: 'Previously current', status: 'READY FOR REVIEW', currentOwner: 'Review', nextOwner: 'Operator', operatorNeeded: 'No', handoffState: 'ready', milestone: 'OLD HEAD', proofIndex: 4, nextAction: 'Review.' }],
+    },
+  });
+  assert.match(grid.children[0].innerHTML, /Previously current/);
+
+  context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'mixed',
+    generatedAt: '2026-07-30T10:01:00.000Z',
+    dashboardGoals: {
+      sourceTruth: 'UNKNOWN',
+      freshnessVerdict: 'NO_CURRENT_GOAL_RECORDS',
+      observedAt: '2026-07-30T10:01:00.000Z',
+      cards: [],
+      nextAction: 'Restore complete GitHub truth.',
+    },
+  });
+  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-unknown');
+  assert.match(grid.children[0].innerHTML, /NO CURRENT GOAL RECORDS/);
+  assert.equal(telemetry.get('hero-truth-source').textContent, 'UNKNOWN');
+  assert.equal(telemetry.get('dashboard-priority-action').textContent, 'Restore complete GitHub truth.');
+});
+
+test('periodic same-lane card refresh restores focus to the matching goal link', async () => {
+  const { grid, context, setActiveElement, getActiveElement } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  const projection = {
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'live',
+    dashboardGoals: {
+      sourceTruth: 'LIVE READ-ONLY GITHUB',
+      observedAt: '2026-07-30T10:00:00.000Z',
+      cards: [{
+        issue: '#1627',
+        url: 'https://github.com/example/repo/issues/1627',
+        title: 'Goal Dashboard',
+        status: 'VERIFYING',
+        currentOwner: 'CI',
+        nextOwner: 'Review',
+        operatorNeeded: 'No',
+        handoffState: 'checks',
+        milestone: 'HEAD',
+        proofIndex: 3,
+        nextAction: 'Wait.',
+        linkedPr: { number: 1627, url: 'https://github.com/example/repo/pull/1627' },
+      }],
+    },
+  };
+  context.renderLiveMissionOperationsTelemetry(projection);
+  assert.match(grid.children[0].innerHTML, /goal-link/);
+  const renderedLinks = grid.children[0].querySelectorAll('a.goal-link');
+  assert.equal(renderedLinks.length, 2);
+  const focusedLink = renderedLinks[0];
+  setActiveElement(focusedLink);
+
+  context.renderLiveMissionOperationsTelemetry({
+    ...projection,
+    generatedAt: '2026-07-30T10:00:30.000Z',
+    dashboardGoals: {
+      ...projection.dashboardGoals,
+      observedAt: '2026-07-30T10:00:30.000Z',
+      cards: projection.dashboardGoals.cards.map((card) => ({ ...card, status: 'READY FOR REVIEW' })),
+    },
+  });
+  assert.equal(getActiveElement().getAttribute('href'), 'https://github.com/example/repo/issues/1627');
+  assert.equal(getActiveElement().textContent, 'Open #1627');
 });
 
 test('a failed live refresh lowers precedence so a current Shared Workspace projection can replace stale cards', async () => {
