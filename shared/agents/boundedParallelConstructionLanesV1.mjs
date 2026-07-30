@@ -1,3 +1,5 @@
+import { validateVerifierResult } from './verificationHarness.mjs';
+
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const SAFE_BRANCH = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
@@ -436,4 +438,3 @@ export function createReadyForIntegrationReceipt(laneInput, evidence = {}) {
     approvalAuthority:false,
   });
 }
-import { validateVerifierResult } from './verificationHarness.mjs';
