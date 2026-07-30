@@ -1515,9 +1515,14 @@
         return new Date(parsed).toISOString().replace('T', ' ').replace('.000Z', 'Z');
       }
 
-      function renderGoals(goalRecords = goals, sourceState = 'static-seed', sourceRank = 0) {
+      function beginGoalProjectionRender(sourceRank = 0) {
         if (!grid || sourceRank < currentGoalSourceRank) return false;
         currentGoalSourceRank = sourceRank;
+        return true;
+      }
+
+      function renderGoals(goalRecords = goals, sourceState = 'static-seed') {
+        if (!grid) return false;
         grid.textContent = '';
         grid.setAttribute('data-goal-dashboard-source-state', sourceState);
         if (!goalRecords.length) {
@@ -1643,6 +1648,10 @@
         const heartbeat = liveProjection?.heartbeat || {};
         const githubTelemetry = liveProjection?.githubTelemetry || feed.githubTelemetry || {};
         const dashboardGoals = liveProjection?.dashboardGoals || null;
+        const goalSourceRank = dashboardGoals
+          ? (dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 3 : (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS' ? 2 : 1))
+          : (missions.length ? 2 : null);
+        if (goalSourceRank !== null && !beginGoalProjectionRender(goalSourceRank)) return true;
         liveTelemetryRendered = true;
         setTelemetryText('source-badge', sourceBadge);
         setTelemetryText('goal-data-source', `${sourceBadge} backend telemetry · ${APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT}`);
@@ -1678,7 +1687,7 @@
           renderDashboardSummary(dashboardGoals);
           setTelemetryText('goals-heading', dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'Current GitHub goal lanes' : 'Current receipt-backed goal lanes');
           setTelemetryText('goals-context', `${dashboardGoals.sourceTruth} · observed ${compactObservedAt(dashboardGoals.observedAt)} · no inferred proof`);
-          renderGoals(Array.isArray(dashboardGoals.cards) ? dashboardGoals.cards : [], dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'live-github' : 'live-receipts', 3);
+          renderGoals(Array.isArray(dashboardGoals.cards) ? dashboardGoals.cards : [], dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'live-github' : 'live-receipts');
         } else if (missions.length) {
           const liveGoals = missions.map((mission) => ({
             issue: mission.mission?.missionId || 'live-mission',
@@ -1695,7 +1704,7 @@
             observedAt: liveProjection?.generatedAt || new Date().toISOString(),
           }));
           renderDashboardSummary({ cards: liveGoals, sourceTruth: 'READ-ONLY MISSION RECEIPTS', freshnessVerdict: 'RECEIPT TIMESTAMPS VISIBLE', observedAt: liveProjection?.generatedAt, nextAction: liveProjection?.nextOperatorAction });
-          renderGoals(liveGoals, 'live-backend', 2);
+          renderGoals(liveGoals, 'live-backend');
         }
         return true;
       }
@@ -1703,6 +1712,8 @@
 
       function renderSharedWorkspaceDashboardFeed(feed) {
         if (!feed || ![SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION, 'stephanos.backend.shared-workspace-dashboard-feed.v1'].includes(feed.schemaVersion)) return false;
+        const sourceRank = ['ready', 'stale'].includes(feed.state) ? 2 : 1;
+        if (!beginGoalProjectionRender(sourceRank)) return true;
         const projection = feed.projection || buildLandingGoalDashboardProjection();
         renderLandingPlatformProjection(projection, feed);
         setTelemetryText('source-badge', String(feed.state || 'unknown').toUpperCase());
@@ -1717,7 +1728,7 @@
         if (!['ready', 'stale'].includes(feed.state)) {
           const blockerCards = [{ issue: 'shared-workspace-blocker', title: `Shared Workspace ${String(feed.state || 'unavailable').toUpperCase()}`, status: String(feed.reason || 'UNKNOWN'), currentOwner: 'Battle Bridge runtime configuration', nextOwner: 'Operator', handoffState: 'blocked', milestone: 'LIVE_SHARED_WORKSPACE_BLOCKED', operatorNeeded: 'Yes - configure safe external workspace', proofIndex: 0, nextAction: feed.exactNextAction || 'Configure a safe external Shared Agent Workspace path outside the repository.', sourceTruth: 'SHARED WORKSPACE FEED', observedAt: feed.lastRefreshUtc }];
           renderDashboardSummary({ cards: blockerCards, sourceTruth: 'SHARED WORKSPACE FEED', freshnessVerdict: String(feed.state || 'UNKNOWN').toUpperCase(), observedAt: feed.lastRefreshUtc, nextAction: feed.exactNextAction });
-          renderGoals(blockerCards, 'live-shared-workspace-blocked', 1);
+          renderGoals(blockerCards, 'live-shared-workspace-blocked');
         }
         if (Array.isArray(projection.goals) && ['ready', 'stale'].includes(feed.state)) {
           const workspaceGoals = projection.goals.map((goal) => ({
@@ -1735,7 +1746,7 @@
             observedAt: feed.lastRefreshUtc,
           }));
           renderDashboardSummary({ cards: workspaceGoals, sourceTruth: 'SHARED WORKSPACE FEED', freshnessVerdict: String(feed.state || 'UNKNOWN').toUpperCase(), observedAt: feed.lastRefreshUtc, nextAction: feed.exactNextAction || projection.operatorAttention?.exactNextAction });
-          renderGoals(workspaceGoals, 'live-shared-workspace', 2);
+          renderGoals(workspaceGoals, 'live-shared-workspace');
         }
         return true;
       }
@@ -1767,6 +1778,7 @@
       }
 
       function markStaticTelemetryFallback() {
+        if (!beginGoalProjectionRender(0)) return false;
         setTelemetryText('source-badge', 'STATIC_FALLBACK');
         setTelemetryText('goal-data-source', `Seeded / source-controlled · ${BACKEND_UNAVAILABLE_STATIC_SEED_ONLY}`);
         setTelemetryText('github-state', 'Not live in browser');
@@ -1780,10 +1792,13 @@
         setTelemetryText('goals-context', 'STATIC REFERENCE · not a claim about the current project');
         setDashboardSignal('unknown', 'Static fallback · not current truth');
         renderDashboardSummary({ cards: goals, sourceTruth: 'STATIC REFERENCE', freshnessVerdict: 'BACKEND UNAVAILABLE', observedAt: '', nextAction: 'Restore the approved read-only backend sources before treating these reference cards as current.' });
+        renderGoals(goals, 'static-seed');
+        return true;
       }
 
       function markLiveTelemetryRefreshFailed() {
         if (!liveTelemetryRendered) return;
+        currentGoalSourceRank = Math.min(currentGoalSourceRank, 1);
         setTelemetryText('source-badge', 'STALE');
         setTelemetryText('dashboard-freshness', 'LAST KNOWN · LIVE REFRESH FAILED');
         setTelemetryText('hero-truth-source', 'STALE LAST KNOWN');
@@ -1821,7 +1836,6 @@
       }
 
       renderLandingPlatformProjection();
-      renderGoals(goals, 'static-seed', 0);
       markStaticTelemetryFallback();
       fetchSharedWorkspaceDashboardFeed().then((feed) => {
         if (feed && renderSharedWorkspaceDashboardFeed(feed)) scheduleSharedWorkspaceDashboardFeedPoll(feed);
