@@ -167,7 +167,7 @@ function orphanPrGoalCard(pr = {}, observedAt) {
 
 export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, missions = [], observedAt = new Date().toISOString(), limit = 12 } = {}) {
   const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 24) : 12;
-  if (githubTelemetry.adapterAvailable === true) {
+  if (githubTelemetry.adapterAvailable === true && githubTelemetry.issueInventoryObserved === true) {
     const pullRequests = list(githubTelemetry.pullRequests);
     const openIssues = list(githubTelemetry.issues).filter((issue) => normalizedStatus(issue.state) === 'open');
     const ranked = openIssues
