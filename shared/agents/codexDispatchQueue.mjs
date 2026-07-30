@@ -122,6 +122,7 @@ function safeExactHeadProof(value = {}) {
     repository: text(value.repository),
     prNumber,
     expectedHead,
+    proofScenario: text(value.proofScenario),
   });
 }
 export function isSafeCodexQueueProofRef(value) {
