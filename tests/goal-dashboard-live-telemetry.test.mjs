@@ -271,6 +271,11 @@ test('a failed live refresh lowers precedence so a current Shared Workspace proj
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
   assert.match(grid.children[0].innerHTML, /Current workspace goal/);
   assert.equal(telemetry.get('hero-truth-source').textContent, 'SHARED WORKSPACE FEED');
+
+  context.markLiveTelemetryRefreshFailed();
+  assert.equal(telemetry.get('source-badge').textContent, 'READY');
+  assert.equal(telemetry.get('hero-truth-source').textContent, 'SHARED WORKSPACE FEED');
+  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
 });
 
 test('standalone Goal Dashboard does not claim live proof without backend data and gates non-local fetches', async () => {
