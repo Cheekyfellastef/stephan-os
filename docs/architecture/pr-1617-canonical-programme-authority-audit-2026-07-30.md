@@ -326,3 +326,34 @@ Affected existing test suites:
   review are required before merge.
 
 Phase 2 may proceed in this same single implementation lane.
+
+## Review-repair convergence: positive authority only
+
+The first independent reviews of exact head
+`e18dfc1411290d646013c173f1bfd58ccb8be27c` found ten related P1/P2 defects.
+The defects shared one structural cause: several production boundaries treated
+syntactically plausible fields or record presence as authority without
+requiring every canonical owner to affirm the same identity and positive
+state.
+
+The repair therefore uses one model across the whole authority surface:
+
+| Authority | Required affirmative evidence | Fail-closed examples |
+| --- | --- | --- |
+| GitHub lane truth | fetched open PR, exact repository, PR, head and branch | caller-supplied wrong branch/head, merged/closed PR, unavailable GitHub read |
+| mutation lease | canonical ACTIVE Shared Workspace status plus exact identity and a maximum 24-hour acquisition lifetime | RELEASED/truncated status, overlong expiry, mismatched owner or head |
+| durable release | exact release marker and removal of the exact current lease | renewal after a published marker, conflicting marker, interrupted unlink |
+| scheduler goal relations | original durable prerequisite, duplicate and supersession claims preserved for canonical scheduler adjudication | malformed prerequisite container, dropped invalidation claim |
+| exact-head proof | valid Shared Workspace proof record with an explicitly affirmative status | FAILED or PENDING proof with otherwise plausible issue/PR/head fields |
+| controller execution posture | fresh heartbeat whose cycle state authorizes the projected action | STOPPED/HOLD authorizing idle work, IDLE authorizing an active lane |
+| conveyor admission | CREATE_NEXT_MISSION for the scheduler-selected issue | generic conveyor decision for another mission |
+| terminal replay | exact terminal proof including valid merge commit SHA and merged timestamp | truncated/corrupted persisted merge proof |
+
+The regression model exercises both accepted and adversarial states, including
+an interrupted release between durable marker publication and lease unlink.
+No repair creates another scheduler, conveyor, lease owner, worker, monitor,
+dispatcher, queue, GitHub adapter or merge authority.
+
+PR #1617 remains held. This prerequisite must receive fresh independent review
+and exact-head CI at the repaired head before it can be considered for merge or
+consumption by PR #1617.

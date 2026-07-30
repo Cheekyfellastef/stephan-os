@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  buildAffirmativeSchedulerProofSources,
   buildProgrammeStallMonitorRegistration,
   claimSourceMutationLease,
   finalizeTerminalImplementationLane,
@@ -19,6 +20,7 @@ import {
   createExecutionReceipt,
 } from '../../shared/agents/executionReceiptV1.mjs';
 import { ensureSharedWorkspaceLayout } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { createSharedWorkspaceProofRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
   createMissionWorkerHeartbeatRecord,
   resolveCanonicalMissionWorkerPaths,
@@ -89,6 +91,22 @@ function githubMerged() {
   };
 }
 
+function githubAuthorityOptions(root, repoRoot, github = githubOpen()) {
+  return {
+    root,
+    repoRoot,
+    testOnly: true,
+    dependencies: {
+      resolveGithubTokenConfig: async () => ({
+        configured: true,
+        token: 'not-published',
+        authority: 'test-only',
+      }),
+      fetchGithubPrEvidence: async () => github,
+    },
+  };
+}
+
 async function publishWorkerHeartbeat(home) {
   const paths = resolveCanonicalMissionWorkerPaths({ home, env: {} });
   const record = createMissionWorkerHeartbeatRecord({
@@ -146,19 +164,27 @@ async function publishExecutionReceipt(root, repoRoot) {
 
 test('lease acquisition is durable, non-seizing, exactly renewable and exactly releasable', async () => {
   await fixture(async ({ root, repoRoot }) => {
-    const claimed = await claimSourceMutationLease(leaseInput(), { root, repoRoot });
+    const wrongGithubIdentity = await claimSourceMutationLease(leaseInput({
+      branch: 'feat/wrong-branch',
+      headSha: 'c'.repeat(40),
+    }), githubAuthorityOptions(root, repoRoot));
+    assert.equal(wrongGithubIdentity.ok, false);
+    assert.equal(wrongGithubIdentity.reason, 'SOURCE_MUTATION_LEASE_GITHUB_IDENTITY_MISMATCH');
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, false);
+
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
     assert.equal(claimed.ok, true);
     assert.equal(claimed.claimed, true);
     assert.equal(claimed.leaseSeizureAllowed, false);
 
-    const same = await claimSourceMutationLease(leaseInput(), { root, repoRoot });
+    const same = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
     assert.equal(same.ok, true);
     assert.equal(same.idempotent, true);
 
     const conflict = await claimSourceMutationLease(leaseInput({
       leaseId: 'different-lease',
       ownerId: 'different-owner',
-    }), { root, repoRoot });
+    }), githubAuthorityOptions(root, repoRoot));
     assert.equal(conflict.ok, false);
     assert.equal(conflict.reason, 'SOURCE_MUTATION_LEASE_ALREADY_OWNED');
 
@@ -192,13 +218,42 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
     assert.equal(wrongRelease.releaseOnlyExactLease, true);
     assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, true);
 
+    const interruptedRelease = await releaseSourceMutationLease({
+      ...leaseInput(),
+      nowUtc: NOW,
+    }, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        unlink: async () => {
+          const error = new Error('simulated crash after durable release publication');
+          error.code = 'EIO';
+          throw error;
+        },
+      },
+    });
+    assert.equal(interruptedRelease.ok, false);
+    assert.equal(interruptedRelease.reason, 'SOURCE_MUTATION_LEASE_RELEASE_FAILED');
+    const releasedButPresent = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(releasedButPresent.ok, false);
+    assert.equal(releasedButPresent.present, true);
+    assert.equal(releasedButPresent.reason, 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT');
+
+    const renewalAfterRelease = await renewSourceMutationLease({
+      ...leaseInput(),
+      nowUtc: NOW,
+    }, { root, repoRoot });
+    assert.equal(renewalAfterRelease.ok, false);
+    assert.equal(renewalAfterRelease.reason, 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT');
+
     const released = await releaseSourceMutationLease({
       ...leaseInput(),
       nowUtc: NOW,
     }, { root, repoRoot });
     assert.equal(released.ok, true);
     assert.equal(released.released, true);
-    assert.equal(released.headSha, HEAD);
+    assert.equal(released.recoveredInterruptedRelease, true);
     assert.equal(released.releaseRecord.schema, 'stephanos.source-mutation-lease-release.v1');
     assert.equal(released.releaseRecord.leaseId, LEASE_ID);
     assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, false);
@@ -221,12 +276,12 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
     const stale = await claimSourceMutationLease(leaseInput({
       leaseId: staleLeaseId,
       expiresAtUtc: '2026-07-30T09:31:00.000Z',
-    }), { root, repoRoot });
+    }), githubAuthorityOptions(root, repoRoot));
     assert.equal(stale.ok, true);
     const refusedSeizure = await claimSourceMutationLease(leaseInput({
       leaseId: staleLeaseId,
       nowUtc: NOW,
-    }), { root, repoRoot });
+    }), githubAuthorityOptions(root, repoRoot));
     assert.equal(refusedSeizure.ok, false);
     assert.equal(refusedSeizure.reason, 'SOURCE_MUTATION_LEASE_STALE_REQUIRES_RECONCILIATION');
     assert.equal(refusedSeizure.leaseSeizureAllowed, false);
@@ -241,7 +296,7 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
 
 test('production composition reads real Shared Workspace, receipt, heartbeat, scheduler and conveyor contracts', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
-    await claimSourceMutationLease(leaseInput(), { root, repoRoot });
+    await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
     await publishControllerHeartbeat(root, repoRoot);
     await publishWorkerHeartbeat(home);
     await publishExecutionReceipt(root, repoRoot);
@@ -335,7 +390,7 @@ test('production composition can discover exact GitHub lane truth before lease a
 
 test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is idempotent', async () => {
   await fixture(async ({ root, repoRoot }) => {
-    await claimSourceMutationLease(leaseInput(), { root, repoRoot });
+    await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
     const identity = { ...leaseInput(), nowUtc: NOW };
     const unmerged = await finalizeTerminalImplementationLane(identity, {
       root,
@@ -393,6 +448,21 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     assert.equal(proof.ownerId, OWNER);
     assert.equal(proof.mergeAuthority, false);
 
+    await writeFile(proofPath, `${JSON.stringify({ ...proof, mergeCommitSha: '' }, null, 2)}\n`, 'utf8');
+    const corruptedMergeProof = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => {
+          throw new Error('corrupted durable merge proof must block before GitHub access');
+        },
+      },
+    });
+    assert.equal(corruptedMergeProof.ok, false);
+    assert.equal(corruptedMergeProof.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
+    await writeFile(proofPath, `${JSON.stringify(proof, null, 2)}\n`, 'utf8');
+
     await rm(proofPath);
     const missingProof = await finalizeTerminalImplementationLane(identity, {
       root,
@@ -407,6 +477,39 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     assert.equal(missingProof.ok, false);
     assert.equal(missingProof.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
   });
+});
+
+test('scheduler proof bindings require a validated affirmative proof status', () => {
+  const proof = {
+    ...createSharedWorkspaceProofRecord({
+      proofId: 'proof-1617',
+      participantId: 'battle-bridge',
+      timestampUtc: NOW,
+      correlationId: 'goal-1497-pr-1617',
+      relatedIssue: '#1497',
+      relatedPr: '#1617',
+      status: 'FAILED',
+      summary: 'Exact-head proof failed.',
+      refs: ['proof/failed.json'],
+      proofRefs: ['proof/failed.json'],
+    }),
+    issueNumber: 1497,
+    prNumber: 1617,
+    headSha: HEAD,
+  };
+  const failed = buildAffirmativeSchedulerProofSources({
+    records: { proofRecords: [proof] },
+  }, null);
+  assert.deepEqual(failed.proofHeadShas, []);
+  assert.deepEqual(failed.proofReceipts, []);
+  assert.deepEqual(failed.proofRefs, []);
+
+  const passed = buildAffirmativeSchedulerProofSources({
+    records: { proofRecords: [{ ...proof, status: 'PASS' }] },
+  }, null);
+  assert.deepEqual(passed.proofHeadShas, [HEAD]);
+  assert.deepEqual(passed.proofReceipts, [{ issue: 1497, activePr: 1617, headSha: HEAD }]);
+  assert.deepEqual(passed.proofRefs, ['proof/failed.json']);
 });
 
 test('programme stall registration exposes only a handler for the existing monitor runtime', () => {

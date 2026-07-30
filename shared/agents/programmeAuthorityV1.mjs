@@ -43,6 +43,9 @@ const CONTROLLER_CYCLE_STATES = new Set([
   'STOPPED',
 ]);
 const EXECUTION_TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
+const ACTIVE_LANE_CONTROLLER_STATES = new Set(['ACTIVE_LANE']);
+const IDLE_SELECTION_CONTROLLER_STATES = new Set(['IDLE', 'RECONCILING']);
+const TERMINAL_LANE_CONTROLLER_STATES = new Set(['FINALIZING', 'RECONCILING']);
 
 export const PROGRAMME_AUTHORITY_COMPONENTS = Object.freeze([
   Object.freeze({ componentId: 'github-pr-evidence', source: 'stephanos-server/services/githubPrEvidenceService.js', ownership: 'github-lane-truth', reuse: true }),
@@ -339,7 +342,13 @@ export function validateSourceMutationLease(record = {}, options = {}) {
   const expiresAtMs = timestamp(record?.expiresAtUtc);
   if (!record || typeof record !== 'object' || Array.isArray(record)) errors.push('invalid-record');
   if (record?.schema !== SOURCE_MUTATION_LEASE_SCHEMA) errors.push('invalid-schema');
+  if (record?.schemaVersion !== 'shared-agent-workspace-record.v1') errors.push('invalid-workspace-schema');
+  if (record?.kind !== 'stephanos.shared_workspace.status') errors.push('invalid-workspace-kind');
   if (record?.statusId !== SOURCE_MUTATION_LEASE_STATUS_ID) errors.push('invalid-status-id');
+  if (record?.participantId !== 'source-mutation-lease-authority') errors.push('invalid-participant-id');
+  if (record?.status !== 'ACTIVE') errors.push('lease-status-not-active');
+  if (record?.timestampUtc !== record?.acquiredAtUtc) errors.push('lease-status-timestamp-mismatch');
+  if (!Array.isArray(record?.proofRefs)) errors.push('invalid-proof-refs');
   if (!SAFE_ID.test(text(record?.leaseId))) errors.push('invalid-lease-id');
   if (!SAFE_ID.test(text(record?.laneId))) errors.push('invalid-lane-id');
   if (!SAFE_REPOSITORY.test(text(record?.repository))) errors.push('invalid-repository');
@@ -353,6 +362,9 @@ export function validateSourceMutationLease(record = {}, options = {}) {
   if (expiresAtMs === null) errors.push('invalid-expires-at');
   if (acquiredAtMs !== null && renewedAtMs !== null && renewedAtMs < acquiredAtMs) errors.push('renewed-before-acquired');
   if (renewedAtMs !== null && expiresAtMs !== null && expiresAtMs <= renewedAtMs) errors.push('expiry-not-after-renewal');
+  if (acquiredAtMs !== null && expiresAtMs !== null && expiresAtMs - acquiredAtMs > MAX_SOURCE_MUTATION_LEASE_MS) {
+    errors.push('lease-lifetime-exceeds-maximum');
+  }
   if (record?.executionReceiptLeaseKeyIsCorrelationOnly !== true) errors.push('lease-key-correlation-boundary-missing');
   if (record?.mergeAuthority !== false) errors.push('merge-authority-forbidden');
   if (record?.leaseSeizureAllowed !== false) errors.push('lease-seizure-forbidden');
@@ -578,7 +590,9 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       issue: issueNumber,
       title: text(record.title, `Goal #${issueNumber}`),
       state: normalizedState(record.state ?? record.status ?? 'WAITING_FOR_EXTERNAL_CONDITION'),
-      prerequisites: Array.isArray(record.prerequisites) ? record.prerequisites : [],
+      prerequisites: Object.prototype.hasOwnProperty.call(record, 'prerequisites')
+        ? record.prerequisites
+        : [],
       priority: Number.isFinite(record.priority) ? record.priority : 0,
       criticalPathWeight: Number.isFinite(record.criticalPathWeight) ? record.criticalPathWeight : 0,
       reversibility: text(record.reversibility, 'UNKNOWN').toUpperCase(),
@@ -596,6 +610,8 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       repairCycleCount: Number.isSafeInteger(record.repairCycleCount) ? record.repairCycleCount : 0,
       structuralReviewProofRefs: Array.isArray(record.structuralReviewProofRefs) ? record.structuralReviewProofRefs : [],
       modelTestProofRefs: Array.isArray(record.modelTestProofRefs) ? record.modelTestProofRefs : [],
+      duplicateOf: record.duplicateOf ?? null,
+      supersededBy: record.supersededBy ?? null,
     });
   }
   if (lane?.valid && lane.active) {
@@ -624,6 +640,8 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       repairCycleCount: existing?.repairCycleCount ?? 0,
       structuralReviewProofRefs: existing?.structuralReviewProofRefs ?? [],
       modelTestProofRefs: existing?.modelTestProofRefs ?? [],
+      duplicateOf: existing?.duplicateOf ?? null,
+      supersededBy: existing?.supersededBy ?? null,
     };
     if (existing) goals[goals.indexOf(existing)] = activeGoal;
     else goals.push(activeGoal);
@@ -675,6 +693,12 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   if (lane?.active && controllerHeartbeat?.activeLaneId !== lane.laneId) {
     blockers.push('controller-heartbeat-active-lane-mismatch');
   }
+  if (lane?.active && !ACTIVE_LANE_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
+    blockers.push('controller-heartbeat-cycle-state-does-not-authorize-active-lane');
+  }
+  if (lane?.terminal && !TERMINAL_LANE_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
+    blockers.push('controller-heartbeat-cycle-state-does-not-authorize-terminal-reconciliation');
+  }
   const workerHeartbeat = input.workerHeartbeatProjection;
   if (!workerHeartbeat?.valid || !workerHeartbeat?.fresh) {
     blockers.push(`worker-heartbeat-${workerHeartbeat?.valid ? 'stale' : 'invalid-or-missing'}`);
@@ -699,6 +723,16 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   if (!conveyor || typeof conveyor !== 'object') blockers.push('critical-backlog-source-missing');
   const idleSelection = !lane && Boolean(scheduler?.selectedGoal);
   if (idleSelection && conveyor?.decision !== 'CREATE_NEXT_MISSION') blockers.push('critical-backlog-did-not-authorize-idle-selection');
+  if (idleSelection && !IDLE_SELECTION_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
+    blockers.push('controller-heartbeat-cycle-state-does-not-authorize-idle-selection');
+  }
+  if (idleSelection) {
+    const selectedIssue = number(scheduler?.decisionReceipt?.selectedIssue ?? scheduler?.selectedGoal);
+    const conveyorIssues = list(conveyor?.selectedItem?.issueNumbers).map((value) => number(value)).filter(Boolean);
+    if (!selectedIssue || !conveyorIssues.includes(selectedIssue)) {
+      blockers.push('critical-backlog-idle-selection-identity-mismatch');
+    }
+  }
 
   if (!input.machineryInventory?.validation?.valid) blockers.push('machinery-inventory-invalid-or-missing');
   if (!Array.isArray(input.battleBridgeProofs)) blockers.push('battle-bridge-proof-source-missing');

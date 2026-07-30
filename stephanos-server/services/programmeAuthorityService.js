@@ -50,6 +50,20 @@ export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.js
 export const PROGRAMME_CONTROLLER_HEARTBEAT_FILE = `${PROGRAMME_CONTROLLER_HEARTBEAT_STATUS_ID}.json`;
 const SOURCE_MUTATION_LEASE_OPERATION_GUARD_FILE = 'source-mutation-lease-operation.lock';
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const SHA_40 = /^[0-9a-f]{40}$/i;
+const AFFIRMATIVE_PROOF_STATUSES = new Set([
+  'ACCEPTED',
+  'COMPLETE',
+  'COMPLETED',
+  'MERGED',
+  'OBSERVED',
+  'PASS',
+  'PASSED',
+  'PROVED',
+  'SUCCEEDED',
+  'SUCCESS',
+  'VERIFIED',
+]);
 
 function text(value, fallback = '') {
   const normalized = typeof value === 'string' ? value.trim() : '';
@@ -239,6 +253,43 @@ export async function readSourceMutationLease({
     });
   }
   const validation = validateSourceMutationLease(loaded.value, { nowUtc });
+  if (validation.valid) {
+    const expectedRelease = createSourceMutationLeaseReleaseRecord(loaded.value, { timestampUtc: nowUtc });
+    const releasePath = authorityPath(
+      resolved.root,
+      repoRoot,
+      'status',
+      `${expectedRelease.statusId}.json`,
+    );
+    if (!releasePath.ok) return blockedRead(releasePath.reason, { present: true, record: loaded.value, validation });
+    const release = await readJson(releasePath.path, readFileImpl);
+    if (release.error) {
+      return blockedRead('SOURCE_MUTATION_LEASE_RELEASE_RECORD_READ_FAILED', {
+        present: true,
+        record: loaded.value,
+        validation,
+      });
+    }
+    if (release.present) {
+      const exact = exactSourceMutationLeaseRelease(release.value, loaded.value);
+      return Object.freeze({
+        ok: false,
+        present: true,
+        reason: exact
+          ? 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
+          : 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CONFLICT',
+        record: loaded.value,
+        validation: Object.freeze({
+          ...validation,
+          active: false,
+          stale: false,
+          finalVerdict: 'SOURCE_MUTATION_LEASE_RELEASED',
+        }),
+        releaseRecord: release.value,
+        path: resolved.path,
+      });
+    }
+  }
   return Object.freeze({
     ok: validation.valid,
     present: true,
@@ -251,30 +302,88 @@ export async function readSourceMutationLease({
 
 export async function claimSourceMutationLease(input = {}, options = {}) {
   const nowUtc = safeNow(input.nowUtc ?? input.acquiredAtUtc);
-  const record = createSourceMutationLeaseRecord({ ...input, acquiredAtUtc: nowUtc });
-  const leaseValidation = validateSourceMutationLease(record, { nowUtc });
-  const workspaceValidation = validateSharedWorkspaceRecord(record, { nowMs: Date.parse(nowUtc) });
-  if (!leaseValidation.valid || !leaseValidation.active || !workspaceValidation.valid) {
+  const requestedRepository = text(input.repository);
+  const requestedPrNumber = positiveInteger(input.prNumber);
+  if (!nowUtc || !parseRepository(requestedRepository) || !requestedPrNumber) {
     return Object.freeze({
       ok: false,
       claimed: false,
-      reason: leaseValidation.errors[0] || workspaceValidation.refusalReason || 'SOURCE_MUTATION_LEASE_INVALID',
-      record,
-      leaseValidation,
-      workspaceValidation,
+      reason: !nowUtc
+        ? 'SOURCE_MUTATION_LEASE_CLAIM_TIME_INVALID'
+        : !parseRepository(requestedRepository)
+          ? 'SOURCE_MUTATION_LEASE_REPOSITORY_INVALID'
+          : 'SOURCE_MUTATION_LEASE_PR_INVALID',
+      record: null,
     });
   }
-  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
-  if (!layout.ok) return Object.freeze({ ok: false, claimed: false, reason: layout.reason, record });
-  const resolved = authorityPath(layout.root, options.repoRoot, 'status', SOURCE_MUTATION_LEASE_FILE);
-  if (!resolved.ok) return Object.freeze({ ok: false, claimed: false, reason: resolved.reason, record });
   const deps = dependencies(options);
+  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
+  if (!layout.ok) return Object.freeze({ ok: false, claimed: false, reason: layout.reason, record: null });
+  const resolved = authorityPath(layout.root, options.repoRoot, 'status', SOURCE_MUTATION_LEASE_FILE);
+  if (!resolved.ok) return Object.freeze({ ok: false, claimed: false, reason: resolved.reason, record: null });
   return withSourceMutationLeaseOperationGuard({
     root: layout.root,
     repoRoot: options.repoRoot,
     deps,
-    failure: { ok: false, claimed: false, record },
+    failure: { ok: false, claimed: false, record: null },
   }, async () => {
+    const github = await githubEvidenceForLaneIdentity({
+      repository: requestedRepository,
+      prNumber: requestedPrNumber,
+    }, options, deps);
+    const canonicalRepository = text(github?.repository);
+    const canonicalPrNumber = positiveInteger(github?.prNumber);
+    const canonicalBranch = text(github?.headBranch);
+    const canonicalHead = text(github?.headSha).toLowerCase();
+    const githubValid = Boolean(
+      github?.status === 'fetched'
+      && canonicalRepository === requestedRepository
+      && canonicalPrNumber === requestedPrNumber
+      && github?.merged !== true
+      && text(github?.prState).toUpperCase() === 'OPEN'
+      && canonicalBranch
+      && SHA_40.test(canonicalHead)
+    );
+    if (!githubValid) {
+      return Object.freeze({
+        ok: false,
+        claimed: false,
+        reason: 'SOURCE_MUTATION_LEASE_GITHUB_TRUTH_INVALID_OR_NON_ACTIVE',
+        record: null,
+        github,
+      });
+    }
+    if ((text(input.branch) && text(input.branch) !== canonicalBranch)
+      || (text(input.headSha) && text(input.headSha).toLowerCase() !== canonicalHead)) {
+      return Object.freeze({
+        ok: false,
+        claimed: false,
+        reason: 'SOURCE_MUTATION_LEASE_GITHUB_IDENTITY_MISMATCH',
+        record: null,
+        github,
+      });
+    }
+    const record = createSourceMutationLeaseRecord({
+      ...input,
+      repository: canonicalRepository,
+      prNumber: canonicalPrNumber,
+      branch: canonicalBranch,
+      headSha: canonicalHead,
+      acquiredAtUtc: nowUtc,
+    });
+    const leaseValidation = validateSourceMutationLease(record, { nowUtc });
+    const workspaceValidation = validateSharedWorkspaceRecord(record, { nowMs: Date.parse(nowUtc) });
+    if (!leaseValidation.valid || !leaseValidation.active || !workspaceValidation.valid) {
+      return Object.freeze({
+        ok: false,
+        claimed: false,
+        reason: leaseValidation.errors[0] || workspaceValidation.refusalReason || 'SOURCE_MUTATION_LEASE_INVALID',
+        record,
+        leaseValidation,
+        workspaceValidation,
+        github,
+      });
+    }
     const releaseMarker = createSourceMutationLeaseReleaseRecord(record, { timestampUtc: nowUtc });
     const releaseMarkerPath = authorityPath(
       layout.root,
@@ -301,6 +410,7 @@ export async function claimSourceMutationLease(input = {}, options = {}) {
         reason: 'SOURCE_MUTATION_LEASE_IDENTITY_ALREADY_RELEASED',
         record,
         leaseSeizureAllowed: false,
+        github,
       });
     }
     try {
@@ -462,6 +572,44 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
       nowUtc,
       readFileImpl: deps.readFile,
     });
+    if (
+      current.present
+      && current.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
+      && existingRelease.present
+      && exactSourceMutationLeaseRelease(existingRelease.value, expectedIdentity)
+    ) {
+      try {
+        await deps.unlink(current.path);
+        return Object.freeze({
+          ok: true,
+          released: true,
+          idempotent: true,
+          recoveredInterruptedRelease: true,
+          reason: 'SOURCE_MUTATION_LEASE_RELEASE_COMPLETED_FROM_DURABLE_MARKER',
+          releaseRecord: existingRelease.value,
+          releaseOnlyExactLease: true,
+        });
+      } catch (error) {
+        if (error?.code === 'ENOENT') {
+          return Object.freeze({
+            ok: true,
+            released: false,
+            idempotent: true,
+            recoveredInterruptedRelease: true,
+            reason: 'SOURCE_MUTATION_LEASE_ALREADY_RELEASED',
+            releaseRecord: existingRelease.value,
+            releaseOnlyExactLease: true,
+          });
+        }
+        return Object.freeze({
+          ok: false,
+          released: false,
+          reason: 'SOURCE_MUTATION_LEASE_RELEASE_RECOVERY_FAILED',
+          errorCode: error?.code || '',
+          releaseOnlyExactLease: true,
+        });
+      }
+    }
     if (current.ok && !current.present) {
       if (!existingRelease.present || !exactSourceMutationLeaseRelease(existingRelease.value, expectedIdentity)) {
         return Object.freeze({
@@ -643,13 +791,22 @@ async function readMissionWorkerHeartbeat(options, deps, nowUtc) {
   });
 }
 
-function proofSources(workspaceFeed, executionReceipt) {
+function isAffirmativeProofRecord(record) {
+  return Boolean(
+    record
+    && validateSharedWorkspaceRecord(record).valid
+    && record.kind === 'stephanos.shared_workspace.proof'
+    && AFFIRMATIVE_PROOF_STATUSES.has(text(record.status).toUpperCase())
+  );
+}
+
+export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt) {
   const records = list(workspaceFeed?.records?.proofRecords);
   const proofHeadShas = [];
   const proofReceipts = [];
   const proofRefs = [];
   for (const record of records) {
-    if (!record || typeof record !== 'object' || Array.isArray(record)) continue;
+    if (!isAffirmativeProofRecord(record)) continue;
     const headSha = text(record.headSha ?? record.sourceHead).toLowerCase();
     if (/^[0-9a-f]{40}$/.test(headSha)) proofHeadShas.push(headSha);
     const issue = Number(String(record.issueNumber ?? record.relatedIssue ?? '').replace(/^#/, ''));
@@ -659,7 +816,7 @@ function proofSources(workspaceFeed, executionReceipt) {
     }
     proofRefs.push(...list(record.proofRefs), ...list(record.refs));
   }
-  proofRefs.push(...list(executionReceipt?.proofRefs));
+  if (executionReceipt?.state === 'completed') proofRefs.push(...list(executionReceipt.proofRefs));
   return Object.freeze({
     records: Object.freeze(records),
     proofHeadShas: Object.freeze([...new Set(proofHeadShas)]),
@@ -784,7 +941,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     }, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : null;
   const executionReceipt = executionRead?.receipt ?? null;
-  const proof = proofSources(workspaceFeed, executionReceipt);
+  const proof = buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt);
   const lane = githubIdentity
     ? buildCanonicalImplementationLaneProjection({
       laneId: selector.laneId || lease?.laneId,
@@ -968,6 +1125,8 @@ function exactTerminalProofForIdentity(record, identity) {
     && record.leaseId === identity.leaseId
     && record.ownerId === identity.ownerId
     && record.status === 'MERGED'
+    && SHA_40.test(text(record.mergeCommitSha))
+    && Boolean(safeNow(record.mergedAtUtc))
     && record.releaseOnlyExactLease === true
     && record.mergeAuthority === false
   );

@@ -31,6 +31,7 @@ import {
   createMissionWorkerHeartbeatRecord,
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
 
 const NOW = '2026-07-30T10:00:00.000Z';
 const HEAD = 'a'.repeat(40);
@@ -197,6 +198,16 @@ test('source mutation lease validates, renews only the exact live owner, and nev
   });
   assert.equal(renewed.ok, true);
   assert.equal(renewed.record.renewedAtUtc, NOW);
+
+  const nonActive = validateSourceMutationLease({ ...record, status: 'RELEASED' }, { nowUtc: NOW });
+  assert.equal(nonActive.valid, false);
+  assert.ok(nonActive.errors.includes('lease-status-not-active'));
+
+  const overlong = validateSourceMutationLease(lease({
+    expiresAtUtc: '2026-08-30T09:30:00.000Z',
+  }), { nowUtc: NOW });
+  assert.equal(overlong.valid, false);
+  assert.ok(overlong.errors.includes('lease-lifetime-exceeds-maximum'));
 });
 
 test('execution receipt leaseKey is correlation only and cannot fabricate mutation authority', () => {
@@ -304,6 +315,42 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(goals.goals[0].state, 'ACTIVE');
   assert.equal(goals.goals[0].activePr, 1617);
   assert.equal(goals.goals[0].headSha, HEAD);
+
+  const malformedDependencies = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [{
+      issueNumber: 1284,
+      title: 'Malformed durable relation evidence',
+      state: 'READY',
+      prerequisites: '#1286',
+      route: 'CHATGPT_GITHUB',
+      evidenceAt: NOW,
+    }],
+  });
+  assert.equal(malformedDependencies.goals[0].prerequisites, '#1286');
+  const malformedScheduler = buildMissionScheduler({
+    now: NOW,
+    goals: malformedDependencies.goals,
+  });
+  assert.equal(malformedScheduler.portfolio[0].lifecycle, 'BLOCKED');
+  assert.equal(malformedScheduler.portfolio[0].invalidPrerequisiteContainer, true);
+  assert.ok(malformedScheduler.blockers.some(({ code }) => code === 'GOAL_BLOCKED'));
+
+  const invalidated = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [{
+      issueNumber: 1497,
+      title: 'Invalidated durable goal',
+      state: 'READY',
+      prerequisites: [],
+      duplicateOf: 1284,
+      supersededBy: 1622,
+      route: 'CHATGPT_GITHUB',
+      evidenceAt: NOW,
+    }],
+  });
+  assert.equal(invalidated.goals[0].duplicateOf, 1284);
+  assert.equal(invalidated.goals[0].supersededBy, 1622);
 });
 
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {
@@ -353,7 +400,7 @@ test('projection receipt identifies every canonical component exactly once', () 
     workspaceFeed: { state: 'ready' },
     lane: lane(),
     mutationLease: lease(),
-    controllerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0, activeLaneId: LANE_ID },
+    controllerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0, cycleState: 'ACTIVE_LANE', activeLaneId: LANE_ID },
     workerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0 },
     executionReceipt: receipt(),
     battleBridgeProofs: [],
@@ -370,6 +417,56 @@ test('projection receipt identifies every canonical component exactly once', () 
   assert.equal(projection.projectionReceipt.sourceConstructionMode, 'deterministic-testing-seam');
   assert.equal(projection.projectionReceipt.boundedMutationStepsPerCycle, 1);
   assert.deepEqual(projection.runtimeHealthRecords, []);
+});
+
+test('controller cycle and conveyor identity must affirm the exact idle selection', () => {
+  const base = {
+    nowUtc: NOW,
+    workspaceFeed: { state: 'ready' },
+    lane: null,
+    mutationLease: null,
+    workerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0 },
+    executionReceipt: null,
+    battleBridgeProofs: [],
+    runtimeHealthRecords: [],
+    scheduler: {
+      failClosed: false,
+      selectedGoal: '#1497',
+      decisionReceipt: { status: 'LANE_SELECTED', selectedIssue: 1497 },
+    },
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+  };
+  const stopped = buildAuthoritativeProgrammeProjection({
+    ...base,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'STOPPED' },
+    criticalBacklog: {
+      decision: 'CREATE_NEXT_MISSION',
+      selectedItem: { issueNumbers: [1497] },
+    },
+  });
+  assert.equal(stopped.status, 'HOLD');
+  assert.ok(stopped.blockers.includes('controller-heartbeat-cycle-state-does-not-authorize-idle-selection'));
+
+  const wrongMission = buildAuthoritativeProgrammeProjection({
+    ...base,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    criticalBacklog: {
+      decision: 'CREATE_NEXT_MISSION',
+      selectedItem: { issueNumbers: [1291] },
+    },
+  });
+  assert.equal(wrongMission.status, 'HOLD');
+  assert.ok(wrongMission.blockers.includes('critical-backlog-idle-selection-identity-mismatch'));
+
+  const exact = buildAuthoritativeProgrammeProjection({
+    ...base,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    criticalBacklog: {
+      decision: 'CREATE_NEXT_MISSION',
+      selectedItem: { issueNumbers: [1497] },
+    },
+  });
+  assert.equal(exact.status, 'READY');
 });
 
 test('programme stall diagnosis reuses Monitor Multiplexer and never starts scheduler, worker or mutation machinery', async () => {
