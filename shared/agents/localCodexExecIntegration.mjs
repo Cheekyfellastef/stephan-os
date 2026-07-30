@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,7 @@ export const LOCAL_CODEX_INTEGRATION_ID = 'battle-bridge-local-codex-exec-v1';
 
 const SAFE_JOB_ID = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
 const ACTIVE_STATUSES = new Set(['DISPATCHED', 'CLAIMED', 'RUNNING', 'WAITING_PROOF']);
+const DEFAULT_DISPATCH_LOCK_LEASE_MS = 5 * 60 * 1000;
 
 function defaultRepoRoot() {
   return resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -73,6 +74,58 @@ function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
+function processAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireDispatchLock(paths, {
+  nowUtc,
+  ownerPid,
+  ownerToken,
+  leaseMs,
+  isProcessAlive,
+}) {
+  const ownerPath = join(paths.dispatchLockPath, 'owner.json');
+  const claim = () => {
+    mkdirSync(paths.dispatchLockPath);
+    writeJson(ownerPath, {
+      ownerToken,
+      ownerPid,
+      acquiredAt: nowUtc,
+      expiresAt: new Date(Date.parse(nowUtc) + leaseMs).toISOString(),
+    });
+    return ownerToken;
+  };
+  try {
+    return claim();
+  } catch {
+    const owner = readJson(ownerPath);
+    const expired = Number.isFinite(Date.parse(owner?.expiresAt)) && Date.parse(owner.expiresAt) <= Date.parse(nowUtc);
+    const demonstrablyAbandoned = expired && !isProcessAlive(Number(owner?.ownerPid));
+    if (!demonstrablyAbandoned) {
+      throw new Error('Local Codex dispatch blocked because another dispatch is claiming the one-active-job slot.');
+    }
+    rmSync(paths.dispatchLockPath, { recursive: true, force: true });
+    try {
+      return claim();
+    } catch {
+      throw new Error('Local Codex dispatch blocked because another dispatch is claiming the one-active-job slot.');
+    }
+  }
+}
+
+function releaseDispatchLock(paths, ownerToken) {
+  const owner = readJson(join(paths.dispatchLockPath, 'owner.json'));
+  if (owner?.ownerToken !== ownerToken) return;
+  rmSync(paths.dispatchLockPath, { recursive: true, force: true });
+}
+
 export function readLocalCodexTaskStatus(jobId, options = {}) {
   const paths = resolveLocalCodexDispatchPaths({ ...options, jobId });
   return readJson(paths.statusPath) || readJson(paths.taskPath) || null;
@@ -89,6 +142,10 @@ export function createLocalCodexExecIntegration({
   spawnFn = spawn,
   now = () => new Date().toISOString(),
   idFactory = () => randomUUID(),
+  lockIdFactory = () => randomUUID(),
+  lockLeaseMs = DEFAULT_DISPATCH_LOCK_LEASE_MS,
+  isProcessAlive = processAlive,
+  ownerPid = process.pid,
   workerPath = resolve(fileURLToPath(new URL('../../scripts/stephanos-codex-dispatch-worker.mjs', import.meta.url))),
 } = {}) {
   const basePaths = resolveLocalCodexDispatchPaths({ repoRoot, workspaceRoot });
@@ -110,11 +167,13 @@ export function createLocalCodexExecIntegration({
       mkdirSync(basePaths.tasksRoot, { recursive: true });
       mkdirSync(basePaths.receiptsRoot, { recursive: true });
 
-      try {
-        mkdirSync(basePaths.dispatchLockPath);
-      } catch {
-        throw new Error('Local Codex dispatch blocked because another dispatch is claiming the one-active-job slot.');
-      }
+      const lockOwnerToken = acquireDispatchLock(basePaths, {
+        nowUtc: now(),
+        ownerPid,
+        ownerToken: lockIdFactory(),
+        leaseMs: lockLeaseMs,
+        isProcessAlive,
+      });
 
       try {
         const current = readJson(basePaths.currentPath);
@@ -233,7 +292,7 @@ export function createLocalCodexExecIntegration({
         writeJson(paths.receiptPath, receipt);
         return receipt;
       } finally {
-        try { rmdirSync(basePaths.dispatchLockPath); } catch {}
+        releaseDispatchLock(basePaths, lockOwnerToken);
       }
     },
     readStatus(jobId) { return readLocalCodexTaskStatus(jobId, { repoRoot: basePaths.repoRoot, workspaceRoot: basePaths.workspaceRoot }); },
