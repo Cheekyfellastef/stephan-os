@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceReceiptRecord,
@@ -308,7 +309,17 @@ export function createSourceMutationLeaseReleaseRecord(lease = {}, input = {}) {
   const headSha = sha(lease.headSha);
   const prNumber = number(lease.prNumber);
   const leaseId = text(lease.leaseId);
-  const statusId = `source-lease-release-${leaseId.slice(0, 40) || 'invalid'}-${headSha?.slice(0, 12) || 'invalid'}`;
+  const releaseIdentityDigest = createHash('sha256').update(JSON.stringify([
+    leaseId,
+    text(lease.laneId),
+    text(lease.repository).toLowerCase(),
+    number(lease.issueNumber),
+    prNumber,
+    text(lease.branch),
+    headSha,
+    text(lease.ownerId),
+  ])).digest('hex').slice(0, 32);
+  const statusId = `source-lease-release-${releaseIdentityDigest}`;
   return freeze({
     ...createSharedWorkspaceStatusRecord({
       statusId,
@@ -773,7 +784,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
       blockers.push('critical-backlog-active-lane-status-mismatch');
     }
     const activeMissionIdentity = laneIdentityFromId(conveyor?.activeMission?.missionId);
-    const conveyorIssues = [
+    const missionIssueAliases = [
       ...list(conveyor?.selectedItem?.issueNumbers),
       ...list(conveyor?.activeMission?.issueNumbers),
       conveyor?.activeMission?.issueNumber,
@@ -781,8 +792,31 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
       conveyor?.activeMission?.relatedIssue,
       activeMissionIdentity.issueNumber,
     ].map((value) => number(value)).filter(Boolean);
-    if (!conveyorIssues.includes(lane.issueNumber)) {
+    if (!missionIssueAliases.length || missionIssueAliases.some((value) => value !== lane.issueNumber)) {
       blockers.push('critical-backlog-active-lane-identity-mismatch');
+    }
+    const missionPrAliases = [
+      conveyor?.activeMission?.prNumber,
+      conveyor?.activeMission?.relatedPr,
+      conveyor?.activeMission?.pullRequest?.number,
+      activeMissionIdentity.prNumber,
+    ].map((value) => number(value)).filter(Boolean);
+    if (missionPrAliases.some((value) => value !== lane.prNumber)) {
+      blockers.push('critical-backlog-active-lane-pr-mismatch');
+    }
+    const missionRepositories = unique([
+      text(conveyor?.activeMission?.repository).toLowerCase(),
+      text(conveyor?.activeMission?.git?.repository).toLowerCase(),
+    ].filter(Boolean));
+    if (missionRepositories.some((value) => value !== text(lane.repository).toLowerCase())) {
+      blockers.push('critical-backlog-active-lane-repository-mismatch');
+    }
+    const missionBranches = unique([
+      text(conveyor?.activeMission?.branch),
+      text(conveyor?.activeMission?.git?.branch),
+    ].filter(Boolean));
+    if (missionBranches.some((value) => value !== lane.branch)) {
+      blockers.push('critical-backlog-active-lane-branch-mismatch');
     }
   }
   const idleSelection = !lane && Boolean(scheduler?.selectedGoal);
