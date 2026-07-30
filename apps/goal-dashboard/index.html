@@ -1428,7 +1428,7 @@
       const grid = document.getElementById('goal-grid');
       const platformGrid = document.getElementById('platform-grid');
       let currentGoalSourceRank = -1;
-      let liveTelemetryRendered = false;
+      let currentGoalProjectionSource = 'none';
 
 
       function resolveSharedWorkspaceDashboardFeedEndpoint() {
@@ -1652,7 +1652,7 @@
           ? (dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 3 : (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS' ? 2 : 1))
           : (missions.length ? 2 : null);
         if (goalSourceRank !== null && !beginGoalProjectionRender(goalSourceRank)) return true;
-        liveTelemetryRendered = true;
+        currentGoalProjectionSource = goalSourceRank === 3 ? 'live-github' : 'live-backend';
         setTelemetryText('source-badge', sourceBadge);
         setTelemetryText('goal-data-source', `${sourceBadge} backend telemetry · ${APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT}`);
         setTelemetryText('github-state', liveProjection?.currentAgentStates?.github?.state || concierge.queue?.autoPick?.liveGithubProof || 'unknown');
@@ -1714,6 +1714,7 @@
         if (!feed || ![SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION, 'stephanos.backend.shared-workspace-dashboard-feed.v1'].includes(feed.schemaVersion)) return false;
         const sourceRank = ['ready', 'stale'].includes(feed.state) ? 2 : 1;
         if (!beginGoalProjectionRender(sourceRank)) return true;
+        currentGoalProjectionSource = 'shared-workspace';
         const projection = feed.projection || buildLandingGoalDashboardProjection();
         renderLandingPlatformProjection(projection, feed);
         setTelemetryText('source-badge', String(feed.state || 'unknown').toUpperCase());
@@ -1779,6 +1780,7 @@
 
       function markStaticTelemetryFallback() {
         if (!beginGoalProjectionRender(0)) return false;
+        currentGoalProjectionSource = 'static-fallback';
         setTelemetryText('source-badge', 'STATIC_FALLBACK');
         setTelemetryText('goal-data-source', `Seeded / source-controlled · ${BACKEND_UNAVAILABLE_STATIC_SEED_ONLY}`);
         setTelemetryText('github-state', 'Not live in browser');
@@ -1797,8 +1799,9 @@
       }
 
       function markLiveTelemetryRefreshFailed() {
-        if (!liveTelemetryRendered) return;
+        if (!['live-github', 'live-backend'].includes(currentGoalProjectionSource)) return;
         currentGoalSourceRank = Math.min(currentGoalSourceRank, 1);
+        currentGoalProjectionSource = 'stale-approved-telemetry';
         setTelemetryText('source-badge', 'STALE');
         setTelemetryText('dashboard-freshness', 'LAST KNOWN · LIVE REFRESH FAILED');
         setTelemetryText('hero-truth-source', 'STALE LAST KNOWN');
