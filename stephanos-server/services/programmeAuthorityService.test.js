@@ -510,6 +510,22 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
   assert.deepEqual(passed.proofHeadShas, [HEAD]);
   assert.deepEqual(passed.proofReceipts, [{ issue: 1497, activePr: 1617, headSha: HEAD }]);
   assert.deepEqual(passed.proofRefs, ['proof/failed.json']);
+
+  const conflictingAliases = buildAffirmativeSchedulerProofSources({
+    records: {
+      proofRecords: [{
+        ...proof,
+        status: 'PASS',
+        relatedIssue: '#1',
+        relatedPr: '#2',
+        issueNumber: 1497,
+        prNumber: 1617,
+      }],
+    },
+  }, null);
+  assert.deepEqual(conflictingAliases.proofHeadShas, []);
+  assert.deepEqual(conflictingAliases.proofReceipts, []);
+  assert.deepEqual(conflictingAliases.proofRefs, []);
 });
 
 test('programme stall registration exposes only a handler for the existing monitor runtime', () => {
