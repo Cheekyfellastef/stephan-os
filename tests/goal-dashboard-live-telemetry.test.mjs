@@ -449,6 +449,27 @@ test('a failed live refresh lowers precedence so a current Shared Workspace proj
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
 });
 
+test('a rejected telemetry schema marks the retained live projection stale', async () => {
+  const { telemetry, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'live',
+    dashboardGoals: {
+      sourceTruth: 'LIVE READ-ONLY GITHUB',
+      observedAt: '2026-07-30T10:00:00.000Z',
+      cards: [{ issue: '#1627', title: 'Current goal', status: 'VERIFYING', currentOwner: 'CI', nextOwner: 'Review', operatorNeeded: 'No', handoffState: 'checks', milestone: 'HEAD', proofIndex: 3, nextAction: 'Wait.' }],
+    },
+  });
+  assert.equal(telemetry.get('source-badge').textContent, 'LIVE');
+
+  const rendered = context.renderApprovedLiveTelemetryOrMarkFailed({ schemaVersion: 'unsupported.telemetry.v2', truthy: true });
+  assert.equal(rendered, false);
+  assert.equal(telemetry.get('source-badge').textContent, 'STALE');
+  assert.equal(telemetry.get('hero-truth-source').textContent, 'STALE LAST KNOWN');
+  assert.match(telemetry.get('goals-context').textContent, /do not treat as current/);
+});
+
 test('standalone Goal Dashboard does not claim live proof without backend data and gates non-local fetches', async () => {
   const calls = [];
   const { telemetry, grid } = runDashboard({ hostname: 'example.com', fetchImpl: async () => { calls.push('called'); return { ok: true }; } });
