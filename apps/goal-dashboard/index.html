@@ -1516,6 +1516,13 @@
         return new Date(parsed).toISOString().replace('T', ' ').replace('.000Z', 'Z');
       }
 
+      function goalCardTimestamp(goal = {}) {
+        const source = String(goal.source || goal.sourceTruth || '').toLowerCase();
+        return source.includes('receipt')
+          ? (goal.lastUpdatedAt || goal.observedAt)
+          : (goal.observedAt || goal.lastUpdatedAt);
+      }
+
       function beginGoalProjectionRender(sourceRank = 0, projectionLane = 'unknown') {
         if (!grid) return false;
         const sameFreshnessLane = projectionLane === currentGoalProjectionLane;
@@ -1585,7 +1592,7 @@
           <div class="goal-body">
             <div class="goal-source">
               <span>${escapeHtml(goal.sourceTruth || (sourceState === 'static-seed' ? 'STATIC REFERENCE' : sourceState))}</span>
-              <time>${escapeHtml(compactObservedAt(goal.observedAt || goal.lastUpdatedAt))}</time>
+              <time>${escapeHtml(compactObservedAt(goalCardTimestamp(goal)))}</time>
             </div>
             <div class="meta">
               <div><span>Current owner</span>${escapeHtml(goal.currentOwner)}</div>
