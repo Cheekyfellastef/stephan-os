@@ -137,6 +137,36 @@ test('GitHub adapter availability without an observed issue inventory cannot cla
   assert.deepEqual(dashboardGoals.cards, []);
 });
 
+test('incomplete GitHub inventories fail closed instead of claiming a current goal estate', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issueInventoryObserved: true,
+      issueInventoryComplete: false,
+      pullRequestInventoryComplete: true,
+      issues: [{ number: 2000, title: 'Only the first page', state: 'open' }],
+      pullRequests: [],
+    },
+  });
+  assert.equal(dashboardGoals.sourceTruth, 'UNKNOWN');
+  assert.deepEqual(dashboardGoals.cards, []);
+});
+
+test('imported historical candidates remain explicit references and never become current receipt cards', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: { adapterAvailable: false },
+    queue: { queuedCandidates: [{ candidateId: 'queue-relabelled-1', title: 'Old imported goal', state: 'QUEUED' }] },
+    historicalCandidates: [{ candidateId: 'historical-1', title: 'Old imported goal', importedAt: '2026-06-01T00:00:00.000Z' }],
+  });
+  assert.equal(dashboardGoals.sourceTruth, 'UNKNOWN');
+  assert.deepEqual(dashboardGoals.cards, []);
+  assert.equal(dashboardGoals.historicalReferenceCount, 1);
+  assert.equal(dashboardGoals.historicalReferences[0].verificationState, 'imported_unverified');
+  assert.match(dashboardGoals.nextAction, /excluded from current cards/);
+});
+
 test('goal ingestion imports unfinished pasted goals, dedupes, and projects imported_unverified V9 candidates', async () => {
   const { importGoalSummaries, readImportedGoalReceipts } = await import('../stephanos-server/services/goalIngestionService.js');
   const directory = await tempDir();
@@ -157,6 +187,10 @@ test('goal ingestion imports unfinished pasted goals, dedupes, and projects impo
   assert.equal(projection.executionEngine.watchedGoalCount, 1);
   assert.equal(projection.executionEngine.classifiedGoalCount, 1);
   assert.equal(projection.executionEngine.enrichedCandidates[0].dispatchReadiness, 'MANUAL_DISPATCH_REQUIRED');
+  assert.equal(projection.dashboardGoals.sourceTruth, 'UNKNOWN');
+  assert.deepEqual(projection.dashboardGoals.cards, []);
+  assert.equal(projection.dashboardGoals.historicalReferenceCount, 1);
+  assert.equal(projection.sourceTruth, 'mixed');
   assert.equal(projection.proofTruth.github, 'unknown');
   assert.equal(projection.proofTruth.local, 'unknown');
   assert.equal(projection.proofTruth.browser, 'unknown');
