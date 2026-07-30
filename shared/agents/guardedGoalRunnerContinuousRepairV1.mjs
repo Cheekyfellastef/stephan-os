@@ -32,7 +32,11 @@ function validAttemptId(value) {
   return candidate && candidate.length <= 120 ? candidate : null;
 }
 
-function cycleId(snapshot, verdict, iteration, attemptId, predecessorCycleId) {
+function detailHash(details) {
+  return createHash('sha256').update(JSON.stringify(details)).digest('hex');
+}
+
+function cycleId(snapshot, verdict, iteration, attemptId, predecessorCycleId, status, integrityDetailsHash) {
   const identity = [
     text(snapshot.repository)?.toLowerCase(),
     snapshot.issueNumber,
@@ -42,17 +46,30 @@ function cycleId(snapshot, verdict, iteration, attemptId, predecessorCycleId) {
     attemptId,
     predecessorCycleId,
     iteration,
+    status,
     verdict.verdict,
+    verdict.nextAction,
     verdict.repairOrder?.findingIds ?? [],
+    integrityDetailsHash,
   ];
   return `repair-cycle-${snapshot.prNumber ?? 'unknown'}-${sha(snapshot.headSha)?.slice(0, 12) ?? 'unknown'}-${createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 16)}`;
 }
 
 function cycleReceipt(snapshot, verdict, iteration, status, context, extra = {}) {
   const predecessorCycleId = text(context.previousReceipt?.cycleId);
+  const integrityDetails = freeze({ ...extra });
+  const integrityDetailsHash = detailHash(integrityDetails);
   return freeze({
     schema:CYCLE_SCHEMA,
-    cycleId:cycleId(snapshot, verdict, iteration, context.attemptId, predecessorCycleId),
+    cycleId:cycleId(
+      snapshot,
+      verdict,
+      iteration,
+      context.attemptId,
+      predecessorCycleId,
+      status,
+      integrityDetailsHash,
+    ),
     attemptId:context.attemptId,
     predecessorCycleId,
     repository:text(snapshot.repository),
@@ -66,7 +83,9 @@ function cycleReceipt(snapshot, verdict, iteration, status, context, extra = {})
     nextAction:verdict.nextAction,
     repairOrderId:verdict.repairOrder?.repairOrderId ?? null,
     findingIds:verdict.repairOrder?.findingIds ?? [],
-    ...extra,
+    integrityDetails,
+    integrityDetailsHash,
+    ...integrityDetails,
     mergeAuthority:false,
     approvalAuthority:false,
   });
@@ -118,21 +137,38 @@ function historyValid(history, snapshot) {
   let predecessorCycleId = null;
   const cycleIds = new Set();
   for (const entry of history) {
+    const integrityDetails = entry?.integrityDetails;
+    const integrityDetailsHash = integrityDetails && typeof integrityDetails === 'object' && !Array.isArray(integrityDetails)
+      ? detailHash(integrityDetails)
+      : null;
+    const topLevelDetailsMatch = integrityDetails && Object.entries(integrityDetails).every(([key, value]) => (
+      JSON.stringify(entry[key]) === JSON.stringify(value)
+    ));
     if (!historyReceiptMatchesLane(entry, snapshot)
       || !Number.isSafeInteger(entry.iteration)
       || entry.iteration <= 0
+      || !text(entry.status)
       || !text(entry.verdict)
+      || !text(entry.nextAction)
       || !Array.isArray(entry.findingIds)
+      || integrityDetailsHash !== entry.integrityDetailsHash
+      || !topLevelDetailsMatch
       || text(entry.predecessorCycleId) !== predecessorCycleId
       || cycleIds.has(entry.cycleId)) {
       return false;
     }
     const expectedCycleId = cycleId(
       entry,
-      { verdict:entry.verdict, repairOrder:{ findingIds:entry.findingIds } },
+      {
+        verdict:entry.verdict,
+        nextAction:entry.nextAction,
+        repairOrder:{ findingIds:entry.findingIds },
+      },
       entry.iteration,
       entry.attemptId,
       predecessorCycleId,
+      entry.status,
+      entry.integrityDetailsHash,
     );
     if (entry.cycleId !== expectedCycleId) return false;
     cycleIds.add(entry.cycleId);
@@ -143,9 +179,57 @@ function historyValid(history, snapshot) {
 
 function verificationPurpose(snapshot) {
   if (snapshot.merged !== true) return 'PRE_MERGE_EXACT_HEAD_CI';
+  const headSha = sha(snapshot.headSha);
+  const exactHeadCiGreen = snapshot.ciGreen === true && sha(snapshot.ciHeadSha) === headSha;
+  if (!exactHeadCiGreen) return 'POST_MERGE_EXACT_HEAD_CI';
   if (snapshot.runtimeProofRequired === true) return 'POST_MERGE_RUNTIME';
-  if (snapshot.runtimeProofRequired === false) return 'POST_MERGE_EXACT_HEAD_CI';
   return 'POST_MERGE_RUNTIME_SCOPE';
+}
+
+function verificationRequestKey(snapshot, purpose) {
+  return `verify-${snapshot.prNumber}-${sha(snapshot.headSha)?.slice(0, 12) ?? 'unknown'}-${purpose.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+}
+
+function pendingVerificationIntent(history, snapshot, purpose) {
+  const closedKeys = new Set(history.filter((entry) => (
+    ['verification-requested', 'blocked-verification-rejected'].includes(entry?.status)
+    && text(entry.verificationRequestKey)
+  )).map((entry) => entry.verificationRequestKey));
+  return history.findLast((entry) => (
+    entry?.status === 'verification-intent-recorded'
+    && entry.verificationPurpose === purpose
+    && sha(entry.headSha) === sha(snapshot.headSha)
+    && text(entry.verificationRequestKey)
+    && !closedKeys.has(entry.verificationRequestKey)
+  )) ?? null;
+}
+
+function repairAttemptsForHead(history, headSha) {
+  const explicit = new Set(history.filter((entry) => (
+    entry?.status === 'repair-attempt-recorded'
+    && sha(entry.headSha) === headSha
+    && text(entry.dispatchAttemptId)
+  )).map((entry) => entry.dispatchAttemptId));
+  const legacy = history.filter((entry) => (
+    ['repair-dispatched', 'blocked-dispatch-rejected'].includes(entry?.status)
+    && sha(entry.headSha) === headSha
+    && !text(entry.dispatchAttemptId)
+  ));
+  return explicit.size + legacy.length;
+}
+
+function pendingTerminalization(history, snapshot) {
+  const recovered = new Set(history.filter((entry) => (
+    entry?.status === 'dispatch-terminalization-recovered'
+    && text(entry.recoveredCycleId)
+  )).map((entry) => entry.recoveredCycleId));
+  return history.findLast((entry) => (
+    entry?.status === 'blocked-dispatch-rejected'
+    && entry.terminalExecutionPersisted === false
+    && entry.pendingTerminalExecutionReceipt
+    && sha(entry.headSha) === sha(snapshot.headSha)
+    && !recovered.has(entry.cycleId)
+  )) ?? null;
 }
 
 function outstandingVerifications(history, snapshot) {
@@ -272,6 +356,39 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
   }
 
   const history = provisionalHistory;
+  const terminalization = pendingTerminalization(history, snapshot);
+  if (terminalization) {
+    const terminalPersistence = await persistOutcome(
+      persistExecutionReceipt,
+      terminalization.pendingTerminalExecutionReceipt,
+      { snapshot, terminal:true, recovery:true },
+    );
+    if (!terminalPersistence.ok) {
+      return result('BLOCKED_EXECUTION_RECEIPT_PERSISTENCE', terminalization, history);
+    }
+    const recovered = cycleReceipt(
+      snapshot,
+      {
+        verdict:terminalization.verdict,
+        nextAction:terminalization.nextAction,
+        repairOrder:{ findingIds:terminalization.findingIds },
+      },
+      terminalization.iteration + 1,
+      'dispatch-terminalization-recovered',
+      {
+        attemptId,
+        previousReceipt:history.at(-1) ?? null,
+      },
+      {
+        recoveredCycleId:terminalization.cycleId,
+        terminalExecutionReceiptId:terminalization.pendingTerminalExecutionReceipt.receiptId,
+      },
+    );
+    const persisted = await persistOutcome(persistCycleReceipt, recovered);
+    if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
+    history.push(recovered);
+    return result('TERMINALIZATION_RECOVERED', recovered, history);
+  }
   let lastSnapshot = snapshot;
   let lastVerdict = { verdict:'abort-missing-proof', nextAction:'STOP_AND_SURFACE_BLOCKER' };
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -298,10 +415,7 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
     lastVerdict = verdict;
 
     if (verdict.nextAction === 'PERSIST_CANONICAL_RECEIPT_THEN_ROUTE_WORKER') {
-      const count = history.filter((entry) => (
-        ['repair-dispatched', 'blocked-dispatch-rejected'].includes(entry?.status)
-        && sha(entry.headSha) === sha(snapshot.headSha)
-      )).length;
+      const count = repairAttemptsForHead(history, sha(snapshot.headSha));
       if (count >= maxRepairsPerHead) {
         const blocked = cycleReceipt(snapshot, verdict, iteration, 'blocked-repair-budget', {
           attemptId,
@@ -332,6 +446,17 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
         history.push(blocked);
         return result('BLOCKED_EXECUTION_RECEIPT_PERSISTENCE', blocked, history);
       }
+      const dispatchAttemptId = verdict.nextReceipt.executionId;
+      const attemptReceipt = cycleReceipt(snapshot, verdict, iteration, 'repair-attempt-recorded', {
+        attemptId,
+        previousReceipt:history.at(-1) ?? null,
+      }, {
+        dispatchAttemptId,
+        executionReceiptId:verdict.nextReceipt.receiptId,
+      });
+      const attemptPersisted = await persistOutcome(persistCycleReceipt, attemptReceipt);
+      if (!attemptPersisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
+      history.push(attemptReceipt);
       let dispatched;
       let dispatchError = null;
       try {
@@ -355,6 +480,8 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
           dispatchAccepted:false,
           terminalExecutionReceiptId:terminalPersistence.ok ? terminal.receiptId : null,
           terminalExecutionPersisted:terminalPersistence.ok,
+          pendingTerminalExecutionReceipt:terminalPersistence.ok ? null : terminal,
+          dispatchAttemptId,
         });
         const persisted = await persistOutcome(persistCycleReceipt, blocked);
         if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
@@ -371,6 +498,7 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
       }, {
         dispatchAccepted:true,
         workerTaskId:text(dispatched.workerTaskId),
+        dispatchAttemptId,
       });
       const persisted = await persistOutcome(persistCycleReceipt, dispatchedReceipt);
       if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
@@ -410,6 +538,20 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
         if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
         history.push(completed);
       }
+      let verificationIntent = pendingVerificationIntent(history, snapshot, purpose);
+      if (!verificationIntent) {
+        const intent = cycleReceipt(snapshot, verdict, iteration, 'verification-intent-recorded', {
+          attemptId,
+          previousReceipt:history.at(-1) ?? null,
+        }, {
+          verificationPurpose:purpose,
+          verificationRequestKey:verificationRequestKey(snapshot, purpose),
+        });
+        const persisted = await persistOutcome(persistCycleReceipt, intent);
+        if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
+        history.push(intent);
+        verificationIntent = intent;
+      }
       let verification;
       let verificationError = null;
       try {
@@ -418,6 +560,7 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
           verdict,
           headSha:sha(snapshot.headSha),
           purpose,
+          idempotencyKey:verificationIntent.verificationRequestKey,
         });
       } catch (error) {
         verificationError = error;
@@ -438,6 +581,7 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
           verificationAccepted:accepted,
           verificationId,
           verificationPurpose:purpose,
+          verificationRequestKey:verificationIntent.verificationRequestKey,
         },
       );
       const persisted = await persistOutcome(persistCycleReceipt, verificationReceipt);
