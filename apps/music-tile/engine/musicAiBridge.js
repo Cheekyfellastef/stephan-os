@@ -1,4 +1,5 @@
 import { queryStephanosAI, resolveStephanosAiBackendBaseUrl } from '../../../shared/ai/stephanosClient.mjs';
+import { readPersistedStephanosSessionMemory } from '../../../shared/runtime/stephanosSessionMemory.mjs';
 
 const CANONICAL_AI_ENDPOINT_PATH = '/api/ai/chat';
 
@@ -27,10 +28,13 @@ function musicAiRouterSettings() {
   const runtimeContext = status.runtimeContext || {};
   const runtimeTruth = status.runtimeTruth || {};
   const finalRouteTruth = status.finalRouteTruth || {};
+  const persistedPreferences = readPersistedStephanosSessionMemory(globalThis?.localStorage)
+    ?.session?.providerPreferences || {};
   const preferences = firstValue(
     status.providerPreferences,
     runtimeContext.providerPreferences,
     runtimeTruth.providerPreferences,
+    persistedPreferences,
     {},
   );
   const provider = String(firstValue(
@@ -45,7 +49,7 @@ function musicAiRouterSettings() {
     routeMode: String(firstValue(preferences.routeMode, finalRouteTruth.requestedRouteMode, status.routeMode, 'auto')),
     fallbackEnabled: firstValue(preferences.fallbackEnabled, status.fallbackEnabled, true) !== false,
     fallbackOrder: firstValue(preferences.fallbackOrder, status.fallbackOrder, undefined),
-    providerConfigs: firstValue(preferences.providerConfigs, runtimeContext.providerConfigs, runtimeTruth.providerConfigs, undefined),
+    providerConfigs: firstValue(preferences.providerConfigs, runtimeContext.providerConfigs, runtimeTruth.providerConfigs, persistedPreferences.providerConfigs, undefined),
   };
 }
 

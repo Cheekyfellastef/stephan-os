@@ -71,7 +71,7 @@ test('queryStephanosAI carries canonical routing and fallback policy', async () 
     fallbackEnabled: true,
     fallbackOrder: ['gemini', 'ollama'],
     providerConfigs: {
-      groq: { model: 'openai/gpt-oss-20b' },
+      groq: { model: 'openai/gpt-oss-20b', apiKey: 'must-not-cross-transport', privateDraftNote: 'secret-adjacent' },
       gemini: { model: 'gemini-2.5-flash' },
     },
     messages: [{ role: 'user', content: 'route this' }],
@@ -84,6 +84,8 @@ test('queryStephanosAI carries canonical routing and fallback policy', async () 
   assert.equal(payload.fallbackEnabled, true);
   assert.deepEqual(payload.fallbackOrder, ['gemini', 'ollama']);
   assert.equal(payload.providerConfigs.gemini.model, 'gemini-2.5-flash');
+  assert.equal(Object.hasOwn(payload.providerConfigs.groq, 'apiKey'), false);
+  assert.equal(Object.hasOwn(payload.providerConfigs.groq, 'privateDraftNote'), false);
 });
 
 test('queryStephanosAI throws cleanly on backend failures', async () => {

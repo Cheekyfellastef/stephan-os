@@ -6,6 +6,13 @@ import { readPersistedStephanosSessionMemory } from '../runtime/stephanosSession
 
 const DEFAULT_UI_REQUEST_TIMEOUT_MS = 30000;
 const UI_TIMEOUT_GRACE_MS = 1500;
+const NON_SECRET_PROVIDER_CONFIG_FIELDS = Object.freeze({
+  mock: ['enabled', 'latencyMs', 'failRate', 'mode', 'model'],
+  groq: ['baseURL', 'model', 'freshWebModel', 'freshWebModelCandidates'],
+  gemini: ['baseURL', 'model'],
+  ollama: ['baseURL', 'model', 'timeoutMs', 'defaultOllamaTimeoutMs', 'perModelTimeoutOverrides'],
+  openrouter: ['baseURL', 'model', 'enabled'],
+});
 
 function safeString(value = '') {
   return typeof value === 'string' ? value.trim() : '';
@@ -66,6 +73,19 @@ function resolveRuntimeProviderConfigs(runtimeContext = {}) {
   const storage = sourceContext.storage || globalThis?.localStorage;
   const sessionMemory = readPersistedStephanosSessionMemory(storage);
   return sessionMemory?.session?.providerPreferences?.providerConfigs || {};
+}
+
+function sanitizeProviderConfigsForTransport(providerConfigs = {}) {
+  return Object.fromEntries(
+    Object.entries(asObject(providerConfigs)).map(([provider, config]) => [
+      provider,
+      Object.fromEntries(
+        (NON_SECRET_PROVIDER_CONFIG_FIELDS[provider] || [])
+          .filter((field) => Object.hasOwn(asObject(config), field))
+          .map((field) => [field, asObject(config)[field]]),
+      ),
+    ]),
+  );
 }
 
 function resolveRuntimeTimeoutPolicy(runtimeContext = {}) {
@@ -193,9 +213,9 @@ function buildChatPayload({
   const normalizedProvider = safeString(provider) || 'ollama';
   const normalizedModel = safeString(model);
   const runtimeProviderConfigs = resolveRuntimeProviderConfigs(runtimeContext);
-  const suppliedProviderConfigs = providerConfigs && typeof providerConfigs === 'object'
+  const suppliedProviderConfigs = sanitizeProviderConfigsForTransport(providerConfigs && typeof providerConfigs === 'object'
     ? providerConfigs
-    : runtimeProviderConfigs;
+    : runtimeProviderConfigs);
   const savedProviderConfig = asObject(suppliedProviderConfigs?.[normalizedProvider]);
   const providerConfig = normalizedModel
     ? { ...savedProviderConfig, model: normalizedModel }

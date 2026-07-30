@@ -54,6 +54,43 @@ test('canonical success response preserves output and provider execution truth',
   assert.equal(result.fallbackUsed, true);
 });
 
+test('standalone Music Tile restores persisted canonical routing policy', async () => {
+  const originalStorage = globalThis.localStorage;
+  const values = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: (key) => values.delete(key),
+  };
+  values.set('stephanos.session.memory.v1', JSON.stringify({
+    session: {
+      providerPreferences: {
+        provider: 'groq',
+        routeMode: 'explicit',
+        fallbackEnabled: false,
+        fallbackOrder: ['gemini', 'ollama'],
+        providerConfigs: { groq: { model: 'openai/gpt-oss-20b' } },
+      },
+    },
+  }));
+  let requestPayload;
+  try {
+    await testMusicAiRoute({
+      fetchImpl: async (_url, options) => {
+        requestPayload = JSON.parse(options.body);
+        return { ok: true, status: 200, text: async () => '{"output_text":"MUSIC_AI_ROUTE_OK"}' };
+      },
+    });
+  } finally {
+    if (originalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = originalStorage;
+  }
+  assert.equal(requestPayload.provider, 'groq');
+  assert.equal(requestPayload.routeMode, 'explicit');
+  assert.equal(requestPayload.fallbackEnabled, false);
+  assert.deepEqual(requestPayload.fallbackOrder, ['gemini', 'ollama', 'groq', 'mock']);
+});
+
 test('status messaging keeps rule fallback without declaring 200 as unavailable', () => {
   assert.match(musicTileJs, /AI ready —/);
   assert.match(musicTileJs, /Rule-based parser remains available\./);
