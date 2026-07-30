@@ -1,17 +1,28 @@
 import { providerSecretStore } from './providerSecretStore.js';
 import { resolveGithubRepoConfig } from './githubPrEvidenceService.js';
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
+import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
 
 export const GITHUB_TELEMETRY_SCHEMA = 'stephanos.github.telemetry.v1';
 const WORKFLOW_STATES = new Set(['running', 'queued', 'failed', 'passed', 'cancelled']);
-const ISSUE_REFERENCE_PATTERN = /(?:^|[^\w])#(\d{1,10})\b/g;
+const DURABLE_ISSUE_REFERENCE_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:[a-z0-9_.-]+\/[a-z0-9_.-]+)?#(\d{1,10})\b/gi;
+const GITHUB_PAGE_SIZE = 100;
+const MAX_GITHUB_PAGES = 100;
 function text(value, fallback = '') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
 function list(value) { return Array.isArray(value) ? value : []; }
 function lc(value) { return text(value).toLowerCase(); }
 function countBy(items, key) { return items.reduce((acc, item) => ({ ...acc, [item[key]]: (acc[item[key]] || 0) + 1 }), {}); }
-function issueReferences(value = '') {
-  const references = [];
-  for (const match of String(value || '').matchAll(ISSUE_REFERENCE_PATTERN)) {
+function positiveInteger(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+function durableIssueReferences(pr = {}) {
+  const references = [
+    ...list(pr.relatedIssues),
+    ...list(pr.closingIssues),
+    ...list(pr.closingIssueReferences),
+  ].map((reference) => positiveInteger(reference?.number ?? reference)).filter(Boolean);
+  for (const match of String(pr.body || '').matchAll(DURABLE_ISSUE_REFERENCE_PATTERN)) {
     const number = Number(match[1]);
     if (Number.isSafeInteger(number) && number > 0) references.push(number);
   }
@@ -30,9 +41,12 @@ function normalizeLabels(labels = []) {
 function normalizeAssignees(assignees = []) {
   return list(assignees).map((assignee) => text(typeof assignee === 'string' ? assignee : assignee?.login)).filter(Boolean);
 }
-function latestWorkflowChecks(workflows = [], prNumber) {
+function checkHeadSha(check = {}) {
+  return text(check.headSha || check.head_sha || check.commit?.sha);
+}
+function latestWorkflowChecks(workflows = [], prNumber, headSha) {
   const latestByName = new Map();
-  for (const workflow of list(workflows).filter((run) => run.prNumber === prNumber)) {
+  for (const workflow of list(workflows).filter((run) => run.prNumber === prNumber && checkHeadSha(run) === headSha)) {
     const key = text(workflow.name, workflow.id);
     const previous = latestByName.get(key);
     const currentAt = Date.parse(workflow.updatedAt || 0);
@@ -42,6 +56,29 @@ function latestWorkflowChecks(workflows = [], prNumber) {
     }
   }
   return [...latestByName.values()];
+}
+function evaluateRequiredExactHeadChecks(checks = [], headSha = '') {
+  if (!headSha) {
+    return { checks: [], status: 'unknown', missing: [...REQUIRED_EXACT_HEAD_WORKFLOWS] };
+  }
+  const latestByName = new Map();
+  for (const check of list(checks).filter((candidate) => checkHeadSha(candidate) === headSha)) {
+    const name = text(check.name);
+    if (!REQUIRED_EXACT_HEAD_WORKFLOWS.includes(name)) continue;
+    const previous = latestByName.get(name);
+    const currentAt = Date.parse(check.updatedAt || check.updated_at || check.completed_at || 0);
+    const previousAt = Date.parse(previous?.updatedAt || previous?.updated_at || previous?.completed_at || 0);
+    if (!previous || (Number.isFinite(currentAt) && (!Number.isFinite(previousAt) || currentAt >= previousAt))) {
+      latestByName.set(name, check);
+    }
+  }
+  const exactChecks = REQUIRED_EXACT_HEAD_WORKFLOWS.map((name) => latestByName.get(name)).filter(Boolean);
+  const missing = REQUIRED_EXACT_HEAD_WORKFLOWS.filter((name) => !latestByName.has(name));
+  const normalized = normalizeChecks(exactChecks);
+  const failed = exactChecks.some((check) => ['failure', 'failed', 'timed_out', 'action_required', 'cancelled'].includes(lc(check.status || check.conclusion || check.state)));
+  const pending = exactChecks.some((check) => ['queued', 'running', 'in_progress', 'pending', 'waiting', 'requested'].includes(lc(check.status || check.conclusion || check.state)));
+  const status = failed ? 'failed' : (missing.length ? 'unknown' : (pending ? 'pending' : normalized));
+  return { checks: exactChecks, status, missing };
 }
 export function classifyGithubNotification(notification = {}) {
   const reason = lc(notification.reason);
@@ -60,6 +97,9 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const available = raw.available === true;
   const issueInventoryObserved = Array.isArray(raw.issues);
+  const issueInventoryComplete = issueInventoryObserved && raw.issueInventoryComplete !== false;
+  const pullRequestInventoryObserved = Array.isArray(raw.pullRequests || raw.prs);
+  const pullRequestInventoryComplete = pullRequestInventoryObserved && raw.pullRequestInventoryComplete !== false;
   const notifications = list(raw.notifications).map((notification, index) => ({
     id: text(notification.id, `notification-${index + 1}`),
     title: text(notification.subject?.title || notification.title, 'unknown'),
@@ -78,30 +118,40 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     if (['success', 'passed'].includes(conclusion)) status = 'passed';
     if (['failure', 'failed', 'timed_out', 'action_required'].includes(conclusion)) status = 'failed';
     if (conclusion === 'cancelled') status = 'cancelled';
-    return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at) };
+    return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, headSha: checkHeadSha(run), prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at) };
   });
   const pullRequests = list(raw.pullRequests || raw.prs).map((pr) => {
     const number = Number(pr.number || pr.prNumber || 0) || null;
-    const workflowChecks = latestWorkflowChecks(workflows, number);
-    const explicitChecksStatus = text(pr.checksStatus);
-    const checksStatus = text(explicitChecksStatus || normalizeChecks(list(pr.checks).length ? pr.checks : workflowChecks), 'unknown');
+    const headSha = text(pr.headSha || pr.head?.sha, '');
+    const providedChecks = list(pr.checks).map((check) => ({
+      ...check,
+      name: text(check.name),
+      headSha: checkHeadSha(check),
+      updatedAt: text(check.updatedAt || check.updated_at || check.completed_at),
+    }));
+    const workflowChecks = latestWorkflowChecks(workflows, number, headSha);
+    const checkEvaluation = evaluateRequiredExactHeadChecks(providedChecks.length ? providedChecks : workflowChecks, headSha);
+    const checksStatus = checkEvaluation.status;
     const blockers = [...list(pr.blockers)];
     if (checksStatus !== 'passed') blockers.push('checks_not_passed_or_unknown');
-    if (!text(pr.headSha || pr.head?.sha)) blockers.push('head_sha_unknown');
+    if (!headSha) blockers.push('head_sha_unknown');
+    if (checkEvaluation.missing.length) blockers.push(`required_exact_head_checks_missing:${checkEvaluation.missing.join(',')}`);
     const branch = text(pr.branch || pr.headRefName || pr.head?.ref, 'unknown');
     return {
       number,
       title: text(pr.title, 'unknown'),
       branch,
-      headSha: text(pr.headSha || pr.head?.sha, ''),
+      headSha,
       url: text(pr.html_url || pr.url, ''),
       draft: pr.draft === true,
       mergeable: typeof pr.mergeable === 'boolean' ? pr.mergeable : null,
       updatedAt: text(pr.updatedAt || pr.updated_at),
-      relatedIssues: issueReferences(`${text(pr.title)} ${text(pr.body)} ${branch}`),
-      checks: list(pr.checks).length ? list(pr.checks) : workflowChecks,
+      relatedIssues: durableIssueReferences(pr),
+      checks: checkEvaluation.checks,
       checksStatus,
-      mergeReadiness: text(pr.mergeReadiness || (checksStatus === 'passed' ? 'awaiting_exact_head_approval' : 'blocked_or_unknown'), 'blocked_or_unknown'),
+      requiredChecks: [...REQUIRED_EXACT_HEAD_WORKFLOWS],
+      missingRequiredChecks: checkEvaluation.missing,
+      mergeReadiness: checksStatus === 'passed' ? text(pr.mergeReadiness, 'awaiting_exact_head_approval') : 'blocked_or_unknown',
       approvalStatus: text(pr.approvalStatus, 'unknown'),
       blockers: [...new Set(blockers)],
       supersededStatus: text(pr.supersededStatus, 'unknown'),
@@ -123,6 +173,8 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     .filter((issue) => issue.number !== null);
   const blockers = [];
   if (!available) blockers.push('github_adapter_unavailable');
+  if (available && !issueInventoryComplete) blockers.push('github_issue_inventory_incomplete');
+  if (available && !pullRequestInventoryComplete) blockers.push('github_pull_request_inventory_incomplete');
   return {
     schemaVersion: GITHUB_TELEMETRY_SCHEMA,
     adapterAvailable: available,
@@ -138,10 +190,15 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     issues,
     issueCount: issues.length,
     issueInventoryObserved,
+    issueInventoryComplete,
+    pullRequestInventoryObserved,
+    pullRequestInventoryComplete,
     workflows,
     workflowCounts: countBy(workflows, 'status'),
     blockers,
-    nextOperatorAction: available ? 'Review actionable GitHub notifications, blocked PRs, and failed workflows before merge decisions.' : 'Configure the read-only GitHub adapter/token; GitHub truth remains unavailable.',
+    nextOperatorAction: available && issueInventoryComplete && pullRequestInventoryComplete
+      ? 'Review actionable GitHub notifications, blocked PRs, and failed workflows before merge decisions.'
+      : (available ? 'Restore complete GitHub issue and pull-request inventories before treating the dashboard as current truth.' : 'Configure the read-only GitHub adapter/token; GitHub truth remains unavailable.'),
     mutationAllowed: false,
     mergeAllowed: false,
   };
@@ -151,16 +208,29 @@ async function githubJson(url, auth, fetchImpl = fetch) {
   if (!response.ok) { const error = new Error(`GitHub API request failed (${response.status})`); error.status = response.status; throw error; }
   return response.json();
 }
+async function githubPaginatedArray(url, auth, fetchImpl = fetch) {
+  const items = [];
+  for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
+    const requestUrl = new URL(url);
+    requestUrl.searchParams.set('per_page', String(GITHUB_PAGE_SIZE));
+    requestUrl.searchParams.set('page', String(page));
+    const payload = await githubJson(requestUrl.href, auth, fetchImpl);
+    if (!Array.isArray(payload)) throw new Error('GitHub paginated inventory response was not an array');
+    items.push(...payload);
+    if (payload.length < GITHUB_PAGE_SIZE) return items;
+  }
+  throw new Error(`GitHub paginated inventory exceeded ${MAX_GITHUB_PAGES} pages`);
+}
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
   const { owner, repo } = repoConfig;
   const fetchImpl = options.fetchImpl || fetch;
   const [notifications, prs, issues, workflowRuns] = await Promise.all([
     githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl),
-    githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, auth, fetchImpl),
-    githubJson(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&sort=updated&direction=desc&per_page=100`, auth, fetchImpl),
+    githubPaginatedArray(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open`, auth, fetchImpl),
+    githubPaginatedArray(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&sort=updated&direction=desc`, auth, fetchImpl),
     githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, fetchImpl),
   ]);
-  return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: repoConfig, notifications, pullRequests: prs, issues, workflows: workflowRuns.workflow_runs || [] }, options);
+  return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: repoConfig, notifications, pullRequests: prs, pullRequestInventoryComplete: true, issues, issueInventoryComplete: true, workflows: workflowRuns.workflow_runs || [] }, options);
 }
 export async function readGithubTelemetry(options = {}) {
   if (options.adapterData) return normalizeGithubTelemetry(options.adapterData, options);
@@ -181,9 +251,12 @@ export async function readGithubTelemetry(options = {}) {
 }
 export function buildExecutionChains({ goals = [], githubTelemetry = {} } = {}) {
   return list(goals).map((goal) => {
-    const prHint = Number(String(goal.lastKnownPR || goal.prNumber || goal.title || '').match(/#?(\d+)/)?.[1] || 0) || null;
-    const pr = list(githubTelemetry.pullRequests).find((candidate) => candidate.number === prHint || (candidate.title && goal.title && candidate.title.toLowerCase().includes(String(goal.title).toLowerCase().slice(0, 24))));
-    const workflows = pr ? list(githubTelemetry.workflows).filter((run) => run.prNumber === pr.number) : [];
+    const prHint = positiveInteger(goal.prNumber)
+      || positiveInteger(String(goal.lastKnownPR || '').match(/^(?:PR\s*)?#?(\d+)$/i)?.[1]);
+    const issueNumber = positiveInteger(goal.issueNumber)
+      || positiveInteger(String(goal.relatedGoal || goal.issue || '').match(/^#?(\d+)$/)?.[1]);
+    const pr = list(githubTelemetry.pullRequests).find((candidate) => candidate.number === prHint || (issueNumber && list(candidate.relatedIssues).includes(issueNumber)));
+    const workflows = pr ? list(githubTelemetry.workflows).filter((run) => run.prNumber === pr.number && run.headSha === pr.headSha) : [];
     return { goalId: goal.candidateId || goal.id || goal.title, title: goal.title || 'unknown', pr: pr || null, workflows, browserProof: 'unknown', approval: pr?.approvalStatus || 'unknown', merge: pr?.mergeReadiness || 'unknown', postMergeSync: 'unknown' };
   });
 }
