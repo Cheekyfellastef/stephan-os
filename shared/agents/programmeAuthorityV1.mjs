@@ -784,15 +784,18 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
       blockers.push('critical-backlog-active-lane-status-mismatch');
     }
     const activeMissionIdentity = laneIdentityFromId(conveyor?.activeMission?.missionId);
-    const missionIssueAliases = [
+    const selectedIssues = [
       ...list(conveyor?.selectedItem?.issueNumbers),
       ...list(conveyor?.activeMission?.issueNumbers),
+    ].map((value) => number(value)).filter(Boolean);
+    const missionIssueAliases = [
       conveyor?.activeMission?.issueNumber,
       conveyor?.activeMission?.issue,
       conveyor?.activeMission?.relatedIssue,
       activeMissionIdentity.issueNumber,
     ].map((value) => number(value)).filter(Boolean);
-    if (!missionIssueAliases.length || missionIssueAliases.some((value) => value !== lane.issueNumber)) {
+    if ((!selectedIssues.includes(lane.issueNumber) && !missionIssueAliases.includes(lane.issueNumber))
+      || missionIssueAliases.some((value) => value !== lane.issueNumber)) {
       blockers.push('critical-backlog-active-lane-identity-mismatch');
     }
     const missionPrAliases = [
