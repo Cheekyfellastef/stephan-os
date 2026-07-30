@@ -26,13 +26,19 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_MAILBOX_RECEIPT',
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+  'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
   CODEX_BANKED_RESET_STATUS_OPERATION,
   CODEX_BANKED_RESET_OPERATION,
+]);
+
+export const WINDOWS_BROWSER_PROOF_SCENARIOS = Object.freeze([
+  'MUSIC_RATING_PRESERVES_PLAYBACK',
 ]);
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const PR_NUMBER_PATTERN = /^[1-9][0-9]{0,9}$/;
 const MAX_FUTURE_WINDOW_MS = 6 * 60 * 60 * 1000;
 const RESET_COMMAND_FIELDS = Object.freeze([
   'resetId',
@@ -136,6 +142,19 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   if (command.expectedHead && !SHA_PATTERN.test(String(command.expectedHead))) {
     return fail('COMMAND_EXPECTED_HEAD_INVALID');
   }
+  if (command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF') {
+    if (!SHA_PATTERN.test(String(command.expectedHead || ''))) {
+      return fail('WINDOWS_BROWSER_PROOF_EXPECTED_HEAD_REQUIRED');
+    }
+    if (!PR_NUMBER_PATTERN.test(String(command.prNumber || ''))) {
+      return fail('WINDOWS_BROWSER_PROOF_PR_NUMBER_INVALID');
+    }
+    if (!WINDOWS_BROWSER_PROOF_SCENARIOS.includes(String(command.proofScenario || ''))) {
+      return fail('WINDOWS_BROWSER_PROOF_SCENARIO_NOT_ALLOWED');
+    }
+  } else if (hasValue(command.prNumber) || hasValue(command.proofScenario)) {
+    return fail('WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
+  }
   if (command.operation === CODEX_BANKED_RESET_STATUS_OPERATION) {
     const unsafeField = unsafeAutomationField(command);
     if (unsafeField) return fail('RESET_STATUS_COMMAND_UNSAFE_FIELD_PRESENT', { field: unsafeField });
@@ -181,6 +200,8 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       operatorApproval: 'operator-approved',
       expectedHead: String(command.expectedHead || ''),
       targetRequestId: command.operation === 'READ_MAILBOX_RECEIPT' ? targetRequestId : '',
+      prNumber: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? Number(command.prNumber) : 0,
+      proofScenario: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? String(command.proofScenario) : '',
       expiresAt: new Date(expiresAtMs).toISOString(),
       ...(reset || {}),
     }),
@@ -228,6 +249,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readMailboxReceipt,
   runWorkerWatchdogAcceptance,
   runMonitorMultiplexerAcceptance,
+  runExactHeadWindowsBrowserProof,
   readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
   redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
 } = {}) {
@@ -242,6 +264,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
+    RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF: runExactHeadWindowsBrowserProof,
     [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
     [CODEX_BANKED_RESET_OPERATION]: redeemBankedCodexReset,
   };
@@ -285,13 +308,15 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
+    prNumber: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? Number(command?.prNumber || 0) : 0,
+    proofScenario: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? String(command?.proofScenario || '') : '',
     resetId: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetId || '') : '',
     resetExpiresAtUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetExpiresAtUtc || '') : '',
     latestSafeExecutionUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.latestSafeExecutionUtc || '') : '',
     standingOperatorPolicyRef: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.standingOperatorPolicyRef || '') : '',
     fixedUiActionOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.fixedUiActionOnly === true : false,
     singlePressOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.singlePressOnly === true : false,
-    readOnly: command?.operation === CODEX_BANKED_RESET_STATUS_OPERATION,
+    readOnly: command?.operation === CODEX_BANKED_RESET_STATUS_OPERATION || command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
     state: String(state || ''),
     acceptedAt: String(acceptedAt || ''),
     heartbeatAt: String(heartbeatAt || ''),
