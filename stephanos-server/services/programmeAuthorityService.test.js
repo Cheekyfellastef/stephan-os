@@ -18,6 +18,7 @@ import {
 import {
   buildCanonicalImplementationLaneProjection,
   buildTerminalLaneFinalizationPlan,
+  createSourceMutationLeaseReleaseRecord,
   createTerminalLaneEvidenceRecords,
 } from '../../shared/agents/programmeAuthorityV1.mjs';
 import {
@@ -207,10 +208,30 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
     }, { root, repoRoot });
     assert.equal(wrongRenewal.ok, false);
 
+    const movedHeadRenewal = await renewSourceMutationLease({
+      ...leaseInput(),
+      nowUtc: NOW,
+    }, githubAuthorityOptions(root, repoRoot, {
+      ...githubOpen(),
+      headSha: 'c'.repeat(40),
+    }));
+    assert.equal(movedHeadRenewal.ok, false);
+    assert.equal(movedHeadRenewal.reason, 'SOURCE_MUTATION_LEASE_RENEWAL_GITHUB_IDENTITY_MISMATCH');
+
+    const closedPrRenewal = await renewSourceMutationLease({
+      ...leaseInput(),
+      nowUtc: NOW,
+    }, githubAuthorityOptions(root, repoRoot, {
+      ...githubOpen(),
+      prState: 'closed',
+    }));
+    assert.equal(closedPrRenewal.ok, false);
+    assert.equal(closedPrRenewal.reason, 'SOURCE_MUTATION_LEASE_RENEWAL_GITHUB_TRUTH_INVALID_OR_NON_ACTIVE');
+
     const renewed = await renewSourceMutationLease({
       ...leaseInput(),
       nowUtc: NOW,
-    }, { root, repoRoot });
+    }, githubAuthorityOptions(root, repoRoot));
     assert.equal(renewed.ok, true);
 
     const incompleteRelease = await releaseSourceMutationLease({
@@ -247,6 +268,20 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
     });
     assert.equal(interruptedRelease.ok, false);
     assert.equal(interruptedRelease.reason, 'SOURCE_MUTATION_LEASE_RELEASE_FAILED');
+    const canonicalRelease = createSourceMutationLeaseReleaseRecord(interruptedRelease.operationResult?.record ?? leaseInput(), {
+      timestampUtc: NOW,
+    });
+    const releaseMarkerPath = path.join(root, 'status', `${canonicalRelease.statusId}.json`);
+    const persistedReleaseMarker = JSON.parse(await readFile(releaseMarkerPath, 'utf8'));
+    await writeFile(releaseMarkerPath, `${JSON.stringify({
+      ...persistedReleaseMarker,
+      participantId: 'not-the-release-authority',
+      statusId: 'different-release-status',
+    }, null, 2)}\n`, 'utf8');
+    const conflictingReleaseEnvelope = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(conflictingReleaseEnvelope.ok, false);
+    assert.equal(conflictingReleaseEnvelope.reason, 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CONFLICT');
+    await writeFile(releaseMarkerPath, `${JSON.stringify(persistedReleaseMarker, null, 2)}\n`, 'utf8');
     const releasedButPresent = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
     assert.equal(releasedButPresent.ok, false);
     assert.equal(releasedButPresent.present, true);
@@ -347,6 +382,12 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
           calls.push('github-pr-evidence');
           return githubOpen();
         },
+        readRepositoryHead: async () => ({
+          ok: true,
+          reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main',
+          headSha: HEAD,
+        }),
         listMissionRecords: async () => [{
           missionId: LANE_ID,
           issueNumber: 1497,
@@ -374,6 +415,36 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
     assert.equal(projection.projectionReceipt.components.some(({ componentId }) => componentId === 'mission-scheduler'), true);
     assert.equal(projection.projectionReceipt.components.some(({ componentId }) => componentId === 'critical-backlog-conveyor'), true);
     assert.deepEqual(calls, ['github-auth', 'github-pr-evidence']);
+
+    const staleProcesses = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => githubOpen(),
+        readRepositoryHead: async () => ({
+          ok: true,
+          reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main',
+          headSha: 'c'.repeat(40),
+        }),
+        listMissionRecords: async () => [{
+          missionId: LANE_ID,
+          issueNumber: 1497,
+          repository: REPOSITORY,
+          git: { branch: BRANCH },
+          pullRequest: { number: 1617 },
+          currentPhase: 'AGENT_IMPLEMENTATION',
+        }],
+      },
+    });
+    assert.equal(staleProcesses.status, 'HOLD');
+    assert.ok(staleProcesses.controllerHeartbeat.errors.includes('controller-source-revision-mismatch'));
+    assert.ok(staleProcesses.workerHeartbeat.errors.includes('worker-head-mismatch'));
   });
 });
 
@@ -484,6 +555,46 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     assert.equal(proof.leaseId, LEASE_ID);
     assert.equal(proof.ownerId, OWNER);
     assert.equal(proof.mergeAuthority, false);
+
+    await writeFile(receiptPath, `${JSON.stringify({
+      ...receipt,
+      relatedIssue: '#1',
+      relatedPr: '#2',
+      correlationId: 'different-lease',
+    }, null, 2)}\n`, 'utf8');
+    const conflictingReceiptAliases = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => {
+          throw new Error('conflicting durable receipt aliases must block before GitHub access');
+        },
+      },
+    });
+    assert.equal(conflictingReceiptAliases.ok, false);
+    assert.equal(conflictingReceiptAliases.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
+    await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+
+    await writeFile(proofPath, `${JSON.stringify({
+      ...proof,
+      relatedIssue: '#1',
+      relatedPr: '#2',
+      correlationId: 'different-lease',
+    }, null, 2)}\n`, 'utf8');
+    const conflictingProofAliases = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => {
+          throw new Error('conflicting durable proof aliases must block before GitHub access');
+        },
+      },
+    });
+    assert.equal(conflictingProofAliases.ok, false);
+    assert.equal(conflictingProofAliases.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
+    await writeFile(proofPath, `${JSON.stringify(proof, null, 2)}\n`, 'utf8');
 
     await writeFile(proofPath, `${JSON.stringify({ ...proof, mergeCommitSha: '' }, null, 2)}\n`, 'utf8');
     const corruptedMergeProof = await finalizeTerminalImplementationLane(identity, {

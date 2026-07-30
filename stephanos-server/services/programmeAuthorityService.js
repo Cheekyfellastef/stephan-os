@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
 
 import {
   PROGRAMME_CONTROLLER_HEARTBEAT_STATUS_ID,
@@ -52,6 +54,7 @@ export const PROGRAMME_CONTROLLER_HEARTBEAT_FILE = `${PROGRAMME_CONTROLLER_HEART
 const SOURCE_MUTATION_LEASE_OPERATION_GUARD_FILE = 'source-mutation-lease-operation.lock';
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const SHA_40 = /^[0-9a-f]{40}$/i;
+const execFileAsync = promisify(execFile);
 const AFFIRMATIVE_PROOF_STATUSES = new Set([
   'COMPLETE',
   'COMPLETED',
@@ -135,8 +138,55 @@ function dependencies(options = {}) {
     writeFile,
     unlink,
     writeAtomicJson,
+    readRepositoryHead: ({ repositoryRoot }) => readCanonicalRepositoryHead({
+      repositoryRoot,
+      execFileImpl: options.execFile || execFileAsync,
+    }),
     ...(options.dependencies ?? {}),
   };
+}
+
+async function readCanonicalRepositoryHead({ repositoryRoot, execFileImpl = execFileAsync } = {}) {
+  const expectedRepositoryRoot = text(repositoryRoot);
+  if (!expectedRepositoryRoot) {
+    return Object.freeze({ ok: false, reason: 'CANONICAL_REPOSITORY_ROOT_MISSING', headSha: '' });
+  }
+  try {
+    const commandOptions = { encoding: 'utf8', windowsHide: true, timeout: 5_000, maxBuffer: 64 * 1024 };
+    const [headResult, branchResult] = await Promise.all([
+      execFileImpl('git', ['-C', expectedRepositoryRoot, 'rev-parse', 'HEAD'], commandOptions),
+      execFileImpl('git', ['-C', expectedRepositoryRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], commandOptions),
+    ]);
+    const headSha = text(headResult?.stdout ?? headResult).toLowerCase();
+    const branch = text(branchResult?.stdout ?? branchResult);
+    if (!SHA_40.test(headSha)) {
+      return Object.freeze({ ok: false, reason: 'CANONICAL_REPOSITORY_HEAD_INVALID', headSha: '' });
+    }
+    if (branch !== 'main') {
+      return Object.freeze({
+        ok: false,
+        reason: 'CANONICAL_REPOSITORY_BRANCH_NOT_MAIN',
+        repositoryRoot: expectedRepositoryRoot,
+        branch,
+        headSha,
+      });
+    }
+    return Object.freeze({
+      ok: true,
+      reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+      repositoryRoot: expectedRepositoryRoot,
+      branch,
+      headSha,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      reason: 'CANONICAL_REPOSITORY_HEAD_READ_FAILED',
+      repositoryRoot: expectedRepositoryRoot,
+      headSha: '',
+      errorCode: error?.code || '',
+    });
+  }
 }
 
 function blockedRead(reason, additions = {}) {
@@ -508,6 +558,39 @@ export async function renewSourceMutationLease(input = {}, options = {}) {
     }
     const renewal = renewSourceMutationLeaseRecord(current.record, input);
     if (!renewal.ok) return Object.freeze({ ok: false, renewed: false, reason: renewal.reason, current, renewal });
+    const github = await githubEvidenceForLaneIdentity(current.record, options, deps);
+    const githubActive = Boolean(
+      github?.status === 'fetched'
+      && text(github.repository) === current.record.repository
+      && positiveInteger(github.prNumber) === current.record.prNumber
+      && github.merged !== true
+      && text(github.prState).toUpperCase() === 'OPEN'
+      && text(github.headBranch)
+      && SHA_40.test(text(github.headSha))
+    );
+    if (!githubActive) {
+      return Object.freeze({
+        ok: false,
+        renewed: false,
+        reason: 'SOURCE_MUTATION_LEASE_RENEWAL_GITHUB_TRUTH_INVALID_OR_NON_ACTIVE',
+        current,
+        renewal,
+        github,
+      });
+    }
+    if (
+      text(github.headBranch) !== current.record.branch
+      || text(github.headSha).toLowerCase() !== current.record.headSha
+    ) {
+      return Object.freeze({
+        ok: false,
+        renewed: false,
+        reason: 'SOURCE_MUTATION_LEASE_RENEWAL_GITHUB_IDENTITY_MISMATCH',
+        current,
+        renewal,
+        github,
+      });
+    }
     const write = await deps.writeAtomicJson(
       layout.root,
       ['status', SOURCE_MUTATION_LEASE_FILE],
@@ -718,6 +801,7 @@ export async function readProgrammeControllerHeartbeat({
   repoRoot,
   nowUtc,
   maxAgeMs,
+  expectedSourceRevision,
   readFileImpl = readFile,
 } = {}) {
   const resolved = authorityPath(root, repoRoot, 'status', PROGRAMME_CONTROLLER_HEARTBEAT_FILE);
@@ -725,7 +809,11 @@ export async function readProgrammeControllerHeartbeat({
   const loaded = await readJson(resolved.path, readFileImpl);
   if (loaded.error) return blockedRead('PROGRAMME_CONTROLLER_HEARTBEAT_READ_FAILED', { errorCode: loaded.error.code || '' });
   if (!loaded.present) return blockedRead('PROGRAMME_CONTROLLER_HEARTBEAT_MISSING', { path: resolved.path });
-  const projection = projectProgrammeControllerHeartbeat(loaded.value, { nowUtc, maxAgeMs });
+  const projection = projectProgrammeControllerHeartbeat(loaded.value, {
+    nowUtc,
+    maxAgeMs,
+    expectedSourceRevision,
+  });
   return Object.freeze({
     ok: projection.valid,
     present: true,
@@ -925,6 +1013,19 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   }
   const root = workspaceConfig.root;
   const selector = requestedLaneSelector(options);
+  const missionWorkerPaths = resolveCanonicalMissionWorkerPaths({
+    env: options.env || process.env,
+    home: options.home,
+  });
+  const repositoryHeadRead = await deps.readRepositoryHead({
+    repositoryRoot: missionWorkerPaths.repositoryRoot,
+  });
+  const repositoryHeadValid = Boolean(
+    repositoryHeadRead.ok
+    && repositoryHeadRead.branch === 'main'
+    && SHA_40.test(text(repositoryHeadRead.headSha)),
+  );
+  const expectedSourceRevision = repositoryHeadValid ? repositoryHeadRead.headSha : 'invalid';
   const [
     leaseRead,
     controllerHeartbeatRead,
@@ -937,6 +1038,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       repoRoot: options.repoRoot,
       nowUtc,
       maxAgeMs: options.controllerHeartbeatMaxAgeMs,
+      expectedSourceRevision,
       readFileImpl: deps.readFile,
     }),
     deps.readWorkspaceFeed({
@@ -955,7 +1057,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     options,
     deps,
     nowUtc,
-    controllerHeartbeatRead.projection?.sourceRevision,
+    expectedSourceRevision,
   );
 
   const lease = leaseRead.present ? leaseRead.record : null;
@@ -1001,7 +1103,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
   });
   const criticalBacklog = deps.buildCriticalBacklogProjection({ missionRecords });
-  const sourceHead = controllerHeartbeatRead.record?.sourceRevision ?? '';
+  const sourceHead = repositoryHeadValid ? repositoryHeadRead.headSha : '';
   const machineryInventory = deps.buildCapabilityRegistry({
     sourceHead,
     generatedAtUtc: nowUtc,
@@ -1010,6 +1112,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ...(!leaseRead.ok ? [`source:${leaseRead.reason}`] : []),
     ...(!controllerHeartbeatRead.ok ? [`source:${controllerHeartbeatRead.reason}`] : []),
     ...(!workerHeartbeatRead.ok ? ['source:mission-worker-heartbeat-unavailable'] : []),
+    ...(!repositoryHeadValid ? [`source:${repositoryHeadRead.reason || 'CANONICAL_REPOSITORY_HEAD_INVALID'}`] : []),
     ...(!schedulerGoals.valid ? schedulerGoals.blockers.map((blocker) => `source:${blocker}`) : []),
     ...(selector.requested && !selector.complete ? ['source:lane-selector-incomplete-or-invalid'] : []),
     ...(githubIdentity && github?.status !== 'fetched' ? ['source:github-pr-evidence-unavailable'] : []),
@@ -1040,6 +1143,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     dependencyInjectionUsed: options.dependencies ? true : false,
     sourceReads: Object.freeze({
       workspaceConfig,
+      repositoryHead: repositoryHeadRead.reason,
       lease: leaseRead.reason,
       controllerHeartbeat: controllerHeartbeatRead.reason,
         workerHeartbeat: workerHeartbeatRead.projection.finalVerdict,
@@ -1051,11 +1155,19 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
 }
 
 function exactTerminalReceipt(record, records) {
+  const proofRef = `proof/${records.evidenceId}.json`;
   return Boolean(
     record
     && validateSharedWorkspaceRecord(record).valid
     && record.schema === records.receipt.schema
     && record.receiptId === records.receipt.receiptId
+    && record.participantId === 'terminal-lane-finalizer'
+    && record.correlationId === records.receipt.leaseId
+    && record.relatedIssue === `#${records.receipt.issueNumber}`
+    && record.relatedPr === `#${records.receipt.prNumber}`
+    && record.receivedRecordId === records.evidenceId
+    && Array.isArray(record.proofRefs)
+    && record.proofRefs.includes(proofRef)
     && record.laneId === records.receipt.laneId
     && record.repository === records.receipt.repository
     && record.issueNumber === records.receipt.issueNumber
@@ -1071,11 +1183,17 @@ function exactTerminalReceipt(record, records) {
 }
 
 function exactSourceMutationLeaseRelease(record, identity) {
+  const expected = createSourceMutationLeaseReleaseRecord(identity, {
+    timestampUtc: record?.releasedAtUtc,
+  });
   return Boolean(
     record
     && validateSharedWorkspaceRecord(record).valid
     && record.schema === SOURCE_MUTATION_LEASE_RELEASE_SCHEMA
+    && record.statusId === expected.statusId
+    && record.participantId === 'source-mutation-lease-authority'
     && record.status === 'RELEASED'
+    && record.timestampUtc === record.releasedAtUtc
     && record.leaseId === identity.leaseId
     && record.laneId === identity.laneId
     && record.repository === identity.repository
@@ -1121,11 +1239,19 @@ function terminalIdentity(input = {}) {
 }
 
 function exactTerminalReceiptForIdentity(record, identity) {
+  const proofRef = `proof/${identity.evidenceId}.json`;
   return Boolean(
     record
     && validateSharedWorkspaceRecord(record).valid
     && record.schema === TERMINAL_LANE_FINALIZATION_SCHEMA
     && record.receiptId === identity.evidenceId
+    && record.participantId === 'terminal-lane-finalizer'
+    && record.correlationId === identity.leaseId
+    && record.relatedIssue === `#${identity.issueNumber}`
+    && record.relatedPr === `#${identity.prNumber}`
+    && record.receivedRecordId === identity.evidenceId
+    && Array.isArray(record.proofRefs)
+    && record.proofRefs.includes(proofRef)
     && record.laneId === identity.laneId
     && record.repository === identity.repository
     && record.issueNumber === identity.issueNumber
@@ -1141,6 +1267,7 @@ function exactTerminalReceiptForIdentity(record, identity) {
 }
 
 function exactTerminalProofForIdentity(record, identity, expectedProof = null) {
+  const proofRef = `proof/${identity.evidenceId}.json`;
   const mergeFactsMatch = !expectedProof || (
     text(record?.mergeCommitSha).toLowerCase() === text(expectedProof.mergeCommitSha).toLowerCase()
     && safeNow(record?.mergedAtUtc) === safeNow(expectedProof.mergedAtUtc)
@@ -1150,6 +1277,14 @@ function exactTerminalProofForIdentity(record, identity, expectedProof = null) {
     && validateSharedWorkspaceRecord(record).valid
     && record.schema === TERMINAL_LANE_FINALIZATION_SCHEMA
     && record.proofId === identity.evidenceId
+    && record.participantId === 'terminal-lane-finalizer'
+    && record.correlationId === identity.leaseId
+    && record.relatedIssue === `#${identity.issueNumber}`
+    && record.relatedPr === `#${identity.prNumber}`
+    && Array.isArray(record.proofRefs)
+    && record.proofRefs.includes(proofRef)
+    && Array.isArray(record.refs)
+    && record.refs.includes(proofRef)
     && record.laneId === identity.laneId
     && record.repository === identity.repository
     && record.issueNumber === identity.issueNumber

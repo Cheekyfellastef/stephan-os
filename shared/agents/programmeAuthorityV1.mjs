@@ -567,6 +567,8 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
   const reconciliationMs = timestamp(record?.lastSuccessfulReconciliationUtc);
   const cycleState = normalizedState(record?.cycleState);
   const activeLaneId = text(record?.activeLaneId);
+  const expectedSourceRevisionProvided = Object.hasOwn(options, 'expectedSourceRevision');
+  const expectedSourceRevision = sha(options.expectedSourceRevision);
   const maxAgeMs = Number.isFinite(options.maxAgeMs) && options.maxAgeMs > 0
     ? options.maxAgeMs
     : DEFAULT_CONTROLLER_HEARTBEAT_MAX_AGE_MS;
@@ -584,6 +586,14 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
   if (!SAFE_ID.test(text(record?.controllerId))) errors.push('invalid-controller-id');
   if (record?.participantId !== text(record?.controllerId)) errors.push('controller-participant-id-mismatch');
   if (!sha(record?.sourceRevision)) errors.push('invalid-source-revision');
+  if (expectedSourceRevisionProvided && !expectedSourceRevision) errors.push('expected-source-revision-invalid');
+  if (
+    expectedSourceRevisionProvided
+    && expectedSourceRevision
+    && sha(record?.sourceRevision) !== expectedSourceRevision
+  ) {
+    errors.push('controller-source-revision-mismatch');
+  }
   if (!CONTROLLER_CYCLE_STATES.has(cycleState)) errors.push('invalid-cycle-state');
   if (normalizedState(record?.status) !== cycleState) errors.push('controller-status-cycle-state-mismatch');
   if (activeLaneId && !SAFE_ID.test(activeLaneId)) errors.push('invalid-active-lane-id');
@@ -607,6 +617,7 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
     ageMs,
     controllerId: text(record?.controllerId),
     sourceRevision: sha(record?.sourceRevision),
+    expectedSourceRevision: expectedSourceRevision || null,
     cycleState,
     activeLaneId: activeLaneId || null,
     lastSuccessfulReconciliationUtc: reconciliationMs === null ? null : new Date(reconciliationMs).toISOString(),

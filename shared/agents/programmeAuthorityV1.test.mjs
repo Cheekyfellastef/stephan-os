@@ -288,6 +288,12 @@ test('controller and Mission Worker heartbeats remain distinct authorities', () 
   });
   assert.equal(controller.schema, PROGRAMME_CONTROLLER_HEARTBEAT_SCHEMA);
   assert.equal(projectProgrammeControllerHeartbeat(controller, { nowUtc: NOW }).fresh, true);
+  const wrongControllerRevision = projectProgrammeControllerHeartbeat(controller, {
+    nowUtc: NOW,
+    expectedSourceRevision: 'b'.repeat(40),
+  });
+  assert.equal(wrongControllerRevision.valid, false);
+  assert.ok(wrongControllerRevision.errors.includes('controller-source-revision-mismatch'));
 
   const worker = createMissionWorkerHeartbeatRecord({
     timestampUtc: NOW,
