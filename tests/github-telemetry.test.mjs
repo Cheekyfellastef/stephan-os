@@ -214,6 +214,34 @@ test('canonical workflow rerun sequence outranks completion timestamps', () => {
   assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
 });
 
+test('check-run run numbers cannot compete with workflow-run sequence metadata', () => {
+  const headSha = '6'.repeat(40);
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const checks = requiredChecks(headSha)
+    .filter((check) => check.name !== workflowName)
+    .concat({
+      id: 9999,
+      run_number: 999,
+      name: workflowName,
+      headSha,
+      status: 'completed',
+      conclusion: 'success',
+      updatedAt: '2026-07-30T10:00:00.000Z',
+    });
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 59, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 6001, run_number: 10, name: workflowName, headSha, prNumber: 59, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T11:00:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+});
+
 test('canonical workflow run ID breaks rerun order when run numbers are unavailable', () => {
   const headSha = '8'.repeat(40);
   const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
