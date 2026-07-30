@@ -236,6 +236,31 @@ test('dashboard surfaces open PRs without a durable issue link as an explicit bl
   assert.equal(dashboardGoals.blockedCount, 1);
 });
 
+test('dashboard excludes superseded orphan PRs from cards and active totals', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issueInventoryObserved: true,
+      issueInventoryComplete: true,
+      pullRequestInventoryObserved: true,
+      pullRequestInventoryComplete: true,
+      issues: [],
+      pullRequests: [{
+        number: 1660,
+        relatedIssues: [],
+        checksStatus: 'failed',
+        supersededStatus: 'superseded',
+        headSha: 'd'.repeat(40),
+        updatedAt: '2026-07-30T09:00:00.000Z',
+      }],
+    },
+  });
+  assert.equal(dashboardGoals.totalAvailable, 0);
+  assert.equal(dashboardGoals.activePrCount, 0);
+  assert.deepEqual(dashboardGoals.cards, []);
+});
+
 test('active PR totals preserve the full verified estate before card truncation', () => {
   const pullRequests = Array.from({ length: 13 }, (_, index) => ({
     number: 1701 + index,
