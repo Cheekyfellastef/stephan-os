@@ -30,6 +30,7 @@ export function buildExactHeadWindowsBrowserProofPacket(command = {}, timestampU
       repository: REPOSITORY,
       prNumber: Number(command.prNumber),
       expectedHead: String(command.expectedHead).toLowerCase(),
+      proofScenario: String(command.proofScenario),
     },
     createdAt: timestampUtc,
     approvalRequirements: {
