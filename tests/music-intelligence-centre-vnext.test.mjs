@@ -72,11 +72,20 @@ test('journey-built presence evidence is emitted only after persistence and rend
   const buildSource = js.slice(js.indexOf('async function buildJourney()'), js.indexOf('function startJourney()'));
   const saveIndex = buildSource.indexOf('saveState();');
   const renderIndex = buildSource.indexOf("safeRenderAll('buildJourney')");
-  const successIndex = buildSource.indexOf("kind: 'journey_built'");
+  const successIndex = buildSource.indexOf('emitJourneyBuildSuccess(term, state.candidates.length)');
   assert.ok(saveIndex >= 0 && renderIndex > saveIndex && successIndex > renderIndex);
   assert.match(js, /function emitJourneyBuildFailure\(message, artist = ''\)/);
   assert.match(js, /kind: 'journey_build_failed'/);
   assert.match(js, /severity: 'warning'/);
+});
+
+test('optional presence adapters cannot reverse a persisted and rendered journey', () => {
+  const successHelper = js.slice(js.indexOf('function emitJourneyBuildSuccess'), js.indexOf('function normalizeCandidate'));
+  assert.match(successHelper, /try \{/);
+  assert.match(successHelper, /kind: 'journey_built'/);
+  assert.match(successHelper, /catch \(eventError\)/);
+  assert.match(successHelper, /journey build success event unavailable/);
+  assert.doesNotMatch(successHelper, /emitJourneyBuildFailure/);
 });
 
 test('artist-prefixed seed titles are de-duplicated in the daily experience', () => {

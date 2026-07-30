@@ -458,6 +458,21 @@ function emitJourneyBuildFailure(message, artist = '') {
     });
   }
 }
+function emitJourneyBuildSuccess(artist, candidateCount) {
+  try {
+    emitPresenceEvent({
+      kind: 'journey_built',
+      severity: 'info',
+      summary: `Journey built for ${artist}`,
+      impact: `${candidateCount} candidates ready.`,
+      suggestedAction: 'Start journey and rate tracks.',
+    });
+  } catch (eventError) {
+    logBuildJourney('journey build success event unavailable', {
+      message: String(eventError?.message || eventError),
+    });
+  }
+}
 function normalizeCandidate(candidate = {}, fallbackArtist = 'Unknown Artist', index = 0) {
   const title = String(candidate.title || candidate.name || '').trim();
   if (!title) return null;
@@ -592,14 +607,8 @@ async function buildJourney() {
       emitJourneyBuildFailure(finalStatus, term);
       return Object.freeze({ ok: false, message: finalStatus, candidateCount: state.candidates.length });
     }
-    emitPresenceEvent({
-      kind: 'journey_built',
-      severity: 'info',
-      summary: `Journey built for ${term}`,
-      impact: `${state.candidates.length} candidates ready.`,
-      suggestedAction: 'Start journey and rate tracks.',
-    });
     setTerminalStatus(finalStatus);
+    emitJourneyBuildSuccess(term, state.candidates.length);
     return Object.freeze({ ok: true, message: finalStatus, candidateCount: state.candidates.length });
   } catch (error) {
     const message = `Build failed: ${String(error?.message || error)}, fallback used`;
