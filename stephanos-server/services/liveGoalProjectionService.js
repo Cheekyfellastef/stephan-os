@@ -242,7 +242,10 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       observedAt,
       totalAvailable: rankedCards.length,
       displayedCount: cards.length,
-      activePrCount: new Set(cards.flatMap((card) => list(card.linkedPullRequests).map((pr) => pr.number))).size,
+      activePrCount: new Set(cards.flatMap((card) => [
+        ...list(card.linkedPullRequests).map((pr) => pr.number),
+        card.linkedPr?.number,
+      ]).filter(Boolean)).size,
       blockedCount: cards.filter((card) => card.status.startsWith('BLOCKED')).length,
       readyCount: cards.filter((card) => card.status.startsWith('READY')).length,
       operatorAttentionCount: operatorAttention.length,
