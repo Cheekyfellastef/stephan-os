@@ -32,6 +32,7 @@ test('GitHub telemetry projects PRs workflows unavailable state and no fabricate
   assert.equal(live.issues[0].number, 1497);
   assert.deepEqual(live.issues[0].labels, ['goal']);
   assert.equal(live.issueCount, 1);
+  assert.equal(live.issueInventoryObserved, true);
   assert.equal(live.workflowCounts.failed, 1);
   assert.equal(live.workflowCounts.passed, 1);
   assert.equal(live.workflowCounts.cancelled, 1);
@@ -39,6 +40,7 @@ test('GitHub telemetry projects PRs workflows unavailable state and no fabricate
   assert.equal(unavailable.status, 'adapter_unavailable');
   assert.deepEqual(unavailable.pullRequests, []);
   assert.equal(unavailable.blockers.includes('github_adapter_unavailable'), true);
+  assert.equal(unavailable.issueInventoryObserved, false);
 });
 
 test('live projection correlates goals to PR workflow chain and command deck answers from telemetry', () => {
