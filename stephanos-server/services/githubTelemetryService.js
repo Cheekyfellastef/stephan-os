@@ -69,10 +69,11 @@ function checkObservedAt(check = {}) {
 }
 function checkRunSequence(check = {}) {
   const sequenceDomain = text(check.sequenceDomain || check.sequence_domain);
+  const isWorkflowRun = sequenceDomain === 'github-workflow-run';
   return {
-    runNumber: positiveInteger(check.runNumber ?? check.run_number),
-    runAttempt: positiveInteger(check.runAttempt ?? check.run_attempt),
-    runId: sequenceDomain === 'github-workflow-run'
+    runNumber: isWorkflowRun ? positiveInteger(check.runNumber ?? check.run_number) : null,
+    runAttempt: isWorkflowRun ? positiveInteger(check.runAttempt ?? check.run_attempt) : null,
+    runId: isWorkflowRun
       ? positiveInteger(check.runId ?? check.run_id ?? check.id)
       : null,
   };
