@@ -132,7 +132,7 @@ test('automatically dispatches a bounded review repair and durably waits', async
   const cycle = await runGuardedContinuousRepairCycle(h.options);
   assert.equal(h.calls.dispatch.length, 1);
   assert.equal(h.calls.execution.length, 1);
-  assert.equal(h.calls.cycle[0].status, 'repair-dispatched');
+  assert.deepEqual(h.calls.cycle.map(({ status }) => status), ['repair-attempt-recorded', 'repair-dispatched']);
   assert.equal(cycle.status, 'WAITING_FOR_REPAIR');
 });
 
@@ -271,7 +271,8 @@ test('cycle identity binds the full lane and durable attempt', async () => {
   ]);
   assert.notEqual(a.receipt.cycleId, b.receipt.cycleId);
   assert.notEqual(a.receipt.cycleId, c.receipt.cycleId);
-  assert.equal(a.receipt.predecessorCycleId, null);
+  assert.equal(a.history[0].predecessorCycleId, null);
+  assert.equal(a.receipt.predecessorCycleId, a.history[0].cycleId);
 });
 
 test('queued receipt persistence must be affirmed before dispatch', async () => {
@@ -342,9 +343,10 @@ test('verification lifecycle retires pre-merge purpose before post-merge runtime
   assert.equal(runtimeRequest.status, 'WAITING_FOR_VERIFICATION');
   assert.equal(resumed.calls.verify.length, 1);
   assert.equal(resumed.calls.verify[0].purpose, 'POST_MERGE_RUNTIME');
-  assert.deepEqual(resumed.calls.cycle.map(({ status }) => [
-    status,
-  ]), [['verification-completed'], ['verification-requested']]);
+  assert.deepEqual(
+    resumed.calls.cycle.map(({ status }) => status),
+    ['verification-completed', 'verification-intent-recorded', 'verification-requested'],
+  );
   assert.equal(runtimeRequest.receipt.verificationPurpose, 'POST_MERGE_RUNTIME');
 });
 
@@ -411,4 +413,117 @@ test('rehydrated history requires canonical cycle IDs and an unbroken predecesso
   });
   const forgedBlocked = await runGuardedContinuousRepairCycle(forgedId.options);
   assert.equal(forgedBlocked.status, 'BLOCKED_HISTORY_INVALID');
+
+  const tamperedStatus = harness([snapshot()], {
+    attemptId:'attempt-4',
+    history:prior.history.map((entry, index) => (
+      index === 0 ? { ...entry, status:'waiting-repair' } : entry
+    )),
+  });
+  const statusBlocked = await runGuardedContinuousRepairCycle(tamperedStatus.options);
+  assert.equal(statusBlocked.status, 'BLOCKED_HISTORY_INVALID');
+});
+
+test('post-merge verification requests exact-head CI before runtime proof', async () => {
+  const repairOrder = order();
+  const h = harness([snapshot({
+    findings:[],
+    activeRepairOrders:[repairOrder],
+    receipts:completedChain(repairOrder),
+    merged:true,
+    operatorApprovalRecorded:true,
+    approvalHeadSha:HEAD,
+    approvalPrNumber:1617,
+    ciGreen:false,
+    ciHeadSha:HEAD,
+    runtimeProofRequired:true,
+    runtimeProofGreen:false,
+    runtimeHeadSha:HEAD,
+  })]);
+  const waiting = await runGuardedContinuousRepairCycle(h.options);
+  assert.equal(waiting.status, 'WAITING_FOR_VERIFICATION');
+  assert.equal(h.calls.verify[0].purpose, 'POST_MERGE_EXACT_HEAD_CI');
+  assert.equal(waiting.receipt.verificationPurpose, 'POST_MERGE_EXACT_HEAD_CI');
+});
+
+test('failed dispatch terminalization is retried durably before more evaluation', async () => {
+  let executionPersistence = 0;
+  const first = harness([snapshot()], {
+    dispatchRepair:async (repairOrder) => {
+      first.calls.dispatch.push(repairOrder);
+      return { accepted:false, reason:'worker unavailable' };
+    },
+    persistExecutionReceipt:async (receipt) => {
+      executionPersistence += 1;
+      first.calls.execution.push(receipt);
+      return executionPersistence === 1 ? { ok:true } : { ok:false, reason:'terminal write failed' };
+    },
+  });
+  const blocked = await runGuardedContinuousRepairCycle(first.options);
+  assert.equal(blocked.status, 'BLOCKED_EXECUTION_RECEIPT_PERSISTENCE');
+  assert.equal(blocked.receipt.pendingTerminalExecutionReceipt.state, 'failed');
+
+  const resumed = harness([snapshot()], {
+    attemptId:'attempt-2',
+    history:blocked.history,
+  });
+  const recovered = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(recovered.status, 'TERMINALIZATION_RECOVERED');
+  assert.equal(resumed.calls.execution.length, 1);
+  assert.equal(resumed.calls.execution[0].state, 'failed');
+  assert.equal(resumed.calls.dispatch.length, 0);
+  assert.equal(recovered.receipt.status, 'dispatch-terminalization-recovered');
+});
+
+test('repair attempt debit survives failure to persist the later dispatch outcome', async () => {
+  const first = harness([snapshot()], {
+    persistCycleReceipt:async (receipt) => {
+      first.calls.cycle.push(receipt);
+      return { ok:receipt.status !== 'repair-dispatched' };
+    },
+  });
+  const failedOutcome = await runGuardedContinuousRepairCycle(first.options);
+  assert.equal(failedOutcome.status, 'BLOCKED_CYCLE_RECEIPT_PERSISTENCE');
+  assert.equal(first.calls.dispatch.length, 1);
+  assert.deepEqual(failedOutcome.history.map(({ status }) => status), ['repair-attempt-recorded']);
+
+  const resumed = harness([snapshot()], {
+    attemptId:'attempt-2',
+    history:failedOutcome.history,
+    maxRepairsPerHead:1,
+  });
+  const blocked = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(blocked.status, 'BLOCKED_REPAIR_BUDGET');
+  assert.equal(resumed.calls.dispatch.length, 0);
+});
+
+test('verification intent preserves one idempotency key across receipt-store failure', async () => {
+  const repairOrder = order();
+  const state = snapshot({
+    findings:[],
+    activeRepairOrders:[repairOrder],
+    receipts:completedChain(repairOrder),
+    ciGreen:false,
+    ciHeadSha:HEAD,
+    mergeable:true,
+  });
+  const first = harness([state], {
+    persistCycleReceipt:async (receipt) => {
+      first.calls.cycle.push(receipt);
+      return { ok:receipt.status !== 'verification-requested' };
+    },
+  });
+  const lostResult = await runGuardedContinuousRepairCycle(first.options);
+  assert.equal(lostResult.status, 'BLOCKED_CYCLE_RECEIPT_PERSISTENCE');
+  assert.deepEqual(lostResult.history.map(({ status }) => status), ['verification-intent-recorded']);
+  const firstKey = first.calls.verify[0].idempotencyKey;
+
+  const resumed = harness([state], {
+    attemptId:'attempt-2',
+    history:lostResult.history,
+  });
+  const waiting = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(waiting.status, 'WAITING_FOR_VERIFICATION');
+  assert.equal(resumed.calls.verify[0].idempotencyKey, firstKey);
+  assert.deepEqual(resumed.calls.cycle.map(({ status }) => status), ['verification-requested']);
 });
