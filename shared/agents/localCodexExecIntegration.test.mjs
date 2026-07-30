@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -22,6 +22,7 @@ import {
   runCodexWorker,
   validateBrowserProofVerdict,
   validateExactHeadAtWorkerStart,
+  validateExactHeadSourceTree,
 } from '../../scripts/stephanos-codex-dispatch-worker.mjs';
 
 function tempRoots() {
@@ -324,6 +325,39 @@ test('local integration acquires an atomic dispatch lock before checking or clai
     /another dispatch is claiming the one-active-job slot/,
   );
   assert.equal(integration.readStatus('codex-job-concurrent'), null);
+});
+
+test('local integration reclaims only an expired lock whose owner is no longer alive', () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    now: () => '2026-07-31T00:10:00.000Z',
+    ownerPid: 424242,
+    lockIdFactory: () => 'replacement-owner',
+    isProcessAlive: () => false,
+    spawnFn: () => ({ pid: 222, unref() {} }),
+  });
+  mkdirSync(integration.paths.dispatchLockPath, { recursive: true });
+  writeFileSync(join(integration.paths.dispatchLockPath, 'owner.json'), JSON.stringify({
+    ownerToken: 'abandoned-owner',
+    ownerPid: 111,
+    acquiredAt: '2026-07-31T00:00:00.000Z',
+    expiresAt: '2026-07-31T00:05:00.000Z',
+  }));
+  const receipt = integration.dispatch(packet('codex-job-after-stale-lock'));
+  assert.equal(receipt.accepted, true);
+  assert.equal(existsSync(integration.paths.dispatchLockPath), false);
+});
+
+test('exact-head browser proof refuses unchanged pre-existing source dirt', () => {
+  const task = packet();
+  const dirt = classifyPostTaskDirt(' M scripts/pre-existing.mjs\n M apps/stephanos/dist/index.html\n');
+  const proof = validateExactHeadSourceTree(task, { ok: true }, { ok: true }, dirt, dirt);
+  assert.equal(proof.ok, false);
+  assert.equal(proof.blocker, 'SOURCE_TREE_DIRTY');
+  assert.deepEqual(proof.sourcePathsBefore, ['scripts/pre-existing.mjs']);
+  const generatedOnly = classifyPostTaskDirt(' M apps/stephanos/dist/index.html\n');
+  assert.equal(validateExactHeadSourceTree(task, { ok: true }, { ok: true }, generatedOnly, generatedOnly).ok, true);
 });
 
 test('local integration refuses to overwrite a terminal task with the same id', () => {
