@@ -282,11 +282,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       queueAdjudication: 'blocked',
     };
   };
-  const receiptCandidates = [
-    ...list(queue.activeProofLane).map(withQueueAdjudication),
-    ...list(queue.queuedCandidates).map(withQueueAdjudication),
-    ...blockedCandidates.map(withQueueAdjudication),
-    ...list(missions).map((mission) => ({
+  const missionReceiptCandidates = list(missions).map((mission) => withQueueAdjudication({
       candidateId: mission.mission?.missionId || mission.missionId,
       title: mission.mission?.title || mission.title,
       status: mission.mission?.state || mission.state,
@@ -295,7 +291,21 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       updatedAt: mission.mission?.updatedAt || mission.updatedAt,
       operatorActionRequired: mission.operatorActionRequired === true || normalizedStatus(mission.mission?.state || mission.state) === 'awaiting_approval',
       currentReceiptAuthority: true,
-    })),
+    }));
+  const missionByIdentity = new Map(missionReceiptCandidates.map((candidate) => [candidateIdentityKeys(candidate)[0], candidate]));
+  const consumedMissionIdentities = new Set();
+  const withMissionAuthority = (candidate) => {
+    const identity = candidateIdentityKeys(candidate)[0];
+    const missionCandidate = missionByIdentity.get(identity);
+    if (!missionCandidate) return candidate;
+    consumedMissionIdentities.add(identity);
+    return missionCandidate;
+  };
+  const receiptCandidates = [
+    ...list(queue.activeProofLane).map(withQueueAdjudication).map(withMissionAuthority),
+    ...list(queue.queuedCandidates).map(withQueueAdjudication).map(withMissionAuthority),
+    ...blockedCandidates.map(withQueueAdjudication).map(withMissionAuthority),
+    ...missionReceiptCandidates.filter((candidate) => !consumedMissionIdentities.has(candidateIdentityKeys(candidate)[0])),
   ];
   const seen = new Set();
   const currentReceiptCandidates = receiptCandidates
