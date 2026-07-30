@@ -253,6 +253,26 @@ test('mixed sequenced and unsequenced workflow evidence reconciles by freshness 
   assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
 });
 
+test('check-run IDs never compete with workflow-run IDs as one sequence domain', () => {
+  const headSha = 'a'.repeat(40);
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const checks = requiredChecks(headSha).map((check) => check.name === workflowName
+    ? { ...check, id: 999999999999, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T11:00:00.000Z' }
+    : check);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 59, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 1000000000000, name: workflowName, headSha, prNumber: 59, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T10:00:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+});
+
 test('PR issue correlation accepts explicit closing references and rejects incidental mentions', () => {
   const headSha = 'e'.repeat(40);
   const telemetry = normalizeGithubTelemetry({
