@@ -174,6 +174,26 @@ test('conflicting exact-head evidence with unreconcilable freshness fails closed
   assert.equal(telemetry.pullRequests[0].blockers.some((blocker) => blocker.startsWith('required_exact_head_checks_conflict:')), true);
 });
 
+test('older workflow history cannot clear an equal-time exact-head conflict', () => {
+  const headSha = '4'.repeat(40);
+  const checks = requiredChecks(headSha).map((check) => ({ ...check, updatedAt: '2026-07-30T11:00:00.000Z' }));
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 55, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 'equal-time-failure', name: workflowName, headSha, prNumber: 55, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T11:00:00.000Z' },
+      { id: 'older-success', name: workflowName, headSha, prNumber: 55, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T10:00:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
+  assert.deepEqual(telemetry.pullRequests[0].conflictingRequiredChecks, [workflowName]);
+  assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+});
+
 test('PR issue correlation accepts explicit closing references and rejects incidental mentions', () => {
   const headSha = 'e'.repeat(40);
   const telemetry = normalizeGithubTelemetry({
