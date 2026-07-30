@@ -2,6 +2,7 @@ import {
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceReceiptRecord,
   createSharedWorkspaceStatusRecord,
+  validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 import { validateExecutionReceipt } from './executionReceiptV1.mjs';
 import {
@@ -351,6 +352,13 @@ export function validateSourceMutationLease(record = {}, options = {}) {
   if (!Array.isArray(record?.proofRefs)) errors.push('invalid-proof-refs');
   if (!SAFE_ID.test(text(record?.leaseId))) errors.push('invalid-lease-id');
   if (!SAFE_ID.test(text(record?.laneId))) errors.push('invalid-lane-id');
+  const encodedLaneIdentity = laneIdentityFromId(record?.laneId);
+  if (encodedLaneIdentity.issueNumber && encodedLaneIdentity.issueNumber !== number(record?.issueNumber)) {
+    errors.push('lane-id-issue-mismatch');
+  }
+  if (encodedLaneIdentity.prNumber && encodedLaneIdentity.prNumber !== number(record?.prNumber)) {
+    errors.push('lane-id-pr-mismatch');
+  }
   if (!SAFE_REPOSITORY.test(text(record?.repository))) errors.push('invalid-repository');
   if (!number(record?.issueNumber)) errors.push('invalid-issue-number');
   if (!number(record?.prNumber)) errors.push('invalid-pr-number');
@@ -552,11 +560,21 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
     ? options.maxAgeMs
     : DEFAULT_CONTROLLER_HEARTBEAT_MAX_AGE_MS;
   if (!record || typeof record !== 'object' || Array.isArray(record)) errors.push('invalid-record');
+  const workspaceValidation = record && typeof record === 'object' && !Array.isArray(record)
+    ? validateSharedWorkspaceRecord(record, { nowMs: nowMs ?? undefined })
+    : { valid: false, errors: ['invalid-record'] };
+  if (!workspaceValidation.valid) {
+    errors.push(...workspaceValidation.errors.map((error) => `workspace:${error}`));
+  }
   if (record?.schema !== PROGRAMME_CONTROLLER_HEARTBEAT_SCHEMA) errors.push('invalid-controller-heartbeat-schema');
+  if (record?.schemaVersion !== 'shared-agent-workspace-record.v1') errors.push('invalid-workspace-schema');
+  if (record?.kind !== 'stephanos.shared_workspace.status') errors.push('invalid-workspace-kind');
   if (record?.statusId !== PROGRAMME_CONTROLLER_HEARTBEAT_STATUS_ID) errors.push('invalid-status-id');
   if (!SAFE_ID.test(text(record?.controllerId))) errors.push('invalid-controller-id');
+  if (record?.participantId !== text(record?.controllerId)) errors.push('controller-participant-id-mismatch');
   if (!sha(record?.sourceRevision)) errors.push('invalid-source-revision');
   if (!CONTROLLER_CYCLE_STATES.has(cycleState)) errors.push('invalid-cycle-state');
+  if (normalizedState(record?.status) !== cycleState) errors.push('controller-status-cycle-state-mismatch');
   if (activeLaneId && !SAFE_ID.test(activeLaneId)) errors.push('invalid-active-lane-id');
   if (['ACTIVE_LANE', 'FINALIZING'].includes(cycleState) && !SAFE_ID.test(activeLaneId)) errors.push('active-lane-id-required');
   if (heartbeatMs === null) errors.push('invalid-heartbeat-time');
@@ -750,6 +768,23 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
 
   const conveyor = input.criticalBacklog;
   if (!conveyor || typeof conveyor !== 'object') blockers.push('critical-backlog-source-missing');
+  if (lane?.active) {
+    if (!['WAIT_ACTIVE_MISSION', 'WAIT_EXTERNAL_ACTIVE_MISSION'].includes(conveyor?.decision)) {
+      blockers.push('critical-backlog-active-lane-status-mismatch');
+    }
+    const activeMissionIdentity = laneIdentityFromId(conveyor?.activeMission?.missionId);
+    const conveyorIssues = [
+      ...list(conveyor?.selectedItem?.issueNumbers),
+      ...list(conveyor?.activeMission?.issueNumbers),
+      conveyor?.activeMission?.issueNumber,
+      conveyor?.activeMission?.issue,
+      conveyor?.activeMission?.relatedIssue,
+      activeMissionIdentity.issueNumber,
+    ].map((value) => number(value)).filter(Boolean);
+    if (!conveyorIssues.includes(lane.issueNumber)) {
+      blockers.push('critical-backlog-active-lane-identity-mismatch');
+    }
+  }
   const idleSelection = !lane && Boolean(scheduler?.selectedGoal);
   if (idleSelection && conveyor?.decision !== 'CREATE_NEXT_MISSION') blockers.push('critical-backlog-did-not-authorize-idle-selection');
   if (idleSelection && !IDLE_SELECTION_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
