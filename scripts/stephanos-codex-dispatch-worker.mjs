@@ -160,6 +160,25 @@ export function compareDirtSnapshots(before = {}, after = {}) {
   });
 }
 
+export function validateExactHeadSourceTree(task, statusBefore = {}, statusAfter = {}, dirtBefore = {}, dirtAfter = {}) {
+  if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
+  const sourcePathsBefore = Array.isArray(dirtBefore.source) ? dirtBefore.source : [];
+  const sourcePathsAfter = Array.isArray(dirtAfter.source) ? dirtAfter.source : [];
+  if (!statusBefore.ok || !statusAfter.ok) {
+    return Object.freeze({ ok: false, required: true, blocker: 'SOURCE_TREE_STATUS_FAILED' });
+  }
+  if (sourcePathsBefore.length > 0 || sourcePathsAfter.length > 0) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'SOURCE_TREE_DIRTY',
+      sourcePathsBefore,
+      sourcePathsAfter,
+    });
+  }
+  return Object.freeze({ ok: true, required: true, sourcePathsBefore: [], sourcePathsAfter: [] });
+}
+
 export function parseCodexJsonEvents(output = '') {
   const events = [];
   const invalidLines = [];
@@ -676,11 +695,12 @@ export async function runCodexWorker(taskPath, {
   });
   const browserRuntimeProofAfter = runBrowserRuntimeExactHeadProof(task, { spawnSyncFn });
   const browserProof = validateBrowserProofVerdict(lastMessage, task, browserRuntimeProofAfter);
+  const sourceTreeProof = validateExactHeadSourceTree(task, statusBefore, statusAfter, dirtBefore, dirtAfter);
   const sourceHeadUnchanged = sourceHeadBefore.ok && sourceHeadAfter.ok && sourceHeadBefore.stdout === sourceHeadAfter.stdout;
   const expectedHead = exactHeadValidation.required ? exactHeadValidation.expectedHead : '';
   const sourceHeadBound = !exactHeadValidation.required
     || (sourceHeadBefore.stdout === expectedHead && sourceHeadAfter.stdout === expectedHead);
-  const sourceSafe = sourceHeadUnchanged && sourceHeadBound && !dirtDelta.sourceMutationDetected;
+  const sourceSafe = sourceHeadUnchanged && sourceHeadBound && sourceTreeProof.ok && !dirtDelta.sourceMutationDetected;
   const passed = execution.passed && browserProof.ok && sourceSafe;
   const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
   let result = {
@@ -704,6 +724,7 @@ export async function runCodexWorker(taskPath, {
     sourceHeadBound,
     browserRuntimeProofBefore,
     browserRuntimeProofAfter,
+    sourceTreeProof,
     browserProof,
     exit,
     execution,
