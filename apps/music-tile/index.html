@@ -3,65 +3,297 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Music Tile</title>
+  <title>Music Intelligence Centre</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
   <script type="module" src="../../shared/runtime/commandDeckReturnControls.mjs"></script>
   <script type="module" src="../../shared/runtime/tileDataContract.mjs"></script>
+
   <main class="music-cockpit" id="music-cockpit-root">
+    <div class="aurora aurora--violet" aria-hidden="true"></div>
+    <div class="aurora aurora--cyan" aria-hidden="true"></div>
+    <div class="noise-field" aria-hidden="true"></div>
+
     <header class="cockpit-header">
-      <div>
-        <h1>Music Taste Cockpit</h1>
-        <p>Dark Courtyard / Ghost Vocal / Serious Trance DNA</p>
+      <a class="brand-lockup" href="#daily-briefing" aria-label="Music Intelligence Centre home">
+        <span class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </span>
+        <span>
+          <strong>Music Intelligence</strong>
+          <small>STEPHANOS · PERSONAL SIGNAL</small>
+          <span class="visually-hidden">Music Taste Cockpit</span>
+        </span>
+      </a>
+      <div class="header-actions">
+        <span class="truth-chip"><i aria-hidden="true"></i> Taste DNA active</span>
+        <a class="return-link" href="../../index.html">Command Deck <span aria-hidden="true">↗</span></a>
       </div>
-      <a class="return-link" href="../../index.html">Return to Command Deck</a>
     </header>
 
-    <section class="top-controls">
-      <label>
-        Artist input
-        <input id="artist-input" placeholder="Anyma, Tale Of Us, Layla Benitez" />
-      </label>
-      <button id="build-journey-btn" type="button">Build Journey</button>
-      <button id="start-journey-btn" type="button">Start Journey</button>
-      <button id="resolve-artist-spotify-btn" type="button" class="ghost">Resolve Artist on Spotify</button>
-      <button id="reset-btn" type="button" class="ghost">Reset</button>
-      <label>
-        Add track by URL
-        <input id="add-track-url-input" placeholder="Spotify or YouTube URL" />
-      </label>
-      <button id="add-track-url-btn" type="button">Add Track</button>
-      <button id="resolve-all-links-btn" type="button" class="ghost">Resolve All Missing Links</button>
-      <button id="resolve-all-links-ai-btn" type="button" class="ghost">Resolve All Missing Links, AI-assisted</button>
-      <button id="ask-ai-build-journey-btn" type="button">Ask AI to build smarter journey</button>
-      <button id="ask-ai-summarise-dna-btn" type="button" class="ghost">Ask AI to summarise Taste DNA</button>
-      <button id="ask-ai-suggest-traits-btn" type="button" class="ghost">Ask AI to suggest new traits</button>
-      <button id="test-ai-route-btn" type="button" class="ghost">Test AI route</button>
-      <p id="status-text" aria-live="polite">Ready. Build a journey to generate candidates.</p>
-    </section>
+    <div class="experience-shell">
+      <section class="daily-briefing" id="daily-briefing" data-experience="daily-briefing">
+        <div class="briefing-copy">
+          <p class="eyebrow"><span></span> Today’s listening signal</p>
+          <h1 id="daily-briefing-title">Your taste is loaded. The next door is unopened.</h1>
+          <p id="daily-briefing-copy" class="briefing-lede">
+            One tap turns your real Taste DNA into a listening journey. Every recommendation will tell you why it earned its place.
+          </p>
 
-    <section class="dashboard-grid">
-      <section class="col" id="taste-col">
-        <h2>Taste DNA</h2>
-        <div id="ai-status-card" class="card"><h3>Stephanos AI</h3><div id="ai-status-text">AI status unknown.</div><div id="ai-last-action" class="meta">No AI actions yet.</div><div class="meta">Rule-based parser always active.</div></div><div id="presence-panel" class="card"><h3>Stephanos says</h3><div id="presence-voice" class="meta">Stephanos presence idle.</div><h4>Awareness Queue</h4><div id="presence-queue" class="stack"></div><h4>Recent learning/events</h4><div id="presence-events" class="meta"></div></div><div id="assisted-setup-panel" class="card"><h3>Assisted Setup</h3><div id="assisted-setup-status" class="meta">Loading integration setup status…</div><div class="actions"><button id="setup-view-steps-btn" type="button" class="ghost">View setup steps</button><button id="setup-test-spotify-btn" type="button" class="ghost">Test Spotify resolver</button><button id="setup-prepare-env-btn" type="button" class="ghost">Prepare .env entries</button><button id="setup-mark-added-btn" type="button" class="ghost">Mark credentials added</button><button id="setup-retest-btn" type="button" class="ghost">Retest</button><button id="setup-ask-codex-btn" type="button" class="ghost">Ask Codex to wire missing setup flow</button></div><pre id="assisted-setup-plan" class="meta"></pre></div><div id="positive-anchors"></div>
-        <div id="reject-patterns"></div>
-        <div id="rating-counts"></div>
-        <div id="taste-dna-editor" class="card"><h3>Taste DNA Editor</h3><div class="actions"><input id="trait-name-input" placeholder="trait name input" /><input id="trait-weight-input" type="number" step="0.2" value="1" placeholder="optional weight input" /><select id="trait-polarity-input"><option value="positive">Add positive trait</option><option value="negative">Add negative trait</option></select><button id="save-trait-btn" type="button">save trait button</button></div><button id="ask-ai-feedback-btn" type="button" disabled>Ask AI to interpret feedback</button><div id="taste-dna-traits" class="stack"></div></div><div id="ai-suggestion-panel" class="card"></div><div id="pending-taste-dna-changes" class="card"><h3>Pending Taste DNA Changes</h3><div class="meta">No pending suggestions.</div></div><div id="applied-taste-dna-changes" class="card"><h3>Recently Applied Taste DNA Changes</h3><div class="meta">No applied suggestions yet.</div></div><div id="learning-signals"></div><div id="memory-promotion-card" class="card"><h3>Stephanos Memory</h3><div id="memory-local-status" class="meta">Local Music Tile memory is active.</div><div id="memory-durable-status" class="meta">Durable promotion is not connected yet. Local Music Tile memory remains active.</div><div id="memory-ai-status" class="meta">AI route has not been tested in this session.</div><div class="actions"><button id="preview-memory-candidates-btn" type="button" class="ghost">Preview memory candidates</button><button id="test-durable-memory-bridge-btn" type="button" class="ghost">Test durable memory bridge</button><button id="promote-memory-btn" type="button" class="ghost">Promote selected</button></div><div id="memory-promotion-status" class="meta">Approval required for durable promotion.</div></div>
-        <div class="card"><h3>Taste DNA AI</h3><button id="synthesise-taste-dna-btn" type="button">Synthesise Taste DNA</button><button id="copy-taste-dna-summary-btn" type="button" class="ghost">Copy Taste DNA Summary</button></div>
+          <div class="hero-actions">
+            <button id="surprise-me-btn" class="journey-button" type="button">
+              <span class="journey-button__icon" aria-hidden="true">▶</span>
+              <span>
+                <strong>Surprise Me</strong>
+                <small>Start my journey</small>
+              </span>
+              <span class="journey-button__arrow" aria-hidden="true">→</span>
+            </button>
+            <button id="show-briefing-reason-btn" class="quiet-action" type="button">Why this journey?</button>
+          </div>
+
+          <p id="status-text" class="status-line" aria-live="polite">Ready. Your next journey will use local Taste DNA and clearly label anything that still needs verification.</p>
+
+          <div class="briefing-answers" aria-label="Daily briefing contract">
+            <article>
+              <span class="answer-number">01</span>
+              <div>
+                <small>LISTEN NOW</small>
+                <strong id="briefing-listen-now">Awaiting your journey</strong>
+              </div>
+            </article>
+            <article>
+              <span class="answer-number">02</span>
+              <div>
+                <small>WHY IT FITS</small>
+                <strong id="briefing-why">Taste evidence will appear here</strong>
+              </div>
+            </article>
+            <article>
+              <span class="answer-number">03</span>
+              <div>
+                <small>WHAT’S NEW</small>
+                <strong id="briefing-novelty">Novelty evidence not available yet</strong>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <div class="signal-orbit" aria-hidden="true">
+          <div class="orbit-label orbit-label--top">GHOST VOCAL</div>
+          <div class="orbit-label orbit-label--right">CLUB PRESSURE</div>
+          <div class="orbit-label orbit-label--bottom">TRANCE DNA</div>
+          <div class="orbit-ring orbit-ring--outer"></div>
+          <div class="orbit-ring orbit-ring--middle"></div>
+          <div class="orbit-ring orbit-ring--inner"></div>
+          <div class="orbit-core">
+            <span class="core-wave"><i></i><i></i><i></i><i></i><i></i></span>
+            <small>YOUR SIGNAL</small>
+          </div>
+          <span class="orbit-node orbit-node--one"></span>
+          <span class="orbit-node orbit-node--two"></span>
+          <span class="orbit-node orbit-node--three"></span>
+        </div>
       </section>
 
-      <section class="col" id="journey-col">
-        <h2>Discovery Journey</h2>
-        <div class="card"><h3>Immersion Session Builder</h3><div class="actions"><select id="immersion-duration"><option>30</option><option selected>60</option><option>90</option><option>120</option></select><select id="immersion-intensity"><option>low</option><option selected>medium</option><option>high</option></select><select id="immersion-vocal-amount"><option>sparse</option><option selected>medium</option><option>vocal-heavy</option></select><select id="immersion-darkness"><option>shadow</option><option selected>deep</option><option>intense</option></select><select id="immersion-trance-spine"><option>low</option><option selected>medium</option><option>high</option></select><button id="build-immersion-session-btn" type="button">Build Immersion Session</button></div></div>
-        <div class="card"><h3>Active Journey Summary</h3><div id="active-journey-summary" class="meta">No active journey yet.</div></div><div class="card" id="ai-smarter-journey-panel"><h3>AI Smarter Journey</h3><div class="meta">AI-guided candidates, search hints, and reasoning</div><div id="ai-suggestions-list" class="stack"></div><div class="actions"><button id="jump-ai-smarter-journey-btn" type="button" class="ghost">Jump to AI Smarter Journey</button><button id="copy-ai-suggestions-btn" type="button" class="ghost">Copy AI Suggestions</button><button id="copy-journey-summary-btn" type="button" class="ghost">Copy Journey Summary</button><button id="export-journey-json-btn" type="button" class="ghost">Export Journey JSON</button><button id="copy-codex-prompt-btn" type="button" class="ghost">Copy Codex Prompt</button></div></div><div class="card"><h3>Discovery Results</h3><div id="discovery-results-list" class="stack"></div></div><div class="card"><h3>Journey Queue / Candidate Bank</h3><div id="journey-queue-list" class="stack"></div></div><div id="immersion-session-panel" class="card"><h3>Immersion Session</h3><div class="meta">No session yet.</div></div><div id="candidate-list" class="stack"></div>
+      <section class="discovery-stage" id="discovery-stage" aria-labelledby="discovery-stage-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow"><span></span> Curated from evidence</p>
+            <h2 id="discovery-stage-title">The doorway track</h2>
+          </div>
+          <div id="daily-briefing-meta" class="section-meta">No journey generated yet</div>
+        </div>
+
+        <div class="discovery-layout">
+          <div id="discovery-spotlight" class="discovery-spotlight">
+            <div class="spotlight-empty">
+              <span class="spotlight-empty__glyph" aria-hidden="true">◇</span>
+              <div>
+                <strong>Your first discovery will land here.</strong>
+                <p>Stephanos will show the recommendation, the reason, and the verification boundary together.</p>
+              </div>
+            </div>
+          </div>
+
+          <aside class="taste-compass" aria-labelledby="taste-compass-title">
+            <div class="compass-header">
+              <div>
+                <p class="eyebrow">Live compass</p>
+                <h3 id="taste-compass-title">Your sound, at a glance</h3>
+              </div>
+              <span id="taste-confidence-chip" class="confidence-chip">Learning</span>
+            </div>
+            <div id="taste-signal-strip" class="taste-signal-strip">
+              <span>Haunting vocal</span>
+              <span>Dark club pressure</span>
+              <span>Serious trance DNA</span>
+            </div>
+            <p id="taste-compass-copy" class="compass-copy">The strongest signals from your real Taste DNA will appear here. Ratings sharpen the compass; they never silently rewrite it.</p>
+            <div id="taste-compass-meter" class="compass-meter" aria-label="Relative strength of the strongest stored Taste DNA signals"></div>
+          </aside>
+        </div>
       </section>
 
-      <section class="col" id="deck-col">
-        <h2>Listening Deck</h2>
-        <div id="listening-deck" class="stack"></div>
+      <section class="listening-room" aria-labelledby="listening-room-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow"><span></span> Your journey</p>
+            <h2 id="listening-room-title">Listening room</h2>
+          </div>
+          <p class="section-meta">Rate what lands. Stephanos learns the shape, not just the genre.</p>
+        </div>
+        <div id="listening-deck" class="stack listening-deck"></div>
       </section>
-    </section>
+
+      <details class="advanced-studio" id="advanced-studio">
+        <summary>
+          <span class="studio-summary-icon" aria-hidden="true">⌘</span>
+          <span>
+            <strong>Advanced Studio</strong>
+            <small>Taste DNA, artist targeting, AI tools, setup and diagnostics</small>
+          </span>
+          <span class="studio-summary-state">Open studio <i aria-hidden="true">⌄</i></span>
+        </summary>
+
+        <div class="advanced-studio__body">
+          <section class="top-controls">
+            <div class="studio-heading">
+              <p class="eyebrow">Journey controls</p>
+              <h2>Direct the intelligence</h2>
+            </div>
+            <label class="artist-control">
+              Artist or creative direction
+              <input id="artist-input" placeholder="Anyma, Tale Of Us, Layla Benitez" />
+            </label>
+            <button id="build-journey-btn" type="button">Build Journey</button>
+            <button id="start-journey-btn" type="button">Start Journey</button>
+            <button id="resolve-artist-spotify-btn" type="button" class="ghost">Resolve Artist on Spotify</button>
+            <button id="reset-btn" type="button" class="ghost">Reset</button>
+            <label>
+              Add track by URL
+              <input id="add-track-url-input" placeholder="Spotify or YouTube URL" />
+            </label>
+            <button id="add-track-url-btn" type="button">Add Track</button>
+            <button id="resolve-all-links-btn" type="button" class="ghost">Resolve All Missing Links</button>
+            <button id="resolve-all-links-ai-btn" type="button" class="ghost">Resolve All Missing Links, AI-assisted</button>
+            <button id="ask-ai-build-journey-btn" type="button">Ask AI to build smarter journey</button>
+            <button id="ask-ai-summarise-dna-btn" type="button" class="ghost">Ask AI to summarise Taste DNA</button>
+            <button id="ask-ai-suggest-traits-btn" type="button" class="ghost">Ask AI to suggest new traits</button>
+            <button id="test-ai-route-btn" type="button" class="ghost">Test AI route</button>
+          </section>
+
+          <section class="dashboard-grid">
+            <section class="col" id="taste-col">
+              <h2>Taste DNA</h2>
+              <div id="ai-status-card" class="card">
+                <h3>Stephanos AI</h3>
+                <div id="ai-status-text">AI status unknown.</div>
+                <div id="ai-last-action" class="meta">No AI actions yet.</div>
+                <div class="meta">Rule-based parser always active.</div>
+              </div>
+              <div id="presence-panel" class="card">
+                <h3>Stephanos says</h3>
+                <div id="presence-voice" class="meta">Stephanos presence idle.</div>
+                <h4>Awareness Queue</h4>
+                <div id="presence-queue" class="stack"></div>
+                <h4>Recent learning/events</h4>
+                <div id="presence-events" class="meta"></div>
+              </div>
+              <div id="assisted-setup-panel" class="card">
+                <h3>Assisted Setup</h3>
+                <div id="assisted-setup-status" class="meta">Loading integration setup status…</div>
+                <div class="actions">
+                  <button id="setup-view-steps-btn" type="button" class="ghost">View setup steps</button>
+                  <button id="setup-test-spotify-btn" type="button" class="ghost">Test Spotify resolver</button>
+                  <button id="setup-prepare-env-btn" type="button" class="ghost">Prepare .env entries</button>
+                  <button id="setup-mark-added-btn" type="button" class="ghost">Mark credentials added</button>
+                  <button id="setup-retest-btn" type="button" class="ghost">Retest</button>
+                  <button id="setup-ask-codex-btn" type="button" class="ghost">Ask Codex to wire missing setup flow</button>
+                </div>
+                <pre id="assisted-setup-plan" class="meta"></pre>
+              </div>
+              <div id="positive-anchors"></div>
+              <div id="reject-patterns"></div>
+              <div id="rating-counts"></div>
+              <div id="taste-dna-editor" class="card">
+                <h3>Taste DNA Editor</h3>
+                <div class="actions">
+                  <input id="trait-name-input" placeholder="trait name input" />
+                  <input id="trait-weight-input" type="number" step="0.2" value="1" placeholder="optional weight input" />
+                  <select id="trait-polarity-input">
+                    <option value="positive">Add positive trait</option>
+                    <option value="negative">Add negative trait</option>
+                  </select>
+                  <button id="save-trait-btn" type="button">save trait button</button>
+                </div>
+                <button id="ask-ai-feedback-btn" type="button" disabled>Ask AI to interpret feedback</button>
+                <div id="taste-dna-traits" class="stack"></div>
+              </div>
+              <div id="ai-suggestion-panel" class="card"></div>
+              <div id="pending-taste-dna-changes" class="card"><h3>Pending Taste DNA Changes</h3><div class="meta">No pending suggestions.</div></div>
+              <div id="applied-taste-dna-changes" class="card"><h3>Recently Applied Taste DNA Changes</h3><div class="meta">No applied suggestions yet.</div></div>
+              <div id="learning-signals"></div>
+              <div id="memory-promotion-card" class="card">
+                <h3>Stephanos Memory</h3>
+                <div id="memory-local-status" class="meta">Local Music Tile memory is active.</div>
+                <div id="memory-durable-status" class="meta">Durable promotion is not connected yet. Local Music Tile memory remains active.</div>
+                <div id="memory-ai-status" class="meta">AI route has not been tested in this session.</div>
+                <div class="actions">
+                  <button id="preview-memory-candidates-btn" type="button" class="ghost">Preview memory candidates</button>
+                  <button id="test-durable-memory-bridge-btn" type="button" class="ghost">Test durable memory bridge</button>
+                  <button id="promote-memory-btn" type="button" class="ghost">Promote selected</button>
+                </div>
+                <div id="memory-promotion-status" class="meta">Approval required for durable promotion.</div>
+              </div>
+              <div class="card">
+                <h3>Taste DNA AI</h3>
+                <button id="synthesise-taste-dna-btn" type="button">Synthesise Taste DNA</button>
+                <button id="copy-taste-dna-summary-btn" type="button" class="ghost">Copy Taste DNA Summary</button>
+              </div>
+            </section>
+
+            <section class="col" id="journey-col">
+              <h2>Discovery Journey</h2>
+              <div class="card">
+                <h3>Immersion Session Builder</h3>
+                <div class="actions">
+                  <select id="immersion-duration"><option>30</option><option selected>60</option><option>90</option><option>120</option></select>
+                  <select id="immersion-intensity"><option>low</option><option selected>medium</option><option>high</option></select>
+                  <select id="immersion-vocal-amount"><option>sparse</option><option selected>medium</option><option>vocal-heavy</option></select>
+                  <select id="immersion-darkness"><option>shadow</option><option selected>deep</option><option>intense</option></select>
+                  <select id="immersion-trance-spine"><option>low</option><option selected>medium</option><option>high</option></select>
+                  <button id="build-immersion-session-btn" type="button">Build Immersion Session</button>
+                </div>
+              </div>
+              <div class="card"><h3>Active Journey Summary</h3><div id="active-journey-summary" class="meta">No active journey yet.</div></div>
+              <div class="card" id="ai-smarter-journey-panel">
+                <h3>AI Smarter Journey</h3>
+                <div class="meta">AI-guided candidates, search hints, and reasoning</div>
+                <div id="ai-suggestions-list" class="stack"></div>
+                <div class="actions">
+                  <button id="jump-ai-smarter-journey-btn" type="button" class="ghost">Jump to AI Smarter Journey</button>
+                  <button id="copy-ai-suggestions-btn" type="button" class="ghost">Copy AI Suggestions</button>
+                  <button id="copy-journey-summary-btn" type="button" class="ghost">Copy Journey Summary</button>
+                  <button id="export-journey-json-btn" type="button" class="ghost">Export Journey JSON</button>
+                  <button id="copy-codex-prompt-btn" type="button" class="ghost">Copy Codex Prompt</button>
+                </div>
+              </div>
+              <div class="card"><h3>Discovery Results</h3><div id="discovery-results-list" class="stack"></div></div>
+              <div class="card"><h3>Journey Queue / Candidate Bank</h3><div id="journey-queue-list" class="stack"></div></div>
+              <div id="immersion-session-panel" class="card"><h3>Immersion Session</h3><div class="meta">No session yet.</div></div>
+              <div id="candidate-list" class="stack"></div>
+            </section>
+
+            <section class="col" id="deck-col">
+              <h2>Listening Tools</h2>
+              <p class="meta">Player cards live in the Listening Room. Detailed feedback and verification tools travel with each card.</p>
+            </section>
+          </section>
+        </div>
+      </details>
+    </div>
   </main>
   <script type="module" src="./main.js"></script>
 </body>
