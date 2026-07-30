@@ -68,10 +68,13 @@ function checkObservedAt(check = {}) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 function checkRunSequence(check = {}) {
+  const sequenceDomain = text(check.sequenceDomain || check.sequence_domain);
   return {
     runNumber: positiveInteger(check.runNumber ?? check.run_number),
     runAttempt: positiveInteger(check.runAttempt ?? check.run_attempt),
-    runId: positiveInteger(check.runId ?? check.run_id ?? check.id),
+    runId: sequenceDomain === 'github-workflow-run'
+      ? positiveInteger(check.runId ?? check.run_id ?? check.id)
+      : null,
   };
 }
 function compareCheckRunSequence(left = {}, right = {}) {
@@ -196,6 +199,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
       runId: positiveInteger(run.runId ?? run.run_id ?? run.id),
       runNumber: positiveInteger(run.runNumber ?? run.run_number),
       runAttempt: positiveInteger(run.runAttempt ?? run.run_attempt),
+      sequenceDomain: 'github-workflow-run',
       name: text(run.name, 'unknown'),
       status,
       rawStatus: statusText,
@@ -212,6 +216,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     const headSha = text(pr.headSha || pr.head?.sha, '');
     const providedChecks = list(pr.checks).map((check) => ({
       ...check,
+      sequenceDomain: 'github-check-run',
       name: text(check.name),
       headSha: checkHeadSha(check),
       updatedAt: text(check.updatedAt || check.updated_at || check.completed_at),
