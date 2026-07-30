@@ -1686,7 +1686,11 @@
         const queue = liveProjection || concierge.queue || {};
         const summary = summarizeQueue(queue);
         const phases = Array.isArray(liveProjection?.buildConciergeStatus?.roadmap?.phases) ? liveProjection.buildConciergeStatus.roadmap.phases : (Array.isArray(concierge.roadmap?.phases) ? concierge.roadmap.phases : []);
-        const missions = Array.isArray(feed.missions) ? feed.missions : [];
+        const rawMissions = Array.isArray(feed.missions) ? feed.missions : [];
+        const missions = liveProjection
+          ? rawMissions
+          : rawMissions.filter((mission) => approvedTimestamp(mission?.mission?.updatedAt || mission?.updatedAt) !== null);
+        if (!liveProjection && missions.length !== rawMissions.length) return false;
         const sourceBadge = liveProjection?.sourceTruth === 'mixed' ? 'MIXED' : (liveProjection?.sourceTruth === 'live' ? 'LIVE' : 'UNKNOWN');
         const heartbeat = liveProjection?.heartbeat || {};
         const githubTelemetry = liveProjection?.githubTelemetry || feed.githubTelemetry || {};
@@ -1737,7 +1741,9 @@
           setTelemetryText('goals-context', `${dashboardGoals.sourceTruth} · observed ${compactObservedAt(dashboardGoals.observedAt)} · no inferred proof`);
           renderGoals(Array.isArray(dashboardGoals.cards) ? dashboardGoals.cards : [], dashboardSourceState);
         } else if (missions.length) {
-          const liveGoals = missions.map((mission) => ({
+          const liveGoals = missions.map((mission) => {
+            const receiptObservedAt = mission.mission?.updatedAt || mission.updatedAt;
+            return {
             issue: mission.mission?.missionId || 'live-mission',
             title: mission.mission?.title || 'Live Mission Operations goal',
             status: mission.mission?.state || 'unknown',
@@ -1749,9 +1755,14 @@
             proofIndex: 0,
             nextAction: mission.mission?.nextAction || feed.recommendedNextAction || 'unknown',
             sourceTruth: 'READ-ONLY MISSION RECEIPT',
-            observedAt: liveProjection?.generatedAt || new Date().toISOString(),
-          }));
-          renderDashboardSummary({ cards: liveGoals, sourceTruth: 'READ-ONLY MISSION RECEIPTS', freshnessVerdict: 'RECEIPT TIMESTAMPS VISIBLE', observedAt: liveProjection?.generatedAt, nextAction: liveProjection?.nextOperatorAction });
+            observedAt: receiptObservedAt,
+            lastUpdatedAt: receiptObservedAt,
+          };
+          });
+          const latestReceiptObservedAt = liveGoals
+            .map((goal) => goal.observedAt)
+            .sort((left, right) => approvedTimestamp(right) - approvedTimestamp(left))[0];
+          renderDashboardSummary({ cards: liveGoals, sourceTruth: 'READ-ONLY MISSION RECEIPTS', freshnessVerdict: 'RECEIPT TIMESTAMPS VISIBLE', observedAt: latestReceiptObservedAt, nextAction: liveProjection?.nextOperatorAction });
           renderGoals(liveGoals, 'live-backend');
         }
         return true;
