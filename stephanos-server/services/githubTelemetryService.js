@@ -67,6 +67,33 @@ function checkObservedAt(check = {}) {
   const parsed = Date.parse(check.updatedAt || check.updated_at || check.completedAt || check.completed_at || '');
   return Number.isFinite(parsed) ? parsed : null;
 }
+function checkRunSequence(check = {}) {
+  return {
+    runNumber: positiveInteger(check.runNumber ?? check.run_number),
+    runAttempt: positiveInteger(check.runAttempt ?? check.run_attempt),
+    runId: positiveInteger(check.runId ?? check.run_id ?? check.id),
+  };
+}
+function compareCheckRunSequence(left = {}, right = {}) {
+  const leftSequence = checkRunSequence(left);
+  const rightSequence = checkRunSequence(right);
+  if (leftSequence.runNumber !== null || rightSequence.runNumber !== null) {
+    if (leftSequence.runNumber === null) return -1;
+    if (rightSequence.runNumber === null) return 1;
+    if (leftSequence.runNumber !== rightSequence.runNumber) return leftSequence.runNumber - rightSequence.runNumber;
+    if (leftSequence.runAttempt !== null || rightSequence.runAttempt !== null) {
+      if (leftSequence.runAttempt === null) return -1;
+      if (rightSequence.runAttempt === null) return 1;
+      if (leftSequence.runAttempt !== rightSequence.runAttempt) return leftSequence.runAttempt - rightSequence.runAttempt;
+    }
+  }
+  if (leftSequence.runId !== null || rightSequence.runId !== null) {
+    if (leftSequence.runId === null) return -1;
+    if (rightSequence.runId === null) return 1;
+    if (leftSequence.runId !== rightSequence.runId) return leftSequence.runId - rightSequence.runId;
+  }
+  return leftSequence.runNumber !== null || leftSequence.runId !== null ? 0 : null;
+}
 function canonicalCheckOutcome(check = {}) {
   const status = lc(check.rawStatus ?? check.status);
   const conclusion = lc(check.rawConclusion ?? check.conclusion);
@@ -85,6 +112,14 @@ function selectLatestRequiredChecks(checks = [], headSha = '') {
     const previous = latestByName.get(name);
     if (!previous) {
       latestByName.set(name, check);
+      continue;
+    }
+    const sequenceComparison = compareCheckRunSequence(check, previous);
+    if (sequenceComparison !== null && sequenceComparison !== 0) {
+      if (sequenceComparison > 0) {
+        latestByName.set(name, check);
+        conflicts.delete(name);
+      }
       continue;
     }
     const currentAt = checkObservedAt(check);
@@ -159,7 +194,21 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     if (['failure', 'failed', 'timed_out', 'action_required'].includes(conclusion)) status = 'failed';
     if (conclusion === 'cancelled') status = 'cancelled';
     if (['neutral', 'skipped'].includes(conclusion)) status = 'unknown';
-    return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, rawStatus: statusText, conclusion, headSha: checkHeadSha(run), prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.completed_at || run.run_started_at) };
+    return {
+      id: text(run.id, `workflow-${index + 1}`),
+      runId: positiveInteger(run.runId ?? run.run_id ?? run.id),
+      runNumber: positiveInteger(run.runNumber ?? run.run_number),
+      runAttempt: positiveInteger(run.runAttempt ?? run.run_attempt),
+      name: text(run.name, 'unknown'),
+      status,
+      rawStatus: statusText,
+      conclusion,
+      headSha: checkHeadSha(run),
+      prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null,
+      goalId: text(run.goalId),
+      url: text(run.url || run.html_url),
+      updatedAt: text(run.updatedAt || run.updated_at || run.completed_at || run.run_started_at),
+    };
   });
   const pullRequests = list(raw.pullRequests || raw.prs).map((pr) => {
     const number = Number(pr.number || pr.prNumber || 0) || null;
