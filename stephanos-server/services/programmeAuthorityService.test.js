@@ -16,6 +16,11 @@ import {
   renewSourceMutationLease,
 } from './programmeAuthorityService.js';
 import {
+  buildCanonicalImplementationLaneProjection,
+  buildTerminalLaneFinalizationPlan,
+  createTerminalLaneEvidenceRecords,
+} from '../../shared/agents/programmeAuthorityV1.mjs';
+import {
   appendExecutionReceipt,
   createExecutionReceipt,
 } from '../../shared/agents/executionReceiptV1.mjs';
@@ -164,6 +169,13 @@ async function publishExecutionReceipt(root, repoRoot) {
 
 test('lease acquisition is durable, non-seizing, exactly renewable and exactly releasable', async () => {
   await fixture(async ({ root, repoRoot }) => {
+    const conflictingLaneIdentity = await claimSourceMutationLease(leaseInput({
+      issueNumber: 1,
+    }), githubAuthorityOptions(root, repoRoot));
+    assert.equal(conflictingLaneIdentity.ok, false);
+    assert.equal(conflictingLaneIdentity.reason, 'lane-id-issue-mismatch');
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, false);
+
     const wrongGithubIdentity = await claimSourceMutationLease(leaseInput({
       branch: 'feat/wrong-branch',
       headSha: 'c'.repeat(40),
@@ -318,6 +330,11 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
           calls.push('github-pr-evidence');
           return githubOpen();
         },
+        listMissionRecords: async () => [{
+          missionId: LANE_ID,
+          issueNumber: 1497,
+          currentPhase: 'AGENT_IMPLEMENTATION',
+        }],
       },
     });
 
@@ -479,6 +496,55 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
   });
 });
 
+test('terminal finalizer rejects replayed merge facts that conflict with fresh GitHub evidence', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    const terminalLane = buildCanonicalImplementationLaneProjection({
+      ...leaseInput(),
+      github: githubMerged(),
+      mutationLease: claimed.record,
+      nowUtc: NOW,
+    });
+    const plan = buildTerminalLaneFinalizationPlan({
+      lane: terminalLane,
+      mutationLease: claimed.record,
+      github: githubMerged(),
+      leaseId: LEASE_ID,
+      ownerId: OWNER,
+      nowUtc: NOW,
+    });
+    assert.equal(plan.valid, true);
+    const records = createTerminalLaneEvidenceRecords(plan, { timestampUtc: NOW });
+    await writeFile(
+      path.join(root, 'receipts', `${records.evidenceId}.json`),
+      `${JSON.stringify(records.receipt, null, 2)}\n`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(root, 'proof', `${records.evidenceId}.json`),
+      `${JSON.stringify({ ...records.proof, mergeCommitSha: 'c'.repeat(40) }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const replayed = await finalizeTerminalImplementationLane({
+      ...leaseInput(),
+      nowUtc: NOW,
+    }, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => githubMerged(),
+      },
+    });
+    assert.equal(replayed.ok, false);
+    assert.equal(replayed.reason, 'TERMINAL_RECEIPT_IDENTITY_CONFLICT');
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, true);
+  });
+});
+
 test('scheduler proof bindings require a validated affirmative proof status', () => {
   const proof = {
     ...createSharedWorkspaceProofRecord({
@@ -526,6 +592,19 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
   assert.deepEqual(conflictingAliases.proofHeadShas, []);
   assert.deepEqual(conflictingAliases.proofReceipts, []);
   assert.deepEqual(conflictingAliases.proofRefs, []);
+
+  const conflictingHeadAliases = buildAffirmativeSchedulerProofSources({
+    records: {
+      proofRecords: [{
+        ...proof,
+        status: 'PASS',
+        sourceHead: 'c'.repeat(40),
+      }],
+    },
+  }, null);
+  assert.deepEqual(conflictingHeadAliases.proofHeadShas, []);
+  assert.deepEqual(conflictingHeadAliases.proofReceipts, []);
+  assert.deepEqual(conflictingHeadAliases.proofRefs, []);
 });
 
 test('programme stall registration exposes only a handler for the existing monitor runtime', () => {
