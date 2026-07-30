@@ -51,6 +51,13 @@ test('listening tools are progressively disclosed without removing their existin
   assert.match(js, /data-action="ai-why-failed"/);
 });
 
+test('artist-prefixed seed titles are de-duplicated in the daily experience', () => {
+  assert.match(js, /function getDisplayTrackTitle\(track = \{\}\)/);
+  assert.match(js, /rawTitle\.toLowerCase\(\)\.startsWith\(artistPrefix\.toLowerCase\(\)\)/);
+  assert.match(js, /const title = getDisplayTrackTitle\(track\)/);
+  assert.match(js, /music-card-title"\>\$\{escapeHtml\(getDisplayTrackTitle\(track\)\)\}/);
+});
+
 test('cinematic layout has iPad, phone and reduced-motion safeguards', () => {
   assert.match(css, /@media \(max-width: 820px\)/);
   assert.match(css, /@media \(max-width: 580px\)/);
