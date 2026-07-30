@@ -240,7 +240,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       ...ranked.filter(({ linkedPullRequests }) => !linkedPullRequests.length).map(({ issue, linkedPullRequests }) => issueGoalCard(issue, linkedPullRequests, observedAt)),
     ];
     const cards = rankedCards.slice(0, safeLimit);
-    const operatorAttention = cards.filter((card) => card.operatorNeeded.startsWith('Yes'));
+    const operatorAttention = rankedCards.filter((card) => card.operatorNeeded.startsWith('Yes'));
     return Object.freeze({
       schemaVersion: 'stephanos.live-dashboard-goals.v1',
       sourceTruth: 'LIVE READ-ONLY GITHUB',
@@ -249,8 +249,8 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       totalAvailable: rankedCards.length,
       displayedCount: cards.length,
       activePrCount: new Set(rankedCards.flatMap(cardPullRequestNumbers)).size,
-      blockedCount: cards.filter((card) => card.status.startsWith('BLOCKED')).length,
-      readyCount: cards.filter((card) => card.status.startsWith('READY')).length,
+      blockedCount: rankedCards.filter((card) => card.status.startsWith('BLOCKED')).length,
+      readyCount: rankedCards.filter((card) => card.status.startsWith('READY')).length,
       operatorAttentionCount: operatorAttention.length,
       cards,
       nextAction: operatorAttention[0]?.nextAction || cards[0]?.nextAction || 'No open goal issues were returned by the verified read-only GitHub adapter.',
@@ -287,19 +287,18 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       seen.add(key);
       return true;
     });
-  const cards = currentReceiptCandidates
-    .slice(0, safeLimit)
-    .map((candidate) => receiptGoalCard(candidate, observedAt));
+  const currentReceiptCards = currentReceiptCandidates.map((candidate) => receiptGoalCard(candidate, observedAt));
+  const cards = currentReceiptCards.slice(0, safeLimit);
   return Object.freeze({
     schemaVersion: 'stephanos.live-dashboard-goals.v1',
     sourceTruth: cards.length ? 'READ-ONLY RECEIPTS' : 'UNKNOWN',
     freshnessVerdict: cards.length ? 'RECEIPT_TIMESTAMPS_VISIBLE' : 'NO_CURRENT_GOAL_RECORDS',
     observedAt,
-    totalAvailable: currentReceiptCandidates.length,
+    totalAvailable: currentReceiptCards.length,
     displayedCount: cards.length,
     activePrCount: 0,
-    blockedCount: cards.filter((card) => /BLOCKED|FAILED/.test(card.status)).length,
-    readyCount: cards.filter((card) => /READY/.test(card.status)).length,
+    blockedCount: currentReceiptCards.filter((card) => /BLOCKED|FAILED/.test(card.status)).length,
+    readyCount: currentReceiptCards.filter((card) => /READY/.test(card.status)).length,
     operatorAttentionCount: 0,
     cards,
     historicalReferenceCount: historicalReferences.length,
