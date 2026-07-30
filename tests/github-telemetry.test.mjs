@@ -194,6 +194,45 @@ test('older workflow history cannot clear an equal-time exact-head conflict', ()
   assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
 });
 
+test('canonical workflow rerun sequence outranks completion timestamps', () => {
+  const headSha = '7'.repeat(40);
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const checks = requiredChecks(headSha).filter((check) => check.name !== workflowName);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 56, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 7001, run_number: 41, name: workflowName, headSha, prNumber: 56, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T10:00:00.000Z' },
+      { id: 6999, run_number: 40, name: workflowName, headSha, prNumber: 56, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T11:00:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].checks.find((check) => check.name === workflowName).runNumber, 41);
+  assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+});
+
+test('canonical workflow run ID breaks rerun order when run numbers are unavailable', () => {
+  const headSha = '8'.repeat(40);
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const checks = requiredChecks(headSha).filter((check) => check.name !== workflowName);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 57, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 8002, name: workflowName, headSha, prNumber: 57, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T10:00:00.000Z' },
+      { id: 8001, name: workflowName, headSha, prNumber: 57, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T11:00:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].checks.find((check) => check.name === workflowName).runId, 8002);
+});
+
 test('PR issue correlation accepts explicit closing references and rejects incidental mentions', () => {
   const headSha = 'e'.repeat(40);
   const telemetry = normalizeGithubTelemetry({
