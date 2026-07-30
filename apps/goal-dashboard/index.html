@@ -1422,6 +1422,8 @@
       const APPROVED_SHARED_WORKSPACE_DASHBOARD_FEED_ENDPOINT = '/api/shared-workspace/dashboard-feed';
       const SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION = 'stephanos.shared-workspace-dashboard-feed.v1';
       const MIN_SHARED_WORKSPACE_DASHBOARD_POLL_INTERVAL_MS = 15000;
+      const MAX_APPROVED_TELEMETRY_AGE_MS = 120000;
+      const MAX_APPROVED_TELEMETRY_CLOCK_SKEW_MS = 30000;
       const BACKEND_UNAVAILABLE_STATIC_SEED_ONLY = 'BACKEND_UNAVAILABLE_STATIC_SEED_ONLY';
       const actorOrder = ['Operator', 'ChatGPT', 'Codex', 'OpenClaw', 'Stephanos', 'Operator'];
 
@@ -1859,11 +1861,67 @@
         return Number.isSafeInteger(value) && value >= 0;
       }
 
-      function isValidApprovedDashboardGoalsEnvelope(dashboardGoals) {
+      function approvedTimestamp(value) {
+        const parsed = Date.parse(String(value || ''));
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function isCurrentApprovedTimestamp(value, now = Date.now()) {
+        const parsed = approvedTimestamp(value);
+        return parsed !== null
+          && parsed <= now + MAX_APPROVED_TELEMETRY_CLOCK_SKEW_MS
+          && parsed >= now - MAX_APPROVED_TELEMETRY_AGE_MS;
+      }
+
+      function isValidLinkedPullRequest(pr) {
+        return Boolean(
+          pr
+          && typeof pr === 'object'
+          && !Array.isArray(pr)
+          && Number.isSafeInteger(pr.number)
+          && pr.number > 0
+          && typeof pr.url === 'string'
+        );
+      }
+
+      function isValidPlatformProof(platformProof) {
+        if (platformProof === undefined || platformProof === null) return true;
+        return Boolean(
+          typeof platformProof === 'object'
+          && !Array.isArray(platformProof)
+          && ['schemaVersion', 'status', 'currentClaim', 'exactHeadMergeHold', 'liveClaims', 'finalVerdict']
+            .every((field) => typeof platformProof[field] === 'string' && platformProof[field].trim())
+          && Array.isArray(platformProof.proofRefs)
+          && platformProof.proofRefs.every((item) => typeof item === 'string')
+          && Array.isArray(platformProof.blockers)
+          && platformProof.blockers.every((item) => typeof item === 'string')
+          && typeof platformProof.manualDispatchRequired === 'boolean'
+        );
+      }
+
+      function isValidApprovedGoalCard(card, generatedAt) {
+        if (!card || typeof card !== 'object' || Array.isArray(card)) return false;
+        if (!['issue', 'title', 'status', 'sourceTruth', 'observedAt', 'currentOwner', 'nextOwner', 'operatorNeeded', 'handoffState', 'milestone', 'nextAction']
+          .every((field) => typeof card[field] === 'string' && card[field].trim())) return false;
+        const observedAt = approvedTimestamp(card.observedAt);
+        if (observedAt === null
+          || observedAt > generatedAt + MAX_APPROVED_TELEMETRY_CLOCK_SKEW_MS
+          || observedAt < generatedAt - MAX_APPROVED_TELEMETRY_AGE_MS) return false;
+        if (!isNonNegativeInteger(card.proofIndex)) return false;
+        if (card.linkedPr !== undefined && card.linkedPr !== null && !isValidLinkedPullRequest(card.linkedPr)) return false;
+        if (card.linkedPullRequests !== undefined
+          && (!Array.isArray(card.linkedPullRequests) || !card.linkedPullRequests.every(isValidLinkedPullRequest))) return false;
+        return isValidPlatformProof(card.platformProof);
+      }
+
+      function isValidApprovedDashboardGoalsEnvelope(dashboardGoals, generatedAt) {
         if (!dashboardGoals || typeof dashboardGoals !== 'object' || Array.isArray(dashboardGoals)) return false;
         if (dashboardGoals.schemaVersion !== 'stephanos.live-dashboard-goals.v1') return false;
         if (!['LIVE READ-ONLY GITHUB', 'READ-ONLY RECEIPTS', 'UNKNOWN'].includes(dashboardGoals.sourceTruth)) return false;
-        if (!Number.isFinite(Date.parse(String(dashboardGoals.observedAt || '')))) return false;
+        const observedAt = approvedTimestamp(dashboardGoals.observedAt);
+        if (observedAt === null
+          || observedAt > generatedAt + MAX_APPROVED_TELEMETRY_CLOCK_SKEW_MS
+          || observedAt < generatedAt - MAX_APPROVED_TELEMETRY_AGE_MS) return false;
         if (typeof dashboardGoals.freshnessVerdict !== 'string' || !dashboardGoals.freshnessVerdict.trim()) return false;
         if (typeof dashboardGoals.nextAction !== 'string' || !dashboardGoals.nextAction.trim()) return false;
         if (!Array.isArray(dashboardGoals.cards)) return false;
@@ -1871,23 +1929,52 @@
           .every((field) => isNonNegativeInteger(dashboardGoals[field]))
           || dashboardGoals.displayedCount !== dashboardGoals.cards.length
           || dashboardGoals.totalAvailable < dashboardGoals.displayedCount) return false;
-        return dashboardGoals.cards.every((card) => (
-          card
-          && typeof card === 'object'
-          && !Array.isArray(card)
-          && ['issue', 'title', 'status', 'sourceTruth', 'observedAt', 'currentOwner', 'nextOwner', 'operatorNeeded', 'handoffState', 'milestone', 'nextAction']
-            .every((field) => typeof card[field] === 'string' && card[field].trim())
-          && Number.isFinite(Date.parse(card.observedAt))
-          && isNonNegativeInteger(card.proofIndex)
-        ));
+        if (!dashboardGoals.cards.every((card) => isValidApprovedGoalCard(card, generatedAt))) return false;
+        const expectedCardSource = dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB'
+          ? 'LIVE READ-ONLY GITHUB'
+          : (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS' ? 'READ-ONLY RECEIPT' : null);
+        if (expectedCardSource && dashboardGoals.cards.some((card) => card.sourceTruth !== expectedCardSource)) return false;
+        const visibleBlocked = dashboardGoals.cards.filter((card) => /^(BLOCKED|FAILED)/.test(card.status)).length;
+        const visibleReady = dashboardGoals.cards.filter((card) => /^READY/.test(card.status)).length;
+        const visibleAttention = dashboardGoals.cards.filter((card) => /^Yes\b/.test(card.operatorNeeded)).length;
+        if (dashboardGoals.blockedCount < visibleBlocked
+          || dashboardGoals.readyCount < visibleReady
+          || dashboardGoals.operatorAttentionCount < visibleAttention
+          || dashboardGoals.blockedCount > dashboardGoals.totalAvailable
+          || dashboardGoals.readyCount > dashboardGoals.totalAvailable
+          || dashboardGoals.operatorAttentionCount > dashboardGoals.totalAvailable) return false;
+        if (dashboardGoals.displayedCount === dashboardGoals.totalAvailable
+          && (dashboardGoals.blockedCount !== visibleBlocked
+            || dashboardGoals.readyCount !== visibleReady
+            || dashboardGoals.operatorAttentionCount !== visibleAttention)) return false;
+        if (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS' && dashboardGoals.activePrCount !== 0) return false;
+        if (dashboardGoals.sourceTruth === 'UNKNOWN') {
+          return dashboardGoals.freshnessVerdict === 'NO_CURRENT_GOAL_RECORDS'
+            && dashboardGoals.cards.length === 0
+            && ['totalAvailable', 'displayedCount', 'activePrCount', 'blockedCount', 'readyCount', 'operatorAttentionCount']
+              .every((field) => dashboardGoals[field] === 0);
+        }
+        if (dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB') {
+          if (dashboardGoals.freshnessVerdict !== 'CURRENT_AT_REQUEST') return false;
+          const visiblePrNumbers = new Set(dashboardGoals.cards.flatMap((card) => [
+            ...(Array.isArray(card.linkedPullRequests) ? card.linkedPullRequests.map((pr) => pr.number) : []),
+            card.linkedPr?.number,
+          ].filter(Boolean)));
+          if (dashboardGoals.activePrCount < visiblePrNumbers.size) return false;
+        }
+        if (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS'
+          && dashboardGoals.freshnessVerdict !== 'RECEIPT_TIMESTAMPS_VISIBLE') return false;
+        return true;
       }
 
       function isValidApprovedLiveTelemetryEnvelope(feed) {
         if (!feed || typeof feed !== 'object' || Array.isArray(feed)) return false;
         if (feed.schemaVersion === 'stephanos.live-goal-projection.v1') {
+          const generatedAt = approvedTimestamp(feed.generatedAt);
           return ['live', 'mixed', 'static-fallback'].includes(feed.sourceTruth)
-            && Number.isFinite(Date.parse(String(feed.generatedAt || '')))
-            && isValidApprovedDashboardGoalsEnvelope(feed.dashboardGoals);
+            && generatedAt !== null
+            && isCurrentApprovedTimestamp(feed.generatedAt)
+            && isValidApprovedDashboardGoalsEnvelope(feed.dashboardGoals, generatedAt);
         }
         if (feed.schemaVersion === 'stephanos.mission-operations-feed.v1') {
           return Array.isArray(feed.missions)
@@ -1902,7 +1989,12 @@
       }
 
       function renderApprovedLiveTelemetryOrMarkFailed(feed) {
-        const rendered = isValidApprovedLiveTelemetryEnvelope(feed) && renderLiveMissionOperationsTelemetry(feed);
+        let rendered = false;
+        try {
+          rendered = isValidApprovedLiveTelemetryEnvelope(feed) && renderLiveMissionOperationsTelemetry(feed);
+        } catch {
+          rendered = false;
+        }
         if (!rendered) markLiveTelemetryRefreshFailed();
         return rendered;
       }
