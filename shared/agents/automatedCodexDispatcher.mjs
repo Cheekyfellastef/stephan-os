@@ -146,6 +146,7 @@ export function createDispatchPacket(record, input = {}) {
     branch: record.branch,
     prompt: record.prompt,
     requestedProofCommands: [...record.requestedProofCommands],
+    exactHeadProof: record.exactHeadProof ? { ...record.exactHeadProof } : null,
     approvalRequirements: { ...record.approvalRequirements },
     queueRecordRef: record.jobId,
     sharedWorkspaceOnly: true,
