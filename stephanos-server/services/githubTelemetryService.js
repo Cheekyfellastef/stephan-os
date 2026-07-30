@@ -88,10 +88,10 @@ function evaluateRequiredExactHeadChecks(checks = [], headSha = '') {
   }
   const exactChecks = REQUIRED_EXACT_HEAD_WORKFLOWS.map((name) => latestByName.get(name)).filter(Boolean);
   const missing = REQUIRED_EXACT_HEAD_WORKFLOWS.filter((name) => !latestByName.has(name));
-  const normalized = normalizeChecks(exactChecks);
   const failed = exactChecks.some((check) => ['failure', 'failed', 'timed_out', 'action_required', 'cancelled'].includes(lc(check.status || check.conclusion || check.state)));
   const pending = exactChecks.some((check) => ['queued', 'running', 'in_progress', 'pending', 'waiting', 'requested'].includes(lc(check.status || check.conclusion || check.state)));
-  const status = failed ? 'failed' : (missing.length ? 'unknown' : (pending ? 'pending' : normalized));
+  const allSuccessful = exactChecks.length > 0 && exactChecks.every((check) => ['success', 'passed'].includes(lc(check.conclusion || check.status || check.state)));
+  const status = failed ? 'failed' : (missing.length ? 'unknown' : (pending ? 'pending' : (allSuccessful ? 'passed' : 'unknown')));
   return { checks: exactChecks, status, missing };
 }
 export function classifyGithubNotification(notification = {}) {
@@ -132,6 +132,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     if (['success', 'passed'].includes(conclusion)) status = 'passed';
     if (['failure', 'failed', 'timed_out', 'action_required'].includes(conclusion)) status = 'failed';
     if (conclusion === 'cancelled') status = 'cancelled';
+    if (['neutral', 'skipped'].includes(conclusion)) status = 'unknown';
     return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, headSha: checkHeadSha(run), prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at) };
   });
   const pullRequests = list(raw.pullRequests || raw.prs).map((pr) => {
