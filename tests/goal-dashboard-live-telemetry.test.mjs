@@ -428,6 +428,41 @@ test('legacy mission telemetry with a future evidence timestamp is rejected', as
   assert.doesNotMatch(grid.children.map((child) => child.innerHTML).join(''), /Future-dated legacy mission/);
 });
 
+test('an empty legacy mission feed clears retained current cards with an explicit unknown state', async () => {
+  const { telemetry, grid, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'live',
+    dashboardGoals: {
+      sourceTruth: 'LIVE READ-ONLY GITHUB',
+      observedAt: '2026-07-30T10:00:00.000Z',
+      cards: [{
+        issue: '#1627',
+        title: 'Retained ready card',
+        status: 'READY FOR REVIEW',
+        currentOwner: 'Review',
+        nextOwner: 'Operator',
+        operatorNeeded: 'No',
+        handoffState: 'ready',
+        milestone: 'OLD HEAD',
+        proofIndex: 4,
+        nextAction: 'Review.',
+      }],
+    },
+  });
+  assert.match(grid.children[0].innerHTML, /Retained ready card/);
+
+  const rendered = context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.mission-operations-feed.v1',
+    missions: [],
+  });
+  assert.equal(rendered, true);
+  assert.match(grid.children[0].innerHTML, /NO CURRENT GOAL RECORDS/);
+  assert.doesNotMatch(grid.children[0].innerHTML, /Retained ready card/);
+  assert.equal(telemetry.get('hero-truth-source').textContent, 'UNKNOWN');
+});
+
 test('goal cards render links for every unsuperseded PR supplied by the projection', async () => {
   const { grid, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
   await new Promise((resolve) => setImmediate(resolve));
