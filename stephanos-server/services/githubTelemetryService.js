@@ -109,51 +109,60 @@ function canonicalCheckOutcome(check = {}) {
   return 'unknown';
 }
 function selectLatestRequiredChecks(checks = [], headSha = '') {
-  const latestByName = new Map();
-  const conflicts = new Set();
+  const observationsByName = new Map();
   for (const check of list(checks).filter((candidate) => checkHeadSha(candidate) === headSha)) {
     const name = text(check.name);
     if (!REQUIRED_EXACT_HEAD_WORKFLOWS.includes(name)) continue;
-    const previous = latestByName.get(name);
-    if (!previous) {
-      latestByName.set(name, check);
+    const sequence = checkRunSequence(check);
+    const domain = sequence.sequenceDomain || 'unsequenced';
+    if (!observationsByName.has(name)) observationsByName.set(name, new Map());
+    const observationsByDomain = observationsByName.get(name);
+    const observation = observationsByDomain.get(domain);
+    if (!observation) {
+      observationsByDomain.set(domain, { check, conflict: false });
       continue;
     }
+    const previous = observation.check;
     const sequenceComparison = compareCheckRunSequence(check, previous);
     if (sequenceComparison !== null && sequenceComparison !== 0) {
       if (sequenceComparison > 0) {
-        latestByName.set(name, check);
-        conflicts.delete(name);
+        observation.check = check;
       }
       continue;
     }
-    const currentSequence = checkRunSequence(check);
-    const previousSequence = checkRunSequence(previous);
     const outcomesDiffer = canonicalCheckOutcome(previous) !== canonicalCheckOutcome(check);
-    const comparableWorkflowDefinition = currentSequence.sequenceDomain
-      && currentSequence.sequenceDomain === previousSequence.sequenceDomain;
-    if (outcomesDiffer && !comparableWorkflowDefinition) {
-      conflicts.add(name);
-      continue;
-    }
     const currentAt = checkObservedAt(check);
     const previousAt = checkObservedAt(previous);
+    if (outcomesDiffer && sequenceComparison === null) {
+      observation.conflict = true;
+      continue;
+    }
     if (currentAt !== null && previousAt !== null && currentAt !== previousAt) {
       if (currentAt > previousAt) {
-        latestByName.set(name, check);
-        conflicts.delete(name);
+        observation.check = check;
       }
       continue;
     }
     if (outcomesDiffer) {
-      conflicts.add(name);
+      observation.conflict = true;
       continue;
     }
     if (currentAt !== null && previousAt === null) {
-      latestByName.set(name, check);
+      observation.check = check;
     }
   }
-  return { latestByName, conflicts: [...conflicts] };
+  const latestByName = new Map();
+  const conflicts = [];
+  for (const [name, observationsByDomain] of observationsByName) {
+    const observations = [...observationsByDomain.values()];
+    const outcomes = new Set(observations.map(({ check }) => canonicalCheckOutcome(check)));
+    if (observations.some(({ conflict }) => conflict) || outcomes.size > 1) conflicts.push(name);
+    const representative = observations
+      .map(({ check }) => check)
+      .sort((left, right) => (checkObservedAt(right) ?? -1) - (checkObservedAt(left) ?? -1))[0];
+    if (representative) latestByName.set(name, representative);
+  }
+  return { latestByName, conflicts };
 }
 function evaluateRequiredExactHeadChecks(checks = [], headSha = '') {
   if (!headSha) {
