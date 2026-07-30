@@ -4,7 +4,7 @@ import { answerLiveTelemetryQuestion, buildExecutionChains, classifyGithubNotifi
 import { resolveGithubAuth } from '../stephanos-server/services/githubAuthResolver.js';
 import { fetchGithubPrEvidence } from '../stephanos-server/services/githubPrEvidenceService.js';
 import { buildLiveGoalProjection } from '../stephanos-server/services/liveGoalProjectionService.js';
-import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
+import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../shared/agents/operatorMergeApprovalGate.mjs';
 
 function requiredChecks(headSha, conclusion = 'success') {
   return REQUIRED_EXACT_HEAD_WORKFLOWS.map((name, index) => ({
@@ -57,7 +57,7 @@ test('GitHub telemetry projects PRs workflows unavailable state and no fabricate
 test('live projection correlates goals to PR workflow chain and command deck answers from telemetry', () => {
   const headSha = 'b'.repeat(40);
   const githubTelemetry = normalizeGithubTelemetry({ available: true, notifications: [{ id: 'n1', reason: 'review_requested', subject: { title: 'Review PR 42', type: 'PullRequest' } }], pullRequests: [{ number: 42, title: 'Historical Mission Control API', branch: 'work', headSha, checks: requiredChecks(headSha), approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', head_sha: headSha, prNumber: 42 }] });
-  const projection = buildLiveGoalProjection({ backendStatus: { status: 'live', ok: true }, missionOperationsFeed: { status: 'ready', missions: [], errors: [] }, importedGoals: { receipts: [], candidates: [{ candidateId: 'goal-42', title: 'Historical Mission Control API', intent: 'API', lastKnownPR: '#42', status: 'open' }] }, githubTelemetry });
+  const projection = buildLiveGoalProjection({ backendStatus: { status: 'live', ok: true }, missionOperationsFeed: { status: 'ready', missions: [], errors: [] }, createdGoalCandidates: [{ candidateId: 'goal-42', title: 'Current Mission Control API', intent: 'API', lastKnownPR: '#42', status: 'open' }], githubTelemetry });
   assert.equal(projection.githubTelemetry.notificationCounts['Review requested'], 1);
   assert.equal(projection.executionChains[0].pr.number, 42);
   assert.equal(projection.executionChains[0].workflows[0].status, 'failed');
@@ -96,16 +96,19 @@ test('PR issue correlation accepts explicit closing references and rejects incid
   const headSha = 'e'.repeat(40);
   const telemetry = normalizeGithubTelemetry({
     available: true,
+    repository: { owner: 'owner', repo: 'repo' },
     issues: [],
     pullRequests: [
       { number: 60, title: 'Supersedes #123', body: 'Background context from #456.', branch: 'issue-789', headSha, checks: requiredChecks(headSha) },
       { number: 61, title: 'Durable link', body: 'Fixes #1497 and resolves owner/repo#1619.', headSha, checks: requiredChecks(headSha) },
       { number: 62, title: 'Adapter-provided link', relatedIssues: [1282], headSha, checks: requiredChecks(headSha) },
+      { number: 63, title: 'Foreign durable link', body: 'Fixes other/repo#1497.', closingIssueReferences: [{ number: 1619, repository: 'other/repo' }], headSha, checks: requiredChecks(headSha) },
     ],
   });
   assert.deepEqual(telemetry.pullRequests[0].relatedIssues, []);
   assert.deepEqual(telemetry.pullRequests[1].relatedIssues, [1497, 1619]);
   assert.deepEqual(telemetry.pullRequests[2].relatedIssues, [1282]);
+  assert.deepEqual(telemetry.pullRequests[3].relatedIssues, []);
 });
 
 test('execution chains use only explicit PR or durable issue identity, never matching title text', () => {
