@@ -24,6 +24,7 @@ import {
   executeBattleBridgeGitHubCommand,
   selectNextBattleBridgeGitHubCommand,
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
+import { dispatchExactHeadWindowsBrowserProof } from '../shared/agents/exactHeadWindowsBrowserProofDispatch.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -552,6 +553,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     readMailboxReceipt,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
+    runExactHeadWindowsBrowserProof: (command) => dispatchExactHeadWindowsBrowserProof(command),
   });
 
   const completedAt = now().toISOString();
