@@ -300,6 +300,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
   if (!available) blockers.push('github_adapter_unavailable');
   if (available && !issueInventoryComplete) blockers.push('github_issue_inventory_incomplete');
   if (available && !pullRequestInventoryComplete) blockers.push('github_pull_request_inventory_incomplete');
+  if (available && raw.notificationAvailable === false) blockers.push('github_notifications_unavailable');
   return {
     schemaVersion: GITHUB_TELEMETRY_SCHEMA,
     adapterAvailable: available,
@@ -309,6 +310,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     repository: raw.repository || null,
     lastUpdatedAt: text(raw.lastUpdatedAt, now.toISOString()),
     notifications,
+    notificationStatus: raw.notificationAvailable === false ? 'unavailable' : 'available',
     notificationCounts: countBy(notifications, 'category'),
     pullRequests,
     pullRequestCount: pullRequests.length,
@@ -346,17 +348,44 @@ async function githubPaginatedArray(url, auth, fetchImpl = fetch) {
   }
   throw new Error(`GitHub paginated inventory exceeded ${MAX_GITHUB_PAGES} pages`);
 }
+async function githubPaginatedWorkflowRuns(url, auth, fetchImpl = fetch) {
+  const runs = [];
+  for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
+    const requestUrl = new URL(url);
+    requestUrl.searchParams.set('per_page', String(GITHUB_PAGE_SIZE));
+    requestUrl.searchParams.set('page', String(page));
+    const payload = await githubJson(requestUrl.href, auth, fetchImpl);
+    if (!Array.isArray(payload?.workflow_runs)) throw new Error('GitHub workflow inventory response was not an array');
+    runs.push(...payload.workflow_runs);
+    if (payload.workflow_runs.length < GITHUB_PAGE_SIZE) return runs;
+  }
+  throw new Error(`GitHub workflow inventory exceeded ${MAX_GITHUB_PAGES} pages`);
+}
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
   const { owner, repo } = repoConfig;
   const fetchImpl = options.fetchImpl || fetch;
-  const [notifications, prs, issues, workflowRuns, repositoryMetadata] = await Promise.all([
-    githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl),
+  const [notificationResult, prs, issues, workflowRuns, repositoryMetadata] = await Promise.all([
+    githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl)
+      .then((notifications) => ({ available: true, notifications }))
+      .catch(() => ({ available: false, notifications: [] })),
     githubPaginatedArray(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open`, auth, fetchImpl),
     githubPaginatedArray(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&sort=updated&direction=desc`, auth, fetchImpl),
-    githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, fetchImpl),
+    githubPaginatedWorkflowRuns(`https://api.github.com/repos/${owner}/${repo}/actions/runs`, auth, fetchImpl),
     githubJson(`https://api.github.com/repos/${owner}/${repo}`, auth, fetchImpl),
   ]);
-  return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: { ...repoConfig, defaultBranch: text(repositoryMetadata.default_branch) }, notifications, pullRequests: prs, pullRequestInventoryComplete: true, issues, issueInventoryComplete: true, workflows: workflowRuns.workflow_runs || [] }, options);
+  return normalizeGithubTelemetry({
+    available: true,
+    source: 'github-api',
+    authAuthority: auth.authority,
+    repository: { ...repoConfig, defaultBranch: text(repositoryMetadata.default_branch) },
+    notifications: notificationResult.notifications,
+    notificationAvailable: notificationResult.available,
+    pullRequests: prs,
+    pullRequestInventoryComplete: true,
+    issues,
+    issueInventoryComplete: true,
+    workflows: workflowRuns,
+  }, options);
 }
 export async function readGithubTelemetry(options = {}) {
   if (options.adapterData) return normalizeGithubTelemetry(options.adapterData, options);
