@@ -126,15 +126,43 @@ test('receipt status totals preserve blocked and ready records outside the displ
           title: `Visible receipt ${index + 1}`,
           state: 'QUEUED',
         })),
-        { candidateId: 'hidden-blocked-receipt', title: 'Hidden blocked receipt', state: 'BLOCKED' },
+        { candidateId: 'hidden-blocked-receipt', title: 'Hidden blocked receipt' },
         { candidateId: 'hidden-ready-receipt', title: 'Hidden ready receipt', state: 'READY' },
       ],
+      blockedCandidates: [{ candidateId: 'hidden-blocked-receipt', blockers: ['Canonical queue adjudication blocked this goal.'] }],
     },
   });
   assert.equal(dashboardGoals.totalAvailable, 14);
   assert.equal(dashboardGoals.displayedCount, 12);
   assert.equal(dashboardGoals.blockedCount, 1);
   assert.equal(dashboardGoals.readyCount, 1);
+});
+
+test('receipt fallback carries hidden mission operator attention before display truncation', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: { adapterAvailable: false },
+    queue: {
+      queuedCandidates: Array.from({ length: 12 }, (_, index) => ({
+        candidateId: `visible-receipt-${index + 1}`,
+        title: `Visible receipt ${index + 1}`,
+        state: 'QUEUED',
+      })),
+    },
+    missions: [{
+      mission: {
+        missionId: 'hidden-approval-mission',
+        title: 'Hidden approval mission',
+        state: 'AWAITING_APPROVAL',
+        nextAction: 'Request the operator decision.',
+      },
+      operatorActionRequired: true,
+    }],
+  });
+  assert.equal(dashboardGoals.totalAvailable, 13);
+  assert.equal(dashboardGoals.displayedCount, 12);
+  assert.equal(dashboardGoals.operatorAttentionCount, 1);
+  assert.equal(dashboardGoals.cards.some((card) => card.issue === 'hidden-approval-mission'), false);
 });
 
 test('dashboard conservatively aggregates every unsuperseded PR linked to one goal', () => {
