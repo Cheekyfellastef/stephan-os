@@ -322,6 +322,45 @@ test('workflow rerun sequence fails closed across workflow definitions sharing o
   assert.deepEqual(telemetry.pullRequests[0].conflictingRequiredChecks, [workflowName]);
 });
 
+test('a third workflow observation cannot erase a conflict between workflow definitions', () => {
+  const headSha = 'd'.repeat(40);
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const checks = requiredChecks(headSha).filter((check) => check.name !== workflowName);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 67, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 6701, workflow_id: 301, run_number: 100, name: workflowName, headSha, prNumber: 67, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T10:00:00.000Z' },
+      { id: 6702, workflow_id: 302, run_number: 2, name: workflowName, headSha, prNumber: 67, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T10:30:00.000Z' },
+      { id: 6703, workflow_id: 302, run_number: 1, name: workflowName, headSha, prNumber: 67, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T11:00:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
+  assert.deepEqual(telemetry.pullRequests[0].conflictingRequiredChecks, [workflowName]);
+});
+
+test('partial rerun-attempt metadata cannot reconcile conflicting outcomes by timestamp', () => {
+  const headSha = 'f'.repeat(40);
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const checks = requiredChecks(headSha).filter((check) => check.name !== workflowName);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 68, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 6801, workflow_id: 303, run_number: 9, name: workflowName, headSha, prNumber: 68, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T11:00:00.000Z' },
+      { id: 6802, workflow_id: 303, run_number: 9, run_attempt: 2, name: workflowName, headSha, prNumber: 68, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T10:30:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'unknown');
+  assert.deepEqual(telemetry.pullRequests[0].conflictingRequiredChecks, [workflowName]);
+});
+
 test('later check-run success cannot override an incomparable workflow-run failure', () => {
   const headSha = 'c'.repeat(40);
   const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
