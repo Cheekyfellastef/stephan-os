@@ -199,6 +199,22 @@ test('source mutation lease validates, renews only the exact live owner, and nev
   assert.equal(renewed.ok, true);
   assert.equal(renewed.record.renewedAtUtc, NOW);
 
+  const maximumLease = lease({
+    acquiredAtUtc: '2026-07-30T09:30:00.000Z',
+    renewedAtUtc: '2026-07-30T09:30:00.000Z',
+    expiresAtUtc: '2026-07-31T09:30:00.000Z',
+  });
+  const clamped = renewSourceMutationLeaseRecord(maximumLease, {
+    ...maximumLease,
+    nowUtc: '2026-07-31T08:30:00.000Z',
+    durationMs: 2 * 60 * 60 * 1000,
+  });
+  assert.equal(clamped.ok, true);
+  assert.equal(clamped.record.expiresAtUtc, '2026-07-31T09:30:00.000Z');
+  assert.equal(validateSourceMutationLease(clamped.record, {
+    nowUtc: '2026-07-31T08:30:00.000Z',
+  }).active, true);
+
   const nonActive = validateSourceMutationLease({ ...record, status: 'RELEASED' }, { nowUtc: NOW });
   assert.equal(nonActive.valid, false);
   assert.ok(nonActive.errors.includes('lease-status-not-active'));
@@ -467,6 +483,38 @@ test('controller cycle and conveyor identity must affirm the exact idle selectio
     },
   });
   assert.equal(exact.status, 'READY');
+});
+
+test('terminal reconciliation requires the controller heartbeat to name the exact terminal lane', () => {
+  const terminalLane = lane({
+    github: github({
+      prState: 'closed',
+      merged: true,
+      mergedAt: '2026-07-30T09:59:00.000Z',
+      mergeCommitSha: MERGE,
+    }),
+  });
+  const projection = buildAuthoritativeProgrammeProjection({
+    nowUtc: NOW,
+    workspaceFeed: { state: 'ready' },
+    lane: terminalLane,
+    mutationLease: lease(),
+    controllerHeartbeatProjection: {
+      valid: true,
+      fresh: true,
+      cycleState: 'FINALIZING',
+      activeLaneId: 'goal-1500-pr-1700',
+    },
+    workerHeartbeatProjection: { valid: true, fresh: true },
+    executionReceipt: null,
+    battleBridgeProofs: [],
+    runtimeHealthRecords: [],
+    scheduler: { failClosed: false, selectedGoal: null, decisionReceipt: { status: 'MERGED' } },
+    criticalBacklog: { decision: 'WAIT_ACTIVE_MISSION' },
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+  });
+  assert.equal(projection.status, 'HOLD');
+  assert.ok(projection.blockers.includes('controller-heartbeat-terminal-lane-mismatch'));
 });
 
 test('programme stall diagnosis reuses Monitor Multiplexer and never starts scheduler, worker or mutation machinery', async () => {
