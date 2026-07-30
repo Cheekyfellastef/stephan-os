@@ -47,6 +47,8 @@ export function goalReceiptToCandidate(receipt = {}) {
     priority: text(goal.priority, 'normal'),
     requestedBy: text(goal.requestedBy, 'unknown'),
     sourceSurface: text(goal.sourceSurface, 'unknown'),
+    createdAt: text(goal.createdAt || receipt.createdAt),
+    updatedAt: text(goal.updatedAt || receipt.updatedAt || goal.createdAt || receipt.createdAt),
     state: 'OPEN',
     status: 'open',
     mergeable: null,
