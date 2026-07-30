@@ -38,7 +38,10 @@ test('projection aggregates Build Concierge queue state and created goal receipt
   assert.equal(projection.sourceTruth, 'live');
   assert.equal(projection.queuedGoalCount, 1);
   assert.equal(projection.queuedCandidates[0].title, 'Live projection goal');
+  assert.equal(projection.queuedCandidates[0].createdAt, '2026-07-02T00:00:00.000Z');
+  assert.equal(projection.queuedCandidates[0].updatedAt, '2026-07-02T00:00:00.000Z');
   assert.equal(projection.receipts[0].receiptType, 'build-concierge-goal-create');
+  assert.equal(projection.dashboardGoals.cards[0].lastUpdatedAt, '2026-07-02T00:00:00.000Z');
 });
 
 test('projection does not claim GitHub local or browser proof without receipts', () => {
@@ -93,6 +96,32 @@ test('dashboard goal cards fall back to bounded current receipts without claimin
   assert.equal(dashboardGoals.sourceTruth, 'READ-ONLY RECEIPTS');
   assert.equal(dashboardGoals.cards[0].sourceTruth, 'READ-ONLY RECEIPT');
   assert.equal(dashboardGoals.cards[0].proofTruth.github, 'unknown');
+});
+
+test('dashboard conservatively aggregates every unsuperseded PR linked to one goal', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issueInventoryObserved: true,
+      issueInventoryComplete: true,
+      pullRequestInventoryComplete: true,
+      issues: [{ number: 1650, title: 'Goal with parallel PR history', state: 'open', updatedAt: '2026-07-30T09:00:00.000Z' }],
+      pullRequests: [
+        { number: 1651, relatedIssues: [1650], checksStatus: 'passed', headSha: 'a'.repeat(40), updatedAt: '2026-07-30T09:30:00.000Z', url: 'https://github.com/example/repo/pull/1651' },
+        { number: 1652, relatedIssues: [1650], checksStatus: 'failed', headSha: 'b'.repeat(40), updatedAt: '2026-07-30T08:30:00.000Z', url: 'https://github.com/example/repo/pull/1652' },
+        { number: 1653, relatedIssues: [1650], checksStatus: 'failed', supersededStatus: 'superseded', headSha: 'c'.repeat(40), updatedAt: '2026-07-30T08:00:00.000Z' },
+      ],
+    },
+  });
+  assert.equal(dashboardGoals.cards.length, 1);
+  assert.equal(dashboardGoals.cards[0].status, 'BLOCKED');
+  assert.deepEqual(dashboardGoals.cards[0].linkedPullRequests.map((pr) => pr.number), [1651, 1652]);
+  assert.equal(dashboardGoals.cards[0].linkedPr.number, 1652);
+  assert.equal(dashboardGoals.activePrCount, 2);
+  assert.equal(dashboardGoals.readyCount, 0);
+  assert.match(dashboardGoals.cards[0].nextAction, /#1651, #1652/);
+  assert.match(dashboardGoals.cards[0].nextAction, /Repair failing checks on PR #1652/);
 });
 
 test('dashboard surfaces open PRs without a durable issue link as an explicit blocker', () => {
