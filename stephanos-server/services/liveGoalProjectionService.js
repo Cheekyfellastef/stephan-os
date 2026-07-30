@@ -220,7 +220,10 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
     githubTelemetry.adapterAvailable === true
     && githubTelemetry.issueInventoryObserved === true
     && githubTelemetry.issueInventoryComplete === true
+    && githubTelemetry.pullRequestInventoryObserved === true
     && githubTelemetry.pullRequestInventoryComplete === true
+    && Array.isArray(githubTelemetry.issues)
+    && Array.isArray(githubTelemetry.pullRequests)
   ) {
     const pullRequests = list(githubTelemetry.pullRequests);
     const openIssues = list(githubTelemetry.issues).filter((issue) => normalizedStatus(issue.state) === 'open');
