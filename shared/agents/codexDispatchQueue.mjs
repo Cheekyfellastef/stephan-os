@@ -84,7 +84,7 @@ const SAFE_PROOF_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const FORBIDDEN_TEXT_PATTERN = /token|secret|password|credential|private key|\.env|session/i;
 const REQUIRED_KEYS = Object.freeze([
   'schemaVersion', 'kind', 'jobId', 'issueNumber', 'branch', 'prompt', 'requestedProofCommands',
-  'proofRequirements', 'approvalRequirements', 'integrationState', 'createdAt', 'dispatchedAt',
+  'exactHeadProof', 'proofRequirements', 'approvalRequirements', 'integrationState', 'createdAt', 'dispatchedAt',
   'completedAt', 'status', 'resultMetadata', 'blockerMetadata', 'history', 'sharedWorkspaceMessage',
 ]);
 
@@ -112,6 +112,17 @@ function safeBranch(value) {
 function safePrompt(value) { return text(value).replace(/\s+/g, ' ').slice(0, 4000); }
 function safeProofCommands(value) {
   return unique(value).filter((command) => SAFE_COMMAND_PATTERN.test(command) && !FORBIDDEN_TEXT_PATTERN.test(command)).slice(0, 20);
+}
+function safeExactHeadProof(value = {}) {
+  value ||= {};
+  const expectedHead = text(value.expectedHead).toLowerCase();
+  const prNumber = Number.parseInt(value.prNumber, 10);
+  if (!/^[0-9a-f]{40}$/.test(expectedHead) || !Number.isSafeInteger(prNumber) || prNumber <= 0) return null;
+  return Object.freeze({
+    repository: text(value.repository),
+    prNumber,
+    expectedHead,
+  });
 }
 export function isSafeCodexQueueProofRef(value) {
   const normalized = text(value).replace(/\\/g, '/');
@@ -185,6 +196,7 @@ function buildRecord(input, state) {
     branch: safeBranch(input.branch),
     prompt,
     requestedProofCommands: safeProofCommands(input.requestedProofCommands || input.requiredTests),
+    exactHeadProof: safeExactHeadProof(input.exactHeadProof),
     proofRequirements: Object.freeze({
       refs: proofRefs,
       verifierTypes: unique(input.proofRequirements?.verifierTypes || ['CodexQueueRecordVerifier', 'ProofReferenceVerifier']),
