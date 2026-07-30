@@ -274,20 +274,9 @@ export function buildLiveGoalProjection(input = {}) {
   const importedGoals = input.importedGoals || buildConcierge.importedGoals || { receipts: [], candidates: [] };
   const updateStatus = input.updateStatus || feed.updateStatus || {};
   const githubTelemetry = input.githubTelemetry || feed.githubTelemetry || { status: 'adapter_unavailable', adapterAvailable: false, notificationCounts: {}, pullRequests: [], workflows: [], blockers: ['github_adapter_unavailable'] };
-  const allCreatedCandidates = [...list(input.createdGoalCandidates), ...list(importedGoals.candidates)];
-  const queue = buildConcierge.queue || buildConciergeQueue({ goals: allCreatedCandidates });
-  const queuedCandidates = list(queue.queuedCandidates);
-  const activeProofLane = list(queue.activeProofLane);
-  const blockedCandidates = list(queue.blockedCandidates);
-  const completedCandidates = list(queue.completedCandidates);
-  const rejectedCandidates = list(queue.rejectedCandidates);
-  const currentReceipts = [
-    ...list(buildConcierge.createdGoalReceipts),
-    ...list(feed.missions).flatMap((mission) => list(mission.receipts)),
-  ];
-  const receipts = [...currentReceipts, ...list(importedGoals.receipts)];
+  const currentCreatedCandidates = list(input.createdGoalCandidates);
   const currentAuthorityKeys = new Set([
-    ...list(input.createdGoalCandidates).flatMap((candidate) => candidateIdentityKeys(candidate)),
+    ...currentCreatedCandidates.flatMap((candidate) => candidateIdentityKeys(candidate)),
     ...list(feed.missions).flatMap((mission) => candidateIdentityKeys({
       candidateId: mission.mission?.missionId || mission.missionId,
       title: mission.mission?.title || mission.title,
@@ -297,10 +286,33 @@ export function buildLiveGoalProjection(input = {}) {
     !candidateIdentityKeys(candidate).some((candidateKey) => currentAuthorityKeys.has(candidateKey))
   ));
   const historicalCandidateKeys = new Set(historicalCandidates.flatMap((candidate) => candidateIdentityKeys(candidate)));
-  const currentQueueCandidates = queuedCandidates.filter((candidate) => (
+  const isCurrentCandidate = (candidate) => (
     !candidateIdentityKeys(candidate).some((candidateKey) => historicalCandidateKeys.has(candidateKey))
-  ));
-  const executionEngine = input.executionEngine || buildConcierge.executionEngine || buildConciergeExecutionEngineV9({ receipts });
+  );
+  const historicalImportPresent = list(importedGoals.candidates).length > 0 || list(importedGoals.receipts).length > 0;
+  const suppliedQueue = historicalImportPresent
+    ? buildConciergeQueue({ goals: currentCreatedCandidates })
+    : (buildConcierge.queue || buildConciergeQueue({ goals: currentCreatedCandidates }));
+  const queue = {
+    ...suppliedQueue,
+    queuedCandidates: list(suppliedQueue.queuedCandidates).filter(isCurrentCandidate),
+    activeProofLane: list(suppliedQueue.activeProofLane).filter(isCurrentCandidate),
+    blockedCandidates: list(suppliedQueue.blockedCandidates).filter(isCurrentCandidate),
+    completedCandidates: list(suppliedQueue.completedCandidates).filter(isCurrentCandidate),
+    rejectedCandidates: list(suppliedQueue.rejectedCandidates).filter(isCurrentCandidate),
+  };
+  if (queue.nextSafeCandidate && !isCurrentCandidate(queue.nextSafeCandidate)) queue.nextSafeCandidate = null;
+  const queuedCandidates = list(queue.queuedCandidates);
+  const activeProofLane = list(queue.activeProofLane);
+  const blockedCandidates = list(queue.blockedCandidates);
+  const completedCandidates = list(queue.completedCandidates);
+  const rejectedCandidates = list(queue.rejectedCandidates);
+  const currentReceipts = [
+    ...list(buildConcierge.createdGoalReceipts),
+    ...list(feed.missions).flatMap((mission) => list(mission.receipts)),
+  ];
+  const receipts = currentReceipts;
+  const executionEngine = buildConciergeExecutionEngineV9({ receipts: currentReceipts });
   const blockers = unique([
     ...list(queue.blockers),
     ...list(executionEngine.blockers),
@@ -310,7 +322,7 @@ export function buildLiveGoalProjection(input = {}) {
   ]);
   const backendHealthy = input.backendStatus?.ok === true || input.backendStatus?.status === 'ok' || input.backendStatus?.status === 'live';
   const missionLive = ['ready', 'empty'].includes(text(feed.status, 'unknown'));
-  const hasLiveGoalTruth = currentQueueCandidates.length || currentReceipts.length || list(feed.missions).length;
+  const hasLiveGoalTruth = queuedCandidates.length || currentReceipts.length || list(feed.missions).length;
   const sourceTruth = backendHealthy && missionLive && hasLiveGoalTruth ? 'live' : (backendHealthy ? 'mixed' : 'static-fallback');
   const githubTruth = githubTelemetry.adapterAvailable === true ? 'adapter-provided' : (queue.autoPick?.liveGithubProof === 'adapter-provided' || queue.autoPick?.liveGithubProof === 'receipt-provided' ? queue.autoPick.liveGithubProof : 'unknown');
   const localProofTruth = currentReceipts.some((receipt) => /proof|command/i.test(`${receipt.receiptType || ''} ${receipt.status || ''}`)) ? 'receipt-provided' : 'unknown';
@@ -342,7 +354,7 @@ export function buildLiveGoalProjection(input = {}) {
     importedGoals: { status: importedGoals.receipts?.length ? 'present' : 'none', verificationState: importedGoals.receipts?.length ? 'imported_unverified' : 'none', receipts: list(importedGoals.receipts), candidates: list(importedGoals.candidates) },
     githubTelemetry,
     dashboardGoals,
-    executionChains: buildExecutionChains({ goals: allCreatedCandidates, githubTelemetry }),
+    executionChains: buildExecutionChains({ goals: currentCreatedCandidates, githubTelemetry }),
     sourceTruth,
     backendStatus: input.backendStatus || { status: backendHealthy ? 'live' : 'unknown', healthRoute: '/api/health' },
     missionOperationsStatus: { status: text(feed.status, 'unknown'), source: text(feed.source, 'unknown'), route: '/api/mission-operations' },
