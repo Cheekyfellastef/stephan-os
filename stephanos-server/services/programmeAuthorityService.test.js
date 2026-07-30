@@ -303,6 +303,23 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
       nowUtc: NOW,
     }, { root, repoRoot });
     assert.equal(staleRelease.ok, true);
+
+    const sharedPrefix = 'lease-release-key'.padEnd(50, 'a');
+    const firstCollisionLease = `${sharedPrefix}-one`;
+    const secondCollisionLease = `${sharedPrefix}-two`;
+    const firstCollision = await claimSourceMutationLease(leaseInput({
+      leaseId:firstCollisionLease,
+    }), githubAuthorityOptions(root, repoRoot));
+    assert.equal(firstCollision.ok, true);
+    assert.equal((await releaseSourceMutationLease({
+      ...leaseInput(),
+      leaseId:firstCollisionLease,
+      nowUtc:NOW,
+    }, { root, repoRoot })).ok, true);
+    const secondCollision = await claimSourceMutationLease(leaseInput({
+      leaseId:secondCollisionLease,
+    }), githubAuthorityOptions(root, repoRoot));
+    assert.equal(secondCollision.ok, true);
   });
 });
 
