@@ -451,9 +451,570 @@
         line-height: 1.5;
       }
 
+      /* Captain-grade visual system: motion communicates state, never authority. */
+      body {
+        position: relative;
+        overflow-x: hidden;
+        background:
+          radial-gradient(circle at 16% 8%, rgba(34, 211, 238, 0.16), transparent 26rem),
+          radial-gradient(circle at 86% 12%, rgba(139, 92, 246, 0.16), transparent 32rem),
+          radial-gradient(circle at 52% 92%, rgba(14, 165, 233, 0.1), transparent 30rem),
+          #040812;
+      }
+
+      body::before,
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: -1;
+      }
+
+      body::before {
+        opacity: 0.38;
+        background-image:
+          linear-gradient(rgba(125, 211, 252, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(125, 211, 252, 0.035) 1px, transparent 1px);
+        background-size: 44px 44px;
+        mask-image: linear-gradient(to bottom, black, transparent 88%);
+      }
+
+      body::after {
+        width: 36rem;
+        height: 36rem;
+        margin: -12rem 0 0 -12rem;
+        border: 1px solid rgba(125, 211, 252, 0.12);
+        border-radius: 50%;
+        box-shadow:
+          0 0 0 6rem rgba(125, 211, 252, 0.018),
+          0 0 0 12rem rgba(139, 92, 246, 0.015);
+        animation: orbital-drift 28s linear infinite;
+      }
+
+      main {
+        width: min(1380px, calc(100vw - 40px));
+        display: flex;
+        flex-direction: column;
+        padding-top: 22px;
+      }
+
+      .hero {
+        position: relative;
+        isolation: isolate;
+        min-height: 320px;
+        padding: clamp(24px, 4vw, 48px);
+        overflow: hidden;
+        border-color: rgba(125, 211, 252, 0.35);
+        background:
+          linear-gradient(125deg, rgba(8, 20, 38, 0.98), rgba(13, 24, 49, 0.88) 54%, rgba(31, 26, 66, 0.78));
+        box-shadow:
+          0 34px 100px rgba(0, 0, 0, 0.48),
+          inset 0 1px rgba(255, 255, 255, 0.06);
+      }
+
+      .hero::before {
+        content: "";
+        position: absolute;
+        width: min(52vw, 620px);
+        aspect-ratio: 1;
+        right: -10%;
+        top: -72%;
+        z-index: -1;
+        border: 1px solid rgba(125, 211, 252, 0.2);
+        border-radius: 50%;
+        box-shadow:
+          0 0 0 40px rgba(125, 211, 252, 0.025),
+          0 0 0 96px rgba(139, 92, 246, 0.025),
+          inset 0 0 80px rgba(34, 211, 238, 0.08);
+        animation: orbital-drift 20s linear infinite reverse;
+      }
+
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: -2;
+        background: linear-gradient(105deg, transparent 48%, rgba(125, 211, 252, 0.05));
+      }
+
+      .hero-topline,
+      .hero-signal,
+      .metric-label,
+      .truth-ribbon,
+      .goal-source,
+      .goal-links {
+        display: flex;
+        align-items: center;
+      }
+
+      .hero-topline {
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .hero-signal {
+        gap: 8px;
+        color: var(--muted);
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      .signal-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--unknown);
+        box-shadow: 0 0 18px rgba(196, 181, 253, 0.72);
+      }
+
+      .hero-signal[data-state="live"] .signal-dot,
+      .hero-signal[data-state="ready"] .signal-dot {
+        background: var(--good);
+        box-shadow: 0 0 18px rgba(134, 239, 172, 0.72);
+        animation: signal-pulse 2.4s ease-in-out infinite;
+      }
+
+      h1 {
+        max-width: 840px;
+        margin-top: 24px;
+        font-size: clamp(3rem, 8vw, 6.8rem);
+        letter-spacing: -0.065em;
+        line-height: 0.86;
+      }
+
+      h1 span {
+        display: block;
+        margin-top: 0.2em;
+        color: transparent;
+        background: linear-gradient(90deg, #f8fbff 0%, #7dd3fc 48%, #c4b5fd 100%);
+        background-clip: text;
+        -webkit-background-clip: text;
+      }
+
+      .subtitle {
+        max-width: 820px;
+        font-size: clamp(0.96rem, 1.6vw, 1.12rem);
+      }
+
+      .hero-metrics,
+      .mission-overview,
+      .priority-action {
+        display: grid;
+        gap: 14px;
+      }
+
+      .hero-metrics {
+        grid-template-columns: repeat(4, minmax(120px, 1fr));
+        max-width: 820px;
+        margin-top: 26px;
+      }
+
+      .hero-metric,
+      .mission-metric,
+      .priority-action {
+        border: 1px solid rgba(125, 211, 252, 0.18);
+        background: rgba(4, 11, 24, 0.56);
+        backdrop-filter: blur(18px);
+      }
+
+      .hero-metric {
+        min-width: 0;
+        border-radius: 16px;
+        padding: 12px 14px;
+      }
+
+      .metric-label {
+        gap: 7px;
+        margin-bottom: 5px;
+        color: var(--muted);
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .hero-metric strong {
+        display: block;
+        overflow: hidden;
+        color: var(--text);
+        font-size: 0.94rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .source-row {
+        grid-template-columns: repeat(4, minmax(150px, 1fr));
+        margin-top: 16px;
+      }
+
+      .source-pill {
+        min-width: 0;
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .source-pill strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mission-overview {
+        order: 1;
+        grid-template-columns: minmax(0, 1.45fr) minmax(310px, 0.55fr);
+        margin-top: 22px;
+      }
+
+      .mission-metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .mission-metric {
+        position: relative;
+        min-height: 132px;
+        overflow: hidden;
+        border-radius: 22px;
+        padding: 18px;
+      }
+
+      .mission-metric::after {
+        content: "";
+        position: absolute;
+        inset: auto -20% -52% 35%;
+        height: 82%;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(125, 211, 252, 0.15), transparent 68%);
+      }
+
+      .mission-metric strong {
+        position: relative;
+        z-index: 1;
+        display: block;
+        margin-top: 18px;
+        font-size: clamp(1.8rem, 4vw, 3rem);
+        line-height: 1;
+      }
+
+      .mission-metric small {
+        position: relative;
+        z-index: 1;
+        display: block;
+        margin-top: 8px;
+        color: var(--muted);
+      }
+
+      .priority-action {
+        align-content: space-between;
+        border-color: rgba(253, 230, 138, 0.28);
+        border-radius: 22px;
+        padding: 20px;
+        background:
+          linear-gradient(145deg, rgba(45, 37, 14, 0.7), rgba(12, 20, 38, 0.82));
+      }
+
+      .priority-action h2 {
+        margin: 6px 0 10px;
+        font-size: 1.18rem;
+      }
+
+      .priority-action p {
+        margin: 0;
+        color: var(--text);
+        font-size: 0.94rem;
+        line-height: 1.55;
+      }
+
+      .truth-ribbon {
+        gap: 8px;
+        width: fit-content;
+        border-radius: 999px;
+        padding: 6px 9px;
+        color: var(--warn);
+        background: rgba(253, 230, 138, 0.08);
+        font-size: 0.68rem;
+        font-weight: 850;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      .primary-goals { order: 2; }
+      .platform-section { order: 3; }
+      .flywheel-section { order: 4; }
+      .systems-section { order: 5; }
+      .vladder-section { order: 6; }
+      .guardrail-section { order: 7; }
+
+      .section-title h2 {
+        font-size: clamp(1.22rem, 2vw, 1.6rem);
+        letter-spacing: -0.025em;
+      }
+
+      .section-title span {
+        max-width: 660px;
+        text-align: right;
+      }
+
+      .goal-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .goal-card {
+        position: relative;
+        min-width: 0;
+        border-color: rgba(125, 211, 252, 0.16);
+        background:
+          linear-gradient(150deg, rgba(15, 30, 53, 0.94), rgba(6, 13, 26, 0.96));
+        box-shadow: 0 18px 52px rgba(0, 0, 0, 0.22);
+        transform: translateY(0);
+        transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+        animation: card-arrive 520ms both;
+        animation-delay: var(--card-delay, 0ms);
+      }
+
+      .goal-card:hover {
+        border-color: rgba(125, 211, 252, 0.42);
+        box-shadow: 0 24px 68px rgba(0, 0, 0, 0.34);
+        transform: translateY(-4px);
+      }
+
+      .goal-card::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 3px;
+        background: var(--unknown);
+        box-shadow: 0 0 22px rgba(196, 181, 253, 0.45);
+      }
+
+      .goal-card[data-status="active"]::before { background: var(--accent); }
+      .goal-card[data-status="ready"]::before,
+      .goal-card[data-status="complete"]::before { background: var(--good); }
+      .goal-card[data-status="blocked"]::before { background: #fb7185; }
+
+      .goal-head {
+        min-height: 122px;
+        padding: 18px 18px 16px 20px;
+        background:
+          linear-gradient(135deg, rgba(125, 211, 252, 0.08), transparent 72%);
+      }
+
+      .goal-head h3 {
+        margin-top: 12px;
+        font-size: 1.08rem;
+      }
+
+      .badge.blocked {
+        color: #fda4af;
+        border-color: rgba(251, 113, 133, 0.4);
+        background: rgba(251, 113, 133, 0.07);
+      }
+
+      .badge.ready {
+        color: var(--good);
+        border-color: rgba(134, 239, 172, 0.38);
+        background: rgba(134, 239, 172, 0.06);
+      }
+
+      .goal-source {
+        justify-content: space-between;
+        gap: 10px;
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 0.69rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .goal-source time {
+        white-space: nowrap;
+      }
+
+      .rail {
+        position: relative;
+        margin-top: 14px;
+      }
+
+      .rail i {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .rail i.done::after,
+      .rail i.now::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.2), transparent);
+        transform-origin: left;
+        animation: rail-reveal 720ms cubic-bezier(.22,.75,.28,1) both;
+        animation-delay: var(--rail-delay, 0ms);
+      }
+
+      .rail i.now {
+        animation: rail-current 2.6s ease-in-out infinite;
+      }
+
+      .goal-links {
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 14px 0 0;
+      }
+
+      .goal-link {
+        border: 1px solid rgba(125, 211, 252, 0.22);
+        border-radius: 999px;
+        padding: 6px 9px;
+        color: var(--accent);
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-decoration: none;
+      }
+
+      .goal-link:hover,
+      .goal-link:focus-visible {
+        border-color: rgba(125, 211, 252, 0.62);
+        background: rgba(125, 211, 252, 0.08);
+      }
+
+      .flywheel {
+        position: relative;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+
+      .flywheel::before {
+        content: "";
+        position: absolute;
+        left: 8%;
+        right: 8%;
+        top: 50%;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.5), rgba(196, 181, 253, 0.5), transparent);
+      }
+
+      .actor-card {
+        position: relative;
+        z-index: 1;
+        min-height: 126px;
+        padding: 18px;
+        background: rgba(8, 18, 34, 0.92);
+      }
+
+      .actor-card::after {
+        content: "";
+        position: absolute;
+        top: calc(50% - 4px);
+        right: -12px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 18px var(--accent);
+        animation: handoff-pulse 3s ease-in-out infinite;
+        animation-delay: var(--actor-delay, 0ms);
+      }
+
+      .actor-card:last-child::after { display: none; }
+
+      .systems-detail {
+        margin-top: 22px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: rgba(8, 17, 32, 0.7);
+      }
+
+      .systems-detail > summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 18px 20px;
+        cursor: pointer;
+        list-style: none;
+      }
+
+      .systems-detail > summary::-webkit-details-marker { display: none; }
+
+      .systems-detail > summary::after {
+        content: "＋";
+        color: var(--accent);
+        font-size: 1.2rem;
+        transition: transform 180ms ease;
+      }
+
+      .systems-detail[open] > summary::after { transform: rotate(45deg); }
+
+      .systems-detail > summary strong {
+        display: block;
+        margin-bottom: 3px;
+      }
+
+      .systems-detail > summary span {
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .systems-detail-content {
+        padding: 0 16px 16px;
+      }
+
+      @keyframes orbital-drift {
+        to { transform: rotate(360deg); }
+      }
+
+      @keyframes signal-pulse {
+        0%, 100% { opacity: 0.7; transform: scale(0.9); }
+        50% { opacity: 1; transform: scale(1.14); }
+      }
+
+      @keyframes card-arrive {
+        from { opacity: 0; transform: translateY(14px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes rail-reveal {
+        from { transform: scaleX(0); opacity: 0; }
+        to { transform: scaleX(1); opacity: 1; }
+      }
+
+      @keyframes rail-current {
+        0%, 100% { box-shadow: 0 0 0 rgba(253, 230, 138, 0); }
+        50% { box-shadow: 0 0 18px rgba(253, 230, 138, 0.38); }
+      }
+
+      @keyframes handoff-pulse {
+        0%, 100% { opacity: 0.35; transform: scale(0.75); }
+        45% { opacity: 1; transform: scale(1.15); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 1ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 1ms !important;
+        }
+      }
+
+      @media (max-width: 1050px) {
+        .goal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .mission-overview { grid-template-columns: 1fr; }
+        .flywheel { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .flywheel::before,
+        .actor-card::after { display: none; }
+      }
+
       @media (max-width: 720px) {
         main {
-          width: min(100% - 18px, 1180px);
+          width: min(100% - 18px, 1380px);
           padding-top: 12px;
         }
 
@@ -468,18 +1029,55 @@
         .meta {
           grid-template-columns: 1fr;
         }
+
+        .hero {
+          min-height: 0;
+          padding: 24px 20px;
+        }
+
+        .hero::before {
+          width: 360px;
+          right: -44%;
+          top: -35%;
+        }
+
+        h1 { font-size: clamp(2.8rem, 17vw, 4.8rem); }
+        .hero-metrics,
+        .source-row,
+        .mission-metrics,
+        .goal-grid,
+        .flywheel {
+          grid-template-columns: 1fr;
+        }
+
+        .source-row { display: none; }
+        .mission-metric { min-height: 108px; }
+        .section-title { align-items: start; flex-direction: column; }
+        .section-title span { text-align: left; }
       }
     </style>
   </head>
   <body>
     <main data-testid="goal-dashboard-landing-tile" data-role="GOAL_DASHBOARD_LANDING_TILE">
       <header class="hero">
-        <div class="eyebrow">GOAL_DASHBOARD_LANDING_TILE</div>
-        <h1>Goal Dashboard</h1>
+        <div class="hero-topline">
+          <div class="eyebrow">STEPHANOS · MISSION CONTROL</div>
+          <div id="hero-signal" class="hero-signal" data-state="unknown">
+            <i class="signal-dot" aria-hidden="true"></i>
+            <span data-live-telemetry-field="hero-signal-label">Establishing truth link</span>
+          </div>
+        </div>
+        <h1>Your goals.<span>The honest view.</span></h1>
         <p class="subtitle">
-          Seeded cockpit panel for active Stephanos goals. This first tile is source-controlled static data only:
-          unknown proof stays unknown, live GitHub and automation state are not claimed until wired and proven.
+          A live, read-only command deck for what is moving, what is blocked, and what needs you next.
+          Every status names its source; missing proof remains visibly unknown.
         </p>
+        <div class="hero-metrics" aria-label="Dashboard headline state">
+          <div class="hero-metric"><span class="metric-label">Truth source</span><strong data-live-telemetry-field="hero-truth-source">STATIC FALLBACK</strong></div>
+          <div class="hero-metric"><span class="metric-label">Observed</span><strong data-live-telemetry-field="hero-observed-at">Not yet</strong></div>
+          <div class="hero-metric"><span class="metric-label">Active PR lanes</span><strong data-live-telemetry-field="hero-active-prs">Unknown</strong></div>
+          <div class="hero-metric"><span class="metric-label">Operator attention</span><strong data-live-telemetry-field="hero-operator-attention">Unknown</strong></div>
+        </div>
         <div class="source-row" aria-label="data source status" data-testid="goal-dashboard-source-row">
           <div class="source-pill">Source badge<strong id="source-badge" data-live-telemetry-field="source-badge">STATIC_FALLBACK</strong></div>
           <div class="source-pill">Goal data<strong id="goal-data-source" data-live-telemetry-field="goal-data-source">Seeded / source-controlled</strong></div>
@@ -492,36 +1090,56 @@
         </div>
       </header>
 
-      <section aria-labelledby="flywheel-title">
+      <section class="mission-overview" aria-label="Mission overview">
+        <div class="mission-metrics">
+          <article class="mission-metric"><span class="metric-label">Visible goals</span><strong data-live-telemetry-field="dashboard-visible-count">—</strong><small data-live-telemetry-field="dashboard-total-context">Awaiting source</small></article>
+          <article class="mission-metric"><span class="metric-label">Building / PR</span><strong data-live-telemetry-field="dashboard-active-count">—</strong><small>Current linked lanes</small></article>
+          <article class="mission-metric"><span class="metric-label">Blocked</span><strong data-live-telemetry-field="dashboard-blocked-count">—</strong><small>Needs repair or proof</small></article>
+          <article class="mission-metric"><span class="metric-label">Ready</span><strong data-live-telemetry-field="dashboard-ready-count">—</strong><small>Review or decision lane</small></article>
+        </div>
+        <aside class="priority-action">
+          <div>
+            <span class="truth-ribbon" data-live-telemetry-field="dashboard-freshness">UNKNOWN · NO CURRENT RECORD</span>
+            <h2>Next best action</h2>
+            <p data-live-telemetry-field="dashboard-priority-action">Connect a current read-only source before treating this page as project truth.</p>
+          </div>
+          <small class="subtitle">This panel observes only. It cannot dispatch, approve, merge, restart, or mutate the project.</small>
+        </aside>
+      </section>
+
+      <section class="flywheel-section" aria-labelledby="flywheel-title">
         <div class="section-title">
-          <h2 id="flywheel-title">Flywheel stack</h2>
-          <span>Operator → ChatGPT → Codex → OpenClaw → Stephanos → Operator</span>
+          <h2 id="flywheel-title">The working flywheel</h2>
+          <span>Intent → strategy → construction → proof → product → decision</span>
         </div>
         <div class="flywheel">
-          <article class="actor-card"><b>Operator</b><p>Intent, judgement, exact-head approval.</p></article>
-          <article class="actor-card"><b>ChatGPT</b><p>Strategy, architecture, goal shaping, handoff packets.</p></article>
-          <article class="actor-card"><b>Codex</b><p>Repo code builder, tests, pull request worker.</p></article>
-          <article class="actor-card"><b>OpenClaw</b><p>Local PC operator, Windows proof, WhatsApp/runtime bridge.</p></article>
-          <article class="actor-card"><b>Stephanos</b><p>Product OS, landing page, command surface.</p></article>
+          <article class="actor-card" style="--actor-delay: 0ms"><span class="actor-chip">01 · Intent</span><b>Operator</b><p>Direction, judgement, exact-head decisions.</p></article>
+          <article class="actor-card" style="--actor-delay: 300ms"><span class="actor-chip">02 · Strategy</span><b>ChatGPT</b><p>Architecture, prioritisation, bounded handoffs.</p></article>
+          <article class="actor-card" style="--actor-delay: 600ms"><span class="actor-chip">03 · Build</span><b>Codex</b><p>Isolated branches, source changes, tests and PRs.</p></article>
+          <article class="actor-card" style="--actor-delay: 900ms"><span class="actor-chip">04 · Prove</span><b>OpenClaw</b><p>Battle Bridge, Windows, browser and runtime evidence.</p></article>
+          <article class="actor-card" style="--actor-delay: 1200ms"><span class="actor-chip">05 · Surface</span><b>Stephanos</b><p>One product view returning truth to the operator.</p></article>
         </div>
       </section>
 
-      <section aria-labelledby="vladder-title">
+      <section class="vladder-section" aria-labelledby="vladder-title">
         <div class="section-title">
           <h2 id="vladder-title">#1282 V-ladder</h2>
           <span>Tile self-progress</span>
         </div>
         <div class="vladder">
           <article class="v-card"><span class="badge complete">V1 complete</span><h3>Chat status board</h3><p>Chat-rendered dashboard exists with seeded goals and next milestones.</p></article>
-          <article class="v-card"><span class="badge active">V2 active</span><h3>Landing-page tile</h3><p>This static tile app is the first landing-page implementation and needs browser proof.</p></article>
-          <article class="v-card"><span class="badge active">V3 seeded</span><h3>Proof-aware progress</h3><p>Progress rails use explicit seeded proof states. Unknown proof is not upgraded.</p></article>
-          <article class="v-card"><span class="badge active">V4 seeded</span><h3>Operator next action</h3><p>Every card includes current owner, next owner, handoff state, and smallest next action.</p></article>
-          <article class="v-card"><span class="badge active">V5 seeded</span><h3>Visual progress rails</h3><p>Compact bridge-panel rails and badges render for each seeded goal.</p></article>
+          <article class="v-card"><span class="badge complete">V2 installed</span><h3>Landing-page tile</h3><p>The Goal Dashboard is registered beside the existing Stephanos apps.</p></article>
+          <article class="v-card"><span class="badge ready">V3 live adapter</span><h3>Proof-aware progress</h3><p>Current GitHub/receipt records drive explicit rails; unknown proof is never upgraded.</p></article>
+          <article class="v-card"><span class="badge ready">V4 current</span><h3>Operator next action</h3><p>Every live card names source, owner, handoff, blocker and smallest safe next action.</p></article>
+          <article class="v-card"><span class="badge active">V5 browser proof pending</span><h3>Visual progress rails</h3><p>Animated cinematic rails and status transitions are implemented with reduced-motion protection.</p></article>
           <article class="v-card"><span class="badge unknown">V6 deferred</span><h3>WhatsApp summary</h3><p>Clean handoff to #1280 unless this goal later implements real WhatsApp proof.</p></article>
         </div>
       </section>
 
-      <section aria-labelledby="captains-bridge-title" data-testid="captains-bridge-panel">
+      <section class="systems-section" aria-labelledby="captains-bridge-title" data-testid="captains-bridge-panel">
+        <details class="systems-detail">
+          <summary><span><strong>Captain’s Bridge diagnostics</strong>Lane identity, exact head, proof, health and handoff detail</span></summary>
+          <div class="systems-detail-content">
         <div class="section-title">
           <h2 id="captains-bridge-title">Captain’s Bridge V1</h2>
           <span>G10–G19 implemented_guarded · Captain’s Bridge V1 complete_guarded · read-only operator bridge</span>
@@ -570,9 +1188,14 @@
             <div class="captain-card"><span>If stopped now</span><b data-live-telemetry-field="first-officer-stopped">Read-only projection; no mutation has been performed.</b></div>
           </div>
         </article>
+          </div>
+        </details>
       </section>
 
-      <section aria-labelledby="concierge-title" data-testid="goal-dashboard-build-concierge">
+      <section class="systems-section" aria-labelledby="concierge-title" data-testid="goal-dashboard-build-concierge">
+        <details class="systems-detail">
+          <summary><span><strong>Build Concierge diagnostics</strong>Guarded V2–V9 queue, proof and approval contracts</span></summary>
+          <div class="systems-detail-content">
         <div class="section-title">
           <h2 id="concierge-title">Build Concierge</h2>
           <span>V2 landed · V3 implemented_guarded · V4 browser-proof contract implemented_guarded · V5 guarded auto-pick · V6 operator approval implemented_guarded · V7 implemented_guarded post-merge sync · V8 planned_guarded · exact-head approval required</span>
@@ -631,9 +1254,11 @@
             BACKEND_UNAVAILABLE_STATIC_SEED_ONLY · Truth boundary: this standalone Goal Dashboard rail is static seeded visibility only. It does not wire live GitHub state, local command proof, browser proof, auto-pick execution, approval-token validation, post-merge sync, or multi-goal automation; unknown remains unknown; V4 browser-proof contract is implemented_guarded, V7 is implemented_guarded for guarded post-merge sync/reproof state, while V8 remains planned_guarded; V5 and V6 are implemented_guarded with no fake GitHub proof, no command execution, and no UI merge claim.
           </div>
         </article>
+          </div>
+        </details>
       </section>
 
-      <section aria-labelledby="platform-title" data-testid="landing-goal-dashboard-live-wiring">
+      <section class="platform-section" aria-labelledby="platform-title" data-testid="landing-goal-dashboard-live-wiring">
         <div class="section-title">
           <h2 id="platform-title">Live platform projection</h2>
           <span>Shared Workspace · Queue/Dispatcher · Battle Bridge · OpenClaw ladder</span>
@@ -641,18 +1266,18 @@
         <div id="platform-grid" class="concierge-grid" aria-live="polite"></div>
       </section>
 
-      <section aria-labelledby="goals-title">
+      <section class="primary-goals" aria-labelledby="goals-title">
         <div class="section-title">
-          <h2 id="goals-title">Active seeded goals</h2>
-          <span>Current owner, next owner, handoff state</span>
+          <h2 id="goals-title" data-live-telemetry-field="goals-heading">Current goal lanes</h2>
+          <span data-live-telemetry-field="goals-context">Source, owner, proof rail, handoff and next action</span>
         </div>
         <div id="goal-grid" class="goal-grid"></div>
       </section>
 
-      <section>
+      <section class="guardrail-section">
         <div class="guardrail">
-          <strong>Safety boundary:</strong> this tile does not claim live GitHub, automation, Windows, browser, or WhatsApp proof.
-          Live wiring must be added through a bounded adapter and proved before the labels change.
+          <strong>Safety boundary:</strong> live GitHub is shown only when the approved read-only adapter proves it.
+          Automation, Windows, browser and WhatsApp proof remain unknown unless their canonical receipt is present; this page cannot mutate the project.
         </div>
       </section>
     </main>
@@ -660,13 +1285,13 @@
     <script>
       const proofSteps = [
         'goal created',
-        'automation active',
-        'design ready',
-        'draft PR opened',
-        'tests passed',
+        'lane selected',
+        'pull request opened',
+        'checks observed',
+        'review passed',
         'runtime proof passed',
-        'browser/WhatsApp proof passed',
-        'merge-ready'
+        'exact-head approval',
+        'merged'
       ];
 
       const goals = [
@@ -802,6 +1427,7 @@
 
       const grid = document.getElementById('goal-grid');
       const platformGrid = document.getElementById('platform-grid');
+      let currentGoalSourceRank = -1;
 
 
       function resolveSharedWorkspaceDashboardFeedEndpoint() {
@@ -864,19 +1490,69 @@
         }
       }
 
-      function renderGoals(goalRecords = goals, sourceState = 'static-seed') {
+      function goalStatusClass(status = '') {
+        const normalized = String(status).toLowerCase();
+        if (/blocked|failed|error|rejected/.test(normalized)) return 'blocked';
+        if (/complete|completed|merged|done/.test(normalized)) return 'complete';
+        if (/ready|approval/.test(normalized)) return 'ready';
+        if (/unknown|stale|unavailable/.test(normalized)) return 'unknown';
+        return 'active';
+      }
+
+      function safeGithubUrl(value = '') {
+        try {
+          const url = new URL(String(value));
+          return url.protocol === 'https:' && url.hostname === 'github.com' ? url.href : '';
+        } catch {
+          return '';
+        }
+      }
+
+      function compactObservedAt(value = '') {
+        const parsed = Date.parse(String(value));
+        if (!Number.isFinite(parsed)) return 'time unknown';
+        return new Date(parsed).toISOString().replace('T', ' ').replace('.000Z', 'Z');
+      }
+
+      function renderGoals(goalRecords = goals, sourceState = 'static-seed', sourceRank = 0) {
+        if (!grid || sourceRank < currentGoalSourceRank) return false;
+        currentGoalSourceRank = sourceRank;
         grid.textContent = '';
         grid.setAttribute('data-goal-dashboard-source-state', sourceState);
-        goalRecords.forEach((goal) => {
+        if (!goalRecords.length) {
+          const empty = document.createElement('article');
+          empty.className = 'goal-card';
+          empty.setAttribute('data-issue', 'no-current-goals');
+          empty.setAttribute('data-status', 'unknown');
+          empty.innerHTML = `
+            <div class="goal-head">
+              <span class="badge unknown">NO CURRENT GOAL RECORDS</span>
+              <h3>The selected source returned no active goal cards.</h3>
+            </div>
+            <div class="goal-body"><p class="next-action"><span>TRUTHFUL EMPTY STATE</span><br />Do not substitute the historical seed for a verified empty live result.</p></div>
+          `;
+          grid.appendChild(empty);
+          return true;
+        }
+        goalRecords.forEach((goal, cardIndex) => {
         const card = document.createElement('article');
+        const statusClass = goalStatusClass(goal.status);
+        const issueUrl = safeGithubUrl(goal.url);
+        const prUrl = safeGithubUrl(goal.linkedPr?.url);
         card.className = 'goal-card';
         card.setAttribute('data-issue', goal.issue);
+        card.setAttribute('data-status', statusClass);
+        card.setAttribute('style', `--card-delay:${Math.min(cardIndex * 70, 630)}ms`);
         card.innerHTML = `
           <div class="goal-head">
-            <span class="badge ${goal.status.includes('Waiting') ? 'active' : 'complete'}">${escapeHtml(goal.status)}</span>
+            <span class="badge ${statusClass}">${escapeHtml(goal.status)}</span>
             <h3>${escapeHtml(goal.issue)} ${escapeHtml(goal.title)}</h3>
           </div>
           <div class="goal-body">
+            <div class="goal-source">
+              <span>${escapeHtml(goal.sourceTruth || (sourceState === 'static-seed' ? 'STATIC REFERENCE' : sourceState))}</span>
+              <time>${escapeHtml(compactObservedAt(goal.observedAt || goal.lastUpdatedAt))}</time>
+            </div>
             <div class="meta">
               <div><span>Current owner</span>${escapeHtml(goal.currentOwner)}</div>
               <div><span>Next owner</span>${escapeHtml(goal.nextOwner)}</div>
@@ -884,10 +1560,10 @@
               <div><span>Handoff</span>${escapeHtml(goal.handoffState)}</div>
             </div>
             <div aria-label="Proof-state rail for ${escapeHtml(goal.issue)}" class="rail">
-              ${proofSteps.map((_, index) => `<i class="${index < goal.proofIndex ? 'done' : index === goal.proofIndex ? 'now' : ''}"></i>`).join('')}
+              ${proofSteps.map((step, index) => `<i title="${escapeHtml(step)}" aria-label="${escapeHtml(step)}" class="${index < goal.proofIndex ? 'done' : index === goal.proofIndex ? 'now' : ''}" style="--rail-delay:${index * 65}ms"></i>`).join('')}
             </div>
             <div class="actor-strip" aria-label="Actor interaction strip">
-              ${actorOrder.map((actor) => `<span class="actor-chip ${actor === goal.currentOwner ? 'current' : ''}">${actor}</span>`).join('')}
+              ${actorOrder.map((actor) => `<span class="actor-chip ${String(goal.currentOwner || '').includes(actor) ? 'current' : ''}">${actor}</span>`).join('')}
             </div>
             ${goal.platformProof ? `
               <div class="platform-proof" aria-label="Platform proof fields for ${escapeHtml(goal.issue)}">
@@ -903,15 +1579,42 @@
               </div>
             ` : ''}
             <p class="next-action"><span>${escapeHtml(goal.milestone)}</span><br />${escapeHtml(goal.nextAction)}</p>
+            ${(issueUrl || prUrl) ? `<div class="goal-links">${issueUrl ? `<a class="goal-link" href="${escapeHtml(issueUrl)}" target="_blank" rel="noreferrer">Open ${escapeHtml(goal.issue)}</a>` : ''}${prUrl ? `<a class="goal-link" href="${escapeHtml(prUrl)}" target="_blank" rel="noreferrer">Open PR #${escapeHtml(goal.linkedPr.number)}</a>` : ''}</div>` : ''}
           </div>
         `;
         grid.appendChild(card);
         });
+        return true;
       }
 
       function setTelemetryText(field, value) {
         const node = document.querySelector(`[data-live-telemetry-field="${field}"]`);
         if (node) node.textContent = value || 'unknown';
+      }
+
+      function setDashboardSignal(state = 'unknown', label = '') {
+        const signal = document.getElementById('hero-signal');
+        if (signal) signal.setAttribute('data-state', state);
+        setTelemetryText('hero-signal-label', label || (state === 'live' ? 'Current truth link' : 'Truth link unavailable'));
+      }
+
+      function renderDashboardSummary(summary = {}) {
+        const cards = Array.isArray(summary.cards) ? summary.cards : [];
+        const activePrCount = Number.isFinite(Number(summary.activePrCount)) ? Number(summary.activePrCount) : cards.filter((card) => card.linkedPr).length;
+        const blockedCount = Number.isFinite(Number(summary.blockedCount)) ? Number(summary.blockedCount) : cards.filter((card) => goalStatusClass(card.status) === 'blocked').length;
+        const readyCount = Number.isFinite(Number(summary.readyCount)) ? Number(summary.readyCount) : cards.filter((card) => goalStatusClass(card.status) === 'ready').length;
+        const operatorAttentionCount = Number.isFinite(Number(summary.operatorAttentionCount)) ? Number(summary.operatorAttentionCount) : cards.filter((card) => /^yes/i.test(card.operatorNeeded || '')).length;
+        setTelemetryText('dashboard-visible-count', String(summary.displayedCount ?? cards.length));
+        setTelemetryText('dashboard-total-context', `${summary.totalAvailable ?? cards.length} current records available`);
+        setTelemetryText('dashboard-active-count', String(activePrCount));
+        setTelemetryText('dashboard-blocked-count', String(blockedCount));
+        setTelemetryText('dashboard-ready-count', String(readyCount));
+        setTelemetryText('dashboard-freshness', `${summary.sourceTruth || 'UNKNOWN'} · ${summary.freshnessVerdict || 'UNKNOWN'}`);
+        setTelemetryText('dashboard-priority-action', summary.nextAction || 'Inspect the current truth source before advancing.');
+        setTelemetryText('hero-truth-source', summary.sourceTruth || 'UNKNOWN');
+        setTelemetryText('hero-observed-at', compactObservedAt(summary.observedAt));
+        setTelemetryText('hero-active-prs', String(activePrCount));
+        setTelemetryText('hero-operator-attention', String(operatorAttentionCount));
       }
 
       function summarizeQueue(queue = {}) {
@@ -936,6 +1639,9 @@
         const phases = Array.isArray(liveProjection?.buildConciergeStatus?.roadmap?.phases) ? liveProjection.buildConciergeStatus.roadmap.phases : (Array.isArray(concierge.roadmap?.phases) ? concierge.roadmap.phases : []);
         const missions = Array.isArray(feed.missions) ? feed.missions : [];
         const sourceBadge = liveProjection?.sourceTruth === 'mixed' ? 'MIXED' : (liveProjection?.sourceTruth === 'live' ? 'LIVE' : 'UNKNOWN');
+        const heartbeat = liveProjection?.heartbeat || {};
+        const githubTelemetry = liveProjection?.githubTelemetry || feed.githubTelemetry || {};
+        const dashboardGoals = liveProjection?.dashboardGoals || null;
         setTelemetryText('source-badge', sourceBadge);
         setTelemetryText('goal-data-source', `${sourceBadge} backend telemetry · ${APPROVED_GOAL_DASHBOARD_TELEMETRY_ENDPOINT}`);
         setTelemetryText('github-state', liveProjection?.currentAgentStates?.github?.state || concierge.queue?.autoPick?.liveGithubProof || 'unknown');
@@ -952,8 +1658,27 @@
         setTelemetryText('build-concierge-v9-execution-engine', `${engine.status || 'unknown'} · watched ${engine.watchedGoalCount ?? 0} · classified ${engine.classifiedGoalCount ?? 0} · manual dispatch ${engine.manualDispatchRequiredCount ?? 0}`);
         setTelemetryText('build-concierge-v9-enriched-candidates', enriched.length ? enriched.map((candidate) => `${candidate.candidateId || 'goal'}:${candidate.classification || 'unknown'}:${candidate.dispatchReadiness || 'blocked_or_unknown'}`).join(' · ') : 'none');
         setTelemetryText('next-operator-action', liveProjection?.nextOperatorAction || queue.nextOperatorAction || feed.recommendedNextAction || 'unknown');
-        setTelemetryText('telemetry-blocker', 'Live backend telemetry loaded from approved read-only Mission Operations endpoint; no landing-page mutation, GitHub proof, local proof, or browser proof is claimed here.');
-        if (missions.length) {
+        setTelemetryText('dashboard-last-refresh', liveProjection?.generatedAt || new Date().toISOString());
+        setTelemetryText('heartbeat-generated-at-age', `${heartbeat.generatedAtAgeSeconds ?? 'unknown'}s`);
+        setTelemetryText('heartbeat-backend-live', heartbeat.backendLive === true ? 'yes' : heartbeat.backendLive === false ? 'no' : 'unknown');
+        setTelemetryText('heartbeat-projection-source', heartbeat.projectionSource || liveProjection?.projectionSource || 'unknown');
+        setTelemetryText('heartbeat-watched-goals', String(heartbeat.watchedGoals ?? 'unknown'));
+        setTelemetryText('heartbeat-classified-goals', String(heartbeat.classifiedGoals ?? 'unknown'));
+        setTelemetryText('heartbeat-manual-dispatch-required', String(heartbeat.manualDispatchRequired ?? 'unknown'));
+        setTelemetryText('heartbeat-stale-warnings', Array.isArray(heartbeat.staleUnknownWarnings) ? (heartbeat.staleUnknownWarnings.join(' · ') || 'none') : 'unknown');
+        setTelemetryText('github-adapter-status', githubTelemetry.status || 'adapter_unavailable');
+        setTelemetryText('github-notification-counts', JSON.stringify(githubTelemetry.notificationCounts || {}));
+        setTelemetryText('github-open-prs', String(githubTelemetry.pullRequestCount ?? githubTelemetry.pullRequests?.length ?? 'unknown'));
+        setTelemetryText('github-workflows', JSON.stringify(githubTelemetry.workflowCounts || {}));
+        setTelemetryText('telemetry-blocker', 'Live backend telemetry loaded from the approved read-only projection. GitHub is labelled live only when its adapter is present; local and browser proof remain unknown without canonical receipts.');
+        setDashboardSignal(sourceBadge === 'LIVE' ? 'live' : 'mixed', sourceBadge === 'LIVE' ? 'Current read-only truth' : 'Mixed truth · inspect source');
+        if (dashboardGoals) {
+          const sourceRank = dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 3 : dashboardGoals.cards?.length ? 2 : 1;
+          renderDashboardSummary(dashboardGoals);
+          setTelemetryText('goals-heading', dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'Current GitHub goal lanes' : 'Current receipt-backed goal lanes');
+          setTelemetryText('goals-context', `${dashboardGoals.sourceTruth} · observed ${compactObservedAt(dashboardGoals.observedAt)} · no inferred proof`);
+          renderGoals(Array.isArray(dashboardGoals.cards) ? dashboardGoals.cards : [], dashboardGoals.sourceTruth === 'LIVE READ-ONLY GITHUB' ? 'live-github' : 'live-receipts', sourceRank);
+        } else if (missions.length) {
           const liveGoals = missions.map((mission) => ({
             issue: mission.mission?.missionId || 'live-mission',
             title: mission.mission?.title || 'Live Mission Operations goal',
@@ -965,8 +1690,11 @@
             operatorNeeded: 'Review live Mission Operations',
             proofIndex: 0,
             nextAction: mission.mission?.nextAction || feed.recommendedNextAction || 'unknown',
+            sourceTruth: 'READ-ONLY MISSION RECEIPT',
+            observedAt: liveProjection?.generatedAt || new Date().toISOString(),
           }));
-          renderGoals(liveGoals, 'live-backend');
+          renderDashboardSummary({ cards: liveGoals, sourceTruth: 'READ-ONLY MISSION RECEIPTS', freshnessVerdict: 'RECEIPT TIMESTAMPS VISIBLE', observedAt: liveProjection?.generatedAt, nextAction: liveProjection?.nextOperatorAction });
+          renderGoals(liveGoals, 'live-backend', 2);
         }
         return true;
       }
@@ -984,11 +1712,14 @@
         setTelemetryText('proof-state', projection.sourceTruth || 'UNKNOWN');
         setTelemetryText('next-operator-action', feed.exactNextAction || projection.operatorAttention?.exactNextAction || 'UNKNOWN');
         setTelemetryText('telemetry-blocker', `Shared Agent Workspace dashboard feed is read-only (${feed.state || 'unknown'}). ${feed.exactNextAction || 'Missing records remain UNKNOWN; stale records remain STALE.'}`);
+        setDashboardSignal(feed.state === 'ready' ? 'ready' : 'mixed', `Shared Workspace ${String(feed.state || 'unknown')}`);
         if (!['ready', 'stale'].includes(feed.state)) {
-          renderGoals([{ issue: 'shared-workspace-blocker', title: `Shared Workspace ${String(feed.state || 'unavailable').toUpperCase()}`, status: String(feed.reason || 'UNKNOWN'), currentOwner: 'Battle Bridge runtime configuration', nextOwner: 'Operator', handoffState: 'blocked', milestone: 'LIVE_SHARED_WORKSPACE_BLOCKED', operatorNeeded: 'Yes - configure safe external workspace', proofIndex: 0, nextAction: feed.exactNextAction || 'Configure a safe external Shared Agent Workspace path outside the repository.' }], 'live-shared-workspace-blocked');
+          const blockerCards = [{ issue: 'shared-workspace-blocker', title: `Shared Workspace ${String(feed.state || 'unavailable').toUpperCase()}`, status: String(feed.reason || 'UNKNOWN'), currentOwner: 'Battle Bridge runtime configuration', nextOwner: 'Operator', handoffState: 'blocked', milestone: 'LIVE_SHARED_WORKSPACE_BLOCKED', operatorNeeded: 'Yes - configure safe external workspace', proofIndex: 0, nextAction: feed.exactNextAction || 'Configure a safe external Shared Agent Workspace path outside the repository.', sourceTruth: 'SHARED WORKSPACE FEED', observedAt: feed.lastRefreshUtc }];
+          renderDashboardSummary({ cards: blockerCards, sourceTruth: 'SHARED WORKSPACE FEED', freshnessVerdict: String(feed.state || 'UNKNOWN').toUpperCase(), observedAt: feed.lastRefreshUtc, nextAction: feed.exactNextAction });
+          renderGoals(blockerCards, 'live-shared-workspace-blocked', 1);
         }
         if (Array.isArray(projection.goals) && ['ready', 'stale'].includes(feed.state)) {
-          renderGoals(projection.goals.map((goal) => ({
+          const workspaceGoals = projection.goals.map((goal) => ({
             issue: goal.issue || 'workspace-goal',
             title: goal.title || 'Shared Workspace goal',
             status: `${goal.statusTruth || 'UNKNOWN'} status · ${goal.proofTruth || 'UNKNOWN'} proof`,
@@ -999,7 +1730,11 @@
             operatorNeeded: goal.blockers?.length ? 'Yes - resolve blockers' : 'Review',
             proofIndex: goal.proofTruth === 'CURRENT' ? 4 : 1,
             nextAction: goal.exactNextAction || feed.exactNextAction || 'Review live workspace record.',
-          })), 'live-shared-workspace');
+            sourceTruth: 'SHARED WORKSPACE FEED',
+            observedAt: feed.lastRefreshUtc,
+          }));
+          renderDashboardSummary({ cards: workspaceGoals, sourceTruth: 'SHARED WORKSPACE FEED', freshnessVerdict: String(feed.state || 'UNKNOWN').toUpperCase(), observedAt: feed.lastRefreshUtc, nextAction: feed.exactNextAction || projection.operatorAttention?.exactNextAction });
+          renderGoals(workspaceGoals, 'live-shared-workspace', 2);
         }
         return true;
       }
@@ -1040,6 +1775,10 @@
         setTelemetryText('dashboard-last-refresh', 'pending');
         setTelemetryText('dashboard-workspace-root', 'UNKNOWN');
         setTelemetryText('telemetry-blocker', `${BACKEND_UNAVAILABLE_STATIC_SEED_ONLY} · Backend unavailable; static seed only. No live GitHub proof, local proof, browser proof, command execution, merge, or dispatch is claimed.`);
+        setTelemetryText('goals-heading', 'Historical reference goals');
+        setTelemetryText('goals-context', 'STATIC REFERENCE · not a claim about the current project');
+        setDashboardSignal('unknown', 'Static fallback · not current truth');
+        renderDashboardSummary({ cards: goals, sourceTruth: 'STATIC REFERENCE', freshnessVerdict: 'BACKEND UNAVAILABLE', observedAt: '', nextAction: 'Restore the approved read-only backend sources before treating these reference cards as current.' });
       }
 
       function shouldAttemptLiveTelemetry() {
@@ -1061,9 +1800,17 @@
         }
       }
 
+      function scheduleApprovedLiveTelemetryPoll(interval = 30000) {
+        if (!shouldAttemptLiveTelemetry()) return;
+        window.setTimeout(async () => {
+          const feed = await fetchApprovedLiveTelemetry();
+          if (feed) renderLiveMissionOperationsTelemetry(feed);
+          scheduleApprovedLiveTelemetryPoll(interval);
+        }, Math.max(15000, Number(interval) || 30000));
+      }
 
       renderLandingPlatformProjection();
-      renderGoals(goals, 'static-seed');
+      renderGoals(goals, 'static-seed', 0);
       markStaticTelemetryFallback();
       fetchSharedWorkspaceDashboardFeed().then((feed) => {
         if (feed && renderSharedWorkspaceDashboardFeed(feed)) scheduleSharedWorkspaceDashboardFeedPoll(feed);
@@ -1071,6 +1818,7 @@
       });
       fetchApprovedLiveTelemetry().then((feed) => {
         if (feed) renderLiveMissionOperationsTelemetry(feed);
+        scheduleApprovedLiveTelemetryPoll();
       });
     </script>
   </body>
