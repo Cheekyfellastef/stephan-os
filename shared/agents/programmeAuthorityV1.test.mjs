@@ -527,6 +527,16 @@ test('active projection requires the conveyor to affirm the exact active lane', 
   });
   assert.equal(exact.status, 'ACTIVE');
 
+  const groupedGoal = buildAuthoritativeProgrammeProjection({
+    ...base,
+    criticalBacklog: {
+      decision:'WAIT_ACTIVE_MISSION',
+      selectedItem:{ issueNumbers:[1497, 1622] },
+      activeMission:{ repository:REPOSITORY, git:{ branch:BRANCH }, pullRequest:{ number:1617 } },
+    },
+  });
+  assert.equal(groupedGoal.status, 'ACTIVE');
+
   const conflictingMission = buildAuthoritativeProgrammeProjection({
     ...base,
     criticalBacklog: {
