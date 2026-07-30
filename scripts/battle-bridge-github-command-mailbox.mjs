@@ -300,7 +300,13 @@ function saveState(state) {
 
 export function createWindowsSafeMailboxReceiptFilename(requestId = '') {
   const value = String(requestId || '');
-  if (/^[A-Za-z0-9][A-Za-z0-9._-]{7,120}$/.test(value)) return `${value}.json`;
+  const windowsDeviceBase = value.split('.')[0].toUpperCase();
+  const reservedWindowsDevice = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(windowsDeviceBase);
+  if (
+    /^[A-Za-z0-9][A-Za-z0-9._-]{7,120}$/.test(value)
+    && !reservedWindowsDevice
+    && !value.endsWith('.')
+  ) return `${value}.json`;
   const digest = createHash('sha256').update(value).digest('hex').slice(0, 32);
   return `request-${digest}.json`;
 }
