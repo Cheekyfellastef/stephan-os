@@ -18,6 +18,7 @@ import {
   parseCodexJsonEvents,
   parseGitStatusPaths,
   resolveCodexExecInvocation,
+  validateBrowserProofVerdict,
   validateExactHeadAtWorkerStart,
 } from '../../scripts/stephanos-codex-dispatch-worker.mjs';
 
@@ -41,6 +42,7 @@ function packet(jobId = 'codex-job-test-123') {
       repository: 'Cheekyfellastef/stephan-os',
       prNumber: 1631,
       expectedHead: 'a'.repeat(40),
+      proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
     },
     approvalRequirements: { approvalReceipt: 'operator-approved' },
     mergeAuthority: false,
@@ -78,6 +80,30 @@ test('local integration writes a durable task and accepted receipt before launch
   assert.equal(status.safety.mergeAllowed, false);
   assert.equal(status.safety.sourceMutationAllowed, false);
   assert.equal(readFileSync(receipt.taskPath, 'utf8').includes('Run the bounded real Windows ignition proof'), true);
+});
+
+test('browser proof PASS requires the exact scenario and complete positive evidence', () => {
+  const task = packet();
+  const valid = validateBrowserProofVerdict(JSON.stringify({
+    verdict: 'PASS',
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    evidence: {
+      listeningDeckIframeIdentityPreserved: true,
+      discoveryIframeIdentityPreserved: true,
+      legacyRankingChanged: true,
+      consoleErrors: [],
+    },
+    blockers: [],
+  }), task);
+  assert.equal(valid.ok, true);
+  for (const invalid of [
+    '{"verdict":"FAIL","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{}}',
+    '{"verdict":"PASS","proofScenario":"WRONG","evidence":{}}',
+    '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":false,"legacyRankingChanged":true,"consoleErrors":[]}}',
+    '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":["boom"]}}',
+  ]) {
+    assert.equal(validateBrowserProofVerdict(invalid, task).ok, false);
+  }
 });
 
 test('worker revalidates both PR and checkout heads immediately before execution', () => {
@@ -201,6 +227,16 @@ test('worker invocation keeps approval policy global and isolates the exec child
   assert.match(promptText, /read-only and non-interactive/);
   assert.match(promptText, /User configuration is not loaded/);
   assert.match(promptText, /git rev-parse HEAD/);
+});
+
+test('exact-head browser prompt requires one machine-readable evidence verdict', () => {
+  const promptText = buildGuardedCodexPrompt({
+    ...packet(),
+    repoRoot: 'C:\\repo',
+  });
+  assert.match(promptText, /Return only one JSON object/);
+  assert.match(promptText, /listeningDeckIframeIdentityPreserved/);
+  assert.match(promptText, /PASS is forbidden/);
 });
 
 test('worker source invokes the exported guarded prompt builder without a misspelled call site', () => {
