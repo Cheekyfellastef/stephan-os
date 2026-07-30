@@ -341,6 +341,34 @@ test('receipt-backed cards display the durable receipt timestamp instead of the 
   assert.doesNotMatch(grid.children[0].innerHTML, /2026-07-30 10:30:00Z/);
 });
 
+test('goal cards render links for every unsuperseded PR supplied by the projection', async () => {
+  const { grid, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  context.renderGoals([{
+    issue: '#1650',
+    url: 'https://github.com/example/repo/issues/1650',
+    title: 'Multi-PR goal',
+    status: 'BLOCKED',
+    sourceTruth: 'LIVE READ-ONLY GITHUB',
+    observedAt: '2026-07-30T10:30:00.000Z',
+    currentOwner: 'Codex / review lane',
+    nextOwner: 'Independent reviewer',
+    operatorNeeded: 'No',
+    handoffState: 'two PRs',
+    milestone: '2 UNSUPERSEDED PRS',
+    proofIndex: 3,
+    nextAction: 'Repair the failing lane.',
+    linkedPr: { number: 1652, url: 'https://github.com/example/repo/pull/1652' },
+    linkedPullRequests: [
+      { number: 1651, url: 'https://github.com/example/repo/pull/1651' },
+      { number: 1652, url: 'https://github.com/example/repo/pull/1652' },
+    ],
+  }], 'live-github');
+  assert.match(grid.children[0].innerHTML, /Open PR #1651/);
+  assert.match(grid.children[0].innerHTML, /Open PR #1652/);
+  assert.equal(grid.children[0].querySelectorAll('a.goal-link').length, 3);
+});
+
 test('periodic same-lane card refresh restores focus to the matching goal link', async () => {
   const { grid, context, setActiveElement, getActiveElement } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
   await new Promise((resolve) => setImmediate(resolve));
