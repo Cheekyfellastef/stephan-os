@@ -140,7 +140,9 @@ function dependencies(options = {}) {
     writeAtomicJson,
     readRepositoryHead: ({ repositoryRoot }) => readCanonicalRepositoryHead({
       repositoryRoot,
-      execFileImpl: options.execFile || execFileAsync,
+      execFileImpl: options.testOnly === true && options.execFile
+        ? options.execFile
+        : execFileAsync,
     }),
     ...(options.dependencies ?? {}),
   };
@@ -1167,7 +1169,8 @@ function exactTerminalReceipt(record, records) {
     && record.relatedPr === `#${records.receipt.prNumber}`
     && record.receivedRecordId === records.evidenceId
     && Array.isArray(record.proofRefs)
-    && record.proofRefs.includes(proofRef)
+    && record.proofRefs.length === 1
+    && record.proofRefs[0] === proofRef
     && record.laneId === records.receipt.laneId
     && record.repository === records.receipt.repository
     && record.issueNumber === records.receipt.issueNumber
@@ -1251,7 +1254,8 @@ function exactTerminalReceiptForIdentity(record, identity) {
     && record.relatedPr === `#${identity.prNumber}`
     && record.receivedRecordId === identity.evidenceId
     && Array.isArray(record.proofRefs)
-    && record.proofRefs.includes(proofRef)
+    && record.proofRefs.length === 1
+    && record.proofRefs[0] === proofRef
     && record.laneId === identity.laneId
     && record.repository === identity.repository
     && record.issueNumber === identity.issueNumber
@@ -1282,9 +1286,11 @@ function exactTerminalProofForIdentity(record, identity, expectedProof = null) {
     && record.relatedIssue === `#${identity.issueNumber}`
     && record.relatedPr === `#${identity.prNumber}`
     && Array.isArray(record.proofRefs)
-    && record.proofRefs.includes(proofRef)
+    && record.proofRefs.length === 1
+    && record.proofRefs[0] === proofRef
     && Array.isArray(record.refs)
-    && record.refs.includes(proofRef)
+    && record.refs.length === 1
+    && record.refs[0] === proofRef
     && record.laneId === identity.laneId
     && record.repository === identity.repository
     && record.issueNumber === identity.issueNumber

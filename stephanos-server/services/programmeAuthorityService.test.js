@@ -462,6 +462,18 @@ test('missing mutation lease cannot be replaced by an execution receipt correlat
     assert.notEqual(projection.status, 'ACTIVE');
     assert.equal(projection.lane, null);
     assert.equal(projection.mutationLease, null);
+
+    const forgedProductionCommand = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      execFile: async (_command, args) => ({
+        stdout: args.includes('--abbrev-ref') ? 'main\n' : `${HEAD}\n`,
+      }),
+    });
+    assert.notEqual(forgedProductionCommand.sourceReads.repositoryHead, 'CANONICAL_REPOSITORY_HEAD_READ');
   });
 });
 
@@ -594,6 +606,26 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     });
     assert.equal(conflictingProofAliases.ok, false);
     assert.equal(conflictingProofAliases.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
+    await writeFile(proofPath, `${JSON.stringify(proof, null, 2)}\n`, 'utf8');
+
+    const expectedProofRef = `proof/${finalized.records.evidenceId}.json`;
+    await writeFile(proofPath, `${JSON.stringify({
+      ...proof,
+      proofRefs: [expectedProofRef, 'proof/conflicting-terminal-proof.json'],
+      refs: [expectedProofRef],
+    }, null, 2)}\n`, 'utf8');
+    const conflictingProofRefs = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => {
+          throw new Error('conflicting durable proof refs must block before GitHub access');
+        },
+      },
+    });
+    assert.equal(conflictingProofRefs.ok, false);
+    assert.equal(conflictingProofRefs.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
     await writeFile(proofPath, `${JSON.stringify(proof, null, 2)}\n`, 'utf8');
 
     await writeFile(proofPath, `${JSON.stringify({ ...proof, mergeCommitSha: '' }, null, 2)}\n`, 'utf8');
