@@ -643,6 +643,7 @@ function updateRatingPresentation(button, rating) {
   });
   renderTasteDNA();
   renderCandidates();
+  renderDiscoveryResults();
   renderJourneyQueue();
   renderMusicIntelligenceCentre();
 }
