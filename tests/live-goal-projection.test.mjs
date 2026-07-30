@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBuildConciergeGoalRequest, readBuildConciergeGoalReceipts } from '../stephanos-server/services/buildConciergeGoalService.js';
-import { buildLiveGoalProjection, readLiveGoalProjection } from '../stephanos-server/services/liveGoalProjectionService.js';
+import { buildLiveDashboardGoals, buildLiveGoalProjection, readLiveGoalProjection } from '../stephanos-server/services/liveGoalProjectionService.js';
 
 async function tempDir() { return mkdtemp(join(tmpdir(), 'stephanos-live-goal-projection-')); }
 
@@ -51,6 +51,73 @@ test('projection does not claim GitHub local or browser proof without receipts',
   assert.equal(projection.proofTruth.browser, 'unknown');
   assert.equal(projection.currentAgentStates.github.state, 'adapter_unavailable');
   assert.equal(projection.staleWarnings.includes('Static goal-dashboard seed is not presented as live truth.'), true);
+  assert.equal(projection.dashboardGoals.sourceTruth, 'UNKNOWN');
+});
+
+test('dashboard goal cards use current GitHub issues and linked PR checks instead of stale seed data', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issues: [
+        { number: 1622, title: 'Canonical programme controller', state: 'open', labels: ['goal', 'P0'], updatedAt: '2026-07-30T09:00:00.000Z', url: 'https://github.com/example/repo/issues/1622' },
+        { number: 1497, title: 'Guarded continuous repair', state: 'open', labels: ['goal'], updatedAt: '2026-07-30T08:00:00.000Z', url: 'https://github.com/example/repo/issues/1497' },
+      ],
+      pullRequests: [
+        { number: 1623, relatedIssues: [1622], checksStatus: 'passed', approvalStatus: 'unknown', headSha: 'a'.repeat(40), branch: 'feat/controller', url: 'https://github.com/example/repo/pull/1623', updatedAt: '2026-07-30T09:30:00.000Z' },
+        { number: 1621, relatedIssues: [1497], checksStatus: 'failed', approvalStatus: 'unknown', headSha: 'b'.repeat(40), branch: 'feat/repair', url: 'https://github.com/example/repo/pull/1621', updatedAt: '2026-07-30T09:15:00.000Z' },
+      ],
+    },
+  });
+
+  assert.equal(dashboardGoals.sourceTruth, 'LIVE READ-ONLY GITHUB');
+  assert.equal(dashboardGoals.cards[0].issue, '#1622');
+  assert.equal(dashboardGoals.cards[0].status, 'READY FOR REVIEW');
+  assert.equal(dashboardGoals.cards[0].proofTruth.browser, 'unknown');
+  assert.equal(dashboardGoals.cards[1].status, 'BLOCKED');
+  assert.match(dashboardGoals.cards[1].nextAction, /Repair failing checks/);
+  assert.equal(dashboardGoals.blockedCount, 1);
+  assert.equal(dashboardGoals.readyCount, 1);
+});
+
+test('dashboard goal cards fall back to bounded current receipts without claiming GitHub truth', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: { adapterAvailable: false },
+    queue: { queuedCandidates: [{ candidateId: 'goal-receipt-1', title: 'Receipt goal', state: 'QUEUED', nextAction: 'Wait for canonical dispatch.' }] },
+  });
+  assert.equal(dashboardGoals.sourceTruth, 'READ-ONLY RECEIPTS');
+  assert.equal(dashboardGoals.cards[0].sourceTruth, 'READ-ONLY RECEIPT');
+  assert.equal(dashboardGoals.cards[0].proofTruth.github, 'unknown');
+});
+
+test('dashboard surfaces open PRs without a durable issue link as an explicit blocker', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issues: [],
+      pullRequests: [{ number: 1700, title: 'Unlinked implementation', relatedIssues: [], checksStatus: 'passed', approvalStatus: 'unknown', headSha: 'c'.repeat(40), url: 'https://github.com/example/repo/pull/1700' }],
+    },
+  });
+  assert.equal(dashboardGoals.cards[0].status, 'BLOCKED · DURABLE GOAL LINK UNKNOWN');
+  assert.match(dashboardGoals.cards[0].nextAction, /durable GitHub goal issue/);
+  assert.equal(dashboardGoals.blockedCount, 1);
+});
+
+test('GitHub review approval never fabricates runtime proof or exact-head operator approval', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issues: [{ number: 1800, title: 'Goal: reviewed change', state: 'open', labels: ['goal'], updatedAt: '2026-07-30T09:00:00.000Z' }],
+      pullRequests: [{ number: 1801, relatedIssues: [1800], checksStatus: 'passed', approvalStatus: 'approved', headSha: 'd'.repeat(40) }],
+    },
+  });
+  assert.equal(dashboardGoals.cards[0].status, 'REVIEW PASSED · RUNTIME PROOF UNKNOWN');
+  assert.equal(dashboardGoals.cards[0].proofIndex, 5);
+  assert.equal(dashboardGoals.cards[0].operatorNeeded, 'No');
+  assert.match(dashboardGoals.cards[0].nextAction, /does not grant operator approval/);
 });
 
 test('goal ingestion imports unfinished pasted goals, dedupes, and projects imported_unverified V9 candidates', async () => {
