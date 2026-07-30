@@ -18,6 +18,7 @@ import {
   parseCodexJsonEvents,
   parseGitStatusPaths,
   resolveCodexExecInvocation,
+  validateExactHeadAtWorkerStart,
 } from '../../scripts/stephanos-codex-dispatch-worker.mjs';
 
 function tempRoots() {
@@ -36,6 +37,11 @@ function packet(jobId = 'codex-job-test-123') {
     branch: 'main',
     prompt: 'Run the bounded real Windows ignition proof and report exact evidence.',
     requestedProofCommands: ['git rev-parse HEAD'],
+    exactHeadProof: {
+      repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 1631,
+      expectedHead: 'a'.repeat(40),
+    },
     approvalRequirements: { approvalReceipt: 'operator-approved' },
     mergeAuthority: false,
   };
@@ -68,9 +74,55 @@ test('local integration writes a durable task and accepted receipt before launch
   const status = integration.readStatus('codex-job-test-123');
   assert.equal(status.status, 'DISPATCHED');
   assert.equal(status.taskType, 'battle-bridge-proof');
+  assert.deepEqual(status.exactHeadProof, packet().exactHeadProof);
   assert.equal(status.safety.mergeAllowed, false);
   assert.equal(status.safety.sourceMutationAllowed, false);
   assert.equal(readFileSync(receipt.taskPath, 'utf8').includes('Run the bounded real Windows ignition proof'), true);
+});
+
+test('worker revalidates both PR and checkout heads immediately before execution', () => {
+  const expectedHead = 'a'.repeat(40);
+  const calls = [];
+  const valid = validateExactHeadAtWorkerStart({
+    repoRoot: 'C:\\stephan-os',
+    exactHeadProof: {
+      repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 1631,
+      expectedHead,
+    },
+  }, {
+    platform: 'win32',
+    spawnSyncFn(executable, args, options) {
+      calls.push({ executable, args, cwd: options.cwd });
+      return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+    },
+  });
+  assert.equal(valid.ok, true);
+  assert.deepEqual(calls.map((call) => call.executable), ['gh.exe', 'git.exe']);
+  assert.equal(calls[1].cwd, 'C:\\stephan-os');
+});
+
+test('worker fails closed before proof execution when an exact head changes', () => {
+  const expectedHead = 'a'.repeat(40);
+  const changedHead = 'b'.repeat(40);
+  let calls = 0;
+  const result = validateExactHeadAtWorkerStart({
+    repoRoot: 'C:\\stephan-os',
+    exactHeadProof: {
+      repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 1631,
+      expectedHead,
+    },
+  }, {
+    platform: 'win32',
+    spawnSyncFn() {
+      calls += 1;
+      return { status: 0, stdout: `${changedHead}\n`, stderr: '' };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'PR_HEAD_MISMATCH');
+  assert.equal(calls, 1);
 });
 
 test('local integration enforces the one-active-job rule', () => {
