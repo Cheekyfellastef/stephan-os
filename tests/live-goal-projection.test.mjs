@@ -165,6 +165,30 @@ test('receipt fallback carries hidden mission operator attention before display 
   assert.equal(dashboardGoals.cards.some((card) => card.issue === 'hidden-approval-mission'), false);
 });
 
+test('current mission receipt outranks a duplicate queued candidate', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: { adapterAvailable: false },
+    queue: {
+      queuedCandidates: [{ candidateId: 'mission-approval', title: 'Older queued candidate', state: 'QUEUED' }],
+    },
+    missions: [{
+      mission: {
+        missionId: 'mission-approval',
+        title: 'Current approval mission',
+        state: 'AWAITING_APPROVAL',
+        nextAction: 'Obtain the exact operator decision.',
+      },
+      operatorActionRequired: true,
+    }],
+  });
+  assert.equal(dashboardGoals.totalAvailable, 1);
+  assert.equal(dashboardGoals.cards[0].title, 'Current approval mission');
+  assert.equal(dashboardGoals.cards[0].status, 'AWAITING_APPROVAL');
+  assert.match(dashboardGoals.cards[0].operatorNeeded, /^Yes/);
+  assert.equal(dashboardGoals.operatorAttentionCount, 1);
+});
+
 test('dashboard conservatively aggregates every unsuperseded PR linked to one goal', () => {
   const dashboardGoals = buildLiveDashboardGoals({
     observedAt: '2026-07-30T10:00:00.000Z',
