@@ -15,6 +15,7 @@ import {
   createProgrammeStallMonitorHandler,
   createSourceMutationLeaseRecord,
   createSourceMutationLeaseReleaseRecord,
+  createTerminalLaneEvidenceId,
   createTerminalLaneEvidenceRecords,
   projectProgrammeControllerHeartbeat,
   renewSourceMutationLeaseRecord,
@@ -760,7 +761,7 @@ export async function publishProgrammeControllerHeartbeat(input = {}, options = 
   });
 }
 
-async function readMissionWorkerHeartbeat(options, deps, nowUtc) {
+async function readMissionWorkerHeartbeat(options, deps, nowUtc, expectedHeadSha) {
   const paths = resolveCanonicalMissionWorkerPaths({
     env: options.env || process.env,
     home: options.home,
@@ -786,6 +787,8 @@ async function readMissionWorkerHeartbeat(options, deps, nowUtc) {
     projection: projectMissionWorkerHeartbeat(loaded.value, {
       nowUtc,
       maxAgeMs: options.workerHeartbeatMaxAgeMs,
+      expectedRepositoryRoot: paths.repositoryRoot,
+      expectedHeadSha,
     }),
     path: paths.heartbeatPath,
   });
@@ -927,7 +930,6 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   const [
     leaseRead,
     controllerHeartbeatRead,
-    workerHeartbeatRead,
     workspaceFeed,
     missionRecords,
   ] = await Promise.all([
@@ -939,7 +941,6 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       maxAgeMs: options.controllerHeartbeatMaxAgeMs,
       readFileImpl: deps.readFile,
     }),
-    readMissionWorkerHeartbeat(options, deps, nowUtc),
     deps.readWorkspaceFeed({
       root,
       repoRoot: options.repoRoot,
@@ -952,6 +953,12 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       env: options.env || process.env,
     }),
   ]);
+  const workerHeartbeatRead = await readMissionWorkerHeartbeat(
+    options,
+    deps,
+    nowUtc,
+    controllerHeartbeatRead.projection?.sourceRevision,
+  );
 
   const lease = leaseRead.present ? leaseRead.record : null;
   const githubIdentity = lease ?? (selector.complete ? selector : null);
@@ -1111,7 +1118,7 @@ function terminalIdentity(input = {}) {
     branch: text(input.branch),
     headSha,
     ownerId: text(input.ownerId),
-    evidenceId: complete ? `terminal-pr-${prNumber}-${headSha.slice(0, 12)}` : '',
+    evidenceId: complete ? createTerminalLaneEvidenceId(input, input) : '',
   });
 }
 

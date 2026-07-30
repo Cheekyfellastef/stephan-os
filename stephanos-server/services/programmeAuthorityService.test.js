@@ -350,6 +350,9 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
         listMissionRecords: async () => [{
           missionId: LANE_ID,
           issueNumber: 1497,
+          repository: REPOSITORY,
+          git: { branch: BRANCH },
+          pullRequest: { number: 1617 },
           currentPhase: 'AGENT_IMPLEMENTATION',
         }],
       },
@@ -470,8 +473,8 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     assert.equal(repeated.idempotent, true);
     assert.equal(repeated.release.reason, 'SOURCE_MUTATION_LEASE_ALREADY_RELEASED');
 
-    const receiptPath = path.join(root, 'receipts', `terminal-pr-1617-${HEAD.slice(0, 12)}.json`);
-    const proofPath = path.join(root, 'proof', `terminal-pr-1617-${HEAD.slice(0, 12)}.json`);
+    const receiptPath = path.join(root, 'receipts', `${finalized.records.evidenceId}.json`);
+    const proofPath = path.join(root, 'proof', `${finalized.records.evidenceId}.json`);
     const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
     const proof = JSON.parse(await readFile(proofPath, 'utf8'));
     assert.equal(receipt.laneId, LANE_ID);

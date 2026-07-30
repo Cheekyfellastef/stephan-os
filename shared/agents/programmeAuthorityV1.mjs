@@ -783,6 +783,9 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     if (!['WAIT_ACTIVE_MISSION', 'WAIT_EXTERNAL_ACTIVE_MISSION'].includes(conveyor?.decision)) {
       blockers.push('critical-backlog-active-lane-status-mismatch');
     }
+    if (conveyor?.finalVerdict !== 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE') {
+      blockers.push('critical-backlog-active-lane-not-affirmative');
+    }
     const activeMissionIdentity = laneIdentityFromId(conveyor?.activeMission?.missionId);
     const selectedIssues = [
       ...list(conveyor?.selectedItem?.issueNumbers),
@@ -802,23 +805,31 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
       conveyor?.activeMission?.prNumber,
       conveyor?.activeMission?.relatedPr,
       conveyor?.activeMission?.pullRequest?.number,
-      activeMissionIdentity.prNumber,
     ].map((value) => number(value)).filter(Boolean);
-    if (missionPrAliases.some((value) => value !== lane.prNumber)) {
+    if (!missionPrAliases.length) {
+      blockers.push('critical-backlog-active-lane-pr-missing');
+    } else if (missionPrAliases.some((value) => value !== lane.prNumber)) {
+      blockers.push('critical-backlog-active-lane-pr-mismatch');
+    }
+    if (activeMissionIdentity.prNumber && activeMissionIdentity.prNumber !== lane.prNumber) {
       blockers.push('critical-backlog-active-lane-pr-mismatch');
     }
     const missionRepositories = unique([
       text(conveyor?.activeMission?.repository).toLowerCase(),
       text(conveyor?.activeMission?.git?.repository).toLowerCase(),
     ].filter(Boolean));
-    if (missionRepositories.some((value) => value !== text(lane.repository).toLowerCase())) {
+    if (!missionRepositories.length) {
+      blockers.push('critical-backlog-active-lane-repository-missing');
+    } else if (missionRepositories.some((value) => value !== text(lane.repository).toLowerCase())) {
       blockers.push('critical-backlog-active-lane-repository-mismatch');
     }
     const missionBranches = unique([
       text(conveyor?.activeMission?.branch),
       text(conveyor?.activeMission?.git?.branch),
     ].filter(Boolean));
-    if (missionBranches.some((value) => value !== lane.branch)) {
+    if (!missionBranches.length) {
+      blockers.push('critical-backlog-active-lane-branch-missing');
+    } else if (missionBranches.some((value) => value !== lane.branch)) {
       blockers.push('critical-backlog-active-lane-branch-mismatch');
     }
   }
@@ -1027,14 +1038,24 @@ export function buildTerminalLaneFinalizationPlan(input = {}) {
   });
 }
 
-function terminalEvidenceId(lane) {
-  return `terminal-pr-${lane.prNumber}-${lane.headSha.slice(0, 12)}`;
+export function createTerminalLaneEvidenceId(lane = {}, lease = {}) {
+  const digest = createHash('sha256').update(JSON.stringify([
+    text(lane.repository).toLowerCase(),
+    text(lane.laneId),
+    number(lane.issueNumber),
+    number(lane.prNumber),
+    text(lane.branch),
+    sha(lane.headSha),
+    text(lease.leaseId),
+    text(lease.ownerId),
+  ])).digest('hex').slice(0, 32);
+  return `terminal-lane-${digest}`;
 }
 
 export function createTerminalLaneEvidenceRecords(plan, input = {}) {
   if (!plan?.valid) throw new TypeError('valid terminal finalization plan is required');
   const timestampUtc = text(input.timestampUtc);
-  const evidenceId = terminalEvidenceId(plan.lane);
+  const evidenceId = createTerminalLaneEvidenceId(plan.lane, plan.mutationLease);
   const proofRef = `proof/${evidenceId}.json`;
   const proof = freeze({
     ...createSharedWorkspaceProofRecord({

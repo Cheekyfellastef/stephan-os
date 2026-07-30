@@ -63,6 +63,8 @@ export function createMissionWorkerHeartbeatRecord({
 export function projectMissionWorkerHeartbeat(record = {}, {
   nowUtc = new Date().toISOString(),
   maxAgeMs = DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
+  expectedRepositoryRoot,
+  expectedHeadSha,
 } = {}) {
   const errors = [];
   const heartbeatTimestamp = text(record?.timestampUtc);
@@ -72,12 +74,20 @@ export function projectMissionWorkerHeartbeat(record = {}, {
   const boundedMaxAgeMs = Number.isFinite(maxAgeMs) && maxAgeMs > 0
     ? maxAgeMs
     : DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS;
+  const normalizedExpectedRepositoryRoot = text(expectedRepositoryRoot);
+  const normalizedExpectedHead = text(expectedHeadSha).toLowerCase();
   if (!record || typeof record !== 'object' || Array.isArray(record)) errors.push('invalid-record');
   if (record?.schemaVersion !== MISSION_WORKER_HEARTBEAT_SCHEMA) errors.push('invalid-worker-heartbeat-schema');
   if (!Number.isFinite(heartbeatMs)) errors.push('invalid-worker-heartbeat-time');
   if (!Number.isFinite(nowMs)) errors.push('invalid-observation-time');
   if (text(record?.branch).toLowerCase() !== 'main') errors.push('worker-branch-not-main');
   if (!SHA_40.test(text(record?.headSha))) errors.push('invalid-worker-head');
+  if (!normalizedExpectedRepositoryRoot) errors.push('expected-worker-repository-missing');
+  else if (path.resolve(text(record?.repositoryRoot)) !== path.resolve(normalizedExpectedRepositoryRoot)) {
+    errors.push('worker-repository-mismatch');
+  }
+  if (!SHA_40.test(normalizedExpectedHead)) errors.push('expected-worker-head-invalid');
+  else if (text(record?.headSha).toLowerCase() !== normalizedExpectedHead) errors.push('worker-head-mismatch');
   if (text(record?.taskName) !== MISSION_WORKER_TASK_NAME) errors.push('worker-task-not-allowlisted');
   if (!Number.isInteger(record?.pid) || record.pid <= 0) errors.push('invalid-worker-pid');
   if (record?.sourceMutationAllowed !== false) errors.push('worker-source-mutation-forbidden');
@@ -95,8 +105,10 @@ export function projectMissionWorkerHeartbeat(record = {}, {
     ageMs,
     timestampUtc: Number.isFinite(heartbeatMs) ? new Date(heartbeatMs).toISOString() : null,
     repositoryRoot: text(record?.repositoryRoot),
+    expectedRepositoryRoot: normalizedExpectedRepositoryRoot || null,
     branch: text(record?.branch).toLowerCase(),
     headSha: text(record?.headSha).toLowerCase(),
+    expectedHeadSha: SHA_40.test(normalizedExpectedHead) ? normalizedExpectedHead : null,
     taskName: text(record?.taskName),
     pid: Number.isInteger(record?.pid) ? record.pid : null,
     lastTickVerdict: text(record?.lastTickVerdict),

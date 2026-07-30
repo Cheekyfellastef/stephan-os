@@ -19,6 +19,7 @@ import {
   createProgrammeStallMonitorHandler,
   createSourceMutationLeaseRecord,
   createSourceMutationLeaseReleaseRecord,
+  createTerminalLaneEvidenceId,
   createTerminalLaneEvidenceRecords,
   diagnoseProgrammeStall,
   projectProgrammeControllerHeartbeat,
@@ -296,11 +297,16 @@ test('controller and Mission Worker heartbeats remain distinct authorities', () 
     pid: 1234,
   });
   assert.equal(worker.schemaVersion, MISSION_WORKER_HEARTBEAT_SCHEMA);
-  assert.equal(projectMissionWorkerHeartbeat(worker, { nowUtc: NOW }).fresh, true);
+  const workerProjectionOptions = {
+    nowUtc: NOW,
+    expectedRepositoryRoot: process.cwd(),
+    expectedHeadSha: HEAD,
+  };
+  assert.equal(projectMissionWorkerHeartbeat(worker, workerProjectionOptions).fresh, true);
   assert.equal(projectProgrammeControllerHeartbeat(worker, { nowUtc: NOW }).valid, false);
-  assert.equal(projectMissionWorkerHeartbeat(controller, { nowUtc: NOW }).valid, false);
+  assert.equal(projectMissionWorkerHeartbeat(controller, workerProjectionOptions).valid, false);
   assert.equal(projectProgrammeControllerHeartbeat(null, { nowUtc: NOW }).valid, false);
-  assert.equal(projectMissionWorkerHeartbeat(null, { nowUtc: NOW }).valid, false);
+  assert.equal(projectMissionWorkerHeartbeat(null, workerProjectionOptions).valid, false);
 
   const contradictoryStatus = projectProgrammeControllerHeartbeat({
     ...controller,
@@ -349,6 +355,18 @@ test('terminal finalization plan is exact-bound and emits no scheduling or merge
   assert.equal(records.receipt.headSha, HEAD);
   assert.equal(records.receipt.leaseId, 'lease-goal-1497-pr-1617');
   assert.equal(records.receipt.schedulesWork, false);
+  assert.equal(records.evidenceId, createTerminalLaneEvidenceId(terminalLane, lease()));
+  assert.notEqual(
+    records.evidenceId,
+    createTerminalLaneEvidenceId(
+      { ...terminalLane, repository: 'other/repository' },
+      lease({ repository: 'other/repository' }),
+    ),
+  );
+  assert.notEqual(
+    records.evidenceId,
+    createTerminalLaneEvidenceId(terminalLane, lease({ leaseId: 'lease-goal-1497-pr-1617-second' })),
+  );
 });
 
 test('scheduler goals are constructed from durable records and the canonical lane', () => {
@@ -522,7 +540,15 @@ test('active projection requires the conveyor to affirm the exact active lane', 
     ...base,
     criticalBacklog: {
       decision: 'WAIT_ACTIVE_MISSION',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
       selectedItem: { issueNumbers: [1497] },
+      activeMission: {
+        missionId: LANE_ID,
+        issueNumber: 1497,
+        repository: REPOSITORY,
+        git: { branch: BRANCH },
+        pullRequest: { number: 1617 },
+      },
     },
   });
   assert.equal(exact.status, 'ACTIVE');
@@ -531,6 +557,7 @@ test('active projection requires the conveyor to affirm the exact active lane', 
     ...base,
     criticalBacklog: {
       decision:'WAIT_ACTIVE_MISSION',
+      finalVerdict:'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
       selectedItem:{ issueNumbers:[1497, 1622] },
       activeMission:{ repository:REPOSITORY, git:{ branch:BRANCH }, pullRequest:{ number:1617 } },
     },
@@ -541,6 +568,7 @@ test('active projection requires the conveyor to affirm the exact active lane', 
     ...base,
     criticalBacklog: {
       decision:'WAIT_EXTERNAL_ACTIVE_MISSION',
+      finalVerdict:'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
       activeMission:{
         missionId:'goal-1497-pr-9999',
         issueNumber:1497,
@@ -554,6 +582,36 @@ test('active projection requires the conveyor to affirm the exact active lane', 
   assert.ok(conflictingMission.blockers.includes('critical-backlog-active-lane-pr-mismatch'));
   assert.ok(conflictingMission.blockers.includes('critical-backlog-active-lane-repository-mismatch'));
   assert.ok(conflictingMission.blockers.includes('critical-backlog-active-lane-branch-mismatch'));
+
+  const heldMission = buildAuthoritativeProgrammeProjection({
+    ...base,
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_HELD',
+      activeMission: {
+        missionId: LANE_ID,
+        issueNumber: 1497,
+        repository: REPOSITORY,
+        git: { branch: BRANCH },
+        pullRequest: { number: 1617 },
+      },
+    },
+  });
+  assert.equal(heldMission.status, 'HOLD');
+  assert.ok(heldMission.blockers.includes('critical-backlog-active-lane-not-affirmative'));
+
+  const truncatedMission = buildAuthoritativeProgrammeProjection({
+    ...base,
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+      activeMission: { missionId: LANE_ID, issueNumber: 1497 },
+    },
+  });
+  assert.equal(truncatedMission.status, 'HOLD');
+  assert.ok(truncatedMission.blockers.includes('critical-backlog-active-lane-pr-missing'));
+  assert.ok(truncatedMission.blockers.includes('critical-backlog-active-lane-repository-missing'));
+  assert.ok(truncatedMission.blockers.includes('critical-backlog-active-lane-branch-missing'));
 });
 
 test('controller cycle and conveyor identity must affirm the exact idle selection', () => {

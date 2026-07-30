@@ -55,11 +55,29 @@ test('worker heartbeat projection remains worker-only liveness authority', () =>
   });
   const projection = projectMissionWorkerHeartbeat(record, {
     nowUtc: '2026-07-15T03:01:00.000Z',
+    expectedRepositoryRoot: '/home/stephan/Documents/GitHub/stephan-os',
+    expectedHeadSha: HEAD,
   });
   assert.equal(projection.valid, true);
   assert.equal(projection.fresh, true);
   assert.equal(projection.authority, 'mission-worker-only');
   assert.equal(projection.controllerHeartbeatAuthority, false);
+
+  const wrongRevision = projectMissionWorkerHeartbeat(record, {
+    nowUtc: '2026-07-15T03:01:00.000Z',
+    expectedRepositoryRoot: '/home/stephan/Documents/GitHub/stephan-os',
+    expectedHeadSha: 'b'.repeat(40),
+  });
+  assert.equal(wrongRevision.valid, false);
+  assert.ok(wrongRevision.errors.includes('worker-head-mismatch'));
+
+  const wrongRepository = projectMissionWorkerHeartbeat(record, {
+    nowUtc: '2026-07-15T03:01:00.000Z',
+    expectedRepositoryRoot: '/home/stephan/Documents/GitHub/other-repo',
+    expectedHeadSha: HEAD,
+  });
+  assert.equal(wrongRepository.valid, false);
+  assert.ok(wrongRepository.errors.includes('worker-repository-mismatch'));
 });
 
 test('heartbeat writer performs one atomic write only at the canonical path', async () => {
