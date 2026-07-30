@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const html = readFileSync(new URL('../apps/goal-dashboard/index.html', import.meta.url), 'utf8');
 const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1] || '';
 
-function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', port = '' } = {}) {
+function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', port = '', now = '2026-07-30T10:01:00.000Z' } = {}) {
   let activeElement = null;
   const telemetry = new Map();
   const grid = {
@@ -62,6 +62,10 @@ function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', p
   };
   const context = {
     document,
+    Date: class DashboardDate extends Date {
+      constructor(...args) { super(...(args.length ? args : [now])); }
+      static now() { return Date.parse(now); }
+    },
     window: {
       location: { hostname, protocol, port },
       fetch: fetchImpl,
@@ -521,6 +525,96 @@ test('a supported telemetry schema with a malformed nested dashboard envelope is
     assert.equal(context.renderApprovedLiveTelemetryOrMarkFailed(feed), false);
     assert.equal(telemetry.get('source-badge').textContent, 'STALE');
   }
+});
+
+test('approved telemetry rejects source-inconsistent counters and malformed nested renderer fields', async () => {
+  const validFeed = {
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'live',
+    generatedAt: '2026-07-30T10:00:00.000Z',
+    dashboardGoals: {
+      schemaVersion: 'stephanos.live-dashboard-goals.v1',
+      sourceTruth: 'LIVE READ-ONLY GITHUB',
+      freshnessVerdict: 'CURRENT_AT_REQUEST',
+      observedAt: '2026-07-30T10:00:00.000Z',
+      totalAvailable: 1,
+      displayedCount: 1,
+      activePrCount: 1,
+      blockedCount: 0,
+      readyCount: 1,
+      operatorAttentionCount: 0,
+      nextAction: 'Review the exact head.',
+      cards: [{
+        issue: '#1627',
+        title: 'Current goal',
+        status: 'READY FOR REVIEW',
+        sourceTruth: 'LIVE READ-ONLY GITHUB',
+        observedAt: '2026-07-30T10:00:00.000Z',
+        currentOwner: 'Review',
+        nextOwner: 'Operator',
+        operatorNeeded: 'No',
+        handoffState: 'checks passed',
+        milestone: 'HEAD',
+        proofIndex: 4,
+        nextAction: 'Review.',
+        linkedPr: { number: 1627, url: 'https://github.com/example/repo/pull/1627' },
+      }],
+    },
+  };
+  const malformedFeeds = [
+    { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, sourceTruth: 'READ-ONLY RECEIPT' })) } },
+    { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, readyCount: 0 } },
+    { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, activePrCount: 0 } },
+    { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, linkedPullRequests: [null] })) } },
+    { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, platformProof: {} })) } },
+  ];
+  for (const feed of malformedFeeds) {
+    const { telemetry, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(context.renderApprovedLiveTelemetryOrMarkFailed(validFeed), true);
+    assert.equal(telemetry.get('source-badge').textContent, 'LIVE');
+    assert.equal(context.renderApprovedLiveTelemetryOrMarkFailed(feed), false);
+    assert.equal(telemetry.get('source-badge').textContent, 'STALE');
+  }
+});
+
+test('approved telemetry rejects structurally valid stale envelopes', async () => {
+  const { telemetry, context } = runDashboard({
+    now: '2026-07-30T10:10:00.000Z',
+    fetchImpl: async () => ({ ok: false, json: async () => ({}) }),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'live',
+    dashboardGoals: {
+      sourceTruth: 'LIVE READ-ONLY GITHUB',
+      observedAt: '2026-07-30T10:09:30.000Z',
+      cards: [{ issue: '#1627', title: 'Current goal', status: 'VERIFYING', currentOwner: 'CI', nextOwner: 'Review', operatorNeeded: 'No', handoffState: 'checks', milestone: 'HEAD', proofIndex: 3, nextAction: 'Wait.' }],
+    },
+  });
+  const staleFeed = {
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'live',
+    generatedAt: '2026-07-30T10:00:00.000Z',
+    dashboardGoals: {
+      schemaVersion: 'stephanos.live-dashboard-goals.v1',
+      sourceTruth: 'UNKNOWN',
+      freshnessVerdict: 'NO_CURRENT_GOAL_RECORDS',
+      observedAt: '2026-07-30T10:00:00.000Z',
+      totalAvailable: 0,
+      displayedCount: 0,
+      activePrCount: 0,
+      blockedCount: 0,
+      readyCount: 0,
+      operatorAttentionCount: 0,
+      cards: [],
+      nextAction: 'Restore current truth.',
+    },
+  };
+  assert.equal(telemetry.get('source-badge').textContent, 'LIVE');
+  assert.equal(context.renderApprovedLiveTelemetryOrMarkFailed(staleFeed), false);
+  assert.equal(telemetry.get('source-badge').textContent, 'STALE');
 });
 
 test('standalone Goal Dashboard does not claim live proof without backend data and gates non-local fetches', async () => {
