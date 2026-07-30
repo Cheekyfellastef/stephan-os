@@ -26,8 +26,12 @@ test('GitHub notifications classify into required categories and count unread st
 });
 
 test('GitHub telemetry projects PRs workflows unavailable state and no fabricated truth', () => {
-  const live = normalizeGithubTelemetry({ available: true, pullRequests: [{ number: 42, title: 'Goal API', branch: 'work', headSha: 'a'.repeat(40), checks: [{ conclusion: 'success' }], approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }, { id: 2, name: 'build', conclusion: 'success', prNumber: 42 }, { id: 3, name: 'deploy', conclusion: 'cancelled' }] });
+  const live = normalizeGithubTelemetry({ available: true, issues: [{ number: 1497, title: 'Goal: continuous repair', state: 'open', labels: [{ name: 'goal' }], assignees: [{ login: 'codex' }], updated_at: '2026-07-29T12:00:00Z' }, { number: 7, title: 'PR-shaped issue', pull_request: {} }], pullRequests: [{ number: 42, title: 'Goal API for #1497', body: 'Advances #1497.', branch: 'work', headSha: 'a'.repeat(40), checks: [{ conclusion: 'success' }], approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }, { id: 2, name: 'build', conclusion: 'success', prNumber: 42 }, { id: 3, name: 'deploy', conclusion: 'cancelled' }] });
   assert.equal(live.pullRequests[0].checksStatus, 'passed');
+  assert.deepEqual(live.pullRequests[0].relatedIssues, [1497]);
+  assert.equal(live.issues[0].number, 1497);
+  assert.deepEqual(live.issues[0].labels, ['goal']);
+  assert.equal(live.issueCount, 1);
   assert.equal(live.workflowCounts.failed, 1);
   assert.equal(live.workflowCounts.passed, 1);
   assert.equal(live.workflowCounts.cancelled, 1);
@@ -58,6 +62,7 @@ function telemetryFetchRecorder(calls, { forbiddenToken = '' } = {}) {
     if (forbiddenToken && auth === `Bearer ${forbiddenToken}`) return forbidden();
     if (url.includes('/notifications')) return okJson([]);
     if (url.includes('/pulls?')) return okJson([]);
+    if (url.includes('/issues?')) return okJson([]);
     if (url.includes('/actions/runs')) return okJson({ workflow_runs: [] });
     return okJson({});
   };
