@@ -111,9 +111,9 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const available = raw.available === true;
   const issueInventoryObserved = Array.isArray(raw.issues);
-  const issueInventoryComplete = issueInventoryObserved && raw.issueInventoryComplete !== false;
+  const issueInventoryComplete = issueInventoryObserved && raw.issueInventoryComplete === true;
   const pullRequestInventoryObserved = Array.isArray(raw.pullRequests || raw.prs);
-  const pullRequestInventoryComplete = pullRequestInventoryObserved && raw.pullRequestInventoryComplete !== false;
+  const pullRequestInventoryComplete = pullRequestInventoryObserved && raw.pullRequestInventoryComplete === true;
   const notifications = list(raw.notifications).map((notification, index) => ({
     id: text(notification.id, `notification-${index + 1}`),
     title: text(notification.subject?.title || notification.title, 'unknown'),
