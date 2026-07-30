@@ -35,9 +35,9 @@ test('GitHub notifications classify into required categories and count unread st
   assert.equal(telemetry.notificationCounts['Historical/no-action'], 1);
 });
 
-test('GitHub telemetry projects PRs workflows unavailable state and no fabricated truth', () => {
+test('GitHub telemetry projects complete PR and issue inventories, workflows, unavailable state, and no fabricated truth', () => {
   const headSha = 'a'.repeat(40);
-  const live = normalizeGithubTelemetry({ available: true, issues: [{ number: 1497, title: 'Goal: continuous repair', state: 'open', labels: [{ name: 'goal' }], assignees: [{ login: 'codex' }], updated_at: '2026-07-29T12:00:00Z' }, { number: 7, title: 'PR-shaped issue', pull_request: {} }], pullRequests: [{ number: 42, title: 'Goal API for #1497', body: 'Fixes #1497.', branch: 'work', headSha, checks: requiredChecks(headSha), approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }, { id: 2, name: 'build', conclusion: 'success', prNumber: 42 }, { id: 3, name: 'deploy', conclusion: 'cancelled' }] });
+  const live = normalizeGithubTelemetry({ available: true, issues: [{ number: 1497, title: 'Goal: continuous repair', state: 'open', labels: [{ name: 'goal' }], assignees: [{ login: 'codex' }], updated_at: '2026-07-29T12:00:00Z' }, { number: 7, title: 'PR-shaped issue', pull_request: {} }], issueInventoryComplete: true, pullRequests: [{ number: 42, title: 'Goal API for #1497', body: 'Fixes #1497.', branch: 'work', headSha, checks: requiredChecks(headSha), approvalStatus: 'approved' }], pullRequestInventoryComplete: true, workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }, { id: 2, name: 'build', conclusion: 'success', prNumber: 42 }, { id: 3, name: 'deploy', conclusion: 'cancelled' }] });
   assert.equal(live.pullRequests[0].checksStatus, 'passed');
   assert.deepEqual(live.pullRequests[0].relatedIssues, [1497]);
   assert.equal(live.issues[0].number, 1497);
@@ -238,6 +238,22 @@ test('explicitly incomplete inventories remain visible as blockers but cannot cl
   assert.equal(telemetry.issueInventoryComplete, false);
   assert.equal(telemetry.blockers.includes('github_issue_inventory_incomplete'), true);
   assert.match(telemetry.nextOperatorAction, /Restore complete GitHub/);
+});
+
+test('array presence without explicit completion receipts fails closed', async () => {
+  const telemetry = await readGithubTelemetry({
+    adapterData: {
+      available: true,
+      issues: [{ number: 1, title: 'Possibly truncated goal', state: 'open' }],
+      pullRequests: [],
+    },
+  });
+  assert.equal(telemetry.issueInventoryObserved, true);
+  assert.equal(telemetry.pullRequestInventoryObserved, true);
+  assert.equal(telemetry.issueInventoryComplete, false);
+  assert.equal(telemetry.pullRequestInventoryComplete, false);
+  assert.equal(telemetry.blockers.includes('github_issue_inventory_incomplete'), true);
+  assert.equal(telemetry.blockers.includes('github_pull_request_inventory_incomplete'), true);
 });
 
 test('PR evidence uses shared resolver authority and gh CLI fallback after explicit 403', async () => {
