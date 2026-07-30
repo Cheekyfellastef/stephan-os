@@ -124,6 +124,22 @@ test('GitHub review approval never fabricates runtime proof or exact-head operat
   assert.match(dashboardGoals.cards[0].nextAction, /does not grant operator approval/);
 });
 
+test('passing exact-head checks never promote a draft PR out of building state', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issueInventoryObserved: true,
+      issues: [{ number: 1810, title: 'Goal: draft build', state: 'open', labels: ['goal'], updatedAt: '2026-07-30T09:00:00.000Z' }],
+      pullRequests: [{ number: 1811, relatedIssues: [1810], draft: true, checksStatus: 'passed', approvalStatus: 'unknown', headSha: 'e'.repeat(40) }],
+    },
+  });
+  assert.equal(dashboardGoals.cards[0].status, 'BUILDING');
+  assert.equal(dashboardGoals.readyCount, 0);
+  assert.match(dashboardGoals.cards[0].nextAction, /draft PR #1811/);
+  assert.match(dashboardGoals.cards[0].nextAction, /do not declare it ready/);
+});
+
 test('GitHub adapter availability without an observed issue inventory cannot claim current goal truth', () => {
   const dashboardGoals = buildLiveDashboardGoals({
     observedAt: '2026-07-30T10:00:00.000Z',
