@@ -443,6 +443,21 @@ function rejectAiSuggestion(){ state.pendingAiSuggestion=null; ui.aiSuggestionPa
 
 function logBuildJourney(stage, payload = {}) { try { console.info('[music-tile]', stage, payload); } catch {} }
 function setTerminalStatus(message) { if (ui.status) ui.status.textContent = message; logBuildJourney('terminal status', { message }); }
+function emitJourneyBuildFailure(message, artist = '') {
+  try {
+    emitPresenceEvent({
+      kind: 'journey_build_failed',
+      severity: 'warning',
+      summary: artist ? `Journey build failed for ${artist}` : 'Journey build failed',
+      impact: String(message || 'The journey was not reported as ready.'),
+      suggestedAction: 'Retry when storage and rendering are available, or choose another artist.',
+    });
+  } catch (eventError) {
+    logBuildJourney('journey build failure event unavailable', {
+      message: String(eventError?.message || eventError),
+    });
+  }
+}
 function normalizeCandidate(candidate = {}, fallbackArtist = 'Unknown Artist', index = 0) {
   const title = String(candidate.title || candidate.name || '').trim();
   if (!title) return null;
@@ -564,6 +579,19 @@ async function buildJourney() {
     else if (status === 'fallback-only' || status === 'unresolved') finalStatus = 'No artist bank found, broad fallback used';
     else finalStatus = `Built ${state.candidates.length} candidates for ${meta.canonicalArtist || term} — see Discovery Pipeline.`;
 
+    saveState();
+    if (!safeRenderAll('buildJourney')) {
+      const message = 'Build failed while rendering the journey.';
+      setTerminalStatus(message);
+      emitJourneyBuildFailure(message, term);
+      return Object.freeze({ ok: false, message, candidateCount: state.candidates.length });
+    }
+    const buildSucceeded = !resolverFailed && state.candidates.length > 0;
+    if (!buildSucceeded) {
+      setTerminalStatus(finalStatus);
+      emitJourneyBuildFailure(finalStatus, term);
+      return Object.freeze({ ok: false, message: finalStatus, candidateCount: state.candidates.length });
+    }
     emitPresenceEvent({
       kind: 'journey_built',
       severity: 'info',
@@ -571,14 +599,8 @@ async function buildJourney() {
       impact: `${state.candidates.length} candidates ready.`,
       suggestedAction: 'Start journey and rate tracks.',
     });
-    saveState();
-    if (!safeRenderAll('buildJourney')) {
-      const message = 'Build failed while rendering the journey.';
-      setTerminalStatus(message);
-      return Object.freeze({ ok: false, message, candidateCount: state.candidates.length });
-    }
     setTerminalStatus(finalStatus);
-    return Object.freeze({ ok: !resolverFailed, message: finalStatus, candidateCount: state.candidates.length });
+    return Object.freeze({ ok: true, message: finalStatus, candidateCount: state.candidates.length });
   } catch (error) {
     const message = `Build failed: ${String(error?.message || error)}, fallback used`;
     logBuildJourney('caught error message and stack', {
@@ -587,6 +609,7 @@ async function buildJourney() {
     });
     setTerminalStatus(message);
     safeRenderAll('buildJourney-error');
+    emitJourneyBuildFailure(message, term);
     return Object.freeze({ ok: false, message, candidateCount: state.candidates.length });
   }
 }

@@ -62,9 +62,21 @@ test('live compass derives relative strength from stored Taste DNA instead of st
 });
 
 test('journey build returns an explicit outcome so persistence failures cannot become false success', () => {
-  assert.match(js, /return Object\.freeze\(\{ ok: !resolverFailed, message: finalStatus/);
+  assert.match(js, /const buildSucceeded = !resolverFailed && state\.candidates\.length > 0/);
+  assert.match(js, /return Object\.freeze\(\{ ok: true, message: finalStatus/);
   assert.match(js, /return Object\.freeze\(\{ ok: false, message, candidateCount:/);
   assert.match(js, /Journey not ready:/);
+});
+
+test('journey-built presence evidence is emitted only after persistence and rendering succeed', () => {
+  const buildSource = js.slice(js.indexOf('async function buildJourney()'), js.indexOf('function startJourney()'));
+  const saveIndex = buildSource.indexOf('saveState();');
+  const renderIndex = buildSource.indexOf("safeRenderAll('buildJourney')");
+  const successIndex = buildSource.indexOf("kind: 'journey_built'");
+  assert.ok(saveIndex >= 0 && renderIndex > saveIndex && successIndex > renderIndex);
+  assert.match(js, /function emitJourneyBuildFailure\(message, artist = ''\)/);
+  assert.match(js, /kind: 'journey_build_failed'/);
+  assert.match(js, /severity: 'warning'/);
 });
 
 test('artist-prefixed seed titles are de-duplicated in the daily experience', () => {
