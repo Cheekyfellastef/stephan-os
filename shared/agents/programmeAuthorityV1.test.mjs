@@ -224,6 +224,14 @@ test('source mutation lease validates, renews only the exact live owner, and nev
   }), { nowUtc: NOW });
   assert.equal(overlong.valid, false);
   assert.ok(overlong.errors.includes('lease-lifetime-exceeds-maximum'));
+
+  const conflictingLaneIdentity = validateSourceMutationLease(lease({
+    issueNumber: 1,
+    prNumber: 2,
+  }), { nowUtc: NOW });
+  assert.equal(conflictingLaneIdentity.valid, false);
+  assert.ok(conflictingLaneIdentity.errors.includes('lane-id-issue-mismatch'));
+  assert.ok(conflictingLaneIdentity.errors.includes('lane-id-pr-mismatch'));
 });
 
 test('execution receipt leaseKey is correlation only and cannot fabricate mutation authority', () => {
@@ -283,6 +291,27 @@ test('controller and Mission Worker heartbeats remain distinct authorities', () 
   assert.equal(projectMissionWorkerHeartbeat(controller, { nowUtc: NOW }).valid, false);
   assert.equal(projectProgrammeControllerHeartbeat(null, { nowUtc: NOW }).valid, false);
   assert.equal(projectMissionWorkerHeartbeat(null, { nowUtc: NOW }).valid, false);
+
+  const contradictoryStatus = projectProgrammeControllerHeartbeat({
+    ...controller,
+    status: 'HOLD',
+  }, { nowUtc: NOW });
+  assert.equal(contradictoryStatus.valid, false);
+  assert.ok(contradictoryStatus.errors.includes('controller-status-cycle-state-mismatch'));
+
+  const wrongParticipant = projectProgrammeControllerHeartbeat({
+    ...controller,
+    participantId: 'different-controller',
+  }, { nowUtc: NOW });
+  assert.equal(wrongParticipant.valid, false);
+  assert.ok(wrongParticipant.errors.includes('controller-participant-id-mismatch'));
+
+  const invalidEnvelope = projectProgrammeControllerHeartbeat({
+    ...controller,
+    schemaVersion: 'unknown.v1',
+  }, { nowUtc: NOW });
+  assert.equal(invalidEnvelope.valid, false);
+  assert.ok(invalidEnvelope.errors.includes('invalid-workspace-schema'));
 });
 
 test('terminal finalization plan is exact-bound and emits no scheduling or merge authority', () => {
@@ -422,7 +451,7 @@ test('projection receipt identifies every canonical component exactly once', () 
     battleBridgeProofs: [],
     runtimeHealthRecords: [],
     scheduler: { failClosed: false, selectedGoal: null, decisionReceipt: { status: 'ACTIVE_LANE', activeIssue: 1497 } },
-    criticalBacklog: { decision: 'WAIT_ACTIVE_MISSION' },
+    criticalBacklog: { decision: 'WAIT_ACTIVE_MISSION', selectedItem: { issueNumbers: [1497] } },
     machineryInventory: { validation: { valid: true }, capabilities: [] },
   });
   const components = projection.projectionReceipt.components;
@@ -433,6 +462,60 @@ test('projection receipt identifies every canonical component exactly once', () 
   assert.equal(projection.projectionReceipt.sourceConstructionMode, 'deterministic-testing-seam');
   assert.equal(projection.projectionReceipt.boundedMutationStepsPerCycle, 1);
   assert.deepEqual(projection.runtimeHealthRecords, []);
+});
+
+test('active projection requires the conveyor to affirm the exact active lane', () => {
+  const base = {
+    nowUtc: NOW,
+    workspaceFeed: { state: 'ready' },
+    lane: lane(),
+    mutationLease: lease(),
+    controllerHeartbeatProjection: {
+      valid: true,
+      fresh: true,
+      ageMs: 0,
+      cycleState: 'ACTIVE_LANE',
+      activeLaneId: LANE_ID,
+    },
+    workerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0 },
+    executionReceipt: receipt(),
+    battleBridgeProofs: [],
+    runtimeHealthRecords: [],
+    scheduler: {
+      failClosed: false,
+      selectedGoal: null,
+      decisionReceipt: { status: 'ACTIVE_LANE', activeIssue: 1497 },
+    },
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+  };
+  const contradictory = buildAuthoritativeProgrammeProjection({
+    ...base,
+    criticalBacklog: {
+      decision: 'CREATE_NEXT_MISSION',
+      selectedItem: { issueNumbers: [1497] },
+    },
+  });
+  assert.equal(contradictory.status, 'HOLD');
+  assert.ok(contradictory.blockers.includes('critical-backlog-active-lane-status-mismatch'));
+
+  const wrongMission = buildAuthoritativeProgrammeProjection({
+    ...base,
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      selectedItem: { issueNumbers: [1291] },
+    },
+  });
+  assert.equal(wrongMission.status, 'HOLD');
+  assert.ok(wrongMission.blockers.includes('critical-backlog-active-lane-identity-mismatch'));
+
+  const exact = buildAuthoritativeProgrammeProjection({
+    ...base,
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      selectedItem: { issueNumbers: [1497] },
+    },
+  });
+  assert.equal(exact.status, 'ACTIVE');
 });
 
 test('controller cycle and conveyor identity must affirm the exact idle selection', () => {
