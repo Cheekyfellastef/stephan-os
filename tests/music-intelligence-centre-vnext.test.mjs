@@ -117,7 +117,10 @@ test('rating a deck track preserves the live player node and refreshes only depe
   assert.match(js, /rating\$\{Number\(rating\) === value \? ' is-active'/);
   assert.doesNotMatch(js, /is-selected/);
   assert.match(presentationHelper, /renderTasteDNA\(\)/);
-  assert.match(presentationHelper, /renderDiscoveryResults\(\)/);
+  assert.match(presentationHelper, /refreshDiscoveryRankingPresentation\(\)/);
   assert.match(presentationHelper, /renderMusicIntelligenceCentre\(\)/);
-  assert.doesNotMatch(presentationHelper, /innerHTML|renderListeningDeck\(|renderAll\(/);
+  assert.doesNotMatch(presentationHelper, /innerHTML|renderDiscoveryResults\(|renderListeningDeck\(|renderAll\(/);
+  const discoveryRefreshHelper = js.slice(js.indexOf('function refreshDiscoveryRankingPresentation'), js.indexOf('function renderDiscoveryResults'));
+  assert.match(discoveryRefreshHelper, /querySelectorAll\('section'\)/);
+  assert.doesNotMatch(discoveryRefreshHelper, /iframe|ui\.discoveryResults\.innerHTML/);
 });
