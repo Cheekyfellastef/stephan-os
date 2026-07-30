@@ -4,16 +4,44 @@ import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.
 
 export const GITHUB_TELEMETRY_SCHEMA = 'stephanos.github.telemetry.v1';
 const WORKFLOW_STATES = new Set(['running', 'queued', 'failed', 'passed', 'cancelled']);
+const ISSUE_REFERENCE_PATTERN = /(?:^|[^\w])#(\d{1,10})\b/g;
 function text(value, fallback = '') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
 function list(value) { return Array.isArray(value) ? value : []; }
 function lc(value) { return text(value).toLowerCase(); }
 function countBy(items, key) { return items.reduce((acc, item) => ({ ...acc, [item[key]]: (acc[item[key]] || 0) + 1 }), {}); }
+function issueReferences(value = '') {
+  const references = [];
+  for (const match of String(value || '').matchAll(ISSUE_REFERENCE_PATTERN)) {
+    const number = Number(match[1]);
+    if (Number.isSafeInteger(number) && number > 0) references.push(number);
+  }
+  return [...new Set(references)];
+}
 function normalizeChecks(checks = []) {
   const states = list(checks).map((check) => lc(check.status || check.conclusion || check.state));
   if (states.some((state) => ['failure', 'failed', 'timed_out', 'action_required'].includes(state))) return 'failed';
   if (states.some((state) => ['queued', 'in_progress', 'pending', 'waiting'].includes(state))) return 'pending';
   if (states.length && states.every((state) => ['success', 'passed', 'skipped', 'neutral'].includes(state))) return 'passed';
   return 'unknown';
+}
+function normalizeLabels(labels = []) {
+  return list(labels).map((label) => text(typeof label === 'string' ? label : label?.name)).filter(Boolean);
+}
+function normalizeAssignees(assignees = []) {
+  return list(assignees).map((assignee) => text(typeof assignee === 'string' ? assignee : assignee?.login)).filter(Boolean);
+}
+function latestWorkflowChecks(workflows = [], prNumber) {
+  const latestByName = new Map();
+  for (const workflow of list(workflows).filter((run) => run.prNumber === prNumber)) {
+    const key = text(workflow.name, workflow.id);
+    const previous = latestByName.get(key);
+    const currentAt = Date.parse(workflow.updatedAt || 0);
+    const previousAt = Date.parse(previous?.updatedAt || 0);
+    if (!previous || (Number.isFinite(currentAt) && (!Number.isFinite(previousAt) || currentAt >= previousAt))) {
+      latestByName.set(key, workflow);
+    }
+  }
+  return [...latestByName.values()];
 }
 export function classifyGithubNotification(notification = {}) {
   const reason = lc(notification.reason);
@@ -41,25 +69,6 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     category: classifyGithubNotification(notification),
     updatedAt: text(notification.updated_at || notification.updatedAt, ''),
   }));
-  const pullRequests = list(raw.pullRequests || raw.prs).map((pr) => {
-    const checksStatus = text(pr.checksStatus || normalizeChecks(pr.checks), 'unknown');
-    const blockers = [...list(pr.blockers)];
-    if (checksStatus !== 'passed') blockers.push('checks_not_passed_or_unknown');
-    if (!text(pr.headSha || pr.head?.sha)) blockers.push('head_sha_unknown');
-    return {
-      number: Number(pr.number || pr.prNumber || 0) || null,
-      title: text(pr.title, 'unknown'),
-      branch: text(pr.branch || pr.headRefName || pr.head?.ref, 'unknown'),
-      headSha: text(pr.headSha || pr.head?.sha, ''),
-      url: text(pr.url || pr.html_url, ''),
-      checks: list(pr.checks),
-      checksStatus,
-      mergeReadiness: text(pr.mergeReadiness || (checksStatus === 'passed' ? 'awaiting_exact_head_approval' : 'blocked_or_unknown'), 'blocked_or_unknown'),
-      approvalStatus: text(pr.approvalStatus, 'unknown'),
-      blockers: [...new Set(blockers)],
-      supersededStatus: text(pr.supersededStatus, 'unknown'),
-    };
-  });
   const workflows = list(raw.workflows || raw.workflowRuns).map((run, index) => {
     const statusText = lc(run.status);
     const conclusion = lc(run.conclusion);
@@ -70,6 +79,47 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     if (conclusion === 'cancelled') status = 'cancelled';
     return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at) };
   });
+  const pullRequests = list(raw.pullRequests || raw.prs).map((pr) => {
+    const number = Number(pr.number || pr.prNumber || 0) || null;
+    const workflowChecks = latestWorkflowChecks(workflows, number);
+    const explicitChecksStatus = text(pr.checksStatus);
+    const checksStatus = text(explicitChecksStatus || normalizeChecks(list(pr.checks).length ? pr.checks : workflowChecks), 'unknown');
+    const blockers = [...list(pr.blockers)];
+    if (checksStatus !== 'passed') blockers.push('checks_not_passed_or_unknown');
+    if (!text(pr.headSha || pr.head?.sha)) blockers.push('head_sha_unknown');
+    const branch = text(pr.branch || pr.headRefName || pr.head?.ref, 'unknown');
+    return {
+      number,
+      title: text(pr.title, 'unknown'),
+      branch,
+      headSha: text(pr.headSha || pr.head?.sha, ''),
+      url: text(pr.html_url || pr.url, ''),
+      draft: pr.draft === true,
+      mergeable: typeof pr.mergeable === 'boolean' ? pr.mergeable : null,
+      updatedAt: text(pr.updatedAt || pr.updated_at),
+      relatedIssues: issueReferences(`${text(pr.title)} ${text(pr.body)} ${branch}`),
+      checks: list(pr.checks).length ? list(pr.checks) : workflowChecks,
+      checksStatus,
+      mergeReadiness: text(pr.mergeReadiness || (checksStatus === 'passed' ? 'awaiting_exact_head_approval' : 'blocked_or_unknown'), 'blocked_or_unknown'),
+      approvalStatus: text(pr.approvalStatus, 'unknown'),
+      blockers: [...new Set(blockers)],
+      supersededStatus: text(pr.supersededStatus, 'unknown'),
+    };
+  });
+  const issues = list(raw.issues)
+    .filter((issue) => !issue?.pull_request)
+    .map((issue) => ({
+      number: Number(issue.number || issue.issueNumber || 0) || null,
+      title: text(issue.title, 'Untitled goal'),
+      state: lc(issue.state || 'open'),
+      url: text(issue.html_url || issue.url, ''),
+      labels: normalizeLabels(issue.labels),
+      assignees: normalizeAssignees(issue.assignees),
+      milestone: text(issue.milestone?.title || issue.milestone),
+      createdAt: text(issue.createdAt || issue.created_at),
+      updatedAt: text(issue.updatedAt || issue.updated_at),
+    }))
+    .filter((issue) => issue.number !== null);
   const blockers = [];
   if (!available) blockers.push('github_adapter_unavailable');
   return {
@@ -84,6 +134,8 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     notificationCounts: countBy(notifications, 'category'),
     pullRequests,
     pullRequestCount: pullRequests.length,
+    issues,
+    issueCount: issues.length,
     workflows,
     workflowCounts: countBy(workflows, 'status'),
     blockers,
@@ -100,12 +152,13 @@ async function githubJson(url, auth, fetchImpl = fetch) {
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
   const { owner, repo } = repoConfig;
   const fetchImpl = options.fetchImpl || fetch;
-  const [notifications, prs, workflowRuns] = await Promise.all([
+  const [notifications, prs, issues, workflowRuns] = await Promise.all([
     githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl),
     githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, auth, fetchImpl),
+    githubJson(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&sort=updated&direction=desc&per_page=100`, auth, fetchImpl),
     githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, fetchImpl),
   ]);
-  return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: repoConfig, notifications, pullRequests: prs, workflows: workflowRuns.workflow_runs || [] }, options);
+  return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: repoConfig, notifications, pullRequests: prs, issues, workflows: workflowRuns.workflow_runs || [] }, options);
 }
 export async function readGithubTelemetry(options = {}) {
   if (options.adapterData) return normalizeGithubTelemetry(options.adapterData, options);
