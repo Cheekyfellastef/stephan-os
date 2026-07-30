@@ -101,6 +101,8 @@ test('browser proof PASS requires the exact scenario and complete positive evide
     '{"verdict":"PASS","proofScenario":"WRONG","evidence":{}}',
     '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":false,"legacyRankingChanged":true,"consoleErrors":[]}}',
     '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":["boom"]}}',
+    '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":[]}}',
+    '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":[]},"blockers":["proof incomplete"]}',
   ]) {
     assert.equal(validateBrowserProofVerdict(invalid, task).ok, false);
   }
