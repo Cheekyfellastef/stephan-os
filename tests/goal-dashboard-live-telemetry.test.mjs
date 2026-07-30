@@ -309,6 +309,38 @@ test('newer degraded approved telemetry invalidates older live GitHub readiness 
   assert.equal(telemetry.get('dashboard-priority-action').textContent, 'Restore complete GitHub truth.');
 });
 
+test('receipt-backed cards display the durable receipt timestamp instead of the projection poll time', async () => {
+  const { grid, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  context.renderLiveMissionOperationsTelemetry({
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    sourceTruth: 'mixed',
+    generatedAt: '2026-07-30T10:30:00.000Z',
+    dashboardGoals: {
+      sourceTruth: 'READ-ONLY RECEIPTS',
+      observedAt: '2026-07-30T10:30:00.000Z',
+      cards: [{
+        issue: '#1282',
+        title: 'Receipt-backed dashboard goal',
+        status: 'QUEUED',
+        source: 'mission-operations-receipt',
+        sourceTruth: 'READ-ONLY RECEIPT',
+        observedAt: '2026-07-30T10:30:00.000Z',
+        lastUpdatedAt: '2026-07-30T08:15:00.000Z',
+        currentOwner: 'Build Concierge queue',
+        nextOwner: 'Canonical dispatcher',
+        operatorNeeded: 'No',
+        handoffState: 'receipt',
+        milestone: 'RECEIPT_BACKED_GOAL',
+        proofIndex: 1,
+        nextAction: 'Inspect the receipt.',
+      }],
+    },
+  });
+  assert.match(grid.children[0].innerHTML, /2026-07-30 08:15:00Z/);
+  assert.doesNotMatch(grid.children[0].innerHTML, /2026-07-30 10:30:00Z/);
+});
+
 test('periodic same-lane card refresh restores focus to the matching goal link', async () => {
   const { grid, context, setActiveElement, getActiveElement } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
   await new Promise((resolve) => setImmediate(resolve));
