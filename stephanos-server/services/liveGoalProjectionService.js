@@ -76,6 +76,12 @@ function projectedPr(pr = {}) {
     supersededStatus: pr.supersededStatus,
   });
 }
+function cardPullRequestNumbers(card = {}) {
+  return [
+    ...list(card.linkedPullRequests).map((pr) => pr.number),
+    card.linkedPr?.number,
+  ].filter(Boolean);
+}
 function activeLinkedPullRequests(linkedPullRequests = []) {
   return [...linkedPullRequests]
     .filter((pr) => normalizedStatus(pr.supersededStatus) !== 'superseded')
@@ -242,10 +248,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       observedAt,
       totalAvailable: rankedCards.length,
       displayedCount: cards.length,
-      activePrCount: new Set(cards.flatMap((card) => [
-        ...list(card.linkedPullRequests).map((pr) => pr.number),
-        card.linkedPr?.number,
-      ]).filter(Boolean)).size,
+      activePrCount: new Set(rankedCards.flatMap(cardPullRequestNumbers)).size,
       blockedCount: cards.filter((card) => card.status.startsWith('BLOCKED')).length,
       readyCount: cards.filter((card) => card.status.startsWith('READY')).length,
       operatorAttentionCount: operatorAttention.length,
@@ -275,7 +278,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
     })),
   ];
   const seen = new Set();
-  const cards = receiptCandidates
+  const currentReceiptCandidates = receiptCandidates
     .filter((candidate) => {
       const keys = candidateIdentityKeys(candidate);
       const key = keys[0] || text(candidate.title);
@@ -283,7 +286,8 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
-    })
+    });
+  const cards = currentReceiptCandidates
     .slice(0, safeLimit)
     .map((candidate) => receiptGoalCard(candidate, observedAt));
   return Object.freeze({
@@ -291,7 +295,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
     sourceTruth: cards.length ? 'READ-ONLY RECEIPTS' : 'UNKNOWN',
     freshnessVerdict: cards.length ? 'RECEIPT_TIMESTAMPS_VISIBLE' : 'NO_CURRENT_GOAL_RECORDS',
     observedAt,
-    totalAvailable: cards.length,
+    totalAvailable: currentReceiptCandidates.length,
     displayedCount: cards.length,
     activePrCount: 0,
     blockedCount: cards.filter((card) => /BLOCKED|FAILED/.test(card.status)).length,
