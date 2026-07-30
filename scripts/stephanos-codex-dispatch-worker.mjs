@@ -32,6 +32,71 @@ function gitCapture(repoRoot, args) {
   };
 }
 
+function processCapture(spawnSyncFn, executable, args, options = {}) {
+  const result = spawnSyncFn(executable, args, {
+    cwd: options.cwd,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 120000,
+  });
+  return {
+    ok: !result.error && result.status === 0,
+    stdout: String(result.stdout || '').trim().toLowerCase(),
+  };
+}
+
+export function validateExactHeadAtWorkerStart(task, {
+  spawnSyncFn = spawnSync,
+  platform = process.platform,
+} = {}) {
+  if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
+  const proof = task.exactHeadProof;
+  const expectedHead = String(proof.expectedHead || '').trim().toLowerCase();
+  const repository = String(proof.repository || '').trim();
+  const prNumber = Number(proof.prNumber);
+  if (!/^[0-9a-f]{40}$/.test(expectedHead) || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(prNumber) || prNumber <= 0) {
+    return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID' });
+  }
+  const gh = processCapture(
+    spawnSyncFn,
+    platform === 'win32' ? 'gh.exe' : 'gh',
+    ['api', `repos/${repository}/pulls/${prNumber}`, '--jq', '.head.sha'],
+  );
+  if (!gh.ok || !/^[0-9a-f]{40}$/.test(gh.stdout)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_LOOKUP_FAILED', expectedHead });
+  }
+  if (gh.stdout !== expectedHead) {
+    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_MISMATCH', expectedHead, pullRequestHead: gh.stdout });
+  }
+  const git = processCapture(
+    spawnSyncFn,
+    platform === 'win32' ? 'git.exe' : 'git',
+    ['rev-parse', 'HEAD'],
+    { cwd: task.repoRoot },
+  );
+  if (!git.ok || !/^[0-9a-f]{40}$/.test(git.stdout)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'LOCAL_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead: gh.stdout });
+  }
+  if (git.stdout !== expectedHead) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'EXPECTED_HEAD_MISMATCH',
+      expectedHead,
+      pullRequestHead: gh.stdout,
+      localHead: git.stdout,
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    required: true,
+    expectedHead,
+    pullRequestHead: gh.stdout,
+    localHead: git.stdout,
+  });
+}
+
 function boundedText(value = '', limit = 4000) {
   const text = String(value || '').trim();
   return text.length > limit ? `${text.slice(0, limit)}\n...[truncated]` : text;
@@ -224,6 +289,7 @@ export async function runCodexWorker(taskPath, {
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
   visibilityPublisher = publishRemoteCodexTaskVisibility,
+  spawnSyncFn = spawnSync,
 } = {}) {
   const task = readJson(taskPath);
   if (task?.schemaVersion !== LOCAL_CODEX_TASK_SCHEMA) throw new Error('Unsupported local Codex task schema.');
@@ -236,6 +302,30 @@ export async function runCodexWorker(taskPath, {
   const stderrPath = join(taskRoot, 'codex.stderr.log');
   const lastMessagePath = join(taskRoot, 'codex-last-message.txt');
   const currentPath = join(dirname(dirname(taskRoot)), 'current.json');
+  const exactHeadValidation = validateExactHeadAtWorkerStart(task, { spawnSyncFn, platform });
+  if (!exactHeadValidation.ok) {
+    const completedAt = now();
+    const result = {
+      ...task,
+      kind: 'stephanos.codex_dispatch.local_result',
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      resultAvailable: true,
+      resultVerdict: 'FAIL',
+      workerAlive: false,
+      heartbeatUtc: completedAt,
+      startedAt: completedAt,
+      completedAt,
+      exactHeadValidation,
+      blocker: exactHeadValidation.blocker,
+      nextOperatorAction: `Repair the exact-head blocker before retrying: ${exactHeadValidation.blocker}.`,
+    };
+    writeJson(resultPath, result);
+    writeJson(statusPath, result);
+    writeJson(currentPath, result);
+    await publishVisibilitySafely(visibilityPublisher, task, result);
+    return result;
+  }
   const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD']);
   const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1']);
   const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
@@ -250,6 +340,7 @@ export async function runCodexWorker(taskPath, {
     resultAvailable: false,
     workerPid: process.pid,
     sourceHeadBefore: sourceHeadBefore.stdout,
+    exactHeadValidation,
     dirtBefore,
     executionPolicy: {
       approvalPolicy: 'never',
