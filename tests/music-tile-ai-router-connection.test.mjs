@@ -56,6 +56,7 @@ test('canonical success response preserves output and provider execution truth',
 
 test('standalone Music Tile restores persisted canonical routing policy', async () => {
   const originalStorage = globalThis.localStorage;
+  const originalRuntimeStatus = globalThis.runtimeStatusModel;
   const values = new Map();
   globalThis.localStorage = {
     getItem: (key) => values.get(key) ?? null,
@@ -69,12 +70,27 @@ test('standalone Music Tile restores persisted canonical routing policy', async 
         routeMode: 'explicit',
         fallbackEnabled: false,
         fallbackOrder: ['gemini', 'ollama'],
-        providerConfigs: { groq: { model: 'openai/gpt-oss-20b' } },
+        providerConfigs: { groq: { model: 'openai/gpt-oss-20b', apiKey: 'must-not-cross-transport', privateDraftNote: 'secret-adjacent' } },
       },
     },
   }));
   let requestPayload;
   try {
+    globalThis.runtimeStatusModel = {
+      providerPreferences: {
+        provider: 'groq',
+        routeMode: 'explicit',
+        fallbackEnabled: false,
+        fallbackOrder: ['gemini', 'ollama'],
+        providerConfigs: {
+          groq: {
+            model: 'openai/gpt-oss-20b',
+            apiKey: 'must-not-cross-transport',
+            privateDraftNote: 'secret-adjacent',
+          },
+        },
+      },
+    };
     await testMusicAiRoute({
       fetchImpl: async (_url, options) => {
         requestPayload = JSON.parse(options.body);
@@ -84,11 +100,15 @@ test('standalone Music Tile restores persisted canonical routing policy', async 
   } finally {
     if (originalStorage === undefined) delete globalThis.localStorage;
     else globalThis.localStorage = originalStorage;
+    if (originalRuntimeStatus === undefined) delete globalThis.runtimeStatusModel;
+    else globalThis.runtimeStatusModel = originalRuntimeStatus;
   }
   assert.equal(requestPayload.provider, 'groq');
   assert.equal(requestPayload.routeMode, 'explicit');
   assert.equal(requestPayload.fallbackEnabled, false);
-  assert.deepEqual(requestPayload.fallbackOrder, ['gemini', 'ollama', 'groq', 'mock']);
+  assert.deepEqual(requestPayload.fallbackOrder, ['gemini', 'ollama']);
+  assert.equal(Object.hasOwn(requestPayload.providerConfig, 'apiKey'), false);
+  assert.equal(Object.hasOwn(requestPayload.providerConfigs.groq, 'privateDraftNote'), false);
 });
 
 test('status messaging keeps rule fallback without declaring 200 as unavailable', () => {

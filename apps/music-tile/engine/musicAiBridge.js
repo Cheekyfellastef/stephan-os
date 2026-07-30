@@ -1,4 +1,4 @@
-import { queryStephanosAI, resolveStephanosAiBackendBaseUrl } from '../../../shared/ai/stephanosClient.mjs';
+import { queryStephanosAI, resolveStephanosAiBackendBaseUrl, sanitizeStephanosProviderConfigsForTransport } from '../../../shared/ai/stephanosClient.mjs';
 import { readPersistedStephanosSessionMemory } from '../../../shared/runtime/stephanosSessionMemory.mjs';
 
 const CANONICAL_AI_ENDPOINT_PATH = '/api/ai/chat';
@@ -212,14 +212,15 @@ export async function askMusicAi(task, payload = {}) {
 export async function testMusicAiRoute({ fetchImpl = globalThis.fetch } = {}) {
   const diagnostics = getMusicAiRuntimeDiagnostics();
   const routerSettings = musicAiRouterSettings();
+  const safeProviderConfigs = sanitizeStephanosProviderConfigsForTransport(routerSettings.providerConfigs || {});
   const payload = {
     prompt: 'Reply with: MUSIC_AI_ROUTE_OK',
     provider: routerSettings.provider,
     routeMode: routerSettings.routeMode,
     fallbackEnabled: routerSettings.fallbackEnabled,
     ...(Array.isArray(routerSettings.fallbackOrder) ? { fallbackOrder: routerSettings.fallbackOrder } : {}),
-    providerConfig: routerSettings.providerConfigs?.[routerSettings.provider] || {},
-    providerConfigs: routerSettings.providerConfigs || {},
+    providerConfig: safeProviderConfigs[routerSettings.provider] || {},
+    providerConfigs: safeProviderConfigs,
     runtimeContext: { ...aiRouteContext(), tileContext: { tile: 'music-tile', task: 'echo-test' } },
   };
   try {

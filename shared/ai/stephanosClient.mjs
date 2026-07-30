@@ -88,6 +88,10 @@ function sanitizeProviderConfigsForTransport(providerConfigs = {}) {
   );
 }
 
+export function sanitizeStephanosProviderConfigsForTransport(providerConfigs = {}) {
+  return sanitizeProviderConfigsForTransport(providerConfigs);
+}
+
 function resolveRuntimeTimeoutPolicy(runtimeContext = {}) {
   const sourceContext = asObject(runtimeContext);
   const nestedRuntimeContext = asObject(sourceContext.runtimeContext);
