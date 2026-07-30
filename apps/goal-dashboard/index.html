@@ -1579,7 +1579,12 @@
         const card = document.createElement('article');
         const statusClass = goalStatusClass(goal.status);
         const issueUrl = safeGithubUrl(goal.url);
-        const prUrl = safeGithubUrl(goal.linkedPr?.url);
+        const linkedPullRequests = (Array.isArray(goal.linkedPullRequests) && goal.linkedPullRequests.length
+          ? goal.linkedPullRequests
+          : (goal.linkedPr ? [goal.linkedPr] : []))
+          .map((pr) => ({ number: pr.number, url: safeGithubUrl(pr.url) }))
+          .filter((pr) => pr.url)
+          .filter((pr, index, items) => items.findIndex((candidate) => candidate.number === pr.number && candidate.url === pr.url) === index);
         card.className = 'goal-card';
         card.setAttribute('data-issue', goal.issue);
         card.setAttribute('data-status', statusClass);
@@ -1620,7 +1625,7 @@
               </div>
             ` : ''}
             <p class="next-action"><span>${escapeHtml(goal.milestone)}</span><br />${escapeHtml(goal.nextAction)}</p>
-            ${(issueUrl || prUrl) ? `<div class="goal-links">${issueUrl ? `<a class="goal-link" href="${escapeHtml(issueUrl)}" target="_blank" rel="noreferrer">Open ${escapeHtml(goal.issue)}</a>` : ''}${prUrl ? `<a class="goal-link" href="${escapeHtml(prUrl)}" target="_blank" rel="noreferrer">Open PR #${escapeHtml(goal.linkedPr.number)}</a>` : ''}</div>` : ''}
+            ${(issueUrl || linkedPullRequests.length) ? `<div class="goal-links">${issueUrl ? `<a class="goal-link" href="${escapeHtml(issueUrl)}" target="_blank" rel="noreferrer">Open ${escapeHtml(goal.issue)}</a>` : ''}${linkedPullRequests.map((pr) => `<a class="goal-link" href="${escapeHtml(pr.url)}" target="_blank" rel="noreferrer">Open PR #${escapeHtml(pr.number)}</a>`).join('')}</div>` : ''}
           </div>
         `;
         grid.appendChild(card);
