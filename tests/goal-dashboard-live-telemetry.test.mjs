@@ -49,6 +49,7 @@ test('standalone Goal Dashboard static fallback remains honest when backend unav
   assert.equal(telemetry.get('github-state').textContent, 'Not live in browser');
   assert.match(telemetry.get('telemetry-blocker').textContent, /BACKEND_UNAVAILABLE_STATIC_SEED_ONLY/);
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'static-seed');
+  assert.match(grid.children[0].innerHTML, /badge active">Active/);
 });
 
 test('standalone Goal Dashboard renders live telemetry from approved endpoint', async () => {
@@ -127,6 +128,55 @@ test('standalone Goal Dashboard renders ready Shared Workspace feed before stati
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
 });
 
+test('standalone Goal Dashboard prefers canonical live GitHub goal cards and renders their source truth', async () => {
+  const { telemetry, grid } = runDashboard({
+    fetchImpl: async (url) => url.includes('shared-workspace') ? { ok: false, json: async () => ({}) } : { ok: true, json: async () => ({
+      schemaVersion: 'stephanos.live-goal-projection.v1',
+      sourceTruth: 'live',
+      generatedAt: '2026-07-30T10:00:00.000Z',
+      heartbeat: { backendLive: true, projectionSource: 'live-goal-projection-service' },
+      currentAgentStates: { github: { state: 'adapter-provided' }, stephanos: { state: 'backend_reachable' } },
+      proofTruth: { local: 'unknown' },
+      githubTelemetry: { status: 'live', pullRequestCount: 1, workflowCounts: { passed: 1 } },
+      dashboardGoals: {
+        sourceTruth: 'LIVE READ-ONLY GITHUB',
+        freshnessVerdict: 'CURRENT_AT_REQUEST',
+        observedAt: '2026-07-30T10:00:00.000Z',
+        totalAvailable: 1,
+        displayedCount: 1,
+        activePrCount: 1,
+        blockedCount: 0,
+        readyCount: 1,
+        operatorAttentionCount: 0,
+        nextAction: 'Request exact-head review.',
+        cards: [{
+          issue: '#1622',
+          url: 'https://github.com/example/repo/issues/1622',
+          title: 'Canonical programme controller',
+          status: 'READY FOR REVIEW',
+          sourceTruth: 'LIVE READ-ONLY GITHUB',
+          observedAt: '2026-07-30T10:00:00.000Z',
+          currentOwner: 'Codex / review lane',
+          nextOwner: 'Independent reviewer',
+          operatorNeeded: 'No',
+          handoffState: 'issue #1622 → PR #1623 → passed',
+          milestone: 'PR #1623 · abcdef1234',
+          proofIndex: 4,
+          nextAction: 'Request exact-head review.',
+          linkedPr: { number: 1623, url: 'https://github.com/example/repo/pull/1623' },
+        }],
+      },
+    }) },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-github');
+  assert.match(grid.children.at(-1).innerHTML, /LIVE READ-ONLY GITHUB/);
+  assert.match(grid.children.at(-1).innerHTML, /badge ready">READY FOR REVIEW/);
+  assert.equal(telemetry.get('dashboard-visible-count').textContent, '1');
+  assert.equal(telemetry.get('dashboard-ready-count').textContent, '1');
+  assert.equal(telemetry.get('dashboard-priority-action').textContent, 'Request exact-head review.');
+});
+
 test('standalone Goal Dashboard does not claim live proof without backend data and gates non-local fetches', async () => {
   const calls = [];
   const { telemetry, grid } = runDashboard({ hostname: 'example.com', fetchImpl: async () => { calls.push('called'); return { ok: true }; } });
@@ -135,4 +185,11 @@ test('standalone Goal Dashboard does not claim live proof without backend data a
   assert.equal(telemetry.get('github-state').textContent, 'Not live in browser');
   assert.match(telemetry.get('telemetry-blocker').textContent, /No live GitHub proof, local proof, browser proof/);
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'static-seed');
+});
+
+test('standalone Goal Dashboard includes professional motion with reduced-motion protection', () => {
+  assert.match(html, /@keyframes card-arrive/);
+  assert.match(html, /@keyframes rail-reveal/);
+  assert.match(html, /@keyframes handoff-pulse/);
+  assert.match(html, /@media \(prefers-reduced-motion: reduce\)/);
 });
