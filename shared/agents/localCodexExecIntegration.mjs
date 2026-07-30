@@ -122,6 +122,7 @@ export function createLocalCodexExecIntegration({
           repository: String(packet.exactHeadProof.repository || ''),
           prNumber: Number(packet.exactHeadProof.prNumber || 0),
           expectedHead: String(packet.exactHeadProof.expectedHead || '').toLowerCase(),
+          proofScenario: String(packet.exactHeadProof.proofScenario || ''),
         } : null,
         approvalRequirements: { ...(packet.approvalRequirements || {}) },
         repoRoot: paths.repoRoot,
