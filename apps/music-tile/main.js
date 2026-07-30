@@ -93,7 +93,12 @@ function buildMusicAiStatusView(diagnostics = {}) {
   const reached = diagnostics.requestReachedBackend;
   const responded = diagnostics.backendResponded;
   const responseMode = diagnostics.responseKind || 'n/a';
-  const providerUnknown = status.routeKind === 'unknown' || status.provider === 'unknown';
+  const requestedProvider = diagnostics.requestedProvider || 'unknown';
+  const selectedProvider = diagnostics.selectedProvider || 'unknown';
+  const actualProvider = diagnostics.actualProvider || 'unknown';
+  const actualModel = diagnostics.actualModel || 'unknown';
+  const fallbackUsed = diagnostics.fallbackUsed === true;
+  const fallbackReason = diagnostics.fallbackReason || 'none';
   let statusKind = 'unknown'; let headline = 'AI transport status unknown. Press Test AI route.'; let badge='music-badge';
   if ((lastStatus == null || Number.isNaN(lastStatus) || lastStatus <= 0) && reached !== true && !lastError) { statusKind='not-tested'; headline='AI transport not tested yet. Press Test AI route.'; badge='music-badge'; }
   else if (lastError && (reached === false || lastStatus === 0)) { statusKind='network-error'; headline=`AI backend unreachable/network error. ${lastError}`; badge='music-badge music-badge--warning'; }
@@ -101,9 +106,9 @@ function buildMusicAiStatusView(diagnostics = {}) {
   else if (lastStatus === 405) { statusKind='method-mismatch'; headline='AI method mismatch: 405.'; badge='music-badge music-badge--warning'; }
   else if (lastStatus === 400) { statusKind='payload-invalid'; headline='AI payload invalid: 400.'; badge='music-badge music-badge--warning'; }
   else if (lastStatus >= 500) { statusKind='backend-error'; headline=`AI backend/provider error: ${lastStatus}.`; badge='music-badge music-badge--warning'; }
-  else if (lastStatus === 200 && responded === true) { statusKind = providerUnknown ? 'degraded' : 'ready'; headline = providerUnknown ? 'AI transport ready. Provider details unavailable in this tile.' : 'AI transport ready.'; badge='music-badge music-badge--success'; }
+  else if (lastStatus === 200 && responded === true) { statusKind = actualProvider === 'unknown' ? 'degraded' : 'ready'; headline = actualProvider === 'unknown' ? 'AI transport ready. Execution provider was not reported.' : `AI ready — ${actualProvider}/${actualModel} answered${fallbackUsed ? ' via fallback' : ''}.`; badge='music-badge music-badge--success'; }
   if (responseMode === 'text-fallback') headline += ' Text fallback mode active.';
-  return { statusKind, headline, details:'Rule-based parser remains available.', badge, providerMetadataHelp:'The Music Tile can reach the AI backend, but this embedded tile cannot currently read the selected provider/model metadata. Provider details will appear when route truth is available.', shouldShowRuleFallback:true, diagnosticsRows:[`Endpoint: ${runtime.endpointUrl}`,`Backend base: ${runtime.backendBaseUrl}`,`Last HTTP status: ${lastStatus ?? 'n/a'}`,`Last error: ${lastError || 'none'}`,`Request reached backend: ${reached===true?'yes':reached===false?'no':'unknown'}`,`Backend responded: ${responded===true?'yes':responded===false?'no':'unknown'}`,`Response mode: ${responseMode}`,`Route/provider metadata: ${status.routeKind}/${status.provider}`] };
+  return { statusKind, headline, details:'Canonical router pool active; rule-based parser remains available. OpenClaw agents are a separate route.', badge, providerMetadataHelp:'Requested, selected, and executed provider truth comes from the canonical Stephanos AI response. A fallback provider may answer when policy permits.', shouldShowRuleFallback:true, diagnosticsRows:[`Endpoint: ${runtime.endpointUrl}`,`Backend base: ${runtime.backendBaseUrl}`,`Last HTTP status: ${lastStatus ?? 'n/a'}`,`Last error: ${lastError || 'none'}`,`Request reached backend: ${reached===true?'yes':reached===false?'no':'unknown'}`,`Backend responded: ${responded===true?'yes':responded===false?'no':'unknown'}`,`Response mode: ${responseMode}`,`Runtime route/provider: ${status.routeKind}/${status.provider}`,`Requested provider: ${requestedProvider}`,`Router-selected provider: ${selectedProvider}`,`Executed provider/model: ${actualProvider}/${actualModel}`,`Fallback used/reason: ${fallbackUsed?'yes':'no'} / ${fallbackReason}`] };
 }
 
 const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false });
@@ -111,9 +116,9 @@ const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPr
 function updateAiStatus(extra = {}) {
   if (!ui.aiStatusText) return;
   const view = buildMusicAiStatusView(extra);
-  const providerMetaBadge = view.statusKind === 'degraded' ? '<span class="music-badge" title="The Music Tile can reach the AI backend, but this embedded tile cannot currently read the selected provider/model metadata.">provider_metadata_unavailable · info</span>' : '';
-  ui.aiStatusText.innerHTML = `<span class="${view.badge}">${view.statusKind}</span> ${view.headline} ${view.details} ${providerMetaBadge} ${view.providerMetadataHelp ? `<span class="meta" title="${view.providerMetadataHelp}">ⓘ</span>` : ''}`;
-  if (ui.aiLastAction) ui.aiLastAction.innerHTML = `<details class="music-diagnostics"><summary>Show diagnostics</summary>${view.diagnosticsRows.map((lineText) => `<div class="meta">${lineText}</div>`).join('')}</details>`;
+  const providerMetaBadge = view.statusKind === 'degraded' ? '<span class="music-badge" title="The backend response did not report the executed provider/model.">execution_metadata_unavailable · info</span>' : '';
+  ui.aiStatusText.innerHTML = `<span class="${view.badge}">${escapeHtml(view.statusKind)}</span> ${escapeHtml(view.headline)} ${escapeHtml(view.details)} ${providerMetaBadge} ${view.providerMetadataHelp ? `<span class="meta" title="${escapeHtml(view.providerMetadataHelp)}">ⓘ</span>` : ''}`;
+  if (ui.aiLastAction) ui.aiLastAction.innerHTML = `<details class="music-diagnostics"><summary>Show diagnostics</summary>${view.diagnosticsRows.map((lineText) => `<div class="meta">${escapeHtml(lineText)}</div>`).join('')}</details>`;
 }
 function setAiAction(text, diagnostics = null) { if (ui.status) ui.status.textContent = text; updateAiStatus(diagnostics || {}); }
 

@@ -54,6 +54,38 @@ test('queryStephanosAI posts messages through Stephanos /api/ai/chat route', asy
   assert.equal(result.success, true);
 });
 
+test('queryStephanosAI carries canonical routing and fallback policy', async () => {
+  let payload;
+  const fetchImpl = async (_url, options) => {
+    payload = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 200,
+      async text() { return JSON.stringify({ success: true, output_text: 'ok' }); },
+    };
+  };
+
+  await queryStephanosAI({
+    provider: 'groq',
+    routeMode: 'cloud-first',
+    fallbackEnabled: true,
+    fallbackOrder: ['gemini', 'ollama'],
+    providerConfigs: {
+      groq: { model: 'openai/gpt-oss-20b' },
+      gemini: { model: 'gemini-2.5-flash' },
+    },
+    messages: [{ role: 'user', content: 'route this' }],
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    fetchImpl,
+  });
+
+  assert.equal(payload.provider, 'groq');
+  assert.equal(payload.routeMode, 'cloud-first');
+  assert.equal(payload.fallbackEnabled, true);
+  assert.deepEqual(payload.fallbackOrder, ['gemini', 'ollama']);
+  assert.equal(payload.providerConfigs.gemini.model, 'gemini-2.5-flash');
+});
+
 test('queryStephanosAI throws cleanly on backend failures', async () => {
   const fetchImpl = async () => ({
     ok: false,

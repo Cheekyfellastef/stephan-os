@@ -174,7 +174,17 @@ function resolveUiRequestTimeoutMs({
   return baselineUiTimeoutMs;
 }
 
-function buildChatPayload({ provider = 'ollama', messages = [], context = {}, model = '', runtimeContext = {} } = {}) {
+function buildChatPayload({
+  provider = 'ollama',
+  messages = [],
+  context = {},
+  model = '',
+  routeMode = 'auto',
+  fallbackEnabled = true,
+  fallbackOrder = undefined,
+  providerConfigs = undefined,
+  runtimeContext = {},
+} = {}) {
   const prompt = resolvePromptFromMessages(messages);
   if (!prompt) {
     throw new Error('Stephanos AI request requires at least one non-empty message content value.');
@@ -182,13 +192,26 @@ function buildChatPayload({ provider = 'ollama', messages = [], context = {}, mo
 
   const normalizedProvider = safeString(provider) || 'ollama';
   const normalizedModel = safeString(model);
-  const providerConfig = normalizedModel ? { model: normalizedModel } : {};
+  const runtimeProviderConfigs = resolveRuntimeProviderConfigs(runtimeContext);
+  const suppliedProviderConfigs = providerConfigs && typeof providerConfigs === 'object'
+    ? providerConfigs
+    : runtimeProviderConfigs;
+  const savedProviderConfig = asObject(suppliedProviderConfigs?.[normalizedProvider]);
+  const providerConfig = normalizedModel
+    ? { ...savedProviderConfig, model: normalizedModel }
+    : savedProviderConfig;
 
   return {
     prompt,
     provider: normalizedProvider,
+    routeMode: safeString(routeMode) || 'auto',
+    fallbackEnabled: fallbackEnabled !== false,
+    ...(Array.isArray(fallbackOrder) ? { fallbackOrder } : {}),
     providerConfig,
-    providerConfigs: normalizedModel ? { [normalizedProvider]: providerConfig } : {},
+    providerConfigs: {
+      ...suppliedProviderConfigs,
+      [normalizedProvider]: providerConfig,
+    },
     runtimeContext: {
       ...runtimeContext,
       frontendOrigin: safeString(runtimeContext.frontendOrigin)
@@ -205,10 +228,24 @@ export async function queryStephanosAI({
   messages = [],
   context = {},
   model = '',
+  routeMode = 'auto',
+  fallbackEnabled = true,
+  fallbackOrder = undefined,
+  providerConfigs = undefined,
   runtimeContext = {},
   fetchImpl = globalThis.fetch,
 } = {}) {
-  const payload = buildChatPayload({ provider, messages, context, model, runtimeContext });
+  const payload = buildChatPayload({
+    provider,
+    messages,
+    context,
+    model,
+    routeMode,
+    fallbackEnabled,
+    fallbackOrder,
+    providerConfigs,
+    runtimeContext,
+  });
   const timeoutMs = resolveUiRequestTimeoutMs({ provider, model, runtimeContext });
   const response = await requestStephanosBackend({
     path: '/api/ai/chat',

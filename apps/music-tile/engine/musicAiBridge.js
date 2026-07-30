@@ -18,6 +18,37 @@ function aiRouteContext() {
   };
 }
 
+function firstValue(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== '');
+}
+
+function musicAiRouterSettings() {
+  const status = parentRuntimeStatus() || {};
+  const runtimeContext = status.runtimeContext || {};
+  const runtimeTruth = status.runtimeTruth || {};
+  const finalRouteTruth = status.finalRouteTruth || {};
+  const preferences = firstValue(
+    status.providerPreferences,
+    runtimeContext.providerPreferences,
+    runtimeTruth.providerPreferences,
+    {},
+  );
+  const provider = String(firstValue(
+    preferences.provider,
+    finalRouteTruth.requestedProvider,
+    finalRouteTruth.selectedProvider,
+    status.provider,
+    'ollama',
+  )).toLowerCase();
+  return {
+    provider,
+    routeMode: String(firstValue(preferences.routeMode, finalRouteTruth.requestedRouteMode, status.routeMode, 'auto')),
+    fallbackEnabled: firstValue(preferences.fallbackEnabled, status.fallbackEnabled, true) !== false,
+    fallbackOrder: firstValue(preferences.fallbackOrder, status.fallbackOrder, undefined),
+    providerConfigs: firstValue(preferences.providerConfigs, runtimeContext.providerConfigs, runtimeTruth.providerConfigs, undefined),
+  };
+}
+
 export function getMusicAiStatus() {
   const status = parentRuntimeStatus();
   const finalRouteTruth = status?.finalRouteTruth || {};
@@ -112,21 +143,61 @@ export function parseAiJsonResponse(text = '') {
   return { parsed: null, mode: 'text-fallback' };
 }
 
+export function normalizeMusicAiResponse(response = {}) {
+  const data = response?.data && typeof response.data === 'object' ? response.data : {};
+  const execution = data.execution_metadata && typeof data.execution_metadata === 'object'
+    ? data.execution_metadata
+    : {};
+  const text = String(response?.output_text || data.reply || response?.reply || response?.text || '').trim();
+  return {
+    text,
+    requestedProvider: String(firstValue(execution.requested_provider, data.requested_provider, 'unknown')),
+    selectedProvider: String(firstValue(execution.selected_provider, data.selected_provider, 'unknown')),
+    actualProvider: String(firstValue(execution.actual_provider_used, data.actual_provider_used, 'unknown')),
+    actualModel: String(firstValue(execution.model_used, data.model_used, 'unknown')),
+    fallbackUsed: firstValue(execution.fallback_used, data.fallback_used, false) === true,
+    fallbackReason: String(firstValue(execution.fallback_reason, data.fallback_reason, 'none')),
+  };
+}
+
 export async function askMusicAi(task, payload = {}) {
   const allowLiveVerification = payload.allowLiveVerification === true;
   const tasteDNA = payload.tasteDNA || null;
   const context = aiRouteContext();
-  const status = getMusicAiStatus();
+  const routerSettings = musicAiRouterSettings();
   const diagnostics = getMusicAiRuntimeDiagnostics();
   try {
     const response = await queryStephanosAI({
-    messages: [{ role: 'user', content: `Task: ${task}\n${payload.promptInstructions || 'Return strict JSON only.'}\nPayload:\n${JSON.stringify(payload, null, 2)}` }],
-    context: { tile: 'music-tile', task, allowLiveVerification, tasteDNA, ...payload },
-    runtimeContext: context,
-  });
-    const text = String(response?.data?.reply || response?.reply || response?.text || '').trim();
+      provider: routerSettings.provider,
+      routeMode: routerSettings.routeMode,
+      fallbackEnabled: routerSettings.fallbackEnabled,
+      fallbackOrder: routerSettings.fallbackOrder,
+      providerConfigs: routerSettings.providerConfigs,
+      messages: [{ role: 'user', content: `Task: ${task}\n${payload.promptInstructions || 'Return strict JSON only.'}\nPayload:\n${JSON.stringify(payload, null, 2)}` }],
+      context: { tile: 'music-tile', task, allowLiveVerification, tasteDNA, ...payload },
+      runtimeContext: context,
+    });
+    const normalized = normalizeMusicAiResponse(response);
+    const text = normalized.text;
     const parsedResponse = parseAiJsonResponse(text);
-    return { ok: true, parsed: parsedResponse.parsed, text, diagnostics: { ...diagnostics, requestReachedBackend: true, backendResponded: true, responseKind: parsedResponse.mode, lastStatus: 200 } };
+    return {
+      ok: true,
+      parsed: parsedResponse.parsed,
+      text,
+      diagnostics: {
+        ...diagnostics,
+        requestReachedBackend: true,
+        backendResponded: true,
+        responseKind: parsedResponse.mode,
+        lastStatus: 200,
+        requestedProvider: normalized.requestedProvider,
+        selectedProvider: normalized.selectedProvider,
+        actualProvider: normalized.actualProvider,
+        actualModel: normalized.actualModel,
+        fallbackUsed: normalized.fallbackUsed,
+        fallbackReason: normalized.fallbackReason,
+      },
+    };
   } catch (error) {
     return { ok: false, message: classifyAiFailure(error), error: String(error?.message || 'Unknown AI error'), diagnostics: { ...diagnostics, requestReachedBackend: error?.status ? true : false, backendResponded: Boolean(error?.status), lastStatus: Number(error?.status || 0), lastError: String(error?.message || 'Unknown AI error') } };
   }
@@ -136,11 +207,15 @@ export async function askMusicAi(task, payload = {}) {
 
 export async function testMusicAiRoute({ fetchImpl = globalThis.fetch } = {}) {
   const diagnostics = getMusicAiRuntimeDiagnostics();
+  const routerSettings = musicAiRouterSettings();
   const payload = {
     prompt: 'Reply with: MUSIC_AI_ROUTE_OK',
-    provider: diagnostics.provider === 'unknown' ? 'ollama' : diagnostics.provider,
-    providerConfig: {},
-    providerConfigs: {},
+    provider: routerSettings.provider,
+    routeMode: routerSettings.routeMode,
+    fallbackEnabled: routerSettings.fallbackEnabled,
+    ...(Array.isArray(routerSettings.fallbackOrder) ? { fallbackOrder: routerSettings.fallbackOrder } : {}),
+    providerConfig: routerSettings.providerConfigs?.[routerSettings.provider] || {},
+    providerConfigs: routerSettings.providerConfigs || {},
     runtimeContext: { ...aiRouteContext(), tileContext: { tile: 'music-tile', task: 'echo-test' } },
   };
   try {
@@ -152,8 +227,9 @@ export async function testMusicAiRoute({ fetchImpl = globalThis.fetch } = {}) {
     const text = await res.text();
     const snippet = String(text || '').slice(0, 180);
     let parsedText = '';
-    try { const parsed = JSON.parse(text); parsedText = String(parsed?.reply || parsed?.text || parsed?.data?.reply || ''); } catch {}
-    return { ok: res.ok, status: res.status, snippet, parsedText, requestUrl: diagnostics.endpointUrl, method: 'POST', failureReason: res.ok ? '' : classifyAiFailure({ status: res.status }), diagnostics: { ...diagnostics, lastStatus: res.status, backendResponded: true, requestReachedBackend: true, responseKind: 'http-response' } };
+    let normalized = normalizeMusicAiResponse({});
+    try { normalized = normalizeMusicAiResponse(JSON.parse(text)); parsedText = normalized.text; } catch {}
+    return { ok: res.ok, status: res.status, snippet, parsedText, requestUrl: diagnostics.endpointUrl, method: 'POST', failureReason: res.ok ? '' : classifyAiFailure({ status: res.status }), diagnostics: { ...diagnostics, lastStatus: res.status, backendResponded: true, requestReachedBackend: true, responseKind: 'http-response', requestedProvider: normalized.requestedProvider, selectedProvider: normalized.selectedProvider, actualProvider: normalized.actualProvider, actualModel: normalized.actualModel, fallbackUsed: normalized.fallbackUsed, fallbackReason: normalized.fallbackReason } };
   } catch (error) {
     return { ok: false, status: 0, snippet: String(error?.message || 'fetch failed'), parsedText: '', requestUrl: diagnostics.endpointUrl, method: 'POST', failureReason: classifyAiFailure(error), diagnostics: { ...diagnostics, lastStatus: 0, backendResponded: false, requestReachedBackend: false, responseKind: 'network-failure', lastError: String(error?.message || 'fetch failed') } };
   }
