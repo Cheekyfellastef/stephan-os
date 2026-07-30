@@ -131,6 +131,7 @@ test('standalone Goal Dashboard renders live telemetry from approved endpoint', 
             status: 'RUNNING',
             sourceTruth: 'READ-ONLY RECEIPT',
             observedAt: '2026-07-30T10:00:00.000Z',
+            lastUpdatedAt: '2026-07-30T09:59:00.000Z',
             currentOwner: 'Codex',
             nextOwner: 'Operator',
             operatorNeeded: 'No',
@@ -563,6 +564,7 @@ test('approved telemetry rejects source-inconsistent counters and malformed nest
   };
   const malformedFeeds = [
     { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, sourceTruth: 'READ-ONLY RECEIPT' })) } },
+    { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, sourceTruth: 'READ-ONLY RECEIPTS', activePrCount: 0, cards: validFeed.dashboardGoals.cards.map((card) => ({ ...card, sourceTruth: 'READ-ONLY RECEIPT', lastUpdatedAt: undefined, linkedPr: undefined })) } },
     { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, readyCount: 0 } },
     { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, activePrCount: 0 } },
     { ...validFeed, dashboardGoals: { ...validFeed.dashboardGoals, activePrCount: 50 } },
