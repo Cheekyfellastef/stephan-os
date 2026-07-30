@@ -99,6 +99,7 @@ test('standalone Goal Dashboard renders live telemetry from approved endpoint', 
       return { ok: true, json: async () => ({
         schemaVersion: 'stephanos.live-goal-projection.v1',
         sourceTruth: 'live',
+        generatedAt: '2026-07-30T10:00:00.000Z',
         nextOperatorAction: 'Continue one active proof lane.',
         currentAgentStates: { github: { state: 'adapter-provided' }, stephanos: { state: 'backend_reachable' } },
         proofTruth: { local: 'unknown' },
@@ -108,6 +109,33 @@ test('standalone Goal Dashboard renders live telemetry from approved endpoint', 
         activeProofLane: [{ candidateId: 'bc-goal-live' }],
         blockedCandidates: [{ candidateId: 'bc-goal-blocked' }],
         completedCandidates: [{ candidateId: 'bc-goal-done' }],
+        dashboardGoals: {
+          schemaVersion: 'stephanos.live-dashboard-goals.v1',
+          sourceTruth: 'READ-ONLY RECEIPTS',
+          freshnessVerdict: 'RECEIPT_TIMESTAMPS_VISIBLE',
+          observedAt: '2026-07-30T10:00:00.000Z',
+          totalAvailable: 1,
+          displayedCount: 1,
+          activePrCount: 0,
+          blockedCount: 0,
+          readyCount: 0,
+          operatorAttentionCount: 0,
+          nextAction: 'Inspect proof.',
+          cards: [{
+            issue: 'mission-live',
+            title: '<script>alert(1)</script>',
+            status: 'RUNNING',
+            sourceTruth: 'READ-ONLY RECEIPT',
+            observedAt: '2026-07-30T10:00:00.000Z',
+            currentOwner: 'Codex',
+            nextOwner: 'Operator',
+            operatorNeeded: 'No',
+            handoffState: 'proof',
+            milestone: 'RECEIPT_BACKED_GOAL',
+            proofIndex: 1,
+            nextAction: 'Inspect proof.',
+          }],
+        },
       }) };
     },
   });
@@ -126,7 +154,7 @@ test('standalone Goal Dashboard renders live telemetry from approved endpoint', 
   assert.match(telemetry.get('build-concierge-v9-execution-engine').textContent, /classified 1/);
   assert.match(telemetry.get('build-concierge-v9-enriched-candidates').textContent, /ui_surface_goal/);
   assert.equal(telemetry.get('next-operator-action').textContent, 'Continue one active proof lane.');
-  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-backend');
+  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-receipts');
   assert.match(script, /function escapeHtml/);
   assert.match(script, /escapeHtml\(goal\.title\)/);
 });
@@ -178,6 +206,7 @@ test('standalone Goal Dashboard prefers canonical live GitHub goal cards and ren
       proofTruth: { local: 'unknown' },
       githubTelemetry: { status: 'live', pullRequestCount: 1, workflowCounts: { passed: 1 } },
       dashboardGoals: {
+        schemaVersion: 'stephanos.live-dashboard-goals.v1',
         sourceTruth: 'LIVE READ-ONLY GITHUB',
         freshnessVerdict: 'CURRENT_AT_REQUEST',
         observedAt: '2026-07-30T10:00:00.000Z',
@@ -468,6 +497,30 @@ test('a rejected telemetry schema marks the retained live projection stale', asy
   assert.equal(telemetry.get('source-badge').textContent, 'STALE');
   assert.equal(telemetry.get('hero-truth-source').textContent, 'STALE LAST KNOWN');
   assert.match(telemetry.get('goals-context').textContent, /do not treat as current/);
+});
+
+test('a supported telemetry schema with a malformed nested dashboard envelope is rejected', async () => {
+  const malformedFeeds = [
+    { schemaVersion: 'stephanos.live-goal-projection.v1', sourceTruth: 'live', generatedAt: '2026-07-30T10:00:00.000Z' },
+    { schemaVersion: 'stephanos.live-goal-projection.v1', sourceTruth: 'live', generatedAt: '2026-07-30T10:00:00.000Z', dashboardGoals: { schemaVersion: 'stephanos.live-dashboard-goals.v1', sourceTruth: 'LIVE READ-ONLY GITHUB', freshnessVerdict: 'CURRENT_AT_REQUEST', observedAt: '2026-07-30T10:00:00.000Z', totalAvailable: 0, displayedCount: 0, activePrCount: 0, blockedCount: 0, readyCount: 0, operatorAttentionCount: 0, nextAction: 'No current goal records.', cards: {} } },
+    { schemaVersion: 'stephanos.live-goal-projection.v1', sourceTruth: 'live', generatedAt: '2026-07-30T10:00:00.000Z', dashboardGoals: { schemaVersion: 'stephanos.live-dashboard-goals.v1', sourceTruth: 'LIVE READ-ONLY GITHUB', freshnessVerdict: 'CURRENT_AT_REQUEST', observedAt: '2026-07-30T10:00:00.000Z', totalAvailable: 1, displayedCount: 1, activePrCount: 1, blockedCount: 0, readyCount: 0, operatorAttentionCount: 0, nextAction: 'Inspect malformed card.', cards: [{ issue: '#1627', title: 'Malformed card' }] } },
+  ];
+  for (const feed of malformedFeeds) {
+    const { telemetry, context } = runDashboard({ fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
+    await new Promise((resolve) => setImmediate(resolve));
+    context.renderLiveMissionOperationsTelemetry({
+      schemaVersion: 'stephanos.live-goal-projection.v1',
+      sourceTruth: 'live',
+      dashboardGoals: {
+        sourceTruth: 'LIVE READ-ONLY GITHUB',
+        observedAt: '2026-07-30T10:00:00.000Z',
+        cards: [{ issue: '#1627', title: 'Current goal', status: 'VERIFYING', currentOwner: 'CI', nextOwner: 'Review', operatorNeeded: 'No', handoffState: 'checks', milestone: 'HEAD', proofIndex: 3, nextAction: 'Wait.' }],
+      },
+    });
+    assert.equal(telemetry.get('source-badge').textContent, 'LIVE');
+    assert.equal(context.renderApprovedLiveTelemetryOrMarkFailed(feed), false);
+    assert.equal(telemetry.get('source-badge').textContent, 'STALE');
+  }
 });
 
 test('standalone Goal Dashboard does not claim live proof without backend data and gates non-local fetches', async () => {
