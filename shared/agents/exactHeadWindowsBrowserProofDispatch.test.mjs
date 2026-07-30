@@ -19,6 +19,11 @@ test('builds one approved read-only exact-head Windows proof packet', () => {
   assert.match(packet.prompt, /strictly identical/);
   assert.match(packet.prompt, /EXPECTED_HEAD_MISMATCH/);
   assert.deepEqual(packet.requestedProofCommands, ['git rev-parse HEAD', 'npm run stephanos:browser-proof']);
+  assert.deepEqual(packet.exactHeadProof, {
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: command.prNumber,
+    expectedHead: command.expectedHead,
+  });
 });
 
 test('fails closed away from Windows', async () => {
