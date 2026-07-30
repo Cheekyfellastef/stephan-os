@@ -1,7 +1,7 @@
 import { providerSecretStore } from './providerSecretStore.js';
 import { resolveGithubRepoConfig } from './githubPrEvidenceService.js';
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
-import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../../shared/agents/operatorMergeApprovalGate.mjs';
+import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
 
 export const GITHUB_TELEMETRY_SCHEMA = 'stephanos.github.telemetry.v1';
 const WORKFLOW_STATES = new Set(['running', 'queued', 'failed', 'passed', 'cancelled']);
@@ -198,6 +198,8 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
   const issueInventoryComplete = issueInventoryObserved && raw.issueInventoryComplete === true;
   const pullRequestInventoryObserved = Array.isArray(raw.pullRequests || raw.prs);
   const pullRequestInventoryComplete = pullRequestInventoryObserved && raw.pullRequestInventoryComplete === true;
+  const workflowInventoryObserved = Array.isArray(raw.workflows || raw.workflowRuns);
+  const workflowInventoryComplete = workflowInventoryObserved && raw.workflowInventoryComplete !== false;
   const notifications = list(raw.notifications).map((notification, index) => ({
     id: text(notification.id, `notification-${index + 1}`),
     title: text(notification.subject?.title || notification.title, 'unknown'),
@@ -297,10 +299,12 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     }))
     .filter((issue) => issue.number !== null);
   const blockers = [];
+  const warnings = [];
   if (!available) blockers.push('github_adapter_unavailable');
   if (available && !issueInventoryComplete) blockers.push('github_issue_inventory_incomplete');
   if (available && !pullRequestInventoryComplete) blockers.push('github_pull_request_inventory_incomplete');
-  if (available && raw.notificationAvailable === false) blockers.push('github_notifications_unavailable');
+  if (available && raw.notificationAvailable === false) warnings.push('github_notifications_unavailable');
+  if (available && raw.workflowInventoryComplete === false) warnings.push('github_workflow_inventory_incomplete');
   return {
     schemaVersion: GITHUB_TELEMETRY_SCHEMA,
     adapterAvailable: available,
@@ -320,9 +324,12 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     issueInventoryComplete,
     pullRequestInventoryObserved,
     pullRequestInventoryComplete,
+    workflowInventoryObserved,
+    workflowInventoryComplete,
     workflows,
     workflowCounts: countBy(workflows, 'status'),
     blockers,
+    warnings,
     nextOperatorAction: available && issueInventoryComplete && pullRequestInventoryComplete
       ? 'Review actionable GitHub notifications, blocked PRs, and failed workflows before merge decisions.'
       : (available ? 'Restore complete GitHub issue and pull-request inventories before treating the dashboard as current truth.' : 'Configure the read-only GitHub adapter/token; GitHub truth remains unavailable.'),
@@ -357,14 +364,14 @@ async function githubPaginatedWorkflowRuns(url, auth, fetchImpl = fetch) {
     const payload = await githubJson(requestUrl.href, auth, fetchImpl);
     if (!Array.isArray(payload?.workflow_runs)) throw new Error('GitHub workflow inventory response was not an array');
     runs.push(...payload.workflow_runs);
-    if (payload.workflow_runs.length < GITHUB_PAGE_SIZE) return runs;
+    if (payload.workflow_runs.length < GITHUB_PAGE_SIZE) return { runs, complete: true };
   }
-  throw new Error(`GitHub workflow inventory exceeded ${MAX_GITHUB_PAGES} pages`);
+  return { runs, complete: false };
 }
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
   const { owner, repo } = repoConfig;
   const fetchImpl = options.fetchImpl || fetch;
-  const [notificationResult, prs, issues, workflowRuns, repositoryMetadata] = await Promise.all([
+  const [notificationResult, prs, issues, workflowInventory, repositoryMetadata] = await Promise.all([
     githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl)
       .then((notifications) => ({ available: true, notifications }))
       .catch(() => ({ available: false, notifications: [] })),
@@ -384,7 +391,8 @@ async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
     pullRequestInventoryComplete: true,
     issues,
     issueInventoryComplete: true,
-    workflows: workflowRuns,
+    workflows: workflowInventory.runs,
+    workflowInventoryComplete: workflowInventory.complete,
   }, options);
 }
 export async function readGithubTelemetry(options = {}) {
