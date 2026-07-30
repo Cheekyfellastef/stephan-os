@@ -63,10 +63,54 @@ function prProofIndex(pr = {}) {
 function operatorNeededForPr(pr = {}) {
   return false;
 }
+function projectedPr(pr = {}) {
+  return Object.freeze({
+    number: pr.number,
+    url: pr.url,
+    branch: pr.branch,
+    headSha: pr.headSha,
+    draft: pr.draft,
+    checksStatus: pr.checksStatus,
+    approvalStatus: pr.approvalStatus,
+    mergeReadiness: pr.mergeReadiness,
+    supersededStatus: pr.supersededStatus,
+  });
+}
+function activeLinkedPullRequests(linkedPullRequests = []) {
+  return [...linkedPullRequests]
+    .filter((pr) => normalizedStatus(pr.supersededStatus) !== 'superseded')
+    .sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt));
+}
+function linkedPrAggregate(linkedPullRequests = []) {
+  const prs = activeLinkedPullRequests(linkedPullRequests);
+  if (!prs.length) return Object.freeze({ prs, representative: null, status: 'QUEUED · NO ACTIVE PR', checks: 'unknown', review: 'unknown' });
+  const byChecks = (state) => prs.filter((pr) => normalizedStatus(pr.checksStatus) === state);
+  const failed = byChecks('failed');
+  if (failed.length) return Object.freeze({ prs, representative: failed[0], status: 'BLOCKED', checks: 'failed', review: 'unknown' });
+  const pending = byChecks('pending');
+  if (pending.length) return Object.freeze({ prs, representative: pending[0], status: 'VERIFYING', checks: 'pending', review: 'unknown' });
+  const unknown = prs.filter((pr) => normalizedStatus(pr.checksStatus) !== 'passed');
+  if (unknown.length) return Object.freeze({ prs, representative: unknown[0], status: 'PR OPEN · PROOF UNKNOWN', checks: 'unknown', review: 'unknown' });
+  const drafts = prs.filter((pr) => pr.draft === true);
+  if (drafts.length) return Object.freeze({ prs, representative: drafts[0], status: 'BUILDING', checks: 'passed', review: 'unknown' });
+  const allApproved = prs.every((pr) => normalizedStatus(pr.approvalStatus) === 'approved');
+  return Object.freeze({
+    prs,
+    representative: prs[0],
+    status: allApproved ? 'REVIEW PASSED · RUNTIME PROOF UNKNOWN' : 'READY FOR REVIEW',
+    checks: 'passed',
+    review: allApproved ? 'approved' : 'unknown',
+  });
+}
 function issueGoalCard(issue, linkedPullRequests = [], observedAt) {
-  const linkedPr = [...linkedPullRequests].sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt))[0] || null;
-  const status = linkedPr ? prStatus(linkedPr) : 'QUEUED · NO ACTIVE PR';
+  const aggregate = linkedPrAggregate(linkedPullRequests);
+  const linkedPr = aggregate.representative;
+  const linkedPrNumbers = aggregate.prs.map((pr) => `#${pr.number}`).join(', ');
+  const status = aggregate.status;
   const operatorNeeded = linkedPr ? operatorNeededForPr(linkedPr) : false;
+  const nextAction = linkedPr
+    ? `${aggregate.prs.length > 1 ? `Reconcile every unsuperseded linked PR (${linkedPrNumbers}); ` : ''}${prNextAction(linkedPr)}`
+    : 'Select this durable goal through the canonical scheduler before starting a build lane.';
   return Object.freeze({
     issue: `#${issue.number}`,
     issueNumber: issue.number,
@@ -81,28 +125,20 @@ function issueGoalCard(issue, linkedPullRequests = [], observedAt) {
     labels: list(issue.labels),
     currentOwner: linkedPr ? (operatorNeeded ? 'Operator' : 'Codex / review lane') : 'Programme queue',
     nextOwner: linkedPr ? (operatorNeeded ? 'Guarded merge lane' : 'Independent reviewer') : 'Bounded construction lane',
-    handoffState: linkedPr ? `issue #${issue.number} → PR #${linkedPr.number} → ${linkedPr.checksStatus || 'checks unknown'}` : `issue #${issue.number} → no active PR`,
-    milestone: linkedPr ? `PR #${linkedPr.number} · ${linkedPr.headSha ? linkedPr.headSha.slice(0, 10) : 'HEAD UNKNOWN'}` : 'DURABLE GOAL RECORDED',
+    handoffState: linkedPr ? `issue #${issue.number} → PR${aggregate.prs.length > 1 ? 's' : ''} ${linkedPrNumbers} → ${aggregate.checks}` : `issue #${issue.number} → no active PR`,
+    milestone: linkedPr ? (aggregate.prs.length > 1 ? `${aggregate.prs.length} UNSUPERSEDED PRS · CONSERVATIVE PROOF` : `PR #${linkedPr.number} · ${linkedPr.headSha ? linkedPr.headSha.slice(0, 10) : 'HEAD UNKNOWN'}`) : 'DURABLE GOAL RECORDED',
     operatorNeeded: operatorNeeded ? 'Yes · exact-head decision' : 'No',
-    proofIndex: linkedPr ? prProofIndex(linkedPr) : 1,
-    nextAction: linkedPr ? prNextAction(linkedPr) : 'Select this durable goal through the canonical scheduler before starting a build lane.',
+    proofIndex: linkedPr ? Math.min(...aggregate.prs.map((pr) => prProofIndex(pr))) : 1,
+    nextAction,
     proofTruth: {
       github: 'CURRENT',
-      checks: linkedPr?.checksStatus || 'unknown',
-      review: linkedPr?.approvalStatus || 'unknown',
+      checks: aggregate.checks,
+      review: aggregate.review,
       runtime: 'unknown',
       browser: 'unknown',
     },
-    linkedPr: linkedPr ? {
-      number: linkedPr.number,
-      url: linkedPr.url,
-      branch: linkedPr.branch,
-      headSha: linkedPr.headSha,
-      draft: linkedPr.draft,
-      checksStatus: linkedPr.checksStatus,
-      approvalStatus: linkedPr.approvalStatus,
-      mergeReadiness: linkedPr.mergeReadiness,
-    } : null,
+    linkedPr: linkedPr ? projectedPr(linkedPr) : null,
+    linkedPullRequests: aggregate.prs.map(projectedPr),
   });
 }
 function receiptGoalCard(candidate = {}, observedAt) {
@@ -206,7 +242,7 @@ export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, miss
       observedAt,
       totalAvailable: rankedCards.length,
       displayedCount: cards.length,
-      activePrCount: new Set(cards.map((card) => card.linkedPr?.number).filter(Boolean)).size,
+      activePrCount: new Set(cards.flatMap((card) => list(card.linkedPullRequests).map((pr) => pr.number))).size,
       blockedCount: cards.filter((card) => card.status.startsWith('BLOCKED')).length,
       readyCount: cards.filter((card) => card.status.startsWith('READY')).length,
       operatorAttentionCount: operatorAttention.length,
