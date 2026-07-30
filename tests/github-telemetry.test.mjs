@@ -511,6 +511,56 @@ test('GitHub telemetry reports authority=gh-cli when fallback succeeds', async (
   assert.equal(telemetry.mergeAllowed, false);
 });
 
+test('notification permission failure degrades advisory counts without discarding repository truth', async () => {
+  const telemetry = await readGithubTelemetry({
+    env: { GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'repo-token' },
+    secretStoreToken: '',
+    fetchImpl: async (url) => {
+      if (url.includes('/notifications')) return forbidden();
+      if (url.includes('/pulls?')) return okJson([]);
+      if (url.includes('/issues?')) return okJson([{ number: 1, title: 'Current goal', state: 'open' }]);
+      if (url.includes('/actions/runs')) return okJson({ workflow_runs: [] });
+      if (/\/repos\/owner\/repo(?:\?|$)/.test(url)) return okJson({ default_branch: 'main' });
+      return okJson({});
+    },
+  });
+  assert.equal(telemetry.status, 'live');
+  assert.equal(telemetry.issueInventoryComplete, true);
+  assert.equal(telemetry.issueCount, 1);
+  assert.equal(telemetry.notificationStatus, 'unavailable');
+  assert.equal(telemetry.blockers.includes('github_notifications_unavailable'), true);
+});
+
+test('GitHub telemetry paginates workflow runs beyond the first page', async () => {
+  const calls = [];
+  const firstPage = Array.from({ length: 100 }, (_, index) => ({
+    id: index + 1,
+    name: `Historical workflow ${index + 1}`,
+    status: 'completed',
+    conclusion: 'success',
+    head_sha: 'a'.repeat(40),
+  }));
+  const telemetry = await readGithubTelemetry({
+    env: { GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'repo-token' },
+    secretStoreToken: '',
+    fetchImpl: async (url) => {
+      calls.push(url);
+      const parsed = new URL(url);
+      if (url.includes('/notifications')) return okJson([]);
+      if (url.includes('/pulls?')) return okJson([]);
+      if (url.includes('/issues?')) return okJson([]);
+      if (url.includes('/actions/runs') && parsed.searchParams.get('page') === '1') return okJson({ workflow_runs: firstPage });
+      if (url.includes('/actions/runs') && parsed.searchParams.get('page') === '2') {
+        return okJson({ workflow_runs: [{ id: 101, name: 'Older exact-head workflow', status: 'completed', conclusion: 'success', head_sha: 'b'.repeat(40) }] });
+      }
+      if (/\/repos\/owner\/repo(?:\?|$)/.test(url)) return okJson({ default_branch: 'main' });
+      return okJson({});
+    },
+  });
+  assert.equal(telemetry.workflows.length, 101);
+  assert.equal(calls.some((url) => url.includes('/actions/runs') && url.includes('page=2')), true);
+});
+
 test('GitHub telemetry paginates open issue inventory to exhaustion before claiming completeness', async () => {
   const calls = [];
   const firstPage = Array.from({ length: 100 }, (_, index) => ({ number: index + 1, title: `Goal ${index + 1}`, state: 'open' }));
