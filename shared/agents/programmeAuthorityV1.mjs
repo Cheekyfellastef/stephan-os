@@ -446,13 +446,39 @@ export function renewSourceMutationLeaseRecord(record = {}, input = {}) {
     });
   }
   const nowMs = timestamp(input.nowUtc);
+  const acquiredAtMs = timestamp(record.acquiredAtUtc);
+  const maximumExpiryMs = acquiredAtMs + MAX_SOURCE_MUTATION_LEASE_MS;
+  const requestedExpiryMs = nowMs + boundedLeaseDuration(input.durationMs);
+  const expiresAtMs = Math.min(requestedExpiryMs, maximumExpiryMs);
+  if (expiresAtMs <= nowMs) {
+    return freeze({
+      ok: false,
+      reason: 'SOURCE_MUTATION_LEASE_MAXIMUM_LIFETIME_REACHED',
+      validation,
+      record: null,
+    });
+  }
   const renewed = createSourceMutationLeaseRecord({
     ...record,
     acquiredAtUtc: record.acquiredAtUtc,
     renewedAtUtc: input.nowUtc,
-    expiresAtUtc: new Date(nowMs + boundedLeaseDuration(input.durationMs)).toISOString(),
+    expiresAtUtc: new Date(expiresAtMs).toISOString(),
   });
-  return freeze({ ok: true, reason: 'SOURCE_MUTATION_LEASE_RENEWED', validation, record: renewed });
+  const renewedValidation = validateSourceMutationLease(renewed, {
+    nowUtc: input.nowUtc,
+    expected: expected.identity,
+  });
+  if (!renewedValidation.valid || !renewedValidation.active) {
+    return freeze({
+      ok: false,
+      reason: renewedValidation.valid
+        ? 'SOURCE_MUTATION_LEASE_RENEWAL_NOT_ACTIVE'
+        : renewedValidation.errors[0],
+      validation: renewedValidation,
+      record: null,
+    });
+  }
+  return freeze({ ok: true, reason: 'SOURCE_MUTATION_LEASE_RENEWED', validation: renewedValidation, record: renewed });
 }
 
 export function validateExecutionReceiptAgainstMutationLease(receipt, lease, options = {}) {
@@ -698,6 +724,9 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   }
   if (lane?.terminal && !TERMINAL_LANE_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
     blockers.push('controller-heartbeat-cycle-state-does-not-authorize-terminal-reconciliation');
+  }
+  if (lane?.terminal && controllerHeartbeat?.activeLaneId !== lane.laneId) {
+    blockers.push('controller-heartbeat-terminal-lane-mismatch');
   }
   const workerHeartbeat = input.workerHeartbeatProjection;
   if (!workerHeartbeat?.valid || !workerHeartbeat?.fresh) {
