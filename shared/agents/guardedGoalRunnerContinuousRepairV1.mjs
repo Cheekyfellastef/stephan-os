@@ -82,6 +82,18 @@ function result(status, last, history) {
   });
 }
 
+async function persistOutcome(persist, receipt, context) {
+  try {
+    const response = await persist(receipt, context);
+    return {
+      ok:response?.ok === true,
+      reason:text(response?.reason) ?? (response?.ok === true ? null : 'PERSISTENCE_NOT_AFFIRMED'),
+    };
+  } catch (error) {
+    return { ok:false, reason:text(error?.message) ?? 'PERSISTENCE_FAILED' };
+  }
+}
+
 function snapshotValid(snapshot) {
   return snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot);
 }
@@ -102,12 +114,59 @@ function historyReceiptMatchesLane(entry, snapshot) {
   );
 }
 
-function pendingVerification(history, snapshot) {
-  return [...history].reverse().find((entry) => (
+function historyValid(history, snapshot) {
+  let predecessorCycleId = null;
+  const cycleIds = new Set();
+  for (const entry of history) {
+    if (!historyReceiptMatchesLane(entry, snapshot)
+      || !Number.isSafeInteger(entry.iteration)
+      || entry.iteration <= 0
+      || !text(entry.verdict)
+      || !Array.isArray(entry.findingIds)
+      || text(entry.predecessorCycleId) !== predecessorCycleId
+      || cycleIds.has(entry.cycleId)) {
+      return false;
+    }
+    const expectedCycleId = cycleId(
+      entry,
+      { verdict:entry.verdict, repairOrder:{ findingIds:entry.findingIds } },
+      entry.iteration,
+      entry.attemptId,
+      predecessorCycleId,
+    );
+    if (entry.cycleId !== expectedCycleId) return false;
+    cycleIds.add(entry.cycleId);
+    predecessorCycleId = entry.cycleId;
+  }
+  return true;
+}
+
+function verificationPurpose(snapshot) {
+  if (snapshot.merged !== true) return 'PRE_MERGE_EXACT_HEAD_CI';
+  if (snapshot.runtimeProofRequired === true) return 'POST_MERGE_RUNTIME';
+  if (snapshot.runtimeProofRequired === false) return 'POST_MERGE_EXACT_HEAD_CI';
+  return 'POST_MERGE_RUNTIME_SCOPE';
+}
+
+function outstandingVerifications(history, snapshot) {
+  const completed = new Set(history.filter((entry) => (
+    entry?.status === 'verification-completed'
+    && text(entry.verificationId)
+    && text(entry.verificationPurpose)
+  )).map((entry) => `${entry.verificationPurpose}:${entry.verificationId}`));
+  return history.filter((entry) => (
     entry?.status === 'verification-requested'
     && entry.verificationAccepted === true
     && sha(entry.headSha) === sha(snapshot.headSha)
     && text(entry.verificationId)
+    && text(entry.verificationPurpose)
+    && !completed.has(`${entry.verificationPurpose}:${entry.verificationId}`)
+  ));
+}
+
+function pendingVerification(history, snapshot, purpose) {
+  return outstandingVerifications(history, snapshot).findLast((entry) => (
+    entry.verificationPurpose === purpose
   )) ?? null;
 }
 
@@ -179,8 +238,10 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
     }, {
       reason:'Durable repair snapshot is missing or malformed.',
     });
-    await persistCycleReceipt(blocked);
-    return result('BLOCKED', blocked, [blocked]);
+    const persisted = await persistOutcome(persistCycleReceipt, blocked);
+    return persisted.ok
+      ? result('BLOCKED', blocked, [blocked])
+      : result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, []);
   }
 
   if (!Array.isArray(historySource) || historyLoadError) {
@@ -191,10 +252,12 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
     }, {
       reason:historyLoadError ? 'Durable cycle history could not be loaded.' : 'Durable cycle history is required.',
     });
-    await persistCycleReceipt(blocked);
-    return result('BLOCKED_HISTORY_UNAVAILABLE', blocked, [blocked]);
+    const persisted = await persistOutcome(persistCycleReceipt, blocked);
+    return persisted.ok
+      ? result('BLOCKED_HISTORY_UNAVAILABLE', blocked, [blocked])
+      : result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, []);
   }
-  if (provisionalHistory.some((entry) => !historyReceiptMatchesLane(entry, snapshot))) {
+  if (!historyValid(provisionalHistory, snapshot)) {
     const verdict = { verdict:'abort-history-invalid', nextAction:'STOP_AND_SURFACE_BLOCKER' };
     const blocked = cycleReceipt(snapshot, verdict, 1, 'blocked-history-invalid', {
       attemptId,
@@ -202,8 +265,10 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
     }, {
       reason:'Durable cycle history is malformed or belongs to another lane.',
     });
-    await persistCycleReceipt(blocked);
-    return result('BLOCKED_HISTORY_INVALID', blocked, [blocked]);
+    const persisted = await persistOutcome(persistCycleReceipt, blocked);
+    return persisted.ok
+      ? result('BLOCKED_HISTORY_INVALID', blocked, [blocked])
+      : result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, []);
   }
 
   const history = provisionalHistory;
@@ -222,7 +287,8 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
         }, {
           reason:'Durable repair snapshot is missing or malformed.',
         });
-        await persistCycleReceipt(blocked);
+        const persisted = await persistOutcome(persistCycleReceipt, blocked);
+        if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
         history.push(blocked);
         return result('BLOCKED', blocked, history);
       }
@@ -233,7 +299,7 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
 
     if (verdict.nextAction === 'PERSIST_CANONICAL_RECEIPT_THEN_ROUTE_WORKER') {
       const count = history.filter((entry) => (
-        entry?.status === 'repair-dispatched'
+        ['repair-dispatched', 'blocked-dispatch-rejected'].includes(entry?.status)
         && sha(entry.headSha) === sha(snapshot.headSha)
       )).length;
       if (count >= maxRepairsPerHead) {
@@ -243,11 +309,29 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
         }, {
           reason:'Automatic repair budget exhausted for this exact head.',
         });
-        await persistCycleReceipt(blocked);
+        const persisted = await persistOutcome(persistCycleReceipt, blocked);
+        if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
         history.push(blocked);
         return result('BLOCKED_REPAIR_BUDGET', blocked, history);
       }
-      await persistExecutionReceipt(verdict.nextReceipt, { snapshot, verdict });
+      const queuedPersistence = await persistOutcome(
+        persistExecutionReceipt,
+        verdict.nextReceipt,
+        { snapshot, verdict },
+      );
+      if (!queuedPersistence.ok) {
+        const blocked = cycleReceipt(snapshot, verdict, iteration, 'blocked-execution-receipt-persistence', {
+          attemptId,
+          previousReceipt:history.at(-1) ?? null,
+        }, {
+          reason:queuedPersistence.reason,
+          dispatchAttempted:false,
+        });
+        const persisted = await persistOutcome(persistCycleReceipt, blocked);
+        if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
+        history.push(blocked);
+        return result('BLOCKED_EXECUTION_RECEIPT_PERSISTENCE', blocked, history);
+      }
       let dispatched;
       let dispatchError = null;
       try {
@@ -258,18 +342,28 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
       if (dispatched?.accepted !== true) {
         const reason = text(dispatched?.reason) ?? text(dispatchError?.message) ?? 'REPAIR_DISPATCH_REJECTED';
         const terminal = terminalDispatchReceipt(verdict.nextReceipt, snapshot, reason);
-        await persistExecutionReceipt(terminal, { snapshot, verdict, terminal:true });
+        const terminalPersistence = await persistOutcome(
+          persistExecutionReceipt,
+          terminal,
+          { snapshot, verdict, terminal:true },
+        );
         const blocked = cycleReceipt(snapshot, verdict, iteration, 'blocked-dispatch-rejected', {
           attemptId,
           previousReceipt:history.at(-1) ?? null,
         }, {
           reason,
           dispatchAccepted:false,
-          terminalExecutionReceiptId:terminal.receiptId,
+          terminalExecutionReceiptId:terminalPersistence.ok ? terminal.receiptId : null,
+          terminalExecutionPersisted:terminalPersistence.ok,
         });
-        await persistCycleReceipt(blocked);
+        const persisted = await persistOutcome(persistCycleReceipt, blocked);
+        if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
         history.push(blocked);
-        return result('BLOCKED_DISPATCH_REJECTED', blocked, history);
+        return result(
+          terminalPersistence.ok ? 'BLOCKED_DISPATCH_REJECTED' : 'BLOCKED_EXECUTION_RECEIPT_PERSISTENCE',
+          blocked,
+          history,
+        );
       }
       const dispatchedReceipt = cycleReceipt(snapshot, verdict, iteration, 'repair-dispatched', {
         attemptId,
@@ -278,7 +372,8 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
         dispatchAccepted:true,
         workerTaskId:text(dispatched.workerTaskId),
       });
-      await persistCycleReceipt(dispatchedReceipt);
+      const persisted = await persistOutcome(persistCycleReceipt, dispatchedReceipt);
+      if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
       history.push(dispatchedReceipt);
       return result('WAITING_FOR_REPAIR', dispatchedReceipt, history);
     }
@@ -290,14 +385,31 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
       }, {
         reason:verdict.reason,
       });
-      await persistCycleReceipt(waiting);
+      const persisted = await persistOutcome(persistCycleReceipt, waiting);
+      if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
       history.push(waiting);
       continue;
     }
 
     if (verdict.nextAction === 'WAIT_FOR_EXACT_HEAD_VERIFICATION') {
-      const existing = pendingVerification(history, snapshot);
+      const purpose = verificationPurpose(snapshot);
+      const existing = pendingVerification(history, snapshot, purpose);
       if (existing) return result('WAITING_FOR_VERIFICATION', existing, history);
+      const obsolete = outstandingVerifications(history, snapshot).at(-1) ?? null;
+      if (obsolete) {
+        const completed = cycleReceipt(snapshot, verdict, iteration, 'verification-completed', {
+          attemptId,
+          previousReceipt:history.at(-1) ?? null,
+        }, {
+          reason:'The prior verification request was retired before a different verification purpose was dispatched.',
+          verificationId:obsolete.verificationId,
+          verificationPurpose:obsolete.verificationPurpose,
+          verificationOutcome:'SUPERSEDED_BY_NEW_PURPOSE',
+        });
+        const persisted = await persistOutcome(persistCycleReceipt, completed);
+        if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
+        history.push(completed);
+      }
       let verification;
       let verificationError = null;
       try {
@@ -305,11 +417,13 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
           snapshot,
           verdict,
           headSha:sha(snapshot.headSha),
+          purpose,
         });
       } catch (error) {
         verificationError = error;
       }
-      const accepted = verification?.accepted === true;
+      const verificationId = text(verification?.verificationId);
+      const accepted = verification?.accepted === true && Boolean(verificationId);
       const verificationReceipt = cycleReceipt(
         snapshot,
         verdict,
@@ -322,16 +436,34 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
         {
           reason:accepted ? verdict.reason : text(verification?.reason) ?? text(verificationError?.message) ?? 'EXACT_HEAD_VERIFICATION_REJECTED',
           verificationAccepted:accepted,
-          verificationId:text(verification?.verificationId),
+          verificationId,
+          verificationPurpose:purpose,
         },
       );
-      await persistCycleReceipt(verificationReceipt);
+      const persisted = await persistOutcome(persistCycleReceipt, verificationReceipt);
+      if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
       history.push(verificationReceipt);
       return result(
         accepted ? 'WAITING_FOR_VERIFICATION' : 'BLOCKED_VERIFICATION_REJECTED',
         verificationReceipt,
         history,
       );
+    }
+
+    const outstandingVerification = outstandingVerifications(history, snapshot).at(-1) ?? null;
+    if (outstandingVerification) {
+      const completed = cycleReceipt(snapshot, verdict, iteration, 'verification-completed', {
+        attemptId,
+        previousReceipt:history.at(-1) ?? null,
+      }, {
+        reason:'A later authoritative cycle outcome retired the outstanding verification request.',
+        verificationId:outstandingVerification.verificationId,
+        verificationPurpose:outstandingVerification.verificationPurpose,
+        verificationOutcome:verdict.verdict,
+      });
+      const persisted = await persistOutcome(persistCycleReceipt, completed);
+      if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
+      history.push(completed);
     }
 
     if (verdict.nextAction === 'REQUEST_EXACT_HEAD_MERGE_APPROVAL') {
@@ -342,7 +474,8 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
         expectedHeadSha:sha(verdict.expectedHeadSha ?? snapshot.headSha),
         reason:verdict.reason,
       });
-      await persistCycleReceipt(mergeReady);
+      const persisted = await persistOutcome(persistCycleReceipt, mergeReady);
+      if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
       history.push(mergeReady);
       return result('MERGE_READY', mergeReady, history);
     }
@@ -354,7 +487,8 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
       }, {
         reason:verdict.reason,
       });
-      await persistCycleReceipt(complete);
+      const persisted = await persistOutcome(persistCycleReceipt, complete);
+      if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
       history.push(complete);
       return result('COMPLETE', complete, history);
     }
@@ -365,7 +499,8 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
     }, {
       reason:verdict.reason,
     });
-    await persistCycleReceipt(blocked);
+    const persisted = await persistOutcome(persistCycleReceipt, blocked);
+    if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
     history.push(blocked);
     return result('BLOCKED', blocked, history);
   }
@@ -376,7 +511,8 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
   }, {
     reason:'Continuous repair iteration budget exhausted.',
   });
-  await persistCycleReceipt(exhausted);
+  const persisted = await persistOutcome(persistCycleReceipt, exhausted);
+  if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
   history.push(exhausted);
   return result('BLOCKED_ITERATION_BUDGET', exhausted, history);
 }
