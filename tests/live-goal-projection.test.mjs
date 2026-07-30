@@ -8,6 +8,7 @@ import { buildLiveDashboardGoals, buildLiveGoalProjection, readLiveGoalProjectio
 import { readMissionOperations } from '../stephanos-server/services/missionOperationsService.js';
 
 async function tempDir() { return mkdtemp(join(tmpdir(), 'stephanos-live-goal-projection-')); }
+const RECEIPT_AT = '2026-07-30T09:00:00.000Z';
 
 test('backend live projection route contract returns schema-valid projection with backend freshness', async () => {
   const projection = await readLiveGoalProjection({
@@ -92,7 +93,7 @@ test('dashboard goal cards fall back to bounded current receipts without claimin
   const dashboardGoals = buildLiveDashboardGoals({
     observedAt: '2026-07-30T10:00:00.000Z',
     githubTelemetry: { adapterAvailable: false },
-    queue: { queuedCandidates: [{ candidateId: 'goal-receipt-1', title: 'Receipt goal', state: 'QUEUED', nextAction: 'Wait for canonical dispatch.' }] },
+    queue: { queuedCandidates: [{ candidateId: 'goal-receipt-1', title: 'Receipt goal', state: 'QUEUED', createdAt: RECEIPT_AT, nextAction: 'Wait for canonical dispatch.' }] },
   });
   assert.equal(dashboardGoals.sourceTruth, 'READ-ONLY RECEIPTS');
   assert.equal(dashboardGoals.cards[0].sourceTruth, 'READ-ONLY RECEIPT');
@@ -108,6 +109,7 @@ test('receipt totals preserve the full current estate before display truncation'
         candidateId: `receipt-${index + 1}`,
         title: `Receipt goal ${index + 1}`,
         state: 'QUEUED',
+        createdAt: RECEIPT_AT,
       })),
     },
   });
@@ -126,9 +128,10 @@ test('receipt status totals preserve blocked and ready records outside the displ
           candidateId: `visible-receipt-${index + 1}`,
           title: `Visible receipt ${index + 1}`,
           state: 'QUEUED',
+          createdAt: RECEIPT_AT,
         })),
-        { candidateId: 'hidden-blocked-receipt', title: 'Hidden blocked receipt' },
-        { candidateId: 'hidden-ready-receipt', title: 'Hidden ready receipt', state: 'READY' },
+        { candidateId: 'hidden-blocked-receipt', title: 'Hidden blocked receipt', createdAt: RECEIPT_AT },
+        { candidateId: 'hidden-ready-receipt', title: 'Hidden ready receipt', state: 'READY', createdAt: RECEIPT_AT },
       ],
       blockedCandidates: [{ candidateId: 'hidden-blocked-receipt', blockers: ['Canonical queue adjudication blocked this goal.'] }],
     },
@@ -148,6 +151,7 @@ test('receipt fallback carries hidden mission operator attention before display 
         candidateId: `visible-receipt-${index + 1}`,
         title: `Visible receipt ${index + 1}`,
         state: 'QUEUED',
+        createdAt: RECEIPT_AT,
       })),
     },
     missions: [{
@@ -156,6 +160,7 @@ test('receipt fallback carries hidden mission operator attention before display 
         title: 'Hidden approval mission',
         state: 'AWAITING_APPROVAL',
         nextAction: 'Request the operator decision.',
+        updatedAt: RECEIPT_AT,
       },
       operatorActionRequired: true,
     }],
@@ -171,7 +176,7 @@ test('current mission receipt outranks a duplicate queued candidate', () => {
     observedAt: '2026-07-30T10:00:00.000Z',
     githubTelemetry: { adapterAvailable: false },
     queue: {
-      queuedCandidates: [{ candidateId: 'mission-approval', title: 'Older queued candidate', state: 'QUEUED' }],
+      queuedCandidates: [{ candidateId: 'mission-approval', title: 'Older queued candidate', state: 'QUEUED', createdAt: RECEIPT_AT }],
     },
     missions: [{
       mission: {
@@ -179,6 +184,7 @@ test('current mission receipt outranks a duplicate queued candidate', () => {
         title: 'Current approval mission',
         state: 'AWAITING_APPROVAL',
         nextAction: 'Obtain the exact operator decision.',
+        updatedAt: RECEIPT_AT,
       },
       operatorActionRequired: true,
     }],
@@ -188,6 +194,23 @@ test('current mission receipt outranks a duplicate queued candidate', () => {
   assert.equal(dashboardGoals.cards[0].status, 'AWAITING_APPROVAL');
   assert.match(dashboardGoals.cards[0].operatorNeeded, /^Yes/);
   assert.equal(dashboardGoals.operatorAttentionCount, 1);
+});
+
+test('timestamp-less receipts are excluded instead of receiving the projection poll time', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: { adapterAvailable: false },
+    queue: {
+      queuedCandidates: [{
+        candidateId: 'timestamp-less-receipt',
+        title: 'Receipt without durable evidence time',
+        state: 'QUEUED',
+      }],
+    },
+  });
+  assert.equal(dashboardGoals.sourceTruth, 'UNKNOWN');
+  assert.equal(dashboardGoals.totalAvailable, 0);
+  assert.deepEqual(dashboardGoals.cards, []);
 });
 
 test('dashboard conservatively aggregates every unsuperseded PR linked to one goal', () => {
