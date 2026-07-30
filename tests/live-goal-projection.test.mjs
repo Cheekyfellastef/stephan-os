@@ -138,6 +138,7 @@ test('dashboard surfaces open PRs without a durable issue link as an explicit bl
   });
   assert.equal(dashboardGoals.cards[0].status, 'BLOCKED · DURABLE GOAL LINK UNKNOWN');
   assert.match(dashboardGoals.cards[0].nextAction, /durable GitHub goal issue/);
+  assert.equal(dashboardGoals.activePrCount, 1);
   assert.equal(dashboardGoals.blockedCount, 1);
 });
 
