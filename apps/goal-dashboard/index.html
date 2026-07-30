@@ -1907,6 +1907,10 @@
         if (observedAt === null
           || observedAt > generatedAt + MAX_APPROVED_TELEMETRY_CLOCK_SKEW_MS
           || observedAt < generatedAt - MAX_APPROVED_TELEMETRY_AGE_MS) return false;
+        if (card.lastUpdatedAt !== undefined) {
+          const lastUpdatedAt = approvedTimestamp(card.lastUpdatedAt);
+          if (lastUpdatedAt === null || lastUpdatedAt > observedAt + MAX_APPROVED_TELEMETRY_CLOCK_SKEW_MS) return false;
+        }
         if (!isNonNegativeInteger(card.proofIndex)) return false;
         if (card.linkedPr !== undefined && card.linkedPr !== null && !isValidLinkedPullRequest(card.linkedPr)) return false;
         if (card.linkedPullRequests !== undefined
@@ -1961,6 +1965,8 @@
             card.linkedPr?.number,
           ].filter(Boolean)));
           if (dashboardGoals.activePrCount < visiblePrNumbers.size) return false;
+          if (dashboardGoals.displayedCount === dashboardGoals.totalAvailable
+            && dashboardGoals.activePrCount !== visiblePrNumbers.size) return false;
         }
         if (dashboardGoals.sourceTruth === 'READ-ONLY RECEIPTS'
           && dashboardGoals.freshnessVerdict !== 'RECEIPT_TIMESTAMPS_VISIBLE') return false;
