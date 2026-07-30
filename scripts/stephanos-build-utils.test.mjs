@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-import { getStephanosFingerprintSourceFiles, repoRoot } from './stephanos-build-utils.mjs';
+import { getGitCommit, getStephanosFingerprintSourceFiles, repoRoot } from './stephanos-build-utils.mjs';
 
 test('Stephanos dist fingerprint includes shared runtime and shared AI source trees', () => {
   const files = getStephanosFingerprintSourceFiles()
@@ -14,4 +14,8 @@ test('Stephanos dist fingerprint includes shared runtime and shared AI source tr
   assert.ok(files.includes('shared/ai/providerDefaults.mjs'));
   assert.ok(files.includes('stephanos-ui/src/App.jsx'));
   assert.ok(files.includes('package.json'));
+});
+
+test('Stephanos build metadata uses the full Git commit needed for exact-head runtime proof', () => {
+  assert.match(getGitCommit(), /^[0-9a-f]{40}$/);
 });

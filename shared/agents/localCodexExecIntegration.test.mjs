@@ -18,6 +18,8 @@ import {
   parseCodexJsonEvents,
   parseGitStatusPaths,
   resolveCodexExecInvocation,
+  runBrowserRuntimeExactHeadProof,
+  runCodexWorker,
   validateBrowserProofVerdict,
   validateExactHeadAtWorkerStart,
 } from '../../scripts/stephanos-codex-dispatch-worker.mjs';
@@ -65,7 +67,8 @@ test('local integration writes a durable task and accepted receipt before launch
 
   const receipt = integration.dispatch(packet());
   assert.equal(receipt.accepted, true);
-  assert.equal(receipt.started, true);
+  assert.equal(receipt.started, false);
+  assert.equal(receipt.workerSpawned, true);
   assert.equal(receipt.workerPid, 4242);
   assert.equal(receipt.mergeAuthority, false);
   assert.equal(child.unrefCalled, true);
@@ -88,6 +91,7 @@ test('browser proof PASS requires the exact scenario and complete positive evide
     verdict: 'PASS',
     proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
     evidence: {
+      runtimeSourceHead: 'a'.repeat(40),
       listeningDeckIframeIdentityPreserved: true,
       discoveryIframeIdentityPreserved: true,
       legacyRankingChanged: true,
@@ -103,9 +107,154 @@ test('browser proof PASS requires the exact scenario and complete positive evide
     '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":["boom"]}}',
     '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":[]}}',
     '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":[]},"blockers":["proof incomplete"]}',
+    `{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"runtimeSourceHead":"${'b'.repeat(40)}","listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":[]},"blockers":[]}`,
   ]) {
     assert.equal(validateBrowserProofVerdict(invalid, task).ok, false);
   }
+});
+
+test('worker-owned browser runtime proof rejects a stale served head even if a model echoes the approved head', () => {
+  const task = packet();
+  const staleHead = 'b'.repeat(40);
+  const browserRuntimeProof = runBrowserRuntimeExactHeadProof({
+    ...task,
+    repoRoot: 'C:\\stephan-os',
+  }, {
+    spawnSyncFn() {
+      return {
+        status: 1,
+        stdout: JSON.stringify({
+          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v1',
+          url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+          observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+          accepted: false,
+          expectedHead: task.exactHeadProof.expectedHead,
+          runtimeSourceHead: staleHead,
+          expectedHeadMatch: false,
+        }),
+      };
+    },
+  });
+  assert.equal(browserRuntimeProof.ok, false);
+  assert.equal(browserRuntimeProof.blocker, 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH');
+
+  const selfReportedPass = JSON.stringify({
+    verdict: 'PASS',
+    proofScenario: task.exactHeadProof.proofScenario,
+    evidence: {
+      runtimeSourceHead: task.exactHeadProof.expectedHead,
+      listeningDeckIframeIdentityPreserved: true,
+      discoveryIframeIdentityPreserved: true,
+      legacyRankingChanged: true,
+      consoleErrors: [],
+    },
+    blockers: [],
+  });
+  const verdict = validateBrowserProofVerdict(selfReportedPass, task, browserRuntimeProof);
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocker, 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH');
+});
+
+test('worker-owned browser runtime proof accepts only structured runner output at the approved head', () => {
+  const task = { ...packet(), repoRoot: 'C:\\stephan-os' };
+  const expectedHead = task.exactHeadProof.expectedHead;
+  const proof = runBrowserRuntimeExactHeadProof(task, {
+    spawnSyncFn(executable, args, options) {
+      assert.equal(executable, process.execPath);
+      assert.deepEqual(args.slice(-6), [
+        '--url',
+        'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+        '--expected-head',
+        expectedHead,
+        '--no-artifacts',
+        '--machine-json',
+      ]);
+      assert.equal(options.cwd, task.repoRoot);
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v1',
+          url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+          observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+          accepted: true,
+          expectedHead,
+          runtimeSourceHead: expectedHead,
+          expectedHeadMatch: true,
+        }),
+      };
+    },
+  });
+  assert.equal(proof.ok, true);
+  assert.equal(proof.runtimeSourceHead, expectedHead);
+});
+
+test('worker-owned browser runtime proof rejects an alternate URL even when its footer matches', () => {
+  const task = { ...packet(), repoRoot: 'C:\\stephan-os' };
+  const expectedHead = task.exactHeadProof.expectedHead;
+  const proof = runBrowserRuntimeExactHeadProof(task, {
+    spawnSyncFn() {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v1',
+          url: 'http://127.0.0.1:9999/alternate.html',
+          observedUrl: 'http://127.0.0.1:9999/alternate.html',
+          accepted: true,
+          expectedHead,
+          runtimeSourceHead: expectedHead,
+          expectedHeadMatch: true,
+        }),
+      };
+    },
+  });
+  assert.equal(proof.ok, false);
+  assert.equal(proof.blocker, 'BROWSER_RUNTIME_URL_MISMATCH');
+});
+
+test('worker-owned browser runtime proof converts runner launch exceptions into a deterministic blocker', () => {
+  const task = { ...packet(), repoRoot: 'C:\\stephan-os' };
+  const proof = runBrowserRuntimeExactHeadProof(task, {
+    spawnSyncFn() { throw new Error('synthetic runner launch failure'); },
+  });
+  assert.equal(proof.ok, false);
+  assert.equal(proof.blocker, 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED');
+});
+
+test('worker persists terminal failure when the guarded Codex child cannot launch', async () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 333, unref() {} }),
+  });
+  const dispatchReceipt = integration.dispatch(packet('codex-job-child-launch-fails'));
+  const expectedHead = packet().exactHeadProof.expectedHead;
+  const result = await runCodexWorker(dispatchReceipt.taskPath, {
+    spawnFn() { throw new Error('synthetic Codex CLI launch failure'); },
+    spawnSyncFn(executable) {
+      if (executable === process.execPath) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v1',
+            url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+            observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+            accepted: true,
+            expectedHead,
+            runtimeSourceHead: expectedHead,
+            expectedHeadMatch: true,
+          }),
+        };
+      }
+      return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+    },
+    visibilityPublisher: async () => ({ ok: true }),
+    now: () => '2026-07-30T23:00:00.000Z',
+  });
+  assert.equal(result.status, 'FAILED');
+  assert.equal(result.blocker, 'CODEX_CLI_STARTUP_FAILED');
+  assert.equal(result.resultAvailable, true);
+  assert.equal(integration.readStatus('codex-job-child-launch-fails').status, 'FAILED');
+  assert.equal(integration.readResult('codex-job-child-launch-fails').blocker, 'CODEX_CLI_STARTUP_FAILED');
 });
 
 test('worker revalidates both PR and checkout heads immediately before execution', () => {
@@ -159,6 +308,63 @@ test('local integration enforces the one-active-job rule', () => {
   const integration = createLocalCodexExecIntegration({ ...roots, spawnFn: () => child });
   integration.dispatch(packet('codex-job-first'));
   assert.throws(() => integration.dispatch(packet('codex-job-second')), /already DISPATCHED/);
+  assert.throws(() => integration.dispatch(packet('codex-job-first')), /already DISPATCHED/);
+});
+
+test('local integration acquires an atomic dispatch lock before checking or claiming the active slot', () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => assert.fail('spawn must not run while another dispatcher owns the lock'),
+  });
+  mkdirSync(integration.paths.dispatchRoot, { recursive: true });
+  mkdirSync(integration.paths.dispatchLockPath);
+  assert.throws(
+    () => integration.dispatch(packet('codex-job-concurrent')),
+    /another dispatch is claiming the one-active-job slot/,
+  );
+  assert.equal(integration.readStatus('codex-job-concurrent'), null);
+});
+
+test('local integration refuses to overwrite a terminal task with the same id', () => {
+  const roots = tempRoots();
+  const paths = resolveLocalCodexDispatchPaths({ ...roots, jobId: 'codex-job-terminal' });
+  mkdirSync(paths.taskRoot, { recursive: true });
+  writeFileSync(paths.statusPath, JSON.stringify({ jobId: 'codex-job-terminal', status: 'DONE' }));
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 111, unref() {} }),
+  });
+  assert.throws(() => integration.dispatch(packet('codex-job-terminal')), /already exists/);
+});
+
+test('worker spawn failure writes terminal truth and does not strand the one-active-job gate', () => {
+  const roots = tempRoots();
+  let attempt = 0;
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    idFactory: () => `receipt-${attempt}`,
+    spawnFn: () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error('synthetic launch failure');
+      return { pid: 222, unref() {} };
+    },
+  });
+
+  assert.throws(() => integration.dispatch(packet('codex-job-launch-fails')), /failed to launch/);
+  const failedStatus = integration.readStatus('codex-job-launch-fails');
+  const failedResult = integration.readResult('codex-job-launch-fails');
+  assert.equal(failedStatus.status, 'BLOCKED');
+  assert.equal(failedStatus.blocker, 'LOCAL_CODEX_WORKER_LAUNCH_FAILED');
+  assert.equal(failedResult.resultAvailable, true);
+  const failedPaths = resolveLocalCodexDispatchPaths({ ...roots, jobId: 'codex-job-launch-fails' });
+  const failedReceipt = JSON.parse(readFileSync(failedPaths.receiptPath, 'utf8'));
+  assert.equal(failedReceipt.accepted, false);
+  assert.equal(failedReceipt.started, false);
+
+  const next = integration.dispatch(packet('codex-job-after-launch-failure'));
+  assert.equal(next.accepted, true);
+  assert.equal(next.workerPid, 222);
 });
 
 test('status and result readers are bounded to safe job ids', () => {
@@ -238,6 +444,8 @@ test('exact-head browser prompt requires one machine-readable evidence verdict',
   });
   assert.match(promptText, /Return only one JSON object/);
   assert.match(promptText, /listeningDeckIframeIdentityPreserved/);
+  assert.match(promptText, /runtimeSourceHead/);
+  assert.match(promptText, new RegExp('a{40}'));
   assert.match(promptText, /PASS is forbidden/);
 });
 

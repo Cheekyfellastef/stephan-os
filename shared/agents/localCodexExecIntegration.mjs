@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +34,16 @@ export function resolveLocalCodexDispatchPaths({
   const tasksRoot = join(dispatchRoot, 'tasks');
   const receiptsRoot = join(workspace, 'receipts');
   const currentPath = join(dispatchRoot, 'current.json');
-  if (!jobId) return { repoRoot: repository, workspaceRoot: workspace, dispatchRoot, tasksRoot, receiptsRoot, currentPath };
+  const dispatchLockPath = join(dispatchRoot, 'dispatch.lock');
+  if (!jobId) return {
+    repoRoot: repository,
+    workspaceRoot: workspace,
+    dispatchRoot,
+    tasksRoot,
+    receiptsRoot,
+    currentPath,
+    dispatchLockPath,
+  };
   if (!SAFE_JOB_ID.test(jobId)) throw new Error(`Unsafe Codex job id: ${jobId}`);
   const taskRoot = join(tasksRoot, jobId);
   return {
@@ -44,6 +53,7 @@ export function resolveLocalCodexDispatchPaths({
     tasksRoot,
     receiptsRoot,
     currentPath,
+    dispatchLockPath,
     taskRoot,
     taskPath: join(taskRoot, 'task.json'),
     statusPath: join(taskRoot, 'status.json'),
@@ -100,82 +110,131 @@ export function createLocalCodexExecIntegration({
       mkdirSync(basePaths.tasksRoot, { recursive: true });
       mkdirSync(basePaths.receiptsRoot, { recursive: true });
 
-      const current = readJson(basePaths.currentPath);
-      if (current && ACTIVE_STATUSES.has(String(current.status || '')) && current.jobId !== packet.jobId) {
-        throw new Error(`Local Codex dispatch blocked because ${current.jobId} is already ${current.status}.`);
+      try {
+        mkdirSync(basePaths.dispatchLockPath);
+      } catch {
+        throw new Error('Local Codex dispatch blocked because another dispatch is claiming the one-active-job slot.');
       }
 
-      const paths = resolveLocalCodexDispatchPaths({ repoRoot: basePaths.repoRoot, workspaceRoot: basePaths.workspaceRoot, jobId: packet.jobId });
-      mkdirSync(paths.taskRoot, { recursive: true });
-      const timestampUtc = now();
-      const task = {
-        schemaVersion: LOCAL_CODEX_TASK_SCHEMA,
-        kind: 'stephanos.codex_dispatch.local_task',
-        taskId: packet.jobId,
-        jobId: packet.jobId,
-        issueNumber: Number(packet.issueNumber || 0),
-        branch: String(packet.branch || 'main'),
-        taskType: 'battle-bridge-proof',
-        prompt: String(packet.prompt),
-        requestedProofCommands: Array.isArray(packet.requestedProofCommands) ? packet.requestedProofCommands.map(String) : [],
-        exactHeadProof: packet.exactHeadProof ? {
-          repository: String(packet.exactHeadProof.repository || ''),
-          prNumber: Number(packet.exactHeadProof.prNumber || 0),
-          expectedHead: String(packet.exactHeadProof.expectedHead || '').toLowerCase(),
-          proofScenario: String(packet.exactHeadProof.proofScenario || ''),
-        } : null,
-        approvalRequirements: { ...(packet.approvalRequirements || {}) },
-        repoRoot: paths.repoRoot,
-        workspaceRoot: paths.workspaceRoot,
-        createdAt: timestampUtc,
-        status: 'DISPATCHED',
-        safety: {
-          mergeAllowed: false,
-          pushAllowed: false,
-          branchDeletionAllowed: false,
-          hardResetAllowed: false,
-          broadProcessKillAllowed: false,
-          sourceMutationAllowed: false,
-          generatedDistMutationAllowed: false,
-          oneActiveJob: true,
-          childApprovalPolicy: 'never',
-          childSandboxMode: 'read-only',
-          childMcpToolsAllowed: false,
-        },
-        proofRefs: [`proof/${packet.jobId}.json`, `receipts/${packet.jobId}.json`],
-      };
-      writeJson(paths.taskPath, task);
-      writeJson(paths.statusPath, task);
-      writeJson(paths.currentPath, task);
+      try {
+        const current = readJson(basePaths.currentPath);
+        if (current && ACTIVE_STATUSES.has(String(current.status || ''))) {
+          throw new Error(`Local Codex dispatch blocked because ${current.jobId} is already ${current.status}.`);
+        }
 
-      const child = spawnFn(process.execPath, [workerPath, '--task', paths.taskPath], {
-        cwd: paths.repoRoot,
-        detached: true,
-        windowsHide: true,
-        stdio: 'ignore',
-        env: { ...process.env, STEPHANOS_REPO_ROOT: paths.repoRoot, STEPHANOS_SHARED_WORKSPACE: paths.workspaceRoot },
-      });
-      if (!child || !Number(child.pid || 0)) throw new Error('Local Codex worker did not return a process id.');
-      if (typeof child.unref === 'function') child.unref();
+        const paths = resolveLocalCodexDispatchPaths({ repoRoot: basePaths.repoRoot, workspaceRoot: basePaths.workspaceRoot, jobId: packet.jobId });
+        if (existsSync(paths.taskPath) || existsSync(paths.statusPath) || existsSync(paths.resultPath)) {
+          throw new Error(`Local Codex dispatch blocked because ${packet.jobId} already exists.`);
+        }
+        mkdirSync(paths.taskRoot, { recursive: true });
+        const timestampUtc = now();
+        const task = {
+          schemaVersion: LOCAL_CODEX_TASK_SCHEMA,
+          kind: 'stephanos.codex_dispatch.local_task',
+          taskId: packet.jobId,
+          jobId: packet.jobId,
+          issueNumber: Number(packet.issueNumber || 0),
+          branch: String(packet.branch || 'main'),
+          taskType: 'battle-bridge-proof',
+          prompt: String(packet.prompt),
+          requestedProofCommands: Array.isArray(packet.requestedProofCommands) ? packet.requestedProofCommands.map(String) : [],
+          exactHeadProof: packet.exactHeadProof ? {
+            repository: String(packet.exactHeadProof.repository || ''),
+            prNumber: Number(packet.exactHeadProof.prNumber || 0),
+            expectedHead: String(packet.exactHeadProof.expectedHead || '').toLowerCase(),
+            proofScenario: String(packet.exactHeadProof.proofScenario || ''),
+          } : null,
+          approvalRequirements: { ...(packet.approvalRequirements || {}) },
+          repoRoot: paths.repoRoot,
+          workspaceRoot: paths.workspaceRoot,
+          createdAt: timestampUtc,
+          status: 'DISPATCHED',
+          safety: {
+            mergeAllowed: false,
+            pushAllowed: false,
+            branchDeletionAllowed: false,
+            hardResetAllowed: false,
+            broadProcessKillAllowed: false,
+            sourceMutationAllowed: false,
+            generatedDistMutationAllowed: false,
+            oneActiveJob: true,
+            childApprovalPolicy: 'never',
+            childSandboxMode: 'read-only',
+            childMcpToolsAllowed: false,
+          },
+          proofRefs: [`proof/${packet.jobId}.json`, `receipts/${packet.jobId}.json`],
+        };
+        writeJson(paths.taskPath, task);
+        writeJson(paths.statusPath, task);
+        writeJson(paths.currentPath, task);
 
-      const receipt = {
-        schemaVersion: LOCAL_CODEX_EXEC_INTEGRATION_SCHEMA,
-        kind: 'stephanos.codex_dispatch.local_receipt',
-        receiptId: `local-codex-${idFactory()}`,
-        jobId: packet.jobId,
-        accepted: true,
-        started: true,
-        timestampUtc,
-        integrationId: LOCAL_CODEX_INTEGRATION_ID,
-        workerPid: Number(child.pid),
-        repoRoot: paths.repoRoot,
-        taskPath: paths.taskPath,
-        proofRefs: [`receipts/${packet.jobId}.json`, `proof/${packet.jobId}.json`],
-        mergeAuthority: false,
-        arbitraryShellAllowed: false,
-      };
-      writeJson(paths.receiptPath, receipt);
-      return receipt;
+        let child;
+        try {
+          child = spawnFn(process.execPath, [workerPath, '--task', paths.taskPath], {
+            cwd: paths.repoRoot,
+            detached: true,
+            windowsHide: true,
+            stdio: 'ignore',
+            env: { ...process.env, STEPHANOS_REPO_ROOT: paths.repoRoot, STEPHANOS_SHARED_WORKSPACE: paths.workspaceRoot },
+          });
+          if (!child || !Number(child.pid || 0)) throw new Error('worker pid unavailable');
+        } catch {
+          const failedAt = now();
+          const failed = {
+            ...task,
+            kind: 'stephanos.codex_dispatch.local_result',
+            status: 'BLOCKED',
+            verdict: 'FAIL',
+            resultAvailable: true,
+            resultVerdict: 'FAIL',
+            workerAlive: false,
+            heartbeatUtc: failedAt,
+            completedAt: failedAt,
+            blocker: 'LOCAL_CODEX_WORKER_LAUNCH_FAILED',
+            nextOperatorAction: 'Repair the local Codex worker launch path, then submit a fresh bounded request.',
+          };
+          writeJson(paths.resultPath, failed);
+          writeJson(paths.statusPath, failed);
+          writeJson(paths.currentPath, failed);
+          writeJson(paths.receiptPath, {
+            schemaVersion: LOCAL_CODEX_EXEC_INTEGRATION_SCHEMA,
+            kind: 'stephanos.codex_dispatch.local_receipt',
+            receiptId: `local-codex-${idFactory()}`,
+            jobId: packet.jobId,
+            accepted: false,
+            started: false,
+            timestampUtc: failedAt,
+            integrationId: LOCAL_CODEX_INTEGRATION_ID,
+            blocker: 'LOCAL_CODEX_WORKER_LAUNCH_FAILED',
+            mergeAuthority: false,
+            arbitraryShellAllowed: false,
+          });
+          throw new Error('Local Codex worker failed to launch.');
+        }
+        if (typeof child.unref === 'function') child.unref();
+
+        const receipt = {
+          schemaVersion: LOCAL_CODEX_EXEC_INTEGRATION_SCHEMA,
+          kind: 'stephanos.codex_dispatch.local_receipt',
+          receiptId: `local-codex-${idFactory()}`,
+          jobId: packet.jobId,
+          accepted: true,
+          started: false,
+          workerSpawned: true,
+          timestampUtc,
+          integrationId: LOCAL_CODEX_INTEGRATION_ID,
+          workerPid: Number(child.pid),
+          repoRoot: paths.repoRoot,
+          taskPath: paths.taskPath,
+          proofRefs: [`receipts/${packet.jobId}.json`, `proof/${packet.jobId}.json`],
+          mergeAuthority: false,
+          arbitraryShellAllowed: false,
+        };
+        writeJson(paths.receiptPath, receipt);
+        return receipt;
+      } finally {
+        try { rmdirSync(basePaths.dispatchLockPath); } catch {}
+      }
     },
     readStatus(jobId) { return readLocalCodexTaskStatus(jobId, { repoRoot: basePaths.repoRoot, workspaceRoot: basePaths.workspaceRoot }); },
     readResult(jobId) { return readLocalCodexTaskResult(jobId, { repoRoot: basePaths.repoRoot, workspaceRoot: basePaths.workspaceRoot }); },

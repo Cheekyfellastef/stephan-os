@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +42,7 @@ const MAX_CRITICAL_BACKLOG_STATUS_BYTES = 64 * 1024;
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SAFE_PROOF_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const SAFE_CONVEYOR_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
+const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
 const SAFE_CONVEYOR_DECISIONS = new Set([
   'CREATE_NEXT_MISSION',
   'WAIT_ACTIVE_MISSION',
@@ -125,6 +127,17 @@ function safeNonNegativeNumber(value) {
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
 }
 
+function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
+  if (typeof operationResult?.expectedHeadMatch === 'boolean') {
+    return operationResult.expectedHeadMatch;
+  }
+  const expectedHead = String(receipt?.expectedHead || '').trim().toLowerCase();
+  const sourceHead = String(operationResult?.sourceHead || '').trim().toLowerCase();
+  return EXACT_GIT_HEAD_PATTERN.test(expectedHead)
+    && EXACT_GIT_HEAD_PATTERN.test(sourceHead)
+    && expectedHead === sourceHead;
+}
+
 function conveyorProjection(operationResult = {}) {
   return Object.freeze({
     decision: safeConveyorDecision(operationResult?.decision),
@@ -169,7 +182,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       finalVerdict: String(operationResult?.finalVerdict || ''),
       sourceHead: String(operationResult?.sourceHead || ''),
       branch: String(operationResult?.branch || ''),
-      expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+      expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
       monitorCount: Number(operationResult?.monitorCount || 0),
       executedCount: Number(operationResult?.executedCount || 0),
       unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
@@ -236,7 +249,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         finalVerdict: String(operationResult?.finalVerdict || ''),
         sourceHead: String(operationResult?.sourceHead || ''),
         branch: String(operationResult?.branch || ''),
-        expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+        expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
         monitorCount: Number(operationResult?.monitorCount || 0),
         executedCount: Number(operationResult?.executedCount || 0),
         unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
@@ -285,10 +298,17 @@ function saveState(state) {
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
 
+export function createWindowsSafeMailboxReceiptFilename(requestId = '') {
+  const value = String(requestId || '');
+  if (/^[A-Za-z0-9][A-Za-z0-9._-]{7,120}$/.test(value)) return `${value}.json`;
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 32);
+  return `request-${digest}.json`;
+}
+
 function writeReceipt(receipt) {
   mkdirSync(mailboxStateRoot, { recursive: true });
   mkdirSync(canonicalReceiptRoot, { recursive: true });
-  const filename = `${receipt.requestId}.json`;
+  const filename = createWindowsSafeMailboxReceiptFilename(receipt.requestId);
   const legacyPath = join(mailboxStateRoot, filename);
   const canonicalPath = join(canonicalReceiptRoot, filename);
   const payload = `${JSON.stringify(receipt, null, 2)}\n`;
@@ -491,7 +511,7 @@ async function readMailboxReceipt(command = {}) {
   if (!SAFE_REQUEST_ID_PATTERN.test(targetRequestId)) {
     return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TARGET_INVALID' };
   }
-  const receiptPath = join(canonicalReceiptRoot, `${targetRequestId}.json`);
+  const receiptPath = join(canonicalReceiptRoot, createWindowsSafeMailboxReceiptFilename(targetRequestId));
   let payload;
   try {
     payload = readFileSync(receiptPath, 'utf8');

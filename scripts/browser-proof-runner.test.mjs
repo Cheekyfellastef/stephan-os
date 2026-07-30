@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildBrowserProofPacket, evaluateBrowserProofResult, shouldGenerateBrowserProofPacket } from './browser-proof-runner.mjs';
+import {
+  buildBrowserProofMachineResult,
+  buildBrowserProofPacket,
+  evaluateBrowserProofResult,
+  parseBrowserProofArguments,
+  shouldGenerateBrowserProofPacket,
+} from './browser-proof-runner.mjs';
 
 test('browser proof packet generated only when nextProof is browser-proof-checklist', () => {
   assert.equal(shouldGenerateBrowserProofPacket({ operatorProofConcierge: { nextProof: 'browser-proof-checklist' } }), true);
@@ -10,14 +16,89 @@ test('browser proof packet generated only when nextProof is browser-proof-checkl
 test('successful DOM proof accepts browser-proof-checklist', () => {
   const result = { browserAutomationAvailable: true, checks: { runtimeReachable: true, footerGitCommitPresent: true, uiBuildTimestampPresent: true, proofConciergeDomNextProofMatches: true, proofConciergePrimaryButtonPresent: true, proofConciergeVisibleDriftClear: true, cloneParityClear: true, operatorDiagnosticCopyPresent: true, consoleErrorCount: 0 } };
   assert.equal(evaluateBrowserProofResult(result).accepted, true);
-  assert.match(buildBrowserProofPacket(result), /Status: accepted/);
+  assert.match(buildBrowserProofPacket(result), /Status: observed/);
 });
 
-test('console or blocking browser failure rejects browser proof', () => {
+test('console errors remain visible merge blockers on an observed browser proof', () => {
   const result = { browserAutomationAvailable: true, checks: { runtimeReachable: true, footerGitCommitPresent: true, uiBuildTimestampPresent: true, proofConciergeDomNextProofMatches: true, proofConciergePrimaryButtonPresent: true, proofConciergeVisibleDriftClear: true, cloneParityClear: true, operatorDiagnosticCopyPresent: true, consoleErrorCount: 2 } };
   const verdict = evaluateBrowserProofResult(result);
-  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.accepted, true);
+  assert.equal(verdict.mergeReady, false);
   assert.match(verdict.blocking.join(' | '), /console error count 2/);
+});
+
+test('exact-head proof accepts only the full Git commit observed in the live browser DOM', () => {
+  const expectedHead = 'a'.repeat(40);
+  const base = {
+    browserAutomationAvailable: true,
+    checks: {
+      runtimeReachable: true,
+      footerGitCommitPresent: true,
+      footerGitCommit: expectedHead,
+      uiBuildTimestampPresent: true,
+      proofConciergeDomNextProofMatches: true,
+      proofConciergePrimaryButtonPresent: true,
+      proofConciergeVisibleDriftClear: true,
+      cloneParityClear: true,
+      operatorDiagnosticCopyPresent: true,
+      consoleErrorCount: 0,
+    },
+  };
+  const matching = evaluateBrowserProofResult(base, { expectedHead });
+  assert.equal(matching.accepted, true);
+  assert.equal(matching.expectedHeadMatch, true);
+  assert.equal(matching.runtimeSourceHead, expectedHead);
+
+  const stale = evaluateBrowserProofResult({
+    ...base,
+    checks: { ...base.checks, footerGitCommit: 'b'.repeat(40) },
+  }, { expectedHead });
+  assert.equal(stale.accepted, false);
+  assert.equal(stale.expectedHeadMatch, false);
+  assert.match(stale.blocking.join(' | '), /does not match expected head/);
+  assert.match(buildBrowserProofPacket({
+    ...base,
+    checks: { ...base.checks, footerGitCommit: 'b'.repeat(40) },
+  }, { expectedHead }), /Status: rejected/);
+});
+
+test('parses an exact approved head without confusing it with the runtime URL', () => {
+  const expectedHead = 'a'.repeat(40);
+  assert.deepEqual(parseBrowserProofArguments(['--expected-head', expectedHead, '--no-artifacts', '--machine-json']), {
+    ok: true,
+    url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    expectedHead,
+    writeArtifacts: false,
+    machineJson: true,
+  });
+  assert.equal(parseBrowserProofArguments(['--expected-head', 'short']).blocker, 'EXPECTED_HEAD_INVALID');
+});
+
+test('machine result exposes the browser-observed exact-head decision without relying on model text', () => {
+  const expectedHead = 'a'.repeat(40);
+  const result = buildBrowserProofMachineResult({
+    browserAutomationAvailable: true,
+    url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    checks: {
+      runtimeReachable: true,
+      footerGitCommitPresent: true,
+      footerGitCommit: expectedHead,
+      uiBuildTimestampPresent: true,
+      proofConciergeDomNextProofMatches: true,
+      proofConciergePrimaryButtonPresent: true,
+      proofConciergeVisibleDriftClear: true,
+      cloneParityClear: true,
+      operatorDiagnosticCopyPresent: true,
+      consoleErrorCount: 0,
+    },
+  }, { expectedHead });
+  assert.equal(result.schemaVersion, 'stephanos.browser-runtime-exact-head-proof.v1');
+  assert.equal(result.url, 'http://127.0.0.1:4173/apps/stephanos/dist/index.html');
+  assert.equal(result.observedUrl, 'http://127.0.0.1:4173/apps/stephanos/dist/index.html');
+  assert.equal(result.accepted, true);
+  assert.equal(result.runtimeSourceHead, expectedHead);
+  assert.equal(result.expectedHeadMatch, true);
 });
 
 test('automation unavailable creates diagnostic repair packet', () => {

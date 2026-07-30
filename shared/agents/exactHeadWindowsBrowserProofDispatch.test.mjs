@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildExactHeadWindowsBrowserProofPacket,
+  createWindowsSafeBrowserProofJobId,
   dispatchExactHeadWindowsBrowserProof,
 } from './exactHeadWindowsBrowserProofDispatch.mjs';
 
@@ -18,13 +19,27 @@ test('builds one approved read-only exact-head Windows proof packet', () => {
   assert.match(packet.prompt, /Microsoft Edge/);
   assert.match(packet.prompt, /strictly identical/);
   assert.match(packet.prompt, /EXPECTED_HEAD_MISMATCH/);
-  assert.deepEqual(packet.requestedProofCommands, ['git rev-parse HEAD', 'npm run stephanos:browser-proof']);
+  assert.match(packet.prompt, /runtimeSourceHead/);
+  assert.deepEqual(packet.requestedProofCommands, [
+    'git rev-parse HEAD',
+    `node scripts/browser-proof-runner.mjs --url http://127.0.0.1:4173/apps/stephanos/dist/index.html --expected-head ${command.expectedHead} --no-artifacts --machine-json`,
+  ]);
   assert.deepEqual(packet.exactHeadProof, {
     repository: 'Cheekyfellastef/stephan-os',
     prNumber: command.prNumber,
     expectedHead: command.expectedHead,
     proofScenario: command.proofScenario,
   });
+});
+
+test('derives a deterministic Windows-safe job id instead of using a raw mailbox request id as a path', () => {
+  const requestId = 'proof:2026-07-30T20:00:00Z';
+  const first = createWindowsSafeBrowserProofJobId(requestId);
+  const second = createWindowsSafeBrowserProofJobId(requestId);
+  assert.equal(first, second);
+  assert.match(first, /^windows-browser-proof-[0-9a-f]{32}$/);
+  assert.doesNotMatch(first, /[<>:"/\\|?*]/);
+  assert.equal(buildExactHeadWindowsBrowserProofPacket({ ...command, requestId }).jobId, first);
 });
 
 test('fails closed away from Windows', async () => {

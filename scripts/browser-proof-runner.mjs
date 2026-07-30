@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_URL = process.env.STEPHANOS_BROWSER_PROOF_URL || 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
-const OUT_DIR = resolve(process.cwd(), 'tmp/browser-proof');
+const DEFAULT_OUT_DIR = resolve(process.cwd(), 'tmp/browser-proof');
+const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/;
 
 function stamp() { return new Date().toISOString(); }
 function ok(v) { return v === true || v === 'yes' || v === 0; }
@@ -24,9 +25,48 @@ export function shouldGenerateBrowserProofPacket(projection = {}) {
   return expectedNextProofFromProjection(projection) === 'browser-proof-checklist';
 }
 
-export function evaluateBrowserProofResult(result = {}) {
+function normalizeGitHead(value = '') {
+  const match = String(value || '').trim().toLowerCase().match(/\b[0-9a-f]{40}\b/);
+  return match?.[0] || '';
+}
+
+export function parseBrowserProofArguments(argv = []) {
+  let url = DEFAULT_URL;
+  let expectedHead = '';
+  let positionalUrlSeen = false;
+  let writeArtifacts = true;
+  let machineJson = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = String(argv[index] || '');
+    if (argument === '--expected-head') {
+      expectedHead = String(argv[index + 1] || '').trim().toLowerCase();
+      index += 1;
+      if (!EXACT_GIT_HEAD.test(expectedHead)) {
+        return { ok: false, url, expectedHead, blocker: 'EXPECTED_HEAD_INVALID' };
+      }
+    } else if (argument === '--url') {
+      url = String(argv[index + 1] || '').trim();
+      index += 1;
+      if (!url) return { ok: false, url: DEFAULT_URL, expectedHead, blocker: 'RUNTIME_URL_INVALID' };
+    } else if (argument === '--no-artifacts') {
+      writeArtifacts = false;
+    } else if (argument === '--machine-json') {
+      machineJson = true;
+    } else if (!argument.startsWith('-') && !positionalUrlSeen) {
+      url = argument;
+      positionalUrlSeen = true;
+    } else {
+      return { ok: false, url, expectedHead, blocker: 'BROWSER_PROOF_ARGUMENT_INVALID' };
+    }
+  }
+  return { ok: true, url, expectedHead, writeArtifacts, machineJson };
+}
+
+export function evaluateBrowserProofResult(result = {}, { expectedHead = '' } = {}) {
   const checks = result.checks || {};
   const blocking = [];
+  const normalizedExpectedHead = String(expectedHead || '').trim().toLowerCase();
+  const runtimeSourceHead = normalizeGitHead(checks.runtimeSourceHead || checks.footerGitCommit);
   if (!ok(checks.runtimeReachable)) blocking.push('4173 runtime unreachable');
   if (!ok(checks.footerGitCommitPresent)) blocking.push('footer UI Git Commit missing');
   if (!ok(checks.uiBuildTimestampPresent)) blocking.push('UI Build Timestamp missing');
@@ -37,8 +77,28 @@ export function evaluateBrowserProofResult(result = {}) {
   if (!ok(checks.operatorDiagnosticCopyPresent)) blocking.push('operator-facing diagnostic copy missing');
   if (Number(checks.consoleErrorCount || 0) > 0) blocking.push(`console error count ${checks.consoleErrorCount}`);
   if (result.automationUnavailable) blocking.push(`automation unavailable: ${result.automationUnavailable}`);
+  let expectedHeadMatch = null;
+  if (normalizedExpectedHead) {
+    expectedHeadMatch = EXACT_GIT_HEAD.test(normalizedExpectedHead) && runtimeSourceHead === normalizedExpectedHead;
+    if (!EXACT_GIT_HEAD.test(normalizedExpectedHead)) {
+      blocking.push('approved expected head is invalid');
+    } else if (!runtimeSourceHead) {
+      blocking.push('served runtime Git Commit is not a full 40-character SHA');
+    } else if (!expectedHeadMatch) {
+      blocking.push(`served runtime Git Commit ${runtimeSourceHead} does not match expected head ${normalizedExpectedHead}`);
+    }
+  }
   const observed = result.browserAutomationAvailable === true && !result.automationUnavailable && checks.runtimeReachable === true;
-  return { accepted: observed, observed, mergeReady: observed && blocking.length === 0, blocking };
+  const accepted = observed && (normalizedExpectedHead ? expectedHeadMatch === true : true);
+  return {
+    accepted,
+    observed,
+    mergeReady: observed && blocking.length === 0,
+    blocking,
+    expectedHead: normalizedExpectedHead,
+    runtimeSourceHead,
+    expectedHeadMatch,
+  };
 }
 
 function listSection(title, items = []) {
@@ -49,11 +109,11 @@ function consoleErrorSummary(errors = []) {
   return errors.slice(0, 5).map((item) => String(item || '').split('\n')[0].slice(0, 220)).filter(Boolean);
 }
 
-export function buildBrowserProofPacket(result = {}) {
-  const verdict = evaluateBrowserProofResult(result);
+export function buildBrowserProofPacket(result = {}, options = {}) {
+  const verdict = evaluateBrowserProofResult(result, options);
   const repair = result.automationUnavailable || !result.browserAutomationAvailable;
   const header = repair ? 'Browser Proof Repair Packet V1' : 'Browser Proof Checklist V1';
-  const status = repair ? 'repair-required' : (verdict.observed ? 'observed' : 'repair-required');
+  const status = repair ? 'repair-required' : (verdict.accepted ? 'observed' : 'rejected');
   const checks = result.checks || {};
   return [
     header,
@@ -69,6 +129,9 @@ export function buildBrowserProofPacket(result = {}) {
     'Required checks:',
     line('- 4173 runtime reachable', checks.runtimeReachable ? 'yes' : 'no'),
     line('- Footer UI Git Commit', checks.footerGitCommit || (checks.footerGitCommitPresent ? 'present' : 'missing')),
+    line('- Approved expected Git head', verdict.expectedHead || 'not requested'),
+    line('- Browser-observed runtime source head', verdict.runtimeSourceHead || 'unavailable'),
+    line('- Browser-observed head matches approved head', verdict.expectedHeadMatch == null ? 'not requested' : (verdict.expectedHeadMatch ? 'yes' : 'no')),
     line('- UI Build Timestamp', checks.uiBuildTimestamp || (checks.uiBuildTimestampPresent ? 'present' : 'missing')),
     line('- Source fingerprint / runtime marker', checks.sourceFingerprint || checks.runtimeMarker || 'unavailable'),
     line('- Proof Concierge DOM next proof', checks.proofConciergeDomNextProof || 'unavailable'),
@@ -86,13 +149,29 @@ export function buildBrowserProofPacket(result = {}) {
   ].join('\n');
 }
 
+export function buildBrowserProofMachineResult(result = {}, options = {}) {
+  const verdict = evaluateBrowserProofResult(result, options);
+  return Object.freeze({
+    schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v1',
+    url: String(result.url || DEFAULT_URL),
+    observedUrl: String(result.observedUrl || ''),
+    accepted: verdict.accepted,
+    observed: verdict.observed,
+    mergeReady: verdict.mergeReady,
+    expectedHead: verdict.expectedHead,
+    runtimeSourceHead: verdict.runtimeSourceHead,
+    expectedHeadMatch: verdict.expectedHeadMatch,
+    blocking: [...verdict.blocking],
+  });
+}
+
 async function loadPlaywright() {
   try { return await import('playwright'); } catch {}
   try { return await import('@playwright/test'); } catch {}
   return null;
 }
 
-async function collectWithBrowser(url = DEFAULT_URL) {
+async function collectWithBrowser(url = DEFAULT_URL, { writeArtifacts = true } = {}) {
   const pw = await loadPlaywright();
   if (!pw?.chromium) return { browserAutomationAvailable: false, automationUnavailable: 'Playwright chromium API unavailable', url, generatedAt: stamp(), checks: { runtimeReachable: false } };
   const errors = [];
@@ -130,43 +209,80 @@ async function collectWithBrowser(url = DEFAULT_URL) {
         operatorDiagnosticCopyPresent: /diagnostic|repair|copy/i.test(body),
       };
     });
-    mkdirSync(OUT_DIR, { recursive: true });
-    const screenshotPath = resolve(OUT_DIR, `browser-proof-${Date.now()}.png`);
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    let screenshotPath = '';
+    if (writeArtifacts) {
+      mkdirSync(DEFAULT_OUT_DIR, { recursive: true });
+      screenshotPath = resolve(DEFAULT_OUT_DIR, `browser-proof-${Date.now()}.png`);
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+    }
     checks.consoleErrorCount = errors.length;
-    return { browserAutomationAvailable: true, localBrowserMechanism: 'Playwright Chromium using installed Microsoft Edge channel on Windows when available; no browser download requested', url, generatedAt: stamp(), screenshotPath, consoleErrors: errors, checks };
+    return {
+      browserAutomationAvailable: true,
+      localBrowserMechanism: 'Playwright Chromium using installed Microsoft Edge channel on Windows when available; no browser download requested',
+      url,
+      observedUrl: page.url(),
+      generatedAt: stamp(),
+      screenshotPath,
+      consoleErrors: errors,
+      checks,
+    };
   } catch (error) {
     return { browserAutomationAvailable: false, automationUnavailable: sanitizeAutomationUnavailable(error.message), url, generatedAt: stamp(), consoleErrors: errors, checks: { runtimeReachable: false, consoleErrorCount: errors.length } };
   } finally { if (browser) await browser.close(); }
 }
 
-function printSinglePacket(result) {
-  const packet = buildBrowserProofPacket(result);
+function printSinglePacket(result, options = {}, { writeArtifacts = true } = {}) {
+  const packet = buildBrowserProofPacket(result, options);
   process.stdout.write(`${packet}\n`);
-  const out = resolve(OUT_DIR, 'browser-proof-checklist-packet.txt');
-  try {
-    mkdirSync(OUT_DIR, { recursive: true });
-    writeFileSync(out, packet);
-    console.error(`[stephanos:browser-proof] packet written: ${out}`);
-  } catch (error) {
-    console.error(`[stephanos:browser-proof] packet file write unavailable: ${sanitizeAutomationUnavailable(error?.message || error)}`);
+  if (writeArtifacts) {
+    const out = resolve(DEFAULT_OUT_DIR, 'browser-proof-checklist-packet.txt');
+    try {
+      mkdirSync(DEFAULT_OUT_DIR, { recursive: true });
+      writeFileSync(out, packet);
+      console.error(`[stephanos:browser-proof] packet written: ${out}`);
+    } catch (error) {
+      console.error(`[stephanos:browser-proof] packet file write unavailable: ${sanitizeAutomationUnavailable(error?.message || error)}`);
+    }
   }
-  return evaluateBrowserProofResult(result).accepted ? 0 : 1;
+  return evaluateBrowserProofResult(result, options).accepted ? 0 : 1;
+}
+
+function printMachineResult(result, options = {}) {
+  const machineResult = buildBrowserProofMachineResult(result, options);
+  process.stdout.write(`${JSON.stringify(machineResult)}\n`);
+  return machineResult.accepted ? 0 : 1;
 }
 
 async function main() {
+  const parsed = parseBrowserProofArguments(process.argv.slice(2));
+  if (!parsed.ok) {
+    const result = {
+      browserAutomationAvailable: false,
+      automationUnavailable: parsed.blocker,
+      url: parsed.url,
+      generatedAt: stamp(),
+      checks: { runtimeReachable: false },
+    };
+    process.exit(parsed.machineJson
+      ? printMachineResult(result, { expectedHead: parsed.expectedHead })
+      : printSinglePacket(result, { expectedHead: parsed.expectedHead }, { writeArtifacts: parsed.writeArtifacts }));
+  }
   try {
-    const result = await collectWithBrowser(process.argv[2] || DEFAULT_URL);
-    process.exit(printSinglePacket(result));
+    const result = await collectWithBrowser(parsed.url, { writeArtifacts: parsed.writeArtifacts });
+    process.exit(parsed.machineJson
+      ? printMachineResult(result, { expectedHead: parsed.expectedHead })
+      : printSinglePacket(result, { expectedHead: parsed.expectedHead }, { writeArtifacts: parsed.writeArtifacts }));
   } catch (error) {
     const result = {
       browserAutomationAvailable: false,
       automationUnavailable: sanitizeAutomationUnavailable(error?.message || error),
-      url: process.argv[2] || DEFAULT_URL,
+      url: parsed.url,
       generatedAt: stamp(),
       checks: { runtimeReachable: false },
     };
-    process.exit(printSinglePacket(result));
+    process.exit(parsed.machineJson
+      ? printMachineResult(result, { expectedHead: parsed.expectedHead })
+      : printSinglePacket(result, { expectedHead: parsed.expectedHead }, { writeArtifacts: parsed.writeArtifacts }));
   }
 }
 

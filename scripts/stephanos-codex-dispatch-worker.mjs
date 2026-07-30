@@ -12,6 +12,7 @@ import {
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
 ]);
+const CANONICAL_BROWSER_PROOF_URL = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -212,7 +213,7 @@ export function classifyCodexExecution({
   });
 }
 
-export function validateBrowserProofVerdict(lastMessage, task = {}) {
+export function validateBrowserProofVerdict(lastMessage, task = {}, browserRuntimeProof = null) {
   if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
   const expectedScenario = String(task.exactHeadProof.proofScenario || '');
   let payload;
@@ -238,13 +239,144 @@ export function validateBrowserProofVerdict(lastMessage, task = {}) {
   if (!requiredTrue.every((key) => evidence[key] === true) || !Array.isArray(evidence.consoleErrors)) {
     return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_EVIDENCE_INCOMPLETE' });
   }
+  const expectedHead = String(task.exactHeadProof.expectedHead || '').trim().toLowerCase();
+  const runtimeSourceHead = String(evidence.runtimeSourceHead || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(runtimeSourceHead)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISSING' });
+  }
+  if (runtimeSourceHead !== expectedHead) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH',
+      expectedHead,
+      runtimeSourceHead,
+    });
+  }
+  if (browserRuntimeProof?.required === true) {
+    if (browserRuntimeProof.ok !== true) {
+      return Object.freeze({
+        ok: false,
+        required: true,
+        blocker: browserRuntimeProof.blocker || 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
+      });
+    }
+    if (runtimeSourceHead !== browserRuntimeProof.runtimeSourceHead) {
+      return Object.freeze({
+        ok: false,
+        required: true,
+        blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH',
+        expectedHead,
+        runtimeSourceHead: browserRuntimeProof.runtimeSourceHead,
+      });
+    }
+  }
   if (evidence.consoleErrors.length > 0) {
     return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_CONSOLE_ERRORS' });
   }
   if (!Array.isArray(payload.blockers) || payload.blockers.length > 0) {
     return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_BLOCKERS_REMAIN' });
   }
-  return Object.freeze({ ok: true, required: true, proofScenario: expectedScenario, evidence });
+  return Object.freeze({
+    ok: true,
+    required: true,
+    proofScenario: expectedScenario,
+    expectedHead,
+    runtimeSourceHead,
+    evidence,
+  });
+}
+
+export function runBrowserRuntimeExactHeadProof(task, {
+  spawnSyncFn = spawnSync,
+  runnerPath = resolve(fileURLToPath(new URL('./browser-proof-runner.mjs', import.meta.url))),
+} = {}) {
+  if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
+  const expectedHead = String(task.exactHeadProof.expectedHead || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID' });
+  }
+  let execution;
+  try {
+    execution = spawnSyncFn(process.execPath, [
+      runnerPath,
+      '--url',
+      CANONICAL_BROWSER_PROOF_URL,
+      '--expected-head',
+      expectedHead,
+      '--no-artifacts',
+      '--machine-json',
+    ], {
+      cwd: task.repoRoot,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 120000,
+    });
+  } catch {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
+      expectedHead,
+      runtimeSourceHead: '',
+    });
+  }
+  let payload = null;
+  try {
+    payload = JSON.parse(String(execution?.stdout || '').trim());
+  } catch {}
+  const runtimeUrl = String(payload?.url || '').trim();
+  const observedRuntimeUrl = String(payload?.observedUrl || '').trim();
+  const runtimeSourceHead = String(payload?.runtimeSourceHead || '').trim().toLowerCase();
+  if (runtimeSourceHead && runtimeSourceHead !== expectedHead) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH',
+      expectedHead,
+      runtimeSourceHead,
+    });
+  }
+  if (
+    runtimeUrl !== CANONICAL_BROWSER_PROOF_URL
+    || observedRuntimeUrl !== CANONICAL_BROWSER_PROOF_URL
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_RUNTIME_URL_MISMATCH',
+      expectedHead,
+      runtimeUrl,
+      observedRuntimeUrl,
+    });
+  }
+  if (
+    execution?.error
+    || execution?.status !== 0
+    || payload?.schemaVersion !== 'stephanos.browser-runtime-exact-head-proof.v1'
+    || payload?.accepted !== true
+    || payload?.expectedHead !== expectedHead
+    || payload?.expectedHeadMatch !== true
+    || runtimeSourceHead !== expectedHead
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
+      expectedHead,
+      runtimeSourceHead,
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    required: true,
+    expectedHead,
+    runtimeSourceHead,
+    runtimeUrl,
+    observedRuntimeUrl,
+    schemaVersion: payload.schemaVersion,
+  });
 }
 
 export function resolveCodexExecInvocation({
@@ -276,7 +408,7 @@ export function resolveCodexExecInvocation({
 
 export function buildGuardedCodexPrompt(task) {
   const verdictContract = task.exactHeadProof
-    ? `\nMACHINE-READABLE FINAL VERDICT\nReturn only one JSON object as your final message. It must use exactly this evidence shape:\n{"verdict":"PASS|FAIL","proofScenario":"${task.exactHeadProof.proofScenario}","evidence":{"listeningDeckIframeIdentityPreserved":true|false,"discoveryIframeIdentityPreserved":true|false,"legacyRankingChanged":true|false,"consoleErrors":[]},"blockers":[]}\nPASS is forbidden unless every boolean is true and consoleErrors is an empty array.`
+    ? `\nMACHINE-READABLE FINAL VERDICT\nReturn only one JSON object as your final message. It must use exactly this evidence shape:\n{"verdict":"PASS|FAIL","proofScenario":"${task.exactHeadProof.proofScenario}","evidence":{"runtimeSourceHead":"40-character Git Commit copied from the live Edge DOM","listeningDeckIframeIdentityPreserved":true|false,"discoveryIframeIdentityPreserved":true|false,"legacyRankingChanged":true|false,"consoleErrors":[]},"blockers":[]}\nPASS is forbidden unless runtimeSourceHead exactly equals ${task.exactHeadProof.expectedHead}, every boolean is true, and consoleErrors and blockers are explicitly empty arrays.`
     : '\nReturn a structured PASS/FAIL report with remaining blockers.';
   return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- The child Codex run is read-only and non-interactive. Do not request approval.\n- User configuration is not loaded for this child run, so local MCP and app tools are unavailable by construction.\n- Do not call MCP tools, app tools, or dispatch another Codex task. Use bounded shell diagnostics only.\n- Do not create generated output unless the exact requested proof cannot be completed without it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.${verdictContract}\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
 }
@@ -364,6 +496,31 @@ export async function runCodexWorker(taskPath, {
     await publishVisibilitySafely(visibilityPublisher, task, result);
     return result;
   }
+  const browserRuntimeProofBefore = runBrowserRuntimeExactHeadProof(task, { spawnSyncFn });
+  if (!browserRuntimeProofBefore.ok) {
+    const completedAt = now();
+    const result = {
+      ...task,
+      kind: 'stephanos.codex_dispatch.local_result',
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      resultAvailable: true,
+      resultVerdict: 'FAIL',
+      workerAlive: false,
+      heartbeatUtc: completedAt,
+      startedAt: completedAt,
+      completedAt,
+      exactHeadValidation,
+      browserRuntimeProofBefore,
+      blocker: browserRuntimeProofBefore.blocker,
+      nextOperatorAction: `Repair the browser runtime exact-head blocker before retrying: ${browserRuntimeProofBefore.blocker}.`,
+    };
+    writeJson(resultPath, result);
+    writeJson(statusPath, result);
+    writeJson(currentPath, result);
+    await publishVisibilitySafely(visibilityPublisher, task, result);
+    return result;
+  }
   const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD']);
   const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1']);
   const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
@@ -379,6 +536,7 @@ export async function runCodexWorker(taskPath, {
     workerPid: process.pid,
     sourceHeadBefore: sourceHeadBefore.stdout,
     exactHeadValidation,
+    browserRuntimeProofBefore,
     dirtBefore,
     executionPolicy: {
       approvalPolicy: 'never',
@@ -408,13 +566,41 @@ export async function runCodexWorker(taskPath, {
   writeJson(currentPath, running);
 
   const prompt = buildGuardedCodexPrompt(task);
-  const child = spawnFn(invocation.command, invocation.args, {
-    cwd: resolve(task.repoRoot),
-    windowsHide: true,
-    shell: false,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env,
-  });
+  let child;
+  try {
+    child = spawnFn(invocation.command, invocation.args, {
+      cwd: resolve(task.repoRoot),
+      windowsHide: true,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env,
+    });
+    if (!child || typeof child.once !== 'function') throw new Error('Codex child process unavailable');
+  } catch {
+    const completedAt = now();
+    const result = {
+      ...task,
+      kind: 'stephanos.codex_dispatch.local_result',
+      status: 'FAILED',
+      verdict: 'FAIL',
+      resultAvailable: true,
+      resultVerdict: 'FAIL',
+      workerAlive: false,
+      heartbeatUtc: completedAt,
+      startedAt,
+      completedAt,
+      exactHeadValidation,
+      browserRuntimeProofBefore,
+      sourceHeadBefore: sourceHeadBefore.stdout,
+      blocker: 'CODEX_CLI_STARTUP_FAILED',
+      nextOperatorAction: 'Repair the local Codex CLI launch path, then submit a fresh bounded request.',
+    };
+    writeJson(resultPath, result);
+    writeJson(statusPath, result);
+    writeJson(currentPath, result);
+    await publishVisibilitySafely(visibilityPublisher, task, result);
+    return result;
+  }
   const stdoutWriter = streamToFile(child.stdout, stdoutPath);
   const stderrWriter = streamToFile(child.stderr, stderrPath);
   child.stdin?.end?.(prompt);
@@ -488,7 +674,8 @@ export async function runCodexWorker(taskPath, {
     lastMessage,
     stderr: stderrText,
   });
-  const browserProof = validateBrowserProofVerdict(lastMessage, task);
+  const browserRuntimeProofAfter = runBrowserRuntimeExactHeadProof(task, { spawnSyncFn });
+  const browserProof = validateBrowserProofVerdict(lastMessage, task, browserRuntimeProofAfter);
   const sourceHeadUnchanged = sourceHeadBefore.ok && sourceHeadAfter.ok && sourceHeadBefore.stdout === sourceHeadAfter.stdout;
   const expectedHead = exactHeadValidation.required ? exactHeadValidation.expectedHead : '';
   const sourceHeadBound = !exactHeadValidation.required
@@ -515,6 +702,8 @@ export async function runCodexWorker(taskPath, {
     sourceHeadAfter: sourceHeadAfter.stdout,
     sourceHeadUnchanged,
     sourceHeadBound,
+    browserRuntimeProofBefore,
+    browserRuntimeProofAfter,
     browserProof,
     exit,
     execution,

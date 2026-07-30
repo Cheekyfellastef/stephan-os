@@ -1,10 +1,12 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createCodexQueueRecord, transitionCodexQueueRecord } from './codexDispatchQueue.mjs';
 import { dispatchQueuedCodexJob } from './automatedCodexDispatcher.mjs';
 import { createLocalCodexExecIntegration } from './localCodexExecIntegration.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/;
+const CANONICAL_BROWSER_PROOF_URL = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
 
 const SCENARIO_PROMPTS = Object.freeze({
   MUSIC_RATING_PRESERVES_PLAYBACK: [
@@ -13,23 +15,33 @@ const SCENARIO_PROMPTS = Object.freeze({
     'Mount a Listening Deck Spotify iframe and a verified Discovery Spotify iframe.',
     'Retain direct references to both iframe DOM nodes, click a rating button, and prove both references remain strictly identical and isConnected after the click.',
     'Prove the non-player legacy discovery ranking changed truthfully and capture browser console errors.',
+    'Read the full Git Commit from the live Edge DOM and return it as runtimeSourceHead; it must exactly equal the requested head.',
     'Do not substitute source inspection, regex assertions, DOM emulation, or Linux browser results.',
   ].join(' '),
 });
 
+export function createWindowsSafeBrowserProofJobId(requestId = '') {
+  const digest = createHash('sha256').update(String(requestId)).digest('hex').slice(0, 32);
+  return `windows-browser-proof-${digest}`;
+}
+
 export function buildExactHeadWindowsBrowserProofPacket(command = {}, timestampUtc = new Date().toISOString()) {
   const prompt = SCENARIO_PROMPTS[command.proofScenario];
   if (!prompt) throw new Error('WINDOWS_BROWSER_PROOF_SCENARIO_NOT_ALLOWED');
+  const expectedHead = String(command.expectedHead).toLowerCase();
   const created = createCodexQueueRecord({
-    jobId: `windows-browser-proof-${command.requestId}`,
+    jobId: createWindowsSafeBrowserProofJobId(command.requestId),
     issueNumber: 1507,
     branch: 'main',
-    prompt: `PR #${command.prNumber}; expected head ${command.expectedHead}. ${prompt}`,
-    requestedProofCommands: ['git rev-parse HEAD', 'npm run stephanos:browser-proof'],
+    prompt: `PR #${command.prNumber}; expected head ${expectedHead}. ${prompt}`,
+    requestedProofCommands: [
+      'git rev-parse HEAD',
+      `node scripts/browser-proof-runner.mjs --url ${CANONICAL_BROWSER_PROOF_URL} --expected-head ${expectedHead} --no-artifacts --machine-json`,
+    ],
     exactHeadProof: {
       repository: REPOSITORY,
       prNumber: Number(command.prNumber),
-      expectedHead: String(command.expectedHead).toLowerCase(),
+      expectedHead,
       proofScenario: String(command.proofScenario),
     },
     createdAt: timestampUtc,

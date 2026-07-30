@@ -86,7 +86,7 @@ export function getStephanosFingerprintSourceFiles() {
 
 export function getGitCommit() {
   try {
-    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],

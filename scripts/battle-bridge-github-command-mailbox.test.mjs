@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { parseBoundedGitHubJson } from './battle-bridge-github-command-mailbox.mjs';
+import {
+  createWindowsSafeMailboxReceiptFilename,
+  parseBoundedGitHubJson,
+} from './battle-bridge-github-command-mailbox.mjs';
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-command-mailbox-hidden.ps1', import.meta.url);
@@ -57,4 +60,13 @@ test('classifies invalid JSON without exposing truncated parser input', () => {
     () => parseBoundedGitHubJson('{"comments":'),
     /GITHUB_RESPONSE_JSON_INVALID/,
   );
+});
+
+test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {
+  const requestId = 'proof:2026-07-30T20:00:00Z';
+  const filename = createWindowsSafeMailboxReceiptFilename(requestId);
+  assert.match(filename, /^request-[0-9a-f]{32}\.json$/);
+  assert.doesNotMatch(filename, /[<>:"/\\|?*]/);
+  assert.equal(createWindowsSafeMailboxReceiptFilename(requestId), filename);
+  assert.equal(createWindowsSafeMailboxReceiptFilename('request-safe-0001'), 'request-safe-0001.json');
 });
