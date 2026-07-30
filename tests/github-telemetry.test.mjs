@@ -1,9 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { answerLiveTelemetryQuestion, classifyGithubNotification, normalizeGithubTelemetry, readGithubTelemetry } from '../stephanos-server/services/githubTelemetryService.js';
+import { answerLiveTelemetryQuestion, buildExecutionChains, classifyGithubNotification, normalizeGithubTelemetry, readGithubTelemetry } from '../stephanos-server/services/githubTelemetryService.js';
 import { resolveGithubAuth } from '../stephanos-server/services/githubAuthResolver.js';
 import { fetchGithubPrEvidence } from '../stephanos-server/services/githubPrEvidenceService.js';
 import { buildLiveGoalProjection } from '../stephanos-server/services/liveGoalProjectionService.js';
+import { REQUIRED_EXACT_HEAD_WORKFLOWS } from '../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
+
+function requiredChecks(headSha, conclusion = 'success') {
+  return REQUIRED_EXACT_HEAD_WORKFLOWS.map((name, index) => ({
+    name,
+    headSha,
+    conclusion,
+    updatedAt: `2026-07-30T10:0${index}:00.000Z`,
+  }));
+}
 
 test('GitHub notifications classify into required categories and count unread state', () => {
   const telemetry = normalizeGithubTelemetry({ available: true, notifications: [
@@ -26,7 +36,8 @@ test('GitHub notifications classify into required categories and count unread st
 });
 
 test('GitHub telemetry projects PRs workflows unavailable state and no fabricated truth', () => {
-  const live = normalizeGithubTelemetry({ available: true, issues: [{ number: 1497, title: 'Goal: continuous repair', state: 'open', labels: [{ name: 'goal' }], assignees: [{ login: 'codex' }], updated_at: '2026-07-29T12:00:00Z' }, { number: 7, title: 'PR-shaped issue', pull_request: {} }], pullRequests: [{ number: 42, title: 'Goal API for #1497', body: 'Advances #1497.', branch: 'work', headSha: 'a'.repeat(40), checks: [{ conclusion: 'success' }], approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }, { id: 2, name: 'build', conclusion: 'success', prNumber: 42 }, { id: 3, name: 'deploy', conclusion: 'cancelled' }] });
+  const headSha = 'a'.repeat(40);
+  const live = normalizeGithubTelemetry({ available: true, issues: [{ number: 1497, title: 'Goal: continuous repair', state: 'open', labels: [{ name: 'goal' }], assignees: [{ login: 'codex' }], updated_at: '2026-07-29T12:00:00Z' }, { number: 7, title: 'PR-shaped issue', pull_request: {} }], pullRequests: [{ number: 42, title: 'Goal API for #1497', body: 'Fixes #1497.', branch: 'work', headSha, checks: requiredChecks(headSha), approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }, { id: 2, name: 'build', conclusion: 'success', prNumber: 42 }, { id: 3, name: 'deploy', conclusion: 'cancelled' }] });
   assert.equal(live.pullRequests[0].checksStatus, 'passed');
   assert.deepEqual(live.pullRequests[0].relatedIssues, [1497]);
   assert.equal(live.issues[0].number, 1497);
@@ -44,7 +55,8 @@ test('GitHub telemetry projects PRs workflows unavailable state and no fabricate
 });
 
 test('live projection correlates goals to PR workflow chain and command deck answers from telemetry', () => {
-  const githubTelemetry = normalizeGithubTelemetry({ available: true, notifications: [{ id: 'n1', reason: 'review_requested', subject: { title: 'Review PR 42', type: 'PullRequest' } }], pullRequests: [{ number: 42, title: 'Historical Mission Control API', branch: 'work', headSha: 'b'.repeat(40), checks: [{ conclusion: 'success' }], approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }] });
+  const headSha = 'b'.repeat(40);
+  const githubTelemetry = normalizeGithubTelemetry({ available: true, notifications: [{ id: 'n1', reason: 'review_requested', subject: { title: 'Review PR 42', type: 'PullRequest' } }], pullRequests: [{ number: 42, title: 'Historical Mission Control API', branch: 'work', headSha, checks: requiredChecks(headSha), approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', head_sha: headSha, prNumber: 42 }] });
   const projection = buildLiveGoalProjection({ backendStatus: { status: 'live', ok: true }, missionOperationsFeed: { status: 'ready', missions: [], errors: [] }, importedGoals: { receipts: [], candidates: [{ candidateId: 'goal-42', title: 'Historical Mission Control API', intent: 'API', lastKnownPR: '#42', status: 'open' }] }, githubTelemetry });
   assert.equal(projection.githubTelemetry.notificationCounts['Review requested'], 1);
   assert.equal(projection.executionChains[0].pr.number, 42);
@@ -52,6 +64,68 @@ test('live projection correlates goals to PR workflow chain and command deck ans
   assert.match(answerLiveTelemetryQuestion('Which workflows failed?', projection), /verify#1/);
   assert.match(answerLiveTelemetryQuestion('What GitHub notifications need my attention?', projection), /Review requested/);
   assert.match(answerLiveTelemetryQuestion('Which PR is safest to merge?', projection), /#42/);
+});
+
+test('PR readiness requires the complete canonical workflow set on the unchanged exact head', () => {
+  const currentHead = 'c'.repeat(40);
+  const staleHead = 'd'.repeat(40);
+  const incomplete = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    pullRequests: [{ number: 50, headSha: currentHead, body: 'Fixes #1497', mergeReadiness: 'merge_ready' }],
+    workflows: [
+      ...requiredChecks(staleHead).map((run, index) => ({ ...run, id: `stale-${index}`, prNumber: 50 })),
+      ...requiredChecks(currentHead).slice(0, -1).map((run, index) => ({ ...run, id: `current-${index}`, prNumber: 50 })),
+    ],
+  });
+  assert.equal(incomplete.pullRequests[0].checksStatus, 'unknown');
+  assert.deepEqual(incomplete.pullRequests[0].missingRequiredChecks, [REQUIRED_EXACT_HEAD_WORKFLOWS.at(-1)]);
+  assert.equal(incomplete.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+
+  const complete = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    pullRequests: [{ number: 50, headSha: currentHead, body: 'Fixes #1497' }],
+    workflows: requiredChecks(currentHead).map((run, index) => ({ ...run, id: `current-${index}`, prNumber: 50 })),
+  });
+  assert.equal(complete.pullRequests[0].checksStatus, 'passed');
+  assert.deepEqual(complete.pullRequests[0].missingRequiredChecks, []);
+});
+
+test('PR issue correlation accepts explicit closing references and rejects incidental mentions', () => {
+  const headSha = 'e'.repeat(40);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    pullRequests: [
+      { number: 60, title: 'Supersedes #123', body: 'Background context from #456.', branch: 'issue-789', headSha, checks: requiredChecks(headSha) },
+      { number: 61, title: 'Durable link', body: 'Fixes #1497 and resolves owner/repo#1619.', headSha, checks: requiredChecks(headSha) },
+      { number: 62, title: 'Adapter-provided link', relatedIssues: [1282], headSha, checks: requiredChecks(headSha) },
+    ],
+  });
+  assert.deepEqual(telemetry.pullRequests[0].relatedIssues, []);
+  assert.deepEqual(telemetry.pullRequests[1].relatedIssues, [1497, 1619]);
+  assert.deepEqual(telemetry.pullRequests[2].relatedIssues, [1282]);
+});
+
+test('execution chains use only explicit PR or durable issue identity, never matching title text', () => {
+  const chains = buildExecutionChains({
+    goals: [
+      { candidateId: 'goal-a', title: 'Retrospective 42' },
+      { candidateId: 'goal-b', title: 'Explicit PR', lastKnownPR: '#42' },
+      { candidateId: 'goal-c', title: 'Durable issue', issueNumber: 1497 },
+    ],
+    githubTelemetry: {
+      pullRequests: [
+        { number: 42, headSha: 'a'.repeat(40), relatedIssues: [] },
+        { number: 43, headSha: 'b'.repeat(40), relatedIssues: [1497] },
+      ],
+      workflows: [],
+    },
+  });
+  assert.equal(chains[0].pr, null);
+  assert.equal(chains[1].pr.number, 42);
+  assert.equal(chains[2].pr.number, 43);
 });
 
 
@@ -125,6 +199,42 @@ test('GitHub telemetry reports authority=gh-cli when fallback succeeds', async (
   assert.equal(telemetry.authAuthority, 'gh-cli');
   assert.equal(telemetry.mutationAllowed, false);
   assert.equal(telemetry.mergeAllowed, false);
+});
+
+test('GitHub telemetry paginates open issue inventory to exhaustion before claiming completeness', async () => {
+  const calls = [];
+  const firstPage = Array.from({ length: 100 }, (_, index) => ({ number: index + 1, title: `Goal ${index + 1}`, state: 'open' }));
+  const telemetry = await readGithubTelemetry({
+    env: { GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'env-token' },
+    secretStoreToken: '',
+    fetchImpl: async (url) => {
+      calls.push(url);
+      const parsed = new URL(url);
+      if (url.includes('/notifications')) return okJson([]);
+      if (url.includes('/pulls?')) return okJson([]);
+      if (url.includes('/issues?') && parsed.searchParams.get('page') === '1') return okJson(firstPage);
+      if (url.includes('/issues?') && parsed.searchParams.get('page') === '2') return okJson([{ number: 101, title: 'Goal 101', state: 'open' }]);
+      if (url.includes('/actions/runs')) return okJson({ workflow_runs: [] });
+      return okJson([]);
+    },
+  });
+  assert.equal(telemetry.issueCount, 101);
+  assert.equal(telemetry.issueInventoryComplete, true);
+  assert.equal(calls.some((url) => url.includes('/issues?') && url.includes('page=2')), true);
+});
+
+test('explicitly incomplete inventories remain visible as blockers but cannot claim complete truth', () => {
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [{ number: 1, title: 'Partial goal', state: 'open' }],
+    issueInventoryComplete: false,
+    pullRequests: [],
+    pullRequestInventoryComplete: true,
+  });
+  assert.equal(telemetry.issueInventoryObserved, true);
+  assert.equal(telemetry.issueInventoryComplete, false);
+  assert.equal(telemetry.blockers.includes('github_issue_inventory_incomplete'), true);
+  assert.match(telemetry.nextOperatorAction, /Restore complete GitHub/);
 });
 
 test('PR evidence uses shared resolver authority and gh CLI fallback after explicit 403', async () => {
