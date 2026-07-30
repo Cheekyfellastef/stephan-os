@@ -238,7 +238,7 @@ export async function readMissionOperations(options = {}) {
   const buildConciergeGoals = options.buildConciergeGoals || await readBuildConciergeGoalReceipts(options.buildConciergeGoalOptions || {});
   const importedGoals = options.importedGoals || await readImportedGoalReceipts(options.goalIngestionOptions || {});
   const githubTelemetry = options.githubTelemetry || { status: 'adapter_unavailable', adapterAvailable: false, notificationCounts: {}, pullRequests: [], workflows: [], blockers: ['github_adapter_unavailable'] };
-  const buildExecutionEngine = () => buildConciergeExecutionEngineV9({ receipts: [...buildConciergeGoals.receipts, ...importedGoals.receipts] });
+  const buildExecutionEngine = () => buildConciergeExecutionEngineV9({ receipts: buildConciergeGoals.receipts });
   if (!directory) {
     return {
       schemaVersion: 'stephanos.mission-operations-feed.v1',
@@ -249,7 +249,7 @@ export async function readMissionOperations(options = {}) {
       errors: [],
       updateStatus,
       githubTelemetry,
-      buildConcierge: { roadmap: buildConciergeRoadmap(), liveAdapter: { available: true, route: '/api/build-concierge/goals', status: 'available', blockerText: '' }, createdGoalReceipts: buildConciergeGoals.receipts, importedGoals, queue: buildConciergeQueue({ goals: [...buildConciergeGoals.candidates, ...importedGoals.candidates] }), postMergeSync: buildConciergePostMergeSync({}), antiStallMergeLane: buildConciergeAntiStallMergeLane({}), executionEngine: buildExecutionEngine() },
+      buildConcierge: { roadmap: buildConciergeRoadmap(), liveAdapter: { available: true, route: '/api/build-concierge/goals', status: 'available', blockerText: '' }, createdGoalReceipts: buildConciergeGoals.receipts, importedGoals, queue: buildConciergeQueue({ goals: buildConciergeGoals.candidates }), postMergeSync: buildConciergePostMergeSync({}), antiStallMergeLane: buildConciergeAntiStallMergeLane({}), executionEngine: buildExecutionEngine() },
       recommendedNextAction: updateStatus?.nextOperatorAction || 'Configure STEPHANOS_MISSION_OPERATIONS_DIR to the external OpenClaw receipt directory.',
     };
   }
@@ -267,7 +267,7 @@ export async function readMissionOperations(options = {}) {
       errors: [error?.message || 'Mission receipt directory could not be read.'],
       updateStatus,
       githubTelemetry,
-      buildConcierge: { roadmap: buildConciergeRoadmap(), liveAdapter: { available: true, route: '/api/build-concierge/goals', status: 'available', blockerText: '' }, createdGoalReceipts: buildConciergeGoals.receipts, importedGoals, queue: buildConciergeQueue({ goals: [...buildConciergeGoals.candidates, ...importedGoals.candidates] }), postMergeSync: buildConciergePostMergeSync({}), antiStallMergeLane: buildConciergeAntiStallMergeLane({}), executionEngine: buildExecutionEngine() },
+      buildConcierge: { roadmap: buildConciergeRoadmap(), liveAdapter: { available: true, route: '/api/build-concierge/goals', status: 'available', blockerText: '' }, createdGoalReceipts: buildConciergeGoals.receipts, importedGoals, queue: buildConciergeQueue({ goals: buildConciergeGoals.candidates }), postMergeSync: buildConciergePostMergeSync({}), antiStallMergeLane: buildConciergeAntiStallMergeLane({}), executionEngine: buildExecutionEngine() },
       recommendedNextAction: updateStatus?.nextOperatorAction || 'Create or restore the configured external receipt directory.',
     };
   }
@@ -295,7 +295,7 @@ export async function readMissionOperations(options = {}) {
     liveAdapter: { available: true, route: '/api/build-concierge/goals', status: 'available', blockerText: '' },
     createdGoalReceipts: buildConciergeGoals.receipts,
     importedGoals,
-    queue: buildConciergeQueue({ goals: [...buildConciergeGoals.candidates, ...importedGoals.candidates] }),
+    queue: buildConciergeQueue({ goals: buildConciergeGoals.candidates }),
     postMergeSync: buildConciergePostMergeSync({}),
     antiStallMergeLane: buildConciergeAntiStallMergeLane({}),
     executionEngine: buildExecutionEngine(),
@@ -306,7 +306,7 @@ export async function readMissionOperations(options = {}) {
     liveGoalProjection = buildLiveGoalProjection({
       now,
       updateStatus,
-      missionOperationsFeed: { status: missions.length || buildConciergeGoals.candidates.length || importedGoals.candidates.length ? 'ready' : 'empty', source: 'external-receipt-directory', missions, errors, githubTelemetry, recommendedNextAction: updateStatus?.nextOperatorAction },
+      missionOperationsFeed: { status: missions.length || buildConciergeGoals.candidates.length ? 'ready' : 'empty', source: 'external-receipt-directory', missions, errors, githubTelemetry, recommendedNextAction: updateStatus?.nextOperatorAction },
       backendStatus: { status: 'live', ok: true, healthRoute: '/api/health', freshness: 'mission-operations-request' },
       buildConcierge,
       createdGoalCandidates: buildConciergeGoals.candidates,
@@ -317,7 +317,7 @@ export async function readMissionOperations(options = {}) {
 
   return {
     schemaVersion: 'stephanos.mission-operations-feed.v1',
-    status: missions.length || buildConciergeGoals.candidates.length || importedGoals.candidates.length ? 'ready' : 'empty',
+    status: missions.length || buildConciergeGoals.candidates.length ? 'ready' : 'empty',
     source: 'external-receipt-directory',
     directory,
     generatedAt: now.toISOString(),
