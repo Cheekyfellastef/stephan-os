@@ -1855,8 +1855,54 @@
         setDashboardSignal('mixed', 'Live refresh failed · last known state');
       }
 
+      function isNonNegativeInteger(value) {
+        return Number.isSafeInteger(value) && value >= 0;
+      }
+
+      function isValidApprovedDashboardGoalsEnvelope(dashboardGoals) {
+        if (!dashboardGoals || typeof dashboardGoals !== 'object' || Array.isArray(dashboardGoals)) return false;
+        if (dashboardGoals.schemaVersion !== 'stephanos.live-dashboard-goals.v1') return false;
+        if (!['LIVE READ-ONLY GITHUB', 'READ-ONLY RECEIPTS', 'UNKNOWN'].includes(dashboardGoals.sourceTruth)) return false;
+        if (!Number.isFinite(Date.parse(String(dashboardGoals.observedAt || '')))) return false;
+        if (typeof dashboardGoals.freshnessVerdict !== 'string' || !dashboardGoals.freshnessVerdict.trim()) return false;
+        if (typeof dashboardGoals.nextAction !== 'string' || !dashboardGoals.nextAction.trim()) return false;
+        if (!Array.isArray(dashboardGoals.cards)) return false;
+        if (!['totalAvailable', 'displayedCount', 'activePrCount', 'blockedCount', 'readyCount', 'operatorAttentionCount']
+          .every((field) => isNonNegativeInteger(dashboardGoals[field]))
+          || dashboardGoals.displayedCount !== dashboardGoals.cards.length
+          || dashboardGoals.totalAvailable < dashboardGoals.displayedCount) return false;
+        return dashboardGoals.cards.every((card) => (
+          card
+          && typeof card === 'object'
+          && !Array.isArray(card)
+          && ['issue', 'title', 'status', 'sourceTruth', 'observedAt', 'currentOwner', 'nextOwner', 'operatorNeeded', 'handoffState', 'milestone', 'nextAction']
+            .every((field) => typeof card[field] === 'string' && card[field].trim())
+          && Number.isFinite(Date.parse(card.observedAt))
+          && isNonNegativeInteger(card.proofIndex)
+        ));
+      }
+
+      function isValidApprovedLiveTelemetryEnvelope(feed) {
+        if (!feed || typeof feed !== 'object' || Array.isArray(feed)) return false;
+        if (feed.schemaVersion === 'stephanos.live-goal-projection.v1') {
+          return ['live', 'mixed', 'static-fallback'].includes(feed.sourceTruth)
+            && Number.isFinite(Date.parse(String(feed.generatedAt || '')))
+            && isValidApprovedDashboardGoalsEnvelope(feed.dashboardGoals);
+        }
+        if (feed.schemaVersion === 'stephanos.mission-operations-feed.v1') {
+          return Array.isArray(feed.missions)
+            && feed.buildConcierge
+            && typeof feed.buildConcierge === 'object'
+            && !Array.isArray(feed.buildConcierge)
+            && feed.buildConcierge.queue
+            && typeof feed.buildConcierge.queue === 'object'
+            && !Array.isArray(feed.buildConcierge.queue);
+        }
+        return false;
+      }
+
       function renderApprovedLiveTelemetryOrMarkFailed(feed) {
-        const rendered = Boolean(feed) && renderLiveMissionOperationsTelemetry(feed);
+        const rendered = isValidApprovedLiveTelemetryEnvelope(feed) && renderLiveMissionOperationsTelemetry(feed);
         if (!rendered) markLiveTelemetryRefreshFailed();
         return rendered;
       }
