@@ -23,6 +23,7 @@ test('builds one approved read-only exact-head Windows proof packet', () => {
     repository: 'Cheekyfellastef/stephan-os',
     prNumber: command.prNumber,
     expectedHead: command.expectedHead,
+    proofScenario: command.proofScenario,
   });
 });
 
