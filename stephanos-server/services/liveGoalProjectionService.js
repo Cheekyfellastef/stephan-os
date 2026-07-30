@@ -37,9 +37,9 @@ function prStatus(pr = {}) {
   const approval = normalizedStatus(pr.approvalStatus);
   if (checks === 'failed') return 'BLOCKED';
   if (checks === 'pending') return 'VERIFYING';
+  if (pr.draft === true) return 'BUILDING';
   if (checks === 'passed' && approval === 'approved') return 'REVIEW PASSED · RUNTIME PROOF UNKNOWN';
   if (checks === 'passed') return 'READY FOR REVIEW';
-  if (pr.draft === true) return 'BUILDING';
   return 'PR OPEN · PROOF UNKNOWN';
 }
 function prNextAction(pr = {}) {
@@ -47,9 +47,9 @@ function prNextAction(pr = {}) {
   const approval = normalizedStatus(pr.approvalStatus);
   if (checks === 'failed') return `Repair failing checks on PR #${pr.number}; rerun exact-head verification.`;
   if (checks === 'pending') return `Wait for PR #${pr.number} checks, then inspect the exact-head result.`;
+  if (pr.draft === true) return `Continue the bounded build on draft PR #${pr.number}; passing checks do not declare it ready for review.`;
   if (checks === 'passed' && approval === 'approved') return `Run the required runtime/browser proof for PR #${pr.number}; GitHub review does not grant operator approval.`;
   if (checks === 'passed') return `Request independent exact-head review for PR #${pr.number}; do not infer approval.`;
-  if (pr.draft === true) return `Continue the bounded build on PR #${pr.number}; checks and proof remain unknown.`;
   return `Inspect PR #${pr.number} checks and proof; unknown remains unknown.`;
 }
 function prProofIndex(pr = {}) {
