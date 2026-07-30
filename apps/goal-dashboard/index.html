@@ -1855,6 +1855,12 @@
         setDashboardSignal('mixed', 'Live refresh failed · last known state');
       }
 
+      function renderApprovedLiveTelemetryOrMarkFailed(feed) {
+        const rendered = Boolean(feed) && renderLiveMissionOperationsTelemetry(feed);
+        if (!rendered) markLiveTelemetryRefreshFailed();
+        return rendered;
+      }
+
       function shouldAttemptLiveTelemetry() {
         return ['localhost', '127.0.0.1', ''].includes(window.location.hostname) || window.location.protocol === 'file:';
       }
@@ -1878,8 +1884,7 @@
         if (!shouldAttemptLiveTelemetry()) return;
         window.setTimeout(async () => {
           const feed = await fetchApprovedLiveTelemetry();
-          if (feed) renderLiveMissionOperationsTelemetry(feed);
-          else markLiveTelemetryRefreshFailed();
+          renderApprovedLiveTelemetryOrMarkFailed(feed);
           scheduleApprovedLiveTelemetryPoll(interval);
         }, Math.max(15000, Number(interval) || 30000));
       }
@@ -1891,7 +1896,7 @@
         else scheduleSharedWorkspaceDashboardFeedPoll();
       });
       fetchApprovedLiveTelemetry().then((feed) => {
-        if (feed) renderLiveMissionOperationsTelemetry(feed);
+        renderApprovedLiveTelemetryOrMarkFailed(feed);
         scheduleApprovedLiveTelemetryPoll();
       });
     </script>
