@@ -113,6 +113,9 @@ test('rating a deck track preserves the live player node and refreshes only depe
   assert.doesNotMatch(ratingHandler, /renderAll\(|renderListeningDeck\(/);
   assert.match(presentationHelper, /button\?\.closest\?\.\('\.player-deck-card'\)/);
   assert.match(presentationHelper, /aria-pressed/);
+  assert.match(presentationHelper, /classList\\.toggle\\('is-active'/);
+  assert.match(js, /rating\\$\\{Number\\(rating\\) === value \\? ' is-active'/);
+  assert.doesNotMatch(js, /is-selected/);
   assert.match(presentationHelper, /renderTasteDNA\(\)/);
   assert.match(presentationHelper, /renderMusicIntelligenceCentre\(\)/);
   assert.doesNotMatch(presentationHelper, /innerHTML|renderListeningDeck\(|renderAll\(/);
