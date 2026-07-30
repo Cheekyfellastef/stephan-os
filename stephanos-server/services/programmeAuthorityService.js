@@ -800,6 +800,19 @@ function isAffirmativeProofRecord(record) {
   );
 }
 
+function canonicalPositiveAlias(values) {
+  const supplied = values.filter((value) => (
+    value !== undefined
+    && value !== null
+    && String(value).trim()
+  ));
+  if (!supplied.length) return null;
+  const normalized = supplied.map(positiveInteger);
+  if (normalized.some((value) => !value)) return null;
+  const uniqueValues = [...new Set(normalized)];
+  return uniqueValues.length === 1 ? uniqueValues[0] : null;
+}
+
 export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt) {
   const records = list(workspaceFeed?.records?.proofRecords);
   const proofHeadShas = [];
@@ -808,12 +821,11 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
   for (const record of records) {
     if (!isAffirmativeProofRecord(record)) continue;
     const headSha = text(record.headSha ?? record.sourceHead).toLowerCase();
-    if (/^[0-9a-f]{40}$/.test(headSha)) proofHeadShas.push(headSha);
-    const issue = Number(String(record.issueNumber ?? record.relatedIssue ?? '').replace(/^#/, ''));
-    const activePr = Number(String(record.prNumber ?? record.relatedPr ?? '').replace(/^#/, ''));
-    if (Number.isSafeInteger(issue) && issue > 0 && Number.isSafeInteger(activePr) && activePr > 0 && /^[0-9a-f]{40}$/.test(headSha)) {
-      proofReceipts.push({ issue, activePr, headSha });
-    }
+    const issue = canonicalPositiveAlias([record.issueNumber, record.relatedIssue]);
+    const activePr = canonicalPositiveAlias([record.prNumber, record.relatedPr]);
+    if (!issue || !activePr || !/^[0-9a-f]{40}$/.test(headSha)) continue;
+    proofHeadShas.push(headSha);
+    proofReceipts.push({ issue, activePr, headSha });
     proofRefs.push(...list(record.proofRefs), ...list(record.refs));
   }
   if (executionReceipt?.state === 'completed') proofRefs.push(...list(executionReceipt.proofRefs));
