@@ -222,6 +222,15 @@ test('construction lease preserves bounded authority', () => {
     inventorySnapshot:currentInventory,
   }), /returned by the evaluator/);
 
+  const overlongInventory = inventory();
+  const overlongAdmission = evaluateConstructionLaneAdmission(candidate(), overlongInventory);
+  assert.throws(() => createConstructionLaneLease(overlongAdmission, {
+    laneId:'lane-1618',
+    issuedAt:'2026-07-29T14:30:00Z',
+    expiresAt:'2026-07-31T14:30:00Z',
+    inventorySnapshot:overlongInventory,
+  }), /valid increasing timestamps/);
+
   const staleInventory = inventory();
   const staleAdmission = evaluateConstructionLaneAdmission(candidate(), staleInventory);
   assert.throws(() => createConstructionLaneLease(staleAdmission, {
@@ -304,6 +313,11 @@ test('unknown states, dot-segment overlap and malformed integration ownership fa
     })],
   }));
   assert.ok(caseOnlyOverlap.reasonCodes.includes('PATH_OWNERSHIP_OVERLAP'));
+
+  const unsafeBranch = evaluateConstructionLaneAdmission(candidate({
+    branch:'feat/../outside',
+  }), inventory());
+  assert.deepEqual(unsafeBranch.reasonCodes, ['CANDIDATE_CONTRACT_INVALID']);
 });
 
 test('ready-for-integration evidence is structured, exact-head bound and time-valid', () => {
@@ -311,6 +325,12 @@ test('ready-for-integration evidence is structured, exact-head bound and time-va
     currentMainSha:SHA_C,
     observedAt:'2026-07-29T14:45:00Z',
     testRefs:[exactEvidence('TEST', { headSha:SHA_A })],
+    proofRefs:[exactEvidence('PROOF')],
+  }), /exact head/);
+  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+    currentMainSha:SHA_C,
+    observedAt:'2026-07-29T14:45:00Z',
+    testRefs:[exactEvidence('TEST', { timestampUtc:'not-a-time' })],
     proofRefs:[exactEvidence('PROOF')],
   }), /exact head/);
   assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
