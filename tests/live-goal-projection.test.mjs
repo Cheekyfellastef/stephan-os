@@ -66,6 +66,7 @@ test('dashboard goal cards use current GitHub issues and linked PR checks instea
       issueInventoryObserved: true,
       issueInventoryComplete: true,
       pullRequestInventoryComplete: true,
+      pullRequestInventoryObserved: true,
       issues: [
         { number: 1622, title: 'Canonical programme controller', state: 'open', labels: ['goal', 'P0'], updatedAt: '2026-07-30T09:00:00.000Z', url: 'https://github.com/example/repo/issues/1622' },
         { number: 1497, title: 'Guarded continuous repair', state: 'open', labels: ['goal'], updatedAt: '2026-07-30T08:00:00.000Z', url: 'https://github.com/example/repo/issues/1497' },
@@ -197,6 +198,7 @@ test('dashboard conservatively aggregates every unsuperseded PR linked to one go
       issueInventoryObserved: true,
       issueInventoryComplete: true,
       pullRequestInventoryComplete: true,
+      pullRequestInventoryObserved: true,
       issues: [{ number: 1650, title: 'Goal with parallel PR history', state: 'open', updatedAt: '2026-07-30T09:00:00.000Z' }],
       pullRequests: [
         { number: 1651, relatedIssues: [1650], checksStatus: 'passed', headSha: 'a'.repeat(40), updatedAt: '2026-07-30T09:30:00.000Z', url: 'https://github.com/example/repo/pull/1651' },
@@ -223,6 +225,7 @@ test('dashboard surfaces open PRs without a durable issue link as an explicit bl
       issueInventoryObserved: true,
       issueInventoryComplete: true,
       pullRequestInventoryComplete: true,
+      pullRequestInventoryObserved: true,
       issues: [],
       pullRequests: [{ number: 1700, title: 'Unlinked implementation', relatedIssues: [], checksStatus: 'passed', approvalStatus: 'unknown', headSha: 'c'.repeat(40), url: 'https://github.com/example/repo/pull/1700' }],
     },
@@ -249,6 +252,7 @@ test('active PR totals preserve the full verified estate before card truncation'
       issueInventoryObserved: true,
       issueInventoryComplete: true,
       pullRequestInventoryComplete: true,
+      pullRequestInventoryObserved: true,
       issues: [],
       pullRequests,
     },
@@ -281,6 +285,7 @@ test('ready goal totals preserve the full verified estate before card truncation
       issueInventoryObserved: true,
       issueInventoryComplete: true,
       pullRequestInventoryComplete: true,
+      pullRequestInventoryObserved: true,
       issues,
       pullRequests,
     },
@@ -298,6 +303,7 @@ test('GitHub review approval never fabricates runtime proof or exact-head operat
       issueInventoryObserved: true,
       issueInventoryComplete: true,
       pullRequestInventoryComplete: true,
+      pullRequestInventoryObserved: true,
       issues: [{ number: 1800, title: 'Goal: reviewed change', state: 'open', labels: ['goal'], updatedAt: '2026-07-30T09:00:00.000Z' }],
       pullRequests: [{ number: 1801, relatedIssues: [1800], checksStatus: 'passed', approvalStatus: 'approved', headSha: 'd'.repeat(40) }],
     },
@@ -316,6 +322,7 @@ test('passing exact-head checks never promote a draft PR out of building state',
       issueInventoryObserved: true,
       issueInventoryComplete: true,
       pullRequestInventoryComplete: true,
+      pullRequestInventoryObserved: true,
       issues: [{ number: 1810, title: 'Goal: draft build', state: 'open', labels: ['goal'], updatedAt: '2026-07-30T09:00:00.000Z' }],
       pullRequests: [{ number: 1811, relatedIssues: [1810], draft: true, checksStatus: 'passed', approvalStatus: 'unknown', headSha: 'e'.repeat(40) }],
     },
@@ -334,6 +341,21 @@ test('GitHub adapter availability without an observed issue inventory cannot cla
       issueInventoryObserved: false,
       issues: [],
       pullRequests: [{ number: 1900, title: 'Unscoped PR', relatedIssues: [] }],
+    },
+  });
+  assert.equal(dashboardGoals.sourceTruth, 'UNKNOWN');
+  assert.deepEqual(dashboardGoals.cards, []);
+});
+
+test('GitHub adapter availability without an observed pull-request inventory cannot claim current goal truth', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    githubTelemetry: {
+      adapterAvailable: true,
+      issueInventoryObserved: true,
+      issueInventoryComplete: true,
+      pullRequestInventoryComplete: true,
+      issues: [{ number: 1900, title: 'Goal with unknown PR estate', state: 'open' }],
+      pullRequests: [],
     },
   });
   assert.equal(dashboardGoals.sourceTruth, 'UNKNOWN');
