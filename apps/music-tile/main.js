@@ -31,6 +31,22 @@ const IMMERSION_FALLBACK_CANDIDATES = ['Anyma', 'Sevdaliza', 'Hunger & Law', 'Cl
 
 const ui = { artistInput: document.getElementById('artist-input'), buildBtn: document.getElementById('build-journey-btn'), startBtn: document.getElementById('start-journey-btn'), resetBtn: document.getElementById('reset-btn'), resolveAllBtn: document.getElementById('resolve-all-links-btn'), status: document.getElementById('status-text'), addTrackUrlInput: document.getElementById('add-track-url-input'), addTrackBtn: document.getElementById('add-track-url-btn'), positiveAnchors: document.getElementById('positive-anchors'), rejectPatterns: document.getElementById('reject-patterns'), ratingCounts: document.getElementById('rating-counts'), learningSignals: document.getElementById('learning-signals'), candidateList: document.getElementById('candidate-list'), listeningDeck: document.getElementById('listening-deck'), traitRows: document.getElementById('taste-dna-traits'), addTraitBtn: document.getElementById('save-trait-btn'), addTraitName: document.getElementById('trait-name-input'), addTraitWeight: document.getElementById('trait-weight-input'), addTraitType: document.getElementById('trait-polarity-input'), aiBtn: document.getElementById('ask-ai-feedback-btn'), aiStatusText: document.getElementById('ai-status-text'), aiLastAction: document.getElementById('ai-last-action'), aiSuggestionPanel: document.getElementById('ai-suggestion-panel'), aiSuggestionsList: document.getElementById('ai-suggestions-list'), discoveryResults: document.getElementById('discovery-results-list'), journeyQueue: document.getElementById('journey-queue-list'), pendingTasteChanges: document.getElementById('pending-taste-dna-changes'), appliedTasteChanges: document.getElementById('applied-taste-dna-changes'), immersionSessionPanel: document.getElementById('immersion-session-panel'), aiBuildJourneyBtn: document.getElementById('ask-ai-build-journey-btn'), aiSummariseDnaBtn: document.getElementById('ask-ai-summarise-dna-btn'), aiSuggestTraitsBtn: document.getElementById('ask-ai-suggest-traits-btn'), resolveAllAiBtn: document.getElementById('resolve-all-links-ai-btn'), promoteMemoryBtn: document.getElementById('promote-memory-btn'), memoryStatus: document.getElementById('memory-promotion-status'), testAiRouteBtn: document.getElementById('test-ai-route-btn'), synthesiseTasteDnaBtn: document.getElementById('synthesise-taste-dna-btn'), buildImmersionSessionBtn: document.getElementById('build-immersion-session-btn'), immersionDuration: document.getElementById('immersion-duration'), immersionIntensity: document.getElementById('immersion-intensity'), immersionVocalAmount: document.getElementById('immersion-vocal-amount'), immersionDarkness: document.getElementById('immersion-darkness'), immersionTranceSpine: document.getElementById('immersion-trance-spine'), presenceVoice: document.getElementById('presence-voice'), presenceQueue: document.getElementById('presence-queue'), presenceEvents: document.getElementById('presence-events'), copyAiSuggestionsBtn: document.getElementById('copy-ai-suggestions-btn'), copyJourneySummaryBtn: document.getElementById('copy-journey-summary-btn'), exportJourneyJsonBtn: document.getElementById('export-journey-json-btn'), copyCodexPromptBtn: document.getElementById('copy-codex-prompt-btn'), copyTasteDnaSummaryBtn: document.getElementById('copy-taste-dna-summary-btn'), activeJourneySummary: document.getElementById('active-journey-summary'), resolveArtistSpotifyBtn: document.getElementById('resolve-artist-spotify-btn'), jumpAiSmarterJourneyBtn: document.getElementById('jump-ai-smarter-journey-btn'), aiSmarterJourneyPanel: document.getElementById('ai-smarter-journey-panel'), assistedSetupStatus: document.getElementById('assisted-setup-status'), assistedSetupPlan: document.getElementById('assisted-setup-plan'), setupViewStepsBtn: document.getElementById('setup-view-steps-btn'), setupTestSpotifyBtn: document.getElementById('setup-test-spotify-btn'), setupPrepareEnvBtn: document.getElementById('setup-prepare-env-btn'), setupMarkAddedBtn: document.getElementById('setup-mark-added-btn'), setupRetestBtn: document.getElementById('setup-retest-btn'), setupAskCodexBtn: document.getElementById('setup-ask-codex-btn') };
 
+const intelligenceUi = {
+  surpriseBtn: document.getElementById('surprise-me-btn'),
+  reasonBtn: document.getElementById('show-briefing-reason-btn'),
+  title: document.getElementById('daily-briefing-title'),
+  copy: document.getElementById('daily-briefing-copy'),
+  meta: document.getElementById('daily-briefing-meta'),
+  listenNow: document.getElementById('briefing-listen-now'),
+  why: document.getElementById('briefing-why'),
+  novelty: document.getElementById('briefing-novelty'),
+  spotlight: document.getElementById('discovery-spotlight'),
+  stage: document.getElementById('discovery-stage'),
+  tasteSignals: document.getElementById('taste-signal-strip'),
+  tasteConfidence: document.getElementById('taste-confidence-chip'),
+  tasteCopy: document.getElementById('taste-compass-copy'),
+};
+
 const tileEventBridge = (() => { try { return createTileEventBridge({ tileId: 'music-tile', tileSource: 'music-cockpit' }); } catch { return null; } })();
 let presenceState = { status: 'idle', voiceMessages: [], awarenessQueue: [], recentEvents: [], lastSpokenSummary: '' };
 
@@ -89,7 +105,7 @@ function buildMusicAiStatusView(diagnostics = {}) {
   return { statusKind, headline, details:'Rule-based parser remains available.', badge, providerMetadataHelp:'The Music Tile can reach the AI backend, but this embedded tile cannot currently read the selected provider/model metadata. Provider details will appear when route truth is available.', shouldShowRuleFallback:true, diagnosticsRows:[`Endpoint: ${runtime.endpointUrl}`,`Backend base: ${runtime.backendBaseUrl}`,`Last HTTP status: ${lastStatus ?? 'n/a'}`,`Last error: ${lastError || 'none'}`,`Request reached backend: ${reached===true?'yes':reached===false?'no':'unknown'}`,`Backend responded: ${responded===true?'yes':responded===false?'no':'unknown'}`,`Response mode: ${responseMode}`,`Route/provider metadata: ${status.routeKind}/${status.provider}`] };
 }
 
-const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); refreshIntegrationSetupStatus({ announce: false });
+const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false });
 
 function updateAiStatus(extra = {}) {
   if (!ui.aiStatusText) return;
@@ -99,6 +115,223 @@ function updateAiStatus(extra = {}) {
   if (ui.aiLastAction) ui.aiLastAction.innerHTML = `<details class="music-diagnostics"><summary>Show diagnostics</summary>${view.diagnosticsRows.map((lineText) => `<div class="meta">${lineText}</div>`).join('')}</details>`;
 }
 function setAiAction(text, diagnostics = null) { if (ui.status) ui.status.textContent = text; updateAiStatus(diagnostics || {}); }
+
+function wireIntelligenceExperience() {
+  intelligenceUi.surpriseBtn?.addEventListener('click', startSurpriseJourney);
+  intelligenceUi.reasonBtn?.addEventListener('click', () => {
+    intelligenceUi.stage?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    intelligenceUi.spotlight?.classList.remove('music-highlight-pulse');
+    void intelligenceUi.spotlight?.offsetWidth;
+    intelligenceUi.spotlight?.classList.add('music-highlight-pulse');
+    window.setTimeout(() => intelligenceUi.spotlight?.classList.remove('music-highlight-pulse'), 1200);
+  });
+  intelligenceUi.spotlight?.addEventListener('click', (event) => {
+    const addButton = event.target.closest('[data-action="spotlight-add"]');
+    if (!addButton) return;
+    const track = (state.candidates || []).find((candidate) => `${candidate.id}` === `${addButton.dataset.id}`);
+    if (!track) return;
+    if (!state.listeningDeck.some((candidate) => `${candidate.id}` === `${track.id}`)) {
+      state.listeningDeck.unshift(track);
+      ui.status.textContent = `${track.title || 'Track'} added to your Listening Room.`;
+      saveState();
+      renderAll();
+    }
+  });
+}
+
+function getJourneySeedArtist() {
+  const typedArtist = parseArtists(ui.artistInput?.value || '')[0];
+  if (typedArtist) return typedArtist;
+  const previousArtist = String(state.lastDiscoveryMeta?.canonicalArtist || '').trim();
+  if (previousArtist && previousArtist.toLowerCase() !== 'unknown artist') return previousArtist;
+  const knownDeckArtist = (state.listeningDeck || []).find((track) => {
+    const artist = String(track?.artist || '').trim().toLowerCase();
+    return artist && artist !== 'unknown' && artist !== 'unknown artist';
+  })?.artist;
+  return knownDeckArtist || 'Anyma';
+}
+
+async function startSurpriseJourney() {
+  const button = intelligenceUi.surpriseBtn;
+  if (!button || button.disabled) return;
+  const seedArtist = getJourneySeedArtist();
+  if (ui.artistInput) ui.artistInput.value = seedArtist;
+  button.disabled = true;
+  button.classList.add('is-loading');
+  const title = button.querySelector('strong');
+  const subtitle = button.querySelector('small');
+  if (title) title.textContent = 'Opening the next door…';
+  if (subtitle) subtitle.textContent = `Reading your ${seedArtist} signal`;
+  try {
+    await buildJourney();
+    const doorwayTrack = state.candidates?.[0] || null;
+    if (doorwayTrack && !state.listeningDeck.some((track) => `${track.id}` === `${doorwayTrack.id}`)) {
+      state.listeningDeck.unshift(doorwayTrack);
+      saveState();
+    }
+    renderAll();
+    if (doorwayTrack) {
+      ui.status.textContent = `Journey ready. ${doorwayTrack.artist || 'Unknown Artist'} — ${doorwayTrack.title || 'Untitled'} is your doorway track.`;
+      intelligenceUi.stage?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      ui.status.textContent = 'No evidence-backed doorway track was available. Try an artist in Advanced Studio.';
+    }
+  } finally {
+    button.disabled = false;
+    button.classList.remove('is-loading');
+    if (title) title.textContent = 'Surprise Me';
+    if (subtitle) subtitle.textContent = 'Start my journey';
+  }
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function getTrackReason(track = {}) {
+  const explicitReason = String(track.aiReason || track.reason || track.discoveryReason || '').trim();
+  if (explicitReason) return explicitReason;
+  const positiveHits = Array.isArray(track.why?.positiveHits) ? track.why.positiveHits.filter(Boolean) : [];
+  if (positiveHits.length) return `It matches ${positiveHits.slice(0, 3).join(', ')} in your Taste DNA.`;
+  return 'Evidence unavailable — Stephanos has not stored a reason for this candidate yet.';
+}
+
+function getTrackEvidence(track = {}) {
+  const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || '');
+  const verification = getCandidateVerificationStatus(track);
+  if (isVerifiedCandidateTrack(track) && spotify.valid && spotify.type === 'track') {
+    return { label: 'Verified playable', tone: 'success', spotify };
+  }
+  if (verification === AI_CANDIDATE_STATUSES.likelyHallucinated || verification === AI_CANDIDATE_STATUSES.notFound) {
+    return { label: 'Suppressed · not verified', tone: 'warning', spotify };
+  }
+  if (track.aiSuggested) {
+    return { label: 'AI lead · unverified', tone: 'warning', spotify };
+  }
+  return { label: 'Local candidate · verify', tone: 'neutral', spotify };
+}
+
+function getNoveltyStatement(track = {}) {
+  if (!track?.id) return 'Novelty evidence not available yet';
+  if (Object.hasOwn(state.ratings || {}, track.id)) {
+    return `Already rated ${state.ratings[track.id]}; this is not a new discovery`;
+  }
+  if (track.aiSuggested) return 'AI lead only; novelty and existence are not yet verified';
+  return 'Unrated in this tile; wider listening history is unavailable';
+}
+
+function renderMusicIntelligenceCentre() {
+  const track = state.candidates?.[0] || state.listeningDeck?.[0] || null;
+  const positiveSignals = Object.entries(state.tasteDNA || {})
+    .filter(([, meta]) => meta?.polarity !== 'negative' && Number(meta?.weight || 0) > 0)
+    .sort((a, b) => Number(b[1]?.weight || 0) - Number(a[1]?.weight || 0))
+    .slice(0, 3)
+    .map(([name]) => name);
+  const ratingCount = Object.keys(state.ratings || {}).length;
+
+  if (intelligenceUi.tasteSignals) {
+    intelligenceUi.tasteSignals.innerHTML = positiveSignals.length
+      ? positiveSignals.map((signal) => `<span>${escapeHtml(signal)}</span>`).join('')
+      : '<span>No positive Taste DNA signals yet</span>';
+  }
+  if (intelligenceUi.tasteConfidence) {
+    intelligenceUi.tasteConfidence.textContent = ratingCount ? `${ratingCount} rated` : 'Taste seed';
+  }
+  if (intelligenceUi.tasteCopy) {
+    const signalText = positiveSignals.length ? positiveSignals.join(', ') : 'no positive signals yet';
+    intelligenceUi.tasteCopy.textContent = `Current compass: ${signalText}. Based on stored weights and ${ratingCount} track rating${ratingCount === 1 ? '' : 's'}; AI suggestions still require approval.`;
+  }
+
+  if (!track) {
+    if (intelligenceUi.title) intelligenceUi.title.textContent = 'Your taste is loaded. The next door is unopened.';
+    if (intelligenceUi.copy) intelligenceUi.copy.textContent = 'One tap turns your real Taste DNA into a listening journey. Every recommendation will tell you why it earned its place.';
+    if (intelligenceUi.meta) intelligenceUi.meta.textContent = 'No journey generated yet';
+    if (intelligenceUi.listenNow) intelligenceUi.listenNow.textContent = 'Awaiting your journey';
+    if (intelligenceUi.why) intelligenceUi.why.textContent = 'Taste evidence will appear here';
+    if (intelligenceUi.novelty) intelligenceUi.novelty.textContent = 'Novelty evidence not available yet';
+    return;
+  }
+
+  const title = track.title || track.name || 'Untitled';
+  const artist = track.artist || 'Unknown Artist';
+  const reason = getTrackReason(track);
+  const evidence = getTrackEvidence(track);
+  const novelty = getNoveltyStatement(track);
+  const matchedTraits = Array.isArray(track.why?.positiveHits) ? track.why.positiveHits.filter(Boolean).slice(0, 3) : [];
+  const reasonSummary = matchedTraits.length ? matchedTraits.join(' · ') : reason;
+  const score = Number(track.finalScore ?? track.tasteScore);
+  const scoreLabel = Number.isFinite(score) ? `Taste score ${score.toFixed(2)}` : 'Taste score unavailable';
+  const inDeck = state.listeningDeck.some((candidate) => `${candidate.id}` === `${track.id}`);
+  const spotifyAction = evidence.spotify.valid && evidence.spotify.type === 'track' && isVerifiedCandidateTrack(track)
+    ? `<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${escapeHtml(evidence.spotify.openUrl)}">Open in Spotify</a>`
+    : `<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${escapeHtml(buildSpotifySearchUrl(track))}">Verify on Spotify</a>`;
+
+  if (intelligenceUi.title) intelligenceUi.title.textContent = `Start with ${title}. Then follow the signal.`;
+  if (intelligenceUi.copy) intelligenceUi.copy.textContent = `${artist} surfaced from your stored Taste DNA. Stephanos is showing the reason and the reality boundary before asking you to trust the recommendation.`;
+  if (intelligenceUi.meta) intelligenceUi.meta.textContent = `${state.candidates?.length || 0} candidates · ${state.listeningDeck?.length || 0} in the room · ${scoreLabel}`;
+  if (intelligenceUi.listenNow) intelligenceUi.listenNow.textContent = `${artist} — ${title}`;
+  if (intelligenceUi.why) intelligenceUi.why.textContent = reasonSummary;
+  if (intelligenceUi.novelty) intelligenceUi.novelty.textContent = novelty;
+  if (!intelligenceUi.spotlight) return;
+
+  intelligenceUi.spotlight.innerHTML = `
+    <article class="spotlight-track">
+      <div class="spotlight-art">
+        <span class="spotlight-monogram">${escapeHtml(`${artist.charAt(0)}${title.charAt(0)}`.toUpperCase())}</span>
+      </div>
+      <div class="spotlight-body">
+        <div class="spotlight-badges">
+          <span class="music-badge${evidence.tone === 'success' ? ' music-badge--success' : evidence.tone === 'warning' ? ' music-badge--warning' : ''}">${escapeHtml(evidence.label)}</span>
+          <span class="music-badge">${escapeHtml(scoreLabel)}</span>
+          <span class="music-badge">${Object.hasOwn(state.ratings || {}, track.id) ? `Rated ${escapeHtml(state.ratings[track.id])}` : 'Unrated'}</span>
+        </div>
+        <h3>${escapeHtml(title)}</h3>
+        <p class="spotlight-artist">${escapeHtml(artist)}</p>
+        <p class="spotlight-reason"><strong>Why this:</strong> ${escapeHtml(reason)}</p>
+        <div class="spotlight-actions">
+          ${spotifyAction}
+          <a class="media-btn youtube" target="_blank" rel="noopener noreferrer" href="${escapeHtml(buildYouTubeSearchUrl(track))}">Search YouTube</a>
+          ${inDeck ? '<span class="music-badge music-badge--success">In Listening Room</span>' : `<button type="button" data-action="spotlight-add" data-id="${escapeHtml(track.id)}">Add to Listening Room</button>`}
+        </div>
+      </div>
+    </article>`;
+}
+
+function enhanceListeningDeckCards() {
+  ui.listeningDeck?.querySelectorAll('.player-deck-card').forEach((card) => {
+    if (card.querySelector(':scope > .track-tools')) return;
+    const children = Array.from(card.children);
+    const header = children.find((node) => node.classList?.contains('music-card-header'));
+    const iframe = children.find((node) => node.tagName === 'IFRAME');
+    const directMeta = children.filter((node) => node.classList?.contains('meta'));
+    const mediaControls = children.find((node) => node.classList?.contains('media-controls'));
+    const ratingControls = children.find((node) => node.classList?.contains('actions') && node.querySelector('[data-rate]'));
+    const linksEditor = children.find((node) => node.classList?.contains('links-editor'));
+    const tags = children.find((node) => node.classList?.contains('tags'));
+    const feedback = children.find((node) => node.classList?.contains('feedback-input'));
+    const feedbackActions = feedback?.nextElementSibling?.classList?.contains('actions') ? feedback.nextElementSibling : null;
+
+    const summary = document.createElement('div');
+    summary.className = 'player-card-summary';
+    [header, ...directMeta, iframe, mediaControls, ratingControls].filter(Boolean).forEach((node) => summary.append(node));
+
+    const details = document.createElement('details');
+    details.className = 'track-tools';
+    const detailsSummary = document.createElement('summary');
+    detailsSummary.textContent = 'Tune, verify & teach Stephanos';
+    const detailsBody = document.createElement('div');
+    detailsBody.className = 'track-tools__body';
+    [linksEditor, tags, feedback, feedbackActions].filter(Boolean).forEach((node) => detailsBody.append(node));
+    details.append(detailsSummary, detailsBody);
+    card.prepend(summary);
+    card.append(details);
+  });
+}
 
 function jumpToDiscoveryPipeline() {
   const target = document.getElementById('discovery-pipeline-summary');
@@ -270,14 +503,14 @@ async function buildJourney() { const artists = parseArtists(ui.artistInput?.val
 function startJourney() { const artists = parseArtists(ui.artistInput?.value || ''); if (!artists.length) { ui.status.textContent = 'Enter an artist to build a journey.'; return; } const term = artists[0]; if (!state.candidates.length) state.candidates = rankCandidatesByTaste(buildSeededCandidates(term), buildTasteWeightsForState()); if (!state.listeningDeck.length) state.listeningDeck = state.candidates.slice(0, 3); ui.status.textContent = `Starting journey for: ${term}.`; saveState(); renderAll(); }
 function addTrackByUrl() { const raw = String(ui.addTrackUrlInput?.value || '').trim(); if (!raw) return; const spotify = resolveSpotifyReference(raw); const youtube = normalizeYouTubeUrl(raw); if (spotify.valid && spotify.type !== 'track') { ui.status.textContent = 'Paste a Spotify track URL to create a playable card.'; return; } if (!spotify.valid && !youtube) { ui.status.textContent = spotify.reason === 'search-url' ? 'This is a Spotify search link, not a playable track link. Open a result in Spotify and paste the track URL.' : 'Paste a valid Spotify track URL or YouTube URL.'; return; } const track = { id: `manual-${Date.now()}`, title: spotify.valid ? 'Spotify track' : 'YouTube track', artist: 'Unknown', spotifyUrl: spotify.valid ? spotify.openUrl : null, spotifyUri: spotify.valid ? spotify.uri : null, candidateVerificationStatus: spotify.valid ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.unverified, youtubeUrl: youtube || null, lane: 'Manual URL import' }; state.listeningDeck.unshift(track); ui.addTrackUrlInput.value = ''; ui.status.textContent = spotify.valid ? 'Spotify track verified. Listening Deck card updated.' : 'Add track by URL: added YouTube URL to Listening Deck.'; saveState(); renderListeningDeck(); }
 function resetAll() { localStorage.removeItem(STORAGE_KEY); Object.assign(state, loadState()); ui.status.textContent = 'Reset complete.'; renderAll(); }
-function renderAll() { renderTasteDNA(); renderCandidates(); renderListeningDeck(); renderDiscoveryResults(); renderAiSuggestions(); renderPendingTasteDnaChanges(); renderAppliedTasteDnaChanges(); renderImmersionSession(); renderJourneyQueue(); renderActiveJourneySummary(); }
+function renderAll() { renderTasteDNA(); renderCandidates(); renderListeningDeck(); renderDiscoveryResults(); renderAiSuggestions(); renderPendingTasteDnaChanges(); renderAppliedTasteDnaChanges(); renderImmersionSession(); renderJourneyQueue(); renderActiveJourneySummary(); renderMusicIntelligenceCentre(); enhanceListeningDeckCards(); }
 function renderTasteDNA() { const anchors = Object.entries(state.tasteDNA).filter(([,meta]) => meta?.polarity !== 'negative' && Number(meta?.weight || 0) > 0).map(([name]) => name).filter(Boolean); ui.positiveAnchors.innerHTML = `<h3>✨ Positive anchors</h3>${anchors.length ? anchors.slice(0, 10).map((name) => `<div class="meta">${name}</div>`).join('') : '<div class="music-empty-state">🎯 No positive anchors yet. Rate tracks or add custom traits to shape your sound.</div>'}`; ui.rejectPatterns.innerHTML = '<h3>🚫 Reject patterns</h3>'; const counts = RATING_VALUES.reduce((acc, val) => ({ ...acc, [val]: 0 }), {}); for (const value of Object.values(state.ratings)) counts[value] = (counts[value] || 0) + 1; ui.ratingCounts.innerHTML = `<h3>Rating counts</h3><div class="card">${Object.entries(counts).map(([k,v]) => `<div>${k}: ${v}</div>`).join('')}</div>`; const weights = buildTasteWeightsForState(); const topPositive = topSignals(weights.positiveWeights); const topReject = topSignals(weights.rejectWeights); const recent = Object.entries(state.tasteDNA).sort((a,b)=>String(b[1].updatedAt||'').localeCompare(String(a[1].updatedAt||''))).slice(0,5).map(([k])=>k); ui.learningSignals.innerHTML = `<h3>🧬 Learning Signals</h3><div class="card dna-grid"><div><strong>Strongest positive</strong>${topPositive.map(([k,v])=>`<div class="dna-row dna-row--positive"><span>${k}</span><strong>+${v.toFixed(2)}</strong></div>`).join('') || '<div class="meta">None</div>'}</div><div><strong>Strongest negative</strong>${topReject.map(([k,v])=>`<div class="dna-row dna-row--negative"><span>${k}</span><strong>-${v.toFixed(2)}</strong></div>`).join('') || '<div class="meta">None</div>'}</div><div><strong>Recently changed</strong>${recent.map((x)=>`<div class="meta">${x}</div>`).join('') || '<div class="meta">None</div>'}</div><div class="meta"><strong>Ratings contributed</strong> ${Object.keys(state.ratings).length}</div><div class="meta"><strong>Last feedback interpreted</strong> ${state.lastFeedbackInterpreted?.raw || 'none yet'}</div></div>`; ui.traitRows.innerHTML = Object.entries(state.tasteDNA).map(([name, meta]) => `<div class="card trait-row"><strong>${name}</strong><div class="meta">${meta.polarity} · ${meta.category} · tracks ${meta.contributions}</div><div class="actions"><button data-action="weight-dec" data-trait="${name}">-</button><span data-weight="${name}">${Number(meta.weight).toFixed(2)}</span><button data-action="weight-inc" data-trait="${name}">+</button><input type="range" min="-5" max="10" step="0.2" value="${Number(meta.weight)}" data-action="weight-slider" data-trait="${name}" /></div></div>`).join(''); ui.traitRows.querySelectorAll('[data-action="weight-inc"]').forEach((btn)=>btn.addEventListener('click',()=>adjustTraitWeight(btn.dataset.trait,0.5))); ui.traitRows.querySelectorAll('[data-action="weight-dec"]').forEach((btn)=>btn.addEventListener('click',()=>adjustTraitWeight(btn.dataset.trait,-0.5))); ui.traitRows.querySelectorAll('[data-action="weight-slider"]').forEach((input)=>input.addEventListener('input',()=>setTraitWeight(input.dataset.trait, Number(input.value)))); }
 function adjustTraitWeight(name, delta) { if (!state.tasteDNA[name]) return; state.tasteDNA[name].weight = Number((state.tasteDNA[name].weight + delta).toFixed(2)); state.tasteDNA[name].updatedAt = new Date().toISOString(); state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); }
 function setTraitWeight(name, value) { if (!state.tasteDNA[name]) return; state.tasteDNA[name].weight = Number(value.toFixed(2)); state.tasteDNA[name].updatedAt = new Date().toISOString(); state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); }
 function renderCandidates() { ui.candidateList.innerHTML = state.candidates.length ? state.candidates.map((track) => `<article class="card"><strong>${track.title || track.name || 'Unknown'}</strong><div class="meta">${track.artist || 'Unknown Artist'}</div><div class="meta">Local score: ${(track.tasteScore ?? 0).toFixed(2)}</div><div class="meta">AI fit score: ${Number(track.aiFitScore ?? 0).toFixed(0)}</div><div class="meta">Why this surfaced: Matched traits: ${track.why?.positiveHits?.join(', ') || 'none'}. Avoid flags: ${track.why?.rejectHits?.join(', ') || 'none'}. Final reason: ${track.aiReason || track.reason || 'Local taste match'}.</div><div class="actions"><button data-action="enqueue" data-id="${track.id}">Add to listening queue</button>${mediaActionLinks(track)}</div></article>`).join('') : '<div class="card">No candidates yet. Press Build Journey.</div>'; ui.candidateList.querySelectorAll('[data-action="enqueue"]').forEach((btn)=>btn.addEventListener('click',()=>{ const id = btn.getAttribute('data-id'); const found = state.candidates.find((t) => `${t.id}` === `${id}`); if (found && !state.listeningDeck.some((t) => t.id === found.id)) { state.listeningDeck.push(found); ui.status.textContent = `Added ${found?.title || 'track'} to Listening Deck.`; } else { ui.status.textContent = `${found?.title || 'Track'} is already in Listening Deck.`; } state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); })); }
 function renderListeningDeck() { ui.listeningDeck.innerHTML = state.listeningDeck.length ? state.listeningDeck.map((track) => listeningCardMarkup(track)).join('') : '<div class="music-empty-state">🎵 Listening Deck is empty. Press <strong>Start Journey</strong> or add a track URL to begin.</div>'; ui.listeningDeck.querySelectorAll('[data-rate]').forEach((btn)=>btn.addEventListener('click',()=>{ state.ratings[btn.dataset.id] = Number(btn.dataset.rate); emitPresenceEvent({ kind: 'track_rated', severity: 'info', summary: `Track rated: ${btn.dataset.id} = ${btn.dataset.rate}`, impact: 'Taste DNA may strengthen from recent ratings.', suggestedAction: 'Build a new journey using updated Taste DNA.' }); state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); })); ui.listeningDeck.querySelectorAll('[data-tag]').forEach((btn)=>btn.addEventListener('click',()=>{ const { id, tag } = btn.dataset; const list = new Set(state.tags[id] || []); list.has(tag) ? list.delete(tag) : list.add(tag); state.tags[id] = Array.from(list); saveState(); renderAll(); })); ui.listeningDeck.querySelectorAll('[data-action="apply-feedback"]').forEach((btn)=>btn.addEventListener('click',()=>{ const id = btn.dataset.id; const field = ui.listeningDeck.querySelector(`[data-feedback-input="${id}"]`); state.trackFeedback[id] = field?.value || ''; applyFeedback(id, field?.value || ''); })); ui.listeningDeck.querySelectorAll('[data-action="save-spotify-link"]').forEach((btn)=>btn.addEventListener('click',()=>saveTrackSpotifyLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="save-youtube-link"]').forEach((btn)=>btn.addEventListener('click',()=>saveTrackYouTubeLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="resolve-spotify-link"]').forEach((btn)=>btn.addEventListener('click',()=>resolveSpotifyLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="resolve-youtube-link"]').forEach((btn)=>btn.addEventListener('click',()=>resolveYouTubeLink(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="ai-interpret-feedback"]').forEach((btn)=>btn.addEventListener('click',()=>{ const track=state.listeningDeck.find((t)=>`${t.id}`===`${btn.dataset.id}`); const field = ui.listeningDeck.querySelector(`[data-feedback-input="${btn.dataset.id}"]`); askAiInterpretFeedback(track, field?.value || state.trackFeedback[btn.dataset.id] || ''); })); ui.listeningDeck.querySelectorAll('[data-action="ai-why-worked"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'why-worked','Ask AI why this worked'))); ui.listeningDeck.querySelectorAll('[data-action="ai-more-like"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'more-like-this','More like this'))); ui.listeningDeck.querySelectorAll('[data-action="ai-less-like"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'less-like-this','Less like this'))); ui.listeningDeck.querySelectorAll('[data-action="ai-same-energy-darker"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'same-energy-darker','Same energy, darker'))); ui.listeningDeck.querySelectorAll('[data-action="ai-same-vocal-more-pressure"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'same-vocal-more-club-pressure','Same vocal, more club pressure'))); ui.listeningDeck.querySelectorAll('[data-action="ai-same-pressure-more-ghost"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'same-club-pressure-more-ghost','Same club pressure, more ghost'))); ui.listeningDeck.querySelectorAll('[data-action="ai-more-universal-nation"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'more-universal-nation-spine','More Universal Nation spine'))); ui.listeningDeck.querySelectorAll('[data-action="ai-less-cheese"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'less-cheese','Less cheese'))); ui.listeningDeck.querySelectorAll('[data-action="ai-less-goa"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'less-goa','Less Goa'))); ui.listeningDeck.querySelectorAll('[data-action="ai-more-echo-reverb"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'more-echo-reverb','More echo/reverb'))); ui.listeningDeck.querySelectorAll('[data-action="ai-why-failed"]').forEach((btn)=>btn.addEventListener('click',()=>askAiTrackTask(btn.dataset.id,'why-this-failed','Ask AI why this failed'))); ui.listeningDeck.querySelectorAll('[data-action="mark-verified"]').forEach((btn)=>btn.addEventListener('click',()=>markCandidateVerified(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="mark-not-found"]').forEach((btn)=>btn.addEventListener('click',()=>markCandidateNotFound(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="mark-hallucinated"]').forEach((btn)=>btn.addEventListener('click',()=>markCandidateHallucinated(btn.dataset.id))); ui.listeningDeck.querySelectorAll('[data-action="replace-verified-track"]').forEach((btn)=>btn.addEventListener('click',()=>replaceWithVerifiedTrack(btn.dataset.id))); }
-function listeningCardMarkup(track) { const spotifyRef = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); const verifiedCandidate = isVerifiedCandidateTrack(track); const hasPlayableSpotifyTrack = verifiedCandidate && spotifyRef.valid && spotifyRef.type === 'track'; const embed = hasPlayableSpotifyTrack ? spotifyRef.embedUrl : null; const spotifyOpenUrl = hasPlayableSpotifyTrack ? spotifyRef.openUrl : '';  const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); const rating = state.ratings[track.id]; const tags = state.tags[track.id] || []; const message = state.linkMessages?.[track.id] || ''; const status = getCandidateVerificationStatus(track); const aiVerificationBadge = track.aiSuggested ? `<span class="music-badge">${status === AI_CANDIDATE_STATUSES.unverified ? 'AI suggestion · unverified' : `AI suggestion · ${status}`}</span>` : ''; return `<article class="music-card player-deck-card"><div class="music-card-header"><div><div class="music-card-title">${track.title || track.name || 'Unknown'}</div><div class="music-card-meta">${track.artist || 'Unknown Artist'} · rating ${rating ?? 'unrated'}</div></div><span class="music-badge">▶ deck</span>${aiVerificationBadge}</div>${embed ? `<iframe src="${embed}" width="100%" height="152" style="border:0" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : `<div class="meta">${track.aiSuggested && status === AI_CANDIDATE_STATUSES.unverified ? 'Unverified AI candidate. Search before treating as real.' : (status === AI_CANDIDATE_STATUSES.likelyHallucinated ? 'Likely hallucinated candidate. Do not recommend again unless verified.' : 'Needs verified Spotify link')}</div>${track.verificationNote ? `<div class="meta">${track.verificationNote}</div>` : ''}`}<div class="actions media-controls">${spotifyOpenUrl ? `<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${spotifyOpenUrl}">Open in Spotify</a>` : ''}<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${buildSpotifySearchUrl(track)}">Find on Spotify</a>${youtubeUrl ? `<a class="media-btn youtube" target="_blank" rel="noopener noreferrer" href="${youtubeUrl}">Open in YouTube</a>` : ''}<a class="media-btn youtube" target="_blank" rel="noopener noreferrer" href="${buildYouTubeSearchUrl(track)}">Find on YouTube</a>${track.aiSuggested ? `<div class="meta"><strong>Candidate Verification</strong></div><button type="button" data-action="mark-verified" data-id="${track.id}">Mark verified</button><button type="button" data-action="mark-not-found" data-id="${track.id}">Mark not found</button><button type="button" data-action="mark-hallucinated" data-id="${track.id}">Mark hallucinated</button><button type="button" data-action="replace-verified-track" data-id="${track.id}">Replace with verified link</button>` : ''}</div><div class="links-editor"><label>Spotify URL<input data-link-input="spotify-${track.id}" placeholder="https://open.spotify.com/track/..." /></label><button data-action="save-spotify-link" data-id="${track.id}">Save Spotify link</button>${spotifyOpenUrl ? '' : `<button data-action="resolve-spotify-link" data-id="${track.id}">Resolve Spotify Link</button>`}<label>YouTube URL<input data-link-input="youtube-${track.id}" placeholder="https://www.youtube.com/watch?v=..." /></label><button data-action="save-youtube-link" data-id="${track.id}">Save YouTube link</button>${youtubeUrl ? '' : `<button data-action="resolve-youtube-link" data-id="${track.id}">Resolve YouTube Link</button>`}${message ? `<div class="meta">${message}</div>` : ''}</div><div class="actions">${RATING_VALUES.map((value) => `<button class="rating" data-id="${track.id}" data-rate="${value}">${value}</button>`).join('')}</div><div class="tags">${DEFAULT_POSITIVE_TRAITS.concat(DEFAULT_NEGATIVE_TRAITS).map((tag) => `<button class="tag" data-id="${track.id}" data-tag="${tag}">${tag}${tags.includes(tag) ? ' ✓' : ''}</button>`).join('')}</div><textarea data-feedback-input="${track.id}" class="feedback-input" placeholder="Tell the taste engine what you hear…">${state.trackFeedback[track.id] || ''}</textarea><div class="actions"><button type="button" data-action="apply-feedback" data-id="${track.id}">Apply feedback to Taste DNA</button><button type="button" data-action="ai-interpret-feedback" data-id="${track.id}">Ask AI to interpret feedback</button><button type="button" data-action="ai-why-worked" data-id="${track.id}">Ask AI why this worked</button><button type="button" data-action="ai-more-like" data-id="${track.id}">More like this</button><button type="button" data-action="ai-less-like" data-id="${track.id}">Less like this</button><button type="button" data-action="ai-same-energy-darker" data-id="${track.id}">Same energy, darker</button><button type="button" data-action="ai-same-vocal-more-pressure" data-id="${track.id}">Same vocal, more club pressure</button><button type="button" data-action="ai-same-pressure-more-ghost" data-id="${track.id}">Same club pressure, more ghost</button><button type="button" data-action="ai-more-universal-nation" data-id="${track.id}">More Universal Nation spine</button><button type="button" data-action="ai-less-cheese" data-id="${track.id}">Less cheese</button><button type="button" data-action="ai-less-goa" data-id="${track.id}">Less Goa</button><button type="button" data-action="ai-more-echo-reverb" data-id="${track.id}">More echo/reverb</button><button type="button" data-action="ai-why-failed" data-id="${track.id}">Ask AI why this failed</button></div></article>`; }
-function saveTrackSpotifyLink(trackId) { const field = ui.listeningDeck.querySelector(`[data-link-input="spotify-${trackId}"]`); const value = String(field?.value || '').trim(); const parsed = resolveSpotifyReference(value); state.linkMessages = state.linkMessages || {}; if (!parsed.valid || parsed.type !== 'track') { if (parsed.reason === 'search-url') state.linkMessages[trackId] = 'This is a Spotify search link, not a playable track link. Open a result in Spotify and paste the track URL.'; else if (parsed.valid && parsed.type !== 'track') state.linkMessages[trackId] = 'Paste a Spotify track URL to create a playable card.'; else state.linkMessages[trackId] = 'Paste a valid Spotify track URL.'; saveState(); renderListeningDeck(); return; } const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return; track.spotifyUrl = parsed.openUrl; track.spotifyUri = parsed.uri; track.candidateVerificationStatus = track.aiSuggested ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.verified; state.linkMessages[trackId] = 'Spotify track verified. Listening Deck card updated.'; saveState(); renderListeningDeck(); }
+function listeningCardMarkup(track) { const spotifyRef = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); const verifiedCandidate = isVerifiedCandidateTrack(track); const hasPlayableSpotifyTrack = verifiedCandidate && spotifyRef.valid && spotifyRef.type === 'track'; const embed = hasPlayableSpotifyTrack ? spotifyRef.embedUrl : null; const spotifyOpenUrl = hasPlayableSpotifyTrack ? spotifyRef.openUrl : '';  const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); const rating = state.ratings[track.id]; const tags = state.tags[track.id] || []; const message = state.linkMessages?.[track.id] || ''; const status = getCandidateVerificationStatus(track); const aiVerificationBadge = track.aiSuggested ? `<span class="music-badge">${status === AI_CANDIDATE_STATUSES.unverified ? 'AI suggestion · unverified' : `AI suggestion · ${status}`}</span>` : ''; return `<article class="music-card player-deck-card"><div class="music-card-header"><div><div class="music-card-title">${track.title || track.name || 'Unknown'}</div><div class="music-card-meta">${track.artist || 'Unknown Artist'} · rating ${rating ?? 'unrated'}</div></div><span class="music-badge">▶ deck</span>${aiVerificationBadge}</div>${embed ? `<iframe src="${embed}" width="100%" height="152" style="border:0" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : `<div class="meta">${track.aiSuggested && status === AI_CANDIDATE_STATUSES.unverified ? 'Unverified AI candidate. Search before treating as real.' : (status === AI_CANDIDATE_STATUSES.likelyHallucinated ? 'Likely hallucinated candidate. Do not recommend again unless verified.' : 'Needs verified Spotify link')}</div>${track.verificationNote ? `<div class="meta">${track.verificationNote}</div>` : ''}`}<div class="actions media-controls">${spotifyOpenUrl ? `<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${spotifyOpenUrl}">Open in Spotify</a>` : ''}<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${buildSpotifySearchUrl(track)}">Find on Spotify</a>${youtubeUrl ? `<a class="media-btn youtube" target="_blank" rel="noopener noreferrer" href="${youtubeUrl}">Open in YouTube</a>` : ''}<a class="media-btn youtube" target="_blank" rel="noopener noreferrer" href="${buildYouTubeSearchUrl(track)}">Find on YouTube</a>${track.aiSuggested ? `<div class="meta"><strong>Candidate Verification</strong></div><button type="button" data-action="mark-verified" data-id="${track.id}">Mark verified</button><button type="button" title="Mark not found" data-action="mark-not-found" data-id="${track.id}">Mark as not found</button><button type="button" data-action="mark-hallucinated" data-id="${track.id}">Mark hallucinated</button><button type="button" data-action="replace-verified-track" data-id="${track.id}">Replace with verified link</button>` : ''}</div><div class="links-editor"><label>Spotify URL<input data-link-input="spotify-${track.id}" placeholder="https://open.spotify.com/track/..." /></label><button data-action="save-spotify-link" data-id="${track.id}">Save Spotify link</button>${spotifyOpenUrl ? '' : `<button data-action="resolve-spotify-link" data-id="${track.id}">Resolve Spotify Link</button>`}<label>YouTube URL<input data-link-input="youtube-${track.id}" placeholder="https://www.youtube.com/watch?v=..." /></label><button data-action="save-youtube-link" data-id="${track.id}">Save YouTube link</button>${youtubeUrl ? '' : `<button data-action="resolve-youtube-link" data-id="${track.id}">Resolve YouTube Link</button>`}${message ? `<div class="meta">${message}</div>` : ''}</div><div class="actions">${RATING_VALUES.map((value) => `<button class="rating" data-id="${track.id}" data-rate="${value}">${value}</button>`).join('')}</div><div class="tags">${DEFAULT_POSITIVE_TRAITS.concat(DEFAULT_NEGATIVE_TRAITS).map((tag) => `<button class="tag" data-id="${track.id}" data-tag="${tag}">${tag}${tags.includes(tag) ? ' ✓' : ''}</button>`).join('')}</div><textarea data-feedback-input="${track.id}" class="feedback-input" placeholder="Tell the taste engine what you hear…">${state.trackFeedback[track.id] || ''}</textarea><div class="actions"><button type="button" data-action="apply-feedback" data-id="${track.id}">Apply feedback to Taste DNA</button><button type="button" data-action="ai-interpret-feedback" data-id="${track.id}">Ask AI to interpret feedback</button><button type="button" data-action="ai-why-worked" data-id="${track.id}">Ask AI why this worked</button><button type="button" data-action="ai-more-like" data-id="${track.id}">More like this</button><button type="button" data-action="ai-less-like" data-id="${track.id}">Less like this</button><button type="button" data-action="ai-same-energy-darker" data-id="${track.id}">Same energy, darker</button><button type="button" data-action="ai-same-vocal-more-pressure" data-id="${track.id}">Same vocal, more club pressure</button><button type="button" data-action="ai-same-pressure-more-ghost" data-id="${track.id}">Same club pressure, more ghost</button><button type="button" data-action="ai-more-universal-nation" data-id="${track.id}">More Universal Nation spine</button><button type="button" data-action="ai-less-cheese" data-id="${track.id}">Less cheese</button><button type="button" data-action="ai-less-goa" data-id="${track.id}">Less Goa</button><button type="button" data-action="ai-more-echo-reverb" data-id="${track.id}">More echo/reverb</button><button type="button" data-action="ai-why-failed" data-id="${track.id}">Ask AI why this failed</button></div></article>`; }
+function saveTrackSpotifyLink(trackId) { const field = ui.listeningDeck.querySelector(`[data-link-input="spotify-${trackId}"]`); const value = String(field?.value || '').trim(); const parsed = resolveSpotifyReference(value); state.linkMessages = state.linkMessages || {}; if (!parsed.valid || parsed.type !== 'track') { if (parsed.reason === 'search-url') state.linkMessages[trackId] = 'Spotify search link or invalid link. Open a result in Spotify and paste the track URL.'; else if (parsed.valid && parsed.type !== 'track') state.linkMessages[trackId] = 'Paste a Spotify track URL to create a playable card.'; else state.linkMessages[trackId] = 'Spotify search link or invalid link. Paste a valid Spotify track URL.'; saveState(); renderListeningDeck(); return; } const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return; track.spotifyUrl = parsed.openUrl; track.spotifyUri = parsed.uri; track.candidateVerificationStatus = track.aiSuggested ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.verified; state.linkMessages[trackId] = 'Spotify track verified. Listening Deck card updated.'; saveState(); renderListeningDeck(); }
 function markCandidateVerified(trackId) { const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return; track.candidateVerificationStatus = AI_CANDIDATE_STATUSES.verified; state.linkMessages = state.linkMessages || {}; state.linkMessages[trackId] = 'Marked verified.'; saveState(); renderListeningDeck(); }
 function markCandidateNotFound(trackId) { const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return; track.candidateVerificationStatus = AI_CANDIDATE_STATUSES.notFound; track.aiFitScore = Number(track.aiFitScore || 0) - 35; state.linkMessages = state.linkMessages || {}; state.linkMessages[trackId] = 'Marked as not found. Try replacing with a verified track URL.'; emitPresenceEvent({ kind: 'music.ai_candidate_not_found', severity: 'warning', summary: 'AI candidate marked as not found.', impact: `${track.artist || 'Unknown artist'} - ${track.title || 'Unknown track'} not confirmed on services.`, suggestedAction: 'Replace with a verified track URL.' }); saveState(); renderListeningDeck(); }
 function markCandidateHallucinated(trackId) { const track = state.listeningDeck.find((item) => `${item.id}` === `${trackId}`); if (!track) return; track.candidateVerificationStatus = AI_CANDIDATE_STATUSES.likelyHallucinated; track.aiFitScore = Number(track.aiFitScore || 0) - 80; state.aiCandidateAudit = Array.isArray(state.aiCandidateAudit) ? state.aiCandidateAudit : []; state.aiCandidateAudit.push({ id: track.id, status: AI_CANDIDATE_STATUSES.likelyHallucinated, artist: track.artist || '', title: track.title || '', at: new Date().toISOString() }); state.candidates = (state.candidates || []).filter((entry) => `${entry.id}` !== `${trackId}`); state.linkMessages = state.linkMessages || {}; state.linkMessages[trackId] = 'Marked hallucinated and removed from active discovery results.'; emitPresenceEvent({ kind: 'music.ai_candidate_hallucinated', severity: 'warning', summary: 'AI candidate marked hallucinated.', impact: 'Candidate removed from active discovery and retained in audit history.', suggestedAction: 'Prefer search query based discovery for this artist.' }); saveState(); renderAll(); }
@@ -305,7 +538,7 @@ async function resolveSpotifyLink(trackId) { const track = state.listeningDeck.f
   if (existing.valid && existing.type === 'track') { state.linkMessages[trackId] = 'Spotify link already present.'; saveState(); renderListeningDeck(); return; }
   try {
     const { payload } = await searchSpotifyCatalogForTrack(track);
-    if (!payload?.configured) { state.linkMessages[trackId] = 'Spotify catalog search not configured. Spotify catalogue search is not configured. Stephanos can help set it up. Open Assisted Setup, view required credentials, or continue with manual Spotify search.'; saveState(); renderListeningDeck(); return; }
+    if (!payload?.configured) { state.linkMessages[trackId] = 'Spotify catalog search not configured. Spotify catalogue search is not configured. Stephanos can help set it up. Open Assisted Setup, view required credentials, or continue with manual Spotify search and paste track URL.'; saveState(); renderListeningDeck(); return; }
     if (payload?.error) { state.linkMessages[trackId] = payload.error; saveState(); renderListeningDeck(); return; }
     const results = Array.isArray(payload?.results) ? payload.results : [];
     if (!results.length) { state.linkMessages[trackId] = 'No Spotify match found. Try search manually or paste URL.'; saveState(); renderListeningDeck(); return; }
@@ -330,7 +563,7 @@ function resolveYouTubeLink(trackId) { const track = state.listeningDeck.find((i
 }
 async function resolveAllMissingLinks() { const summary = { searched: 0, candidatesFound: 0, noMatch: 0, notConfigured: 0, errors: 0 }; for (const track of state.listeningDeck) { const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); if (!spotify.valid || spotify.type !== 'track') { summary.searched += 1; try { const { payload } = await searchSpotifyCatalogForTrack(track); if (!payload?.configured) { summary.notConfigured += 1; continue; } if (payload?.error) { summary.errors += 1; continue; } if ((payload.results || []).length) summary.candidatesFound += 1; else summary.noMatch += 1; } catch { summary.errors += 1; } await resolveSpotifyLink(track.id); } const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); if (!youtubeUrl) resolveYouTubeLink(track.id); } ui.status.textContent = `Resolve all summary: searched ${summary.searched}, candidates ${summary.candidatesFound}, no match ${summary.noMatch}, not configured ${summary.notConfigured}, errors ${summary.errors}.`; }
 async function resolveAllMissingLinksAiAssisted(){ setAiAction('Contacting Stephanos AI for smarter journey…'); emitPresenceEvent({ kind: 'music.ai_smarter_journey_started', severity: 'info', summary: 'AI smarter journey started', impact: 'Waiting for AI candidates.' }); state.aiSmarterJourney=[{id:`ai-loading-${Date.now()}`, title:'AI Smarter Journey', summary:'Contacting Stephanos AI for smarter journey…', badge:'loading'}]; renderAiSuggestions(); try { for (const track of state.listeningDeck){ const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || ''); const youtubeUrl = normalizeYouTubeUrl(track.youtubeUrl || ''); if (spotify.valid && spotify.type==='track' && youtubeUrl) continue; const res = await askMusicAi('resolve-links', { track, tasteDNA: state.tasteDNA, allowLiveVerification: getMusicAiStatus().freshWeb }); const parsed = res.parsed || {}; if (!res.ok) { state.linkMessages[track.id] = `AI router unavailable: ${res.message}. Open Spotify search or paste confirmed track URL.`; if (!spotify.valid || spotify.type!=='track') window.open(buildSpotifySearchUrl(track), '_blank', 'noopener,noreferrer'); if (!youtubeUrl) window.open(buildYouTubeSearchUrl(track), '_blank', 'noopener,noreferrer'); continue; } const candidateUrl = parsed.spotifyCandidates?.[0]?.url || ''; const candidateRef = resolveSpotifyReference(candidateUrl); if (parsed.status === 'candidate-found' && candidateRef.valid && candidateRef.type === 'track') { track.spotifyUrl = candidateRef.openUrl; track.spotifyUri = candidateRef.uri; state.linkMessages[track.id] = 'Spotify track verified. Listening Deck card updated.'; } else if (!spotify.valid || spotify.type!=='track') { state.linkMessages[track.id] = 'Spotify catalog search is not configured. Use Spotify search and paste a confirmed track URL.'; window.open(buildSpotifySearchUrl(track), '_blank', 'noopener,noreferrer'); } if (!youtubeUrl) window.open(buildYouTubeSearchUrl(track), '_blank', 'noopener,noreferrer'); } setAiAction('AI-assisted link resolution completed.'); saveState(); renderAll(); } catch (error) { setAiAction('AI router unavailable: request failed. Rule-based mode remains active.', { lastError: String(error?.message || error) }); } }
-async function buildJourneyAiAssisted(){ const artists=parseArtists(ui.artistInput?.value || ''); if(!artists.length){ ui.status.textContent='Enter an artist to build a journey.'; return; } setAiAction('Contacting Stephanos AI for smarter journey…'); emitPresenceEvent({ kind: 'music.ai_smarter_journey_started', severity: 'info', summary: 'AI smarter journey started', impact: 'Waiting for AI candidates.' }); state.aiSmarterJourney=[{id:`ai-loading-${Date.now()}`, title:'AI Smarter Journey', summary:'Contacting Stephanos AI for smarter journey…', badge:'loading'}]; renderAiSuggestions(); const promptInstructions = `Return strict JSON only. No markdown. Do not invent track titles. If unsure a track exists, provide it as a search query or candidate idea rather than a verified track. Only mark a track as verified if a real Spotify/YouTube/source URL is provided. Schema:
+async function buildJourneyAiAssisted(){ const artists=parseArtists(ui.artistInput?.value || ''); if(!artists.length){ ui.status.textContent='Enter an artist to build a journey.'; return; } setAiAction('Contacting Stephanos AI for smarter journey…'); emitPresenceEvent({ kind: 'music.ai_smarter_journey_started', severity: 'info', summary: 'AI smarter journey started', impact: 'Waiting for AI candidates.' }); state.aiSmarterJourney=[{id:`ai-loading-${Date.now()}`, title:'AI Smarter Journey', summary:'Contacting Stephanos AI for smarter journey…', badge:'loading'}]; renderAiSuggestions(); const promptInstructions = `Return strict JSON only. No markdown. Do not invent track titles. If unsure, provide search query candidates instead of exact track claims. Only mark a track as verified if a real Spotify/YouTube/source URL is provided. Schema:
 {
   "journeySummary": "...",
   "candidateHints": [{"title":"...","artist":"...","reason":"...","matchedTraits":["dark club pressure"],"avoidanceNotes":["not vocal trance cheese"],"spotifySearchQuery":"...","youtubeSearchQuery":"..."}],
