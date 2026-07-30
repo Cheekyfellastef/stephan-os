@@ -422,6 +422,13 @@ test('rehydrated history requires canonical cycle IDs and an unbroken predecesso
   });
   const statusBlocked = await runGuardedContinuousRepairCycle(tamperedStatus.options);
   assert.equal(statusBlocked.status, 'BLOCKED_HISTORY_INVALID');
+
+  const otherHead = harness([snapshot({ headSha:'c'.repeat(40) })], {
+    attemptId:'attempt-5',
+    history:prior.history,
+  });
+  const headBlocked = await runGuardedContinuousRepairCycle(otherHead.options);
+  assert.equal(headBlocked.status, 'BLOCKED_HISTORY_INVALID');
 });
 
 test('post-merge verification requests exact-head CI before runtime proof', async () => {
@@ -526,4 +533,20 @@ test('verification intent preserves one idempotency key across receipt-store fai
   assert.equal(waiting.status, 'WAITING_FOR_VERIFICATION');
   assert.equal(resumed.calls.verify[0].idempotencyKey, firstKey);
   assert.deepEqual(resumed.calls.cycle.map(({ status }) => status), ['verification-requested']);
+});
+
+test('invalid explicit repair and iteration budgets fail closed', async () => {
+  for (const [name, value] of [
+    ['maxIterations', 0],
+    ['maxIterations', 1.5],
+    ['maxRepairsPerHead', 0],
+    ['maxRepairsPerHead', '1'],
+  ]) {
+    const h = harness([snapshot()], { [name]:value });
+    await assert.rejects(
+      runGuardedContinuousRepairCycle(h.options),
+      new RegExp(name),
+    );
+    assert.equal(h.calls.dispatch.length, 0);
+  }
 });
