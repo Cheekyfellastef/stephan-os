@@ -47,6 +47,7 @@ function pathOverlaps(left, right) {
 }
 
 function normalizeOwnership(candidate = {}) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) candidate = {};
   const rawPaths = array(candidate.paths);
   const rawContracts = array(candidate.contracts);
   const paths = rawPaths.map(normalizedPath).filter(Boolean);
@@ -62,6 +63,7 @@ function normalizeOwnership(candidate = {}) {
 }
 
 function normalizeLane(candidate = {}) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) candidate = {};
   const ownership = normalizeOwnership(candidate.ownership);
   const capabilities = unique(array(candidate.capabilities).map((value) => text(value)?.toUpperCase()).filter(Boolean)).sort();
   return freeze({
