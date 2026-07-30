@@ -135,6 +135,13 @@ test('malformed active inventory fails closed', () => {
   });
   assert.equal(result.status, 'REJECTED');
   assert.deepEqual(result.reasonCodes, ['ACTIVE_LANE_INVENTORY_INVALID']);
+
+  const nonArray = evaluateConstructionLaneAdmission(candidate(), {
+    constructionLanes:{ lane:'hidden' },
+    completedGoalIds:[],
+  });
+  assert.equal(nonArray.status, 'REJECTED');
+  assert.deepEqual(nonArray.reasonCodes, ['ACTIVE_LANE_INVENTORY_INVALID']);
 });
 
 test('candidate cannot request merge, deploy, approval, lease seizure or runtime mutation', () => {
@@ -146,6 +153,14 @@ test('candidate cannot request merge, deploy, approval, lease seizure or runtime
     assert.equal(result.status, 'REJECTED');
     assert.deepEqual(result.reasonCodes, ['CANDIDATE_CONTRACT_INVALID']);
   }
+  assert.equal(evaluateConstructionLaneAdmission(candidate({ capabilities:'MERGE' }), {
+    constructionLanes:[],
+    completedGoalIds:[],
+  }).status, 'REJECTED');
+  assert.equal(evaluateConstructionLaneAdmission(candidate({ dependencies:'1617' }), {
+    constructionLanes:[],
+    completedGoalIds:[],
+  }).status, 'REJECTED');
 });
 
 test('construction lease preserves bounded authority', () => {
@@ -162,14 +177,19 @@ test('construction lease preserves bounded authority', () => {
   assert.equal(lease.deploymentAuthority, false);
   assert.equal(lease.runtimeMutationAllowed, false);
   assert.deepEqual(lease.ownedPaths, ['shared/notifications/whatsapp']);
+  assert.throws(() => createConstructionLaneLease(admission, {
+    laneId:'lane-other',
+    issuedAt:'2026-07-29T14:30:00Z',
+    expiresAt:'2026-07-29T15:30:00Z',
+  }), /exactly match/);
 });
 
 test('ready-for-integration receipt binds exact branch heads and records main drift', () => {
   const receipt = createReadyForIntegrationReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'2026-07-29T14:45:00Z',
-    testRefs:['node-test:bounded-parallel-construction-lanes-v1'],
-    proofRefs:['github:commit:proof'],
+    testRefs:[{ ref:'node-test:bounded-parallel-construction-lanes-v1', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+    proofRefs:[{ ref:'github:commit:proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
   });
   assert.equal(receipt.status, 'READY_FOR_INTEGRATION');
   assert.equal(receipt.baseSha, SHA_A);
@@ -185,6 +205,51 @@ test('ready-for-integration receipt requires tests, proof and current main', () 
     observedAt:'2026-07-29T14:45:00Z',
     currentMainSha:SHA_C,
     testRefs:[],
-    proofRefs:['proof'],
-  }), /required/);
+    proofRefs:[{ ref:'proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+  }), /non-empty/);
+});
+
+test('unknown states, dot-segment overlap and malformed integration ownership fail closed', () => {
+  const unknown = evaluateConstructionLaneAdmission(candidate(), {
+    constructionLanes:[activeLane({ state:'BUILDNG' })],
+    completedGoalIds:[],
+  });
+  assert.deepEqual(unknown.reasonCodes, ['ACTIVE_LANE_INVENTORY_INVALID']);
+
+  const dotOverlap = evaluateConstructionLaneAdmission(candidate({
+    ownership:{ paths:['shared/./notifications'], contracts:[] },
+  }), {
+    constructionLanes:[activeLane({
+      ownership:{ paths:['shared/notifications/whatsapp'], contracts:[] },
+    })],
+    completedGoalIds:[],
+  });
+  assert.ok(dotOverlap.reasonCodes.includes('PATH_OWNERSHIP_OVERLAP'));
+
+  const malformedIntegration = evaluateConstructionLaneAdmission(candidate(), {
+    constructionLanes:[],
+    completedGoalIds:[],
+    integrationLane:{
+      id:'integration-1617',
+      branch:'feat/integration',
+      state:'BUILDING',
+      ownership:{ paths:'shared/notifications', contracts:[] },
+    },
+  });
+  assert.deepEqual(malformedIntegration.reasonCodes, ['INTEGRATION_LANE_INVENTORY_INVALID']);
+});
+
+test('ready-for-integration evidence is structured, exact-head bound and time-valid', () => {
+  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+    currentMainSha:SHA_C,
+    observedAt:'2026-07-29T14:45:00Z',
+    testRefs:[{ ref:'test-old-head', branch:'feat/whatsapp-merge-ready', headSha:SHA_A }],
+    proofRefs:[{ ref:'proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+  }), /exact head/);
+  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+    currentMainSha:SHA_C,
+    observedAt:'not-a-time',
+    testRefs:[{ ref:'test', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+    proofRefs:[{ ref:'proof', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
+  }), /must be valid/);
 });
