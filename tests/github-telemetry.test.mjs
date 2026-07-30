@@ -233,6 +233,26 @@ test('canonical workflow run ID breaks rerun order when run numbers are unavaila
   assert.equal(telemetry.pullRequests[0].checks.find((check) => check.name === workflowName).runId, 8002);
 });
 
+test('mixed sequenced and unsequenced workflow evidence reconciles by freshness instead of metadata presence', () => {
+  const headSha = '9'.repeat(40);
+  const workflowName = REQUIRED_EXACT_HEAD_WORKFLOWS[0];
+  const checks = requiredChecks(headSha).map((check) => check.name === workflowName
+    ? { ...check, status: 'completed', conclusion: 'failure', updatedAt: '2026-07-30T11:00:00.000Z' }
+    : check);
+  const telemetry = normalizeGithubTelemetry({
+    available: true,
+    issues: [],
+    issueInventoryComplete: true,
+    pullRequests: [{ number: 58, headSha, checks }],
+    pullRequestInventoryComplete: true,
+    workflows: [
+      { id: 9001, run_number: 40, name: workflowName, headSha, prNumber: 58, status: 'completed', conclusion: 'success', updatedAt: '2026-07-30T10:00:00.000Z' },
+    ],
+  });
+  assert.equal(telemetry.pullRequests[0].checksStatus, 'failed');
+  assert.equal(telemetry.pullRequests[0].mergeReadiness, 'blocked_or_unknown');
+});
+
 test('PR issue correlation accepts explicit closing references and rejects incidental mentions', () => {
   const headSha = 'e'.repeat(40);
   const telemetry = normalizeGithubTelemetry({
