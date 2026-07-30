@@ -115,6 +115,28 @@ test('receipt totals preserve the full current estate before display truncation'
   assert.equal(dashboardGoals.cards.length, 12);
 });
 
+test('receipt status totals preserve blocked and ready records outside the display limit', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: { adapterAvailable: false },
+    queue: {
+      queuedCandidates: [
+        ...Array.from({ length: 12 }, (_, index) => ({
+          candidateId: `visible-receipt-${index + 1}`,
+          title: `Visible receipt ${index + 1}`,
+          state: 'QUEUED',
+        })),
+        { candidateId: 'hidden-blocked-receipt', title: 'Hidden blocked receipt', state: 'BLOCKED' },
+        { candidateId: 'hidden-ready-receipt', title: 'Hidden ready receipt', state: 'READY' },
+      ],
+    },
+  });
+  assert.equal(dashboardGoals.totalAvailable, 14);
+  assert.equal(dashboardGoals.displayedCount, 12);
+  assert.equal(dashboardGoals.blockedCount, 1);
+  assert.equal(dashboardGoals.readyCount, 1);
+});
+
 test('dashboard conservatively aggregates every unsuperseded PR linked to one goal', () => {
   const dashboardGoals = buildLiveDashboardGoals({
     observedAt: '2026-07-30T10:00:00.000Z',
@@ -181,8 +203,39 @@ test('active PR totals preserve the full verified estate before card truncation'
   });
   assert.equal(dashboardGoals.totalAvailable, 13);
   assert.equal(dashboardGoals.activePrCount, 13);
+  assert.equal(dashboardGoals.blockedCount, 13);
   assert.equal(dashboardGoals.displayedCount, 12);
   assert.equal(dashboardGoals.cards.length, 12);
+});
+
+test('ready goal totals preserve the full verified estate before card truncation', () => {
+  const issues = Array.from({ length: 13 }, (_, index) => ({
+    number: 1801 + index,
+    title: `Ready goal ${index + 1}`,
+    state: 'open',
+    updatedAt: `2026-07-30T${String(index).padStart(2, '0')}:00:00.000Z`,
+  }));
+  const pullRequests = issues.map((issue, index) => ({
+    number: 1901 + index,
+    relatedIssues: [issue.number],
+    checksStatus: 'passed',
+    approvalStatus: 'unknown',
+    headSha: String(index + 1).padStart(40, 'a'),
+  }));
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issueInventoryObserved: true,
+      issueInventoryComplete: true,
+      pullRequestInventoryComplete: true,
+      issues,
+      pullRequests,
+    },
+  });
+  assert.equal(dashboardGoals.totalAvailable, 13);
+  assert.equal(dashboardGoals.displayedCount, 12);
+  assert.equal(dashboardGoals.readyCount, 13);
 });
 
 test('GitHub review approval never fabricates runtime proof or exact-head operator approval', () => {
