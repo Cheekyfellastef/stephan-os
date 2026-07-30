@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBuildConciergeGoalRequest, readBuildConciergeGoalReceipts } from '../stephanos-server/services/buildConciergeGoalService.js';
 import { buildLiveDashboardGoals, buildLiveGoalProjection, readLiveGoalProjection } from '../stephanos-server/services/liveGoalProjectionService.js';
+import { readMissionOperations } from '../stephanos-server/services/missionOperationsService.js';
 
 async function tempDir() { return mkdtemp(join(tmpdir(), 'stephanos-live-goal-projection-')); }
 
@@ -167,7 +168,7 @@ test('imported historical candidates remain explicit references and never become
   assert.match(dashboardGoals.nextAction, /excluded from current cards/);
 });
 
-test('goal ingestion imports unfinished pasted goals, dedupes, and projects imported_unverified V9 candidates', async () => {
+test('goal ingestion imports unfinished pasted goals as history without projecting current queue or execution authority', async () => {
   const { importGoalSummaries, readImportedGoalReceipts } = await import('../stephanos-server/services/goalIngestionService.js');
   const directory = await tempDir();
   const payload = { goals: [{ title: 'Historical Mission Control API', intent: 'Add backend API projection for old goals.', source: 'operator-paste', status: 'blocked', lastKnownPR: '#123', blockers: ['needs proof'], nextAction: 'Inspect receipts.' }] };
@@ -180,13 +181,32 @@ test('goal ingestion imports unfinished pasted goals, dedupes, and projects impo
     now: new Date('2026-07-02T00:00:02.000Z'),
     backendStatus: { status: 'live', ok: true, healthRoute: '/api/health' },
     missionOperationsFeed: { status: 'ready', source: 'external-receipt-directory', missions: [], errors: [] },
+    buildConcierge: {
+      queue: {
+        status: 'implemented_guarded',
+        queuedCandidates: importedGoals.candidates,
+        activeProofLane: importedGoals.candidates,
+        blockedCandidates: importedGoals.candidates,
+        completedCandidates: importedGoals.candidates,
+        rejectedCandidates: importedGoals.candidates,
+        nextSafeCandidate: importedGoals.candidates[0],
+        blockers: ['Imported history must not become a current blocker.'],
+      },
+      executionEngine: { watchedGoalCount: 99, classifiedGoalCount: 99, blockers: ['Imported history drove this engine.'] },
+    },
+    executionEngine: { watchedGoalCount: 100, classifiedGoalCount: 100 },
     importedGoals,
   });
   assert.equal(projection.importedGoals.verificationState, 'imported_unverified');
-  assert.equal(projection.queuedCandidates[0].title, 'Historical Mission Control API');
-  assert.equal(projection.executionEngine.watchedGoalCount, 1);
-  assert.equal(projection.executionEngine.classifiedGoalCount, 1);
-  assert.equal(projection.executionEngine.enrichedCandidates[0].dispatchReadiness, 'MANUAL_DISPATCH_REQUIRED');
+  assert.deepEqual(projection.queuedCandidates, []);
+  assert.equal(projection.totalGoals, 0);
+  assert.equal(projection.heartbeat.watchedGoals, 0);
+  assert.equal(projection.executionEngine.watchedGoalCount, 0);
+  assert.equal(projection.executionEngine.classifiedGoalCount, 0);
+  assert.deepEqual(projection.executionChains, []);
+  assert.deepEqual(projection.receipts, []);
+  assert.equal(projection.blockers.includes('Imported history must not become a current blocker.'), false);
+  assert.equal(projection.blockers.includes('Imported history drove this engine.'), false);
   assert.equal(projection.dashboardGoals.sourceTruth, 'UNKNOWN');
   assert.deepEqual(projection.dashboardGoals.cards, []);
   assert.equal(projection.dashboardGoals.historicalReferenceCount, 1);
@@ -194,4 +214,16 @@ test('goal ingestion imports unfinished pasted goals, dedupes, and projects impo
   assert.equal(projection.proofTruth.github, 'unknown');
   assert.equal(projection.proofTruth.local, 'unknown');
   assert.equal(projection.proofTruth.browser, 'unknown');
+
+  const missionFeed = await readMissionOperations({
+    directory,
+    now: new Date('2026-07-02T00:00:03.000Z'),
+    buildConciergeGoals: { receipts: [], candidates: [] },
+    importedGoals,
+    updateStatus: {},
+  });
+  assert.equal(missionFeed.status, 'empty');
+  assert.deepEqual(missionFeed.buildConcierge.queue.queuedCandidates, []);
+  assert.equal(missionFeed.buildConcierge.executionEngine.watchedGoalCount, 0);
+  assert.equal(missionFeed.buildConcierge.importedGoals.candidates.length, 1);
 });
