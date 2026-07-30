@@ -6,7 +6,7 @@ const INTEGRATION_STATES = new Set([...KNOWN_STATES, 'CI_REVIEW', 'INTEGRATING']
 const FORBIDDEN_CAPABILITIES = new Set(['MERGE', 'DEPLOY', 'APPROVE', 'LEASE_SEIZE', 'RUNTIME_MUTATE']);
 const DEFAULT_MAX_LANES = 4;
 const EXACT_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/i;
-const ADMITTED_DECISIONS = new WeakSet();
+const ADMITTED_DECISIONS = new WeakMap();
 
 function text(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -23,7 +23,7 @@ function array(value) {
 
 function normalizedPath(value) {
   const supplied = text(value);
-  if (!supplied || /^[a-z]:[\\/]/i.test(supplied)) return null;
+  if (!supplied || /^[a-z]:/i.test(supplied)) return null;
   const candidate = supplied.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/{2,}/g, '/');
   if (!candidate || candidate.startsWith('/')) return null;
   const segments = candidate.split('/');
@@ -66,7 +66,11 @@ function unique(values) {
 }
 
 function pathOverlaps(left, right) {
-  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+  const normalizedLeft = left.toLowerCase();
+  const normalizedRight = right.toLowerCase();
+  return normalizedLeft === normalizedRight
+    || normalizedLeft.startsWith(`${normalizedRight}/`)
+    || normalizedRight.startsWith(`${normalizedLeft}/`);
 }
 
 function normalizeOwnership(candidate = {}) {
@@ -202,7 +206,7 @@ function dependenciesSatisfied(candidate, completedGoalIds) {
 }
 
 function decision(status, candidate, reasonCodes, details = []) {
-  const result = freeze({
+  return freeze({
     schema:'Stephanos Parallel Construction Admission V1',
     status,
     laneId:candidate.id,
@@ -217,8 +221,15 @@ function decision(status, candidate, reasonCodes, details = []) {
     leaseSeizureAllowed:false,
     runtimeMutationAllowed:false,
   });
-  if (status === 'ADMITTED') ADMITTED_DECISIONS.add(result);
-  return result;
+}
+
+function inventoryFingerprint(lanes, integration, completedGoalIds, maxLanes) {
+  return JSON.stringify({
+    lanes,
+    integration,
+    completedGoalIds:unique(array(completedGoalIds).map(text).filter(Boolean)).sort(),
+    maxLanes,
+  });
 }
 
 export function evaluateConstructionLaneAdmission(candidateInput, snapshot = {}, options = {}) {
@@ -234,6 +245,9 @@ export function evaluateConstructionLaneAdmission(candidateInput, snapshot = {},
   const laneInventoryProvided = Object.hasOwn(snapshot, 'constructionLanes');
   if (!laneInventoryProvided || !Array.isArray(snapshot.constructionLanes)) {
     return decision('REJECTED', candidate, ['ACTIVE_LANE_INVENTORY_INVALID']);
+  }
+  if (!Object.hasOwn(snapshot, 'integrationLane')) {
+    return decision('REJECTED', candidate, ['INTEGRATION_LANE_INVENTORY_INVALID']);
   }
   const laneInputs = array(snapshot.constructionLanes);
   const lanes = laneInputs.map(normalizeLane);
@@ -256,11 +270,17 @@ export function evaluateConstructionLaneAdmission(candidateInput, snapshot = {},
   const conflicts = conflictCodes(candidate, lanes, integrationLane);
   if (conflicts.codes.length) return decision('SERIAL_QUEUE', candidate, conflicts.codes, conflicts.details);
 
-  return decision('ADMITTED', candidate, [], [{
+  const admitted = decision('ADMITTED', candidate, [], [{
     leaseKind:'BOUNDED_CONSTRUCTION',
     ownedPaths:candidate.ownership.paths,
     ownedContracts:candidate.ownership.contracts,
   }]);
+  ADMITTED_DECISIONS.set(admitted, {
+    candidate,
+    consumed:false,
+    inventoryFingerprint:inventoryFingerprint(lanes, integration, snapshot.completedGoalIds, maxLanes),
+  });
+  return admitted;
 }
 
 function validAdmittedDecision(admission) {
@@ -299,6 +319,28 @@ function validAdmittedDecision(admission) {
 
 export function createConstructionLaneLease(admission, options = {}) {
   if (!validAdmittedDecision(admission)) throw new TypeError('admission must be the validated ADMITTED decision returned by the evaluator');
+  const reservation = ADMITTED_DECISIONS.get(admission);
+  if (reservation.consumed) throw new TypeError('admission reservation has already been consumed');
+  const snapshot = options.inventorySnapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
+    || !Array.isArray(snapshot.constructionLanes)
+    || !Object.hasOwn(snapshot, 'integrationLane')) {
+    throw new TypeError('a current explicit inventory snapshot is required');
+  }
+  const optionRecord = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  const maxLanes = Object.hasOwn(optionRecord, 'maxLanes') ? optionRecord.maxLanes : DEFAULT_MAX_LANES;
+  if (!Number.isSafeInteger(maxLanes) || maxLanes <= 0) throw new TypeError('current inventory capacity must be valid');
+  const currentLanes = snapshot.constructionLanes.map(normalizeLane);
+  const currentIntegration = normalizeIntegrationLane(snapshot.integrationLane);
+  const currentFingerprint = inventoryFingerprint(
+    currentLanes,
+    currentIntegration,
+    snapshot.completedGoalIds,
+    maxLanes,
+  );
+  if (currentFingerprint !== reservation.inventoryFingerprint) {
+    throw new TypeError('admission inventory is stale and must be re-evaluated');
+  }
   const laneId = text(options.laneId);
   if (!laneId || laneId !== admission.laneId) throw new TypeError('laneId must exactly match the admitted lane');
   const issuedAt = text(options.issuedAt);
@@ -308,6 +350,7 @@ export function createConstructionLaneLease(admission, options = {}) {
   if (issuedAtMs === null || expiresAtMs === null || expiresAtMs <= issuedAtMs) {
     throw new TypeError('issuedAt and expiresAt must be valid increasing timestamps');
   }
+  reservation.consumed = true;
   return freeze({
     schema:'Stephanos Bounded Construction Lease V1',
     laneId,
@@ -326,13 +369,21 @@ export function createConstructionLaneLease(admission, options = {}) {
   });
 }
 
-function exactHeadEvidenceRefs(values, lane, name) {
+function exactHeadEvidenceRefs(values, lane, name, evidenceKind) {
   if (!Array.isArray(values) || !values.length) throw new TypeError(`${name} must be a non-empty array`);
   const refs = [];
   for (const value of values) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must contain structured exact-head evidence`);
     const ref = text(value.ref);
-    if (!ref || text(value.branch) !== lane.branch || sha(value.headSha) !== lane.headSha) {
+    const validation = validateVerifierResult(value);
+    if (!validation.valid
+      || value.status !== 'PASS'
+      || !text(value.finalVerdict)?.endsWith('_PASS')
+      || value.evidenceKind !== evidenceKind
+      || !ref
+      || !array(value.proofRefs).includes(ref)
+      || text(value.branch) !== lane.branch
+      || sha(value.headSha) !== lane.headSha) {
       throw new TypeError(`${name} evidence must match the lane branch and exact head`);
     }
     refs.push(ref);
@@ -344,8 +395,8 @@ export function createReadyForIntegrationReceipt(laneInput, evidence = {}) {
   const lane = normalizeLane(laneInput);
   if (laneInvalid(lane) || !lane.headSha) throw new TypeError('lane must include valid identity, ownership, baseSha and headSha');
   if (!ACTIVE_STATES.has(lane.state)) throw new TypeError('lane state is not eligible for readiness');
-  const testRefs = exactHeadEvidenceRefs(evidence.testRefs, lane, 'testRefs');
-  const proofRefs = exactHeadEvidenceRefs(evidence.proofRefs, lane, 'proofRefs');
+  const testRefs = exactHeadEvidenceRefs(evidence.testRefs, lane, 'testRefs', 'TEST');
+  const proofRefs = exactHeadEvidenceRefs(evidence.proofRefs, lane, 'proofRefs', 'PROOF');
   const observedAt = text(evidence.observedAt);
   const observedAtMs = timestamp(observedAt);
   const currentMainSha = sha(evidence.currentMainSha);
@@ -375,3 +426,4 @@ export function createReadyForIntegrationReceipt(laneInput, evidence = {}) {
     approvalAuthority:false,
   });
 }
+import { validateVerifierResult } from './verificationHarness.mjs';
