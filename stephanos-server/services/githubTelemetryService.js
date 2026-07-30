@@ -59,6 +59,7 @@ export function classifyGithubNotification(notification = {}) {
 export function normalizeGithubTelemetry(raw = {}, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const available = raw.available === true;
+  const issueInventoryObserved = Array.isArray(raw.issues);
   const notifications = list(raw.notifications).map((notification, index) => ({
     id: text(notification.id, `notification-${index + 1}`),
     title: text(notification.subject?.title || notification.title, 'unknown'),
@@ -136,6 +137,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     pullRequestCount: pullRequests.length,
     issues,
     issueCount: issues.length,
+    issueInventoryObserved,
     workflows,
     workflowCounts: countBy(workflows, 'status'),
     blockers,
