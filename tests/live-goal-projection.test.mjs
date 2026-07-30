@@ -59,6 +59,7 @@ test('dashboard goal cards use current GitHub issues and linked PR checks instea
     observedAt: '2026-07-30T10:00:00.000Z',
     githubTelemetry: {
       adapterAvailable: true,
+      issueInventoryObserved: true,
       issues: [
         { number: 1622, title: 'Canonical programme controller', state: 'open', labels: ['goal', 'P0'], updatedAt: '2026-07-30T09:00:00.000Z', url: 'https://github.com/example/repo/issues/1622' },
         { number: 1497, title: 'Guarded continuous repair', state: 'open', labels: ['goal'], updatedAt: '2026-07-30T08:00:00.000Z', url: 'https://github.com/example/repo/issues/1497' },
@@ -96,6 +97,7 @@ test('dashboard surfaces open PRs without a durable issue link as an explicit bl
     observedAt: '2026-07-30T10:00:00.000Z',
     githubTelemetry: {
       adapterAvailable: true,
+      issueInventoryObserved: true,
       issues: [],
       pullRequests: [{ number: 1700, title: 'Unlinked implementation', relatedIssues: [], checksStatus: 'passed', approvalStatus: 'unknown', headSha: 'c'.repeat(40), url: 'https://github.com/example/repo/pull/1700' }],
     },
@@ -110,6 +112,7 @@ test('GitHub review approval never fabricates runtime proof or exact-head operat
     observedAt: '2026-07-30T10:00:00.000Z',
     githubTelemetry: {
       adapterAvailable: true,
+      issueInventoryObserved: true,
       issues: [{ number: 1800, title: 'Goal: reviewed change', state: 'open', labels: ['goal'], updatedAt: '2026-07-30T09:00:00.000Z' }],
       pullRequests: [{ number: 1801, relatedIssues: [1800], checksStatus: 'passed', approvalStatus: 'approved', headSha: 'd'.repeat(40) }],
     },
@@ -118,6 +121,20 @@ test('GitHub review approval never fabricates runtime proof or exact-head operat
   assert.equal(dashboardGoals.cards[0].proofIndex, 5);
   assert.equal(dashboardGoals.cards[0].operatorNeeded, 'No');
   assert.match(dashboardGoals.cards[0].nextAction, /does not grant operator approval/);
+});
+
+test('GitHub adapter availability without an observed issue inventory cannot claim current goal truth', () => {
+  const dashboardGoals = buildLiveDashboardGoals({
+    observedAt: '2026-07-30T10:00:00.000Z',
+    githubTelemetry: {
+      adapterAvailable: true,
+      issueInventoryObserved: false,
+      issues: [],
+      pullRequests: [{ number: 1900, title: 'Unscoped PR', relatedIssues: [] }],
+    },
+  });
+  assert.equal(dashboardGoals.sourceTruth, 'UNKNOWN');
+  assert.deepEqual(dashboardGoals.cards, []);
 });
 
 test('goal ingestion imports unfinished pasted goals, dedupes, and projects imported_unverified V9 candidates', async () => {
