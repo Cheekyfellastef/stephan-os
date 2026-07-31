@@ -496,6 +496,7 @@ test('wires the trusted coordinator identity through the runner and trusted work
 
 test('runs every required proof workflow for every pull request head', () => {
   const workflowPaths = [
+    '../../.github/workflows/exact-head-review-dispatch.yml',
     '../../.github/workflows/openclaw-github-operator.yml',
     '../../.github/workflows/pr-clean.yml',
     '../../.github/workflows/build-stephanos-ui.yml',
