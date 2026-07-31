@@ -312,6 +312,17 @@ test('source mutation lease validates, renews only the exact live owner, and nev
   assert.ok(conflictingLaneIdentity.errors.includes('lane-id-issue-mismatch'));
   assert.ok(conflictingLaneIdentity.errors.includes('lane-id-pr-mismatch'));
 
+  for (const [unsafeEnvelope, expectedError] of [
+    [lease({ proofRefs: ['../secret.json'] }), 'workspace:unsafe-proof-ref'],
+    [{ ...lease(), apiKey: 'not-a-real-secret' }, 'workspace:forbidden-secret-field:apiKey'],
+  ]) {
+    const invalidEnvelope = validateSourceMutationLease(unsafeEnvelope, { nowUtc: NOW });
+    assert.equal(invalidEnvelope.valid, false);
+    assert.equal(invalidEnvelope.active, false);
+    assert.ok(invalidEnvelope.errors.includes(expectedError));
+    assert.equal(invalidEnvelope.finalVerdict, 'SOURCE_MUTATION_LEASE_BLOCKED');
+  }
+
   const sharedPrefix = 'lease-release-key'.padEnd(50, 'a');
   const firstRelease = createSourceMutationLeaseReleaseRecord(lease({
     leaseId:`${sharedPrefix}-one`,
@@ -359,6 +370,18 @@ test('execution receipt leaseKey is correlation only and cannot fabricate mutati
   assert.equal(expiredReceipt.valid, false);
   assert.ok(expiredReceipt.errors.includes('receipt-heartbeat-expired'));
   assert.equal(expiredReceipt.leaseAuthorityDerivedFromReceipt, false);
+
+  const futureReceipt = validateExecutionReceiptAgainstMutationLease(
+    receipt({
+      timestampUtc: '2099-01-01T00:00:00.000Z',
+      heartbeatExpiresAtUtc: '2099-01-01T00:01:00.000Z',
+    }),
+    lease(),
+    { nowUtc: NOW },
+  );
+  assert.equal(futureReceipt.valid, false);
+  assert.ok(futureReceipt.errors.includes('receipt-timestamp-in-future'));
+  assert.equal(futureReceipt.finalVerdict, 'EXECUTION_RECEIPT_MUTATION_AUTHORITY_BLOCKED');
 });
 
 test('controller and Mission Worker heartbeats remain distinct authorities', () => {

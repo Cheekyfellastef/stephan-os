@@ -400,6 +400,10 @@ export function validateSourceMutationLease(record = {}, options = {}) {
   const errors = [];
   const nowUtc = text(options.nowUtc);
   const nowMs = timestamp(nowUtc);
+  const workspaceValidation = validateSharedWorkspaceRecord(record, {
+    nowMs: nowMs ?? undefined,
+  });
+  for (const error of workspaceValidation.errors) errors.push(`workspace:${error}`);
   const acquiredAtMs = timestamp(record?.acquiredAtUtc);
   const renewedAtMs = timestamp(record?.renewedAtUtc);
   const expiresAtMs = timestamp(record?.expiresAtUtc);
@@ -579,7 +583,16 @@ export function validateExecutionReceiptAgainstMutationLease(receipt, lease, opt
   if (receipt?.workerId !== lease.ownerId) errors.push('worker-owner-mismatch');
   if (receipt?.leaseKey !== lease.leaseId) errors.push('lease-correlation-mismatch');
   const receiptHeartbeatExpiresAtMs = timestamp(receipt?.heartbeatExpiresAtUtc);
+  const receiptTimestampMs = timestamp(receipt?.timestampUtc);
   const nowMs = timestamp(options.nowUtc);
+  if (
+    ACTIVE_EXECUTION_RECEIPT_STATES.has(receipt?.state)
+    && receiptTimestampMs !== null
+    && nowMs !== null
+    && receiptTimestampMs - nowMs > MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+  ) {
+    errors.push('receipt-timestamp-in-future');
+  }
   if (
     ACTIVE_EXECUTION_RECEIPT_STATES.has(receipt?.state)
     && receiptHeartbeatExpiresAtMs !== null

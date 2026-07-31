@@ -118,6 +118,17 @@ These partials are compatible inputs to a new lane projection, but none alone
 binds lane ID, issue, PR, exact head, merge state, proofs, receipts and mutation
 lease.
 
+## Durable authority-envelope lesson
+
+Authority records are valid only when both their domain contract and their
+canonical Shared Workspace envelope validate. A parseable lease payload cannot
+grant mutation authority when its envelope carries unsafe proof references,
+secret-bearing fields, or another workspace-schema violation. Likewise, active
+execution evidence is bounded by the programme observation clock: a
+future-dated receipt cannot prolong or create current execution authority.
+These rules are model-level invariants covered by adversarial tests rather than
+caller-specific guards.
+
 ### Lease-like records
 
 - `executionReceiptV1.mjs` stores a `leaseKey`, validates it as part of an
