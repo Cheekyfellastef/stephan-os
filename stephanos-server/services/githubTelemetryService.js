@@ -9,6 +9,10 @@ const DURABLE_ISSUE_REFERENCE_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[s
 const GITHUB_PAGE_SIZE = 100;
 const MAX_GITHUB_PAGES = 100;
 const MAX_OPEN_PR_WORKFLOW_HEADS = 32;
+const WORKFLOW_INVENTORY_CACHE_TTL_MS = 60_000;
+const MAX_WORKFLOW_INVENTORY_CACHE_ENTRIES = 64;
+const workflowInventoryCache = new Map();
+const workflowInventoryInflight = new Map();
 function text(value, fallback = '') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
 function list(value) { return Array.isArray(value) ? value : []; }
 function lc(value) { return text(value).toLowerCase(); }
@@ -356,7 +360,7 @@ async function githubPaginatedArray(url, auth, fetchImpl = fetch) {
   }
   throw new Error(`GitHub paginated inventory exceeded ${MAX_GITHUB_PAGES} pages`);
 }
-async function githubWorkflowRunsForOpenPullRequests(url, pullRequests, auth, fetchImpl = fetch) {
+function boundedWorkflowHeadInventory(pullRequests) {
   const prNumbersByHead = new Map();
   let complete = true;
   for (const pr of list(pullRequests)) {
@@ -372,27 +376,62 @@ async function githubWorkflowRunsForOpenPullRequests(url, pullRequests, auth, fe
   const headEntries = [...prNumbersByHead.entries()];
   const selectedHeads = headEntries.slice(0, MAX_OPEN_PR_WORKFLOW_HEADS);
   if (selectedHeads.length < headEntries.length) complete = false;
-  const results = await Promise.all(selectedHeads.map(async ([headSha, prNumbers]) => {
+  return { complete, headEntries, selectedHeads };
+}
+function workflowInventoryCacheKey(url, auth, inventory) {
+  const selectedIdentity = inventory.selectedHeads
+    .map(([headSha, prNumbers]) => `${headSha}:${[...prNumbers].sort((left, right) => left - right).join(',')}`)
+    .join('|');
+  return `${url}|${text(auth?.authority, 'unknown')}|${inventory.headEntries.length}|${inventory.complete}|${selectedIdentity}`;
+}
+function cacheWorkflowInventory(key, value, nowMs) {
+  if (workflowInventoryCache.size >= MAX_WORKFLOW_INVENTORY_CACHE_ENTRIES && !workflowInventoryCache.has(key)) {
+    workflowInventoryCache.delete(workflowInventoryCache.keys().next().value);
+  }
+  workflowInventoryCache.set(key, { expiresAt: nowMs + WORKFLOW_INVENTORY_CACHE_TTL_MS, value });
+  return value;
+}
+async function loadWorkflowRunsForOpenPullRequests(url, inventory, auth, fetchImpl) {
+  const results = await Promise.all(inventory.selectedHeads.map(async ([headSha, prNumbers]) => {
     const requestUrl = new URL(url);
     requestUrl.searchParams.set('per_page', String(GITHUB_PAGE_SIZE));
     requestUrl.searchParams.set('page', '1');
     requestUrl.searchParams.set('event', 'pull_request');
     requestUrl.searchParams.set('head_sha', headSha);
-    const payload = await githubJson(requestUrl.href, auth, fetchImpl);
-    if (!Array.isArray(payload?.workflow_runs)) throw new Error('GitHub workflow inventory response was not an array');
-    const totalCount = Number(payload.total_count);
-    const pageComplete = Number.isSafeInteger(totalCount)
-      ? totalCount <= payload.workflow_runs.length
-      : payload.workflow_runs.length < GITHUB_PAGE_SIZE;
-    return {
-      complete: pageComplete,
-      runs: payload.workflow_runs.flatMap((run) => prNumbers.map((prNumber) => ({ ...run, prNumber }))),
-    };
+    try {
+      const payload = await githubJson(requestUrl.href, auth, fetchImpl);
+      if (!Array.isArray(payload?.workflow_runs)) return { complete: false, runs: [] };
+      const totalCount = Number(payload.total_count);
+      const pageComplete = Number.isSafeInteger(totalCount)
+        ? totalCount <= payload.workflow_runs.length
+        : payload.workflow_runs.length < GITHUB_PAGE_SIZE;
+      return {
+        complete: pageComplete,
+        runs: payload.workflow_runs.flatMap((run) => prNumbers.map((prNumber) => ({ ...run, prNumber }))),
+      };
+    } catch {
+      return { complete: false, runs: [] };
+    }
   }));
   return {
     runs: results.flatMap((result) => result.runs),
-    complete: complete && results.every((result) => result.complete),
+    complete: inventory.complete && results.every((result) => result.complete),
   };
+}
+async function githubWorkflowRunsForOpenPullRequests(url, pullRequests, auth, fetchImpl = fetch) {
+  const inventory = boundedWorkflowHeadInventory(pullRequests);
+  const key = workflowInventoryCacheKey(url, auth, inventory);
+  const nowMs = Date.now();
+  const cached = workflowInventoryCache.get(key);
+  if (cached && cached.expiresAt > nowMs) return cached.value;
+  if (cached) workflowInventoryCache.delete(key);
+  const existingLoad = workflowInventoryInflight.get(key);
+  if (existingLoad) return existingLoad;
+  const load = loadWorkflowRunsForOpenPullRequests(url, inventory, auth, fetchImpl)
+    .then((value) => cacheWorkflowInventory(key, value, Date.now()))
+    .finally(() => workflowInventoryInflight.delete(key));
+  workflowInventoryInflight.set(key, load);
+  return load;
 }
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
   const { owner, repo } = repoConfig;
