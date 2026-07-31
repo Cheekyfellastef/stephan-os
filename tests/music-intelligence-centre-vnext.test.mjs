@@ -103,3 +103,24 @@ test('cinematic layout has iPad, phone and reduced-motion safeguards', () => {
   assert.match(css, /\.signal-orbit \{/);
   assert.match(css, /\.discovery-spotlight/);
 });
+
+
+test('rating a deck track preserves the live player node and refreshes only dependent UI', () => {
+  const deckSource = js.slice(js.indexOf('function renderListeningDeck()'), js.indexOf('function listeningCardMarkup'));
+  const ratingHandler = deckSource.slice(deckSource.indexOf("querySelectorAll('[data-rate]')"), deckSource.indexOf("querySelectorAll('[data-tag]')"));
+  const presentationHelper = js.slice(js.indexOf('function updateRatingPresentation'), js.indexOf('function renderListeningDeck()'));
+  assert.match(ratingHandler, /saveState\(\); updateRatingPresentation\(btn, Number\(btn\.dataset\.rate\)\)/);
+  assert.doesNotMatch(ratingHandler, /renderAll\(|renderListeningDeck\(/);
+  assert.match(presentationHelper, /button\?\.closest\?\.\('\.player-deck-card'\)/);
+  assert.match(presentationHelper, /aria-pressed/);
+  assert.match(presentationHelper, /classList\.toggle\('is-active'/);
+  assert.match(js, /rating\$\{Number\(rating\) === value \? ' is-active'/);
+  assert.doesNotMatch(js, /is-selected/);
+  assert.match(presentationHelper, /renderTasteDNA\(\)/);
+  assert.match(presentationHelper, /refreshDiscoveryRankingPresentation\(\)/);
+  assert.match(presentationHelper, /renderMusicIntelligenceCentre\(\)/);
+  assert.doesNotMatch(presentationHelper, /innerHTML|renderDiscoveryResults\(|renderListeningDeck\(|renderAll\(/);
+  const discoveryRefreshHelper = js.slice(js.indexOf('function refreshDiscoveryRankingPresentation'), js.indexOf('function renderDiscoveryResults'));
+  assert.match(discoveryRefreshHelper, /querySelectorAll\('section'\)/);
+  assert.doesNotMatch(discoveryRefreshHelper, /iframe|ui\.discoveryResults\.innerHTML/);
+});
