@@ -684,6 +684,12 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
         if (executable === 'git' && args[1] === 'add') {
           buildRoot = args[3];
           mkdirSync(buildRoot, { recursive: true });
+          mkdirSync(join(buildRoot, 'stephanos-ui'), { recursive: true });
+          writeFileSync(join(buildRoot, 'stephanos-ui', 'package.json'), '{}\n');
+          writeFileSync(join(buildRoot, 'stephanos-ui', 'package-lock.json'), '{}\n');
+        }
+        if (executable === 'npm' && args[0] === 'ci') {
+          mkdirSync(join(options.cwd, 'node_modules'), { recursive: true });
         }
         if (executable === process.execPath && args[0].endsWith('build-stephanos-ui.mjs')) {
           mkdirSync(join(options.cwd, 'apps', 'stephanos', 'dist'), { recursive: true });
@@ -704,12 +710,45 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
     assert.equal(manifestRoots.length, 3);
     const add = calls.find((call) => call.executable === 'git' && call.args[1] === 'add');
     assert.deepEqual(add.args, ['worktree', 'add', '--detach', buildRoot, expectedHead]);
+    const dependencyInstall = calls.find((call) => call.executable === 'npm' && call.args[0] === 'ci');
+    assert.deepEqual(dependencyInstall.args, ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
+    assert.equal(dependencyInstall.options.cwd, join(buildRoot, 'stephanos-ui'));
     const buildAndVerify = calls.filter((call) => call.executable === process.execPath);
     assert.equal(buildAndVerify.length, 2);
     assert.equal(buildAndVerify.every((call) => call.options.cwd === buildRoot), true);
     assert.equal(buildAndVerify.every((call) => call.options.cwd !== repoRoot), true);
     const remove = calls.find((call) => call.executable === 'git' && call.args[1] === 'remove');
     assert.deepEqual(remove.args, ['worktree', 'remove', buildRoot]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('exact-head runtime blocks when the approved lockfile dependency install fails', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stephanos-exact-head-dependency-failure-test-'));
+  const repoRoot = join(root, 'repo');
+  mkdirSync(repoRoot, { recursive: true });
+  const expectedHead = 'b'.repeat(40);
+  const calls = [];
+  try {
+    const prepared = prepareExactHeadRuntimeBundle(repoRoot, {
+      expectedHead,
+      platform: 'linux',
+      spawnSyncFn(executable, args, options) {
+        calls.push({ executable, args, options });
+        if (executable === 'git' && args[1] === 'add') {
+          const buildRoot = args[3];
+          mkdirSync(join(buildRoot, 'stephanos-ui'), { recursive: true });
+          writeFileSync(join(buildRoot, 'stephanos-ui', 'package.json'), '{}\n');
+          writeFileSync(join(buildRoot, 'stephanos-ui', 'package-lock.json'), '{}\n');
+        }
+        if (executable === 'npm') return { status: 1, stdout: '', stderr: 'dependency install failed' };
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
+    assert.equal(prepared.ok, false);
+    assert.equal(prepared.blocker, 'CANONICAL_RUNTIME_DEPENDENCY_INSTALL_FAILED');
+    assert.equal(calls.some((call) => call.executable === process.execPath), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

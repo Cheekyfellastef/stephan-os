@@ -10,7 +10,6 @@ import {
   mkdtempSync,
   renameSync,
   rmSync,
-  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -45,10 +44,6 @@ const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
 const CANONICAL_RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
 const CANONICAL_RUNTIME_WORKTREE_PREFIX = 'stephanos-exact-head-build-';
-const CANONICAL_RUNTIME_DEPENDENCY_LINKS = Object.freeze([
-  'stephanos-ui/node_modules',
-  'node_modules',
-]);
 const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
 const MUSIC_RATING_PRESERVES_PLAYBACK = 'MUSIC_RATING_PRESERVES_PLAYBACK';
 
@@ -359,7 +354,7 @@ function createIsolatedRuntimeBuildWorkspace() {
 function cleanupIsolatedRuntimeBuildWorkspace({
   workspace,
   repoRoot,
-  linkedPaths = [],
+  dependencyInstallPaths = [],
   worktreeAdded = false,
   spawnSyncFn,
 } = {}) {
@@ -378,11 +373,13 @@ function cleanupIsolatedRuntimeBuildWorkspace({
   } catch (error) {
     cleanupError = `TEMPORARY_DIST_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
   }
-  for (const linkedPath of linkedPaths) {
+  for (const dependencyPath of dependencyInstallPaths) {
     try {
-      if (existsSync(linkedPath) || runtimePathIsSymlink(linkedPath)) unlinkSync(linkedPath);
+      if (!existsSync(dependencyPath) && !runtimePathIsSymlink(dependencyPath)) continue;
+      if (runtimePathIsSymlink(dependencyPath)) unlinkSync(dependencyPath);
+      else rmSync(dependencyPath, { recursive: true, force: true });
     } catch (error) {
-      cleanupError ||= `DEPENDENCY_LINK_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
+      cleanupError ||= `DEPENDENCY_INSTALL_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
     }
   }
   if (worktreeAdded) {
@@ -416,17 +413,47 @@ function cleanupIsolatedRuntimeBuildWorkspace({
     : { ok: true });
 }
 
-function linkRuntimeDependencies(repoRoot, buildRoot, platform) {
-  const linkedPaths = [];
-  for (const relativePath of CANONICAL_RUNTIME_DEPENDENCY_LINKS) {
-    const sourcePath = runtimePath(repoRoot, ...relativePath.split('/'));
-    const targetPath = runtimePath(buildRoot, ...relativePath.split('/'));
-    if (!existsSync(sourcePath) || existsSync(targetPath) || runtimePathIsSymlink(targetPath)) continue;
-    mkdirSync(dirname(targetPath), { recursive: true });
-    symlinkSync(sourcePath, targetPath, platform === 'win32' ? 'junction' : 'dir');
-    linkedPaths.push(targetPath);
+function installRuntimeDependencies(buildRoot, platform, spawnSyncFn) {
+  const uiRoot = runtimePath(buildRoot, 'stephanos-ui');
+  const packageJsonPath = runtimePath(uiRoot, 'package.json');
+  const lockfilePath = runtimePath(uiRoot, 'package-lock.json');
+  if (!existsSync(packageJsonPath) || !existsSync(lockfilePath)) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_DEPENDENCY_LOCKFILE_MISSING',
+    });
   }
-  return linkedPaths;
+  const npmExecutable = platform === 'win32' ? 'npm.cmd' : 'npm';
+  let installation;
+  try {
+    installation = spawnSyncFn(npmExecutable, ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
+      cwd: uiRoot,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_DEPENDENCY_INSTALL_FAILED',
+      reason: boundedText(error?.message || error),
+    });
+  }
+  const installedPath = runtimePath(uiRoot, 'node_modules');
+  if (installation?.error || installation?.status !== 0 || !existsSync(installedPath) || runtimePathIsSymlink(installedPath)) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_DEPENDENCY_INSTALL_FAILED',
+      reason: boundedText(installation?.error?.message || installation?.stderr || installation?.stdout),
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    manager: 'npm-ci',
+    lockfile: 'stephanos-ui/package-lock.json',
+    installedPaths: Object.freeze([installedPath]),
+  });
 }
 
 function copyVerifiedRuntimeDist({ repoRoot, buildRoot, distManifestFactory }) {
@@ -545,7 +572,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
   }
   let workspace = null;
   let worktreeAdded = false;
-  let linkedPaths = [];
+  let dependencyInstallPaths = [];
   let result = null;
   try {
     const buildRoot = isolated
@@ -579,10 +606,11 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
       }
       if (!result) {
         worktreeAdded = true;
-        try {
-          linkedPaths = linkRuntimeDependencies(repoRoot, buildRoot, platform);
-        } catch (error) {
-          result = { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_DEPENDENCY_LINK_FAILED', reason: boundedText(error?.message || error) };
+        const dependencies = installRuntimeDependencies(buildRoot, platform, spawnSyncFn);
+        if (!dependencies.ok) {
+          result = { ok: false, required: true, blocker: dependencies.blocker, reason: dependencies.reason };
+        } else {
+          dependencyInstallPaths = [...dependencies.installedPaths];
         }
       }
     }
@@ -676,7 +704,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
     const cleanup = cleanupIsolatedRuntimeBuildWorkspace({
       workspace,
       repoRoot,
-      linkedPaths,
+      dependencyInstallPaths,
       worktreeAdded,
       spawnSyncFn,
     });
