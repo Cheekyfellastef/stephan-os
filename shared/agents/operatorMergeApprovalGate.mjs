@@ -8,6 +8,7 @@ const REVIEW_SESSION_PATTERN = /^github-actions-independent-review-run-([1-9][0-
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 
 export const OPERATOR_MERGE_ENVIRONMENT = 'operator-merge-approval';
+export const OPERATOR_MERGE_PROTECTION_BOUNDARY = 'github-protected-environment:operator-merge-approval';
 export const OPERATOR_MERGE_REVIEWER = 'Cheekyfellastef';
 export const OPERATOR_MERGE_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
 export const OPERATOR_MERGE_GATE_JOB = 'operator-approval-gate';
@@ -543,6 +544,7 @@ export function buildProtectedApprovalReceipt(input = {}) {
     sourceHead: input.verdict.sourceHead,
     branch: input.verdict.branch,
     environment: OPERATOR_MERGE_ENVIRONMENT,
+    protectionBoundary: OPERATOR_MERGE_PROTECTION_BOUNDARY,
     requiredReviewer: OPERATOR_MERGE_REVIEWER,
     workflowPath: OPERATOR_MERGE_WORKFLOW_PATH,
     workflowRunId: integer(input.workflowRunId),
@@ -585,6 +587,9 @@ export function validateProtectedApprovalReceipt(receipt = {}, options = {}) {
     && receipt?.environment !== OPERATOR_MERGE_ENVIRONMENT) {
     blockers.push('approval-environment-mismatch');
   }
+  if (receipt?.protectionBoundary !== OPERATOR_MERGE_PROTECTION_BOUNDARY) {
+    blockers.push('approval-protection-boundary-mismatch');
+  }
   if (text(receipt?.requiredReviewer).toLowerCase() !== OPERATOR_MERGE_REVIEWER.toLowerCase()) {
     blockers.push('approval-reviewer-mismatch');
   }
@@ -608,5 +613,27 @@ export function validateProtectedApprovalReceipt(receipt = {}, options = {}) {
     finalVerdict: blockers.length
       ? 'PROTECTED_OPERATOR_APPROVAL_RECEIPT_BLOCKED'
       : 'PROTECTED_OPERATOR_APPROVAL_RECEIPT_READY',
+  });
+}
+
+export function projectProtectedApprovalReceiptForWorkspace(receipt = {}, options = {}) {
+  const validation = validateProtectedApprovalReceipt(receipt, options);
+  if (!validation.valid) {
+    return Object.freeze({
+      valid: false,
+      receipt: null,
+      blockers: validation.blockers,
+      finalVerdict: 'PROTECTED_OPERATOR_APPROVAL_WORKSPACE_PROJECTION_BLOCKED',
+    });
+  }
+  const { environment: _protectedEnvironment, ...workspaceSafeReceipt } = receipt;
+  return Object.freeze({
+    valid: true,
+    receipt: Object.freeze({
+      ...workspaceSafeReceipt,
+      protectionBoundary: OPERATOR_MERGE_PROTECTION_BOUNDARY,
+    }),
+    blockers: Object.freeze([]),
+    finalVerdict: 'PROTECTED_OPERATOR_APPROVAL_WORKSPACE_PROJECTION_READY',
   });
 }
