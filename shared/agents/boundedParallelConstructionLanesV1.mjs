@@ -48,6 +48,7 @@ function normalizedPath(value) {
   const segments = candidate.split('/');
   if (segments.some((segment) => segment === '..')) return null;
   const normalized = segments.filter((segment) => segment && segment !== '.').join('/');
+  if (normalized.toLowerCase() === '.git' || normalized.toLowerCase().startsWith('.git/')) return null;
   return normalized || null;
 }
 
@@ -396,6 +397,8 @@ async function createConstructionLaneLease(admission, options, authorityToken, r
     goalId:admission.goalId,
     branch:admission.branch,
     baseSha:admission.baseSha,
+    headSha:reservation.candidate.headSha,
+    state:reservation.candidate.state,
     issuedAt,
     expiresAt,
     ownedPaths:admission.details[0]?.ownedPaths ?? [],
@@ -408,6 +411,7 @@ async function createConstructionLaneLease(admission, options, authorityToken, r
   });
   const reserved = await reserveConstructionLane({
     lease,
+    lane:reservation.candidate,
     expectedInventoryFingerprint:currentFingerprint,
     expectedActiveLaneCount:currentLanes.filter(activeLane).length,
     maxLanes,
@@ -459,10 +463,50 @@ async function exactHeadEvidenceRefs(values, lane, name, evidenceKind, resolveVe
   return unique(refs);
 }
 
-async function createReadyForIntegrationReceipt(laneInput, evidence, resolveVerifierEvidence, trustedNowMs) {
-  const lane = normalizeLane(laneInput);
-  if (laneInvalid(lane) || !lane.headSha) throw new TypeError('lane must include valid identity, ownership, baseSha and headSha');
-  if (!ACTIVE_STATES.has(lane.state)) throw new TypeError('lane state is not eligible for readiness');
+async function exactHeadLaneFromReservation(
+  reservationRef,
+  resolveConstructionLaneReservation,
+  trustedNowMs,
+) {
+  const ref = text(reservationRef);
+  if (!ref || !SAFE_ID.test(ref)) throw new TypeError('reservationRef must be an immutable construction-lane reference');
+  const resolved = await resolveConstructionLaneReservation({ reservationId:ref });
+  const lane = normalizeLane(resolved?.lane);
+  const issuedAtMs = timestamp(resolved?.issuedAt);
+  const expiresAtMs = timestamp(resolved?.expiresAt);
+  const nowMs = Number(trustedNowMs());
+  if (resolved?.authenticated !== true
+    || resolved?.active !== true
+    || resolved?.immutable !== true
+    || resolved?.reservationId !== ref
+    || !text(resolved?.inventoryFingerprint)
+    || issuedAtMs === null
+    || expiresAtMs === null
+    || !Number.isFinite(nowMs)
+    || issuedAtMs - nowMs > MAX_ISSUANCE_CLOCK_SKEW_MS
+    || expiresAtMs <= issuedAtMs
+    || expiresAtMs - issuedAtMs > MAX_CONSTRUCTION_LEASE_MS
+    || expiresAtMs <= nowMs
+    || laneInvalid(lane)
+    || !lane.headSha
+    || !ACTIVE_STATES.has(lane.state)) {
+    throw new TypeError('reservationRef must resolve to an authenticated active exact-head construction lease');
+  }
+  return lane;
+}
+
+async function createReadyForIntegrationReceipt(
+  reservationRef,
+  evidence,
+  resolveConstructionLaneReservation,
+  resolveVerifierEvidence,
+  trustedNowMs,
+) {
+  const lane = await exactHeadLaneFromReservation(
+    reservationRef,
+    resolveConstructionLaneReservation,
+    trustedNowMs,
+  );
   const testRefs = await exactHeadEvidenceRefs(evidence.testRefs, lane, 'testRefs', 'TEST', resolveVerifierEvidence);
   const proofRefs = await exactHeadEvidenceRefs(evidence.proofRefs, lane, 'proofRefs', 'PROOF', resolveVerifierEvidence);
   const observedAt = text(evidence.observedAt);
@@ -501,6 +545,10 @@ async function createReadyForIntegrationReceipt(laneInput, evidence, resolveVeri
 
 export function createBoundedParallelConstructionAuthority(adapters = {}) {
   const reserveConstructionLane = requiredFunction(adapters.reserveConstructionLane, 'reserveConstructionLane');
+  const resolveConstructionLaneReservation = requiredFunction(
+    adapters.resolveConstructionLaneReservation,
+    'resolveConstructionLaneReservation',
+  );
   const resolveVerifierEvidence = requiredFunction(adapters.resolveVerifierEvidence, 'resolveVerifierEvidence');
   const trustedNowMs = requiredFunction(adapters.nowMs, 'nowMs');
   const authorityToken = freeze({});
@@ -517,10 +565,11 @@ export function createBoundedParallelConstructionAuthority(adapters = {}) {
         trustedNowMs,
       );
     },
-    createReadyReceipt(laneInput, evidence = {}) {
+    createReadyReceipt(reservationRef, evidence = {}) {
       return createReadyForIntegrationReceipt(
-        laneInput,
+        reservationRef,
         evidence,
+        resolveConstructionLaneReservation,
         resolveVerifierEvidence,
         trustedNowMs,
       );
