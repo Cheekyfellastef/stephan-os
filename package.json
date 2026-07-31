@@ -50,7 +50,7 @@
     "stephanos:pr:prepare": "node scripts/guard-pr-clean.mjs --prepare",
     "stephanos:browser-proof": "node scripts/browser-proof-runner.mjs",
     "stephanos:publish-merge": "node scripts/repository-native-publish-merge-lane.mjs",
-    "stephanos:operator-merge-approval:test": "node --test shared/agents/operatorMergeApprovalGate.test.mjs shared/agents/operatorMergeBaseBindingV1.test.mjs shared/agents/operatorMergeApprovalBoundaryV2.test.mjs shared/agents/repositoryNativePublishMergeLane.test.mjs scripts/repository-native-merge-boundary.test.mjs",
+    "stephanos:operator-merge-approval:test": "node --test shared/agents/operatorMergeApprovalGate.test.mjs shared/agents/operatorMergeBaseBindingV1.test.mjs shared/agents/operatorMergeReviewArtifactV1.test.mjs shared/agents/operatorMergeApprovalBoundaryV2.test.mjs shared/agents/repositoryNativePublishMergeLane.test.mjs scripts/repository-native-merge-boundary.test.mjs scripts/independent-review-artifact-boundary.test.mjs",
     "stephanos:battle-bridge:concierge": "node scripts/battle-bridge-build-concierge-v2.mjs",
     "stephanos:verify:pr-publication": "node scripts/verify-pr-publication.mjs",
     "ignition:readiness": "node scripts/launcher-readiness-report.mjs",
@@ -71,7 +71,11 @@
     "stephanos:exact-head-review:test": "node --test shared/agents/exactHeadReviewDispatchCoordinator.test.mjs",
     "stephanos:provider-neutral-review:test": "node --test shared/agents/providerNeutralReviewV1.test.mjs shared/agents/providerNeutralReviewV1IdentityRegression.test.mjs",
     "stephanos:pr-estate:reconcile": "node scripts/pr-estate-reconcile.mjs",
-    "stephanos:pr-estate:test": "node --test shared/agents/prEstateReconciler.test.mjs shared/agents/prEstateCurrentHeadSafetyRegression.test.mjs scripts/pr-estate-reconcile.test.mjs"
+    "stephanos:pr-estate:test": "node --test shared/agents/prEstateReconciler.test.mjs shared/agents/prEstateCurrentHeadSafetyRegression.test.mjs scripts/pr-estate-reconcile.test.mjs",
+    "music:rating-playback:browser:test": "node --test tests/music-tile-rating-playback-browser.test.mjs",
+    "starfield-vr:install-shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-starfield-vr-desktop-shortcut.ps1",
+    "starfield-vr:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/launch-starfield-vr.ps1 -ReadinessOnly",
+    "starfield-vr:test": "node --test shared/agents/starfieldVrLaunchPolicy.test.mjs scripts/starfield-vr-launcher-source.test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

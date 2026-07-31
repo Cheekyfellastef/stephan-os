@@ -1,109 +1,470 @@
-import { validateExecutionReceipt } from './executionReceiptV1.mjs';
-import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
+import {
+  AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+} from './programmeAuthorityV1.mjs';
+import {
+  createSharedWorkspaceReceiptRecord,
+  writeAtomicJson,
+} from './sharedAgentWorkspaceStore.mjs';
+import {
+  finalizeTerminalImplementationLane,
+  publishProgrammeControllerHeartbeat,
+  readAuthoritativeProgrammeProjection,
+  resolveProgrammeAuthorityPaths,
+} from '../../stephanos-server/services/programmeAuthorityService.js';
+import {
+  ensureCriticalBacklogMission,
+} from '../../stephanos-server/services/criticalBacklogConveyorService.js';
 
-const SHA_RE=/^[0-9a-f]{40}$/i;
-const ACTIVE_LANE_STATES=new Set(['ACTIVE','IMPLEMENTING','CI_REVIEW','PROOF_RUNNING']);
-const KNOWN_LANE_STATES=new Set(['QUEUED','READY','ACTIVE','IMPLEMENTING','CI_REVIEW','PROOF_RUNNING','IMPLEMENTED','COMPLETE','CLOSED','SUPERSEDED','DUPLICATE','BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED']);
-const ACTIVE_MACHINERY_STATES=new Set(['ACTIVE','RUNNING','DISPATCHED','WAITING_PROOF']);
-const KNOWN_MACHINERY_STATES=new Set(['IDLE','READY','ACTIVE','RUNNING','DISPATCHED','WAITING_PROOF','STOPPED','COMPLETE','COMPLETED','BLOCKED','FAILED','CANCELLED']);
-const SCHEDULER_PROOF_CONTAINER_KEYS=['proofHeadShas','proofReceipts','proofRefs'];
-const SCHEDULER_PROOF_CONTRADICTION_KEYS=new Map([
-  ['INVALID_PROOF_HEAD_EVIDENCE','proofHeadShas'],
-  ['INVALID_PROOF_RECEIPT_EVIDENCE','proofReceipts'],
-  ['INVALID_PROOF_REFERENCE_EVIDENCE','proofRefs'],
+export const DURABLE_FLYWHEEL_CONTROLLER_SCHEMA = 'stephanos.durable-flywheel-controller.vnext';
+export const DURABLE_FLYWHEEL_CYCLE_RECEIPT_SCHEMA = 'stephanos.durable-flywheel-cycle-receipt.vnext';
+export const DURABLE_FLYWHEEL_CONTROLLER_ID = 'durable-flywheel-controller';
+export const DURABLE_FLYWHEEL_CONTROLLER_ISSUE = 1497;
+
+const SHA_40 = /^[0-9a-f]{40}$/i;
+const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
+const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const KNOWN_PROJECTION_STATES = new Set([
+  'HOLD',
+  'TERMINAL_RECONCILIATION_REQUIRED',
+  'ACTIVE',
+  'READY',
+  'IDLE',
 ]);
-const DEFAULT_HEARTBEAT_MAX_AGE_MS=20*60*1000;
-const DEFAULT_RECEIPT_MAX_AGE_MS=2*60*60*1000;
-const DEFAULT_FUTURE_SKEW_MS=60*1000;
 
-const text=(value)=>typeof value==='string'&&value.trim()?value.trim():null;
-const sha=(value)=>{const candidate=text(value);return candidate&&SHA_RE.test(candidate)?candidate.toLowerCase():null;};
-const array=(value)=>Array.isArray(value)?value:[];
-const hasOwn=(object,key)=>Boolean(object&&typeof object==='object'&&Object.prototype.hasOwnProperty.call(object,key));
-const normalizedState=(value)=>text(value)?.toUpperCase()??'UNKNOWN';
-const issueNumber=(value)=>{const candidate=typeof value==='number'?String(value):text(value);if(!candidate||!/^#?[1-9]\d*$/.test(candidate))return null;const parsed=Number(candidate.replace(/^#/,''));return Number.isSafeInteger(parsed)?parsed:null;};
-function timestamp(value){const candidate=text(value);if(!candidate||!/(?:Z|[+-]\d{2}:\d{2})$/i.test(candidate))return null;const parsed=Date.parse(candidate);return Number.isFinite(parsed)?parsed:null;}
-function evidenceAge(at,nowMs,futureSkewMs){const atMs=timestamp(at);if(atMs===null||nowMs===null)return{ageMs:Number.POSITIVE_INFINITY,future:false,valid:false};if(atMs-nowMs>futureSkewMs)return{ageMs:Number.POSITIVE_INFINITY,future:true,valid:false};return{ageMs:Math.max(0,nowMs-atMs),future:false,valid:true};}
-function laneIssue(lane){const explicit=issueNumber(lane?.issue??lane?.issueNumber);if(explicit)return explicit;const match=/^goal-([1-9]\d+)(?:-|$)/i.exec(text(lane?.id)??'');return match?issueNumber(match[1]):null;}
-function lanePr(lane){const explicit=issueNumber(lane?.pr??lane?.prNumber);if(explicit)return explicit;const match=/-pr-([1-9]\d+)(?:-|$)/i.exec(text(lane?.id)??'');return match?issueNumber(match[1]):null;}
-function mergedLane(lane){return Boolean(lane?.merged===true||text(lane?.mergedAt)||(normalizedState(lane?.prState)==='CLOSED'&&lane?.merged!==false));}
-function validLaneRecord(lane){if(!lane||typeof lane!=='object'||Array.isArray(lane))return false;const state=normalizedState(lane.state);return Boolean(text(lane.id)&&KNOWN_LANE_STATES.has(state)&&(!ACTIVE_LANE_STATES.has(state)||mergedLane(lane)||(sha(lane.headSha)&&laneIssue(lane)&&lanePr(lane))));}
-const activeLane=(lane)=>validLaneRecord(lane)&&ACTIVE_LANE_STATES.has(normalizedState(lane.state))&&!mergedLane(lane);
-const terminalMergedLane=(lane)=>validLaneRecord(lane)&&mergedLane(lane);
-function validMachineryRecord(machine){return Boolean(machine&&typeof machine==='object'&&!Array.isArray(machine)&&text(machine.id)&&text(machine.kind)&&KNOWN_MACHINERY_STATES.has(normalizedState(machine.state)));}
-const activeMachine=(machine)=>validMachineryRecord(machine)&&ACTIVE_MACHINERY_STATES.has(normalizedState(machine.state));
-function duplicateActiveMachinery(machinery){const groups=new Map();for(const machine of array(machinery).filter(activeMachine)){const kind=text(machine.kind)?.toLowerCase()??'unknown';groups.set(kind,[...(groups.get(kind)??[]),text(machine.id)??text(machine.name)??kind]);}return[...groups.entries()].filter(([,entries])=>entries.length>1).map(([kind,entries])=>({kind,entries}));}
-function validLease(lease,nowMs){const expiresAtMs=timestamp(lease?.expiresAt);return Boolean(lease&&typeof lease==='object'&&nowMs!==null&&text(lease.owner)&&text(lease.laneId)&&expiresAtMs!==null&&expiresAtMs>nowMs);}
-function schedulerProofEvidence(receipts,now){
-  for(const key of SCHEDULER_PROOF_CONTAINER_KEYS){if(hasOwn(receipts,key)&&!Array.isArray(receipts[key]))return{valid:false,reason:`scheduler-${key}-container-invalid`};}
-  const scheduler=buildMissionScheduler({now,goals:[],proofHeadShas:receipts?.proofHeadShas,proofReceipts:receipts?.proofReceipts,proofRefs:receipts?.proofRefs});
-  const contradiction=scheduler.contradictions.find(({code})=>SCHEDULER_PROOF_CONTRADICTION_KEYS.has(code));
-  if(!contradiction)return{valid:true,reason:null};
-  return{valid:false,reason:`scheduler-${SCHEDULER_PROOF_CONTRADICTION_KEYS.get(contradiction.code)}-evidence-invalid`};
-}
-function schedulerReceiptEvidence(receipt,lane,nowMs,maxAgeMs,futureSkewMs){
-  if(!receipt||typeof receipt!=='object'||Array.isArray(receipt))return{valid:false,reason:'missing-scheduler-receipt'};
-  const allowed=new Set(['BLOCKED_FAIL_CLOSED','ACTIVE_LANE','MERGE_READY','CLOSE_READY','LANE_SELECTED','APPROVAL_REQUIRED','WAITING']);
-  if(!text(receipt.correlationId)||!allowed.has(text(receipt.status))||typeof receipt.failClosed!=='boolean'||!Array.isArray(receipt.contradictionCodes))return{valid:false,reason:'scheduler-receipt-contract-invalid'};
-  if(receipt.failClosed===true||receipt.status==='BLOCKED_FAIL_CLOSED'||receipt.contradictionCodes.length>0)return{valid:false,reason:'scheduler-receipt-fail-closed'};
-  if(lane){const expectedIssue=laneIssue(lane);if(!expectedIssue)return{valid:false,reason:'scheduler-receipt-active-lane-identity-unproven'};if(receipt.status!=='ACTIVE_LANE')return{valid:false,reason:'scheduler-receipt-active-lane-status-mismatch'};if(issueNumber(receipt.activeIssue)!==expectedIssue)return{valid:false,reason:'scheduler-receipt-active-lane-identity-mismatch'};}
-  const age=evidenceAge(receipt.decidedAt,nowMs,futureSkewMs);if(age.future)return{valid:false,reason:'scheduler-receipt-future-dated'};if(!age.valid||age.ageMs>maxAgeMs)return{valid:false,reason:'scheduler-receipt-stale'};return{valid:true,reason:null};
-}
-function executionReceiptEvidence(receipt,lane,lease,nowMs,maxAgeMs,futureSkewMs){
-  if(!receipt||typeof receipt!=='object'||Array.isArray(receipt))return{valid:false,reason:'missing-execution-receipt'};
-  const expectedIssue=laneIssue(lane);const expectedPr=lanePr(lane);if(!expectedIssue||!expectedPr)return{valid:false,reason:'execution-receipt-active-lane-identity-unproven'};
-  const options={expectedHead:sha(lane?.headSha),leaseKey:text(lease?.laneId),issueNumber:expectedIssue};
-  const validation=validateExecutionReceipt(receipt,options);
-  if(!validation.valid)return{valid:false,reason:`execution-receipt-${validation.refusalReason||'contract-invalid'}`};
-  if(issueNumber(receipt.prNumber)!==expectedPr)return{valid:false,reason:'execution-receipt-pr-mismatch'};
-  if(text(receipt.workerId)!==text(lease?.owner))return{valid:false,reason:'execution-receipt-worker-lease-owner-mismatch'};
-  if(receipt.state!=='completed')return{valid:false,reason:'execution-receipt-not-complete'};
-  const age=evidenceAge(receipt.timestampUtc,nowMs,futureSkewMs);if(age.future)return{valid:false,reason:'execution-receipt-future-dated'};if(!age.valid||age.ageMs>maxAgeMs)return{valid:false,reason:'execution-receipt-stale'};return{valid:true,reason:null};
-}
-function freeze(value){if(!value||typeof value!=='object'||Object.isFrozen(value))return value;if(Array.isArray(value))return Object.freeze(value.map(freeze));for(const key of Object.keys(value))value[key]=freeze(value[key]);return Object.freeze(value);}
-function requireFunction(value,name){if(typeof value!=='function')throw new TypeError(`${name} must be a function`);return value;}
-function schedulerInputFromSnapshot(snapshot,now){return{now:now??snapshot.observedAt,goals:snapshot.github?.goals,proofHeadShas:snapshot.receipts?.proofHeadShas,proofReceipts:snapshot.receipts?.proofReceipts,proofRefs:snapshot.receipts?.proofRefs,correlationId:text(snapshot.correlationId)??undefined};}
-function cycleReceipt({reconciliation,scheduler=null,execution=null}){return freeze({schema:'Stephanos Durable Flywheel Startup Cycle VNext',status:reconciliation.status==='HOLD'?'HOLD':execution?.status??(scheduler?'SCHEDULER_DECIDED':'RECONCILED'),chatMemoryAuthoritative:false,reconciliation,schedulerDecision:scheduler?.decisionReceipt??null,execution:execution??null});}
-
-export function reconcileDurableFlywheelController(snapshot={},options={}){
-  const durableSnapshot=snapshot&&typeof snapshot==='object'&&!Array.isArray(snapshot)?snapshot:{};
-  const suppliedNow=options.now??durableSnapshot.observedAt;
-  const nowMs=timestamp(suppliedNow);
-  const heartbeatMaxAgeMs=Number.isFinite(options.heartbeatMaxAgeMs)?options.heartbeatMaxAgeMs:DEFAULT_HEARTBEAT_MAX_AGE_MS;
-  const receiptMaxAgeMs=Number.isFinite(options.receiptMaxAgeMs)?options.receiptMaxAgeMs:DEFAULT_RECEIPT_MAX_AGE_MS;
-  const futureSkewMs=Number.isFinite(options.futureSkewMs)&&options.futureSkewMs>=0?options.futureSkewMs:DEFAULT_FUTURE_SKEW_MS;
-  const blockers=[];const caveats=[];
-  if(nowMs===null)blockers.push('reconciliation-time-unproven');
-  const mainHead=sha(durableSnapshot.github?.mainHead);if(!mainHead)blockers.push('github-main-head-unproven');
-  const lanesPresent=hasOwn(durableSnapshot.github,'implementationLanes');const lanesValid=lanesPresent&&Array.isArray(durableSnapshot.github.implementationLanes);if(!lanesValid)blockers.push('github-implementation-lanes-unproven');
-  const laneInventory=lanesValid?durableSnapshot.github.implementationLanes:[];if(lanesValid&&laneInventory.some((lane)=>!validLaneRecord(lane)))blockers.push('github-implementation-lane-entry-invalid');
-  const activeStateLanes=laneInventory.filter((lane)=>lane&&typeof lane==='object'&&!Array.isArray(lane)&&ACTIVE_LANE_STATES.has(normalizedState(lane.state))&&!mergedLane(lane));
-  const lanes=laneInventory.filter(activeLane);const terminalLanes=laneInventory.filter(terminalMergedLane);if(activeStateLanes.length>1)blockers.push('split-brain-multiple-active-implementation-lanes');if(terminalLanes.length>1)blockers.push('multiple-terminal-lanes-awaiting-reconciliation');
-  const lease=durableSnapshot.sharedWorkspace?.sourceMutationLease;const leaseValid=validLease(lease,nowMs);const terminalLeaseBound=terminalLanes.length===1&&leaseValid&&text(lease.laneId)===text(terminalLanes[0].id);
-  if(lanes.length===1&&!leaseValid)blockers.push('active-lane-without-valid-source-mutation-lease');
-  if(lanes.length===0&&leaseValid&&!terminalLeaseBound)blockers.push('valid-lease-without-active-lane');
-  if(lanes.length===1&&leaseValid&&text(lease.laneId)!==text(lanes[0].id))blockers.push('lease-lane-binding-mismatch');
-  const heartbeat=evidenceAge(durableSnapshot.sharedWorkspace?.controllerHeartbeat?.at,nowMs,futureSkewMs);if(heartbeat.future)blockers.push('controller-heartbeat-future-dated');else if(!heartbeat.valid||heartbeat.ageMs>heartbeatMaxAgeMs)blockers.push('controller-heartbeat-stale-or-missing');
-  const machineryPresent=hasOwn(durableSnapshot.sharedWorkspace,'machineryInventory');const machineryValid=machineryPresent&&Array.isArray(durableSnapshot.sharedWorkspace.machineryInventory);if(!machineryValid)blockers.push('shared-workspace-machinery-inventory-unproven');
-  const machinery=machineryValid?durableSnapshot.sharedWorkspace.machineryInventory:[];if(machineryValid&&machinery.some((machine)=>!validMachineryRecord(machine)))blockers.push('shared-workspace-machinery-entry-invalid');
-  const duplicates=duplicateActiveMachinery(machinery);if(duplicates.length)blockers.push('duplicate-active-machinery');
-  const proofEvidence=schedulerProofEvidence(durableSnapshot.receipts,suppliedNow);if(!proofEvidence.valid)blockers.push(proofEvidence.reason);
-  const schedulerReceipt=schedulerReceiptEvidence(durableSnapshot.receipts?.scheduler,lanes.length===1?lanes[0]:null,nowMs,receiptMaxAgeMs,futureSkewMs);if(!schedulerReceipt.valid)blockers.push(schedulerReceipt.reason);
-  if(lanes.length===1){const executionReceipt=executionReceiptEvidence(durableSnapshot.receipts?.execution,lanes[0],lease,nowMs,receiptMaxAgeMs,futureSkewMs);if(!executionReceipt.valid)blockers.push(executionReceipt.reason);}
-  const runtimeProof=durableSnapshot.battleBridge?.proof;
-  if(lanes.some((lane)=>normalizedState(lane.state)==='PROOF_RUNNING')){if(!runtimeProof||normalizedState(runtimeProof.state)!=='OBSERVED')blockers.push('battle-bridge-proof-missing');if(runtimeProof){const proofAge=evidenceAge(runtimeProof.at,nowMs,futureSkewMs);if(proofAge.future)blockers.push('battle-bridge-proof-future-dated');else if(!proofAge.valid||proofAge.ageMs>receiptMaxAgeMs)blockers.push('battle-bridge-proof-stale');}const activeHead=lanes.length===1?sha(lanes[0].headSha):null;if(runtimeProof&&activeHead&&sha(runtimeProof.sourceHead)!==activeHead)blockers.push('battle-bridge-proof-source-head-mismatch');}
-  const status=blockers.length?'HOLD':'HEALTHY';const nextAction=blockers.length?'publish-reconciliation-receipt-and-stop-without-mutation':terminalLeaseBound?'finalize-merged-lane-release-lease-and-reschedule':lanes.length===1?'advance-one-bounded-step-under-existing-lease':'scheduler-may-select-one-runnable-goal';
-  return freeze({schema:'Stephanos Durable Flywheel Controller VNext',status,authoritativeSources:['github','shared-workspace','battle-bridge-proofs','execution-receipts'],chatMemoryAuthoritative:false,observedAt:text(suppliedNow),mainHead,activeLaneCount:lanes.length,activeLane:lanes.length===1?{id:text(lanes[0].id),issueNumber:laneIssue(lanes[0]),prNumber:lanePr(lanes[0]),state:normalizedState(lanes[0].state),headSha:sha(lanes[0].headSha)}:null,terminalLaneCount:terminalLanes.length,terminalLane:terminalLanes.length===1?{id:text(terminalLanes[0].id),issueNumber:laneIssue(terminalLanes[0]),prNumber:lanePr(terminalLanes[0]),state:normalizedState(terminalLanes[0].state),headSha:sha(terminalLanes[0].headSha),merged:true}:null,lease:{valid:leaseValid,owner:text(lease?.owner),laneId:text(lease?.laneId),expiresAt:text(lease?.expiresAt)},heartbeat:{ageMs:heartbeat.ageMs,fresh:heartbeat.valid&&heartbeat.ageMs<=heartbeatMaxAgeMs,futureDated:heartbeat.future},duplicateMachinery:duplicates,blockers,caveats,mergeAuthority:false,leaseSeizureAllowed:false,nextAction});
+function text(value, fallback = '') {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized || fallback;
 }
 
-export async function runDurableFlywheelStartupCycle(machinery={},options={}){
-  const loadDurableSnapshot=requireFunction(machinery.loadDurableSnapshot,'loadDurableSnapshot');const publishReceipt=requireFunction(machinery.publishReceipt,'publishReceipt');
-  const loaded=await loadDurableSnapshot();const snapshot=loaded&&typeof loaded==='object'&&!Array.isArray(loaded)?loaded:{};const reconciliation=reconcileDurableFlywheelController(snapshot,options);
-  if(reconciliation.status==='HOLD'){const receipt=cycleReceipt({reconciliation});await publishReceipt(receipt);return receipt;}
-  if(reconciliation.terminalLaneCount===1&&reconciliation.nextAction==='finalize-merged-lane-release-lease-and-reschedule'){const finalize=requireFunction(machinery.finalizeTerminalLane,'finalizeTerminalLane');const execution=await finalize({snapshot,lane:reconciliation.terminalLane,lease:reconciliation.lease,boundedSteps:1,releaseLease:true,reschedule:true,mergeAuthority:false,leaseSeizureAllowed:false});const receipt=cycleReceipt({reconciliation,execution});await publishReceipt(receipt);return receipt;}
-  if(reconciliation.activeLaneCount===1){const advance=requireFunction(machinery.advanceActiveLane,'advanceActiveLane');const execution=await advance({snapshot,lane:reconciliation.activeLane,lease:reconciliation.lease,boundedSteps:1,mergeAuthority:false,leaseSeizureAllowed:false});const receipt=cycleReceipt({reconciliation,execution});await publishReceipt(receipt);return receipt;}
-  const scheduler=buildMissionScheduler(schedulerInputFromSnapshot(snapshot,options.now));if(scheduler.failClosed||!scheduler.selectedGoal){const receipt=cycleReceipt({reconciliation,scheduler});await publishReceipt(receipt);return receipt;}
-  const dispatch=requireFunction(machinery.dispatchSelectedGoal,'dispatchSelectedGoal');const execution=await dispatch({snapshot,selectedGoal:scheduler.selectedGoal,selectedRoute:scheduler.selectedRoute,selectedLifecycle:scheduler.selectedLifecycle,schedulerReceipt:scheduler.decisionReceipt,boundedSteps:1,createReplacementMachinery:false,mergeAuthority:false,leaseSeizureAllowed:false});const receipt=cycleReceipt({reconciliation,scheduler,execution});await publishReceipt(receipt);return receipt;
+function safeNow(value) {
+  const normalized = text(value);
+  return EXPLICIT_TIMEZONE.test(normalized) && Number.isFinite(Date.parse(normalized))
+    ? new Date(Date.parse(normalized)).toISOString()
+    : '';
 }
 
-export function renderDurableFlywheelReceipt(result){if(!result||typeof result!=='object')throw new TypeError('result is required');return['Durable Flywheel Reconciliation Receipt VNext',`Status: ${result.status}`,`Observed-At: ${result.observedAt??'unproven'}`,`Main-Head: ${result.mainHead??'unproven'}`,`Active-Lanes: ${result.activeLaneCount}`,`Terminal-Lanes: ${result.terminalLaneCount??0}`,`Lease-Valid: ${result.lease?.valid===true}`,`Heartbeat-Fresh: ${result.heartbeat?.fresh===true}`,'Merge-Authority: false','Lease-Seizure-Allowed: false',`Next-Action: ${result.nextAction}`,`Blockers: ${result.blockers?.length?result.blockers.join(', '):'none'}`,`Caveats: ${result.caveats?.length?result.caveats.join(', '):'none'}`].join('\n');}
+function sha(value) {
+  const normalized = text(value).toLowerCase();
+  return SHA_40.test(normalized) ? normalized : '';
+}
+
+function positiveInteger(value) {
+  const normalized = typeof value === 'string'
+    ? Number(value.replace(/^#/, ''))
+    : Number(value);
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
+function list(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function freeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  if (Array.isArray(value)) return Object.freeze(value.map(freeze));
+  for (const key of Object.keys(value)) value[key] = freeze(value[key]);
+  return Object.freeze(value);
+}
+
+function requiredFunction(value, name) {
+  if (typeof value !== 'function') throw new TypeError(`${name} must be a function`);
+  return value;
+}
+
+function receiptId(nowUtc) {
+  const timestamp = nowUtc.replace(/[^0-9]/g, '').slice(0, 17);
+  return `durable-flywheel-${timestamp || 'invalid'}`;
+}
+
+function projectionIdentity(projection = {}) {
+  const lane = projection?.lane;
+  const issueNumber = positiveInteger(
+    lane?.issueNumber
+      ?? projection?.scheduler?.decisionReceipt?.selectedIssue
+      ?? projection?.scheduler?.selectedGoal,
+  ) ?? DURABLE_FLYWHEEL_CONTROLLER_ISSUE;
+  const prNumber = positiveInteger(lane?.prNumber);
+  return freeze({
+    laneId: text(lane?.laneId),
+    repository: text(lane?.repository),
+    issueNumber,
+    prNumber,
+    branch: text(lane?.branch),
+    headSha: sha(lane?.headSha),
+    leaseId: text(projection?.mutationLease?.leaseId),
+    ownerId: text(projection?.mutationLease?.ownerId),
+  });
+}
+
+function holdResult(reason, additions = {}) {
+  const blockers = [...new Set([
+    reason,
+    ...list(additions.blockers),
+  ].map((item) => text(item)).filter(Boolean))];
+  return freeze({
+    schemaVersion: DURABLE_FLYWHEEL_CONTROLLER_SCHEMA,
+    status: 'HOLD',
+    finalVerdict: 'DURABLE_FLYWHEEL_CONTROLLER_HOLD',
+    observedAtUtc: additions.observedAtUtc ?? null,
+    sourceRevision: additions.sourceRevision ?? null,
+    projectionStatus: additions.projectionStatus ?? null,
+    activeLane: additions.activeLane ?? null,
+    blockers,
+    allowWorkerTick: false,
+    boundedMutationSteps: 0,
+    chatMemoryAuthoritative: false,
+    productionContractsOnly: true,
+    createsReplacementMachinery: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+    nextAction: 'Publish the exact blocker and stop without mutation.',
+  });
+}
+
+export function reconcileDurableFlywheelController(projection = {}, options = {}) {
+  const observedAtUtc = safeNow(options.nowUtc ?? projection?.observedAtUtc);
+  const sourceRevision = sha(options.sourceRevision);
+  const blockers = [];
+  if (!projection || typeof projection !== 'object' || Array.isArray(projection)) {
+    blockers.push('authoritative-programme-projection-invalid');
+  }
+  if (projection?.schemaVersion !== AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA) {
+    blockers.push('authoritative-programme-projection-schema-mismatch');
+  }
+  if (projection?.sourceConstructionMode !== 'production-contracts') {
+    blockers.push('authoritative-programme-projection-not-production-constructed');
+  }
+  if (projection?.chatMemoryAuthoritative !== false) {
+    blockers.push('chat-memory-authority-not-explicitly-disabled');
+  }
+  if (!observedAtUtc) blockers.push('controller-observation-time-invalid');
+  if (!sourceRevision) blockers.push('controller-source-revision-invalid');
+  const status = text(projection?.status).toUpperCase();
+  if (!KNOWN_PROJECTION_STATES.has(status)) blockers.push('authoritative-programme-status-invalid');
+  if (status === 'HOLD') blockers.push(...list(projection?.blockers).map((blocker) => `authority:${text(blocker)}`));
+  if (blockers.length) {
+    return holdResult('authoritative-programme-reconciliation-blocked', {
+      blockers,
+      observedAtUtc: observedAtUtc || null,
+      sourceRevision: sourceRevision || null,
+      projectionStatus: status || null,
+      activeLane: projection?.lane ?? null,
+    });
+  }
+
+  const identity = projectionIdentity(projection);
+  const common = {
+    schemaVersion: DURABLE_FLYWHEEL_CONTROLLER_SCHEMA,
+    status,
+    finalVerdict: 'DURABLE_FLYWHEEL_CONTROLLER_READY',
+    observedAtUtc,
+    sourceRevision,
+    projectionStatus: status,
+    activeLane: projection?.lane ?? null,
+    laneIdentity: identity,
+    blockers: [],
+    boundedMutationSteps: 1,
+    chatMemoryAuthoritative: false,
+    productionContractsOnly: true,
+    createsReplacementMachinery: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  if (status === 'TERMINAL_RECONCILIATION_REQUIRED') {
+    return freeze({
+      ...common,
+      action: 'FINALIZE_EXACT_TERMINAL_LANE',
+      allowWorkerTick: false,
+      nextAction: 'Publish exact terminal evidence, release only the matching lease, then reconcile again.',
+    });
+  }
+  if (status === 'ACTIVE') {
+    return freeze({
+      ...common,
+      action: 'ADVANCE_EXISTING_ACTIVE_LANE',
+      allowWorkerTick: true,
+      nextAction: 'Allow the existing Mission Worker to advance one bounded action under the current lease.',
+    });
+  }
+  if (status === 'READY') {
+    return freeze({
+      ...common,
+      action: 'CREATE_CANONICAL_CONVEYOR_MISSION',
+      allowWorkerTick: false,
+      nextAction: 'Ask the Critical Backlog Conveyor to create the scheduler-authorized mission.',
+    });
+  }
+  return freeze({
+    ...common,
+    action: 'WAIT_FOR_DURABLE_GOAL_EVIDENCE',
+    allowWorkerTick: false,
+    boundedMutationSteps: 0,
+    nextAction: 'Remain idle until canonical durable sources expose buildable work.',
+  });
+}
+
+function createCycleReceipt(result, projection, nowUtc) {
+  const identity = result.laneIdentity ?? projectionIdentity(projection);
+  const id = receiptId(nowUtc);
+  const proofRef = `receipts/${id}.json`;
+  return freeze({
+    ...createSharedWorkspaceReceiptRecord({
+      receiptId: id,
+      participantId: DURABLE_FLYWHEEL_CONTROLLER_ID,
+      timestampUtc: nowUtc,
+      correlationId: identity.laneId || id,
+      relatedIssue: `#${identity.issueNumber || DURABLE_FLYWHEEL_CONTROLLER_ISSUE}`,
+      relatedPr: identity.prNumber ? `#${identity.prNumber}` : '',
+      receivedRecordId: text(projection?.projectionReceipt?.receiptId, id),
+      disposition: text(result.status, 'HOLD').toLowerCase(),
+      summary: `${text(result.action, 'HOLD')}: ${text(result.nextAction, 'Stopped without mutation.')}`,
+      proofRefs: [proofRef],
+    }),
+    schema: DURABLE_FLYWHEEL_CYCLE_RECEIPT_SCHEMA,
+    controllerId: DURABLE_FLYWHEEL_CONTROLLER_ID,
+    sourceRevision: result.sourceRevision,
+    programmeStatus: text(result.projectionStatus, 'UNKNOWN'),
+    action: text(result.action, 'HOLD'),
+    laneId: identity.laneId || null,
+    repository: identity.repository || null,
+    issueNumber: identity.issueNumber,
+    prNumber: identity.prNumber,
+    branch: identity.branch || null,
+    headSha: identity.headSha || null,
+    blockers: list(result.blockers),
+    allowWorkerTick: result.allowWorkerTick === true,
+    boundedMutationSteps: result.boundedMutationSteps === 1 ? 1 : 0,
+    chatMemoryAuthoritative: false,
+    createsReplacementMachinery: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  });
+}
+
+export async function publishDurableFlywheelCycleReceipt(receipt, options = {}) {
+  const paths = resolveProgrammeAuthorityPaths({
+    root: options.root,
+    repoRoot: options.repoRoot,
+  });
+  if (!paths.ok) return freeze({ ok: false, reason: paths.reason, receipt });
+  const write = await writeAtomicJson(
+    paths.root,
+    ['receipts', `${receipt.receiptId}.json`],
+    receipt,
+    { repoRoot: options.repoRoot, nowMs: Date.parse(receipt.timestampUtc) },
+  );
+  return freeze({
+    ok: write.ok === true,
+    reason: write.ok ? 'DURABLE_FLYWHEEL_CYCLE_RECEIPT_PUBLISHED' : write.reason,
+    receipt,
+    write,
+  });
+}
+
+function heartbeatInput({
+  state,
+  sourceRevision,
+  activeLaneId = '',
+  nowUtc,
+  cycleReceiptId,
+  boundedMutationSteps = 0,
+}) {
+  return freeze({
+    controllerId: DURABLE_FLYWHEEL_CONTROLLER_ID,
+    sourceRevision,
+    cycleState: state,
+    activeLaneId,
+    lastSuccessfulReconciliationUtc: nowUtc,
+    lastPublishedReceiptId: cycleReceiptId,
+    timestampUtc: nowUtc,
+    boundedMutationSteps,
+    proofRefs: [`receipts/${cycleReceiptId}.json`],
+  });
+}
+
+function productionMachinery(overrides = {}) {
+  return freeze({
+    publishControllerHeartbeat: overrides.publishControllerHeartbeat ?? publishProgrammeControllerHeartbeat,
+    loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
+    finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
+    ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
+    publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
+  });
+}
+
+export async function runDurableFlywheelStartupCycle(machinery = {}, options = {}) {
+  const deps = productionMachinery(machinery);
+  const nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
+  const env = options.env ?? process.env;
+  const sourceRevision = sha(options.sourceRevision ?? env.STEPHANOS_MISSION_WORKER_HEAD_SHA);
+  const cycleReceiptId = receiptId(nowUtc);
+  const serviceOptions = {
+    ...options,
+    env,
+    nowUtc,
+    sourceRevision,
+  };
+  if (!sourceRevision) {
+    const result = holdResult('controller-source-revision-invalid', { observedAtUtc: nowUtc });
+    const receipt = createCycleReceipt(result, null, nowUtc);
+    const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
+    return freeze({ ...result, cycleReceipt: receipt, receiptPublication: publication });
+  }
+
+  const publishHeartbeat = requiredFunction(deps.publishControllerHeartbeat, 'publishControllerHeartbeat');
+  const initialHeartbeat = await publishHeartbeat(heartbeatInput({
+    state: 'RECONCILING',
+    sourceRevision,
+    nowUtc,
+    cycleReceiptId,
+  }), serviceOptions);
+  if (initialHeartbeat?.ok !== true) {
+    const result = holdResult(`controller-heartbeat:${text(initialHeartbeat?.reason, 'publication-failed')}`, {
+      observedAtUtc: nowUtc,
+      sourceRevision,
+    });
+    const receipt = createCycleReceipt(result, null, nowUtc);
+    const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
+    return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+  }
+
+  const loadProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
+  let projection = await loadProjection(serviceOptions);
+  if (projection?.lane?.active === true) {
+    const activeHeartbeat = await publishHeartbeat(heartbeatInput({
+      state: 'ACTIVE_LANE',
+      sourceRevision,
+      activeLaneId: projection.lane.laneId,
+      nowUtc,
+      cycleReceiptId,
+      boundedMutationSteps: 1,
+    }), serviceOptions);
+    if (activeHeartbeat?.ok !== true) {
+      const result = holdResult(`controller-heartbeat:${text(activeHeartbeat?.reason, 'active-lane-publication-failed')}`, {
+        observedAtUtc: nowUtc,
+        sourceRevision,
+        activeLane: projection.lane,
+      });
+      const receipt = createCycleReceipt(result, projection, nowUtc);
+      const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
+      return freeze({ ...result, heartbeatPublication: activeHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+    }
+    projection = await loadProjection(serviceOptions);
+  }
+
+  let result = reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
+  let actionResult = null;
+  if (result.status === 'TERMINAL_RECONCILIATION_REQUIRED') {
+    const identity = result.laneIdentity;
+    const finalizingHeartbeat = await publishHeartbeat(heartbeatInput({
+      state: 'FINALIZING',
+      sourceRevision,
+      activeLaneId: identity.laneId,
+      nowUtc,
+      cycleReceiptId,
+      boundedMutationSteps: 1,
+    }), serviceOptions);
+    if (finalizingHeartbeat?.ok !== true) {
+      result = holdResult(`controller-heartbeat:${text(finalizingHeartbeat?.reason, 'finalizing-publication-failed')}`, {
+        observedAtUtc: nowUtc,
+        sourceRevision,
+        activeLane: projection.lane,
+      });
+    } else {
+      actionResult = await requiredFunction(deps.finalizeTerminalLane, 'finalizeTerminalLane')({
+        leaseId: identity.leaseId,
+        laneId: identity.laneId,
+        repository: identity.repository,
+        issueNumber: identity.issueNumber,
+        prNumber: identity.prNumber,
+        branch: identity.branch,
+        headSha: identity.headSha,
+        ownerId: identity.ownerId,
+        nowUtc,
+      }, serviceOptions);
+      if (actionResult?.ok !== true) {
+        result = holdResult(`terminal-finalization:${text(actionResult?.reason, 'failed')}`, {
+          observedAtUtc: nowUtc,
+          sourceRevision,
+          activeLane: projection.lane,
+        });
+      }
+    }
+  } else if (result.status === 'READY') {
+    actionResult = await requiredFunction(deps.ensureBacklogMission, 'ensureBacklogMission')({
+      env,
+      now: new Date(nowUtc),
+    });
+    if (actionResult?.ok !== true) {
+      result = holdResult(`critical-backlog:${text(actionResult?.classification ?? actionResult?.reason, 'mission-create-failed')}`, {
+        observedAtUtc: nowUtc,
+        sourceRevision,
+      });
+    } else {
+      result = freeze({
+        ...result,
+        allowWorkerTick: true,
+        nextAction: actionResult.createdMission
+          ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
+          : 'Allow the existing Mission Worker to continue the conveyor-authorized mission.',
+      });
+    }
+  }
+
+  const receipt = createCycleReceipt(result, projection, nowUtc);
+  const receiptPublication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
+  if (receiptPublication?.ok !== true) {
+    result = holdResult(`cycle-receipt:${text(receiptPublication?.reason, 'publication-failed')}`, {
+      observedAtUtc: nowUtc,
+      sourceRevision,
+      activeLane: projection?.lane,
+    });
+  }
+  const finalState = result.status === 'HOLD'
+    ? 'HOLD'
+    : result.status === 'ACTIVE'
+      ? 'ACTIVE_LANE'
+      : 'IDLE';
+  const finalHeartbeat = await publishHeartbeat(heartbeatInput({
+    state: finalState,
+    sourceRevision,
+    activeLaneId: finalState === 'ACTIVE_LANE' ? text(projection?.lane?.laneId) : '',
+    nowUtc,
+    cycleReceiptId: receipt.receiptId,
+    boundedMutationSteps: result.boundedMutationSteps,
+  }), serviceOptions);
+  if (finalHeartbeat?.ok !== true) {
+    result = holdResult(`controller-heartbeat:${text(finalHeartbeat?.reason, 'final-publication-failed')}`, {
+      observedAtUtc: nowUtc,
+      sourceRevision,
+      activeLane: projection?.lane,
+    });
+  }
+  return freeze({
+    ...result,
+    authoritativeProjection: projection,
+    actionResult,
+    cycleReceipt: receipt,
+    receiptPublication,
+    heartbeatPublication: finalHeartbeat,
+  });
+}
+
+export function renderDurableFlywheelReceipt(result) {
+  if (!result || typeof result !== 'object') throw new TypeError('result is required');
+  return [
+    'Durable Flywheel Reconciliation Receipt VNext',
+    `Status: ${text(result.status, 'HOLD')}`,
+    `Observed-At: ${text(result.observedAtUtc, 'unproven')}`,
+    `Source-Revision: ${text(result.sourceRevision, 'unproven')}`,
+    `Projection-Status: ${text(result.projectionStatus, 'unproven')}`,
+    `Action: ${text(result.action, 'none')}`,
+    `Worker-Tick-Allowed: ${result.allowWorkerTick === true}`,
+    'Chat-Memory-Authoritative: false',
+    'Creates-Replacement-Machinery: false',
+    'Merge-Authority: false',
+    'Lease-Seizure-Allowed: false',
+    `Next-Action: ${text(result.nextAction, 'none')}`,
+    `Blockers: ${list(result.blockers).length ? result.blockers.join(', ') : 'none'}`,
+  ].join('\n');
+}

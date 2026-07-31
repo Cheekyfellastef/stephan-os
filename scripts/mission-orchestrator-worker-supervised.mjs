@@ -4,6 +4,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleBridgeGitHubCommandMailboxBootstrap.mjs';
+import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
 import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
 
@@ -13,6 +14,7 @@ export async function runSupervisedMissionWorker({
   stdout = process.stdout,
   stderr = process.stderr,
   bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox,
+  runControllerCycle = runDurableFlywheelStartupCycle,
   runTick = runMissionWorkerTick,
   writeHeartbeat = writeMissionWorkerHeartbeat,
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
@@ -65,8 +67,16 @@ export async function runSupervisedMissionWorker({
     }, heartbeatIntervalMs);
 
     try {
-      const result = await runTick();
-      stdout.write(`${JSON.stringify({ checkedAt, ...result })}\n`);
+      const controller = await runControllerCycle({}, {
+        env,
+        nowUtc: checkedAt,
+        sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA,
+      });
+      stdout.write(`${JSON.stringify({ checkedAt, controller })}\n`);
+      if (controller?.allowWorkerTick === true) {
+        const result = await runTick();
+        stdout.write(`${JSON.stringify({ checkedAt, ...result })}\n`);
+      }
     } catch (error) {
       lastTickVerdict = 'MISSION_WORKER_TICK_FAILED';
       stderr.write(`${JSON.stringify({ checkedAt, finalVerdict: lastTickVerdict, error: error.message })}\n`);

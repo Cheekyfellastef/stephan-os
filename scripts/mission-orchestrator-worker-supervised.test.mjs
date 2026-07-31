@@ -19,6 +19,9 @@ function timerHarness() {
   };
 }
 
+const allowWorkerTick = async () => ({ status: 'ACTIVE', allowWorkerTick: true });
+const bootstrapMailbox = async () => ({ ok: true, status: 'MAILBOX_ALREADY_REGISTERED' });
+
 test('supervised worker writes running and final heartbeat around a successful tick', async () => {
   const output = sink();
   const errors = sink();
@@ -29,6 +32,8 @@ test('supervised worker writes running and final heartbeat around a successful t
     env: {},
     stdout: output.stream,
     stderr: errors.stream,
+    bootstrapMailbox,
+    runControllerCycle: allowWorkerTick,
     runTick: async () => ({ publish: { ok: true } }),
     writeHeartbeat: async (input) => { heartbeats.push(input); },
     setIntervalFn: timer.setIntervalFn,
@@ -57,6 +62,8 @@ test('supervised worker refreshes heartbeat while a long tick is still running',
     env: { STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS: '1000' },
     stdout: sink().stream,
     stderr: sink().stream,
+    bootstrapMailbox,
+    runControllerCycle: allowWorkerTick,
     runTick: async () => {
       tickStarted();
       await tickGate;
@@ -92,6 +99,8 @@ test('supervised worker records failed tick heartbeat and exits non-zero in once
     env: {},
     stdout: output.stream,
     stderr: errors.stream,
+    bootstrapMailbox,
+    runControllerCycle: allowWorkerTick,
     runTick: async () => { throw new Error('tick failed'); },
     writeHeartbeat: async (input) => { heartbeats.push(input); },
     setIntervalFn: timer.setIntervalFn,
@@ -113,6 +122,8 @@ test('heartbeat write failure is visible and non-zero in once mode', async () =>
     env: {},
     stdout: sink().stream,
     stderr: errors.stream,
+    bootstrapMailbox,
+    runControllerCycle: allowWorkerTick,
     runTick: async () => ({}),
     writeHeartbeat: async () => { throw new Error('write failed'); },
     setIntervalFn: timer.setIntervalFn,
@@ -120,4 +131,31 @@ test('heartbeat write failure is visible and non-zero in once mode', async () =>
   });
   assert.equal(exitCode, 1);
   assert.match(errors.read(), /MISSION_WORKER_HEARTBEAT_WRITE_FAILED/);
+});
+
+test('supervised worker gates source work through the durable controller', async () => {
+  const output = sink();
+  let workerTicks = 0;
+  let observedOptions = null;
+  const head = 'a'.repeat(40);
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: head },
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    runControllerCycle: async (_machinery, options) => {
+      observedOptions = options;
+      return { status: 'HOLD', allowWorkerTick: false, blockers: ['authority-held'] };
+    },
+    runTick: async () => { workerTicks += 1; return {}; },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+  });
+  assert.equal(exitCode, 0);
+  assert.equal(workerTicks, 0);
+  assert.equal(observedOptions.sourceRevision, head);
+  assert.equal(observedOptions.env.STEPHANOS_MISSION_WORKER_HEAD_SHA, head);
+  assert.match(output.read(), /"authority-held"/);
 });

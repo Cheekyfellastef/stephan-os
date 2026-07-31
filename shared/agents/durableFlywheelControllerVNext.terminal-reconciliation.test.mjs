@@ -1,63 +1,155 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
+import test from 'node:test';
+
 import {
-  reconcileDurableFlywheelController,
+  AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+} from './programmeAuthorityV1.mjs';
+import {
   runDurableFlywheelStartupCycle,
 } from './durableFlywheelControllerVNext.mjs';
 
-const NOW='2026-07-29T14:00:00+01:00';
-const MAIN='21dd7e30db529fea6eed0f0085f1b67fe858891c';
-const HEAD='762a64949d4e335bbf75b5aa4d2e50bac857d47a';
-const LANE_ID='goal-1497-pr-1603';
-const OWNER='github-first-chatgpt';
+const NOW = '2026-07-30T13:00:00.000Z';
+const SOURCE_REVISION = 'a'.repeat(40);
+const HEAD = 'b'.repeat(40);
+const LANE_ID = 'goal-1497-pr-1617';
+const LEASE_ID = 'lease-goal-1497-pr-1617';
+const OWNER_ID = 'mission-worker';
+const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const BRANCH = 'feat/durable-flywheel-controller-vnext';
 
-function snapshot(){
+function terminalProjection() {
   return {
-    observedAt:NOW,
-    github:{mainHead:MAIN,implementationLanes:[{id:LANE_ID,issueNumber:1497,prNumber:1603,state:'IMPLEMENTING',headSha:HEAD,prState:'OPEN',merged:false}],goals:[]},
-    sharedWorkspace:{
-      sourceMutationLease:{owner:OWNER,laneId:LANE_ID,expiresAt:'2026-07-29T14:30:00+01:00'},
-      controllerHeartbeat:{at:'2026-07-29T13:55:00+01:00'},
-      machineryInventory:[{id:'scheduler-primary',kind:'scheduler',state:'RUNNING'},{id:'worker-primary',kind:'worker',state:'RUNNING'}],
+    schemaVersion: AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+    status: 'TERMINAL_RECONCILIATION_REQUIRED',
+    observedAtUtc: NOW,
+    blockers: [],
+    chatMemoryAuthoritative: false,
+    sourceConstructionMode: 'production-contracts',
+    lane: {
+      valid: true,
+      active: false,
+      terminal: true,
+      laneId: LANE_ID,
+      repository: REPOSITORY,
+      issueNumber: 1497,
+      prNumber: 1617,
+      branch: BRANCH,
+      headSha: HEAD,
     },
-    receipts:{
-      scheduler:{correlationId:'scheduler-1497',decidedAt:'2026-07-29T13:56:00+01:00',status:'ACTIVE_LANE',failClosed:false,contradictionCodes:[],selectedIssue:null,selectedLifecycle:null,activeIssue:1497,route:'CHATGPT_GITHUB',proofRefs:[],proofHeadShas:[],proofReceipts:[]},
-      execution:{schemaVersion:'stephanos.execution-receipt.v1',kind:'stephanos.execution.receipt',receiptId:'execution-1497-1',repository:'Cheekyfellastef/stephan-os',issueNumber:1497,prNumber:1603,branch:'feat/durable-flywheel-controller-vnext',sourceHead:HEAD,workerId:OWNER,workerType:'github-first',executionId:'execution-1497',leaseKey:LANE_ID,state:'completed',phase:'completed',sequence:1,predecessorReceiptId:'',timestampUtc:'2026-07-29T13:57:00+01:00',heartbeatExpiresAtUtc:'2026-07-29T13:57:00+01:00',blocker:'',operatorActionRequired:false,proofRefs:['proofs/execution-1497.json'],expectedNextAction:''},
-      proofHeadShas:[],proofReceipts:[],proofRefs:[],
+    mutationLease: {
+      leaseId: LEASE_ID,
+      laneId: LANE_ID,
+      repository: REPOSITORY,
+      issueNumber: 1497,
+      prNumber: 1617,
+      branch: BRANCH,
+      headSha: HEAD,
+      ownerId: OWNER_ID,
     },
-    battleBridge:{proof:null},
+    projectionReceipt: {
+      receiptId: 'programme-projection-terminal',
+      sourceConstructionMode: 'production-contracts',
+    },
   };
 }
 
-test('execution receipt must bind to active PR independently of issue identity',()=>{
-  const state=snapshot();
-  state.receipts.execution.prNumber=9999;
-  const result=reconcileDurableFlywheelController(state,{now:NOW});
-  assert.equal(result.status,'HOLD');
-  assert.ok(result.blockers.includes('execution-receipt-pr-mismatch'));
-  assert.ok(!result.blockers.includes('execution-receipt-issue-mismatch'));
+function machinery(overrides = {}) {
+  return {
+    publishControllerHeartbeat: async () => ({ ok: true }),
+    loadAuthoritativeProjection: async () => terminalProjection(),
+    publishReceipt: async () => ({ ok: true }),
+    finalizeTerminalLane: async () => ({ ok: true }),
+    ensureBacklogMission: async () => {
+      throw new Error('terminal reconciliation must not schedule work');
+    },
+    ...overrides,
+  };
+}
+
+test('affirmative canonical terminal projection invokes the exact existing finalizer once', async () => {
+  const finalizations = [];
+  const result = await runDurableFlywheelStartupCycle(machinery({
+    finalizeTerminalLane: async (input) => {
+      finalizations.push(input);
+      return {
+        ok: true,
+        releaseOnlyExactLease: true,
+        schedulesWork: false,
+        mergeAuthority: false,
+      };
+    },
+  }), {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(finalizations.length, 1);
+  assert.deepEqual(finalizations[0], {
+    leaseId: LEASE_ID,
+    laneId: LANE_ID,
+    repository: REPOSITORY,
+    issueNumber: 1497,
+    prNumber: 1617,
+    branch: BRANCH,
+    headSha: HEAD,
+    ownerId: OWNER_ID,
+    nowUtc: NOW,
+  });
+  assert.equal(result.status, 'TERMINAL_RECONCILIATION_REQUIRED');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.actionResult.releaseOnlyExactLease, true);
 });
 
-test('live merged PR truth supersedes stale active-lane state and releases its lease once',async()=>{
-  const state=snapshot();
-  Object.assign(state.github.implementationLanes[0],{prState:'CLOSED',merged:true,mergedAt:'2026-07-28T11:15:19Z'});
-  const reconciliation=reconcileDurableFlywheelController(state,{now:NOW});
-  assert.equal(reconciliation.status,'HEALTHY');
-  assert.equal(reconciliation.activeLaneCount,0);
-  assert.equal(reconciliation.terminalLaneCount,1);
-  assert.equal(reconciliation.nextAction,'finalize-merged-lane-release-lease-and-reschedule');
+test('terminal finalizer rejection remains HOLD and cannot release or schedule indirectly', async () => {
+  let calls = 0;
+  const result = await runDurableFlywheelStartupCycle(machinery({
+    finalizeTerminalLane: async () => {
+      calls += 1;
+      return {
+        ok: false,
+        reason: 'SOURCE_MUTATION_LEASE_RELEASE_IDENTITY_INCOMPLETE',
+      };
+    },
+  }), {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
 
-  const calls=[];
-  const result=await runDurableFlywheelStartupCycle({
-    loadDurableSnapshot:async()=>state,
-    finalizeTerminalLane:async(packet)=>{calls.push(packet);return{status:'TERMINAL_LANE_RECONCILED',laneId:packet.lane.id};},
-    advanceActiveLane:async()=>{throw new Error('must not advance a merged lane');},
-    dispatchSelectedGoal:async()=>{throw new Error('must release the stale lease before rescheduling');},
-    publishReceipt:async()=>{},
-  },{now:NOW});
-  assert.equal(calls.length,1);
-  assert.equal(calls[0].releaseLease,true);
-  assert.equal(calls[0].reschedule,true);
-  assert.equal(calls[0].mergeAuthority,false);
-  assert.equal(result.status,'TERMINAL_LANE_RECONCILED');
+  assert.equal(calls, 1);
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.ok(result.blockers.includes(
+    'terminal-finalization:SOURCE_MUTATION_LEASE_RELEASE_IDENTITY_INCOMPLETE',
+  ));
+});
+
+test('FINALIZING heartbeat must publish before terminal finalization', async () => {
+  const order = [];
+  const result = await runDurableFlywheelStartupCycle(machinery({
+    publishControllerHeartbeat: async ({ cycleState }) => {
+      order.push(cycleState);
+      if (cycleState === 'FINALIZING') {
+        return { ok: false, reason: 'finalizing-heartbeat-failed' };
+      }
+      return { ok: true };
+    },
+    finalizeTerminalLane: async () => {
+      order.push('FINALIZER_CALLED');
+      return { ok: true };
+    },
+  }), {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.deepEqual(order, ['RECONCILING', 'FINALIZING', 'HOLD']);
+  assert.ok(result.blockers.includes(
+    'controller-heartbeat:finalizing-heartbeat-failed',
+  ));
 });

@@ -1,177 +1,210 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
+import test from 'node:test';
+
 import {
-  reconcileDurableFlywheelController,
+  AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+} from './programmeAuthorityV1.mjs';
+import {
   runDurableFlywheelStartupCycle,
 } from './durableFlywheelControllerVNext.mjs';
 
-const NOW = '2026-07-29T14:00:00+01:00';
-const MAIN = '21dd7e30db529fea6eed0f0085f1b67fe858891c';
-const HEAD = '762a64949d4e335bbf75b5aa4d2e50bac857d47a';
-const LANE_ID = 'goal-1497-pr-1603';
-const OWNER = 'github-first-chatgpt';
+const NOW = '2026-07-30T13:00:00.000Z';
+const SOURCE_REVISION = 'a'.repeat(40);
 
-function schedulerReceipt(overrides = {}) {
+function projection(status, overrides = {}) {
   return {
-    correlationId:'scheduler-1497', decidedAt:'2026-07-29T13:56:00+01:00', status:'ACTIVE_LANE',
-    failClosed:false, contradictionCodes:[], selectedIssue:null, selectedLifecycle:null,
-    activeIssue:1497, route:'CHATGPT_GITHUB', proofRefs:[], proofHeadShas:[], proofReceipts:[],
-    ...overrides,
-  };
-}
-
-function executionReceipt(overrides = {}) {
-  return {
-    schemaVersion:'stephanos.execution-receipt.v1', kind:'stephanos.execution.receipt', receiptId:'execution-1497-1',
-    repository:'Cheekyfellastef/stephan-os', issueNumber:1497, prNumber:1603,
-    branch:'feat/durable-flywheel-controller-vnext', sourceHead:HEAD,
-    workerId:OWNER, workerType:'github-first', executionId:'execution-1497', leaseKey:LANE_ID,
-    state:'completed', phase:'completed', sequence:1, predecessorReceiptId:'',
-    timestampUtc:'2026-07-29T13:57:00+01:00', heartbeatExpiresAtUtc:'2026-07-29T13:57:00+01:00',
-    blocker:'', operatorActionRequired:false, proofRefs:['proofs/execution-1497.json'], expectedNextAction:'',
-    ...overrides,
-  };
-}
-
-function activeSnapshot() {
-  return {
-    observedAt:NOW,
-    github:{ mainHead:MAIN, implementationLanes:[{ id:LANE_ID, state:'IMPLEMENTING', headSha:HEAD }], goals:[] },
-    sharedWorkspace:{
-      sourceMutationLease:{ owner:OWNER, laneId:LANE_ID, expiresAt:'2026-07-29T14:30:00+01:00' },
-      controllerHeartbeat:{ at:'2026-07-29T13:55:00+01:00' },
-      machineryInventory:[
-        { id:'scheduler-primary', kind:'scheduler', state:'RUNNING' },
-        { id:'worker-primary', kind:'worker', state:'RUNNING' },
-      ],
+    schemaVersion: AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+    status,
+    observedAtUtc: NOW,
+    blockers: [],
+    chatMemoryAuthoritative: false,
+    sourceConstructionMode: 'production-contracts',
+    lane: null,
+    mutationLease: null,
+    projectionReceipt: {
+      receiptId: 'programme-projection-20260730130000',
+      sourceConstructionMode: 'production-contracts',
     },
-    receipts:{ scheduler:schedulerReceipt(), execution:executionReceipt(), proofHeadShas:[], proofReceipts:[], proofRefs:[] },
-    battleBridge:{ proof:null },
+    ...overrides,
   };
 }
 
-function idleSnapshot() {
-  const snapshot = activeSnapshot();
-  snapshot.github.implementationLanes = [];
-  snapshot.sharedWorkspace.sourceMutationLease = null;
-  snapshot.receipts.execution = null;
-  snapshot.receipts.scheduler = schedulerReceipt({ status:'LANE_SELECTED', selectedIssue:1700, selectedLifecycle:'READY', activeIssue:null });
-  snapshot.github.goals = [{
-    issue:1700, title:'Bounded goal', state:'READY', prerequisites:[], priority:100,
-    criticalPathWeight:100, reversibility:'HIGH', route:'CHATGPT_GITHUB', evidenceAt:'2026-07-29T13:58:00+01:00',
-  }];
-  return snapshot;
+function baseMachinery(authoritativeProjection, calls, overrides = {}) {
+  return {
+    publishControllerHeartbeat: async (heartbeat) => {
+      calls.push(['heartbeat', heartbeat.cycleState]);
+      return { ok: true };
+    },
+    loadAuthoritativeProjection: async () => {
+      calls.push(['canonical-projection']);
+      return authoritativeProjection;
+    },
+    publishReceipt: async (receipt) => {
+      calls.push(['receipt', receipt.action]);
+      return { ok: true };
+    },
+    ensureBacklogMission: async () => {
+      calls.push(['canonical-conveyor']);
+      return { ok: true, createdMission: true };
+    },
+    finalizeTerminalLane: async () => {
+      calls.push(['canonical-finalizer']);
+      return { ok: true };
+    },
+    ...overrides,
+  };
 }
 
-test('fail-closed scheduler receipt blocks active-lane advancement', async () => {
-  const snapshot = activeSnapshot();
-  snapshot.receipts.scheduler = schedulerReceipt({ status:'BLOCKED_FAIL_CLOSED', failClosed:true, contradictionCodes:['split-brain'] });
-  let advances = 0;
+test('READY work is admitted only through the existing Critical Backlog Conveyor', async () => {
+  const calls = [];
+  const result = await runDurableFlywheelStartupCycle(
+    baseMachinery(projection('READY'), calls),
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+
+  assert.equal(result.status, 'READY');
+  assert.equal(result.action, 'CREATE_CANONICAL_CONVEYOR_MISSION');
+  assert.equal(result.allowWorkerTick, true);
+  assert.equal(result.actionResult.createdMission, true);
+  assert.equal(calls.filter(([name]) => name === 'canonical-conveyor').length, 1);
+  assert.equal(result.createsReplacementMachinery, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('conveyor rejection is a HOLD and never authorizes the Mission Worker', async () => {
+  const calls = [];
+  const result = await runDurableFlywheelStartupCycle(
+    baseMachinery(projection('READY'), calls, {
+      ensureBacklogMission: async () => {
+        calls.push(['canonical-conveyor']);
+        return {
+          ok: false,
+          classification: 'BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS',
+        };
+      },
+    }),
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.ok(result.blockers.includes(
+    'critical-backlog:BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS',
+  ));
+});
+
+test('cycle receipt publication failure revokes otherwise valid work authority', async () => {
+  const calls = [];
+  const result = await runDurableFlywheelStartupCycle(
+    baseMachinery(projection('READY'), calls, {
+      publishReceipt: async () => ({ ok: false, reason: 'disk-unavailable' }),
+    }),
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.ok(result.blockers.includes('cycle-receipt:disk-unavailable'));
+});
+
+test('controller heartbeat failure blocks projection reads and source work', async () => {
+  let projectionReads = 0;
+  let conveyorCalls = 0;
+  const receipts = [];
   const result = await runDurableFlywheelStartupCycle({
-    loadDurableSnapshot:async () => snapshot,
-    advanceActiveLane:async () => { advances += 1; },
-    publishReceipt:async () => {},
-  }, { now:NOW });
+    publishControllerHeartbeat: async () => ({
+      ok: false,
+      reason: 'controller-heartbeat-write-failed',
+    }),
+    loadAuthoritativeProjection: async () => {
+      projectionReads += 1;
+      return projection('READY');
+    },
+    ensureBacklogMission: async () => {
+      conveyorCalls += 1;
+      return { ok: true };
+    },
+    publishReceipt: async (receipt) => {
+      receipts.push(receipt);
+      return { ok: true };
+    },
+  }, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
   assert.equal(result.status, 'HOLD');
-  assert.equal(advances, 0);
-  assert.ok(result.reconciliation.blockers.includes('scheduler-receipt-fail-closed'));
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(projectionReads, 0);
+  assert.equal(conveyorCalls, 0);
+  assert.equal(receipts.length, 1);
 });
 
-test('non-active scheduler decisions block active-lane advancement', async () => {
-  for (const status of ['APPROVAL_REQUIRED','WAITING','LANE_SELECTED','MERGE_READY','CLOSE_READY']) {
-    const snapshot = activeSnapshot();
-    snapshot.receipts.scheduler = schedulerReceipt({ status });
-    let advances = 0;
-    const result = await runDurableFlywheelStartupCycle({
-      loadDurableSnapshot:async () => snapshot,
-      advanceActiveLane:async () => { advances += 1; },
-      publishReceipt:async () => {},
-    }, { now:NOW });
-    assert.equal(result.status, 'HOLD');
-    assert.equal(advances, 0);
-    assert.ok(result.reconciliation.blockers.includes('scheduler-receipt-active-lane-status-mismatch'));
-  }
-});
-
-test('ACTIVE_LANE scheduler decision must identify the active lane issue', () => {
-  const snapshot = activeSnapshot();
-  snapshot.receipts.scheduler = schedulerReceipt({ activeIssue:1700 });
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('scheduler-receipt-active-lane-identity-mismatch'));
-});
-
-test('malformed scheduler proof containers reach canonical validation and prevent dispatch', async () => {
-  const snapshot = idleSnapshot();
-  snapshot.receipts.proofReceipts = { malformed:true };
-  let dispatches = 0;
+test('legacy injected snapshots and direct dispatch hooks cannot become authority', async () => {
+  const calls = [];
+  let legacySnapshotReads = 0;
+  let directDispatches = 0;
   const result = await runDurableFlywheelStartupCycle({
-    loadDurableSnapshot:async () => snapshot,
-    dispatchSelectedGoal:async () => { dispatches += 1; },
-    publishReceipt:async () => {},
-  }, { now:NOW });
-  assert.equal(dispatches, 0);
+    ...baseMachinery(projection('IDLE'), calls),
+    loadDurableSnapshot: async () => {
+      legacySnapshotReads += 1;
+      return { injectedGoal: 9999 };
+    },
+    dispatchSelectedGoal: async () => {
+      directDispatches += 1;
+      return { ok: true };
+    },
+    advanceActiveLane: async () => {
+      directDispatches += 1;
+      return { ok: true };
+    },
+  }, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(result.status, 'IDLE');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(legacySnapshotReads, 0);
+  assert.equal(directDispatches, 0);
+  assert.equal(calls.filter(([name]) => name === 'canonical-projection').length, 1);
+});
+
+test('canonical projection is re-read after ACTIVE_LANE heartbeat before work is allowed', async () => {
+  const lane = {
+    valid: true,
+    active: true,
+    terminal: false,
+    laneId: 'goal-1497-pr-1617',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1497,
+    prNumber: 1617,
+    branch: 'feat/durable-flywheel-controller-vnext',
+    headSha: 'b'.repeat(40),
+  };
+  const first = projection('ACTIVE', { lane });
+  const second = projection('HOLD', {
+    lane,
+    blockers: ['execution:sourceHead mismatch'],
+  });
+  let reads = 0;
+  const calls = [];
+  const result = await runDurableFlywheelStartupCycle({
+    ...baseMachinery(first, calls),
+    loadAuthoritativeProjection: async () => {
+      reads += 1;
+      return reads === 1 ? first : second;
+    },
+  }, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(reads, 2);
   assert.equal(result.status, 'HOLD');
-  assert.ok(result.reconciliation.blockers.includes('scheduler-proofReceipts-container-invalid'));
-});
-
-test('malformed scheduler proof containers prevent active-lane advancement', async () => {
-  for (const key of ['proofHeadShas','proofReceipts','proofRefs']) {
-    const snapshot = activeSnapshot();
-    snapshot.receipts[key] = { malformed:true };
-    let advances = 0;
-    const result = await runDurableFlywheelStartupCycle({
-      loadDurableSnapshot:async () => snapshot,
-      advanceActiveLane:async () => { advances += 1; },
-      publishReceipt:async () => {},
-    }, { now:NOW });
-    assert.equal(result.status, 'HOLD');
-    assert.equal(advances, 0);
-    assert.ok(result.reconciliation.blockers.includes(`scheduler-${key}-container-invalid`));
-  }
-});
-
-test('malformed proof-array entries prevent active-lane advancement', async () => {
-  const cases = [
-    ['proofHeadShas', ['not-a-sha']],
-    ['proofReceipts', [{ issue:1497, activePr:1603, headSha:'not-a-sha' }]],
-    ['proofRefs', ['']],
-  ];
-  for (const [key, value] of cases) {
-    const snapshot = activeSnapshot();
-    snapshot.receipts[key] = value;
-    let advances = 0;
-    const result = await runDurableFlywheelStartupCycle({
-      loadDurableSnapshot:async () => snapshot,
-      advanceActiveLane:async () => { advances += 1; },
-      publishReceipt:async () => {},
-    }, { now:NOW });
-    assert.equal(result.status, 'HOLD');
-    assert.equal(advances, 0);
-    assert.ok(result.reconciliation.blockers.includes(`scheduler-${key}-evidence-invalid`));
-  }
-});
-
-test('execution receipt must bind to active lease key', () => {
-  const snapshot = activeSnapshot();
-  snapshot.receipts.execution = executionReceipt({ leaseKey:'another-lane' });
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.some((blocker) => blocker.startsWith('execution-receipt-')));
-});
-
-test('execution receipt worker must match active lease owner', () => {
-  const snapshot = activeSnapshot();
-  snapshot.receipts.execution = executionReceipt({ workerId:'different-worker' });
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('execution-receipt-worker-lease-owner-mismatch'));
-});
-
-test('execution receipt must bind to the active issue', () => {
-  const snapshot = activeSnapshot();
-  snapshot.receipts.execution = executionReceipt({ issueNumber:1700, prNumber:9999 });
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('execution-receipt-issue-mismatch'));
+  assert.equal(result.allowWorkerTick, false);
+  assert.ok(result.blockers.includes('authority:execution:sourceHead mismatch'));
 });

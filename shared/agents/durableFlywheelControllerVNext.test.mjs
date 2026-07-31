@@ -1,331 +1,241 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+} from './programmeAuthorityV1.mjs';
 import {
   reconcileDurableFlywheelController,
   renderDurableFlywheelReceipt,
   runDurableFlywheelStartupCycle,
 } from './durableFlywheelControllerVNext.mjs';
 
-const NOW = '2026-07-29T14:00:00+01:00';
-const MAIN = '21dd7e30db529fea6eed0f0085f1b67fe858891c';
-const LANE_HEAD = '762a64949d4e335bbf75b5aa4d2e50bac857d47a';
+const NOW = '2026-07-30T13:00:00.000Z';
+const SOURCE_REVISION = 'a'.repeat(40);
+const LANE_HEAD = 'b'.repeat(40);
+const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const LANE_ID = 'goal-1497-pr-1617';
+const BRANCH = 'feat/durable-flywheel-controller-vnext';
 
-function schedulerReceipt(overrides = {}) {
+function projection(status = 'IDLE', overrides = {}) {
   return {
-    correlationId:'scheduler-1497',
-    decidedAt:'2026-07-29T13:56:00+01:00',
-    status:'ACTIVE_LANE',
-    failClosed:false,
-    contradictionCodes:[],
-    selectedIssue:null,
-    selectedLifecycle:null,
-    activeIssue:1497,
-    route:'CHATGPT_GITHUB',
-    proofRefs:[],
-    proofHeadShas:[],
-    proofReceipts:[],
+    schemaVersion: AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+    status,
+    finalVerdict: status === 'HOLD'
+      ? 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD'
+      : 'AUTHORITATIVE_PROGRAMME_PROJECTION_READY',
+    observedAtUtc: NOW,
+    blockers: [],
+    chatMemoryAuthoritative: false,
+    sourceConstructionMode: 'production-contracts',
+    lane: null,
+    mutationLease: null,
+    projectionReceipt: {
+      schemaVersion: AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+      receiptId: 'programme-projection-20260730130000',
+      status,
+      chatMemoryAuthoritative: false,
+      sourceConstructionMode: 'production-contracts',
+      mergeAuthority: false,
+      workerAuthorityOwnedByController: false,
+      schedulerAuthorityOwnedByController: false,
+      boundedMutationStepsPerCycle: 1,
+    },
     ...overrides,
   };
 }
 
-function executionReceipt(overrides = {}) {
-  return {
-    schemaVersion:'stephanos.execution-receipt.v1',
-    kind:'stephanos.execution.receipt',
-    receiptId:'execution-1497-1',
-    repository:'Cheekyfellastef/stephan-os',
-    issueNumber:1497,
-    prNumber:1603,
-    branch:'feat/durable-flywheel-controller-vnext',
-    sourceHead:LANE_HEAD,
-    workerId:'github-first-chatgpt',
-    workerType:'github-first',
-    executionId:'execution-1497',
-    leaseKey:'goal-1497-pr-1603',
-    state:'completed',
-    phase:'completed',
-    sequence:1,
-    predecessorReceiptId:'',
-    timestampUtc:'2026-07-29T13:57:00+01:00',
-    heartbeatExpiresAtUtc:'2026-07-29T13:57:00+01:00',
-    blocker:'',
-    operatorActionRequired:false,
-    proofRefs:['proofs/execution-1497.json'],
-    expectedNextAction:'',
+function activeProjection(overrides = {}) {
+  return projection('ACTIVE', {
+    lane: {
+      valid: true,
+      active: true,
+      terminal: false,
+      laneId: LANE_ID,
+      repository: REPOSITORY,
+      issueNumber: 1497,
+      prNumber: 1617,
+      branch: BRANCH,
+      headSha: LANE_HEAD,
+    },
+    mutationLease: {
+      leaseId: 'lease-goal-1497-pr-1617',
+      ownerId: 'mission-worker',
+    },
     ...overrides,
-  };
-}
-
-function healthy(overrides = {}) {
-  return {
-    observedAt:NOW,
-    github:{
-      mainHead:MAIN,
-      implementationLanes:[{ id:'goal-1497-pr-1603', state:'IMPLEMENTING', headSha:LANE_HEAD }],
-      goals:[],
-    },
-    sharedWorkspace:{
-      sourceMutationLease:{ owner:'github-first-chatgpt', laneId:'goal-1497-pr-1603', expiresAt:'2026-07-29T14:30:00+01:00' },
-      controllerHeartbeat:{ at:'2026-07-29T13:55:00+01:00' },
-      machineryInventory:[
-        { id:'scheduler-primary', kind:'scheduler', state:'RUNNING' },
-        { id:'worker-primary', kind:'worker', state:'RUNNING' },
-        { id:'audit-primary', kind:'audit-monitor', state:'RUNNING' },
-      ],
-    },
-    receipts:{
-      scheduler:schedulerReceipt(),
-      execution:executionReceipt(),
-      proofHeadShas:[],
-      proofReceipts:[],
-      proofRefs:[],
-    },
-    battleBridge:{ proof:null },
-    ...overrides,
-  };
-}
-
-function idleWithGoal() {
-  const snapshot = healthy();
-  snapshot.github.implementationLanes = [];
-  snapshot.sharedWorkspace.sourceMutationLease = null;
-  snapshot.receipts.scheduler = schedulerReceipt({
-    status:'LANE_SELECTED',
-    selectedIssue:1700,
-    selectedLifecycle:'READY',
-    activeIssue:null,
   });
-  snapshot.receipts.execution = null;
-  snapshot.github.goals = [{
-    issue:1700,
-    title:'Use existing machinery automatically',
-    state:'READY',
-    prerequisites:[],
-    priority:100,
-    criticalPathWeight:100,
-    reversibility:'HIGH',
-    route:'CHATGPT_GITHUB',
-    evidenceAt:'2026-07-29T13:58:00+01:00',
-  }];
-  return snapshot;
 }
 
-test('healthy durable state advances only one bounded step', () => {
-  const result = reconcileDurableFlywheelController(healthy(), { now:NOW });
-  assert.equal(result.status, 'HEALTHY');
-  assert.equal(result.activeLaneCount, 1);
-  assert.equal(result.nextAction, 'advance-one-bounded-step-under-existing-lease');
+function machineryFor(authoritativeProjection, overrides = {}) {
+  const heartbeats = [];
+  const receipts = [];
+  return {
+    heartbeats,
+    receipts,
+    machinery: {
+      publishControllerHeartbeat: async (input) => {
+        heartbeats.push(input);
+        return { ok: true };
+      },
+      loadAuthoritativeProjection: async () => authoritativeProjection,
+      publishReceipt: async (receipt) => {
+        receipts.push(receipt);
+        return { ok: true };
+      },
+      ensureBacklogMission: async () => ({ ok: true, createdMission: false }),
+      finalizeTerminalLane: async () => ({ ok: true }),
+      ...overrides,
+    },
+  };
+}
+
+test('production canonical ACTIVE projection authorizes one existing worker tick', async () => {
+  const fixture = machineryFor(activeProjection());
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(result.status, 'ACTIVE');
+  assert.equal(result.action, 'ADVANCE_EXISTING_ACTIVE_LANE');
+  assert.equal(result.allowWorkerTick, true);
+  assert.equal(result.boundedMutationSteps, 1);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.leaseSeizureAllowed, false);
-  assert.deepEqual(result.blockers, []);
-  assert.equal(result.chatMemoryAuthoritative, false);
+  assert.deepEqual(
+    fixture.heartbeats.map(({ cycleState }) => cycleState),
+    ['RECONCILING', 'ACTIVE_LANE', 'ACTIVE_LANE'],
+  );
+  assert.equal(fixture.receipts.length, 1);
+  assert.equal(fixture.receipts[0].repository, REPOSITORY);
+  assert.equal(fixture.receipts[0].prNumber, 1617);
+  assert.equal(fixture.receipts[0].headSha, LANE_HEAD);
 });
 
-test('multiple active lanes fail closed as split brain', () => {
-  const snapshot = healthy();
-  snapshot.github.implementationLanes.push({ id:'goal-other-pr-9999', state:'ACTIVE', headSha:MAIN });
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
+test('canonical HOLD projection preserves authority blockers and forbids work', async () => {
+  const fixture = machineryFor(projection('HOLD', {
+    blockers: [
+      'lane:github-merge-evidence-incomplete',
+      'execution:sourceHead mismatch',
+      'critical-backlog-active-lane-pr-mismatch',
+    ],
+  }));
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
   assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('split-brain-multiple-active-implementation-lanes'));
+  assert.equal(result.allowWorkerTick, false);
+  assert.deepEqual(result.blockers, [
+    'authoritative-programme-reconciliation-blocked',
+    'authority:lane:github-merge-evidence-incomplete',
+    'authority:execution:sourceHead mismatch',
+    'authority:critical-backlog-active-lane-pr-mismatch',
+  ]);
+  assert.deepEqual(
+    fixture.heartbeats.map(({ cycleState }) => cycleState),
+    ['RECONCILING', 'HOLD'],
+  );
 });
 
-test('expired lease cannot be seized implicitly', () => {
-  const snapshot = healthy();
-  snapshot.sharedWorkspace.sourceMutationLease.expiresAt = '2026-07-29T13:59:59+01:00';
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('active-lane-without-valid-source-mutation-lease'));
+test('non-production, memory-authoritative, malformed, and unknown projections fail closed', () => {
+  const cases = [
+    [
+      projection('IDLE', { schemaVersion: 'legacy.parallel-authority.v1' }),
+      'authoritative-programme-projection-schema-mismatch',
+    ],
+    [
+      projection('IDLE', { sourceConstructionMode: 'deterministic-testing-seam' }),
+      'authoritative-programme-projection-not-production-constructed',
+    ],
+    [
+      projection('IDLE', { chatMemoryAuthoritative: true }),
+      'chat-memory-authority-not-explicitly-disabled',
+    ],
+    [
+      projection('UNRECOGNIZED'),
+      'authoritative-programme-status-invalid',
+    ],
+    [
+      null,
+      'authoritative-programme-projection-invalid',
+    ],
+  ];
+
+  for (const [candidate, expectedBlocker] of cases) {
+    const result = reconcileDurableFlywheelController(candidate, {
+      nowUtc: NOW,
+      sourceRevision: SOURCE_REVISION,
+    });
+    assert.equal(result.status, 'HOLD');
+    assert.equal(result.allowWorkerTick, false);
+    assert.ok(result.blockers.includes(expectedBlocker));
+  }
 });
 
-test('stale heartbeat and duplicate machinery are surfaced', () => {
-  const snapshot = healthy();
-  snapshot.sharedWorkspace.controllerHeartbeat.at = '2026-07-29T12:00:00+01:00';
-  snapshot.sharedWorkspace.machineryInventory.push({ id:'worker-duplicate', kind:'worker', state:'DISPATCHED' });
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.ok(result.blockers.includes('controller-heartbeat-stale-or-missing'));
-  assert.ok(result.blockers.includes('duplicate-active-machinery'));
-});
-
-test('proof-running lane requires observed exact active-lane-head Battle Bridge proof', () => {
-  const snapshot = healthy();
-  snapshot.github.implementationLanes[0].state = 'PROOF_RUNNING';
-  snapshot.battleBridge.proof = {
-    state:'OBSERVED',
-    at:'2026-07-29T13:58:00+01:00',
-    sourceHead:MAIN,
-  };
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('battle-bridge-proof-source-head-mismatch'));
-
-  snapshot.battleBridge.proof.sourceHead = LANE_HEAD;
-  const repaired = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(repaired.status, 'HEALTHY');
-});
-
-test('missing authority-bearing inventories fail closed', () => {
-  const snapshot = healthy();
-  delete snapshot.github.implementationLanes;
-  delete snapshot.sharedWorkspace.machineryInventory;
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.ok(result.blockers.includes('github-implementation-lanes-unproven'));
-  assert.ok(result.blockers.includes('shared-workspace-machinery-inventory-unproven'));
-});
-
-test('malformed lane and machinery entries fail closed', () => {
-  const snapshot = healthy();
-  snapshot.github.implementationLanes = [null];
-  snapshot.sharedWorkspace.machineryInventory.push({ id:'unknown-worker', kind:'worker', state:'ALIEN_STATE' });
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('github-implementation-lane-entry-invalid'));
-  assert.ok(result.blockers.includes('shared-workspace-machinery-entry-invalid'));
-});
-
-test('future-dated heartbeat and canonical receipts fail closed', () => {
-  const snapshot = healthy();
-  snapshot.sharedWorkspace.controllerHeartbeat.at = '2027-07-29T13:55:00+01:00';
-  snapshot.receipts.scheduler.decidedAt = '2027-07-29T13:56:00+01:00';
-  snapshot.receipts.execution.timestampUtc = '2027-07-29T13:57:00+01:00';
-  snapshot.receipts.execution.heartbeatExpiresAtUtc = '2027-07-29T13:57:00+01:00';
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.ok(result.blockers.includes('controller-heartbeat-future-dated'));
-  assert.ok(result.blockers.includes('scheduler-receipt-future-dated'));
-  assert.ok(result.blockers.includes('execution-receipt-future-dated'));
-});
-
-test('canonical execution receipt must bind to active lane head', () => {
-  const snapshot = healthy();
-  snapshot.receipts.execution.sourceHead = MAIN;
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('execution-receipt-head-mismatch'));
-});
-
-test('legacy test-only receipts are rejected', () => {
-  const snapshot = healthy();
-  snapshot.receipts.scheduler = { kind:'scheduler', state:'COMPLETE', at:'2026-07-29T13:56:00+01:00' };
-  snapshot.receipts.execution = { kind:'execution', state:'COMPLETE', at:'2026-07-29T13:57:00+01:00' };
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.ok(result.blockers.includes('scheduler-receipt-contract-invalid'));
-  assert.ok(result.blockers.some((blocker) => blocker.startsWith('execution-receipt-')));
-});
-
-test('valid lease without active lane blocks scheduler selection', () => {
-  const snapshot = healthy();
-  snapshot.github.implementationLanes = [];
-  snapshot.receipts.execution = null;
-  const result = reconcileDurableFlywheelController(snapshot, { now:NOW });
-  assert.ok(result.blockers.includes('valid-lease-without-active-lane'));
-});
-
-test('missing explicit reconciliation time fails closed deterministically', () => {
-  const snapshot = healthy();
-  delete snapshot.observedAt;
-  const first = reconcileDurableFlywheelController(snapshot);
-  const second = reconcileDurableFlywheelController(snapshot);
-  assert.equal(first.status, 'HOLD');
-  assert.ok(first.blockers.includes('reconciliation-time-unproven'));
-  assert.deepEqual(first, second);
-});
-
-test('null durable snapshot publishes a HOLD receipt without mutation', async () => {
-  let mutationCalls = 0;
-  const receipts = [];
-  const result = await runDurableFlywheelStartupCycle({
-    loadDurableSnapshot:async () => null,
-    advanceActiveLane:async () => { mutationCalls += 1; },
-    dispatchSelectedGoal:async () => { mutationCalls += 1; },
-    publishReceipt:async (receipt) => receipts.push(receipt),
-  }, { now:NOW });
-  assert.equal(result.status, 'HOLD');
-  assert.equal(mutationCalls, 0);
-  assert.equal(receipts.length, 1);
-  assert.ok(result.reconciliation.blockers.includes('github-main-head-unproven'));
-});
-
-test('startup cycle reconstructs durable state and advances active lane once', async () => {
-  const calls = [];
-  const result = await runDurableFlywheelStartupCycle({
-    loadDurableSnapshot:async () => healthy(),
-    advanceActiveLane:async (packet) => {
-      calls.push(packet);
-      return { status:'ACTIVE_LANE_ADVANCED', laneId:packet.lane.id };
+test('explicit observation time and exact source revision are mandatory', () => {
+  const missingTime = reconcileDurableFlywheelController(
+    projection('IDLE', { observedAtUtc: undefined }),
+    {
+    sourceRevision: SOURCE_REVISION,
     },
-    publishReceipt:async () => {},
-  }, { now:NOW });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].boundedSteps, 1);
-  assert.equal(calls[0].mergeAuthority, false);
-  assert.equal(result.status, 'ACTIVE_LANE_ADVANCED');
+  );
+  assert.ok(missingTime.blockers.includes('controller-observation-time-invalid'));
+
+  const missingRevision = reconcileDurableFlywheelController(projection(), {
+    nowUtc: NOW,
+  });
+  assert.ok(missingRevision.blockers.includes('controller-source-revision-invalid'));
+  assert.equal(missingRevision.allowWorkerTick, false);
 });
 
-test('startup cycle derives goals only from canonical GitHub truth', async () => {
-  const snapshot = idleWithGoal();
-  snapshot.github.goals = [];
-  snapshot.schedulerInput = {
-    goals:[{
-      issue:9999,
-      title:'Untrusted injected goal',
-      state:'READY',
-      prerequisites:[],
-      priority:999,
-      criticalPathWeight:999,
-      reversibility:'HIGH',
-      route:'CHATGPT_GITHUB',
-      evidenceAt:'2026-07-29T13:58:00+01:00',
-    }],
-  };
-  let dispatchCalls = 0;
-  const result = await runDurableFlywheelStartupCycle({
-    loadDurableSnapshot:async () => snapshot,
-    dispatchSelectedGoal:async () => { dispatchCalls += 1; },
-    publishReceipt:async () => {},
-  }, { now:NOW });
-  assert.equal(dispatchCalls, 0);
-  assert.equal(result.status, 'SCHEDULER_DECIDED');
-  assert.equal(result.schedulerDecision.selectedIssue, null);
-});
-
-test('startup cycle uses existing mission scheduler and dispatches one selected goal', async () => {
-  const dispatched = [];
+test('invalid startup source revision publishes a durable HOLD without touching authority services', async () => {
+  let authorityCalls = 0;
   const receipts = [];
   const result = await runDurableFlywheelStartupCycle({
-    loadDurableSnapshot:async () => idleWithGoal(),
-    dispatchSelectedGoal:async (packet) => {
-      dispatched.push(packet);
-      return { status:'GOAL_DISPATCHED', selectedGoal:packet.selectedGoal };
+    publishControllerHeartbeat: async () => {
+      authorityCalls += 1;
+      return { ok: true };
     },
-    publishReceipt:async (receipt) => receipts.push(receipt),
-  }, { now:NOW });
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].selectedGoal, '#1700');
-  assert.equal(dispatched[0].createReplacementMachinery, false);
-  assert.equal(result.status, 'GOAL_DISPATCHED');
-  assert.equal(receipts[0].schedulerDecision.selectedIssue, 1700);
-});
+    loadAuthoritativeProjection: async () => {
+      authorityCalls += 1;
+      return projection();
+    },
+    publishReceipt: async (receipt) => {
+      receipts.push(receipt);
+      return { ok: true };
+    },
+  }, {
+    nowUtc: NOW,
+    sourceRevision: 'not-a-sha',
+    env: {},
+  });
 
-test('startup cycle publishes hold receipt and performs no mutation', async () => {
-  const snapshot = healthy();
-  snapshot.sharedWorkspace.controllerHeartbeat.at = '2026-07-29T12:00:00+01:00';
-  let mutationCalls = 0;
-  const receipts = [];
-  const result = await runDurableFlywheelStartupCycle({
-    loadDurableSnapshot:async () => snapshot,
-    advanceActiveLane:async () => { mutationCalls += 1; },
-    dispatchSelectedGoal:async () => { mutationCalls += 1; },
-    publishReceipt:async (receipt) => receipts.push(receipt),
-  }, { now:NOW });
   assert.equal(result.status, 'HOLD');
-  assert.equal(mutationCalls, 0);
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(authorityCalls, 0);
   assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].action, 'HOLD');
 });
 
-test('receipt renderer preserves fail-closed authority posture', () => {
-  const receipt = renderDurableFlywheelReceipt(reconcileDurableFlywheelController(healthy(), { now:NOW }));
-  assert.match(receipt, /Durable Flywheel Reconciliation Receipt VNext/);
-  assert.match(receipt, /Merge-Authority: false/);
-  assert.match(receipt, /Lease-Seizure-Allowed: false/);
-  assert.match(receipt, /Blockers: none/);
+test('IDLE waits without mutation and renders its authority posture', async () => {
+  const fixture = machineryFor(projection('IDLE'));
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+  const rendered = renderDurableFlywheelReceipt(result);
+
+  assert.equal(result.status, 'IDLE');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(result.boundedMutationSteps, 0);
+  assert.match(rendered, /Status: IDLE/);
+  assert.match(rendered, /Worker-Tick-Allowed: false/);
+  assert.match(rendered, /Merge-Authority: false/);
+  assert.match(rendered, /Lease-Seizure-Allowed: false/);
+  assert.match(rendered, /Blockers: none/);
 });
