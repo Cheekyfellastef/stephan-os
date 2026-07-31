@@ -544,6 +544,28 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(goals.goals[0].activePr, 1617);
   assert.equal(goals.goals[0].headSha, HEAD);
 
+  const nonCanonicalGoalWithoutIssue = goalRecord({
+    goalId: 'release-2026-goal-1497',
+  });
+  delete nonCanonicalGoalWithoutIssue.issueNumber;
+  const rejectedInferredIssue = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [nonCanonicalGoalWithoutIssue],
+  });
+  assert.equal(rejectedInferredIssue.valid, false);
+  assert.equal(rejectedInferredIssue.goals.length, 0);
+  assert.ok(rejectedInferredIssue.blockers.includes('goal-record-0-issue-invalid'));
+
+  const explicitNonCanonicalGoal = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [goalRecord({
+      goalId: 'release-2026-goal-1497',
+      issueNumber: 1497,
+    })],
+  });
+  assert.equal(explicitNonCanonicalGoal.valid, true);
+  assert.equal(explicitNonCanonicalGoal.goals[0].issue, 1497);
+
   const exactApprovalReceipt = approvalReceipt();
   const implementedGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
