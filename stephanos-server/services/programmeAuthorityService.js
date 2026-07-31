@@ -323,7 +323,7 @@ export async function readSourceMutationLease({
       });
     }
     if (release.present) {
-      const exact = exactSourceMutationLeaseRelease(release.value, loaded.value);
+      const exact = exactSourceMutationLeaseRelease(release.value, loaded.value, nowUtc);
       return Object.freeze({
         ok: false,
         present: true,
@@ -661,7 +661,7 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
       current.present
       && current.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
       && existingRelease.present
-      && exactSourceMutationLeaseRelease(existingRelease.value, expectedIdentity)
+      && exactSourceMutationLeaseRelease(existingRelease.value, current.record, nowUtc)
     ) {
       try {
         await deps.unlink(current.path);
@@ -696,7 +696,7 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
       }
     }
     if (current.ok && !current.present) {
-      if (!existingRelease.present || !exactSourceMutationLeaseRelease(existingRelease.value, expectedIdentity)) {
+      if (!existingRelease.present || !exactSourceMutationLeaseRelease(existingRelease.value, expectedIdentity, nowUtc)) {
         return Object.freeze({
           ok: false,
           released: false,
@@ -731,7 +731,7 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
     const releaseRecord = createSourceMutationLeaseReleaseRecord(current.record, { timestampUtc: nowUtc });
     let releasePublication;
     if (existingRelease.present) {
-      if (!exactSourceMutationLeaseRelease(existingRelease.value, expectedIdentity)) {
+      if (!exactSourceMutationLeaseRelease(existingRelease.value, current.record, nowUtc)) {
         return Object.freeze({
           ok: false,
           released: false,
@@ -918,6 +918,19 @@ function canonicalShaAlias(values) {
   return uniqueValues.length === 1 ? uniqueValues[0] : null;
 }
 
+function canonicalTextAlias(values, normalize = text) {
+  const supplied = values.filter((value) => (
+    value !== undefined
+    && value !== null
+    && String(value).trim()
+  ));
+  if (!supplied.length) return null;
+  const normalized = supplied.map(normalize);
+  if (normalized.some((value) => !value)) return null;
+  const uniqueValues = [...new Set(normalized)];
+  return uniqueValues.length === 1 ? uniqueValues[0] : null;
+}
+
 export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt) {
   const records = list(workspaceFeed?.records?.proofRecords);
   const proofHeadShas = [];
@@ -928,9 +941,14 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
     const headSha = canonicalShaAlias([record.headSha, record.sourceHead]);
     const issue = canonicalPositiveAlias([record.issueNumber, record.relatedIssue]);
     const activePr = canonicalPositiveAlias([record.prNumber, record.relatedPr]);
-    if (!issue || !activePr || !/^[0-9a-f]{40}$/.test(headSha)) continue;
+    const repository = canonicalTextAlias(
+      [record.repository, record.repositoryFullName],
+      (value) => text(value).toLowerCase(),
+    );
+    const branch = canonicalTextAlias([record.branch, record.headBranch]);
+    if (!issue || !activePr || !/^[0-9a-f]{40}$/.test(headSha) || !repository || !branch) continue;
     proofHeadShas.push(headSha);
-    proofReceipts.push({ issue, activePr, headSha });
+    proofReceipts.push({ issue, activePr, headSha, repository, branch });
     proofRefs.push(...list(record.proofRefs), ...list(record.refs));
   }
   if (executionReceipt?.state === 'completed') proofRefs.push(...list(executionReceipt.proofRefs));
@@ -1187,10 +1205,13 @@ function exactTerminalReceipt(record, records) {
   );
 }
 
-function exactSourceMutationLeaseRelease(record, identity) {
+function exactSourceMutationLeaseRelease(record, identity, nowUtc) {
   const expected = createSourceMutationLeaseReleaseRecord(identity, {
     timestampUtc: record?.releasedAtUtc,
   });
+  const releasedAtMs = Date.parse(text(record?.releasedAtUtc));
+  const acquiredAtMs = Date.parse(text(record?.acquiredAtUtc));
+  const nowMs = Date.parse(text(nowUtc));
   return Boolean(
     record
     && validateSharedWorkspaceRecord(record).valid
@@ -1208,9 +1229,15 @@ function exactSourceMutationLeaseRelease(record, identity) {
     && record.branch === identity.branch
     && record.headSha === identity.headSha
     && record.ownerId === identity.ownerId
+    && (!text(identity.acquiredAtUtc) || record.acquiredAtUtc === identity.acquiredAtUtc)
     && record.releaseOnlyExactLease === true
     && record.executionReceiptLeaseKeyIsCorrelationOnly === true
     && record.mergeAuthority === false
+    && Number.isFinite(releasedAtMs)
+    && Number.isFinite(acquiredAtMs)
+    && Number.isFinite(nowMs)
+    && releasedAtMs >= acquiredAtMs
+    && releasedAtMs - nowMs <= 60_000
   );
 }
 
