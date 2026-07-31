@@ -12,8 +12,10 @@ import {
   buildBrowserProofMachineResult,
   buildBrowserProofPacket,
   collectPlaywrightNavigationDistFingerprint,
+  collectScenarioSourceResponseBinding,
   collectServedDistFingerprint,
   evaluateBrowserProofResult,
+  evaluateMusicRatingPreservesPlaybackScenarioEvidence,
   parseBrowserProofArguments,
   readExpectedDistManifest,
   shouldGenerateBrowserProofPacket,
@@ -88,6 +90,7 @@ test('parses an exact approved head without confusing it with the runtime URL', 
     expectedSourceFingerprint: '',
     expectedDistFingerprint: '',
     expectedDistManifestPath: '',
+    proofScenario: '',
     writeArtifacts: false,
     machineJson: true,
   });
@@ -125,6 +128,17 @@ test('parses an exact approved head without confusing it with the runtime URL', 
     ]).blocker,
     'EXPECTED_DIST_MANIFEST_INVALID',
   );
+  assert.equal(
+    parseBrowserProofArguments([
+      '--proof-scenario',
+      'MUSIC_RATING_PRESERVES_PLAYBACK',
+    ]).proofScenario,
+    'MUSIC_RATING_PRESERVES_PLAYBACK',
+  );
+  assert.equal(
+    parseBrowserProofArguments(['--proof-scenario', 'UNTRUSTED_SCENARIO']).blocker,
+    'PROOF_SCENARIO_INVALID',
+  );
 });
 
 test('machine result exposes the browser-observed exact-head decision without relying on model text', () => {
@@ -150,16 +164,165 @@ test('machine result exposes the browser-observed exact-head decision without re
       consoleErrorCount: 0,
     },
   }, { expectedHead, expectedSourceFingerprint, expectedDistFingerprint });
-  assert.equal(result.schemaVersion, 'stephanos.browser-runtime-exact-head-proof.v2');
+  assert.equal(result.schemaVersion, 'stephanos.browser-runtime-exact-head-proof.v3');
   assert.equal(result.url, 'http://127.0.0.1:4173/apps/stephanos/dist/index.html');
   assert.equal(result.observedUrl, 'http://127.0.0.1:4173/apps/stephanos/dist/index.html');
   assert.equal(result.accepted, true);
+  assert.equal(result.mergeReady, true);
+  assert.deepEqual(result.blocking, []);
   assert.equal(result.runtimeSourceHead, expectedHead);
   assert.equal(result.expectedHeadMatch, true);
   assert.equal(result.runtimeSourceFingerprint, expectedSourceFingerprint);
   assert.equal(result.expectedSourceFingerprintMatch, true);
   assert.equal(result.runtimeDistFingerprint, expectedDistFingerprint);
   assert.equal(result.expectedDistFingerprintMatch, true);
+});
+
+test('machine result fails closed when observed browser evidence still has merge blockers', () => {
+  const result = buildBrowserProofMachineResult({
+    browserAutomationAvailable: true,
+    checks: {
+      runtimeReachable: true,
+      footerGitCommitPresent: true,
+      uiBuildTimestampPresent: true,
+      proofConciergeDomNextProofMatches: true,
+      proofConciergePrimaryButtonPresent: false,
+      proofConciergeVisibleDriftClear: true,
+      cloneParityClear: true,
+      operatorDiagnosticCopyPresent: true,
+      consoleErrorCount: 1,
+    },
+  });
+  assert.equal(result.observed, true);
+  assert.equal(result.accepted, false);
+  assert.equal(result.mergeReady, false);
+  assert.deepEqual(result.blocking, [
+    'Proof Concierge primary button missing',
+    'console error count 1',
+  ]);
+});
+
+function musicScenarioEvidence(overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v1',
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    collector: 'playwright-page-v1',
+    observed: true,
+    sourceResponseBinding: {
+      exact: true,
+      blocker: '',
+      fileCount: 3,
+      paths: [
+        'apps/music-tile/index.html',
+        'apps/music-tile/main.js',
+        'shared/runtime/tileEventBridge.js',
+      ],
+    },
+    ratingInteraction: {
+      trackId: 'anyma-pictures-of-you',
+      requestedRating: 2,
+      persistedRating: 2,
+      selectedButtonPressed: true,
+      selectedButtonActive: true,
+      cardRatingTextUpdated: true,
+    },
+    listeningDeckIframe: {
+      beforePresent: true,
+      sameNode: true,
+      isConnected: true,
+      srcUnchanged: true,
+      contentWindowPreserved: true,
+      frameIdentityPreserved: true,
+      frameNavigationCount: 0,
+      frameDetachCount: 0,
+      playbackSentinelAdvanced: true,
+    },
+    discoveryIframe: {
+      beforePresent: true,
+      sameNode: true,
+      isConnected: true,
+      srcUnchanged: true,
+      contentWindowPreserved: true,
+      frameIdentityPreserved: true,
+      frameNavigationCount: 0,
+      frameDetachCount: 0,
+      playbackSentinelAdvanced: true,
+    },
+    legacyRanking: {
+      before: ['Other Artist - Alpha'],
+      after: ['Anyma - Pictures Of You'],
+      beforeIds: ['other-alpha', 'anyma-pictures-of-you'],
+      afterIds: ['anyma-pictures-of-you', 'other-alpha'],
+      targetId: 'anyma-pictures-of-you',
+      targetLabel: 'Anyma - Pictures Of You',
+      beforeIndex: 1,
+      afterIndex: 0,
+      beforeTargetScore: 0,
+      afterTargetScore: 2.5,
+      changed: true,
+      targetMovedUp: true,
+      sameMembers: true,
+      legacyDomMatchesStoredBefore: true,
+      legacyDomMatchesStoredAfter: true,
+      candidateDomMatchesStoredBefore: true,
+      candidateDomMatchesStoredAfter: true,
+    },
+    consoleErrors: [],
+    pageErrors: [],
+    blockers: [],
+    ...overrides,
+  };
+}
+
+test('requested music scenario accepts only detailed Playwright-collected interaction evidence', () => {
+  const evidence = musicScenarioEvidence();
+  const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence);
+  assert.equal(evaluation.accepted, true);
+  assert.equal(evaluation.listeningDeckIframeIdentityPreserved, true);
+  assert.equal(evaluation.discoveryIframeIdentityPreserved, true);
+  assert.equal(evaluation.legacyRankingChanged, true);
+
+  const missing = evaluateBrowserProofResult({
+    browserAutomationAvailable: true,
+    checks: { runtimeReachable: true },
+  }, { proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK' });
+  assert.equal(missing.accepted, false);
+  assert.equal(missing.scenarioEvidenceAccepted, false);
+
+  const navigated = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    musicScenarioEvidence({
+      listeningDeckIframe: {
+        ...evidence.listeningDeckIframe,
+        frameNavigationCount: 1,
+      },
+    }),
+  );
+  assert.equal(navigated.accepted, false);
+  assert.match(navigated.blocking.join(' | '), /LISTENING_IFRAME_REPLACED/);
+});
+
+test('machine result binds requested scenario PASS to typed browser evidence', () => {
+  const evidence = musicScenarioEvidence();
+  const result = buildBrowserProofMachineResult({
+    browserAutomationAvailable: true,
+    checks: {
+      runtimeReachable: true,
+      footerGitCommitPresent: true,
+      uiBuildTimestampPresent: true,
+      proofConciergeDomNextProofMatches: true,
+      proofConciergePrimaryButtonPresent: true,
+      proofConciergeVisibleDriftClear: true,
+      cloneParityClear: true,
+      operatorDiagnosticCopyPresent: true,
+      consoleErrorCount: 0,
+    },
+    scenarioEvidence: evidence,
+  }, { proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK' });
+  assert.equal(result.schemaVersion, 'stephanos.browser-runtime-exact-head-proof.v3');
+  assert.equal(result.accepted, true);
+  assert.equal(result.proofScenario, 'MUSIC_RATING_PRESERVES_PLAYBACK');
+  assert.equal(result.scenarioEvidenceAccepted, true);
+  assert.equal(result.scenarioEvidence.ratingInteraction.persistedRating, 2);
 });
 
 test('exact-head proof rejects a served source fingerprint from a dirty or different build', () => {
@@ -336,6 +499,74 @@ function playwrightResponse(url, contents, headers = {}) {
     body: async () => bytes,
   };
 }
+
+test('scenario source binding compares browser responses with the clean checkout bytes', async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'stephanos-scenario-source-binding-'));
+  const files = {
+    'apps/music-tile/index.html': '<!doctype html><script type="module" src="./main.js"></script>',
+    'apps/music-tile/main.js': 'import "../../../shared/runtime/proof.mjs";\n',
+    'shared/runtime/proof.mjs': 'globalThis.__SCENARIO_SOURCE_BOUND__ = true;\n',
+  };
+  for (const [path, contents] of Object.entries(files)) {
+    const absolutePath = join(repoRoot, ...path.split('/'));
+    mkdirSync(join(absolutePath, '..'), { recursive: true });
+    writeFileSync(absolutePath, contents);
+  }
+  const origin = 'http://127.0.0.1:4173';
+  const canonical = await collectScenarioSourceResponseBinding(
+    Object.entries(files).map(([path, contents]) => (
+      playwrightResponse(`${origin}/${path}`, contents)
+    )),
+    {
+      scenarioUrl: `${origin}/apps/music-tile/index.html`,
+      repoRoot,
+    },
+  );
+  assert.equal(canonical.exact, true);
+  assert.equal(canonical.fileCount, 3);
+  assert.deepEqual(canonical.paths, Object.keys(files).sort());
+
+  const modified = await collectScenarioSourceResponseBinding([
+    playwrightResponse(`${origin}/apps/music-tile/index.html`, files['apps/music-tile/index.html']),
+    playwrightResponse(
+      `${origin}/apps/music-tile/main.js`,
+      'x'.repeat(Buffer.byteLength(files['apps/music-tile/main.js'])),
+    ),
+  ], {
+    scenarioUrl: `${origin}/apps/music-tile/index.html`,
+    repoRoot,
+  });
+  assert.equal(modified.exact, false);
+  assert.equal(modified.blocker, 'BROWSER_SCENARIO_SOURCE_RESPONSE_MISMATCH');
+
+  const oversized = await collectScenarioSourceResponseBinding([
+    playwrightResponse(
+      `${origin}/apps/music-tile/index.html`,
+      files['apps/music-tile/index.html'],
+      { 'content-length': String(33 * 1024 * 1024) },
+    ),
+    playwrightResponse(`${origin}/apps/music-tile/main.js`, files['apps/music-tile/main.js']),
+  ], {
+    scenarioUrl: `${origin}/apps/music-tile/index.html`,
+    repoRoot,
+  });
+  assert.equal(oversized.exact, false);
+  assert.equal(oversized.blocker, 'BROWSER_SCENARIO_SOURCE_RESPONSE_SIZE_INVALID');
+
+  const missingLength = await collectScenarioSourceResponseBinding([
+    playwrightResponse(
+      `${origin}/apps/music-tile/index.html`,
+      files['apps/music-tile/index.html'],
+      { 'content-length': '' },
+    ),
+    playwrightResponse(`${origin}/apps/music-tile/main.js`, files['apps/music-tile/main.js']),
+  ], {
+    scenarioUrl: `${origin}/apps/music-tile/index.html`,
+    repoRoot,
+  });
+  assert.equal(missingLength.exact, false);
+  assert.equal(missingLength.blocker, 'BROWSER_SCENARIO_SOURCE_RESPONSE_LENGTH_MISSING');
+});
 
 test('exact dist proof hashes the Playwright navigation and resource responses, not a second client', async () => {
   const { rootDir, files } = distFixture();

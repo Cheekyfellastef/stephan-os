@@ -22,7 +22,7 @@ test('builds one approved read-only exact-head Windows proof packet', () => {
   assert.match(packet.prompt, /runtimeSourceHead/);
   assert.deepEqual(packet.requestedProofCommands, [
     'git rev-parse HEAD',
-    `node scripts/browser-proof-runner.mjs --url http://127.0.0.1:4173/apps/stephanos/dist/index.html --expected-head ${command.expectedHead} --no-artifacts --machine-json`,
+    `node scripts/browser-proof-runner.mjs --url http://127.0.0.1:4173/apps/stephanos/dist/index.html --expected-head ${command.expectedHead} --proof-scenario MUSIC_RATING_PRESERVES_PLAYBACK --no-artifacts --machine-json`,
   ]);
   assert.deepEqual(packet.exactHeadProof, {
     repository: 'Cheekyfellastef/stephan-os',

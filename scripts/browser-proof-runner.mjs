@@ -2,9 +2,10 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import {
@@ -21,6 +22,15 @@ const DEFAULT_OUT_DIR = resolve(process.cwd(), 'tmp/browser-proof');
 const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/;
 const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
+const MUSIC_RATING_PRESERVES_PLAYBACK = 'MUSIC_RATING_PRESERVES_PLAYBACK';
+const ALLOWED_PROOF_SCENARIOS = new Set([MUSIC_RATING_PRESERVES_PLAYBACK]);
+const MUSIC_RATING_SCENARIO_EVIDENCE_SCHEMA = 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v1';
+const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
+const MUSIC_TILE_STATE_KEY = 'stephanos.musicTile.dashboardState.v1';
+const MUSIC_TILE_SCENARIO_PATH = '/apps/music-tile/index.html';
+const MUSIC_TILE_SCENARIO_TRACK_ID = 'anyma-pictures-of-you';
+const MUSIC_TILE_SCENARIO_TRACK_LABEL = 'Anyma - Pictures Of You';
+const MUSIC_TILE_SCENARIO_RATING = 2;
 
 function stamp() { return new Date().toISOString(); }
 function ok(v) { return v === true || v === 'yes' || v === 0; }
@@ -52,6 +62,7 @@ export function parseBrowserProofArguments(argv = []) {
   let expectedSourceFingerprint = '';
   let expectedDistFingerprint = '';
   let expectedDistManifestPath = '';
+  let proofScenario = '';
   let positionalUrlSeen = false;
   let writeArtifacts = true;
   let machineJson = false;
@@ -102,6 +113,21 @@ export function parseBrowserProofArguments(argv = []) {
           blocker: 'EXPECTED_DIST_MANIFEST_INVALID',
         };
       }
+    } else if (argument === '--proof-scenario') {
+      proofScenario = String(argv[index + 1] || '').trim();
+      index += 1;
+      if (!ALLOWED_PROOF_SCENARIOS.has(proofScenario)) {
+        return {
+          ok: false,
+          url,
+          expectedHead,
+          expectedSourceFingerprint,
+          expectedDistFingerprint,
+          expectedDistManifestPath,
+          proofScenario,
+          blocker: 'PROOF_SCENARIO_INVALID',
+        };
+      }
     } else if (argument === '--url') {
       url = String(argv[index + 1] || '').trim();
       index += 1;
@@ -125,6 +151,7 @@ export function parseBrowserProofArguments(argv = []) {
       expectedSourceFingerprint,
       expectedDistFingerprint,
       expectedDistManifestPath,
+      proofScenario,
       blocker: 'EXPECTED_DIST_MANIFEST_INVALID',
       writeArtifacts,
       machineJson,
@@ -137,21 +164,127 @@ export function parseBrowserProofArguments(argv = []) {
     expectedSourceFingerprint,
     expectedDistFingerprint,
     expectedDistManifestPath,
+    proofScenario,
     writeArtifacts,
     machineJson,
   };
+}
+
+export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = {}) {
+  const blocking = [];
+  const listening = evidence?.listeningDeckIframe || {};
+  const discovery = evidence?.discoveryIframe || {};
+  const rating = evidence?.ratingInteraction || {};
+  const ranking = evidence?.legacyRanking || {};
+  const sourceBinding = evidence?.sourceResponseBinding || {};
+  const consoleErrors = Array.isArray(evidence?.consoleErrors) ? evidence.consoleErrors : null;
+  const scenarioBlockers = Array.isArray(evidence?.blockers) ? evidence.blockers : null;
+  const beforeRanking = Array.isArray(ranking.before) ? ranking.before.map(String) : [];
+  const afterRanking = Array.isArray(ranking.after) ? ranking.after.map(String) : [];
+  const listeningDeckIframeIdentityPreserved = (
+    listening.beforePresent === true
+    && listening.sameNode === true
+    && listening.isConnected === true
+    && listening.srcUnchanged === true
+    && listening.contentWindowPreserved === true
+    && listening.frameIdentityPreserved === true
+    && listening.frameNavigationCount === 0
+    && listening.frameDetachCount === 0
+    && listening.playbackSentinelAdvanced === true
+  );
+  const discoveryIframeIdentityPreserved = (
+    discovery.beforePresent === true
+    && discovery.sameNode === true
+    && discovery.isConnected === true
+    && discovery.srcUnchanged === true
+    && discovery.contentWindowPreserved === true
+    && discovery.frameIdentityPreserved === true
+    && discovery.frameNavigationCount === 0
+    && discovery.frameDetachCount === 0
+    && discovery.playbackSentinelAdvanced === true
+  );
+  const legacyRankingChanged = (
+    beforeRanking.length > 0
+    && afterRanking.length > 0
+    && JSON.stringify(beforeRanking) !== JSON.stringify(afterRanking)
+    && ranking.changed === true
+    && ranking.sameMembers === true
+    && ranking.targetMovedUp === true
+    && Number.isInteger(ranking.beforeIndex)
+    && Number.isInteger(ranking.afterIndex)
+    && ranking.beforeIndex > ranking.afterIndex
+    && ranking.afterIndex === 0
+    && ranking.targetLabel === MUSIC_TILE_SCENARIO_TRACK_LABEL
+    && ranking.targetId === MUSIC_TILE_SCENARIO_TRACK_ID
+    && Array.isArray(ranking.beforeIds)
+    && Array.isArray(ranking.afterIds)
+    && ranking.afterIds[0] === MUSIC_TILE_SCENARIO_TRACK_ID
+    && ranking.beforeTargetScore === 0
+    && ranking.afterTargetScore === 2.5
+    && ranking.legacyDomMatchesStoredBefore === true
+    && ranking.legacyDomMatchesStoredAfter === true
+    && ranking.candidateDomMatchesStoredBefore === true
+    && ranking.candidateDomMatchesStoredAfter === true
+  );
+  const ratingInteractionObserved = (
+    rating.trackId === MUSIC_TILE_SCENARIO_TRACK_ID
+    && rating.requestedRating === MUSIC_TILE_SCENARIO_RATING
+    && rating.persistedRating === MUSIC_TILE_SCENARIO_RATING
+    && rating.selectedButtonPressed === true
+    && rating.selectedButtonActive === true
+    && rating.cardRatingTextUpdated === true
+  );
+  if (evidence?.schemaVersion !== MUSIC_RATING_SCENARIO_EVIDENCE_SCHEMA) {
+    blocking.push('BROWSER_SCENARIO_EVIDENCE_SCHEMA_INVALID');
+  }
+  if (evidence?.proofScenario !== MUSIC_RATING_PRESERVES_PLAYBACK) {
+    blocking.push('BROWSER_SCENARIO_EVIDENCE_SCENARIO_MISMATCH');
+  }
+  if (evidence?.collector !== 'playwright-page-v1' || evidence?.observed !== true) {
+    blocking.push('BROWSER_SCENARIO_NOT_OBSERVED');
+  }
+  if (
+    sourceBinding.exact !== true
+    || !Number.isInteger(sourceBinding.fileCount)
+    || sourceBinding.fileCount < 2
+    || !Array.isArray(sourceBinding.paths)
+    || !sourceBinding.paths.includes('apps/music-tile/index.html')
+    || !sourceBinding.paths.includes('apps/music-tile/main.js')
+  ) {
+    blocking.push(sourceBinding.blocker || 'BROWSER_SCENARIO_SOURCE_RESPONSE_MISMATCH');
+  }
+  if (!ratingInteractionObserved) blocking.push('BROWSER_SCENARIO_RATING_INTERACTION_MISSING');
+  if (!listeningDeckIframeIdentityPreserved) blocking.push('BROWSER_SCENARIO_LISTENING_IFRAME_REPLACED');
+  if (!discoveryIframeIdentityPreserved) blocking.push('BROWSER_SCENARIO_DISCOVERY_IFRAME_REPLACED');
+  if (!legacyRankingChanged) blocking.push('BROWSER_SCENARIO_LEGACY_RANKING_UNCHANGED');
+  if (!consoleErrors) blocking.push('BROWSER_SCENARIO_CONSOLE_ERRORS_INVALID');
+  else if (consoleErrors.length > 0) blocking.push('BROWSER_SCENARIO_CONSOLE_ERRORS');
+  if (!Array.isArray(evidence?.pageErrors)) blocking.push('BROWSER_SCENARIO_PAGE_ERRORS_INVALID');
+  else if (evidence.pageErrors.length > 0) blocking.push('BROWSER_SCENARIO_PAGE_ERRORS');
+  if (!scenarioBlockers) blocking.push('BROWSER_SCENARIO_BLOCKERS_INVALID');
+  else blocking.push(...scenarioBlockers.map(String).filter(Boolean));
+  return Object.freeze({
+    accepted: blocking.length === 0,
+    blocking: Object.freeze([...new Set(blocking)]),
+    listeningDeckIframeIdentityPreserved,
+    discoveryIframeIdentityPreserved,
+    legacyRankingChanged,
+    ratingInteractionObserved,
+  });
 }
 
 export function evaluateBrowserProofResult(result = {}, {
   expectedHead = '',
   expectedSourceFingerprint = '',
   expectedDistFingerprint = '',
+  proofScenario = '',
 } = {}) {
   const checks = result.checks || {};
   const blocking = [];
   const normalizedExpectedHead = String(expectedHead || '').trim().toLowerCase();
   const normalizedExpectedSourceFingerprint = String(expectedSourceFingerprint || '').trim().toLowerCase();
   const normalizedExpectedDistFingerprint = String(expectedDistFingerprint || '').trim().toLowerCase();
+  const normalizedProofScenario = String(proofScenario || '').trim();
   const runtimeSourceHead = normalizeGitHead(checks.runtimeSourceHead || checks.footerGitCommit);
   const runtimeSourceFingerprint = String(checks.sourceFingerprint || '').trim().toLowerCase();
   const runtimeDistFingerprint = String(checks.runtimeDistFingerprint || '').trim().toLowerCase();
@@ -208,12 +341,25 @@ export function evaluateBrowserProofResult(result = {}, {
       blocking.push('served runtime dist fingerprint does not match the canonical built bundle');
     }
   }
+  let scenarioEvidenceAccepted = null;
+  let scenarioEvaluation = null;
+  if (normalizedProofScenario) {
+    if (!ALLOWED_PROOF_SCENARIOS.has(normalizedProofScenario)) {
+      blocking.push('BROWSER_PROOF_SCENARIO_INVALID');
+      scenarioEvidenceAccepted = false;
+    } else if (normalizedProofScenario === MUSIC_RATING_PRESERVES_PLAYBACK) {
+      scenarioEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(result.scenarioEvidence);
+      scenarioEvidenceAccepted = scenarioEvaluation.accepted;
+      blocking.push(...scenarioEvaluation.blocking);
+    }
+  }
   const observed = result.browserAutomationAvailable === true && !result.automationUnavailable && checks.runtimeReachable === true;
   const accepted = (
     observed
     && (normalizedExpectedHead ? expectedHeadMatch === true : true)
     && (normalizedExpectedSourceFingerprint ? expectedSourceFingerprintMatch === true : true)
     && (normalizedExpectedDistFingerprint ? expectedDistFingerprintMatch === true : true)
+    && (normalizedProofScenario ? scenarioEvidenceAccepted === true : true)
   );
   return {
     accepted,
@@ -229,6 +375,9 @@ export function evaluateBrowserProofResult(result = {}, {
     expectedDistFingerprint: normalizedExpectedDistFingerprint,
     runtimeDistFingerprint,
     expectedDistFingerprintMatch,
+    proofScenario: normalizedProofScenario,
+    scenarioEvidenceAccepted,
+    scenarioEvaluation,
   };
 }
 
@@ -289,10 +438,10 @@ export function buildBrowserProofPacket(result = {}, options = {}) {
 export function buildBrowserProofMachineResult(result = {}, options = {}) {
   const verdict = evaluateBrowserProofResult(result, options);
   return Object.freeze({
-    schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
+    schemaVersion: BROWSER_RUNTIME_PROOF_SCHEMA,
     url: String(result.url || DEFAULT_URL),
     observedUrl: String(result.observedUrl || ''),
-    accepted: verdict.accepted,
+    accepted: verdict.mergeReady,
     observed: verdict.observed,
     mergeReady: verdict.mergeReady,
     expectedHead: verdict.expectedHead,
@@ -304,6 +453,9 @@ export function buildBrowserProofMachineResult(result = {}, options = {}) {
     expectedDistFingerprint: verdict.expectedDistFingerprint,
     runtimeDistFingerprint: verdict.runtimeDistFingerprint,
     expectedDistFingerprintMatch: verdict.expectedDistFingerprintMatch,
+    proofScenario: verdict.proofScenario,
+    scenarioEvidenceAccepted: verdict.scenarioEvidenceAccepted,
+    scenarioEvidence: verdict.proofScenario ? (result.scenarioEvidence || null) : null,
     blocking: [...verdict.blocking],
   });
 }
@@ -786,10 +938,627 @@ export async function collectPlaywrightNavigationDistFingerprint(
   }
 }
 
+function scenarioSourcePathFromUrl(value, expectedOrigin) {
+  const parsed = new URL(String(value || ''));
+  if (parsed.origin !== expectedOrigin) return '';
+  let pathname;
+  try {
+    pathname = decodeURIComponent(parsed.pathname);
+  } catch {
+    throw servedDistError('BROWSER_SCENARIO_SOURCE_URL_INVALID');
+  }
+  if (
+    !pathname.startsWith('/apps/music-tile/')
+    && !pathname.startsWith('/shared/')
+  ) {
+    return '';
+  }
+  const relativePath = pathname.replace(/^\/+/, '');
+  if (
+    !relativePath
+    || relativePath.includes('\0')
+    || relativePath.split('/').some((part) => !part || part === '.' || part === '..')
+  ) {
+    throw servedDistError('BROWSER_SCENARIO_SOURCE_URL_INVALID');
+  }
+  return relativePath;
+}
+
+function pathInsideRoot(rootPath, candidatePath) {
+  const rel = relative(rootPath, candidatePath);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+export async function collectScenarioSourceResponseBinding(
+  capturedResponses = [],
+  {
+    scenarioUrl,
+    repoRoot = process.cwd(),
+    maxFiles = STEPHANOS_DIST_MANIFEST_MAX_FILES,
+    maxFileBytes = STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES,
+    maxTotalBytes = STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES,
+  } = {},
+) {
+  try {
+    const expectedOrigin = new URL(String(scenarioUrl || '')).origin;
+    const repoInfo = lstatSync(repoRoot);
+    if (repoInfo.isSymbolicLink() || !repoInfo.isDirectory()) {
+      throw servedDistError('BROWSER_SCENARIO_SOURCE_ROOT_INVALID');
+    }
+    const realRepoRoot = realpathSync(repoRoot);
+    const responseGroups = new Map();
+    for (const response of capturedResponses) {
+      const relativePath = scenarioSourcePathFromUrl(responseUrl(response), expectedOrigin);
+      if (!relativePath) continue;
+      if (responseStatus(response) !== 200) {
+        throw servedDistError('BROWSER_SCENARIO_SOURCE_RESPONSE_MISSING');
+      }
+      const group = responseGroups.get(relativePath) || [];
+      group.push(response);
+      responseGroups.set(relativePath, group);
+    }
+    if (
+      responseGroups.size < 2
+      || responseGroups.size > maxFiles
+      || !responseGroups.has('apps/music-tile/index.html')
+      || !responseGroups.has('apps/music-tile/main.js')
+    ) {
+      throw servedDistError('BROWSER_SCENARIO_SOURCE_RESPONSE_INCOMPLETE');
+    }
+    let totalBytes = 0;
+    const entries = [];
+    for (const relativePath of [...responseGroups.keys()].sort()) {
+      const absolutePath = resolve(repoRoot, ...relativePath.split('/'));
+      const info = lstatSync(absolutePath);
+      if (info.isSymbolicLink() || !info.isFile() || info.size > maxFileBytes) {
+        throw servedDistError('BROWSER_SCENARIO_SOURCE_FILE_INVALID');
+      }
+      const realPath = realpathSync(absolutePath);
+      if (!pathInsideRoot(realRepoRoot, realPath)) {
+        throw servedDistError('BROWSER_SCENARIO_SOURCE_PATH_ESCAPE');
+      }
+      const expectedBytes = readFileSync(realPath);
+      if (expectedBytes.length > maxFileBytes || totalBytes + expectedBytes.length > maxTotalBytes) {
+        throw servedDistError('BROWSER_SCENARIO_SOURCE_FILE_TOO_LARGE');
+      }
+      const expectedSha = createHash('sha256').update(expectedBytes).digest('hex');
+      for (const response of responseGroups.get(relativePath)) {
+        const headers = await responseHeaders(response);
+        const declaredLengthText = String(headers?.['content-length'] || '').trim();
+        if (!declaredLengthText) {
+          throw servedDistError('BROWSER_SCENARIO_SOURCE_RESPONSE_LENGTH_MISSING');
+        }
+        const declaredLength = Number(declaredLengthText);
+        if (
+          !Number.isSafeInteger(declaredLength)
+          || declaredLength < 0
+          || declaredLength > maxFileBytes
+          || totalBytes + declaredLength > maxTotalBytes
+          || declaredLength !== expectedBytes.length
+        ) {
+          throw servedDistError('BROWSER_SCENARIO_SOURCE_RESPONSE_SIZE_INVALID');
+        }
+        let actualBytes;
+        try {
+          actualBytes = Buffer.from(await response.body());
+        } catch {
+          throw servedDistError('BROWSER_SCENARIO_SOURCE_RESPONSE_BODY_UNAVAILABLE');
+        }
+        if (
+          actualBytes.length > maxFileBytes
+          || totalBytes + actualBytes.length > maxTotalBytes
+          || actualBytes.length !== expectedBytes.length
+          || createHash('sha256').update(actualBytes).digest('hex') !== expectedSha
+        ) {
+          throw servedDistError('BROWSER_SCENARIO_SOURCE_RESPONSE_MISMATCH');
+        }
+      }
+      totalBytes += expectedBytes.length;
+      entries.push(Object.freeze({
+        path: relativePath,
+        size: expectedBytes.length,
+        sha256: expectedSha,
+      }));
+    }
+    return Object.freeze({
+      exact: true,
+      blocker: '',
+      fileCount: entries.length,
+      totalBytes,
+      fingerprint: computeStephanosDistManifestFingerprint(entries),
+      paths: Object.freeze(entries.map((entry) => entry.path)),
+      entries: Object.freeze(entries),
+      responseBinding: 'playwright-scenario-source-responses-v1',
+    });
+  } catch (error) {
+    return Object.freeze({
+      exact: false,
+      blocker: String(error?.code || error?.message || 'BROWSER_SCENARIO_SOURCE_RESPONSE_MISMATCH'),
+      fileCount: 0,
+      totalBytes: 0,
+      fingerprint: '',
+      paths: Object.freeze([]),
+      entries: Object.freeze([]),
+      responseBinding: 'playwright-scenario-source-responses-v1',
+    });
+  }
+}
+
+function createMusicRatingScenarioState() {
+  return {
+    candidates: [],
+    listeningDeck: [{
+      id: MUSIC_TILE_SCENARIO_TRACK_ID,
+      title: 'Pictures Of You',
+      artist: 'Anyma',
+      lane: 'proof-player',
+      reason: 'scenario target',
+      positiveTags: ['scenario-rated-signal'],
+      spotifyUrl: 'https://open.spotify.com/track/1lXzvA8rQwRz4t5Lwz4M8W',
+      candidateVerificationStatus: 'verified',
+    }],
+    ratings: {},
+    tags: {},
+    tasteDNA: {},
+    feedbackHistory: [],
+    trackFeedback: {},
+    linkMessages: {},
+    aiSuggestions: [],
+    aiSmarterJourney: [{
+      id: 'proof-discovery-player',
+      title: 'Proof Discovery Player',
+      artist: 'Proof Artist',
+      spotifyUrl: 'https://open.spotify.com/track/2GQfQw0f9M8e8P3G2NL8eN',
+      aiSuggested: true,
+      sourceKind: 'ai',
+    }],
+    pendingTasteDnaChanges: [],
+    appliedTasteDnaChanges: [],
+    recentlyShownCandidateIds: [],
+    sessionCounter: 0,
+    lastDiscoveryMeta: null,
+  };
+}
+
+function failedMusicRatingScenarioEvidence({
+  scenarioUrl = '',
+  consoleErrors = [],
+  pageErrors = [],
+  blocker = 'BROWSER_SCENARIO_EXECUTION_FAILED',
+  sourceResponseBinding = null,
+} = {}) {
+  return Object.freeze({
+    schemaVersion: MUSIC_RATING_SCENARIO_EVIDENCE_SCHEMA,
+    proofScenario: MUSIC_RATING_PRESERVES_PLAYBACK,
+    collector: 'playwright-page-v1',
+    observed: false,
+    musicTileUrl: scenarioUrl,
+    fixture: 'isolated-browser-context-v1',
+    sourceResponseBinding: sourceResponseBinding || {
+      exact: false,
+      blocker: 'BROWSER_SCENARIO_SOURCE_RESPONSE_INCOMPLETE',
+      fileCount: 0,
+      paths: [],
+    },
+    ratingInteraction: {},
+    listeningDeckIframe: {},
+    discoveryIframe: {},
+    legacyRanking: {},
+    consoleErrors: [...consoleErrors],
+    pageErrors: [...pageErrors],
+    blockers: [String(blocker || 'BROWSER_SCENARIO_EXECUTION_FAILED')],
+    listeningDeckIframeIdentityPreserved: false,
+    discoveryIframeIdentityPreserved: false,
+    legacyRankingChanged: false,
+  });
+}
+
+export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeUrl, {
+  capturedResponses = [],
+  consoleErrors = [],
+  pageErrors = [],
+  repoRoot = process.cwd(),
+} = {}) {
+  const scenarioUrl = new URL(MUSIC_TILE_SCENARIO_PATH, runtimeUrl).href;
+  const captureStart = capturedResponses.length;
+  let sourceResponseBinding = null;
+  let refsHandle = null;
+  let listeningFrame = null;
+  let discoveryFrame = null;
+  let frameNavigatedListener = null;
+  let frameDetachedListener = null;
+  const frameEvents = {
+    listeningNavigations: 0,
+    discoveryNavigations: 0,
+    listeningDetaches: 0,
+    discoveryDetaches: 0,
+  };
+  try {
+    await page.route('https://open.spotify.com/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: [
+          '<!doctype html><title>Spotify proof fixture</title>',
+          '<body>playback continuity sentinel active',
+          '<script>',
+          `globalThis.__stephanosProofPlaybackInstance = ${JSON.stringify('spotify-playback-continuity-sentinel-v1')};`,
+          'globalThis.__stephanosProofPlaybackTick = 0;',
+          'setInterval(() => { globalThis.__stephanosProofPlaybackTick += 1; }, 10);',
+          '</script></body>',
+        ].join(''),
+      });
+    });
+    await page.route('**/api/setup/integrations', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify({ integrations: [] }),
+      });
+    });
+    await page.addInitScript(({ key, state, origin }) => {
+      if (location.origin === origin) localStorage.setItem(key, JSON.stringify(state));
+    }, {
+      key: MUSIC_TILE_STATE_KEY,
+      state: createMusicRatingScenarioState(),
+      origin: new URL(scenarioUrl).origin,
+    });
+    const navigationResponse = await page.goto(scenarioUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000,
+    });
+    if (!navigationResponse || responseStatus(navigationResponse) !== 200 || page.url() !== scenarioUrl) {
+      throw servedDistError('BROWSER_SCENARIO_RUNTIME_URL_MISMATCH');
+    }
+    await page.locator('#advanced-studio > summary').click();
+    await page.locator('#artist-input').fill('Anyma');
+    await page.locator('#build-journey-btn').click();
+    await page.waitForFunction(({ trackId, rating, stateKey }) => {
+      const legacy = Array.from(document.querySelectorAll('#discovery-results-list section'))
+        .find((section) => section.querySelector('h3')?.textContent?.startsWith('Discovery Results'));
+      const verified = Array.from(document.querySelectorAll('#discovery-results-list section'))
+        .find((section) => section.querySelector('h3')?.textContent?.trim() === 'Verified Candidates');
+      const ratingButton = document.querySelector(
+        `#listening-deck [data-rate="${rating}"][data-id="${trackId}"]`,
+      );
+      let state = {};
+      try {
+        state = JSON.parse(localStorage.getItem(stateKey) || '{}');
+      } catch {}
+      return !!document.querySelector('#discovery-pipeline-summary')
+        && !!legacy
+        && !!verified?.querySelector('iframe[src*="open.spotify.com/embed/track/"]')
+        && !!ratingButton?.closest('.player-deck-card')
+          ?.querySelector('iframe[src*="open.spotify.com/embed/track/"]')
+        && Array.isArray(state.candidates)
+        && state.candidates.some((candidate) => candidate?.id === trackId);
+    }, {
+      trackId: MUSIC_TILE_SCENARIO_TRACK_ID,
+      rating: MUSIC_TILE_SCENARIO_RATING,
+      stateKey: MUSIC_TILE_STATE_KEY,
+    }, { timeout: 15000 });
+    const listeningHandleValue = await page.evaluateHandle(({ trackId, rating }) => {
+      const ratingButton = document.querySelector(
+        `#listening-deck [data-rate="${rating}"][data-id="${trackId}"]`,
+      );
+      return ratingButton?.closest('.player-deck-card')
+        ?.querySelector('iframe[src*="open.spotify.com/embed/track/"]') || null;
+    }, {
+      trackId: MUSIC_TILE_SCENARIO_TRACK_ID,
+      rating: MUSIC_TILE_SCENARIO_RATING,
+    });
+    const discoveryHandleValue = await page.evaluateHandle(() => {
+      const verified = Array.from(document.querySelectorAll('#discovery-results-list section'))
+        .find((section) => section.querySelector('h3')?.textContent?.trim() === 'Verified Candidates');
+      return verified?.querySelector('iframe[src*="open.spotify.com/embed/track/"]') || null;
+    });
+    const listeningHandle = listeningHandleValue.asElement();
+    const discoveryHandle = discoveryHandleValue.asElement();
+    if (!listeningHandle || !discoveryHandle) {
+      await listeningHandleValue.dispose();
+      await discoveryHandleValue.dispose();
+      throw servedDistError('BROWSER_SCENARIO_PLAYER_IFRAME_MISSING');
+    }
+    await listeningHandle.scrollIntoViewIfNeeded();
+    await discoveryHandle.scrollIntoViewIfNeeded();
+    listeningFrame = await listeningHandle.contentFrame();
+    discoveryFrame = await discoveryHandle.contentFrame();
+    if (!listeningFrame || !discoveryFrame) {
+      throw servedDistError('BROWSER_SCENARIO_PLAYER_FRAME_MISSING');
+    }
+    await Promise.all([
+      listeningFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
+      discoveryFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
+    ]);
+    const listeningSentinelBefore = await listeningFrame.evaluate(() => ({
+      instance: globalThis.__stephanosProofPlaybackInstance,
+      tick: globalThis.__stephanosProofPlaybackTick,
+    }));
+    const discoverySentinelBefore = await discoveryFrame.evaluate(() => ({
+      instance: globalThis.__stephanosProofPlaybackInstance,
+      tick: globalThis.__stephanosProofPlaybackTick,
+    }));
+    refsHandle = await page.evaluateHandle(({ targetId, targetLabel, stateKey, rating }) => {
+      const ratingButton = document.querySelector(
+        `#listening-deck [data-rate="${rating}"][data-id="${targetId}"]`,
+      );
+      const listening = ratingButton?.closest('.player-deck-card')
+        ?.querySelector('iframe[src*="open.spotify.com/embed/track/"]') || null;
+      const verified = Array.from(document.querySelectorAll('#discovery-results-list section'))
+        .find((section) => section.querySelector('h3')?.textContent?.trim() === 'Verified Candidates');
+      const discovery = verified?.querySelector('iframe[src*="open.spotify.com/embed/track/"]') || null;
+      const legacy = Array.from(document.querySelectorAll('#discovery-results-list section'))
+        .find((section) => section.querySelector('h3')?.textContent?.startsWith('Discovery Results'));
+      const beforeRanking = Array.from(legacy?.children || [])
+        .filter((node) => node.classList?.contains('meta'))
+        .map((node) => String(node.textContent || '').trim())
+        .filter(Boolean);
+      const beforeCandidateDom = Array.from(document.querySelectorAll('#candidate-list > article.card > strong'))
+        .map((node) => String(node.textContent || '').trim());
+      let beforeState = {};
+      try {
+        beforeState = JSON.parse(localStorage.getItem(stateKey) || '{}');
+      } catch {}
+      const beforeIds = Array.isArray(beforeState.candidates)
+        ? beforeState.candidates.map((candidate) => String(candidate?.id || ''))
+        : [];
+      const expectedLegacyBefore = Array.isArray(beforeState.candidates)
+        ? beforeState.candidates.slice(0, 4)
+          .map((candidate) => `${candidate?.artist || 'Unknown'} - ${candidate?.title || 'Unknown'}`)
+        : [];
+      const expectedCandidateBefore = Array.isArray(beforeState.candidates)
+        ? beforeState.candidates.map((candidate) => String(candidate?.title || candidate?.name || 'Unknown'))
+        : [];
+      const beforeTarget = Array.isArray(beforeState.candidates)
+        ? beforeState.candidates.find((candidate) => candidate?.id === targetId)
+        : null;
+      return {
+        listening,
+        discovery,
+        listeningContentWindow: listening?.contentWindow || null,
+        discoveryContentWindow: discovery?.contentWindow || null,
+        listeningSrc: listening?.src || '',
+        discoverySrc: discovery?.src || '',
+        beforeRanking,
+        beforeCandidateDom,
+        beforeIds,
+        beforeIndex: beforeIds.indexOf(targetId),
+        beforeTargetScore: Number(beforeTarget?.tasteScore || 0),
+        expectedLegacyBefore,
+        expectedCandidateBefore,
+        targetLabel,
+      };
+    }, {
+      targetId: MUSIC_TILE_SCENARIO_TRACK_ID,
+      targetLabel: MUSIC_TILE_SCENARIO_TRACK_LABEL,
+      stateKey: MUSIC_TILE_STATE_KEY,
+      rating: MUSIC_TILE_SCENARIO_RATING,
+    });
+    frameNavigatedListener = (frame) => {
+      if (frame === listeningFrame) frameEvents.listeningNavigations += 1;
+      if (frame === discoveryFrame) frameEvents.discoveryNavigations += 1;
+    };
+    frameDetachedListener = (frame) => {
+      if (frame === listeningFrame) frameEvents.listeningDetaches += 1;
+      if (frame === discoveryFrame) frameEvents.discoveryDetaches += 1;
+    };
+    page.on('framenavigated', frameNavigatedListener);
+    page.on('framedetached', frameDetachedListener);
+    const ratingLocator = page.locator(
+      `#listening-deck .player-deck-card [data-rate="${MUSIC_TILE_SCENARIO_RATING}"][data-id="${MUSIC_TILE_SCENARIO_TRACK_ID}"]`,
+    );
+    await ratingLocator.click();
+    await page.waitForFunction(({ key, trackId, rating }) => {
+      let stored = {};
+      try {
+        stored = JSON.parse(localStorage.getItem(key) || '{}');
+      } catch {}
+      const selected = document.querySelector(
+        `#listening-deck .player-deck-card [data-rate="${rating}"][data-id="${trackId}"]`,
+      );
+      const cardText = selected?.closest('.player-deck-card')
+        ?.querySelector('.music-card-header .music-card-meta')?.textContent || '';
+      return stored?.ratings?.[trackId] === rating
+        && selected?.getAttribute('aria-pressed') === 'true'
+        && selected?.classList.contains('is-active')
+        && cardText.includes(`rating ${rating}`);
+    }, {
+      key: MUSIC_TILE_STATE_KEY,
+      trackId: MUSIC_TILE_SCENARIO_TRACK_ID,
+      rating: MUSIC_TILE_SCENARIO_RATING,
+    }, { timeout: 10000 });
+    await page.waitForTimeout(50);
+    const currentListeningHandleValue = await page.evaluateHandle(({ trackId, rating }) => {
+      const ratingButton = document.querySelector(
+        `#listening-deck [data-rate="${rating}"][data-id="${trackId}"]`,
+      );
+      return ratingButton?.closest('.player-deck-card')
+        ?.querySelector('iframe[src*="open.spotify.com/embed/track/"]') || null;
+    }, {
+      trackId: MUSIC_TILE_SCENARIO_TRACK_ID,
+      rating: MUSIC_TILE_SCENARIO_RATING,
+    });
+    const currentDiscoveryHandleValue = await page.evaluateHandle(() => {
+      const verified = Array.from(document.querySelectorAll('#discovery-results-list section'))
+        .find((section) => section.querySelector('h3')?.textContent?.trim() === 'Verified Candidates');
+      return verified?.querySelector('iframe[src*="open.spotify.com/embed/track/"]') || null;
+    });
+    const currentListeningHandle = currentListeningHandleValue.asElement();
+    const currentDiscoveryHandle = currentDiscoveryHandleValue.asElement();
+    const currentListeningFrame = await currentListeningHandle?.contentFrame?.();
+    const currentDiscoveryFrame = await currentDiscoveryHandle?.contentFrame?.();
+    const listeningSentinelAfter = currentListeningFrame
+      ? await currentListeningFrame.evaluate(() => ({
+        instance: globalThis.__stephanosProofPlaybackInstance,
+        tick: globalThis.__stephanosProofPlaybackTick,
+      }))
+      : { instance: '', tick: -1 };
+    const discoverySentinelAfter = currentDiscoveryFrame
+      ? await currentDiscoveryFrame.evaluate(() => ({
+        instance: globalThis.__stephanosProofPlaybackInstance,
+        tick: globalThis.__stephanosProofPlaybackTick,
+      }))
+      : { instance: '', tick: -1 };
+    const observed = await page.evaluate(({ refs, key, trackId, targetLabel, rating }) => {
+      const selectedRating = document.querySelector(
+        `#listening-deck [data-rate="${rating}"][data-id="${trackId}"]`,
+      );
+      const currentListening = selectedRating?.closest('.player-deck-card')
+        ?.querySelector('iframe[src*="open.spotify.com/embed/track/"]') || null;
+      const verified = Array.from(document.querySelectorAll('#discovery-results-list section'))
+        .find((section) => section.querySelector('h3')?.textContent?.trim() === 'Verified Candidates');
+      const currentDiscovery = verified?.querySelector('iframe[src*="open.spotify.com/embed/track/"]') || null;
+      const legacy = Array.from(document.querySelectorAll('#discovery-results-list section'))
+        .find((section) => section.querySelector('h3')?.textContent?.startsWith('Discovery Results'));
+      const afterRanking = Array.from(legacy?.children || [])
+        .filter((node) => node.classList?.contains('meta'))
+        .map((node) => String(node.textContent || '').trim())
+        .filter(Boolean);
+      const afterCandidateDom = Array.from(document.querySelectorAll('#candidate-list > article.card > strong'))
+        .map((node) => String(node.textContent || '').trim());
+      const selected = document.querySelector(
+        `#listening-deck .player-deck-card [data-rate="${rating}"][data-id="${trackId}"]`,
+      );
+      const cardText = selected?.closest('.player-deck-card')
+        ?.querySelector('.music-card-header .music-card-meta')?.textContent || '';
+      let stored = {};
+      try {
+        stored = JSON.parse(localStorage.getItem(key) || '{}');
+      } catch {}
+      const afterCandidates = Array.isArray(stored.candidates) ? stored.candidates : [];
+      const afterIds = afterCandidates.map((candidate) => String(candidate?.id || ''));
+      const afterTarget = afterCandidates.find((candidate) => candidate?.id === trackId);
+      const expectedLegacyAfter = afterCandidates.slice(0, 4)
+        .map((candidate) => `${candidate?.artist || 'Unknown'} - ${candidate?.title || 'Unknown'}`);
+      const expectedCandidateAfter = afterCandidates
+        .map((candidate) => String(candidate?.title || candidate?.name || 'Unknown'));
+      const afterIndex = afterIds.indexOf(trackId);
+      return {
+        ratingInteraction: {
+          trackId,
+          requestedRating: rating,
+          persistedRating: stored?.ratings?.[trackId],
+          selectedButtonPressed: selected?.getAttribute('aria-pressed') === 'true',
+          selectedButtonActive: selected?.classList.contains('is-active') === true,
+          cardRatingTextUpdated: cardText.includes(`rating ${rating}`),
+        },
+        listeningDeckIframe: {
+          beforePresent: !!refs.listening,
+          sameNode: refs.listening === currentListening,
+          isConnected: refs.listening?.isConnected === true,
+          srcUnchanged: !!refs.listeningSrc && refs.listeningSrc === currentListening?.src,
+          contentWindowPreserved: !!refs.listeningContentWindow
+            && refs.listeningContentWindow === currentListening?.contentWindow,
+        },
+        discoveryIframe: {
+          beforePresent: !!refs.discovery,
+          sameNode: refs.discovery === currentDiscovery,
+          isConnected: refs.discovery?.isConnected === true,
+          srcUnchanged: !!refs.discoverySrc && refs.discoverySrc === currentDiscovery?.src,
+          contentWindowPreserved: !!refs.discoveryContentWindow
+            && refs.discoveryContentWindow === currentDiscovery?.contentWindow,
+        },
+        legacyRanking: {
+          before: refs.beforeRanking,
+          after: afterRanking,
+          beforeIds: refs.beforeIds,
+          afterIds,
+          targetId: trackId,
+          targetLabel,
+          beforeIndex: refs.beforeIndex,
+          afterIndex,
+          beforeTargetScore: refs.beforeTargetScore,
+          afterTargetScore: Number(afterTarget?.tasteScore || 0),
+          changed: JSON.stringify(refs.beforeRanking) !== JSON.stringify(afterRanking),
+          targetMovedUp: refs.beforeIndex >= 0 && afterIndex >= 0 && afterIndex < refs.beforeIndex,
+          sameMembers: JSON.stringify([...refs.beforeIds].sort()) === JSON.stringify([...afterIds].sort()),
+          legacyDomMatchesStoredBefore: JSON.stringify(refs.beforeRanking)
+            === JSON.stringify(refs.expectedLegacyBefore),
+          legacyDomMatchesStoredAfter: JSON.stringify(afterRanking)
+            === JSON.stringify(expectedLegacyAfter),
+          candidateDomMatchesStoredBefore: JSON.stringify(refs.beforeCandidateDom)
+            === JSON.stringify(refs.expectedCandidateBefore),
+          candidateDomMatchesStoredAfter: JSON.stringify(afterCandidateDom)
+            === JSON.stringify(expectedCandidateAfter),
+        },
+      };
+    }, {
+      refs: refsHandle,
+      key: MUSIC_TILE_STATE_KEY,
+      trackId: MUSIC_TILE_SCENARIO_TRACK_ID,
+      targetLabel: MUSIC_TILE_SCENARIO_TRACK_LABEL,
+      rating: MUSIC_TILE_SCENARIO_RATING,
+    });
+    observed.listeningDeckIframe.frameIdentityPreserved = currentListeningFrame === listeningFrame;
+    observed.listeningDeckIframe.frameNavigationCount = frameEvents.listeningNavigations;
+    observed.listeningDeckIframe.frameDetachCount = frameEvents.listeningDetaches;
+    observed.listeningDeckIframe.playbackSentinelAdvanced = (
+      listeningSentinelBefore.instance === listeningSentinelAfter.instance
+      && Number(listeningSentinelAfter.tick) > Number(listeningSentinelBefore.tick)
+    );
+    observed.discoveryIframe.frameIdentityPreserved = currentDiscoveryFrame === discoveryFrame;
+    observed.discoveryIframe.frameNavigationCount = frameEvents.discoveryNavigations;
+    observed.discoveryIframe.frameDetachCount = frameEvents.discoveryDetaches;
+    observed.discoveryIframe.playbackSentinelAdvanced = (
+      discoverySentinelBefore.instance === discoverySentinelAfter.instance
+      && Number(discoverySentinelAfter.tick) > Number(discoverySentinelBefore.tick)
+    );
+    await currentListeningHandleValue.dispose();
+    await currentDiscoveryHandleValue.dispose();
+    await listeningHandleValue.dispose();
+    await discoveryHandleValue.dispose();
+    sourceResponseBinding = await collectScenarioSourceResponseBinding(
+      capturedResponses.slice(captureStart),
+      { scenarioUrl, repoRoot },
+    );
+    const evidence = {
+      schemaVersion: MUSIC_RATING_SCENARIO_EVIDENCE_SCHEMA,
+      proofScenario: MUSIC_RATING_PRESERVES_PLAYBACK,
+      collector: 'playwright-page-v1',
+      observed: true,
+      musicTileUrl: scenarioUrl,
+      fixture: 'isolated-browser-context-v1',
+      playbackContinuityProxy: 'intercepted-spotify-frame-tick-v1',
+      sourceResponseBinding,
+      ...observed,
+      consoleErrors: [...consoleErrors],
+      pageErrors: [...pageErrors],
+      blockers: [],
+    };
+    const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence);
+    return Object.freeze({
+      ...evidence,
+      blockers: [...evaluation.blocking],
+      listeningDeckIframeIdentityPreserved: evaluation.listeningDeckIframeIdentityPreserved,
+      discoveryIframeIdentityPreserved: evaluation.discoveryIframeIdentityPreserved,
+      legacyRankingChanged: evaluation.legacyRankingChanged,
+    });
+  } catch (error) {
+    if (!sourceResponseBinding) {
+      sourceResponseBinding = await collectScenarioSourceResponseBinding(
+        capturedResponses.slice(captureStart),
+        { scenarioUrl, repoRoot },
+      );
+    }
+    return failedMusicRatingScenarioEvidence({
+      scenarioUrl,
+      consoleErrors,
+      pageErrors,
+      blocker: String(error?.code || error?.message || 'BROWSER_SCENARIO_EXECUTION_FAILED'),
+      sourceResponseBinding,
+    });
+  } finally {
+    if (frameNavigatedListener) page.off('framenavigated', frameNavigatedListener);
+    if (frameDetachedListener) page.off('framedetached', frameDetachedListener);
+    await refsHandle?.dispose?.();
+  }
+}
+
 async function collectWithBrowser(url = DEFAULT_URL, {
   writeArtifacts = true,
   expectedDistFingerprint = '',
   expectedDistManifestEntries = [],
+  proofScenario = '',
 } = {}) {
   const pw = await loadPlaywright();
   if (!pw?.chromium) return { browserAutomationAvailable: false, automationUnavailable: 'Playwright chromium API unavailable', url, generatedAt: stamp(), checks: { runtimeReachable: false } };
@@ -813,6 +1582,7 @@ async function collectWithBrowser(url = DEFAULT_URL, {
     page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
     const navigationResponse = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await page.waitForTimeout(750);
+    const observedRuntimeUrl = page.url();
     const checks = await page.evaluate(() => {
       const text = (v) => String(v || '').trim();
       const body = document.body?.innerText || '';
@@ -856,6 +1626,30 @@ async function collectWithBrowser(url = DEFAULT_URL, {
       checks.runtimeDistManifestTotalBytes = servedDist.totalBytes;
       checks.runtimeDistResponseBinding = servedDist.responseBinding;
     }
+    let scenarioEvidence = null;
+    if (proofScenario === MUSIC_RATING_PRESERVES_PLAYBACK) {
+      const scenarioPage = await context.newPage();
+      const scenarioResponses = [];
+      const scenarioConsoleErrors = [];
+      const scenarioPageErrors = [];
+      scenarioPage.on('response', (response) => { scenarioResponses.push(response); });
+      scenarioPage.on('console', (message) => {
+        if (message.type() === 'error') scenarioConsoleErrors.push(message.text());
+      });
+      scenarioPage.on('pageerror', (error) => {
+        scenarioPageErrors.push(String(error?.message || error || 'unknown page error'));
+      });
+      try {
+        scenarioEvidence = await collectMusicRatingPreservesPlaybackEvidence(scenarioPage, url, {
+          capturedResponses: scenarioResponses,
+          consoleErrors: scenarioConsoleErrors,
+          pageErrors: scenarioPageErrors,
+          repoRoot: process.cwd(),
+        });
+      } finally {
+        await scenarioPage.close();
+      }
+    }
     let screenshotPath = '';
     if (writeArtifacts) {
       mkdirSync(DEFAULT_OUT_DIR, { recursive: true });
@@ -867,10 +1661,12 @@ async function collectWithBrowser(url = DEFAULT_URL, {
       browserAutomationAvailable: true,
       localBrowserMechanism: 'Playwright Chromium using installed Microsoft Edge channel on Windows when available; no browser download requested',
       url,
-      observedUrl: page.url(),
+      observedUrl: observedRuntimeUrl,
       generatedAt: stamp(),
       screenshotPath,
       consoleErrors: errors,
+      proofScenario,
+      scenarioEvidence,
       checks,
     };
   } catch (error) {
@@ -915,11 +1711,13 @@ async function main() {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
+        proofScenario: parsed.proofScenario,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
+        proofScenario: parsed.proofScenario,
       }, { writeArtifacts: parsed.writeArtifacts }));
   }
   const expectedDistManifest = parsed.expectedDistFingerprint
@@ -944,11 +1742,13 @@ async function main() {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
+        proofScenario: parsed.proofScenario,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
+        proofScenario: parsed.proofScenario,
       }, { writeArtifacts: parsed.writeArtifacts }));
   }
   try {
@@ -956,17 +1756,20 @@ async function main() {
       writeArtifacts: parsed.writeArtifacts,
       expectedDistFingerprint: parsed.expectedDistFingerprint,
       expectedDistManifestEntries: expectedDistManifest.entries,
+      proofScenario: parsed.proofScenario,
     });
     process.exit(parsed.machineJson
       ? printMachineResult(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
+        proofScenario: parsed.proofScenario,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
+        proofScenario: parsed.proofScenario,
       }, { writeArtifacts: parsed.writeArtifacts }));
   } catch (error) {
     const result = {
@@ -981,11 +1784,13 @@ async function main() {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
+        proofScenario: parsed.proofScenario,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
+        proofScenario: parsed.proofScenario,
       }, { writeArtifacts: parsed.writeArtifacts }));
   }
 }

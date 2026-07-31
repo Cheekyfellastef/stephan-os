@@ -25,6 +25,9 @@ import {
   extractCodexThreadId,
   publishRemoteCodexTaskVisibility,
 } from '../shared/agents/remoteCodexTaskVisibility.mjs';
+import {
+  evaluateMusicRatingPreservesPlaybackScenarioEvidence,
+} from './browser-proof-runner.mjs';
 
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
@@ -33,6 +36,8 @@ const CANONICAL_BROWSER_PROOF_URL = 'http://127.0.0.1:4173/apps/stephanos/dist/i
 const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
 const CANONICAL_RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
+const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
+const MUSIC_RATING_PRESERVES_PLAYBACK = 'MUSIC_RATING_PRESERVES_PLAYBACK';
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -487,17 +492,53 @@ export function validateBrowserProofVerdict(lastMessage, task = {}, browserRunti
       blocker: payload?.verdict === 'FAIL' ? 'BROWSER_PROOF_FAILED' : 'BROWSER_PROOF_VERDICT_INVALID',
     });
   }
-  const evidence = payload.evidence || {};
-  const requiredTrue = [
-    'listeningDeckIframeIdentityPreserved',
-    'discoveryIframeIdentityPreserved',
-    'legacyRankingChanged',
-  ];
-  if (!requiredTrue.every((key) => evidence[key] === true) || !Array.isArray(evidence.consoleErrors)) {
-    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_EVIDENCE_INCOMPLETE' });
+  if (!Array.isArray(payload.blockers) || payload.blockers.length > 0) {
+    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_BLOCKERS_REMAIN' });
   }
   const expectedHead = String(task.exactHeadProof.expectedHead || '').trim().toLowerCase();
-  const runtimeSourceHead = String(evidence.runtimeSourceHead || '').trim().toLowerCase();
+  if (
+    browserRuntimeProof?.required !== true
+    || browserRuntimeProof?.ok !== true
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: browserRuntimeProof?.blocker || 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
+    });
+  }
+  if (
+    browserRuntimeProof.schemaVersion !== BROWSER_RUNTIME_PROOF_SCHEMA
+    || browserRuntimeProof.mergeReady !== true
+    || !Array.isArray(browserRuntimeProof.blocking)
+    || browserRuntimeProof.blocking.length !== 0
+    || browserRuntimeProof.proofScenario !== expectedScenario
+    || browserRuntimeProof.scenarioEvidenceAccepted !== true
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_MACHINE_SCENARIO_EVIDENCE_MISSING',
+    });
+  }
+  if (expectedScenario !== MUSIC_RATING_PRESERVES_PLAYBACK) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_SCENARIO_INVALID',
+    });
+  }
+  const scenarioEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    browserRuntimeProof.scenarioEvidence,
+  );
+  if (!scenarioEvaluation.accepted) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: scenarioEvaluation.blocking[0] || 'BROWSER_PROOF_EVIDENCE_INCOMPLETE',
+      scenarioEvidenceBlockers: scenarioEvaluation.blocking,
+    });
+  }
+  const runtimeSourceHead = String(browserRuntimeProof.runtimeSourceHead || '').trim().toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(runtimeSourceHead)) {
     return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISSING' });
   }
@@ -510,37 +551,16 @@ export function validateBrowserProofVerdict(lastMessage, task = {}, browserRunti
       runtimeSourceHead,
     });
   }
-  if (browserRuntimeProof?.required === true) {
-    if (browserRuntimeProof.ok !== true) {
-      return Object.freeze({
-        ok: false,
-        required: true,
-        blocker: browserRuntimeProof.blocker || 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
-      });
-    }
-    if (runtimeSourceHead !== browserRuntimeProof.runtimeSourceHead) {
-      return Object.freeze({
-        ok: false,
-        required: true,
-        blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH',
-        expectedHead,
-        runtimeSourceHead: browserRuntimeProof.runtimeSourceHead,
-      });
-    }
-  }
-  if (evidence.consoleErrors.length > 0) {
-    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_CONSOLE_ERRORS' });
-  }
-  if (!Array.isArray(payload.blockers) || payload.blockers.length > 0) {
-    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_BLOCKERS_REMAIN' });
-  }
   return Object.freeze({
     ok: true,
     required: true,
     proofScenario: expectedScenario,
     expectedHead,
     runtimeSourceHead,
-    evidence,
+    evidence: browserRuntimeProof.scenarioEvidence,
+    scenarioEvidenceAccepted: true,
+    evidenceAuthority: 'worker-owned-playwright-runner',
+    modelScenarioEvidenceTrusted: false,
   });
 }
 
@@ -550,11 +570,29 @@ export function runBrowserRuntimeExactHeadProof(task, {
   expectedSourceFingerprint: suppliedExpectedSourceFingerprint = '',
   expectedDistFingerprint: suppliedExpectedDistFingerprint = '',
   expectedDistManifestPath: suppliedExpectedDistManifestPath = '',
+  proofScenario: suppliedProofScenario = '',
 } = {}) {
   if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
   const expectedHead = String(task.exactHeadProof.expectedHead || '').trim().toLowerCase();
+  const taskProofScenario = String(task.exactHeadProof.proofScenario || '').trim();
+  const proofScenario = String(suppliedProofScenario || '').trim();
   if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
     return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID' });
+  }
+  if (
+    proofScenario
+    && (
+      proofScenario !== taskProofScenario
+      || proofScenario !== MUSIC_RATING_PRESERVES_PLAYBACK
+    )
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_SCENARIO_INVALID',
+      expectedHead,
+      proofScenario,
+    });
   }
   const expectedSourceFingerprint = String(suppliedExpectedSourceFingerprint || '').trim().toLowerCase();
   if (!EXACT_SOURCE_FINGERPRINT.test(expectedSourceFingerprint)) {
@@ -600,6 +638,7 @@ export function runBrowserRuntimeExactHeadProof(task, {
       expectedDistFingerprint,
       '--expected-dist-manifest',
       expectedDistManifestPath,
+      ...(proofScenario ? ['--proof-scenario', proofScenario] : []),
       '--no-artifacts',
       '--machine-json',
     ], {
@@ -630,6 +669,11 @@ export function runBrowserRuntimeExactHeadProof(task, {
   const runtimeSourceHead = String(payload?.runtimeSourceHead || '').trim().toLowerCase();
   const runtimeSourceFingerprint = String(payload?.runtimeSourceFingerprint || '').trim().toLowerCase();
   const runtimeDistFingerprint = String(payload?.runtimeDistFingerprint || '').trim().toLowerCase();
+  const payloadProofScenario = String(payload?.proofScenario || '').trim();
+  const scenarioEvidence = payload?.scenarioEvidence || null;
+  const scenarioEvaluation = proofScenario
+    ? evaluateMusicRatingPreservesPlaybackScenarioEvidence(scenarioEvidence)
+    : null;
   if (runtimeSourceHead && runtimeSourceHead !== expectedHead) {
     return Object.freeze({
       ok: false,
@@ -686,8 +730,11 @@ export function runBrowserRuntimeExactHeadProof(task, {
   if (
     execution?.error
     || execution?.status !== 0
-    || payload?.schemaVersion !== 'stephanos.browser-runtime-exact-head-proof.v2'
+    || payload?.schemaVersion !== BROWSER_RUNTIME_PROOF_SCHEMA
     || payload?.accepted !== true
+    || payload?.mergeReady !== true
+    || !Array.isArray(payload?.blocking)
+    || payload.blocking.length !== 0
     || payload?.expectedHead !== expectedHead
     || payload?.expectedHeadMatch !== true
     || runtimeSourceHead !== expectedHead
@@ -697,6 +744,12 @@ export function runBrowserRuntimeExactHeadProof(task, {
     || payload?.expectedDistFingerprint !== expectedDistFingerprint
     || payload?.expectedDistFingerprintMatch !== true
     || runtimeDistFingerprint !== expectedDistFingerprint
+    || (proofScenario && (
+      payloadProofScenario !== proofScenario
+      || payload?.scenarioEvidenceAccepted !== true
+      || scenarioEvaluation?.accepted !== true
+    ))
+    || (!proofScenario && payloadProofScenario !== '')
   ) {
     return Object.freeze({
       ok: false,
@@ -709,6 +762,10 @@ export function runBrowserRuntimeExactHeadProof(task, {
       runtimeSourceHead,
       runtimeSourceFingerprint,
       runtimeDistFingerprint,
+      proofScenario,
+      payloadProofScenario,
+      scenarioEvidenceAccepted: payload?.scenarioEvidenceAccepted === true,
+      scenarioEvidenceBlockers: scenarioEvaluation?.blocking || [],
     });
   }
   return Object.freeze({
@@ -724,6 +781,11 @@ export function runBrowserRuntimeExactHeadProof(task, {
     runtimeUrl,
     observedRuntimeUrl,
     schemaVersion: payload.schemaVersion,
+    mergeReady: true,
+    blocking: Object.freeze([]),
+    proofScenario,
+    scenarioEvidenceAccepted: proofScenario ? true : null,
+    scenarioEvidence: proofScenario ? scenarioEvidence : null,
   });
 }
 
@@ -756,7 +818,7 @@ export function resolveCodexExecInvocation({
 
 export function buildGuardedCodexPrompt(task) {
   const verdictContract = task.exactHeadProof
-    ? `\nMACHINE-READABLE FINAL VERDICT\nReturn only one JSON object as your final message. It must use exactly this evidence shape:\n{"verdict":"PASS|FAIL","proofScenario":"${task.exactHeadProof.proofScenario}","evidence":{"runtimeSourceHead":"40-character Git Commit copied from the live Edge DOM","listeningDeckIframeIdentityPreserved":true|false,"discoveryIframeIdentityPreserved":true|false,"legacyRankingChanged":true|false,"consoleErrors":[]},"blockers":[]}\nPASS is forbidden unless runtimeSourceHead exactly equals ${task.exactHeadProof.expectedHead}, every boolean is true, and consoleErrors and blockers are explicitly empty arrays.`
+    ? `\nMACHINE-READABLE FINAL VERDICT\nReturn only one JSON object as your final message, using exactly this shape:\n{"verdict":"PASS|FAIL","proofScenario":"${task.exactHeadProof.proofScenario}","blockers":[]}\nDo not self-attest scenario booleans or browser facts. After your bounded diagnostic turn, the worker-owned Playwright runner independently performs the interaction and is the sole authority for scenario evidence. Report FAIL and list blockers when your diagnostics find a problem; PASS is forbidden when blockers remain.`
     : '\nReturn a structured PASS/FAIL report with remaining blockers.';
   return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- The child Codex run is read-only and non-interactive. Do not request approval.\n- User configuration is not loaded for this child run, so local MCP and app tools are unavailable by construction.\n- Do not call MCP tools, app tools, or dispatch another Codex task. Use bounded shell diagnostics only.\n- Do not create generated output unless the exact requested proof cannot be completed without it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.${verdictContract}\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
 }
@@ -1134,6 +1196,7 @@ export async function runCodexWorker(taskPath, {
     expectedSourceFingerprint,
     expectedDistFingerprint,
     expectedDistManifestPath,
+    proofScenario: task.exactHeadProof?.proofScenario || '',
   });
   const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
   const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);

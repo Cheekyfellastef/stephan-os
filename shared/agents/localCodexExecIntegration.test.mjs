@@ -95,6 +95,128 @@ const TEST_PROCESS_IDENTITY = Object.freeze({
   bootId: TEST_BOOT_ID,
   processStartId: TEST_PROCESS_START_ID,
 });
+const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
+const MUSIC_RATING_SCENARIO = 'MUSIC_RATING_PRESERVES_PLAYBACK';
+
+function musicRatingScenarioEvidence(overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v1',
+    proofScenario: MUSIC_RATING_SCENARIO,
+    collector: 'playwright-page-v1',
+    observed: true,
+    sourceResponseBinding: {
+      exact: true,
+      blocker: '',
+      fileCount: 3,
+      paths: [
+        'apps/music-tile/index.html',
+        'apps/music-tile/main.js',
+        'shared/runtime/tileEventBridge.js',
+      ],
+    },
+    ratingInteraction: {
+      trackId: 'anyma-pictures-of-you',
+      requestedRating: 2,
+      persistedRating: 2,
+      selectedButtonPressed: true,
+      selectedButtonActive: true,
+      cardRatingTextUpdated: true,
+    },
+    listeningDeckIframe: {
+      beforePresent: true,
+      sameNode: true,
+      isConnected: true,
+      srcUnchanged: true,
+      contentWindowPreserved: true,
+      frameIdentityPreserved: true,
+      frameNavigationCount: 0,
+      frameDetachCount: 0,
+      playbackSentinelAdvanced: true,
+    },
+    discoveryIframe: {
+      beforePresent: true,
+      sameNode: true,
+      isConnected: true,
+      srcUnchanged: true,
+      contentWindowPreserved: true,
+      frameIdentityPreserved: true,
+      frameNavigationCount: 0,
+      frameDetachCount: 0,
+      playbackSentinelAdvanced: true,
+    },
+    legacyRanking: {
+      before: ['Other Artist - Alpha'],
+      after: ['Anyma - Pictures Of You'],
+      beforeIds: ['other-alpha', 'anyma-pictures-of-you'],
+      afterIds: ['anyma-pictures-of-you', 'other-alpha'],
+      targetId: 'anyma-pictures-of-you',
+      targetLabel: 'Anyma - Pictures Of You',
+      beforeIndex: 1,
+      afterIndex: 0,
+      beforeTargetScore: 0,
+      afterTargetScore: 2.5,
+      changed: true,
+      targetMovedUp: true,
+      sameMembers: true,
+      legacyDomMatchesStoredBefore: true,
+      legacyDomMatchesStoredAfter: true,
+      candidateDomMatchesStoredBefore: true,
+      candidateDomMatchesStoredAfter: true,
+    },
+    consoleErrors: [],
+    pageErrors: [],
+    blockers: [],
+    ...overrides,
+  };
+}
+
+function browserRunnerPayload(expectedHead, {
+  proofScenario = '',
+  ...overrides
+} = {}) {
+  const scenarioRequested = proofScenario === MUSIC_RATING_SCENARIO;
+  return {
+    schemaVersion: BROWSER_RUNTIME_PROOF_SCHEMA,
+    url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    accepted: true,
+    mergeReady: true,
+    blocking: [],
+    expectedHead,
+    runtimeSourceHead: expectedHead,
+    expectedHeadMatch: true,
+    expectedSourceFingerprint: SOURCE_FINGERPRINT,
+    runtimeSourceFingerprint: SOURCE_FINGERPRINT,
+    expectedSourceFingerprintMatch: true,
+    expectedDistFingerprint: DIST_FINGERPRINT,
+    runtimeDistFingerprint: DIST_FINGERPRINT,
+    expectedDistFingerprintMatch: true,
+    proofScenario,
+    scenarioEvidenceAccepted: scenarioRequested ? true : null,
+    scenarioEvidence: scenarioRequested ? musicRatingScenarioEvidence() : null,
+    ...overrides,
+  };
+}
+
+function browserRunnerPayloadForArgs(args, expectedHead, overrides = {}) {
+  const scenarioIndex = args.indexOf('--proof-scenario');
+  const proofScenario = scenarioIndex >= 0 ? String(args[scenarioIndex + 1] || '') : '';
+  return browserRunnerPayload(expectedHead, { proofScenario, ...overrides });
+}
+
+function workerOwnedScenarioProof(expectedHead, evidence = musicRatingScenarioEvidence()) {
+  return {
+    ok: true,
+    required: true,
+    schemaVersion: BROWSER_RUNTIME_PROOF_SCHEMA,
+    runtimeSourceHead: expectedHead,
+    mergeReady: true,
+    blocking: [],
+    proofScenario: MUSIC_RATING_SCENARIO,
+    scenarioEvidenceAccepted: true,
+    scenarioEvidence: evidence,
+  };
+}
 
 function exactRuntimeBundleFactory() {
   return Object.freeze({
@@ -158,14 +280,7 @@ function successfulCodexProofChild(args, expectedHead) {
   process.nextTick(() => {
     writeFileSync(lastMessagePath, JSON.stringify({
       verdict: 'PASS',
-      proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
-      evidence: {
-        runtimeSourceHead: expectedHead,
-        listeningDeckIframeIdentityPreserved: true,
-        discoveryIframeIdentityPreserved: true,
-        legacyRankingChanged: true,
-        consoleErrors: [],
-      },
+      proofScenario: MUSIC_RATING_SCENARIO,
       blockers: [],
     }));
     child.stdout.end('{"type":"turn.completed"}\n');
@@ -209,13 +324,28 @@ test('local integration writes a durable task and accepted receipt before launch
   assert.equal(readFileSync(receipt.taskPath, 'utf8').includes('Run the bounded real Windows ignition proof'), true);
 });
 
-test('browser proof PASS requires the exact scenario and complete positive evidence', () => {
+test('browser proof PASS trusts only exact machine-owned scenario evidence', () => {
   const task = packet();
-  const valid = validateBrowserProofVerdict(JSON.stringify({
+  const modelPass = JSON.stringify({
     verdict: 'PASS',
-    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    proofScenario: MUSIC_RATING_SCENARIO,
+    blockers: [],
+  });
+  const valid = validateBrowserProofVerdict(
+    modelPass,
+    task,
+    workerOwnedScenarioProof(task.exactHeadProof.expectedHead),
+  );
+  assert.equal(valid.ok, true);
+  assert.equal(valid.evidenceAuthority, 'worker-owned-playwright-runner');
+  assert.equal(valid.modelScenarioEvidenceTrusted, false);
+  assert.equal(valid.evidence.ratingInteraction.persistedRating, 2);
+
+  const forgedModelOnly = validateBrowserProofVerdict(JSON.stringify({
+    verdict: 'PASS',
+    proofScenario: MUSIC_RATING_SCENARIO,
     evidence: {
-      runtimeSourceHead: 'a'.repeat(40),
+      runtimeSourceHead: task.exactHeadProof.expectedHead,
       listeningDeckIframeIdentityPreserved: true,
       discoveryIframeIdentityPreserved: true,
       legacyRankingChanged: true,
@@ -223,18 +353,37 @@ test('browser proof PASS requires the exact scenario and complete positive evide
     },
     blockers: [],
   }), task);
-  assert.equal(valid.ok, true);
+  assert.equal(forgedModelOnly.ok, false);
+  assert.equal(forgedModelOnly.blocker, 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED');
+
   for (const invalid of [
-    '{"verdict":"FAIL","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{}}',
-    '{"verdict":"PASS","proofScenario":"WRONG","evidence":{}}',
-    '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":false,"legacyRankingChanged":true,"consoleErrors":[]}}',
-    '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":["boom"]}}',
-    '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":[]}}',
-    '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":[]},"blockers":["proof incomplete"]}',
-    `{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","evidence":{"runtimeSourceHead":"${'b'.repeat(40)}","listeningDeckIframeIdentityPreserved":true,"discoveryIframeIdentityPreserved":true,"legacyRankingChanged":true,"consoleErrors":[]},"blockers":[]}`,
+    '{"verdict":"FAIL","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","blockers":[]}',
+    '{"verdict":"PASS","proofScenario":"WRONG","blockers":[]}',
+    '{"verdict":"PASS","proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK","blockers":["proof incomplete"]}',
   ]) {
-    assert.equal(validateBrowserProofVerdict(invalid, task).ok, false);
+    assert.equal(
+      validateBrowserProofVerdict(
+        invalid,
+        task,
+        workerOwnedScenarioProof(task.exactHeadProof.expectedHead),
+      ).ok,
+      false,
+    );
   }
+
+  const navigatedEvidence = musicRatingScenarioEvidence({
+    listeningDeckIframe: {
+      ...musicRatingScenarioEvidence().listeningDeckIframe,
+      frameNavigationCount: 1,
+    },
+  });
+  const rejectedMachineEvidence = validateBrowserProofVerdict(
+    modelPass,
+    task,
+    workerOwnedScenarioProof(task.exactHeadProof.expectedHead, navigatedEvidence),
+  );
+  assert.equal(rejectedMachineEvidence.ok, false);
+  assert.equal(rejectedMachineEvidence.blocker, 'BROWSER_SCENARIO_LISTENING_IFRAME_REPLACED');
 });
 
 test('worker-owned browser runtime proof rejects a stale served head even if a model echoes the approved head', () => {
@@ -251,7 +400,7 @@ test('worker-owned browser runtime proof rejects a stale served head even if a m
       return {
         status: 1,
         stdout: JSON.stringify({
-          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
+          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v3',
           url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
           observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
           accepted: false,
@@ -288,16 +437,17 @@ test('worker-owned browser runtime proof rejects a stale served head even if a m
   assert.equal(verdict.blocker, 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH');
 });
 
-test('worker-owned browser runtime proof accepts only structured runner output at the approved head', () => {
+test('worker-owned browser runtime proof accepts schema v3 Playwright scenario evidence at the approved head', () => {
   const task = { ...packet(), repoRoot: 'C:\\stephan-os' };
   const expectedHead = task.exactHeadProof.expectedHead;
   const proof = runBrowserRuntimeExactHeadProof(task, {
     expectedSourceFingerprint: SOURCE_FINGERPRINT,
     expectedDistFingerprint: DIST_FINGERPRINT,
     expectedDistManifestPath: DIST_MANIFEST_PATH,
+    proofScenario: MUSIC_RATING_SCENARIO,
     spawnSyncFn(executable, args, options) {
       assert.equal(executable, process.execPath);
-      assert.deepEqual(args.slice(-12), [
+      assert.deepEqual(args.slice(-14), [
         '--url',
         'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
         '--expected-head',
@@ -308,27 +458,17 @@ test('worker-owned browser runtime proof accepts only structured runner output a
         DIST_FINGERPRINT,
         '--expected-dist-manifest',
         DIST_MANIFEST_PATH,
+        '--proof-scenario',
+        MUSIC_RATING_SCENARIO,
         '--no-artifacts',
         '--machine-json',
       ]);
       assert.equal(options.cwd, task.repoRoot);
       return {
         status: 0,
-        stdout: JSON.stringify({
-          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
-          url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-          observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-          accepted: true,
-          expectedHead,
-          runtimeSourceHead: expectedHead,
-          expectedHeadMatch: true,
-          expectedSourceFingerprint: SOURCE_FINGERPRINT,
-          runtimeSourceFingerprint: SOURCE_FINGERPRINT,
-          expectedSourceFingerprintMatch: true,
-          expectedDistFingerprint: DIST_FINGERPRINT,
-          runtimeDistFingerprint: DIST_FINGERPRINT,
-          expectedDistFingerprintMatch: true,
-        }),
+        stdout: JSON.stringify(browserRunnerPayload(expectedHead, {
+          proofScenario: MUSIC_RATING_SCENARIO,
+        })),
       };
     },
   });
@@ -336,6 +476,33 @@ test('worker-owned browser runtime proof accepts only structured runner output a
   assert.equal(proof.runtimeSourceHead, expectedHead);
   assert.equal(proof.runtimeSourceFingerprint, SOURCE_FINGERPRINT);
   assert.equal(proof.runtimeDistFingerprint, DIST_FINGERPRINT);
+  assert.equal(proof.proofScenario, MUSIC_RATING_SCENARIO);
+  assert.equal(proof.scenarioEvidenceAccepted, true);
+  assert.equal(proof.scenarioEvidence.collector, 'playwright-page-v1');
+});
+
+test('worker-owned browser runtime proof rejects accepted output with merge blockers', () => {
+  const task = { ...packet(), repoRoot: 'C:\\stephan-os' };
+  const expectedHead = task.exactHeadProof.expectedHead;
+  const proof = runBrowserRuntimeExactHeadProof(task, {
+    expectedSourceFingerprint: SOURCE_FINGERPRINT,
+    expectedDistFingerprint: DIST_FINGERPRINT,
+    expectedDistManifestPath: DIST_MANIFEST_PATH,
+    proofScenario: MUSIC_RATING_SCENARIO,
+    spawnSyncFn() {
+      return {
+        status: 0,
+        stdout: JSON.stringify(browserRunnerPayload(expectedHead, {
+          proofScenario: MUSIC_RATING_SCENARIO,
+          accepted: true,
+          mergeReady: false,
+          blocking: ['console error count 1'],
+        })),
+      };
+    },
+  });
+  assert.equal(proof.ok, false);
+  assert.equal(proof.blocker, 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED');
 });
 
 test('worker-owned browser runtime proof rejects an alternate URL even when its footer matches', () => {
@@ -349,10 +516,12 @@ test('worker-owned browser runtime proof rejects an alternate URL even when its 
       return {
         status: 0,
         stdout: JSON.stringify({
-          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
+          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v3',
           url: 'http://127.0.0.1:9999/alternate.html',
           observedUrl: 'http://127.0.0.1:9999/alternate.html',
           accepted: true,
+          mergeReady: true,
+          blocking: [],
           expectedHead,
           runtimeSourceHead: expectedHead,
           expectedHeadMatch: true,
@@ -397,10 +566,12 @@ test('worker persists terminal failure when the guarded Codex child cannot launc
         return {
           status: 0,
           stdout: JSON.stringify({
-            schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
+            schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v3',
             url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
             observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
             accepted: true,
+            mergeReady: true,
+            blocking: [],
             expectedHead,
             runtimeSourceHead: expectedHead,
             expectedHeadMatch: true,
@@ -662,7 +833,7 @@ test('worker-owned browser runtime proof rejects a fingerprint from a different 
       return {
         status: 1,
         stdout: JSON.stringify({
-          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
+          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v3',
           url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
           observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
           accepted: false,
@@ -694,7 +865,7 @@ test('worker-owned browser runtime proof rejects modified served assets even whe
       return {
         status: 1,
         stdout: JSON.stringify({
-          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
+          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v3',
           url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
           observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
           accepted: false,
@@ -770,21 +941,7 @@ test('worker freezes one source fingerprint across both browser proofs and snaps
         callOrder.push(`browser-${browserCalls}`);
         return {
           status: 0,
-          stdout: JSON.stringify({
-            schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
-            url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-            observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-            accepted: true,
-            expectedHead,
-            runtimeSourceHead: expectedHead,
-            expectedHeadMatch: true,
-            expectedSourceFingerprint: SOURCE_FINGERPRINT,
-            runtimeSourceFingerprint: SOURCE_FINGERPRINT,
-            expectedSourceFingerprintMatch: true,
-            expectedDistFingerprint: DIST_FINGERPRINT,
-            runtimeDistFingerprint: DIST_FINGERPRINT,
-            expectedDistFingerprintMatch: true,
-          }),
+          stdout: JSON.stringify(browserRunnerPayloadForArgs(args, expectedHead)),
         };
       }
       if (args[0] === 'status') {
@@ -828,21 +985,7 @@ test('an exact-head proof is blocked when canonical dist bytes change during exe
       if (executable === process.execPath) {
         return {
           status: 0,
-          stdout: JSON.stringify({
-            schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
-            url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-            observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-            accepted: true,
-            expectedHead,
-            runtimeSourceHead: expectedHead,
-            expectedHeadMatch: true,
-            expectedSourceFingerprint: SOURCE_FINGERPRINT,
-            runtimeSourceFingerprint: SOURCE_FINGERPRINT,
-            expectedSourceFingerprintMatch: true,
-            expectedDistFingerprint: DIST_FINGERPRINT,
-            runtimeDistFingerprint: DIST_FINGERPRINT,
-            expectedDistFingerprintMatch: true,
-          }),
+          stdout: JSON.stringify(browserRunnerPayloadForArgs(args, expectedHead)),
         };
       }
       if (args[0] === 'status') return { status: 0, stdout: '', stderr: '' };
@@ -881,21 +1024,7 @@ test('an otherwise passing exact-head proof is BLOCKED when the final status sna
         browserCalls += 1;
         return {
           status: 0,
-          stdout: JSON.stringify({
-            schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
-            url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-            observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-            accepted: true,
-            expectedHead,
-            runtimeSourceHead: expectedHead,
-            expectedHeadMatch: true,
-            expectedSourceFingerprint: SOURCE_FINGERPRINT,
-            runtimeSourceFingerprint: SOURCE_FINGERPRINT,
-            expectedSourceFingerprintMatch: true,
-            expectedDistFingerprint: DIST_FINGERPRINT,
-            runtimeDistFingerprint: DIST_FINGERPRINT,
-            expectedDistFingerprintMatch: true,
-          }),
+          stdout: JSON.stringify(browserRunnerPayloadForArgs(args, expectedHead)),
         };
       }
       if (args[0] === 'status') {
@@ -2105,15 +2234,18 @@ test('worker invocation keeps approval policy global and isolates the exec child
   assert.match(promptText, /git rev-parse HEAD/);
 });
 
-test('exact-head browser prompt requires one machine-readable evidence verdict', () => {
+test('exact-head browser prompt leaves scenario evidence to the worker-owned Playwright runner', () => {
   const promptText = buildGuardedCodexPrompt({
     ...packet(),
     repoRoot: 'C:\\repo',
   });
   assert.match(promptText, /Return only one JSON object/);
-  assert.match(promptText, /listeningDeckIframeIdentityPreserved/);
-  assert.match(promptText, /runtimeSourceHead/);
-  assert.match(promptText, new RegExp('a{40}'));
+  assert.match(promptText, /"proofScenario":"MUSIC_RATING_PRESERVES_PLAYBACK"/);
+  assert.match(promptText, /worker-owned Playwright runner/);
+  assert.match(promptText, /sole authority for scenario evidence/);
+  assert.match(promptText, /Do not self-attest scenario booleans or browser facts/);
+  assert.doesNotMatch(promptText, /listeningDeckIframeIdentityPreserved/);
+  assert.doesNotMatch(promptText, /runtimeSourceHead/);
   assert.match(promptText, /PASS is forbidden/);
 });
 
