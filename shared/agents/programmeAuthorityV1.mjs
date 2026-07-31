@@ -547,6 +547,16 @@ export function validateExecutionReceiptAgainstMutationLease(receipt, lease, opt
   if (receipt?.prNumber !== lease.prNumber) errors.push('pr-mismatch');
   if (receipt?.workerId !== lease.ownerId) errors.push('worker-owner-mismatch');
   if (receipt?.leaseKey !== lease.leaseId) errors.push('lease-correlation-mismatch');
+  const receiptHeartbeatExpiresAtMs = timestamp(receipt?.heartbeatExpiresAtUtc);
+  const nowMs = timestamp(options.nowUtc);
+  if (
+    ACTIVE_EXECUTION_RECEIPT_STATES.has(receipt?.state)
+    && receiptHeartbeatExpiresAtMs !== null
+    && nowMs !== null
+    && receiptHeartbeatExpiresAtMs <= nowMs
+  ) {
+    errors.push('receipt-heartbeat-expired');
+  }
   return freeze({
     valid: errors.length === 0,
     errors: unique(errors),
@@ -731,7 +741,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       proofState: existing?.proofState ?? 'UNKNOWN',
       approvalRequired: ownValueOr(existing, 'approvalRequired', false),
       operatorPriority: ownValueOr(existing, 'operatorPriority', false),
-      evidenceAt: nowUtc,
+      evidenceAt: ownValueOr(existing, 'evidenceAt', nowUtc),
       resultProofRefs: ownValueOr(existing, 'resultProofRefs', []),
       reusableCapabilityId: existing?.reusableCapabilityId ?? null,
       sharedLessonId: existing?.sharedLessonId ?? null,
@@ -982,10 +992,16 @@ function isAffirmativeLaneProgressProof(proof, lane, nowMs) {
   if (!everySuppliedAliasMatches([proof.issueNumber, proof.relatedIssue], number, lane.issueNumber)) return false;
   if (!everySuppliedAliasMatches([proof.prNumber, proof.relatedPr], number, lane.prNumber)) return false;
   if (!everySuppliedAliasMatches([proof.headSha, proof.sourceHead], sha, lane.headSha)) return false;
-  const repositories = [proof.repository, proof.repositoryFullName].filter((value) => text(value));
-  if (repositories.length && repositories.some((value) => text(value).toLowerCase() !== text(lane.repository).toLowerCase())) return false;
-  const branches = [proof.branch, proof.headBranch].filter((value) => text(value));
-  if (branches.length && branches.some((value) => text(value) !== lane.branch)) return false;
+  if (!everySuppliedAliasMatches(
+    [proof.repository, proof.repositoryFullName],
+    (value) => text(value).toLowerCase(),
+    text(lane.repository).toLowerCase(),
+  )) return false;
+  if (!everySuppliedAliasMatches(
+    [proof.branch, proof.headBranch],
+    text,
+    lane.branch,
+  )) return false;
   return true;
 }
 
