@@ -624,6 +624,20 @@ test('scheduler goals are constructed from durable records and the canonical lan
     assert.ok(malformedIdentity.blockers.includes('goal-record-0-issue-invalid'));
   }
 
+  for (const invalidPrAliases of [
+    { activePr: 1617, prNumber: 9999 },
+    { activePr: null, prNumber: 1617 },
+    { activePr: 1617, relatedPr: 'not-a-pr' },
+  ]) {
+    const malformedIdentity = buildSchedulerGoalsFromProgrammeSources({
+      nowUtc: NOW,
+      goalRecords: [goalRecord(invalidPrAliases)],
+    });
+    assert.equal(malformedIdentity.valid, false);
+    assert.equal(malformedIdentity.goals.length, 0);
+    assert.ok(malformedIdentity.blockers.includes('goal-record-0-pr-invalid'));
+  }
+
   const nonGoal = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     goalRecords: [{
@@ -856,6 +870,30 @@ test('active projection requires the conveyor to affirm the exact active lane', 
     },
   });
   assert.equal(exact.status, 'ACTIVE');
+
+  for (const invalidIssueAliases of [
+    { issueNumber: null },
+    { issueNumber: 'not-an-issue' },
+    { issueNumber: 1497, relatedIssue: '#1' },
+  ]) {
+    const malformedMission = buildAuthoritativeProgrammeProjection({
+      ...base,
+      criticalBacklog: {
+        decision: 'WAIT_ACTIVE_MISSION',
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+        selectedItem: { issueNumbers: [1497] },
+        activeMission: {
+          missionId: LANE_ID,
+          repository: REPOSITORY,
+          git: { branch: BRANCH },
+          pullRequest: { number: 1617 },
+          ...invalidIssueAliases,
+        },
+      },
+    });
+    assert.equal(malformedMission.status, 'HOLD');
+    assert.ok(malformedMission.blockers.includes('critical-backlog-active-lane-identity-mismatch'));
+  }
 
   const expiredReceiptProjection = buildAuthoritativeProgrammeProjection({
     ...base,
