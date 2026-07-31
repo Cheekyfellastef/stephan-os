@@ -123,17 +123,22 @@ function authorityHarness(options = {}) {
       }
       return record;
     },
-    resolveMainHead:async ({ branch }) => {
-      const record = typeof options.resolveMainHead === 'function'
-        ? await options.resolveMainHead({ branch })
+    resolveReadinessAuthoritySnapshot:async ({ reservationId, mainBranch }) => {
+      const record = typeof options.resolveReadinessAuthoritySnapshot === 'function'
+        ? await options.resolveReadinessAuthoritySnapshot({ reservationId, mainBranch })
         : {
             authenticated:true,
             immutable:true,
-            branch:'main',
-            headSha:options.mainHeadSha ?? SHA_C,
+            reservation:reservations.get(reservationId) ?? null,
+            main:{
+              authenticated:true,
+              immutable:true,
+              branch:'main',
+              headSha:options.mainHeadSha ?? SHA_C,
+            },
           };
-      if (typeof options.onResolveMainHead === 'function') {
-        await options.onResolveMainHead({ branch, record });
+      if (typeof options.onResolveReadinessAuthoritySnapshot === 'function') {
+        await options.onResolveReadinessAuthoritySnapshot({ reservationId, mainBranch, record });
       }
       return record;
     },
@@ -588,7 +593,7 @@ test('ready-for-integration evidence is authenticated, exact-head bound and time
   let finalNowUtc = '2026-07-29T14:30:00Z';
   const staleAfterMain = authorityHarness({
     nowMs:() => Date.parse(finalNowUtc),
-    onResolveMainHead:() => { finalNowUtc = '2026-07-29T14:40:00Z'; },
+    onResolveReadinessAuthoritySnapshot:() => { finalNowUtc = '2026-07-29T14:40:00Z'; },
   });
   const staleAfterMainLease = await issueAuthenticatedLease(staleAfterMain);
   await assert.rejects(() => staleAfterMain.api.createReadyReceipt(staleAfterMainLease.reservationId, {
@@ -597,6 +602,21 @@ test('ready-for-integration evidence is authenticated, exact-head bound and time
     testRefs:[staleAfterMain.addEvidence('TEST', { ref:'proof/test-stale-main.json' })],
     proofRefs:[staleAfterMain.addEvidence('PROOF', { ref:'proof/proof-stale-main.json' })],
   }), /trusted observation clock/);
+
+  let expiryNowUtc = '2026-07-29T14:30:00Z';
+  const expiringDuringSnapshot = authorityHarness({
+    nowMs:() => Date.parse(expiryNowUtc),
+    onResolveReadinessAuthoritySnapshot:() => { expiryNowUtc = '2026-07-29T14:30:45Z'; },
+  });
+  const snapshotLease = await issueAuthenticatedLease(expiringDuringSnapshot);
+  expiringDuringSnapshot.updateReservation(snapshotLease.reservationId, {
+    expiresAt:'2026-07-29T14:30:30Z',
+  });
+  await assert.rejects(() => expiringDuringSnapshot.api.createReadyReceipt(snapshotLease.reservationId, {
+    observedAt:'2026-07-29T14:30:45Z',
+    testRefs:[expiringDuringSnapshot.addEvidence('TEST', { ref:'proof/test-expiring-snapshot.json' })],
+    proofRefs:[expiringDuringSnapshot.addEvidence('PROOF', { ref:'proof/proof-expiring-snapshot.json' })],
+  }), /authenticated active exact-head construction lease/);
 });
 
 test('candidate admission rejects terminal states', () => {

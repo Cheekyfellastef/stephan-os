@@ -464,18 +464,12 @@ async function exactHeadEvidenceRefs(values, lane, name, evidenceKind, resolveVe
   return unique(refs);
 }
 
-async function exactHeadLaneFromReservation(
-  reservationRef,
-  resolveConstructionLaneReservation,
-  trustedNowMs,
-) {
+function exactHeadLaneFromResolvedReservation(reservationRef, resolved, nowMs) {
   const ref = text(reservationRef);
   if (!ref || !SAFE_ID.test(ref)) throw new TypeError('reservationRef must be an immutable construction-lane reference');
-  const resolved = await resolveConstructionLaneReservation({ reservationId:ref });
   const lane = normalizeLane(resolved?.lane);
   const issuedAtMs = timestamp(resolved?.issuedAt);
   const expiresAtMs = timestamp(resolved?.expiresAt);
-  const nowMs = Number(trustedNowMs());
   if (resolved?.authenticated !== true
     || resolved?.active !== true
     || resolved?.immutable !== true
@@ -496,12 +490,23 @@ async function exactHeadLaneFromReservation(
   return lane;
 }
 
+async function exactHeadLaneFromReservation(
+  reservationRef,
+  resolveConstructionLaneReservation,
+  trustedNowMs,
+) {
+  const ref = text(reservationRef);
+  if (!ref || !SAFE_ID.test(ref)) throw new TypeError('reservationRef must be an immutable construction-lane reference');
+  const resolved = await resolveConstructionLaneReservation({ reservationId:ref });
+  return exactHeadLaneFromResolvedReservation(ref, resolved, Number(trustedNowMs()));
+}
+
 async function createReadyForIntegrationReceipt(
   reservationRef,
   evidence,
   resolveConstructionLaneReservation,
   resolveVerifierEvidence,
-  resolveMainHead,
+  resolveReadinessAuthoritySnapshot,
   trustedNowMs,
 ) {
   const lane = await exactHeadLaneFromReservation(
@@ -511,15 +516,17 @@ async function createReadyForIntegrationReceipt(
   );
   const testRefs = await exactHeadEvidenceRefs(evidence.testRefs, lane, 'testRefs', 'TEST', resolveVerifierEvidence);
   const proofRefs = await exactHeadEvidenceRefs(evidence.proofRefs, lane, 'proofRefs', 'PROOF', resolveVerifierEvidence);
-  const currentLane = await exactHeadLaneFromReservation(
-    reservationRef,
-    resolveConstructionLaneReservation,
-    trustedNowMs,
-  );
+  const ref = text(reservationRef);
+  const snapshot = await resolveReadinessAuthoritySnapshot({ reservationId:ref, mainBranch:'main' });
+  if (snapshot?.authenticated !== true || snapshot?.immutable !== true) {
+    throw new TypeError('readiness authority must resolve from one authenticated immutable snapshot');
+  }
+  const nowMs = Number(trustedNowMs());
+  const currentLane = exactHeadLaneFromResolvedReservation(ref, snapshot.reservation, nowMs);
   if (JSON.stringify(currentLane) !== JSON.stringify(lane)) {
     throw new TypeError('construction lease changed while readiness evidence was resolving');
   }
-  const main = await resolveMainHead({ branch:'main' });
+  const main = snapshot.main;
   const currentMainSha = sha(main?.headSha);
   if (main?.authenticated !== true
     || main?.immutable !== true
@@ -529,7 +536,6 @@ async function createReadyForIntegrationReceipt(
   }
   const observedAt = text(evidence.observedAt);
   const observedAtMs = timestamp(observedAt);
-  const nowMs = Number(trustedNowMs());
   if (observedAtMs === null
     || !Number.isFinite(nowMs)
     || Math.abs(observedAtMs - nowMs) > MAX_ISSUANCE_CLOCK_SKEW_MS) {
@@ -566,7 +572,10 @@ export function createBoundedParallelConstructionAuthority(adapters = {}) {
     'resolveConstructionLaneReservation',
   );
   const resolveVerifierEvidence = requiredFunction(adapters.resolveVerifierEvidence, 'resolveVerifierEvidence');
-  const resolveMainHead = requiredFunction(adapters.resolveMainHead, 'resolveMainHead');
+  const resolveReadinessAuthoritySnapshot = requiredFunction(
+    adapters.resolveReadinessAuthoritySnapshot,
+    'resolveReadinessAuthoritySnapshot',
+  );
   const trustedNowMs = requiredFunction(adapters.nowMs, 'nowMs');
   const authorityToken = freeze({});
   return freeze({
@@ -588,7 +597,7 @@ export function createBoundedParallelConstructionAuthority(adapters = {}) {
         evidence,
         resolveConstructionLaneReservation,
         resolveVerifierEvidence,
-        resolveMainHead,
+        resolveReadinessAuthoritySnapshot,
         trustedNowMs,
       );
     },
