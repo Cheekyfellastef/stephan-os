@@ -291,6 +291,17 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
     assert.equal(wrongKindReleaseEnvelope.ok, false);
     assert.equal(wrongKindReleaseEnvelope.reason, 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CONFLICT');
     await writeFile(releaseMarkerPath, `${JSON.stringify(persistedReleaseMarker, null, 2)}\n`, 'utf8');
+    for (const releasedAtUtc of ['2026-07-30T09:00:00.000Z', '2099-01-01T00:00:00.000Z']) {
+      await writeFile(releaseMarkerPath, `${JSON.stringify({
+        ...persistedReleaseMarker,
+        timestampUtc: releasedAtUtc,
+        releasedAtUtc,
+      }, null, 2)}\n`, 'utf8');
+      const impossibleReleaseEnvelope = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+      assert.equal(impossibleReleaseEnvelope.ok, false);
+      assert.equal(impossibleReleaseEnvelope.reason, 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CONFLICT');
+    }
+    await writeFile(releaseMarkerPath, `${JSON.stringify(persistedReleaseMarker, null, 2)}\n`, 'utf8');
     const releasedButPresent = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
     assert.equal(releasedButPresent.ok, false);
     assert.equal(releasedButPresent.present, true);
@@ -882,6 +893,8 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
     issueNumber: 1497,
     prNumber: 1617,
     headSha: HEAD,
+    repository: REPOSITORY,
+    branch: BRANCH,
   };
   const failed = buildAffirmativeSchedulerProofSources({
     records: { proofRecords: [proof] },
@@ -903,8 +916,32 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
     records: { proofRecords: [{ ...proof, status: 'PASS' }] },
   }, null);
   assert.deepEqual(passed.proofHeadShas, [HEAD]);
-  assert.deepEqual(passed.proofReceipts, [{ issue: 1497, activePr: 1617, headSha: HEAD }]);
+  assert.deepEqual(passed.proofReceipts, [{
+    issue: 1497,
+    activePr: 1617,
+    headSha: HEAD,
+    repository: REPOSITORY.toLowerCase(),
+    branch: BRANCH,
+  }]);
   assert.deepEqual(passed.proofRefs, ['proof/failed.json']);
+
+  for (const incompleteOrConflictingIdentity of [
+    { repository: undefined },
+    { branch: undefined },
+    { repositoryFullName: 'other/repository' },
+    { headBranch: 'feat/other-branch' },
+  ]) {
+    const held = buildAffirmativeSchedulerProofSources({
+      records: {
+        proofRecords: [{
+          ...proof,
+          status: 'PASS',
+          ...incompleteOrConflictingIdentity,
+        }],
+      },
+    }, null);
+    assert.deepEqual(held.proofReceipts, []);
+  }
 
   const conflictingAliases = buildAffirmativeSchedulerProofSources({
     records: {
