@@ -511,6 +511,33 @@ test('same invocation starts a new receipt chain when repair publication changes
   assert.equal(next.history[0].predecessorCycleId, null);
 });
 
+test('same invocation fails closed when an exact head is revisited', async () => {
+  const admittedA = evaluateGuardedRepairLoop(snapshot());
+  const observingA = snapshot({
+    activeRepairOrders:[admittedA.repairOrder],
+    receipts:[admittedA.nextReceipt],
+  });
+  const headB = 'c'.repeat(40);
+  const snapshotB = snapshot({
+    headSha:headB,
+    reviewHeadSha:headB,
+  });
+  const admittedB = evaluateGuardedRepairLoop(snapshotB);
+  const observingB = snapshot({
+    headSha:headB,
+    reviewHeadSha:headB,
+    activeRepairOrders:[admittedB.repairOrder],
+    receipts:[admittedB.nextReceipt],
+  });
+  const h = harness([observingA, observingB, observingA], { maxIterations:3 });
+  const blocked = await runGuardedContinuousRepairCycle(h.options);
+  assert.equal(blocked.status, 'BLOCKED_HEAD_REVISITED');
+  assert.equal(blocked.receipt.status, 'blocked-head-revisited');
+  assert.match(blocked.receipt.reason, /exact head was revisited/i);
+  assert.equal(blocked.receipt.predecessorCycleId, null);
+  assert.equal(h.calls.dispatch.length, 0);
+});
+
 test('post-merge verification requests exact-head CI before runtime proof', async () => {
   const repairOrder = order();
   const h = harness([snapshot({
