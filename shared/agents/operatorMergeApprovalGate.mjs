@@ -566,7 +566,10 @@ export function validateProtectedApprovalReceipt(receipt = {}, options = {}) {
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
     blockers.push('approval-receipt-invalid');
   }
-  if (receipt?.schemaVersion !== 'stephanos.protected-operator-approval.v1') {
+  if (![
+    'stephanos.protected-operator-approval.v1',
+    'stephanos.protected-operator-approval.v2',
+  ].includes(receipt?.schemaVersion)) {
     blockers.push('approval-schema-mismatch');
   }
   if (receipt?.kind !== 'stephanos.protected-operator-approval') {
@@ -606,6 +609,10 @@ export function validateProtectedApprovalReceipt(receipt = {}, options = {}) {
     blockers.push('approval-execution-authority-mismatch');
   }
   if (receipt?.reusableAcrossHeads !== false) blockers.push('approval-reusable-across-heads');
+  if (receipt?.schemaVersion === 'stephanos.protected-operator-approval.v2') {
+    if (!SHA_PATTERN.test(text(receipt?.baseSha).toLowerCase())) blockers.push('approval-base-invalid');
+    if (receipt?.reusableAcrossBases !== false) blockers.push('approval-reusable-across-bases');
+  }
   return Object.freeze({
     valid: blockers.length === 0,
     blockers: Object.freeze(unique(blockers)),
