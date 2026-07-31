@@ -58,11 +58,18 @@ export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth
   const failingChecks = asList(checksPayload?.check_runs?.filter((run) => ['failure', 'failed', 'timed_out', 'cancelled', 'action_required'].includes(asText(run?.conclusion || run?.status, '').toLowerCase())).map((run) => run?.name));
   const checksStatus = normalizeChecksState(checkRuns);
   const changedFiles = asList(files.map((file) => file?.filename));
+  const baseRepository = `${owner}/${repo}`;
+  const headRepository = asText(pr.head?.repo?.full_name, '');
   const missingProof = [];
   if (checksStatus !== 'passed') missingProof.push('checks');
   const mergeReadiness = pr.merged ? 'already-merged' : (checksStatus === 'failed' ? 'needs-amendment' : (checksStatus === 'passed' ? 'merge-candidate' : 'needs-proof'));
   return {
-    status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo, repository: `${owner}/${repo}`, prNumber: Number(pr.number || prNumber),
+    status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo,
+    repository: headRepository,
+    baseRepository,
+    headRepository,
+    headRepositoryMatchesBase: headRepository.toLowerCase() === baseRepository.toLowerCase(),
+    prNumber: Number(pr.number || prNumber),
     prUrl: asText(pr.html_url, ''), prTitle: asText(pr.title, ''), prState: asText(pr.state, 'unknown'), merged: pr.merged === true,
     headSha: asText(pr.head?.sha, ''), headBranch: asText(pr.head?.ref, ''), baseBranch: asText(pr.base?.ref, ''), baseSha: asText(pr.base?.sha, ''),
     mergedAt: asText(pr.merged_at, ''), closedAt: asText(pr.closed_at, ''), mergeCommitSha: asText(pr.merge_commit_sha, ''),
