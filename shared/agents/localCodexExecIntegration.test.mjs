@@ -189,6 +189,7 @@ function musicRatingScenarioEvidence(overrides = {}, sourceHead = 'a'.repeat(40)
 
 function browserRunnerPayload(expectedHead, {
   proofScenario = '',
+  proofTarget = 'PULL_REQUEST_HEAD',
   ...overrides
 } = {}) {
   const scenarioRequested = proofScenario === MUSIC_RATING_SCENARIO;
@@ -209,6 +210,7 @@ function browserRunnerPayload(expectedHead, {
     runtimeDistFingerprint: DIST_FINGERPRINT,
     expectedDistFingerprintMatch: true,
     proofScenario,
+    proofTarget,
     scenarioEvidenceAccepted: scenarioRequested ? true : null,
     scenarioEvidence: scenarioRequested ? musicRatingScenarioEvidence({}, expectedHead) : null,
     ...overrides,
@@ -218,7 +220,9 @@ function browserRunnerPayload(expectedHead, {
 function browserRunnerPayloadForArgs(args, expectedHead, overrides = {}) {
   const scenarioIndex = args.indexOf('--proof-scenario');
   const proofScenario = scenarioIndex >= 0 ? String(args[scenarioIndex + 1] || '') : '';
-  return browserRunnerPayload(expectedHead, { proofScenario, ...overrides });
+  const targetIndex = args.indexOf('--proof-target');
+  const proofTarget = targetIndex >= 0 ? String(args[targetIndex + 1] || '') : '';
+  return browserRunnerPayload(expectedHead, { proofScenario, proofTarget, ...overrides });
 }
 
 function workerOwnedScenarioProof(
@@ -500,11 +504,13 @@ test('worker-owned browser runtime proof accepts schema v3 Playwright scenario e
     proofScenario: MUSIC_RATING_SCENARIO,
     spawnSyncFn(executable, args, options) {
       assert.equal(executable, process.execPath);
-      assert.deepEqual(args.slice(-14), [
+      assert.deepEqual(args.slice(-16), [
         '--url',
         'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
         '--expected-head',
         expectedHead,
+        '--proof-target',
+        'PULL_REQUEST_HEAD',
         '--expected-source-fingerprint',
         SOURCE_FINGERPRINT,
         '--expected-dist-fingerprint',
@@ -530,8 +536,49 @@ test('worker-owned browser runtime proof accepts schema v3 Playwright scenario e
   assert.equal(proof.runtimeSourceFingerprint, SOURCE_FINGERPRINT);
   assert.equal(proof.runtimeDistFingerprint, DIST_FINGERPRINT);
   assert.equal(proof.proofScenario, MUSIC_RATING_SCENARIO);
+  assert.equal(proof.proofTarget, 'PULL_REQUEST_HEAD');
   assert.equal(proof.scenarioEvidenceAccepted, true);
   assert.equal(proof.scenarioEvidence.collector, 'playwright-page-v1');
+});
+
+test('worker-owned merged-main proof propagates its target and rejects a downgraded runner payload', () => {
+  const baseTask = packet();
+  const task = {
+    ...baseTask,
+    repoRoot: 'C:\\stephan-os',
+    exactHeadProof: {
+      ...baseTask.exactHeadProof,
+      proofTarget: 'MERGED_MAIN',
+      pullRequestHead: 'b'.repeat(40),
+      mergeCommitHead: 'c'.repeat(40),
+      githubMainHead: baseTask.exactHeadProof.expectedHead,
+      mergeCommitIncluded: true,
+    },
+  };
+  const proof = runBrowserRuntimeExactHeadProof(task, {
+    expectedSourceFingerprint: SOURCE_FINGERPRINT,
+    expectedDistFingerprint: DIST_FINGERPRINT,
+    expectedDistManifestPath: DIST_MANIFEST_PATH,
+    proofScenario: MUSIC_RATING_SCENARIO,
+    spawnSyncFn(executable, args) {
+      assert.equal(executable, process.execPath);
+      assert.deepEqual(args.slice(args.indexOf('--proof-target'), args.indexOf('--proof-target') + 2), [
+        '--proof-target',
+        'MERGED_MAIN',
+      ]);
+      return {
+        status: 0,
+        stdout: JSON.stringify(browserRunnerPayload(task.exactHeadProof.expectedHead, {
+          proofScenario: MUSIC_RATING_SCENARIO,
+          proofTarget: 'PULL_REQUEST_HEAD',
+        })),
+      };
+    },
+  });
+  assert.equal(proof.ok, false);
+  assert.equal(proof.blocker, 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED');
+  assert.equal(proof.proofTarget, 'MERGED_MAIN');
+  assert.equal(proof.payloadProofTarget, 'PULL_REQUEST_HEAD');
 });
 
 test('worker-owned browser runtime proof rejects accepted output with merge blockers', () => {
@@ -618,23 +665,7 @@ test('worker persists terminal failure when the guarded Codex child cannot launc
       if (executable === process.execPath) {
         return {
           status: 0,
-          stdout: JSON.stringify({
-            schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v3',
-            url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-            observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
-            accepted: true,
-            mergeReady: true,
-            blocking: [],
-            expectedHead,
-            runtimeSourceHead: expectedHead,
-            expectedHeadMatch: true,
-            expectedSourceFingerprint: SOURCE_FINGERPRINT,
-            runtimeSourceFingerprint: SOURCE_FINGERPRINT,
-            expectedSourceFingerprintMatch: true,
-            expectedDistFingerprint: DIST_FINGERPRINT,
-            runtimeDistFingerprint: DIST_FINGERPRINT,
-            expectedDistFingerprintMatch: true,
-          }),
+          stdout: JSON.stringify(browserRunnerPayloadForArgs(args, expectedHead)),
         };
       }
       if (executable === 'git' && args[0] === 'status') {

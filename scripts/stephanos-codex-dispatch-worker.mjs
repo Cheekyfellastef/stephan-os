@@ -1339,7 +1339,10 @@ export function validateBrowserProofVerdict(lastMessage, task = {}, browserRunti
   }
   const scenarioEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
     browserRuntimeProof.scenarioEvidence,
-    { expectedHead },
+    {
+      expectedHead,
+      proofTarget: String(task.exactHeadProof.proofTarget || 'PULL_REQUEST_HEAD'),
+    },
   );
   if (!scenarioEvaluation.accepted) {
     return Object.freeze({
@@ -1386,9 +1389,21 @@ export function runBrowserRuntimeExactHeadProof(task, {
   if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
   const expectedHead = String(task.exactHeadProof.expectedHead || '').trim().toLowerCase();
   const taskProofScenario = String(task.exactHeadProof.proofScenario || '').trim();
+  const proofTarget = String(task.exactHeadProof.proofTarget || 'PULL_REQUEST_HEAD').trim();
   const proofScenario = String(suppliedProofScenario || '').trim();
   if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
     return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID' });
+  }
+  if (
+    !['PULL_REQUEST_HEAD', 'MERGED_MAIN'].includes(proofTarget)
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_TARGET_INVALID',
+      expectedHead,
+      proofTarget,
+    });
   }
   if (
     proofScenario
@@ -1443,6 +1458,8 @@ export function runBrowserRuntimeExactHeadProof(task, {
       CANONICAL_BROWSER_PROOF_URL,
       '--expected-head',
       expectedHead,
+      '--proof-target',
+      proofTarget,
       '--expected-source-fingerprint',
       expectedSourceFingerprint,
       '--expected-dist-fingerprint',
@@ -1481,9 +1498,10 @@ export function runBrowserRuntimeExactHeadProof(task, {
   const runtimeSourceFingerprint = String(payload?.runtimeSourceFingerprint || '').trim().toLowerCase();
   const runtimeDistFingerprint = String(payload?.runtimeDistFingerprint || '').trim().toLowerCase();
   const payloadProofScenario = String(payload?.proofScenario || '').trim();
+  const payloadProofTarget = String(payload?.proofTarget || '').trim();
   const scenarioEvidence = payload?.scenarioEvidence || null;
   const scenarioEvaluation = proofScenario
-    ? evaluateMusicRatingPreservesPlaybackScenarioEvidence(scenarioEvidence, { expectedHead })
+    ? evaluateMusicRatingPreservesPlaybackScenarioEvidence(scenarioEvidence, { expectedHead, proofTarget })
     : null;
   if (runtimeSourceHead && runtimeSourceHead !== expectedHead) {
     return Object.freeze({
@@ -1555,6 +1573,7 @@ export function runBrowserRuntimeExactHeadProof(task, {
     || payload?.expectedDistFingerprint !== expectedDistFingerprint
     || payload?.expectedDistFingerprintMatch !== true
     || runtimeDistFingerprint !== expectedDistFingerprint
+    || payloadProofTarget !== proofTarget
     || (proofScenario && (
       payloadProofScenario !== proofScenario
       || payload?.scenarioEvidenceAccepted !== true
@@ -1575,6 +1594,8 @@ export function runBrowserRuntimeExactHeadProof(task, {
       runtimeDistFingerprint,
       proofScenario,
       payloadProofScenario,
+      proofTarget,
+      payloadProofTarget,
       scenarioEvidenceAccepted: payload?.scenarioEvidenceAccepted === true,
       scenarioEvidenceBlockers: scenarioEvaluation?.blocking || [],
     });
@@ -1595,6 +1616,7 @@ export function runBrowserRuntimeExactHeadProof(task, {
     mergeReady: true,
     blocking: Object.freeze([]),
     proofScenario,
+    proofTarget,
     scenarioEvidenceAccepted: proofScenario ? true : null,
     scenarioEvidence: proofScenario ? scenarioEvidence : null,
   });
