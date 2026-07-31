@@ -457,12 +457,58 @@ test('rehydrated history requires canonical cycle IDs and an unbroken predecesso
   const statusBlocked = await runGuardedContinuousRepairCycle(tamperedStatus.options);
   assert.equal(statusBlocked.status, 'BLOCKED_HISTORY_INVALID');
 
-  const otherHead = harness([snapshot({ headSha:'c'.repeat(40) })], {
+  const otherHead = harness([snapshot({
+    headSha:'c'.repeat(40),
+    reviewHeadSha:'c'.repeat(40),
+  })], {
     attemptId:'attempt-5',
     history:prior.history,
   });
   const headBlocked = await runGuardedContinuousRepairCycle(otherHead.options);
-  assert.equal(headBlocked.status, 'BLOCKED_HISTORY_INVALID');
+  assert.equal(headBlocked.status, 'WAITING_FOR_REPAIR');
+  assert.equal(headBlocked.history[0].predecessorCycleId, null);
+});
+
+test('restart partitions prior-head history before admitting the repaired exact head', async () => {
+  const first = harness([snapshot()]);
+  const priorHead = await runGuardedContinuousRepairCycle(first.options);
+  const nextHead = 'c'.repeat(40);
+  const resumed = harness([snapshot({
+    headSha:nextHead,
+    reviewHeadSha:nextHead,
+  })], {
+    attemptId:'attempt-2',
+    history:priorHead.history,
+    maxRepairsPerHead:1,
+  });
+  const next = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(next.status, 'WAITING_FOR_REPAIR');
+  assert.equal(next.history.length, 2);
+  assert.equal(next.history[0].headSha, nextHead);
+  assert.equal(next.history[0].predecessorCycleId, null);
+  assert.equal(resumed.calls.dispatch.length, 1);
+});
+
+test('same invocation starts a new receipt chain when repair publication changes the head', async () => {
+  const admitted = evaluateGuardedRepairLoop(snapshot());
+  const observingOldHead = snapshot({
+    activeRepairOrders:[admitted.repairOrder],
+    receipts:[admitted.nextReceipt],
+  });
+  const nextHead = 'c'.repeat(40);
+  const repairedHead = snapshot({
+    headSha:nextHead,
+    reviewHeadSha:nextHead,
+  });
+  const h = harness([observingOldHead, repairedHead], { maxIterations:2 });
+  const next = await runGuardedContinuousRepairCycle(h.options);
+  assert.equal(next.status, 'WAITING_FOR_REPAIR');
+  assert.deepEqual(next.history.map(({ status }) => status), [
+    'repair-attempt-recorded',
+    'repair-dispatched',
+  ]);
+  assert.equal(next.history[0].headSha, nextHead);
+  assert.equal(next.history[0].predecessorCycleId, null);
 });
 
 test('post-merge verification requests exact-head CI before runtime proof', async () => {

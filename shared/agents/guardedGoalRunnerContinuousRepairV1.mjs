@@ -138,6 +138,30 @@ function historyReceiptMatchesLane(entry, snapshot) {
   );
 }
 
+function historyEntryInLaneHeadScope(entry, snapshot) {
+  return Boolean(
+    entry
+    && text(entry.repository)?.toLowerCase() === text(snapshot.repository)?.toLowerCase()
+    && entry.issueNumber === snapshot.issueNumber
+    && entry.prNumber === snapshot.prNumber
+    && text(entry.branch) === text(snapshot.branch)
+    && sha(entry.headSha) === sha(snapshot.headSha)
+  );
+}
+
+function historyForLaneHead(history, snapshot) {
+  return history.filter((entry) => historyEntryInLaneHeadScope(entry, snapshot));
+}
+
+function sameLaneIdentity(left, right) {
+  return Boolean(
+    text(left?.repository)?.toLowerCase() === text(right?.repository)?.toLowerCase()
+    && left?.issueNumber === right?.issueNumber
+    && left?.prNumber === right?.prNumber
+    && text(left?.branch) === text(right?.branch)
+  );
+}
+
 function historyValid(history, snapshot) {
   let predecessorCycleId = null;
   const cycleIds = new Set();
@@ -452,7 +476,8 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
       ? result('BLOCKED_HISTORY_UNAVAILABLE', blocked, [blocked])
       : result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, []);
   }
-  if (!historyValid(provisionalHistory, snapshot)) {
+  const scopedHistory = historyForLaneHead(provisionalHistory, snapshot);
+  if (!historyValid(scopedHistory, snapshot)) {
     const verdict = { verdict:'abort-history-invalid', nextAction:'STOP_AND_SURFACE_BLOCKER' };
     const blocked = cycleReceipt(snapshot, verdict, 1, 'blocked-history-invalid', {
       attemptId,
@@ -466,7 +491,7 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
       : result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, []);
   }
 
-  const history = provisionalHistory;
+  const history = [...scopedHistory];
   const terminalization = pendingTerminalization(history, snapshot);
   if (terminalization) {
     const terminalPersistence = await persistOutcome(
@@ -659,6 +684,7 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
   let lastVerdict = { verdict:'abort-missing-proof', nextAction:'STOP_AND_SURFACE_BLOCKER' };
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
     if (iteration > 1) {
+      const previousSnapshot = snapshot;
       snapshot = await loadSnapshot({
         iteration,
         previousReceipt:history.at(-1) ?? null,
@@ -674,6 +700,41 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
         if (!persisted.ok) return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, history);
         history.push(blocked);
         return result('BLOCKED', blocked, history);
+      }
+      if (!sameLaneIdentity(previousSnapshot, snapshot)) {
+        const blocked = cycleReceipt(snapshot, lastVerdict, iteration, 'blocked', {
+          attemptId,
+          previousReceipt:null,
+        }, {
+          reason:'The canonical repair lane identity changed during one continuous cycle.',
+        });
+        const persisted = await persistOutcome(persistCycleReceipt, blocked);
+        return persisted.ok
+          ? result('BLOCKED', blocked, [blocked])
+          : result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, []);
+      }
+      if (sha(previousSnapshot.headSha) !== sha(snapshot.headSha)) {
+        const nextHeadHistory = historyForLaneHead(provisionalHistory, snapshot);
+        if (!historyValid(nextHeadHistory, snapshot)) {
+          const blocked = cycleReceipt(
+            snapshot,
+            { verdict:'abort-history-invalid', nextAction:'STOP_AND_SURFACE_BLOCKER' },
+            iteration,
+            'blocked-history-invalid',
+            {
+              attemptId,
+              previousReceipt:null,
+            },
+            {
+              reason:'Durable cycle history for the newly observed exact head is malformed.',
+            },
+          );
+          const persisted = await persistOutcome(persistCycleReceipt, blocked);
+          return persisted.ok
+            ? result('BLOCKED_HISTORY_INVALID', blocked, [blocked])
+            : result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, []);
+        }
+        history.splice(0, history.length, ...nextHeadHistory);
       }
     }
     lastSnapshot = snapshot;
