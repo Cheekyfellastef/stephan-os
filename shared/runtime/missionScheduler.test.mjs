@@ -163,6 +163,18 @@ test('merge readiness is restricted to implemented goals', () => {
   const implemented = buildMissionScheduler({ now:NOW, proofReceipts:[binding(2,1601)], goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,repository:REPOSITORY,branch:BRANCH,headSha:PROOF_SHA,operatorApprovalReceipt:binding(2,1601)})] });
   assert.equal(implemented.portfolio[0].lifecycle,'MERGE_READY');
 
+  for (const mismatchedApproval of [
+    binding(2,1601,PROOF_SHA, { repository:'other/repository' }),
+    binding(2,1601,PROOF_SHA, { branch:'feat/other-lane' }),
+  ]) {
+    const held = buildMissionScheduler({
+      now:NOW,
+      proofReceipts:[binding(2,1601)],
+      goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,repository:REPOSITORY,branch:BRANCH,headSha:PROOF_SHA,operatorApprovalReceipt:mismatchedApproval})],
+    });
+    assert.equal(held.portfolio[0].lifecycle,'APPROVAL_REQUIRED');
+  }
+
   for (const mismatchedProof of [
     binding(2,1601,PROOF_SHA, { repository:'other/repository' }),
   ]) {
