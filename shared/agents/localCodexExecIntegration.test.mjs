@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import {
@@ -32,6 +33,7 @@ import {
   evaluateWorkerSourceSafety,
   parseCodexJsonEvents,
   parseGitStatusPaths,
+  materializeExactHeadBuildTree,
   prepareExactHeadRuntimeBundle,
   resolveCodexExecInvocation,
   runBrowserRuntimeExactHeadProof,
@@ -98,6 +100,13 @@ const TEST_PROCESS_IDENTITY = Object.freeze({
 });
 const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
 const MUSIC_RATING_SCENARIO = 'MUSIC_RATING_PRESERVES_PLAYBACK';
+
+function testGitBlobSha(bytes) {
+  return createHash('sha1')
+    .update(`blob ${bytes.length}\0`, 'utf8')
+    .update(bytes)
+    .digest('hex');
+}
 
 function musicRatingScenarioEvidence(overrides = {}, sourceHead = 'a'.repeat(40)) {
   return {
@@ -676,6 +685,7 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
   const calls = [];
   const manifestRoots = [];
   let buildRoot = '';
+  let approvedDistRestoredBeforeWorktreeRemoval = false;
   try {
     const prepared = prepareExactHeadRuntimeBundle(repoRoot, {
       expectedHead,
@@ -685,17 +695,23 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
         git_object_directory: '/hostile/objects',
       },
       sourceFingerprintFactory: () => SOURCE_FINGERPRINT,
+      treeMaterializer({ buildRoot: materializedRoot }) {
+        assert.equal(materializedRoot, buildRoot);
+        mkdirSync(join(materializedRoot, 'stephanos-ui'), { recursive: true });
+        writeFileSync(join(materializedRoot, 'stephanos-ui', 'package.json'), '{}\n');
+        writeFileSync(join(materializedRoot, 'stephanos-ui', 'package-lock.json'), '{}\n');
+        mkdirSync(join(materializedRoot, 'apps', 'stephanos', 'dist'), { recursive: true });
+        writeFileSync(join(materializedRoot, 'apps', 'stephanos', 'dist', 'index.html'), '<!-- approved tracked dist -->\n');
+        return { ok: true };
+      },
       spawnSyncFn(executable, args, options) {
         calls.push({ executable, args, options });
         if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === repoRoot) {
           return { status: 0, stdout: `${expectedTree}\n`, stderr: '' };
         }
         if (executable === 'git' && args[1] === 'worktree' && args[2] === 'add') {
-          buildRoot = args[4];
+          buildRoot = args[5];
           mkdirSync(buildRoot, { recursive: true });
-          mkdirSync(join(buildRoot, 'stephanos-ui'), { recursive: true });
-          writeFileSync(join(buildRoot, 'stephanos-ui', 'package.json'), '{}\n');
-          writeFileSync(join(buildRoot, 'stephanos-ui', 'package-lock.json'), '{}\n');
         }
         if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === buildRoot) {
           return { status: 0, stdout: `${expectedHead}\n${expectedTree}\n`, stderr: '' };
@@ -706,6 +722,12 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
         if (executable === process.execPath && args[0].endsWith('build-stephanos-ui.mjs')) {
           mkdirSync(join(options.cwd, 'apps', 'stephanos', 'dist'), { recursive: true });
           writeFileSync(join(options.cwd, 'apps', 'stephanos', 'dist', 'index.html'), '<!-- approved -->\n');
+        }
+        if (executable === 'git' && args[1] === 'worktree' && args[2] === 'remove') {
+          approvedDistRestoredBeforeWorktreeRemoval = (
+            readFileSync(join(buildRoot, 'apps', 'stephanos', 'dist', 'index.html'), 'utf8')
+            === '<!-- approved tracked dist -->\n'
+          );
         }
         return { status: 0, stdout: '', stderr: '' };
       },
@@ -726,7 +748,10 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
     assert.equal(gitCalls.every((call) => call.options.env.GIT_DIR === undefined), true);
     assert.equal(gitCalls.every((call) => call.options.env.git_object_directory === undefined), true);
     const add = calls.find((call) => call.executable === 'git' && call.args[1] === 'worktree' && call.args[2] === 'add');
-    assert.deepEqual(add.args, ['--no-replace-objects', 'worktree', 'add', '--detach', buildRoot, expectedHead]);
+    assert.deepEqual(add.args, ['--no-replace-objects', 'worktree', 'add', '--detach', '--no-checkout', buildRoot, expectedHead]);
+    const readTree = calls.find((call) => call.executable === 'git' && call.args[1] === 'read-tree');
+    assert.deepEqual(readTree.args, ['--no-replace-objects', 'read-tree', expectedHead]);
+    assert.equal(readTree.options.cwd, buildRoot);
     const dependencyInstall = calls.find((call) => call.executable === 'npm' && call.args[0] === 'ci');
     assert.deepEqual(dependencyInstall.args, ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
     assert.equal(dependencyInstall.options.cwd, join(buildRoot, 'stephanos-ui'));
@@ -736,6 +761,106 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
     assert.equal(buildAndVerify.every((call) => call.options.cwd !== repoRoot), true);
     const remove = calls.find((call) => call.executable === 'git' && call.args[1] === 'worktree' && call.args[2] === 'remove');
     assert.deepEqual(remove.args, ['--no-replace-objects', 'worktree', 'remove', buildRoot]);
+    assert.equal(approvedDistRestoredBeforeWorktreeRemoval, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('exact-head tree materialization writes only immutable blob bytes without checkout filters', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stephanos-exact-head-blob-materialization-test-'));
+  const repoRoot = join(root, 'repo');
+  const buildRoot = join(root, 'build');
+  const expectedHead = 'a'.repeat(40);
+  const approvedBytes = Buffer.from('approved bytes\r\n', 'utf8');
+  const objectId = testGitBlobSha(approvedBytes);
+  const targetPath = join(buildRoot, 'stephanos-ui', 'src', 'proof.txt');
+  mkdirSync(repoRoot, { recursive: true });
+  mkdirSync(buildRoot, { recursive: true });
+  const calls = [];
+  try {
+    const materialized = materializeExactHeadBuildTree({
+      repoRoot,
+      buildRoot,
+      expectedHead,
+      gitEnvironment: { PATH: process.env.PATH, GIT_NO_REPLACE_OBJECTS: '1' },
+      spawnSyncFn(executable, args, options) {
+        calls.push({ executable, args, options });
+        if (args[1] === 'ls-tree') {
+          return {
+            status: 0,
+            stdout: Buffer.from(`100644 blob ${objectId} ${approvedBytes.length}\tstephanos-ui/src/proof.txt\0`, 'utf8'),
+            stderr: Buffer.alloc(0),
+          };
+        }
+        if (args[1] === 'cat-file') {
+          assert.deepEqual(options.input, Buffer.from(`${objectId}\n`, 'ascii'));
+          return {
+            status: 0,
+            stdout: Buffer.concat([
+              Buffer.from(`${objectId} blob ${approvedBytes.length}\n`, 'ascii'),
+              approvedBytes,
+              Buffer.from('\n', 'ascii'),
+            ]),
+            stderr: Buffer.alloc(0),
+          };
+        }
+        return assert.fail(`unexpected Git command: ${args.join(' ')}`);
+      },
+    });
+    assert.equal(materialized.ok, true);
+    assert.equal(materialized.fileCount, 1);
+    assert.equal(materialized.totalBytes, approvedBytes.length);
+    assert.deepEqual(readFileSync(targetPath), approvedBytes);
+    assert.equal(calls.length, 2);
+    assert.equal(calls.every((call) => call.executable === 'git'), true);
+    assert.equal(calls.every((call) => call.args[0] === '--no-replace-objects'), true);
+    assert.equal(calls.every((call) => call.options.env.GIT_NO_REPLACE_OBJECTS === '1'), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('exact-head tree materialization rejects checkout-populated or substituted bytes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stephanos-exact-head-filter-collision-test-'));
+  const repoRoot = join(root, 'repo');
+  const buildRoot = join(root, 'build');
+  const expectedHead = 'b'.repeat(40);
+  const approvedBytes = Buffer.from('approved\n', 'utf8');
+  const objectId = testGitBlobSha(approvedBytes);
+  const targetPath = join(buildRoot, 'stephanos-ui', 'src', 'proof.txt');
+  mkdirSync(repoRoot, { recursive: true });
+  mkdirSync(join(buildRoot, 'stephanos-ui', 'src'), { recursive: true });
+  writeFileSync(targetPath, 'smudge-filter substitution\n');
+  try {
+    const materialized = materializeExactHeadBuildTree({
+      repoRoot,
+      buildRoot,
+      expectedHead,
+      spawnSyncFn(executable, args) {
+        assert.equal(executable, 'git');
+        if (args[1] === 'ls-tree') {
+          return {
+            status: 0,
+            stdout: Buffer.from(`100644 blob ${objectId} ${approvedBytes.length}\tstephanos-ui/src/proof.txt\0`, 'utf8'),
+            stderr: Buffer.alloc(0),
+          };
+        }
+        return {
+          status: 0,
+          stdout: Buffer.concat([
+            Buffer.from(`${objectId} blob ${approvedBytes.length}\n`, 'ascii'),
+            approvedBytes,
+            Buffer.from('\n', 'ascii'),
+          ]),
+          stderr: Buffer.alloc(0),
+        };
+      },
+    });
+    assert.equal(materialized.ok, false);
+    assert.equal(materialized.blocker, 'CANONICAL_RUNTIME_BUILD_BYTES_MISMATCH');
+    assert.match(materialized.reason, /escapes or collides/);
+    assert.equal(readFileSync(targetPath, 'utf8'), 'smudge-filter substitution\n');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -764,7 +889,7 @@ test('exact-head runtime rejects a materialized replacement tree before dependen
           return { status: 0, stdout: `${expectedTree}\n`, stderr: '' };
         }
         if (executable === 'git' && args[1] === 'worktree' && args[2] === 'add') {
-          buildRoot = args[4];
+          buildRoot = args[5];
           mkdirSync(buildRoot, { recursive: true });
           return { status: 0, stdout: '', stderr: '' };
         }
@@ -804,16 +929,21 @@ test('exact-head runtime blocks when the approved lockfile dependency install fa
     const prepared = prepareExactHeadRuntimeBundle(repoRoot, {
       expectedHead,
       platform: 'linux',
+      treeMaterializer({ buildRoot: materializedRoot }) {
+        assert.equal(materializedRoot, buildRoot);
+        mkdirSync(join(materializedRoot, 'stephanos-ui'), { recursive: true });
+        writeFileSync(join(materializedRoot, 'stephanos-ui', 'package.json'), '{}\n');
+        writeFileSync(join(materializedRoot, 'stephanos-ui', 'package-lock.json'), '{}\n');
+        return { ok: true };
+      },
       spawnSyncFn(executable, args, options) {
         calls.push({ executable, args, options });
         if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === repoRoot) {
           return { status: 0, stdout: `${expectedTree}\n`, stderr: '' };
         }
         if (executable === 'git' && args[1] === 'worktree' && args[2] === 'add') {
-          buildRoot = args[4];
-          mkdirSync(join(buildRoot, 'stephanos-ui'), { recursive: true });
-          writeFileSync(join(buildRoot, 'stephanos-ui', 'package.json'), '{}\n');
-          writeFileSync(join(buildRoot, 'stephanos-ui', 'package-lock.json'), '{}\n');
+          buildRoot = args[5];
+          mkdirSync(buildRoot, { recursive: true });
         }
         if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === buildRoot) {
           return { status: 0, stdout: `${expectedHead}\n${expectedTree}\n`, stderr: '' };

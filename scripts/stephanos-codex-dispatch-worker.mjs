@@ -13,9 +13,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOCAL_CODEX_TASK_SCHEMA } from '../shared/agents/localCodexExecIntegration.mjs';
 import {
@@ -45,6 +45,9 @@ const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
 const CANONICAL_RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
 const CANONICAL_RUNTIME_WORKTREE_PREFIX = 'stephanos-exact-head-build-';
+const EXACT_HEAD_TREE_MAX_FILES = 50_000;
+const EXACT_HEAD_TREE_MAX_BYTES = 512 * 1024 * 1024;
+const EXACT_HEAD_TREE_BATCH_OVERHEAD_BYTES = 8 * 1024 * 1024;
 const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
 const MUSIC_RATING_PRESERVES_PLAYBACK = 'MUSIC_RATING_PRESERVES_PLAYBACK';
 
@@ -355,11 +358,16 @@ function createIsolatedRuntimeBuildWorkspace() {
 function runExactHeadGit(spawnSyncFn, args, {
   cwd,
   gitEnvironment,
+  encoding = 'utf8',
+  input,
+  maxBuffer,
 } = {}) {
   return spawnSyncFn('git', ['--no-replace-objects', ...args], {
     cwd,
-    encoding: 'utf8',
+    encoding,
     env: gitEnvironment,
+    input,
+    maxBuffer,
     shell: false,
     windowsHide: true,
     timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
@@ -371,10 +379,169 @@ function exactGitSha(value = '') {
   return /^[0-9a-f]{40}$/.test(normalized) ? normalized : '';
 }
 
+function gitBlobSha(bytes) {
+  return createHash('sha1')
+    .update(`blob ${bytes.length}\0`, 'utf8')
+    .update(bytes)
+    .digest('hex');
+}
+
+function parseExactHeadTreeListing(output) {
+  const text = Buffer.isBuffer(output) ? output.toString('utf8') : String(output || '');
+  if (!text || text.includes('\uFFFD') || !text.endsWith('\0')) {
+    throw new Error('approved tree listing is missing or not safely decodable');
+  }
+  const entries = [];
+  const paths = new Set();
+  let totalBytes = 0;
+  for (const record of text.slice(0, -1).split('\0')) {
+    const match = /^(\d{6}) (blob|commit) ([0-9a-f]{40})\s+(\d+|-)\t(.+)$/i.exec(record);
+    if (!match) throw new Error('approved tree listing contains an invalid record');
+    const [, mode, type, objectIdValue, sizeValue, path] = match;
+    const segments = path.split('/');
+    if (
+      type !== 'blob'
+      || !['100644', '100755'].includes(mode)
+      || sizeValue === '-'
+      || path.includes('\\')
+      || path.startsWith('/')
+      || /^[A-Za-z]:/.test(path)
+      || segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.toLowerCase() === '.git')
+      || paths.has(path)
+    ) {
+      throw new Error('approved tree contains an unsupported or unsafe entry');
+    }
+    const size = Number(sizeValue);
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error('approved tree contains an invalid blob size');
+    totalBytes += size;
+    if (
+      entries.length + 1 > EXACT_HEAD_TREE_MAX_FILES
+      || totalBytes > EXACT_HEAD_TREE_MAX_BYTES
+    ) {
+      throw new Error('approved tree exceeds the bounded materialization limits');
+    }
+    paths.add(path);
+    entries.push(Object.freeze({
+      mode,
+      objectId: objectIdValue.toLowerCase(),
+      path,
+      size,
+    }));
+  }
+  if (entries.length === 0) throw new Error('approved tree contains no materializable blobs');
+  return Object.freeze({ entries: Object.freeze(entries), totalBytes });
+}
+
+function parseExactHeadBlobBatch(output, entries) {
+  const bytes = Buffer.isBuffer(output) ? output : Buffer.from(output || '');
+  const blobs = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const newline = bytes.indexOf(0x0a, offset);
+    if (newline < 0) throw new Error('approved blob batch is missing an object header');
+    const header = bytes.subarray(offset, newline).toString('ascii');
+    const match = /^([0-9a-f]{40}) blob (\d+)$/i.exec(header);
+    if (!match) throw new Error('approved blob batch contains an invalid object header');
+    const [, objectIdValue, sizeValue] = match;
+    const size = Number(sizeValue);
+    const contentStart = newline + 1;
+    const contentEnd = contentStart + size;
+    if (
+      objectIdValue.toLowerCase() !== entry.objectId
+      || size !== entry.size
+      || contentEnd >= bytes.length
+      || bytes[contentEnd] !== 0x0a
+    ) {
+      throw new Error('approved blob batch does not match its immutable tree entry');
+    }
+    const content = Buffer.from(bytes.subarray(contentStart, contentEnd));
+    if (gitBlobSha(content) !== entry.objectId) {
+      throw new Error('approved blob bytes do not match their immutable object ID');
+    }
+    blobs.push(content);
+    offset = contentEnd + 1;
+  }
+  if (offset !== bytes.length) throw new Error('approved blob batch contains unexpected trailing output');
+  return blobs;
+}
+
+function materializedBlobBytes(path) {
+  const status = lstatSync(path);
+  if (!status.isFile() || status.isSymbolicLink()) {
+    throw new Error('materialized regular blob has an invalid filesystem type');
+  }
+  return readFileSync(path);
+}
+
+export function materializeExactHeadBuildTree({
+  repoRoot,
+  buildRoot,
+  expectedHead,
+  spawnSyncFn = spawnSync,
+  gitEnvironment,
+} = {}) {
+  try {
+    const listing = runExactHeadGit(
+      spawnSyncFn,
+      ['ls-tree', '-rlz', '--full-tree', expectedHead],
+      {
+        cwd: repoRoot,
+        gitEnvironment,
+        encoding: null,
+        maxBuffer: EXACT_HEAD_TREE_BATCH_OVERHEAD_BYTES,
+      },
+    );
+    if (listing?.error || listing?.status !== 0) {
+      throw new Error(listing?.stderr || listing?.stdout || listing?.error?.message || 'approved tree listing failed');
+    }
+    const manifest = parseExactHeadTreeListing(listing.stdout);
+    const objectInput = Buffer.from(`${manifest.entries.map((entry) => entry.objectId).join('\n')}\n`, 'ascii');
+    const batch = runExactHeadGit(spawnSyncFn, ['cat-file', '--batch'], {
+      cwd: repoRoot,
+      gitEnvironment,
+      encoding: null,
+      input: objectInput,
+      maxBuffer: manifest.totalBytes + EXACT_HEAD_TREE_BATCH_OVERHEAD_BYTES,
+    });
+    if (batch?.error || batch?.status !== 0) {
+      throw new Error(batch?.stderr || batch?.stdout || batch?.error?.message || 'approved blob batch failed');
+    }
+    const blobs = parseExactHeadBlobBatch(batch.stdout, manifest.entries);
+    const rootPrefix = `${resolve(buildRoot)}${sep}`;
+    for (let index = 0; index < manifest.entries.length; index += 1) {
+      const entry = manifest.entries[index];
+      const target = resolve(buildRoot, ...entry.path.split('/'));
+      if (!target.startsWith(rootPrefix) || existsSync(target)) {
+        throw new Error('approved blob target escapes or collides with the detached build root');
+      }
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, blobs[index], {
+        flag: 'wx',
+        mode: entry.mode === '100755' ? 0o755 : 0o644,
+      });
+      if (gitBlobSha(materializedBlobBytes(target)) !== entry.objectId) {
+        throw new Error('materialized build bytes do not match the approved immutable blob');
+      }
+    }
+    return Object.freeze({
+      ok: true,
+      fileCount: manifest.entries.length,
+      totalBytes: manifest.totalBytes,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_BUILD_BYTES_MISMATCH',
+      reason: boundedText(error?.message || error),
+    });
+  }
+}
+
 function cleanupIsolatedRuntimeBuildWorkspace({
   workspace,
   repoRoot,
   dependencyInstallPaths = [],
+  approvedRuntimeDistBackup = '',
   worktreeAdded = false,
   spawnSyncFn,
   gitEnvironment,
@@ -393,6 +560,17 @@ function cleanupIsolatedRuntimeBuildWorkspace({
     }
   } catch (error) {
     cleanupError = `TEMPORARY_DIST_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
+  }
+  if (approvedRuntimeDistBackup) {
+    try {
+      if (!existsSync(approvedRuntimeDistBackup) || existsSync(temporaryDist)) {
+        throw new Error('approved runtime dist backup cannot be restored safely');
+      }
+      mkdirSync(dirname(temporaryDist), { recursive: true });
+      renameSync(approvedRuntimeDistBackup, temporaryDist);
+    } catch (error) {
+      cleanupError ||= `APPROVED_RUNTIME_DIST_RESTORE_FAILED:${boundedText(error?.message || error, 800)}`;
+    }
   }
   for (const dependencyPath of dependencyInstallPaths) {
     try {
@@ -584,6 +762,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
   platform = process.platform,
   environment = process.env,
   isolatedBuildWorkspaceFactory = createIsolatedRuntimeBuildWorkspace,
+  treeMaterializer = materializeExactHeadBuildTree,
 } = {}) {
   const isolated = Boolean(expectedHead);
   if (isolated && !/^[0-9a-f]{40}$/i.test(expectedHead)) {
@@ -592,6 +771,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
   let workspace = null;
   let worktreeAdded = false;
   let dependencyInstallPaths = [];
+  let approvedRuntimeDistBackup = '';
   let result = null;
   const gitEnvironment = isolated
     ? createScenarioSourceGitEnvironment(environment, { platform })
@@ -635,7 +815,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
       let worktree;
       if (!result) {
         try {
-          worktree = runExactHeadGit(spawnSyncFn, ['worktree', 'add', '--detach', buildRoot, expectedHead], {
+          worktree = runExactHeadGit(spawnSyncFn, ['worktree', 'add', '--detach', '--no-checkout', buildRoot, expectedHead], {
             cwd: repoRoot,
             gitEnvironment,
           });
@@ -653,6 +833,30 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
       }
       if (!result) {
         worktreeAdded = true;
+        let materializedIndex;
+        try {
+          materializedIndex = runExactHeadGit(spawnSyncFn, ['read-tree', expectedHead], {
+            cwd: buildRoot,
+            gitEnvironment,
+          });
+        } catch (error) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_BUILD_INDEX_FAILED',
+            reason: boundedText(error?.message || error),
+          };
+        }
+        if (!result && (materializedIndex?.error || materializedIndex?.status !== 0)) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_BUILD_INDEX_FAILED',
+            reason: boundedText(materializedIndex?.stderr || materializedIndex?.stdout || materializedIndex?.error?.message),
+          };
+        }
+      }
+      if (!result) {
         let materializedIdentity;
         try {
           materializedIdentity = runExactHeadGit(spawnSyncFn, ['rev-parse', 'HEAD', 'HEAD^{tree}'], {
@@ -691,6 +895,40 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
             materializedTree,
             reason: boundedText(materializedIdentity?.stderr || materializedIdentity?.error?.message),
           };
+        }
+      }
+      if (!result) {
+        const materialized = treeMaterializer({
+          repoRoot,
+          buildRoot,
+          expectedHead,
+          spawnSyncFn,
+          gitEnvironment,
+        });
+        if (!materialized.ok) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: materialized.blocker,
+            reason: materialized.reason,
+          };
+        }
+      }
+      if (!result) {
+        const materializedDist = runtimePath(buildRoot, 'apps', 'stephanos', 'dist');
+        if (existsSync(materializedDist)) {
+          try {
+            if (runtimePathIsSymlink(materializedDist)) throw new Error('approved runtime dist cannot be a symbolic link');
+            approvedRuntimeDistBackup = runtimePath(workspace.temporaryRoot, 'approved-runtime-dist');
+            renameSync(materializedDist, approvedRuntimeDistBackup);
+          } catch (error) {
+            result = {
+              ok: false,
+              required: true,
+              blocker: 'CANONICAL_RUNTIME_APPROVED_DIST_STAGE_FAILED',
+              reason: boundedText(error?.message || error),
+            };
+          }
         }
       }
       if (!result) {
@@ -792,6 +1030,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
       workspace,
       repoRoot,
       dependencyInstallPaths,
+      approvedRuntimeDistBackup,
       worktreeAdded,
       spawnSyncFn,
       gitEnvironment,
