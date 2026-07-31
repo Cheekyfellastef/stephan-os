@@ -8,6 +8,7 @@ const WORKFLOW_STATES = new Set(['running', 'queued', 'failed', 'passed', 'cance
 const DURABLE_ISSUE_REFERENCE_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([a-z0-9_.-]+\/[a-z0-9_.-]+))?#(\d{1,10})\b/gi;
 const GITHUB_PAGE_SIZE = 100;
 const MAX_GITHUB_PAGES = 100;
+const MAX_OPEN_PR_WORKFLOW_HEADS = 32;
 function text(value, fallback = '') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
 function list(value) { return Array.isArray(value) ? value : []; }
 function lc(value) { return text(value).toLowerCase(); }
@@ -355,31 +356,61 @@ async function githubPaginatedArray(url, auth, fetchImpl = fetch) {
   }
   throw new Error(`GitHub paginated inventory exceeded ${MAX_GITHUB_PAGES} pages`);
 }
-async function githubPaginatedWorkflowRuns(url, auth, fetchImpl = fetch) {
-  const runs = [];
-  for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
+async function githubWorkflowRunsForOpenPullRequests(url, pullRequests, auth, fetchImpl = fetch) {
+  const prNumbersByHead = new Map();
+  let complete = true;
+  for (const pr of list(pullRequests)) {
+    const number = positiveInteger(pr?.number);
+    const headSha = lc(pr?.headSha || pr?.head?.sha);
+    if (!number || !/^[0-9a-f]{40}$/.test(headSha)) {
+      complete = false;
+      continue;
+    }
+    if (!prNumbersByHead.has(headSha)) prNumbersByHead.set(headSha, []);
+    prNumbersByHead.get(headSha).push(number);
+  }
+  const headEntries = [...prNumbersByHead.entries()];
+  const selectedHeads = headEntries.slice(0, MAX_OPEN_PR_WORKFLOW_HEADS);
+  if (selectedHeads.length < headEntries.length) complete = false;
+  const results = await Promise.all(selectedHeads.map(async ([headSha, prNumbers]) => {
     const requestUrl = new URL(url);
     requestUrl.searchParams.set('per_page', String(GITHUB_PAGE_SIZE));
-    requestUrl.searchParams.set('page', String(page));
+    requestUrl.searchParams.set('page', '1');
+    requestUrl.searchParams.set('event', 'pull_request');
+    requestUrl.searchParams.set('head_sha', headSha);
     const payload = await githubJson(requestUrl.href, auth, fetchImpl);
     if (!Array.isArray(payload?.workflow_runs)) throw new Error('GitHub workflow inventory response was not an array');
-    runs.push(...payload.workflow_runs);
-    if (payload.workflow_runs.length < GITHUB_PAGE_SIZE) return { runs, complete: true };
-  }
-  return { runs, complete: false };
+    const totalCount = Number(payload.total_count);
+    const pageComplete = Number.isSafeInteger(totalCount)
+      ? totalCount <= payload.workflow_runs.length
+      : payload.workflow_runs.length < GITHUB_PAGE_SIZE;
+    return {
+      complete: pageComplete,
+      runs: payload.workflow_runs.flatMap((run) => prNumbers.map((prNumber) => ({ ...run, prNumber }))),
+    };
+  }));
+  return {
+    runs: results.flatMap((result) => result.runs),
+    complete: complete && results.every((result) => result.complete),
+  };
 }
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
   const { owner, repo } = repoConfig;
   const fetchImpl = options.fetchImpl || fetch;
-  const [notificationResult, prs, issues, workflowInventory, repositoryMetadata] = await Promise.all([
+  const [notificationResult, prs, issues, repositoryMetadata] = await Promise.all([
     githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl)
       .then((notifications) => ({ available: true, notifications }))
       .catch(() => ({ available: false, notifications: [] })),
-    githubPaginatedArray(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open`, auth, fetchImpl),
+    githubPaginatedArray(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&sort=updated&direction=desc`, auth, fetchImpl),
     githubPaginatedArray(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&sort=updated&direction=desc`, auth, fetchImpl),
-    githubPaginatedWorkflowRuns(`https://api.github.com/repos/${owner}/${repo}/actions/runs`, auth, fetchImpl),
     githubJson(`https://api.github.com/repos/${owner}/${repo}`, auth, fetchImpl),
   ]);
+  const workflowInventory = await githubWorkflowRunsForOpenPullRequests(
+    `https://api.github.com/repos/${owner}/${repo}/actions/runs`,
+    prs,
+    auth,
+    fetchImpl,
+  );
   return normalizeGithubTelemetry({
     available: true,
     source: 'github-api',
