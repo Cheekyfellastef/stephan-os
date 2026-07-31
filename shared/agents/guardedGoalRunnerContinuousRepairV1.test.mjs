@@ -48,6 +48,7 @@ function harness(states, extra = {}) {
     cycle:[],
     execution:[],
     dispatch:[],
+    dispatchContext:[],
     verify:[],
     history:[],
   };
@@ -69,8 +70,9 @@ function harness(states, extra = {}) {
         calls.execution.push(receipt);
         return { ok:true };
       },
-      dispatchRepair:async (order) => {
+      dispatchRepair:async (order, context) => {
         calls.dispatch.push(order);
+        calls.dispatchContext.push(context);
         return { accepted:true, workerTaskId:'worker-1' };
       },
       requestExactHeadVerification:async (request) => {
@@ -133,6 +135,7 @@ test('automatically dispatches a bounded review repair and durably waits', async
   assert.equal(h.calls.dispatch.length, 1);
   assert.equal(h.calls.execution.length, 1);
   assert.deepEqual(h.calls.cycle.map(({ status }) => status), ['repair-attempt-recorded', 'repair-dispatched']);
+  assert.equal(h.calls.dispatchContext[0].idempotencyKey, h.calls.dispatch[0].executionId);
   assert.equal(cycle.status, 'WAITING_FOR_REPAIR');
 });
 
@@ -554,6 +557,43 @@ test('recorded repair intent is idempotently recovered before the repair budget 
   assert.equal(recovered.receipt.status, 'repair-dispatched');
   assert.equal(recovered.receipt.dispatchAttemptId, failedOutcome.history[0].dispatchAttemptId);
   assert.equal(recovered.receipt.recoveredDispatchIntentCycleId, failedOutcome.history[0].cycleId);
+});
+
+test('terminal execution evidence closes a recorded intent without replaying dispatch', async () => {
+  const first = harness([snapshot()], {
+    dispatchRepair:async (repairOrder) => {
+      first.calls.dispatch.push(repairOrder);
+      return { accepted:false, reason:'worker unavailable' };
+    },
+    persistCycleReceipt:async (receipt) => {
+      first.calls.cycle.push(receipt);
+      return { ok:receipt.status !== 'blocked-dispatch-rejected' };
+    },
+  });
+  const lostCycleOutcome = await runGuardedContinuousRepairCycle(first.options);
+  assert.equal(lostCycleOutcome.status, 'BLOCKED_CYCLE_RECEIPT_PERSISTENCE');
+  assert.deepEqual(lostCycleOutcome.history.map(({ status }) => status), ['repair-attempt-recorded']);
+  assert.deepEqual(first.calls.execution.map(({ state }) => state), ['queued', 'failed']);
+
+  const intent = lostCycleOutcome.history[0];
+  const resumed = harness([snapshot({
+    activeRepairOrders:[intent.repairOrder],
+    receipts:first.calls.execution,
+  })], {
+    attemptId:'attempt-2',
+    history:lostCycleOutcome.history,
+    maxRepairsPerHead:1,
+  });
+  const reconciled = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(reconciled.status, 'TERMINAL_EXECUTION_RECONCILED');
+  assert.equal(resumed.calls.dispatch.length, 0);
+  assert.equal(resumed.calls.execution.length, 0);
+  assert.equal(reconciled.receipt.status, 'dispatch-terminal-reconciled');
+  assert.equal(reconciled.receipt.terminalExecutionState, 'failed');
+  assert.equal(
+    reconciled.receipt.terminalExecutionReceiptId,
+    first.calls.execution.at(-1).receiptId,
+  );
 });
 
 test('verification intent preserves one idempotency key across receipt-store failure', async () => {
