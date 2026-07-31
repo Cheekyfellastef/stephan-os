@@ -432,6 +432,8 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   let transitionAuthorityReceipt = null;
   let transitionAuthorityReceiptPublication = null;
   let transitionAuthorityHeartbeatPublication = null;
+  let missionAdmissionReceipt = null;
+  let missionAdmissionReceiptPublication = null;
   let projection = await loadProjection(serviceOptions);
   const transitionState = projection?.lane?.active === true
     ? 'ACTIVE_LANE'
@@ -567,35 +569,55 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       result = freeze({ ...result, workerActionGrant });
     }
   } else if (result.status === 'READY') {
-    actionResult = await requiredFunction(deps.ensureBacklogMission, 'ensureBacklogMission')({
-      env,
-      now: new Date(nowUtc),
-    });
-    if (actionResult?.ok !== true) {
-      result = holdResult(`critical-backlog:${text(actionResult?.classification ?? actionResult?.reason, 'mission-create-failed')}`, {
+    missionAdmissionReceipt = createCycleReceipt(
+      result,
+      projection,
+      nowUtc,
+      { receiptId: `${receiptId(nowUtc)}-admission` },
+    );
+    missionAdmissionReceiptPublication = await requiredFunction(
+      deps.publishReceipt,
+      'publishReceipt',
+    )(missionAdmissionReceipt, serviceOptions);
+    if (missionAdmissionReceiptPublication?.ok !== true) {
+      result = holdResult(`mission-admission-receipt:${text(
+        missionAdmissionReceiptPublication?.reason,
+        'publication-failed',
+      )}`, {
         observedAtUtc: nowUtc,
         sourceRevision,
       });
     } else {
-      const grantProjection = {
-        ...projection,
-        criticalBacklog: actionResult.projection,
-      };
-      const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision);
-      if (!workerActionGrant) {
-        result = holdResult('mission-worker:exact-action-grant-unavailable', {
+      actionResult = await requiredFunction(deps.ensureBacklogMission, 'ensureBacklogMission')({
+        env,
+        now: new Date(nowUtc),
+      });
+      if (actionResult?.ok !== true) {
+        result = holdResult(`critical-backlog:${text(actionResult?.classification ?? actionResult?.reason, 'mission-create-failed')}`, {
           observedAtUtc: nowUtc,
           sourceRevision,
         });
       } else {
-        result = freeze({
-          ...result,
-          workerActionGrant,
-          allowWorkerTick: true,
-          nextAction: actionResult.createdMission
-            ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
-            : 'Allow the existing Mission Worker to continue the conveyor-authorized mission.',
-        });
+        const grantProjection = {
+          ...projection,
+          criticalBacklog: actionResult.projection,
+        };
+        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision);
+        if (!workerActionGrant) {
+          result = holdResult('mission-worker:exact-action-grant-unavailable', {
+            observedAtUtc: nowUtc,
+            sourceRevision,
+          });
+        } else {
+          result = freeze({
+            ...result,
+            workerActionGrant,
+            allowWorkerTick: true,
+            nextAction: actionResult.createdMission
+              ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
+              : 'Allow the existing Mission Worker to continue the conveyor-authorized mission.',
+          });
+        }
       }
     }
   }
@@ -607,6 +629,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       observedAtUtc: nowUtc,
       sourceRevision,
       activeLane: projection?.lane,
+      blockers: result.blockers,
     });
   }
   const finalState = result.status === 'HOLD'
@@ -637,6 +660,8 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     transitionAuthorityReceipt,
     transitionAuthorityReceiptPublication,
     transitionAuthorityHeartbeatPublication,
+    missionAdmissionReceipt,
+    missionAdmissionReceiptPublication,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,

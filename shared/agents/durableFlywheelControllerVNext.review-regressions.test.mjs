@@ -83,6 +83,13 @@ test('READY work is admitted only through the existing Critical Backlog Conveyor
   assert.equal(result.workerActionGrant.boundedActionCount, 1);
   assert.equal(result.actionResult.createdMission, true);
   assert.equal(calls.filter(([name]) => name === 'canonical-conveyor').length, 1);
+  assert.equal(result.missionAdmissionReceipt.allowWorkerTick, false);
+  assert.equal(result.missionAdmissionReceipt.boundedMutationSteps, 1);
+  assert.match(result.missionAdmissionReceipt.receiptId, /-admission$/);
+  assert.ok(
+    calls.findIndex(([name]) => name === 'receipt')
+      < calls.findIndex(([name]) => name === 'canonical-conveyor'),
+  );
   assert.equal(result.createsReplacementMachinery, false);
   assert.equal(result.mergeAuthority, false);
 });
@@ -120,7 +127,37 @@ test('cycle receipt publication failure revokes otherwise valid work authority',
 
   assert.equal(result.status, 'HOLD');
   assert.equal(result.allowWorkerTick, false);
+  assert.ok(result.blockers.includes('mission-admission-receipt:disk-unavailable'));
   assert.ok(result.blockers.includes('cycle-receipt:disk-unavailable'));
+  assert.equal(calls.filter(([name]) => name === 'canonical-conveyor').length, 0);
+});
+
+test('a failed final receipt cannot make created mission work unreceipted', async () => {
+  const calls = [];
+  let publicationCount = 0;
+  const result = await runDurableFlywheelStartupCycle(
+    baseMachinery(projection('READY'), calls, {
+      publishReceipt: async (receipt) => {
+        publicationCount += 1;
+        calls.push(['receipt', receipt.receiptId]);
+        return publicationCount === 1
+          ? { ok: true }
+          : { ok: false, reason: 'final-receipt-unavailable' };
+      },
+    }),
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(result.actionResult.createdMission, true);
+  assert.equal(result.missionAdmissionReceiptPublication.ok, true);
+  assert.match(result.missionAdmissionReceipt.receiptId, /-admission$/);
+  assert.ok(result.blockers.includes('cycle-receipt:final-receipt-unavailable'));
+  assert.ok(
+    calls.findIndex((entry) => entry[0] === 'receipt' && /-admission$/.test(entry[1]))
+      < calls.findIndex(([name]) => name === 'canonical-conveyor'),
+  );
 });
 
 test('controller heartbeat failure blocks projection reads and source work', async () => {
