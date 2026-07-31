@@ -320,7 +320,16 @@ test('local integration writes a durable task and accepted receipt before launch
     spawnFn: (...args) => { spawns.push(args); return child; },
   });
 
-  const receipt = integration.dispatch(packet());
+  const dispatchedPacket = packet();
+  dispatchedPacket.exactHeadProof = {
+    ...dispatchedPacket.exactHeadProof,
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead: 'b'.repeat(40),
+    mergeCommitHead: 'c'.repeat(40),
+    githubMainHead: dispatchedPacket.exactHeadProof.expectedHead,
+    mergeCommitIncluded: true,
+  };
+  const receipt = integration.dispatch(dispatchedPacket);
   assert.equal(receipt.accepted, true);
   assert.equal(receipt.started, false);
   assert.equal(receipt.workerSpawned, true);
@@ -334,7 +343,7 @@ test('local integration writes a durable task and accepted receipt before launch
   const status = integration.readStatus('codex-job-test-123');
   assert.equal(status.status, 'DISPATCHED');
   assert.equal(status.taskType, 'battle-bridge-proof');
-  assert.deepEqual(status.exactHeadProof, packet().exactHeadProof);
+  assert.deepEqual(status.exactHeadProof, dispatchedPacket.exactHeadProof);
   assert.equal(status.safety.mergeAllowed, false);
   assert.equal(status.safety.sourceMutationAllowed, false);
   assert.equal(readFileSync(receipt.taskPath, 'utf8').includes('Run the bounded real Windows ignition proof'), true);
