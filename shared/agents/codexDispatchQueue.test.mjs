@@ -207,6 +207,84 @@ test('dashboard projection preserves transitioned state rather than recreating r
   assert.equal(dashboard.counts.WAITING_OPERATOR_APPROVAL, 1);
 });
 
+test('dispatch blockers survive canonical transition, persistence, and dashboard projection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-codex-queue-blocker-test-'));
+  try {
+    const dispatched = transitionCodexQueueRecord(
+      readyRecord(),
+      CODEX_QUEUE_STATUS.DISPATCHED_MANUAL,
+      {
+        timestamp: '2026-07-14T00:03:00Z',
+        integrationState: { automatedCodexDispatchProven: true },
+        blockerMetadata: {
+          code: 'LOCAL_CODEX_DISPATCH_RECEIPT_PERSIST_FAILED',
+          reason: 'The final receipt could not be persisted.',
+          operatorActionRequired: true,
+        },
+      },
+    );
+    assert.equal(dispatched.valid, true);
+    assert.equal(dispatched.record.integrationState.blocker, '');
+    assert.equal(dispatched.record.sharedWorkspaceMessage.requiresOperator, true);
+    assert.equal(dispatched.record.sharedWorkspaceMessage.severity, 'warning');
+
+    assert.equal(
+      (await writeCodexQueueRecordToSharedWorkspace(root, dispatched.record, { repoRoot: REPO_ROOT })).ok,
+      true,
+    );
+    const read = await readCodexQueueRecordFromSharedWorkspace(
+      root,
+      dispatched.record.jobId,
+      { repoRoot: REPO_ROOT },
+    );
+    assert.equal(read.ok, true);
+    const dashboard = projectCodexQueueDashboard([read.record]);
+    assert.equal(dashboard.jobs[0].blocker, 'LOCAL_CODEX_DISPATCH_RECEIPT_PERSIST_FAILED');
+    assert.equal(dashboard.jobs[0].requiresOperator, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('queue validation rejects contradictory integration and operator-message truth', () => {
+  const queued = createCodexQueueRecord(base);
+  const hiddenIntegrationBlocker = {
+    ...queued,
+    integrationState: {
+      automatedCodexDispatchProven: false,
+      blocker: '',
+    },
+  };
+  assert.equal(
+    validateCodexQueueRecord(hiddenIntegrationBlocker).errors.includes('integration-blocker-mismatch'),
+    true,
+  );
+
+  const dispatched = transitionCodexQueueRecord(
+    readyRecord(),
+    CODEX_QUEUE_STATUS.DISPATCHED_MANUAL,
+    {
+      timestamp: '2026-07-14T00:03:00Z',
+      integrationState: { automatedCodexDispatchProven: true },
+      blockerMetadata: {
+        code: 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED',
+        operatorActionRequired: true,
+      },
+    },
+  ).record;
+  const hiddenOperatorAction = {
+    ...dispatched,
+    sharedWorkspaceMessage: {
+      ...dispatched.sharedWorkspaceMessage,
+      requiresOperator: false,
+      severity: 'info',
+    },
+  };
+  const validation = validateCodexQueueRecord(hiddenOperatorAction);
+  assert.equal(validation.errors.includes('operator-message-mismatch'), true);
+  assert.equal(validation.errors.includes('operator-message-severity-mismatch'), true);
+});
+
 test('bounded schema rejects extra fields and unsafe proof commands', () => {
   const record = createCodexQueueRecord({ ...base, requestedProofCommands: ['node --test shared/agents/codexDispatchQueue.test.mjs', 'git reset --hard HEAD'] });
   const tampered = { ...record, arbitraryShell: 'bash anything' };

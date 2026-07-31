@@ -73,6 +73,68 @@ test('dispatches once through the existing local Codex integration', async () =>
   assert.equal(result.mergeAuthority, false);
 });
 
+test('blocks the healthy mailbox verdict when a spawned worker cannot release the dispatch lock', async () => {
+  const result = await dispatchExactHeadWindowsBrowserProof(command, {
+    platform: 'win32',
+    now: () => '2026-07-30T20:00:00.000Z',
+    readPullRequestHead: async () => ({ ok: true, head: command.expectedHead }),
+    readLocalHead: async () => ({ ok: true, head: command.expectedHead }),
+    integration: {
+      integrationId: 'test-windows-integration',
+      paths: { repoRoot: 'C:\\stephan-os' },
+      capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+      dispatch(packet) {
+        return {
+          accepted: true,
+          workerSpawned: true,
+          jobId: packet.jobId,
+          proofRefs: [`proof/${packet.jobId}.json`],
+          blocker: 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED',
+          lockReleased: false,
+          lockRelease: {
+            ok: false,
+            blocker: 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED',
+            reason: 'owner-changed',
+          },
+        };
+      },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.finalVerdict, 'WINDOWS_BROWSER_PROOF_DISPATCH_BLOCKED');
+  assert.equal(result.blocker, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+  assert.equal(result.dispatchAccepted, true);
+  assert.equal(result.workerSpawned, true);
+  assert.equal(result.taskId, createWindowsSafeBrowserProofJobId(command.requestId));
+  assert.equal(result.lockReleased, false);
+  assert.equal(result.lockRelease.reason, 'owner-changed');
+});
+
+test('blocks the healthy mailbox verdict when the final dispatch receipt cannot be persisted', async () => {
+  const result = await dispatchExactHeadWindowsBrowserProof(command, {
+    platform: 'win32',
+    now: () => '2026-07-30T20:00:00.000Z',
+    readPullRequestHead: async () => command.expectedHead,
+    readLocalHead: async () => command.expectedHead,
+    integration: {
+      paths: { repoRoot: 'C:\\stephan-os' },
+      capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+      dispatch: () => ({
+        accepted: true,
+        workerSpawned: true,
+        lockReleased: true,
+        lockRelease: { ok: true, blocker: '', receiptPersisted: false },
+      }),
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'LOCAL_CODEX_DISPATCH_RECEIPT_PERSIST_FAILED');
+  assert.equal(result.dispatchAccepted, true);
+  assert.equal(result.workerSpawned, true);
+  assert.equal(result.lockReleased, true);
+  assert.equal(result.lockRelease.receiptPersisted, false);
+});
+
 test('blocks before local inspection or dispatch when the PR head changed', async () => {
   const calls = [];
   let localReads = 0;

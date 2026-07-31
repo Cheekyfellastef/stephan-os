@@ -1,9 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   createWindowsSafeMailboxReceiptFilename,
   parseBoundedGitHubJson,
+  readMailboxReceipt,
 } from './battle-bridge-github-command-mailbox.mjs';
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
@@ -114,4 +118,70 @@ test('hashes Windows reserved device basenames while preserving safe boundary na
   const lowercase = createWindowsSafeMailboxReceiptFilename('request-safe-0001');
   assert.match(uppercase, /^_request-[0-9a-f]{32}\.json$/);
   assert.notEqual(uppercase.toLowerCase(), lowercase.toLowerCase());
+});
+
+test('point lookup reads an exact legacy receipt but never falls through a malformed canonical receipt', async () => {
+  const receiptRoot = await mkdtemp(join(tmpdir(), 'mailbox-point-read-'));
+  const targetRequestId = 'proof:2026-07-30T20:00:00Z';
+  const digest = createHash('sha256').update(targetRequestId).digest('hex').slice(0, 32);
+  const legacyPath = join(receiptRoot, `request-${digest}.json`);
+  const receipt = {
+    requestId: targetRequestId,
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    state: 'DONE',
+    completedAt: '2026-07-30T20:01:00.000Z',
+  };
+  const options = {
+    receiptRoot,
+    readSourceIdentity: async () => ({ ok: true, sourceHead: 'a'.repeat(40), branch: 'main' }),
+  };
+  try {
+    await writeFile(legacyPath, `${JSON.stringify(receipt)}\n`, 'utf8');
+    const legacy = await readMailboxReceipt({ targetRequestId }, options);
+    assert.equal(legacy.ok, true);
+    assert.equal(legacy.receipt.requestId, targetRequestId);
+
+    const canonicalPath = join(
+      receiptRoot,
+      createWindowsSafeMailboxReceiptFilename(targetRequestId),
+    );
+    await writeFile(canonicalPath, '{"requestId":', 'utf8');
+    const failClosed = await readMailboxReceipt({ targetRequestId }, options);
+    assert.equal(failClosed.ok, false);
+    assert.equal(failClosed.blocker, 'MAILBOX_RECEIPT_JSON_INVALID');
+  } finally {
+    await rm(receiptRoot, { recursive: true, force: true });
+  }
+});
+
+test('point lookup rejects oversized and symlinked canonical receipt candidates', async () => {
+  const receiptRoot = await mkdtemp(join(tmpdir(), 'mailbox-point-read-bounds-'));
+  const options = {
+    receiptRoot,
+    readSourceIdentity: async () => ({ ok: true, sourceHead: 'a'.repeat(40), branch: 'main' }),
+  };
+  try {
+    const oversizedRequestId = 'proof:oversized-receipt-0001';
+    await writeFile(
+      join(receiptRoot, createWindowsSafeMailboxReceiptFilename(oversizedRequestId)),
+      'x'.repeat((256 * 1024) + 1),
+      'utf8',
+    );
+    const oversized = await readMailboxReceipt({ targetRequestId: oversizedRequestId }, options);
+    assert.equal(oversized.ok, false);
+    assert.equal(oversized.blocker, 'MAILBOX_RECEIPT_TOO_LARGE');
+
+    const symlinkRequestId = 'proof:symlink-receipt-0001';
+    const symlinkTarget = join(receiptRoot, 'symlink-target.json');
+    await writeFile(symlinkTarget, `${JSON.stringify({ requestId: symlinkRequestId })}\n`, 'utf8');
+    await symlink(
+      symlinkTarget,
+      join(receiptRoot, createWindowsSafeMailboxReceiptFilename(symlinkRequestId)),
+    );
+    const linked = await readMailboxReceipt({ targetRequestId: symlinkRequestId }, options);
+    assert.equal(linked.ok, false);
+    assert.equal(linked.blocker, 'MAILBOX_RECEIPT_NOT_REGULAR_FILE');
+  } finally {
+    await rm(receiptRoot, { recursive: true, force: true });
+  }
 });

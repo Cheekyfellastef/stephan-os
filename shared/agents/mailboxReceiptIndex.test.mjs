@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -22,7 +23,10 @@ import {
   sanitizeMailboxReceiptForIndex,
 } from './mailboxReceiptIndex.mjs';
 import { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
-import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
+import {
+  createWindowsSafeMailboxReceiptFilename,
+  getReadableMailboxReceiptFilenames,
+} from './windowsSafeMailboxReceiptFilename.mjs';
 
 const HEAD = '8517ef3cc89e5ab6c191c550cc729227b3089e42';
 const LATER_HEAD = 'b3aca072a1c66555a1a2d3b4343f218af8d33ef4';
@@ -104,16 +108,72 @@ test('loads receipts whose Windows-safe filenames hash reserved or colon-bearing
   );
 }));
 
+test('loads validated legacy receipt filenames so active upgrade state does not disappear', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const receiptRoot = join(workspaceRoot, 'receipts', 'github-command-mailbox');
+  assert.deepEqual(
+    getReadableMailboxReceiptFilenames('CON.proof').slice(1),
+    [
+      `request-${createHash('sha256').update('CON.proof').digest('hex').slice(0, 32)}.json`,
+      'CON.proof.json',
+    ],
+  );
+  assert.equal(getReadableMailboxReceiptFilenames('Request-safe-0001')[1], 'Request-safe-0001.json');
+  const values = [
+    receipt({
+      requestId: 'CON.proof',
+      state: 'ACCEPTED',
+      heartbeatAt: '2026-07-17T20:00:00.000Z',
+      completedAt: '',
+      result: null,
+    }),
+    receipt({ requestId: 'proof:2026-07-30T20:00:00Z' }),
+    receipt({ requestId: 'Request-safe-0001' }),
+  ];
+  for (const value of values) {
+    const canonical = createWindowsSafeMailboxReceiptFilename(value.requestId);
+    const legacy = getReadableMailboxReceiptFilenames(value.requestId)
+      .find((filename) => filename !== canonical);
+    assert.ok(legacy);
+    await writeFile(join(receiptRoot, legacy), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  }
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.deepEqual(
+    loaded.receipts.map((value) => value.requestId).sort(),
+    values.map((value) => value.requestId).sort(),
+  );
+  const record = createMailboxReceiptIndexRecord({
+    receipts: loaded.receipts,
+    timestampUtc: '2026-07-30T20:01:00.000Z',
+  });
+  assert.equal(record.status, 'ACTIVE');
+  assert.equal(record.activeReceipt.requestId, 'CON.proof');
+}));
+
 test('fallback hashes cannot alias valid raw request ids and both receipts remain loadable', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
-  const unsafeRequestId = 'CON.proof';
-  const unsafeFilename = createWindowsSafeMailboxReceiptFilename(unsafeRequestId);
-  const digest = unsafeFilename.slice('_request-'.length, -'.json'.length);
+  const unsafeRequestId = 'proof:2026-07-30T20:00:00Z';
+  const digest = createHash('sha256').update(unsafeRequestId).digest('hex').slice(0, 32);
+  const legacyFilename = `request-${digest}.json`;
   const formerlyAliasedRawId = `request-${digest}`;
   const rawFilename = createWindowsSafeMailboxReceiptFilename(formerlyAliasedRawId);
-  assert.notEqual(unsafeFilename, rawFilename);
+  assert.notEqual(legacyFilename, rawFilename);
+  assert.match(rawFilename, /^_request-[0-9a-f]{32}\.json$/);
+  assert.equal(
+    getReadableMailboxReceiptFilenames(formerlyAliasedRawId).includes(legacyFilename),
+    true,
+  );
 
-  await writeReceipt(workspaceRoot, receipt({ requestId: unsafeRequestId }));
+  const receiptRoot = join(workspaceRoot, 'receipts', 'github-command-mailbox');
+  const legacyReceipt = receipt({ requestId: unsafeRequestId });
+  await writeFile(
+    join(receiptRoot, legacyFilename),
+    `${JSON.stringify(legacyReceipt, null, 2)}\n`,
+    'utf8',
+  );
   await writeReceipt(workspaceRoot, receipt({ requestId: formerlyAliasedRawId }));
+  assert.equal(
+    JSON.parse(await readFile(join(receiptRoot, legacyFilename), 'utf8')).requestId,
+    unsafeRequestId,
+  );
   const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
   assert.deepEqual(
     loaded.receipts.map((value) => value.requestId).sort(),
@@ -145,6 +205,13 @@ test('rejects a matching fallback-hash filename when the embedded request id is 
       'utf8',
     );
   }
+  const conLegacy = getReadableMailboxReceiptFilenames('CON.proof')
+    .find((filename) => filename !== createWindowsSafeMailboxReceiptFilename('CON.proof'));
+  await writeFile(
+    join(receiptRoot, conLegacy),
+    `${JSON.stringify(receipt({ requestId: 'AUX.proof' }))}\n`,
+    'utf8',
+  );
   const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
   assert.equal(loaded.ok, true);
   assert.deepEqual(loaded.receipts, []);

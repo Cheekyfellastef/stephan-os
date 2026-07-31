@@ -16,6 +16,10 @@ import { runVerificationHarness } from './verificationHarness.mjs';
 
 export const AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION = 'automated-codex-dispatcher.v1';
 export const BLOCKED_BY_MISSING_INTEGRATION = 'BLOCKED_BY_MISSING_INTEGRATION';
+export const CODEX_JOB_DISPATCHED_WITH_BLOCKER = 'CODEX_JOB_DISPATCHED_WITH_BLOCKER';
+export const CODEX_DISPATCH_RECEIPT_BLOCKER_INVALID = 'CODEX_DISPATCH_RECEIPT_BLOCKER_INVALID';
+export const CODEX_DISPATCH_LOCK_RELEASE_TRUTH_INVALID = 'CODEX_DISPATCH_LOCK_RELEASE_TRUTH_INVALID';
+export const LOCAL_CODEX_DISPATCH_RECEIPT_PERSIST_FAILED = 'LOCAL_CODEX_DISPATCH_RECEIPT_PERSIST_FAILED';
 
 export const CODEX_DISPATCHER_STATE = Object.freeze({
   IDLE: 'IDLE',
@@ -92,6 +96,75 @@ function stableReceiptHash(receipt) {
   return createHash('sha256').update(JSON.stringify(receipt)).digest('hex');
 }
 
+function boundedReceiptDetail(value, fallback = '') {
+  const normalized = text(value, fallback);
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(normalized) ? normalized : fallback;
+}
+
+function normalizeDispatchLockRelease(input = {}) {
+  const hasOwn = (key) => Object.prototype.hasOwnProperty.call(input, key);
+  const lockReleasedPresent = hasOwn('lockReleased');
+  const lockReleasePresent = hasOwn('lockRelease');
+  const canonicalNullAbsence = lockReleasedPresent
+    && input.lockReleased === null
+    && lockReleasePresent
+    && input.lockRelease === null;
+  if (canonicalNullAbsence) {
+    return { lockReleased: null, lockRelease: null, dispatchBlocker: '' };
+  }
+  const lockReleaseObjectValid = !lockReleasePresent || (
+    input.lockRelease !== null
+    && typeof input.lockRelease === 'object'
+    && !Array.isArray(input.lockRelease)
+  );
+  const supplied = lockReleaseObjectValid && lockReleasePresent ? input.lockRelease : null;
+  const suppliedHasOwn = (key) => supplied !== null
+    && Object.prototype.hasOwnProperty.call(supplied, key);
+  const malformedTruth = (lockReleasedPresent && typeof input.lockReleased !== 'boolean')
+    || !lockReleaseObjectValid
+    || (suppliedHasOwn('ok') && typeof supplied.ok !== 'boolean')
+    || (suppliedHasOwn('receiptPersisted') && typeof supplied.receiptPersisted !== 'boolean');
+  const hasTruth = lockReleasedPresent || lockReleasePresent;
+  if (!hasTruth) return { lockReleased: null, lockRelease: null, dispatchBlocker: '' };
+  if (malformedTruth) {
+    return {
+      lockReleased: false,
+      lockRelease: Object.freeze({
+        ok: false,
+        blocker: CODEX_DISPATCH_LOCK_RELEASE_TRUTH_INVALID,
+        reason: '',
+        receiptPersisted: false,
+      }),
+      dispatchBlocker: CODEX_DISPATCH_LOCK_RELEASE_TRUTH_INVALID,
+    };
+  }
+  const suppliedBlocker = text(supplied?.blocker);
+  const receiptPersisted = supplied?.receiptPersisted !== false;
+  const lockReleased = input.lockReleased === false
+    || supplied?.ok === false
+    || !!suppliedBlocker
+    ? false
+    : (input.lockReleased === true || supplied?.ok === true);
+  return {
+    lockReleased,
+    lockRelease: Object.freeze({
+      ok: lockReleased && supplied?.ok !== false,
+      blocker: boundedReceiptDetail(
+        suppliedBlocker,
+        lockReleased ? '' : 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED',
+      ),
+      reason: boundedReceiptDetail(supplied?.reason),
+      receiptPersisted,
+    }),
+    dispatchBlocker: lockReleased
+      ? (receiptPersisted ? '' : LOCAL_CODEX_DISPATCH_RECEIPT_PERSIST_FAILED)
+      : boundedReceiptDetail(
+        suppliedBlocker,
+        'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED',
+      ),
+  };
+}
+
 export function buildAutomatedCodexDispatcherContract() {
   return Object.freeze({
     schemaVersion: AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
@@ -157,6 +230,11 @@ export function createDispatchPacket(record, input = {}) {
 }
 
 export function createDispatchReceipt(input = {}) {
+  const lockReleaseTruth = normalizeDispatchLockRelease(input);
+  const suppliedBlocker = text(input.blocker);
+  const blocker = suppliedBlocker
+    ? boundedReceiptDetail(suppliedBlocker, CODEX_DISPATCH_RECEIPT_BLOCKER_INVALID)
+    : lockReleaseTruth.dispatchBlocker;
   const receipt = {
     schemaVersion: AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
     kind: 'stephanos.automated_codex_dispatcher.dispatch_receipt',
@@ -165,14 +243,25 @@ export function createDispatchReceipt(input = {}) {
     mode: Object.values(CODEX_DISPATCH_CAPABILITY).includes(input.mode) ? input.mode : CODEX_DISPATCH_CAPABILITY.MANUAL_ONLY,
     accepted: input.accepted === true,
     started: input.started === true,
+    workerSpawned: input.workerSpawned === true,
     timestampUtc: text(input.timestampUtc, 'pending'),
     integrationId: text(input.integrationId, 'manual-operator'),
     proofRefs: Array.isArray(input.proofRefs) ? input.proofRefs.map(String) : [],
     exitCode: Number.isInteger(input.exitCode) ? input.exitCode : 0,
+    blocker,
+    lockReleased: lockReleaseTruth.lockReleased,
+    lockRelease: lockReleaseTruth.lockRelease,
     arbitraryShellAllowed: false,
     mergeAuthority: false,
   };
-  return Object.freeze({ ...receipt, commandOutputHash: text(input.commandOutputHash, stableReceiptHash(receipt)), finalVerdict: receipt.accepted ? 'CODEX_DISPATCH_RECEIPT_ACCEPTED' : 'CODEX_DISPATCH_RECEIPT_RECORDED' });
+  const finalVerdict = receipt.accepted
+    ? (blocker ? 'CODEX_DISPATCH_RECEIPT_ACCEPTED_WITH_BLOCKER' : 'CODEX_DISPATCH_RECEIPT_ACCEPTED')
+    : 'CODEX_DISPATCH_RECEIPT_RECORDED';
+  return Object.freeze({
+    ...receipt,
+    commandOutputHash: text(input.commandOutputHash, stableReceiptHash(receipt)),
+    finalVerdict,
+  });
 }
 
 export function createCodexWorkspaceMessage(record, status, input = {}) {
@@ -189,7 +278,9 @@ export function createCodexWorkspaceMessage(record, status, input = {}) {
     summary: input.summary || `Codex job ${record.jobId} moved to ${status}.`,
     status: input.dispatcherState || status,
     proofRefs: input.proofRefs || [`proof/${record.jobId}.json`],
-    requiresOperator: waitingOperator || status === CODEX_QUEUE_STATUS.BLOCKED,
+    requiresOperator: input.requiresOperator === true
+      || waitingOperator
+      || status === CODEX_QUEUE_STATUS.BLOCKED,
   });
 }
 
@@ -246,7 +337,10 @@ export function createDispatcherDashboard(input = {}) {
     lastDispatchReceipt,
     lastProof,
     lastBlocker,
-    operatorActionRequired: input.operatorActionRequired === true || input.dispatcherState === CODEX_DISPATCHER_STATE.WAITING_FOR_OPERATOR,
+    operatorActionRequired: input.operatorActionRequired === true
+      || input.dispatcherState === CODEX_DISPATCHER_STATE.WAITING_FOR_OPERATOR
+      || lastBlocker?.operatorActionRequired === true
+      || !!text(lastBlocker?.code),
     finalVerdict: 'CODEX_DISPATCHER_DASHBOARD_READY',
   });
 }
@@ -315,13 +409,22 @@ export function dispatchQueuedCodexJob(input = {}) {
     });
   }
 
-  const receipt = createDispatchReceipt({ ...(input.integration.dispatch(dispatchPacket) || {}), jobId: record.jobId, mode: CODEX_DISPATCH_CAPABILITY.AUTOMATED_SUPPORTED, timestampUtc: input.now || 'pending', integrationId: input.integration.integrationId || 'codex-automated-integration' });
+  const integrationReceipt = input.integration.dispatch(dispatchPacket) || {};
+  const receipt = createDispatchReceipt({ ...integrationReceipt, jobId: record.jobId, mode: CODEX_DISPATCH_CAPABILITY.AUTOMATED_SUPPORTED, timestampUtc: input.now || 'pending', integrationId: input.integration.integrationId || 'codex-automated-integration' });
   if (!receipt.accepted) throw new Error('dispatcher invariant violated: supported integration must return an accepted dispatch receipt; fake dispatch is forbidden');
+  const dispatchBlocker = receipt.blocker
+    || (receipt.lockReleased === false ? 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED' : '');
   const verification = verifyDispatchReceipt({ receipt });
   const transition = transitionCodexQueueRecord(record, CODEX_QUEUE_STATUS.DISPATCHED_MANUAL, {
     timestamp: input.now || 'pending',
-    reason: 'dispatch receipt recorded',
+    reason: dispatchBlocker ? `dispatch receipt recorded with blocker ${dispatchBlocker}` : 'dispatch receipt recorded',
     resultMetadata: { dispatchReceipt: receipt, proofMetadata: verification },
+    integrationState: { automatedCodexDispatchProven: true },
+    blockerMetadata: dispatchBlocker ? {
+      code: dispatchBlocker,
+      reason: 'The worker was spawned, but the dispatch control plane reported a blocker.',
+      operatorActionRequired: true,
+    } : record.blockerMetadata,
   });
   if (!transition.valid) return invalidTransitionResult(record, transition);
   const dispatched = transition.record;
@@ -332,11 +435,27 @@ export function dispatchQueuedCodexJob(input = {}) {
     record: dispatched,
     dispatchPacket,
     dispatchReceipt: receipt,
+    blocker: dispatchBlocker,
+    blockerMetadata: dispatched.blockerMetadata,
+    operatorActionRequired: !!dispatchBlocker,
     proofMetadata: verification,
     capabilityRecord: createAgentCapabilityRecord({ agentId: 'codex', mode: 'automated_dispatch_supported', boundedWritePath: 'shared-workspace', timestampUtc: input.now || 'pending', proofRefs: receipt.proofRefs }),
-    sharedWorkspaceMessage: createCodexWorkspaceMessage(dispatched, CODEX_QUEUE_STATUS.DISPATCHED),
-    workspacePublication: createDispatcherWorkspacePublication({ record: dispatched, dispatcherState: CODEX_DISPATCHER_STATE.WAITING_FOR_RESULT, timestampUtc: input.now, summary: 'Automated dispatch receipt recorded; waiting for Codex result.', proofRefs: receipt.proofRefs }),
-    finalVerdict: 'CODEX_JOB_DISPATCHED',
+    sharedWorkspaceMessage: createCodexWorkspaceMessage(dispatched, CODEX_QUEUE_STATUS.DISPATCHED, {
+      summary: dispatchBlocker
+        ? 'Codex worker dispatched but control-plane completion failed. Review the typed dispatch receipt blocker.'
+        : undefined,
+      requiresOperator: !!dispatchBlocker,
+    }),
+    workspacePublication: createDispatcherWorkspacePublication({
+      record: dispatched,
+      dispatcherState: CODEX_DISPATCHER_STATE.WAITING_FOR_RESULT,
+      timestampUtc: input.now,
+      summary: dispatchBlocker
+        ? 'Automated dispatch receipt recorded with a control-plane blocker. Worker result and lock repair both require attention.'
+        : 'Automated dispatch receipt recorded; waiting for Codex result.',
+      proofRefs: receipt.proofRefs,
+    }),
+    finalVerdict: dispatchBlocker ? CODEX_JOB_DISPATCHED_WITH_BLOCKER : 'CODEX_JOB_DISPATCHED',
   });
 }
 

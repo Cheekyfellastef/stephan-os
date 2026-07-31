@@ -8,7 +8,7 @@ import {
   validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
-import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
+import { isReadableMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
 
 export const MAILBOX_RECEIPT_INDEX_SCHEMA_VERSION = 'stephanos.mailbox-receipt-index.v1';
 export const MAILBOX_RECEIPT_INDEX_STATUS_ID = 'battle-bridge-mailbox-receipt-index';
@@ -222,7 +222,7 @@ export async function loadMailboxReceiptsFromSharedWorkspace({
       const requestId = String(receipt?.requestId || '');
       if (
         REQUEST_ID_PATTERN.test(requestId)
-        && createWindowsSafeMailboxReceiptFilename(requestId) === candidate.name
+        && isReadableMailboxReceiptFilename(candidate.name, requestId)
       ) {
         receipts.push(receipt);
       }

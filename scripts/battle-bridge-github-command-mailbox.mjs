@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -25,7 +25,10 @@ import {
   selectNextBattleBridgeGitHubCommand,
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { dispatchExactHeadWindowsBrowserProof } from '../shared/agents/exactHeadWindowsBrowserProofDispatch.mjs';
-import { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
+import {
+  createWindowsSafeMailboxReceiptFilename,
+  getReadableMailboxReceiptFilenames,
+} from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -499,42 +502,58 @@ async function readCriticalBacklogStatus(command = {}) {
   };
 }
 
-async function readMailboxReceipt(command = {}) {
-  const identity = readCanonicalSourceIdentity(command);
+export async function readMailboxReceipt(command = {}, {
+  readSourceIdentity = readCanonicalSourceIdentity,
+  receiptRoot = canonicalReceiptRoot,
+} = {}) {
+  const identity = await readSourceIdentity(command);
   if (!identity.ok) return identity;
   const targetRequestId = String(command.targetRequestId || '');
   if (!SAFE_REQUEST_ID_PATTERN.test(targetRequestId)) {
     return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TARGET_INVALID' };
   }
-  const receiptPath = join(canonicalReceiptRoot, createWindowsSafeMailboxReceiptFilename(targetRequestId));
-  let payload;
-  try {
-    payload = readFileSync(receiptPath, 'utf8');
-  } catch {
-    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
+  for (const filename of getReadableMailboxReceiptFilenames(targetRequestId)) {
+    const receiptPath = join(receiptRoot, filename);
+    let info;
+    try {
+      info = lstatSync(receiptPath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_READ_FAILED', targetRequestId };
+    }
+    if (!info.isFile()) {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_REGULAR_FILE', targetRequestId };
+    }
+    let payload;
+    try {
+      payload = readFileSync(receiptPath, 'utf8');
+    } catch {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_READ_FAILED', targetRequestId };
+    }
+    if (Buffer.byteLength(payload, 'utf8') > MAX_LOCAL_RECEIPT_BYTES) {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TOO_LARGE', targetRequestId };
+    }
+    let receipt;
+    try {
+      receipt = JSON.parse(payload);
+    } catch {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_JSON_INVALID', targetRequestId };
+    }
+    if (String(receipt?.requestId || '') !== targetRequestId) {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
+    }
+    return {
+      ...identity,
+      ok: true,
+      finalVerdict: 'MAILBOX_RECEIPT_READ_READY',
+      targetRequestId,
+      receipt: createSanitizedMailboxReceiptProjection(receipt),
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+    };
   }
-  if (Buffer.byteLength(payload, 'utf8') > MAX_LOCAL_RECEIPT_BYTES) {
-    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TOO_LARGE', targetRequestId };
-  }
-  let receipt;
-  try {
-    receipt = JSON.parse(payload);
-  } catch {
-    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_JSON_INVALID', targetRequestId };
-  }
-  if (String(receipt?.requestId || '') !== targetRequestId) {
-    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
-  }
-  return {
-    ...identity,
-    ok: true,
-    finalVerdict: 'MAILBOX_RECEIPT_READ_READY',
-    targetRequestId,
-    receipt: createSanitizedMailboxReceiptProjection(receipt),
-    arbitraryFilesystemAccess: false,
-    commandExecutionAccess: false,
-    sourceMutationAccess: false,
-  };
+  return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
 }
 
 export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {

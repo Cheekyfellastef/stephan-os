@@ -162,11 +162,21 @@ export async function dispatchExactHeadWindowsBrowserProof(command, {
     integration: activeIntegration,
     now: timestampUtc,
   });
+  const dispatchReceipt = dispatcher.dispatchReceipt || null;
   const ok = dispatcher.finalVerdict === 'CODEX_JOB_DISPATCHED';
   return {
     ok,
     finalVerdict: ok ? 'WINDOWS_BROWSER_PROOF_DISPATCHED' : 'WINDOWS_BROWSER_PROOF_DISPATCH_BLOCKED',
-    blocker: ok ? '' : (dispatcher.blocker || dispatcher.reason || 'WINDOWS_BROWSER_PROOF_DISPATCH_FAILED'),
+    blocker: ok ? '' : (
+      dispatcher.blocker
+      || dispatchReceipt?.blocker
+      || dispatcher.reason
+      || 'WINDOWS_BROWSER_PROOF_DISPATCH_FAILED'
+    ),
+    dispatchAccepted: dispatchReceipt?.accepted === true,
+    workerSpawned: dispatchReceipt?.workerSpawned === true,
+    lockReleased: dispatchReceipt?.lockReleased ?? null,
+    lockRelease: dispatchReceipt?.lockRelease || null,
     taskId: dispatcher.record?.jobId || packet.jobId,
     prNumber: Number(command.prNumber),
     expectedHead,
