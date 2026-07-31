@@ -902,7 +902,7 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
   };
   const failed = buildAffirmativeSchedulerProofSources({
     records: { proofRecords: [proof] },
-  }, null);
+  }, null, { nowUtc: NOW });
   assert.deepEqual(failed.proofHeadShas, []);
   assert.deepEqual(failed.proofReceipts, []);
   assert.deepEqual(failed.proofRefs, []);
@@ -910,7 +910,7 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
   for (const nonAffirmativeStatus of ['OBSERVED', 'ACCEPTED']) {
     const nonAffirmative = buildAffirmativeSchedulerProofSources({
       records: { proofRecords: [{ ...proof, status: nonAffirmativeStatus }] },
-    }, null);
+    }, null, { nowUtc: NOW });
     assert.deepEqual(nonAffirmative.proofHeadShas, []);
     assert.deepEqual(nonAffirmative.proofReceipts, []);
     assert.deepEqual(nonAffirmative.proofRefs, []);
@@ -918,7 +918,7 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
 
   const passed = buildAffirmativeSchedulerProofSources({
     records: { proofRecords: [{ ...proof, status: 'PASS' }] },
-  }, null);
+  }, null, { nowUtc: NOW });
   assert.deepEqual(passed.proofHeadShas, [HEAD]);
   assert.deepEqual(passed.proofReceipts, [{
     issue: 1497,
@@ -943,7 +943,7 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
           ...incompleteOrConflictingIdentity,
         }],
       },
-    }, null);
+    }, null, { nowUtc: NOW });
     assert.deepEqual(held.proofReceipts, []);
   }
 
@@ -958,7 +958,7 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
         prNumber: 1617,
       }],
     },
-  }, null);
+  }, null, { nowUtc: NOW });
   assert.deepEqual(conflictingAliases.proofHeadShas, []);
   assert.deepEqual(conflictingAliases.proofReceipts, []);
   assert.deepEqual(conflictingAliases.proofRefs, []);
@@ -971,10 +971,29 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
         sourceHead: 'c'.repeat(40),
       }],
     },
-  }, null);
+  }, null, { nowUtc: NOW });
   assert.deepEqual(conflictingHeadAliases.proofHeadShas, []);
   assert.deepEqual(conflictingHeadAliases.proofReceipts, []);
   assert.deepEqual(conflictingHeadAliases.proofRefs, []);
+
+  for (const invalidAuthority of [
+    { timestampUtc: '2099-01-01T00:00:00.000Z' },
+    { headSha: null, sourceHead: HEAD },
+    { repository: null, repositoryFullName: REPOSITORY },
+  ]) {
+    const held = buildAffirmativeSchedulerProofSources({
+      records: {
+        proofRecords: [{
+          ...proof,
+          status: 'PASS',
+          ...invalidAuthority,
+        }],
+      },
+    }, null, { nowUtc: NOW });
+    assert.deepEqual(held.proofHeadShas, []);
+    assert.deepEqual(held.proofReceipts, []);
+    assert.deepEqual(held.proofRefs, []);
+  }
 });
 
 test('programme stall registration exposes only a handler for the existing monitor runtime', () => {
