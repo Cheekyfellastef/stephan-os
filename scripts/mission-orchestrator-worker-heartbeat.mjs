@@ -79,6 +79,15 @@ export function projectMissionWorkerHeartbeat(record = {}, {
   const boundedMaxAgeMs = Number.isFinite(maxAgeMs) && maxAgeMs > 0
     ? maxAgeMs
     : DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS;
+  const recordRepositoryRoot = text(record?.repositoryRoot);
+  const recordRepositoryRootIsAbsolute = Boolean(
+    recordRepositoryRoot
+    && (
+      path.isAbsolute(recordRepositoryRoot)
+      || /^[a-z]:[\\/]/i.test(recordRepositoryRoot)
+      || /^\\\\/.test(recordRepositoryRoot)
+    )
+  );
   const normalizedExpectedRepositoryRoot = text(expectedRepositoryRoot);
   const normalizedExpectedHead = text(expectedHeadSha).toLowerCase();
   if (!record || typeof record !== 'object' || Array.isArray(record)) errors.push('invalid-record');
@@ -88,7 +97,9 @@ export function projectMissionWorkerHeartbeat(record = {}, {
   if (text(record?.branch).toLowerCase() !== 'main') errors.push('worker-branch-not-main');
   if (!SHA_40.test(text(record?.headSha))) errors.push('invalid-worker-head');
   if (!normalizedExpectedRepositoryRoot) errors.push('expected-worker-repository-missing');
-  else if (path.resolve(text(record?.repositoryRoot)) !== path.resolve(normalizedExpectedRepositoryRoot)) {
+  if (!recordRepositoryRoot) errors.push('worker-repository-missing');
+  else if (!recordRepositoryRootIsAbsolute) errors.push('worker-repository-not-absolute');
+  else if (normalizedExpectedRepositoryRoot && path.resolve(recordRepositoryRoot) !== path.resolve(normalizedExpectedRepositoryRoot)) {
     errors.push('worker-repository-mismatch');
   }
   if (!SHA_40.test(normalizedExpectedHead)) errors.push('expected-worker-head-invalid');
