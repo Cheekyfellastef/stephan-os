@@ -123,6 +123,15 @@ function withStoreMetadata(state, additions = {}) {
   };
 }
 
+function missionStatePreconditionFailed(state, precondition = {}) {
+  const expectedRevision = Number(precondition.expectedRevision);
+  const expectedCurrentPhase = text(precondition.expectedCurrentPhase).toUpperCase();
+  return (
+    (Number.isSafeInteger(expectedRevision) && state.revision !== expectedRevision)
+    || (expectedCurrentPhase && state.currentPhase !== expectedCurrentPhase)
+  );
+}
+
 async function publishSnapshot(state, snapshotRoot) {
   if (!snapshotRoot) return { published: false, path: '' };
   const root = resolve(snapshotRoot);
@@ -194,6 +203,41 @@ export async function listMissionRecords(options = {}) {
   return states.sort((left, right) => Date.parse(right.updatedAt || 0) - Date.parse(left.updatedAt || 0));
 }
 
+export async function runWithMissionStatePrecondition(
+  missionId,
+  precondition,
+  operation,
+  options = {},
+) {
+  if (typeof operation !== 'function') {
+    throw new TypeError('Mission state precondition operation must be a function.');
+  }
+  const root = options.root || resolveMissionOrchestratorRoot(options.env || process.env);
+  if (!root) throw new Error('Mission orchestrator directory is not configured.');
+  const paths = missionPaths(root, missionId);
+  await mkdir(paths.root, { recursive: true });
+  const lockHandle = await acquireLock(paths.lockPath);
+  try {
+    const current = JSON.parse(await readFile(paths.statePath, 'utf8'));
+    if (missionStatePreconditionFailed(current, precondition)) {
+      return {
+        state: current,
+        preconditionFailed: true,
+        reason: 'MISSION_STATE_PRECONDITION_FAILED',
+        result: null,
+      };
+    }
+    return {
+      state: current,
+      preconditionFailed: false,
+      reason: '',
+      result: await operation(current),
+    };
+  } finally {
+    await releaseLock(lockHandle, paths.lockPath);
+  }
+}
+
 export async function appendMissionEvent(missionId, event, options = {}) {
   const root = options.root || resolveMissionOrchestratorRoot(options.env || process.env);
   if (!root) throw new Error('Mission orchestrator directory is not configured.');
@@ -209,12 +253,7 @@ export async function appendMissionEvent(missionId, event, options = {}) {
     if (processedEventIds.includes(eventId)) {
       return { state: current, duplicate: true, eventId, snapshot: { published: false, path: '' } };
     }
-    const expectedRevision = Number(event.expectedRevision);
-    const expectedCurrentPhase = String(event.expectedCurrentPhase || '').trim().toUpperCase();
-    if (
-      (Number.isSafeInteger(expectedRevision) && current.revision !== expectedRevision)
-      || (expectedCurrentPhase && current.currentPhase !== expectedCurrentPhase)
-    ) {
+    if (missionStatePreconditionFailed(current, event)) {
       return {
         state: current,
         duplicate: false,

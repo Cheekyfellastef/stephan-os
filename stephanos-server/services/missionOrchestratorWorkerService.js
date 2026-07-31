@@ -5,7 +5,13 @@ import {
   issueMissionWorkerAuthorization,
   projectMissionWorkerActionState,
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
-import { appendMissionEvent, listMissionRecords, readMissionRecord, resolveMissionOrchestratorRoot } from './missionOrchestratorStore.js';
+import {
+  appendMissionEvent,
+  listMissionRecords,
+  readMissionRecord,
+  resolveMissionOrchestratorRoot,
+  runWithMissionStatePrecondition,
+} from './missionOrchestratorStore.js';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -97,10 +103,28 @@ function validateExecutionTargetBindings(state, action, grant) {
   const laneIdentity = encodedMissionIdentity(grant?.laneId);
   const laneId = text(grant?.laneId).toLowerCase();
   const stateMissionId = text(state?.missionId).toLowerCase();
+  const issueNumber = positiveInteger(grant?.issueNumber);
+  const prNumber = positiveInteger(grant?.prNumber);
+  const headSha = text(grant?.headSha).toLowerCase();
+  const statePrNumber = positiveInteger(
+    state?.pullRequest?.number
+      ?? state?.prNumber
+      ?? state?.relatedPr
+      ?? missionIdentity.prNumber,
+  );
+  const actionPrNumber = positiveInteger(
+    action?.prNumber ?? action?.claims?.prNumber,
+  );
+  const hasPrTarget = Boolean(statePrNumber || actionPrNumber);
+  if (hasPrTarget) {
+    if (!laneId) errors.push('action-grant-lane-binding-missing');
+    if (!issueNumber) errors.push('action-grant-issue-binding-missing');
+    if (!prNumber) errors.push('action-grant-pr-binding-missing');
+    if (!headSha) errors.push('action-grant-head-binding-missing');
+  }
   if (laneId && laneId !== stateMissionId) {
     errors.push('action-grant-lane-mismatch');
   }
-  const issueNumber = positiveInteger(grant?.issueNumber);
   if (issueNumber) {
     const stateIssueNumber = positiveInteger(
       state?.issueNumber
@@ -114,18 +138,7 @@ function validateExecutionTargetBindings(state, action, grant) {
     }
   }
 
-  const prNumber = positiveInteger(grant?.prNumber);
   if (prNumber) {
-    if (!laneId) errors.push('action-grant-lane-binding-missing');
-    const statePrNumber = positiveInteger(
-      state?.pullRequest?.number
-        ?? state?.prNumber
-        ?? state?.relatedPr
-        ?? missionIdentity.prNumber,
-    );
-    const actionPrNumber = positiveInteger(
-      action?.prNumber ?? action?.claims?.prNumber,
-    );
     if (!statePrNumber) errors.push('action-grant-pr-binding-unproven');
     else if (statePrNumber !== prNumber) errors.push('action-grant-pr-mismatch');
     if (actionPrNumber && actionPrNumber !== prNumber) {
@@ -136,7 +149,6 @@ function validateExecutionTargetBindings(state, action, grant) {
     }
   }
 
-  const headSha = text(grant?.headSha).toLowerCase();
   if (headSha) {
     const stateHeadSha = text(state?.pullRequest?.headSha).toLowerCase();
     const actionHeadSha = text(
@@ -216,32 +228,137 @@ async function beginRepairIfRequired(state, options) {
   };
 }
 
-export async function publishMissionWorkerAction(inputState, options = {}) {
-  if (inputState.dispatch?.status === 'running' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION'].includes(inputState.currentPhase)) return { published: false, reason: 'agent-already-running', action: null, path: '' };
-  const prepared = await beginRepairIfRequired(inputState, options);
-  const state = prepared.state;
+async function publishLockedMissionWorkerAction(state, options = {}) {
   const action = buildMissionWorkerAction(state, options);
-  if (action.executable !== true) return { published: false, reason: action.reason || action.finalVerdict, action, path: '', repairStarted: prepared.repairStarted };
+  if (action.executable !== true) {
+    return {
+      published: false,
+      reason: action.reason || action.finalVerdict,
+      action,
+      path: '',
+    };
+  }
+  if (options.actionGrant) {
+    const validation = validateExactActionGrant(
+      state,
+      action,
+      options.actionGrant,
+      options,
+    );
+    if (!validation.valid) {
+      return {
+        published: false,
+        reason: 'locked-action-grant-mismatch',
+        blockers: validation.errors,
+        action,
+        path: '',
+      };
+    }
+  }
   const adapter = adapterForAction(action);
-  if (!adapter) return { published: false, reason: 'unsupported-worker-adapter', action, path: '', repairStarted: prepared.repairStarted };
+  if (!adapter) {
+    return {
+      published: false,
+      reason: 'unsupported-worker-adapter',
+      action,
+      path: '',
+    };
+  }
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) throw new Error('Mission worker queue directory is not configured.');
   const paths = queuePaths(root, adapter);
   await Promise.all(Object.values(paths).map((path) => mkdir(path, { recursive: true })));
   let payload = action;
   if (action.actionKind === 'signed-openclaw-operation') {
-    if (!options.privateKeyPem && !options.privateKeyPath) throw new Error('Mission worker authorization private key is not configured.');
+    if (!options.privateKeyPem && !options.privateKeyPath) {
+      throw new Error('Mission worker authorization private key is not configured.');
+    }
     const privateKeyPem = options.privateKeyPem || await readFile(options.privateKeyPath, 'utf8');
     payload = issueMissionWorkerAuthorization(action, privateKeyPem, options);
-    if (payload.finalVerdict !== 'MISSION_WORKER_REQUEST_ISSUED') return { published: false, reason: payload.finalVerdict, action, payload, path: '', repairStarted: prepared.repairStarted };
+    if (payload.finalVerdict !== 'MISSION_WORKER_REQUEST_ISSUED') {
+      return {
+        published: false,
+        reason: payload.finalVerdict,
+        action,
+        payload,
+        path: '',
+      };
+    }
   }
   const path = resolve(paths.pending, `${action.actionId}.json`);
-  const published = await createImmutableJson(path, { schemaVersion: 'stephanos.mission-worker-queue-item.v1', adapter, actionId: action.actionId, missionId: state.missionId, createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(), payload });
-  if (!published) return { published: false, reason: 'action-already-published', action, path, repairStarted: prepared.repairStarted };
-  if (action.actionKind === 'agent-handoff') {
-    await appendMissionEvent(state.missionId, { eventId: `dispatch-${action.actionId}`.slice(0, 128), eventType: 'AGENT_DISPATCHED', agentId: action.adapter === 'codex' ? 'codex' : 'openclaw-standalone', summary: `${action.adapter} handoff published to the durable worker queue.` }, options);
+  const published = await createImmutableJson(path, {
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter,
+    actionId: action.actionId,
+    missionId: state.missionId,
+    createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
+    payload,
+  });
+  if (!published) {
+    return {
+      published: false,
+      reason: 'action-already-published',
+      action,
+      path,
+    };
   }
-  return { published: true, reason: '', action, payload, path, adapter, repairStarted: prepared.repairStarted };
+  return {
+    published: true,
+    reason: '',
+    action,
+    payload,
+    path,
+    adapter,
+  };
+}
+
+export async function publishMissionWorkerAction(inputState, options = {}) {
+  if (inputState.dispatch?.status === 'running' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION'].includes(inputState.currentPhase)) return { published: false, reason: 'agent-already-running', action: null, path: '' };
+  const prepared = await beginRepairIfRequired(inputState, options);
+  if (prepared.preconditionFailed) {
+    return {
+      published: false,
+      reason: 'repair-transition-precondition-failed',
+      blockers: [prepared.reason || 'mission-state-precondition-failed'],
+      action: null,
+      path: '',
+      repairStarted: false,
+    };
+  }
+  const state = prepared.state;
+  const locked = await runWithMissionStatePrecondition(
+    state.missionId,
+    {
+      expectedRevision: state.revision,
+      expectedCurrentPhase: state.currentPhase,
+    },
+    (current) => publishLockedMissionWorkerAction(current, options),
+    options,
+  );
+  if (locked.preconditionFailed) {
+    return {
+      published: false,
+      reason: 'mission-state-precondition-failed',
+      blockers: [locked.reason],
+      action: null,
+      path: '',
+      repairStarted: prepared.repairStarted,
+    };
+  }
+  const result = {
+    ...locked.result,
+    repairStarted: prepared.repairStarted,
+  };
+  if (result.published && result.action.actionKind === 'agent-handoff') {
+    const action = result.action;
+    await appendMissionEvent(state.missionId, {
+      eventId: `dispatch-${action.actionId}`.slice(0, 128),
+      eventType: 'AGENT_DISPATCHED',
+      agentId: action.adapter === 'codex' ? 'codex' : 'openclaw-standalone',
+      summary: `${action.adapter} handoff published to the durable worker queue.`,
+    }, options);
+  }
+  return result;
 }
 
 export async function publishNextMissionWorkerAction(options = {}) {

@@ -46,6 +46,28 @@ test('publishes worktree then one Codex dispatch and collects grounded result', 
   assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'complete');
 });
 
+test('publisher rejects a stale mission revision before signing or queueing', async () => {
+  const options = await runtime();
+  const missionId = 'stale-publish-test';
+  const created = await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/stale-publish-test',
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'stale-worktree-ready',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'stale-worktree-proof'),
+  }, options);
+
+  const stale = await publishMissionWorkerAction(created.state, options);
+  assert.equal(stale.published, false);
+  assert.equal(stale.reason, 'mission-state-precondition-failed');
+  assert.deepEqual(await readMissionWorkerQueue(options), []);
+});
+
 test('publisher rejects retargeting and publishes only the exact granted mission action', async () => {
   const options = await runtime();
   const first = await createMissionRecord({ ...intent, missionId: 'grant-first', branch: 'openclaw/grant-first' }, options);
@@ -211,6 +233,22 @@ test('repair transition is projected, granted, applied, and queued as one exact 
     assert.equal(retargeted.reason, 'action-grant-mismatch');
     assert.equal(retargeted.blockers.includes(blocker), true);
   }
+
+  for (const [field, blocker] of [
+    ['laneId', 'action-grant-lane-binding-missing'],
+    ['issueNumber', 'action-grant-issue-binding-missing'],
+    ['prNumber', 'action-grant-pr-binding-missing'],
+    ['headSha', 'action-grant-head-binding-missing'],
+  ]) {
+    const incomplete = await publishNextMissionWorkerAction({
+      ...options,
+      actionGrant: { ...grant, [field]: null },
+    });
+    assert.equal(incomplete.published, false);
+    assert.equal(incomplete.reason, 'action-grant-mismatch');
+    assert.equal(incomplete.blockers.includes(blocker), true);
+  }
+  assert.deepEqual(await readMissionWorkerQueue(options), []);
 
   const published = await publishNextMissionWorkerAction({
     ...options,
