@@ -141,10 +141,26 @@ function normalizeGoal(candidate = {}) {
   const rawBranch = text(goal.branch) || null;
   const branchBoundExceeded = Boolean(rawBranch && rawBranch.length > MAX_LANE_IDENTITY_LENGTH);
   const branch = branchBoundExceeded ? null : rawBranch;
-  const approvalBinding = normalizeBindingReceipt(goal.operatorApprovalReceipt);
+  const approvalBinding = goal.operatorApprovalReceipt === undefined || goal.operatorApprovalReceipt === null
+    ? { receipt:null, invalid:false }
+    : normalizeProofReceipt(goal.operatorApprovalReceipt);
   const operatorApprovalReceipt = approvalBinding.receipt;
   const invalidOperatorApprovalReceipt = approvalBinding.invalid;
-  const exactHeadApprovalSatisfied = Boolean(operatorApprovalReceipt && number && activePr && headSha && bindingKey(operatorApprovalReceipt.issue, operatorApprovalReceipt.activePr, operatorApprovalReceipt.headSha) === bindingKey(number, activePr, headSha));
+  const exactHeadApprovalSatisfied = Boolean(
+    operatorApprovalReceipt
+    && number
+    && activePr
+    && headSha
+    && repository
+    && branch
+    && proofBindingKey(
+      operatorApprovalReceipt.issue,
+      operatorApprovalReceipt.activePr,
+      operatorApprovalReceipt.headSha,
+      operatorApprovalReceipt.repository,
+      operatorApprovalReceipt.branch,
+    ) === proofBindingKey(number, activePr, headSha, repository, branch)
+  );
   return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, boundExceededFlywheelEvidence, invalidFlywheelEvidenceEntries, invalidOperatorApprovalReceipt, branchBoundExceeded, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr, repository, branch, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalReceipt, exactHeadApprovalSatisfied, duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
 }
 
