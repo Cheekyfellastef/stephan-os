@@ -283,12 +283,15 @@ function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
     const localHead = String(operationResult?.localHead || '').trim().toLowerCase();
     const proofTarget = String(receipt?.proofTarget || operationResult?.proofTarget || 'PULL_REQUEST_HEAD');
     const mergeCommitHead = String(operationResult?.mergeCommitHead || '').trim().toLowerCase();
+    const githubMainHead = String(operationResult?.githubMainHead || '').trim().toLowerCase();
     if (proofTarget === 'MERGED_MAIN') {
       return EXACT_GIT_HEAD_PATTERN.test(expectedHead)
         && EXACT_GIT_HEAD_PATTERN.test(pullRequestHead)
         && EXACT_GIT_HEAD_PATTERN.test(mergeCommitHead)
+        && EXACT_GIT_HEAD_PATTERN.test(githubMainHead)
         && EXACT_GIT_HEAD_PATTERN.test(localHead)
-        && expectedHead === mergeCommitHead
+        && operationResult?.mergeCommitIncluded === true
+        && expectedHead === githubMainHead
         && expectedHead === localHead;
     }
     return EXACT_GIT_HEAD_PATTERN.test(expectedHead)
@@ -344,6 +347,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
     pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
     mergeCommitHead: safeTelemetrySha(operationResult?.mergeCommitHead),
+    githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
+    mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeTelemetrySha(operationResult?.localHead),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
@@ -365,6 +370,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
       pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
       mergeCommitHead: safeTelemetrySha(operationResult?.mergeCommitHead),
+      githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
+      mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
       localHead: safeTelemetrySha(operationResult?.localHead),
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
@@ -429,6 +436,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
     pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
     mergeCommitHead: safeTelemetrySha(operationResult?.mergeCommitHead),
+    githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
+    mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeTelemetrySha(operationResult?.localHead),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
@@ -448,6 +457,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
         pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
         mergeCommitHead: safeTelemetrySha(operationResult?.mergeCommitHead),
+        githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
+        mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
         localHead: safeTelemetrySha(operationResult?.localHead),
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),

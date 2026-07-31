@@ -108,12 +108,15 @@ function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
     const localHead = String(operationResult?.localHead || '').trim().toLowerCase();
     const proofTarget = String(receipt?.proofTarget || operationResult?.proofTarget || 'PULL_REQUEST_HEAD');
     const mergeCommitHead = String(operationResult?.mergeCommitHead || '').trim().toLowerCase();
+    const githubMainHead = String(operationResult?.githubMainHead || '').trim().toLowerCase();
     if (proofTarget === 'MERGED_MAIN') {
       return SHA_PATTERN.test(expectedHead)
         && SHA_PATTERN.test(pullRequestHead)
         && SHA_PATTERN.test(mergeCommitHead)
+        && SHA_PATTERN.test(githubMainHead)
         && SHA_PATTERN.test(localHead)
-        && expectedHead === mergeCommitHead
+        && operationResult?.mergeCommitIncluded === true
+        && expectedHead === githubMainHead
         && expectedHead === localHead;
     }
     return SHA_PATTERN.test(expectedHead)
@@ -274,6 +277,8 @@ export function sanitizeMailboxReceiptForIndex(receipt = {}) {
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
     pullRequestHead: safeSha(operationResult?.pullRequestHead),
     mergeCommitHead: safeSha(operationResult?.mergeCommitHead),
+    githubMainHead: safeSha(operationResult?.githubMainHead),
+    mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeSha(operationResult?.localHead),
     sourceHead: safeSha(operationResult?.sourceHead || operationResult?.recoveredHead),
     branch: String(operationResult?.branch || receipt?.branch || '') === 'main' ? 'main' : '',

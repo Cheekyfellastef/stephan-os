@@ -129,15 +129,25 @@ function safeExactHeadProof(value = {}) {
   if (!/^[0-9a-f]{40}$/.test(expectedHead) || !Number.isSafeInteger(prNumber) || prNumber <= 0) return null;
   const proofTarget = text(value.proofTarget, 'PULL_REQUEST_HEAD');
   const pullRequestHead = text(value.pullRequestHead).toLowerCase();
+  const mergeCommitHead = text(value.mergeCommitHead).toLowerCase();
+  const githubMainHead = text(value.githubMainHead).toLowerCase();
   if (!['PULL_REQUEST_HEAD', 'MERGED_MAIN'].includes(proofTarget)) return null;
   if (proofTarget === 'MERGED_MAIN' && !/^[0-9a-f]{40}$/.test(pullRequestHead)) return null;
+  if (proofTarget === 'MERGED_MAIN' && (!/^[0-9a-f]{40}$/.test(mergeCommitHead)
+    || !/^[0-9a-f]{40}$/.test(githubMainHead)
+    || githubMainHead !== expectedHead
+    || value.mergeCommitIncluded !== true)) return null;
   if (proofTarget === 'PULL_REQUEST_HEAD' && pullRequestHead) return null;
+  if (proofTarget === 'PULL_REQUEST_HEAD' && (mergeCommitHead || githubMainHead || value.mergeCommitIncluded === true)) return null;
   return Object.freeze({
     repository: text(value.repository),
     prNumber,
     expectedHead,
     proofTarget,
     pullRequestHead,
+    mergeCommitHead,
+    githubMainHead,
+    mergeCommitIncluded: value.mergeCommitIncluded === true,
     proofScenario: text(value.proofScenario),
   });
 }

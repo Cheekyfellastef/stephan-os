@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildExactHeadWindowsBrowserProofPacket,
+  createProofGitEnvironment,
   createWindowsSafeBrowserProofJobId,
   dispatchExactHeadWindowsBrowserProof,
+  readMergeCommitAncestry,
 } from './exactHeadWindowsBrowserProofDispatch.mjs';
 
 const command = {
@@ -30,6 +32,9 @@ test('builds one approved read-only exact-head Windows proof packet', () => {
     expectedHead: command.expectedHead,
     proofTarget: 'PULL_REQUEST_HEAD',
     pullRequestHead: '',
+    mergeCommitHead: '',
+    githubMainHead: '',
+    mergeCommitIncluded: false,
     proofScenario: command.proofScenario,
   });
 });
@@ -55,6 +60,8 @@ test('binds a post-merge proof to both immutable PR provenance and the merged ma
       mergeCommitHead,
       baseBranch: 'main',
     }),
+    readMainHead: async () => ({ ok: true, head: mergeCommitHead }),
+    readMergeAncestry: async () => ({ ok: true, included: true }),
     readLocalHead: async () => ({ ok: true, head: mergeCommitHead }),
     integration: {
       paths: { repoRoot: 'C:\\stephan-os' },
@@ -78,6 +85,9 @@ test('binds a post-merge proof to both immutable PR provenance and the merged ma
     expectedHead: mergeCommitHead,
     proofTarget: 'MERGED_MAIN',
     pullRequestHead,
+    mergeCommitHead,
+    githubMainHead: mergeCommitHead,
+    mergeCommitIncluded: true,
     proofScenario: command.proofScenario,
   });
 });
@@ -95,15 +105,19 @@ test('rejects post-merge PR-head substitution, unrelated merges, missing provena
   const run = (overrides = {}) => dispatchExactHeadWindowsBrowserProof(overrides.command || mergedCommand, {
     platform: 'win32', integration,
     readPullRequestHead: overrides.readPullRequestHead || (async () => identity),
+    readMainHead: overrides.readMainHead || (async () => ({ ok: true, head: mergeCommitHead })),
     readLocalHead: overrides.readLocalHead || (async () => ({ ok: true, head: mergeCommitHead })),
+    readMergeAncestry: overrides.readMergeAncestry || (async () => ({ ok: true, included: true })),
   });
 
   assert.equal((await run({ command: { ...mergedCommand, pullRequestHead: 'a'.repeat(40) } })).blocker, 'PR_HEAD_MISMATCH');
   assert.equal((await run({
     readPullRequestHead: async () => ({ ...identity, mergeCommitHead: 'b'.repeat(40) }),
-  })).blocker, 'MERGE_COMMIT_MISMATCH');
+    readMergeAncestry: async () => ({ ok: true, included: false }),
+  })).blocker, 'PR_MERGE_NOT_IN_EXPECTED_MAIN');
   assert.equal((await run({ command: { ...mergedCommand, pullRequestHead: '' } })).blocker, 'PR_PROVENANCE_HEAD_REQUIRED');
   assert.equal((await run({ readLocalHead: async () => ({ ok: true, head: 'c'.repeat(40) }) })).blocker, 'EXPECTED_HEAD_MISMATCH');
+  assert.equal((await run({ readMainHead: async () => ({ ok: true, head: 'e'.repeat(40) }) })).blocker, 'GITHUB_MAIN_HEAD_MISMATCH');
 
   let identityReads = 0;
   const moved = await run({
@@ -113,6 +127,83 @@ test('rejects post-merge PR-head substitution, unrelated merges, missing provena
     },
   });
   assert.equal(moved.blocker, 'PR_HEAD_MISMATCH');
+});
+
+test('accepts a later current main only when it contains the selected PR merge commit', async () => {
+  const pullRequestHead = command.expectedHead;
+  const mergeCommitHead = 'b0fb339ea21cc4bbbaa50056d3d049f86031a29b';
+  const currentMainHead = '3465beca92e0651598a77668c4426451aadad0b2';
+  const ancestryCalls = [];
+  const result = await dispatchExactHeadWindowsBrowserProof({
+    ...command,
+    expectedHead: currentMainHead,
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead,
+  }, {
+    platform: 'win32',
+    readPullRequestHead: async () => ({
+      ok: true,
+      head: pullRequestHead,
+      merged: true,
+      state: 'closed',
+      mergeCommitHead,
+      baseBranch: 'main',
+    }),
+    readMainHead: async () => ({ ok: true, head: currentMainHead }),
+    readLocalHead: async () => ({ ok: true, head: currentMainHead }),
+    readMergeAncestry: async (repoRoot, ancestor, descendant) => {
+      ancestryCalls.push({ repoRoot, ancestor, descendant });
+      return { ok: true, included: true };
+    },
+    integration: {
+      paths: { repoRoot: 'C:\\stephan-os' },
+      capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+      dispatch(packet) { return { accepted: true, started: true, jobId: packet.jobId }; },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.mergeCommitHead, mergeCommitHead);
+  assert.equal(result.githubMainHead, currentMainHead);
+  assert.equal(result.mergeCommitIncluded, true);
+  assert.equal(ancestryCalls.length, 2);
+  assert.deepEqual(ancestryCalls[0], {
+    repoRoot: 'C:\\stephan-os',
+    ancestor: mergeCommitHead,
+    descendant: currentMainHead,
+  });
+});
+
+test('checks merge ancestry with replacement objects and ambient Git configuration disabled', () => {
+  const environment = createProofGitEnvironment({
+    PATH: 'C:\\safe',
+    GIT_REPLACE_REF_BASE: 'refs/replace-hostile',
+    GIT_OBJECT_DIRECTORY: 'C:\\hostile-objects',
+    GIT_CONFIG_GLOBAL: 'C:\\hostile.gitconfig',
+  }, 'win32');
+  assert.equal(environment.PATH, 'C:\\safe');
+  assert.equal(environment.GIT_CONFIG_GLOBAL, 'NUL');
+  assert.equal(environment.GIT_CONFIG_NOSYSTEM, '1');
+  assert.equal(environment.GIT_NO_REPLACE_OBJECTS, '1');
+  assert.equal(environment.GIT_OBJECT_DIRECTORY, undefined);
+  assert.equal(environment.GIT_REPLACE_REF_BASE, undefined);
+
+  const calls = [];
+  const result = readMergeCommitAncestry(
+    'C:\\stephan-os',
+    'a'.repeat(40),
+    'b'.repeat(40),
+    {
+      platform: 'win32',
+      spawnSyncFn(executable, args, options) {
+        calls.push({ executable, args, options });
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    },
+  );
+  assert.deepEqual(result, { ok: true, included: true });
+  assert.deepEqual(calls[0].args, ['merge-base', '--is-ancestor', 'a'.repeat(40), 'b'.repeat(40)]);
+  assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.env.GIT_NO_REPLACE_OBJECTS, '1');
 });
 
 test('derives a deterministic Windows-safe job id instead of using a raw mailbox request id as a path', () => {
