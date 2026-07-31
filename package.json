@@ -71,7 +71,8 @@
     "stephanos:exact-head-review:test": "node --test shared/agents/exactHeadReviewDispatchCoordinator.test.mjs",
     "stephanos:provider-neutral-review:test": "node --test shared/agents/providerNeutralReviewV1.test.mjs shared/agents/providerNeutralReviewV1IdentityRegression.test.mjs",
     "stephanos:pr-estate:reconcile": "node scripts/pr-estate-reconcile.mjs",
-    "stephanos:pr-estate:test": "node --test shared/agents/prEstateReconciler.test.mjs shared/agents/prEstateCurrentHeadSafetyRegression.test.mjs scripts/pr-estate-reconcile.test.mjs"
+    "stephanos:pr-estate:test": "node --test shared/agents/prEstateReconciler.test.mjs shared/agents/prEstateCurrentHeadSafetyRegression.test.mjs scripts/pr-estate-reconcile.test.mjs",
+    "music:rating-playback:browser:test": "node --test tests/music-tile-rating-playback-browser.test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
