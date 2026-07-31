@@ -84,11 +84,11 @@ function approvalReceipt(overrides = {}) {
   return {
     schemaVersion: 'stephanos.protected-operator-approval.v1',
     kind: 'stephanos.protected-operator-approval',
-    issue: 1497,
     activePr: 1617,
     headSha: HEAD,
     repository: REPOSITORY,
     branch: BRANCH,
+    protectionBoundary: 'github-protected-environment:operator-merge-approval',
     requiredReviewer: 'Cheekyfellastef',
     workflowPath: '.github/workflows/operator-merge-approval-gate.yml',
     workflowRunId: 12345,
@@ -609,6 +609,7 @@ test('scheduler goals are constructed from durable records and the canonical lan
 
   for (const untrustedProvenance of [
     { schemaVersion: 'self-attested.approval.v1' },
+    { protectionBoundary: 'unprotected-caller' },
     { requiredReviewer: 'untrusted-writer' },
     { workflowRunId: null },
     { mergeExecutionAuthority: 'caller' },
