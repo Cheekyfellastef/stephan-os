@@ -10,6 +10,7 @@ import {
   buildProtectedSecurityReviewReceipt,
   extractJsonObjects,
   parseIndependentReviewSessionId,
+  projectProtectedApprovalReceiptForWorkspace,
   validateExactHeadWorkflowRuns,
   validateIndependentReviewWorkflowRun,
   validateProtectedEnvironment,
@@ -414,6 +415,7 @@ test('builds an exact-head operator approval receipt only from ready separated e
   assert.equal(receipt.workflowRunId, operatorRunId);
   assert.equal(receipt.mergeExecutionAuthority, 'github-actions-protected-environment-only');
   assert.equal(receipt.reusableAcrossHeads, false);
+  assert.equal(receipt.protectionBoundary, 'github-protected-environment:operator-merge-approval');
   assert.equal(validateProtectedApprovalReceipt(receipt, {
     nowUtc: '2026-07-21T20:06:00.000Z',
   }).valid, true);
@@ -434,4 +436,16 @@ test('builds an exact-head operator approval receipt only from ready separated e
       nowUtc: '2026-07-21T20:06:00.000Z',
     }).valid, false);
   }
+  const workspaceProjection = projectProtectedApprovalReceiptForWorkspace(receipt, {
+    nowUtc: '2026-07-21T20:06:00.000Z',
+  });
+  assert.equal(workspaceProjection.valid, true);
+  assert.equal(Object.hasOwn(workspaceProjection.receipt, 'environment'), false);
+  assert.equal(
+    workspaceProjection.receipt.protectionBoundary,
+    'github-protected-environment:operator-merge-approval',
+  );
+  assert.equal(validateProtectedApprovalReceipt(workspaceProjection.receipt, {
+    nowUtc: '2026-07-21T20:06:00.000Z',
+  }).valid, true);
 });
