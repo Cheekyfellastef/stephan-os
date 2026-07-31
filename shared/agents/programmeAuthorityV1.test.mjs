@@ -337,6 +337,13 @@ test('source mutation lease validates, renews only the exact live owner, and nev
   assert.equal(overlong.valid, false);
   assert.ok(overlong.errors.includes('lease-lifetime-exceeds-maximum'));
 
+  const futureRenewal = validateSourceMutationLease(lease({
+    renewedAtUtc: '2026-07-30T12:00:00.000Z',
+    expiresAtUtc: '2026-07-30T13:00:00.000Z',
+  }), { nowUtc: NOW });
+  assert.equal(futureRenewal.valid, false);
+  assert.ok(futureRenewal.errors.includes('future-renewal'));
+
   const conflictingLaneIdentity = validateSourceMutationLease(lease({
     issueNumber: 1,
     prNumber: 2,
@@ -415,6 +422,17 @@ test('execution receipt leaseKey is correlation only and cannot fabricate mutati
   assert.equal(futureReceipt.valid, false);
   assert.ok(futureReceipt.errors.includes('receipt-timestamp-in-future'));
   assert.equal(futureReceipt.finalVerdict, 'EXECUTION_RECEIPT_MUTATION_AUTHORITY_BLOCKED');
+
+  const preLeaseReceipt = validateExecutionReceiptAgainstMutationLease(
+    receipt({
+      timestampUtc: '2026-07-30T09:29:59.000Z',
+      heartbeatExpiresAtUtc: '2026-07-30T10:01:00.000Z',
+    }),
+    lease(),
+    { nowUtc: NOW },
+  );
+  assert.equal(preLeaseReceipt.valid, false);
+  assert.ok(preLeaseReceipt.errors.includes('receipt-before-lease-acquisition'));
 });
 
 test('controller and Mission Worker heartbeats remain distinct authorities', () => {
@@ -567,8 +585,20 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(explicitNonCanonicalGoal.goals[0].issue, 1497);
 
   const exactApprovalReceipt = approvalReceipt();
+  const selfAttestedApproval = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [goalRecord({
+      state: 'IMPLEMENTED',
+      activePr: 1617,
+      headSha: HEAD,
+      operatorApprovalReceipt: exactApprovalReceipt,
+    })],
+  });
+  assert.equal(selfAttestedApproval.valid, false);
+  assert.ok(selfAttestedApproval.blockers.includes('goal-record-0-approval-receipt-invalid'));
   const implementedGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
+    trustedOperatorApprovalReceipts: [exactApprovalReceipt],
     goalRecords: [goalRecord({
       state: 'IMPLEMENTED',
       activePr: 1617,
@@ -602,6 +632,7 @@ test('scheduler goals are constructed from durable records and the canonical lan
   const activeApprovalOverlay = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     lane: lane(),
+    trustedOperatorApprovalReceipts: [exactApprovalReceipt],
     goalRecords: [goalRecord({ operatorApprovalReceipt: exactApprovalReceipt })],
   });
   assert.equal(activeApprovalOverlay.goals[0].operatorApprovalReceipt.issue, 1497);
@@ -664,6 +695,7 @@ test('scheduler goals are constructed from durable records and the canonical lan
   delete aliasOnlyApprovalReceipt.branch;
   const aliasedApproval = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
+    trustedOperatorApprovalReceipts: [exactApprovalReceipt],
     goalRecords: [goalRecord({
       state: 'IMPLEMENTED',
       activePr: 1617,
