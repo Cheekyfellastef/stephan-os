@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import {
   PROGRAMME_CONTROLLER_HEARTBEAT_STATUS_ID,
   PROGRAMME_STALL_MONITOR_HANDLER_ID,
+  MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS,
   SOURCE_MUTATION_LEASE_RELEASE_SCHEMA,
   SOURCE_MUTATION_LEASE_STATUS_ID,
   TERMINAL_LANE_FINALIZATION_SCHEMA,
@@ -71,6 +72,10 @@ const AFFIRMATIVE_PROOF_STATUSES = new Set([
 function text(value, fallback = '') {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || fallback;
+}
+
+function hasOwn(value, key) {
+  return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
 }
 
 function list(value) {
@@ -931,21 +936,42 @@ function canonicalTextAlias(values, normalize = text) {
   return uniqueValues.length === 1 ? uniqueValues[0] : null;
 }
 
-export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt) {
+function canonicalRecordAlias(record, keys, canonicalize) {
+  const values = [];
+  for (const key of keys) {
+    if (!hasOwn(record, key)) continue;
+    const value = record[key];
+    if (value === undefined || value === null || !String(value).trim()) return null;
+    values.push(value);
+  }
+  return values.length ? canonicalize(values) : null;
+}
+
+export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt, options = {}) {
   const records = list(workspaceFeed?.records?.proofRecords);
   const proofHeadShas = [];
   const proofReceipts = [];
   const proofRefs = [];
+  const nowUtc = safeNow(options.nowUtc);
+  const nowMs = nowUtc ? Date.parse(nowUtc) : null;
   for (const record of records) {
     if (!isAffirmativeProofRecord(record)) continue;
-    const headSha = canonicalShaAlias([record.headSha, record.sourceHead]);
-    const issue = canonicalPositiveAlias([record.issueNumber, record.relatedIssue]);
-    const activePr = canonicalPositiveAlias([record.prNumber, record.relatedPr]);
-    const repository = canonicalTextAlias(
-      [record.repository, record.repositoryFullName],
-      (value) => text(value).toLowerCase(),
+    const proofTimestampUtc = safeNow(record.timestampUtc);
+    const proofTimestampMs = proofTimestampUtc ? Date.parse(proofTimestampUtc) : null;
+    if (
+      nowMs === null
+      || proofTimestampMs === null
+      || proofTimestampMs - nowMs > MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+    ) continue;
+    const headSha = canonicalRecordAlias(record, ['headSha', 'sourceHead'], canonicalShaAlias);
+    const issue = canonicalRecordAlias(record, ['issueNumber', 'relatedIssue'], canonicalPositiveAlias);
+    const activePr = canonicalRecordAlias(record, ['prNumber', 'relatedPr'], canonicalPositiveAlias);
+    const repository = canonicalRecordAlias(
+      record,
+      ['repository', 'repositoryFullName'],
+      (values) => canonicalTextAlias(values, (value) => text(value).toLowerCase()),
     );
-    const branch = canonicalTextAlias([record.branch, record.headBranch]);
+    const branch = canonicalRecordAlias(record, ['branch', 'headBranch'], canonicalTextAlias);
     if (!issue || !activePr || !/^[0-9a-f]{40}$/.test(headSha) || !repository || !branch) continue;
     proofHeadShas.push(headSha);
     proofReceipts.push({ issue, activePr, headSha, repository, branch });
@@ -1094,7 +1120,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     }, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : null;
   const executionReceipt = executionRead?.receipt ?? null;
-  const proof = buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt);
+  const proof = buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt, { nowUtc });
   const lane = githubIdentity
     ? buildCanonicalImplementationLaneProjection({
       laneId: selector.laneId || lease?.laneId,
