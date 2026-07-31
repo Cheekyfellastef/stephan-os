@@ -5,6 +5,7 @@ import {
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const REVIEW_SESSION_PATTERN = /^github-actions-independent-review-run-([1-9][0-9]*)-attempt-([1-9][0-9]*)$/;
+const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 
 export const OPERATOR_MERGE_ENVIRONMENT = 'operator-merge-approval';
 export const OPERATOR_MERGE_REVIEWER = 'Cheekyfellastef';
@@ -549,5 +550,63 @@ export function buildProtectedApprovalReceipt(input = {}) {
     approvedAtUtc: text(input.approvedAtUtc),
     mergeExecutionAuthority: 'github-actions-protected-environment-only',
     reusableAcrossHeads: false,
+  });
+}
+
+export function validateProtectedApprovalReceipt(receipt = {}, options = {}) {
+  const blockers = [];
+  const approvedAtUtc = text(receipt?.approvedAtUtc);
+  const approvedAtMs = EXPLICIT_TIMEZONE.test(approvedAtUtc)
+    ? Date.parse(approvedAtUtc)
+    : Number.NaN;
+  const nowUtc = text(options.nowUtc);
+  const nowMs = EXPLICIT_TIMEZONE.test(nowUtc) ? Date.parse(nowUtc) : Number.NaN;
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
+    blockers.push('approval-receipt-invalid');
+  }
+  if (receipt?.schemaVersion !== 'stephanos.protected-operator-approval.v1') {
+    blockers.push('approval-schema-mismatch');
+  }
+  if (receipt?.kind !== 'stephanos.protected-operator-approval') {
+    blockers.push('approval-kind-mismatch');
+  }
+  if (!/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(text(receipt?.repository))) {
+    blockers.push('approval-repository-invalid');
+  }
+  if (!integer(receipt?.prNumber)) blockers.push('approval-pr-invalid');
+  if (!SHA_PATTERN.test(text(receipt?.sourceHead).toLowerCase())) {
+    blockers.push('approval-head-invalid');
+  }
+  if (!/^[a-z0-9][a-z0-9._/-]{0,239}$/i.test(text(receipt?.branch))
+    || text(receipt?.branch).includes('..')) {
+    blockers.push('approval-branch-invalid');
+  }
+  if (Object.prototype.hasOwnProperty.call(receipt ?? {}, 'environment')
+    && receipt?.environment !== OPERATOR_MERGE_ENVIRONMENT) {
+    blockers.push('approval-environment-mismatch');
+  }
+  if (text(receipt?.requiredReviewer).toLowerCase() !== OPERATOR_MERGE_REVIEWER.toLowerCase()) {
+    blockers.push('approval-reviewer-mismatch');
+  }
+  if (receipt?.workflowPath !== OPERATOR_MERGE_WORKFLOW_PATH) {
+    blockers.push('approval-workflow-path-mismatch');
+  }
+  if (!integer(receipt?.workflowRunId)) blockers.push('approval-run-invalid');
+  if (!integer(receipt?.workflowRunAttempt)) blockers.push('approval-attempt-invalid');
+  if (!Number.isFinite(approvedAtMs)) blockers.push('approval-timestamp-invalid');
+  if (Number.isFinite(nowMs) && Number.isFinite(approvedAtMs) && approvedAtMs > nowMs) {
+    blockers.push('approval-timestamp-in-future');
+  }
+  if (receipt?.mergeExecutionAuthority !== 'github-actions-protected-environment-only') {
+    blockers.push('approval-execution-authority-mismatch');
+  }
+  if (receipt?.reusableAcrossHeads !== false) blockers.push('approval-reusable-across-heads');
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(unique(blockers)),
+    approvedAtUtc: Number.isFinite(approvedAtMs) ? new Date(approvedAtMs).toISOString() : null,
+    finalVerdict: blockers.length
+      ? 'PROTECTED_OPERATOR_APPROVAL_RECEIPT_BLOCKED'
+      : 'PROTECTED_OPERATOR_APPROVAL_RECEIPT_READY',
   });
 }
