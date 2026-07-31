@@ -51,6 +51,8 @@ const EXECUTION_TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
 const ACTIVE_LANE_CONTROLLER_STATES = new Set(['ACTIVE_LANE']);
 const IDLE_SELECTION_CONTROLLER_STATES = new Set(['IDLE', 'RECONCILING']);
 const TERMINAL_LANE_CONTROLLER_STATES = new Set(['FINALIZING', 'RECONCILING']);
+const ACTIVE_EXECUTION_RECEIPT_STATES = new Set(['queued', 'accepted', 'started', 'progress']);
+const FAILED_EXECUTION_RECEIPT_STATES = new Set(['failed', 'cancelled']);
 const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
   'COMPLETE',
   'COMPLETED',
@@ -720,8 +722,8 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       priority: existing?.priority ?? 0,
       criticalPathWeight: existing?.criticalPathWeight ?? 0,
       reversibility: existing?.reversibility ?? 'UNKNOWN',
-      route: ownValueOr(existing, 'route', 'WAITING_FOR_EXTERNAL_CONDITION') !== 'WAITING_FOR_EXTERNAL_CONDITION'
-        ? existing.route
+      route: existing
+        ? ownValueOr(existing, 'route', 'WAITING_FOR_EXTERNAL_CONDITION')
         : 'CHATGPT_GITHUB',
       activePr: lane.prNumber,
       branch: lane.branch,
@@ -808,6 +810,9 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     else {
       const executionBinding = validateExecutionReceiptAgainstMutationLease(input.executionReceipt, lease, { nowUtc });
       if (!executionBinding.valid) blockers.push(...executionBinding.errors.map((error) => `execution:${error}`));
+      else if (!ACTIVE_EXECUTION_RECEIPT_STATES.has(input.executionReceipt.state)) {
+        blockers.push('active-lane-execution-receipt-state-not-executable');
+      }
     }
   }
 
@@ -1009,6 +1014,9 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   if (safeProjection.lane?.active && safeProjection.controllerHeartbeat?.fresh !== true) blockers.push('controller-heartbeat-not-fresh');
   if (safeProjection.lane?.active && safeProjection.workerHeartbeat?.fresh !== true) blockers.push('worker-heartbeat-not-fresh');
   if (safeProjection.lane?.active && safeProjection.executionReceipt?.state === 'stalled') blockers.push('execution-receipt-reports-stall');
+  if (safeProjection.lane?.active && FAILED_EXECUTION_RECEIPT_STATES.has(safeProjection.executionReceipt?.state)) {
+    blockers.push('execution-receipt-terminal-failure');
+  }
   if (safeProjection.lane?.active && lastProgressMs === null) blockers.push('active-lane-progress-evidence-missing');
   if (safeProjection.lane?.active && !EXECUTION_TERMINAL_STATES.has(safeProjection.executionReceipt?.state) && progressAgeMs !== null && progressAgeMs > threshold) blockers.push('active-lane-progress-stale');
   if (safeProjection.lane?.terminal && safeProjection.mutationLease) blockers.push('terminal-lane-cleanup-pending');
