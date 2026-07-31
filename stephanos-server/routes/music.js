@@ -1,7 +1,20 @@
 import express from 'express';
 import { getSpotifyConfigDiagnostics, searchSpotifyCatalog } from '../services/spotifyClient.js';
+import { readMusicSpotifyLinkCandidates } from '../../shared/agents/musicSpotifyLinkBridge.mjs';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 const router = express.Router();
+
+router.get('/spotify/verified-links', async (_req, res) => {
+  try {
+    const result = await readMusicSpotifyLinkCandidates({ repoRoot });
+    res.status(result.ok ? 200 : 503).json(result);
+  } catch {
+    res.status(503).json({ ok: false, configured: false, blocker: 'MUSIC_SPOTIFY_LINK_FEED_UNAVAILABLE', candidates: [] });
+  }
+});
 
 function normalize(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();

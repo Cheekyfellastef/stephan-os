@@ -21,6 +21,7 @@ const ANYMA_SEEDED_CANDIDATES = [];
 const LEGACY_MINIMUM_CANDIDATE_FLOOR = "Math.max(8, unique.length)";
 
 const IMMERSION_REQUEST_TIMEOUT_MS = 25000;
+const SPOTIFY_LINK_FEED_POLL_MS = 30000;
 const IMMERSION_FALLBACK_PHASES = [
   { name: 'Doorway / Warm-up', description: 'Prime the room with reverb vocal, dark atmosphere, and a slow-build contour.', traits: ['reverb vocal', 'dark atmosphere', 'slow-build'] },
   { name: 'Lift / Portal', description: 'Pivot into serious trance DNA with emotional lift and a Universal Nation spine.', traits: ['serious trance DNA', 'emotional lift', 'Universal Nation spine'] },
@@ -106,7 +107,7 @@ function buildMusicAiStatusView(diagnostics = {}) {
   return { statusKind, headline, details:'Rule-based parser remains available.', badge, providerMetadataHelp:'The Music Tile can reach the AI backend, but this embedded tile cannot currently read the selected provider/model metadata. Provider details will appear when route truth is available.', shouldShowRuleFallback:true, diagnosticsRows:[`Endpoint: ${runtime.endpointUrl}`,`Backend base: ${runtime.backendBaseUrl}`,`Last HTTP status: ${lastStatus ?? 'n/a'}`,`Last error: ${lastError || 'none'}`,`Request reached backend: ${reached===true?'yes':reached===false?'no':'unknown'}`,`Backend responded: ${responded===true?'yes':responded===false?'no':'unknown'}`,`Response mode: ${responseMode}`,`Route/provider metadata: ${status.routeKind}/${status.provider}`] };
 }
 
-const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false });
+const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false }); refreshVerifiedSpotifyLinks(); setInterval(() => { if (!document.hidden) refreshVerifiedSpotifyLinks(); }, SPOTIFY_LINK_FEED_POLL_MS);
 
 function updateAiStatus(extra = {}) {
   if (!ui.aiStatusText) return;
@@ -329,7 +330,7 @@ function renderMusicIntelligenceCentre() {
 }
 
 function enhanceListeningDeckCards() {
-  ui.listeningDeck?.querySelectorAll('.player-deck-card').forEach((card) => {
+  ui.listeningDeck?.querySelectorAll('.player-deck-card').forEach((card, index) => {
     if (card.querySelector(':scope > .track-tools')) return;
     const children = Array.from(card.children);
     const header = children.find((node) => node.classList?.contains('music-card-header'));
@@ -356,6 +357,10 @@ function enhanceListeningDeckCards() {
     details.append(detailsSummary, detailsBody);
     card.prepend(summary);
     card.append(details);
+    const track = state.listeningDeck[index];
+    const spotify = resolveSpotifyReference(track?.spotifyUrl || track?.spotifyUri || '');
+    const spotifyInput = card.querySelector(`[data-link-input="spotify-${track?.id}"]`);
+    if (spotifyInput && spotify.valid && spotify.type === 'track') spotifyInput.value = spotify.openUrl;
   });
 }
 
@@ -772,8 +777,70 @@ function resolveArtistOnSpotify() { const artists = parseArtists(ui.artistInput?
 function parseArtists(raw) { return raw.split(',').map((a) => a.trim()).filter(Boolean).map((name) => normalizeArtistAlias(name)); }
 function normalizeArtistAlias(name = '') { const lower = String(name || '').trim().toLowerCase(); return lower === 'y do i' || lower === 'ydoi' ? 'Y do I' : String(name || '').trim(); }
 function initialTasteDNA() { const map = {}; DEFAULT_POSITIVE_TRAITS.forEach((name)=>{ map[name] = { weight: 1, polarity: 'positive', category: 'core', contributions: 0, custom: false, updatedAt: '' }; }); DEFAULT_NEGATIVE_TRAITS.forEach((name)=>{ map[name] = { weight: 1, polarity: 'negative', category: name === 'too harsh' ? 'banned' : 'avoid', contributions: 0, custom: false, updatedAt: '' }; }); return map; }
-function loadState() { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); return { candidates: Array.isArray(saved.candidates) ? saved.candidates : [], listeningDeck: Array.isArray(saved.listeningDeck) ? saved.listeningDeck : [], ratings: saved.ratings && typeof saved.ratings === 'object' ? saved.ratings : {}, tags: saved.tags && typeof saved.tags === 'object' ? saved.tags : {}, tasteDNA: saved.tasteDNA && typeof saved.tasteDNA === 'object' ? saved.tasteDNA : initialTasteDNA(), feedbackHistory: Array.isArray(saved.feedbackHistory) ? saved.feedbackHistory : [], trackFeedback: saved.trackFeedback && typeof saved.trackFeedback === 'object' ? saved.trackFeedback : {}, linkMessages: saved.linkMessages && typeof saved.linkMessages === 'object' ? saved.linkMessages : {}, lastFeedbackInterpreted: saved.lastFeedbackInterpreted || null, aiSuggestions: Array.isArray(saved.aiSuggestions) ? saved.aiSuggestions : [], aiSmarterJourney: Array.isArray(saved.aiSmarterJourney) ? saved.aiSmarterJourney : [], pendingTasteDnaChanges: Array.isArray(saved.pendingTasteDnaChanges) ? saved.pendingTasteDnaChanges : [], appliedTasteDnaChanges: Array.isArray(saved.appliedTasteDnaChanges) ? saved.appliedTasteDnaChanges : [], immersionSession: saved.immersionSession && typeof saved.immersionSession === 'object' ? saved.immersionSession : null, recentlyShownCandidateIds: Array.isArray(saved.recentlyShownCandidateIds) ? saved.recentlyShownCandidateIds : [], sessionCounter: Number(saved.sessionCounter || 0), lastDiscoveryMeta: saved.lastDiscoveryMeta || null }; }
+function loadState() { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); return { candidates: Array.isArray(saved.candidates) ? saved.candidates : [], listeningDeck: Array.isArray(saved.listeningDeck) ? saved.listeningDeck : [], ratings: saved.ratings && typeof saved.ratings === 'object' ? saved.ratings : {}, tags: saved.tags && typeof saved.tags === 'object' ? saved.tags : {}, tasteDNA: saved.tasteDNA && typeof saved.tasteDNA === 'object' ? saved.tasteDNA : initialTasteDNA(), feedbackHistory: Array.isArray(saved.feedbackHistory) ? saved.feedbackHistory : [], trackFeedback: saved.trackFeedback && typeof saved.trackFeedback === 'object' ? saved.trackFeedback : {}, linkMessages: saved.linkMessages && typeof saved.linkMessages === 'object' ? saved.linkMessages : {}, appliedSpotifyLinkRequestIds: Array.isArray(saved.appliedSpotifyLinkRequestIds) ? saved.appliedSpotifyLinkRequestIds.slice(-200) : [], lastFeedbackInterpreted: saved.lastFeedbackInterpreted || null, aiSuggestions: Array.isArray(saved.aiSuggestions) ? saved.aiSuggestions : [], aiSmarterJourney: Array.isArray(saved.aiSmarterJourney) ? saved.aiSmarterJourney : [], pendingTasteDnaChanges: Array.isArray(saved.pendingTasteDnaChanges) ? saved.pendingTasteDnaChanges : [], appliedTasteDnaChanges: Array.isArray(saved.appliedTasteDnaChanges) ? saved.appliedTasteDnaChanges : [], immersionSession: saved.immersionSession && typeof saved.immersionSession === 'object' ? saved.immersionSession : null, recentlyShownCandidateIds: Array.isArray(saved.recentlyShownCandidateIds) ? saved.recentlyShownCandidateIds : [], sessionCounter: Number(saved.sessionCounter || 0), lastDiscoveryMeta: saved.lastDiscoveryMeta || null }; }
 function saveState() { logBuildJourney('saveState:start'); localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); logBuildJourney('saveState:end'); }
+
+function normalizedConnectorIdentity(value = '') { return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function findConnectorTarget(candidate) {
+  if (candidate.targetTrackId) {
+    const exactId = state.listeningDeck.find((track) => String(track.id) === String(candidate.targetTrackId));
+    if (exactId) return exactId;
+  }
+  const artist = normalizedConnectorIdentity(candidate.targetArtist);
+  const title = normalizedConnectorIdentity(candidate.targetTitle);
+  return state.listeningDeck.find((track) => normalizedConnectorIdentity(track.artist) === artist
+    && normalizedConnectorIdentity(track.title || track.name) === title) || null;
+}
+function updateConnectorTargetCard(track, parsed) {
+  const input = ui.listeningDeck?.querySelector(`[data-link-input="spotify-${track.id}"]`);
+  const card = input?.closest('.player-deck-card');
+  if (!card) return;
+  input.value = parsed.openUrl;
+  card.querySelector(`[data-action="resolve-spotify-link"][data-id="${track.id}"]`)?.remove();
+  const summary = card.querySelector(':scope > .player-card-summary');
+  const missing = Array.from(summary?.children || []).find((node) => node.classList?.contains('meta') && /verified Spotify link|Unverified AI candidate|Likely hallucinated/.test(node.textContent || ''));
+  if (missing) {
+    const iframe = document.createElement('iframe');
+    iframe.src = parsed.embedUrl;
+    iframe.width = '100%'; iframe.height = '152'; iframe.style.border = '0'; iframe.loading = 'lazy';
+    iframe.allow = 'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture';
+    missing.replaceWith(iframe);
+  }
+  const controls = summary?.querySelector('.media-controls');
+  if (controls && !controls.querySelector(`a[href="${parsed.openUrl}"]`)) {
+    const link = document.createElement('a');
+    link.className = 'media-btn spotify'; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.href = parsed.openUrl; link.textContent = 'Open in Spotify';
+    controls.prepend(link);
+  }
+  const message = document.createElement('div');
+  message.className = 'meta'; message.textContent = state.linkMessages[track.id];
+  input.closest('.links-editor')?.append(message);
+}
+async function refreshVerifiedSpotifyLinks() {
+  try {
+    const response = await fetch('/api/music/spotify/verified-links', { headers: { Accept: 'application/json' } });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const consumed = new Set(state.appliedSpotifyLinkRequestIds || []);
+    for (const candidate of Array.isArray(payload.candidates) ? payload.candidates : []) {
+      if (consumed.has(candidate.requestId)) continue;
+      const track = findConnectorTarget(candidate);
+      if (!track) continue;
+      const incoming = resolveSpotifyReference(candidate.spotifyUri || '');
+      if (!incoming.valid || incoming.type !== 'track') continue;
+      const current = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || '');
+      if (current.valid && current.type === 'track' && current.uri !== incoming.uri) continue;
+      track.spotifyUrl = incoming.openUrl;
+      track.spotifyUri = incoming.uri;
+      track.candidateVerificationStatus = track.aiSuggested ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.verified;
+      state.linkMessages[track.id] = 'Spotify track supplied by your connected ChatGPT Spotify search and applied safely.';
+      consumed.add(candidate.requestId);
+      updateConnectorTargetCard(track, incoming);
+    }
+    state.appliedSpotifyLinkRequestIds = [...consumed].slice(-200);
+    saveState();
+  } catch { /* feed is optional and the deck remains fully usable offline */ }
+}
 
 
 function renderAiResultPanel({title, sourceLabel, status='Structured', summary='', body='', actions=[]}){
