@@ -10,7 +10,10 @@ import {
   processNextOpenClawReadonlyItem,
   processNextSignedOpenClawItem,
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
-import { publishNextMissionWorkerAction } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
+import {
+  publishNextMissionWorkerAction,
+  readMissionWorkerQueue,
+} from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -339,13 +342,123 @@ export async function inspectGitHubAction(action, _claim, options = {}) {
   return { execution: { success: true, commandOutputHash: outputHash(result.stdout || '', result.stderr || ''), completedAt: completedAt(options) }, inspection: { prNumber: view.number, headSha: text(view.headRefOid).toLowerCase(), prState: text(view.state).toLowerCase(), mergeable: view.mergeable === 'MERGEABLE' && view.state === 'OPEN', checks: normalizeChecks(view.statusCheckRollup) } };
 }
 
+function payloadActionKind(payload, adapter) {
+  const declared = text(payload?.actionKind);
+  if (declared) return declared;
+  if (
+    adapter === 'openclaw-signed'
+    && payload?.schemaVersion === 'stephanos.mission-worker-request.v1'
+  ) {
+    return 'signed-openclaw-operation';
+  }
+  return '';
+}
+
+function queuePayloadMatchesGrant(entry, actionGrant) {
+  const payload = entry?.item?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const adapter = text(actionGrant.adapter).toLowerCase();
+  const expectedOperation = text(actionGrant.operation).toLowerCase();
+  const declaredPayloadAdapter = text(payload.adapter).toLowerCase();
+  return (
+    text(payload.missionId).toLowerCase() === text(actionGrant.missionId).toLowerCase()
+    && text(payload.actionId).toLowerCase() === text(actionGrant.actionId).toLowerCase()
+    && (!declaredPayloadAdapter || declaredPayloadAdapter === adapter)
+    && payloadActionKind(payload, adapter) === text(actionGrant.actionKind)
+    && text(payload.operation).toLowerCase() === expectedOperation
+  );
+}
+
+export function selectGrantedMissionWorkerQueueItem(queue = [], actionGrant = {}) {
+  const missionId = text(actionGrant.missionId).toLowerCase();
+  const actionId = text(actionGrant.actionId).toLowerCase();
+  const adapter = text(actionGrant.adapter).toLowerCase();
+  if (
+    actionGrant.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
+    || actionGrant.boundedActionCount !== 1
+    || !missionId
+    || !actionId
+    || !adapter
+  ) {
+    return { ok: false, reason: 'exact-action-grant-invalid', entry: null };
+  }
+  const envelopeMatches = queue.filter((entry) => (
+    text(entry?.adapter).toLowerCase() === adapter
+    && entry?.item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && text(entry?.item?.adapter).toLowerCase() === adapter
+    && text(entry?.item?.missionId).toLowerCase() === missionId
+    && text(entry?.item?.actionId).toLowerCase() === actionId
+  ));
+  const matches = envelopeMatches.filter((entry) => (
+    queuePayloadMatchesGrant(entry, actionGrant)
+  ));
+  if (matches.length !== 1) {
+    return {
+      ok: false,
+      reason: matches.length
+        ? 'exact-action-queue-item-ambiguous'
+        : envelopeMatches.length
+          ? 'exact-action-queue-payload-mismatch'
+          : 'exact-action-queue-item-not-pending',
+      entry: null,
+    };
+  }
+  return { ok: true, reason: 'exact-action-queue-item-selected', entry: matches[0] };
+}
+
 export async function runMissionWorkerTick(options = {}) {
-  const publish = await publishNextMissionWorkerAction({ ...options, privateKeyPath: options.privateKeyPath || process.env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH });
-  const consumed = await processNextSignedOpenClawItem({ ...options, executeSignedOperation: (payload, claim) => executeSignedOperation(payload, claim, options), inspectSignedOperation: (payload, execution, claim) => inspectSignedOperation(payload, execution, claim, options) });
-  const inspected = await processNextGitHubInspectionItem({ ...options, inspectGitHub: (action, claim) => inspectGitHubAction(action, claim, options) });
-  const codex = await processNextCodexItem({ ...options, executeCodexAction: (action, claim) => executeCodexAction(action, claim, options) });
-  const openclaw = await processNextOpenClawReadonlyItem({ ...options, executeOpenClawReadonlyAction: (action, claim) => executeOpenClawReadonlyAction(action, claim, options) });
-  return { publish, consumed, inspected, codex, openclaw };
+  const actionGrant = options.actionGrant;
+  const grantCheck = selectGrantedMissionWorkerQueueItem([], actionGrant);
+  if (grantCheck.reason === 'exact-action-grant-invalid') {
+    return {
+      publish: { published: false, reason: 'exact-action-grant-required' },
+      processed: { processed: false, reason: 'exact-action-grant-required' },
+    };
+  }
+  const workerOptions = {
+    ...options,
+    actionGrant,
+    privateKeyPath: options.privateKeyPath
+      || options.env?.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH
+      || process.env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH,
+  };
+  const publish = await publishNextMissionWorkerAction(workerOptions);
+  if (publish.reason === 'action-grant-mismatch' || publish.reason?.startsWith('action-grant-mission-')) {
+    return { publish, processed: { processed: false, reason: publish.reason } };
+  }
+  const selection = selectGrantedMissionWorkerQueueItem(
+    await readMissionWorkerQueue(workerOptions),
+    actionGrant,
+  );
+  if (!selection.ok) {
+    return { publish, processed: { processed: false, reason: selection.reason } };
+  }
+  let processed;
+  if (selection.entry.adapter === 'openclaw-signed') {
+    processed = await processNextSignedOpenClawItem({
+      ...workerOptions,
+      executeSignedOperation: (payload, claim) => executeSignedOperation(payload, claim, options),
+      inspectSignedOperation: (payload, execution, claim) => inspectSignedOperation(payload, execution, claim, options),
+    });
+  } else if (selection.entry.adapter === 'openclaw-github-readonly') {
+    processed = await processNextGitHubInspectionItem({
+      ...workerOptions,
+      inspectGitHub: (action, claim) => inspectGitHubAction(action, claim, options),
+    });
+  } else if (selection.entry.adapter === 'codex') {
+    processed = await processNextCodexItem({
+      ...workerOptions,
+      executeCodexAction: (action, claim) => executeCodexAction(action, claim, options),
+    });
+  } else if (selection.entry.adapter === 'openclaw-readonly') {
+    processed = await processNextOpenClawReadonlyItem({
+      ...workerOptions,
+      executeOpenClawReadonlyAction: (action, claim) => executeOpenClawReadonlyAction(action, claim, options),
+    });
+  } else {
+    processed = { processed: false, reason: 'granted-action-adapter-not-supported-by-worker' };
+  }
+  return { publish, actionGrant, processed };
 }
 
 async function main() {

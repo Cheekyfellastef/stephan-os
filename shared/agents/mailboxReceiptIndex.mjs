@@ -78,6 +78,142 @@ function safeCount(value) {
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
 }
 
+function safeTelemetryText(value, limit = 500) {
+  const normalized = String(value ?? '').trim();
+  return normalized.length > limit ? normalized.slice(0, limit) : normalized;
+}
+
+function safeTelemetryId(value) {
+  const normalized = safeTelemetryText(value, 160);
+  return /^[A-Za-z0-9][A-Za-z0-9._:#-]{1,159}$/.test(normalized) ? normalized : '';
+}
+
+function safeTelemetryBranch(value) {
+  const normalized = safeTelemetryText(value, 240);
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(normalized) && !normalized.includes('..')
+    ? normalized
+    : '';
+}
+
+function safeTelemetrySha(value) {
+  return safeSha(value);
+}
+
+function telemetryPosture(value = {}) {
+  return Object.freeze({
+    state: safeTelemetryText(value?.state || 'UNKNOWN', 80).toUpperCase(),
+    allGreen: value?.allGreen === true,
+    mergeable: typeof value?.mergeable === 'boolean' ? value.mergeable : null,
+    summary: safeTelemetryText(value?.summary, 300),
+    proofRefs: safeProofRefs(value?.proofRefs),
+  });
+}
+
+function telemetryReceipt(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return Object.freeze({
+    repository: safeTelemetryText(value.repository, 160),
+    issueNumber: safeCount(value.issueNumber),
+    prNumber: safeCount(value.prNumber),
+    branch: safeTelemetryBranch(value.branch),
+    sourceHead: safeTelemetrySha(value.sourceHead),
+    workerId: safeTelemetryId(value.workerId),
+    workerType: safeTelemetryId(value.workerType),
+    executionId: safeTelemetryId(value.executionId),
+    leaseKey: safeTelemetryId(value.leaseKey),
+    state: safeTelemetryText(value.state, 80).toUpperCase(),
+    phase: safeTelemetryText(value.phase, 120).toUpperCase(),
+    sequence: safeCount(value.sequence),
+    timestampUtc: safeTimestamp(value.timestampUtc),
+    heartbeatExpiresAtUtc: safeTimestamp(value.heartbeatExpiresAtUtc),
+    blocker: safeTelemetryText(value.blocker, 200),
+    operatorActionRequired: value.operatorActionRequired === true,
+    expectedNextAction: safeTelemetryText(value.expectedNextAction, 500),
+    proofRefs: safeProofRefs(value.proofRefs),
+  });
+}
+
+export function sanitizeWorkerTelemetryForIndex(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const worker = value.worker || {};
+  const task = value.task || {};
+  const heartbeat = value.heartbeat || {};
+  const lease = value.lease || {};
+  const posture = value.testsChecksReview || {};
+  return Object.freeze({
+    schemaVersion: safeTelemetryText(value.schemaVersion, 120),
+    ok: value.ok === true,
+    workerActive: value.workerActive === true,
+    workerAlive: typeof value.workerAlive === 'boolean' ? value.workerAlive : null,
+    workerStatus: safeTelemetryText(value.workerStatus, 80).toUpperCase(),
+    worker: Object.freeze({
+      pid: safeCount(worker.pid),
+      observedPid: safeCount(worker.observedPid),
+      commandIdentity: safeTelemetryText(worker.commandIdentity, 240),
+      commandLineVerified: worker.commandLineVerified === true,
+      taskName: safeTelemetryText(worker.taskName, 160),
+      scheduledTaskState: safeTelemetryText(worker.scheduledTaskState, 80).toUpperCase(),
+    }),
+    task: Object.freeze({
+      taskId: safeTelemetryId(task.taskId),
+      goalId: safeTelemetryText(task.goalId, 160),
+      issueNumber: safeCount(task.issueNumber),
+      prNumber: safeCount(task.prNumber),
+      branch: safeTelemetryBranch(task.branch),
+      headSha: safeTelemetrySha(task.headSha),
+      phase: safeTelemetryText(task.phase, 120).toUpperCase(),
+      boundedAction: safeTelemetryText(task.boundedAction, 500),
+    }),
+    heartbeat: Object.freeze({
+      timestampUtc: safeTimestamp(heartbeat.timestampUtc),
+      ageMs: heartbeat.ageMs === null ? null : safeCount(heartbeat.ageMs),
+      fresh: heartbeat.fresh === true,
+      headSha: safeTelemetrySha(heartbeat.headSha),
+      branch: safeTelemetryBranch(heartbeat.branch),
+      tickVerdict: safeTelemetryText(heartbeat.tickVerdict, 120),
+      errors: Array.isArray(heartbeat.errors)
+        ? heartbeat.errors.map((item) => safeTelemetryText(item, 160)).filter(Boolean).slice(0, 20)
+        : [],
+    }),
+    lease: Object.freeze({
+      observed: lease.observed === true,
+      valid: lease.valid === true,
+      active: lease.active === true,
+      leaseId: safeTelemetryId(lease.leaseId),
+      laneId: safeTelemetryId(lease.laneId),
+      ownerId: safeTelemetryId(lease.ownerId),
+      repository: safeTelemetryText(lease.repository, 160),
+      issueNumber: safeCount(lease.issueNumber),
+      prNumber: safeCount(lease.prNumber),
+      branch: safeTelemetryBranch(lease.branch),
+      headSha: safeTelemetrySha(lease.headSha),
+      acquiredAtUtc: safeTimestamp(lease.acquiredAtUtc),
+      renewedAtUtc: safeTimestamp(lease.renewedAtUtc),
+      expiresAtUtc: safeTimestamp(lease.expiresAtUtc),
+      errors: Array.isArray(lease.errors)
+        ? lease.errors.map((item) => safeTelemetryText(item, 160)).filter(Boolean).slice(0, 20)
+        : [],
+    }),
+    latestExecutionReceipt: telemetryReceipt(value.latestExecutionReceipt),
+    testsChecksReview: Object.freeze({
+      tests: telemetryPosture(posture.tests),
+      checks: telemetryPosture(posture.checks),
+      review: telemetryPosture(posture.review),
+    }),
+    blockers: Array.isArray(value.blockers)
+      ? value.blockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 30)
+      : [],
+    operatorActionRequired: value.operatorActionRequired === true,
+    nextAction: safeTelemetryText(value.nextAction, 600),
+    evidenceRefs: Object.freeze([
+      'status/mission-orchestrator-worker-heartbeat.json',
+      'status/source-mutation-lease-current.json',
+      'status/battle-bridge-mailbox-receipt-index.json',
+    ]),
+    finalVerdict: safeTelemetryText(value.finalVerdict, 120).toUpperCase(),
+  });
+}
+
 function receiptTimestamp(receipt = {}) {
   return safeTimestamp(receipt.completedAt || receipt.heartbeatAt || receipt.acceptedAt);
 }
@@ -89,6 +225,7 @@ function sortTimestamp(receipt = {}) {
 export function sanitizeMailboxReceiptForIndex(receipt = {}) {
   const execution = receipt?.result || {};
   const operationResult = execution?.result && typeof execution.result === 'object' ? execution.result : receipt;
+  const workerTelemetry = sanitizeWorkerTelemetryForIndex(operationResult?.workerTelemetry);
   const requestId = safeRequestId(receipt?.requestId);
   if (!requestId) return null;
   return Object.freeze({
@@ -110,6 +247,7 @@ export function sanitizeMailboxReceiptForIndex(receipt = {}) {
     notificationCount: safeCount(operationResult?.notificationCount),
     notificationSurface: safeOperation(String(operationResult?.notificationSurface || '').replace(/-/g, '_')),
     proofRefs: safeProofRefs([...(receipt?.proofRefs || []), ...(operationResult?.proofRefs || [])]),
+    workerTelemetry,
   });
 }
 

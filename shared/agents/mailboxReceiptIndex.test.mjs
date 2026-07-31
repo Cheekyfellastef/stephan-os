@@ -241,6 +241,82 @@ test('sanitization retains bounded evidence and removes raw payloads, machine pa
   assert.doesNotMatch(json, /rawPayload|machinePath|apiToken|C:\\Users|\.env|\.\.\//i);
 });
 
+test('sanitization preserves on-demand worker telemetry without exposing machine paths', () => {
+  const value = receipt();
+  value.result.result.workerTelemetry = {
+    schemaVersion: 'stephanos.battle-bridge.worker-telemetry.v1',
+    ok: true,
+    workerActive: true,
+    workerAlive: true,
+    workerStatus: 'RUNNING',
+    worker: {
+      pid: 1631,
+      observedPid: 1631,
+      commandIdentity: 'scripts/mission-orchestrator-worker-supervised.mjs',
+      commandLineVerified: true,
+      taskName: 'Stephanos Mission Orchestrator Worker',
+      scheduledTaskState: 'RUNNING',
+    },
+    task: {
+      taskId: 'task-1631',
+      goalId: '#1507',
+      issueNumber: 1507,
+      prNumber: 1631,
+      branch: 'main',
+      headSha: HEAD,
+      phase: 'WINDOWS_PROOF',
+      boundedAction: 'Collect final exact-head browser proof.',
+    },
+    heartbeat: {
+      timestampUtc: '2026-07-17T19:41:00.000Z',
+      ageMs: 1000,
+      fresh: true,
+      headSha: HEAD,
+      branch: 'main',
+      tickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+      errors: [],
+    },
+    lease: {
+      observed: true,
+      valid: true,
+      active: true,
+      leaseId: 'lease-1631',
+      laneId: 'lane-goal-1507-pr-1631',
+      ownerId: 'worker-1631',
+      repository: 'Cheekyfellastef/stephan-os',
+      issueNumber: 1507,
+      prNumber: 1631,
+      branch: 'main',
+      headSha: HEAD,
+      expiresAtUtc: '2026-07-17T20:00:00.000Z',
+      errors: [],
+    },
+    latestExecutionReceipt: { executionId: 'exec-1631', state: 'RUNNING', sourceHead: HEAD },
+    testsChecksReview: {
+      tests: { state: 'PASS', allGreen: true },
+      checks: { state: 'PASS', allGreen: true },
+      review: { state: 'PASS', allGreen: true },
+    },
+    blockers: [],
+    operatorActionRequired: false,
+    nextAction: 'Collect final exact-head browser proof.',
+    finalVerdict: 'WORKER_TELEMETRY_READY',
+  };
+  const projected = sanitizeMailboxReceiptForIndex(value);
+  assert.equal(projected.workerTelemetry.workerActive, true);
+  assert.equal(projected.workerTelemetry.worker.pid, 1631);
+  assert.equal(projected.workerTelemetry.task.prNumber, 1631);
+  assert.equal(projected.workerTelemetry.heartbeat.fresh, true);
+  assert.equal(projected.workerTelemetry.lease.expiresAtUtc, '2026-07-17T20:00:00.000Z');
+  assert.equal(projected.workerTelemetry.latestExecutionReceipt.executionId, 'exec-1631');
+  assert.deepEqual(projected.workerTelemetry.evidenceRefs, [
+    'status/mission-orchestrator-worker-heartbeat.json',
+    'status/source-mutation-lease-current.json',
+    'status/battle-bridge-mailbox-receipt-index.json',
+  ]);
+  assert.doesNotMatch(JSON.stringify(projected), /C:\\Users|rawPayload|apiToken/i);
+});
+
 test('index deduplicates each request to its latest receipt and separates active from recent', () => {
   const accepted = receipt({
     requestId: 'deploy-pr1549-20260717T1940Z',

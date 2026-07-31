@@ -510,6 +510,31 @@ async function acquireExecutionReceiptLeaseLock(root, leaseKey, options = {}) {
   }, options);
 }
 
+export async function acquireSharedWorkspaceOperationLock(root, segments, options = {}) {
+  if (
+    !Array.isArray(segments)
+    || segments.length < 2
+    || !/^[a-z0-9][a-z0-9._-]{0,75}\.lock$/i.test(text(segments.at(-1)))
+  ) {
+    return Object.freeze({ ok: false, reason: 'SHARED_WORKSPACE_OPERATION_LOCK_PATH_INVALID' });
+  }
+  return acquireExecutionReceiptFileLock(root, segments, {
+    acquired: 'SHARED_WORKSPACE_OPERATION_LOCK_ACQUIRED',
+    failed: 'SHARED_WORKSPACE_OPERATION_LOCK_FAILED',
+    timeout: 'SHARED_WORKSPACE_OPERATION_LOCK_TIMEOUT',
+  }, {
+    ...options,
+    executionReceiptLockTimeoutMs: options.operationLockTimeoutMs
+      ?? options.executionReceiptLockTimeoutMs,
+    executionReceiptLockRetryMs: options.operationLockRetryMs
+      ?? options.executionReceiptLockRetryMs,
+    executionReceiptStaleLockMs: options.operationStaleLockMs
+      ?? options.executionReceiptStaleLockMs,
+    executionReceiptLockHeartbeatMs: options.operationLockHeartbeatMs
+      ?? options.executionReceiptLockHeartbeatMs,
+  });
+}
+
 export async function acquireExecutionReceiptHistoryLock(root, options = {}) {
   return acquireExecutionReceiptFileLock(root, ['receipt-locks', 'history', 'execution-receipts.lock'], {
     acquired: 'EXECUTION_RECEIPT_HISTORY_LOCK_ACQUIRED',

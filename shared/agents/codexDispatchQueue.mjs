@@ -291,7 +291,12 @@ function validateHistory(record, errors) {
 
 export function validateCodexQueueRecord(record = {}) {
   const errors = [];
-  if (JSON.stringify(Object.keys(record).sort()) !== JSON.stringify([...REQUIRED_KEYS].sort())) errors.push('unbounded-schema');
+  const recordKeys = Object.keys(record).sort();
+  const requiredKeys = [...REQUIRED_KEYS].sort();
+  const legacyV1Keys = REQUIRED_KEYS.filter((key) => key !== 'exactHeadProof').sort();
+  const canonicalShape = JSON.stringify(recordKeys) === JSON.stringify(requiredKeys);
+  const legacyV1Shape = JSON.stringify(recordKeys) === JSON.stringify(legacyV1Keys);
+  if (!canonicalShape && !legacyV1Shape) errors.push('unbounded-schema');
   if (record.schemaVersion !== CODEX_DISPATCH_QUEUE_SCHEMA_VERSION) errors.push('invalid-schema-version');
   if (record.kind !== CODEX_DISPATCH_QUEUE_KIND) errors.push('invalid-kind');
   if (!SAFE_ID_PATTERN.test(text(record.jobId))) errors.push('invalid-job-id');

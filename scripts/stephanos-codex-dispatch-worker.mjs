@@ -100,14 +100,17 @@ function processTextCapture(spawnSyncFn, executable, args, options = {}) {
 export function validateExactHeadAtWorkerStart(task, {
   spawnSyncFn = spawnSync,
   platform = process.platform,
+  verificationPhase = 'worker-start',
+  checkSourceStatus = true,
 } = {}) {
   if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
   const proof = task.exactHeadProof;
   const expectedHead = String(proof.expectedHead || '').trim().toLowerCase();
   const repository = String(proof.repository || '').trim();
   const prNumber = Number(proof.prNumber);
-  if (!/^[0-9a-f]{40}$/.test(expectedHead) || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(prNumber) || prNumber <= 0) {
-    return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID' });
+  const expectedBranch = String(proof.branch || task.branch || 'main').trim();
+  if (!/^[0-9a-f]{40}$/.test(expectedHead) || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(prNumber) || prNumber <= 0 || expectedBranch !== 'main') {
+    return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID', verificationPhase });
   }
   const gh = processCapture(
     spawnSyncFn,
@@ -115,10 +118,10 @@ export function validateExactHeadAtWorkerStart(task, {
     ['api', `repos/${repository}/pulls/${prNumber}`, '--jq', '.head.sha'],
   );
   if (!gh.ok || !/^[0-9a-f]{40}$/.test(gh.stdout)) {
-    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_LOOKUP_FAILED', expectedHead });
+    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_LOOKUP_FAILED', expectedHead, branch: expectedBranch, verificationPhase });
   }
   if (gh.stdout !== expectedHead) {
-    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_MISMATCH', expectedHead, pullRequestHead: gh.stdout });
+    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_MISMATCH', expectedHead, pullRequestHead: gh.stdout, branch: expectedBranch, verificationPhase });
   }
   const git = processCapture(
     spawnSyncFn,
@@ -127,7 +130,7 @@ export function validateExactHeadAtWorkerStart(task, {
     { cwd: task.repoRoot },
   );
   if (!git.ok || !/^[0-9a-f]{40}$/.test(git.stdout)) {
-    return Object.freeze({ ok: false, required: true, blocker: 'LOCAL_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead: gh.stdout });
+    return Object.freeze({ ok: false, required: true, blocker: 'LOCAL_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead: gh.stdout, branch: expectedBranch, verificationPhase });
   }
   if (git.stdout !== expectedHead) {
     return Object.freeze({
@@ -137,6 +140,20 @@ export function validateExactHeadAtWorkerStart(task, {
       expectedHead,
       pullRequestHead: gh.stdout,
       localHead: git.stdout,
+      branch: expectedBranch,
+      verificationPhase,
+    });
+  }
+  if (!checkSourceStatus) {
+    return Object.freeze({
+      ok: true,
+      required: true,
+      expectedHead,
+      pullRequestHead: gh.stdout,
+      localHead: git.stdout,
+      branch: expectedBranch,
+      verificationPhase,
+      sourceStatusChecked: false,
     });
   }
   const status = processTextCapture(
@@ -153,6 +170,9 @@ export function validateExactHeadAtWorkerStart(task, {
       expectedHead,
       pullRequestHead: gh.stdout,
       localHead: git.stdout,
+      branch: expectedBranch,
+      expectedBranch,
+      verificationPhase,
     });
   }
   const dirt = classifyPostTaskDirt(status.stdout);
@@ -164,6 +184,8 @@ export function validateExactHeadAtWorkerStart(task, {
       expectedHead,
       pullRequestHead: gh.stdout,
       localHead: git.stdout,
+      branch: expectedBranch,
+      verificationPhase,
       sourcePaths: dirt.source,
     });
   }
@@ -173,6 +195,9 @@ export function validateExactHeadAtWorkerStart(task, {
     expectedHead,
     pullRequestHead: gh.stdout,
     localHead: git.stdout,
+    branch: expectedBranch,
+    expectedBranch,
+    verificationPhase,
     sourceDirtClean: true,
     generatedRuntimePaths: dirt.generated,
   });
@@ -380,6 +405,8 @@ export function evaluateWorkerSourceSafety({
   dirtBefore = {},
   dirtAfter = {},
   dirtDelta = {},
+  preProofExactHeadValidation = { ok: true },
+  postProofExactHeadValidation = { ok: true },
 } = {}) {
   const sourceHeadUnchanged = (
     sourceHeadBefore.ok === true
@@ -404,12 +431,17 @@ export function evaluateWorkerSourceSafety({
     && runtimeDistFingerprintAfter === expectedDistFingerprint
     && dirtDelta.generatedRuntimeMutationDetected !== true
   );
+  const exactHeadExecutionBound = !exactHeadRequired || (
+    preProofExactHeadValidation.ok === true
+    && postProofExactHeadValidation.ok === true
+  );
   const sourceSafe = (
     sourceHeadUnchanged
     && sourceHeadBound
     && exactHeadStatusAvailable
     && exactHeadSourceClean
     && exactHeadRuntimeBound
+    && exactHeadExecutionBound
     && dirtDelta.sourceMutationDetected !== true
   );
   return Object.freeze({
@@ -419,6 +451,9 @@ export function evaluateWorkerSourceSafety({
     exactHeadStatusAvailable,
     exactHeadSourceClean,
     exactHeadRuntimeBound,
+    exactHeadExecutionBound,
+    preProofExactHeadValidation,
+    postProofExactHeadValidation,
   });
 }
 
@@ -440,6 +475,8 @@ export function classifyCodexExecution({
   events = [],
   lastMessage = '',
   stderr = '',
+  requiresStructuredVerdict = false,
+  expectedProofScenario = '',
 } = {}) {
   const failureEvent = events.find((event) => (
     event?.type === 'turn.failed'
@@ -452,7 +489,27 @@ export function classifyCodexExecution({
   const failureText = `${lastMessage}\n${stderrExcerpt}\n${failureEvent ? JSON.stringify(failureEvent) : ''}`;
   const cancelled = /(?:user\s+)?cancel(?:led|ed)(?:\s+by\s+user)?|tool call.*cancel(?:led|ed)/i.test(failureText);
   const exitPassed = exit.code === 0 && !exit.error;
-  const passed = exitPassed && turnCompleted && !failureEvent && !cancelled;
+  let structuredVerdict = null;
+  let structuredVerdictPresent = false;
+  let structuredBlockers = [];
+  let structuredProofScenario = '';
+  if (requiresStructuredVerdict) {
+    try {
+      const normalized = String(lastMessage || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const payload = JSON.parse(normalized);
+      structuredVerdictPresent = Boolean(payload && typeof payload === 'object' && !Array.isArray(payload) && Object.hasOwn(payload, 'verdict'));
+      structuredVerdict = structuredVerdictPresent ? String(payload.verdict || '') : null;
+      structuredProofScenario = structuredVerdictPresent ? String(payload.proofScenario || '') : '';
+      structuredBlockers = Array.isArray(payload?.blockers) ? payload.blockers : [];
+    } catch {}
+  }
+  const structuredVerdictPassed = !requiresStructuredVerdict || (
+    structuredVerdictPresent
+    && structuredVerdict === 'PASS'
+    && (!expectedProofScenario || structuredProofScenario === expectedProofScenario)
+    && structuredBlockers.length === 0
+  );
+  const passed = exitPassed && turnCompleted && !failureEvent && !cancelled && structuredVerdictPassed;
   let reason = '';
   if (!exitPassed) {
     reason = exit.error || (events.length === 0 ? 'CODEX_CLI_STARTUP_FAILED' : `codex-exit-${exit.code ?? 'unknown'}`);
@@ -462,6 +519,14 @@ export function classifyCodexExecution({
     reason = `CODEX_EVENT_${String(failureEvent.type || 'FAILED').toUpperCase().replaceAll('.', '_')}`;
   } else if (!turnCompleted) {
     reason = 'CODEX_TURN_COMPLETION_MISSING';
+  } else if (requiresStructuredVerdict && !structuredVerdictPresent) {
+    reason = 'CODEX_STRUCTURED_VERDICT_MISSING';
+  } else if (requiresStructuredVerdict && structuredVerdict !== 'PASS') {
+    reason = 'CODEX_STRUCTURED_VERDICT_FAILED';
+  } else if (requiresStructuredVerdict && expectedProofScenario && structuredProofScenario !== expectedProofScenario) {
+    reason = 'CODEX_STRUCTURED_PROOF_SCENARIO_MISMATCH';
+  } else if (requiresStructuredVerdict && structuredBlockers.length > 0) {
+    reason = 'CODEX_STRUCTURED_VERDICT_BLOCKERS_REMAIN';
   }
   return Object.freeze({
     passed,
@@ -470,6 +535,11 @@ export function classifyCodexExecution({
     cancelled,
     failureEventType: failureEvent?.type || '',
     reason,
+    structuredVerdictRequired: requiresStructuredVerdict,
+    structuredVerdictPresent,
+    structuredVerdict,
+    structuredProofScenario,
+    structuredBlockers,
     eventCount: events.length,
     stderrExcerpt,
   });
@@ -1006,12 +1076,22 @@ export async function runCodexWorker(taskPath, {
     await publishVisibilitySafely(visibilityPublisher, task, result);
     return result;
   }
-  const browserRuntimeProofBefore = runBrowserRuntimeExactHeadProof(task, {
-    spawnSyncFn,
-    expectedSourceFingerprint,
-    expectedDistFingerprint,
-    expectedDistManifestPath,
-  });
+  const exactHeadBeforePreProof = exactHeadValidation.required
+    ? validateExactHeadAtWorkerStart(task, { spawnSyncFn, platform, verificationPhase: 'pre-browser-proof', checkSourceStatus: false })
+    : Object.freeze({ ok: true, required: false });
+  const browserRuntimeProofBefore = exactHeadBeforePreProof.ok
+    ? runBrowserRuntimeExactHeadProof(task, {
+      spawnSyncFn,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+    })
+    : Object.freeze({
+      ok: false,
+      required: true,
+      blocker: exactHeadBeforePreProof.blocker || 'EXACT_HEAD_TARGET_NOT_BOUND',
+      exactHeadValidation: exactHeadBeforePreProof,
+    });
   if (!browserRuntimeProofBefore.ok) {
     const completedAt = now();
     const result = {
@@ -1026,6 +1106,7 @@ export async function runCodexWorker(taskPath, {
       startedAt: completedAt,
       completedAt,
       exactHeadValidation,
+      exactHeadBeforePreProof,
       exactHeadRuntimeBundle,
       expectedSourceFingerprint,
       expectedDistFingerprint,
@@ -1058,6 +1139,7 @@ export async function runCodexWorker(taskPath, {
     expectedDistFingerprint,
     expectedDistManifestPath,
     exactHeadValidation,
+    exactHeadBeforePreProof,
     exactHeadRuntimeBundle,
     browserRuntimeProofBefore,
     dirtBefore,
@@ -1191,14 +1273,29 @@ export async function runCodexWorker(taskPath, {
     events: parsedEvents.events,
     lastMessage,
     stderr: stderrText,
+    requiresStructuredVerdict: exactHeadValidation.required,
+    expectedProofScenario: task.exactHeadProof?.proofScenario || '',
   });
-  const browserRuntimeProofAfter = runBrowserRuntimeExactHeadProof(task, {
-    spawnSyncFn,
-    expectedSourceFingerprint,
-    expectedDistFingerprint,
-    expectedDistManifestPath,
-    proofScenario: task.exactHeadProof?.proofScenario || '',
-  });
+  const exactHeadBeforeFinalProof = exactHeadValidation.required
+    ? validateExactHeadAtWorkerStart(task, { spawnSyncFn, platform, verificationPhase: 'post-codex-pre-browser-proof', checkSourceStatus: false })
+    : Object.freeze({ ok: true, required: false });
+  const browserRuntimeProofAfter = exactHeadBeforeFinalProof.ok
+    ? runBrowserRuntimeExactHeadProof(task, {
+      spawnSyncFn,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      proofScenario: task.exactHeadProof?.proofScenario || '',
+    })
+    : Object.freeze({
+      ok: false,
+      required: true,
+      blocker: exactHeadBeforeFinalProof.blocker || 'EXACT_HEAD_TARGET_NOT_BOUND',
+      exactHeadValidation: exactHeadBeforeFinalProof,
+    });
+  const exactHeadAfterFinalProof = exactHeadValidation.required
+    ? validateExactHeadAtWorkerStart(task, { spawnSyncFn, platform, verificationPhase: 'post-browser-proof', checkSourceStatus: false })
+    : Object.freeze({ ok: true, required: false });
   const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
   const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
   const dirtAfter = classifyPostTaskDirt(statusAfter.stdout);
@@ -1221,6 +1318,8 @@ export async function runCodexWorker(taskPath, {
     dirtBefore,
     dirtAfter,
     dirtDelta,
+    preProofExactHeadValidation: exactHeadBeforePreProof,
+    postProofExactHeadValidation: exactHeadAfterFinalProof,
   });
   const {
     sourceSafe,
@@ -1231,11 +1330,13 @@ export async function runCodexWorker(taskPath, {
   const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
   const safetyBlocker = !sourceSafety.exactHeadStatusAvailable
     ? 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED'
-    : (!sourceSafety.sourceHeadBound || !sourceSafety.sourceHeadUnchanged
-      ? 'LOCAL_HEAD_CHANGED_DURING_PROOF'
-      : (!sourceSafety.exactHeadRuntimeBound
-        ? 'GENERATED_RUNTIME_INTEGRITY_MISMATCH'
-        : 'SOURCE_MUTATION_DETECTED'));
+    : (!sourceSafety.exactHeadExecutionBound
+      ? 'EXACT_HEAD_TARGET_CHANGED_DURING_PROOF'
+      : (!sourceSafety.sourceHeadBound || !sourceSafety.sourceHeadUnchanged
+        ? 'LOCAL_HEAD_CHANGED_DURING_PROOF'
+        : (!sourceSafety.exactHeadRuntimeBound
+          ? 'GENERATED_RUNTIME_INTEGRITY_MISMATCH'
+          : 'SOURCE_MUTATION_DETECTED')));
   const finalBlocker = passed
     ? ''
     : (sourceSafe
@@ -1267,6 +1368,9 @@ export async function runCodexWorker(taskPath, {
     expectedDistManifestPath,
     runtimeDistFingerprintAfter,
     browserRuntimeProofBefore,
+    exactHeadBeforePreProof,
+    exactHeadBeforeFinalProof,
+    exactHeadAfterFinalProof,
     browserRuntimeProofAfter,
     browserProof,
     exit,
@@ -1297,6 +1401,7 @@ export async function runCodexWorker(taskPath, {
       sourceMutationDetected: dirtDelta.sourceMutationDetected,
       generatedRuntimeMutationDetected: dirtDelta.generatedRuntimeMutationDetected,
       exactHeadRuntimeBound: sourceSafety.exactHeadRuntimeBound,
+      exactHeadExecutionBound: sourceSafety.exactHeadExecutionBound,
       preExistingSourceDirt: dirtDelta.preExistingSourceDirt,
       sourceHeadChanged: !sourceHeadUnchanged,
       approvalPolicy: 'never',

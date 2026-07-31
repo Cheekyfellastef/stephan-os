@@ -937,6 +937,12 @@ export async function collectPlaywrightNavigationDistFingerprint(
       ))) {
         throw servedDistError('BROWSER_RUNTIME_DIST_RESPONSE_VARIATION');
       }
+      if (
+        Number(expectedEntry?.size) !== selected.size
+        || String(expectedEntry?.sha256 || '').trim().toLowerCase() !== selected.sha256
+      ) {
+        throw servedDistError('BROWSER_RUNTIME_DIST_ASSET_MISMATCH');
+      }
       totalBytes += selected.size;
       if (totalBytes > maxTotalBytes) {
         throw servedDistError('BROWSER_RUNTIME_DIST_TOTAL_TOO_LARGE');

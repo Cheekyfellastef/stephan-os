@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  createSanitizedMailboxReceiptProjection,
   createWindowsSafeMailboxReceiptFilename,
   parseBoundedGitHubJson,
   readMailboxReceipt,
@@ -64,6 +65,73 @@ test('classifies invalid JSON without exposing truncated parser input', () => {
     () => parseBoundedGitHubJson('{"comments":'),
     /GITHUB_RESPONSE_JSON_INVALID/,
   );
+});
+
+test('GitHub receipt projection preserves bounded live worker telemetry', () => {
+  const projected = createSanitizedMailboxReceiptProjection({
+    requestId: 'battle-bridge-observability-0001',
+    operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
+    state: 'BLOCKED',
+    result: {
+      ok: false,
+      result: {
+        blocker: 'WORKER_HEARTBEAT_STALE',
+        workerTelemetry: {
+          schemaVersion: 'stephanos.battle-bridge.worker-telemetry.v1',
+          ok: false,
+          workerActive: false,
+          workerAlive: false,
+          workerStatus: 'NOT_PROVEN',
+          worker: {
+            pid: 0,
+            observedPid: 0,
+            commandIdentity: 'scripts/mission-orchestrator-worker-supervised.mjs',
+            commandLineVerified: false,
+            taskName: 'Stephanos Mission Orchestrator Worker',
+            scheduledTaskState: 'READY',
+          },
+          task: {
+            taskId: 'task-1631',
+            goalId: '#1507',
+            issueNumber: 1507,
+            prNumber: 1631,
+            branch: 'main',
+            headSha: 'a'.repeat(40),
+            phase: 'BLOCKED',
+            boundedAction: 'Publish a fresh heartbeat.',
+          },
+          heartbeat: {
+            timestampUtc: '2026-07-31T15:00:00.000Z',
+            ageMs: 360000,
+            fresh: false,
+            headSha: 'a'.repeat(40),
+            branch: 'main',
+            tickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+            errors: ['stale-heartbeat'],
+          },
+          lease: { observed: false, valid: false, active: false, errors: ['lease-not-observed'] },
+          latestExecutionReceipt: null,
+          testsChecksReview: {
+            tests: { state: 'UNKNOWN' },
+            checks: { state: 'UNKNOWN' },
+            review: { state: 'UNKNOWN' },
+          },
+          blockers: ['WORKER_HEARTBEAT_STALE'],
+          operatorActionRequired: false,
+          nextAction: 'Use the existing watchdog route to publish fresh evidence.',
+          finalVerdict: 'WORKER_TELEMETRY_BLOCKED',
+        },
+      },
+    },
+  });
+  assert.equal(projected.workerTelemetry.workerActive, false);
+  assert.equal(projected.workerTelemetry.task.prNumber, 1631);
+  assert.deepEqual(projected.workerTelemetry.blockers, ['WORKER_HEARTBEAT_STALE']);
+  assert.deepEqual(projected.workerTelemetry.evidenceRefs, [
+    'status/mission-orchestrator-worker-heartbeat.json',
+    'status/source-mutation-lease-current.json',
+    'status/battle-bridge-mailbox-receipt-index.json',
+  ]);
 });
 
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {

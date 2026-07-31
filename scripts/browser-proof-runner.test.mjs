@@ -781,9 +781,9 @@ test('exact dist proof hashes the Playwright navigation and resource responses, 
       expectedEntries: manifest.entries,
     },
   );
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'BROWSER_RUNTIME_DIST_ASSET_MISMATCH');
   assert.equal(result.responseBinding, 'playwright-navigation-and-browser-context-v1');
-  assert.notEqual(result.fingerprint, manifest.fingerprint);
 
   const canonicalResponses = [
     playwrightResponse(`${baseUrl}assets/app.js`, files['assets/app.js']),

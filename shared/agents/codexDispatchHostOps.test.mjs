@@ -5,6 +5,7 @@ import {
   runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from './codexDispatchHostOps.mjs';
+import { createSourceMutationLeaseRecord } from './programmeAuthorityV1.mjs';
 
 function scriptedSpawn(script) {
   const calls = [];
@@ -160,7 +161,7 @@ test('sync bridge refuses to mutate without explicit operator approval', () => {
   assert.equal(result.blocker, 'OPERATOR_APPROVAL_REQUIRED');
 });
 
-test('direct diagnostics collect Git and localhost health without a Codex child', async () => {
+test('direct diagnostics fail closed when Git and endpoint health pass but worker evidence is absent', async () => {
   const spawnSyncFn = scriptedSpawn({
     'git rev-parse --show-toplevel': { stdout: 'C:\\repo\n' },
     'git branch --show-current': { stdout: 'main\n' },
@@ -178,12 +179,14 @@ test('direct diagnostics collect Git and localhost health without a Codex child'
   const result = await runBattleBridgeDiagnostics({
     repoRoot: 'C:\\repo',
     endpoints: ['http://127.0.0.1:4173/health', 'http://127.0.0.1:8787/health'],
+    platform: 'linux',
     spawnSyncFn,
     fetchFn,
   });
 
-  assert.equal(result.status, 'DONE');
-  assert.equal(result.verdict, 'PASS');
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.verdict, 'FAIL');
+  assert.equal(result.blocker, 'WINDOWS_REQUIRED');
   assert.equal(result.fullHead, 'abc123');
   assert.equal(result.ahead, 0);
   assert.equal(result.behind, 0);
@@ -191,4 +194,121 @@ test('direct diagnostics collect Git and localhost health without a Codex child'
   assert.equal(result.execution.codexChildUsed, false);
   assert.equal(result.execution.shellPolicyDependency, false);
   assert.equal(result.safety.sourceMutationDetected, false);
+  assert.equal(result.workerTelemetry.ok, false);
+  assert.equal(result.operatorActionRequired, false);
+});
+
+test('direct diagnostics report live worker telemetry only when canonical evidence is present', async () => {
+  const fullHead = 'a'.repeat(40);
+  const nowUtc = '2026-07-31T16:00:00.000Z';
+  const repository = '/repo';
+  const lease = createSourceMutationLeaseRecord({
+    laneId: 'lane-goal-1507-pr-1631',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1507,
+    prNumber: 1631,
+    branch: 'main',
+    headSha: fullHead,
+    ownerId: 'worker-1631',
+    acquiredAtUtc: '2026-07-31T15:59:00.000Z',
+    renewedAtUtc: '2026-07-31T15:59:30.000Z',
+    expiresAtUtc: '2026-07-31T17:00:00.000Z',
+  });
+  const heartbeat = {
+    schemaVersion: 'stephanos.mission-orchestrator-worker-heartbeat.v1',
+    timestampUtc: '2026-07-31T15:59:30.000Z',
+    repositoryRoot: repository,
+    branch: 'main',
+    headSha: fullHead,
+    taskName: 'Stephanos Mission Orchestrator Worker',
+    pid: 1631,
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+  };
+  const task = {
+    status: 'RUNNING',
+    taskId: 'task-1631',
+    goalId: '#1507',
+    issueNumber: 1507,
+    prNumber: 1631,
+    branch: 'main',
+    headSha: fullHead,
+    phase: 'WINDOWS_PROOF',
+    expectedNextAction: 'Collect final exact-head browser proof.',
+    tests: { state: 'PASS', allGreen: true, proofRefs: ['proof/tests'] },
+    checks: { state: 'PASS', allGreen: true },
+    review: { state: 'PASS', allGreen: true },
+  };
+  const receipt = {
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1507,
+    prNumber: 1631,
+    branch: 'main',
+    sourceHead: fullHead,
+    workerId: 'worker-1631',
+    workerType: 'battle-bridge',
+    executionId: 'exec-1631',
+    leaseKey: lease.leaseId,
+    state: 'RUNNING',
+    phase: 'WINDOWS_PROOF',
+    sequence: 4,
+    timestampUtc: '2026-07-31T15:59:45.000Z',
+    heartbeatExpiresAtUtc: '2026-07-31T16:01:45.000Z',
+    expectedNextAction: 'Collect final exact-head browser proof.',
+    proofRefs: ['proof/tests'],
+  };
+  const readRecord = (filePath) => {
+    if (filePath.endsWith('mission-orchestrator-worker-heartbeat.json')) return { state: 'present', value: heartbeat };
+    if (filePath.endsWith('source-mutation-lease-current.json')) return { state: 'present', value: lease };
+    if (filePath.endsWith('codex-dispatch/current.json')) return { state: 'present', value: task };
+    if (filePath.endsWith('codex-dispatch/tasks/task-1631/result.json')) return { state: 'present', value: receipt };
+    if (filePath.endsWith('battle-bridge-mailbox-receipt-index.json')) return { state: 'present', value: { recentReceipts: [receipt] } };
+    return { state: 'absent', value: null };
+  };
+  const spawnSyncFn = scriptedSpawn({
+    'git rev-parse --show-toplevel': { stdout: `${repository}\n` },
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': { stdout: `${fullHead}\n` },
+    'git rev-parse --abbrev-ref --symbolic-full-name @{upstream}': { stdout: 'origin/main\n' },
+    'git status --branch --untracked-files=all': { stdout: 'On branch main\nYour branch is up to date with origin/main.\n' },
+    'git rev-list --left-right --count HEAD...@{upstream}': { stdout: '0\t0\n' },
+  });
+
+  const result = await runBattleBridgeDiagnostics({
+    repoRoot: repository,
+    endpoints: [],
+    spawnSyncFn,
+    nowFn: () => new Date(nowUtc),
+    workspaceRoot: '/telemetry-fixture',
+    workerInspection: {
+      ok: true,
+      blocker: '',
+      observation: {
+        scheduledTask: {
+          taskName: 'Stephanos Mission Orchestrator Worker',
+          status: 'Running',
+          actionMatchesCanonicalWorker: true,
+        },
+        process: {
+          running: true,
+          pid: 1631,
+          taskName: 'Stephanos Mission Orchestrator Worker',
+          commandLineMatchesCanonicalWorker: true,
+        },
+      },
+    },
+    readRecord,
+  });
+
+  assert.equal(result.status, 'DONE');
+  assert.equal(result.verdict, 'PASS');
+  assert.equal(result.workerTelemetry.ok, true);
+  assert.equal(result.workerTelemetry.workerActive, true);
+  assert.equal(result.workerTelemetry.worker.pid, 1631);
+  assert.equal(result.workerTelemetry.task.prNumber, 1631);
+  assert.equal(result.workerTelemetry.task.headSha, fullHead);
+  assert.equal(result.workerTelemetry.lease.active, true);
+  assert.equal(result.workerTelemetry.latestExecutionReceipt.executionId, 'exec-1631');
+  assert.equal(result.workerTelemetry.operatorActionRequired, false);
 });

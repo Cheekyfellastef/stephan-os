@@ -1,5 +1,5 @@
 export const STEPHANOS_CAPABILITY_REGISTRY_SCHEMA = 'stephanos.capability-registry.v1';
-export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.1.0';
+export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.2.0';
 export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 const SAFE_CAPABILITY_ID = /^[a-z0-9][a-z0-9.-]{2,80}$/;
@@ -123,6 +123,15 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
     statusSource: 'shared-agent-workspace',
     operations: ['INSPECT_WORKER', 'START_APPROVED_WORKER_TASK'],
     runtimeMutationAllowed: true,
+  }),
+  descriptor({
+    capabilityId: 'programme-stall-monitor',
+    category: 'programme-monitoring',
+    purpose: 'Deterministically diagnoses durable programme stalls and publishes through the existing Monitor Multiplexer without scheduling or mutation.',
+    ownerIssue: 1497,
+    discoveryRoute: 'shared-workspace:monitor-programme-stall-monitor',
+    statusSource: 'monitor-multiplexer',
+    operations: ['DIAGNOSE_PROGRAMME_STALL', 'PUBLISH_MONITOR_RESULT'],
   }),
   descriptor({
     capabilityId: 'verification-harness',

@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import {
   acquireExecutionReceiptHistoryLock,
+  acquireSharedWorkspaceOperationLock,
   appendExecutionReceipt,
   buildExecutionWorkerAdapterContract,
   classifyExecutionReceiptSet,
@@ -29,6 +30,16 @@ import {
 } from './codexDispatchQueue.mjs';
 
 const HEAD = 'a'.repeat(40);
+
+test('shared workspace operation lock exposes existing lock machinery only for lock paths', async () => {
+  const refused = await acquireSharedWorkspaceOperationLock(
+    process.cwd(),
+    ['status', 'source-mutation-lease-current.json'],
+  );
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, 'SHARED_WORKSPACE_OPERATION_LOCK_PATH_INVALID');
+});
+
 const BASE = {
   repository: 'Cheekyfellastef/stephan-os',
   issueNumber: 1568,

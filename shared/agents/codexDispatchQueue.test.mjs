@@ -109,6 +109,18 @@ test('legacy lowercase dispatched cannot bypass the approval path', () => {
   assert.equal(result.toStatus, 'DISPATCHED_MANUAL');
 });
 
+test('legacy v1 queue records remain readable when the later exact-head field is absent', () => {
+  const canonical = createCodexQueueRecord(base);
+  const legacy = { ...canonical };
+  delete legacy.exactHeadProof;
+  const validation = validateCodexQueueRecord(legacy);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.finalVerdict, 'CODEX_QUEUE_RECORD_PASS');
+
+  const unknownField = { ...legacy, unexpectedField: true };
+  assert.equal(validateCodexQueueRecord(unknownField).errors.includes('unbounded-schema'), true);
+});
+
 test('tampered history cannot manufacture a ready queue record', () => {
   const queued = createCodexQueueRecord(base);
   const tampered = {

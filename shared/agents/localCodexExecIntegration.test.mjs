@@ -2279,6 +2279,47 @@ test('JSON event parsing and completed-turn classification prove a successful Co
   assert.equal(execution.reason, '');
 });
 
+test('exact-head Codex execution requires the machine-readable final verdict contract', () => {
+  const events = [{ type: 'turn.started' }, { type: 'turn.completed' }];
+  const missing = classifyCodexExecution({
+    exit: { code: 0, error: '' },
+    events,
+    lastMessage: 'The browser proof looks good.',
+    requiresStructuredVerdict: true,
+    expectedProofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+  });
+  assert.equal(missing.passed, false);
+  assert.equal(missing.reason, 'CODEX_STRUCTURED_VERDICT_MISSING');
+
+  const blocked = classifyCodexExecution({
+    exit: { code: 0, error: '' },
+    events,
+    lastMessage: JSON.stringify({
+      verdict: 'PASS',
+      proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+      blockers: ['BROWSER_PROOF_NOT_OBSERVED'],
+    }),
+    requiresStructuredVerdict: true,
+    expectedProofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+  });
+  assert.equal(blocked.passed, false);
+  assert.equal(blocked.reason, 'CODEX_STRUCTURED_VERDICT_BLOCKERS_REMAIN');
+
+  const passed = classifyCodexExecution({
+    exit: { code: 0, error: '' },
+    events,
+    lastMessage: JSON.stringify({
+      verdict: 'PASS',
+      proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+      blockers: [],
+    }),
+    requiresStructuredVerdict: true,
+    expectedProofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+  });
+  assert.equal(passed.passed, true);
+  assert.equal(passed.structuredVerdictPresent, true);
+});
+
 test('exit zero with user-cancelled MCP text cannot be misreported as success', () => {
   const parsed = parseCodexJsonEvents('{"type":"turn.started"}\n');
   const execution = classifyCodexExecution({ exit: { code: 0, error: '' }, events: parsed.events, lastMessage: 'user cancelled MCP tool call' });
