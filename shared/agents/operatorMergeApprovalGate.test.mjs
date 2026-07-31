@@ -448,4 +448,10 @@ test('builds an exact-head operator approval receipt only from ready separated e
   assert.equal(validateProtectedApprovalReceipt(workspaceProjection.receipt, {
     nowUtc: '2026-07-21T20:06:00.000Z',
   }).valid, true);
+  const selfAttestedProjection = projectProtectedApprovalReceiptForWorkspace(
+    workspaceProjection.receipt,
+    { nowUtc: '2026-07-21T20:06:00.000Z' },
+  );
+  assert.equal(selfAttestedProjection.valid, false);
+  assert.ok(selfAttestedProjection.blockers.includes('approval-environment-provenance-missing'));
 });
