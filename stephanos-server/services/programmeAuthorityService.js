@@ -964,7 +964,7 @@ async function githubEvidenceForLaneIdentity(identity, options, deps) {
     prNumber: identity.prNumber,
     auth,
     ghTokenProvider: options.ghTokenProvider,
-    fetchImpl: options.fetchImpl,
+    fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
   });
 }
 
@@ -1332,7 +1332,13 @@ export async function finalizeTerminalImplementationLane(input = {}, options = {
     nowUtc,
     readFileImpl: deps.readFile,
   });
-  if (leaseRead.ok && !leaseRead.present) {
+  const leaseAlreadyAbsent = leaseRead.ok && !leaseRead.present;
+  const interruptedReleaseRecovery = (
+    !leaseRead.ok
+    && leaseRead.present
+    && leaseRead.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
+  );
+  if (leaseAlreadyAbsent || interruptedReleaseRecovery) {
     const receiptPath = authorityPath(root, options.repoRoot, 'receipts', `${expected.evidenceId}.json`);
     const proofPath = authorityPath(root, options.repoRoot, 'proof', `${expected.evidenceId}.json`);
     if (!receiptPath.ok || !proofPath.ok) {
