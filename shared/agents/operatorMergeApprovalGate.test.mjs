@@ -13,6 +13,7 @@ import {
   validateExactHeadWorkflowRuns,
   validateIndependentReviewWorkflowRun,
   validateProtectedEnvironment,
+  validateProtectedApprovalReceipt,
   validateProtectedOperatorMergeEvidence,
   validateProtectedOperatorMergePrerequisites,
   validateTrustedProtectedReviewReceipt,
@@ -413,4 +414,24 @@ test('builds an exact-head operator approval receipt only from ready separated e
   assert.equal(receipt.workflowRunId, operatorRunId);
   assert.equal(receipt.mergeExecutionAuthority, 'github-actions-protected-environment-only');
   assert.equal(receipt.reusableAcrossHeads, false);
+  assert.equal(validateProtectedApprovalReceipt(receipt, {
+    nowUtc: '2026-07-21T20:06:00.000Z',
+  }).valid, true);
+  for (const invalid of [
+    { schemaVersion: 'self-attested.approval.v1' },
+    { requiredReviewer: 'untrusted-writer' },
+    { workflowPath: '.github/workflows/untrusted.yml' },
+    { workflowRunId: null },
+    { approvedAtUtc: 'not-a-time' },
+    { approvedAtUtc: '2099-01-01T00:00:00.000Z' },
+    { mergeExecutionAuthority: 'caller' },
+    { reusableAcrossHeads: true },
+  ]) {
+    assert.equal(validateProtectedApprovalReceipt({
+      ...receipt,
+      ...invalid,
+    }, {
+      nowUtc: '2026-07-21T20:06:00.000Z',
+    }).valid, false);
+  }
 });
