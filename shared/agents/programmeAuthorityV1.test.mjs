@@ -550,6 +550,29 @@ test('scheduler goals are constructed from durable records and the canonical lan
   });
   assert.deepEqual(activeApprovalOverlay.goals[0].operatorApprovalReceipt, approvalReceipt);
 
+  for (const conflictingApprovalAliases of [
+    { issue: 1497, issueNumber: 9999 },
+    { activePr: 1617, pr: 9999 },
+  ]) {
+    const malformedApproval = buildSchedulerGoalsFromProgrammeSources({
+      nowUtc: NOW,
+      goalRecords: [goalRecord({
+        state: 'IMPLEMENTED',
+        activePr: 1617,
+        headSha: HEAD,
+        repository: REPOSITORY,
+        branch: BRANCH,
+        operatorApprovalReceipt: {
+          ...approvalReceipt,
+          ...conflictingApprovalAliases,
+        },
+      })],
+    });
+    assert.equal(malformedApproval.valid, false);
+    assert.equal(malformedApproval.goals.length, 0);
+    assert.ok(malformedApproval.blockers.includes('goal-record-0-approval-receipt-invalid'));
+  }
+
   for (const evidenceAt of ['2026-07-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z', 'malformed']) {
     const preservedEvidence = buildSchedulerGoalsFromProgrammeSources({
       nowUtc: NOW,
@@ -637,6 +660,19 @@ test('scheduler goals are constructed from durable records and the canonical lan
     assert.equal(malformedIdentity.goals.length, 0);
     assert.ok(malformedIdentity.blockers.includes('goal-record-0-pr-invalid'));
   }
+
+  const conflictingActiveOverlay = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    lane: lane(),
+    goalRecords: [goalRecord({
+      activePr: 9999,
+      repository: REPOSITORY,
+      branch: BRANCH,
+      headSha: HEAD,
+    })],
+  });
+  assert.equal(conflictingActiveOverlay.valid, false);
+  assert.ok(conflictingActiveOverlay.blockers.includes('active-goal-canonical-lane-identity-conflict'));
 
   const nonGoal = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
@@ -893,6 +929,31 @@ test('active projection requires the conveyor to affirm the exact active lane', 
     });
     assert.equal(malformedMission.status, 'HOLD');
     assert.ok(malformedMission.blockers.includes('critical-backlog-active-lane-identity-mismatch'));
+  }
+
+  for (const invalidPrAliases of [
+    { prNumber: null },
+    { prNumber: 'not-a-pr' },
+    { prNumber: 1617, relatedPr: '#9999' },
+  ]) {
+    const malformedMission = buildAuthoritativeProgrammeProjection({
+      ...base,
+      criticalBacklog: {
+        decision: 'WAIT_ACTIVE_MISSION',
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+        selectedItem: { issueNumbers: [1497] },
+        activeMission: {
+          missionId: LANE_ID,
+          issueNumber: 1497,
+          repository: REPOSITORY,
+          git: { branch: BRANCH },
+          pullRequest: { number: 1617 },
+          ...invalidPrAliases,
+        },
+      },
+    });
+    assert.equal(malformedMission.status, 'HOLD');
+    assert.ok(malformedMission.blockers.includes('critical-backlog-active-lane-pr-mismatch'));
   }
 
   const expiredReceiptProjection = buildAuthoritativeProgrammeProjection({
