@@ -25,6 +25,7 @@ const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
 const MUSIC_RATING_PRESERVES_PLAYBACK = 'MUSIC_RATING_PRESERVES_PLAYBACK';
 const ALLOWED_PROOF_SCENARIOS = new Set([MUSIC_RATING_PRESERVES_PLAYBACK]);
+const ALLOWED_PROOF_TARGETS = new Set(['PULL_REQUEST_HEAD', 'MERGED_MAIN']);
 const MUSIC_RATING_SCENARIO_EVIDENCE_SCHEMA = 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v2';
 const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
 const SCENARIO_SOURCE_RESPONSE_BINDING = 'playwright-scenario-source-responses-git-blob-v2';
@@ -65,6 +66,7 @@ export function parseBrowserProofArguments(argv = []) {
   let expectedDistFingerprint = '';
   let expectedDistManifestPath = '';
   let proofScenario = '';
+  let proofTarget = 'PULL_REQUEST_HEAD';
   let positionalUrlSeen = false;
   let writeArtifacts = true;
   let machineJson = false;
@@ -130,6 +132,18 @@ export function parseBrowserProofArguments(argv = []) {
           blocker: 'PROOF_SCENARIO_INVALID',
         };
       }
+    } else if (argument === '--proof-target') {
+      proofTarget = String(argv[index + 1] || '').trim();
+      index += 1;
+      if (!ALLOWED_PROOF_TARGETS.has(proofTarget)) {
+        return {
+          ok: false,
+          url,
+          expectedHead,
+          proofTarget,
+          blocker: 'PROOF_TARGET_INVALID',
+        };
+      }
     } else if (argument === '--url') {
       url = String(argv[index + 1] || '').trim();
       index += 1;
@@ -154,6 +168,7 @@ export function parseBrowserProofArguments(argv = []) {
       expectedDistFingerprint,
       expectedDistManifestPath,
       proofScenario,
+      proofTarget,
       blocker: 'EXPECTED_DIST_MANIFEST_INVALID',
       writeArtifacts,
       machineJson,
@@ -168,7 +183,20 @@ export function parseBrowserProofArguments(argv = []) {
       expectedDistFingerprint,
       expectedDistManifestPath,
       proofScenario,
+      proofTarget,
       blocker: 'EXPECTED_HEAD_REQUIRED_FOR_PROOF_SCENARIO',
+      writeArtifacts,
+      machineJson,
+    };
+  }
+  if (proofTarget === 'MERGED_MAIN' && !proofScenario) {
+    return {
+      ok: false,
+      url,
+      expectedHead,
+      proofScenario,
+      proofTarget,
+      blocker: 'PROOF_SCENARIO_REQUIRED_FOR_MERGED_MAIN',
       writeArtifacts,
       machineJson,
     };
@@ -181,6 +209,7 @@ export function parseBrowserProofArguments(argv = []) {
     expectedDistFingerprint,
     expectedDistManifestPath,
     proofScenario,
+    proofTarget,
     writeArtifacts,
     machineJson,
   };
@@ -188,6 +217,7 @@ export function parseBrowserProofArguments(argv = []) {
 
 export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = {}, {
   expectedHead = '',
+  proofTarget = 'PULL_REQUEST_HEAD',
 } = {}) {
   const blocking = [];
   const listening = evidence?.listeningDeckIframe || {};
@@ -199,6 +229,22 @@ export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = 
   const scenarioBlockers = Array.isArray(evidence?.blockers) ? evidence.blockers : null;
   const beforeRanking = Array.isArray(ranking.before) ? ranking.before.map(String) : [];
   const afterRanking = Array.isArray(ranking.after) ? ranking.after.map(String) : [];
+  const mergedMainProof = proofTarget === 'MERGED_MAIN';
+  const playbackMediaTimeBefore = Number(listening.playbackMediaTimeBefore);
+  const playbackMediaTimeAfter = Number(listening.playbackMediaTimeAfter);
+  const livePlaybackObserved = (
+    evidence?.fixture === 'live-runtime-v1'
+    && evidence?.playbackContinuityProxy === 'same-player-media-time-v1'
+    && evidence?.PLAYBACK_CONTINUED_AFTER_RATING === true
+    && listening.playbackMediaElementIdentityPreserved === true
+    && listening.playbackMediaSourceUnchanged === true
+    && listening.playbackMediaPlayingBefore === true
+    && listening.playbackMediaPlayingAfter === true
+    && listening.playbackMediaTimeAdvanced === true
+    && Number.isFinite(playbackMediaTimeBefore)
+    && Number.isFinite(playbackMediaTimeAfter)
+    && playbackMediaTimeAfter > playbackMediaTimeBefore
+  );
   const listeningDeckIframeIdentityPreserved = (
     listening.beforePresent === true
     && listening.sameNode === true
@@ -208,7 +254,7 @@ export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = 
     && listening.frameIdentityPreserved === true
     && listening.frameNavigationCount === 0
     && listening.frameDetachCount === 0
-    && listening.playbackSentinelAdvanced === true
+    && (mergedMainProof ? livePlaybackObserved : listening.playbackSentinelAdvanced === true)
   );
   const discoveryIframeIdentityPreserved = (
     discovery.beforePresent === true
@@ -219,7 +265,7 @@ export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = 
     && discovery.frameIdentityPreserved === true
     && discovery.frameNavigationCount === 0
     && discovery.frameDetachCount === 0
-    && discovery.playbackSentinelAdvanced === true
+    && (mergedMainProof || discovery.playbackSentinelAdvanced === true)
   );
   const legacyRankingChanged = (
     beforeRanking.length > 0
@@ -257,6 +303,11 @@ export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = 
   }
   if (evidence?.proofScenario !== MUSIC_RATING_PRESERVES_PLAYBACK) {
     blocking.push('BROWSER_SCENARIO_EVIDENCE_SCENARIO_MISMATCH');
+  }
+  if (!ALLOWED_PROOF_TARGETS.has(proofTarget)) {
+    blocking.push('BROWSER_SCENARIO_PROOF_TARGET_INVALID');
+  } else if (mergedMainProof && !livePlaybackObserved) {
+    blocking.push('BROWSER_SCENARIO_LIVE_PLAYBACK_NOT_OBSERVED');
   }
   if (evidence?.collector !== 'playwright-page-v1' || evidence?.observed !== true) {
     blocking.push('BROWSER_SCENARIO_NOT_OBSERVED');
@@ -298,6 +349,24 @@ export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = 
     discoveryIframeIdentityPreserved,
     legacyRankingChanged,
     ratingInteractionObserved,
+    livePlaybackObserved,
+  });
+}
+
+export function finalizeMusicRatingPreservesPlaybackEvidence(evidence = {}, {
+  expectedHead = '',
+  proofTarget = 'PULL_REQUEST_HEAD',
+} = {}) {
+  const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    evidence,
+    { expectedHead, proofTarget },
+  );
+  return Object.freeze({
+    ...evidence,
+    blockers: [...evaluation.blocking],
+    listeningDeckIframeIdentityPreserved: evaluation.listeningDeckIframeIdentityPreserved,
+    discoveryIframeIdentityPreserved: evaluation.discoveryIframeIdentityPreserved,
+    legacyRankingChanged: evaluation.legacyRankingChanged,
   });
 }
 
@@ -306,6 +375,7 @@ export function evaluateBrowserProofResult(result = {}, {
   expectedSourceFingerprint = '',
   expectedDistFingerprint = '',
   proofScenario = '',
+  proofTarget = 'PULL_REQUEST_HEAD',
 } = {}) {
   const checks = result.checks || {};
   const blocking = [];
@@ -313,6 +383,7 @@ export function evaluateBrowserProofResult(result = {}, {
   const normalizedExpectedSourceFingerprint = String(expectedSourceFingerprint || '').trim().toLowerCase();
   const normalizedExpectedDistFingerprint = String(expectedDistFingerprint || '').trim().toLowerCase();
   const normalizedProofScenario = String(proofScenario || '').trim();
+  const normalizedProofTarget = String(proofTarget || '').trim();
   const runtimeSourceHead = normalizeGitHead(checks.runtimeSourceHead || checks.footerGitCommit);
   const runtimeSourceFingerprint = String(checks.sourceFingerprint || '').trim().toLowerCase();
   const runtimeDistFingerprint = String(checks.runtimeDistFingerprint || '').trim().toLowerCase();
@@ -378,11 +449,17 @@ export function evaluateBrowserProofResult(result = {}, {
     } else if (normalizedProofScenario === MUSIC_RATING_PRESERVES_PLAYBACK) {
       scenarioEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
         result.scenarioEvidence,
-        { expectedHead: normalizedExpectedHead },
+        { expectedHead: normalizedExpectedHead, proofTarget: normalizedProofTarget },
       );
       scenarioEvidenceAccepted = scenarioEvaluation.accepted;
       blocking.push(...scenarioEvaluation.blocking);
     }
+  }
+  if (!ALLOWED_PROOF_TARGETS.has(normalizedProofTarget)) {
+    blocking.push('BROWSER_PROOF_TARGET_INVALID');
+  }
+  if (normalizedProofTarget === 'MERGED_MAIN' && !normalizedProofScenario) {
+    blocking.push('BROWSER_PROOF_SCENARIO_REQUIRED_FOR_MERGED_MAIN');
   }
   const observed = result.browserAutomationAvailable === true && !result.automationUnavailable && checks.runtimeReachable === true;
   const accepted = (
@@ -407,6 +484,7 @@ export function evaluateBrowserProofResult(result = {}, {
     runtimeDistFingerprint,
     expectedDistFingerprintMatch,
     proofScenario: normalizedProofScenario,
+    proofTarget: normalizedProofTarget,
     scenarioEvidenceAccepted,
     scenarioEvaluation,
   };
@@ -449,6 +527,7 @@ export function buildBrowserProofPacket(result = {}, options = {}) {
     line('- Approved canonical dist fingerprint', verdict.expectedDistFingerprint || 'not requested'),
     line('- Browser-fetched runtime dist fingerprint', verdict.runtimeDistFingerprint || 'unavailable'),
     line('- Browser-fetched dist bytes match canonical build', verdict.expectedDistFingerprintMatch == null ? 'not requested' : (verdict.expectedDistFingerprintMatch ? 'yes' : 'no')),
+    line('- Proof target', verdict.proofTarget),
     line('- UI Build Timestamp', checks.uiBuildTimestamp || (checks.uiBuildTimestampPresent ? 'present' : 'missing')),
     line('- Source fingerprint / runtime marker', checks.sourceFingerprint || checks.runtimeMarker || 'unavailable'),
     line('- Proof Concierge DOM next proof', checks.proofConciergeDomNextProof || 'unavailable'),
@@ -485,6 +564,7 @@ export function buildBrowserProofMachineResult(result = {}, options = {}) {
     runtimeDistFingerprint: verdict.runtimeDistFingerprint,
     expectedDistFingerprintMatch: verdict.expectedDistFingerprintMatch,
     proofScenario: verdict.proofScenario,
+    proofTarget: verdict.proofTarget,
     scenarioEvidenceAccepted: verdict.scenarioEvidenceAccepted,
     scenarioEvidence: verdict.proofScenario ? (result.scenarioEvidence || null) : null,
     blocking: [...verdict.blocking],
@@ -1349,6 +1429,7 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
   pageErrors = [],
   repoRoot = process.cwd(),
   expectedHead = '',
+  proofTarget = 'PULL_REQUEST_HEAD',
 } = {}) {
   const scenarioUrl = new URL(MUSIC_TILE_SCENARIO_PATH, runtimeUrl).href;
   const captureStart = capturedResponses.length;
@@ -1356,6 +1437,10 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
   let refsHandle = null;
   let listeningFrame = null;
   let discoveryFrame = null;
+  let livePlaybackHandle = null;
+  let livePlaybackBefore = null;
+  let ratingClickAttempted = false;
+  let livePlaybackFailureObserved = false;
   let frameNavigatedListener = null;
   let frameDetachedListener = null;
   const frameEvents = {
@@ -1365,21 +1450,24 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     discoveryDetaches: 0,
   };
   try {
-    await page.route('https://open.spotify.com/**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/html; charset=utf-8',
-        body: [
-          '<!doctype html><title>Spotify proof fixture</title>',
-          '<body>playback continuity sentinel active',
-          '<script>',
-          `globalThis.__stephanosProofPlaybackInstance = ${JSON.stringify('spotify-playback-continuity-sentinel-v1')};`,
-          'globalThis.__stephanosProofPlaybackTick = 0;',
-          'setInterval(() => { globalThis.__stephanosProofPlaybackTick += 1; }, 10);',
-          '</script></body>',
-        ].join(''),
+    const mergedMainProof = proofTarget === 'MERGED_MAIN';
+    if (!mergedMainProof) {
+      await page.route('https://open.spotify.com/**', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/html; charset=utf-8',
+          body: [
+            '<!doctype html><title>Spotify proof fixture</title>',
+            '<body>playback continuity sentinel active',
+            '<script>',
+            `globalThis.__stephanosProofPlaybackInstance = ${JSON.stringify('spotify-playback-continuity-sentinel-v1')};`,
+            'globalThis.__stephanosProofPlaybackTick = 0;',
+            'setInterval(() => { globalThis.__stephanosProofPlaybackTick += 1; }, 10);',
+            '</script></body>',
+          ].join(''),
+        });
       });
-    });
+    }
     await page.route('**/api/setup/integrations', async (route) => {
       await route.fulfill({
         status: 200,
@@ -1457,18 +1545,54 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     if (!listeningFrame || !discoveryFrame) {
       throw servedDistError('BROWSER_SCENARIO_PLAYER_FRAME_MISSING');
     }
-    await Promise.all([
-      listeningFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
-      discoveryFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
-    ]);
-    const listeningSentinelBefore = await listeningFrame.evaluate(() => ({
-      instance: globalThis.__stephanosProofPlaybackInstance,
-      tick: globalThis.__stephanosProofPlaybackTick,
-    }));
-    const discoverySentinelBefore = await discoveryFrame.evaluate(() => ({
-      instance: globalThis.__stephanosProofPlaybackInstance,
-      tick: globalThis.__stephanosProofPlaybackTick,
-    }));
+    let listeningSentinelBefore = { instance: '', tick: -1 };
+    let discoverySentinelBefore = { instance: '', tick: -1 };
+    if (mergedMainProof) {
+      const playButton = listeningFrame.getByRole('button', { name: /play/i }).first();
+      if (await playButton.count() < 1) {
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_CONTROL_UNAVAILABLE');
+      }
+      await playButton.click({ timeout: 10000 });
+      await listeningFrame.waitForFunction(() => {
+        const media = document.querySelector('audio, video');
+        return !!media && media.paused === false && Number.isFinite(media.currentTime);
+      }, null, { timeout: 15000 });
+      livePlaybackHandle = await listeningFrame.locator('audio, video').first().elementHandle();
+      if (!livePlaybackHandle) {
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_MEDIA_UNAVAILABLE');
+      }
+      livePlaybackBefore = await livePlaybackHandle.evaluate((media) => ({
+        isConnected: media.isConnected === true,
+        sameMediaElement: document.querySelector('audio, video') === media,
+        currentSrc: String(media.currentSrc || media.src || ''),
+        currentTime: Number(media.currentTime),
+        paused: media.paused === true,
+        ended: media.ended === true,
+      }));
+      if (
+        livePlaybackBefore.isConnected !== true
+        || livePlaybackBefore.sameMediaElement !== true
+        || !livePlaybackBefore.currentSrc
+        || !Number.isFinite(livePlaybackBefore.currentTime)
+        || livePlaybackBefore.paused === true
+        || livePlaybackBefore.ended === true
+      ) {
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_NOT_STARTED');
+      }
+    } else {
+      await Promise.all([
+        listeningFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
+        discoveryFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
+      ]);
+      listeningSentinelBefore = await listeningFrame.evaluate(() => ({
+        instance: globalThis.__stephanosProofPlaybackInstance,
+        tick: globalThis.__stephanosProofPlaybackTick,
+      }));
+      discoverySentinelBefore = await discoveryFrame.evaluate(() => ({
+        instance: globalThis.__stephanosProofPlaybackInstance,
+        tick: globalThis.__stephanosProofPlaybackTick,
+      }));
+    }
     refsHandle = await page.evaluateHandle(({ targetId, targetLabel, stateKey, rating }) => {
       const ratingButton = document.querySelector(
         `#listening-deck [data-rate="${rating}"][data-id="${targetId}"]`,
@@ -1538,6 +1662,7 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     const ratingLocator = page.locator(
       `#listening-deck .player-deck-card [data-rate="${MUSIC_TILE_SCENARIO_RATING}"][data-id="${MUSIC_TILE_SCENARIO_TRACK_ID}"]`,
     );
+    ratingClickAttempted = true;
     await ratingLocator.click();
     await page.waitForFunction(({ key, trackId, rating }) => {
       let stored = {};
@@ -1578,18 +1703,55 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     const currentDiscoveryHandle = currentDiscoveryHandleValue.asElement();
     const currentListeningFrame = await currentListeningHandle?.contentFrame?.();
     const currentDiscoveryFrame = await currentDiscoveryHandle?.contentFrame?.();
-    const listeningSentinelAfter = currentListeningFrame
-      ? await currentListeningFrame.evaluate(() => ({
-        instance: globalThis.__stephanosProofPlaybackInstance,
-        tick: globalThis.__stephanosProofPlaybackTick,
-      }))
-      : { instance: '', tick: -1 };
-    const discoverySentinelAfter = currentDiscoveryFrame
-      ? await currentDiscoveryFrame.evaluate(() => ({
-        instance: globalThis.__stephanosProofPlaybackInstance,
-        tick: globalThis.__stephanosProofPlaybackTick,
-      }))
-      : { instance: '', tick: -1 };
+    let listeningSentinelAfter = { instance: '', tick: -1 };
+    let discoverySentinelAfter = { instance: '', tick: -1 };
+    let livePlaybackAfter = null;
+    if (mergedMainProof) {
+      if (!currentListeningFrame || currentListeningFrame !== listeningFrame || !livePlaybackHandle) {
+        livePlaybackFailureObserved = true;
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_PLAYER_REPLACED');
+      }
+      try {
+        await livePlaybackHandle.evaluate(async (media, before) => {
+          const deadline = performance.now() + 5000;
+          while (performance.now() < deadline) {
+            if (
+              media.isConnected
+              && document.querySelector('audio, video') === media
+              && media.paused === false
+              && String(media.currentSrc || media.src || '') === before.currentSrc
+              && Number(media.currentTime) > before.currentTime + 0.25
+            ) return;
+            await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+          }
+          throw new Error('BROWSER_SCENARIO_LIVE_PLAYBACK_DID_NOT_PROGRESS');
+        }, livePlaybackBefore);
+      } catch {
+        livePlaybackFailureObserved = true;
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_DID_NOT_PROGRESS');
+      }
+      livePlaybackAfter = await livePlaybackHandle.evaluate((media) => ({
+        isConnected: media.isConnected === true,
+        sameMediaElement: document.querySelector('audio, video') === media,
+        currentSrc: String(media.currentSrc || media.src || ''),
+        currentTime: Number(media.currentTime),
+        paused: media.paused === true,
+        ended: media.ended === true,
+      }));
+    } else {
+      listeningSentinelAfter = currentListeningFrame
+        ? await currentListeningFrame.evaluate(() => ({
+          instance: globalThis.__stephanosProofPlaybackInstance,
+          tick: globalThis.__stephanosProofPlaybackTick,
+        }))
+        : { instance: '', tick: -1 };
+      discoverySentinelAfter = currentDiscoveryFrame
+        ? await currentDiscoveryFrame.evaluate(() => ({
+          instance: globalThis.__stephanosProofPlaybackInstance,
+          tick: globalThis.__stephanosProofPlaybackTick,
+        }))
+        : { instance: '', tick: -1 };
+    }
     const observed = await page.evaluate(({ refs, key, trackId, targetLabel, rating }) => {
       const selectedRating = document.querySelector(
         `#listening-deck [data-rate="${rating}"][data-id="${trackId}"]`,
@@ -1687,6 +1849,25 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
       listeningSentinelBefore.instance === listeningSentinelAfter.instance
       && Number(listeningSentinelAfter.tick) > Number(listeningSentinelBefore.tick)
     );
+    observed.listeningDeckIframe.playbackMediaElementIdentityPreserved = mergedMainProof
+      && livePlaybackAfter?.isConnected === true
+      && livePlaybackAfter?.sameMediaElement === true;
+    observed.listeningDeckIframe.playbackMediaSourceUnchanged = mergedMainProof
+      && livePlaybackBefore?.currentSrc === livePlaybackAfter?.currentSrc;
+    observed.listeningDeckIframe.playbackMediaPlayingBefore = mergedMainProof
+      && livePlaybackBefore?.paused === false
+      && livePlaybackBefore?.ended === false;
+    observed.listeningDeckIframe.playbackMediaPlayingAfter = mergedMainProof
+      && livePlaybackAfter?.paused === false
+      && livePlaybackAfter?.ended === false;
+    observed.listeningDeckIframe.playbackMediaTimeBefore = mergedMainProof
+      ? Number(livePlaybackBefore?.currentTime)
+      : null;
+    observed.listeningDeckIframe.playbackMediaTimeAfter = mergedMainProof
+      ? Number(livePlaybackAfter?.currentTime)
+      : null;
+    observed.listeningDeckIframe.playbackMediaTimeAdvanced = mergedMainProof
+      && Number(livePlaybackAfter?.currentTime) > Number(livePlaybackBefore?.currentTime) + 0.25;
     observed.discoveryIframe.frameIdentityPreserved = currentDiscoveryFrame === discoveryFrame;
     observed.discoveryIframe.frameNavigationCount = frameEvents.discoveryNavigations;
     observed.discoveryIframe.frameDetachCount = frameEvents.discoveryDetaches;
@@ -1708,25 +1889,21 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
       collector: 'playwright-page-v1',
       observed: true,
       musicTileUrl: scenarioUrl,
-      fixture: 'isolated-browser-context-v1',
-      playbackContinuityProxy: 'intercepted-spotify-frame-tick-v1',
+      fixture: mergedMainProof ? 'live-runtime-v1' : 'isolated-browser-context-v1',
+      playbackContinuityProxy: mergedMainProof
+        ? 'same-player-media-time-v1'
+        : 'intercepted-spotify-frame-tick-v1',
+      PLAYBACK_CONTINUED_AFTER_RATING: mergedMainProof ? true : null,
       sourceResponseBinding,
       ...observed,
       consoleErrors: [...consoleErrors],
       pageErrors: [...pageErrors],
       blockers: [],
     };
-    const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    return finalizeMusicRatingPreservesPlaybackEvidence(
       evidence,
-      { expectedHead },
+      { expectedHead, proofTarget },
     );
-    return Object.freeze({
-      ...evidence,
-      blockers: [...evaluation.blocking],
-      listeningDeckIframeIdentityPreserved: evaluation.listeningDeckIframeIdentityPreserved,
-      discoveryIframeIdentityPreserved: evaluation.discoveryIframeIdentityPreserved,
-      legacyRankingChanged: evaluation.legacyRankingChanged,
-    });
   } catch (error) {
     if (!sourceResponseBinding) {
       sourceResponseBinding = await collectScenarioSourceResponseBinding(
@@ -1734,17 +1911,38 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
         { scenarioUrl, repoRoot, expectedHead },
       );
     }
-    return failedMusicRatingScenarioEvidence({
+    const failed = failedMusicRatingScenarioEvidence({
       scenarioUrl,
       consoleErrors,
       pageErrors,
       blocker: String(error?.code || error?.message || 'BROWSER_SCENARIO_EXECUTION_FAILED'),
       sourceResponseBinding,
     });
+    return Object.freeze({
+      ...failed,
+      fixture: proofTarget === 'MERGED_MAIN' ? 'live-runtime-v1' : failed.fixture,
+      playbackContinuityProxy: proofTarget === 'MERGED_MAIN'
+        ? 'same-player-media-time-v1'
+        : 'intercepted-spotify-frame-tick-v1',
+      PLAYBACK_CONTINUED_AFTER_RATING: proofTarget === 'MERGED_MAIN'
+        && livePlaybackBefore
+        && ratingClickAttempted
+        && livePlaybackFailureObserved
+        ? false
+        : null,
+      listeningDeckIframe: proofTarget === 'MERGED_MAIN' && livePlaybackBefore
+        ? {
+          playbackMediaPlayingBefore: livePlaybackBefore.paused === false && livePlaybackBefore.ended === false,
+          playbackMediaTimeBefore: Number(livePlaybackBefore.currentTime),
+          playbackMediaSource: String(livePlaybackBefore.currentSrc || ''),
+        }
+        : failed.listeningDeckIframe,
+    });
   } finally {
     if (frameNavigatedListener) page.off('framenavigated', frameNavigatedListener);
     if (frameDetachedListener) page.off('framedetached', frameDetachedListener);
     await refsHandle?.dispose?.();
+    await livePlaybackHandle?.dispose?.();
   }
 }
 
@@ -1754,6 +1952,7 @@ async function collectWithBrowser(url = DEFAULT_URL, {
   expectedDistFingerprint = '',
   expectedDistManifestEntries = [],
   proofScenario = '',
+  proofTarget = 'PULL_REQUEST_HEAD',
 } = {}) {
   const pw = await loadPlaywright();
   if (!pw?.chromium) return { browserAutomationAvailable: false, automationUnavailable: 'Playwright chromium API unavailable', url, generatedAt: stamp(), checks: { runtimeReachable: false } };
@@ -1841,6 +2040,7 @@ async function collectWithBrowser(url = DEFAULT_URL, {
           pageErrors: scenarioPageErrors,
           repoRoot: process.cwd(),
           expectedHead,
+          proofTarget,
         });
       } finally {
         await scenarioPage.close();
@@ -1908,12 +2108,14 @@ async function main() {
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
         proofScenario: parsed.proofScenario,
+        proofTarget: parsed.proofTarget,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
         proofScenario: parsed.proofScenario,
+        proofTarget: parsed.proofTarget,
       }, { writeArtifacts: parsed.writeArtifacts }));
   }
   const expectedDistManifest = parsed.expectedDistFingerprint
@@ -1939,12 +2141,14 @@ async function main() {
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
         proofScenario: parsed.proofScenario,
+        proofTarget: parsed.proofTarget,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
         proofScenario: parsed.proofScenario,
+        proofTarget: parsed.proofTarget,
       }, { writeArtifacts: parsed.writeArtifacts }));
   }
   try {
@@ -1954,6 +2158,7 @@ async function main() {
       expectedDistFingerprint: parsed.expectedDistFingerprint,
       expectedDistManifestEntries: expectedDistManifest.entries,
       proofScenario: parsed.proofScenario,
+      proofTarget: parsed.proofTarget,
     });
     process.exit(parsed.machineJson
       ? printMachineResult(result, {
@@ -1961,12 +2166,14 @@ async function main() {
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
         proofScenario: parsed.proofScenario,
+        proofTarget: parsed.proofTarget,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
         proofScenario: parsed.proofScenario,
+        proofTarget: parsed.proofTarget,
       }, { writeArtifacts: parsed.writeArtifacts }));
   } catch (error) {
     const result = {
@@ -1982,12 +2189,14 @@ async function main() {
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
         proofScenario: parsed.proofScenario,
+        proofTarget: parsed.proofTarget,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
         expectedDistFingerprint: parsed.expectedDistFingerprint,
         proofScenario: parsed.proofScenario,
+        proofTarget: parsed.proofTarget,
       }, { writeArtifacts: parsed.writeArtifacts }));
   }
 }

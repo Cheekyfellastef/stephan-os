@@ -101,15 +101,47 @@ function isExactWindowsProofOperation(receipt = {}, operationResult = {}) {
     || operationResult?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF';
 }
 
+function projectedPullRequestHeads(receipt = {}, operationResult = {}) {
+  const requested = String(
+    receipt?.pullRequestHead
+      || operationResult?.requestedPullRequestHead
+      || operationResult?.pullRequestHead
+      || '',
+  ).trim().toLowerCase();
+  const observed = String(
+    operationResult?.observedPullRequestHead
+      || operationResult?.pullRequestHead
+      || '',
+  ).trim().toLowerCase();
+  return Object.freeze({ requested, observed });
+}
+
 function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
   const expectedHead = String(receipt?.expectedHead || operationResult?.expectedHead || '').trim().toLowerCase();
   if (isExactWindowsProofOperation(receipt, operationResult)) {
-    const pullRequestHead = String(operationResult?.pullRequestHead || '').trim().toLowerCase();
+    const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
     const localHead = String(operationResult?.localHead || '').trim().toLowerCase();
+    const proofTarget = String(receipt?.proofTarget || operationResult?.proofTarget || 'PULL_REQUEST_HEAD');
+    const mergeCommitHead = String(operationResult?.mergeCommitHead || '').trim().toLowerCase();
+    const githubMainHead = String(operationResult?.githubMainHead || '').trim().toLowerCase();
+    if (proofTarget === 'MERGED_MAIN') {
+      return SHA_PATTERN.test(expectedHead)
+        && SHA_PATTERN.test(requestedPullRequestHead)
+        && SHA_PATTERN.test(observedPullRequestHead)
+        && SHA_PATTERN.test(mergeCommitHead)
+        && SHA_PATTERN.test(githubMainHead)
+        && SHA_PATTERN.test(localHead)
+        && operationResult?.mergeCommitIncluded === true
+        && requestedPullRequestHead === observedPullRequestHead
+        && expectedHead === githubMainHead
+        && expectedHead === localHead;
+    }
     return SHA_PATTERN.test(expectedHead)
-      && SHA_PATTERN.test(pullRequestHead)
+      && SHA_PATTERN.test(requestedPullRequestHead)
+      && SHA_PATTERN.test(observedPullRequestHead)
       && SHA_PATTERN.test(localHead)
-      && expectedHead === pullRequestHead
+      && requestedPullRequestHead === observedPullRequestHead
+      && expectedHead === requestedPullRequestHead
       && expectedHead === localHead;
   }
   if (typeof operationResult?.expectedHeadMatch === 'boolean') return operationResult.expectedHeadMatch;
@@ -250,6 +282,7 @@ export function sanitizeMailboxReceiptForIndex(receipt = {}) {
   const workerTelemetry = sanitizeWorkerTelemetryForIndex(operationResult?.workerTelemetry);
   const requestId = safeRequestId(receipt?.requestId);
   if (!requestId) return null;
+  const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   return Object.freeze({
     requestId,
     operation: safeOperation(receipt?.operation),
@@ -260,8 +293,14 @@ export function sanitizeMailboxReceiptForIndex(receipt = {}) {
     expectedHead: safeSha(receipt?.expectedHead || operationResult?.expectedHead),
     prNumber: safeCount(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeOperation(receipt?.proofScenario || operationResult?.proofScenario),
+    proofTarget: safeOperation(receipt?.proofTarget || operationResult?.proofTarget || ''),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
-    pullRequestHead: safeSha(operationResult?.pullRequestHead),
+    pullRequestHead: safeSha(requestedPullRequestHead),
+    requestedPullRequestHead: safeSha(requestedPullRequestHead),
+    observedPullRequestHead: safeSha(observedPullRequestHead),
+    mergeCommitHead: safeSha(operationResult?.mergeCommitHead),
+    githubMainHead: safeSha(operationResult?.githubMainHead),
+    mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeSha(operationResult?.localHead),
     sourceHead: safeSha(operationResult?.sourceHead || operationResult?.recoveredHead),
     branch: String(operationResult?.branch || receipt?.branch || '') === 'main' ? 'main' : '',

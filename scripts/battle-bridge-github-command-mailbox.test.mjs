@@ -221,6 +221,77 @@ test('exact-head proof projections retain the verified PR and local heads', () =
     },
   });
   assert.equal(mismatch.operationResult.expectedHeadMatch, false);
+
+  const mergeCommitHead = 'c'.repeat(40);
+  const mergedMainHead = 'd'.repeat(40);
+  const mergedReceipt = {
+    ...receipt,
+    expectedHead: mergedMainHead,
+    proofTarget: 'MERGED_MAIN',
+    result: {
+      ...receipt.result,
+      result: {
+        ...receipt.result.result,
+        expectedHead: mergedMainHead,
+        proofTarget: 'MERGED_MAIN',
+        pullRequestHead: expectedHead,
+        mergeCommitHead,
+        githubMainHead: mergedMainHead,
+        mergeCommitIncluded: true,
+        localHead: mergedMainHead,
+      },
+    },
+  };
+  const merged = createSanitizedMailboxReceiptProjection(mergedReceipt);
+  assert.equal(merged.proofTarget, 'MERGED_MAIN');
+  assert.equal(merged.mergeCommitHead, mergeCommitHead);
+  assert.equal(merged.githubMainHead, mergedMainHead);
+  assert.equal(merged.mergeCommitIncluded, true);
+  assert.equal(merged.operationResult.expectedHeadMatch, true);
+  const mergedSerialized = JSON.parse(serializeBoundedReceiptJson(mergedReceipt));
+  assert.equal(mergedSerialized.proofTarget, 'MERGED_MAIN');
+  assert.equal(mergedSerialized.mergeCommitHead, mergeCommitHead);
+  assert.equal(mergedSerialized.githubMainHead, mergedMainHead);
+  assert.equal(mergedSerialized.mergeCommitIncluded, true);
+  assert.equal(mergedSerialized.result.result.expectedHeadMatch, true);
+
+  const observedDifferentHead = 'e'.repeat(40);
+  const provenanceMismatchReceipt = {
+    ...mergedReceipt,
+    pullRequestHead: expectedHead,
+    result: {
+      ...mergedReceipt.result,
+      result: {
+        ...mergedReceipt.result.result,
+        pullRequestHead: observedDifferentHead,
+      },
+    },
+  };
+  const provenanceMismatch = createSanitizedMailboxReceiptProjection(provenanceMismatchReceipt);
+  assert.equal(provenanceMismatch.pullRequestHead, expectedHead);
+  assert.equal(provenanceMismatch.requestedPullRequestHead, expectedHead);
+  assert.equal(provenanceMismatch.observedPullRequestHead, observedDifferentHead);
+  assert.equal(provenanceMismatch.operationResult.pullRequestHead, expectedHead);
+  assert.equal(provenanceMismatch.operationResult.requestedPullRequestHead, expectedHead);
+  assert.equal(provenanceMismatch.operationResult.observedPullRequestHead, observedDifferentHead);
+  assert.equal(provenanceMismatch.operationResult.expectedHeadMatch, false);
+  const mismatchSerialized = JSON.parse(serializeBoundedReceiptJson(provenanceMismatchReceipt));
+  assert.equal(mismatchSerialized.pullRequestHead, expectedHead);
+  assert.equal(mismatchSerialized.requestedPullRequestHead, expectedHead);
+  assert.equal(mismatchSerialized.observedPullRequestHead, observedDifferentHead);
+  assert.equal(mismatchSerialized.result.result.pullRequestHead, expectedHead);
+  assert.equal(mismatchSerialized.result.result.requestedPullRequestHead, expectedHead);
+  assert.equal(mismatchSerialized.result.result.observedPullRequestHead, observedDifferentHead);
+  assert.equal(mismatchSerialized.result.result.expectedHeadMatch, false);
+
+  const missingAncestry = createSanitizedMailboxReceiptProjection({
+    ...mergedReceipt,
+    result: {
+      ...mergedReceipt.result,
+      result: { ...mergedReceipt.result.result, mergeCommitIncluded: false },
+    },
+  });
+  assert.equal(missingAncestry.operationResult.expectedHeadMatch, false);
 });
 
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {

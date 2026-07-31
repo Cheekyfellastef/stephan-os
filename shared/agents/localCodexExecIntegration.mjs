@@ -1264,6 +1264,17 @@ export function createLocalCodexExecIntegration({
         }
         mkdirSync(paths.taskRoot, { recursive: true });
         const timestampUtc = now();
+        const exactHeadProof = packet.exactHeadProof ? Object.freeze({
+          repository: String(packet.exactHeadProof.repository || ''),
+          prNumber: Number(packet.exactHeadProof.prNumber || 0),
+          expectedHead: String(packet.exactHeadProof.expectedHead || '').toLowerCase(),
+          proofTarget: String(packet.exactHeadProof.proofTarget || 'PULL_REQUEST_HEAD'),
+          pullRequestHead: String(packet.exactHeadProof.pullRequestHead || '').toLowerCase(),
+          mergeCommitHead: String(packet.exactHeadProof.mergeCommitHead || '').toLowerCase(),
+          githubMainHead: String(packet.exactHeadProof.githubMainHead || '').toLowerCase(),
+          mergeCommitIncluded: packet.exactHeadProof.mergeCommitIncluded === true,
+          proofScenario: String(packet.exactHeadProof.proofScenario || ''),
+        }) : null;
         const task = {
           schemaVersion: LOCAL_CODEX_TASK_SCHEMA,
           kind: LOCAL_CODEX_TASK_KIND,
@@ -1274,12 +1285,7 @@ export function createLocalCodexExecIntegration({
           taskType: 'battle-bridge-proof',
           prompt: String(packet.prompt),
           requestedProofCommands: Array.isArray(packet.requestedProofCommands) ? packet.requestedProofCommands.map(String) : [],
-          exactHeadProof: packet.exactHeadProof ? {
-            repository: String(packet.exactHeadProof.repository || ''),
-            prNumber: Number(packet.exactHeadProof.prNumber || 0),
-            expectedHead: String(packet.exactHeadProof.expectedHead || '').toLowerCase(),
-            proofScenario: String(packet.exactHeadProof.proofScenario || ''),
-          } : null,
+          exactHeadProof,
           approvalRequirements: { ...(packet.approvalRequirements || {}) },
           repoRoot: paths.repoRoot,
           workspaceRoot: paths.workspaceRoot,
@@ -1342,6 +1348,7 @@ export function createLocalCodexExecIntegration({
             timestampUtc: failedAt,
             integrationId: LOCAL_CODEX_INTEGRATION_ID,
             blocker: 'LOCAL_CODEX_WORKER_LAUNCH_FAILED',
+            exactHeadProof,
             mergeAuthority: false,
             arbitraryShellAllowed: false,
           });
@@ -1363,6 +1370,7 @@ export function createLocalCodexExecIntegration({
           repoRoot: paths.repoRoot,
           taskPath: paths.taskPath,
           proofRefs: [`receipts/${packet.jobId}.json`, `proof/${packet.jobId}.json`],
+          exactHeadProof,
           mergeAuthority: false,
           arbitraryShellAllowed: false,
         };

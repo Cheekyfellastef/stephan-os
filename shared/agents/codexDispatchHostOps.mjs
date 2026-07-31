@@ -412,6 +412,15 @@ function changedFiles(output = '') {
   return String(output || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+function classifyCompletedSyncBlocker({ afterHead, approvedTargetHead, statusAfter, diffNames, tests } = {}) {
+  if (!afterHead?.ok) return 'POST_SYNC_HEAD_READ_FAILED';
+  if (afterHead.stdout !== approvedTargetHead) return 'POST_SYNC_HEAD_MISMATCH';
+  if (!statusAfter?.ok) return 'POST_SYNC_STATUS_READ_FAILED';
+  if (!diffNames?.ok) return 'POST_SYNC_CHANGED_FILES_READ_FAILED';
+  if (!tests?.ok) return 'POST_SYNC_VERIFICATION_FAILED';
+  return '';
+}
+
 export function syncCodexDispatchBridge({
   repoRoot = DEFAULT_CODEX_DISPATCH_REPO_ROOT,
   expectedBranch = 'main',
@@ -523,11 +532,19 @@ export function syncCodexDispatchBridge({
     && statusAfter.ok
     && diffNames.ok
     && tests.ok;
+  const blocker = passed ? '' : classifyCompletedSyncBlocker({
+    afterHead,
+    approvedTargetHead,
+    statusAfter,
+    diffNames,
+    tests,
+  });
 
   return Object.freeze({
     ok: passed,
     status: passed ? 'DONE' : 'FAILED',
     verdict: passed ? 'PASS' : 'FAIL',
+    blocker,
     repoRoot,
     branch: branch.stdout,
     approvalScope: 'latest-canonical-origin-main-observed-after-fetch',

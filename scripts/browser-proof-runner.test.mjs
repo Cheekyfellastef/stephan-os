@@ -18,6 +18,7 @@ import {
   createScenarioSourceGitEnvironment,
   evaluateBrowserProofResult,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
+  finalizeMusicRatingPreservesPlaybackEvidence,
   parseBrowserProofArguments,
   readExpectedDistManifest,
   shouldGenerateBrowserProofPacket,
@@ -128,6 +129,7 @@ test('parses an exact approved head without confusing it with the runtime URL', 
     expectedDistFingerprint: '',
     expectedDistManifestPath: '',
     proofScenario: '',
+    proofTarget: 'PULL_REQUEST_HEAD',
     writeArtifacts: false,
     machineJson: true,
   });
@@ -173,6 +175,25 @@ test('parses an exact approved head without confusing it with the runtime URL', 
       'MUSIC_RATING_PRESERVES_PLAYBACK',
     ]).proofScenario,
     'MUSIC_RATING_PRESERVES_PLAYBACK',
+  );
+  assert.equal(
+    parseBrowserProofArguments([
+      '--expected-head',
+      expectedHead,
+      '--proof-target',
+      'MERGED_MAIN',
+      '--proof-scenario',
+      'MUSIC_RATING_PRESERVES_PLAYBACK',
+    ]).proofTarget,
+    'MERGED_MAIN',
+  );
+  assert.equal(
+    parseBrowserProofArguments(['--proof-target', 'MERGED_MAIN']).blocker,
+    'PROOF_SCENARIO_REQUIRED_FOR_MERGED_MAIN',
+  );
+  assert.equal(
+    parseBrowserProofArguments(['--proof-target', 'UNTRUSTED_TARGET']).blocker,
+    'PROOF_TARGET_INVALID',
   );
   assert.equal(
     parseBrowserProofArguments([
@@ -254,6 +275,8 @@ function musicScenarioEvidence(overrides = {}) {
     proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
     collector: 'playwright-page-v1',
     observed: true,
+    fixture: 'isolated-browser-context-v1',
+    playbackContinuityProxy: 'intercepted-spotify-frame-tick-v1',
     sourceResponseBinding: {
       exact: true,
       blocker: '',
@@ -363,6 +386,47 @@ test('requested music scenario accepts only detailed Playwright-collected intera
   );
   assert.equal(navigated.accepted, false);
   assert.match(navigated.blocking.join(' | '), /LISTENING_IFRAME_REPLACED/);
+});
+
+test('merged-main music proof rejects the timer fixture and requires same-player media progression', async () => {
+  const expectedHead = 'a'.repeat(40);
+  const fixtureEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    musicScenarioEvidence(),
+    { expectedHead, proofTarget: 'MERGED_MAIN' },
+  );
+  assert.equal(fixtureEvaluation.accepted, false);
+  assert.equal(fixtureEvaluation.livePlaybackObserved, false);
+  assert.match(fixtureEvaluation.blocking.join(' | '), /LIVE_PLAYBACK_NOT_OBSERVED/);
+
+  const liveEvidence = musicScenarioEvidence({
+    fixture: 'live-runtime-v1',
+    playbackContinuityProxy: 'same-player-media-time-v1',
+    PLAYBACK_CONTINUED_AFTER_RATING: true,
+    listeningDeckIframe: {
+      ...musicScenarioEvidence().listeningDeckIframe,
+      playbackMediaElementIdentityPreserved: true,
+      playbackMediaSourceUnchanged: true,
+      playbackMediaPlayingBefore: true,
+      playbackMediaPlayingAfter: true,
+      playbackMediaTimeAdvanced: true,
+      playbackMediaTimeBefore: 12.25,
+      playbackMediaTimeAfter: 13.75,
+    },
+  });
+  const liveEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    liveEvidence,
+    { expectedHead, proofTarget: 'MERGED_MAIN' },
+  );
+  assert.equal(liveEvaluation.accepted, true);
+  assert.equal(liveEvaluation.livePlaybackObserved, true);
+  const finalized = finalizeMusicRatingPreservesPlaybackEvidence(
+    liveEvidence,
+    { expectedHead, proofTarget: 'MERGED_MAIN' },
+  );
+  assert.deepEqual(finalized.blockers, []);
+  assert.equal(finalized.listeningDeckIframeIdentityPreserved, true);
+  assert.equal(finalized.discoveryIframeIdentityPreserved, true);
+  assert.equal(finalized.legacyRankingChanged, true);
 });
 
 test('machine result binds requested scenario PASS to typed browser evidence', () => {

@@ -129,6 +129,31 @@ test('sync bridge fails if the post-merge HEAD is not the exact origin/main obse
   assert.equal(result.verdict, 'FAIL');
   assert.equal(result.approvedTargetHead, 'approved-head');
   assert.equal(result.afterHead, 'unexpected-head');
+  assert.equal(result.blocker, 'POST_SYNC_HEAD_MISMATCH');
+});
+
+test('sync bridge accepts an already-current main checkout and names verification failure exactly', () => {
+  const baseScript = {
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': [{ stdout: 'current-head\n' }, { stdout: 'current-head\n' }],
+    'git status --porcelain=v1 --untracked-files=all': [
+      { stdout: ' M apps/stephanos/dist/index.html\n' },
+      { stdout: ' M apps/stephanos/dist/index.html\n' },
+    ],
+    'git fetch origin main': { stdout: '' },
+    'git rev-parse origin/main': { stdout: 'current-head\n' },
+    'git rev-list --left-right --count HEAD...current-head': { stdout: '0\t0\n' },
+    [nodeTestCommand()]: { status: 1, stderr: 'focused verification failed\n' },
+  };
+  const result = syncCodexDispatchBridge({
+    repoRoot: 'C:\\repo', operatorApproval: 'operator-approved', expectedBranch: 'main', nodeCommand: 'node.exe',
+    spawnSyncFn: scriptedSpawn(baseScript),
+  });
+  assert.equal(result.updated, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'POST_SYNC_VERIFICATION_FAILED');
+  assert.equal(result.statusBefore, 'M apps/stephanos/dist/index.html');
+  assert.equal(result.statusAfter, 'M apps/stephanos/dist/index.html');
 });
 
 test('sync bridge blocks local commits or divergence instead of forcing main', () => {
