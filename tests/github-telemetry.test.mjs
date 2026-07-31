@@ -129,16 +129,93 @@ test('PR evidence uses shared resolver authority and gh CLI fallback after expli
       const authorization = String(init.headers?.Authorization || '');
       calls.push({ url, authorization });
       if (url.includes('/pulls/7') && !url.includes('/files') && authorization === 'Bearer bad-env-token') return forbidden();
-      if (url.includes('/pulls/7') && !url.includes('/files')) return okJson({ number: 7, html_url: 'https://github.com/owner/repo/pull/7', title: 'PR', state: 'open', merged: false, head: { sha: 'a'.repeat(40) }, base: { ref: 'main' } });
+      if (url.includes('/pulls/7') && !url.includes('/files')) return okJson({
+        number: 7,
+        html_url: 'https://github.com/owner/repo/pull/7',
+        title: 'PR',
+        state: 'open',
+        merged: false,
+        merged_at: null,
+        closed_at: null,
+        merge_commit_sha: null,
+        head: { ref: 'feature/exact-head', sha: 'a'.repeat(40), repo: { full_name: 'owner/repo' } },
+        base: { ref: 'main', sha: 'b'.repeat(40) },
+      });
       if (url.includes('/files')) return okJson([{ filename: 'README.md' }]);
       if (url.includes('/check-runs')) return okJson({ check_runs: [{ name: 'build', conclusion: 'success' }] });
+      if (url.includes('/issues/7/comments')) return okJson([{
+        user: { login: 'github-actions[bot]' },
+        body: `<!-- stephanos-protected-operator-approval -->
+\`\`\`json
+${JSON.stringify({
+  schemaVersion: 'stephanos.protected-operator-approval.v1',
+  kind: 'stephanos.protected-operator-approval',
+  repository: 'owner/repo',
+  prNumber: 7,
+  sourceHead: 'a'.repeat(40),
+  branch: 'feature/exact-head',
+  environment: 'operator-merge-approval',
+  protectionBoundary: 'github-protected-environment:operator-merge-approval',
+  requiredReviewer: 'Cheekyfellastef',
+  workflowPath: '.github/workflows/operator-merge-approval-gate.yml',
+  workflowRunId: 123,
+  workflowRunAttempt: 1,
+  approvedAtUtc: '2026-07-30T09:00:00.000Z',
+  mergeExecutionAuthority: 'github-actions-protected-environment-only',
+  reusableAcrossHeads: false,
+})}
+\`\`\``,
+      }]);
       return okJson({});
     },
   });
   assert.equal(payload.status, 'fetched');
   assert.equal(payload.authAuthority, 'gh-cli');
   assert.equal(payload.checksStatus, 'passed');
+  assert.equal(payload.repository, 'owner/repo');
+  assert.equal(payload.baseRepository, 'owner/repo');
+  assert.equal(payload.headRepository, 'owner/repo');
+  assert.equal(payload.headRepositoryMatchesBase, true);
+  assert.equal(payload.headBranch, 'feature/exact-head');
+  assert.equal(payload.baseSha, 'b'.repeat(40));
+  assert.equal(payload.mergedAt, '');
+  assert.equal(payload.closedAt, '');
+  assert.equal(payload.mergeCommitSha, '');
+  assert.equal(payload.trustedOperatorApprovalReceipts.length, 1);
+  assert.equal(payload.trustedOperatorApprovalReceipts[0].prNumber, 7);
+  assert.equal(Object.hasOwn(payload.trustedOperatorApprovalReceipts[0], 'environment'), false);
   assert.equal(JSON.stringify(payload).includes('gh-token'), false);
   assert.equal(calls.some((call) => call.authorization === 'Bearer bad-env-token'), true);
   assert.equal(calls.some((call) => call.authorization === 'Bearer gh-token'), true);
+});
+
+test('PR evidence preserves a fork head repository so lease identity cannot be bound to the base repository', async () => {
+  const payload = await fetchGithubPrEvidence({
+    owner: 'owner',
+    repo: 'repo',
+    prNumber: 8,
+    auth: { token: 'token', authority: 'test', configured: true },
+    fetchImpl: async (url) => {
+      if (url.includes('/pulls/8') && !url.includes('/files')) return okJson({
+        number: 8,
+        html_url: 'https://github.com/owner/repo/pull/8',
+        title: 'Fork PR',
+        state: 'open',
+        merged: false,
+        head: {
+          ref: 'feature/fork-head',
+          sha: 'c'.repeat(40),
+          repo: { full_name: 'contributor/repo' },
+        },
+        base: { ref: 'main', sha: 'd'.repeat(40) },
+      });
+      if (url.includes('/files')) return okJson([{ filename: 'README.md' }]);
+      if (url.includes('/check-runs')) return okJson({ check_runs: [{ name: 'build', conclusion: 'success' }] });
+      return okJson({});
+    },
+  });
+  assert.equal(payload.status, 'fetched');
+  assert.equal(payload.repository, 'contributor/repo');
+  assert.equal(payload.baseRepository, 'owner/repo');
+  assert.equal(payload.headRepositoryMatchesBase, false);
 });
