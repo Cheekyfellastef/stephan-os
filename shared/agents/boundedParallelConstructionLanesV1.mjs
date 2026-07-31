@@ -501,6 +501,7 @@ async function createReadyForIntegrationReceipt(
   evidence,
   resolveConstructionLaneReservation,
   resolveVerifierEvidence,
+  resolveMainHead,
   trustedNowMs,
 ) {
   const lane = await exactHeadLaneFromReservation(
@@ -510,16 +511,6 @@ async function createReadyForIntegrationReceipt(
   );
   const testRefs = await exactHeadEvidenceRefs(evidence.testRefs, lane, 'testRefs', 'TEST', resolveVerifierEvidence);
   const proofRefs = await exactHeadEvidenceRefs(evidence.proofRefs, lane, 'proofRefs', 'PROOF', resolveVerifierEvidence);
-  const observedAt = text(evidence.observedAt);
-  const observedAtMs = timestamp(observedAt);
-  const nowMs = Number(trustedNowMs());
-  const currentMainSha = sha(evidence.currentMainSha);
-  if (observedAtMs === null
-    || !Number.isFinite(nowMs)
-    || Math.abs(observedAtMs - nowMs) > MAX_ISSUANCE_CLOCK_SKEW_MS
-    || !currentMainSha) {
-    throw new TypeError('observedAt must be valid and match the trusted observation clock; currentMainSha must be valid');
-  }
   const currentLane = await exactHeadLaneFromReservation(
     reservationRef,
     resolveConstructionLaneReservation,
@@ -527,6 +518,22 @@ async function createReadyForIntegrationReceipt(
   );
   if (JSON.stringify(currentLane) !== JSON.stringify(lane)) {
     throw new TypeError('construction lease changed while readiness evidence was resolving');
+  }
+  const main = await resolveMainHead({ branch:'main' });
+  const currentMainSha = sha(main?.headSha);
+  if (main?.authenticated !== true
+    || main?.immutable !== true
+    || main?.branch !== 'main'
+    || !currentMainSha) {
+    throw new TypeError('current main head must be resolved through authenticated immutable repository truth');
+  }
+  const observedAt = text(evidence.observedAt);
+  const observedAtMs = timestamp(observedAt);
+  const nowMs = Number(trustedNowMs());
+  if (observedAtMs === null
+    || !Number.isFinite(nowMs)
+    || Math.abs(observedAtMs - nowMs) > MAX_ISSUANCE_CLOCK_SKEW_MS) {
+    throw new TypeError('observedAt must be valid and match the trusted observation clock');
   }
 
   return freeze({
@@ -559,6 +566,7 @@ export function createBoundedParallelConstructionAuthority(adapters = {}) {
     'resolveConstructionLaneReservation',
   );
   const resolveVerifierEvidence = requiredFunction(adapters.resolveVerifierEvidence, 'resolveVerifierEvidence');
+  const resolveMainHead = requiredFunction(adapters.resolveMainHead, 'resolveMainHead');
   const trustedNowMs = requiredFunction(adapters.nowMs, 'nowMs');
   const authorityToken = freeze({});
   return freeze({
@@ -580,6 +588,7 @@ export function createBoundedParallelConstructionAuthority(adapters = {}) {
         evidence,
         resolveConstructionLaneReservation,
         resolveVerifierEvidence,
+        resolveMainHead,
         trustedNowMs,
       );
     },

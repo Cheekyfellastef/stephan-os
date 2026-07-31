@@ -123,6 +123,20 @@ function authorityHarness(options = {}) {
       }
       return record;
     },
+    resolveMainHead:async ({ branch }) => {
+      const record = typeof options.resolveMainHead === 'function'
+        ? await options.resolveMainHead({ branch })
+        : {
+            authenticated:true,
+            immutable:true,
+            branch:'main',
+            headSha:options.mainHeadSha ?? SHA_C,
+          };
+      if (typeof options.onResolveMainHead === 'function') {
+        await options.onResolveMainHead({ branch, record });
+      }
+      return record;
+    },
   });
   return {
     api,
@@ -383,7 +397,7 @@ test('ready-for-integration receipt binds authenticated exact-head evidence and 
   const authority = authorityHarness();
   const lease = await issueAuthenticatedLease(authority);
   const receipt = await authority.api.createReadyReceipt(lease.reservationId, {
-    currentMainSha:SHA_C,
+    currentMainSha:SHA_A,
     observedAt:'2026-07-29T14:30:00Z',
     testRefs:[authority.addEvidence('TEST')],
     proofRefs:[authority.addEvidence('PROOF')],
@@ -406,6 +420,15 @@ test('ready-for-integration receipt requires tests, proof and current main', asy
     testRefs:[],
     proofRefs:[authority.addEvidence('PROOF')],
   }), /non-empty/);
+
+  const invalidMain = authorityHarness({ mainHeadSha:'caller-controlled' });
+  const invalidMainLease = await issueAuthenticatedLease(invalidMain);
+  await assert.rejects(() => invalidMain.api.createReadyReceipt(invalidMainLease.reservationId, {
+    currentMainSha:SHA_C,
+    observedAt:'2026-07-29T14:30:00Z',
+    testRefs:[invalidMain.addEvidence('TEST')],
+    proofRefs:[invalidMain.addEvidence('PROOF')],
+  }), /authenticated immutable repository truth/);
 });
 
 test('unknown states, dot-segment overlap and malformed integration ownership fail closed', () => {
@@ -561,6 +584,19 @@ test('ready-for-integration evidence is authenticated, exact-head bound and time
     testRefs:[expiring.addEvidence('TEST', { ref:'proof/test-expiring.json' })],
     proofRefs:[expiring.addEvidence('PROOF', { ref:'proof/proof-expiring.json' })],
   }), /authenticated active exact-head construction lease/);
+
+  let finalNowUtc = '2026-07-29T14:30:00Z';
+  const staleAfterMain = authorityHarness({
+    nowMs:() => Date.parse(finalNowUtc),
+    onResolveMainHead:() => { finalNowUtc = '2026-07-29T14:40:00Z'; },
+  });
+  const staleAfterMainLease = await issueAuthenticatedLease(staleAfterMain);
+  await assert.rejects(() => staleAfterMain.api.createReadyReceipt(staleAfterMainLease.reservationId, {
+    currentMainSha:SHA_A,
+    observedAt:'2026-07-29T14:30:00Z',
+    testRefs:[staleAfterMain.addEvidence('TEST', { ref:'proof/test-stale-main.json' })],
+    proofRefs:[staleAfterMain.addEvidence('PROOF', { ref:'proof/proof-stale-main.json' })],
+  }), /trusted observation clock/);
 });
 
 test('candidate admission rejects terminal states', () => {
