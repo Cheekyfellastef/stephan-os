@@ -291,7 +291,11 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
     assert.equal(wrongKindReleaseEnvelope.ok, false);
     assert.equal(wrongKindReleaseEnvelope.reason, 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CONFLICT');
     await writeFile(releaseMarkerPath, `${JSON.stringify(persistedReleaseMarker, null, 2)}\n`, 'utf8');
-    for (const releasedAtUtc of ['2026-07-30T09:00:00.000Z', '2099-01-01T00:00:00.000Z']) {
+    for (const releasedAtUtc of [
+      '2026-07-30T09:00:00.000Z',
+      '2026-07-30T09:45:00.000Z',
+      '2099-01-01T00:00:00.000Z',
+    ]) {
       await writeFile(releaseMarkerPath, `${JSON.stringify({
         ...persistedReleaseMarker,
         timestampUtc: releasedAtUtc,
