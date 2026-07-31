@@ -282,6 +282,15 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
     assert.equal(conflictingReleaseEnvelope.ok, false);
     assert.equal(conflictingReleaseEnvelope.reason, 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CONFLICT');
     await writeFile(releaseMarkerPath, `${JSON.stringify(persistedReleaseMarker, null, 2)}\n`, 'utf8');
+    await writeFile(releaseMarkerPath, `${JSON.stringify({
+      ...persistedReleaseMarker,
+      kind: 'stephanos.shared_workspace.goal',
+      goalId: 'forged-release-goal',
+    }, null, 2)}\n`, 'utf8');
+    const wrongKindReleaseEnvelope = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(wrongKindReleaseEnvelope.ok, false);
+    assert.equal(wrongKindReleaseEnvelope.reason, 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CONFLICT');
+    await writeFile(releaseMarkerPath, `${JSON.stringify(persistedReleaseMarker, null, 2)}\n`, 'utf8');
     const releasedButPresent = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
     assert.equal(releasedButPresent.ok, false);
     assert.equal(releasedButPresent.present, true);
@@ -643,6 +652,27 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     assert.equal(conflictingReceiptAliases.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
     await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
 
+    await writeFile(receiptPath, `${JSON.stringify({
+      ...receipt,
+      kind: 'stephanos.shared_workspace.proof',
+      proofId: receipt.receiptId,
+      refs: receipt.proofRefs,
+      status: 'MERGED',
+    }, null, 2)}\n`, 'utf8');
+    const wrongKindReceipt = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => {
+          throw new Error('wrong-kind durable receipt must block before GitHub access');
+        },
+      },
+    });
+    assert.equal(wrongKindReceipt.ok, false);
+    assert.equal(wrongKindReceipt.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
+    await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+
     await writeFile(proofPath, `${JSON.stringify({
       ...proof,
       relatedIssue: '#1',
@@ -661,6 +691,27 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     });
     assert.equal(conflictingProofAliases.ok, false);
     assert.equal(conflictingProofAliases.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
+    await writeFile(proofPath, `${JSON.stringify(proof, null, 2)}\n`, 'utf8');
+
+    await writeFile(proofPath, `${JSON.stringify({
+      ...proof,
+      kind: 'stephanos.shared_workspace.record.receipt',
+      receiptId: proof.proofId,
+      receivedRecordId: proof.proofId,
+      disposition: 'terminal-evidence-published',
+    }, null, 2)}\n`, 'utf8');
+    const wrongKindProof = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => {
+          throw new Error('wrong-kind durable proof must block before GitHub access');
+        },
+      },
+    });
+    assert.equal(wrongKindProof.ok, false);
+    assert.equal(wrongKindProof.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
     await writeFile(proofPath, `${JSON.stringify(proof, null, 2)}\n`, 'utf8');
 
     const expectedProofRef = `proof/${finalized.records.evidenceId}.json`;
