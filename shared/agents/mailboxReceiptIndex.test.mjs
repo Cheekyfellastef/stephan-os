@@ -307,6 +307,31 @@ test('exact-head proof index projections retain verified heads and derive the ma
   assert.equal(merged.mergeCommitIncluded, true);
   assert.equal(merged.expectedHeadMatch, true);
 
+  const observedDifferentHead = 'e'.repeat(40);
+  const provenanceMismatch = sanitizeMailboxReceiptForIndex({
+    ...exactHeadReceipt,
+    expectedHead: mergedMainHead,
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead: HEAD,
+    result: {
+      ...exactHeadReceipt.result,
+      result: {
+        ...exactHeadReceipt.result.result,
+        expectedHead: mergedMainHead,
+        proofTarget: 'MERGED_MAIN',
+        pullRequestHead: observedDifferentHead,
+        mergeCommitHead,
+        githubMainHead: mergedMainHead,
+        mergeCommitIncluded: true,
+        localHead: mergedMainHead,
+      },
+    },
+  });
+  assert.equal(provenanceMismatch.pullRequestHead, HEAD);
+  assert.equal(provenanceMismatch.requestedPullRequestHead, HEAD);
+  assert.equal(provenanceMismatch.observedPullRequestHead, observedDifferentHead);
+  assert.equal(provenanceMismatch.expectedHeadMatch, false);
+
   const missingAncestry = sanitizeMailboxReceiptForIndex({
     ...exactHeadReceipt,
     expectedHead: mergedMainHead,

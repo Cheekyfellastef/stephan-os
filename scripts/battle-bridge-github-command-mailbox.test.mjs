@@ -255,6 +255,35 @@ test('exact-head proof projections retain the verified PR and local heads', () =
   assert.equal(mergedSerialized.mergeCommitIncluded, true);
   assert.equal(mergedSerialized.result.result.expectedHeadMatch, true);
 
+  const observedDifferentHead = 'e'.repeat(40);
+  const provenanceMismatchReceipt = {
+    ...mergedReceipt,
+    pullRequestHead: expectedHead,
+    result: {
+      ...mergedReceipt.result,
+      result: {
+        ...mergedReceipt.result.result,
+        pullRequestHead: observedDifferentHead,
+      },
+    },
+  };
+  const provenanceMismatch = createSanitizedMailboxReceiptProjection(provenanceMismatchReceipt);
+  assert.equal(provenanceMismatch.pullRequestHead, expectedHead);
+  assert.equal(provenanceMismatch.requestedPullRequestHead, expectedHead);
+  assert.equal(provenanceMismatch.observedPullRequestHead, observedDifferentHead);
+  assert.equal(provenanceMismatch.operationResult.pullRequestHead, expectedHead);
+  assert.equal(provenanceMismatch.operationResult.requestedPullRequestHead, expectedHead);
+  assert.equal(provenanceMismatch.operationResult.observedPullRequestHead, observedDifferentHead);
+  assert.equal(provenanceMismatch.operationResult.expectedHeadMatch, false);
+  const mismatchSerialized = JSON.parse(serializeBoundedReceiptJson(provenanceMismatchReceipt));
+  assert.equal(mismatchSerialized.pullRequestHead, expectedHead);
+  assert.equal(mismatchSerialized.requestedPullRequestHead, expectedHead);
+  assert.equal(mismatchSerialized.observedPullRequestHead, observedDifferentHead);
+  assert.equal(mismatchSerialized.result.result.pullRequestHead, expectedHead);
+  assert.equal(mismatchSerialized.result.result.requestedPullRequestHead, expectedHead);
+  assert.equal(mismatchSerialized.result.result.observedPullRequestHead, observedDifferentHead);
+  assert.equal(mismatchSerialized.result.result.expectedHeadMatch, false);
+
   const missingAncestry = createSanitizedMailboxReceiptProjection({
     ...mergedReceipt,
     result: {
