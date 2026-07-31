@@ -169,6 +169,14 @@ function mergeEvidence(github = {}, expected = {}) {
   if (expected.prNumber && prNumber !== expected.prNumber) blockers.push('github-pr-number-mismatch');
   if (expected.headSha && headSha !== expected.headSha) blockers.push('github-head-mismatch');
   if (merged && (!TERMINAL_PR_STATES.has(prState) || mergedAtMs === null || !mergeCommitSha)) blockers.push('github-merge-evidence-incomplete');
+  const observedAtMs = timestamp(expected.nowUtc);
+  if (
+    mergedAtMs !== null
+    && (
+      observedAtMs === null
+      || mergedAtMs - observedAtMs > MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+    )
+  ) blockers.push('github-merged-at-in-future');
   // GitHub may expose a provisional/test merge commit SHA while an open PR is
   // still unmerged. Only affirmative merge state makes that SHA authoritative.
   if (!merged && (mergedAt || prState === 'MERGED')) blockers.push('github-merge-evidence-contradictory');
@@ -230,7 +238,7 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   if (!headSha) blockers.push('lane-head-invalid');
   if (!branch || !SAFE_BRANCH.test(branch) || branch.includes('..')) blockers.push('lane-branch-invalid');
   if (!repository || !SAFE_REPOSITORY.test(repository)) blockers.push('lane-repository-invalid');
-  const github = mergeEvidence(input.github, { prNumber, headSha });
+  const github = mergeEvidence(input.github, { prNumber, headSha, nowUtc: input.nowUtc });
   blockers.push(...github.blockers);
 
   let mutationLeaseIdentity = null;
@@ -1129,6 +1137,7 @@ export function buildTerminalLaneFinalizationPlan(input = {}) {
   const merge = mergeEvidence(input.github ?? lane?.mergeEvidence, {
     prNumber: lane?.prNumber,
     headSha: lane?.headSha,
+    nowUtc: input.nowUtc,
   });
   if (!merge.affirmativelyMerged) blockers.push(...merge.blockers, 'github-merge-not-affirmative');
   const leaseValidation = validateSourceMutationLease(lease, {
