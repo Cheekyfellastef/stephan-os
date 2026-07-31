@@ -98,6 +98,10 @@ function number(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function hasOwn(object, key) {
+  return Boolean(object && typeof object === 'object' && Object.prototype.hasOwnProperty.call(object, key));
+}
+
 function sha(value) {
   const normalized = text(value).toLowerCase();
   return SHA_40.test(normalized) ? normalized : null;
@@ -193,6 +197,19 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   const laneId = text(input.laneId ?? input.id);
   const encoded = laneIdentityFromId(laneId);
   const lease = input.mutationLease ?? null;
+  for (const [name, keys, normalize] of [
+    ['issue', ['issueNumber', 'issue'], number],
+    ['pr', ['prNumber', 'pr'], number],
+    ['head', ['headSha'], sha],
+    ['branch', ['branch'], text],
+    ['repository', ['repository'], text],
+  ]) {
+    for (const key of keys) {
+      if (hasOwn(input, key) && !normalize(input[key])) {
+        blockers.push(`${name}-explicit-identity-invalid`);
+      }
+    }
+  }
   const explicitIssue = number(input.issueNumber ?? input.issue);
   const explicitPr = number(input.prNumber ?? input.pr);
   const githubPr = number(input.github?.prNumber ?? input.github?.number);
@@ -427,8 +444,10 @@ export function validateSourceMutationLease(record = {}, options = {}) {
     ['headSha', sha],
     ['ownerId', text],
   ]) {
+    if (!hasOwn(expected, field)) continue;
     const wanted = normalize(expected[field]);
-    if (wanted && normalize(record?.[field]) !== wanted) errors.push(`${field}-mismatch`);
+    if (!wanted) errors.push(`${field}-expected-invalid`);
+    else if (normalize(record?.[field]) !== wanted) errors.push(`${field}-mismatch`);
   }
   const valid = errors.length === 0;
   const active = valid && expiresAtMs > nowMs;
