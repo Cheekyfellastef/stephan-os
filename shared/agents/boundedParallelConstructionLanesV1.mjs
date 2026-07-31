@@ -47,6 +47,7 @@ function normalizedPath(value) {
   if (!candidate || candidate.startsWith('/')) return null;
   const segments = candidate.split('/');
   if (segments.some((segment) => segment === '..')) return null;
+  if (segments.some((segment) => segment !== '.' && /[. ]$/.test(segment))) return null;
   const normalized = segments.filter((segment) => segment && segment !== '.').join('/');
   if (normalized.toLowerCase() === '.git' || normalized.toLowerCase().startsWith('.git/')) return null;
   return normalized || null;
@@ -519,19 +520,27 @@ async function createReadyForIntegrationReceipt(
     || !currentMainSha) {
     throw new TypeError('observedAt must be valid and match the trusted observation clock; currentMainSha must be valid');
   }
+  const currentLane = await exactHeadLaneFromReservation(
+    reservationRef,
+    resolveConstructionLaneReservation,
+    trustedNowMs,
+  );
+  if (JSON.stringify(currentLane) !== JSON.stringify(lane)) {
+    throw new TypeError('construction lease changed while readiness evidence was resolving');
+  }
 
   return freeze({
     schema:'Stephanos Ready For Integration Receipt V1',
     status:'READY_FOR_INTEGRATION',
-    laneId:lane.id,
-    goalId:lane.goalId,
-    branch:lane.branch,
-    baseSha:lane.baseSha,
-    headSha:lane.headSha,
+    laneId:currentLane.id,
+    goalId:currentLane.goalId,
+    branch:currentLane.branch,
+    baseSha:currentLane.baseSha,
+    headSha:currentLane.headSha,
     currentMainSha,
-    mainDrifted:lane.baseSha !== currentMainSha,
-    ownedPaths:lane.ownership.paths,
-    ownedContracts:lane.ownership.contracts,
+    mainDrifted:currentLane.baseSha !== currentMainSha,
+    ownedPaths:currentLane.ownership.paths,
+    ownedContracts:currentLane.ownership.contracts,
     testRefs,
     proofRefs,
     caveats:unique(array(evidence.caveats).map(text).filter(Boolean)),

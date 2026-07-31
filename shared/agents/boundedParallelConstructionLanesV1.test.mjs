@@ -78,7 +78,9 @@ function authorityHarness(options = {}) {
   const reservedFingerprints = new Set();
   const reserveCalls = [];
   const api = createBoundedParallelConstructionAuthority({
-    nowMs:() => Date.parse(options.nowUtc ?? '2026-07-29T14:30:00Z'),
+    nowMs:typeof options.nowMs === 'function'
+      ? options.nowMs
+      : () => Date.parse(options.nowUtc ?? '2026-07-29T14:30:00Z'),
     reserveConstructionLane:async (request) => {
       reserveCalls.push(request);
       let result;
@@ -114,7 +116,13 @@ function authorityHarness(options = {}) {
       }
       return reservations.get(reservationId) ?? null;
     },
-    resolveVerifierEvidence:async ({ ref }) => evidence.get(ref) ?? null,
+    resolveVerifierEvidence:async ({ ref }) => {
+      const record = evidence.get(ref) ?? null;
+      if (typeof options.onResolveVerifierEvidence === 'function') {
+        await options.onResolveVerifierEvidence({ ref, record });
+      }
+      return record;
+    },
   });
   return {
     api,
@@ -440,6 +448,11 @@ test('unknown states, dot-segment overlap and malformed integration ownership fa
   }), inventory());
   assert.deepEqual(repositoryControlPath.reasonCodes, ['CANDIDATE_CONTRACT_INVALID']);
 
+  const windowsRepositoryControlAlias = evaluateConstructionLaneAdmission(candidate({
+    ownership:{ paths:['.git./refs/heads/main'], contracts:[] },
+  }), inventory());
+  assert.deepEqual(windowsRepositoryControlAlias.reasonCodes, ['CANDIDATE_CONTRACT_INVALID']);
+
   const caseOnlyOverlap = evaluateConstructionLaneAdmission(candidate({
     ownership:{ paths:['shared/Foo'], contracts:[] },
   }), inventory({
@@ -534,6 +547,19 @@ test('ready-for-integration evidence is authenticated, exact-head bound and time
     observedAt:'2026-07-29T14:30:00Z',
     testRefs:[fabricatedLane.addEvidence('TEST', { ref:'proof/test-invented.json' })],
     proofRefs:[fabricatedLane.addEvidence('PROOF', { ref:'proof/proof-invented.json' })],
+  }), /authenticated active exact-head construction lease/);
+
+  let nowUtc = '2026-07-29T14:30:00Z';
+  const expiring = authorityHarness({
+    nowMs:() => Date.parse(nowUtc),
+    onResolveVerifierEvidence:() => { nowUtc = '2026-07-29T16:00:00Z'; },
+  });
+  const expiringLease = await issueAuthenticatedLease(expiring);
+  await assert.rejects(() => expiring.api.createReadyReceipt(expiringLease.reservationId, {
+    currentMainSha:SHA_C,
+    observedAt:'2026-07-29T16:00:00Z',
+    testRefs:[expiring.addEvidence('TEST', { ref:'proof/test-expiring.json' })],
+    proofRefs:[expiring.addEvidence('PROOF', { ref:'proof/proof-expiring.json' })],
   }), /authenticated active exact-head construction lease/);
 });
 
