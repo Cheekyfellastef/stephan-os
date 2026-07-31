@@ -683,6 +683,7 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
   let lastSnapshot = snapshot;
   let lastVerdict = { verdict:'abort-missing-proof', nextAction:'STOP_AND_SURFACE_BLOCKER' };
   const observedHeadShas = new Set([sha(snapshot.headSha)]);
+  const invocationHistoryByHead = new Map([[sha(snapshot.headSha), [...history]]]);
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
     if (iteration > 1) {
       const previousSnapshot = snapshot;
@@ -715,8 +716,10 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
           : result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, []);
       }
       if (sha(previousSnapshot.headSha) !== sha(snapshot.headSha)) {
+        invocationHistoryByHead.set(sha(previousSnapshot.headSha), [...history]);
         const nextHeadSha = sha(snapshot.headSha);
         if (observedHeadShas.has(nextHeadSha)) {
+          const revisitedHeadHistory = invocationHistoryByHead.get(nextHeadSha) ?? [];
           const blocked = cycleReceipt(
             snapshot,
             { verdict:'abort-head-revisited', nextAction:'STOP_AND_SURFACE_BLOCKER' },
@@ -724,16 +727,18 @@ export async function runGuardedContinuousRepairCycle(options = {}) {
             'blocked-head-revisited',
             {
               attemptId,
-              previousReceipt:null,
+              previousReceipt:revisitedHeadHistory.at(-1) ?? null,
             },
             {
               reason:'An exact head was revisited during one continuous cycle; restart from durable head-scoped history.',
             },
           );
           const persisted = await persistOutcome(persistCycleReceipt, blocked);
-          return persisted.ok
-            ? result('BLOCKED_HEAD_REVISITED', blocked, [blocked])
-            : result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, []);
+          if (!persisted.ok) {
+            return result('BLOCKED_CYCLE_RECEIPT_PERSISTENCE', null, revisitedHeadHistory);
+          }
+          revisitedHeadHistory.push(blocked);
+          return result('BLOCKED_HEAD_REVISITED', blocked, revisitedHeadHistory);
         }
         observedHeadShas.add(nextHeadSha);
         const nextHeadHistory = historyForLaneHead(provisionalHistory, snapshot);

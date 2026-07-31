@@ -534,8 +534,20 @@ test('same invocation fails closed when an exact head is revisited', async () =>
   assert.equal(blocked.status, 'BLOCKED_HEAD_REVISITED');
   assert.equal(blocked.receipt.status, 'blocked-head-revisited');
   assert.match(blocked.receipt.reason, /exact head was revisited/i);
-  assert.equal(blocked.receipt.predecessorCycleId, null);
+  assert.equal(blocked.history.length, 2);
+  assert.equal(blocked.receipt.predecessorCycleId, blocked.history[0].cycleId);
   assert.equal(h.calls.dispatch.length, 0);
+
+  const restarted = harness([observingA], {
+    attemptId:'attempt-after-revisit',
+    history:[
+      ...blocked.history,
+      ...h.calls.cycle.filter((receipt) => receipt.headSha === headB),
+    ],
+    maxIterations:1,
+  });
+  const resumed = await runGuardedContinuousRepairCycle(restarted.options);
+  assert.notEqual(resumed.status, 'BLOCKED_HISTORY_INVALID');
 });
 
 test('post-merge verification requests exact-head CI before runtime proof', async () => {
