@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { issueOpenClawGitHubAuthorization } from './openClawGitHubAuthorization.mjs';
 import { buildOpenClawGitHubOperation } from './openClawGitHubOperator.mjs';
+import { applyMissionOrchestratorEvent } from './missionOrchestrator.mjs';
 
 const OPENCLAW_BRANCH_PATTERN = /^openclaw\/[a-z0-9][a-z0-9._/-]{2,127}$/;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
@@ -65,6 +66,16 @@ function operationClaims(state, operation, options = {}) {
 
 function blocked(state, reason) {
   return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers: [reason], finalVerdict: 'BLOCKED' };
+}
+
+export function projectMissionWorkerActionState(state, options = {}) {
+  if (state?.currentPhase !== 'REPAIR_REQUIRED') return state;
+  return applyMissionOrchestratorEvent(state, {
+    missionId: state.missionId,
+    eventType: 'REPAIR_STARTED',
+    timestamp: nowIso(options),
+    summary: 'Project the next bounded repair action for an exact controller grant.',
+  }, options);
 }
 
 export function buildMissionWorkerAction(state, options = {}) {

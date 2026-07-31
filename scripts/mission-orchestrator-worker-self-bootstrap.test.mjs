@@ -20,6 +20,10 @@ test('supervised worker self-bootstraps mailbox before its first mission tick', 
       events.push('bootstrap');
       return { ok: true, status: 'MAILBOX_SELF_BOOTSTRAP_INSTALLED' };
     },
+    runControllerCycle: async () => ({
+      status: 'ACTIVE',
+      allowWorkerTick: true,
+    }),
     runTick: async () => {
       events.push('tick');
       return { publish: { ok: true } };
@@ -43,6 +47,10 @@ test('bootstrap failure is visible but the long-running worker path remains avai
     stdout: sink().stream,
     stderr: errors.stream,
     bootstrapMailbox: async () => { throw new Error('registration denied'); },
+    runControllerCycle: async () => ({
+      status: 'ACTIVE',
+      allowWorkerTick: true,
+    }),
     runTick: async () => { tickRan = true; return {}; },
     writeHeartbeat: async () => {},
     setIntervalFn: () => 7,

@@ -455,6 +455,37 @@ test('controller and Mission Worker heartbeats remain distinct authorities', () 
   assert.equal(wrongControllerRevision.valid, false);
   assert.ok(wrongControllerRevision.errors.includes('controller-source-revision-mismatch'));
 
+  const starting = createProgrammeControllerHeartbeat({
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: HEAD,
+    cycleState: 'STARTING',
+    timestampUtc: NOW,
+    boundedMutationSteps: 0,
+    proofRefs: [],
+  });
+  const startingProjection = projectProgrammeControllerHeartbeat(starting, { nowUtc: NOW });
+  assert.equal(startingProjection.valid, true);
+  assert.equal(startingProjection.reconciliationSucceeded, false);
+  assert.equal(startingProjection.lastSuccessfulReconciliationUtc, null);
+  assert.equal(startingProjection.lastPublishedReceiptId, '');
+
+  const fabricatedStarting = projectProgrammeControllerHeartbeat(
+    createProgrammeControllerHeartbeat({
+      controllerId: 'durable-flywheel-controller',
+      sourceRevision: HEAD,
+      cycleState: 'STARTING',
+      lastSuccessfulReconciliationUtc: NOW,
+      lastPublishedReceiptId: 'not-yet-published',
+      timestampUtc: NOW,
+      boundedMutationSteps: 0,
+    }),
+    { nowUtc: NOW },
+  );
+  assert.equal(fabricatedStarting.valid, false);
+  assert.ok(fabricatedStarting.errors.includes(
+    'starting-heartbeat-cannot-claim-success',
+  ));
+
   const worker = createMissionWorkerHeartbeatRecord({
     timestampUtc: NOW,
     repositoryRoot: process.cwd(),
@@ -996,6 +1027,8 @@ test('active projection requires the conveyor to affirm the exact active lane', 
       ageMs: 0,
       cycleState: 'ACTIVE_LANE',
       activeLaneId: LANE_ID,
+      reconciliationSucceeded: true,
+      boundedMutationSteps: 1,
     },
     workerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0 },
     executionReceipt: receipt(),
@@ -1044,6 +1077,24 @@ test('active projection requires the conveyor to affirm the exact active lane', 
     },
   });
   assert.equal(exact.status, 'ACTIVE');
+
+  const transitional = buildAuthoritativeProgrammeProjection({
+    ...base,
+    controllerHeartbeatProjection: {
+      valid: true,
+      fresh: true,
+      ageMs: 0,
+      cycleState: 'ACTIVE_LANE',
+      activeLaneId: LANE_ID,
+      reconciliationSucceeded: false,
+      boundedMutationSteps: 0,
+    },
+    criticalBacklog: exact.criticalBacklog,
+  });
+  assert.equal(transitional.status, 'HOLD');
+  assert.ok(transitional.blockers.includes(
+    'controller-heartbeat-active-lane-authority-unproven',
+  ));
 
   for (const invalidIssueAliases of [
     { issueNumber: null },
@@ -1253,6 +1304,55 @@ test('controller cycle and conveyor identity must affirm the exact idle selectio
     },
   });
   assert.equal(exact.status, 'READY');
+
+  const continued = buildAuthoritativeProgrammeProjection({
+    ...base,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'RECONCILING' },
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+      selectedItem: {
+        issueNumbers: [1497],
+        mission: {
+          missionId: 'critical-1497-continuation',
+          repository: REPOSITORY,
+          branch: 'openclaw/critical-1497-continuation',
+        },
+      },
+      activeMission: {
+        missionId: 'critical-1497-continuation',
+        repository: REPOSITORY,
+        git: { branch: 'openclaw/critical-1497-continuation' },
+      },
+    },
+  });
+  assert.equal(continued.status, 'READY');
+
+  const wrongContinuation = buildAuthoritativeProgrammeProjection({
+    ...base,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'RECONCILING' },
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+      selectedItem: {
+        issueNumbers: [1497],
+        mission: {
+          missionId: 'critical-1497-continuation',
+          repository: REPOSITORY,
+          branch: 'openclaw/critical-1497-continuation',
+        },
+      },
+      activeMission: {
+        missionId: 'critical-1291-other',
+        repository: REPOSITORY,
+        git: { branch: 'openclaw/critical-1497-continuation' },
+      },
+    },
+  });
+  assert.equal(wrongContinuation.status, 'HOLD');
+  assert.ok(wrongContinuation.blockers.includes(
+    'critical-backlog-idle-selection-mission-mismatch',
+  ));
 });
 
 test('terminal reconciliation requires the controller heartbeat to name the exact terminal lane', () => {
@@ -1285,6 +1385,32 @@ test('terminal reconciliation requires the controller heartbeat to name the exac
   });
   assert.equal(projection.status, 'HOLD');
   assert.ok(projection.blockers.includes('controller-heartbeat-terminal-lane-mismatch'));
+
+  const transitional = buildAuthoritativeProgrammeProjection({
+    nowUtc: NOW,
+    workspaceFeed: { state: 'ready' },
+    lane: terminalLane,
+    mutationLease: lease(),
+    controllerHeartbeatProjection: {
+      valid: true,
+      fresh: true,
+      cycleState: 'FINALIZING',
+      activeLaneId: LANE_ID,
+      reconciliationSucceeded: false,
+      boundedMutationSteps: 0,
+    },
+    workerHeartbeatProjection: { valid: true, fresh: true },
+    executionReceipt: null,
+    battleBridgeProofs: [],
+    runtimeHealthRecords: [],
+    scheduler: { failClosed: false, selectedGoal: null, decisionReceipt: { status: 'MERGED' } },
+    criticalBacklog: { decision: 'WAIT_ACTIVE_MISSION' },
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+  });
+  assert.equal(transitional.status, 'HOLD');
+  assert.ok(transitional.blockers.includes(
+    'controller-heartbeat-terminal-lane-authority-unproven',
+  ));
 });
 
 test('programme stall diagnosis reuses Monitor Multiplexer and never starts scheduler, worker or mutation machinery', async () => {
