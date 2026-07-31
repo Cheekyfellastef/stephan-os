@@ -11,7 +11,16 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOCAL_CODEX_TASK_SCHEMA } from '../shared/agents/localCodexExecIntegration.mjs';
-import { computeStephanosSourceFingerprint } from './stephanos-build-utils.mjs';
+import {
+  STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES,
+  STEPHANOS_DIST_MANIFEST_MAX_FILES,
+  STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES,
+  STEPHANOS_DIST_MANIFEST_SCHEMA_VERSION,
+  computeStephanosDistFingerprint,
+  computeStephanosDistManifestFingerprint,
+  computeStephanosSourceFingerprint,
+  createStephanosDistManifest,
+} from './stephanos-build-utils.mjs';
 import {
   extractCodexThreadId,
   publishRemoteCodexTaskVisibility,
@@ -22,6 +31,8 @@ const APPROVED_GENERATED_PREFIXES = Object.freeze([
 ]);
 const CANONICAL_BROWSER_PROOF_URL = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
 const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
+const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
+const CANONICAL_RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -236,9 +247,127 @@ export function resolveExpectedSourceFingerprint(
   }
 }
 
+export function resolveExpectedDistFingerprint(
+  distFingerprintFactory,
+  repoRoot,
+) {
+  try {
+    const fingerprint = String(distFingerprintFactory(repoRoot) || '').trim().toLowerCase();
+    return EXACT_DIST_FINGERPRINT.test(fingerprint) ? fingerprint : '';
+  } catch {
+    return '';
+  }
+}
+
+export function validateExactHeadDistManifest(manifest = {}) {
+  try {
+    const entries = Array.isArray(manifest?.entries) ? manifest.entries : [];
+    const totalBytes = entries.reduce((total, entry) => total + Number(entry?.size), 0);
+    const fingerprint = computeStephanosDistManifestFingerprint(entries);
+    const valid = (
+      manifest?.schemaVersion === STEPHANOS_DIST_MANIFEST_SCHEMA_VERSION
+      && entries.length > 0
+      && entries.length <= STEPHANOS_DIST_MANIFEST_MAX_FILES
+      && entries.every((entry) => (
+        Number.isSafeInteger(entry?.size)
+        && entry.size >= 0
+        && entry.size <= STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES
+      ))
+      && totalBytes <= STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES
+      && manifest.fileCount === entries.length
+      && manifest.totalBytes === totalBytes
+      && manifest.fingerprint === fingerprint
+      && EXACT_DIST_FINGERPRINT.test(fingerprint)
+    );
+    return Object.freeze({
+      ok: valid,
+      fingerprint: valid ? fingerprint : '',
+      entries: valid ? Object.freeze([...entries]) : Object.freeze([]),
+    });
+  } catch {
+    return Object.freeze({
+      ok: false,
+      fingerprint: '',
+      entries: Object.freeze([]),
+    });
+  }
+}
+
+export function prepareExactHeadRuntimeBundle(repoRoot, {
+  spawnSyncFn = spawnSync,
+  distManifestFactory = (root) => createStephanosDistManifest({ rootDir: root }),
+} = {}) {
+  const steps = [
+    {
+      name: 'build',
+      scriptPath: resolve(repoRoot, 'scripts', 'build-stephanos-ui.mjs'),
+      blocker: 'CANONICAL_RUNTIME_BUILD_FAILED',
+    },
+    {
+      name: 'verify',
+      scriptPath: resolve(repoRoot, 'scripts', 'verify-stephanos-dist.mjs'),
+      blocker: 'CANONICAL_RUNTIME_VERIFY_FAILED',
+    },
+  ];
+  for (const step of steps) {
+    let execution;
+    try {
+      execution = spawnSyncFn(process.execPath, [step.scriptPath], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        shell: false,
+        windowsHide: true,
+        timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+      });
+    } catch (error) {
+      return Object.freeze({
+        ok: false,
+        required: true,
+        blocker: step.blocker,
+        failedStep: step.name,
+        reason: boundedText(error?.message || error),
+      });
+    }
+    if (execution?.error || execution?.status !== 0) {
+      return Object.freeze({
+        ok: false,
+        required: true,
+        blocker: step.blocker,
+        failedStep: step.name,
+        status: execution?.status ?? null,
+        reason: boundedText(execution?.error?.message || execution?.stderr || execution?.stdout),
+      });
+    }
+  }
+  let distManifest;
+  try {
+    distManifest = distManifestFactory(repoRoot);
+  } catch {
+    distManifest = null;
+  }
+  const validatedManifest = validateExactHeadDistManifest(distManifest);
+  if (!validatedManifest.ok) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED',
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    required: true,
+    canonicalBuildPerformed: true,
+    canonicalVerifyPerformed: true,
+    expectedDistFingerprint: validatedManifest.fingerprint,
+    distManifest,
+  });
+}
+
 export function evaluateWorkerSourceSafety({
   exactHeadRequired = false,
   expectedHead = '',
+  expectedDistFingerprint = '',
+  runtimeDistFingerprintAfter = '',
   sourceHeadBefore = {},
   sourceHeadAfter = {},
   statusBefore = {},
@@ -264,11 +393,18 @@ export function evaluateWorkerSourceSafety({
     dirtBefore.safe === true
     && dirtAfter.safe === true
   );
+  const exactHeadRuntimeBound = !exactHeadRequired || (
+    exactHeadStatusAvailable
+    && EXACT_DIST_FINGERPRINT.test(expectedDistFingerprint)
+    && runtimeDistFingerprintAfter === expectedDistFingerprint
+    && dirtDelta.generatedRuntimeMutationDetected !== true
+  );
   const sourceSafe = (
     sourceHeadUnchanged
     && sourceHeadBound
     && exactHeadStatusAvailable
     && exactHeadSourceClean
+    && exactHeadRuntimeBound
     && dirtDelta.sourceMutationDetected !== true
   );
   return Object.freeze({
@@ -277,6 +413,7 @@ export function evaluateWorkerSourceSafety({
     sourceHeadBound,
     exactHeadStatusAvailable,
     exactHeadSourceClean,
+    exactHeadRuntimeBound,
   });
 }
 
@@ -411,6 +548,8 @@ export function runBrowserRuntimeExactHeadProof(task, {
   spawnSyncFn = spawnSync,
   runnerPath = resolve(fileURLToPath(new URL('./browser-proof-runner.mjs', import.meta.url))),
   expectedSourceFingerprint: suppliedExpectedSourceFingerprint = '',
+  expectedDistFingerprint: suppliedExpectedDistFingerprint = '',
+  expectedDistManifestPath: suppliedExpectedDistManifestPath = '',
 } = {}) {
   if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
   const expectedHead = String(task.exactHeadProof.expectedHead || '').trim().toLowerCase();
@@ -426,6 +565,27 @@ export function runBrowserRuntimeExactHeadProof(task, {
       expectedHead,
     });
   }
+  const expectedDistFingerprint = String(suppliedExpectedDistFingerprint || '').trim().toLowerCase();
+  if (!EXACT_DIST_FINGERPRINT.test(expectedDistFingerprint)) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED',
+      expectedHead,
+      expectedSourceFingerprint,
+    });
+  }
+  const expectedDistManifestPath = String(suppliedExpectedDistManifestPath || '').trim();
+  if (!expectedDistManifestPath) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'CANONICAL_RUNTIME_MANIFEST_MISSING',
+      expectedHead,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+    });
+  }
   let execution;
   try {
     execution = spawnSyncFn(process.execPath, [
@@ -436,6 +596,10 @@ export function runBrowserRuntimeExactHeadProof(task, {
       expectedHead,
       '--expected-source-fingerprint',
       expectedSourceFingerprint,
+      '--expected-dist-fingerprint',
+      expectedDistFingerprint,
+      '--expected-dist-manifest',
+      expectedDistManifestPath,
       '--no-artifacts',
       '--machine-json',
     ], {
@@ -452,6 +616,8 @@ export function runBrowserRuntimeExactHeadProof(task, {
       blocker: 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
       expectedHead,
       expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
       runtimeSourceHead: '',
     });
   }
@@ -463,6 +629,7 @@ export function runBrowserRuntimeExactHeadProof(task, {
   const observedRuntimeUrl = String(payload?.observedUrl || '').trim();
   const runtimeSourceHead = String(payload?.runtimeSourceHead || '').trim().toLowerCase();
   const runtimeSourceFingerprint = String(payload?.runtimeSourceFingerprint || '').trim().toLowerCase();
+  const runtimeDistFingerprint = String(payload?.runtimeDistFingerprint || '').trim().toLowerCase();
   if (runtimeSourceHead && runtimeSourceHead !== expectedHead) {
     return Object.freeze({
       ok: false,
@@ -486,6 +653,21 @@ export function runBrowserRuntimeExactHeadProof(task, {
     });
   }
   if (
+    runtimeDistFingerprint
+    && runtimeDistFingerprint !== expectedDistFingerprint
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_RUNTIME_DIST_FINGERPRINT_MISMATCH',
+      expectedHead,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      runtimeDistFingerprint,
+    });
+  }
+  if (
     runtimeUrl !== CANONICAL_BROWSER_PROOF_URL
     || observedRuntimeUrl !== CANONICAL_BROWSER_PROOF_URL
   ) {
@@ -495,6 +677,8 @@ export function runBrowserRuntimeExactHeadProof(task, {
       blocker: 'BROWSER_RUNTIME_URL_MISMATCH',
       expectedHead,
       expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
       runtimeUrl,
       observedRuntimeUrl,
     });
@@ -502,7 +686,7 @@ export function runBrowserRuntimeExactHeadProof(task, {
   if (
     execution?.error
     || execution?.status !== 0
-    || payload?.schemaVersion !== 'stephanos.browser-runtime-exact-head-proof.v1'
+    || payload?.schemaVersion !== 'stephanos.browser-runtime-exact-head-proof.v2'
     || payload?.accepted !== true
     || payload?.expectedHead !== expectedHead
     || payload?.expectedHeadMatch !== true
@@ -510,6 +694,9 @@ export function runBrowserRuntimeExactHeadProof(task, {
     || payload?.expectedSourceFingerprint !== expectedSourceFingerprint
     || payload?.expectedSourceFingerprintMatch !== true
     || runtimeSourceFingerprint !== expectedSourceFingerprint
+    || payload?.expectedDistFingerprint !== expectedDistFingerprint
+    || payload?.expectedDistFingerprintMatch !== true
+    || runtimeDistFingerprint !== expectedDistFingerprint
   ) {
     return Object.freeze({
       ok: false,
@@ -517,8 +704,11 @@ export function runBrowserRuntimeExactHeadProof(task, {
       blocker: 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
       expectedHead,
       expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
       runtimeSourceHead,
       runtimeSourceFingerprint,
+      runtimeDistFingerprint,
     });
   }
   return Object.freeze({
@@ -526,8 +716,11 @@ export function runBrowserRuntimeExactHeadProof(task, {
     required: true,
     expectedHead,
     expectedSourceFingerprint,
+    expectedDistFingerprint,
+    expectedDistManifestPath,
     runtimeSourceHead,
     runtimeSourceFingerprint,
+    runtimeDistFingerprint,
     runtimeUrl,
     observedRuntimeUrl,
     schemaVersion: payload.schemaVersion,
@@ -616,6 +809,9 @@ export async function runCodexWorker(taskPath, {
   visibilityPublisher = publishRemoteCodexTaskVisibility,
   spawnSyncFn = spawnSync,
   sourceFingerprintFactory = (repoRoot) => computeStephanosSourceFingerprint({ rootDir: repoRoot }),
+  distFingerprintFactory = (repoRoot) => computeStephanosDistFingerprint({ rootDir: repoRoot }),
+  distManifestFactory = (repoRoot) => createStephanosDistManifest({ rootDir: repoRoot }),
+  runtimeBundleFactory = prepareExactHeadRuntimeBundle,
 } = {}) {
   const task = readJson(taskPath);
   if (task?.schemaVersion !== LOCAL_CODEX_TASK_SCHEMA) throw new Error('Unsupported local Codex task schema.');
@@ -655,12 +851,63 @@ export async function runCodexWorker(taskPath, {
   const expectedSourceFingerprint = exactHeadValidation.required
     ? resolveExpectedSourceFingerprint(sourceFingerprintFactory, task.repoRoot)
     : '';
+  let exactHeadRuntimeBundle = Object.freeze({ ok: true, required: false });
+  if (exactHeadValidation.required && expectedSourceFingerprint) {
+    try {
+      exactHeadRuntimeBundle = runtimeBundleFactory(task.repoRoot, {
+        spawnSyncFn,
+        distManifestFactory,
+      });
+    } catch (error) {
+      exactHeadRuntimeBundle = Object.freeze({
+        ok: false,
+        required: true,
+        blocker: 'CANONICAL_RUNTIME_BUILD_FAILED',
+        reason: boundedText(error?.message || error),
+      });
+    }
+  }
+  let expectedDistManifestPath = '';
+  if (exactHeadValidation.required && exactHeadRuntimeBundle?.ok === true) {
+    const validatedManifest = validateExactHeadDistManifest(
+      exactHeadRuntimeBundle.distManifest,
+    );
+    if (!validatedManifest.ok) {
+      exactHeadRuntimeBundle = Object.freeze({
+        ok: false,
+        required: true,
+        blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED',
+      });
+    } else {
+      expectedDistManifestPath = join(taskRoot, 'canonical-dist-manifest.json');
+      try {
+        writeJson(expectedDistManifestPath, exactHeadRuntimeBundle.distManifest);
+      } catch (error) {
+        exactHeadRuntimeBundle = Object.freeze({
+          ok: false,
+          required: true,
+          blocker: 'CANONICAL_RUNTIME_MANIFEST_PERSIST_FAILED',
+          reason: boundedText(error?.message || error),
+        });
+        expectedDistManifestPath = '';
+      }
+    }
+  }
+  const expectedDistFingerprint = exactHeadValidation.required
+    ? String(exactHeadRuntimeBundle?.expectedDistFingerprint || '').trim().toLowerCase()
+    : '';
   const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
   const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
   const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
   let preExecutionBlocker = '';
   if (exactHeadValidation.required) {
     if (!expectedSourceFingerprint) preExecutionBlocker = 'LOCAL_SOURCE_FINGERPRINT_FAILED';
+    else if (exactHeadRuntimeBundle?.ok !== true) {
+      preExecutionBlocker = exactHeadRuntimeBundle?.blocker || 'CANONICAL_RUNTIME_BUILD_FAILED';
+    }
+    else if (!EXACT_DIST_FINGERPRINT.test(expectedDistFingerprint)) {
+      preExecutionBlocker = 'CANONICAL_RUNTIME_FINGERPRINT_FAILED';
+    }
     else if (!sourceHeadBefore.ok) preExecutionBlocker = 'LOCAL_HEAD_LOOKUP_FAILED';
     else if (sourceHeadBefore.stdout !== exactHeadValidation.expectedHead) preExecutionBlocker = 'EXPECTED_HEAD_MISMATCH';
     else if (!statusBefore.ok) preExecutionBlocker = 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED';
@@ -680,7 +927,10 @@ export async function runCodexWorker(taskPath, {
       startedAt: completedAt,
       completedAt,
       exactHeadValidation,
+      exactHeadRuntimeBundle,
       expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
       sourceHeadBefore: sourceHeadBefore.stdout,
       statusBeforeOk: statusBefore.ok,
       dirtBefore,
@@ -696,6 +946,8 @@ export async function runCodexWorker(taskPath, {
   const browserRuntimeProofBefore = runBrowserRuntimeExactHeadProof(task, {
     spawnSyncFn,
     expectedSourceFingerprint,
+    expectedDistFingerprint,
+    expectedDistManifestPath,
   });
   if (!browserRuntimeProofBefore.ok) {
     const completedAt = now();
@@ -711,7 +963,10 @@ export async function runCodexWorker(taskPath, {
       startedAt: completedAt,
       completedAt,
       exactHeadValidation,
+      exactHeadRuntimeBundle,
       expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
       sourceHeadBefore: sourceHeadBefore.stdout,
       statusBeforeOk: statusBefore.ok,
       dirtBefore,
@@ -737,7 +992,10 @@ export async function runCodexWorker(taskPath, {
     workerPid: process.pid,
     sourceHeadBefore: sourceHeadBefore.stdout,
     expectedSourceFingerprint,
+    expectedDistFingerprint,
+    expectedDistManifestPath,
     exactHeadValidation,
+    exactHeadRuntimeBundle,
     browserRuntimeProofBefore,
     dirtBefore,
     executionPolicy: {
@@ -874,17 +1132,24 @@ export async function runCodexWorker(taskPath, {
   const browserRuntimeProofAfter = runBrowserRuntimeExactHeadProof(task, {
     spawnSyncFn,
     expectedSourceFingerprint,
+    expectedDistFingerprint,
+    expectedDistManifestPath,
   });
   const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
   const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
   const dirtAfter = classifyPostTaskDirt(statusAfter.stdout);
   const dirtDelta = compareDirtSnapshots(dirtBefore, dirtAfter);
+  const runtimeDistFingerprintAfter = exactHeadValidation.required
+    ? resolveExpectedDistFingerprint(distFingerprintFactory, task.repoRoot)
+    : '';
   const completedAt = now();
   const browserProof = validateBrowserProofVerdict(lastMessage, task, browserRuntimeProofAfter);
   const expectedHead = exactHeadValidation.required ? exactHeadValidation.expectedHead : '';
   const sourceSafety = evaluateWorkerSourceSafety({
     exactHeadRequired: exactHeadValidation.required,
     expectedHead,
+    expectedDistFingerprint,
+    runtimeDistFingerprintAfter,
     sourceHeadBefore,
     sourceHeadAfter,
     statusBefore,
@@ -900,6 +1165,18 @@ export async function runCodexWorker(taskPath, {
   } = sourceSafety;
   const passed = execution.passed && browserProof.ok && sourceSafe;
   const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
+  const safetyBlocker = !sourceSafety.exactHeadStatusAvailable
+    ? 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED'
+    : (!sourceSafety.sourceHeadBound || !sourceSafety.sourceHeadUnchanged
+      ? 'LOCAL_HEAD_CHANGED_DURING_PROOF'
+      : (!sourceSafety.exactHeadRuntimeBound
+        ? 'GENERATED_RUNTIME_INTEGRITY_MISMATCH'
+        : 'SOURCE_MUTATION_DETECTED'));
+  const finalBlocker = passed
+    ? ''
+    : (sourceSafe
+      ? (browserProof.blocker || execution.reason || 'CODEX_EXEC_FAILED')
+      : safetyBlocker);
   let result = {
     schemaVersion: LOCAL_CODEX_TASK_SCHEMA,
     kind: 'stephanos.codex_dispatch.local_result',
@@ -908,6 +1185,7 @@ export async function runCodexWorker(taskPath, {
     issueNumber: task.issueNumber,
     status: finalStatus,
     verdict: passed ? 'PASS' : 'FAIL',
+    blocker: finalBlocker,
     resultAvailable: true,
     resultVerdict: passed ? 'PASS' : 'FAIL',
     workerAlive: false,
@@ -920,6 +1198,10 @@ export async function runCodexWorker(taskPath, {
     sourceHeadUnchanged,
     sourceHeadBound,
     sourceSafety,
+    exactHeadRuntimeBundle,
+    expectedDistFingerprint,
+    expectedDistManifestPath,
+    runtimeDistFingerprintAfter,
     browserRuntimeProofBefore,
     browserRuntimeProofAfter,
     browserProof,
@@ -950,6 +1232,7 @@ export async function runCodexWorker(taskPath, {
       pushPerformed: false,
       sourceMutationDetected: dirtDelta.sourceMutationDetected,
       generatedRuntimeMutationDetected: dirtDelta.generatedRuntimeMutationDetected,
+      exactHeadRuntimeBound: sourceSafety.exactHeadRuntimeBound,
       preExistingSourceDirt: dirtDelta.preExistingSourceDirt,
       sourceHeadChanged: !sourceHeadUnchanged,
       approvalPolicy: 'never',

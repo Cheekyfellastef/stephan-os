@@ -1,12 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  mkdtempSync,
+  mkdirSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
   buildBrowserProofMachineResult,
   buildBrowserProofPacket,
+  collectPlaywrightNavigationDistFingerprint,
+  collectServedDistFingerprint,
   evaluateBrowserProofResult,
   parseBrowserProofArguments,
+  readExpectedDistManifest,
   shouldGenerateBrowserProofPacket,
 } from './browser-proof-runner.mjs';
+import {
+  computeStephanosDistFingerprint,
+  createStephanosDistManifest,
+} from './stephanos-build-utils.mjs';
 
 test('browser proof packet generated only when nextProof is browser-proof-checklist', () => {
   assert.equal(shouldGenerateBrowserProofPacket({ operatorProofConcierge: { nextProof: 'browser-proof-checklist' } }), true);
@@ -65,11 +80,14 @@ test('exact-head proof accepts only the full Git commit observed in the live bro
 test('parses an exact approved head without confusing it with the runtime URL', () => {
   const expectedHead = 'a'.repeat(40);
   const expectedSourceFingerprint = 'b'.repeat(64);
+  const expectedDistFingerprint = 'c'.repeat(64);
   assert.deepEqual(parseBrowserProofArguments(['--expected-head', expectedHead, '--no-artifacts', '--machine-json']), {
     ok: true,
     url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
     expectedHead,
     expectedSourceFingerprint: '',
+    expectedDistFingerprint: '',
+    expectedDistManifestPath: '',
     writeArtifacts: false,
     machineJson: true,
   });
@@ -82,16 +100,37 @@ test('parses an exact approved head without confusing it with the runtime URL', 
     ]).expectedSourceFingerprint,
     expectedSourceFingerprint,
   );
+  assert.equal(
+    parseBrowserProofArguments([
+      '--expected-dist-fingerprint',
+      expectedDistFingerprint,
+      '--expected-dist-manifest',
+      '/proof/canonical-dist-manifest.json',
+    ]).expectedDistFingerprint,
+    expectedDistFingerprint,
+  );
   assert.equal(parseBrowserProofArguments(['--expected-head', 'short']).blocker, 'EXPECTED_HEAD_INVALID');
   assert.equal(
     parseBrowserProofArguments(['--expected-source-fingerprint', 'short']).blocker,
     'EXPECTED_SOURCE_FINGERPRINT_INVALID',
+  );
+  assert.equal(
+    parseBrowserProofArguments(['--expected-dist-fingerprint', 'short']).blocker,
+    'EXPECTED_DIST_FINGERPRINT_INVALID',
+  );
+  assert.equal(
+    parseBrowserProofArguments([
+      '--expected-dist-fingerprint',
+      expectedDistFingerprint,
+    ]).blocker,
+    'EXPECTED_DIST_MANIFEST_INVALID',
   );
 });
 
 test('machine result exposes the browser-observed exact-head decision without relying on model text', () => {
   const expectedHead = 'a'.repeat(40);
   const expectedSourceFingerprint = 'b'.repeat(64);
+  const expectedDistFingerprint = 'c'.repeat(64);
   const result = buildBrowserProofMachineResult({
     browserAutomationAvailable: true,
     url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
@@ -101,6 +140,7 @@ test('machine result exposes the browser-observed exact-head decision without re
       footerGitCommitPresent: true,
       footerGitCommit: expectedHead,
       sourceFingerprint: expectedSourceFingerprint,
+      runtimeDistFingerprint: expectedDistFingerprint,
       uiBuildTimestampPresent: true,
       proofConciergeDomNextProofMatches: true,
       proofConciergePrimaryButtonPresent: true,
@@ -109,8 +149,8 @@ test('machine result exposes the browser-observed exact-head decision without re
       operatorDiagnosticCopyPresent: true,
       consoleErrorCount: 0,
     },
-  }, { expectedHead, expectedSourceFingerprint });
-  assert.equal(result.schemaVersion, 'stephanos.browser-runtime-exact-head-proof.v1');
+  }, { expectedHead, expectedSourceFingerprint, expectedDistFingerprint });
+  assert.equal(result.schemaVersion, 'stephanos.browser-runtime-exact-head-proof.v2');
   assert.equal(result.url, 'http://127.0.0.1:4173/apps/stephanos/dist/index.html');
   assert.equal(result.observedUrl, 'http://127.0.0.1:4173/apps/stephanos/dist/index.html');
   assert.equal(result.accepted, true);
@@ -118,6 +158,8 @@ test('machine result exposes the browser-observed exact-head decision without re
   assert.equal(result.expectedHeadMatch, true);
   assert.equal(result.runtimeSourceFingerprint, expectedSourceFingerprint);
   assert.equal(result.expectedSourceFingerprintMatch, true);
+  assert.equal(result.runtimeDistFingerprint, expectedDistFingerprint);
+  assert.equal(result.expectedDistFingerprintMatch, true);
 });
 
 test('exact-head proof rejects a served source fingerprint from a dirty or different build', () => {
@@ -144,6 +186,312 @@ test('exact-head proof rejects a served source fingerprint from a dirty or diffe
   assert.equal(verdict.expectedHeadMatch, true);
   assert.equal(verdict.expectedSourceFingerprintMatch, false);
   assert.match(verdict.blocking.join(' | '), /fingerprint does not match/);
+});
+
+test('exact-head proof rejects forged matching metadata when served dist bytes differ', () => {
+  const expectedHead = 'a'.repeat(40);
+  const expectedSourceFingerprint = 'b'.repeat(64);
+  const expectedDistFingerprint = 'c'.repeat(64);
+  const verdict = evaluateBrowserProofResult({
+    browserAutomationAvailable: true,
+    checks: {
+      runtimeReachable: true,
+      footerGitCommitPresent: true,
+      footerGitCommit: expectedHead,
+      sourceFingerprint: expectedSourceFingerprint,
+      runtimeDistFingerprint: 'd'.repeat(64),
+      uiBuildTimestampPresent: true,
+      proofConciergeDomNextProofMatches: true,
+      proofConciergePrimaryButtonPresent: true,
+      proofConciergeVisibleDriftClear: true,
+      cloneParityClear: true,
+      operatorDiagnosticCopyPresent: true,
+      consoleErrorCount: 0,
+    },
+  }, { expectedHead, expectedSourceFingerprint, expectedDistFingerprint });
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.expectedHeadMatch, true);
+  assert.equal(verdict.expectedSourceFingerprintMatch, true);
+  assert.equal(verdict.expectedDistFingerprintMatch, false);
+  assert.match(verdict.blocking.join(' | '), /dist fingerprint does not match/);
+
+  const missing = evaluateBrowserProofResult({
+    browserAutomationAvailable: true,
+    checks: {
+      runtimeReachable: true,
+      footerGitCommitPresent: true,
+      footerGitCommit: expectedHead,
+      sourceFingerprint: expectedSourceFingerprint,
+      uiBuildTimestampPresent: true,
+      proofConciergeDomNextProofMatches: true,
+      proofConciergePrimaryButtonPresent: true,
+      proofConciergeVisibleDriftClear: true,
+      cloneParityClear: true,
+      operatorDiagnosticCopyPresent: true,
+      consoleErrorCount: 0,
+    },
+  }, { expectedHead, expectedSourceFingerprint, expectedDistFingerprint });
+  assert.equal(missing.accepted, false);
+  assert.equal(missing.expectedDistFingerprintMatch, false);
+  assert.match(missing.blocking.join(' | '), /dist fingerprint is not a full/);
+});
+
+function distFixture({
+  indexHtml = '<script type="module" src="./assets/app.js"></script><link rel="stylesheet" href="./assets/app.css">',
+} = {}) {
+  const rootDir = mkdtempSync(join(tmpdir(), 'stephanos-dist-fingerprint-'));
+  const distRoot = join(rootDir, 'apps', 'stephanos', 'dist');
+  mkdirSync(join(distRoot, 'assets'), { recursive: true });
+  const files = {
+    'index.html': indexHtml,
+    'stephanos-build.json': '{"sourceFingerprint":"fixture"}\n',
+    'assets/app.js': 'globalThis.__STEPHANOS_FIXTURE__ = true;\n',
+    'assets/app.css': 'body { color: green; }\n',
+    'assets/lazy-chunk.js': 'globalThis.__STEPHANOS_LAZY_FIXTURE__ = true;\n',
+  };
+  for (const [relativePath, contents] of Object.entries(files)) {
+    const filePath = join(distRoot, ...relativePath.split('/'));
+    mkdirSync(join(filePath, '..'), { recursive: true });
+    writeFileSync(filePath, contents);
+  }
+  return { rootDir, distRoot, files };
+}
+
+function createFixtureFetch(files, {
+  mutate = {},
+  calls = [],
+} = {}) {
+  return async (url, options = {}) => {
+    const parsed = new URL(url);
+    const marker = '/apps/stephanos/dist/';
+    const markerIndex = parsed.pathname.indexOf(marker);
+    const relativePath = markerIndex >= 0
+      ? parsed.pathname.slice(markerIndex + marker.length)
+      : '';
+    calls.push({ relativePath, options });
+    const contents = Object.hasOwn(mutate, relativePath)
+      ? mutate[relativePath]
+      : files[relativePath];
+    if (contents == null) return new Response('missing', { status: 404 });
+    return new Response(contents, {
+      status: 200,
+      headers: { 'content-length': String(Buffer.byteLength(contents)) },
+    });
+  };
+}
+
+test('browser runner independently fetches no-store and reproduces the canonical raw dist fingerprint', async () => {
+  const { rootDir, files } = distFixture();
+  const expectedManifest = createStephanosDistManifest({ rootDir });
+  const expectedDistFingerprint = expectedManifest.fingerprint;
+  const calls = [];
+  const served = await collectServedDistFingerprint(
+    'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    {
+      fetchFn: createFixtureFetch(files, { calls }),
+      expectedEntries: expectedManifest.entries,
+    },
+  );
+  assert.equal(served.ok, true);
+  assert.equal(served.fingerprint, expectedDistFingerprint);
+  assert.equal(served.fileCount, 5);
+  assert.deepEqual(
+    calls.map((call) => call.relativePath).sort(),
+    [
+      'assets/app.css',
+      'assets/app.js',
+      'assets/lazy-chunk.js',
+      'index.html',
+      'stephanos-build.json',
+    ],
+  );
+  for (const call of calls) {
+    assert.equal(call.options.cache, 'no-store');
+    assert.equal(call.options.redirect, 'error');
+    assert.equal(call.options.headers['cache-control'], 'no-store');
+  }
+
+  const modified = await collectServedDistFingerprint(
+    'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    {
+      fetchFn: createFixtureFetch(files, {
+        mutate: { 'assets/app.js': 'globalThis.__FORGED_RUNTIME__ = true;\n' },
+      }),
+      expectedEntries: expectedManifest.entries,
+    },
+  );
+  assert.equal(modified.ok, true);
+  assert.notEqual(modified.fingerprint, expectedDistFingerprint);
+});
+
+function playwrightResponse(url, contents, headers = {}) {
+  const bytes = Buffer.from(contents);
+  return {
+    url: () => url,
+    status: () => 200,
+    allHeaders: async () => ({
+      'content-length': String(bytes.length),
+      ...headers,
+    }),
+    body: async () => bytes,
+  };
+}
+
+test('exact dist proof hashes the Playwright navigation and resource responses, not a second client', async () => {
+  const { rootDir, files } = distFixture();
+  const manifest = createStephanosDistManifest({ rootDir });
+  const baseUrl = 'http://127.0.0.1:4173/apps/stephanos/dist/';
+  const capturedResponses = [
+    playwrightResponse(
+      `${baseUrl}assets/app.js`,
+      'globalThis.__FORGED_EDGE_RUNTIME__ = true;\n',
+    ),
+    playwrightResponse(`${baseUrl}assets/app.css`, files['assets/app.css']),
+  ];
+  const page = {
+    async evaluate(_callback, assetUrl) {
+      const relativePath = new URL(assetUrl).pathname.split('/apps/stephanos/dist/')[1];
+      capturedResponses.push(playwrightResponse(assetUrl, files[relativePath]));
+    },
+  };
+  const result = await collectPlaywrightNavigationDistFingerprint(
+    page,
+    `${baseUrl}index.html`,
+    {
+      navigationResponse: playwrightResponse(`${baseUrl}index.html`, files['index.html']),
+      capturedResponses,
+      expectedEntries: manifest.entries,
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.responseBinding, 'playwright-navigation-and-browser-context-v1');
+  assert.notEqual(result.fingerprint, manifest.fingerprint);
+
+  const canonicalResponses = [
+    playwrightResponse(`${baseUrl}assets/app.js`, files['assets/app.js']),
+    playwrightResponse(`${baseUrl}assets/app.css`, files['assets/app.css']),
+  ];
+  const canonicalPage = {
+    async evaluate(_callback, assetUrl) {
+      const relativePath = new URL(assetUrl).pathname.split('/apps/stephanos/dist/')[1];
+      canonicalResponses.push(playwrightResponse(assetUrl, files[relativePath]));
+    },
+  };
+  const canonical = await collectPlaywrightNavigationDistFingerprint(
+    canonicalPage,
+    `${baseUrl}index.html`,
+    {
+      navigationResponse: playwrightResponse(`${baseUrl}index.html`, files['index.html']),
+      capturedResponses: canonicalResponses,
+      expectedEntries: manifest.entries,
+    },
+  );
+  assert.equal(canonical.ok, true);
+  assert.equal(canonical.fingerprint, manifest.fingerprint);
+
+  canonicalResponses.push(
+    playwrightResponse(
+      `${baseUrl}assets/injected-after-build.js`,
+      'globalThis.__INJECTED_AFTER_BUILD__ = true;\n',
+    ),
+  );
+  const unexpected = await collectPlaywrightNavigationDistFingerprint(
+    canonicalPage,
+    `${baseUrl}index.html`,
+    {
+      navigationResponse: playwrightResponse(`${baseUrl}index.html`, files['index.html']),
+      capturedResponses: canonicalResponses,
+      expectedEntries: manifest.entries,
+    },
+  );
+  assert.equal(unexpected.ok, false);
+  assert.equal(unexpected.blocker, 'BROWSER_RUNTIME_DIST_UNEXPECTED_RESPONSE');
+});
+
+test('persisted expected dist manifest is bounded and fingerprint-bound', () => {
+  const { rootDir } = distFixture();
+  const manifest = createStephanosDistManifest({ rootDir });
+  const manifestPath = join(rootDir, 'canonical-dist-manifest.json');
+  writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+  const valid = readExpectedDistManifest(manifestPath, manifest.fingerprint);
+  assert.equal(valid.ok, true);
+  assert.equal(valid.fileCount, manifest.fileCount);
+
+  const mismatched = readExpectedDistManifest(manifestPath, 'f'.repeat(64));
+  assert.equal(mismatched.ok, false);
+  assert.equal(mismatched.blocker, 'EXPECTED_DIST_MANIFEST_INVALID');
+});
+
+test('dist manifest rejects duplicate, escaping, nonregular and symlinked runtime assets', () => {
+  const duplicate = distFixture({
+    indexHtml: '<script src="./assets/app.js"></script><script src="./assets/app.js"></script>',
+  });
+  assert.throws(
+    () => createStephanosDistManifest({ rootDir: duplicate.rootDir }),
+    /STEPHANOS_DIST_ASSET_REFERENCE_DUPLICATE/,
+  );
+
+  const escaping = distFixture({
+    indexHtml: '<script src="../outside.js"></script>',
+  });
+  assert.throws(
+    () => createStephanosDistManifest({ rootDir: escaping.rootDir }),
+    /STEPHANOS_DIST_ASSET_REFERENCE_INVALID/,
+  );
+
+  const nonregular = distFixture();
+  mkdirSync(join(nonregular.distRoot, 'assets', 'directory.js'));
+  writeFileSync(
+    join(nonregular.distRoot, 'index.html'),
+    '<script src="./assets/directory.js"></script>',
+  );
+  assert.throws(
+    () => createStephanosDistManifest({ rootDir: nonregular.rootDir }),
+    /STEPHANOS_DIST_MANIFEST_(?:FILE_NOT_REGULAR|REQUIRED_FILE_MISSING)/,
+  );
+
+  const symlinked = distFixture();
+  symlinkSync(
+    join(symlinked.distRoot, 'assets', 'app.js'),
+    join(symlinked.distRoot, 'assets', 'linked.js'),
+  );
+  writeFileSync(
+    join(symlinked.distRoot, 'index.html'),
+    '<script src="./assets/linked.js"></script>',
+  );
+  assert.throws(
+    () => createStephanosDistManifest({ rootDir: symlinked.rootDir }),
+    /STEPHANOS_DIST_MANIFEST_(?:FILE_NOT_REGULAR|PATH_NOT_REGULAR)/,
+  );
+
+  const ancestorSymlink = distFixture();
+  const outsideAssets = mkdtempSync(join(tmpdir(), 'stephanos-outside-assets-'));
+  writeFileSync(
+    join(outsideAssets, 'outside.js'),
+    'globalThis.__OUTSIDE_DIST_BOUNDARY__ = true;\n',
+  );
+  const linkedAssetsPath = join(ancestorSymlink.distRoot, 'linked-assets');
+  symlinkSync(outsideAssets, linkedAssetsPath, 'dir');
+  writeFileSync(
+    join(ancestorSymlink.distRoot, 'index.html'),
+    '<script src="./linked-assets/outside.js"></script>',
+  );
+  assert.throws(
+    () => createStephanosDistManifest({ rootDir: ancestorSymlink.rootDir }),
+    /STEPHANOS_DIST_MANIFEST_PATH_NOT_REGULAR/,
+  );
+
+  const outsideRepo = distFixture();
+  const redirectedRoot = mkdtempSync(join(tmpdir(), 'stephanos-redirected-root-'));
+  symlinkSync(
+    join(outsideRepo.rootDir, 'apps'),
+    join(redirectedRoot, 'apps'),
+    'dir',
+  );
+  assert.throws(
+    () => createStephanosDistManifest({ rootDir: redirectedRoot }),
+    /STEPHANOS_DIST_MANIFEST_ROOT_NOT_REGULAR/,
+  );
 });
 
 test('automation unavailable creates diagnostic repair packet', () => {

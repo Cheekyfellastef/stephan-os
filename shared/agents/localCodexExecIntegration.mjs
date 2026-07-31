@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { hostname, uptime } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -33,6 +33,17 @@ const MIN_DISPATCH_LOCK_LEASE_MS = 1_000;
 const MAX_DISPATCH_LOCK_LEASE_MS = 5 * 60_000;
 const DISPATCH_LOCK_FUTURE_SKEW_MS = 30_000;
 const LEGACY_DISPATCH_LOCK_STALE_AFTER_MS = MAX_DISPATCH_LOCK_LEASE_MS + DISPATCH_LOCK_FUTURE_SKEW_MS;
+const LEGACY_V1_DISPATCH_LOCK_OWNER_FILENAME = 'owner.json';
+const LEGACY_V1_DISPATCH_LOCK_TOMBSTONE_TIME_SEPARATOR = '.at-';
+const LEGACY_V1_DISPATCH_LOCK_TOMBSTONE_SUFFIX = '.tombstone';
+const MAX_LEGACY_V1_DISPATCH_LOCK_TOMBSTONES = 64;
+const MAX_LEGACY_V1_DISPATCH_LOCK_OWNER_BYTES = 2_048;
+const LEGACY_V1_DISPATCH_LOCK_OWNER_KEYS = Object.freeze([
+  'acquiredAt',
+  'expiresAt',
+  'ownerPid',
+  'ownerToken',
+]);
 
 function defaultRepoRoot() {
   return resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -182,6 +193,39 @@ function dispatchLockOwnerIsValid(owner, ownerFilename, nowMs = Date.now()) {
   );
 }
 
+function legacyV1DispatchLockOwnerIsValid(owner, ownerFilename, nowMs = Date.now()) {
+  if (
+    !owner
+    || typeof owner !== 'object'
+    || Array.isArray(owner)
+    || ownerFilename !== LEGACY_V1_DISPATCH_LOCK_OWNER_FILENAME
+  ) {
+    return false;
+  }
+  const ownerKeys = Object.keys(owner).sort();
+  if (
+    ownerKeys.length !== LEGACY_V1_DISPATCH_LOCK_OWNER_KEYS.length
+    || ownerKeys.some((key, index) => key !== LEGACY_V1_DISPATCH_LOCK_OWNER_KEYS[index])
+  ) {
+    return false;
+  }
+  const acquiredAtMs = timestampMs(owner.acquiredAt);
+  const expiresAtMs = timestampMs(owner.expiresAt);
+  const leaseDurationMs = expiresAtMs - acquiredAtMs;
+  return Boolean(
+    SAFE_LOCK_ID.test(String(owner.ownerToken || ''))
+    && Number.isSafeInteger(owner.ownerPid)
+    && owner.ownerPid > 0
+    && Number.isFinite(acquiredAtMs)
+    && Number.isFinite(expiresAtMs)
+    && owner.acquiredAt === new Date(acquiredAtMs).toISOString()
+    && owner.expiresAt === new Date(expiresAtMs).toISOString()
+    && leaseDurationMs >= MIN_DISPATCH_LOCK_LEASE_MS
+    && leaseDurationMs <= MAX_DISPATCH_LOCK_LEASE_MS
+    && acquiredAtMs <= nowMs + DISPATCH_LOCK_FUTURE_SKEW_MS
+  );
+}
+
 export function parseLinuxDispatchLockProcessIdentity(stat = '', bootId = '') {
   const closeParen = stat.lastIndexOf(')');
   const fields = closeParen >= 0 ? stat.slice(closeParen + 1).trim().split(/\s+/) : [];
@@ -297,6 +341,10 @@ function readDispatchLockEvidence(lockPath, nowMs = Date.now()) {
     owner,
     ownerRaw,
     validOwner: Boolean(ownerEntry && dispatchLockOwnerIsValid(owner, ownerEntry.name, nowMs)),
+    validLegacyV1Owner: Boolean(
+      ownerEntry
+      && legacyV1DispatchLockOwnerIsValid(owner, ownerEntry.name, nowMs)
+    ),
     newestMtimeMs: entries.length
       ? Math.max(lockStat.mtimeMs, ...entries.map((entry) => entry.mtimeMs))
       : lockStat.mtimeMs,
@@ -320,8 +368,312 @@ function sameDispatchLockOwner(left, right) {
   );
 }
 
+function sameLegacyV1DispatchLockOwner(left, right) {
+  return Boolean(
+    left
+    && right
+    && left.ownerToken === right.ownerToken
+    && left.ownerPid === right.ownerPid
+    && left.acquiredAt === right.acquiredAt
+    && left.expiresAt === right.expiresAt
+  );
+}
+
 function recoveryResult(state, errorCode = '') {
   return Object.freeze({ state, errorCode });
+}
+
+function legacyV1DispatchLockOwnerDisposition(
+  owner,
+  nowMs,
+  processIdentityProbe,
+  liveOwnerErrorCode = 'LOCK_LEGACY_OWNER_LIVE',
+) {
+  const expiresAtMs = timestampMs(owner.expiresAt);
+  if (expiresAtMs > nowMs) {
+    return recoveryResult('contended');
+  }
+  let identity = null;
+  try {
+    identity = processIdentityProbe(owner.ownerPid);
+  } catch {
+    return recoveryResult(
+      'unverifiable',
+      'LOCK_LEGACY_OWNER_IDENTITY_UNVERIFIABLE',
+    );
+  }
+  if (identity?.state === 'known') {
+    return recoveryResult('contended', liveOwnerErrorCode);
+  }
+  if (identity?.state !== 'dead') {
+    return recoveryResult(
+      'unverifiable',
+      'LOCK_LEGACY_OWNER_IDENTITY_UNVERIFIABLE',
+    );
+  }
+  return recoveryResult('recoverable');
+}
+
+function legacyV1DispatchLockTombstoneName(
+  lockPath,
+  recoveryId,
+  recoveryStartedAtMs,
+) {
+  return (
+    `${basename(lockPath)}.legacy-v1-owner-${recoveryId}`
+    + `${LEGACY_V1_DISPATCH_LOCK_TOMBSTONE_TIME_SEPARATOR}${recoveryStartedAtMs}`
+    + LEGACY_V1_DISPATCH_LOCK_TOMBSTONE_SUFFIX
+  );
+}
+
+function legacyV1DispatchLockTombstonePath(
+  lockPath,
+  recoveryId,
+  recoveryStartedAtMs,
+) {
+  return join(
+    dirname(lockPath),
+    legacyV1DispatchLockTombstoneName(
+      lockPath,
+      recoveryId,
+      recoveryStartedAtMs,
+    ),
+  );
+}
+
+function parseLegacyV1DispatchLockTombstoneName(lockPath, name, nowMs) {
+  const prefix = `${basename(lockPath)}.legacy-v1-owner-`;
+  if (
+    !name.startsWith(prefix)
+    || !name.endsWith(LEGACY_V1_DISPATCH_LOCK_TOMBSTONE_SUFFIX)
+  ) {
+    return null;
+  }
+  const encoded = name.slice(
+    prefix.length,
+    -LEGACY_V1_DISPATCH_LOCK_TOMBSTONE_SUFFIX.length,
+  );
+  const separatorIndex = encoded.lastIndexOf(
+    LEGACY_V1_DISPATCH_LOCK_TOMBSTONE_TIME_SEPARATOR,
+  );
+  const recoveryId = separatorIndex > 0
+    ? encoded.slice(0, separatorIndex)
+    : '';
+  const recoveryStartedAtText = separatorIndex > 0
+    ? encoded.slice(
+      separatorIndex + LEGACY_V1_DISPATCH_LOCK_TOMBSTONE_TIME_SEPARATOR.length,
+    )
+    : '';
+  const recoveryStartedAtMs = /^[1-9][0-9]{0,15}$/.test(recoveryStartedAtText)
+    ? Number(recoveryStartedAtText)
+    : NaN;
+  return Object.freeze({
+    recoveryId,
+    recoveryStartedAtMs,
+    valid: (
+      SAFE_LOCK_ID.test(recoveryId)
+      && Number.isSafeInteger(recoveryStartedAtMs)
+      && recoveryStartedAtMs <= nowMs + DISPATCH_LOCK_FUTURE_SKEW_MS
+      && name === legacyV1DispatchLockTombstoneName(
+        lockPath,
+        recoveryId,
+        recoveryStartedAtMs,
+      )
+    ),
+  });
+}
+
+function readLegacyV1DispatchLockTombstone(path, nowMs) {
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    return error?.code === 'ENOENT'
+      ? Object.freeze({ state: 'changed', owner: null, errorCode: '' })
+      : Object.freeze({
+        state: 'failed',
+        owner: null,
+        errorCode: error?.code || 'LOCK_LEGACY_TOMBSTONE_STAT_FAILED',
+      });
+  }
+  if (
+    !stat.isFile()
+    || stat.size <= 0
+    || stat.size > MAX_LEGACY_V1_DISPATCH_LOCK_OWNER_BYTES
+  ) {
+    return Object.freeze({
+      state: 'invalid',
+      owner: null,
+      errorCode: 'LOCK_LEGACY_TOMBSTONE_INVALID',
+    });
+  }
+  let owner;
+  try {
+    owner = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    return error?.code === 'ENOENT'
+      ? Object.freeze({ state: 'changed', owner: null, errorCode: '' })
+      : Object.freeze({
+        state: 'invalid',
+        owner: null,
+        errorCode: 'LOCK_LEGACY_TOMBSTONE_INVALID',
+      });
+  }
+  if (
+    !legacyV1DispatchLockOwnerIsValid(
+      owner,
+      LEGACY_V1_DISPATCH_LOCK_OWNER_FILENAME,
+      nowMs,
+    )
+  ) {
+    return Object.freeze({
+      state: 'invalid',
+      owner: null,
+      errorCode: 'LOCK_LEGACY_TOMBSTONE_INVALID',
+    });
+  }
+  return Object.freeze({ state: 'valid', owner, errorCode: '' });
+}
+
+function reconcileLegacyV1DispatchLockTombstones(
+  lockPath,
+  nowMs,
+  processIdentityProbe,
+) {
+  let directoryEntries;
+  try {
+    directoryEntries = readdirSync(dirname(lockPath), { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return recoveryResult('clear');
+    return recoveryResult(
+      'failed',
+      error?.code || 'LOCK_LEGACY_TOMBSTONE_DIRECTORY_READ_FAILED',
+    );
+  }
+  const tombstones = [];
+  for (const entry of directoryEntries) {
+    const parsed = parseLegacyV1DispatchLockTombstoneName(
+      lockPath,
+      entry.name,
+      nowMs,
+    );
+    if (!parsed) continue;
+    if (!parsed.valid) {
+      return recoveryResult('invalid', 'LOCK_LEGACY_TOMBSTONE_INVALID');
+    }
+    tombstones.push({
+      name: entry.name,
+      path: join(dirname(lockPath), entry.name),
+      recoveryStartedAtMs: parsed.recoveryStartedAtMs,
+    });
+  }
+  if (tombstones.length > MAX_LEGACY_V1_DISPATCH_LOCK_TOMBSTONES) {
+    return recoveryResult('invalid', 'LOCK_LEGACY_TOMBSTONE_LIMIT_EXCEEDED');
+  }
+  tombstones.sort((left, right) => left.name.localeCompare(right.name));
+  let recoveredTombstone = false;
+  for (const tombstone of tombstones) {
+    const observed = readLegacyV1DispatchLockTombstone(tombstone.path, nowMs);
+    if (observed.state === 'changed') return recoveryResult('contended');
+    if (observed.state !== 'valid') {
+      return recoveryResult(observed.state, observed.errorCode);
+    }
+    const disposition = legacyV1DispatchLockOwnerDisposition(
+      observed.owner,
+      nowMs,
+      processIdentityProbe,
+      'LOCK_LEGACY_RECOVERY_OWNER_LIVE',
+    );
+    if (disposition.state !== 'recoverable') return disposition;
+
+    // Re-home the checked artifact under another strict, recognized sibling
+    // name. If this process crashes, every later contender will still inspect
+    // the moved owner before it can publish. The UUID destination also keeps
+    // unrelated recoverers from deleting through the original pathname.
+    const cleanupPath = legacyV1DispatchLockTombstonePath(
+      lockPath,
+      randomUUID(),
+      tombstone.recoveryStartedAtMs,
+    );
+    try {
+      lstatSync(cleanupPath);
+      return recoveryResult('contended');
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        return recoveryResult(
+          'failed',
+          error?.code || 'LOCK_LEGACY_TOMBSTONE_STAT_FAILED',
+        );
+      }
+    }
+    try {
+      renameSync(tombstone.path, cleanupPath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return recoveryResult('contended');
+      return recoveryResult(
+        'failed',
+        error?.code || 'LOCK_LEGACY_TOMBSTONE_MOVE_FAILED',
+      );
+    }
+
+    const moved = readLegacyV1DispatchLockTombstone(cleanupPath, nowMs);
+    if (moved.state === 'changed') return recoveryResult('contended');
+    if (moved.state !== 'valid') {
+      return recoveryResult(moved.state, moved.errorCode);
+    }
+    if (!sameLegacyV1DispatchLockOwner(moved.owner, observed.owner)) {
+      // A replacement won the compare-to-move race. Keep it under the strict
+      // sibling name so its lease/PID evidence remains authoritative.
+      return recoveryResult('contended');
+    }
+    const movedDisposition = legacyV1DispatchLockOwnerDisposition(
+      moved.owner,
+      nowMs,
+      processIdentityProbe,
+      'LOCK_LEGACY_RECOVERY_OWNER_LIVE',
+    );
+    if (movedDisposition.state !== 'recoverable') return movedDisposition;
+    try {
+      unlinkSync(cleanupPath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return recoveryResult('contended');
+      return recoveryResult(
+        'failed',
+        error?.code || 'LOCK_LEGACY_TOMBSTONE_REMOVE_FAILED',
+      );
+    }
+    recoveredTombstone = true;
+  }
+  return recoveryResult(recoveredTombstone ? 'clear-after-recovery' : 'clear');
+}
+
+function confirmLegacyV1TombstonesAfterPublicLockRemoval(
+  lockPath,
+  nowMs,
+  processIdentityProbe,
+  finalState,
+) {
+  // Once dispatch.lock is absent, a legitimate new marker cannot appear
+  // without first recreating that public directory. Require one reconciliation
+  // that removes nothing; any later claimant will then collide with candidate
+  // publication and be re-read by the ordinary acquisition path.
+  for (
+    let attempt = 0;
+    attempt <= MAX_LEGACY_V1_DISPATCH_LOCK_TOMBSTONES;
+    attempt += 1
+  ) {
+    const confirmation = reconcileLegacyV1DispatchLockTombstones(
+      lockPath,
+      nowMs,
+      processIdentityProbe,
+    );
+    if (confirmation.state === 'clear') return recoveryResult(finalState);
+    if (confirmation.state !== 'clear-after-recovery') return confirmation;
+  }
+  return recoveryResult(
+    'failed',
+    'LOCK_LEGACY_TOMBSTONE_CONFIRMATION_LIMIT_EXCEEDED',
+  );
 }
 
 function dispatchLockError(code, message, cause = null) {
@@ -329,6 +681,19 @@ function dispatchLockError(code, message, cause = null) {
   error.code = code;
   if (cause) error.cause = cause;
   return error;
+}
+
+function dispatchLockContentionError(recovery = {}) {
+  if (recovery.errorCode === 'LOCK_LEGACY_RECOVERY_OWNER_LIVE') {
+    return dispatchLockError(
+      'LOCAL_CODEX_DISPATCH_LOCK_LEGACY_RECOVERY_REQUIRED',
+      'a moved legacy v1 owner is still live; restart or terminate the legacy dispatch host before retrying',
+    );
+  }
+  return dispatchLockError(
+    'LOCAL_CODEX_DISPATCH_LOCK_CONTENDED',
+    'another dispatch is claiming the one-active-job slot',
+  );
 }
 
 function retryDispatchLockFsOperation(operation, attempts = 3) {
@@ -366,26 +731,236 @@ function removeOwnedDispatchLock(lockPath, ownerEntry, owner) {
   return recoveryResult('failed', removeDirectory.error?.code || 'LOCK_DIRECTORY_REMOVE_FAILED');
 }
 
+function removeOwnedLegacyV1DispatchLock(
+  lockPath,
+  ownerEntry,
+  owner,
+  nowMs,
+  recoveryId,
+  processIdentityProbe,
+  beforeOwnerMove,
+) {
+  let currentOwnerStat;
+  try {
+    currentOwnerStat = lstatSync(ownerEntry.path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return recoveryResult('contended');
+    return recoveryResult('failed', error?.code || 'LOCK_LEGACY_OWNER_STAT_FAILED');
+  }
+  if (!currentOwnerStat.isFile()) return recoveryResult('contended');
+
+  let currentOwner;
+  try {
+    currentOwner = JSON.parse(readFileSync(ownerEntry.path, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return recoveryResult('contended');
+    return recoveryResult('failed', error?.code || 'LOCK_LEGACY_OWNER_READ_FAILED');
+  }
+  if (
+    !legacyV1DispatchLockOwnerIsValid(
+      currentOwner,
+      LEGACY_V1_DISPATCH_LOCK_OWNER_FILENAME,
+      nowMs,
+    )
+    || !sameLegacyV1DispatchLockOwner(currentOwner, owner)
+  ) {
+    return recoveryResult('contended');
+  }
+
+  // Keep strict recovery evidence outside dispatch.lock. Every later contender
+  // checks the marker before publication, so a moved replacement stays owned
+  // until its PID is definitively dead.
+  const tombstonePath = legacyV1DispatchLockTombstonePath(
+    lockPath,
+    recoveryId,
+    nowMs,
+  );
+  try {
+    lstatSync(tombstonePath);
+    return recoveryResult('invalid', 'LOCK_LEGACY_TOMBSTONE_COLLISION');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      return recoveryResult(
+        'failed',
+        error?.code || 'LOCK_LEGACY_TOMBSTONE_STAT_FAILED',
+      );
+    }
+  }
+
+  try {
+    beforeOwnerMove?.({
+      lockPath,
+      ownerPath: ownerEntry.path,
+      tombstonePath,
+      owner,
+    });
+  } catch {
+    return recoveryResult('failed', 'LOCK_LEGACY_RECOVERY_HOOK_FAILED');
+  }
+
+  try {
+    // Do not retry this move. If owner.json changes or disappears, retrying
+    // could move a replacement that was not part of the checked stale claim.
+    renameSync(ownerEntry.path, tombstonePath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return recoveryResult('contended');
+    return recoveryResult(
+      'failed',
+      error?.code || 'LOCK_LEGACY_OWNER_MOVE_FAILED',
+    );
+  }
+
+  let movedOwnerStat;
+  try {
+    movedOwnerStat = lstatSync(tombstonePath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return recoveryResult('contended');
+    return recoveryResult('failed', error?.code || 'LOCK_LEGACY_TOMBSTONE_STAT_FAILED');
+  }
+  if (!movedOwnerStat.isFile()) {
+    return recoveryResult('invalid', 'LOCK_OWNER_INVALID');
+  }
+
+  let movedOwner;
+  try {
+    movedOwner = JSON.parse(readFileSync(tombstonePath, 'utf8'));
+  } catch {
+    return recoveryResult('invalid', 'LOCK_OWNER_INVALID');
+  }
+  const movedOwnerValid = legacyV1DispatchLockOwnerIsValid(
+    movedOwner,
+    LEGACY_V1_DISPATCH_LOCK_OWNER_FILENAME,
+    nowMs,
+  );
+  if (!movedOwnerValid || !sameLegacyV1DispatchLockOwner(movedOwner, owner)) {
+    // Never restore a moved replacement to owner.json: its v1 process may have
+    // already attempted release while that pathname was absent. The strict
+    // sibling remains authoritative and blocks publication until that owner is
+    // definitively dead.
+    return recoveryResult(
+      movedOwnerValid ? 'contended' : 'invalid',
+      movedOwnerValid ? '' : 'LOCK_OWNER_INVALID',
+    );
+  }
+
+  try {
+    // The tombstone name is unique to this contender's validated lock id.
+    // A single unlink avoids ever retrying against a replacement pathname.
+    unlinkSync(tombstonePath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return recoveryResult('contended');
+    return recoveryResult(
+      'failed',
+      error?.code || 'LOCK_LEGACY_TOMBSTONE_REMOVE_FAILED',
+    );
+  }
+
+  try {
+    // Do not retry removal of the public lock path: an old v1 claimant may
+    // create a fresh empty directory and owner.json in separate operations.
+    rmdirSync(lockPath);
+    return confirmLegacyV1TombstonesAfterPublicLockRemoval(
+      lockPath,
+      nowMs,
+      processIdentityProbe,
+      'recovered',
+    );
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return confirmLegacyV1TombstonesAfterPublicLockRemoval(
+        lockPath,
+        nowMs,
+        processIdentityProbe,
+        'recovered',
+      );
+    }
+    if (error?.code === 'ENOTEMPTY' || error?.code === 'EEXIST') {
+      return recoveryResult('contended');
+    }
+    return recoveryResult(
+      'failed',
+      error?.code || 'LOCK_LEGACY_DIRECTORY_REMOVE_FAILED',
+    );
+  }
+}
+
 function reclaimStaleDispatchLock(lockPath, {
   nowMs,
   staleAfterMs,
   localHostname,
   processIdentityProbe,
+  legacyRecoveryId,
+  beforeLegacyOwnerMove,
 } = {}) {
+  const tombstoneRecovery = reconcileLegacyV1DispatchLockTombstones(
+    lockPath,
+    nowMs,
+    processIdentityProbe,
+  );
+  if (
+    tombstoneRecovery.state !== 'clear'
+    && tombstoneRecovery.state !== 'clear-after-recovery'
+  ) {
+    return tombstoneRecovery;
+  }
+  const verifiedTombstoneRecovered = (
+    tombstoneRecovery.state === 'clear-after-recovery'
+  );
+
   const evidence = readDispatchLockEvidence(lockPath, nowMs);
-  if (!evidence) return recoveryResult('absent');
+  if (!evidence) {
+    return verifiedTombstoneRecovered
+      ? confirmLegacyV1TombstonesAfterPublicLockRemoval(
+        lockPath,
+        nowMs,
+        processIdentityProbe,
+        'absent',
+      )
+      : recoveryResult('absent');
+  }
   if (evidence.errorCode) return recoveryResult('failed', evidence.errorCode);
   if (!evidence.lockStat?.isDirectory()) return recoveryResult('failed', 'LOCK_PATH_NOT_DIRECTORY');
+  if (evidence.validLegacyV1Owner) {
+    const disposition = legacyV1DispatchLockOwnerDisposition(
+      evidence.owner,
+      nowMs,
+      processIdentityProbe,
+    );
+    if (disposition.state !== 'recoverable') return disposition;
+    return removeOwnedLegacyV1DispatchLock(
+      lockPath,
+      evidence.ownerEntry,
+      evidence.owner,
+      nowMs,
+      legacyRecoveryId,
+      processIdentityProbe,
+      beforeLegacyOwnerMove,
+    );
+  }
   if (!evidence.validOwner) {
     if (evidence.entries.length !== 0) {
       return recoveryResult('invalid', 'LOCK_OWNER_INVALID');
     }
-    if (nowMs - evidence.newestMtimeMs <= staleAfterMs) return recoveryResult('contended');
+    if (nowMs - evidence.newestMtimeMs <= staleAfterMs) {
+      return recoveryResult('contended');
+    }
     try {
       rmdirSync(lockPath);
-      return recoveryResult('recovered');
+      return confirmLegacyV1TombstonesAfterPublicLockRemoval(
+        lockPath,
+        nowMs,
+        processIdentityProbe,
+        'recovered',
+      );
     } catch (error) {
-      if (error?.code === 'ENOENT') return recoveryResult('recovered');
+      if (error?.code === 'ENOENT') {
+        return confirmLegacyV1TombstonesAfterPublicLockRemoval(
+          lockPath,
+          nowMs,
+          processIdentityProbe,
+          'recovered',
+        );
+      }
       if (error?.code === 'ENOTEMPTY' || error?.code === 'EEXIST') return recoveryResult('contended');
       return recoveryResult('failed', error?.code || 'LOCK_LEGACY_REMOVE_FAILED');
     }
@@ -424,6 +999,7 @@ function acquireDispatchLock(lockPath, {
   processIdentity,
   processIdentityProbe,
   beforePublish,
+  beforeLegacyOwnerMove,
 } = {}) {
   const lockId = String(lockIdFactory() || '');
   if (!SAFE_LOCK_ID.test(lockId)) throw new Error('Local Codex dispatch lock owner id is invalid.');
@@ -491,14 +1067,13 @@ function acquireDispatchLock(lockPath, {
       staleAfterMs: LEGACY_DISPATCH_LOCK_STALE_AFTER_MS,
       localHostname,
       processIdentityProbe,
+      legacyRecoveryId: lockId,
+      beforeLegacyOwnerMove,
     });
     if (existing.state === 'contended') {
       try { unlinkSync(candidateOwnerPath); } catch {}
       try { rmdirSync(candidatePath); } catch {}
-      throw dispatchLockError(
-        'LOCAL_CODEX_DISPATCH_LOCK_CONTENDED',
-        'another dispatch is claiming the one-active-job slot',
-      );
+      throw dispatchLockContentionError(existing);
     }
     if (existing.state === 'failed') {
       try { unlinkSync(candidateOwnerPath); } catch {}
@@ -557,6 +1132,8 @@ function acquireDispatchLock(lockPath, {
         staleAfterMs: LEGACY_DISPATCH_LOCK_STALE_AFTER_MS,
         localHostname,
         processIdentityProbe,
+        legacyRecoveryId: lockId,
+        beforeLegacyOwnerMove,
       });
       if (recovery.state === 'recovered') continue;
       if (
@@ -589,10 +1166,7 @@ function acquireDispatchLock(lockPath, {
           error,
         );
       }
-      throw dispatchLockError(
-        'LOCAL_CODEX_DISPATCH_LOCK_CONTENDED',
-        'another dispatch is claiming the one-active-job slot',
-      );
+      throw dispatchLockContentionError(recovery);
     }
   }
   try { unlinkSync(candidateOwnerPath); } catch {}
@@ -626,6 +1200,7 @@ export function createLocalCodexExecIntegration({
   dispatchLockProcessIdentity = null,
   dispatchLockProcessIdentityProbe = defaultDispatchLockProcessIdentityProbe,
   dispatchLockBeforePublish = null,
+  dispatchLockBeforeLegacyOwnerMove = null,
   workerPath = resolve(fileURLToPath(new URL('../../scripts/stephanos-codex-dispatch-worker.mjs', import.meta.url))),
 } = {}) {
   const basePaths = resolveLocalCodexDispatchPaths({ repoRoot, workspaceRoot });
@@ -656,6 +1231,7 @@ export function createLocalCodexExecIntegration({
         processIdentity: dispatchLockProcessIdentity || dispatchLockProcessIdentityProbe(process.pid),
         processIdentityProbe: dispatchLockProcessIdentityProbe,
         beforePublish: dispatchLockBeforePublish,
+        beforeLegacyOwnerMove: dispatchLockBeforeLegacyOwnerMove,
       });
 
       let acceptedReceipt = null;

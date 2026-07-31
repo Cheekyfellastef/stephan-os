@@ -1,11 +1,26 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import {
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import {
+  STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES,
+  STEPHANOS_DIST_MANIFEST_MAX_FILES,
+  STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES,
+  STEPHANOS_DIST_MANIFEST_SCHEMA_VERSION,
+  computeStephanosDistManifestFingerprint,
+  getStephanosDistRuntimeAssetReferences,
+} from './stephanos-build-utils.mjs';
 
 const DEFAULT_URL = process.env.STEPHANOS_BROWSER_PROOF_URL || 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
 const DEFAULT_OUT_DIR = resolve(process.cwd(), 'tmp/browser-proof');
 const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/;
 const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
+const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
 
 function stamp() { return new Date().toISOString(); }
 function ok(v) { return v === true || v === 'yes' || v === 0; }
@@ -35,6 +50,8 @@ export function parseBrowserProofArguments(argv = []) {
   let url = DEFAULT_URL;
   let expectedHead = '';
   let expectedSourceFingerprint = '';
+  let expectedDistFingerprint = '';
+  let expectedDistManifestPath = '';
   let positionalUrlSeen = false;
   let writeArtifacts = true;
   let machineJson = false;
@@ -58,6 +75,33 @@ export function parseBrowserProofArguments(argv = []) {
           blocker: 'EXPECTED_SOURCE_FINGERPRINT_INVALID',
         };
       }
+    } else if (argument === '--expected-dist-fingerprint') {
+      expectedDistFingerprint = String(argv[index + 1] || '').trim().toLowerCase();
+      index += 1;
+      if (!EXACT_DIST_FINGERPRINT.test(expectedDistFingerprint)) {
+        return {
+          ok: false,
+          url,
+          expectedHead,
+          expectedSourceFingerprint,
+          expectedDistFingerprint,
+          blocker: 'EXPECTED_DIST_FINGERPRINT_INVALID',
+        };
+      }
+    } else if (argument === '--expected-dist-manifest') {
+      expectedDistManifestPath = String(argv[index + 1] || '').trim();
+      index += 1;
+      if (!expectedDistManifestPath) {
+        return {
+          ok: false,
+          url,
+          expectedHead,
+          expectedSourceFingerprint,
+          expectedDistFingerprint,
+          expectedDistManifestPath,
+          blocker: 'EXPECTED_DIST_MANIFEST_INVALID',
+        };
+      }
     } else if (argument === '--url') {
       url = String(argv[index + 1] || '').trim();
       index += 1;
@@ -73,19 +117,44 @@ export function parseBrowserProofArguments(argv = []) {
       return { ok: false, url, expectedHead, blocker: 'BROWSER_PROOF_ARGUMENT_INVALID' };
     }
   }
-  return { ok: true, url, expectedHead, expectedSourceFingerprint, writeArtifacts, machineJson };
+  if (expectedDistFingerprint && !expectedDistManifestPath) {
+    return {
+      ok: false,
+      url,
+      expectedHead,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      blocker: 'EXPECTED_DIST_MANIFEST_INVALID',
+      writeArtifacts,
+      machineJson,
+    };
+  }
+  return {
+    ok: true,
+    url,
+    expectedHead,
+    expectedSourceFingerprint,
+    expectedDistFingerprint,
+    expectedDistManifestPath,
+    writeArtifacts,
+    machineJson,
+  };
 }
 
 export function evaluateBrowserProofResult(result = {}, {
   expectedHead = '',
   expectedSourceFingerprint = '',
+  expectedDistFingerprint = '',
 } = {}) {
   const checks = result.checks || {};
   const blocking = [];
   const normalizedExpectedHead = String(expectedHead || '').trim().toLowerCase();
   const normalizedExpectedSourceFingerprint = String(expectedSourceFingerprint || '').trim().toLowerCase();
+  const normalizedExpectedDistFingerprint = String(expectedDistFingerprint || '').trim().toLowerCase();
   const runtimeSourceHead = normalizeGitHead(checks.runtimeSourceHead || checks.footerGitCommit);
   const runtimeSourceFingerprint = String(checks.sourceFingerprint || '').trim().toLowerCase();
+  const runtimeDistFingerprint = String(checks.runtimeDistFingerprint || '').trim().toLowerCase();
   if (!ok(checks.runtimeReachable)) blocking.push('4173 runtime unreachable');
   if (!ok(checks.footerGitCommitPresent)) blocking.push('footer UI Git Commit missing');
   if (!ok(checks.uiBuildTimestampPresent)) blocking.push('UI Build Timestamp missing');
@@ -121,11 +190,30 @@ export function evaluateBrowserProofResult(result = {}, {
       blocking.push('served runtime source fingerprint does not match the clean approved checkout');
     }
   }
+  let expectedDistFingerprintMatch = null;
+  if (normalizedExpectedDistFingerprint) {
+    expectedDistFingerprintMatch = (
+      EXACT_DIST_FINGERPRINT.test(normalizedExpectedDistFingerprint)
+      && runtimeDistFingerprint === normalizedExpectedDistFingerprint
+    );
+    if (!EXACT_DIST_FINGERPRINT.test(normalizedExpectedDistFingerprint)) {
+      blocking.push('approved dist fingerprint is invalid');
+    } else if (!EXACT_DIST_FINGERPRINT.test(runtimeDistFingerprint)) {
+      blocking.push(
+        checks.runtimeDistFingerprintBlocker
+          ? `served runtime dist fingerprint unavailable: ${checks.runtimeDistFingerprintBlocker}`
+          : 'served runtime dist fingerprint is not a full 64-character SHA-256',
+      );
+    } else if (!expectedDistFingerprintMatch) {
+      blocking.push('served runtime dist fingerprint does not match the canonical built bundle');
+    }
+  }
   const observed = result.browserAutomationAvailable === true && !result.automationUnavailable && checks.runtimeReachable === true;
   const accepted = (
     observed
     && (normalizedExpectedHead ? expectedHeadMatch === true : true)
     && (normalizedExpectedSourceFingerprint ? expectedSourceFingerprintMatch === true : true)
+    && (normalizedExpectedDistFingerprint ? expectedDistFingerprintMatch === true : true)
   );
   return {
     accepted,
@@ -138,6 +226,9 @@ export function evaluateBrowserProofResult(result = {}, {
     expectedSourceFingerprint: normalizedExpectedSourceFingerprint,
     runtimeSourceFingerprint,
     expectedSourceFingerprintMatch,
+    expectedDistFingerprint: normalizedExpectedDistFingerprint,
+    runtimeDistFingerprint,
+    expectedDistFingerprintMatch,
   };
 }
 
@@ -175,6 +266,9 @@ export function buildBrowserProofPacket(result = {}, options = {}) {
     line('- Approved source fingerprint', verdict.expectedSourceFingerprint || 'not requested'),
     line('- Browser-observed source fingerprint', verdict.runtimeSourceFingerprint || 'unavailable'),
     line('- Browser-observed fingerprint matches clean checkout', verdict.expectedSourceFingerprintMatch == null ? 'not requested' : (verdict.expectedSourceFingerprintMatch ? 'yes' : 'no')),
+    line('- Approved canonical dist fingerprint', verdict.expectedDistFingerprint || 'not requested'),
+    line('- Browser-fetched runtime dist fingerprint', verdict.runtimeDistFingerprint || 'unavailable'),
+    line('- Browser-fetched dist bytes match canonical build', verdict.expectedDistFingerprintMatch == null ? 'not requested' : (verdict.expectedDistFingerprintMatch ? 'yes' : 'no')),
     line('- UI Build Timestamp', checks.uiBuildTimestamp || (checks.uiBuildTimestampPresent ? 'present' : 'missing')),
     line('- Source fingerprint / runtime marker', checks.sourceFingerprint || checks.runtimeMarker || 'unavailable'),
     line('- Proof Concierge DOM next proof', checks.proofConciergeDomNextProof || 'unavailable'),
@@ -195,7 +289,7 @@ export function buildBrowserProofPacket(result = {}, options = {}) {
 export function buildBrowserProofMachineResult(result = {}, options = {}) {
   const verdict = evaluateBrowserProofResult(result, options);
   return Object.freeze({
-    schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v1',
+    schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v2',
     url: String(result.url || DEFAULT_URL),
     observedUrl: String(result.observedUrl || ''),
     accepted: verdict.accepted,
@@ -207,6 +301,9 @@ export function buildBrowserProofMachineResult(result = {}, options = {}) {
     expectedSourceFingerprint: verdict.expectedSourceFingerprint,
     runtimeSourceFingerprint: verdict.runtimeSourceFingerprint,
     expectedSourceFingerprintMatch: verdict.expectedSourceFingerprintMatch,
+    expectedDistFingerprint: verdict.expectedDistFingerprint,
+    runtimeDistFingerprint: verdict.runtimeDistFingerprint,
+    expectedDistFingerprintMatch: verdict.expectedDistFingerprintMatch,
     blocking: [...verdict.blocking],
   });
 }
@@ -217,16 +314,504 @@ async function loadPlaywright() {
   return null;
 }
 
-async function collectWithBrowser(url = DEFAULT_URL, { writeArtifacts = true } = {}) {
+function servedDistError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
+export function readExpectedDistManifest(
+  manifestPath,
+  expectedDistFingerprint,
+) {
+  try {
+    const info = lstatSync(manifestPath);
+    if (info.isSymbolicLink() || !info.isFile() || info.size > 2 * 1024 * 1024) {
+      throw servedDistError('EXPECTED_DIST_MANIFEST_INVALID');
+    }
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const entries = Array.isArray(manifest?.entries) ? manifest.entries : [];
+    const totalBytes = entries.reduce((total, entry) => total + Number(entry?.size), 0);
+    const fingerprint = computeStephanosDistManifestFingerprint(entries);
+    if (
+      manifest?.schemaVersion !== STEPHANOS_DIST_MANIFEST_SCHEMA_VERSION
+      || entries.length === 0
+      || entries.length > STEPHANOS_DIST_MANIFEST_MAX_FILES
+      || entries.some((entry) => (
+        !Number.isSafeInteger(entry?.size)
+        || entry.size < 0
+        || entry.size > STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES
+      ))
+      || totalBytes > STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES
+      || manifest.fileCount !== entries.length
+      || manifest.totalBytes !== totalBytes
+      || manifest.fingerprint !== fingerprint
+      || fingerprint !== expectedDistFingerprint
+    ) {
+      throw servedDistError('EXPECTED_DIST_MANIFEST_INVALID');
+    }
+    return Object.freeze({
+      ok: true,
+      blocker: '',
+      fingerprint,
+      entries: Object.freeze([...entries]),
+      fileCount: entries.length,
+      totalBytes,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: String(error?.code || 'EXPECTED_DIST_MANIFEST_INVALID'),
+      fingerprint: '',
+      entries: Object.freeze([]),
+      fileCount: 0,
+      totalBytes: 0,
+    });
+  }
+}
+
+async function readBoundedServedBytes(response, {
+  maxFileBytes,
+  remainingBytes,
+} = {}) {
+  const contentLengthValue = response?.headers?.get?.('content-length');
+  const contentEncoding = String(response?.headers?.get?.('content-encoding') || '').trim().toLowerCase();
+  if (contentLengthValue != null && contentLengthValue !== '') {
+    const contentLength = Number(contentLengthValue);
+    if (
+      !Number.isSafeInteger(contentLength)
+      || contentLength < 0
+      || contentLength > maxFileBytes
+      || contentLength > remainingBytes
+    ) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_FILE_TOO_LARGE');
+    }
+  }
+
+  const chunks = [];
+  let totalBytes = 0;
+  const append = (value) => {
+    const chunk = Buffer.from(value);
+    totalBytes += chunk.length;
+    if (totalBytes > maxFileBytes || totalBytes > remainingBytes) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_FILE_TOO_LARGE');
+    }
+    chunks.push(chunk);
+  };
+
+  if (response?.body?.getReader) {
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        append(value);
+      }
+    } finally {
+      reader.releaseLock?.();
+    }
+  } else if (response?.body?.[Symbol.asyncIterator]) {
+    for await (const chunk of response.body) append(chunk);
+  } else if (typeof response?.arrayBuffer === 'function') {
+    append(await response.arrayBuffer());
+  } else {
+    throw servedDistError('BROWSER_RUNTIME_DIST_RESPONSE_BODY_UNAVAILABLE');
+  }
+
+  if (
+    contentLengthValue != null
+    && contentLengthValue !== ''
+    && (!contentEncoding || contentEncoding === 'identity')
+    && Number(contentLengthValue) !== totalBytes
+  ) {
+    throw servedDistError('BROWSER_RUNTIME_DIST_CONTENT_LENGTH_MISMATCH');
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
+
+async function fetchServedDistFile(fetchFn, url, bounds) {
+  let response;
+  try {
+    response = await fetchFn(url, {
+      cache: 'no-store',
+      redirect: 'error',
+      headers: {
+        'cache-control': 'no-store',
+        pragma: 'no-cache',
+        'accept-encoding': 'identity',
+      },
+    });
+  } catch {
+    throw servedDistError('BROWSER_RUNTIME_DIST_FETCH_FAILED');
+  }
+  if (!response || response.ok !== true || Number(response.status) !== 200) {
+    throw servedDistError('BROWSER_RUNTIME_DIST_FETCH_FAILED');
+  }
+  const responseUrl = String(response.url || '');
+  if (responseUrl && new URL(responseUrl).href !== new URL(url).href) {
+    throw servedDistError('BROWSER_RUNTIME_DIST_REDIRECTED');
+  }
+  return readBoundedServedBytes(response, bounds);
+}
+
+export async function collectServedDistFingerprint(url = DEFAULT_URL, {
+  fetchFn = globalThis.fetch,
+  expectedEntries = [],
+  maxFiles = STEPHANOS_DIST_MANIFEST_MAX_FILES,
+  maxFileBytes = STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES,
+  maxTotalBytes = STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES,
+} = {}) {
+  try {
+    if (typeof fetchFn !== 'function') {
+      throw servedDistError('BROWSER_RUNTIME_DIST_FETCH_UNAVAILABLE');
+    }
+    const indexUrl = new URL(String(url || ''));
+    if (
+      !['http:', 'https:'].includes(indexUrl.protocol)
+      || indexUrl.username
+      || indexUrl.password
+      || indexUrl.search
+      || indexUrl.hash
+      || !indexUrl.pathname.endsWith('/index.html')
+    ) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_URL_INVALID');
+    }
+    const boundedMaxFiles = Number(maxFiles);
+    const boundedMaxFileBytes = Number(maxFileBytes);
+    const boundedMaxTotalBytes = Number(maxTotalBytes);
+    if (
+      !Number.isSafeInteger(boundedMaxFiles)
+      || boundedMaxFiles < 1
+      || !Number.isSafeInteger(boundedMaxFileBytes)
+      || boundedMaxFileBytes < 1
+      || !Number.isSafeInteger(boundedMaxTotalBytes)
+      || boundedMaxTotalBytes < 1
+    ) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_BOUNDS_INVALID');
+    }
+
+    const baseUrl = new URL('.', indexUrl);
+    const indexBytes = await fetchServedDistFile(fetchFn, indexUrl.href, {
+      maxFileBytes: boundedMaxFileBytes,
+      remainingBytes: boundedMaxTotalBytes,
+    });
+    const runtimeAssetPaths = getStephanosDistRuntimeAssetReferences(indexBytes.toString('utf8'));
+    const relativePaths = Array.isArray(expectedEntries) && expectedEntries.length > 0
+      ? expectedEntries.map((entry) => String(entry?.path || ''))
+      : [
+        'index.html',
+        'stephanos-build.json',
+        ...runtimeAssetPaths,
+      ];
+    if (relativePaths.length > boundedMaxFiles) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_TOO_MANY_FILES');
+    }
+    if (new Set(relativePaths).size !== relativePaths.length) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_DUPLICATE_PATH');
+    }
+    if (runtimeAssetPaths.some((assetPath) => !relativePaths.includes(assetPath))) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_MANIFEST_INCOMPLETE');
+    }
+
+    let totalBytes = indexBytes.length;
+    const entries = [Object.freeze({
+      path: 'index.html',
+      size: indexBytes.length,
+      sha256: createHash('sha256').update(indexBytes).digest('hex'),
+    })];
+    for (const relativePath of relativePaths
+      .filter((item) => item !== 'index.html')
+      .sort((left, right) => (
+      left < right ? -1 : (left > right ? 1 : 0)
+      ))) {
+      const assetUrl = new URL(relativePath, baseUrl);
+      if (
+        assetUrl.origin !== indexUrl.origin
+        || !assetUrl.pathname.startsWith(baseUrl.pathname)
+        || assetUrl.search
+        || assetUrl.hash
+      ) {
+        throw servedDistError('BROWSER_RUNTIME_DIST_PATH_ESCAPE');
+      }
+      const bytes = await fetchServedDistFile(fetchFn, assetUrl.href, {
+        maxFileBytes: boundedMaxFileBytes,
+        remainingBytes: boundedMaxTotalBytes - totalBytes,
+      });
+      totalBytes += bytes.length;
+      if (totalBytes > boundedMaxTotalBytes) {
+        throw servedDistError('BROWSER_RUNTIME_DIST_TOTAL_TOO_LARGE');
+      }
+      entries.push(Object.freeze({
+        path: relativePath,
+        size: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      }));
+    }
+    const fingerprint = computeStephanosDistManifestFingerprint(entries);
+    return Object.freeze({
+      ok: true,
+      blocker: '',
+      fingerprint,
+      fileCount: entries.length,
+      totalBytes,
+      entries: Object.freeze(entries),
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: String(error?.code || error?.message || 'BROWSER_RUNTIME_DIST_FINGERPRINT_FAILED'),
+      fingerprint: '',
+      fileCount: 0,
+      totalBytes: 0,
+      entries: Object.freeze([]),
+    });
+  }
+}
+
+function responseUrl(response) {
+  return String(typeof response?.url === 'function' ? response.url() : response?.url || '');
+}
+
+function responseStatus(response) {
+  return Number(typeof response?.status === 'function' ? response.status() : response?.status);
+}
+
+async function responseHeaders(response) {
+  if (typeof response?.allHeaders === 'function') return response.allHeaders();
+  if (typeof response?.headers === 'function') return response.headers();
+  return response?.headers || {};
+}
+
+async function readBoundedPlaywrightResponse(response, expectedUrl, {
+  maxFileBytes,
+  remainingBytes,
+} = {}) {
+  if (
+    !response
+    || responseStatus(response) !== 200
+    || new URL(responseUrl(response)).href !== new URL(expectedUrl).href
+  ) {
+    throw servedDistError('BROWSER_RUNTIME_DIST_CAPTURE_MISSING');
+  }
+  const headers = await responseHeaders(response);
+  const contentLengthValue = headers?.['content-length'];
+  const contentEncoding = String(headers?.['content-encoding'] || '').trim().toLowerCase();
+  if (contentLengthValue != null && contentLengthValue !== '') {
+    const contentLength = Number(contentLengthValue);
+    if (
+      !Number.isSafeInteger(contentLength)
+      || contentLength < 0
+      || contentLength > maxFileBytes
+      || contentLength > remainingBytes
+    ) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_FILE_TOO_LARGE');
+    }
+  }
+  let bytes;
+  try {
+    bytes = Buffer.from(await response.body());
+  } catch {
+    throw servedDistError('BROWSER_RUNTIME_DIST_RESPONSE_BODY_UNAVAILABLE');
+  }
+  if (bytes.length > maxFileBytes || bytes.length > remainingBytes) {
+    throw servedDistError('BROWSER_RUNTIME_DIST_FILE_TOO_LARGE');
+  }
+  if (
+    contentLengthValue != null
+    && contentLengthValue !== ''
+    && (!contentEncoding || contentEncoding === 'identity')
+    && Number(contentLengthValue) !== bytes.length
+  ) {
+    throw servedDistError('BROWSER_RUNTIME_DIST_CONTENT_LENGTH_MISMATCH');
+  }
+  return bytes;
+}
+
+function resolveServedManifestUrl(indexUrl, relativePath) {
+  const baseUrl = new URL('.', indexUrl);
+  const assetUrl = new URL(relativePath, baseUrl);
+  if (
+    assetUrl.origin !== indexUrl.origin
+    || !assetUrl.pathname.startsWith(baseUrl.pathname)
+    || assetUrl.search
+    || assetUrl.hash
+  ) {
+    throw servedDistError('BROWSER_RUNTIME_DIST_PATH_ESCAPE');
+  }
+  return assetUrl;
+}
+
+async function fetchThroughPage(page, assetUrl) {
+  try {
+    await page.evaluate(async (targetUrl) => {
+      const response = await fetch(targetUrl, {
+        cache: 'no-store',
+        redirect: 'error',
+        headers: {
+          'cache-control': 'no-store',
+          pragma: 'no-cache',
+        },
+      });
+      if (!response.ok || response.status !== 200 || response.url !== targetUrl) {
+        throw new Error('BROWSER_RUNTIME_DIST_FETCH_FAILED');
+      }
+      await response.arrayBuffer();
+    }, assetUrl);
+  } catch {
+    throw servedDistError('BROWSER_RUNTIME_DIST_FETCH_FAILED');
+  }
+}
+
+export async function collectPlaywrightNavigationDistFingerprint(
+  page,
+  url = DEFAULT_URL,
+  {
+    navigationResponse,
+    capturedResponses = [],
+    expectedEntries = [],
+    maxFiles = STEPHANOS_DIST_MANIFEST_MAX_FILES,
+    maxFileBytes = STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES,
+    maxTotalBytes = STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES,
+  } = {},
+) {
+  try {
+    const indexUrl = new URL(String(url || ''));
+    if (
+      !['http:', 'https:'].includes(indexUrl.protocol)
+      || indexUrl.username
+      || indexUrl.password
+      || indexUrl.search
+      || indexUrl.hash
+      || !indexUrl.pathname.endsWith('/index.html')
+    ) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_URL_INVALID');
+    }
+    if (
+      !Array.isArray(expectedEntries)
+      || expectedEntries.length === 0
+      || expectedEntries.length > maxFiles
+      || !expectedEntries.some((entry) => entry?.path === 'index.html')
+    ) {
+      throw servedDistError('EXPECTED_DIST_MANIFEST_INVALID');
+    }
+    const expectedUrls = new Set(expectedEntries.map((entry) => (
+      resolveServedManifestUrl(indexUrl, String(entry?.path || '')).href
+    )));
+    const distBaseUrl = new URL('.', indexUrl);
+    const unexpectedCapturedResponse = () => capturedResponses.some((response) => {
+      const capturedUrl = new URL(responseUrl(response));
+      return (
+        capturedUrl.origin === distBaseUrl.origin
+        && capturedUrl.pathname.startsWith(distBaseUrl.pathname)
+        && !expectedUrls.has(capturedUrl.href)
+      );
+    });
+    if (unexpectedCapturedResponse()) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_UNEXPECTED_RESPONSE');
+    }
+    let totalBytes = 0;
+    const actualEntries = [];
+    for (const expectedEntry of [...expectedEntries].sort((left, right) => (
+      String(left?.path || '') < String(right?.path || '')
+        ? -1
+        : (String(left?.path || '') > String(right?.path || '') ? 1 : 0)
+    ))) {
+      const relativePath = String(expectedEntry?.path || '');
+      const assetUrl = resolveServedManifestUrl(indexUrl, relativePath).href;
+      let candidates;
+      if (relativePath === 'index.html') {
+        candidates = [navigationResponse];
+      } else {
+        candidates = capturedResponses.filter((response) => (
+          responseUrl(response) === assetUrl
+        ));
+        if (candidates.length === 0) {
+          const captureStart = capturedResponses.length;
+          await fetchThroughPage(page, assetUrl);
+          candidates = capturedResponses.slice(captureStart).filter((response) => (
+            responseUrl(response) === assetUrl
+          ));
+        }
+      }
+      if (candidates.length === 0) {
+        throw servedDistError('BROWSER_RUNTIME_DIST_CAPTURE_MISSING');
+      }
+      const candidateEntries = [];
+      for (const candidate of candidates) {
+        const bytes = await readBoundedPlaywrightResponse(candidate, assetUrl, {
+          maxFileBytes,
+          remainingBytes: maxTotalBytes - totalBytes,
+        });
+        candidateEntries.push({
+          path: relativePath,
+          size: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        });
+      }
+      const [selected] = candidateEntries;
+      if (candidateEntries.some((entry) => (
+        entry.size !== selected.size || entry.sha256 !== selected.sha256
+      ))) {
+        throw servedDistError('BROWSER_RUNTIME_DIST_RESPONSE_VARIATION');
+      }
+      totalBytes += selected.size;
+      if (totalBytes > maxTotalBytes) {
+        throw servedDistError('BROWSER_RUNTIME_DIST_TOTAL_TOO_LARGE');
+      }
+      actualEntries.push(Object.freeze(selected));
+    }
+    if (unexpectedCapturedResponse()) {
+      throw servedDistError('BROWSER_RUNTIME_DIST_UNEXPECTED_RESPONSE');
+    }
+    const fingerprint = computeStephanosDistManifestFingerprint(actualEntries);
+    return Object.freeze({
+      ok: true,
+      blocker: '',
+      fingerprint,
+      fileCount: actualEntries.length,
+      totalBytes,
+      entries: Object.freeze(actualEntries),
+      responseBinding: 'playwright-navigation-and-browser-context-v1',
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: String(error?.code || error?.message || 'BROWSER_RUNTIME_DIST_FINGERPRINT_FAILED'),
+      fingerprint: '',
+      fileCount: 0,
+      totalBytes: 0,
+      entries: Object.freeze([]),
+      responseBinding: 'playwright-navigation-and-browser-context-v1',
+    });
+  }
+}
+
+async function collectWithBrowser(url = DEFAULT_URL, {
+  writeArtifacts = true,
+  expectedDistFingerprint = '',
+  expectedDistManifestEntries = [],
+} = {}) {
   const pw = await loadPlaywright();
   if (!pw?.chromium) return { browserAutomationAvailable: false, automationUnavailable: 'Playwright chromium API unavailable', url, generatedAt: stamp(), checks: { runtimeReachable: false } };
   const errors = [];
   let browser;
   try {
     browser = await pw.chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
-    const page = await browser.newPage();
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    const capturedResponses = [];
+    page.on('response', (response) => { capturedResponses.push(response); });
+    await page.route('**/apps/stephanos/dist/**', async (route) => {
+      await route.continue({
+        headers: {
+          ...route.request().headers(),
+          'cache-control': 'no-store',
+          pragma: 'no-cache',
+        },
+      });
+    });
     page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const navigationResponse = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await page.waitForTimeout(750);
     const checks = await page.evaluate(() => {
       const text = (v) => String(v || '').trim();
@@ -259,6 +844,18 @@ async function collectWithBrowser(url = DEFAULT_URL, { writeArtifacts = true } =
         operatorDiagnosticCopyPresent: /diagnostic|repair|copy/i.test(body),
       };
     });
+    if (expectedDistFingerprint) {
+      const servedDist = await collectPlaywrightNavigationDistFingerprint(page, url, {
+        navigationResponse,
+        capturedResponses,
+        expectedEntries: expectedDistManifestEntries,
+      });
+      checks.runtimeDistFingerprint = servedDist.fingerprint;
+      checks.runtimeDistFingerprintBlocker = servedDist.blocker;
+      checks.runtimeDistManifestFileCount = servedDist.fileCount;
+      checks.runtimeDistManifestTotalBytes = servedDist.totalBytes;
+      checks.runtimeDistResponseBinding = servedDist.responseBinding;
+    }
     let screenshotPath = '';
     if (writeArtifacts) {
       mkdirSync(DEFAULT_OUT_DIR, { recursive: true });
@@ -317,22 +914,59 @@ async function main() {
       ? printMachineResult(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+        expectedDistFingerprint: parsed.expectedDistFingerprint,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+        expectedDistFingerprint: parsed.expectedDistFingerprint,
       }, { writeArtifacts: parsed.writeArtifacts }));
   }
-  try {
-    const result = await collectWithBrowser(parsed.url, { writeArtifacts: parsed.writeArtifacts });
+  const expectedDistManifest = parsed.expectedDistFingerprint
+    ? readExpectedDistManifest(
+      parsed.expectedDistManifestPath,
+      parsed.expectedDistFingerprint,
+    )
+    : Object.freeze({ ok: true, entries: Object.freeze([]) });
+  if (!expectedDistManifest.ok) {
+    const result = {
+      browserAutomationAvailable: false,
+      automationUnavailable: expectedDistManifest.blocker,
+      url: parsed.url,
+      generatedAt: stamp(),
+      checks: {
+        runtimeReachable: false,
+        runtimeDistFingerprintBlocker: expectedDistManifest.blocker,
+      },
+    };
     process.exit(parsed.machineJson
       ? printMachineResult(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+        expectedDistFingerprint: parsed.expectedDistFingerprint,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+        expectedDistFingerprint: parsed.expectedDistFingerprint,
+      }, { writeArtifacts: parsed.writeArtifacts }));
+  }
+  try {
+    const result = await collectWithBrowser(parsed.url, {
+      writeArtifacts: parsed.writeArtifacts,
+      expectedDistFingerprint: parsed.expectedDistFingerprint,
+      expectedDistManifestEntries: expectedDistManifest.entries,
+    });
+    process.exit(parsed.machineJson
+      ? printMachineResult(result, {
+        expectedHead: parsed.expectedHead,
+        expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+        expectedDistFingerprint: parsed.expectedDistFingerprint,
+      })
+      : printSinglePacket(result, {
+        expectedHead: parsed.expectedHead,
+        expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+        expectedDistFingerprint: parsed.expectedDistFingerprint,
       }, { writeArtifacts: parsed.writeArtifacts }));
   } catch (error) {
     const result = {
@@ -346,10 +980,12 @@ async function main() {
       ? printMachineResult(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+        expectedDistFingerprint: parsed.expectedDistFingerprint,
       })
       : printSinglePacket(result, {
         expectedHead: parsed.expectedHead,
         expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+        expectedDistFingerprint: parsed.expectedDistFingerprint,
       }, { writeArtifacts: parsed.writeArtifacts }));
   }
 }
