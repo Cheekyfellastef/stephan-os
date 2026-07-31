@@ -143,6 +143,29 @@ test('PR evidence uses shared resolver authority and gh CLI fallback after expli
       });
       if (url.includes('/files')) return okJson([{ filename: 'README.md' }]);
       if (url.includes('/check-runs')) return okJson({ check_runs: [{ name: 'build', conclusion: 'success' }] });
+      if (url.includes('/issues/7/comments')) return okJson([{
+        user: { login: 'github-actions[bot]' },
+        body: `<!-- stephanos-protected-operator-approval -->
+\`\`\`json
+${JSON.stringify({
+  schemaVersion: 'stephanos.protected-operator-approval.v1',
+  kind: 'stephanos.protected-operator-approval',
+  repository: 'owner/repo',
+  prNumber: 7,
+  sourceHead: 'a'.repeat(40),
+  branch: 'feature/exact-head',
+  environment: 'operator-merge-approval',
+  protectionBoundary: 'github-protected-environment:operator-merge-approval',
+  requiredReviewer: 'Cheekyfellastef',
+  workflowPath: '.github/workflows/operator-merge-approval-gate.yml',
+  workflowRunId: 123,
+  workflowRunAttempt: 1,
+  approvedAtUtc: '2026-07-30T09:00:00.000Z',
+  mergeExecutionAuthority: 'github-actions-protected-environment-only',
+  reusableAcrossHeads: false,
+})}
+\`\`\``,
+      }]);
       return okJson({});
     },
   });
@@ -158,6 +181,9 @@ test('PR evidence uses shared resolver authority and gh CLI fallback after expli
   assert.equal(payload.mergedAt, '');
   assert.equal(payload.closedAt, '');
   assert.equal(payload.mergeCommitSha, '');
+  assert.equal(payload.trustedOperatorApprovalReceipts.length, 1);
+  assert.equal(payload.trustedOperatorApprovalReceipts[0].prNumber, 7);
+  assert.equal(Object.hasOwn(payload.trustedOperatorApprovalReceipts[0], 'environment'), false);
   assert.equal(JSON.stringify(payload).includes('gh-token'), false);
   assert.equal(calls.some((call) => call.authorization === 'Bearer bad-env-token'), true);
   assert.equal(calls.some((call) => call.authorization === 'Bearer gh-token'), true);
