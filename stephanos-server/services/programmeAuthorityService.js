@@ -1140,6 +1140,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     nowUtc,
     lane,
     goalRecords: workspaceFeed?.records?.goalRecords,
+    trustedOperatorApprovalReceipts: github?.trustedOperatorApprovalReceipts,
   });
   const scheduler = deps.buildMissionScheduler({
     now: nowUtc,
