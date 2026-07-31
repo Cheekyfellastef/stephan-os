@@ -153,6 +153,24 @@ function identityConflict(name, values, blockers) {
   return present[0] ?? null;
 }
 
+function canonicalSuppliedAliases(source, keys, normalizer, derivedValues = []) {
+  const values = [];
+  let valid = true;
+  for (const key of keys) {
+    if (!hasOwn(source, key)) continue;
+    const normalized = normalizer(source[key]);
+    if (normalized === null || normalized === '') valid = false;
+    else values.push(normalized);
+  }
+  values.push(...derivedValues.filter((value) => value !== null && value !== ''));
+  const canonicalValues = unique(values);
+  return freeze({
+    valid: valid && canonicalValues.length <= 1,
+    value: canonicalValues[0] ?? null,
+    supplied: values.length > 0,
+  });
+}
+
 function mergeEvidence(github = {}, expected = {}) {
   github = github && typeof github === 'object' && !Array.isArray(github) ? github : {};
   const blockers = [];
@@ -735,22 +753,25 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       blockers.push(`goal-record-${index}-not-canonical-goal`);
       continue;
     }
-    const suppliedIssueAliases = [];
-    let issueAliasesValid = true;
-    for (const key of ['issueNumber', 'issue', 'relatedIssue']) {
-      if (!hasOwn(record, key)) continue;
-      const normalized = number(record[key]);
-      if (!normalized) issueAliasesValid = false;
-      else suppliedIssueAliases.push(normalized);
-    }
     const goalIdIssue = number(text(record.goalId).match(/[1-9]\d*/)?.[0]);
-    if (goalIdIssue) suppliedIssueAliases.push(goalIdIssue);
-    const canonicalIssueAliases = unique(suppliedIssueAliases);
-    const issueNumber = issueAliasesValid && canonicalIssueAliases.length === 1
-      ? canonicalIssueAliases[0]
-      : null;
+    const issueAliases = canonicalSuppliedAliases(
+      record,
+      ['issueNumber', 'issue', 'relatedIssue'],
+      number,
+      [goalIdIssue],
+    );
+    const issueNumber = issueAliases.valid ? issueAliases.value : null;
     if (!issueNumber) {
       blockers.push(`goal-record-${index}-issue-invalid`);
+      continue;
+    }
+    const prAliases = canonicalSuppliedAliases(
+      record,
+      ['activePr', 'prNumber', 'relatedPr'],
+      number,
+    );
+    if (!prAliases.valid) {
+      blockers.push(`goal-record-${index}-pr-invalid`);
       continue;
     }
     goals.push({
@@ -762,7 +783,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       criticalPathWeight: Number.isFinite(record.criticalPathWeight) ? record.criticalPathWeight : 0,
       reversibility: text(record.reversibility, 'UNKNOWN').toUpperCase(),
       route: ownValueOr(record, 'route', 'WAITING_FOR_EXTERNAL_CONDITION'),
-      activePr: number(record.activePr ?? record.prNumber),
+      activePr: prAliases.value,
       repository: text(record.repository) || null,
       branch: text(record.branch) || null,
       headSha: sha(record.headSha),
@@ -908,14 +929,23 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
       ...list(conveyor?.selectedItem?.issueNumbers),
       ...list(conveyor?.activeMission?.issueNumbers),
     ].map((value) => number(value)).filter(Boolean);
-    const missionIssueAliases = [
-      conveyor?.activeMission?.issueNumber,
-      conveyor?.activeMission?.issue,
-      conveyor?.activeMission?.relatedIssue,
-      activeMissionIdentity.issueNumber,
-    ].map((value) => number(value)).filter(Boolean);
-    if ((!selectedIssues.includes(lane.issueNumber) && !missionIssueAliases.includes(lane.issueNumber))
-      || missionIssueAliases.some((value) => value !== lane.issueNumber)) {
+    const missionIssueAliases = canonicalSuppliedAliases(
+      conveyor?.activeMission,
+      ['issueNumber', 'issue', 'relatedIssue'],
+      number,
+      [activeMissionIdentity.issueNumber],
+    );
+    if (
+      !missionIssueAliases.valid
+      || (
+        !selectedIssues.includes(lane.issueNumber)
+        && missionIssueAliases.value !== lane.issueNumber
+      )
+      || (
+        missionIssueAliases.value !== null
+        && missionIssueAliases.value !== lane.issueNumber
+      )
+    ) {
       blockers.push('critical-backlog-active-lane-identity-mismatch');
     }
     const missionPrAliases = [
