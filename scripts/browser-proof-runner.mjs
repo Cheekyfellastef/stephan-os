@@ -353,6 +353,23 @@ export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = 
   });
 }
 
+export function finalizeMusicRatingPreservesPlaybackEvidence(evidence = {}, {
+  expectedHead = '',
+  proofTarget = 'PULL_REQUEST_HEAD',
+} = {}) {
+  const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    evidence,
+    { expectedHead, proofTarget },
+  );
+  return Object.freeze({
+    ...evidence,
+    blockers: [...evaluation.blocking],
+    listeningDeckIframeIdentityPreserved: evaluation.listeningDeckIframeIdentityPreserved,
+    discoveryIframeIdentityPreserved: evaluation.discoveryIframeIdentityPreserved,
+    legacyRankingChanged: evaluation.legacyRankingChanged,
+  });
+}
+
 export function evaluateBrowserProofResult(result = {}, {
   expectedHead = '',
   expectedSourceFingerprint = '',
@@ -1883,17 +1900,10 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
       pageErrors: [...pageErrors],
       blockers: [],
     };
-    const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    return finalizeMusicRatingPreservesPlaybackEvidence(
       evidence,
-      { expectedHead },
+      { expectedHead, proofTarget },
     );
-    return Object.freeze({
-      ...evidence,
-      blockers: [...evaluation.blocking],
-      listeningDeckIframeIdentityPreserved: evaluation.listeningDeckIframeIdentityPreserved,
-      discoveryIframeIdentityPreserved: evaluation.discoveryIframeIdentityPreserved,
-      legacyRankingChanged: evaluation.legacyRankingChanged,
-    });
   } catch (error) {
     if (!sourceResponseBinding) {
       sourceResponseBinding = await collectScenarioSourceResponseBinding(

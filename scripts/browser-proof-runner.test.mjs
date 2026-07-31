@@ -18,6 +18,7 @@ import {
   createScenarioSourceGitEnvironment,
   evaluateBrowserProofResult,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
+  finalizeMusicRatingPreservesPlaybackEvidence,
   parseBrowserProofArguments,
   readExpectedDistManifest,
   shouldGenerateBrowserProofPacket,
@@ -418,6 +419,14 @@ test('merged-main music proof rejects the timer fixture and requires same-player
   );
   assert.equal(liveEvaluation.accepted, true);
   assert.equal(liveEvaluation.livePlaybackObserved, true);
+  const finalized = finalizeMusicRatingPreservesPlaybackEvidence(
+    liveEvidence,
+    { expectedHead, proofTarget: 'MERGED_MAIN' },
+  );
+  assert.deepEqual(finalized.blockers, []);
+  assert.equal(finalized.listeningDeckIframeIdentityPreserved, true);
+  assert.equal(finalized.discoveryIframeIdentityPreserved, true);
+  assert.equal(finalized.legacyRankingChanged, true);
 });
 
 test('machine result binds requested scenario PASS to typed browser evidence', () => {
