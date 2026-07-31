@@ -79,6 +79,28 @@ test('worker heartbeat projection remains worker-only liveness authority', () =>
   assert.equal(wrongRepository.valid, false);
   assert.ok(wrongRepository.errors.includes('worker-repository-mismatch'));
 
+  const missingRepository = projectMissionWorkerHeartbeat({
+    ...record,
+    repositoryRoot: undefined,
+  }, {
+    nowUtc: '2026-07-15T03:01:00.000Z',
+    expectedRepositoryRoot: process.cwd(),
+    expectedHeadSha: HEAD,
+  });
+  assert.equal(missingRepository.valid, false);
+  assert.ok(missingRepository.errors.includes('worker-repository-missing'));
+
+  const relativeRepository = projectMissionWorkerHeartbeat({
+    ...record,
+    repositoryRoot: 'stephan-os',
+  }, {
+    nowUtc: '2026-07-15T03:01:00.000Z',
+    expectedRepositoryRoot: path.resolve('stephan-os'),
+    expectedHeadSha: HEAD,
+  });
+  assert.equal(relativeRepository.valid, false);
+  assert.ok(relativeRepository.errors.includes('worker-repository-not-absolute'));
+
   const failedTick = projectMissionWorkerHeartbeat({
     ...record,
     lastTickVerdict: 'MISSION_WORKER_TICK_FAILED',
