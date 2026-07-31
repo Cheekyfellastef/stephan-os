@@ -214,6 +214,28 @@ function canonicalApprovalReceipt(receipt, expected = {}) {
   });
 }
 
+function approvalAuthorityKey(receipt) {
+  if (!receipt) return '';
+  return JSON.stringify([
+    text(receipt.schemaVersion),
+    text(receipt.kind),
+    number(receipt.activePr),
+    sha(receipt.headSha),
+    text(receipt.repository).toLowerCase(),
+    text(receipt.branch),
+    text(receipt.protectionBoundary),
+    text(receipt.requiredReviewer).toLowerCase(),
+    text(receipt.workflowPath),
+    number(receipt.workflowRunId),
+    number(receipt.workflowRunAttempt),
+    timestamp(receipt.approvedAtUtc),
+    text(receipt.mergeExecutionAuthority),
+    receipt.reusableAcrossHeads,
+    sha(receipt.baseSha),
+    receipt.reusableAcrossBases,
+  ]);
+}
+
 function mergeEvidence(github = {}, expected = {}) {
   github = github && typeof github === 'object' && !Array.isArray(github) ? github : {};
   const blockers = [];
@@ -517,6 +539,7 @@ export function validateSourceMutationLease(record = {}, options = {}) {
   if (record?.leaseSeizureAllowed !== false) errors.push('lease-seizure-forbidden');
   if (nowMs === null) errors.push('invalid-observation-time');
   if (nowMs !== null && acquiredAtMs !== null && acquiredAtMs - nowMs > 60_000) errors.push('future-acquisition');
+  if (nowMs !== null && renewedAtMs !== null && renewedAtMs - nowMs > 60_000) errors.push('future-renewal');
 
   const expected = options.expected ?? {};
   for (const [field, normalize] of [
@@ -657,7 +680,16 @@ export function validateExecutionReceiptAgainstMutationLease(receipt, lease, opt
   if (receipt?.leaseKey !== lease.leaseId) errors.push('lease-correlation-mismatch');
   const receiptHeartbeatExpiresAtMs = timestamp(receipt?.heartbeatExpiresAtUtc);
   const receiptTimestampMs = timestamp(receipt?.timestampUtc);
+  const leaseAcquiredAtMs = timestamp(lease?.acquiredAtUtc);
   const nowMs = timestamp(options.nowUtc);
+  if (
+    ACTIVE_EXECUTION_RECEIPT_STATES.has(receipt?.state)
+    && receiptTimestampMs !== null
+    && leaseAcquiredAtMs !== null
+    && receiptTimestampMs < leaseAcquiredAtMs
+  ) {
+    errors.push('receipt-before-lease-acquisition');
+  }
   if (
     ACTIVE_EXECUTION_RECEIPT_STATES.has(receipt?.state)
     && receiptTimestampMs !== null
@@ -790,6 +822,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   const nowUtc = text(input.nowUtc);
   if (timestamp(nowUtc) === null) blockers.push('scheduler-goal-observation-time-invalid');
   const records = list(input.goalRecords);
+  const trustedApprovalReceipts = list(input.trustedOperatorApprovalReceipts);
   const goals = [];
   for (const [index, record] of records.entries()) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) {
@@ -834,7 +867,17 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       ownValueOr(record, 'operatorApprovalReceipt', null),
       { issueNumber, nowUtc },
     );
-    if (!approvalReceipt.valid) {
+    const trustedApprovalKeys = trustedApprovalReceipts
+      .map((receipt) => canonicalApprovalReceipt(receipt, { issueNumber, nowUtc }))
+      .filter(({ valid, value }) => valid && value)
+      .map(({ value }) => approvalAuthorityKey(value));
+    if (
+      !approvalReceipt.valid
+      || (
+        approvalReceipt.value
+        && !trustedApprovalKeys.includes(approvalAuthorityKey(approvalReceipt.value))
+      )
+    ) {
       blockers.push(`goal-record-${index}-approval-receipt-invalid`);
       continue;
     }
