@@ -24,6 +24,7 @@ import {
   validateSourceMutationLease,
 } from '../../shared/agents/programmeAuthorityV1.mjs';
 import {
+  SHARED_WORKSPACE_RECORD_KINDS,
   ensureSharedWorkspaceLayout,
   resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
@@ -1161,6 +1162,7 @@ function exactTerminalReceipt(record, records) {
   return Boolean(
     record
     && validateSharedWorkspaceRecord(record).valid
+    && record.kind === SHARED_WORKSPACE_RECORD_KINDS.RECEIPT
     && record.schema === records.receipt.schema
     && record.receiptId === records.receipt.receiptId
     && record.participantId === 'terminal-lane-finalizer'
@@ -1192,6 +1194,7 @@ function exactSourceMutationLeaseRelease(record, identity) {
   return Boolean(
     record
     && validateSharedWorkspaceRecord(record).valid
+    && record.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
     && record.schema === SOURCE_MUTATION_LEASE_RELEASE_SCHEMA
     && record.statusId === expected.statusId
     && record.participantId === 'source-mutation-lease-authority'
@@ -1246,6 +1249,7 @@ function exactTerminalReceiptForIdentity(record, identity) {
   return Boolean(
     record
     && validateSharedWorkspaceRecord(record).valid
+    && record.kind === SHARED_WORKSPACE_RECORD_KINDS.RECEIPT
     && record.schema === TERMINAL_LANE_FINALIZATION_SCHEMA
     && record.receiptId === identity.evidenceId
     && record.participantId === 'terminal-lane-finalizer'
@@ -1279,6 +1283,7 @@ function exactTerminalProofForIdentity(record, identity, expectedProof = null) {
   return Boolean(
     record
     && validateSharedWorkspaceRecord(record).valid
+    && record.kind === SHARED_WORKSPACE_RECORD_KINDS.PROOF
     && record.schema === TERMINAL_LANE_FINALIZATION_SCHEMA
     && record.proofId === identity.evidenceId
     && record.participantId === 'terminal-lane-finalizer'
