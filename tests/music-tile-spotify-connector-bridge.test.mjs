@@ -12,4 +12,6 @@ test('connector feed applies in place without rebuilding the listening deck', ()
   assert.doesNotMatch(implementation, /renderListeningDeck\(|renderAll\(/);
   assert.match(source, /spotifyInput\.value = spotify\.openUrl/);
   assert.match(source, /current\.uri !== incoming\.uri/);
+  assert.match(source, /AI suggestion · \$\{getCandidateVerificationStatus\(track\)\}/);
+  assert.match(source, /verificationBadge\.classList\.add\('music-badge--success'\)/);
 });

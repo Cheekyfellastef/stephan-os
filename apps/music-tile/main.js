@@ -796,6 +796,12 @@ function updateConnectorTargetCard(track, parsed) {
   const card = input?.closest('.player-deck-card');
   if (!card) return;
   input.value = parsed.openUrl;
+  const verificationBadge = Array.from(card.querySelectorAll('.music-card-header .music-badge'))
+    .find((badge) => /^AI suggestion · /.test(badge.textContent || ''));
+  if (verificationBadge) {
+    verificationBadge.textContent = `AI suggestion · ${getCandidateVerificationStatus(track)}`;
+    verificationBadge.classList.add('music-badge--success');
+  }
   card.querySelector(`[data-action="resolve-spotify-link"][data-id="${track.id}"]`)?.remove();
   const summary = card.querySelector(':scope > .player-card-summary');
   const missing = Array.from(summary?.children || []).find((node) => node.classList?.contains('meta') && /verified Spotify link|Unverified AI candidate|Likely hallucinated/.test(node.textContent || ''));

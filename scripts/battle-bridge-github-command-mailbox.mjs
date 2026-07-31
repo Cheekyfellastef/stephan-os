@@ -830,7 +830,12 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     queueVerifiedSpotifyLink: async (command) => {
       const identity = readCanonicalSourceIdentity(command);
       if (!identity.ok) return identity;
-      return appendMusicSpotifyLinkCandidate(command, { root: sharedWorkspaceRoot, repoRoot });
+      return appendMusicSpotifyLinkCandidate(command, {
+        root: sharedWorkspaceRoot,
+        repoRoot,
+        expectedHead: command.expectedHead,
+        receiptRef,
+      });
     },
   });
 
