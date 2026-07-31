@@ -581,7 +581,7 @@ test('GitHub telemetry fetches workflow evidence by each open PR exact head', as
 });
 
 test('per-head workflow cap degrades only workflow evidence without scanning repository history', async () => {
-  const headSha = 'a'.repeat(40);
+  const headSha = 'c'.repeat(40);
   const fullPage = Array.from({ length: 100 }, (_, index) => ({
     id: index + 1,
     name: `Historical workflow ${index + 1}`,
@@ -614,6 +614,79 @@ test('per-head workflow cap degrades only workflow evidence without scanning rep
     githubTelemetry: telemetry,
   });
   assert.equal(projection.blockers.includes('github_workflow_inventory_incomplete'), false);
+});
+
+test('bounded workflow pages are cached and in-flight coalesced across dashboard polls', async () => {
+  const headSha = 'd'.repeat(40);
+  let workflowCalls = 0;
+  const fetchImpl = async (url) => {
+    if (url.includes('/notifications')) return okJson([]);
+    if (url.includes('/pulls?')) return okJson([{ number: 12, head: { sha: headSha } }]);
+    if (url.includes('/issues?')) return okJson([]);
+    if (url.includes('/actions/runs')) {
+      workflowCalls += 1;
+      await new Promise((resolve) => setImmediate(resolve));
+      return okJson({ total_count: 0, workflow_runs: [] });
+    }
+    if (/\/repos\/owner\/cache-repo(?:\?|$)/.test(url)) return okJson({ default_branch: 'main' });
+    return okJson({});
+  };
+  const options = {
+    env: { GITHUB_REPOSITORY: 'owner/cache-repo', GITHUB_TOKEN: 'repo-token' },
+    secretStoreToken: '',
+    fetchImpl,
+  };
+  const [first, concurrent] = await Promise.all([
+    readGithubTelemetry(options),
+    readGithubTelemetry(options),
+  ]);
+  const cached = await readGithubTelemetry(options);
+  assert.equal(first.status, 'live');
+  assert.equal(concurrent.status, 'live');
+  assert.equal(cached.status, 'live');
+  assert.equal(workflowCalls, 1);
+});
+
+test('one exact-head workflow failure cannot discard complete repository truth', async () => {
+  const firstHead = 'e'.repeat(40);
+  const secondHead = 'f'.repeat(40);
+  const telemetry = await readGithubTelemetry({
+    env: { GITHUB_REPOSITORY: 'owner/failure-repo', GITHUB_TOKEN: 'repo-token' },
+    secretStoreToken: '',
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      if (url.includes('/notifications')) return okJson([]);
+      if (url.includes('/pulls?')) return okJson([
+        { number: 20, head: { sha: firstHead } },
+        { number: 21, head: { sha: secondHead } },
+      ]);
+      if (url.includes('/issues?')) return okJson([{ number: 1, title: 'Current goal', state: 'open' }]);
+      if (url.includes('/actions/runs') && parsed.searchParams.get('head_sha') === secondHead) throw new Error('transient timeout');
+      if (url.includes('/actions/runs')) {
+        return okJson({
+          total_count: 1,
+          workflow_runs: [{
+            id: 201,
+            name: REQUIRED_EXACT_HEAD_WORKFLOWS[0],
+            status: 'completed',
+            conclusion: 'success',
+            head_sha: firstHead,
+          }],
+        });
+      }
+      if (/\/repos\/owner\/failure-repo(?:\?|$)/.test(url)) return okJson({ default_branch: 'main' });
+      return okJson({});
+    },
+  });
+  assert.equal(telemetry.status, 'live');
+  assert.equal(telemetry.adapterAvailable, true);
+  assert.equal(telemetry.issueInventoryComplete, true);
+  assert.equal(telemetry.pullRequestInventoryComplete, true);
+  assert.equal(telemetry.workflowInventoryComplete, false);
+  assert.equal(telemetry.workflows.length, 1);
+  assert.equal(telemetry.workflows[0].prNumber, 20);
+  assert.equal(telemetry.warnings.includes('github_workflow_inventory_incomplete'), true);
+  assert.equal(telemetry.blockers.some((blocker) => blocker.startsWith('github_adapter_error:')), false);
 });
 
 test('GitHub telemetry paginates open issue inventory to exhaustion before claiming completeness', async () => {
