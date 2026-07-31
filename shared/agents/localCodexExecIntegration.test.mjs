@@ -66,6 +66,11 @@ function packet(jobId = 'codex-job-test-123') {
       repository: 'Cheekyfellastef/stephan-os',
       prNumber: 1631,
       expectedHead: 'a'.repeat(40),
+      proofTarget: 'PULL_REQUEST_HEAD',
+      pullRequestHead: '',
+      mergeCommitHead: '',
+      githubMainHead: '',
+      mergeCommitIncluded: false,
       proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
     },
     approvalRequirements: { approvalReceipt: 'operator-approved' },
@@ -347,6 +352,29 @@ test('local integration writes a durable task and accepted receipt before launch
   assert.equal(status.safety.mergeAllowed, false);
   assert.equal(status.safety.sourceMutationAllowed, false);
   assert.equal(readFileSync(receipt.taskPath, 'utf8').includes('Run the bounded real Windows ignition proof'), true);
+});
+
+test('local integration preserves merged-main provenance through task status and receipt', () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 4243, unref() {} }),
+  });
+  const mergedPacket = packet('codex-job-merged-main-provenance');
+  mergedPacket.exactHeadProof = {
+    ...mergedPacket.exactHeadProof,
+    prNumber: 1628,
+    expectedHead: 'd'.repeat(40),
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead: 'a'.repeat(40),
+    mergeCommitHead: 'c'.repeat(40),
+    githubMainHead: 'd'.repeat(40),
+    mergeCommitIncluded: true,
+  };
+  const receipt = integration.dispatch(mergedPacket);
+  assert.deepEqual(receipt.exactHeadProof, mergedPacket.exactHeadProof);
+  assert.deepEqual(integration.readStatus(mergedPacket.jobId).exactHeadProof, mergedPacket.exactHeadProof);
+  assert.deepEqual(JSON.parse(readFileSync(receipt.taskPath, 'utf8')).exactHeadProof, mergedPacket.exactHeadProof);
 });
 
 test('browser proof PASS trusts only exact machine-owned scenario evidence', () => {
@@ -1000,6 +1028,60 @@ test('worker fails closed before proof execution when an exact head changes', ()
   assert.equal(calls, 1);
 });
 
+test('worker revalidates merged-main PR provenance current main ancestry and local head', () => {
+  const pullRequestHead = 'a'.repeat(40);
+  const mergeCommitHead = 'c'.repeat(40);
+  const currentMainHead = 'd'.repeat(40);
+  const calls = [];
+  const result = validateExactHeadAtWorkerStart({
+    repoRoot: 'C:\\stephan-os',
+    branch: 'main',
+    exactHeadProof: {
+      repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 1628,
+      expectedHead: currentMainHead,
+      proofTarget: 'MERGED_MAIN',
+      pullRequestHead,
+      mergeCommitHead,
+      githubMainHead: currentMainHead,
+      mergeCommitIncluded: true,
+      proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    },
+  }, {
+    platform: 'win32',
+    spawnSyncFn(executable, args, options) {
+      calls.push({ executable, args, options });
+      if (executable === 'gh.exe' && args[1]?.endsWith('/pulls/1628')) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            head: { sha: pullRequestHead },
+            merge_commit_sha: mergeCommitHead,
+            merged: true,
+            state: 'closed',
+            base: { ref: 'main' },
+          }),
+          stderr: '',
+        };
+      }
+      if (executable === 'gh.exe') return { status: 0, stdout: `${currentMainHead}\n`, stderr: '' };
+      if (args[0] === 'merge-base') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'rev-parse') return { status: 0, stdout: `${currentMainHead}\n`, stderr: '' };
+      if (args[0] === 'status') return { status: 0, stdout: ' M apps/stephanos/dist/index.html\n', stderr: '' };
+      assert.fail(`unexpected command: ${executable} ${args.join(' ')}`);
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.proofTarget, 'MERGED_MAIN');
+  assert.equal(result.pullRequestHead, pullRequestHead);
+  assert.equal(result.mergeCommitHead, mergeCommitHead);
+  assert.equal(result.githubMainHead, currentMainHead);
+  assert.equal(result.mergeCommitIncluded, true);
+  const ancestryCall = calls.find((call) => call.args[0] === 'merge-base');
+  assert.deepEqual(ancestryCall.args, ['merge-base', '--is-ancestor', mergeCommitHead, currentMainHead]);
+  assert.equal(ancestryCall.options.env.GIT_NO_REPLACE_OBJECTS, '1');
+});
+
 test('worker rejects pre-existing source dirt before accepting an exact-head runtime proof', () => {
   const expectedHead = 'a'.repeat(40);
   const result = validateExactHeadAtWorkerStart({
@@ -1278,6 +1360,7 @@ test('worker reuses the detached runtime source fingerprint across both browser 
   });
 
   assert.equal(result.status, 'DONE');
+  assert.deepEqual(result.exactHeadProof, packet().exactHeadProof);
   assert.equal(mutableCheckoutFingerprintCalls, 0);
   assert.equal(browserCalls, 2);
   assert.deepEqual(callOrder.slice(-3), ['browser-2', 'final-head', 'final-status']);

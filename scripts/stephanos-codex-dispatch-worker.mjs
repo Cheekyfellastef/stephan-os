@@ -88,6 +88,7 @@ function processCapture(spawnSyncFn, executable, args, options = {}) {
     shell: false,
     windowsHide: true,
     timeout: 120000,
+    env: options.env,
   });
   return {
     ok: !result.error && result.status === 0,
@@ -121,19 +122,90 @@ export function validateExactHeadAtWorkerStart(task, {
   const repository = String(proof.repository || '').trim();
   const prNumber = Number(proof.prNumber);
   const expectedBranch = String(proof.branch || task.branch || 'main').trim();
+  const proofTarget = String(proof.proofTarget || 'PULL_REQUEST_HEAD').trim();
   if (!/^[0-9a-f]{40}$/.test(expectedHead) || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(prNumber) || prNumber <= 0 || expectedBranch !== 'main') {
     return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID', verificationPhase });
   }
-  const gh = processCapture(
-    spawnSyncFn,
-    platform === 'win32' ? 'gh.exe' : 'gh',
-    ['api', `repos/${repository}/pulls/${prNumber}`, '--jq', '.head.sha'],
-  );
-  if (!gh.ok || !/^[0-9a-f]{40}$/.test(gh.stdout)) {
-    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_LOOKUP_FAILED', expectedHead, branch: expectedBranch, verificationPhase });
-  }
-  if (gh.stdout !== expectedHead) {
-    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_MISMATCH', expectedHead, pullRequestHead: gh.stdout, branch: expectedBranch, verificationPhase });
+  let pullRequestHead = '';
+  let mergeCommitHead = '';
+  let githubMainHead = '';
+  let mergeCommitIncluded = false;
+  if (proofTarget === 'PULL_REQUEST_HEAD') {
+    const gh = processCapture(
+      spawnSyncFn,
+      platform === 'win32' ? 'gh.exe' : 'gh',
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--jq', '.head.sha'],
+    );
+    if (!gh.ok || !/^[0-9a-f]{40}$/.test(gh.stdout)) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_LOOKUP_FAILED', expectedHead, branch: expectedBranch, verificationPhase });
+    }
+    pullRequestHead = gh.stdout;
+    if (pullRequestHead !== expectedHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_MISMATCH', expectedHead, pullRequestHead, branch: expectedBranch, verificationPhase });
+    }
+  } else if (proofTarget === 'MERGED_MAIN') {
+    pullRequestHead = String(proof.pullRequestHead || '').trim().toLowerCase();
+    mergeCommitHead = String(proof.mergeCommitHead || '').trim().toLowerCase();
+    githubMainHead = String(proof.githubMainHead || '').trim().toLowerCase();
+    mergeCommitIncluded = proof.mergeCommitIncluded === true;
+    if (![pullRequestHead, mergeCommitHead, githubMainHead].every((head) => /^[0-9a-f]{40}$/.test(head))
+      || githubMainHead !== expectedHead
+      || !mergeCommitIncluded) {
+      return Object.freeze({ ok: false, required: true, blocker: 'MERGED_MAIN_PROOF_INVALID', expectedHead, branch: expectedBranch, verificationPhase });
+    }
+    const prLookup = processTextCapture(
+      spawnSyncFn,
+      platform === 'win32' ? 'gh.exe' : 'gh',
+      ['api', `repos/${repository}/pulls/${prNumber}`],
+    );
+    let prIdentity;
+    try { prIdentity = prLookup.ok ? JSON.parse(prLookup.stdout) : null; } catch { prIdentity = null; }
+    if (!prIdentity || typeof prIdentity !== 'object') {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_IDENTITY_LOOKUP_FAILED', expectedHead, branch: expectedBranch, verificationPhase });
+    }
+    if (String(prIdentity?.head?.sha || '').trim().toLowerCase() !== pullRequestHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_MISMATCH', expectedHead, pullRequestHead: String(prIdentity?.head?.sha || '').trim().toLowerCase(), branch: expectedBranch, verificationPhase });
+    }
+    if (prIdentity?.merged !== true || String(prIdentity?.state || '').toLowerCase() !== 'closed') {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_NOT_MERGED', expectedHead, pullRequestHead, branch: expectedBranch, verificationPhase });
+    }
+    if (String(prIdentity?.base?.ref || '') !== 'main') {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_BASE_BRANCH_MISMATCH', expectedHead, pullRequestHead, branch: expectedBranch, verificationPhase });
+    }
+    if (String(prIdentity?.merge_commit_sha || '').trim().toLowerCase() !== mergeCommitHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_MERGE_COMMIT_MISMATCH', expectedHead, pullRequestHead, mergeCommitHead: String(prIdentity?.merge_commit_sha || '').trim().toLowerCase(), branch: expectedBranch, verificationPhase });
+    }
+    const main = processCapture(
+      spawnSyncFn,
+      platform === 'win32' ? 'gh.exe' : 'gh',
+      ['api', `repos/${repository}/commits/main`, '--jq', '.sha'],
+    );
+    if (!main.ok || !/^[0-9a-f]{40}$/.test(main.stdout)) {
+      return Object.freeze({ ok: false, required: true, blocker: 'GITHUB_MAIN_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, mergeCommitHead, branch: expectedBranch, verificationPhase });
+    }
+    if (main.stdout !== expectedHead || main.stdout !== githubMainHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'GITHUB_MAIN_HEAD_MISMATCH', expectedHead, pullRequestHead, mergeCommitHead, githubMainHead: main.stdout, branch: expectedBranch, verificationPhase });
+    }
+    const ancestry = spawnSyncFn(
+      platform === 'win32' ? 'git.exe' : 'git',
+      ['merge-base', '--is-ancestor', mergeCommitHead, expectedHead],
+      {
+        cwd: task.repoRoot,
+        encoding: 'utf8',
+        shell: false,
+        windowsHide: true,
+        timeout: 120000,
+        env: createScenarioSourceGitEnvironment(process.env, { platform }),
+      },
+    );
+    if (ancestry?.error || ![0, 1].includes(ancestry?.status)) {
+      return Object.freeze({ ok: false, required: true, blocker: 'MERGE_ANCESTRY_LOOKUP_FAILED', expectedHead, pullRequestHead, mergeCommitHead, githubMainHead, branch: expectedBranch, verificationPhase });
+    }
+    if (ancestry.status !== 0) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_MERGE_NOT_IN_EXPECTED_MAIN', expectedHead, pullRequestHead, mergeCommitHead, githubMainHead, branch: expectedBranch, verificationPhase });
+    }
+  } else {
+    return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_TARGET_INVALID', expectedHead, branch: expectedBranch, verificationPhase });
   }
   const git = processCapture(
     spawnSyncFn,
@@ -142,7 +214,7 @@ export function validateExactHeadAtWorkerStart(task, {
     { cwd: task.repoRoot },
   );
   if (!git.ok || !/^[0-9a-f]{40}$/.test(git.stdout)) {
-    return Object.freeze({ ok: false, required: true, blocker: 'LOCAL_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead: gh.stdout, branch: expectedBranch, verificationPhase });
+    return Object.freeze({ ok: false, required: true, blocker: 'LOCAL_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, mergeCommitHead, githubMainHead, mergeCommitIncluded, branch: expectedBranch, verificationPhase });
   }
   if (git.stdout !== expectedHead) {
     return Object.freeze({
@@ -150,7 +222,10 @@ export function validateExactHeadAtWorkerStart(task, {
       required: true,
       blocker: 'EXPECTED_HEAD_MISMATCH',
       expectedHead,
-      pullRequestHead: gh.stdout,
+      pullRequestHead,
+      mergeCommitHead,
+      githubMainHead,
+      mergeCommitIncluded,
       localHead: git.stdout,
       branch: expectedBranch,
       verificationPhase,
@@ -161,7 +236,11 @@ export function validateExactHeadAtWorkerStart(task, {
       ok: true,
       required: true,
       expectedHead,
-      pullRequestHead: gh.stdout,
+      proofTarget,
+      pullRequestHead,
+      mergeCommitHead,
+      githubMainHead,
+      mergeCommitIncluded,
       localHead: git.stdout,
       branch: expectedBranch,
       verificationPhase,
@@ -180,7 +259,11 @@ export function validateExactHeadAtWorkerStart(task, {
       required: true,
       blocker: 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED',
       expectedHead,
-      pullRequestHead: gh.stdout,
+      proofTarget,
+      pullRequestHead,
+      mergeCommitHead,
+      githubMainHead,
+      mergeCommitIncluded,
       localHead: git.stdout,
       branch: expectedBranch,
       expectedBranch,
@@ -194,7 +277,11 @@ export function validateExactHeadAtWorkerStart(task, {
       required: true,
       blocker: 'PRE_EXISTING_SOURCE_DIRT',
       expectedHead,
-      pullRequestHead: gh.stdout,
+      proofTarget,
+      pullRequestHead,
+      mergeCommitHead,
+      githubMainHead,
+      mergeCommitIncluded,
       localHead: git.stdout,
       branch: expectedBranch,
       verificationPhase,
@@ -205,7 +292,11 @@ export function validateExactHeadAtWorkerStart(task, {
     ok: true,
     required: true,
     expectedHead,
-    pullRequestHead: gh.stdout,
+    proofTarget,
+    pullRequestHead,
+    mergeCommitHead,
+    githubMainHead,
+    mergeCommitIncluded,
     localHead: git.stdout,
     branch: expectedBranch,
     expectedBranch,
@@ -2007,6 +2098,7 @@ export async function runCodexWorker(taskPath, {
     taskId: task.taskId,
     jobId: task.jobId,
     issueNumber: task.issueNumber,
+    exactHeadProof: task.exactHeadProof ? { ...task.exactHeadProof } : null,
     status: finalStatus,
     verdict: passed ? 'PASS' : 'FAIL',
     blocker: finalBlocker,
