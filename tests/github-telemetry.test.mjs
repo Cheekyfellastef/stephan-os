@@ -138,7 +138,7 @@ test('PR evidence uses shared resolver authority and gh CLI fallback after expli
         merged_at: null,
         closed_at: null,
         merge_commit_sha: null,
-        head: { ref: 'feature/exact-head', sha: 'a'.repeat(40) },
+        head: { ref: 'feature/exact-head', sha: 'a'.repeat(40), repo: { full_name: 'owner/repo' } },
         base: { ref: 'main', sha: 'b'.repeat(40) },
       });
       if (url.includes('/files')) return okJson([{ filename: 'README.md' }]);
@@ -150,6 +150,9 @@ test('PR evidence uses shared resolver authority and gh CLI fallback after expli
   assert.equal(payload.authAuthority, 'gh-cli');
   assert.equal(payload.checksStatus, 'passed');
   assert.equal(payload.repository, 'owner/repo');
+  assert.equal(payload.baseRepository, 'owner/repo');
+  assert.equal(payload.headRepository, 'owner/repo');
+  assert.equal(payload.headRepositoryMatchesBase, true);
   assert.equal(payload.headBranch, 'feature/exact-head');
   assert.equal(payload.baseSha, 'b'.repeat(40));
   assert.equal(payload.mergedAt, '');
@@ -158,4 +161,35 @@ test('PR evidence uses shared resolver authority and gh CLI fallback after expli
   assert.equal(JSON.stringify(payload).includes('gh-token'), false);
   assert.equal(calls.some((call) => call.authorization === 'Bearer bad-env-token'), true);
   assert.equal(calls.some((call) => call.authorization === 'Bearer gh-token'), true);
+});
+
+test('PR evidence preserves a fork head repository so lease identity cannot be bound to the base repository', async () => {
+  const payload = await fetchGithubPrEvidence({
+    owner: 'owner',
+    repo: 'repo',
+    prNumber: 8,
+    auth: { token: 'token', authority: 'test', configured: true },
+    fetchImpl: async (url) => {
+      if (url.includes('/pulls/8') && !url.includes('/files')) return okJson({
+        number: 8,
+        html_url: 'https://github.com/owner/repo/pull/8',
+        title: 'Fork PR',
+        state: 'open',
+        merged: false,
+        head: {
+          ref: 'feature/fork-head',
+          sha: 'c'.repeat(40),
+          repo: { full_name: 'contributor/repo' },
+        },
+        base: { ref: 'main', sha: 'd'.repeat(40) },
+      });
+      if (url.includes('/files')) return okJson([{ filename: 'README.md' }]);
+      if (url.includes('/check-runs')) return okJson({ check_runs: [{ name: 'build', conclusion: 'success' }] });
+      return okJson({});
+    },
+  });
+  assert.equal(payload.status, 'fetched');
+  assert.equal(payload.repository, 'contributor/repo');
+  assert.equal(payload.baseRepository, 'owner/repo');
+  assert.equal(payload.headRepositoryMatchesBase, false);
 });
