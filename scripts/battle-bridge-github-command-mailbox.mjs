@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -24,6 +24,13 @@ import {
   executeBattleBridgeGitHubCommand,
   selectNextBattleBridgeGitHubCommand,
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
+import { dispatchExactHeadWindowsBrowserProof } from '../shared/agents/exactHeadWindowsBrowserProofDispatch.mjs';
+import {
+  createWindowsSafeMailboxReceiptFilename,
+  getReadableMailboxReceiptFilenames,
+} from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
+
+export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -40,6 +47,8 @@ const MAX_CRITICAL_BACKLOG_STATUS_BYTES = 64 * 1024;
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SAFE_PROOF_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const SAFE_CONVEYOR_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
+const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
+const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set([
   'CREATE_NEXT_MISSION',
   'WAIT_ACTIVE_MISSION',
@@ -124,6 +133,169 @@ function safeNonNegativeNumber(value) {
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
 }
 
+function safeTelemetryText(value, limit = 500) {
+  const normalized = String(value ?? '').trim();
+  if (UNSAFE_TELEMETRY_PATTERN.test(normalized)) return '';
+  return normalized.length > limit ? normalized.slice(0, limit) : normalized;
+}
+
+function safeTelemetryId(value) {
+  const normalized = safeTelemetryText(value, 160);
+  return /^[A-Za-z0-9][A-Za-z0-9._:#-]{1,159}$/.test(normalized) ? normalized : '';
+}
+
+function safeTelemetrySha(value) {
+  const normalized = safeTelemetryText(value, 40).toLowerCase();
+  return EXACT_GIT_HEAD_PATTERN.test(normalized) ? normalized : '';
+}
+
+function safeTelemetryBranch(value) {
+  const normalized = safeTelemetryText(value, 240);
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(normalized) && !normalized.includes('..')
+    ? normalized
+    : '';
+}
+
+function telemetryPosture(value = {}) {
+  return Object.freeze({
+    state: safeTelemetryText(value?.state || value?.status || 'UNKNOWN', 80).toUpperCase(),
+    allGreen: value?.allGreen === true,
+    mergeable: typeof value?.mergeable === 'boolean' ? value.mergeable : null,
+    summary: safeTelemetryText(value?.summary, 300),
+    proofRefs: safeProofRefs(value?.proofRefs),
+  });
+}
+
+function telemetryReceipt(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return Object.freeze({
+    repository: safeTelemetryText(value.repository, 160),
+    issueNumber: safeNonNegativeNumber(value.issueNumber),
+    prNumber: safeNonNegativeNumber(value.prNumber),
+    branch: safeTelemetryBranch(value.branch),
+    sourceHead: safeTelemetrySha(value.sourceHead),
+    workerId: safeTelemetryId(value.workerId),
+    workerType: safeTelemetryId(value.workerType),
+    executionId: safeTelemetryId(value.executionId),
+    leaseKey: safeTelemetryId(value.leaseKey),
+    state: safeTelemetryText(value.state, 80).toUpperCase(),
+    phase: safeTelemetryText(value.phase, 120).toUpperCase(),
+    sequence: safeNonNegativeNumber(value.sequence),
+    timestampUtc: safeTimestamp(value.timestampUtc),
+    heartbeatExpiresAtUtc: safeTimestamp(value.heartbeatExpiresAtUtc),
+    blocker: safeTelemetryText(value.blocker, 200),
+    operatorActionRequired: value.operatorActionRequired === true,
+    expectedNextAction: safeTelemetryText(value.expectedNextAction, 500),
+    proofRefs: safeProofRefs(value.proofRefs),
+  });
+}
+
+function projectWorkerTelemetry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const worker = value.worker || {};
+  const task = value.task || {};
+  const heartbeat = value.heartbeat || {};
+  const lease = value.lease || {};
+  const posture = value.testsChecksReview || {};
+  return Object.freeze({
+    schemaVersion: safeTelemetryText(value.schemaVersion, 120),
+    ok: value.ok === true,
+    workerActive: value.workerActive === true,
+    workerAlive: typeof value.workerAlive === 'boolean' ? value.workerAlive : null,
+    workerStatus: safeTelemetryText(value.workerStatus, 80).toUpperCase(),
+    worker: Object.freeze({
+      pid: safeNonNegativeNumber(worker.pid),
+      observedPid: safeNonNegativeNumber(worker.observedPid),
+      commandIdentity: safeTelemetryText(worker.commandIdentity, 240),
+      commandLineVerified: worker.commandLineVerified === true,
+      taskName: safeTelemetryText(worker.taskName, 160),
+      scheduledTaskState: safeTelemetryText(worker.scheduledTaskState, 80).toUpperCase(),
+    }),
+    task: Object.freeze({
+      taskId: safeTelemetryId(task.taskId),
+      goalId: safeTelemetryText(task.goalId, 160),
+      issueNumber: safeNonNegativeNumber(task.issueNumber),
+      prNumber: safeNonNegativeNumber(task.prNumber),
+      branch: safeTelemetryBranch(task.branch),
+      headSha: safeTelemetrySha(task.headSha),
+      phase: safeTelemetryText(task.phase, 120).toUpperCase(),
+      boundedAction: safeTelemetryText(task.boundedAction, 500),
+    }),
+    heartbeat: Object.freeze({
+      timestampUtc: safeTimestamp(heartbeat.timestampUtc),
+      ageMs: heartbeat.ageMs === null ? null : safeNonNegativeNumber(heartbeat.ageMs),
+      fresh: heartbeat.fresh === true,
+      headSha: safeTelemetrySha(heartbeat.headSha),
+      branch: safeTelemetryBranch(heartbeat.branch),
+      tickVerdict: safeTelemetryText(heartbeat.tickVerdict, 120),
+      errors: Array.isArray(heartbeat.errors)
+        ? heartbeat.errors.map((item) => safeTelemetryText(item, 160)).filter(Boolean).slice(0, 20)
+        : [],
+    }),
+    lease: Object.freeze({
+      observed: lease.observed === true,
+      valid: lease.valid === true,
+      active: lease.active === true,
+      leaseId: safeTelemetryId(lease.leaseId),
+      laneId: safeTelemetryId(lease.laneId),
+      ownerId: safeTelemetryId(lease.ownerId),
+      repository: safeTelemetryText(lease.repository, 160),
+      issueNumber: safeNonNegativeNumber(lease.issueNumber),
+      prNumber: safeNonNegativeNumber(lease.prNumber),
+      branch: safeTelemetryBranch(lease.branch),
+      headSha: safeTelemetrySha(lease.headSha),
+      acquiredAtUtc: safeTimestamp(lease.acquiredAtUtc),
+      renewedAtUtc: safeTimestamp(lease.renewedAtUtc),
+      expiresAtUtc: safeTimestamp(lease.expiresAtUtc),
+      errors: Array.isArray(lease.errors)
+        ? lease.errors.map((item) => safeTelemetryText(item, 160)).filter(Boolean).slice(0, 20)
+        : [],
+    }),
+    latestExecutionReceipt: telemetryReceipt(value.latestExecutionReceipt),
+    testsChecksReview: Object.freeze({
+      tests: telemetryPosture(posture.tests),
+      checks: telemetryPosture(posture.checks),
+      review: telemetryPosture(posture.review),
+    }),
+    blockers: Array.isArray(value.blockers)
+      ? value.blockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 30)
+      : [],
+    operatorActionRequired: value.operatorActionRequired === true,
+    nextAction: safeTelemetryText(value.nextAction, 600),
+    evidenceRefs: Object.freeze([
+      'status/mission-orchestrator-worker-heartbeat.json',
+      'status/source-mutation-lease-current.json',
+      'status/battle-bridge-mailbox-receipt-index.json',
+    ]),
+    finalVerdict: safeTelemetryText(value.finalVerdict, 120).toUpperCase(),
+  });
+}
+
+function isExactWindowsProofOperation(receipt = {}, operationResult = {}) {
+  return receipt?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
+    || operationResult?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF';
+}
+
+function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
+  const expectedHead = String(receipt?.expectedHead || operationResult?.expectedHead || '').trim().toLowerCase();
+  if (isExactWindowsProofOperation(receipt, operationResult)) {
+    const pullRequestHead = String(operationResult?.pullRequestHead || '').trim().toLowerCase();
+    const localHead = String(operationResult?.localHead || '').trim().toLowerCase();
+    return EXACT_GIT_HEAD_PATTERN.test(expectedHead)
+      && EXACT_GIT_HEAD_PATTERN.test(pullRequestHead)
+      && EXACT_GIT_HEAD_PATTERN.test(localHead)
+      && expectedHead === pullRequestHead
+      && expectedHead === localHead;
+  }
+  if (typeof operationResult?.expectedHeadMatch === 'boolean') {
+    return operationResult.expectedHeadMatch;
+  }
+  const sourceHead = String(operationResult?.sourceHead || '').trim().toLowerCase();
+  return EXACT_GIT_HEAD_PATTERN.test(expectedHead)
+    && EXACT_GIT_HEAD_PATTERN.test(sourceHead)
+    && expectedHead === sourceHead;
+}
+
 function conveyorProjection(operationResult = {}) {
   return Object.freeze({
     decision: safeConveyorDecision(operationResult?.decision),
@@ -146,43 +318,57 @@ function conveyorProjection(operationResult = {}) {
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
+  const workerTelemetry = projectWorkerTelemetry(operationResult?.workerTelemetry);
   return Object.freeze({
-    schemaVersion: String(receipt?.schemaVersion || ''),
-    requestId: String(receipt?.requestId || ''),
-    operation: String(receipt?.operation || ''),
-    state: String(receipt?.state || ''),
-    acceptedAt: String(receipt?.acceptedAt || ''),
-    heartbeatAt: String(receipt?.heartbeatAt || ''),
-    completedAt: String(receipt?.completedAt || ''),
-    blocker: String(receipt?.blocker || operationResult?.blocker || ''),
+    schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
+    requestId: safeTelemetryText(receipt?.requestId, 160),
+    operation: safeTelemetryText(receipt?.operation, 120),
+    state: safeTelemetryText(receipt?.state, 80).toUpperCase(),
+    acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
+    heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
+    completedAt: safeTelemetryText(receipt?.completedAt, 80),
+    expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+    prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
+    proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+    taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+    localHead: safeTelemetrySha(operationResult?.localHead),
+    blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
       ok: execution?.ok !== false,
-      verdict: String(execution?.verdict || ''),
-      operation: String(execution?.operation || receipt?.operation || ''),
-      requestId: String(execution?.requestId || receipt?.requestId || ''),
+      verdict: safeTelemetryText(execution?.verdict, 120).toUpperCase(),
+      operation: safeTelemetryText(execution?.operation || receipt?.operation, 120),
+      requestId: safeTelemetryText(execution?.requestId || receipt?.requestId, 160),
     }),
+    workerTelemetry,
     operationResult: Object.freeze({
       ok: operationResult?.ok !== false,
-      blocker: String(operationResult?.blocker || ''),
-      finalVerdict: String(operationResult?.finalVerdict || ''),
-      sourceHead: String(operationResult?.sourceHead || ''),
-      branch: String(operationResult?.branch || ''),
-      expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+      blocker: safeTelemetryText(operationResult?.blocker, 240),
+      finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
+      expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+      prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
+      proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+      taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+      pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+      localHead: safeTelemetrySha(operationResult?.localHead),
+      sourceHead: safeTelemetrySha(operationResult?.sourceHead),
+      branch: safeTelemetryBranch(operationResult?.branch),
+      expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
       monitorCount: Number(operationResult?.monitorCount || 0),
       executedCount: Number(operationResult?.executedCount || 0),
       unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
       expectedFailureCount: Number(operationResult?.expectedFailureCount || 0),
       notificationBatchCount: Number(operationResult?.notificationBatchCount || 0),
       notificationCount: Number(operationResult?.notificationCount || 0),
-      notificationSurface: String(operationResult?.notificationSurface || ''),
+      notificationSurface: safeTelemetryText(operationResult?.notificationSurface, 120),
       externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
       maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
       receiptCount: Number(operationResult?.receiptCount || 0),
       watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
-      watchdogRecoveryRoute: String(operationResult?.watchdogRecoveryRoute || ''),
-      initialHead: String(operationResult?.initialHead || ''),
-      recoveredHead: String(operationResult?.recoveredHead || ''),
+      watchdogRecoveryRoute: safeTelemetryText(operationResult?.watchdogRecoveryRoute, 160),
+      initialHead: safeTelemetrySha(operationResult?.initialHead),
+      recoveredHead: safeTelemetrySha(operationResult?.recoveredHead),
       initialPid: Number(operationResult?.initialPid || 0),
       recoveredPid: Number(operationResult?.recoveredPid || 0),
       workerKilled: operationResult?.workerKilled === true,
@@ -192,9 +378,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       workerRecovered: operationResult?.workerRecovered === true,
       workerFromMain: operationResult?.workerFromMain === true,
       proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
-      publicationState: String(operationResult?.publicationState || ''),
+      publicationState: safeTelemetryText(operationResult?.publicationState, 120),
       visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
       proofRefs: safeProofRefs(operationResult?.proofRefs),
+      workerTelemetry,
       ...conveyorProjection(operationResult),
     }),
     arbitraryFilesystemAccess: false,
@@ -207,46 +394,57 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
 export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
-  if (fullBytes <= maxBytes) return fullJson;
 
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
   const compactReceipt = {
-    schemaVersion: String(receipt?.schemaVersion || ''),
-    requestId: String(receipt?.requestId || ''),
-    operation: String(receipt?.operation || ''),
-    repository: String(receipt?.repository || ''),
+    schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
+    requestId: safeTelemetryText(receipt?.requestId, 160),
+    operation: safeTelemetryText(receipt?.operation, 120),
+    repository: safeTelemetryText(receipt?.repository, 180),
     issueNumber: Number(receipt?.issueNumber || 0),
-    branch: String(receipt?.branch || ''),
-    state: String(receipt?.state || ''),
-    acceptedAt: String(receipt?.acceptedAt || ''),
-    heartbeatAt: String(receipt?.heartbeatAt || ''),
-    completedAt: String(receipt?.completedAt || ''),
-    blocker: String(receipt?.blocker || operationResult?.blocker || ''),
+    branch: safeTelemetryBranch(receipt?.branch),
+    state: safeTelemetryText(receipt?.state, 80).toUpperCase(),
+    acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
+    heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
+    completedAt: safeTelemetryText(receipt?.completedAt, 80),
+    expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+    prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
+    proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+    taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+    localHead: safeTelemetrySha(operationResult?.localHead),
+    blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
       ok: execution?.ok !== false,
-      verdict: String(execution?.verdict || ''),
-      operation: String(execution?.operation || receipt?.operation || ''),
-      requestId: String(execution?.requestId || receipt?.requestId || ''),
+      verdict: safeTelemetryText(execution?.verdict, 120).toUpperCase(),
+      operation: safeTelemetryText(execution?.operation || receipt?.operation, 120),
+      requestId: safeTelemetryText(execution?.requestId || receipt?.requestId, 160),
       result: {
         ok: operationResult?.ok !== false,
-        blocker: String(operationResult?.blocker || ''),
-        finalVerdict: String(operationResult?.finalVerdict || ''),
-        sourceHead: String(operationResult?.sourceHead || ''),
-        branch: String(operationResult?.branch || ''),
-        expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+        blocker: safeTelemetryText(operationResult?.blocker, 240),
+        finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
+        expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+        prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
+        proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+        taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+        pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+        localHead: safeTelemetrySha(operationResult?.localHead),
+        sourceHead: safeTelemetrySha(operationResult?.sourceHead),
+        branch: safeTelemetryBranch(operationResult?.branch),
+        expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
         monitorCount: Number(operationResult?.monitorCount || 0),
         executedCount: Number(operationResult?.executedCount || 0),
         unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
         expectedFailureCount: Number(operationResult?.expectedFailureCount || 0),
         notificationBatchCount: Number(operationResult?.notificationBatchCount || 0),
         notificationCount: Number(operationResult?.notificationCount || 0),
-        notificationSurface: String(operationResult?.notificationSurface || ''),
+        notificationSurface: safeTelemetryText(operationResult?.notificationSurface, 120),
         externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
         maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
         receiptCount: Number(operationResult?.receiptCount || 0),
-        targetRequestId: String(operationResult?.targetRequestId || ''),
+        targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
         recoveredPid: Number(operationResult?.recoveredPid || 0),
@@ -258,15 +456,16 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
         visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
         proofRefs: safeProofRefs(operationResult?.proofRefs),
+        workerTelemetry: projectWorkerTelemetry(operationResult?.workerTelemetry),
         ...conveyorProjection(operationResult),
-        githubProjectionTruncated: true,
+        githubProjectionTruncated: fullBytes > maxBytes,
         originalBytes: fullBytes,
       },
     },
     arbitraryShellAllowed: false,
     destructiveGitAllowed: false,
     liveOpenClawUpdateAllowed: false,
-    githubProjectionTruncated: true,
+    githubProjectionTruncated: fullBytes > maxBytes,
   };
   const compactJson = JSON.stringify(compactReceipt, null, 2);
   if (Buffer.byteLength(compactJson, 'utf8') > maxBytes) {
@@ -287,10 +486,10 @@ function saveState(state) {
 function writeReceipt(receipt) {
   mkdirSync(mailboxStateRoot, { recursive: true });
   mkdirSync(canonicalReceiptRoot, { recursive: true });
-  const filename = `${receipt.requestId}.json`;
+  const filename = createWindowsSafeMailboxReceiptFilename(receipt.requestId);
   const legacyPath = join(mailboxStateRoot, filename);
   const canonicalPath = join(canonicalReceiptRoot, filename);
-  const payload = `${JSON.stringify(receipt, null, 2)}\n`;
+  const payload = `${serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES)}\n`;
   writeFileSync(legacyPath, payload, 'utf8');
   writeFileSync(canonicalPath, payload, 'utf8');
   return {
@@ -483,42 +682,58 @@ async function readCriticalBacklogStatus(command = {}) {
   };
 }
 
-async function readMailboxReceipt(command = {}) {
-  const identity = readCanonicalSourceIdentity(command);
+export async function readMailboxReceipt(command = {}, {
+  readSourceIdentity = readCanonicalSourceIdentity,
+  receiptRoot = canonicalReceiptRoot,
+} = {}) {
+  const identity = await readSourceIdentity(command);
   if (!identity.ok) return identity;
   const targetRequestId = String(command.targetRequestId || '');
   if (!SAFE_REQUEST_ID_PATTERN.test(targetRequestId)) {
     return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TARGET_INVALID' };
   }
-  const receiptPath = join(canonicalReceiptRoot, `${targetRequestId}.json`);
-  let payload;
-  try {
-    payload = readFileSync(receiptPath, 'utf8');
-  } catch {
-    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
+  for (const filename of getReadableMailboxReceiptFilenames(targetRequestId)) {
+    const receiptPath = join(receiptRoot, filename);
+    let info;
+    try {
+      info = lstatSync(receiptPath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_READ_FAILED', targetRequestId };
+    }
+    if (!info.isFile()) {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_REGULAR_FILE', targetRequestId };
+    }
+    let payload;
+    try {
+      payload = readFileSync(receiptPath, 'utf8');
+    } catch {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_READ_FAILED', targetRequestId };
+    }
+    if (Buffer.byteLength(payload, 'utf8') > MAX_LOCAL_RECEIPT_BYTES) {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TOO_LARGE', targetRequestId };
+    }
+    let receipt;
+    try {
+      receipt = JSON.parse(payload);
+    } catch {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_JSON_INVALID', targetRequestId };
+    }
+    if (String(receipt?.requestId || '') !== targetRequestId) {
+      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
+    }
+    return {
+      ...identity,
+      ok: true,
+      finalVerdict: 'MAILBOX_RECEIPT_READ_READY',
+      targetRequestId,
+      receipt: createSanitizedMailboxReceiptProjection(receipt),
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+    };
   }
-  if (Buffer.byteLength(payload, 'utf8') > MAX_LOCAL_RECEIPT_BYTES) {
-    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_TOO_LARGE', targetRequestId };
-  }
-  let receipt;
-  try {
-    receipt = JSON.parse(payload);
-  } catch {
-    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_JSON_INVALID', targetRequestId };
-  }
-  if (String(receipt?.requestId || '') !== targetRequestId) {
-    return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
-  }
-  return {
-    ...identity,
-    ok: true,
-    finalVerdict: 'MAILBOX_RECEIPT_READ_READY',
-    targetRequestId,
-    receipt: createSanitizedMailboxReceiptProjection(receipt),
-    arbitraryFilesystemAccess: false,
-    commandExecutionAccess: false,
-    sourceMutationAccess: false,
-  };
+  return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
 }
 
 export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
@@ -552,6 +767,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     readMailboxReceipt,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
+    runExactHeadWindowsBrowserProof: (command) => dispatchExactHeadWindowsBrowserProof(command),
   });
 
   const completedAt = now().toISOString();
@@ -567,7 +783,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
   });
   writeReceipt(receipt);
   state.consumedRequestIds = [...new Set([...(state.consumedRequestIds || []), selected.command.requestId])].slice(-500);
-  state.lastReceipt = receipt;
+  state.lastReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   saveState(state);
   postReceipt({ ...receipt, receiptRef });
   return { ...receipt, receiptPath: receiptLocation.path, receiptRef };

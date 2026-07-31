@@ -19,6 +19,7 @@ export const CODEX_DISPATCH_QUEUE_KIND = 'stephanos.codex_dispatch.queue_record'
 export const CODEX_DISPATCH_HISTORY_KIND = 'stephanos.codex_dispatch.queue_history_entry';
 export const CODEX_DISPATCH_DASHBOARD_SCHEMA_VERSION = 'codex-dispatch-dashboard.v1';
 export const CODEX_DISPATCH_HANDOFF_SCHEMA_VERSION = 'codex-manual-handoff.v1';
+const MISSING_AUTOMATED_INTEGRATION_BLOCKER = 'BLOCKED_BY_MISSING_CODEX_AUTOMATED_DISPATCH_INTEGRATION_1293';
 
 const STATUS_VALUES = {
   QUEUED: 'QUEUED',
@@ -81,10 +82,11 @@ const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
 const SAFE_BRANCH_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,160}$/i;
 const SAFE_COMMAND_PATTERN = /^(node|npm|git)\b(?!.*\b(reset\s+--hard|merge|push|branch\s+-d|branch\s+-D)\b)/i;
 const SAFE_PROOF_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
+const SAFE_BLOCKER_CODE_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
 const FORBIDDEN_TEXT_PATTERN = /token|secret|password|credential|private key|\.env|session/i;
 const REQUIRED_KEYS = Object.freeze([
   'schemaVersion', 'kind', 'jobId', 'issueNumber', 'branch', 'prompt', 'requestedProofCommands',
-  'proofRequirements', 'approvalRequirements', 'integrationState', 'createdAt', 'dispatchedAt',
+  'exactHeadProof', 'proofRequirements', 'approvalRequirements', 'integrationState', 'createdAt', 'dispatchedAt',
   'completedAt', 'status', 'resultMetadata', 'blockerMetadata', 'history', 'sharedWorkspaceMessage',
 ]);
 
@@ -112,6 +114,25 @@ function safeBranch(value) {
 function safePrompt(value) { return text(value).replace(/\s+/g, ' ').slice(0, 4000); }
 function safeProofCommands(value) {
   return unique(value).filter((command) => SAFE_COMMAND_PATTERN.test(command) && !FORBIDDEN_TEXT_PATTERN.test(command)).slice(0, 20);
+}
+function projectedBlockerCode(value = {}) {
+  const candidate = text(value?.code).toUpperCase();
+  if (!candidate) return '';
+  return SAFE_BLOCKER_CODE_PATTERN.test(candidate) && !FORBIDDEN_TEXT_PATTERN.test(candidate)
+    ? candidate
+    : 'CODEX_QUEUE_BLOCKER_INVALID';
+}
+function safeExactHeadProof(value = {}) {
+  value ||= {};
+  const expectedHead = text(value.expectedHead).toLowerCase();
+  const prNumber = Number.parseInt(value.prNumber, 10);
+  if (!/^[0-9a-f]{40}$/.test(expectedHead) || !Number.isSafeInteger(prNumber) || prNumber <= 0) return null;
+  return Object.freeze({
+    repository: text(value.repository),
+    prNumber,
+    expectedHead,
+    proofScenario: text(value.proofScenario),
+  });
 }
 export function isSafeCodexQueueProofRef(value) {
   const normalized = text(value).replace(/\\/g, '/');
@@ -165,7 +186,7 @@ export function buildCodexDispatchQueueContract() {
       status: 'status/codex-dispatch-queue.json',
       events: 'events/codex-dispatch-queue.jsonl',
     },
-    missingIntegrationBlocker: 'BLOCKED_BY_MISSING_CODEX_AUTOMATED_DISPATCH_INTEGRATION_1293',
+    missingIntegrationBlocker: MISSING_AUTOMATED_INTEGRATION_BLOCKER,
     finalVerdict: 'CODEX_DISPATCH_QUEUE_CONTRACT_READY',
   });
 }
@@ -177,6 +198,12 @@ function buildRecord(input, state) {
   const createdAt = text(input.createdAt || input.createdAtUtc, 'pending');
   const status = canonicalStatus(state.status);
   const proofRefs = unique(input.proofRequirements?.refs || [`proof/${jobId}.json`]);
+  const blockerMetadata = Object.freeze({ ...(state.blockerMetadata || input.blockerMetadata || {}) });
+  const blockerCode = projectedBlockerCode(blockerMetadata);
+  const requiresOperator = status === CODEX_QUEUE_STATUS.WAITING_OPERATOR_APPROVAL
+    || blockerMetadata.operatorActionRequired === true
+    || !!blockerCode;
+  const integrationState = state.integrationState || input.integrationState || {};
   return Object.freeze({
     schemaVersion: CODEX_DISPATCH_QUEUE_SCHEMA_VERSION,
     kind: CODEX_DISPATCH_QUEUE_KIND,
@@ -185,6 +212,7 @@ function buildRecord(input, state) {
     branch: safeBranch(input.branch),
     prompt,
     requestedProofCommands: safeProofCommands(input.requestedProofCommands || input.requiredTests),
+    exactHeadProof: safeExactHeadProof(input.exactHeadProof),
     proofRequirements: Object.freeze({
       refs: proofRefs,
       verifierTypes: unique(input.proofRequirements?.verifierTypes || ['CodexQueueRecordVerifier', 'ProofReferenceVerifier']),
@@ -196,15 +224,15 @@ function buildRecord(input, state) {
       approvalReceipt: text(state.approvalReceipt, ''),
     }),
     integrationState: Object.freeze({
-      automatedCodexDispatchProven: input.integrationState?.automatedCodexDispatchProven === true,
-      blocker: input.integrationState?.automatedCodexDispatchProven === true ? '' : 'BLOCKED_BY_MISSING_CODEX_AUTOMATED_DISPATCH_INTEGRATION_1293',
+      automatedCodexDispatchProven: integrationState.automatedCodexDispatchProven === true,
+      blocker: integrationState.automatedCodexDispatchProven === true ? '' : MISSING_AUTOMATED_INTEGRATION_BLOCKER,
     }),
     createdAt,
     dispatchedAt: text(state.dispatchedAt, ''),
     completedAt: text(state.completedAt, ''),
     status,
     resultMetadata: Object.freeze({ ...(state.resultMetadata || input.resultMetadata || {}) }),
-    blockerMetadata: Object.freeze({ ...(state.blockerMetadata || input.blockerMetadata || {}) }),
+    blockerMetadata,
     history: Object.freeze(state.history.map((entry) => Object.freeze({ ...entry }))),
     sharedWorkspaceMessage: createSharedWorkspaceMessage({
       messageId: jobId,
@@ -212,13 +240,17 @@ function buildRecord(input, state) {
       recipient: 'operator',
       channel: 'codex-dispatch-queue',
       kind: eventKindForStatus(status),
-      severity: status === CODEX_QUEUE_STATUS.BLOCKED || status === CODEX_QUEUE_STATUS.FAILED ? 'warning' : 'info',
+      severity: status === CODEX_QUEUE_STATUS.BLOCKED
+        || status === CODEX_QUEUE_STATUS.FAILED
+        || requiresOperator
+        ? 'warning'
+        : 'info',
       correlationId: `issue-${Number.isSafeInteger(issueNumber) ? issueNumber : 0}`,
       relatedGoal: `#${Number.isSafeInteger(issueNumber) ? issueNumber : 0}`,
       summary: `Codex queue job ${jobId} is ${status} for issue #${Number.isSafeInteger(issueNumber) ? issueNumber : 0}.`,
       status,
       proofRefs,
-      requiresOperator: status === CODEX_QUEUE_STATUS.WAITING_OPERATOR_APPROVAL,
+      requiresOperator,
     }),
   });
 }
@@ -259,7 +291,12 @@ function validateHistory(record, errors) {
 
 export function validateCodexQueueRecord(record = {}) {
   const errors = [];
-  if (JSON.stringify(Object.keys(record).sort()) !== JSON.stringify([...REQUIRED_KEYS].sort())) errors.push('unbounded-schema');
+  const recordKeys = Object.keys(record).sort();
+  const requiredKeys = [...REQUIRED_KEYS].sort();
+  const legacyV1Keys = REQUIRED_KEYS.filter((key) => key !== 'exactHeadProof').sort();
+  const canonicalShape = JSON.stringify(recordKeys) === JSON.stringify(requiredKeys);
+  const legacyV1Shape = JSON.stringify(recordKeys) === JSON.stringify(legacyV1Keys);
+  if (!canonicalShape && !legacyV1Shape) errors.push('unbounded-schema');
   if (record.schemaVersion !== CODEX_DISPATCH_QUEUE_SCHEMA_VERSION) errors.push('invalid-schema-version');
   if (record.kind !== CODEX_DISPATCH_QUEUE_KIND) errors.push('invalid-kind');
   if (!SAFE_ID_PATTERN.test(text(record.jobId))) errors.push('invalid-job-id');
@@ -271,6 +308,27 @@ export function validateCodexQueueRecord(record = {}) {
   if (!Object.values(CODEX_QUEUE_STATUS).includes(record.status)) errors.push('invalid-status');
   if (record.approvalRequirements?.requiresExactHeadApproval !== true) errors.push('exact-head-approval-not-required');
   if (!record.integrationState || typeof record.integrationState.automatedCodexDispatchProven !== 'boolean') errors.push('missing-integration-state');
+  const expectedIntegrationBlocker = record.integrationState?.automatedCodexDispatchProven === true
+    ? ''
+    : MISSING_AUTOMATED_INTEGRATION_BLOCKER;
+  if (record.integrationState?.blocker !== expectedIntegrationBlocker) {
+    errors.push('integration-blocker-mismatch');
+  }
+  const blockerCode = projectedBlockerCode(record.blockerMetadata);
+  const expectedOperatorAction = record.status === CODEX_QUEUE_STATUS.WAITING_OPERATOR_APPROVAL
+    || record.blockerMetadata?.operatorActionRequired === true
+    || !!blockerCode;
+  if (record.sharedWorkspaceMessage?.requiresOperator !== expectedOperatorAction) {
+    errors.push('operator-message-mismatch');
+  }
+  const expectedSeverity = record.status === CODEX_QUEUE_STATUS.BLOCKED
+    || record.status === CODEX_QUEUE_STATUS.FAILED
+    || expectedOperatorAction
+    ? 'warning'
+    : 'info';
+  if (record.sharedWorkspaceMessage?.severity !== expectedSeverity) {
+    errors.push('operator-message-severity-mismatch');
+  }
   validateHistory(record, errors);
   if (!Array.isArray(record.proofRequirements?.refs) || record.proofRequirements.refs.length === 0) errors.push('missing-proof-requirement-refs');
   for (const ref of list(record.proofRequirements?.refs)) if (!isSafeCodexQueueProofRef(ref)) errors.push('unsafe-proof-ref');
@@ -300,6 +358,7 @@ export function transitionCodexQueueRecord(record = {}, nextStatus, input = {}) 
     completedAt: CODEX_QUEUE_TERMINAL_STATUSES.includes(target) ? timestamp : record.completedAt,
     resultMetadata: input.resultMetadata || record.resultMetadata,
     blockerMetadata: input.blockerMetadata || record.blockerMetadata,
+    integrationState: input.integrationState || record.integrationState,
     history: [...record.history, historyEntry({ fromStatus: current, toStatus: target, timestamp, reason: input.reason, metadata: input.metadata })],
   });
   const nextValidation = validateCodexQueueRecord(next);
@@ -318,7 +377,7 @@ export function buildManualCodexHandoffPacket(record = {}, input = {}) {
     branch: record.branch,
     status: record.status,
     dispatchMode: 'manual_operator_dispatch_only',
-    automatedDispatchBlockedBy: record.integrationState?.automatedCodexDispatchProven ? '' : 'BLOCKED_BY_MISSING_CODEX_AUTOMATED_DISPATCH_INTEGRATION_1293',
+    automatedDispatchBlockedBy: record.integrationState?.automatedCodexDispatchProven ? '' : MISSING_AUTOMATED_INTEGRATION_BLOCKER,
     operatorApprovalReceipt: text(record.approvalRequirements?.approvalReceipt),
     exactHeadApprovalRequired: true,
     prompt: record.prompt,
@@ -339,15 +398,20 @@ export function projectCodexQueueDashboard(records = [], input = {}) {
     generatedAt: text(input.generatedAt || input.timestampUtc, 'pending'),
     queueDepth: safeRecords.filter((record) => !CODEX_QUEUE_TERMINAL_STATUSES.includes(record.status)).length,
     counts,
-    jobs: safeRecords.map((record) => Object.freeze({
-      jobId: record.jobId,
-      issueNumber: record.issueNumber,
-      branch: record.branch,
-      status: record.status,
-      requiresOperator: record.sharedWorkspaceMessage.requiresOperator,
-      blocker: record.integrationState.blocker,
-      proofRefs: record.proofRequirements.refs,
-    })),
+    jobs: safeRecords.map((record) => {
+      const blocker = projectedBlockerCode(record.blockerMetadata) || record.integrationState.blocker;
+      return Object.freeze({
+        jobId: record.jobId,
+        issueNumber: record.issueNumber,
+        branch: record.branch,
+        status: record.status,
+        requiresOperator: record.sharedWorkspaceMessage.requiresOperator
+          || record.blockerMetadata?.operatorActionRequired === true
+          || !!projectedBlockerCode(record.blockerMetadata),
+        blocker,
+        proofRefs: record.proofRequirements.refs,
+      });
+    }),
     finalVerdict: 'CODEX_QUEUE_DASHBOARD_READY',
   });
 }

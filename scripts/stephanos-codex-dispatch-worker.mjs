@@ -1,35 +1,218 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { createWriteStream, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import {
+  cpSync,
+  createWriteStream,
+  existsSync,
+  readFileSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOCAL_CODEX_TASK_SCHEMA } from '../shared/agents/localCodexExecIntegration.mjs';
+import {
+  STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES,
+  STEPHANOS_DIST_MANIFEST_MAX_FILES,
+  STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES,
+  STEPHANOS_DIST_MANIFEST_SCHEMA_VERSION,
+  computeStephanosDistFingerprint,
+  computeStephanosDistManifestFingerprint,
+  computeStephanosSourceFingerprint,
+  createStephanosDistManifest,
+} from './stephanos-build-utils.mjs';
 import {
   extractCodexThreadId,
   publishRemoteCodexTaskVisibility,
 } from '../shared/agents/remoteCodexTaskVisibility.mjs';
+import {
+  createScenarioSourceGitEnvironment,
+  evaluateMusicRatingPreservesPlaybackScenarioEvidence,
+} from './browser-proof-runner.mjs';
 
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
 ]);
+const CANONICAL_BROWSER_PROOF_URL = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
+const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
+const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
+const CANONICAL_RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
+const CANONICAL_RUNTIME_WORKTREE_PREFIX = 'stephanos-exact-head-build-';
+const EXACT_HEAD_TREE_MAX_FILES = 50_000;
+const EXACT_HEAD_TREE_MAX_BYTES = 512 * 1024 * 1024;
+const EXACT_HEAD_TREE_BATCH_OVERHEAD_BYTES = 8 * 1024 * 1024;
+const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
+const MUSIC_RATING_PRESERVES_PLAYBACK = 'MUSIC_RATING_PRESERVES_PLAYBACK';
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
 function writeJson(path, value) {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+    flag: 'wx',
+  });
+  try {
+    renameSync(tempPath, path);
+  } catch (error) {
+    try { unlinkSync(tempPath); } catch {}
+    throw error;
+  }
 }
 
-function gitCapture(repoRoot, args) {
-  const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', shell: false });
+function gitCapture(repoRoot, args, spawnSyncFn = spawnSync) {
+  const result = spawnSyncFn('git', args, { cwd: repoRoot, encoding: 'utf8', shell: false });
   return {
     ok: !result.error && result.status === 0,
     status: result.status,
-    stdout: String(result.stdout || '').trim(),
+    stdout: String(result.stdout || '').replace(/\s+$/, ''),
     stderr: String(result.stderr || '').trim(),
     error: result.error?.message || '',
   };
+}
+
+function processCapture(spawnSyncFn, executable, args, options = {}) {
+  const result = spawnSyncFn(executable, args, {
+    cwd: options.cwd,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 120000,
+  });
+  return {
+    ok: !result.error && result.status === 0,
+    stdout: String(result.stdout || '').trim().toLowerCase(),
+  };
+}
+
+function processTextCapture(spawnSyncFn, executable, args, options = {}) {
+  const result = spawnSyncFn(executable, args, {
+    cwd: options.cwd,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 120000,
+  });
+  return {
+    ok: !result.error && result.status === 0,
+    stdout: String(result.stdout || '').replace(/(?:\r?\n)+$/, ''),
+  };
+}
+
+export function validateExactHeadAtWorkerStart(task, {
+  spawnSyncFn = spawnSync,
+  platform = process.platform,
+  verificationPhase = 'worker-start',
+  checkSourceStatus = true,
+} = {}) {
+  if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
+  const proof = task.exactHeadProof;
+  const expectedHead = String(proof.expectedHead || '').trim().toLowerCase();
+  const repository = String(proof.repository || '').trim();
+  const prNumber = Number(proof.prNumber);
+  const expectedBranch = String(proof.branch || task.branch || 'main').trim();
+  if (!/^[0-9a-f]{40}$/.test(expectedHead) || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(prNumber) || prNumber <= 0 || expectedBranch !== 'main') {
+    return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID', verificationPhase });
+  }
+  const gh = processCapture(
+    spawnSyncFn,
+    platform === 'win32' ? 'gh.exe' : 'gh',
+    ['api', `repos/${repository}/pulls/${prNumber}`, '--jq', '.head.sha'],
+  );
+  if (!gh.ok || !/^[0-9a-f]{40}$/.test(gh.stdout)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_LOOKUP_FAILED', expectedHead, branch: expectedBranch, verificationPhase });
+  }
+  if (gh.stdout !== expectedHead) {
+    return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_MISMATCH', expectedHead, pullRequestHead: gh.stdout, branch: expectedBranch, verificationPhase });
+  }
+  const git = processCapture(
+    spawnSyncFn,
+    platform === 'win32' ? 'git.exe' : 'git',
+    ['rev-parse', 'HEAD'],
+    { cwd: task.repoRoot },
+  );
+  if (!git.ok || !/^[0-9a-f]{40}$/.test(git.stdout)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'LOCAL_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead: gh.stdout, branch: expectedBranch, verificationPhase });
+  }
+  if (git.stdout !== expectedHead) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'EXPECTED_HEAD_MISMATCH',
+      expectedHead,
+      pullRequestHead: gh.stdout,
+      localHead: git.stdout,
+      branch: expectedBranch,
+      verificationPhase,
+    });
+  }
+  if (!checkSourceStatus) {
+    return Object.freeze({
+      ok: true,
+      required: true,
+      expectedHead,
+      pullRequestHead: gh.stdout,
+      localHead: git.stdout,
+      branch: expectedBranch,
+      verificationPhase,
+      sourceStatusChecked: false,
+    });
+  }
+  const status = processTextCapture(
+    spawnSyncFn,
+    platform === 'win32' ? 'git.exe' : 'git',
+    ['status', '--porcelain=v1', '--untracked-files=all'],
+    { cwd: task.repoRoot },
+  );
+  if (!status.ok) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED',
+      expectedHead,
+      pullRequestHead: gh.stdout,
+      localHead: git.stdout,
+      branch: expectedBranch,
+      expectedBranch,
+      verificationPhase,
+    });
+  }
+  const dirt = classifyPostTaskDirt(status.stdout);
+  if (!dirt.safe) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'PRE_EXISTING_SOURCE_DIRT',
+      expectedHead,
+      pullRequestHead: gh.stdout,
+      localHead: git.stdout,
+      branch: expectedBranch,
+      verificationPhase,
+      sourcePaths: dirt.source,
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    required: true,
+    expectedHead,
+    pullRequestHead: gh.stdout,
+    localHead: git.stdout,
+    branch: expectedBranch,
+    expectedBranch,
+    verificationPhase,
+    sourceDirtClean: true,
+    generatedRuntimePaths: dirt.generated,
+  });
 }
 
 function boundedText(value = '', limit = 4000) {
@@ -94,6 +277,835 @@ export function compareDirtSnapshots(before = {}, after = {}) {
   });
 }
 
+export function resolveExpectedSourceFingerprint(
+  sourceFingerprintFactory,
+  repoRoot,
+) {
+  try {
+    const fingerprint = String(sourceFingerprintFactory(repoRoot) || '').trim().toLowerCase();
+    return EXACT_SOURCE_FINGERPRINT.test(fingerprint) ? fingerprint : '';
+  } catch {
+    return '';
+  }
+}
+
+export function resolveExpectedDistFingerprint(
+  distFingerprintFactory,
+  repoRoot,
+) {
+  try {
+    const fingerprint = String(distFingerprintFactory(repoRoot) || '').trim().toLowerCase();
+    return EXACT_DIST_FINGERPRINT.test(fingerprint) ? fingerprint : '';
+  } catch {
+    return '';
+  }
+}
+
+export function validateExactHeadDistManifest(manifest = {}) {
+  try {
+    const entries = Array.isArray(manifest?.entries) ? manifest.entries : [];
+    const totalBytes = entries.reduce((total, entry) => total + Number(entry?.size), 0);
+    const fingerprint = computeStephanosDistManifestFingerprint(entries);
+    const valid = (
+      manifest?.schemaVersion === STEPHANOS_DIST_MANIFEST_SCHEMA_VERSION
+      && entries.length > 0
+      && entries.length <= STEPHANOS_DIST_MANIFEST_MAX_FILES
+      && entries.every((entry) => (
+        Number.isSafeInteger(entry?.size)
+        && entry.size >= 0
+        && entry.size <= STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES
+      ))
+      && totalBytes <= STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES
+      && manifest.fileCount === entries.length
+      && manifest.totalBytes === totalBytes
+      && manifest.fingerprint === fingerprint
+      && EXACT_DIST_FINGERPRINT.test(fingerprint)
+    );
+    return Object.freeze({
+      ok: valid,
+      fingerprint: valid ? fingerprint : '',
+      entries: valid ? Object.freeze([...entries]) : Object.freeze([]),
+    });
+  } catch {
+    return Object.freeze({
+      ok: false,
+      fingerprint: '',
+      entries: Object.freeze([]),
+    });
+  }
+}
+
+function runtimePath(repoRoot, ...parts) {
+  return resolve(repoRoot, ...parts);
+}
+
+function runtimePathIsSymlink(path) {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function createIsolatedRuntimeBuildWorkspace() {
+  const temporaryRoot = mkdtempSync(join(tmpdir(), CANONICAL_RUNTIME_WORKTREE_PREFIX));
+  return Object.freeze({
+    temporaryRoot,
+    buildRoot: join(temporaryRoot, 'repo'),
+  });
+}
+
+function runExactHeadGit(spawnSyncFn, args, {
+  cwd,
+  gitEnvironment,
+  encoding = 'utf8',
+  input,
+  maxBuffer,
+} = {}) {
+  return spawnSyncFn('git', ['--no-replace-objects', ...args], {
+    cwd,
+    encoding,
+    env: gitEnvironment,
+    input,
+    maxBuffer,
+    shell: false,
+    windowsHide: true,
+    timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+  });
+}
+
+function exactGitSha(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(normalized) ? normalized : '';
+}
+
+function gitBlobSha(bytes) {
+  return createHash('sha1')
+    .update(`blob ${bytes.length}\0`, 'utf8')
+    .update(bytes)
+    .digest('hex');
+}
+
+function parseExactHeadTreeListing(output) {
+  const text = Buffer.isBuffer(output) ? output.toString('utf8') : String(output || '');
+  if (!text || text.includes('\uFFFD') || !text.endsWith('\0')) {
+    throw new Error('approved tree listing is missing or not safely decodable');
+  }
+  const entries = [];
+  const paths = new Set();
+  let totalBytes = 0;
+  for (const record of text.slice(0, -1).split('\0')) {
+    const match = /^(\d{6}) (blob|commit) ([0-9a-f]{40})\s+(\d+|-)\t(.+)$/i.exec(record);
+    if (!match) throw new Error('approved tree listing contains an invalid record');
+    const [, mode, type, objectIdValue, sizeValue, path] = match;
+    const segments = path.split('/');
+    if (
+      type !== 'blob'
+      || !['100644', '100755'].includes(mode)
+      || sizeValue === '-'
+      || path.includes('\\')
+      || path.startsWith('/')
+      || /^[A-Za-z]:/.test(path)
+      || segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.toLowerCase() === '.git')
+      || paths.has(path)
+    ) {
+      throw new Error('approved tree contains an unsupported or unsafe entry');
+    }
+    const size = Number(sizeValue);
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error('approved tree contains an invalid blob size');
+    totalBytes += size;
+    if (
+      entries.length + 1 > EXACT_HEAD_TREE_MAX_FILES
+      || totalBytes > EXACT_HEAD_TREE_MAX_BYTES
+    ) {
+      throw new Error('approved tree exceeds the bounded materialization limits');
+    }
+    paths.add(path);
+    entries.push(Object.freeze({
+      mode,
+      objectId: objectIdValue.toLowerCase(),
+      path,
+      size,
+    }));
+  }
+  if (entries.length === 0) throw new Error('approved tree contains no materializable blobs');
+  return Object.freeze({ entries: Object.freeze(entries), totalBytes });
+}
+
+function parseExactHeadBlobBatch(output, entries) {
+  const bytes = Buffer.isBuffer(output) ? output : Buffer.from(output || '');
+  const blobs = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const newline = bytes.indexOf(0x0a, offset);
+    if (newline < 0) throw new Error('approved blob batch is missing an object header');
+    const header = bytes.subarray(offset, newline).toString('ascii');
+    const match = /^([0-9a-f]{40}) blob (\d+)$/i.exec(header);
+    if (!match) throw new Error('approved blob batch contains an invalid object header');
+    const [, objectIdValue, sizeValue] = match;
+    const size = Number(sizeValue);
+    const contentStart = newline + 1;
+    const contentEnd = contentStart + size;
+    if (
+      objectIdValue.toLowerCase() !== entry.objectId
+      || size !== entry.size
+      || contentEnd >= bytes.length
+      || bytes[contentEnd] !== 0x0a
+    ) {
+      throw new Error('approved blob batch does not match its immutable tree entry');
+    }
+    const content = Buffer.from(bytes.subarray(contentStart, contentEnd));
+    if (gitBlobSha(content) !== entry.objectId) {
+      throw new Error('approved blob bytes do not match their immutable object ID');
+    }
+    blobs.push(content);
+    offset = contentEnd + 1;
+  }
+  if (offset !== bytes.length) throw new Error('approved blob batch contains unexpected trailing output');
+  return blobs;
+}
+
+function materializedBlobBytes(path) {
+  const status = lstatSync(path);
+  if (!status.isFile() || status.isSymbolicLink()) {
+    throw new Error('materialized regular blob has an invalid filesystem type');
+  }
+  return readFileSync(path);
+}
+
+export function materializeExactHeadBuildTree({
+  repoRoot,
+  buildRoot,
+  expectedHead,
+  spawnSyncFn = spawnSync,
+  gitEnvironment,
+} = {}) {
+  try {
+    const listing = runExactHeadGit(
+      spawnSyncFn,
+      ['ls-tree', '-rlz', '--full-tree', expectedHead],
+      {
+        cwd: repoRoot,
+        gitEnvironment,
+        encoding: null,
+        maxBuffer: EXACT_HEAD_TREE_BATCH_OVERHEAD_BYTES,
+      },
+    );
+    if (listing?.error || listing?.status !== 0) {
+      throw new Error(listing?.stderr || listing?.stdout || listing?.error?.message || 'approved tree listing failed');
+    }
+    const manifest = parseExactHeadTreeListing(listing.stdout);
+    const objectInput = Buffer.from(`${manifest.entries.map((entry) => entry.objectId).join('\n')}\n`, 'ascii');
+    const batch = runExactHeadGit(spawnSyncFn, ['cat-file', '--batch'], {
+      cwd: repoRoot,
+      gitEnvironment,
+      encoding: null,
+      input: objectInput,
+      maxBuffer: manifest.totalBytes + EXACT_HEAD_TREE_BATCH_OVERHEAD_BYTES,
+    });
+    if (batch?.error || batch?.status !== 0) {
+      throw new Error(batch?.stderr || batch?.stdout || batch?.error?.message || 'approved blob batch failed');
+    }
+    const blobs = parseExactHeadBlobBatch(batch.stdout, manifest.entries);
+    const rootPrefix = `${resolve(buildRoot)}${sep}`;
+    for (let index = 0; index < manifest.entries.length; index += 1) {
+      const entry = manifest.entries[index];
+      const target = resolve(buildRoot, ...entry.path.split('/'));
+      if (!target.startsWith(rootPrefix) || existsSync(target)) {
+        throw new Error('approved blob target escapes or collides with the detached build root');
+      }
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, blobs[index], {
+        flag: 'wx',
+        mode: entry.mode === '100755' ? 0o755 : 0o644,
+      });
+      if (gitBlobSha(materializedBlobBytes(target)) !== entry.objectId) {
+        throw new Error('materialized build bytes do not match the approved immutable blob');
+      }
+    }
+    return Object.freeze({
+      ok: true,
+      fileCount: manifest.entries.length,
+      totalBytes: manifest.totalBytes,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_BUILD_BYTES_MISMATCH',
+      reason: boundedText(error?.message || error),
+    });
+  }
+}
+
+function cleanupIsolatedRuntimeBuildWorkspace({
+  workspace,
+  repoRoot,
+  dependencyInstallPaths = [],
+  approvedRuntimeDistBackup = '',
+  worktreeAdded = false,
+  spawnSyncFn,
+  gitEnvironment,
+} = {}) {
+  if (!workspace) return Object.freeze({ ok: true });
+  let cleanupError = '';
+  let worktreeRemoved = !worktreeAdded;
+  const temporaryDist = runtimePath(workspace.buildRoot, 'apps', 'stephanos', 'dist');
+  try {
+    if (existsSync(temporaryDist)) {
+      if (runtimePathIsSymlink(temporaryDist)) {
+        unlinkSync(temporaryDist);
+      } else {
+        rmSync(temporaryDist, { recursive: true, force: true });
+      }
+    }
+  } catch (error) {
+    cleanupError = `TEMPORARY_DIST_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
+  }
+  if (approvedRuntimeDistBackup) {
+    try {
+      if (!existsSync(approvedRuntimeDistBackup) || existsSync(temporaryDist)) {
+        throw new Error('approved runtime dist backup cannot be restored safely');
+      }
+      mkdirSync(dirname(temporaryDist), { recursive: true });
+      renameSync(approvedRuntimeDistBackup, temporaryDist);
+    } catch (error) {
+      cleanupError ||= `APPROVED_RUNTIME_DIST_RESTORE_FAILED:${boundedText(error?.message || error, 800)}`;
+    }
+  }
+  for (const dependencyPath of dependencyInstallPaths) {
+    try {
+      if (!existsSync(dependencyPath) && !runtimePathIsSymlink(dependencyPath)) continue;
+      if (runtimePathIsSymlink(dependencyPath)) unlinkSync(dependencyPath);
+      else rmSync(dependencyPath, { recursive: true, force: true });
+    } catch (error) {
+      cleanupError ||= `DEPENDENCY_INSTALL_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
+    }
+  }
+  if (worktreeAdded) {
+    let removal;
+    try {
+      removal = runExactHeadGit(spawnSyncFn, ['worktree', 'remove', workspace.buildRoot], {
+        cwd: repoRoot,
+        gitEnvironment,
+      });
+    } catch (error) {
+      cleanupError ||= `WORKTREE_REMOVE_FAILED:${boundedText(error?.message || error, 800)}`;
+    }
+    if (removal && (removal.error || removal.status !== 0)) {
+      cleanupError ||= `WORKTREE_REMOVE_FAILED:${boundedText(removal.stderr || removal.stdout || removal.error?.message, 800)}`;
+    } else if (removal) {
+      worktreeRemoved = true;
+    }
+  }
+  try {
+    if (worktreeRemoved && existsSync(workspace.temporaryRoot)) {
+      rmSync(workspace.temporaryRoot, { recursive: true, force: true });
+    }
+  } catch (error) {
+    cleanupError ||= `TEMPORARY_ROOT_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
+  }
+  return Object.freeze(cleanupError
+    ? { ok: false, blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_CLEANUP_FAILED', reason: cleanupError }
+    : { ok: true });
+}
+
+function installRuntimeDependencies(buildRoot, platform, spawnSyncFn) {
+  const uiRoot = runtimePath(buildRoot, 'stephanos-ui');
+  const packageJsonPath = runtimePath(uiRoot, 'package.json');
+  const lockfilePath = runtimePath(uiRoot, 'package-lock.json');
+  const installedPath = runtimePath(uiRoot, 'node_modules');
+  if (!existsSync(packageJsonPath) || !existsSync(lockfilePath)) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_DEPENDENCY_LOCKFILE_MISSING',
+    });
+  }
+  const npmExecutable = platform === 'win32' ? 'npm.cmd' : 'npm';
+  let installation;
+  try {
+    installation = spawnSyncFn(npmExecutable, ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
+      cwd: uiRoot,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_DEPENDENCY_INSTALL_FAILED',
+      reason: boundedText(error?.message || error),
+    });
+  }
+  if (installation?.error || installation?.status !== 0 || !existsSync(installedPath) || runtimePathIsSymlink(installedPath)) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_DEPENDENCY_INSTALL_FAILED',
+      reason: boundedText(installation?.error?.message || installation?.stderr || installation?.stdout),
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    manager: 'npm-ci',
+    lockfile: 'stephanos-ui/package-lock.json',
+    installedPaths: Object.freeze([installedPath]),
+  });
+}
+
+function copyVerifiedRuntimeDist({ repoRoot, buildRoot, distManifestFactory }) {
+  const sourceDist = runtimePath(buildRoot, 'apps', 'stephanos', 'dist');
+  const targetDist = runtimePath(repoRoot, 'apps', 'stephanos', 'dist');
+  if (!existsSync(sourceDist) || runtimePathIsSymlink(sourceDist)) {
+    return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DIST_MISSING_OR_SYMLINK' });
+  }
+  let sourceStat;
+  try {
+    sourceStat = lstatSync(sourceDist);
+  } catch {
+    sourceStat = null;
+  }
+  if (!sourceStat?.isDirectory() || sourceStat.isSymbolicLink()) {
+    return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DIST_MISSING_OR_SYMLINK' });
+  }
+  if (runtimePathIsSymlink(targetDist)) {
+    return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DESTINATION_SYMLINK' });
+  }
+  let sourceManifest;
+  try {
+    sourceManifest = distManifestFactory(buildRoot);
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED',
+      reason: boundedText(error?.message || error),
+    });
+  }
+  const validatedSource = validateExactHeadDistManifest(sourceManifest);
+  if (!validatedSource.ok) {
+    return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED' });
+  }
+  mkdirSync(dirname(targetDist), { recursive: true });
+  const stagingRoot = mkdtempSync(join(dirname(targetDist), '.stephanos-exact-head-dist-'));
+  const stagedDist = runtimePath(stagingRoot, 'apps', 'stephanos', 'dist');
+  const backupDist = `${targetDist}.previous-${randomUUID()}`;
+  let previousDistMoved = false;
+  let stagedDistInstalled = false;
+  try {
+    mkdirSync(dirname(stagedDist), { recursive: true });
+    cpSync(sourceDist, stagedDist, { recursive: true, force: true, dereference: true });
+    const stagedManifest = distManifestFactory(stagingRoot);
+    const validatedStaged = validateExactHeadDistManifest(stagedManifest);
+    if (!validatedStaged.ok || validatedStaged.fingerprint !== validatedSource.fingerprint) {
+      return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DIST_BINDING_FAILED' });
+    }
+    if (existsSync(targetDist)) {
+      renameSync(targetDist, backupDist);
+      previousDistMoved = true;
+    }
+    renameSync(stagedDist, targetDist);
+    stagedDistInstalled = true;
+    const targetManifest = distManifestFactory(repoRoot);
+    const validatedTarget = validateExactHeadDistManifest(targetManifest);
+    if (!validatedTarget.ok || validatedSource.fingerprint !== validatedTarget.fingerprint) {
+      rmSync(targetDist, { recursive: true, force: true });
+      stagedDistInstalled = false;
+      if (previousDistMoved) {
+        renameSync(backupDist, targetDist);
+        previousDistMoved = false;
+      }
+      return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DIST_BINDING_FAILED' });
+    }
+    if (previousDistMoved) {
+      rmSync(backupDist, { recursive: true, force: true });
+      previousDistMoved = false;
+    }
+    return Object.freeze({
+      ok: true,
+      distManifest: targetManifest,
+      expectedDistFingerprint: validatedTarget.fingerprint,
+    });
+  } catch (error) {
+    try {
+      if (stagedDistInstalled && existsSync(targetDist)) rmSync(targetDist, { recursive: true, force: true });
+      if (previousDistMoved && existsSync(backupDist)) {
+        renameSync(backupDist, targetDist);
+        previousDistMoved = false;
+      }
+    } catch (rollbackError) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'CANONICAL_RUNTIME_DIST_ROLLBACK_FAILED',
+        reason: boundedText(rollbackError?.message || rollbackError),
+      });
+    }
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_DIST_COPY_FAILED',
+      reason: boundedText(error?.message || error),
+    });
+  }
+  finally {
+    try {
+      if (existsSync(stagingRoot)) rmSync(stagingRoot, { recursive: true, force: true });
+      if (!previousDistMoved && existsSync(backupDist)) rmSync(backupDist, { recursive: true, force: true });
+    } catch {
+      // The caller will fail closed on the next generated-runtime status check.
+    }
+  }
+}
+
+export function prepareExactHeadRuntimeBundle(repoRoot, {
+  spawnSyncFn = spawnSync,
+  distManifestFactory = (root) => createStephanosDistManifest({ rootDir: root }),
+  sourceFingerprintFactory = (root) => computeStephanosSourceFingerprint({ rootDir: root }),
+  expectedHead = '',
+  platform = process.platform,
+  environment = process.env,
+  isolatedBuildWorkspaceFactory = createIsolatedRuntimeBuildWorkspace,
+  treeMaterializer = materializeExactHeadBuildTree,
+} = {}) {
+  const isolated = Boolean(expectedHead);
+  if (isolated && !/^[0-9a-f]{40}$/i.test(expectedHead)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID' });
+  }
+  let workspace = null;
+  let worktreeAdded = false;
+  let dependencyInstallPaths = [];
+  let approvedRuntimeDistBackup = '';
+  let result = null;
+  const gitEnvironment = isolated
+    ? createScenarioSourceGitEnvironment(environment, { platform })
+    : null;
+  try {
+    const buildRoot = isolated
+      ? (() => {
+        const candidate = isolatedBuildWorkspaceFactory({ repoRoot, expectedHead });
+        if (!candidate?.buildRoot || !candidate?.temporaryRoot) throw new Error('isolated workspace factory returned an invalid workspace');
+        workspace = candidate;
+        return candidate.buildRoot;
+      })()
+      : repoRoot;
+    if (isolated) {
+      let approvedTree = '';
+      let approvedTreeLookup;
+      try {
+        approvedTreeLookup = runExactHeadGit(spawnSyncFn, ['rev-parse', `${expectedHead}^{tree}`], {
+          cwd: repoRoot,
+          gitEnvironment,
+        });
+      } catch (error) {
+        result = {
+          ok: false,
+          required: true,
+          blocker: 'CANONICAL_RUNTIME_APPROVED_TREE_LOOKUP_FAILED',
+          reason: boundedText(error?.message || error),
+        };
+      }
+      if (!result) {
+        approvedTree = exactGitSha(approvedTreeLookup?.stdout);
+        if (approvedTreeLookup?.error || approvedTreeLookup?.status !== 0 || !approvedTree) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_APPROVED_TREE_LOOKUP_FAILED',
+            reason: boundedText(approvedTreeLookup?.stderr || approvedTreeLookup?.stdout || approvedTreeLookup?.error?.message),
+          };
+        }
+      }
+      let worktree;
+      if (!result) {
+        try {
+          worktree = runExactHeadGit(spawnSyncFn, ['worktree', 'add', '--detach', '--no-checkout', buildRoot, expectedHead], {
+            cwd: repoRoot,
+            gitEnvironment,
+          });
+        } catch (error) {
+          result = { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_FAILED', reason: boundedText(error?.message || error) };
+        }
+      }
+      if (!result && (worktree?.error || worktree?.status !== 0 || !existsSync(buildRoot))) {
+        result = {
+          ok: false,
+          required: true,
+          blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_FAILED',
+          reason: boundedText(worktree?.stderr || worktree?.stdout || worktree?.error?.message),
+        };
+      }
+      if (!result) {
+        worktreeAdded = true;
+        let materializedIndex;
+        try {
+          materializedIndex = runExactHeadGit(spawnSyncFn, ['read-tree', expectedHead], {
+            cwd: buildRoot,
+            gitEnvironment,
+          });
+        } catch (error) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_BUILD_INDEX_FAILED',
+            reason: boundedText(error?.message || error),
+          };
+        }
+        if (!result && (materializedIndex?.error || materializedIndex?.status !== 0)) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_BUILD_INDEX_FAILED',
+            reason: boundedText(materializedIndex?.stderr || materializedIndex?.stdout || materializedIndex?.error?.message),
+          };
+        }
+      }
+      if (!result) {
+        let materializedIdentity;
+        try {
+          materializedIdentity = runExactHeadGit(spawnSyncFn, ['rev-parse', 'HEAD', 'HEAD^{tree}'], {
+            cwd: buildRoot,
+            gitEnvironment,
+          });
+        } catch (error) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_IDENTITY_MISMATCH',
+            reason: boundedText(error?.message || error),
+          };
+        }
+        const [materializedHead = '', materializedTree = '', ...unexpectedIdentity] = String(materializedIdentity?.stdout || '')
+          .trim()
+          .split(/\r?\n/)
+          .map((value) => exactGitSha(value));
+        if (
+          !result
+          && (
+            materializedIdentity?.error
+            || materializedIdentity?.status !== 0
+            || unexpectedIdentity.length > 0
+            || materializedHead !== expectedHead.toLowerCase()
+            || materializedTree !== approvedTree
+          )
+        ) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_IDENTITY_MISMATCH',
+            expectedHead: expectedHead.toLowerCase(),
+            materializedHead,
+            expectedTree: approvedTree,
+            materializedTree,
+            reason: boundedText(materializedIdentity?.stderr || materializedIdentity?.error?.message),
+          };
+        }
+      }
+      if (!result) {
+        const materialized = treeMaterializer({
+          repoRoot,
+          buildRoot,
+          expectedHead,
+          spawnSyncFn,
+          gitEnvironment,
+        });
+        if (!materialized.ok) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: materialized.blocker,
+            reason: materialized.reason,
+          };
+        }
+      }
+      if (!result) {
+        const materializedDist = runtimePath(buildRoot, 'apps', 'stephanos', 'dist');
+        if (existsSync(materializedDist)) {
+          try {
+            if (runtimePathIsSymlink(materializedDist)) throw new Error('approved runtime dist cannot be a symbolic link');
+            approvedRuntimeDistBackup = runtimePath(workspace.temporaryRoot, 'approved-runtime-dist');
+            renameSync(materializedDist, approvedRuntimeDistBackup);
+          } catch (error) {
+            result = {
+              ok: false,
+              required: true,
+              blocker: 'CANONICAL_RUNTIME_APPROVED_DIST_STAGE_FAILED',
+              reason: boundedText(error?.message || error),
+            };
+          }
+        }
+      }
+      if (!result) {
+        dependencyInstallPaths = [runtimePath(buildRoot, 'stephanos-ui', 'node_modules')];
+        const dependencies = installRuntimeDependencies(buildRoot, platform, spawnSyncFn);
+        if (!dependencies.ok) {
+          result = { ok: false, required: true, blocker: dependencies.blocker, reason: dependencies.reason };
+        }
+      }
+    }
+    let expectedSourceFingerprint = '';
+    if (isolated && !result) {
+      expectedSourceFingerprint = resolveExpectedSourceFingerprint(sourceFingerprintFactory, isolated ? workspace.buildRoot : repoRoot);
+      if (!expectedSourceFingerprint) {
+        result = { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_SOURCE_FINGERPRINT_FAILED' };
+      }
+    }
+    const steps = [
+      {
+        name: 'build',
+        scriptPath: resolve(isolated ? workspace.buildRoot : repoRoot, 'scripts', 'build-stephanos-ui.mjs'),
+        blocker: 'CANONICAL_RUNTIME_BUILD_FAILED',
+      },
+      {
+        name: 'verify',
+        scriptPath: resolve(isolated ? workspace.buildRoot : repoRoot, 'scripts', 'verify-stephanos-dist.mjs'),
+        blocker: 'CANONICAL_RUNTIME_VERIFY_FAILED',
+      },
+    ];
+    if (!result) {
+      for (const step of steps) {
+        let execution;
+        try {
+          execution = spawnSyncFn(process.execPath, [step.scriptPath], {
+            cwd: isolated ? workspace.buildRoot : repoRoot,
+            encoding: 'utf8',
+            shell: false,
+            windowsHide: true,
+            timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+          });
+        } catch (error) {
+          result = { ok: false, required: true, blocker: step.blocker, failedStep: step.name, reason: boundedText(error?.message || error) };
+          break;
+        }
+        if (execution?.error || execution?.status !== 0) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: step.blocker,
+            failedStep: step.name,
+            status: execution?.status ?? null,
+            reason: boundedText(execution?.error?.message || execution?.stderr || execution?.stdout),
+          };
+          break;
+        }
+      }
+    }
+    if (!result) {
+      if (isolated) {
+        const copied = copyVerifiedRuntimeDist({ repoRoot, buildRoot: workspace.buildRoot, distManifestFactory });
+        result = copied.ok
+          ? {
+            ok: true,
+            required: true,
+            canonicalBuildPerformed: true,
+            canonicalVerifyPerformed: true,
+            immutableBuildSource: expectedHead,
+            expectedSourceFingerprint,
+            expectedDistFingerprint: copied.expectedDistFingerprint,
+            distManifest: copied.distManifest,
+          }
+          : { ok: false, required: true, blocker: copied.blocker, reason: copied.reason };
+      } else {
+        let distManifest;
+        try {
+          distManifest = distManifestFactory(repoRoot);
+        } catch {
+          distManifest = null;
+        }
+        const validatedManifest = validateExactHeadDistManifest(distManifest);
+        result = validatedManifest.ok
+          ? {
+            ok: true,
+            required: true,
+            canonicalBuildPerformed: true,
+            canonicalVerifyPerformed: true,
+            expectedSourceFingerprint,
+            expectedDistFingerprint: validatedManifest.fingerprint,
+            distManifest,
+          }
+          : { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED' };
+      }
+    }
+  } catch (error) {
+    result ||= { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_FAILED', reason: boundedText(error?.message || error) };
+  }
+  if (workspace) {
+    const cleanup = cleanupIsolatedRuntimeBuildWorkspace({
+      workspace,
+      repoRoot,
+      dependencyInstallPaths,
+      approvedRuntimeDistBackup,
+      worktreeAdded,
+      spawnSyncFn,
+      gitEnvironment,
+    });
+    if (!cleanup.ok) {
+      result = { ok: false, required: true, blocker: cleanup.blocker, reason: cleanup.reason };
+    }
+  }
+  return Object.freeze(result || { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_FAILED' });
+}
+
+export function evaluateWorkerSourceSafety({
+  exactHeadRequired = false,
+  expectedHead = '',
+  expectedDistFingerprint = '',
+  runtimeDistFingerprintAfter = '',
+  sourceHeadBefore = {},
+  sourceHeadAfter = {},
+  statusBefore = {},
+  statusAfter = {},
+  dirtBefore = {},
+  dirtAfter = {},
+  dirtDelta = {},
+  preProofExactHeadValidation = { ok: true },
+  postProofExactHeadValidation = { ok: true },
+} = {}) {
+  const sourceHeadUnchanged = (
+    sourceHeadBefore.ok === true
+    && sourceHeadAfter.ok === true
+    && sourceHeadBefore.stdout === sourceHeadAfter.stdout
+  );
+  const sourceHeadBound = !exactHeadRequired || (
+    sourceHeadBefore.stdout === expectedHead
+    && sourceHeadAfter.stdout === expectedHead
+  );
+  const exactHeadStatusAvailable = !exactHeadRequired || (
+    statusBefore.ok === true
+    && statusAfter.ok === true
+  );
+  const exactHeadSourceClean = !exactHeadRequired || (
+    dirtBefore.safe === true
+    && dirtAfter.safe === true
+  );
+  const exactHeadRuntimeBound = !exactHeadRequired || (
+    exactHeadStatusAvailable
+    && EXACT_DIST_FINGERPRINT.test(expectedDistFingerprint)
+    && runtimeDistFingerprintAfter === expectedDistFingerprint
+    && dirtDelta.generatedRuntimeMutationDetected !== true
+  );
+  const exactHeadExecutionBound = !exactHeadRequired || (
+    preProofExactHeadValidation.ok === true
+    && postProofExactHeadValidation.ok === true
+  );
+  const sourceSafe = (
+    sourceHeadUnchanged
+    && sourceHeadBound
+    && exactHeadStatusAvailable
+    && exactHeadSourceClean
+    && exactHeadRuntimeBound
+    && exactHeadExecutionBound
+    && dirtDelta.sourceMutationDetected !== true
+  );
+  return Object.freeze({
+    sourceSafe,
+    sourceHeadUnchanged,
+    sourceHeadBound,
+    exactHeadStatusAvailable,
+    exactHeadSourceClean,
+    exactHeadRuntimeBound,
+    exactHeadExecutionBound,
+    preProofExactHeadValidation,
+    postProofExactHeadValidation,
+  });
+}
+
 export function parseCodexJsonEvents(output = '') {
   const events = [];
   const invalidLines = [];
@@ -112,6 +1124,8 @@ export function classifyCodexExecution({
   events = [],
   lastMessage = '',
   stderr = '',
+  requiresStructuredVerdict = false,
+  expectedProofScenario = '',
 } = {}) {
   const failureEvent = events.find((event) => (
     event?.type === 'turn.failed'
@@ -124,7 +1138,27 @@ export function classifyCodexExecution({
   const failureText = `${lastMessage}\n${stderrExcerpt}\n${failureEvent ? JSON.stringify(failureEvent) : ''}`;
   const cancelled = /(?:user\s+)?cancel(?:led|ed)(?:\s+by\s+user)?|tool call.*cancel(?:led|ed)/i.test(failureText);
   const exitPassed = exit.code === 0 && !exit.error;
-  const passed = exitPassed && turnCompleted && !failureEvent && !cancelled;
+  let structuredVerdict = null;
+  let structuredVerdictPresent = false;
+  let structuredBlockers = [];
+  let structuredProofScenario = '';
+  if (requiresStructuredVerdict) {
+    try {
+      const normalized = String(lastMessage || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      const payload = JSON.parse(normalized);
+      structuredVerdictPresent = Boolean(payload && typeof payload === 'object' && !Array.isArray(payload) && Object.hasOwn(payload, 'verdict'));
+      structuredVerdict = structuredVerdictPresent ? String(payload.verdict || '') : null;
+      structuredProofScenario = structuredVerdictPresent ? String(payload.proofScenario || '') : '';
+      structuredBlockers = Array.isArray(payload?.blockers) ? payload.blockers : [];
+    } catch {}
+  }
+  const structuredVerdictPassed = !requiresStructuredVerdict || (
+    structuredVerdictPresent
+    && structuredVerdict === 'PASS'
+    && (!expectedProofScenario || structuredProofScenario === expectedProofScenario)
+    && structuredBlockers.length === 0
+  );
+  const passed = exitPassed && turnCompleted && !failureEvent && !cancelled && structuredVerdictPassed;
   let reason = '';
   if (!exitPassed) {
     reason = exit.error || (events.length === 0 ? 'CODEX_CLI_STARTUP_FAILED' : `codex-exit-${exit.code ?? 'unknown'}`);
@@ -134,6 +1168,14 @@ export function classifyCodexExecution({
     reason = `CODEX_EVENT_${String(failureEvent.type || 'FAILED').toUpperCase().replaceAll('.', '_')}`;
   } else if (!turnCompleted) {
     reason = 'CODEX_TURN_COMPLETION_MISSING';
+  } else if (requiresStructuredVerdict && !structuredVerdictPresent) {
+    reason = 'CODEX_STRUCTURED_VERDICT_MISSING';
+  } else if (requiresStructuredVerdict && structuredVerdict !== 'PASS') {
+    reason = 'CODEX_STRUCTURED_VERDICT_FAILED';
+  } else if (requiresStructuredVerdict && expectedProofScenario && structuredProofScenario !== expectedProofScenario) {
+    reason = 'CODEX_STRUCTURED_PROOF_SCENARIO_MISMATCH';
+  } else if (requiresStructuredVerdict && structuredBlockers.length > 0) {
+    reason = 'CODEX_STRUCTURED_VERDICT_BLOCKERS_REMAIN';
   }
   return Object.freeze({
     passed,
@@ -142,8 +1184,328 @@ export function classifyCodexExecution({
     cancelled,
     failureEventType: failureEvent?.type || '',
     reason,
+    structuredVerdictRequired: requiresStructuredVerdict,
+    structuredVerdictPresent,
+    structuredVerdict,
+    structuredProofScenario,
+    structuredBlockers,
     eventCount: events.length,
     stderrExcerpt,
+  });
+}
+
+export function validateBrowserProofVerdict(lastMessage, task = {}, browserRuntimeProof = null) {
+  if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
+  const expectedScenario = String(task.exactHeadProof.proofScenario || '');
+  let payload;
+  try {
+    const normalized = String(lastMessage || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    payload = JSON.parse(normalized);
+  } catch {
+    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_VERDICT_INVALID' });
+  }
+  if (payload?.verdict !== 'PASS' || payload?.proofScenario !== expectedScenario) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: payload?.verdict === 'FAIL' ? 'BROWSER_PROOF_FAILED' : 'BROWSER_PROOF_VERDICT_INVALID',
+    });
+  }
+  if (!Array.isArray(payload.blockers) || payload.blockers.length > 0) {
+    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_BLOCKERS_REMAIN' });
+  }
+  const expectedHead = String(task.exactHeadProof.expectedHead || '').trim().toLowerCase();
+  if (
+    browserRuntimeProof?.required !== true
+    || browserRuntimeProof?.ok !== true
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: browserRuntimeProof?.blocker || 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
+    });
+  }
+  if (
+    browserRuntimeProof.schemaVersion !== BROWSER_RUNTIME_PROOF_SCHEMA
+    || browserRuntimeProof.mergeReady !== true
+    || !Array.isArray(browserRuntimeProof.blocking)
+    || browserRuntimeProof.blocking.length !== 0
+    || browserRuntimeProof.proofScenario !== expectedScenario
+    || browserRuntimeProof.scenarioEvidenceAccepted !== true
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_MACHINE_SCENARIO_EVIDENCE_MISSING',
+    });
+  }
+  if (expectedScenario !== MUSIC_RATING_PRESERVES_PLAYBACK) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_SCENARIO_INVALID',
+    });
+  }
+  const scenarioEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    browserRuntimeProof.scenarioEvidence,
+    { expectedHead },
+  );
+  if (!scenarioEvaluation.accepted) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: scenarioEvaluation.blocking[0] || 'BROWSER_PROOF_EVIDENCE_INCOMPLETE',
+      scenarioEvidenceBlockers: scenarioEvaluation.blocking,
+    });
+  }
+  const runtimeSourceHead = String(browserRuntimeProof.runtimeSourceHead || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(runtimeSourceHead)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISSING' });
+  }
+  if (runtimeSourceHead !== expectedHead) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH',
+      expectedHead,
+      runtimeSourceHead,
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    required: true,
+    proofScenario: expectedScenario,
+    expectedHead,
+    runtimeSourceHead,
+    evidence: browserRuntimeProof.scenarioEvidence,
+    scenarioEvidenceAccepted: true,
+    evidenceAuthority: 'worker-owned-playwright-runner',
+    modelScenarioEvidenceTrusted: false,
+  });
+}
+
+export function runBrowserRuntimeExactHeadProof(task, {
+  spawnSyncFn = spawnSync,
+  runnerPath = resolve(fileURLToPath(new URL('./browser-proof-runner.mjs', import.meta.url))),
+  expectedSourceFingerprint: suppliedExpectedSourceFingerprint = '',
+  expectedDistFingerprint: suppliedExpectedDistFingerprint = '',
+  expectedDistManifestPath: suppliedExpectedDistManifestPath = '',
+  proofScenario: suppliedProofScenario = '',
+} = {}) {
+  if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
+  const expectedHead = String(task.exactHeadProof.expectedHead || '').trim().toLowerCase();
+  const taskProofScenario = String(task.exactHeadProof.proofScenario || '').trim();
+  const proofScenario = String(suppliedProofScenario || '').trim();
+  if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID' });
+  }
+  if (
+    proofScenario
+    && (
+      proofScenario !== taskProofScenario
+      || proofScenario !== MUSIC_RATING_PRESERVES_PLAYBACK
+    )
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_SCENARIO_INVALID',
+      expectedHead,
+      proofScenario,
+    });
+  }
+  const expectedSourceFingerprint = String(suppliedExpectedSourceFingerprint || '').trim().toLowerCase();
+  if (!EXACT_SOURCE_FINGERPRINT.test(expectedSourceFingerprint)) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'LOCAL_SOURCE_FINGERPRINT_FAILED',
+      expectedHead,
+    });
+  }
+  const expectedDistFingerprint = String(suppliedExpectedDistFingerprint || '').trim().toLowerCase();
+  if (!EXACT_DIST_FINGERPRINT.test(expectedDistFingerprint)) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED',
+      expectedHead,
+      expectedSourceFingerprint,
+    });
+  }
+  const expectedDistManifestPath = String(suppliedExpectedDistManifestPath || '').trim();
+  if (!expectedDistManifestPath) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'CANONICAL_RUNTIME_MANIFEST_MISSING',
+      expectedHead,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+    });
+  }
+  let execution;
+  try {
+    execution = spawnSyncFn(process.execPath, [
+      runnerPath,
+      '--url',
+      CANONICAL_BROWSER_PROOF_URL,
+      '--expected-head',
+      expectedHead,
+      '--expected-source-fingerprint',
+      expectedSourceFingerprint,
+      '--expected-dist-fingerprint',
+      expectedDistFingerprint,
+      '--expected-dist-manifest',
+      expectedDistManifestPath,
+      ...(proofScenario ? ['--proof-scenario', proofScenario] : []),
+      '--no-artifacts',
+      '--machine-json',
+    ], {
+      cwd: task.repoRoot,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 120000,
+    });
+  } catch {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
+      expectedHead,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      runtimeSourceHead: '',
+    });
+  }
+  let payload = null;
+  try {
+    payload = JSON.parse(String(execution?.stdout || '').trim());
+  } catch {}
+  const runtimeUrl = String(payload?.url || '').trim();
+  const observedRuntimeUrl = String(payload?.observedUrl || '').trim();
+  const runtimeSourceHead = String(payload?.runtimeSourceHead || '').trim().toLowerCase();
+  const runtimeSourceFingerprint = String(payload?.runtimeSourceFingerprint || '').trim().toLowerCase();
+  const runtimeDistFingerprint = String(payload?.runtimeDistFingerprint || '').trim().toLowerCase();
+  const payloadProofScenario = String(payload?.proofScenario || '').trim();
+  const scenarioEvidence = payload?.scenarioEvidence || null;
+  const scenarioEvaluation = proofScenario
+    ? evaluateMusicRatingPreservesPlaybackScenarioEvidence(scenarioEvidence, { expectedHead })
+    : null;
+  if (runtimeSourceHead && runtimeSourceHead !== expectedHead) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH',
+      expectedHead,
+      runtimeSourceHead,
+    });
+  }
+  if (
+    runtimeSourceFingerprint
+    && runtimeSourceFingerprint !== expectedSourceFingerprint
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_RUNTIME_FINGERPRINT_MISMATCH',
+      expectedHead,
+      expectedSourceFingerprint,
+      runtimeSourceFingerprint,
+    });
+  }
+  if (
+    runtimeDistFingerprint
+    && runtimeDistFingerprint !== expectedDistFingerprint
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_RUNTIME_DIST_FINGERPRINT_MISMATCH',
+      expectedHead,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      runtimeDistFingerprint,
+    });
+  }
+  if (
+    runtimeUrl !== CANONICAL_BROWSER_PROOF_URL
+    || observedRuntimeUrl !== CANONICAL_BROWSER_PROOF_URL
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_RUNTIME_URL_MISMATCH',
+      expectedHead,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      runtimeUrl,
+      observedRuntimeUrl,
+    });
+  }
+  if (
+    execution?.error
+    || execution?.status !== 0
+    || payload?.schemaVersion !== BROWSER_RUNTIME_PROOF_SCHEMA
+    || payload?.accepted !== true
+    || payload?.mergeReady !== true
+    || !Array.isArray(payload?.blocking)
+    || payload.blocking.length !== 0
+    || payload?.expectedHead !== expectedHead
+    || payload?.expectedHeadMatch !== true
+    || runtimeSourceHead !== expectedHead
+    || payload?.expectedSourceFingerprint !== expectedSourceFingerprint
+    || payload?.expectedSourceFingerprintMatch !== true
+    || runtimeSourceFingerprint !== expectedSourceFingerprint
+    || payload?.expectedDistFingerprint !== expectedDistFingerprint
+    || payload?.expectedDistFingerprintMatch !== true
+    || runtimeDistFingerprint !== expectedDistFingerprint
+    || (proofScenario && (
+      payloadProofScenario !== proofScenario
+      || payload?.scenarioEvidenceAccepted !== true
+      || scenarioEvaluation?.accepted !== true
+    ))
+    || (!proofScenario && payloadProofScenario !== '')
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
+      expectedHead,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      runtimeSourceHead,
+      runtimeSourceFingerprint,
+      runtimeDistFingerprint,
+      proofScenario,
+      payloadProofScenario,
+      scenarioEvidenceAccepted: payload?.scenarioEvidenceAccepted === true,
+      scenarioEvidenceBlockers: scenarioEvaluation?.blocking || [],
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    required: true,
+    expectedHead,
+    expectedSourceFingerprint,
+    expectedDistFingerprint,
+    expectedDistManifestPath,
+    runtimeSourceHead,
+    runtimeSourceFingerprint,
+    runtimeDistFingerprint,
+    runtimeUrl,
+    observedRuntimeUrl,
+    schemaVersion: payload.schemaVersion,
+    mergeReady: true,
+    blocking: Object.freeze([]),
+    proofScenario,
+    scenarioEvidenceAccepted: proofScenario ? true : null,
+    scenarioEvidence: proofScenario ? scenarioEvidence : null,
   });
 }
 
@@ -175,7 +1537,10 @@ export function resolveCodexExecInvocation({
 }
 
 export function buildGuardedCodexPrompt(task) {
-  return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- The child Codex run is read-only and non-interactive. Do not request approval.\n- User configuration is not loaded for this child run, so local MCP and app tools are unavailable by construction.\n- Do not call MCP tools, app tools, or dispatch another Codex task. Use bounded shell diagnostics only.\n- Do not create generated output unless the exact requested proof cannot be completed without it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.\n- Return a structured PASS/FAIL report with remaining blockers.\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
+  const verdictContract = task.exactHeadProof
+    ? `\nMACHINE-READABLE FINAL VERDICT\nReturn only one JSON object as your final message, using exactly this shape:\n{"verdict":"PASS|FAIL","proofScenario":"${task.exactHeadProof.proofScenario}","blockers":[]}\nDo not self-attest scenario booleans or browser facts. After your bounded diagnostic turn, the worker-owned Playwright runner independently performs the interaction and is the sole authority for scenario evidence. Report FAIL and list blockers when your diagnostics find a problem; PASS is forbidden when blockers remain.`
+    : '\nReturn a structured PASS/FAIL report with remaining blockers.';
+  return `You are running as the guarded Stephanos Battle Bridge Codex proof worker.\n\nTASK\n${task.prompt}\n\nNON-NEGOTIABLE SAFETY\n- Work only in ${task.repoRoot}.\n- This is a proof and diagnostics task. Do not modify source files.\n- The child Codex run is read-only and non-interactive. Do not request approval.\n- User configuration is not loaded for this child run, so local MCP and app tools are unavailable by construction.\n- Do not call MCP tools, app tools, or dispatch another Codex task. Use bounded shell diagnostics only.\n- Do not create generated output unless the exact requested proof cannot be completed without it.\n- Do not push, merge, delete branches, run git reset --hard, expose secrets, enable public tunnels, or use broad process-kill commands.\n- Stop only positively identified Stephanos-owned processes.\n- Keep backend, OpenClaw, UI, and transport lifecycle truths separate.\n- Capture exact commands, results, browser evidence when available, and uncertainty.${verdictContract}\n\nREQUESTED PROOF COMMANDS\n${task.requestedProofCommands.length ? task.requestedProofCommands.map((command) => `- ${command}`).join('\n') : '- Use the exact bounded proof commands required by the task.'}\n`;
 }
 
 function streamToFile(stream, path) {
@@ -224,6 +1589,11 @@ export async function runCodexWorker(taskPath, {
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
   visibilityPublisher = publishRemoteCodexTaskVisibility,
+  spawnSyncFn = spawnSync,
+  sourceFingerprintFactory = (repoRoot) => computeStephanosSourceFingerprint({ rootDir: repoRoot }),
+  distFingerprintFactory = (repoRoot) => computeStephanosDistFingerprint({ rootDir: repoRoot }),
+  distManifestFactory = (repoRoot) => createStephanosDistManifest({ rootDir: repoRoot }),
+  runtimeBundleFactory = prepareExactHeadRuntimeBundle,
 } = {}) {
   const task = readJson(taskPath);
   if (task?.schemaVersion !== LOCAL_CODEX_TASK_SCHEMA) throw new Error('Unsupported local Codex task schema.');
@@ -236,9 +1606,183 @@ export async function runCodexWorker(taskPath, {
   const stderrPath = join(taskRoot, 'codex.stderr.log');
   const lastMessagePath = join(taskRoot, 'codex-last-message.txt');
   const currentPath = join(dirname(dirname(taskRoot)), 'current.json');
-  const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD']);
-  const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1']);
+  const exactHeadValidation = validateExactHeadAtWorkerStart(task, { spawnSyncFn, platform });
+  if (!exactHeadValidation.ok) {
+    const completedAt = now();
+    const result = {
+      ...task,
+      kind: 'stephanos.codex_dispatch.local_result',
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      resultAvailable: true,
+      resultVerdict: 'FAIL',
+      workerAlive: false,
+      heartbeatUtc: completedAt,
+      startedAt: completedAt,
+      completedAt,
+      exactHeadValidation,
+      blocker: exactHeadValidation.blocker,
+      nextOperatorAction: `Repair the exact-head blocker before retrying: ${exactHeadValidation.blocker}.`,
+    };
+    writeJson(resultPath, result);
+    writeJson(statusPath, result);
+    writeJson(currentPath, result);
+    await publishVisibilitySafely(visibilityPublisher, task, result);
+    return result;
+  }
+  let expectedSourceFingerprint = '';
+  let exactHeadRuntimeBundle = Object.freeze({ ok: true, required: false });
+  if (exactHeadValidation.required) {
+    try {
+      exactHeadRuntimeBundle = runtimeBundleFactory(task.repoRoot, {
+        spawnSyncFn,
+        distManifestFactory,
+        sourceFingerprintFactory,
+        expectedHead: exactHeadValidation.expectedHead,
+        platform,
+      });
+      expectedSourceFingerprint = String(exactHeadRuntimeBundle?.expectedSourceFingerprint || '').trim().toLowerCase();
+      if (exactHeadRuntimeBundle?.ok === true && !EXACT_SOURCE_FINGERPRINT.test(expectedSourceFingerprint)) {
+        exactHeadRuntimeBundle = Object.freeze({
+          ...exactHeadRuntimeBundle,
+          ok: false,
+          required: true,
+          blocker: 'CANONICAL_RUNTIME_SOURCE_FINGERPRINT_FAILED',
+        });
+      }
+    } catch (error) {
+      exactHeadRuntimeBundle = Object.freeze({
+        ok: false,
+        required: true,
+        blocker: 'CANONICAL_RUNTIME_BUILD_FAILED',
+        reason: boundedText(error?.message || error),
+      });
+    }
+  }
+  let expectedDistManifestPath = '';
+  if (exactHeadValidation.required && exactHeadRuntimeBundle?.ok === true) {
+    const validatedManifest = validateExactHeadDistManifest(
+      exactHeadRuntimeBundle.distManifest,
+    );
+    if (!validatedManifest.ok) {
+      exactHeadRuntimeBundle = Object.freeze({
+        ok: false,
+        required: true,
+        blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED',
+      });
+    } else {
+      expectedDistManifestPath = join(taskRoot, 'canonical-dist-manifest.json');
+      try {
+        writeJson(expectedDistManifestPath, exactHeadRuntimeBundle.distManifest);
+      } catch (error) {
+        exactHeadRuntimeBundle = Object.freeze({
+          ok: false,
+          required: true,
+          blocker: 'CANONICAL_RUNTIME_MANIFEST_PERSIST_FAILED',
+          reason: boundedText(error?.message || error),
+        });
+        expectedDistManifestPath = '';
+      }
+    }
+  }
+  const expectedDistFingerprint = exactHeadValidation.required
+    ? String(exactHeadRuntimeBundle?.expectedDistFingerprint || '').trim().toLowerCase()
+    : '';
+  const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
+  const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
   const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
+  let preExecutionBlocker = '';
+  if (exactHeadValidation.required) {
+    if (exactHeadRuntimeBundle?.ok !== true) {
+      preExecutionBlocker = exactHeadRuntimeBundle?.blocker || 'CANONICAL_RUNTIME_BUILD_FAILED';
+    }
+    else if (!EXACT_SOURCE_FINGERPRINT.test(expectedSourceFingerprint)) preExecutionBlocker = 'CANONICAL_RUNTIME_SOURCE_FINGERPRINT_FAILED';
+    else if (!EXACT_DIST_FINGERPRINT.test(expectedDistFingerprint)) {
+      preExecutionBlocker = 'CANONICAL_RUNTIME_FINGERPRINT_FAILED';
+    }
+    else if (!sourceHeadBefore.ok) preExecutionBlocker = 'LOCAL_HEAD_LOOKUP_FAILED';
+    else if (sourceHeadBefore.stdout !== exactHeadValidation.expectedHead) preExecutionBlocker = 'EXPECTED_HEAD_MISMATCH';
+    else if (!statusBefore.ok) preExecutionBlocker = 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED';
+    else if (!dirtBefore.safe) preExecutionBlocker = 'PRE_EXISTING_SOURCE_DIRT';
+  }
+  if (preExecutionBlocker) {
+    const completedAt = now();
+    const result = {
+      ...task,
+      kind: 'stephanos.codex_dispatch.local_result',
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      resultAvailable: true,
+      resultVerdict: 'FAIL',
+      workerAlive: false,
+      heartbeatUtc: completedAt,
+      startedAt: completedAt,
+      completedAt,
+      exactHeadValidation,
+      exactHeadRuntimeBundle,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      sourceHeadBefore: sourceHeadBefore.stdout,
+      statusBeforeOk: statusBefore.ok,
+      dirtBefore,
+      blocker: preExecutionBlocker,
+      nextOperatorAction: `Repair the exact-head source blocker before retrying: ${preExecutionBlocker}.`,
+    };
+    writeJson(resultPath, result);
+    writeJson(statusPath, result);
+    writeJson(currentPath, result);
+    await publishVisibilitySafely(visibilityPublisher, task, result);
+    return result;
+  }
+  const exactHeadBeforePreProof = exactHeadValidation.required
+    ? validateExactHeadAtWorkerStart(task, { spawnSyncFn, platform, verificationPhase: 'pre-browser-proof', checkSourceStatus: false })
+    : Object.freeze({ ok: true, required: false });
+  const browserRuntimeProofBefore = exactHeadBeforePreProof.ok
+    ? runBrowserRuntimeExactHeadProof(task, {
+      spawnSyncFn,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+    })
+    : Object.freeze({
+      ok: false,
+      required: true,
+      blocker: exactHeadBeforePreProof.blocker || 'EXACT_HEAD_TARGET_NOT_BOUND',
+      exactHeadValidation: exactHeadBeforePreProof,
+    });
+  if (!browserRuntimeProofBefore.ok) {
+    const completedAt = now();
+    const result = {
+      ...task,
+      kind: 'stephanos.codex_dispatch.local_result',
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      resultAvailable: true,
+      resultVerdict: 'FAIL',
+      workerAlive: false,
+      heartbeatUtc: completedAt,
+      startedAt: completedAt,
+      completedAt,
+      exactHeadValidation,
+      exactHeadBeforePreProof,
+      exactHeadRuntimeBundle,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      sourceHeadBefore: sourceHeadBefore.stdout,
+      statusBeforeOk: statusBefore.ok,
+      dirtBefore,
+      browserRuntimeProofBefore,
+      blocker: browserRuntimeProofBefore.blocker,
+      nextOperatorAction: `Repair the browser runtime exact-head blocker before retrying: ${browserRuntimeProofBefore.blocker}.`,
+    };
+    writeJson(resultPath, result);
+    writeJson(statusPath, result);
+    writeJson(currentPath, result);
+    await publishVisibilitySafely(visibilityPublisher, task, result);
+    return result;
+  }
   const startedAt = now();
   const invocation = resolveCodexExecInvocation({ platform, env, lastMessagePath });
   let running = {
@@ -250,6 +1794,13 @@ export async function runCodexWorker(taskPath, {
     resultAvailable: false,
     workerPid: process.pid,
     sourceHeadBefore: sourceHeadBefore.stdout,
+    expectedSourceFingerprint,
+    expectedDistFingerprint,
+    expectedDistManifestPath,
+    exactHeadValidation,
+    exactHeadBeforePreProof,
+    exactHeadRuntimeBundle,
+    browserRuntimeProofBefore,
     dirtBefore,
     executionPolicy: {
       approvalPolicy: 'never',
@@ -279,13 +1830,41 @@ export async function runCodexWorker(taskPath, {
   writeJson(currentPath, running);
 
   const prompt = buildGuardedCodexPrompt(task);
-  const child = spawnFn(invocation.command, invocation.args, {
-    cwd: resolve(task.repoRoot),
-    windowsHide: true,
-    shell: false,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env,
-  });
+  let child;
+  try {
+    child = spawnFn(invocation.command, invocation.args, {
+      cwd: resolve(task.repoRoot),
+      windowsHide: true,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env,
+    });
+    if (!child || typeof child.once !== 'function') throw new Error('Codex child process unavailable');
+  } catch {
+    const completedAt = now();
+    const result = {
+      ...task,
+      kind: 'stephanos.codex_dispatch.local_result',
+      status: 'FAILED',
+      verdict: 'FAIL',
+      resultAvailable: true,
+      resultVerdict: 'FAIL',
+      workerAlive: false,
+      heartbeatUtc: completedAt,
+      startedAt,
+      completedAt,
+      exactHeadValidation,
+      browserRuntimeProofBefore,
+      sourceHeadBefore: sourceHeadBefore.stdout,
+      blocker: 'CODEX_CLI_STARTUP_FAILED',
+      nextOperatorAction: 'Repair the local Codex CLI launch path, then submit a fresh bounded request.',
+    };
+    writeJson(resultPath, result);
+    writeJson(statusPath, result);
+    writeJson(currentPath, result);
+    await publishVisibilitySafely(visibilityPublisher, task, result);
+    return result;
+  }
   const stdoutWriter = streamToFile(child.stdout, stdoutPath);
   const stderrWriter = streamToFile(child.stderr, stderrPath);
   child.stdin?.end?.(prompt);
@@ -341,11 +1920,6 @@ export async function runCodexWorker(taskPath, {
   await heartbeatChain;
   await Promise.all([waitForWriter(stdoutWriter), waitForWriter(stderrWriter)]);
 
-  const completedAt = now();
-  const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD']);
-  const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1']);
-  const dirtAfter = classifyPostTaskDirt(statusAfter.stdout);
-  const dirtDelta = compareDirtSnapshots(dirtBefore, dirtAfter);
   let lastMessage = '';
   let stdoutEvents = '';
   let stderrText = '';
@@ -358,11 +1932,75 @@ export async function runCodexWorker(taskPath, {
     events: parsedEvents.events,
     lastMessage,
     stderr: stderrText,
+    requiresStructuredVerdict: exactHeadValidation.required,
+    expectedProofScenario: task.exactHeadProof?.proofScenario || '',
   });
-  const sourceHeadUnchanged = sourceHeadBefore.ok && sourceHeadAfter.ok && sourceHeadBefore.stdout === sourceHeadAfter.stdout;
-  const sourceSafe = sourceHeadUnchanged && !dirtDelta.sourceMutationDetected;
-  const passed = execution.passed && sourceSafe;
+  const exactHeadBeforeFinalProof = exactHeadValidation.required
+    ? validateExactHeadAtWorkerStart(task, { spawnSyncFn, platform, verificationPhase: 'post-codex-pre-browser-proof', checkSourceStatus: false })
+    : Object.freeze({ ok: true, required: false });
+  const browserRuntimeProofAfter = exactHeadBeforeFinalProof.ok
+    ? runBrowserRuntimeExactHeadProof(task, {
+      spawnSyncFn,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      proofScenario: task.exactHeadProof?.proofScenario || '',
+    })
+    : Object.freeze({
+      ok: false,
+      required: true,
+      blocker: exactHeadBeforeFinalProof.blocker || 'EXACT_HEAD_TARGET_NOT_BOUND',
+      exactHeadValidation: exactHeadBeforeFinalProof,
+    });
+  const exactHeadAfterFinalProof = exactHeadValidation.required
+    ? validateExactHeadAtWorkerStart(task, { spawnSyncFn, platform, verificationPhase: 'post-browser-proof', checkSourceStatus: false })
+    : Object.freeze({ ok: true, required: false });
+  const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
+  const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
+  const dirtAfter = classifyPostTaskDirt(statusAfter.stdout);
+  const dirtDelta = compareDirtSnapshots(dirtBefore, dirtAfter);
+  const runtimeDistFingerprintAfter = exactHeadValidation.required
+    ? resolveExpectedDistFingerprint(distFingerprintFactory, task.repoRoot)
+    : '';
+  const completedAt = now();
+  const browserProof = validateBrowserProofVerdict(lastMessage, task, browserRuntimeProofAfter);
+  const expectedHead = exactHeadValidation.required ? exactHeadValidation.expectedHead : '';
+  const sourceSafety = evaluateWorkerSourceSafety({
+    exactHeadRequired: exactHeadValidation.required,
+    expectedHead,
+    expectedDistFingerprint,
+    runtimeDistFingerprintAfter,
+    sourceHeadBefore,
+    sourceHeadAfter,
+    statusBefore,
+    statusAfter,
+    dirtBefore,
+    dirtAfter,
+    dirtDelta,
+    preProofExactHeadValidation: exactHeadBeforePreProof,
+    postProofExactHeadValidation: exactHeadAfterFinalProof,
+  });
+  const {
+    sourceSafe,
+    sourceHeadUnchanged,
+    sourceHeadBound,
+  } = sourceSafety;
+  const passed = execution.passed && browserProof.ok && sourceSafe;
   const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
+  const safetyBlocker = !sourceSafety.exactHeadStatusAvailable
+    ? 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED'
+    : (!sourceSafety.exactHeadExecutionBound
+      ? 'EXACT_HEAD_TARGET_CHANGED_DURING_PROOF'
+      : (!sourceSafety.sourceHeadBound || !sourceSafety.sourceHeadUnchanged
+        ? 'LOCAL_HEAD_CHANGED_DURING_PROOF'
+        : (!sourceSafety.exactHeadRuntimeBound
+          ? 'GENERATED_RUNTIME_INTEGRITY_MISMATCH'
+          : 'SOURCE_MUTATION_DETECTED')));
+  const finalBlocker = passed
+    ? ''
+    : (sourceSafe
+      ? (browserProof.blocker || execution.reason || 'CODEX_EXEC_FAILED')
+      : safetyBlocker);
   let result = {
     schemaVersion: LOCAL_CODEX_TASK_SCHEMA,
     kind: 'stephanos.codex_dispatch.local_result',
@@ -371,6 +2009,7 @@ export async function runCodexWorker(taskPath, {
     issueNumber: task.issueNumber,
     status: finalStatus,
     verdict: passed ? 'PASS' : 'FAIL',
+    blocker: finalBlocker,
     resultAvailable: true,
     resultVerdict: passed ? 'PASS' : 'FAIL',
     workerAlive: false,
@@ -381,6 +2020,18 @@ export async function runCodexWorker(taskPath, {
     sourceHeadBefore: sourceHeadBefore.stdout,
     sourceHeadAfter: sourceHeadAfter.stdout,
     sourceHeadUnchanged,
+    sourceHeadBound,
+    sourceSafety,
+    exactHeadRuntimeBundle,
+    expectedDistFingerprint,
+    expectedDistManifestPath,
+    runtimeDistFingerprintAfter,
+    browserRuntimeProofBefore,
+    exactHeadBeforePreProof,
+    exactHeadBeforeFinalProof,
+    exactHeadAfterFinalProof,
+    browserRuntimeProofAfter,
+    browserProof,
     exit,
     execution,
     eventParsing: {
@@ -408,6 +2059,8 @@ export async function runCodexWorker(taskPath, {
       pushPerformed: false,
       sourceMutationDetected: dirtDelta.sourceMutationDetected,
       generatedRuntimeMutationDetected: dirtDelta.generatedRuntimeMutationDetected,
+      exactHeadRuntimeBound: sourceSafety.exactHeadRuntimeBound,
+      exactHeadExecutionBound: sourceSafety.exactHeadExecutionBound,
       preExistingSourceDirt: dirtDelta.preExistingSourceDirt,
       sourceHeadChanged: !sourceHeadUnchanged,
       approvalPolicy: 'never',
@@ -419,7 +2072,7 @@ export async function runCodexWorker(taskPath, {
       ? 'Review the returned proof and decide whether the owning goal may advance.'
       : (!sourceSafe
         ? 'Inspect the task logs and source dirt. Do not auto-discard changes.'
-        : `Inspect the task logs and repair the precise runtime blocker: ${execution.reason || 'CODEX_EXEC_FAILED'}.`),
+        : `Inspect the task logs and repair the precise runtime blocker: ${browserProof.blocker || execution.reason || 'CODEX_EXEC_FAILED'}.`),
   };
   writeJson(resultPath, result);
   writeJson(statusPath, result);

@@ -9,6 +9,7 @@ import {
   readMailboxReceiptIndexForParticipant,
 } from './mailboxReceiptIndexAccess.mjs';
 import { refreshMailboxReceiptIndex } from './mailboxReceiptIndex.mjs';
+import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
 
 const HEAD = 'b3aca072a1c66555a1a2d3b4343f218af8d33ef4';
 
@@ -20,9 +21,11 @@ async function fixture(fn) {
   await mkdir(repoRoot, { recursive: true });
   const receiptRoot = join(workspaceRoot, 'receipts', 'github-command-mailbox');
   await mkdir(receiptRoot, { recursive: true });
+  const requestId = 'mailbox-index-access-20260717T2000Z';
+  const receiptFilename = createWindowsSafeMailboxReceiptFilename(requestId);
   const receipt = {
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
-    requestId: 'mailbox-index-access-20260717T2000Z',
+    requestId,
     operation: 'READ_SHARED_WORKSPACE_STATUS',
     branch: 'main',
     expectedHead: HEAD,
@@ -30,7 +33,7 @@ async function fixture(fn) {
     acceptedAt: timestampUtc,
     heartbeatAt: timestampUtc,
     completedAt: timestampUtc,
-    proofRefs: ['receipts/github-command-mailbox/mailbox-index-access-20260717T2000Z.json'],
+    proofRefs: [`receipts/github-command-mailbox/${receiptFilename}`],
     result: {
       ok: true,
       verdict: 'COMMAND_EXECUTION_COMPLETE',
@@ -43,7 +46,11 @@ async function fixture(fn) {
       },
     },
   };
-  await writeFile(join(receiptRoot, `${receipt.requestId}.json`), `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+  await writeFile(
+    join(receiptRoot, receiptFilename),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+    'utf8',
+  );
   await refreshMailboxReceiptIndex({ root: workspaceRoot, repoRoot, timestampUtc });
   try { return await fn({ repoRoot, workspaceRoot }); }
   finally { await rm(root, { recursive: true, force: true }); }

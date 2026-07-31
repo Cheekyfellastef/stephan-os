@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -22,6 +23,10 @@ import {
   sanitizeMailboxReceiptForIndex,
 } from './mailboxReceiptIndex.mjs';
 import { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
+import {
+  createWindowsSafeMailboxReceiptFilename,
+  getReadableMailboxReceiptFilenames,
+} from './windowsSafeMailboxReceiptFilename.mjs';
 
 const HEAD = '8517ef3cc89e5ab6c191c550cc729227b3089e42';
 const LATER_HEAD = 'b3aca072a1c66555a1a2d3b4343f218af8d33ef4';
@@ -79,10 +84,138 @@ async function workspaceFixture(fn) {
 }
 
 async function writeReceipt(workspaceRoot, value) {
-  const target = join(workspaceRoot, 'receipts', 'github-command-mailbox', `${value.requestId}.json`);
+  const target = join(
+    workspaceRoot,
+    'receipts',
+    'github-command-mailbox',
+    createWindowsSafeMailboxReceiptFilename(value.requestId),
+  );
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
   return target;
 }
+
+test('loads receipts whose Windows-safe filenames hash reserved or colon-bearing request IDs', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const values = [
+    receipt({ requestId: 'CON.proof' }),
+    receipt({ requestId: 'proof:2026-07-30T20:00:00Z' }),
+  ];
+  for (const value of values) await writeReceipt(workspaceRoot, value);
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.equal(loaded.ok, true);
+  assert.deepEqual(
+    loaded.receipts.map((value) => value.requestId).sort(),
+    values.map((value) => value.requestId).sort(),
+  );
+}));
+
+test('loads validated legacy receipt filenames so active upgrade state does not disappear', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const receiptRoot = join(workspaceRoot, 'receipts', 'github-command-mailbox');
+  assert.deepEqual(
+    getReadableMailboxReceiptFilenames('CON.proof').slice(1),
+    [
+      `request-${createHash('sha256').update('CON.proof').digest('hex').slice(0, 32)}.json`,
+      'CON.proof.json',
+    ],
+  );
+  assert.equal(getReadableMailboxReceiptFilenames('Request-safe-0001')[1], 'Request-safe-0001.json');
+  const values = [
+    receipt({
+      requestId: 'CON.proof',
+      state: 'ACCEPTED',
+      heartbeatAt: '2026-07-17T20:00:00.000Z',
+      completedAt: '',
+      result: null,
+    }),
+    receipt({ requestId: 'proof:2026-07-30T20:00:00Z' }),
+    receipt({ requestId: 'Request-safe-0001' }),
+  ];
+  for (const value of values) {
+    const canonical = createWindowsSafeMailboxReceiptFilename(value.requestId);
+    const legacy = getReadableMailboxReceiptFilenames(value.requestId)
+      .find((filename) => filename !== canonical);
+    assert.ok(legacy);
+    await writeFile(join(receiptRoot, legacy), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  }
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.deepEqual(
+    loaded.receipts.map((value) => value.requestId).sort(),
+    values.map((value) => value.requestId).sort(),
+  );
+  const record = createMailboxReceiptIndexRecord({
+    receipts: loaded.receipts,
+    timestampUtc: '2026-07-30T20:01:00.000Z',
+  });
+  assert.equal(record.status, 'ACTIVE');
+  assert.equal(record.activeReceipt.requestId, 'CON.proof');
+}));
+
+test('fallback hashes cannot alias valid raw request ids and both receipts remain loadable', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const unsafeRequestId = 'proof:2026-07-30T20:00:00Z';
+  const digest = createHash('sha256').update(unsafeRequestId).digest('hex').slice(0, 32);
+  const legacyFilename = `request-${digest}.json`;
+  const formerlyAliasedRawId = `request-${digest}`;
+  const rawFilename = createWindowsSafeMailboxReceiptFilename(formerlyAliasedRawId);
+  assert.notEqual(legacyFilename, rawFilename);
+  assert.match(rawFilename, /^_request-[0-9a-f]{32}\.json$/);
+  assert.equal(
+    getReadableMailboxReceiptFilenames(formerlyAliasedRawId).includes(legacyFilename),
+    true,
+  );
+
+  const receiptRoot = join(workspaceRoot, 'receipts', 'github-command-mailbox');
+  const legacyReceipt = receipt({ requestId: unsafeRequestId });
+  await writeFile(
+    join(receiptRoot, legacyFilename),
+    `${JSON.stringify(legacyReceipt, null, 2)}\n`,
+    'utf8',
+  );
+  await writeReceipt(workspaceRoot, receipt({ requestId: formerlyAliasedRawId }));
+  assert.equal(
+    JSON.parse(await readFile(join(receiptRoot, legacyFilename), 'utf8')).requestId,
+    unsafeRequestId,
+  );
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.deepEqual(
+    loaded.receipts.map((value) => value.requestId).sort(),
+    [unsafeRequestId, formerlyAliasedRawId].sort(),
+  );
+}));
+
+test('case-distinct request ids use case-distinct Windows filenames and remain independently loadable', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const values = [
+    receipt({ requestId: 'Request-safe-0001' }),
+    receipt({ requestId: 'request-safe-0001' }),
+  ];
+  const filenames = values.map((value) => createWindowsSafeMailboxReceiptFilename(value.requestId));
+  assert.notEqual(filenames[0].toLowerCase(), filenames[1].toLowerCase());
+  for (const value of values) await writeReceipt(workspaceRoot, value);
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.deepEqual(
+    loaded.receipts.map((value) => value.requestId).sort(),
+    values.map((value) => value.requestId).sort(),
+  );
+}));
+
+test('rejects a matching fallback-hash filename when the embedded request id is missing or invalid', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const receiptRoot = join(workspaceRoot, 'receipts', 'github-command-mailbox');
+  for (const requestId of ['', '../invalid']) {
+    await writeFile(
+      join(receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)),
+      `${JSON.stringify(requestId ? { requestId } : {})}\n`,
+      'utf8',
+    );
+  }
+  const conLegacy = getReadableMailboxReceiptFilenames('CON.proof')
+    .find((filename) => filename !== createWindowsSafeMailboxReceiptFilename('CON.proof'));
+  await writeFile(
+    join(receiptRoot, conLegacy),
+    `${JSON.stringify(receipt({ requestId: 'AUX.proof' }))}\n`,
+    'utf8',
+  );
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.equal(loaded.ok, true);
+  assert.deepEqual(loaded.receipts, []);
+}));
 
 test('sanitization retains bounded evidence and removes raw payloads, machine paths and secret-shaped data', () => {
   const projected = sanitizeMailboxReceiptForIndex(receipt({
@@ -106,6 +239,148 @@ test('sanitization retains bounded evidence and removes raw payloads, machine pa
   ]);
   const json = JSON.stringify(projected);
   assert.doesNotMatch(json, /rawPayload|machinePath|apiToken|C:\\Users|\.env|\.\.\//i);
+});
+
+test('exact-head proof index projections retain verified heads and derive the match', () => {
+  const exactHeadReceipt = receipt({
+    requestId: 'windows-proof-1631-0001',
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    expectedHead: HEAD,
+    prNumber: 1628,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    result: {
+      ok: true,
+      result: {
+        ok: true,
+        operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+        finalVerdict: 'WINDOWS_BROWSER_PROOF_DISPATCHED',
+        expectedHead: HEAD,
+        prNumber: 1628,
+        proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+        taskId: 'codex-job-1631',
+        pullRequestHead: HEAD,
+        localHead: HEAD,
+        expectedHeadMatch: false,
+      },
+    },
+  });
+  const projected = sanitizeMailboxReceiptForIndex(exactHeadReceipt);
+  assert.equal(projected.prNumber, 1628);
+  assert.equal(projected.proofScenario, 'MUSIC_RATING_PRESERVES_PLAYBACK');
+  assert.equal(projected.taskId, 'codex-job-1631');
+  assert.equal(projected.pullRequestHead, HEAD);
+  assert.equal(projected.localHead, HEAD);
+  assert.equal(projected.expectedHeadMatch, true);
+  const mismatch = sanitizeMailboxReceiptForIndex({
+    ...exactHeadReceipt,
+    result: {
+      ...exactHeadReceipt.result,
+      result: { ...exactHeadReceipt.result.result, localHead: LATER_HEAD, expectedHeadMatch: true },
+    },
+  });
+  assert.equal(mismatch.expectedHeadMatch, false);
+});
+
+test('sanitization preserves on-demand worker telemetry without exposing machine paths', () => {
+  const value = receipt();
+  value.result.result.workerTelemetry = {
+    schemaVersion: 'stephanos.battle-bridge.worker-telemetry.v1',
+    ok: true,
+    workerActive: true,
+    workerAlive: true,
+    workerStatus: 'RUNNING',
+    worker: {
+      pid: 1631,
+      observedPid: 1631,
+      commandIdentity: 'scripts/mission-orchestrator-worker-supervised.mjs',
+      commandLineVerified: true,
+      taskName: 'Stephanos Mission Orchestrator Worker',
+      scheduledTaskState: 'RUNNING',
+    },
+    task: {
+      taskId: 'task-1631',
+      goalId: '#1507',
+      issueNumber: 1507,
+      prNumber: 1631,
+      branch: 'main',
+      headSha: HEAD,
+      phase: 'WINDOWS_PROOF',
+      boundedAction: 'Collect final exact-head browser proof.',
+    },
+    heartbeat: {
+      timestampUtc: '2026-07-17T19:41:00.000Z',
+      ageMs: 1000,
+      fresh: true,
+      headSha: HEAD,
+      branch: 'main',
+      tickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+      errors: [],
+    },
+    lease: {
+      observed: true,
+      valid: true,
+      active: true,
+      leaseId: 'lease-1631',
+      laneId: 'lane-goal-1507-pr-1631',
+      ownerId: 'worker-1631',
+      repository: 'Cheekyfellastef/stephan-os',
+      issueNumber: 1507,
+      prNumber: 1631,
+      branch: 'main',
+      headSha: HEAD,
+      expiresAtUtc: '2026-07-17T20:00:00.000Z',
+      errors: [],
+    },
+    latestExecutionReceipt: { executionId: 'exec-1631', state: 'RUNNING', sourceHead: HEAD },
+    testsChecksReview: {
+      tests: { state: 'PASS', allGreen: true },
+      checks: { state: 'PASS', allGreen: true },
+      review: { state: 'PASS', allGreen: true },
+    },
+    blockers: [],
+    operatorActionRequired: false,
+    nextAction: 'Collect final exact-head browser proof.',
+    finalVerdict: 'WORKER_TELEMETRY_READY',
+  };
+  const projected = sanitizeMailboxReceiptForIndex(value);
+  assert.equal(projected.workerTelemetry.workerActive, true);
+  assert.equal(projected.workerTelemetry.worker.pid, 1631);
+  assert.equal(projected.workerTelemetry.task.prNumber, 1631);
+  assert.equal(projected.workerTelemetry.heartbeat.fresh, true);
+  assert.equal(projected.workerTelemetry.lease.expiresAtUtc, '2026-07-17T20:00:00.000Z');
+  assert.equal(projected.workerTelemetry.latestExecutionReceipt.executionId, 'exec-1631');
+  assert.deepEqual(projected.workerTelemetry.evidenceRefs, [
+    'status/mission-orchestrator-worker-heartbeat.json',
+    'status/source-mutation-lease-current.json',
+    'status/battle-bridge-mailbox-receipt-index.json',
+  ]);
+  assert.doesNotMatch(JSON.stringify(projected), /C:\\Users|rawPayload|apiToken/i);
+});
+
+test('worker telemetry index redacts path- and credential-shaped free-form fields', () => {
+  const value = receipt();
+  value.result.result.workerTelemetry = {
+    task: {
+      boundedAction: 'Read /workspace/stephan-os with token=ghp_should-not-appear',
+    },
+    heartbeat: {
+      errors: ['C:\\Users\\Stephan\\secret.log'],
+    },
+    blockers: ['password=should-not-appear', '/home/stephan/.env', '/etc/stephanos/config', 'sk-proj-should-not-appear'],
+    nextAction: 'Use private_key=/tmp/private.pem',
+    latestExecutionReceipt: {
+      blocker: 'authorization: Bearer should-not-appear',
+      expectedNextAction: 'Open C:\\Users\\Stephan\\proof.txt',
+    },
+  };
+  const projected = sanitizeMailboxReceiptForIndex(value);
+  const json = JSON.stringify(projected);
+  assert.doesNotMatch(json, /C:\\Users|\/workspace\/stephan|\/home\/stephan|\/etc\/stephanos|ghp_should|sk-proj-should|password=|private_key|authorization:|\.env/i);
+  assert.equal(projected.workerTelemetry.task.boundedAction, '');
+  assert.deepEqual(projected.workerTelemetry.heartbeat.errors, []);
+  assert.deepEqual(projected.workerTelemetry.blockers, []);
+  assert.equal(projected.workerTelemetry.nextAction, '');
+  assert.equal(projected.workerTelemetry.latestExecutionReceipt.blocker, '');
 });
 
 test('index deduplicates each request to its latest receipt and separates active from recent', () => {

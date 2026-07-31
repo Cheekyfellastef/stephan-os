@@ -85,11 +85,47 @@ test('control-plane and banked reset commands are allowlisted', () => {
     'READ_CRITICAL_BACKLOG_STATUS',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
     'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+    'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
     CODEX_BANKED_RESET_STATUS_OPERATION,
     CODEX_BANKED_RESET_OPERATION,
   ]) {
     assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
   }
+});
+
+test('accepts only typed exact-head Windows browser proof requests', () => {
+  const proof = command({
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    prNumber: 1628,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+  });
+  const accepted = validateBattleBridgeGitHubCommand(proof, { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(accepted.verdict, 'COMMAND_ACCEPTED');
+  assert.equal(accepted.command.prNumber, 1628);
+  assert.equal(accepted.command.proofScenario, 'MUSIC_RATING_PRESERVES_PLAYBACK');
+  assert.equal(validateBattleBridgeGitHubCommand({ ...proof, proofScenario: 'ARBITRARY_BROWSER' }, {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_SCENARIO_NOT_ALLOWED');
+  assert.equal(validateBattleBridgeGitHubCommand(command({ prNumber: 1628 }), {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
+});
+
+test('dispatches Windows browser proof only through its named handler', async () => {
+  const proof = validateBattleBridgeGitHubCommand(command({
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    prNumber: 1628,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+  }), { authorLogin: 'Cheekyfellastef', now }).command;
+  const calls = [];
+  const result = await executeBattleBridgeGitHubCommand(proof, {
+    runExactHeadWindowsBrowserProof: async (input) => {
+      calls.push([input.prNumber, input.expectedHead, input.proofScenario]);
+      return { ok: true, finalVerdict: 'WINDOWS_BROWSER_PROOF_DISPATCHED' };
+    },
+  });
+  assert.deepEqual(calls, [[1628, proof.expectedHead, 'MUSIC_RATING_PRESERVES_PLAYBACK']]);
+  assert.equal(result.ok, true);
 });
 
 test('accepts read-only Codex reset status commands without reset authority fields', () => {

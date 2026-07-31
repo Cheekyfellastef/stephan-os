@@ -4,3 +4,14 @@ apps/stephanos/dist/stephanos-build.json linguist-generated=false
 
 apps/stephanos/dist/assets/*.js -diff
 apps/stephanos/dist/assets/*.css -diff
+
+# Exact-head browser proofs compare these served source bytes with immutable Git blobs.
+apps/music-tile/**/*.html text eol=lf
+apps/music-tile/**/*.js text eol=lf
+apps/music-tile/**/*.mjs text eol=lf
+apps/music-tile/**/*.css text eol=lf
+apps/music-tile/**/*.json text eol=lf
+shared/**/*.js text eol=lf
+shared/**/*.mjs text eol=lf
+shared/**/*.css text eol=lf
+shared/**/*.json text eol=lf
