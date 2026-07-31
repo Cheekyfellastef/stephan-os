@@ -408,6 +408,19 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(goals.goals[0].activePr, 1617);
   assert.equal(goals.goals[0].headSha, HEAD);
 
+  const heldActiveRoute = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    lane: lane(),
+    goalRecords: [goalRecord({ route: 'WAITING_FOR_EXTERNAL_CONDITION' })],
+  });
+  assert.equal(heldActiveRoute.goals[0].route, 'WAITING_FOR_EXTERNAL_CONDITION');
+  const heldActiveScheduler = buildMissionScheduler({
+    now: NOW,
+    goals: heldActiveRoute.goals,
+  });
+  assert.equal(heldActiveScheduler.failClosed, true);
+  assert.ok(heldActiveScheduler.contradictions.some(({ code }) => code === 'ACTIVE_ROUTE_NOT_EXECUTABLE'));
+
   const malformedDependencies = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     goalRecords: [goalRecord({
@@ -677,6 +690,37 @@ test('active projection requires the conveyor to affirm the exact active lane', 
     },
   });
   assert.equal(exact.status, 'ACTIVE');
+
+  for (const state of ['stalled', 'completed', 'failed', 'cancelled']) {
+    const terminalOrStalledExecution = buildAuthoritativeProgrammeProjection({
+      ...base,
+      executionReceipt: receipt({
+        state,
+        ...(state === 'stalled' ? { blocker: 'SIMULATED_STALL' } : {}),
+      }),
+      criticalBacklog: {
+        decision: 'WAIT_ACTIVE_MISSION',
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+        selectedItem: { issueNumbers: [1497] },
+        activeMission: {
+          missionId: LANE_ID,
+          issueNumber: 1497,
+          repository: REPOSITORY,
+          git: { branch: BRANCH },
+          pullRequest: { number: 1617 },
+        },
+      },
+    });
+    assert.equal(terminalOrStalledExecution.status, 'HOLD');
+    assert.ok(terminalOrStalledExecution.blockers.includes(
+      'active-lane-execution-receipt-state-not-executable',
+    ), `expected ${state} receipt to be non-executable: ${terminalOrStalledExecution.blockers.join(',')}`);
+    if (['failed', 'cancelled'].includes(state)) {
+      assert.ok(terminalOrStalledExecution.stallDiagnosis.blockers.includes(
+        'execution-receipt-terminal-failure',
+      ));
+    }
+  }
 
   const groupedGoal = buildAuthoritativeProgrammeProjection({
     ...base,
