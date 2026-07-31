@@ -540,15 +540,10 @@ test('notification permission failure degrades advisory counts without discardin
   assert.equal(projection.blockers.includes('github_notifications_unavailable'), false);
 });
 
-test('GitHub telemetry paginates workflow runs beyond the first page', async () => {
+test('GitHub telemetry fetches workflow evidence by each open PR exact head', async () => {
   const calls = [];
-  const firstPage = Array.from({ length: 100 }, (_, index) => ({
-    id: index + 1,
-    name: `Historical workflow ${index + 1}`,
-    status: 'completed',
-    conclusion: 'success',
-    head_sha: 'a'.repeat(40),
-  }));
+  const firstHead = 'a'.repeat(40);
+  const secondHead = 'b'.repeat(40);
   const telemetry = await readGithubTelemetry({
     env: { GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'repo-token' },
     secretStoreToken: '',
@@ -556,22 +551,37 @@ test('GitHub telemetry paginates workflow runs beyond the first page', async () 
       calls.push(url);
       const parsed = new URL(url);
       if (url.includes('/notifications')) return okJson([]);
-      if (url.includes('/pulls?')) return okJson([]);
+      if (url.includes('/pulls?')) return okJson([
+        { number: 10, head: { sha: firstHead } },
+        { number: 11, head: { sha: secondHead } },
+      ]);
       if (url.includes('/issues?')) return okJson([]);
-      if (url.includes('/actions/runs') && parsed.searchParams.get('page') === '1') return okJson({ workflow_runs: firstPage });
-      if (url.includes('/actions/runs') && parsed.searchParams.get('page') === '2') {
-        return okJson({ workflow_runs: [{ id: 101, name: 'Older exact-head workflow', status: 'completed', conclusion: 'success', head_sha: 'b'.repeat(40) }] });
+      if (url.includes('/actions/runs')) {
+        const headSha = parsed.searchParams.get('head_sha');
+        return okJson({
+          total_count: 1,
+          workflow_runs: [{
+            id: headSha === firstHead ? 101 : 102,
+            name: REQUIRED_EXACT_HEAD_WORKFLOWS[0],
+            status: 'completed',
+            conclusion: 'success',
+            head_sha: headSha,
+          }],
+        });
       }
       if (/\/repos\/owner\/repo(?:\?|$)/.test(url)) return okJson({ default_branch: 'main' });
       return okJson({});
     },
   });
-  assert.equal(telemetry.workflows.length, 101);
+  assert.equal(telemetry.workflows.length, 2);
+  assert.deepEqual(telemetry.workflows.map((run) => run.prNumber), [10, 11]);
   assert.equal(telemetry.workflowInventoryComplete, true);
-  assert.equal(calls.some((url) => url.includes('/actions/runs') && url.includes('page=2')), true);
+  assert.equal(calls.filter((url) => url.includes('/actions/runs')).length, 2);
+  assert.equal(calls.every((url) => !url.includes('/actions/runs') || (url.includes('head_sha=') && url.includes('event=pull_request'))), true);
 });
 
-test('workflow history cap degrades only workflow evidence without disabling repository truth', async () => {
+test('per-head workflow cap degrades only workflow evidence without scanning repository history', async () => {
+  const headSha = 'a'.repeat(40);
   const fullPage = Array.from({ length: 100 }, (_, index) => ({
     id: index + 1,
     name: `Historical workflow ${index + 1}`,
@@ -584,9 +594,9 @@ test('workflow history cap degrades only workflow evidence without disabling rep
     secretStoreToken: '',
     fetchImpl: async (url) => {
       if (url.includes('/notifications')) return okJson([]);
-      if (url.includes('/pulls?')) return okJson([]);
+      if (url.includes('/pulls?')) return okJson([{ number: 10, head: { sha: headSha } }]);
       if (url.includes('/issues?')) return okJson([{ number: 1, title: 'Current goal', state: 'open' }]);
-      if (url.includes('/actions/runs')) return okJson({ workflow_runs: fullPage });
+      if (url.includes('/actions/runs')) return okJson({ total_count: 101, workflow_runs: fullPage });
       if (/\/repos\/owner\/repo(?:\?|$)/.test(url)) return okJson({ default_branch: 'main' });
       return okJson({});
     },
@@ -595,7 +605,7 @@ test('workflow history cap degrades only workflow evidence without disabling rep
   assert.equal(telemetry.adapterAvailable, true);
   assert.equal(telemetry.issueInventoryComplete, true);
   assert.equal(telemetry.workflowInventoryComplete, false);
-  assert.equal(telemetry.workflows.length, 10_000);
+  assert.equal(telemetry.workflows.length, 100);
   assert.equal(telemetry.blockers.some((blocker) => blocker.startsWith('github_adapter_error:')), false);
   assert.equal(telemetry.warnings.includes('github_workflow_inventory_incomplete'), true);
   const projection = buildLiveGoalProjection({
