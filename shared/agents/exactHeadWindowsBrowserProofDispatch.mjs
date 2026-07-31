@@ -45,7 +45,7 @@ export function buildExactHeadWindowsBrowserProofPacket(command = {}, timestampU
     prompt: `PR #${command.prNumber}; ${targetDescription}. ${prompt}`,
     requestedProofCommands: [
       'git rev-parse HEAD',
-      `node scripts/browser-proof-runner.mjs --url ${CANONICAL_BROWSER_PROOF_URL} --expected-head ${expectedHead} --proof-scenario ${command.proofScenario} --no-artifacts --machine-json`,
+      `node scripts/browser-proof-runner.mjs --url ${CANONICAL_BROWSER_PROOF_URL} --expected-head ${expectedHead} --proof-target ${proofTarget} --proof-scenario ${command.proofScenario} --no-artifacts --machine-json`,
     ],
     exactHeadProof: {
       repository: REPOSITORY,

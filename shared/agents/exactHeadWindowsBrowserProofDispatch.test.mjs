@@ -24,7 +24,7 @@ test('builds one approved read-only exact-head Windows proof packet', () => {
   assert.match(packet.prompt, /runtimeSourceHead/);
   assert.deepEqual(packet.requestedProofCommands, [
     'git rev-parse HEAD',
-    `node scripts/browser-proof-runner.mjs --url http://127.0.0.1:4173/apps/stephanos/dist/index.html --expected-head ${command.expectedHead} --proof-scenario MUSIC_RATING_PRESERVES_PLAYBACK --no-artifacts --machine-json`,
+    `node scripts/browser-proof-runner.mjs --url http://127.0.0.1:4173/apps/stephanos/dist/index.html --expected-head ${command.expectedHead} --proof-target PULL_REQUEST_HEAD --proof-scenario MUSIC_RATING_PRESERVES_PLAYBACK --no-artifacts --machine-json`,
   ]);
   assert.deepEqual(packet.exactHeadProof, {
     repository: 'Cheekyfellastef/stephan-os',
@@ -79,6 +79,7 @@ test('binds a post-merge proof to both immutable PR provenance and the merged ma
   assert.equal(result.mergeCommitHead, mergeCommitHead);
   assert.equal(result.localHead, mergeCommitHead);
   assert.equal(calls.length, 1);
+  assert.match(calls[0].requestedProofCommands[1], /--proof-target MERGED_MAIN/);
   assert.deepEqual(calls[0].exactHeadProof, {
     repository: 'Cheekyfellastef/stephan-os',
     prNumber: command.prNumber,

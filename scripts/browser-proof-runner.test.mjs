@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import {
   buildBrowserProofMachineResult,
   buildBrowserProofPacket,
+  collectMusicRatingPreservesPlaybackEvidence,
   collectPlaywrightNavigationDistFingerprint,
   collectScenarioSourceResponseBinding,
   collectServedDistFingerprint,
@@ -128,6 +129,7 @@ test('parses an exact approved head without confusing it with the runtime URL', 
     expectedDistFingerprint: '',
     expectedDistManifestPath: '',
     proofScenario: '',
+    proofTarget: 'PULL_REQUEST_HEAD',
     writeArtifacts: false,
     machineJson: true,
   });
@@ -173,6 +175,25 @@ test('parses an exact approved head without confusing it with the runtime URL', 
       'MUSIC_RATING_PRESERVES_PLAYBACK',
     ]).proofScenario,
     'MUSIC_RATING_PRESERVES_PLAYBACK',
+  );
+  assert.equal(
+    parseBrowserProofArguments([
+      '--expected-head',
+      expectedHead,
+      '--proof-target',
+      'MERGED_MAIN',
+      '--proof-scenario',
+      'MUSIC_RATING_PRESERVES_PLAYBACK',
+    ]).proofTarget,
+    'MERGED_MAIN',
+  );
+  assert.equal(
+    parseBrowserProofArguments(['--proof-target', 'MERGED_MAIN']).blocker,
+    'PROOF_SCENARIO_REQUIRED_FOR_MERGED_MAIN',
+  );
+  assert.equal(
+    parseBrowserProofArguments(['--proof-target', 'UNTRUSTED_TARGET']).blocker,
+    'PROOF_TARGET_INVALID',
   );
   assert.equal(
     parseBrowserProofArguments([
@@ -254,6 +275,8 @@ function musicScenarioEvidence(overrides = {}) {
     proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
     collector: 'playwright-page-v1',
     observed: true,
+    fixture: 'isolated-browser-context-v1',
+    playbackContinuityProxy: 'intercepted-spotify-frame-tick-v1',
     sourceResponseBinding: {
       exact: true,
       blocker: '',
@@ -363,6 +386,45 @@ test('requested music scenario accepts only detailed Playwright-collected intera
   );
   assert.equal(navigated.accepted, false);
   assert.match(navigated.blocking.join(' | '), /LISTENING_IFRAME_REPLACED/);
+});
+
+test('merged-main music proof rejects the timer fixture and requires same-player media progression', async () => {
+  const expectedHead = 'a'.repeat(40);
+  const fixtureEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    musicScenarioEvidence(),
+    { expectedHead, proofTarget: 'MERGED_MAIN' },
+  );
+  assert.equal(fixtureEvaluation.accepted, false);
+  assert.equal(fixtureEvaluation.livePlaybackObserved, false);
+  assert.match(fixtureEvaluation.blocking.join(' | '), /LIVE_PLAYBACK_NOT_OBSERVED/);
+
+  const typedBlocker = await collectMusicRatingPreservesPlaybackEvidence(
+    {},
+    'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    { expectedHead, proofTarget: 'MERGED_MAIN' },
+  );
+  assert.match(typedBlocker.blockers.join(' | '), /LIVE_PLAYBACK_OBSERVER_UNAVAILABLE/);
+
+  const liveEvidence = musicScenarioEvidence({
+    fixture: 'live-runtime-v1',
+    playbackContinuityProxy: 'same-player-media-time-v1',
+    listeningDeckIframe: {
+      ...musicScenarioEvidence().listeningDeckIframe,
+      playbackMediaElementIdentityPreserved: true,
+      playbackMediaSourceUnchanged: true,
+      playbackMediaPlayingBefore: true,
+      playbackMediaPlayingAfter: true,
+      playbackMediaTimeAdvanced: true,
+      playbackMediaTimeBefore: 12.25,
+      playbackMediaTimeAfter: 13.75,
+    },
+  });
+  const liveEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    liveEvidence,
+    { expectedHead, proofTarget: 'MERGED_MAIN' },
+  );
+  assert.equal(liveEvaluation.accepted, true);
+  assert.equal(liveEvaluation.livePlaybackObserved, true);
 });
 
 test('machine result binds requested scenario PASS to typed browser evidence', () => {
