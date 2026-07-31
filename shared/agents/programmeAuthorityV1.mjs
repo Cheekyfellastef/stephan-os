@@ -722,7 +722,20 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       blockers.push(`goal-record-${index}-not-canonical-goal`);
       continue;
     }
-    const issueNumber = number(record.issueNumber ?? record.issue ?? record.relatedIssue ?? record.goalId?.match(/[1-9]\d*/)?.[0]);
+    const suppliedIssueAliases = [];
+    let issueAliasesValid = true;
+    for (const key of ['issueNumber', 'issue', 'relatedIssue']) {
+      if (!hasOwn(record, key)) continue;
+      const normalized = number(record[key]);
+      if (!normalized) issueAliasesValid = false;
+      else suppliedIssueAliases.push(normalized);
+    }
+    const goalIdIssue = number(text(record.goalId).match(/[1-9]\d*/)?.[0]);
+    if (goalIdIssue) suppliedIssueAliases.push(goalIdIssue);
+    const canonicalIssueAliases = unique(suppliedIssueAliases);
+    const issueNumber = issueAliasesValid && canonicalIssueAliases.length === 1
+      ? canonicalIssueAliases[0]
+      : null;
     if (!issueNumber) {
       blockers.push(`goal-record-${index}-issue-invalid`);
       continue;
@@ -1004,8 +1017,14 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   return freeze(projection);
 }
 
-function everySuppliedAliasMatches(values, normalizer, expected) {
-  const supplied = values.filter((value) => value !== undefined && value !== null && String(value).trim());
+function everySuppliedRecordAliasMatches(record, keys, normalizer, expected) {
+  const supplied = [];
+  for (const key of keys) {
+    if (!hasOwn(record, key)) continue;
+    const value = record[key];
+    if (value === undefined || value === null || !String(value).trim()) return false;
+    supplied.push(value);
+  }
   return supplied.length > 0 && supplied.every((value) => normalizer(value) === expected);
 }
 
@@ -1024,16 +1043,18 @@ function isAffirmativeLaneProgressProof(proof, lane, nowMs) {
   if (!validateSharedWorkspaceRecord(proof, { nowMs: nowMs ?? undefined }).valid) return false;
   if (boundedProgressTimestamp(proof.timestampUtc ?? proof.at, nowMs) === null) return false;
   if (!AFFIRMATIVE_PROGRESS_PROOF_STATUSES.has(text(proof.status).toUpperCase())) return false;
-  if (!everySuppliedAliasMatches([proof.issueNumber, proof.relatedIssue], number, lane.issueNumber)) return false;
-  if (!everySuppliedAliasMatches([proof.prNumber, proof.relatedPr], number, lane.prNumber)) return false;
-  if (!everySuppliedAliasMatches([proof.headSha, proof.sourceHead], sha, lane.headSha)) return false;
-  if (!everySuppliedAliasMatches(
-    [proof.repository, proof.repositoryFullName],
+  if (!everySuppliedRecordAliasMatches(proof, ['issueNumber', 'relatedIssue'], number, lane.issueNumber)) return false;
+  if (!everySuppliedRecordAliasMatches(proof, ['prNumber', 'relatedPr'], number, lane.prNumber)) return false;
+  if (!everySuppliedRecordAliasMatches(proof, ['headSha', 'sourceHead'], sha, lane.headSha)) return false;
+  if (!everySuppliedRecordAliasMatches(
+    proof,
+    ['repository', 'repositoryFullName'],
     (value) => text(value).toLowerCase(),
     text(lane.repository).toLowerCase(),
   )) return false;
-  if (!everySuppliedAliasMatches(
-    [proof.branch, proof.headBranch],
+  if (!everySuppliedRecordAliasMatches(
+    proof,
+    ['branch', 'headBranch'],
     text,
     lane.branch,
   )) return false;
