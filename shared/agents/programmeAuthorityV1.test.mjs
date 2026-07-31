@@ -177,6 +177,17 @@ test('closed-but-unmerged and contradictory merge evidence never become terminal
   assert.ok(contradictory.blockers.includes('github-merge-evidence-contradictory'));
 });
 
+test('open PR provisional merge SHAs do not fabricate contradictory merge evidence', () => {
+  const projection = lane({
+    github: github({ mergeCommitSha: MERGE }),
+  });
+  assert.equal(projection.valid, true);
+  assert.equal(projection.active, true);
+  assert.equal(projection.terminal, false);
+  assert.equal(projection.mergeEvidence.affirmativelyMerged, false);
+  assert.equal(projection.blockers.includes('github-merge-evidence-contradictory'), false);
+});
+
 test('affirmative internally consistent exact-head merge evidence produces one terminal lane', () => {
   const terminal = lane({
     github: github({
@@ -419,7 +430,13 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(goals.goals[0].activePr, 1617);
   assert.equal(goals.goals[0].headSha, HEAD);
 
-  const approvalReceipt = { issue: 1497, activePr: 1617, headSha: HEAD };
+  const approvalReceipt = {
+    issue: 1497,
+    activePr: 1617,
+    headSha: HEAD,
+    repository: REPOSITORY,
+    branch: BRANCH,
+  };
   const implementedGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     goalRecords: [goalRecord({
