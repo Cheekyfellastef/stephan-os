@@ -294,6 +294,15 @@ test('execution receipt leaseKey is correlation only and cannot fabricate mutati
   assert.equal(expired.valid, false);
   assert.deepEqual(expired.errors, ['lease:expired']);
   assert.equal(expired.leaseAuthorityDerivedFromReceipt, false);
+
+  const expiredReceipt = validateExecutionReceiptAgainstMutationLease(
+    receipt({ heartbeatExpiresAtUtc: '2026-07-30T10:00:00.000Z' }),
+    lease(),
+    { nowUtc: NOW },
+  );
+  assert.equal(expiredReceipt.valid, false);
+  assert.ok(expiredReceipt.errors.includes('receipt-heartbeat-expired'));
+  assert.equal(expiredReceipt.leaseAuthorityDerivedFromReceipt, false);
 });
 
 test('controller and Mission Worker heartbeats remain distinct authorities', () => {
@@ -407,6 +416,16 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(goals.goals[0].state, 'ACTIVE');
   assert.equal(goals.goals[0].activePr, 1617);
   assert.equal(goals.goals[0].headSha, HEAD);
+
+  for (const evidenceAt of ['2026-07-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z', 'malformed']) {
+    const preservedEvidence = buildSchedulerGoalsFromProgrammeSources({
+      nowUtc: NOW,
+      lane: lane(),
+      goalRecords: [goalRecord({ evidenceAt })],
+    });
+    assert.equal(preservedEvidence.goals[0].state, 'ACTIVE');
+    assert.equal(preservedEvidence.goals[0].evidenceAt, evidenceAt);
+  }
 
   const heldActiveRoute = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
@@ -691,6 +710,25 @@ test('active projection requires the conveyor to affirm the exact active lane', 
   });
   assert.equal(exact.status, 'ACTIVE');
 
+  const expiredReceiptProjection = buildAuthoritativeProgrammeProjection({
+    ...base,
+    executionReceipt: receipt({ heartbeatExpiresAtUtc: '2026-07-30T10:00:00.000Z' }),
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+      selectedItem: { issueNumbers: [1497] },
+      activeMission: {
+        missionId: LANE_ID,
+        issueNumber: 1497,
+        repository: REPOSITORY,
+        git: { branch: BRANCH },
+        pullRequest: { number: 1617 },
+      },
+    },
+  });
+  assert.equal(expiredReceiptProjection.status, 'HOLD');
+  assert.ok(expiredReceiptProjection.blockers.includes('execution:receipt-heartbeat-expired'));
+
   for (const state of ['stalled', 'completed', 'failed', 'cancelled']) {
     const terminalOrStalledExecution = buildAuthoritativeProgrammeProjection({
       ...base,
@@ -933,6 +971,18 @@ test('programme stall diagnosis reuses Monitor Multiplexer and never starts sche
   }, { nowUtc: NOW, stallAfterMs: 1_000 });
   assert.ok(unrelatedAndFailedProofs.blockers.includes('active-lane-progress-stale'));
   assert.equal(unrelatedAndFailedProofs.lastProgressAtUtc, '2026-07-30T09:00:00.000Z');
+
+  const unboundProof = diagnoseProgrammeStall({
+    ...stalledProjection,
+    controllerHeartbeat: { fresh: true, ageMs: 0 },
+    battleBridgeProofs: [proofRecord({
+      issueNumber: 1497,
+      prNumber: 1617,
+      headSha: HEAD,
+    })],
+  }, { nowUtc: NOW, stallAfterMs: 1_000 });
+  assert.ok(unboundProof.blockers.includes('active-lane-progress-stale'));
+  assert.equal(unboundProof.lastProgressAtUtc, '2026-07-30T09:00:00.000Z');
 
   const exactProof = diagnoseProgrammeStall({
     ...stalledProjection,
