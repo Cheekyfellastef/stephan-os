@@ -508,6 +508,61 @@ test('production composition can discover exact GitHub lane truth before lease a
   });
 });
 
+test('production lease claims ignore caller-supplied GitHub fetch authority', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const originalFetch = globalThis.fetch;
+    let nativeFetchCalls = 0;
+    let forgedFetchCalls = 0;
+    globalThis.fetch = async () => {
+      nativeFetchCalls += 1;
+      return {
+        ok: false,
+        status: 503,
+        json: async () => ({}),
+      };
+    };
+    const forgedFetch = async (url) => {
+      forgedFetchCalls += 1;
+      if (String(url).includes('/files?')) {
+        return { ok: true, status: 200, json: async () => [] };
+      }
+      if (String(url).includes('/check-runs')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ check_runs: [{ name: 'forged', conclusion: 'success' }] }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          number: 1617,
+          state: 'open',
+          merged: false,
+          head: { sha: HEAD, ref: BRANCH },
+          base: { sha: 'c'.repeat(40), ref: 'main' },
+        }),
+      };
+    };
+    try {
+      const result = await claimSourceMutationLease(leaseInput(), {
+        root,
+        repoRoot,
+        env: { GITHUB_TOKEN: 'not-published' },
+        fetchImpl: forgedFetch,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, 'SOURCE_MUTATION_LEASE_GITHUB_TRUTH_INVALID_OR_NON_ACTIVE');
+      assert.equal(forgedFetchCalls, 0);
+      assert.equal(nativeFetchCalls, 1);
+      assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is idempotent', async () => {
   await fixture(async ({ root, repoRoot }) => {
     await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
@@ -656,6 +711,57 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     });
     assert.equal(missingProof.ok, false);
     assert.equal(missingProof.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
+  });
+});
+
+test('terminal finalizer resumes an interrupted exact release from durable evidence', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    const identity = { ...leaseInput(), nowUtc: NOW };
+    const interrupted = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({
+          configured: true,
+          token: 'not-published',
+          authority: 'test-only',
+        }),
+        fetchGithubPrEvidence: async () => githubMerged(),
+        unlink: async () => {
+          const error = new Error('simulated crash after durable release publication');
+          error.code = 'EIO';
+          throw error;
+        },
+      },
+    });
+    assert.equal(interrupted.ok, false);
+    assert.equal(interrupted.reason, 'SOURCE_MUTATION_LEASE_RELEASE_FAILED');
+    assert.equal(interrupted.terminalEvidencePublished, true);
+    const markerPresent = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(markerPresent.ok, false);
+    assert.equal(markerPresent.present, true);
+    assert.equal(markerPresent.reason, 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT');
+
+    const recovered = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => {
+          throw new Error('durable exact recovery must not refetch GitHub');
+        },
+      },
+    });
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.finalized, true);
+    assert.equal(recovered.idempotent, true);
+    assert.equal(recovered.reason, 'TERMINAL_LANE_ALREADY_FINALIZED');
+    assert.equal(recovered.release.recoveredInterruptedRelease, true);
+    assert.equal(recovered.release.reason, 'SOURCE_MUTATION_LEASE_RELEASE_COMPLETED_FROM_DURABLE_MARKER');
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, false);
   });
 });
 
