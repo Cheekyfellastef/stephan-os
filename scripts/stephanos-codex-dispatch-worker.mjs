@@ -534,6 +534,7 @@ function copyVerifiedRuntimeDist({ repoRoot, buildRoot, distManifestFactory }) {
 export function prepareExactHeadRuntimeBundle(repoRoot, {
   spawnSyncFn = spawnSync,
   distManifestFactory = (root) => createStephanosDistManifest({ rootDir: root }),
+  sourceFingerprintFactory = (root) => computeStephanosSourceFingerprint({ rootDir: root }),
   expectedHead = '',
   platform = process.platform,
   isolatedBuildWorkspaceFactory = createIsolatedRuntimeBuildWorkspace,
@@ -583,6 +584,13 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
         } catch (error) {
           result = { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_DEPENDENCY_LINK_FAILED', reason: boundedText(error?.message || error) };
         }
+      }
+    }
+    let expectedSourceFingerprint = '';
+    if (isolated && !result) {
+      expectedSourceFingerprint = resolveExpectedSourceFingerprint(sourceFingerprintFactory, isolated ? workspace.buildRoot : repoRoot);
+      if (!expectedSourceFingerprint) {
+        result = { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_SOURCE_FINGERPRINT_FAILED' };
       }
     }
     const steps = [
@@ -635,6 +643,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
             canonicalBuildPerformed: true,
             canonicalVerifyPerformed: true,
             immutableBuildSource: expectedHead,
+            expectedSourceFingerprint,
             expectedDistFingerprint: copied.expectedDistFingerprint,
             distManifest: copied.distManifest,
           }
@@ -653,6 +662,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
             required: true,
             canonicalBuildPerformed: true,
             canonicalVerifyPerformed: true,
+            expectedSourceFingerprint,
             expectedDistFingerprint: validatedManifest.fingerprint,
             distManifest,
           }
@@ -1265,18 +1275,26 @@ export async function runCodexWorker(taskPath, {
     await publishVisibilitySafely(visibilityPublisher, task, result);
     return result;
   }
-  const expectedSourceFingerprint = exactHeadValidation.required
-    ? resolveExpectedSourceFingerprint(sourceFingerprintFactory, task.repoRoot)
-    : '';
+  let expectedSourceFingerprint = '';
   let exactHeadRuntimeBundle = Object.freeze({ ok: true, required: false });
-  if (exactHeadValidation.required && expectedSourceFingerprint) {
+  if (exactHeadValidation.required) {
     try {
       exactHeadRuntimeBundle = runtimeBundleFactory(task.repoRoot, {
         spawnSyncFn,
         distManifestFactory,
+        sourceFingerprintFactory,
         expectedHead: exactHeadValidation.expectedHead,
         platform,
       });
+      expectedSourceFingerprint = String(exactHeadRuntimeBundle?.expectedSourceFingerprint || '').trim().toLowerCase();
+      if (exactHeadRuntimeBundle?.ok === true && !EXACT_SOURCE_FINGERPRINT.test(expectedSourceFingerprint)) {
+        exactHeadRuntimeBundle = Object.freeze({
+          ...exactHeadRuntimeBundle,
+          ok: false,
+          required: true,
+          blocker: 'CANONICAL_RUNTIME_SOURCE_FINGERPRINT_FAILED',
+        });
+      }
     } catch (error) {
       exactHeadRuntimeBundle = Object.freeze({
         ok: false,
@@ -1320,10 +1338,10 @@ export async function runCodexWorker(taskPath, {
   const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
   let preExecutionBlocker = '';
   if (exactHeadValidation.required) {
-    if (!expectedSourceFingerprint) preExecutionBlocker = 'LOCAL_SOURCE_FINGERPRINT_FAILED';
-    else if (exactHeadRuntimeBundle?.ok !== true) {
+    if (exactHeadRuntimeBundle?.ok !== true) {
       preExecutionBlocker = exactHeadRuntimeBundle?.blocker || 'CANONICAL_RUNTIME_BUILD_FAILED';
     }
+    else if (!EXACT_SOURCE_FINGERPRINT.test(expectedSourceFingerprint)) preExecutionBlocker = 'CANONICAL_RUNTIME_SOURCE_FINGERPRINT_FAILED';
     else if (!EXACT_DIST_FINGERPRINT.test(expectedDistFingerprint)) {
       preExecutionBlocker = 'CANONICAL_RUNTIME_FINGERPRINT_FAILED';
     }

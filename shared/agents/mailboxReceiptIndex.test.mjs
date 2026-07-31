@@ -326,7 +326,7 @@ test('worker telemetry index redacts path- and credential-shaped free-form field
     heartbeat: {
       errors: ['C:\\Users\\Stephan\\secret.log'],
     },
-    blockers: ['password=should-not-appear', '/home/stephan/.env'],
+    blockers: ['password=should-not-appear', '/home/stephan/.env', '/etc/stephanos/config', 'sk-proj-should-not-appear'],
     nextAction: 'Use private_key=/tmp/private.pem',
     latestExecutionReceipt: {
       blocker: 'authorization: Bearer should-not-appear',
@@ -335,7 +335,7 @@ test('worker telemetry index redacts path- and credential-shaped free-form field
   };
   const projected = sanitizeMailboxReceiptForIndex(value);
   const json = JSON.stringify(projected);
-  assert.doesNotMatch(json, /C:\\Users|\/workspace\/stephan|\/home\/stephan|ghp_should|password=|private_key|authorization:|\.env/i);
+  assert.doesNotMatch(json, /C:\\Users|\/workspace\/stephan|\/home\/stephan|\/etc\/stephanos|ghp_should|sk-proj-should|password=|private_key|authorization:|\.env/i);
   assert.equal(projected.workerTelemetry.task.boundedAction, '');
   assert.deepEqual(projected.workerTelemetry.heartbeat.errors, []);
   assert.deepEqual(projected.workerTelemetry.blockers, []);

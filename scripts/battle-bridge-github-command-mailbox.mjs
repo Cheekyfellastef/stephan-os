@@ -48,7 +48,7 @@ const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SAFE_PROOF_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const SAFE_CONVEYOR_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
-const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:[A-Za-z]:[\\/])|(?:^|[\s=:(\[])(?:\\\\|~?\/(?:home|Users|tmp|var|workspace|root|private|mnt|opt|Volumes)(?:[\\/]|$))|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:ghp|github_pat|xox[baprs]|sk)_[A-Za-z0-9_-]{8,})/i;
+const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set([
   'CREATE_NEXT_MISSION',
   'WAIT_ACTIVE_MISSION',
@@ -313,6 +313,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
+    expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
@@ -382,6 +383,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
+    expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {

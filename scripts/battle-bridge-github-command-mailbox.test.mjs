@@ -141,12 +141,13 @@ test('GitHub receipt projections redact path- and credential-shaped free-form te
     requestId: 'battle-bridge-observability-0002',
     operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
     state: 'BLOCKED',
+    expectedHead: 'a'.repeat(40),
     blocker: 'worker at C:\\Users\\Stephan\\Documents\\secret.json',
     result: {
       ok: false,
       result: {
         blocker: 'token=ghp_this-must-not-leak',
-        finalVerdict: 'read /home/stephan/.env',
+        finalVerdict: 'read /etc/stephanos/config with sk-proj-this-must-not-leak',
         sourceHead: 'a'.repeat(40),
         branch: 'main',
         workerTelemetry: {
@@ -166,7 +167,8 @@ test('GitHub receipt projections redact path- and credential-shaped free-form te
   const projected = createSanitizedMailboxReceiptProjection(receipt);
   const serialized = serializeBoundedReceiptJson(receipt);
   const json = `${JSON.stringify(projected)}${serialized}`;
-  assert.doesNotMatch(json, /C:\\Users|\/home\/stephan|\/workspace\/stephan|ghp_this|password=|bearer secret|private_key|\.env/i);
+  assert.doesNotMatch(json, /C:\\Users|\/home\/stephan|\/workspace\/stephan|\/etc\/stephanos|ghp_this|sk-proj-this|password=|bearer secret|private_key|\.env/i);
+  assert.equal(projected.expectedHead, 'a'.repeat(40));
   assert.equal(projected.blocker, '');
   assert.equal(projected.operationResult.blocker, '');
   assert.equal(projected.workerTelemetry.task.boundedAction, '');
