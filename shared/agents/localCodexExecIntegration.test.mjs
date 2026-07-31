@@ -672,21 +672,33 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
   const repoRoot = join(root, 'repo');
   mkdirSync(repoRoot, { recursive: true });
   const expectedHead = 'a'.repeat(40);
+  const expectedTree = 'c'.repeat(40);
   const calls = [];
   const manifestRoots = [];
   let buildRoot = '';
   try {
     const prepared = prepareExactHeadRuntimeBundle(repoRoot, {
       expectedHead,
+      environment: {
+        PATH: process.env.PATH,
+        GIT_DIR: '/hostile/redirect',
+        git_object_directory: '/hostile/objects',
+      },
       sourceFingerprintFactory: () => SOURCE_FINGERPRINT,
       spawnSyncFn(executable, args, options) {
         calls.push({ executable, args, options });
-        if (executable === 'git' && args[1] === 'add') {
-          buildRoot = args[3];
+        if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === repoRoot) {
+          return { status: 0, stdout: `${expectedTree}\n`, stderr: '' };
+        }
+        if (executable === 'git' && args[1] === 'worktree' && args[2] === 'add') {
+          buildRoot = args[4];
           mkdirSync(buildRoot, { recursive: true });
           mkdirSync(join(buildRoot, 'stephanos-ui'), { recursive: true });
           writeFileSync(join(buildRoot, 'stephanos-ui', 'package.json'), '{}\n');
           writeFileSync(join(buildRoot, 'stephanos-ui', 'package-lock.json'), '{}\n');
+        }
+        if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === buildRoot) {
+          return { status: 0, stdout: `${expectedHead}\n${expectedTree}\n`, stderr: '' };
         }
         if (executable === 'npm' && args[0] === 'ci') {
           mkdirSync(join(options.cwd, 'node_modules'), { recursive: true });
@@ -708,8 +720,13 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
     assert.equal(manifestRoots[0], buildRoot);
     assert.equal(manifestRoots.at(-1), repoRoot);
     assert.equal(manifestRoots.length, 3);
-    const add = calls.find((call) => call.executable === 'git' && call.args[1] === 'add');
-    assert.deepEqual(add.args, ['worktree', 'add', '--detach', buildRoot, expectedHead]);
+    const gitCalls = calls.filter((call) => call.executable === 'git');
+    assert.equal(gitCalls.every((call) => call.args[0] === '--no-replace-objects'), true);
+    assert.equal(gitCalls.every((call) => call.options.env.GIT_NO_REPLACE_OBJECTS === '1'), true);
+    assert.equal(gitCalls.every((call) => call.options.env.GIT_DIR === undefined), true);
+    assert.equal(gitCalls.every((call) => call.options.env.git_object_directory === undefined), true);
+    const add = calls.find((call) => call.executable === 'git' && call.args[1] === 'worktree' && call.args[2] === 'add');
+    assert.deepEqual(add.args, ['--no-replace-objects', 'worktree', 'add', '--detach', buildRoot, expectedHead]);
     const dependencyInstall = calls.find((call) => call.executable === 'npm' && call.args[0] === 'ci');
     assert.deepEqual(dependencyInstall.args, ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
     assert.equal(dependencyInstall.options.cwd, join(buildRoot, 'stephanos-ui'));
@@ -717,8 +734,57 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
     assert.equal(buildAndVerify.length, 2);
     assert.equal(buildAndVerify.every((call) => call.options.cwd === buildRoot), true);
     assert.equal(buildAndVerify.every((call) => call.options.cwd !== repoRoot), true);
-    const remove = calls.find((call) => call.executable === 'git' && call.args[1] === 'remove');
-    assert.deepEqual(remove.args, ['worktree', 'remove', buildRoot]);
+    const remove = calls.find((call) => call.executable === 'git' && call.args[1] === 'worktree' && call.args[2] === 'remove');
+    assert.deepEqual(remove.args, ['--no-replace-objects', 'worktree', 'remove', buildRoot]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('exact-head runtime rejects a materialized replacement tree before dependency install or build', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stephanos-exact-head-replacement-tree-test-'));
+  const repoRoot = join(root, 'repo');
+  mkdirSync(repoRoot, { recursive: true });
+  const expectedHead = 'a'.repeat(40);
+  const expectedTree = 'b'.repeat(40);
+  const substitutedTree = 'c'.repeat(40);
+  const calls = [];
+  let buildRoot = '';
+  try {
+    const prepared = prepareExactHeadRuntimeBundle(repoRoot, {
+      expectedHead,
+      environment: {
+        PATH: process.env.PATH,
+        GIT_REPLACE_REF_BASE: 'refs/hostile/',
+        Git_Dir: '/hostile/redirect',
+      },
+      spawnSyncFn(executable, args, options) {
+        calls.push({ executable, args, options });
+        if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === repoRoot) {
+          return { status: 0, stdout: `${expectedTree}\n`, stderr: '' };
+        }
+        if (executable === 'git' && args[1] === 'worktree' && args[2] === 'add') {
+          buildRoot = args[4];
+          mkdirSync(buildRoot, { recursive: true });
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === buildRoot) {
+          return { status: 0, stdout: `${expectedHead}\n${substitutedTree}\n`, stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
+    assert.equal(prepared.ok, false);
+    assert.equal(prepared.blocker, 'CANONICAL_RUNTIME_BUILD_WORKTREE_IDENTITY_MISMATCH');
+    assert.equal(prepared.expectedHead, expectedHead);
+    assert.equal(prepared.expectedTree, expectedTree);
+    assert.equal(prepared.materializedTree, substitutedTree);
+    assert.equal(calls.some((call) => call.executable === 'npm'), false);
+    assert.equal(calls.some((call) => call.executable === process.execPath), false);
+    const gitCalls = calls.filter((call) => call.executable === 'git');
+    assert.equal(gitCalls.every((call) => call.args[0] === '--no-replace-objects'), true);
+    assert.equal(gitCalls.every((call) => call.options.env.GIT_REPLACE_REF_BASE === undefined), true);
+    assert.equal(gitCalls.every((call) => call.options.env.Git_Dir === undefined), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -729,26 +795,44 @@ test('exact-head runtime blocks when the approved lockfile dependency install fa
   const repoRoot = join(root, 'repo');
   mkdirSync(repoRoot, { recursive: true });
   const expectedHead = 'b'.repeat(40);
+  const expectedTree = 'd'.repeat(40);
   const calls = [];
+  let buildRoot = '';
+  let partialInstallPath = '';
+  let partialInstallRemovedBeforeWorktreeRemoval = false;
   try {
     const prepared = prepareExactHeadRuntimeBundle(repoRoot, {
       expectedHead,
       platform: 'linux',
       spawnSyncFn(executable, args, options) {
         calls.push({ executable, args, options });
-        if (executable === 'git' && args[1] === 'add') {
-          const buildRoot = args[3];
+        if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === repoRoot) {
+          return { status: 0, stdout: `${expectedTree}\n`, stderr: '' };
+        }
+        if (executable === 'git' && args[1] === 'worktree' && args[2] === 'add') {
+          buildRoot = args[4];
           mkdirSync(join(buildRoot, 'stephanos-ui'), { recursive: true });
           writeFileSync(join(buildRoot, 'stephanos-ui', 'package.json'), '{}\n');
           writeFileSync(join(buildRoot, 'stephanos-ui', 'package-lock.json'), '{}\n');
         }
-        if (executable === 'npm') return { status: 1, stdout: '', stderr: 'dependency install failed' };
+        if (executable === 'git' && args[1] === 'rev-parse' && options.cwd === buildRoot) {
+          return { status: 0, stdout: `${expectedHead}\n${expectedTree}\n`, stderr: '' };
+        }
+        if (executable === 'npm') {
+          partialInstallPath = join(options.cwd, 'node_modules');
+          mkdirSync(join(partialInstallPath, 'partial-package'), { recursive: true });
+          return { status: 1, stdout: '', stderr: 'dependency install failed' };
+        }
+        if (executable === 'git' && args[1] === 'worktree' && args[2] === 'remove') {
+          partialInstallRemovedBeforeWorktreeRemoval = !existsSync(partialInstallPath);
+        }
         return { status: 0, stdout: '', stderr: '' };
       },
     });
     assert.equal(prepared.ok, false);
     assert.equal(prepared.blocker, 'CANONICAL_RUNTIME_DEPENDENCY_INSTALL_FAILED');
     assert.equal(calls.some((call) => call.executable === process.execPath), false);
+    assert.equal(partialInstallRemovedBeforeWorktreeRemoval, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

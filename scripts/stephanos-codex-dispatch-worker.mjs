@@ -33,6 +33,7 @@ import {
   publishRemoteCodexTaskVisibility,
 } from '../shared/agents/remoteCodexTaskVisibility.mjs';
 import {
+  createScenarioSourceGitEnvironment,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
 } from './browser-proof-runner.mjs';
 
@@ -351,12 +352,32 @@ function createIsolatedRuntimeBuildWorkspace() {
   });
 }
 
+function runExactHeadGit(spawnSyncFn, args, {
+  cwd,
+  gitEnvironment,
+} = {}) {
+  return spawnSyncFn('git', ['--no-replace-objects', ...args], {
+    cwd,
+    encoding: 'utf8',
+    env: gitEnvironment,
+    shell: false,
+    windowsHide: true,
+    timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+  });
+}
+
+function exactGitSha(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(normalized) ? normalized : '';
+}
+
 function cleanupIsolatedRuntimeBuildWorkspace({
   workspace,
   repoRoot,
   dependencyInstallPaths = [],
   worktreeAdded = false,
   spawnSyncFn,
+  gitEnvironment,
 } = {}) {
   if (!workspace) return Object.freeze({ ok: true });
   let cleanupError = '';
@@ -385,12 +406,9 @@ function cleanupIsolatedRuntimeBuildWorkspace({
   if (worktreeAdded) {
     let removal;
     try {
-      removal = spawnSyncFn('git', ['worktree', 'remove', workspace.buildRoot], {
+      removal = runExactHeadGit(spawnSyncFn, ['worktree', 'remove', workspace.buildRoot], {
         cwd: repoRoot,
-        encoding: 'utf8',
-        shell: false,
-        windowsHide: true,
-        timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+        gitEnvironment,
       });
     } catch (error) {
       cleanupError ||= `WORKTREE_REMOVE_FAILED:${boundedText(error?.message || error, 800)}`;
@@ -417,6 +435,7 @@ function installRuntimeDependencies(buildRoot, platform, spawnSyncFn) {
   const uiRoot = runtimePath(buildRoot, 'stephanos-ui');
   const packageJsonPath = runtimePath(uiRoot, 'package.json');
   const lockfilePath = runtimePath(uiRoot, 'package-lock.json');
+  const installedPath = runtimePath(uiRoot, 'node_modules');
   if (!existsSync(packageJsonPath) || !existsSync(lockfilePath)) {
     return Object.freeze({
       ok: false,
@@ -440,7 +459,6 @@ function installRuntimeDependencies(buildRoot, platform, spawnSyncFn) {
       reason: boundedText(error?.message || error),
     });
   }
-  const installedPath = runtimePath(uiRoot, 'node_modules');
   if (installation?.error || installation?.status !== 0 || !existsSync(installedPath) || runtimePathIsSymlink(installedPath)) {
     return Object.freeze({
       ok: false,
@@ -564,6 +582,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
   sourceFingerprintFactory = (root) => computeStephanosSourceFingerprint({ rootDir: root }),
   expectedHead = '',
   platform = process.platform,
+  environment = process.env,
   isolatedBuildWorkspaceFactory = createIsolatedRuntimeBuildWorkspace,
 } = {}) {
   const isolated = Boolean(expectedHead);
@@ -574,6 +593,9 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
   let worktreeAdded = false;
   let dependencyInstallPaths = [];
   let result = null;
+  const gitEnvironment = isolated
+    ? createScenarioSourceGitEnvironment(environment, { platform })
+    : null;
   try {
     const buildRoot = isolated
       ? (() => {
@@ -584,17 +606,42 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
       })()
       : repoRoot;
     if (isolated) {
-      let worktree;
+      let approvedTree = '';
+      let approvedTreeLookup;
       try {
-        worktree = spawnSyncFn('git', ['worktree', 'add', '--detach', buildRoot, expectedHead], {
+        approvedTreeLookup = runExactHeadGit(spawnSyncFn, ['rev-parse', `${expectedHead}^{tree}`], {
           cwd: repoRoot,
-          encoding: 'utf8',
-          shell: false,
-          windowsHide: true,
-          timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+          gitEnvironment,
         });
       } catch (error) {
-        result = { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_FAILED', reason: boundedText(error?.message || error) };
+        result = {
+          ok: false,
+          required: true,
+          blocker: 'CANONICAL_RUNTIME_APPROVED_TREE_LOOKUP_FAILED',
+          reason: boundedText(error?.message || error),
+        };
+      }
+      if (!result) {
+        approvedTree = exactGitSha(approvedTreeLookup?.stdout);
+        if (approvedTreeLookup?.error || approvedTreeLookup?.status !== 0 || !approvedTree) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_APPROVED_TREE_LOOKUP_FAILED',
+            reason: boundedText(approvedTreeLookup?.stderr || approvedTreeLookup?.stdout || approvedTreeLookup?.error?.message),
+          };
+        }
+      }
+      let worktree;
+      if (!result) {
+        try {
+          worktree = runExactHeadGit(spawnSyncFn, ['worktree', 'add', '--detach', buildRoot, expectedHead], {
+            cwd: repoRoot,
+            gitEnvironment,
+          });
+        } catch (error) {
+          result = { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_FAILED', reason: boundedText(error?.message || error) };
+        }
       }
       if (!result && (worktree?.error || worktree?.status !== 0 || !existsSync(buildRoot))) {
         result = {
@@ -606,11 +653,51 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
       }
       if (!result) {
         worktreeAdded = true;
+        let materializedIdentity;
+        try {
+          materializedIdentity = runExactHeadGit(spawnSyncFn, ['rev-parse', 'HEAD', 'HEAD^{tree}'], {
+            cwd: buildRoot,
+            gitEnvironment,
+          });
+        } catch (error) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_IDENTITY_MISMATCH',
+            reason: boundedText(error?.message || error),
+          };
+        }
+        const [materializedHead = '', materializedTree = '', ...unexpectedIdentity] = String(materializedIdentity?.stdout || '')
+          .trim()
+          .split(/\r?\n/)
+          .map((value) => exactGitSha(value));
+        if (
+          !result
+          && (
+            materializedIdentity?.error
+            || materializedIdentity?.status !== 0
+            || unexpectedIdentity.length > 0
+            || materializedHead !== expectedHead.toLowerCase()
+            || materializedTree !== approvedTree
+          )
+        ) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_IDENTITY_MISMATCH',
+            expectedHead: expectedHead.toLowerCase(),
+            materializedHead,
+            expectedTree: approvedTree,
+            materializedTree,
+            reason: boundedText(materializedIdentity?.stderr || materializedIdentity?.error?.message),
+          };
+        }
+      }
+      if (!result) {
+        dependencyInstallPaths = [runtimePath(buildRoot, 'stephanos-ui', 'node_modules')];
         const dependencies = installRuntimeDependencies(buildRoot, platform, spawnSyncFn);
         if (!dependencies.ok) {
           result = { ok: false, required: true, blocker: dependencies.blocker, reason: dependencies.reason };
-        } else {
-          dependencyInstallPaths = [...dependencies.installedPaths];
         }
       }
     }
@@ -707,6 +794,7 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
       dependencyInstallPaths,
       worktreeAdded,
       spawnSyncFn,
+      gitEnvironment,
     });
     if (!cleanup.ok) {
       result = { ok: false, required: true, blocker: cleanup.blocker, reason: cleanup.reason };
