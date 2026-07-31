@@ -218,6 +218,21 @@ test('affirmative internally consistent exact-head merge evidence produces one t
   assert.equal(terminal.mergeEvidence.mergeCommitSha, MERGE);
 });
 
+test('future-dated GitHub merge evidence cannot make a lane terminal', () => {
+  const projection = lane({
+    github: github({
+      prState: 'closed',
+      merged: true,
+      mergedAt: '2099-01-01T00:00:00.000Z',
+      mergeCommitSha: MERGE,
+    }),
+  });
+  assert.equal(projection.valid, false);
+  assert.equal(projection.active, false);
+  assert.equal(projection.terminal, false);
+  assert.ok(projection.blockers.includes('github-merged-at-in-future'));
+});
+
 test('source mutation lease validates, renews only the exact live owner, and never grants merge authority', () => {
   const record = lease();
   assert.equal(record.schema, SOURCE_MUTATION_LEASE_SCHEMA);
@@ -444,6 +459,21 @@ test('terminal finalization plan is exact-bound and emits no scheduling or merge
     records.evidenceId,
     createTerminalLaneEvidenceId(terminalLane, lease({ leaseId: 'lease-goal-1497-pr-1617-second' })),
   );
+
+  const futureMergePlan = buildTerminalLaneFinalizationPlan({
+    lane: terminalLane,
+    mutationLease: lease(),
+    github: {
+      ...terminalLane.mergeEvidence,
+      mergedAt: '2099-01-01T00:00:00.000Z',
+    },
+    leaseId: 'lease-goal-1497-pr-1617',
+    ownerId: OWNER,
+    nowUtc: NOW,
+  });
+  assert.equal(futureMergePlan.valid, false);
+  assert.ok(futureMergePlan.blockers.includes('github-merged-at-in-future'));
+  assert.equal(futureMergePlan.finalVerdict, 'TERMINAL_LANE_FINALIZATION_HOLD');
 });
 
 test('scheduler goals are constructed from durable records and the canonical lane', () => {
