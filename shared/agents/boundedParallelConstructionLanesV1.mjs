@@ -459,7 +459,7 @@ async function exactHeadEvidenceRefs(values, lane, name, evidenceKind, resolveVe
   return unique(refs);
 }
 
-async function createReadyForIntegrationReceipt(laneInput, evidence, resolveVerifierEvidence) {
+async function createReadyForIntegrationReceipt(laneInput, evidence, resolveVerifierEvidence, trustedNowMs) {
   const lane = normalizeLane(laneInput);
   if (laneInvalid(lane) || !lane.headSha) throw new TypeError('lane must include valid identity, ownership, baseSha and headSha');
   if (!ACTIVE_STATES.has(lane.state)) throw new TypeError('lane state is not eligible for readiness');
@@ -467,9 +467,13 @@ async function createReadyForIntegrationReceipt(laneInput, evidence, resolveVeri
   const proofRefs = await exactHeadEvidenceRefs(evidence.proofRefs, lane, 'proofRefs', 'PROOF', resolveVerifierEvidence);
   const observedAt = text(evidence.observedAt);
   const observedAtMs = timestamp(observedAt);
+  const nowMs = Number(trustedNowMs());
   const currentMainSha = sha(evidence.currentMainSha);
-  if (observedAtMs === null || !currentMainSha) {
-    throw new TypeError('observedAt and currentMainSha must be valid');
+  if (observedAtMs === null
+    || !Number.isFinite(nowMs)
+    || Math.abs(observedAtMs - nowMs) > MAX_ISSUANCE_CLOCK_SKEW_MS
+    || !currentMainSha) {
+    throw new TypeError('observedAt must be valid and match the trusted observation clock; currentMainSha must be valid');
   }
 
   return freeze({
@@ -514,7 +518,12 @@ export function createBoundedParallelConstructionAuthority(adapters = {}) {
       );
     },
     createReadyReceipt(laneInput, evidence = {}) {
-      return createReadyForIntegrationReceipt(laneInput, evidence, resolveVerifierEvidence);
+      return createReadyForIntegrationReceipt(
+        laneInput,
+        evidence,
+        resolveVerifierEvidence,
+        trustedNowMs,
+      );
     },
   });
 }

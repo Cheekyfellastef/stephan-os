@@ -334,7 +334,7 @@ test('ready-for-integration receipt binds authenticated exact-head evidence and 
   const authority = authorityHarness();
   const receipt = await authority.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
-    observedAt:'2026-07-29T14:45:00Z',
+    observedAt:'2026-07-29T14:30:00Z',
     testRefs:[authority.addEvidence('TEST')],
     proofRefs:[authority.addEvidence('PROOF')],
   });
@@ -350,7 +350,7 @@ test('ready-for-integration receipt binds authenticated exact-head evidence and 
 test('ready-for-integration receipt requires tests, proof and current main', async () => {
   const authority = authorityHarness();
   await assert.rejects(() => authority.api.createReadyReceipt(candidate(), {
-    observedAt:'2026-07-29T14:45:00Z',
+    observedAt:'2026-07-29T14:30:00Z',
     currentMainSha:SHA_C,
     testRefs:[],
     proofRefs:[authority.addEvidence('PROOF')],
@@ -411,14 +411,14 @@ test('ready-for-integration evidence is authenticated, exact-head bound and time
   const wrongHead = authorityHarness();
   await assert.rejects(() => wrongHead.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
-    observedAt:'2026-07-29T14:45:00Z',
+    observedAt:'2026-07-29T14:30:00Z',
     testRefs:[wrongHead.addEvidence('TEST', { headSha:SHA_A })],
     proofRefs:[wrongHead.addEvidence('PROOF')],
   }), /exact head/);
   const badTimestamp = authorityHarness();
   await assert.rejects(() => badTimestamp.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
-    observedAt:'2026-07-29T14:45:00Z',
+    observedAt:'2026-07-29T14:30:00Z',
     testRefs:[badTimestamp.addEvidence('TEST', {
       result:{ ...exactEvidence('TEST').result, timestampUtc:'not-a-time' },
     })],
@@ -439,10 +439,18 @@ test('ready-for-integration evidence is authenticated, exact-head bound and time
     proofRefs:[invalidCalendar.addEvidence('PROOF')],
   }), /must be valid/);
 
+  const futureObserved = authorityHarness();
+  await assert.rejects(() => futureObserved.api.createReadyReceipt(candidate(), {
+    currentMainSha:SHA_C,
+    observedAt:'2099-01-01T00:00:00Z',
+    testRefs:[futureObserved.addEvidence('TEST')],
+    proofRefs:[futureObserved.addEvidence('PROOF')],
+  }), /trusted observation clock/);
+
   const forged = authorityHarness();
   await assert.rejects(() => forged.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
-    observedAt:'2026-07-29T14:45:00Z',
+    observedAt:'2026-07-29T14:30:00Z',
     testRefs:[{ ref:'made-up', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
     proofRefs:[forged.addEvidence('PROOF')],
   }), /immutable evidence references/);
@@ -450,7 +458,7 @@ test('ready-for-integration evidence is authenticated, exact-head bound and time
   const unresolved = authorityHarness();
   await assert.rejects(() => unresolved.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
-    observedAt:'2026-07-29T14:45:00Z',
+    observedAt:'2026-07-29T14:30:00Z',
     testRefs:['proof/invented-pass.json'],
     proofRefs:[unresolved.addEvidence('PROOF')],
   }), /exact head/);
@@ -499,7 +507,7 @@ test('terminal lane outcomes cannot be converted into readiness receipts', async
     const authority = authorityHarness();
     await assert.rejects(() => authority.api.createReadyReceipt(candidate({ state }), {
       currentMainSha:SHA_C,
-      observedAt:'2026-07-29T14:45:00Z',
+      observedAt:'2026-07-29T14:30:00Z',
       testRefs:[authority.addEvidence('TEST')],
       proofRefs:[authority.addEvidence('PROOF')],
     }), /not eligible/);
