@@ -16,6 +16,7 @@ import {
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
 import {
   buildMissionWorkerAction,
+  projectMissionWorkerActionState,
 } from './missionOrchestratorWorker.mjs';
 
 export const DURABLE_FLYWHEEL_CONTROLLER_SCHEMA = 'stephanos.durable-flywheel-controller.vnext';
@@ -111,9 +112,12 @@ function workerAdapter(action = {}) {
 
 function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
   const activeMission = projection?.criticalBacklog?.activeMission;
-  const missionId = text(activeMission?.missionId).toLowerCase();
-  const missionRevision = Number(activeMission?.revision);
-  const currentPhase = text(activeMission?.currentPhase).toUpperCase();
+  const actionState = projectMissionWorkerActionState(activeMission, {
+    now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
+  });
+  const missionId = text(actionState?.missionId).toLowerCase();
+  const missionRevision = Number(actionState?.revision);
+  const currentPhase = text(actionState?.currentPhase).toUpperCase();
   if (
     !WORKER_SAFE_ID.test(missionId)
     || !Number.isSafeInteger(missionRevision)
@@ -122,7 +126,7 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
   ) {
     return null;
   }
-  const action = buildMissionWorkerAction(activeMission, {
+  const action = buildMissionWorkerAction(actionState, {
     now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
   });
   const actionId = text(action?.actionId).toLowerCase();
@@ -142,10 +146,10 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
     adapter,
     operation: text(action.operation),
     laneId: identity.laneId || null,
-    repository: identity.repository || text(activeMission?.repository) || null,
+    repository: identity.repository || text(actionState?.repository) || null,
     issueNumber: identity.issueNumber,
     prNumber: identity.prNumber,
-    branch: identity.branch || text(activeMission?.git?.branch) || null,
+    branch: identity.branch || text(actionState?.git?.branch) || null,
     headSha: identity.headSha || null,
     boundedActionCount: 1,
     mergeAuthority: false,
@@ -260,9 +264,9 @@ export function reconcileDurableFlywheelController(projection = {}, options = {}
   });
 }
 
-function createCycleReceipt(result, projection, nowUtc) {
+function createCycleReceipt(result, projection, nowUtc, options = {}) {
   const identity = result.laneIdentity ?? projectionIdentity(projection);
-  const id = receiptId(nowUtc);
+  const id = text(options.receiptId, receiptId(nowUtc));
   const proofRef = `receipts/${id}.json`;
   return freeze({
     ...createSharedWorkspaceReceiptRecord({
@@ -299,6 +303,42 @@ function createCycleReceipt(result, projection, nowUtc) {
     mergeAuthority: false,
     leaseSeizureAllowed: false,
   });
+}
+
+function transitionAuthorityResult(projection, sourceRevision, nowUtc, transitionState) {
+  const terminal = transitionState === 'FINALIZING';
+  const identity = projectionIdentity(projection);
+  return freeze({
+    schemaVersion: DURABLE_FLYWHEEL_CONTROLLER_SCHEMA,
+    status: terminal ? 'TERMINAL_RECONCILIATION_REQUIRED' : 'ACTIVE',
+    finalVerdict: 'DURABLE_FLYWHEEL_TRANSITION_RECONCILED',
+    observedAtUtc: nowUtc,
+    sourceRevision,
+    projectionStatus: terminal ? 'TERMINAL_RECONCILIATION_REQUIRED' : 'ACTIVE',
+    activeLane: projection?.lane ?? null,
+    laneIdentity: identity,
+    action: terminal
+      ? 'ESTABLISH_EXACT_TERMINAL_RECONCILIATION_AUTHORITY'
+      : 'ESTABLISH_EXACT_ACTIVE_LANE_AUTHORITY',
+    blockers: [],
+    allowWorkerTick: false,
+    boundedMutationSteps: 0,
+    chatMemoryAuthoritative: false,
+    productionContractsOnly: true,
+    createsReplacementMachinery: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+    nextAction: 'Publish durable reconciliation evidence before exposing one bounded mutation step.',
+  });
+}
+
+function hasOnlyTransitionAuthorityBlocker(projection, transitionState) {
+  const expected = transitionState === 'FINALIZING'
+    ? 'controller-heartbeat-terminal-lane-authority-unproven'
+    : 'controller-heartbeat-active-lane-authority-unproven';
+  return projection?.status === 'HOLD'
+    && list(projection?.blockers).length === 1
+    && projection.blockers[0] === expected;
 }
 
 export async function publishDurableFlywheelCycleReceipt(receipt, options = {}) {
@@ -389,6 +429,9 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   }
 
   const loadProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
+  let transitionAuthorityReceipt = null;
+  let transitionAuthorityReceiptPublication = null;
+  let transitionAuthorityHeartbeatPublication = null;
   let projection = await loadProjection(serviceOptions);
   const transitionState = projection?.lane?.active === true
     ? 'ACTIVE_LANE'
@@ -403,7 +446,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       sourceRevision,
       activeLaneId: projection?.lane?.laneId ?? '',
       nowUtc,
-      boundedMutationSteps: transitionState === 'RECONCILING' ? 0 : 1,
+      boundedMutationSteps: 0,
     }), serviceOptions);
     if (transitionHeartbeat?.ok !== true) {
       const result = holdResult(`controller-heartbeat:${text(transitionHeartbeat?.reason, 'transition-publication-failed')}`, {
@@ -429,6 +472,65 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       });
     }
     projection = await loadProjection(serviceOptions);
+    if (
+      ['ACTIVE_LANE', 'FINALIZING'].includes(transitionState)
+      && hasOnlyTransitionAuthorityBlocker(projection, transitionState)
+    ) {
+      const authorityResult = transitionAuthorityResult(
+        projection,
+        sourceRevision,
+        nowUtc,
+        transitionState,
+      );
+      transitionAuthorityReceipt = createCycleReceipt(
+        authorityResult,
+        projection,
+        nowUtc,
+        { receiptId: `${receiptId(nowUtc)}-authority` },
+      );
+      transitionAuthorityReceiptPublication = await requiredFunction(
+        deps.publishReceipt,
+        'publishReceipt',
+      )(transitionAuthorityReceipt, serviceOptions);
+      if (transitionAuthorityReceiptPublication?.ok === true) {
+        transitionAuthorityHeartbeatPublication = await publishHeartbeat(heartbeatInput({
+          state: transitionState,
+          sourceRevision,
+          activeLaneId: projection?.lane?.laneId ?? '',
+          nowUtc,
+          boundedMutationSteps: 1,
+          successful: true,
+          cycleReceiptId: transitionAuthorityReceipt.receiptId,
+        }), serviceOptions);
+        if (transitionAuthorityHeartbeatPublication?.ok === true) {
+          projection = await loadProjection(serviceOptions);
+        } else {
+          projection = {
+            ...projection,
+            status: 'HOLD',
+            blockers: [
+              ...list(projection.blockers),
+              `controller-heartbeat:${text(
+                transitionAuthorityHeartbeatPublication?.reason,
+                'authority-publication-failed',
+              )}`,
+            ],
+          };
+        }
+      } else {
+        projection = {
+          ...projection,
+          status: 'HOLD',
+          blockers: [
+            ...list(projection.blockers),
+            `transition-authority-receipt:${text(
+              transitionAuthorityReceiptPublication?.reason,
+              'publication-failed',
+            )}`,
+          ],
+        };
+      }
+    }
   }
 
   let result = reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
@@ -532,6 +634,9 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     ...result,
     authoritativeProjection: projection,
     actionResult,
+    transitionAuthorityReceipt,
+    transitionAuthorityReceiptPublication,
+    transitionAuthorityHeartbeatPublication,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,

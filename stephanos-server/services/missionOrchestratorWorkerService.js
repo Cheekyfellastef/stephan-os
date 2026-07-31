@@ -1,6 +1,10 @@
 import { readFile, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { buildMissionWorkerAction, issueMissionWorkerAuthorization } from '../../shared/agents/missionOrchestratorWorker.mjs';
+import {
+  buildMissionWorkerAction,
+  issueMissionWorkerAuthorization,
+  projectMissionWorkerActionState,
+} from '../../shared/agents/missionOrchestratorWorker.mjs';
 import { appendMissionEvent, listMissionRecords, readMissionRecord, resolveMissionOrchestratorRoot } from './missionOrchestratorStore.js';
 
 function text(value, fallback = '') {
@@ -144,9 +148,12 @@ export async function publishNextMissionWorkerAction(options = {}) {
     };
   }
   for (const state of candidates) {
+    let actionState = state;
+    let repairStarted = false;
     if (grant) {
-      const preview = buildMissionWorkerAction(state, options);
-      const validation = validateExactActionGrant(state, preview, grant, options);
+      const projectedState = projectMissionWorkerActionState(state, options);
+      const preview = buildMissionWorkerAction(projectedState, options);
+      const validation = validateExactActionGrant(projectedState, preview, grant, options);
       if (!validation.valid) {
         return {
           published: false,
@@ -156,9 +163,37 @@ export async function publishNextMissionWorkerAction(options = {}) {
           path: '',
         };
       }
+      if (state.currentPhase === 'REPAIR_REQUIRED') {
+        const prepared = await beginRepairIfRequired(state, options);
+        actionState = prepared.state;
+        repairStarted = prepared.repairStarted;
+        const actualAction = buildMissionWorkerAction(actionState, options);
+        const actualValidation = validateExactActionGrant(
+          actionState,
+          actualAction,
+          grant,
+          options,
+        );
+        if (!actualValidation.valid) {
+          return {
+            published: false,
+            reason: 'post-repair-action-grant-mismatch',
+            blockers: actualValidation.errors,
+            action: actualAction,
+            path: '',
+            repairStarted,
+          };
+        }
+      }
     }
-    const result = await publishMissionWorkerAction(state, options);
-    if (result.published || grant) return { ...result, actionGrantAccepted: Boolean(grant) };
+    const result = await publishMissionWorkerAction(actionState, options);
+    if (result.published || grant) {
+      return {
+        ...result,
+        repairStarted: repairStarted || result.repairStarted,
+        actionGrantAccepted: Boolean(grant),
+      };
+    }
   }
   return { published: false, reason: 'no-runnable-mission', action: null, path: '' };
 }

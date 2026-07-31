@@ -808,6 +808,9 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
   if (cycleState === 'STARTING' && record?.boundedMutationSteps !== 0) {
     errors.push('starting-heartbeat-cannot-authorize-mutation');
   }
+  if (!successEvidenceComplete && record?.boundedMutationSteps !== 0) {
+    errors.push('unproven-heartbeat-cannot-authorize-mutation');
+  }
   if (!successEvidenceComplete && list(record?.proofRefs).length) {
     errors.push('unproven-heartbeat-cannot-claim-proof');
   }
@@ -830,6 +833,7 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
     expectedSourceRevision: expectedSourceRevision || null,
     cycleState,
     activeLaneId: activeLaneId || null,
+    boundedMutationSteps: record?.boundedMutationSteps === 1 ? 1 : 0,
     reconciliationSucceeded: successEvidenceComplete,
     lastSuccessfulReconciliationUtc: reconciliationMs === null ? null : new Date(reconciliationMs).toISOString(),
     lastPublishedReceiptId,
@@ -1031,8 +1035,26 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   if (lane?.active && !ACTIVE_LANE_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
     blockers.push('controller-heartbeat-cycle-state-does-not-authorize-active-lane');
   }
+  if (
+    lane?.active
+    && (
+      controllerHeartbeat?.reconciliationSucceeded !== true
+      || controllerHeartbeat?.boundedMutationSteps !== 1
+    )
+  ) {
+    blockers.push('controller-heartbeat-active-lane-authority-unproven');
+  }
   if (lane?.terminal && !TERMINAL_LANE_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
     blockers.push('controller-heartbeat-cycle-state-does-not-authorize-terminal-reconciliation');
+  }
+  if (
+    lane?.terminal
+    && (
+      controllerHeartbeat?.reconciliationSucceeded !== true
+      || controllerHeartbeat?.boundedMutationSteps !== 1
+    )
+  ) {
+    blockers.push('controller-heartbeat-terminal-lane-authority-unproven');
   }
   if (lane?.terminal && controllerHeartbeat?.activeLaneId !== lane.laneId) {
     blockers.push('controller-heartbeat-terminal-lane-mismatch');

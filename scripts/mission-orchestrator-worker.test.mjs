@@ -22,21 +22,55 @@ test('one exact controller grant selects only its bound queue action', () => {
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     missionId: 'mission-two',
     actionId: 'mission-two-r4-action',
+    actionKind: 'agent-handoff',
     adapter: 'codex',
+    operation: '',
     boundedActionCount: 1,
   };
   const selected = selectGrantedMissionWorkerQueueItem([
     {
       adapter: 'openclaw-signed',
-      item: { missionId: 'mission-one', actionId: 'mission-one-r1-action' },
+      item: {
+        schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+        adapter: 'openclaw-signed',
+        missionId: 'mission-one',
+        actionId: 'mission-one-r1-action',
+        payload: {
+          missionId: 'mission-one',
+          actionId: 'mission-one-r1-action',
+          actionKind: 'signed-openclaw-operation',
+        },
+      },
     },
     {
       adapter: 'codex',
-      item: { missionId: 'mission-two', actionId: 'mission-two-r4-action' },
+      item: {
+        schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+        adapter: 'codex',
+        missionId: 'mission-two',
+        actionId: 'mission-two-r4-action',
+        payload: {
+          missionId: 'mission-two',
+          actionId: 'mission-two-r4-action',
+          actionKind: 'agent-handoff',
+          adapter: 'codex',
+        },
+      },
     },
     {
       adapter: 'openclaw-readonly',
-      item: { missionId: 'mission-three', actionId: 'mission-three-r2-action' },
+      item: {
+        schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+        adapter: 'openclaw-readonly',
+        missionId: 'mission-three',
+        actionId: 'mission-three-r2-action',
+        payload: {
+          missionId: 'mission-three',
+          actionId: 'mission-three-r2-action',
+          actionKind: 'agent-handoff',
+          adapter: 'openclaw-readonly',
+        },
+      },
     },
   ], grant);
   assert.equal(selected.ok, true);
@@ -45,11 +79,51 @@ test('one exact controller grant selects only its bound queue action', () => {
   const retargeted = selectGrantedMissionWorkerQueueItem([
     {
       adapter: 'codex',
-      item: { missionId: 'mission-two', actionId: 'different-action' },
+      item: {
+        schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+        adapter: 'codex',
+        missionId: 'mission-two',
+        actionId: 'different-action',
+        payload: {
+          missionId: 'mission-two',
+          actionId: 'different-action',
+          actionKind: 'agent-handoff',
+          adapter: 'codex',
+        },
+      },
     },
   ], grant);
   assert.equal(retargeted.ok, false);
   assert.equal(retargeted.reason, 'exact-action-queue-item-not-pending');
+
+  const validPayload = {
+    missionId: grant.missionId,
+    actionId: grant.actionId,
+    actionKind: grant.actionKind,
+    adapter: grant.adapter,
+  };
+  for (const payload of [
+    { ...validPayload, missionId: 'mission-other' },
+    { ...validPayload, actionId: 'action-other' },
+    { ...validPayload, actionKind: 'github-inspection' },
+    { ...validPayload, adapter: 'openclaw-readonly' },
+    { ...validPayload, operation: 'check-pr' },
+  ]) {
+    const retargetedPayload = selectGrantedMissionWorkerQueueItem([
+      {
+        adapter: 'codex',
+        item: {
+          schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+          adapter: 'codex',
+          missionId: grant.missionId,
+          actionId: grant.actionId,
+          payload,
+        },
+      },
+    ], grant);
+    assert.equal(retargetedPayload.ok, false);
+    assert.equal(retargetedPayload.reason, 'exact-action-queue-payload-mismatch');
+  }
 });
 
 test('executes Codex non-interactively and grounds approved source evidence', async () => {

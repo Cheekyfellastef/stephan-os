@@ -5,7 +5,10 @@ import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
-import { buildMissionWorkerAction } from '../../shared/agents/missionOrchestratorWorker.mjs';
+import {
+  buildMissionWorkerAction,
+  projectMissionWorkerActionState,
+} from '../../shared/agents/missionOrchestratorWorker.mjs';
 import {
   collectAgentWorkerResult,
   publishMissionWorkerAction,
@@ -76,4 +79,105 @@ test('publisher rejects retargeting and publishes only the exact granted mission
   });
   assert.equal(retargeted.published, false);
   assert.equal(retargeted.reason, 'action-grant-mismatch');
+});
+
+test('repair transition is projected, granted, applied, and queued as one exact post-repair action', async () => {
+  const options = await runtime();
+  const missionId = 'grant-repair';
+  let current = await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/grant-repair',
+  }, options);
+  const append = async (eventId, eventType, fields = {}) => {
+    current = await appendMissionEvent(missionId, {
+      eventId,
+      eventType,
+      ...fields,
+    }, options);
+  };
+  await append('repair-worktree', 'WORKTREE_READY', {
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'repair-worktree'),
+  });
+  await append('repair-dispatch', 'AGENT_DISPATCHED', { agentId: 'codex' });
+  await append('repair-result', 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'repair-result',
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('codex result', 'repair-result'),
+  });
+  await append('repair-evidence', 'EVIDENCE_RECORDED', {
+    receipts: [proof('focused test output', 'repair-focused')],
+  });
+  await append('repair-commit', 'GIT_OPERATION_COMPLETED', {
+    operation: 'commit',
+    commitSha: '1'.repeat(40),
+    clean: true,
+    receipt: proof('signed git commit', 'repair-commit'),
+  });
+  await append('repair-push', 'GIT_OPERATION_COMPLETED', {
+    operation: 'push',
+    success: true,
+    receipt: proof('signed git push', 'repair-push'),
+  });
+  await append('repair-pr', 'PULL_REQUEST_OPENED', {
+    prNumber: 1617,
+    prUrl: 'https://github.com/Cheekyfellastef/stephan-os/pull/1617',
+    headSha: '2'.repeat(40),
+    mergeable: true,
+    receipt: proof('pull request creation', 'repair-pr'),
+  });
+  await append('repair-checks', 'PULL_REQUEST_CHECKS_UPDATED', {
+    prNumber: 1617,
+    headSha: '2'.repeat(40),
+    prState: 'open',
+    mergeable: true,
+    checks: [{ name: 'Build Stephanos UI', status: 'failure', required: true }],
+    receipt: proof('pull request checks', 'repair-checks'),
+  });
+  assert.equal(current.state.currentPhase, 'REPAIR_REQUIRED');
+
+  const actionState = projectMissionWorkerActionState(current.state, options);
+  const action = buildMissionWorkerAction(actionState, options);
+  const grant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId,
+    missionRevision: actionState.revision,
+    currentPhase: actionState.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    adapter: 'codex',
+    operation: '',
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const beforeRejectedGrant = await readMissionRecord(missionId, options);
+  const rejected = await publishNextMissionWorkerAction({
+    ...options,
+    actionGrant: { ...grant, actionId: `${grant.actionId}-retargeted` },
+  });
+  assert.equal(rejected.published, false);
+  assert.equal(rejected.reason, 'action-grant-mismatch');
+  const afterRejectedGrant = await readMissionRecord(missionId, options);
+  assert.equal(afterRejectedGrant.state.currentPhase, 'REPAIR_REQUIRED');
+  assert.equal(afterRejectedGrant.state.revision, beforeRejectedGrant.state.revision);
+
+  const published = await publishNextMissionWorkerAction({
+    ...options,
+    actionGrant: grant,
+  });
+  assert.equal(published.published, true);
+  assert.equal(published.repairStarted, true);
+  assert.equal(published.action.actionId, grant.actionId);
+  const durable = await readMissionRecord(missionId, options);
+  assert.equal(durable.state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(durable.state.revision, grant.missionRevision + 1);
+  const queued = await readMissionWorkerQueue(options);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].item.payload.actionId, grant.actionId);
 });

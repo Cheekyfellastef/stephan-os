@@ -1027,6 +1027,8 @@ test('active projection requires the conveyor to affirm the exact active lane', 
       ageMs: 0,
       cycleState: 'ACTIVE_LANE',
       activeLaneId: LANE_ID,
+      reconciliationSucceeded: true,
+      boundedMutationSteps: 1,
     },
     workerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0 },
     executionReceipt: receipt(),
@@ -1075,6 +1077,24 @@ test('active projection requires the conveyor to affirm the exact active lane', 
     },
   });
   assert.equal(exact.status, 'ACTIVE');
+
+  const transitional = buildAuthoritativeProgrammeProjection({
+    ...base,
+    controllerHeartbeatProjection: {
+      valid: true,
+      fresh: true,
+      ageMs: 0,
+      cycleState: 'ACTIVE_LANE',
+      activeLaneId: LANE_ID,
+      reconciliationSucceeded: false,
+      boundedMutationSteps: 0,
+    },
+    criticalBacklog: exact.criticalBacklog,
+  });
+  assert.equal(transitional.status, 'HOLD');
+  assert.ok(transitional.blockers.includes(
+    'controller-heartbeat-active-lane-authority-unproven',
+  ));
 
   for (const invalidIssueAliases of [
     { issueNumber: null },
@@ -1365,6 +1385,32 @@ test('terminal reconciliation requires the controller heartbeat to name the exac
   });
   assert.equal(projection.status, 'HOLD');
   assert.ok(projection.blockers.includes('controller-heartbeat-terminal-lane-mismatch'));
+
+  const transitional = buildAuthoritativeProgrammeProjection({
+    nowUtc: NOW,
+    workspaceFeed: { state: 'ready' },
+    lane: terminalLane,
+    mutationLease: lease(),
+    controllerHeartbeatProjection: {
+      valid: true,
+      fresh: true,
+      cycleState: 'FINALIZING',
+      activeLaneId: LANE_ID,
+      reconciliationSucceeded: false,
+      boundedMutationSteps: 0,
+    },
+    workerHeartbeatProjection: { valid: true, fresh: true },
+    executionReceipt: null,
+    battleBridgeProofs: [],
+    runtimeHealthRecords: [],
+    scheduler: { failClosed: false, selectedGoal: null, decisionReceipt: { status: 'MERGED' } },
+    criticalBacklog: { decision: 'WAIT_ACTIVE_MISSION' },
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+  });
+  assert.equal(transitional.status, 'HOLD');
+  assert.ok(transitional.blockers.includes(
+    'controller-heartbeat-terminal-lane-authority-unproven',
+  ));
 });
 
 test('programme stall diagnosis reuses Monitor Multiplexer and never starts scheduler, worker or mutation machinery', async () => {

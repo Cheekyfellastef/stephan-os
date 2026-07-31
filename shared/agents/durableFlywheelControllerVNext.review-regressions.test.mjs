@@ -7,6 +7,9 @@ import {
 import {
   runDurableFlywheelStartupCycle,
 } from './durableFlywheelControllerVNext.mjs';
+import {
+  createMissionOrchestratorState,
+} from './missionOrchestrator.mjs';
 
 const NOW = '2026-07-30T13:00:00.000Z';
 const SOURCE_REVISION = 'a'.repeat(40);
@@ -250,4 +253,81 @@ test('canonical projection is re-read after ACTIVE_LANE heartbeat before work is
   assert.equal(result.status, 'HOLD');
   assert.equal(result.allowWorkerTick, false);
   assert.ok(result.blockers.includes('authority:execution:sourceHead mismatch'));
+});
+
+test('active-lane mutation authority is exposed only after its durable transition receipt exists', async () => {
+  const lane = {
+    valid: true,
+    active: true,
+    terminal: false,
+    laneId: 'goal-1497-pr-1617',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1497,
+    prNumber: 1617,
+    branch: 'feat/durable-flywheel-controller-vnext',
+    headSha: 'b'.repeat(40),
+  };
+  const activeMission = createMissionOrchestratorState({
+    missionId: 'goal-1497-pr-1617',
+    operatorIntent: 'Implement one bounded unattended controller repair.',
+    intendedOutcome: 'Advance the exact existing mission by one action.',
+    missionKind: 'implementation',
+    repository: 'Cheekyfellastef/stephan-os',
+    repositoryRoot: 'C:\\repo',
+    branch: 'openclaw/goal-1497-pr-1617',
+    worktreePath: 'C:\\worktree',
+    allowedFiles: ['shared/agents/**'],
+    requiredEvidence: ['focused test output'],
+    requiredTests: ['node --test focused.test.mjs'],
+  }, { now: new Date(NOW) });
+  const transitionBlocked = projection('HOLD', {
+    lane,
+    blockers: ['controller-heartbeat-active-lane-authority-unproven'],
+    criticalBacklog: { activeMission },
+  });
+  const active = projection('ACTIVE', {
+    lane,
+    criticalBacklog: { activeMission },
+  });
+  let reads = 0;
+  const events = [];
+  const receipts = [];
+  const heartbeats = [];
+  const result = await runDurableFlywheelStartupCycle({
+    publishControllerHeartbeat: async (heartbeat) => {
+      events.push(`heartbeat:${heartbeat.cycleState}:${heartbeat.boundedMutationSteps}`);
+      heartbeats.push(heartbeat);
+      return { ok: true };
+    },
+    loadAuthoritativeProjection: async () => {
+      reads += 1;
+      return reads < 3 ? transitionBlocked : active;
+    },
+    publishReceipt: async (receipt) => {
+      events.push(`receipt:${receipt.receiptId}`);
+      receipts.push(receipt);
+      return { ok: true };
+    },
+  }, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(reads, 3);
+  assert.equal(result.status, 'ACTIVE');
+  assert.equal(result.allowWorkerTick, true);
+  assert.equal(receipts.length, 2);
+  assert.match(receipts[0].receiptId, /-authority$/);
+  assert.equal(receipts[0].boundedMutationSteps, 0);
+  assert.equal(heartbeats[1].cycleState, 'ACTIVE_LANE');
+  assert.equal(heartbeats[1].boundedMutationSteps, 0);
+  assert.equal(heartbeats[1].lastPublishedReceiptId, '');
+  assert.equal(heartbeats[2].cycleState, 'ACTIVE_LANE');
+  assert.equal(heartbeats[2].boundedMutationSteps, 1);
+  assert.equal(heartbeats[2].lastPublishedReceiptId, receipts[0].receiptId);
+  assert.ok(
+    events.indexOf(`receipt:${receipts[0].receiptId}`)
+      < events.indexOf('heartbeat:ACTIVE_LANE:1'),
+  );
 });

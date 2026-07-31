@@ -342,6 +342,33 @@ export async function inspectGitHubAction(action, _claim, options = {}) {
   return { execution: { success: true, commandOutputHash: outputHash(result.stdout || '', result.stderr || ''), completedAt: completedAt(options) }, inspection: { prNumber: view.number, headSha: text(view.headRefOid).toLowerCase(), prState: text(view.state).toLowerCase(), mergeable: view.mergeable === 'MERGEABLE' && view.state === 'OPEN', checks: normalizeChecks(view.statusCheckRollup) } };
 }
 
+function payloadActionKind(payload, adapter) {
+  const declared = text(payload?.actionKind);
+  if (declared) return declared;
+  if (
+    adapter === 'openclaw-signed'
+    && payload?.schemaVersion === 'stephanos.mission-worker-request.v1'
+  ) {
+    return 'signed-openclaw-operation';
+  }
+  return '';
+}
+
+function queuePayloadMatchesGrant(entry, actionGrant) {
+  const payload = entry?.item?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const adapter = text(actionGrant.adapter).toLowerCase();
+  const expectedOperation = text(actionGrant.operation).toLowerCase();
+  const declaredPayloadAdapter = text(payload.adapter).toLowerCase();
+  return (
+    text(payload.missionId).toLowerCase() === text(actionGrant.missionId).toLowerCase()
+    && text(payload.actionId).toLowerCase() === text(actionGrant.actionId).toLowerCase()
+    && (!declaredPayloadAdapter || declaredPayloadAdapter === adapter)
+    && payloadActionKind(payload, adapter) === text(actionGrant.actionKind)
+    && text(payload.operation).toLowerCase() === expectedOperation
+  );
+}
+
 export function selectGrantedMissionWorkerQueueItem(queue = [], actionGrant = {}) {
   const missionId = text(actionGrant.missionId).toLowerCase();
   const actionId = text(actionGrant.actionId).toLowerCase();
@@ -355,15 +382,24 @@ export function selectGrantedMissionWorkerQueueItem(queue = [], actionGrant = {}
   ) {
     return { ok: false, reason: 'exact-action-grant-invalid', entry: null };
   }
-  const matches = queue.filter((entry) => (
+  const envelopeMatches = queue.filter((entry) => (
     text(entry?.adapter).toLowerCase() === adapter
+    && entry?.item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && text(entry?.item?.adapter).toLowerCase() === adapter
     && text(entry?.item?.missionId).toLowerCase() === missionId
     && text(entry?.item?.actionId).toLowerCase() === actionId
+  ));
+  const matches = envelopeMatches.filter((entry) => (
+    queuePayloadMatchesGrant(entry, actionGrant)
   ));
   if (matches.length !== 1) {
     return {
       ok: false,
-      reason: matches.length ? 'exact-action-queue-item-ambiguous' : 'exact-action-queue-item-not-pending',
+      reason: matches.length
+        ? 'exact-action-queue-item-ambiguous'
+        : envelopeMatches.length
+          ? 'exact-action-queue-payload-mismatch'
+          : 'exact-action-queue-item-not-pending',
       entry: null,
     };
   }
