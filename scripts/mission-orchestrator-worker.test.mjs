@@ -4,11 +4,52 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { executeCodexAction, executeOpenClawReadonlyAction, parseBridgeOutput, parseCodexJsonLines } from './mission-orchestrator-worker.mjs';
+import {
+  executeCodexAction,
+  executeOpenClawReadonlyAction,
+  parseBridgeOutput,
+  parseCodexJsonLines,
+  selectGrantedMissionWorkerQueueItem,
+} from './mission-orchestrator-worker.mjs';
 
 test('parses deterministic bridge and Codex JSONL output', () => {
   assert.equal(parseBridgeOutput('FINAL_VERDICT=PASS\n').FINAL_VERDICT, 'PASS');
   assert.deepEqual(parseCodexJsonLines('{"type":"thread.started"}\ndiagnostic\n'), [{ type: 'thread.started' }]);
+});
+
+test('one exact controller grant selects only its bound queue action', () => {
+  const grant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    missionId: 'mission-two',
+    actionId: 'mission-two-r4-action',
+    adapter: 'codex',
+    boundedActionCount: 1,
+  };
+  const selected = selectGrantedMissionWorkerQueueItem([
+    {
+      adapter: 'openclaw-signed',
+      item: { missionId: 'mission-one', actionId: 'mission-one-r1-action' },
+    },
+    {
+      adapter: 'codex',
+      item: { missionId: 'mission-two', actionId: 'mission-two-r4-action' },
+    },
+    {
+      adapter: 'openclaw-readonly',
+      item: { missionId: 'mission-three', actionId: 'mission-three-r2-action' },
+    },
+  ], grant);
+  assert.equal(selected.ok, true);
+  assert.equal(selected.entry.item.actionId, grant.actionId);
+
+  const retargeted = selectGrantedMissionWorkerQueueItem([
+    {
+      adapter: 'codex',
+      item: { missionId: 'mission-two', actionId: 'different-action' },
+    },
+  ], grant);
+  assert.equal(retargeted.ok, false);
+  assert.equal(retargeted.reason, 'exact-action-queue-item-not-pending');
 });
 
 test('executes Codex non-interactively and grounds approved source evidence', async () => {

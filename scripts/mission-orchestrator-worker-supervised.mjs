@@ -74,7 +74,10 @@ export async function runSupervisedMissionWorker({
       });
       stdout.write(`${JSON.stringify({ checkedAt, controller })}\n`);
       if (controller?.allowWorkerTick === true) {
-        const result = await runTick();
+        const result = await runTick({
+          env,
+          actionGrant: controller.workerActionGrant,
+        });
         stdout.write(`${JSON.stringify({ checkedAt, ...result })}\n`);
       }
     } catch (error) {

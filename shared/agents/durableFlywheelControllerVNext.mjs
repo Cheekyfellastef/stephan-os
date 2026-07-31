@@ -14,6 +14,9 @@ import {
 import {
   ensureCriticalBacklogMission,
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
+import {
+  buildMissionWorkerAction,
+} from './missionOrchestratorWorker.mjs';
 
 export const DURABLE_FLYWHEEL_CONTROLLER_SCHEMA = 'stephanos.durable-flywheel-controller.vnext';
 export const DURABLE_FLYWHEEL_CYCLE_RECEIPT_SCHEMA = 'stephanos.durable-flywheel-cycle-receipt.vnext';
@@ -22,6 +25,7 @@ export const DURABLE_FLYWHEEL_CONTROLLER_ISSUE = 1497;
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
+const WORKER_SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,159}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const KNOWN_PROJECTION_STATES = new Set([
   'HOLD',
@@ -93,6 +97,59 @@ function projectionIdentity(projection = {}) {
     headSha: sha(lane?.headSha),
     leaseId: text(projection?.mutationLease?.leaseId),
     ownerId: text(projection?.mutationLease?.ownerId),
+  });
+}
+
+function workerAdapter(action = {}) {
+  if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
+  if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
+  if (action.actionKind === 'agent-handoff') return text(action.adapter);
+  if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
+  if (action.actionKind === 'evidence-judgment') return 'verification';
+  return '';
+}
+
+function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
+  const activeMission = projection?.criticalBacklog?.activeMission;
+  const missionId = text(activeMission?.missionId).toLowerCase();
+  const missionRevision = Number(activeMission?.revision);
+  const currentPhase = text(activeMission?.currentPhase).toUpperCase();
+  if (
+    !WORKER_SAFE_ID.test(missionId)
+    || !Number.isSafeInteger(missionRevision)
+    || missionRevision < 0
+    || !currentPhase
+  ) {
+    return null;
+  }
+  const action = buildMissionWorkerAction(activeMission, {
+    now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
+  });
+  const actionId = text(action?.actionId).toLowerCase();
+  const adapter = workerAdapter(action);
+  if (action?.executable !== true || !WORKER_SAFE_ID.test(actionId) || !adapter) return null;
+  const identity = projectionIdentity(projection);
+  return freeze({
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    grantId: `grant-${actionId}`.slice(0, 80),
+    controllerId: DURABLE_FLYWHEEL_CONTROLLER_ID,
+    sourceRevision,
+    missionId,
+    missionRevision,
+    currentPhase,
+    actionId,
+    actionKind: text(action.actionKind),
+    adapter,
+    operation: text(action.operation),
+    laneId: identity.laneId || null,
+    repository: identity.repository || text(activeMission?.repository) || null,
+    issueNumber: identity.issueNumber,
+    prNumber: identity.prNumber,
+    branch: identity.branch || text(activeMission?.git?.branch) || null,
+    headSha: identity.headSha || null,
+    boundedActionCount: 1,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
   });
 }
 
@@ -234,6 +291,9 @@ function createCycleReceipt(result, projection, nowUtc) {
     blockers: list(result.blockers),
     allowWorkerTick: result.allowWorkerTick === true,
     boundedMutationSteps: result.boundedMutationSteps === 1 ? 1 : 0,
+    workerActionGrantId: text(result.workerActionGrant?.grantId) || null,
+    workerMissionId: text(result.workerActionGrant?.missionId) || null,
+    workerActionId: text(result.workerActionGrant?.actionId) || null,
     chatMemoryAuthoritative: false,
     createsReplacementMachinery: false,
     mergeAuthority: false,
@@ -266,19 +326,20 @@ function heartbeatInput({
   sourceRevision,
   activeLaneId = '',
   nowUtc,
-  cycleReceiptId,
   boundedMutationSteps = 0,
+  successful = false,
+  cycleReceiptId = '',
 }) {
   return freeze({
     controllerId: DURABLE_FLYWHEEL_CONTROLLER_ID,
     sourceRevision,
     cycleState: state,
     activeLaneId,
-    lastSuccessfulReconciliationUtc: nowUtc,
-    lastPublishedReceiptId: cycleReceiptId,
+    lastSuccessfulReconciliationUtc: successful ? nowUtc : '',
+    lastPublishedReceiptId: successful ? cycleReceiptId : '',
     timestampUtc: nowUtc,
     boundedMutationSteps,
-    proofRefs: [`receipts/${cycleReceiptId}.json`],
+    proofRefs: successful ? [`receipts/${cycleReceiptId}.json`] : [],
   });
 }
 
@@ -313,10 +374,9 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
 
   const publishHeartbeat = requiredFunction(deps.publishControllerHeartbeat, 'publishControllerHeartbeat');
   const initialHeartbeat = await publishHeartbeat(heartbeatInput({
-    state: 'RECONCILING',
+    state: 'STARTING',
     sourceRevision,
     nowUtc,
-    cycleReceiptId,
   }), serviceOptions);
   if (initialHeartbeat?.ok !== true) {
     const result = holdResult(`controller-heartbeat:${text(initialHeartbeat?.reason, 'publication-failed')}`, {
@@ -330,24 +390,43 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
 
   const loadProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
   let projection = await loadProjection(serviceOptions);
-  if (projection?.lane?.active === true) {
-    const activeHeartbeat = await publishHeartbeat(heartbeatInput({
-      state: 'ACTIVE_LANE',
+  const transitionState = projection?.lane?.active === true
+    ? 'ACTIVE_LANE'
+    : projection?.lane?.terminal === true
+      ? 'FINALIZING'
+      : !projection?.lane && projection?.scheduler?.selectedGoal
+        ? 'RECONCILING'
+        : '';
+  if (transitionState) {
+    const transitionHeartbeat = await publishHeartbeat(heartbeatInput({
+      state: transitionState,
       sourceRevision,
-      activeLaneId: projection.lane.laneId,
+      activeLaneId: projection?.lane?.laneId ?? '',
       nowUtc,
-      cycleReceiptId,
-      boundedMutationSteps: 1,
+      boundedMutationSteps: transitionState === 'RECONCILING' ? 0 : 1,
     }), serviceOptions);
-    if (activeHeartbeat?.ok !== true) {
-      const result = holdResult(`controller-heartbeat:${text(activeHeartbeat?.reason, 'active-lane-publication-failed')}`, {
+    if (transitionHeartbeat?.ok !== true) {
+      const result = holdResult(`controller-heartbeat:${text(transitionHeartbeat?.reason, 'transition-publication-failed')}`, {
         observedAtUtc: nowUtc,
         sourceRevision,
         activeLane: projection.lane,
       });
       const receipt = createCycleReceipt(result, projection, nowUtc);
       const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
-      return freeze({ ...result, heartbeatPublication: activeHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+      const holdHeartbeat = await publishHeartbeat(heartbeatInput({
+        state: 'HOLD',
+        sourceRevision,
+        nowUtc,
+        cycleReceiptId: receipt.receiptId,
+        successful: publication?.ok === true,
+      }), serviceOptions);
+      return freeze({
+        ...result,
+        transitionHeartbeatPublication: transitionHeartbeat,
+        heartbeatPublication: holdHeartbeat,
+        cycleReceipt: receipt,
+        receiptPublication: publication,
+      });
     }
     projection = await loadProjection(serviceOptions);
   }
@@ -356,39 +435,34 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   let actionResult = null;
   if (result.status === 'TERMINAL_RECONCILIATION_REQUIRED') {
     const identity = result.laneIdentity;
-    const finalizingHeartbeat = await publishHeartbeat(heartbeatInput({
-      state: 'FINALIZING',
-      sourceRevision,
-      activeLaneId: identity.laneId,
+    actionResult = await requiredFunction(deps.finalizeTerminalLane, 'finalizeTerminalLane')({
+      leaseId: identity.leaseId,
+      laneId: identity.laneId,
+      repository: identity.repository,
+      issueNumber: identity.issueNumber,
+      prNumber: identity.prNumber,
+      branch: identity.branch,
+      headSha: identity.headSha,
+      ownerId: identity.ownerId,
       nowUtc,
-      cycleReceiptId,
-      boundedMutationSteps: 1,
-    }), serviceOptions);
-    if (finalizingHeartbeat?.ok !== true) {
-      result = holdResult(`controller-heartbeat:${text(finalizingHeartbeat?.reason, 'finalizing-publication-failed')}`, {
+    }, serviceOptions);
+    if (actionResult?.ok !== true) {
+      result = holdResult(`terminal-finalization:${text(actionResult?.reason, 'failed')}`, {
+        observedAtUtc: nowUtc,
+        sourceRevision,
+        activeLane: projection.lane,
+      });
+    }
+  } else if (result.status === 'ACTIVE') {
+    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision);
+    if (!workerActionGrant) {
+      result = holdResult('mission-worker:exact-action-grant-unavailable', {
         observedAtUtc: nowUtc,
         sourceRevision,
         activeLane: projection.lane,
       });
     } else {
-      actionResult = await requiredFunction(deps.finalizeTerminalLane, 'finalizeTerminalLane')({
-        leaseId: identity.leaseId,
-        laneId: identity.laneId,
-        repository: identity.repository,
-        issueNumber: identity.issueNumber,
-        prNumber: identity.prNumber,
-        branch: identity.branch,
-        headSha: identity.headSha,
-        ownerId: identity.ownerId,
-        nowUtc,
-      }, serviceOptions);
-      if (actionResult?.ok !== true) {
-        result = holdResult(`terminal-finalization:${text(actionResult?.reason, 'failed')}`, {
-          observedAtUtc: nowUtc,
-          sourceRevision,
-          activeLane: projection.lane,
-        });
-      }
+      result = freeze({ ...result, workerActionGrant });
     }
   } else if (result.status === 'READY') {
     actionResult = await requiredFunction(deps.ensureBacklogMission, 'ensureBacklogMission')({
@@ -401,13 +475,26 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
         sourceRevision,
       });
     } else {
-      result = freeze({
-        ...result,
-        allowWorkerTick: true,
-        nextAction: actionResult.createdMission
-          ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
-          : 'Allow the existing Mission Worker to continue the conveyor-authorized mission.',
-      });
+      const grantProjection = {
+        ...projection,
+        criticalBacklog: actionResult.projection,
+      };
+      const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision);
+      if (!workerActionGrant) {
+        result = holdResult('mission-worker:exact-action-grant-unavailable', {
+          observedAtUtc: nowUtc,
+          sourceRevision,
+        });
+      } else {
+        result = freeze({
+          ...result,
+          workerActionGrant,
+          allowWorkerTick: true,
+          nextAction: actionResult.createdMission
+            ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
+            : 'Allow the existing Mission Worker to continue the conveyor-authorized mission.',
+        });
+      }
     }
   }
 
@@ -432,6 +519,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     nowUtc,
     cycleReceiptId: receipt.receiptId,
     boundedMutationSteps: result.boundedMutationSteps,
+    successful: receiptPublication?.ok === true,
   }), serviceOptions);
   if (finalHeartbeat?.ok !== true) {
     result = holdResult(`controller-heartbeat:${text(finalHeartbeat?.reason, 'final-publication-failed')}`, {

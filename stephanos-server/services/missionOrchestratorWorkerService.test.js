@@ -5,7 +5,14 @@ import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
-import { collectAgentWorkerResult, publishMissionWorkerAction, readMissionWorkerQueue, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
+import { buildMissionWorkerAction } from '../../shared/agents/missionOrchestratorWorker.mjs';
+import {
+  collectAgentWorkerResult,
+  publishMissionWorkerAction,
+  publishNextMissionWorkerAction,
+  readMissionWorkerQueue,
+  resolveMissionWorkerQueueRoot,
+} from './missionOrchestratorWorkerService.js';
 
 const intent = {
   missionId: 'worker-service-test', operatorIntent: 'Implement a bounded source change.', intendedOutcome: 'Deliver grounded evidence.',
@@ -34,4 +41,39 @@ test('publishes worktree then one Codex dispatch and collects grounded result', 
   const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'complete');
+});
+
+test('publisher rejects retargeting and publishes only the exact granted mission action', async () => {
+  const options = await runtime();
+  const first = await createMissionRecord({ ...intent, missionId: 'grant-first', branch: 'openclaw/grant-first' }, options);
+  const second = await createMissionRecord({ ...intent, missionId: 'grant-second', branch: 'openclaw/grant-second' }, options);
+  const action = buildMissionWorkerAction(second.state, options);
+  const grant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId: second.state.missionId,
+    missionRevision: second.state.revision,
+    currentPhase: second.state.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    adapter: 'openclaw-signed',
+    operation: action.operation,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const published = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(published.published, true);
+  assert.equal(published.action.missionId, second.state.missionId);
+  assert.equal(published.actionGrantAccepted, true);
+  const queued = await readMissionWorkerQueue(options);
+  assert.deepEqual(queued.map(({ item }) => item.missionId), [second.state.missionId]);
+
+  const retargeted = await publishNextMissionWorkerAction({
+    ...options,
+    actionGrant: { ...grant, actionId: buildMissionWorkerAction(first.state, options).actionId },
+  });
+  assert.equal(retargeted.published, false);
+  assert.equal(retargeted.reason, 'action-grant-mismatch');
 });

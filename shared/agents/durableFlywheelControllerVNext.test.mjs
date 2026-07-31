@@ -62,6 +62,16 @@ function activeProjection(overrides = {}) {
       leaseId: 'lease-goal-1497-pr-1617',
       ownerId: 'mission-worker',
     },
+    criticalBacklog: {
+      activeMission: {
+        missionId: 'critical-1497-controller-test',
+        revision: 4,
+        currentPhase: 'CHECK_PULL_REQUEST',
+        repository: REPOSITORY,
+        git: { branch: BRANCH },
+        pullRequest: { number: 1617, headSha: LANE_HEAD },
+      },
+    },
     ...overrides,
   });
 }
@@ -82,7 +92,18 @@ function machineryFor(authoritativeProjection, overrides = {}) {
         receipts.push(receipt);
         return { ok: true };
       },
-      ensureBacklogMission: async () => ({ ok: true, createdMission: false }),
+      ensureBacklogMission: async () => ({
+        ok: true,
+        createdMission: false,
+        projection: {
+          activeMission: {
+            missionId: 'critical-1497-controller-test',
+            revision: 0,
+            currentPhase: 'LIVE_RUNTIME_INVESTIGATION',
+            repository: REPOSITORY,
+          },
+        },
+      }),
       finalizeTerminalLane: async () => ({ ok: true }),
       ...overrides,
     },
@@ -105,8 +126,11 @@ test('production canonical ACTIVE projection authorizes one existing worker tick
   assert.equal(result.leaseSeizureAllowed, false);
   assert.deepEqual(
     fixture.heartbeats.map(({ cycleState }) => cycleState),
-    ['RECONCILING', 'ACTIVE_LANE', 'ACTIVE_LANE'],
+    ['STARTING', 'ACTIVE_LANE', 'ACTIVE_LANE'],
   );
+  assert.equal(result.workerActionGrant.missionId, 'critical-1497-controller-test');
+  assert.equal(result.workerActionGrant.actionId.includes('critical-1497-controller-test'), true);
+  assert.equal(result.workerActionGrant.boundedActionCount, 1);
   assert.equal(fixture.receipts.length, 1);
   assert.equal(fixture.receipts[0].repository, REPOSITORY);
   assert.equal(fixture.receipts[0].prNumber, 1617);
@@ -137,7 +161,7 @@ test('canonical HOLD projection preserves authority blockers and forbids work', 
   ]);
   assert.deepEqual(
     fixture.heartbeats.map(({ cycleState }) => cycleState),
-    ['RECONCILING', 'HOLD'],
+    ['STARTING', 'HOLD'],
   );
 });
 

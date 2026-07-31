@@ -148,7 +148,7 @@ test('FINALIZING heartbeat must publish before terminal finalization', async () 
 
   assert.equal(result.status, 'HOLD');
   assert.equal(result.allowWorkerTick, false);
-  assert.deepEqual(order, ['RECONCILING', 'FINALIZING', 'HOLD']);
+  assert.deepEqual(order, ['STARTING', 'FINALIZING', 'HOLD']);
   assert.ok(result.blockers.includes(
     'controller-heartbeat:finalizing-heartbeat-failed',
   ));

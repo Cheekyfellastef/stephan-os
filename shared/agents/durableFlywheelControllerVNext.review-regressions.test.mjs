@@ -45,7 +45,18 @@ function baseMachinery(authoritativeProjection, calls, overrides = {}) {
     },
     ensureBacklogMission: async () => {
       calls.push(['canonical-conveyor']);
-      return { ok: true, createdMission: true };
+      return {
+        ok: true,
+        createdMission: true,
+        projection: {
+          activeMission: {
+            missionId: 'critical-1497-review-test',
+            revision: 0,
+            currentPhase: 'LIVE_RUNTIME_INVESTIGATION',
+            repository: 'Cheekyfellastef/stephan-os',
+          },
+        },
+      };
     },
     finalizeTerminalLane: async () => {
       calls.push(['canonical-finalizer']);
@@ -65,6 +76,8 @@ test('READY work is admitted only through the existing Critical Backlog Conveyor
   assert.equal(result.status, 'READY');
   assert.equal(result.action, 'CREATE_CANONICAL_CONVEYOR_MISSION');
   assert.equal(result.allowWorkerTick, true);
+  assert.equal(result.workerActionGrant.missionId, 'critical-1497-review-test');
+  assert.equal(result.workerActionGrant.boundedActionCount, 1);
   assert.equal(result.actionResult.createdMission, true);
   assert.equal(calls.filter(([name]) => name === 'canonical-conveyor').length, 1);
   assert.equal(result.createsReplacementMachinery, false);
@@ -139,6 +152,36 @@ test('controller heartbeat failure blocks projection reads and source work', asy
   assert.equal(projectionReads, 0);
   assert.equal(conveyorCalls, 0);
   assert.equal(receipts.length, 1);
+});
+
+test('startup crash cannot publish success evidence for a receipt that does not exist', async () => {
+  const heartbeats = [];
+  await assert.rejects(
+    runDurableFlywheelStartupCycle({
+      publishControllerHeartbeat: async (heartbeat) => {
+        heartbeats.push(heartbeat);
+        return { ok: true };
+      },
+      loadAuthoritativeProjection: async () => {
+        throw new Error('projection read crashed');
+      },
+      publishReceipt: async () => {
+        throw new Error('receipt must not be fabricated after crash');
+      },
+    }, {
+      nowUtc: NOW,
+      sourceRevision: SOURCE_REVISION,
+      env: {},
+    }),
+    /projection read crashed/,
+  );
+
+  assert.equal(heartbeats.length, 1);
+  assert.equal(heartbeats[0].cycleState, 'STARTING');
+  assert.equal(heartbeats[0].lastSuccessfulReconciliationUtc, '');
+  assert.equal(heartbeats[0].lastPublishedReceiptId, '');
+  assert.deepEqual(heartbeats[0].proofRefs, []);
+  assert.equal(heartbeats[0].boundedMutationSteps, 0);
 });
 
 test('legacy injected snapshots and direct dispatch hooks cannot become authority', async () => {

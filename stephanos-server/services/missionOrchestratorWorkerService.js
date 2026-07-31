@@ -41,6 +41,53 @@ function adapterForAction(action) {
   return '';
 }
 
+function validateExactActionGrant(state, action, grant, options = {}) {
+  const errors = [];
+  const sourceRevision = text(grant?.sourceRevision).toLowerCase();
+  const expectedSourceRevision = text(
+    options.sourceRevision
+      || options.env?.STEPHANOS_MISSION_WORKER_HEAD_SHA,
+  ).toLowerCase();
+  if (grant?.schemaVersion !== 'stephanos.mission-worker-action-grant.v1') {
+    errors.push('invalid-action-grant-schema');
+  }
+  if (text(grant?.controllerId) !== 'durable-flywheel-controller') {
+    errors.push('invalid-action-grant-controller');
+  }
+  if (!/^[0-9a-f]{40}$/.test(sourceRevision)) {
+    errors.push('invalid-action-grant-source-revision');
+  }
+  if (expectedSourceRevision && sourceRevision !== expectedSourceRevision) {
+    errors.push('action-grant-source-revision-mismatch');
+  }
+  if (grant?.boundedActionCount !== 1) errors.push('action-grant-not-single-use');
+  if (text(grant?.missionId).toLowerCase() !== text(state?.missionId).toLowerCase()) {
+    errors.push('action-grant-mission-mismatch');
+  }
+  if (Number(grant?.missionRevision) !== Number(state?.revision)) {
+    errors.push('action-grant-revision-mismatch');
+  }
+  if (text(grant?.currentPhase).toUpperCase() !== text(state?.currentPhase).toUpperCase()) {
+    errors.push('action-grant-phase-mismatch');
+  }
+  if (text(grant?.actionId).toLowerCase() !== text(action?.actionId).toLowerCase()) {
+    errors.push('action-grant-action-mismatch');
+  }
+  if (text(grant?.actionKind) !== text(action?.actionKind)) {
+    errors.push('action-grant-kind-mismatch');
+  }
+  if (text(grant?.adapter) !== adapterForAction(action)) {
+    errors.push('action-grant-adapter-mismatch');
+  }
+  if (text(grant?.operation) !== text(action?.operation)) {
+    errors.push('action-grant-operation-mismatch');
+  }
+  if (grant?.mergeAuthority !== false || grant?.leaseSeizureAllowed !== false) {
+    errors.push('action-grant-authority-expanded');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
 async function beginRepairIfRequired(state, options) {
   if (state.currentPhase !== 'REPAIR_REQUIRED') return { state, repairStarted: false };
   const round = Number.isInteger(state.repair?.currentRound) ? state.repair.currentRound + 1 : 1;
@@ -83,9 +130,35 @@ export async function publishMissionWorkerAction(inputState, options = {}) {
 export async function publishNextMissionWorkerAction(options = {}) {
   const missions = await listMissionRecords(options);
   const runnable = missions.filter((state) => !['COMPLETE', 'CANCELLED', 'BLOCKED', 'AWAITING_OPERATOR_APPROVAL'].includes(state.currentPhase));
-  for (const state of runnable) {
+  const grant = options.actionGrant;
+  const grantedMissionId = text(grant?.missionId).toLowerCase();
+  const candidates = grant
+    ? runnable.filter((state) => text(state?.missionId).toLowerCase() === grantedMissionId)
+    : runnable;
+  if (grant && candidates.length !== 1) {
+    return {
+      published: false,
+      reason: candidates.length ? 'action-grant-mission-ambiguous' : 'action-grant-mission-not-runnable',
+      action: null,
+      path: '',
+    };
+  }
+  for (const state of candidates) {
+    if (grant) {
+      const preview = buildMissionWorkerAction(state, options);
+      const validation = validateExactActionGrant(state, preview, grant, options);
+      if (!validation.valid) {
+        return {
+          published: false,
+          reason: 'action-grant-mismatch',
+          blockers: validation.errors,
+          action: preview,
+          path: '',
+        };
+      }
+    }
     const result = await publishMissionWorkerAction(state, options);
-    if (result.published) return result;
+    if (result.published || grant) return { ...result, actionGrantAccepted: Boolean(grant) };
   }
   return { published: false, reason: 'no-runnable-mission', action: null, path: '' };
 }

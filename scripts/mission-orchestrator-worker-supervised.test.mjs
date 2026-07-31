@@ -19,7 +19,18 @@ function timerHarness() {
   };
 }
 
-const allowWorkerTick = async () => ({ status: 'ACTIVE', allowWorkerTick: true });
+const actionGrant = {
+  schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+  missionId: 'critical-supervisor-test',
+  actionId: 'critical-supervisor-test-r1-action',
+  adapter: 'codex',
+  boundedActionCount: 1,
+};
+const allowWorkerTick = async () => ({
+  status: 'ACTIVE',
+  allowWorkerTick: true,
+  workerActionGrant: actionGrant,
+});
 const bootstrapMailbox = async () => ({ ok: true, status: 'MAILBOX_ALREADY_REGISTERED' });
 
 test('supervised worker writes running and final heartbeat around a successful tick', async () => {
@@ -27,6 +38,7 @@ test('supervised worker writes running and final heartbeat around a successful t
   const errors = sink();
   const heartbeats = [];
   const timer = timerHarness();
+  let tickOptions = null;
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
     env: {},
@@ -34,7 +46,10 @@ test('supervised worker writes running and final heartbeat around a successful t
     stderr: errors.stream,
     bootstrapMailbox,
     runControllerCycle: allowWorkerTick,
-    runTick: async () => ({ publish: { ok: true } }),
+    runTick: async (options) => {
+      tickOptions = options;
+      return { publish: { ok: true } };
+    },
     writeHeartbeat: async (input) => { heartbeats.push(input); },
     setIntervalFn: timer.setIntervalFn,
     clearIntervalFn: timer.clearIntervalFn,
@@ -45,6 +60,7 @@ test('supervised worker writes running and final heartbeat around a successful t
     'MISSION_WORKER_TICK_PASS',
   ]);
   assert.equal(timer.wasCleared(), true);
+  assert.deepEqual(tickOptions.actionGrant, actionGrant);
   assert.match(output.read(), /"publish"/);
   assert.equal(errors.read(), '');
 });

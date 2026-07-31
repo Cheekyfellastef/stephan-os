@@ -745,7 +745,17 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
   const errors = [];
   const nowMs = timestamp(options.nowUtc);
   const heartbeatMs = timestamp(record?.timestampUtc);
-  const reconciliationMs = timestamp(record?.lastSuccessfulReconciliationUtc);
+  const lastSuccessfulReconciliationUtc = text(record?.lastSuccessfulReconciliationUtc);
+  const lastPublishedReceiptId = text(record?.lastPublishedReceiptId);
+  const successEvidenceSupplied = Boolean(
+    lastSuccessfulReconciliationUtc || lastPublishedReceiptId,
+  );
+  const successEvidenceComplete = Boolean(
+    lastSuccessfulReconciliationUtc && lastPublishedReceiptId,
+  );
+  const reconciliationMs = successEvidenceComplete
+    ? timestamp(lastSuccessfulReconciliationUtc)
+    : null;
   const cycleState = normalizedState(record?.cycleState);
   const activeLaneId = text(record?.activeLaneId);
   const expectedSourceRevisionProvided = Object.hasOwn(options, 'expectedSourceRevision');
@@ -780,8 +790,27 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
   if (activeLaneId && !SAFE_ID.test(activeLaneId)) errors.push('invalid-active-lane-id');
   if (['ACTIVE_LANE', 'FINALIZING'].includes(cycleState) && !SAFE_ID.test(activeLaneId)) errors.push('active-lane-id-required');
   if (heartbeatMs === null) errors.push('invalid-heartbeat-time');
-  if (reconciliationMs === null) errors.push('invalid-reconciliation-time');
-  if (!SAFE_ID.test(text(record?.lastPublishedReceiptId))) errors.push('invalid-last-receipt');
+  if (successEvidenceSupplied !== successEvidenceComplete) {
+    errors.push('incomplete-success-evidence');
+  }
+  if (successEvidenceComplete && reconciliationMs === null) {
+    errors.push('invalid-reconciliation-time');
+  }
+  if (successEvidenceComplete && !SAFE_ID.test(lastPublishedReceiptId)) {
+    errors.push('invalid-last-receipt');
+  }
+  if (cycleState === 'STARTING' && successEvidenceSupplied) {
+    errors.push('starting-heartbeat-cannot-claim-success');
+  }
+  if (cycleState === 'STARTING' && activeLaneId) {
+    errors.push('starting-heartbeat-cannot-name-active-lane');
+  }
+  if (cycleState === 'STARTING' && record?.boundedMutationSteps !== 0) {
+    errors.push('starting-heartbeat-cannot-authorize-mutation');
+  }
+  if (!successEvidenceComplete && list(record?.proofRefs).length) {
+    errors.push('unproven-heartbeat-cannot-claim-proof');
+  }
   if (![0, 1].includes(record?.boundedMutationSteps)) errors.push('invalid-bounded-mutation-step');
   if (record?.workerHeartbeatAuthority !== false) errors.push('worker-heartbeat-authority-forbidden');
   if (record?.chatMemoryAuthoritative !== false) errors.push('chat-memory-authority-forbidden');
@@ -801,8 +830,9 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
     expectedSourceRevision: expectedSourceRevision || null,
     cycleState,
     activeLaneId: activeLaneId || null,
+    reconciliationSucceeded: successEvidenceComplete,
     lastSuccessfulReconciliationUtc: reconciliationMs === null ? null : new Date(reconciliationMs).toISOString(),
-    lastPublishedReceiptId: text(record?.lastPublishedReceiptId),
+    lastPublishedReceiptId,
     timestampUtc: heartbeatMs === null ? null : new Date(heartbeatMs).toISOString(),
     authority: 'programme-controller-only',
     workerHeartbeatAuthority: false,
@@ -1105,15 +1135,46 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     }
   }
   const idleSelection = !lane && Boolean(scheduler?.selectedGoal);
-  if (idleSelection && conveyor?.decision !== 'CREATE_NEXT_MISSION') blockers.push('critical-backlog-did-not-authorize-idle-selection');
+  const continuingSelectedMission = idleSelection
+    && conveyor?.decision === 'WAIT_ACTIVE_MISSION'
+    && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE';
+  if (
+    idleSelection
+    && conveyor?.decision !== 'CREATE_NEXT_MISSION'
+    && !continuingSelectedMission
+  ) {
+    blockers.push('critical-backlog-did-not-authorize-idle-selection');
+  }
   if (idleSelection && !IDLE_SELECTION_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
     blockers.push('controller-heartbeat-cycle-state-does-not-authorize-idle-selection');
   }
   if (idleSelection) {
     const selectedIssue = number(scheduler?.decisionReceipt?.selectedIssue ?? scheduler?.selectedGoal);
-    const conveyorIssues = list(conveyor?.selectedItem?.issueNumbers).map((value) => number(value)).filter(Boolean);
+    const conveyorIssues = [
+      ...list(conveyor?.selectedItem?.issueNumbers),
+      ...list(conveyor?.activeMission?.issueNumbers),
+    ].map((value) => number(value)).filter(Boolean);
     if (!selectedIssue || !conveyorIssues.includes(selectedIssue)) {
       blockers.push('critical-backlog-idle-selection-identity-mismatch');
+    }
+    if (continuingSelectedMission) {
+      const selectedMissionId = text(conveyor?.selectedItem?.mission?.missionId).toLowerCase();
+      const activeMissionId = text(conveyor?.activeMission?.missionId).toLowerCase();
+      if (!selectedMissionId || activeMissionId !== selectedMissionId) {
+        blockers.push('critical-backlog-idle-selection-mission-mismatch');
+      }
+      if (
+        text(conveyor?.activeMission?.repository).toLowerCase()
+        !== text(conveyor?.selectedItem?.mission?.repository).toLowerCase()
+      ) {
+        blockers.push('critical-backlog-idle-selection-repository-mismatch');
+      }
+      if (
+        text(conveyor?.activeMission?.git?.branch)
+        !== text(conveyor?.selectedItem?.mission?.branch)
+      ) {
+        blockers.push('critical-backlog-idle-selection-branch-mismatch');
+      }
     }
   }
 
