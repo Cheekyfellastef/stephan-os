@@ -45,6 +45,111 @@ function adapterForAction(action) {
   return '';
 }
 
+function positiveInteger(value) {
+  const normalized = typeof value === 'string'
+    ? Number(value.replace(/^#/, ''))
+    : Number(value);
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
+function encodedMissionIdentity(value) {
+  const normalized = text(value).toLowerCase();
+  const goalLane = /^goal-([1-9]\d*)-pr-([1-9]\d*)(?:$|[-_.])/.exec(normalized);
+  if (goalLane) {
+    return {
+      issueNumber: positiveInteger(goalLane[1]),
+      prNumber: positiveInteger(goalLane[2]),
+    };
+  }
+  const criticalGoal = /^critical-([1-9]\d*)(?:$|[-_.])/.exec(normalized);
+  return {
+    issueNumber: positiveInteger(criticalGoal?.[1]),
+    prNumber: null,
+  };
+}
+
+function validateExecutionTargetBindings(state, action, grant) {
+  const errors = [];
+  const repository = text(grant?.repository).toLowerCase();
+  const branch = text(grant?.branch);
+  const stateRepository = text(state?.repository).toLowerCase();
+  const stateBranch = text(state?.git?.branch || state?.branch);
+  const actionRepository = text(
+    action?.repository || action?.claims?.repository,
+  ).toLowerCase();
+  const actionBranch = text(action?.branch || action?.claims?.branch);
+  if (!repository) errors.push('action-grant-repository-missing');
+  else {
+    if (stateRepository !== repository) errors.push('action-grant-repository-mismatch');
+    if (actionRepository && actionRepository !== repository) {
+      errors.push('action-grant-action-repository-mismatch');
+    }
+  }
+  if (!branch) errors.push('action-grant-branch-missing');
+  else {
+    if (stateBranch !== branch) errors.push('action-grant-branch-mismatch');
+    if (actionBranch && actionBranch !== branch) {
+      errors.push('action-grant-action-branch-mismatch');
+    }
+  }
+
+  const missionIdentity = encodedMissionIdentity(state?.missionId);
+  const laneIdentity = encodedMissionIdentity(grant?.laneId);
+  const laneId = text(grant?.laneId).toLowerCase();
+  const stateMissionId = text(state?.missionId).toLowerCase();
+  if (laneId && laneId !== stateMissionId) {
+    errors.push('action-grant-lane-mismatch');
+  }
+  const issueNumber = positiveInteger(grant?.issueNumber);
+  if (issueNumber) {
+    const stateIssueNumber = positiveInteger(
+      state?.issueNumber
+        ?? state?.relatedIssue
+        ?? missionIdentity.issueNumber,
+    );
+    if (!stateIssueNumber) errors.push('action-grant-issue-binding-unproven');
+    else if (stateIssueNumber !== issueNumber) errors.push('action-grant-issue-mismatch');
+    if (laneIdentity.issueNumber && laneIdentity.issueNumber !== issueNumber) {
+      errors.push('action-grant-lane-issue-mismatch');
+    }
+  }
+
+  const prNumber = positiveInteger(grant?.prNumber);
+  if (prNumber) {
+    if (!laneId) errors.push('action-grant-lane-binding-missing');
+    const statePrNumber = positiveInteger(
+      state?.pullRequest?.number
+        ?? state?.prNumber
+        ?? state?.relatedPr
+        ?? missionIdentity.prNumber,
+    );
+    const actionPrNumber = positiveInteger(
+      action?.prNumber ?? action?.claims?.prNumber,
+    );
+    if (!statePrNumber) errors.push('action-grant-pr-binding-unproven');
+    else if (statePrNumber !== prNumber) errors.push('action-grant-pr-mismatch');
+    if (actionPrNumber && actionPrNumber !== prNumber) {
+      errors.push('action-grant-action-pr-mismatch');
+    }
+    if (laneIdentity.prNumber && laneIdentity.prNumber !== prNumber) {
+      errors.push('action-grant-lane-pr-mismatch');
+    }
+  }
+
+  const headSha = text(grant?.headSha).toLowerCase();
+  if (headSha) {
+    const stateHeadSha = text(state?.pullRequest?.headSha).toLowerCase();
+    const actionHeadSha = text(
+      action?.expectedHeadSha || action?.claims?.expectedHeadSha,
+    ).toLowerCase();
+    if (stateHeadSha !== headSha) errors.push('action-grant-head-mismatch');
+    if (actionHeadSha && actionHeadSha !== headSha) {
+      errors.push('action-grant-action-head-mismatch');
+    }
+  }
+  return errors;
+}
+
 function validateExactActionGrant(state, action, grant, options = {}) {
   const errors = [];
   const sourceRevision = text(grant?.sourceRevision).toLowerCase();
@@ -89,6 +194,7 @@ function validateExactActionGrant(state, action, grant, options = {}) {
   if (grant?.mergeAuthority !== false || grant?.leaseSeizureAllowed !== false) {
     errors.push('action-grant-authority-expanded');
   }
+  errors.push(...validateExecutionTargetBindings(state, action, grant));
   return { valid: errors.length === 0, errors };
 }
 
@@ -98,9 +204,16 @@ async function beginRepairIfRequired(state, options) {
   const started = await appendMissionEvent(state.missionId, {
     eventId: `repair-${state.missionId}-round-${round}`.slice(0, 128),
     eventType: 'REPAIR_STARTED',
+    expectedRevision: state.revision,
+    expectedCurrentPhase: 'REPAIR_REQUIRED',
     summary: `Bounded Codex repair round ${round} started after required check failure.`,
   }, options);
-  return { state: started.state, repairStarted: true };
+  return {
+    state: started.state,
+    repairStarted: started.preconditionFailed !== true,
+    preconditionFailed: started.preconditionFailed === true,
+    reason: started.reason || '',
+  };
 }
 
 export async function publishMissionWorkerAction(inputState, options = {}) {
@@ -165,6 +278,16 @@ export async function publishNextMissionWorkerAction(options = {}) {
       }
       if (state.currentPhase === 'REPAIR_REQUIRED') {
         const prepared = await beginRepairIfRequired(state, options);
+        if (prepared.preconditionFailed) {
+          return {
+            published: false,
+            reason: 'repair-transition-precondition-failed',
+            blockers: [prepared.reason || 'mission-state-precondition-failed'],
+            action: preview,
+            path: '',
+            repairStarted: false,
+          };
+        }
         actionState = prepared.state;
         repairStarted = prepared.repairStarted;
         const actualAction = buildMissionWorkerAction(actionState, options);

@@ -209,6 +209,21 @@ export async function appendMissionEvent(missionId, event, options = {}) {
     if (processedEventIds.includes(eventId)) {
       return { state: current, duplicate: true, eventId, snapshot: { published: false, path: '' } };
     }
+    const expectedRevision = Number(event.expectedRevision);
+    const expectedCurrentPhase = String(event.expectedCurrentPhase || '').trim().toUpperCase();
+    if (
+      (Number.isSafeInteger(expectedRevision) && current.revision !== expectedRevision)
+      || (expectedCurrentPhase && current.currentPhase !== expectedCurrentPhase)
+    ) {
+      return {
+        state: current,
+        duplicate: false,
+        eventId,
+        preconditionFailed: true,
+        reason: 'MISSION_STATE_PRECONDITION_FAILED',
+        snapshot: { published: false, path: '' },
+      };
+    }
 
     const preparedEvent = {
       ...event,

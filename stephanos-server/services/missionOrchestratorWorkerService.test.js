@@ -63,9 +63,25 @@ test('publisher rejects retargeting and publishes only the exact granted mission
     actionKind: action.actionKind,
     adapter: 'openclaw-signed',
     operation: action.operation,
+    repository: second.state.repository,
+    branch: second.state.git.branch,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
   };
+  const targetRetargeted = await publishNextMissionWorkerAction({
+    ...options,
+    actionGrant: {
+      ...grant,
+      repository: 'trusted/repository',
+      branch: 'openclaw/trusted-target',
+    },
+  });
+  assert.equal(targetRetargeted.published, false);
+  assert.equal(targetRetargeted.reason, 'action-grant-mismatch');
+  assert.equal(targetRetargeted.blockers.includes('action-grant-repository-mismatch'), true);
+  assert.equal(targetRetargeted.blockers.includes('action-grant-branch-mismatch'), true);
+  assert.deepEqual(await readMissionWorkerQueue(options), []);
+
   const published = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
   assert.equal(published.published, true);
   assert.equal(published.action.missionId, second.state.missionId);
@@ -83,7 +99,7 @@ test('publisher rejects retargeting and publishes only the exact granted mission
 
 test('repair transition is projected, granted, applied, and queued as one exact post-repair action', async () => {
   const options = await runtime();
-  const missionId = 'grant-repair';
+  const missionId = 'goal-1497-pr-1617';
   let current = await createMissionRecord({
     ...intent,
     missionId,
@@ -153,6 +169,12 @@ test('repair transition is projected, granted, applied, and queued as one exact 
     actionKind: action.actionKind,
     adapter: 'codex',
     operation: '',
+    laneId: missionId,
+    repository: actionState.repository,
+    issueNumber: 1497,
+    prNumber: 1617,
+    branch: actionState.git.branch,
+    headSha: '2'.repeat(40),
     mergeAuthority: false,
     leaseSeizureAllowed: false,
   };
@@ -166,6 +188,29 @@ test('repair transition is projected, granted, applied, and queued as one exact 
   const afterRejectedGrant = await readMissionRecord(missionId, options);
   assert.equal(afterRejectedGrant.state.currentPhase, 'REPAIR_REQUIRED');
   assert.equal(afterRejectedGrant.state.revision, beforeRejectedGrant.state.revision);
+
+  const laneRetargeted = await publishNextMissionWorkerAction({
+    ...options,
+    actionGrant: { ...grant, laneId: 'goal-1497-pr-9999' },
+  });
+  assert.equal(laneRetargeted.published, false);
+  assert.equal(laneRetargeted.reason, 'action-grant-mismatch');
+  assert.equal(laneRetargeted.blockers.includes('action-grant-lane-mismatch'), true);
+  assert.equal(laneRetargeted.blockers.includes('action-grant-lane-pr-mismatch'), true);
+
+  for (const [field, value, blocker] of [
+    ['issueNumber', 9999, 'action-grant-issue-mismatch'],
+    ['prNumber', 9999, 'action-grant-pr-mismatch'],
+    ['headSha', '3'.repeat(40), 'action-grant-head-mismatch'],
+  ]) {
+    const retargeted = await publishNextMissionWorkerAction({
+      ...options,
+      actionGrant: { ...grant, [field]: value },
+    });
+    assert.equal(retargeted.published, false);
+    assert.equal(retargeted.reason, 'action-grant-mismatch');
+    assert.equal(retargeted.blockers.includes(blocker), true);
+  }
 
   const published = await publishNextMissionWorkerAction({
     ...options,
