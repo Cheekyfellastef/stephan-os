@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "source_id": "github-raicuparta-rai-pal",
+  "title": "Rai Pal",
+  "priority": "P0",
+  "status": "registered-pinned-copyleft-source",
+  "repository": "Raicuparta/rai-pal",
+  "snapshot_commit": "ace5d1f299633720ad0a8d696bf1cb689544bdfe",
+  "snapshot_date": "2026-07-16",
+  "licence": "GPL-3.0-or-later",
+  "local_manifest": "VR-Research-Lab/knowledge-sources/rai-pal/source-manifest.json",
+  "local_extraction": "VR-Research-Lab/knowledge-sources/rai-pal/knowledge-extraction.md",
+  "relevance": [
+    "installed and owned game discovery",
+    "multi-store library scanning",
+    "game-engine and engine-version detection",
+    "universal-mod discovery and updates",
+    "UEVR download and launch orchestration",
+    "game executable drop-in discovery",
+    "local capability inventory"
+  ],
+  "programme_links": [1593, 1594, 1595, 1596, 1597],
+  "refresh_owner": 1596,
+  "promotion_rule": "GPL source may be studied and modified under its terms. Prefer use as a separate tool or a clearly GPL-compatible component unless distribution obligations for a combined work are deliberately accepted."
+}
