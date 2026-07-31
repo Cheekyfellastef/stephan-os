@@ -587,6 +587,20 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(invalidated.goals[0].duplicateOf, 1284);
   assert.equal(invalidated.goals[0].supersededBy, 1622);
 
+  for (const invalidIssueAliases of [
+    { issueNumber: null, relatedIssue: '#1497' },
+    { issueNumber: 1497, relatedIssue: '#1' },
+    { issueNumber: 1497, issue: 'not-an-issue' },
+  ]) {
+    const malformedIdentity = buildSchedulerGoalsFromProgrammeSources({
+      nowUtc: NOW,
+      goalRecords: [goalRecord(invalidIssueAliases)],
+    });
+    assert.equal(malformedIdentity.valid, false);
+    assert.equal(malformedIdentity.goals.length, 0);
+    assert.ok(malformedIdentity.blockers.includes('goal-record-0-issue-invalid'));
+  }
+
   const nonGoal = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     goalRecords: [{
@@ -1107,6 +1121,27 @@ test('programme stall diagnosis reuses Monitor Multiplexer and never starts sche
   }, { nowUtc: NOW, stallAfterMs: 1_000 });
   assert.equal(exactProof.stalled, false);
   assert.equal(exactProof.lastProgressAtUtc, '2026-07-30T09:59:59.000Z');
+
+  for (const invalidAliases of [
+    { issueNumber: null, relatedIssue: '#1497' },
+    { repository: null, repositoryFullName: REPOSITORY },
+  ]) {
+    const invalidAliasProof = diagnoseProgrammeStall({
+      ...stalledProjection,
+      controllerHeartbeat: { fresh: true, ageMs: 0 },
+      battleBridgeProofs: [proofRecord({
+        issueNumber: 1497,
+        prNumber: 1617,
+        headSha: HEAD,
+        repository: REPOSITORY,
+        branch: BRANCH,
+        ...invalidAliases,
+      })],
+    }, { nowUtc: NOW, stallAfterMs: 1_000 });
+    assert.equal(invalidAliasProof.stalled, true);
+    assert.ok(invalidAliasProof.blockers.includes('active-lane-progress-stale'));
+    assert.equal(invalidAliasProof.lastProgressAtUtc, '2026-07-30T09:00:00.000Z');
+  }
 
   const futureEvidence = diagnoseProgrammeStall({
     ...stalledProjection,
