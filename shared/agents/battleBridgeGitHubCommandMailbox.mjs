@@ -34,6 +34,10 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
 export const WINDOWS_BROWSER_PROOF_SCENARIOS = Object.freeze([
   'MUSIC_RATING_PRESERVES_PLAYBACK',
 ]);
+export const WINDOWS_BROWSER_PROOF_TARGETS = Object.freeze([
+  'PULL_REQUEST_HEAD',
+  'MERGED_MAIN',
+]);
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
@@ -152,7 +156,18 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     if (!WINDOWS_BROWSER_PROOF_SCENARIOS.includes(String(command.proofScenario || ''))) {
       return fail('WINDOWS_BROWSER_PROOF_SCENARIO_NOT_ALLOWED');
     }
-  } else if (hasValue(command.prNumber) || hasValue(command.proofScenario)) {
+    const proofTarget = String(command.proofTarget || 'PULL_REQUEST_HEAD');
+    if (!WINDOWS_BROWSER_PROOF_TARGETS.includes(proofTarget)) {
+      return fail('WINDOWS_BROWSER_PROOF_TARGET_NOT_ALLOWED');
+    }
+    if (proofTarget === 'MERGED_MAIN' && !SHA_PATTERN.test(String(command.pullRequestHead || ''))) {
+      return fail('WINDOWS_BROWSER_PROOF_PR_PROVENANCE_HEAD_REQUIRED');
+    }
+    if (proofTarget === 'PULL_REQUEST_HEAD' && hasValue(command.pullRequestHead)) {
+      return fail('WINDOWS_BROWSER_PROOF_PR_PROVENANCE_HEAD_NOT_ALLOWED');
+    }
+  } else if (hasValue(command.prNumber) || hasValue(command.proofScenario)
+    || hasValue(command.proofTarget) || hasValue(command.pullRequestHead)) {
     return fail('WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
   }
   if (command.operation === CODEX_BANKED_RESET_STATUS_OPERATION) {
@@ -202,6 +217,12 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       targetRequestId: command.operation === 'READ_MAILBOX_RECEIPT' ? targetRequestId : '',
       prNumber: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? Number(command.prNumber) : 0,
       proofScenario: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? String(command.proofScenario) : '',
+      proofTarget: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
+        ? String(command.proofTarget || 'PULL_REQUEST_HEAD')
+        : '',
+      pullRequestHead: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
+        ? String(command.pullRequestHead || '').toLowerCase()
+        : '',
       expiresAt: new Date(expiresAtMs).toISOString(),
       ...(reset || {}),
     }),
@@ -310,6 +331,12 @@ export function buildBattleBridgeGitHubCommandReceipt({
     expectedHead: String(command?.expectedHead || ''),
     prNumber: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? Number(command?.prNumber || 0) : 0,
     proofScenario: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? String(command?.proofScenario || '') : '',
+    proofTarget: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
+      ? String(command?.proofTarget || 'PULL_REQUEST_HEAD')
+      : '',
+    pullRequestHead: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
+      ? String(command?.pullRequestHead || '').toLowerCase()
+      : '',
     resetId: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetId || '') : '',
     resetExpiresAtUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetExpiresAtUtc || '') : '',
     latestSafeExecutionUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.latestSafeExecutionUtc || '') : '',

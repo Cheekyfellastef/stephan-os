@@ -127,10 +127,17 @@ function safeExactHeadProof(value = {}) {
   const expectedHead = text(value.expectedHead).toLowerCase();
   const prNumber = Number.parseInt(value.prNumber, 10);
   if (!/^[0-9a-f]{40}$/.test(expectedHead) || !Number.isSafeInteger(prNumber) || prNumber <= 0) return null;
+  const proofTarget = text(value.proofTarget, 'PULL_REQUEST_HEAD');
+  const pullRequestHead = text(value.pullRequestHead).toLowerCase();
+  if (!['PULL_REQUEST_HEAD', 'MERGED_MAIN'].includes(proofTarget)) return null;
+  if (proofTarget === 'MERGED_MAIN' && !/^[0-9a-f]{40}$/.test(pullRequestHead)) return null;
+  if (proofTarget === 'PULL_REQUEST_HEAD' && pullRequestHead) return null;
   return Object.freeze({
     repository: text(value.repository),
     prNumber,
     expectedHead,
+    proofTarget,
+    pullRequestHead,
     proofScenario: text(value.proofScenario),
   });
 }

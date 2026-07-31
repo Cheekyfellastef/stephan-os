@@ -106,6 +106,16 @@ function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
   if (isExactWindowsProofOperation(receipt, operationResult)) {
     const pullRequestHead = String(operationResult?.pullRequestHead || '').trim().toLowerCase();
     const localHead = String(operationResult?.localHead || '').trim().toLowerCase();
+    const proofTarget = String(receipt?.proofTarget || operationResult?.proofTarget || 'PULL_REQUEST_HEAD');
+    const mergeCommitHead = String(operationResult?.mergeCommitHead || '').trim().toLowerCase();
+    if (proofTarget === 'MERGED_MAIN') {
+      return SHA_PATTERN.test(expectedHead)
+        && SHA_PATTERN.test(pullRequestHead)
+        && SHA_PATTERN.test(mergeCommitHead)
+        && SHA_PATTERN.test(localHead)
+        && expectedHead === mergeCommitHead
+        && expectedHead === localHead;
+    }
     return SHA_PATTERN.test(expectedHead)
       && SHA_PATTERN.test(pullRequestHead)
       && SHA_PATTERN.test(localHead)
@@ -260,8 +270,10 @@ export function sanitizeMailboxReceiptForIndex(receipt = {}) {
     expectedHead: safeSha(receipt?.expectedHead || operationResult?.expectedHead),
     prNumber: safeCount(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeOperation(receipt?.proofScenario || operationResult?.proofScenario),
+    proofTarget: safeOperation(receipt?.proofTarget || operationResult?.proofTarget || ''),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
     pullRequestHead: safeSha(operationResult?.pullRequestHead),
+    mergeCommitHead: safeSha(operationResult?.mergeCommitHead),
     localHead: safeSha(operationResult?.localHead),
     sourceHead: safeSha(operationResult?.sourceHead || operationResult?.recoveredHead),
     branch: String(operationResult?.branch || receipt?.branch || '') === 'main' ? 'main' : '',

@@ -281,6 +281,16 @@ function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
   if (isExactWindowsProofOperation(receipt, operationResult)) {
     const pullRequestHead = String(operationResult?.pullRequestHead || '').trim().toLowerCase();
     const localHead = String(operationResult?.localHead || '').trim().toLowerCase();
+    const proofTarget = String(receipt?.proofTarget || operationResult?.proofTarget || 'PULL_REQUEST_HEAD');
+    const mergeCommitHead = String(operationResult?.mergeCommitHead || '').trim().toLowerCase();
+    if (proofTarget === 'MERGED_MAIN') {
+      return EXACT_GIT_HEAD_PATTERN.test(expectedHead)
+        && EXACT_GIT_HEAD_PATTERN.test(pullRequestHead)
+        && EXACT_GIT_HEAD_PATTERN.test(mergeCommitHead)
+        && EXACT_GIT_HEAD_PATTERN.test(localHead)
+        && expectedHead === mergeCommitHead
+        && expectedHead === localHead;
+    }
     return EXACT_GIT_HEAD_PATTERN.test(expectedHead)
       && EXACT_GIT_HEAD_PATTERN.test(pullRequestHead)
       && EXACT_GIT_HEAD_PATTERN.test(localHead)
@@ -330,8 +340,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
     prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+    proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
     pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+    mergeCommitHead: safeTelemetrySha(operationResult?.mergeCommitHead),
     localHead: safeTelemetrySha(operationResult?.localHead),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
@@ -349,8 +361,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
       prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
       proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+      proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
       taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
       pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+      mergeCommitHead: safeTelemetrySha(operationResult?.mergeCommitHead),
       localHead: safeTelemetrySha(operationResult?.localHead),
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
@@ -411,8 +425,10 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
     prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+    proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
     pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+    mergeCommitHead: safeTelemetrySha(operationResult?.mergeCommitHead),
     localHead: safeTelemetrySha(operationResult?.localHead),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
@@ -428,8 +444,10 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
         prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
         proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+        proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
         taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
         pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+        mergeCommitHead: safeTelemetrySha(operationResult?.mergeCommitHead),
         localHead: safeTelemetrySha(operationResult?.localHead),
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),

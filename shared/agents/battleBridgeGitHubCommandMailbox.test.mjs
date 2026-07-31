@@ -111,6 +111,30 @@ test('accepts only typed exact-head Windows browser proof requests', () => {
   }).blocker, 'WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
 });
 
+test('accepts a merged-main proof only with a distinct immutable PR provenance head', () => {
+  const pullRequestHead = 'a'.repeat(40);
+  const proof = command({
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    prNumber: 1631,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead,
+  });
+  const accepted = validateBattleBridgeGitHubCommand(proof, { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.command.proofTarget, 'MERGED_MAIN');
+  assert.equal(accepted.command.pullRequestHead, pullRequestHead);
+  assert.equal(validateBattleBridgeGitHubCommand({ ...proof, pullRequestHead: '' }, {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_PR_PROVENANCE_HEAD_REQUIRED');
+  assert.equal(validateBattleBridgeGitHubCommand({ ...proof, proofTarget: 'ARBITRARY_COMMIT' }, {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_TARGET_NOT_ALLOWED');
+  assert.equal(validateBattleBridgeGitHubCommand(command({ pullRequestHead }), {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
+});
+
 test('dispatches Windows browser proof only through its named handler', async () => {
   const proof = validateBattleBridgeGitHubCommand(command({
     operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',

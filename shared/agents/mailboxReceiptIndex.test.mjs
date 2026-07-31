@@ -279,6 +279,28 @@ test('exact-head proof index projections retain verified heads and derive the ma
     },
   });
   assert.equal(mismatch.expectedHeadMatch, false);
+
+  const mergedMainHead = LATER_HEAD;
+  const merged = sanitizeMailboxReceiptForIndex({
+    ...exactHeadReceipt,
+    expectedHead: mergedMainHead,
+    proofTarget: 'MERGED_MAIN',
+    result: {
+      ...exactHeadReceipt.result,
+      result: {
+        ...exactHeadReceipt.result.result,
+        expectedHead: mergedMainHead,
+        proofTarget: 'MERGED_MAIN',
+        pullRequestHead: HEAD,
+        mergeCommitHead: mergedMainHead,
+        localHead: mergedMainHead,
+      },
+    },
+  });
+  assert.equal(merged.proofTarget, 'MERGED_MAIN');
+  assert.equal(merged.pullRequestHead, HEAD);
+  assert.equal(merged.mergeCommitHead, mergedMainHead);
+  assert.equal(merged.expectedHeadMatch, true);
 });
 
 test('sanitization preserves on-demand worker telemetry without exposing machine paths', () => {

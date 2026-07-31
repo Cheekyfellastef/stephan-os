@@ -28,8 +28,91 @@ test('builds one approved read-only exact-head Windows proof packet', () => {
     repository: 'Cheekyfellastef/stephan-os',
     prNumber: command.prNumber,
     expectedHead: command.expectedHead,
+    proofTarget: 'PULL_REQUEST_HEAD',
+    pullRequestHead: '',
     proofScenario: command.proofScenario,
   });
+});
+
+test('binds a post-merge proof to both immutable PR provenance and the merged main runtime head', async () => {
+  const pullRequestHead = command.expectedHead;
+  const mergeCommitHead = '3465beca92e0651598a77668c4426451aadad0b2';
+  const mergedCommand = {
+    ...command,
+    expectedHead: mergeCommitHead,
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead,
+  };
+  const calls = [];
+  const result = await dispatchExactHeadWindowsBrowserProof(mergedCommand, {
+    platform: 'win32',
+    now: () => '2026-07-31T20:00:00.000Z',
+    readPullRequestHead: async () => ({
+      ok: true,
+      head: pullRequestHead,
+      merged: true,
+      state: 'closed',
+      mergeCommitHead,
+      baseBranch: 'main',
+    }),
+    readLocalHead: async () => ({ ok: true, head: mergeCommitHead }),
+    integration: {
+      paths: { repoRoot: 'C:\\stephan-os' },
+      capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+      dispatch(packet) {
+        calls.push(packet);
+        return { accepted: true, started: true, jobId: packet.jobId };
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.proofTarget, 'MERGED_MAIN');
+  assert.equal(result.expectedHead, mergeCommitHead);
+  assert.equal(result.pullRequestHead, pullRequestHead);
+  assert.equal(result.mergeCommitHead, mergeCommitHead);
+  assert.equal(result.localHead, mergeCommitHead);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].exactHeadProof, {
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: command.prNumber,
+    expectedHead: mergeCommitHead,
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead,
+    proofScenario: command.proofScenario,
+  });
+});
+
+test('rejects post-merge PR-head substitution, unrelated merges, missing provenance, stale main, and head movement', async () => {
+  const pullRequestHead = command.expectedHead;
+  const mergeCommitHead = '3465beca92e0651598a77668c4426451aadad0b2';
+  const mergedCommand = { ...command, expectedHead: mergeCommitHead, proofTarget: 'MERGED_MAIN', pullRequestHead };
+  const integration = {
+    paths: { repoRoot: 'C:\\stephan-os' },
+    capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+    dispatch() { assert.fail('dispatch must not run'); },
+  };
+  const identity = { ok: true, head: pullRequestHead, merged: true, state: 'closed', mergeCommitHead, baseBranch: 'main' };
+  const run = (overrides = {}) => dispatchExactHeadWindowsBrowserProof(overrides.command || mergedCommand, {
+    platform: 'win32', integration,
+    readPullRequestHead: overrides.readPullRequestHead || (async () => identity),
+    readLocalHead: overrides.readLocalHead || (async () => ({ ok: true, head: mergeCommitHead })),
+  });
+
+  assert.equal((await run({ command: { ...mergedCommand, pullRequestHead: 'a'.repeat(40) } })).blocker, 'PR_HEAD_MISMATCH');
+  assert.equal((await run({
+    readPullRequestHead: async () => ({ ...identity, mergeCommitHead: 'b'.repeat(40) }),
+  })).blocker, 'MERGE_COMMIT_MISMATCH');
+  assert.equal((await run({ command: { ...mergedCommand, pullRequestHead: '' } })).blocker, 'PR_PROVENANCE_HEAD_REQUIRED');
+  assert.equal((await run({ readLocalHead: async () => ({ ok: true, head: 'c'.repeat(40) }) })).blocker, 'EXPECTED_HEAD_MISMATCH');
+
+  let identityReads = 0;
+  const moved = await run({
+    readPullRequestHead: async () => {
+      identityReads += 1;
+      return identityReads === 1 ? identity : { ...identity, head: 'd'.repeat(40) };
+    },
+  });
+  assert.equal(moved.blocker, 'PR_HEAD_MISMATCH');
 });
 
 test('derives a deterministic Windows-safe job id instead of using a raw mailbox request id as a path', () => {
