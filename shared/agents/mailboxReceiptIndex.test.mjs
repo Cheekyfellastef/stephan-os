@@ -22,6 +22,7 @@ import {
   sanitizeMailboxReceiptForIndex,
 } from './mailboxReceiptIndex.mjs';
 import { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
+import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
 
 const HEAD = '8517ef3cc89e5ab6c191c550cc729227b3089e42';
 const LATER_HEAD = 'b3aca072a1c66555a1a2d3b4343f218af8d33ef4';
@@ -79,10 +80,75 @@ async function workspaceFixture(fn) {
 }
 
 async function writeReceipt(workspaceRoot, value) {
-  const target = join(workspaceRoot, 'receipts', 'github-command-mailbox', `${value.requestId}.json`);
+  const target = join(
+    workspaceRoot,
+    'receipts',
+    'github-command-mailbox',
+    createWindowsSafeMailboxReceiptFilename(value.requestId),
+  );
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
   return target;
 }
+
+test('loads receipts whose Windows-safe filenames hash reserved or colon-bearing request IDs', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const values = [
+    receipt({ requestId: 'CON.proof' }),
+    receipt({ requestId: 'proof:2026-07-30T20:00:00Z' }),
+  ];
+  for (const value of values) await writeReceipt(workspaceRoot, value);
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.equal(loaded.ok, true);
+  assert.deepEqual(
+    loaded.receipts.map((value) => value.requestId).sort(),
+    values.map((value) => value.requestId).sort(),
+  );
+}));
+
+test('fallback hashes cannot alias valid raw request ids and both receipts remain loadable', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const unsafeRequestId = 'CON.proof';
+  const unsafeFilename = createWindowsSafeMailboxReceiptFilename(unsafeRequestId);
+  const digest = unsafeFilename.slice('_request-'.length, -'.json'.length);
+  const formerlyAliasedRawId = `request-${digest}`;
+  const rawFilename = createWindowsSafeMailboxReceiptFilename(formerlyAliasedRawId);
+  assert.notEqual(unsafeFilename, rawFilename);
+
+  await writeReceipt(workspaceRoot, receipt({ requestId: unsafeRequestId }));
+  await writeReceipt(workspaceRoot, receipt({ requestId: formerlyAliasedRawId }));
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.deepEqual(
+    loaded.receipts.map((value) => value.requestId).sort(),
+    [unsafeRequestId, formerlyAliasedRawId].sort(),
+  );
+}));
+
+test('case-distinct request ids use case-distinct Windows filenames and remain independently loadable', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const values = [
+    receipt({ requestId: 'Request-safe-0001' }),
+    receipt({ requestId: 'request-safe-0001' }),
+  ];
+  const filenames = values.map((value) => createWindowsSafeMailboxReceiptFilename(value.requestId));
+  assert.notEqual(filenames[0].toLowerCase(), filenames[1].toLowerCase());
+  for (const value of values) await writeReceipt(workspaceRoot, value);
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.deepEqual(
+    loaded.receipts.map((value) => value.requestId).sort(),
+    values.map((value) => value.requestId).sort(),
+  );
+}));
+
+test('rejects a matching fallback-hash filename when the embedded request id is missing or invalid', async () => workspaceFixture(async ({ repoRoot, workspaceRoot }) => {
+  const receiptRoot = join(workspaceRoot, 'receipts', 'github-command-mailbox');
+  for (const requestId of ['', '../invalid']) {
+    await writeFile(
+      join(receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)),
+      `${JSON.stringify(requestId ? { requestId } : {})}\n`,
+      'utf8',
+    );
+  }
+  const loaded = await loadMailboxReceiptsFromSharedWorkspace({ root: workspaceRoot, repoRoot });
+  assert.equal(loaded.ok, true);
+  assert.deepEqual(loaded.receipts, []);
+}));
 
 test('sanitization retains bounded evidence and removes raw payloads, machine paths and secret-shaped data', () => {
   const projected = sanitizeMailboxReceiptForIndex(receipt({

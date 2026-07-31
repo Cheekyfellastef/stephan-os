@@ -1,11 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import {
   createLocalCodexExecIntegration,
+  LOCAL_CODEX_DISPATCH_LOCK_SCHEMA,
+  parseLinuxDispatchLockProcessIdentity,
   readLocalCodexTaskResult,
   readLocalCodexTaskStatus,
   resolveLocalCodexDispatchPaths,
@@ -15,6 +28,7 @@ import {
   classifyCodexExecution,
   classifyPostTaskDirt,
   compareDirtSnapshots,
+  evaluateWorkerSourceSafety,
   parseCodexJsonEvents,
   parseGitStatusPaths,
   resolveCodexExecInvocation,
@@ -22,7 +36,6 @@ import {
   runCodexWorker,
   validateBrowserProofVerdict,
   validateExactHeadAtWorkerStart,
-  validateExactHeadSourceTree,
 } from '../../scripts/stephanos-codex-dispatch-worker.mjs';
 
 function tempRoots() {
@@ -50,6 +63,61 @@ function packet(jobId = 'codex-job-test-123') {
     approvalRequirements: { approvalReceipt: 'operator-approved' },
     mergeAuthority: false,
   };
+}
+
+const SOURCE_FINGERPRINT = 'f'.repeat(64);
+const TEST_BOOT_STARTED_AT = '2026-07-30T22:00:00.000Z';
+const TEST_BOOT_ID = 'test-boot-generation-0001';
+const TEST_PROCESS_START_ID = 'test-process-generation-0001';
+const TEST_PROCESS_IDENTITY = Object.freeze({
+  state: 'known',
+  bootId: TEST_BOOT_ID,
+  processStartId: TEST_PROCESS_START_ID,
+});
+
+function dispatchLockOwner(overrides = {}) {
+  const acquiredAtUtc = overrides.acquiredAtUtc || '2026-07-30T23:00:00.000Z';
+  const leaseDurationMs = overrides.leaseDurationMs ?? 1_000;
+  return {
+    schemaVersion: LOCAL_CODEX_DISPATCH_LOCK_SCHEMA,
+    lockId: 'fixture-lock-owner-0001',
+    pid: 777,
+    hostname: 'test-host',
+    acquiredAtUtc,
+    expiresAtUtc: new Date(Date.parse(acquiredAtUtc) + leaseDurationMs).toISOString(),
+    leaseDurationMs,
+    processStartedAtUtc: '2026-07-30T22:59:00.000Z',
+    bootStartedAtUtc: TEST_BOOT_STARTED_AT,
+    bootId: TEST_BOOT_ID,
+    processStartId: TEST_PROCESS_START_ID,
+    ...overrides,
+  };
+}
+
+function successfulCodexProofChild(args, expectedHead) {
+  const child = new EventEmitter();
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const lastMessagePath = args[args.indexOf('--output-last-message') + 1];
+  process.nextTick(() => {
+    writeFileSync(lastMessagePath, JSON.stringify({
+      verdict: 'PASS',
+      proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+      evidence: {
+        runtimeSourceHead: expectedHead,
+        listeningDeckIframeIdentityPreserved: true,
+        discoveryIframeIdentityPreserved: true,
+        legacyRankingChanged: true,
+        consoleErrors: [],
+      },
+      blockers: [],
+    }));
+    child.stdout.end('{"type":"turn.completed"}\n');
+    child.stderr.end();
+    child.emit('exit', 0, null);
+  });
+  return child;
 }
 
 test('local integration writes a durable task and accepted receipt before launching one detached worker', () => {
@@ -121,6 +189,7 @@ test('worker-owned browser runtime proof rejects a stale served head even if a m
     ...task,
     repoRoot: 'C:\\stephan-os',
   }, {
+    expectedSourceFingerprint: SOURCE_FINGERPRINT,
     spawnSyncFn() {
       return {
         status: 1,
@@ -132,6 +201,9 @@ test('worker-owned browser runtime proof rejects a stale served head even if a m
           expectedHead: task.exactHeadProof.expectedHead,
           runtimeSourceHead: staleHead,
           expectedHeadMatch: false,
+          expectedSourceFingerprint: SOURCE_FINGERPRINT,
+          runtimeSourceFingerprint: SOURCE_FINGERPRINT,
+          expectedSourceFingerprintMatch: true,
         }),
       };
     },
@@ -160,13 +232,16 @@ test('worker-owned browser runtime proof accepts only structured runner output a
   const task = { ...packet(), repoRoot: 'C:\\stephan-os' };
   const expectedHead = task.exactHeadProof.expectedHead;
   const proof = runBrowserRuntimeExactHeadProof(task, {
+    expectedSourceFingerprint: SOURCE_FINGERPRINT,
     spawnSyncFn(executable, args, options) {
       assert.equal(executable, process.execPath);
-      assert.deepEqual(args.slice(-6), [
+      assert.deepEqual(args.slice(-8), [
         '--url',
         'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
         '--expected-head',
         expectedHead,
+        '--expected-source-fingerprint',
+        SOURCE_FINGERPRINT,
         '--no-artifacts',
         '--machine-json',
       ]);
@@ -181,18 +256,23 @@ test('worker-owned browser runtime proof accepts only structured runner output a
           expectedHead,
           runtimeSourceHead: expectedHead,
           expectedHeadMatch: true,
+          expectedSourceFingerprint: SOURCE_FINGERPRINT,
+          runtimeSourceFingerprint: SOURCE_FINGERPRINT,
+          expectedSourceFingerprintMatch: true,
         }),
       };
     },
   });
   assert.equal(proof.ok, true);
   assert.equal(proof.runtimeSourceHead, expectedHead);
+  assert.equal(proof.runtimeSourceFingerprint, SOURCE_FINGERPRINT);
 });
 
 test('worker-owned browser runtime proof rejects an alternate URL even when its footer matches', () => {
   const task = { ...packet(), repoRoot: 'C:\\stephan-os' };
   const expectedHead = task.exactHeadProof.expectedHead;
   const proof = runBrowserRuntimeExactHeadProof(task, {
+    expectedSourceFingerprint: SOURCE_FINGERPRINT,
     spawnSyncFn() {
       return {
         status: 0,
@@ -204,6 +284,9 @@ test('worker-owned browser runtime proof rejects an alternate URL even when its 
           expectedHead,
           runtimeSourceHead: expectedHead,
           expectedHeadMatch: true,
+          expectedSourceFingerprint: SOURCE_FINGERPRINT,
+          runtimeSourceFingerprint: SOURCE_FINGERPRINT,
+          expectedSourceFingerprintMatch: true,
         }),
       };
     },
@@ -215,6 +298,7 @@ test('worker-owned browser runtime proof rejects an alternate URL even when its 
 test('worker-owned browser runtime proof converts runner launch exceptions into a deterministic blocker', () => {
   const task = { ...packet(), repoRoot: 'C:\\stephan-os' };
   const proof = runBrowserRuntimeExactHeadProof(task, {
+    expectedSourceFingerprint: SOURCE_FINGERPRINT,
     spawnSyncFn() { throw new Error('synthetic runner launch failure'); },
   });
   assert.equal(proof.ok, false);
@@ -231,7 +315,7 @@ test('worker persists terminal failure when the guarded Codex child cannot launc
   const expectedHead = packet().exactHeadProof.expectedHead;
   const result = await runCodexWorker(dispatchReceipt.taskPath, {
     spawnFn() { throw new Error('synthetic Codex CLI launch failure'); },
-    spawnSyncFn(executable) {
+    spawnSyncFn(executable, args) {
       if (executable === process.execPath) {
         return {
           status: 0,
@@ -243,11 +327,18 @@ test('worker persists terminal failure when the guarded Codex child cannot launc
             expectedHead,
             runtimeSourceHead: expectedHead,
             expectedHeadMatch: true,
+            expectedSourceFingerprint: SOURCE_FINGERPRINT,
+            runtimeSourceFingerprint: SOURCE_FINGERPRINT,
+            expectedSourceFingerprintMatch: true,
           }),
         };
       }
+      if (executable === 'git' && args[0] === 'status') {
+        return { status: 0, stdout: '', stderr: '' };
+      }
       return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
     },
+    sourceFingerprintFactory: () => SOURCE_FINGERPRINT,
     visibilityPublisher: async () => ({ ok: true }),
     now: () => '2026-07-30T23:00:00.000Z',
   });
@@ -272,12 +363,14 @@ test('worker revalidates both PR and checkout heads immediately before execution
     platform: 'win32',
     spawnSyncFn(executable, args, options) {
       calls.push({ executable, args, cwd: options.cwd });
+      if (args[0] === 'status') return { status: 0, stdout: '', stderr: '' };
       return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
     },
   });
   assert.equal(valid.ok, true);
-  assert.deepEqual(calls.map((call) => call.executable), ['gh.exe', 'git.exe']);
+  assert.deepEqual(calls.map((call) => call.executable), ['gh.exe', 'git.exe', 'git.exe']);
   assert.equal(calls[1].cwd, 'C:\\stephan-os');
+  assert.equal(valid.sourceDirtClean, true);
 });
 
 test('worker fails closed before proof execution when an exact head changes', () => {
@@ -303,6 +396,287 @@ test('worker fails closed before proof execution when an exact head changes', ()
   assert.equal(calls, 1);
 });
 
+test('worker rejects pre-existing source dirt before accepting an exact-head runtime proof', () => {
+  const expectedHead = 'a'.repeat(40);
+  const result = validateExactHeadAtWorkerStart({
+    repoRoot: 'C:\\stephan-os',
+    exactHeadProof: {
+      repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 1631,
+      expectedHead,
+    },
+  }, {
+    platform: 'win32',
+    spawnSyncFn(executable, args) {
+      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+        return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+      }
+      return {
+        status: 0,
+        stdout: ' M scripts/dirty-source.mjs\n M apps/stephanos/dist/index.html\n',
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'PRE_EXISTING_SOURCE_DIRT');
+  assert.deepEqual(result.sourcePaths, ['scripts/dirty-source.mjs']);
+});
+
+test('worker permits generated runtime dirt when committed source is clean', () => {
+  const expectedHead = 'a'.repeat(40);
+  const result = validateExactHeadAtWorkerStart({
+    repoRoot: 'C:\\stephan-os',
+    exactHeadProof: {
+      repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 1631,
+      expectedHead,
+    },
+  }, {
+    platform: 'win32',
+    spawnSyncFn(executable, args) {
+      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+        return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+      }
+      return { status: 0, stdout: ' M apps/stephanos/dist/index.html\n', stderr: '' };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.generatedRuntimePaths, ['apps/stephanos/dist/index.html']);
+});
+
+test('worker fails closed when exact-head source status cannot be read', () => {
+  const expectedHead = 'a'.repeat(40);
+  const result = validateExactHeadAtWorkerStart({
+    repoRoot: 'C:\\stephan-os',
+    exactHeadProof: {
+      repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 1631,
+      expectedHead,
+    },
+  }, {
+    platform: 'win32',
+    spawnSyncFn(executable, args) {
+      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+        return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+      }
+      return { status: 1, stdout: '', stderr: 'status unavailable' };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED');
+});
+
+test('worker persists BLOCKED before browser or child execution when exact-head source is dirty', async () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 333, unref() {} }),
+  });
+  const dispatchReceipt = integration.dispatch(packet('codex-job-dirty-source'));
+  const expectedHead = packet().exactHeadProof.expectedHead;
+  let browserRunnerCalls = 0;
+  const result = await runCodexWorker(dispatchReceipt.taskPath, {
+    platform: 'win32',
+    spawnFn: () => assert.fail('Codex child must not start from a dirty exact-head checkout'),
+    spawnSyncFn(executable, args) {
+      if (executable === process.execPath) {
+        browserRunnerCalls += 1;
+        return { status: 1, stdout: '', stderr: '' };
+      }
+      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+        return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+      }
+      return { status: 0, stdout: ' M scripts/dirty-source.mjs\n', stderr: '' };
+    },
+    visibilityPublisher: async () => ({ ok: true }),
+    now: () => '2026-07-30T23:10:00.000Z',
+  });
+  assert.equal(browserRunnerCalls, 0);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.blocker, 'PRE_EXISTING_SOURCE_DIRT');
+  assert.equal(integration.readStatus('codex-job-dirty-source').status, 'BLOCKED');
+  assert.equal(integration.readResult('codex-job-dirty-source').blocker, 'PRE_EXISTING_SOURCE_DIRT');
+});
+
+test('worker blocks before browser or child execution when the bracketing source status lookup fails', async () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 333, unref() {} }),
+  });
+  const dispatchReceipt = integration.dispatch(packet('codex-job-source-status-race'));
+  const expectedHead = packet().exactHeadProof.expectedHead;
+  let statusCalls = 0;
+  let browserCalls = 0;
+  const result = await runCodexWorker(dispatchReceipt.taskPath, {
+    platform: 'win32',
+    spawnFn: () => assert.fail('Codex child must not start when the bracket status lookup fails'),
+    spawnSyncFn(executable, args) {
+      if (executable === process.execPath) {
+        browserCalls += 1;
+        return { status: 1, stdout: '', stderr: '' };
+      }
+      if (args[0] === 'status') {
+        statusCalls += 1;
+        return statusCalls === 1
+          ? { status: 0, stdout: '', stderr: '' }
+          : { status: 1, stdout: '', stderr: 'status unavailable' };
+      }
+      return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+    },
+    sourceFingerprintFactory: () => SOURCE_FINGERPRINT,
+    visibilityPublisher: async () => ({ ok: true }),
+  });
+  assert.equal(statusCalls, 2);
+  assert.equal(browserCalls, 0);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.blocker, 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED');
+});
+
+test('worker-owned browser runtime proof rejects a fingerprint from a different source tree', () => {
+  const task = { ...packet(), repoRoot: 'C:\\stephan-os' };
+  const expectedHead = task.exactHeadProof.expectedHead;
+  const proof = runBrowserRuntimeExactHeadProof(task, {
+    expectedSourceFingerprint: SOURCE_FINGERPRINT,
+    spawnSyncFn() {
+      return {
+        status: 1,
+        stdout: JSON.stringify({
+          schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v1',
+          url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+          observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+          accepted: false,
+          expectedHead,
+          runtimeSourceHead: expectedHead,
+          expectedHeadMatch: true,
+          expectedSourceFingerprint: SOURCE_FINGERPRINT,
+          runtimeSourceFingerprint: 'e'.repeat(64),
+          expectedSourceFingerprintMatch: false,
+        }),
+      };
+    },
+  });
+  assert.equal(proof.ok, false);
+  assert.equal(proof.blocker, 'BROWSER_PROOF_RUNTIME_FINGERPRINT_MISMATCH');
+});
+
+test('worker freezes one source fingerprint across both browser proofs and snapshots source afterward', async () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 333, unref() {} }),
+  });
+  const dispatchReceipt = integration.dispatch(packet('codex-job-frozen-fingerprint'));
+  const expectedHead = packet().exactHeadProof.expectedHead;
+  const callOrder = [];
+  let browserCalls = 0;
+  let fingerprintCalls = 0;
+  const result = await runCodexWorker(dispatchReceipt.taskPath, {
+    platform: 'win32',
+    sourceFingerprintFactory() {
+      fingerprintCalls += 1;
+      return fingerprintCalls === 1 ? SOURCE_FINGERPRINT : 'e'.repeat(64);
+    },
+    spawnSyncFn(executable, args) {
+      if (executable === process.execPath) {
+        browserCalls += 1;
+        callOrder.push(`browser-${browserCalls}`);
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v1',
+            url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+            observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+            accepted: true,
+            expectedHead,
+            runtimeSourceHead: expectedHead,
+            expectedHeadMatch: true,
+            expectedSourceFingerprint: SOURCE_FINGERPRINT,
+            runtimeSourceFingerprint: SOURCE_FINGERPRINT,
+            expectedSourceFingerprintMatch: true,
+          }),
+        };
+      }
+      if (args[0] === 'status') {
+        callOrder.push(browserCalls === 2 ? 'final-status' : 'status');
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (executable === 'git') {
+        callOrder.push(browserCalls === 2 ? 'final-head' : 'head');
+      }
+      return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+    },
+    spawnFn(command, args) {
+      return successfulCodexProofChild(args, expectedHead);
+    },
+    visibilityPublisher: async () => ({ ok: true }),
+    heartbeatIntervalMs: 0,
+  });
+
+  assert.equal(result.status, 'DONE');
+  assert.equal(fingerprintCalls, 1);
+  assert.equal(browserCalls, 2);
+  assert.deepEqual(callOrder.slice(-3), ['browser-2', 'final-head', 'final-status']);
+  assert.equal(result.browserRuntimeProofBefore.expectedSourceFingerprint, SOURCE_FINGERPRINT);
+  assert.equal(result.browserRuntimeProofAfter.expectedSourceFingerprint, SOURCE_FINGERPRINT);
+});
+
+test('an otherwise passing exact-head proof is BLOCKED when the final status snapshot fails', async () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 333, unref() {} }),
+  });
+  const dispatchReceipt = integration.dispatch(packet('codex-job-final-status-fails'));
+  const expectedHead = packet().exactHeadProof.expectedHead;
+  let statusCalls = 0;
+  let browserCalls = 0;
+  const result = await runCodexWorker(dispatchReceipt.taskPath, {
+    platform: 'win32',
+    sourceFingerprintFactory: () => SOURCE_FINGERPRINT,
+    spawnSyncFn(executable, args) {
+      if (executable === process.execPath) {
+        browserCalls += 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            schemaVersion: 'stephanos.browser-runtime-exact-head-proof.v1',
+            url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+            observedUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+            accepted: true,
+            expectedHead,
+            runtimeSourceHead: expectedHead,
+            expectedHeadMatch: true,
+            expectedSourceFingerprint: SOURCE_FINGERPRINT,
+            runtimeSourceFingerprint: SOURCE_FINGERPRINT,
+            expectedSourceFingerprintMatch: true,
+          }),
+        };
+      }
+      if (args[0] === 'status') {
+        statusCalls += 1;
+        return statusCalls < 3
+          ? { status: 0, stdout: '', stderr: '' }
+          : { status: 1, stdout: '', stderr: 'final status unavailable' };
+      }
+      return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+    },
+    spawnFn(command, args) {
+      return successfulCodexProofChild(args, expectedHead);
+    },
+    visibilityPublisher: async () => ({ ok: true }),
+    heartbeatIntervalMs: 0,
+  });
+
+  assert.equal(browserCalls, 2);
+  assert.equal(statusCalls, 3);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.verdict, 'FAIL');
+  assert.equal(result.browserProof.ok, true);
+  assert.equal(result.sourceSafety.exactHeadStatusAvailable, false);
+});
+
 test('local integration enforces the one-active-job rule', () => {
   const roots = tempRoots();
   const child = { pid: 111, unref() {} };
@@ -310,6 +684,54 @@ test('local integration enforces the one-active-job rule', () => {
   integration.dispatch(packet('codex-job-first'));
   assert.throws(() => integration.dispatch(packet('codex-job-second')), /already DISPATCHED/);
   assert.throws(() => integration.dispatch(packet('codex-job-first')), /already DISPATCHED/);
+});
+
+test('local integration fails closed when current task truth is malformed', () => {
+  const roots = tempRoots();
+  let spawnCalls = 0;
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+    spawnFn: () => {
+      spawnCalls += 1;
+      return { pid: 111, unref() {} };
+    },
+  });
+  mkdirSync(integration.paths.dispatchRoot, { recursive: true });
+  writeFileSync(integration.paths.currentPath, '{"jobId":"truncated');
+  assert.throws(
+    () => integration.dispatch(packet('codex-job-current-unverifiable')),
+    /LOCAL_CODEX_DISPATCH_CURRENT_UNVERIFIABLE/,
+  );
+  assert.equal(spawnCalls, 0);
+  assert.equal(existsSync(integration.paths.dispatchLockPath), false);
+});
+
+test('local integration fails closed when current task truth has an unknown status', () => {
+  const roots = tempRoots();
+  let spawnCalls = 0;
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+    spawnFn: () => {
+      spawnCalls += 1;
+      return { pid: 111, unref() {} };
+    },
+  });
+  mkdirSync(integration.paths.dispatchRoot, { recursive: true });
+  writeFileSync(integration.paths.currentPath, JSON.stringify({
+    schemaVersion: 'stephanos.codex-dispatch-task.v1',
+    kind: 'stephanos.codex_dispatch.local_task',
+    taskId: 'existing-unknown-job',
+    jobId: 'existing-unknown-job',
+    status: 'PAUSED',
+  }));
+  assert.throws(
+    () => integration.dispatch(packet('codex-job-unknown-current-status')),
+    /LOCAL_CODEX_DISPATCH_CURRENT_UNVERIFIABLE/,
+  );
+  assert.equal(spawnCalls, 0);
+  assert.equal(existsSync(integration.paths.dispatchLockPath), false);
 });
 
 test('local integration acquires an atomic dispatch lock before checking or claiming the active slot', () => {
@@ -327,37 +749,471 @@ test('local integration acquires an atomic dispatch lock before checking or clai
   assert.equal(integration.readStatus('codex-job-concurrent'), null);
 });
 
-test('local integration reclaims only an expired lock whose owner is no longer alive', () => {
+test('a paused populated candidate cannot overwrite a contender that publishes first', () => {
+  const roots = tempRoots();
+  let spawnCalls = 0;
+  const contenderId = 'winning-contender-lock-0001';
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    now: () => '2026-07-30T23:10:00.000Z',
+    lockIdFactory: () => 'paused-candidate-lock-0001',
+    dispatchLockHostname: 'test-host',
+    dispatchLockBootStartedAtUtc: TEST_BOOT_STARTED_AT,
+    dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+    dispatchLockProcessIdentityProbe: () => TEST_PROCESS_IDENTITY,
+    dispatchLockBeforePublish({ lockPath, candidatePath }) {
+      assert.equal(existsSync(lockPath), false);
+      assert.deepEqual(readdirSync(candidatePath), ['owner-paused-candidate-lock-0001.json']);
+      const contenderCandidate = `${lockPath}.candidate-${contenderId}`;
+      mkdirSync(contenderCandidate);
+      writeFileSync(
+        join(contenderCandidate, `owner-${contenderId}.json`),
+        `${JSON.stringify(dispatchLockOwner({
+          lockId: contenderId,
+          acquiredAtUtc: '2026-07-30T23:10:00.000Z',
+          leaseDurationMs: 60_000,
+        }))}\n`,
+      );
+      renameSync(contenderCandidate, lockPath);
+    },
+    spawnFn: () => {
+      spawnCalls += 1;
+      return { pid: 444, unref() {} };
+    },
+  });
+
+  assert.throws(
+    () => integration.dispatch(packet('codex-job-paused-candidate')),
+    /LOCAL_CODEX_DISPATCH_LOCK_CONTENDED/,
+  );
+  assert.equal(spawnCalls, 0);
+  assert.deepEqual(
+    readdirSync(integration.paths.dispatchLockPath),
+    [`owner-${contenderId}.json`],
+  );
+});
+
+test('malformed nonempty locks fail closed in place instead of quarantining a live replacement path', () => {
+  const roots = tempRoots();
+  let spawnCalls = 0;
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    now: () => '2026-07-30T23:10:00.000Z',
+    lockIdFactory: () => 'malformed-contender-lock-0001',
+    dispatchLockLeaseMs: 1_000,
+    dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+    spawnFn: () => {
+      spawnCalls += 1;
+      return { pid: 444, unref() {} };
+    },
+  });
+  mkdirSync(integration.paths.dispatchLockPath, { recursive: true });
+  const malformedPath = join(integration.paths.dispatchLockPath, 'owner-malformed-lock-0001.json');
+  writeFileSync(malformedPath, '{not-json');
+  const staleTime = new Date('2026-07-30T23:00:00.000Z');
+  utimesSync(malformedPath, staleTime, staleTime);
+  utimesSync(integration.paths.dispatchLockPath, staleTime, staleTime);
+
+  assert.throws(
+    () => integration.dispatch(packet('codex-job-malformed-lock')),
+    /LOCAL_CODEX_DISPATCH_LOCK_INVALID/,
+  );
+  assert.equal(spawnCalls, 0);
+  assert.equal(readFileSync(malformedPath, 'utf8'), '{not-json');
+  assert.deepEqual(readdirSync(integration.paths.dispatchLockPath), ['owner-malformed-lock-0001.json']);
+});
+
+test('legacy empty-lock recovery uses the global maximum grace rather than a contender lease', () => {
   const roots = tempRoots();
   const integration = createLocalCodexExecIntegration({
     ...roots,
-    now: () => '2026-07-31T00:10:00.000Z',
-    ownerPid: 424242,
-    lockIdFactory: () => 'replacement-owner',
-    isProcessAlive: () => false,
-    spawnFn: () => ({ pid: 222, unref() {} }),
+    now: () => '2026-07-30T23:10:00.000Z',
+    lockIdFactory: () => 'short-lease-contender-lock-0001',
+    dispatchLockLeaseMs: 1_000,
+    dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+    spawnFn: () => assert.fail('a two-second-old legacy lock must remain within the global grace'),
   });
   mkdirSync(integration.paths.dispatchLockPath, { recursive: true });
-  writeFileSync(join(integration.paths.dispatchLockPath, 'owner.json'), JSON.stringify({
-    ownerToken: 'abandoned-owner',
-    ownerPid: 111,
-    acquiredAt: '2026-07-31T00:00:00.000Z',
-    expiresAt: '2026-07-31T00:05:00.000Z',
-  }));
-  const receipt = integration.dispatch(packet('codex-job-after-stale-lock'));
+  const twoSecondsOld = new Date('2026-07-30T23:09:58.000Z');
+  utimesSync(integration.paths.dispatchLockPath, twoSecondsOld, twoSecondsOld);
+  assert.throws(
+    () => integration.dispatch(packet('codex-job-global-lock-grace')),
+    /LOCAL_CODEX_DISPATCH_LOCK_CONTENDED/,
+  );
+});
+
+test('local integration reclaims an expired lock only when its same-host owner is definitively dead', () => {
+  const roots = tempRoots();
+  const lockId = 'abandoned-lock-0001';
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    now: () => '2026-07-30T23:10:00.000Z',
+    lockIdFactory: () => 'replacement-lock-0001',
+    dispatchLockLeaseMs: 1_000,
+    dispatchLockHostname: 'test-host',
+    dispatchLockBootStartedAtUtc: TEST_BOOT_STARTED_AT,
+    dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+    dispatchLockProcessIdentityProbe: () => ({ state: 'dead' }),
+    spawnFn: () => ({ pid: 444, unref() {} }),
+  });
+  mkdirSync(integration.paths.dispatchLockPath, { recursive: true });
+  writeFileSync(
+    join(integration.paths.dispatchLockPath, `owner-${lockId}.json`),
+    `${JSON.stringify({
+      schemaVersion: LOCAL_CODEX_DISPATCH_LOCK_SCHEMA,
+      lockId,
+      pid: 999_999,
+      hostname: 'test-host',
+      acquiredAtUtc: '2026-07-30T23:00:00.000Z',
+      expiresAtUtc: '2026-07-30T23:00:01.000Z',
+      leaseDurationMs: 1_000,
+      processStartedAtUtc: '2026-07-30T22:59:00.000Z',
+      bootStartedAtUtc: TEST_BOOT_STARTED_AT,
+      bootId: TEST_BOOT_ID,
+      processStartId: 'abandoned-process-generation',
+    })}\n`,
+  );
+  const receipt = integration.dispatch(packet('codex-job-after-abandoned-lock'));
   assert.equal(receipt.accepted, true);
+  assert.equal(receipt.workerPid, 444);
   assert.equal(existsSync(integration.paths.dispatchLockPath), false);
 });
 
-test('exact-head browser proof refuses unchanged pre-existing source dirt', () => {
-  const task = packet();
-  const dirt = classifyPostTaskDirt(' M scripts/pre-existing.mjs\n M apps/stephanos/dist/index.html\n');
-  const proof = validateExactHeadSourceTree(task, { ok: true }, { ok: true }, dirt, dirt);
-  assert.equal(proof.ok, false);
-  assert.equal(proof.blocker, 'SOURCE_TREE_DIRTY');
-  assert.deepEqual(proof.sourcePathsBefore, ['scripts/pre-existing.mjs']);
-  const generatedOnly = classifyPostTaskDirt(' M apps/stephanos/dist/index.html\n');
-  assert.equal(validateExactHeadSourceTree(task, { ok: true }, { ok: true }, generatedOnly, generatedOnly).ok, true);
+test('stale-lock recovery never overrides an active current job', () => {
+  const roots = tempRoots();
+  const lockId = 'abandoned-lock-active-job';
+  let spawnCalls = 0;
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    now: () => '2026-07-30T23:10:00.000Z',
+    lockIdFactory: () => 'replacement-lock-active-job',
+    dispatchLockLeaseMs: 1_000,
+    dispatchLockHostname: 'test-host',
+    dispatchLockBootStartedAtUtc: TEST_BOOT_STARTED_AT,
+    dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+    dispatchLockProcessIdentityProbe: () => ({ state: 'dead' }),
+    spawnFn: () => {
+      spawnCalls += 1;
+      return { pid: 444, unref() {} };
+    },
+  });
+  mkdirSync(integration.paths.dispatchLockPath, { recursive: true });
+  writeFileSync(
+    join(integration.paths.dispatchLockPath, `owner-${lockId}.json`),
+    `${JSON.stringify({
+      schemaVersion: LOCAL_CODEX_DISPATCH_LOCK_SCHEMA,
+      lockId,
+      pid: 999_999,
+      hostname: 'test-host',
+      acquiredAtUtc: '2026-07-30T23:00:00.000Z',
+      expiresAtUtc: '2026-07-30T23:00:01.000Z',
+      leaseDurationMs: 1_000,
+      processStartedAtUtc: '2026-07-30T22:59:00.000Z',
+      bootStartedAtUtc: TEST_BOOT_STARTED_AT,
+      bootId: TEST_BOOT_ID,
+      processStartId: 'abandoned-process-generation',
+    })}\n`,
+  );
+  writeFileSync(integration.paths.currentPath, JSON.stringify({
+    schemaVersion: 'stephanos.codex-dispatch-task.v1',
+    kind: 'stephanos.codex_dispatch.local_task',
+    taskId: 'existing-active-job',
+    jobId: 'existing-active-job',
+    status: 'RUNNING',
+  }));
+  assert.throws(
+    () => integration.dispatch(packet('codex-job-must-not-replace-active')),
+    /existing-active-job is already RUNNING/,
+  );
+  assert.equal(spawnCalls, 0);
+  assert.equal(existsSync(integration.paths.dispatchLockPath), false);
+});
+
+test('local integration does not reclaim an expired lock whose owner is alive or unknowable', () => {
+  for (const liveness of ['alive', 'unknown']) {
+    const roots = tempRoots();
+    const lockId = `retained-lock-${liveness}`;
+    const integration = createLocalCodexExecIntegration({
+      ...roots,
+      now: () => '2026-07-30T23:10:00.000Z',
+      lockIdFactory: () => `contender-lock-${liveness}`,
+      dispatchLockLeaseMs: 1_000,
+      dispatchLockHostname: 'test-host',
+      dispatchLockBootStartedAtUtc: TEST_BOOT_STARTED_AT,
+      dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+      dispatchLockProcessIdentityProbe: () => (
+        liveness === 'alive'
+          ? TEST_PROCESS_IDENTITY
+          : { state: 'unknown' }
+      ),
+      spawnFn: () => assert.fail('spawn must not run without definitive stale-lock evidence'),
+    });
+    mkdirSync(integration.paths.dispatchLockPath, { recursive: true });
+    writeFileSync(
+      join(integration.paths.dispatchLockPath, `owner-${lockId}.json`),
+      `${JSON.stringify({
+        schemaVersion: LOCAL_CODEX_DISPATCH_LOCK_SCHEMA,
+        lockId,
+        pid: 777,
+        hostname: 'test-host',
+        acquiredAtUtc: '2026-07-30T23:00:00.000Z',
+        expiresAtUtc: '2026-07-30T23:00:01.000Z',
+        leaseDurationMs: 1_000,
+        processStartedAtUtc: '2026-07-30T22:59:00.000Z',
+        bootStartedAtUtc: TEST_BOOT_STARTED_AT,
+        bootId: TEST_BOOT_ID,
+        processStartId: TEST_PROCESS_START_ID,
+      })}\n`,
+    );
+    assert.throws(
+      () => integration.dispatch(packet(`codex-job-${liveness}-lock`)),
+      liveness === 'alive'
+        ? /LOCAL_CODEX_DISPATCH_LOCK_CONTENDED/
+        : /LOCAL_CODEX_DISPATCH_LOCK_OWNER_UNVERIFIABLE/,
+    );
+    assert.equal(existsSync(integration.paths.dispatchLockPath), true);
+  }
+});
+
+test('expired owners are reclaimed when an exact boot or process generation proves PID reuse', () => {
+  for (const [label, probedIdentity] of [
+    ['previous-boot', { state: 'known', bootId: 'new-boot-generation', processStartId: TEST_PROCESS_START_ID }],
+    ['reused-pid', { state: 'known', bootId: TEST_BOOT_ID, processStartId: 'new-process-generation' }],
+  ]) {
+    const roots = tempRoots();
+    const integration = createLocalCodexExecIntegration({
+      ...roots,
+      now: () => '2026-07-30T23:10:00.000Z',
+      lockIdFactory: () => `replacement-${label}-lock-0001`,
+      dispatchLockHostname: 'test-host',
+      dispatchLockBootStartedAtUtc: TEST_BOOT_STARTED_AT,
+      dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+      dispatchLockProcessIdentityProbe: () => probedIdentity,
+      spawnFn: () => ({ pid: 456, unref() {} }),
+    });
+    const owner = dispatchLockOwner({ lockId: `expired-${label}-lock-0001` });
+    mkdirSync(integration.paths.dispatchLockPath, { recursive: true });
+    writeFileSync(
+      join(integration.paths.dispatchLockPath, `owner-${owner.lockId}.json`),
+      `${JSON.stringify(owner)}\n`,
+    );
+    const result = integration.dispatch(packet(`codex-job-${label}`));
+    assert.equal(result.accepted, true);
+    assert.equal(existsSync(integration.paths.dispatchLockPath), false);
+  }
+});
+
+test('Linux zombie and terminal process states are dead lock owners', () => {
+  const statLine = (state) => (
+    `777 (node worker) ${[state, ...Array(18).fill('0'), '987654'].join(' ')}`
+  );
+  for (const state of ['Z', 'X', 'x']) {
+    assert.deepEqual(
+      parseLinuxDispatchLockProcessIdentity(statLine(state), TEST_BOOT_ID),
+      { state: 'dead' },
+    );
+  }
+  assert.deepEqual(
+    parseLinuxDispatchLockProcessIdentity(statLine('S'), TEST_BOOT_ID),
+    {
+      state: 'known',
+      bootId: TEST_BOOT_ID,
+      processStartId: '987654',
+    },
+  );
+});
+
+test('persisted lock leases are bounded and temporally plausible', () => {
+  for (const scenario of [
+    {
+      label: 'maximum-valid',
+      owner: dispatchLockOwner({
+        lockId: 'maximum-valid-lease-lock-0001',
+        acquiredAtUtc: '2026-07-30T23:09:00.000Z',
+        leaseDurationMs: 300_000,
+      }),
+      expected: /LOCAL_CODEX_DISPATCH_LOCK_CONTENDED/,
+    },
+    {
+      label: 'maximum-plus-one',
+      owner: dispatchLockOwner({
+        lockId: 'oversized-lease-lock-0001',
+        acquiredAtUtc: '2026-07-30T23:00:00.000Z',
+        leaseDurationMs: 300_001,
+      }),
+      expected: /LOCAL_CODEX_DISPATCH_LOCK_INVALID/,
+    },
+    {
+      label: 'future-acquisition',
+      owner: dispatchLockOwner({
+        lockId: 'future-acquisition-lock-0001',
+        acquiredAtUtc: '2026-07-30T23:11:00.000Z',
+        leaseDurationMs: 60_000,
+      }),
+      expected: /LOCAL_CODEX_DISPATCH_LOCK_INVALID/,
+    },
+  ]) {
+    const roots = tempRoots();
+    const integration = createLocalCodexExecIntegration({
+      ...roots,
+      now: () => '2026-07-30T23:10:00.000Z',
+      lockIdFactory: () => `lease-contender-${scenario.label}-0001`,
+      dispatchLockHostname: 'test-host',
+      dispatchLockBootStartedAtUtc: TEST_BOOT_STARTED_AT,
+      dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+      dispatchLockProcessIdentityProbe: () => TEST_PROCESS_IDENTITY,
+      spawnFn: () => assert.fail('invalid or owned lease must not spawn'),
+    });
+    mkdirSync(integration.paths.dispatchLockPath, { recursive: true });
+    writeFileSync(
+      join(integration.paths.dispatchLockPath, `owner-${scenario.owner.lockId}.json`),
+      `${JSON.stringify(scenario.owner)}\n`,
+    );
+    assert.throws(
+      () => integration.dispatch(packet(`codex-job-lease-${scenario.label}`)),
+      scenario.expected,
+    );
+  }
+});
+
+test('configured lease bounds are clamped before a complete owner is published', () => {
+  for (const [configured, expected] of [[1, 1_000], [999_999, 300_000]]) {
+    const roots = tempRoots();
+    let observedLease = 0;
+    const integration = createLocalCodexExecIntegration({
+      ...roots,
+      lockIdFactory: () => `clamped-lease-${expected}-lock`,
+      dispatchLockLeaseMs: configured,
+      dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+      dispatchLockBeforePublish({ owner }) {
+        observedLease = owner.leaseDurationMs;
+      },
+      spawnFn: () => ({ pid: 456, unref() {} }),
+    });
+    assert.equal(integration.dispatch(packet(`codex-job-clamped-${expected}`)).accepted, true);
+    assert.equal(observedLease, expected);
+  }
+});
+
+test('lock-path filesystem faults are surfaced as I/O failures, not contention', () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    lockIdFactory: () => 'io-failure-contender-lock-0001',
+    dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+    spawnFn: () => assert.fail('filesystem faults must fail before spawn'),
+  });
+  mkdirSync(integration.paths.dispatchRoot, { recursive: true });
+  writeFileSync(integration.paths.dispatchLockPath, 'not-a-directory');
+  assert.throws(
+    () => integration.dispatch(packet('codex-job-lock-io-failure')),
+    /LOCAL_CODEX_DISPATCH_LOCK_IO_FAILED/,
+  );
+});
+
+test('local integration recovers a stale empty legacy lock but preserves a fresh one', () => {
+  const staleRoots = tempRoots();
+  const staleIntegration = createLocalCodexExecIntegration({
+    ...staleRoots,
+    now: () => '2026-07-30T23:10:00.000Z',
+    lockIdFactory: () => 'legacy-recovery-lock-0001',
+    dispatchLockLeaseMs: 1_000,
+    spawnFn: () => ({ pid: 555, unref() {} }),
+  });
+  mkdirSync(staleIntegration.paths.dispatchLockPath, { recursive: true });
+  const staleTime = new Date('2026-07-30T23:00:00.000Z');
+  utimesSync(staleIntegration.paths.dispatchLockPath, staleTime, staleTime);
+  assert.equal(staleIntegration.dispatch(packet('codex-job-after-legacy-lock')).accepted, true);
+
+  const freshRoots = tempRoots();
+  const freshIntegration = createLocalCodexExecIntegration({
+    ...freshRoots,
+    lockIdFactory: () => 'fresh-contender-lock-0001',
+    dispatchLockLeaseMs: 60_000,
+    spawnFn: () => assert.fail('fresh empty lock must remain fail-closed'),
+  });
+  mkdirSync(freshIntegration.paths.dispatchLockPath, { recursive: true });
+  assert.throws(
+    () => freshIntegration.dispatch(packet('codex-job-fresh-legacy-lock')),
+    /another dispatch is claiming the one-active-job slot/,
+  );
+});
+
+test('an old lock owner cannot release a newer replacement owner', () => {
+  const roots = tempRoots();
+  let integration;
+  integration = createLocalCodexExecIntegration({
+    ...roots,
+    lockIdFactory: () => 'original-owner-lock-0001',
+    spawnFn: () => {
+      const [ownerFilename] = readdirSync(integration.paths.dispatchLockPath);
+      unlinkSync(join(integration.paths.dispatchLockPath, ownerFilename));
+      writeFileSync(
+        join(integration.paths.dispatchLockPath, 'owner-replacement-owner-lock-0001.json'),
+        `${JSON.stringify({
+          schemaVersion: LOCAL_CODEX_DISPATCH_LOCK_SCHEMA,
+          lockId: 'replacement-owner-lock-0001',
+          pid: 888,
+          hostname: 'test-host',
+          acquiredAtUtc: '2026-07-30T23:10:00.000Z',
+          expiresAtUtc: '2026-07-30T23:11:00.000Z',
+          leaseDurationMs: 60_000,
+          processStartedAtUtc: '2026-07-30T23:00:00.000Z',
+          bootStartedAtUtc: TEST_BOOT_STARTED_AT,
+          bootId: TEST_BOOT_ID,
+          processStartId: 'replacement-process-generation',
+        })}\n`,
+      );
+      return { pid: 666, unref() {} };
+    },
+  });
+  const receipt = integration.dispatch(packet('codex-job-owner-replaced'));
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.lockReleased, false);
+  assert.equal(receipt.blocker, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+  assert.equal(receipt.lockRelease.reason, 'owner-changed');
+  assert.deepEqual(
+    readdirSync(integration.paths.dispatchLockPath),
+    ['owner-replacement-owner-lock-0001.json'],
+  );
+  const persisted = JSON.parse(readFileSync(
+    resolveLocalCodexDispatchPaths({
+      ...roots,
+      jobId: 'codex-job-owner-replaced',
+    }).receiptPath,
+    'utf8',
+  ));
+  assert.equal(persisted.lockReleased, false);
+  assert.equal(persisted.lockRelease.blocker, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+});
+
+test('release directory failure is returned and persisted without hiding the spawned worker', () => {
+  const roots = tempRoots();
+  let integration;
+  integration = createLocalCodexExecIntegration({
+    ...roots,
+    lockIdFactory: () => 'release-directory-failure-lock-0001',
+    dispatchLockProcessIdentity: TEST_PROCESS_IDENTITY,
+    spawnFn: () => {
+      writeFileSync(join(integration.paths.dispatchLockPath, 'unexpected-entry'), 'blocks rmdir');
+      return { pid: 777, unref() {} };
+    },
+  });
+  const receipt = integration.dispatch(packet('codex-job-release-directory-failure'));
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.workerPid, 777);
+  assert.equal(receipt.lockReleased, false);
+  assert.equal(receipt.blocker, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+  assert.equal(['ENOTEMPTY', 'EEXIST', 'EPERM'].includes(receipt.lockRelease.reason), true);
+  const persisted = JSON.parse(readFileSync(
+    resolveLocalCodexDispatchPaths({
+      ...roots,
+      jobId: 'codex-job-release-directory-failure',
+    }).receiptPath,
+    'utf8',
+  ));
+  assert.equal(persisted.accepted, true);
+  assert.equal(persisted.lockReleased, false);
 });
 
 test('local integration refuses to overwrite a terminal task with the same id', () => {
@@ -442,6 +1298,36 @@ test('new or removed source dirt is classified as a task-time mutation', () => {
   assert.deepEqual(delta.newSourcePaths, ['scripts/new-file.mjs']);
 });
 
+test('exact-head source safety requires both status snapshots, while non-exact work keeps delta semantics', () => {
+  const shared = {
+    sourceHeadBefore: { ok: true, stdout: 'a'.repeat(40) },
+    sourceHeadAfter: { ok: true, stdout: 'a'.repeat(40) },
+    dirtBefore: classifyPostTaskDirt(' M scripts/pre-existing.mjs\n'),
+    dirtAfter: classifyPostTaskDirt(' M scripts/pre-existing.mjs\n'),
+    dirtDelta: { sourceMutationDetected: false },
+  };
+  const exact = evaluateWorkerSourceSafety({
+    ...shared,
+    exactHeadRequired: true,
+    expectedHead: 'a'.repeat(40),
+    statusBefore: { ok: true },
+    statusAfter: { ok: false },
+  });
+  assert.equal(exact.sourceSafe, false);
+  assert.equal(exact.exactHeadStatusAvailable, false);
+  assert.equal(exact.exactHeadSourceClean, false);
+
+  const nonExact = evaluateWorkerSourceSafety({
+    ...shared,
+    exactHeadRequired: false,
+    statusBefore: { ok: false },
+    statusAfter: { ok: false },
+  });
+  assert.equal(nonExact.sourceSafe, true);
+  assert.equal(nonExact.exactHeadStatusAvailable, true);
+  assert.equal(nonExact.exactHeadSourceClean, true);
+});
+
 test('worker invocation keeps approval policy global and isolates the exec child by ignoring user config', () => {
   const windows = resolveCodexExecInvocation({ platform: 'win32', env: { STEPHANOS_CODEX_COMMAND: 'codex.cmd' }, lastMessagePath: 'C:\\proof\\last.txt' });
   assert.equal(windows.command, 'cmd.exe');
@@ -485,8 +1371,13 @@ test('exact-head browser prompt requires one machine-readable evidence verdict',
 
 test('worker source invokes the exported guarded prompt builder without a misspelled call site', () => {
   const workerSource = readFileSync(new URL('../../scripts/stephanos-codex-dispatch-worker.mjs', import.meta.url), 'utf8');
+  const integrationSource = readFileSync(new URL('./localCodexExecIntegration.mjs', import.meta.url), 'utf8');
   assert.match(workerSource, /const prompt = buildGuardedCodexPrompt\(task\);/);
   assert.doesNotMatch(workerSource, /buildGuaredCodexPrompt/);
+  for (const source of [workerSource, integrationSource]) {
+    assert.match(source, /const tempPath = `\$\{path\}\.\$\{process\.pid\}\.\$\{randomUUID\(\)\}\.tmp`;/);
+    assert.match(source, /renameSync\(tempPath, path\);/);
+  }
 });
 
 test('JSON event parsing and completed-turn classification prove a successful Codex run', () => {

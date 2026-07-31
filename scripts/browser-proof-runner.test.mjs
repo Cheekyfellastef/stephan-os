@@ -64,18 +64,34 @@ test('exact-head proof accepts only the full Git commit observed in the live bro
 
 test('parses an exact approved head without confusing it with the runtime URL', () => {
   const expectedHead = 'a'.repeat(40);
+  const expectedSourceFingerprint = 'b'.repeat(64);
   assert.deepEqual(parseBrowserProofArguments(['--expected-head', expectedHead, '--no-artifacts', '--machine-json']), {
     ok: true,
     url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
     expectedHead,
+    expectedSourceFingerprint: '',
     writeArtifacts: false,
     machineJson: true,
   });
+  assert.equal(
+    parseBrowserProofArguments([
+      '--expected-head',
+      expectedHead,
+      '--expected-source-fingerprint',
+      expectedSourceFingerprint,
+    ]).expectedSourceFingerprint,
+    expectedSourceFingerprint,
+  );
   assert.equal(parseBrowserProofArguments(['--expected-head', 'short']).blocker, 'EXPECTED_HEAD_INVALID');
+  assert.equal(
+    parseBrowserProofArguments(['--expected-source-fingerprint', 'short']).blocker,
+    'EXPECTED_SOURCE_FINGERPRINT_INVALID',
+  );
 });
 
 test('machine result exposes the browser-observed exact-head decision without relying on model text', () => {
   const expectedHead = 'a'.repeat(40);
+  const expectedSourceFingerprint = 'b'.repeat(64);
   const result = buildBrowserProofMachineResult({
     browserAutomationAvailable: true,
     url: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
@@ -84,6 +100,7 @@ test('machine result exposes the browser-observed exact-head decision without re
       runtimeReachable: true,
       footerGitCommitPresent: true,
       footerGitCommit: expectedHead,
+      sourceFingerprint: expectedSourceFingerprint,
       uiBuildTimestampPresent: true,
       proofConciergeDomNextProofMatches: true,
       proofConciergePrimaryButtonPresent: true,
@@ -92,13 +109,41 @@ test('machine result exposes the browser-observed exact-head decision without re
       operatorDiagnosticCopyPresent: true,
       consoleErrorCount: 0,
     },
-  }, { expectedHead });
+  }, { expectedHead, expectedSourceFingerprint });
   assert.equal(result.schemaVersion, 'stephanos.browser-runtime-exact-head-proof.v1');
   assert.equal(result.url, 'http://127.0.0.1:4173/apps/stephanos/dist/index.html');
   assert.equal(result.observedUrl, 'http://127.0.0.1:4173/apps/stephanos/dist/index.html');
   assert.equal(result.accepted, true);
   assert.equal(result.runtimeSourceHead, expectedHead);
   assert.equal(result.expectedHeadMatch, true);
+  assert.equal(result.runtimeSourceFingerprint, expectedSourceFingerprint);
+  assert.equal(result.expectedSourceFingerprintMatch, true);
+});
+
+test('exact-head proof rejects a served source fingerprint from a dirty or different build', () => {
+  const expectedHead = 'a'.repeat(40);
+  const expectedSourceFingerprint = 'b'.repeat(64);
+  const result = {
+    browserAutomationAvailable: true,
+    checks: {
+      runtimeReachable: true,
+      footerGitCommitPresent: true,
+      footerGitCommit: expectedHead,
+      sourceFingerprint: 'c'.repeat(64),
+      uiBuildTimestampPresent: true,
+      proofConciergeDomNextProofMatches: true,
+      proofConciergePrimaryButtonPresent: true,
+      proofConciergeVisibleDriftClear: true,
+      cloneParityClear: true,
+      operatorDiagnosticCopyPresent: true,
+      consoleErrorCount: 0,
+    },
+  };
+  const verdict = evaluateBrowserProofResult(result, { expectedHead, expectedSourceFingerprint });
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.expectedHeadMatch, true);
+  assert.equal(verdict.expectedSourceFingerprintMatch, false);
+  assert.match(verdict.blocking.join(' | '), /fingerprint does not match/);
 });
 
 test('automation unavailable creates diagnostic repair packet', () => {

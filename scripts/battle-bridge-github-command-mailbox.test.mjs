@@ -65,11 +65,53 @@ test('classifies invalid JSON without exposing truncated parser input', () => {
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {
   const requestId = 'proof:2026-07-30T20:00:00Z';
   const filename = createWindowsSafeMailboxReceiptFilename(requestId);
-  assert.match(filename, /^request-[0-9a-f]{32}\.json$/);
+  assert.match(filename, /^_request-[0-9a-f]{32}\.json$/);
   assert.doesNotMatch(filename, /[<>:"/\\|?*]/);
   assert.equal(createWindowsSafeMailboxReceiptFilename(requestId), filename);
   assert.equal(createWindowsSafeMailboxReceiptFilename('request-safe-0001'), 'request-safe-0001.json');
-  for (const requestId of ['CON.proof-0001', 'aux.command-0001', 'LPT9.receipt-0001', 'request-safe-0001.']) {
-    assert.match(createWindowsSafeMailboxReceiptFilename(requestId), /^request-[0-9a-f]{32}\.json$/);
+});
+
+test('hashes Windows reserved device basenames while preserving safe boundary names', () => {
+  const reserved = [
+    'CON.proof',
+    'prn.receipt',
+    'AuX.trace',
+    'nul.output',
+    'CON..proof',
+    'cOn.proof',
+    'CoM1.proof',
+    'lPt9.proof',
+    ...Array.from({ length: 9 }, (_, index) => `COM${index + 1}.proof`),
+    ...Array.from({ length: 9 }, (_, index) => `LPT${index + 1}.proof`),
+  ];
+  for (const requestId of reserved) {
+    assert.match(createWindowsSafeMailboxReceiptFilename(requestId), /^_request-[0-9a-f]{32}\.json$/);
   }
+  for (const requestId of [
+    'com0.proof',
+    'com10.proof',
+    'lpt0.proof',
+    'lpt10.proof',
+    'console.proof',
+    'aux-proof',
+    'nul_value',
+    'x.con.proof',
+    'request-safe-0001',
+  ]) {
+    assert.equal(createWindowsSafeMailboxReceiptFilename(requestId), `${requestId}.json`);
+  }
+  assert.notEqual(
+    createWindowsSafeMailboxReceiptFilename('CON.proof'),
+    createWindowsSafeMailboxReceiptFilename('con.proof'),
+  );
+  const oldRawAlias = createWindowsSafeMailboxReceiptFilename('CON.proof')
+    .slice('_request-'.length, -'.json'.length);
+  assert.notEqual(
+    createWindowsSafeMailboxReceiptFilename('CON.proof'),
+    createWindowsSafeMailboxReceiptFilename(`request-${oldRawAlias}`),
+  );
+  const uppercase = createWindowsSafeMailboxReceiptFilename('Request-safe-0001');
+  const lowercase = createWindowsSafeMailboxReceiptFilename('request-safe-0001');
+  assert.match(uppercase, /^_request-[0-9a-f]{32}\.json$/);
+  assert.notEqual(uppercase.toLowerCase(), lowercase.toLowerCase());
 });

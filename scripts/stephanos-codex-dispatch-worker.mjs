@@ -1,9 +1,17 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { createWriteStream, readFileSync, writeFileSync } from 'node:fs';
+import {
+  createWriteStream,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOCAL_CODEX_TASK_SCHEMA } from '../shared/agents/localCodexExecIntegration.mjs';
+import { computeStephanosSourceFingerprint } from './stephanos-build-utils.mjs';
 import {
   extractCodexThreadId,
   publishRemoteCodexTaskVisibility,
@@ -13,21 +21,33 @@ const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
 ]);
 const CANONICAL_BROWSER_PROOF_URL = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
+const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
 function writeJson(path, value) {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+    flag: 'wx',
+  });
+  try {
+    renameSync(tempPath, path);
+  } catch (error) {
+    try { unlinkSync(tempPath); } catch {}
+    throw error;
+  }
 }
 
-function gitCapture(repoRoot, args) {
-  const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', shell: false });
+function gitCapture(repoRoot, args, spawnSyncFn = spawnSync) {
+  const result = spawnSyncFn('git', args, { cwd: repoRoot, encoding: 'utf8', shell: false });
   return {
     ok: !result.error && result.status === 0,
     status: result.status,
-    stdout: String(result.stdout || '').trim(),
+    stdout: String(result.stdout || '').replace(/\s+$/, ''),
     stderr: String(result.stderr || '').trim(),
     error: result.error?.message || '',
   };
@@ -44,6 +64,20 @@ function processCapture(spawnSyncFn, executable, args, options = {}) {
   return {
     ok: !result.error && result.status === 0,
     stdout: String(result.stdout || '').trim().toLowerCase(),
+  };
+}
+
+function processTextCapture(spawnSyncFn, executable, args, options = {}) {
+  const result = spawnSyncFn(executable, args, {
+    cwd: options.cwd,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 120000,
+  });
+  return {
+    ok: !result.error && result.status === 0,
+    stdout: String(result.stdout || '').replace(/(?:\r?\n)+$/, ''),
   };
 }
 
@@ -89,12 +123,42 @@ export function validateExactHeadAtWorkerStart(task, {
       localHead: git.stdout,
     });
   }
+  const status = processTextCapture(
+    spawnSyncFn,
+    platform === 'win32' ? 'git.exe' : 'git',
+    ['status', '--porcelain=v1', '--untracked-files=all'],
+    { cwd: task.repoRoot },
+  );
+  if (!status.ok) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED',
+      expectedHead,
+      pullRequestHead: gh.stdout,
+      localHead: git.stdout,
+    });
+  }
+  const dirt = classifyPostTaskDirt(status.stdout);
+  if (!dirt.safe) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'PRE_EXISTING_SOURCE_DIRT',
+      expectedHead,
+      pullRequestHead: gh.stdout,
+      localHead: git.stdout,
+      sourcePaths: dirt.source,
+    });
+  }
   return Object.freeze({
     ok: true,
     required: true,
     expectedHead,
     pullRequestHead: gh.stdout,
     localHead: git.stdout,
+    sourceDirtClean: true,
+    generatedRuntimePaths: dirt.generated,
   });
 }
 
@@ -160,23 +224,60 @@ export function compareDirtSnapshots(before = {}, after = {}) {
   });
 }
 
-export function validateExactHeadSourceTree(task, statusBefore = {}, statusAfter = {}, dirtBefore = {}, dirtAfter = {}) {
-  if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
-  const sourcePathsBefore = Array.isArray(dirtBefore.source) ? dirtBefore.source : [];
-  const sourcePathsAfter = Array.isArray(dirtAfter.source) ? dirtAfter.source : [];
-  if (!statusBefore.ok || !statusAfter.ok) {
-    return Object.freeze({ ok: false, required: true, blocker: 'SOURCE_TREE_STATUS_FAILED' });
+export function resolveExpectedSourceFingerprint(
+  sourceFingerprintFactory,
+  repoRoot,
+) {
+  try {
+    const fingerprint = String(sourceFingerprintFactory(repoRoot) || '').trim().toLowerCase();
+    return EXACT_SOURCE_FINGERPRINT.test(fingerprint) ? fingerprint : '';
+  } catch {
+    return '';
   }
-  if (sourcePathsBefore.length > 0 || sourcePathsAfter.length > 0) {
-    return Object.freeze({
-      ok: false,
-      required: true,
-      blocker: 'SOURCE_TREE_DIRTY',
-      sourcePathsBefore,
-      sourcePathsAfter,
-    });
-  }
-  return Object.freeze({ ok: true, required: true, sourcePathsBefore: [], sourcePathsAfter: [] });
+}
+
+export function evaluateWorkerSourceSafety({
+  exactHeadRequired = false,
+  expectedHead = '',
+  sourceHeadBefore = {},
+  sourceHeadAfter = {},
+  statusBefore = {},
+  statusAfter = {},
+  dirtBefore = {},
+  dirtAfter = {},
+  dirtDelta = {},
+} = {}) {
+  const sourceHeadUnchanged = (
+    sourceHeadBefore.ok === true
+    && sourceHeadAfter.ok === true
+    && sourceHeadBefore.stdout === sourceHeadAfter.stdout
+  );
+  const sourceHeadBound = !exactHeadRequired || (
+    sourceHeadBefore.stdout === expectedHead
+    && sourceHeadAfter.stdout === expectedHead
+  );
+  const exactHeadStatusAvailable = !exactHeadRequired || (
+    statusBefore.ok === true
+    && statusAfter.ok === true
+  );
+  const exactHeadSourceClean = !exactHeadRequired || (
+    dirtBefore.safe === true
+    && dirtAfter.safe === true
+  );
+  const sourceSafe = (
+    sourceHeadUnchanged
+    && sourceHeadBound
+    && exactHeadStatusAvailable
+    && exactHeadSourceClean
+    && dirtDelta.sourceMutationDetected !== true
+  );
+  return Object.freeze({
+    sourceSafe,
+    sourceHeadUnchanged,
+    sourceHeadBound,
+    exactHeadStatusAvailable,
+    exactHeadSourceClean,
+  });
 }
 
 export function parseCodexJsonEvents(output = '') {
@@ -309,11 +410,21 @@ export function validateBrowserProofVerdict(lastMessage, task = {}, browserRunti
 export function runBrowserRuntimeExactHeadProof(task, {
   spawnSyncFn = spawnSync,
   runnerPath = resolve(fileURLToPath(new URL('./browser-proof-runner.mjs', import.meta.url))),
+  expectedSourceFingerprint: suppliedExpectedSourceFingerprint = '',
 } = {}) {
   if (!task?.exactHeadProof) return Object.freeze({ ok: true, required: false });
   const expectedHead = String(task.exactHeadProof.expectedHead || '').trim().toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
     return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID' });
+  }
+  const expectedSourceFingerprint = String(suppliedExpectedSourceFingerprint || '').trim().toLowerCase();
+  if (!EXACT_SOURCE_FINGERPRINT.test(expectedSourceFingerprint)) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'LOCAL_SOURCE_FINGERPRINT_FAILED',
+      expectedHead,
+    });
   }
   let execution;
   try {
@@ -323,6 +434,8 @@ export function runBrowserRuntimeExactHeadProof(task, {
       CANONICAL_BROWSER_PROOF_URL,
       '--expected-head',
       expectedHead,
+      '--expected-source-fingerprint',
+      expectedSourceFingerprint,
       '--no-artifacts',
       '--machine-json',
     ], {
@@ -338,6 +451,7 @@ export function runBrowserRuntimeExactHeadProof(task, {
       required: true,
       blocker: 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
       expectedHead,
+      expectedSourceFingerprint,
       runtimeSourceHead: '',
     });
   }
@@ -348,6 +462,7 @@ export function runBrowserRuntimeExactHeadProof(task, {
   const runtimeUrl = String(payload?.url || '').trim();
   const observedRuntimeUrl = String(payload?.observedUrl || '').trim();
   const runtimeSourceHead = String(payload?.runtimeSourceHead || '').trim().toLowerCase();
+  const runtimeSourceFingerprint = String(payload?.runtimeSourceFingerprint || '').trim().toLowerCase();
   if (runtimeSourceHead && runtimeSourceHead !== expectedHead) {
     return Object.freeze({
       ok: false,
@@ -355,6 +470,19 @@ export function runBrowserRuntimeExactHeadProof(task, {
       blocker: 'BROWSER_PROOF_RUNTIME_HEAD_MISMATCH',
       expectedHead,
       runtimeSourceHead,
+    });
+  }
+  if (
+    runtimeSourceFingerprint
+    && runtimeSourceFingerprint !== expectedSourceFingerprint
+  ) {
+    return Object.freeze({
+      ok: false,
+      required: true,
+      blocker: 'BROWSER_PROOF_RUNTIME_FINGERPRINT_MISMATCH',
+      expectedHead,
+      expectedSourceFingerprint,
+      runtimeSourceFingerprint,
     });
   }
   if (
@@ -366,6 +494,7 @@ export function runBrowserRuntimeExactHeadProof(task, {
       required: true,
       blocker: 'BROWSER_RUNTIME_URL_MISMATCH',
       expectedHead,
+      expectedSourceFingerprint,
       runtimeUrl,
       observedRuntimeUrl,
     });
@@ -378,20 +507,27 @@ export function runBrowserRuntimeExactHeadProof(task, {
     || payload?.expectedHead !== expectedHead
     || payload?.expectedHeadMatch !== true
     || runtimeSourceHead !== expectedHead
+    || payload?.expectedSourceFingerprint !== expectedSourceFingerprint
+    || payload?.expectedSourceFingerprintMatch !== true
+    || runtimeSourceFingerprint !== expectedSourceFingerprint
   ) {
     return Object.freeze({
       ok: false,
       required: true,
       blocker: 'BROWSER_RUNTIME_EXACT_HEAD_PROOF_FAILED',
       expectedHead,
+      expectedSourceFingerprint,
       runtimeSourceHead,
+      runtimeSourceFingerprint,
     });
   }
   return Object.freeze({
     ok: true,
     required: true,
     expectedHead,
+    expectedSourceFingerprint,
     runtimeSourceHead,
+    runtimeSourceFingerprint,
     runtimeUrl,
     observedRuntimeUrl,
     schemaVersion: payload.schemaVersion,
@@ -479,6 +615,7 @@ export async function runCodexWorker(taskPath, {
   clearIntervalFn = clearInterval,
   visibilityPublisher = publishRemoteCodexTaskVisibility,
   spawnSyncFn = spawnSync,
+  sourceFingerprintFactory = (repoRoot) => computeStephanosSourceFingerprint({ rootDir: repoRoot }),
 } = {}) {
   const task = readJson(taskPath);
   if (task?.schemaVersion !== LOCAL_CODEX_TASK_SCHEMA) throw new Error('Unsupported local Codex task schema.');
@@ -515,7 +652,51 @@ export async function runCodexWorker(taskPath, {
     await publishVisibilitySafely(visibilityPublisher, task, result);
     return result;
   }
-  const browserRuntimeProofBefore = runBrowserRuntimeExactHeadProof(task, { spawnSyncFn });
+  const expectedSourceFingerprint = exactHeadValidation.required
+    ? resolveExpectedSourceFingerprint(sourceFingerprintFactory, task.repoRoot)
+    : '';
+  const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
+  const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
+  const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
+  let preExecutionBlocker = '';
+  if (exactHeadValidation.required) {
+    if (!expectedSourceFingerprint) preExecutionBlocker = 'LOCAL_SOURCE_FINGERPRINT_FAILED';
+    else if (!sourceHeadBefore.ok) preExecutionBlocker = 'LOCAL_HEAD_LOOKUP_FAILED';
+    else if (sourceHeadBefore.stdout !== exactHeadValidation.expectedHead) preExecutionBlocker = 'EXPECTED_HEAD_MISMATCH';
+    else if (!statusBefore.ok) preExecutionBlocker = 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED';
+    else if (!dirtBefore.safe) preExecutionBlocker = 'PRE_EXISTING_SOURCE_DIRT';
+  }
+  if (preExecutionBlocker) {
+    const completedAt = now();
+    const result = {
+      ...task,
+      kind: 'stephanos.codex_dispatch.local_result',
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      resultAvailable: true,
+      resultVerdict: 'FAIL',
+      workerAlive: false,
+      heartbeatUtc: completedAt,
+      startedAt: completedAt,
+      completedAt,
+      exactHeadValidation,
+      expectedSourceFingerprint,
+      sourceHeadBefore: sourceHeadBefore.stdout,
+      statusBeforeOk: statusBefore.ok,
+      dirtBefore,
+      blocker: preExecutionBlocker,
+      nextOperatorAction: `Repair the exact-head source blocker before retrying: ${preExecutionBlocker}.`,
+    };
+    writeJson(resultPath, result);
+    writeJson(statusPath, result);
+    writeJson(currentPath, result);
+    await publishVisibilitySafely(visibilityPublisher, task, result);
+    return result;
+  }
+  const browserRuntimeProofBefore = runBrowserRuntimeExactHeadProof(task, {
+    spawnSyncFn,
+    expectedSourceFingerprint,
+  });
   if (!browserRuntimeProofBefore.ok) {
     const completedAt = now();
     const result = {
@@ -530,6 +711,10 @@ export async function runCodexWorker(taskPath, {
       startedAt: completedAt,
       completedAt,
       exactHeadValidation,
+      expectedSourceFingerprint,
+      sourceHeadBefore: sourceHeadBefore.stdout,
+      statusBeforeOk: statusBefore.ok,
+      dirtBefore,
       browserRuntimeProofBefore,
       blocker: browserRuntimeProofBefore.blocker,
       nextOperatorAction: `Repair the browser runtime exact-head blocker before retrying: ${browserRuntimeProofBefore.blocker}.`,
@@ -540,9 +725,6 @@ export async function runCodexWorker(taskPath, {
     await publishVisibilitySafely(visibilityPublisher, task, result);
     return result;
   }
-  const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD']);
-  const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1']);
-  const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
   const startedAt = now();
   const invocation = resolveCodexExecInvocation({ platform, env, lastMessagePath });
   let running = {
@@ -554,6 +736,7 @@ export async function runCodexWorker(taskPath, {
     resultAvailable: false,
     workerPid: process.pid,
     sourceHeadBefore: sourceHeadBefore.stdout,
+    expectedSourceFingerprint,
     exactHeadValidation,
     browserRuntimeProofBefore,
     dirtBefore,
@@ -675,11 +858,6 @@ export async function runCodexWorker(taskPath, {
   await heartbeatChain;
   await Promise.all([waitForWriter(stdoutWriter), waitForWriter(stderrWriter)]);
 
-  const completedAt = now();
-  const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD']);
-  const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1']);
-  const dirtAfter = classifyPostTaskDirt(statusAfter.stdout);
-  const dirtDelta = compareDirtSnapshots(dirtBefore, dirtAfter);
   let lastMessage = '';
   let stdoutEvents = '';
   let stderrText = '';
@@ -693,14 +871,33 @@ export async function runCodexWorker(taskPath, {
     lastMessage,
     stderr: stderrText,
   });
-  const browserRuntimeProofAfter = runBrowserRuntimeExactHeadProof(task, { spawnSyncFn });
+  const browserRuntimeProofAfter = runBrowserRuntimeExactHeadProof(task, {
+    spawnSyncFn,
+    expectedSourceFingerprint,
+  });
+  const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
+  const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
+  const dirtAfter = classifyPostTaskDirt(statusAfter.stdout);
+  const dirtDelta = compareDirtSnapshots(dirtBefore, dirtAfter);
+  const completedAt = now();
   const browserProof = validateBrowserProofVerdict(lastMessage, task, browserRuntimeProofAfter);
-  const sourceTreeProof = validateExactHeadSourceTree(task, statusBefore, statusAfter, dirtBefore, dirtAfter);
-  const sourceHeadUnchanged = sourceHeadBefore.ok && sourceHeadAfter.ok && sourceHeadBefore.stdout === sourceHeadAfter.stdout;
   const expectedHead = exactHeadValidation.required ? exactHeadValidation.expectedHead : '';
-  const sourceHeadBound = !exactHeadValidation.required
-    || (sourceHeadBefore.stdout === expectedHead && sourceHeadAfter.stdout === expectedHead);
-  const sourceSafe = sourceHeadUnchanged && sourceHeadBound && sourceTreeProof.ok && !dirtDelta.sourceMutationDetected;
+  const sourceSafety = evaluateWorkerSourceSafety({
+    exactHeadRequired: exactHeadValidation.required,
+    expectedHead,
+    sourceHeadBefore,
+    sourceHeadAfter,
+    statusBefore,
+    statusAfter,
+    dirtBefore,
+    dirtAfter,
+    dirtDelta,
+  });
+  const {
+    sourceSafe,
+    sourceHeadUnchanged,
+    sourceHeadBound,
+  } = sourceSafety;
   const passed = execution.passed && browserProof.ok && sourceSafe;
   const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
   let result = {
@@ -722,9 +919,9 @@ export async function runCodexWorker(taskPath, {
     sourceHeadAfter: sourceHeadAfter.stdout,
     sourceHeadUnchanged,
     sourceHeadBound,
+    sourceSafety,
     browserRuntimeProofBefore,
     browserRuntimeProofAfter,
-    sourceTreeProof,
     browserProof,
     exit,
     execution,

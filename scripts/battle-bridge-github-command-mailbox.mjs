@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +25,9 @@ import {
   selectNextBattleBridgeGitHubCommand,
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { dispatchExactHeadWindowsBrowserProof } from '../shared/agents/exactHeadWindowsBrowserProofDispatch.mjs';
+import { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
+
+export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -296,19 +298,6 @@ function loadState() {
 function saveState(state) {
   mkdirSync(mailboxStateRoot, { recursive: true });
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
-}
-
-export function createWindowsSafeMailboxReceiptFilename(requestId = '') {
-  const value = String(requestId || '');
-  const windowsDeviceBase = value.split('.')[0].toUpperCase();
-  const reservedWindowsDevice = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(windowsDeviceBase);
-  if (
-    /^[A-Za-z0-9][A-Za-z0-9._-]{7,120}$/.test(value)
-    && !reservedWindowsDevice
-    && !value.endsWith('.')
-  ) return `${value}.json`;
-  const digest = createHash('sha256').update(value).digest('hex').slice(0, 32);
-  return `request-${digest}.json`;
 }
 
 function writeReceipt(receipt) {

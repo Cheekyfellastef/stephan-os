@@ -59,6 +59,12 @@ const FINGERPRINT_INPUTS = [
   'package.json',
 ];
 
+const FINGERPRINT_SOURCE_TREES = [
+  'stephanos-ui/src',
+  'shared',
+  'apps/music-tile',
+];
+
 function walkFiles(rootDir) {
   const results = [];
   for (const entry of readdirSync(rootDir, { withFileTypes: true })) {
@@ -75,12 +81,13 @@ function walkFiles(rootDir) {
   return results;
 }
 
-export function getStephanosFingerprintSourceFiles() {
+export function getStephanosFingerprintSourceFiles(rootDir = repoRoot) {
+  const fingerprintRepoRoot = resolveFsPath(rootDir);
   return [
-    ...FINGERPRINT_INPUTS.map((filePath) => resolveFsPath(repoRoot, filePath)),
-    ...walkFiles(stephanosUiSrcRoot),
-    ...walkFiles(sharedRuntimeRoot),
-    ...walkFiles(sharedAiRoot),
+    ...FINGERPRINT_INPUTS.map((filePath) => resolveFsPath(fingerprintRepoRoot, filePath)),
+    ...FINGERPRINT_SOURCE_TREES.flatMap((treePath) => (
+      walkFiles(resolveFsPath(fingerprintRepoRoot, treePath))
+    )),
   ].sort((left, right) => left.localeCompare(right));
 }
 
@@ -96,12 +103,13 @@ export function getGitCommit() {
   }
 }
 
-export function computeStephanosSourceFingerprint() {
+export function computeStephanosSourceFingerprint({ rootDir = repoRoot } = {}) {
+  const fingerprintRepoRoot = resolveFsPath(rootDir);
   const hash = createHash('sha256');
-  const files = getStephanosFingerprintSourceFiles();
+  const files = getStephanosFingerprintSourceFiles(fingerprintRepoRoot);
 
   for (const absolutePath of files) {
-    const relPath = path.relative(repoRoot, absolutePath).replace(/\\/g, '/');
+    const relPath = path.relative(fingerprintRepoRoot, absolutePath).replace(/\\/g, '/');
     hash.update(`FILE:${relPath}\n`);
     hash.update(readFileSyncWithDebug(absolutePath));
     hash.update('\n');

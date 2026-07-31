@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 const DEFAULT_URL = process.env.STEPHANOS_BROWSER_PROOF_URL || 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
 const DEFAULT_OUT_DIR = resolve(process.cwd(), 'tmp/browser-proof');
 const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/;
+const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 
 function stamp() { return new Date().toISOString(); }
 function ok(v) { return v === true || v === 'yes' || v === 0; }
@@ -33,6 +34,7 @@ function normalizeGitHead(value = '') {
 export function parseBrowserProofArguments(argv = []) {
   let url = DEFAULT_URL;
   let expectedHead = '';
+  let expectedSourceFingerprint = '';
   let positionalUrlSeen = false;
   let writeArtifacts = true;
   let machineJson = false;
@@ -43,6 +45,18 @@ export function parseBrowserProofArguments(argv = []) {
       index += 1;
       if (!EXACT_GIT_HEAD.test(expectedHead)) {
         return { ok: false, url, expectedHead, blocker: 'EXPECTED_HEAD_INVALID' };
+      }
+    } else if (argument === '--expected-source-fingerprint') {
+      expectedSourceFingerprint = String(argv[index + 1] || '').trim().toLowerCase();
+      index += 1;
+      if (!EXACT_SOURCE_FINGERPRINT.test(expectedSourceFingerprint)) {
+        return {
+          ok: false,
+          url,
+          expectedHead,
+          expectedSourceFingerprint,
+          blocker: 'EXPECTED_SOURCE_FINGERPRINT_INVALID',
+        };
       }
     } else if (argument === '--url') {
       url = String(argv[index + 1] || '').trim();
@@ -59,14 +73,19 @@ export function parseBrowserProofArguments(argv = []) {
       return { ok: false, url, expectedHead, blocker: 'BROWSER_PROOF_ARGUMENT_INVALID' };
     }
   }
-  return { ok: true, url, expectedHead, writeArtifacts, machineJson };
+  return { ok: true, url, expectedHead, expectedSourceFingerprint, writeArtifacts, machineJson };
 }
 
-export function evaluateBrowserProofResult(result = {}, { expectedHead = '' } = {}) {
+export function evaluateBrowserProofResult(result = {}, {
+  expectedHead = '',
+  expectedSourceFingerprint = '',
+} = {}) {
   const checks = result.checks || {};
   const blocking = [];
   const normalizedExpectedHead = String(expectedHead || '').trim().toLowerCase();
+  const normalizedExpectedSourceFingerprint = String(expectedSourceFingerprint || '').trim().toLowerCase();
   const runtimeSourceHead = normalizeGitHead(checks.runtimeSourceHead || checks.footerGitCommit);
+  const runtimeSourceFingerprint = String(checks.sourceFingerprint || '').trim().toLowerCase();
   if (!ok(checks.runtimeReachable)) blocking.push('4173 runtime unreachable');
   if (!ok(checks.footerGitCommitPresent)) blocking.push('footer UI Git Commit missing');
   if (!ok(checks.uiBuildTimestampPresent)) blocking.push('UI Build Timestamp missing');
@@ -88,8 +107,26 @@ export function evaluateBrowserProofResult(result = {}, { expectedHead = '' } = 
       blocking.push(`served runtime Git Commit ${runtimeSourceHead} does not match expected head ${normalizedExpectedHead}`);
     }
   }
+  let expectedSourceFingerprintMatch = null;
+  if (normalizedExpectedSourceFingerprint) {
+    expectedSourceFingerprintMatch = (
+      EXACT_SOURCE_FINGERPRINT.test(normalizedExpectedSourceFingerprint)
+      && runtimeSourceFingerprint === normalizedExpectedSourceFingerprint
+    );
+    if (!EXACT_SOURCE_FINGERPRINT.test(normalizedExpectedSourceFingerprint)) {
+      blocking.push('approved source fingerprint is invalid');
+    } else if (!EXACT_SOURCE_FINGERPRINT.test(runtimeSourceFingerprint)) {
+      blocking.push('served runtime source fingerprint is not a full 64-character SHA-256');
+    } else if (!expectedSourceFingerprintMatch) {
+      blocking.push('served runtime source fingerprint does not match the clean approved checkout');
+    }
+  }
   const observed = result.browserAutomationAvailable === true && !result.automationUnavailable && checks.runtimeReachable === true;
-  const accepted = observed && (normalizedExpectedHead ? expectedHeadMatch === true : true);
+  const accepted = (
+    observed
+    && (normalizedExpectedHead ? expectedHeadMatch === true : true)
+    && (normalizedExpectedSourceFingerprint ? expectedSourceFingerprintMatch === true : true)
+  );
   return {
     accepted,
     observed,
@@ -98,6 +135,9 @@ export function evaluateBrowserProofResult(result = {}, { expectedHead = '' } = 
     expectedHead: normalizedExpectedHead,
     runtimeSourceHead,
     expectedHeadMatch,
+    expectedSourceFingerprint: normalizedExpectedSourceFingerprint,
+    runtimeSourceFingerprint,
+    expectedSourceFingerprintMatch,
   };
 }
 
@@ -132,6 +172,9 @@ export function buildBrowserProofPacket(result = {}, options = {}) {
     line('- Approved expected Git head', verdict.expectedHead || 'not requested'),
     line('- Browser-observed runtime source head', verdict.runtimeSourceHead || 'unavailable'),
     line('- Browser-observed head matches approved head', verdict.expectedHeadMatch == null ? 'not requested' : (verdict.expectedHeadMatch ? 'yes' : 'no')),
+    line('- Approved source fingerprint', verdict.expectedSourceFingerprint || 'not requested'),
+    line('- Browser-observed source fingerprint', verdict.runtimeSourceFingerprint || 'unavailable'),
+    line('- Browser-observed fingerprint matches clean checkout', verdict.expectedSourceFingerprintMatch == null ? 'not requested' : (verdict.expectedSourceFingerprintMatch ? 'yes' : 'no')),
     line('- UI Build Timestamp', checks.uiBuildTimestamp || (checks.uiBuildTimestampPresent ? 'present' : 'missing')),
     line('- Source fingerprint / runtime marker', checks.sourceFingerprint || checks.runtimeMarker || 'unavailable'),
     line('- Proof Concierge DOM next proof', checks.proofConciergeDomNextProof || 'unavailable'),
@@ -161,6 +204,9 @@ export function buildBrowserProofMachineResult(result = {}, options = {}) {
     expectedHead: verdict.expectedHead,
     runtimeSourceHead: verdict.runtimeSourceHead,
     expectedHeadMatch: verdict.expectedHeadMatch,
+    expectedSourceFingerprint: verdict.expectedSourceFingerprint,
+    runtimeSourceFingerprint: verdict.runtimeSourceFingerprint,
+    expectedSourceFingerprintMatch: verdict.expectedSourceFingerprintMatch,
     blocking: [...verdict.blocking],
   });
 }
@@ -196,7 +242,11 @@ async function collectWithBrowser(url = DEFAULT_URL, { writeArtifacts = true } =
         footerGitCommit: (footer.match(/(?:git commit|commit)[:\s]+([^\n]+)/i) || [])[1] || '',
         uiBuildTimestampPresent: /build/i.test(footer) && /\d{4}-\d{2}-\d{2}|timestamp/i.test(footer + body),
         uiBuildTimestamp: (footer.match(/build[:\s]+([^\n]+)/i) || [])[1] || '',
-        sourceFingerprint: (footer.match(/fingerprint[:\s]+([^\n]+)/i) || [])[1] || '',
+        sourceFingerprint: (
+          document.querySelector('meta[name="stephanos-build-source-fingerprint"]')?.getAttribute('content')
+          || (footer.match(/fingerprint[:\s]+([^\n]+)/i) || [])[1]
+          || ''
+        ),
         runtimeMarker: (footer.match(/marker[:\s]+([^\n]+)/i) || [])[1] || '',
         proofConciergeDomNextProof: text(next),
         proofConciergeDomNextProofMatches: text(next) === 'browser-proof-checklist',
@@ -264,14 +314,26 @@ async function main() {
       checks: { runtimeReachable: false },
     };
     process.exit(parsed.machineJson
-      ? printMachineResult(result, { expectedHead: parsed.expectedHead })
-      : printSinglePacket(result, { expectedHead: parsed.expectedHead }, { writeArtifacts: parsed.writeArtifacts }));
+      ? printMachineResult(result, {
+        expectedHead: parsed.expectedHead,
+        expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+      })
+      : printSinglePacket(result, {
+        expectedHead: parsed.expectedHead,
+        expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+      }, { writeArtifacts: parsed.writeArtifacts }));
   }
   try {
     const result = await collectWithBrowser(parsed.url, { writeArtifacts: parsed.writeArtifacts });
     process.exit(parsed.machineJson
-      ? printMachineResult(result, { expectedHead: parsed.expectedHead })
-      : printSinglePacket(result, { expectedHead: parsed.expectedHead }, { writeArtifacts: parsed.writeArtifacts }));
+      ? printMachineResult(result, {
+        expectedHead: parsed.expectedHead,
+        expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+      })
+      : printSinglePacket(result, {
+        expectedHead: parsed.expectedHead,
+        expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+      }, { writeArtifacts: parsed.writeArtifacts }));
   } catch (error) {
     const result = {
       browserAutomationAvailable: false,
@@ -281,8 +343,14 @@ async function main() {
       checks: { runtimeReachable: false },
     };
     process.exit(parsed.machineJson
-      ? printMachineResult(result, { expectedHead: parsed.expectedHead })
-      : printSinglePacket(result, { expectedHead: parsed.expectedHead }, { writeArtifacts: parsed.writeArtifacts }));
+      ? printMachineResult(result, {
+        expectedHead: parsed.expectedHead,
+        expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+      })
+      : printSinglePacket(result, {
+        expectedHead: parsed.expectedHead,
+        expectedSourceFingerprint: parsed.expectedSourceFingerprint,
+      }, { writeArtifacts: parsed.writeArtifacts }));
   }
 }
 

@@ -1,4 +1,5 @@
 import { lstat, readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import {
   DEFAULT_STALE_AFTER_MS,
@@ -7,6 +8,7 @@ import {
   validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
+import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
 
 export const MAILBOX_RECEIPT_INDEX_SCHEMA_VERSION = 'stephanos.mailbox-receipt-index.v1';
 export const MAILBOX_RECEIPT_INDEX_STATUS_ID = 'battle-bridge-mailbox-receipt-index';
@@ -20,6 +22,7 @@ export const MAILBOX_RECEIPT_INDEX_MAX_GITHUB_BYTES = 9 * 1024;
 
 const RECEIPT_MARKER = 'stephanos-battle-bridge-command-receipt';
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const RECEIPT_FILENAME_PATTERN = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{7,120}|_request-[0-9a-f]{32})\.json$/;
 const OPERATION_PATTERN = /^[A-Z][A-Z0-9_]{2,80}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
@@ -199,12 +202,11 @@ export async function loadMailboxReceiptsFromSharedWorkspace({
     return { ok: false, reason: 'MAILBOX_RECEIPT_DIRECTORY_READ_FAILED', receipts: [] };
   }
   const candidates = [];
-  for (const name of names.filter((item) => item.endsWith('.json') && REQUEST_ID_PATTERN.test(item.slice(0, -5)))) {
-    const file = resolveSharedWorkspacePath({ root, repoRoot, segments: ['receipts', 'github-command-mailbox', name] });
-    if (!file.ok) continue;
+  for (const name of names.filter((item) => RECEIPT_FILENAME_PATTERN.test(item))) {
+    const filePath = join(resolved.path, name);
     try {
-      const info = await lstat(file.path);
-      if (info.isFile()) candidates.push({ name, path: file.path, mtimeMs: info.mtimeMs });
+      const info = await lstat(filePath);
+      if (info.isFile()) candidates.push({ name, path: filePath, mtimeMs: info.mtimeMs });
     } catch {}
   }
   const boundedFileCount = Math.max(1, Math.min(MAILBOX_RECEIPT_INDEX_MAX_FILES, Number(maxFiles) || MAILBOX_RECEIPT_INDEX_MAX_FILES));
@@ -217,7 +219,13 @@ export async function loadMailboxReceiptsFromSharedWorkspace({
       const payload = await readFile(candidate.path, 'utf8');
       if (Buffer.byteLength(payload, 'utf8') > MAILBOX_RECEIPT_INDEX_MAX_FILE_BYTES) continue;
       const receipt = JSON.parse(payload);
-      if (String(receipt?.requestId || '') === candidate.name.slice(0, -5)) receipts.push(receipt);
+      const requestId = String(receipt?.requestId || '');
+      if (
+        REQUEST_ID_PATTERN.test(requestId)
+        && createWindowsSafeMailboxReceiptFilename(requestId) === candidate.name
+      ) {
+        receipts.push(receipt);
+      }
     } catch {}
   }
   return { ok: true, reason: 'MAILBOX_RECEIPTS_LOADED', receipts };
