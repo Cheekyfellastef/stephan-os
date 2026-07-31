@@ -235,6 +235,7 @@ export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = 
   const livePlaybackObserved = (
     evidence?.fixture === 'live-runtime-v1'
     && evidence?.playbackContinuityProxy === 'same-player-media-time-v1'
+    && evidence?.PLAYBACK_CONTINUED_AFTER_RATING === true
     && listening.playbackMediaElementIdentityPreserved === true
     && listening.playbackMediaSourceUnchanged === true
     && listening.playbackMediaPlayingBefore === true
@@ -1419,6 +1420,10 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
   let refsHandle = null;
   let listeningFrame = null;
   let discoveryFrame = null;
+  let livePlaybackHandle = null;
+  let livePlaybackBefore = null;
+  let ratingClickAttempted = false;
+  let livePlaybackFailureObserved = false;
   let frameNavigatedListener = null;
   let frameDetachedListener = null;
   const frameEvents = {
@@ -1428,24 +1433,24 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     discoveryDetaches: 0,
   };
   try {
-    if (proofTarget === 'MERGED_MAIN') {
-      throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_OBSERVER_UNAVAILABLE');
-    }
-    await page.route('https://open.spotify.com/**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/html; charset=utf-8',
-        body: [
-          '<!doctype html><title>Spotify proof fixture</title>',
-          '<body>playback continuity sentinel active',
-          '<script>',
-          `globalThis.__stephanosProofPlaybackInstance = ${JSON.stringify('spotify-playback-continuity-sentinel-v1')};`,
-          'globalThis.__stephanosProofPlaybackTick = 0;',
-          'setInterval(() => { globalThis.__stephanosProofPlaybackTick += 1; }, 10);',
-          '</script></body>',
-        ].join(''),
+    const mergedMainProof = proofTarget === 'MERGED_MAIN';
+    if (!mergedMainProof) {
+      await page.route('https://open.spotify.com/**', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/html; charset=utf-8',
+          body: [
+            '<!doctype html><title>Spotify proof fixture</title>',
+            '<body>playback continuity sentinel active',
+            '<script>',
+            `globalThis.__stephanosProofPlaybackInstance = ${JSON.stringify('spotify-playback-continuity-sentinel-v1')};`,
+            'globalThis.__stephanosProofPlaybackTick = 0;',
+            'setInterval(() => { globalThis.__stephanosProofPlaybackTick += 1; }, 10);',
+            '</script></body>',
+          ].join(''),
+        });
       });
-    });
+    }
     await page.route('**/api/setup/integrations', async (route) => {
       await route.fulfill({
         status: 200,
@@ -1523,18 +1528,54 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     if (!listeningFrame || !discoveryFrame) {
       throw servedDistError('BROWSER_SCENARIO_PLAYER_FRAME_MISSING');
     }
-    await Promise.all([
-      listeningFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
-      discoveryFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
-    ]);
-    const listeningSentinelBefore = await listeningFrame.evaluate(() => ({
-      instance: globalThis.__stephanosProofPlaybackInstance,
-      tick: globalThis.__stephanosProofPlaybackTick,
-    }));
-    const discoverySentinelBefore = await discoveryFrame.evaluate(() => ({
-      instance: globalThis.__stephanosProofPlaybackInstance,
-      tick: globalThis.__stephanosProofPlaybackTick,
-    }));
+    let listeningSentinelBefore = { instance: '', tick: -1 };
+    let discoverySentinelBefore = { instance: '', tick: -1 };
+    if (mergedMainProof) {
+      const playButton = listeningFrame.getByRole('button', { name: /play/i }).first();
+      if (await playButton.count() < 1) {
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_CONTROL_UNAVAILABLE');
+      }
+      await playButton.click({ timeout: 10000 });
+      await listeningFrame.waitForFunction(() => {
+        const media = document.querySelector('audio, video');
+        return !!media && media.paused === false && Number.isFinite(media.currentTime);
+      }, null, { timeout: 15000 });
+      livePlaybackHandle = await listeningFrame.locator('audio, video').first().elementHandle();
+      if (!livePlaybackHandle) {
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_MEDIA_UNAVAILABLE');
+      }
+      livePlaybackBefore = await livePlaybackHandle.evaluate((media) => ({
+        isConnected: media.isConnected === true,
+        sameMediaElement: document.querySelector('audio, video') === media,
+        currentSrc: String(media.currentSrc || media.src || ''),
+        currentTime: Number(media.currentTime),
+        paused: media.paused === true,
+        ended: media.ended === true,
+      }));
+      if (
+        livePlaybackBefore.isConnected !== true
+        || livePlaybackBefore.sameMediaElement !== true
+        || !livePlaybackBefore.currentSrc
+        || !Number.isFinite(livePlaybackBefore.currentTime)
+        || livePlaybackBefore.paused === true
+        || livePlaybackBefore.ended === true
+      ) {
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_NOT_STARTED');
+      }
+    } else {
+      await Promise.all([
+        listeningFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
+        discoveryFrame.waitForFunction(() => globalThis.__stephanosProofPlaybackTick >= 2, null, { timeout: 10000 }),
+      ]);
+      listeningSentinelBefore = await listeningFrame.evaluate(() => ({
+        instance: globalThis.__stephanosProofPlaybackInstance,
+        tick: globalThis.__stephanosProofPlaybackTick,
+      }));
+      discoverySentinelBefore = await discoveryFrame.evaluate(() => ({
+        instance: globalThis.__stephanosProofPlaybackInstance,
+        tick: globalThis.__stephanosProofPlaybackTick,
+      }));
+    }
     refsHandle = await page.evaluateHandle(({ targetId, targetLabel, stateKey, rating }) => {
       const ratingButton = document.querySelector(
         `#listening-deck [data-rate="${rating}"][data-id="${targetId}"]`,
@@ -1604,6 +1645,7 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     const ratingLocator = page.locator(
       `#listening-deck .player-deck-card [data-rate="${MUSIC_TILE_SCENARIO_RATING}"][data-id="${MUSIC_TILE_SCENARIO_TRACK_ID}"]`,
     );
+    ratingClickAttempted = true;
     await ratingLocator.click();
     await page.waitForFunction(({ key, trackId, rating }) => {
       let stored = {};
@@ -1644,18 +1686,55 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     const currentDiscoveryHandle = currentDiscoveryHandleValue.asElement();
     const currentListeningFrame = await currentListeningHandle?.contentFrame?.();
     const currentDiscoveryFrame = await currentDiscoveryHandle?.contentFrame?.();
-    const listeningSentinelAfter = currentListeningFrame
-      ? await currentListeningFrame.evaluate(() => ({
-        instance: globalThis.__stephanosProofPlaybackInstance,
-        tick: globalThis.__stephanosProofPlaybackTick,
-      }))
-      : { instance: '', tick: -1 };
-    const discoverySentinelAfter = currentDiscoveryFrame
-      ? await currentDiscoveryFrame.evaluate(() => ({
-        instance: globalThis.__stephanosProofPlaybackInstance,
-        tick: globalThis.__stephanosProofPlaybackTick,
-      }))
-      : { instance: '', tick: -1 };
+    let listeningSentinelAfter = { instance: '', tick: -1 };
+    let discoverySentinelAfter = { instance: '', tick: -1 };
+    let livePlaybackAfter = null;
+    if (mergedMainProof) {
+      if (!currentListeningFrame || currentListeningFrame !== listeningFrame || !livePlaybackHandle) {
+        livePlaybackFailureObserved = true;
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_PLAYER_REPLACED');
+      }
+      try {
+        await livePlaybackHandle.evaluate(async (media, before) => {
+          const deadline = performance.now() + 5000;
+          while (performance.now() < deadline) {
+            if (
+              media.isConnected
+              && document.querySelector('audio, video') === media
+              && media.paused === false
+              && String(media.currentSrc || media.src || '') === before.currentSrc
+              && Number(media.currentTime) > before.currentTime + 0.25
+            ) return;
+            await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+          }
+          throw new Error('BROWSER_SCENARIO_LIVE_PLAYBACK_DID_NOT_PROGRESS');
+        }, livePlaybackBefore);
+      } catch {
+        livePlaybackFailureObserved = true;
+        throw servedDistError('BROWSER_SCENARIO_LIVE_PLAYBACK_DID_NOT_PROGRESS');
+      }
+      livePlaybackAfter = await livePlaybackHandle.evaluate((media) => ({
+        isConnected: media.isConnected === true,
+        sameMediaElement: document.querySelector('audio, video') === media,
+        currentSrc: String(media.currentSrc || media.src || ''),
+        currentTime: Number(media.currentTime),
+        paused: media.paused === true,
+        ended: media.ended === true,
+      }));
+    } else {
+      listeningSentinelAfter = currentListeningFrame
+        ? await currentListeningFrame.evaluate(() => ({
+          instance: globalThis.__stephanosProofPlaybackInstance,
+          tick: globalThis.__stephanosProofPlaybackTick,
+        }))
+        : { instance: '', tick: -1 };
+      discoverySentinelAfter = currentDiscoveryFrame
+        ? await currentDiscoveryFrame.evaluate(() => ({
+          instance: globalThis.__stephanosProofPlaybackInstance,
+          tick: globalThis.__stephanosProofPlaybackTick,
+        }))
+        : { instance: '', tick: -1 };
+    }
     const observed = await page.evaluate(({ refs, key, trackId, targetLabel, rating }) => {
       const selectedRating = document.querySelector(
         `#listening-deck [data-rate="${rating}"][data-id="${trackId}"]`,
@@ -1753,6 +1832,25 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
       listeningSentinelBefore.instance === listeningSentinelAfter.instance
       && Number(listeningSentinelAfter.tick) > Number(listeningSentinelBefore.tick)
     );
+    observed.listeningDeckIframe.playbackMediaElementIdentityPreserved = mergedMainProof
+      && livePlaybackAfter?.isConnected === true
+      && livePlaybackAfter?.sameMediaElement === true;
+    observed.listeningDeckIframe.playbackMediaSourceUnchanged = mergedMainProof
+      && livePlaybackBefore?.currentSrc === livePlaybackAfter?.currentSrc;
+    observed.listeningDeckIframe.playbackMediaPlayingBefore = mergedMainProof
+      && livePlaybackBefore?.paused === false
+      && livePlaybackBefore?.ended === false;
+    observed.listeningDeckIframe.playbackMediaPlayingAfter = mergedMainProof
+      && livePlaybackAfter?.paused === false
+      && livePlaybackAfter?.ended === false;
+    observed.listeningDeckIframe.playbackMediaTimeBefore = mergedMainProof
+      ? Number(livePlaybackBefore?.currentTime)
+      : null;
+    observed.listeningDeckIframe.playbackMediaTimeAfter = mergedMainProof
+      ? Number(livePlaybackAfter?.currentTime)
+      : null;
+    observed.listeningDeckIframe.playbackMediaTimeAdvanced = mergedMainProof
+      && Number(livePlaybackAfter?.currentTime) > Number(livePlaybackBefore?.currentTime) + 0.25;
     observed.discoveryIframe.frameIdentityPreserved = currentDiscoveryFrame === discoveryFrame;
     observed.discoveryIframe.frameNavigationCount = frameEvents.discoveryNavigations;
     observed.discoveryIframe.frameDetachCount = frameEvents.discoveryDetaches;
@@ -1774,8 +1872,11 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
       collector: 'playwright-page-v1',
       observed: true,
       musicTileUrl: scenarioUrl,
-      fixture: 'isolated-browser-context-v1',
-      playbackContinuityProxy: 'intercepted-spotify-frame-tick-v1',
+      fixture: mergedMainProof ? 'live-runtime-v1' : 'isolated-browser-context-v1',
+      playbackContinuityProxy: mergedMainProof
+        ? 'same-player-media-time-v1'
+        : 'intercepted-spotify-frame-tick-v1',
+      PLAYBACK_CONTINUED_AFTER_RATING: mergedMainProof ? true : null,
       sourceResponseBinding,
       ...observed,
       consoleErrors: [...consoleErrors],
@@ -1800,17 +1901,38 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
         { scenarioUrl, repoRoot, expectedHead },
       );
     }
-    return failedMusicRatingScenarioEvidence({
+    const failed = failedMusicRatingScenarioEvidence({
       scenarioUrl,
       consoleErrors,
       pageErrors,
       blocker: String(error?.code || error?.message || 'BROWSER_SCENARIO_EXECUTION_FAILED'),
       sourceResponseBinding,
     });
+    return Object.freeze({
+      ...failed,
+      fixture: proofTarget === 'MERGED_MAIN' ? 'live-runtime-v1' : failed.fixture,
+      playbackContinuityProxy: proofTarget === 'MERGED_MAIN'
+        ? 'same-player-media-time-v1'
+        : 'intercepted-spotify-frame-tick-v1',
+      PLAYBACK_CONTINUED_AFTER_RATING: proofTarget === 'MERGED_MAIN'
+        && livePlaybackBefore
+        && ratingClickAttempted
+        && livePlaybackFailureObserved
+        ? false
+        : null,
+      listeningDeckIframe: proofTarget === 'MERGED_MAIN' && livePlaybackBefore
+        ? {
+          playbackMediaPlayingBefore: livePlaybackBefore.paused === false && livePlaybackBefore.ended === false,
+          playbackMediaTimeBefore: Number(livePlaybackBefore.currentTime),
+          playbackMediaSource: String(livePlaybackBefore.currentSrc || ''),
+        }
+        : failed.listeningDeckIframe,
+    });
   } finally {
     if (frameNavigatedListener) page.off('framenavigated', frameNavigatedListener);
     if (frameDetachedListener) page.off('framedetached', frameDetachedListener);
     await refsHandle?.dispose?.();
+    await livePlaybackHandle?.dispose?.();
   }
 }
 
