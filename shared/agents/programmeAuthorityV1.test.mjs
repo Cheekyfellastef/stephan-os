@@ -80,6 +80,26 @@ function github(overrides = {}) {
   };
 }
 
+function approvalReceipt(overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.protected-operator-approval.v1',
+    kind: 'stephanos.protected-operator-approval',
+    issue: 1497,
+    activePr: 1617,
+    headSha: HEAD,
+    repository: REPOSITORY,
+    branch: BRANCH,
+    requiredReviewer: 'Cheekyfellastef',
+    workflowPath: '.github/workflows/operator-merge-approval-gate.yml',
+    workflowRunId: 12345,
+    workflowRunAttempt: 1,
+    approvedAtUtc: '2026-07-30T09:59:00.000Z',
+    mergeExecutionAuthority: 'github-actions-protected-environment-only',
+    reusableAcrossHeads: false,
+    ...overrides,
+  };
+}
+
 function lease(overrides = {}) {
   return createSourceMutationLeaseRecord({
     leaseId: 'lease-goal-1497-pr-1617',
@@ -148,6 +168,19 @@ test('canonical lane binds lane ID, issue, PR, exact head, receipts, proofs and 
   assert.deepEqual(projection.executionReceiptRefs, ['execution-1617-1']);
   assert.equal(projection.mutationLeaseIdentity.leaseId, 'lease-goal-1497-pr-1617');
   assert.equal(projection.chatMemoryAuthoritative, false);
+});
+
+test('canonical lane requires GitHub to affirm the exact head repository and branch', () => {
+  for (const githubEvidence of [
+    github({ repository: '' }),
+    github({ headBranch: '' }),
+    github({ repository: 'other/repository' }),
+    github({ headBranch: 'feat/other-branch' }),
+  ]) {
+    const projection = lane({ github: githubEvidence });
+    assert.equal(projection.valid, false);
+    assert.equal(projection.active, false);
+  }
 });
 
 test('conflicting encoded and explicit lane identities fail closed', () => {
@@ -511,13 +544,7 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(goals.goals[0].activePr, 1617);
   assert.equal(goals.goals[0].headSha, HEAD);
 
-  const approvalReceipt = {
-    issue: 1497,
-    activePr: 1617,
-    headSha: HEAD,
-    repository: REPOSITORY,
-    branch: BRANCH,
-  };
+  const exactApprovalReceipt = approvalReceipt();
   const implementedGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     goalRecords: [goalRecord({
@@ -525,11 +552,18 @@ test('scheduler goals are constructed from durable records and the canonical lan
       activePr: 1617,
       headSha: HEAD,
       proofState: 'PASS',
-      operatorApprovalReceipt: approvalReceipt,
+      operatorApprovalReceipt: exactApprovalReceipt,
       evidenceAt: NOW,
     })],
   });
-  assert.deepEqual(implementedGoals.goals[0].operatorApprovalReceipt, approvalReceipt);
+  assert.equal(implementedGoals.valid, true, implementedGoals.blockers.join(','));
+  assert.equal(implementedGoals.goals[0].operatorApprovalReceipt.issue, 1497);
+  assert.equal(implementedGoals.goals[0].operatorApprovalReceipt.activePr, 1617);
+  assert.equal(implementedGoals.goals[0].operatorApprovalReceipt.headSha, HEAD);
+  assert.equal(
+    implementedGoals.goals[0].operatorApprovalReceipt.schemaVersion,
+    'stephanos.protected-operator-approval.v1',
+  );
   const implementedScheduler = buildMissionScheduler({
     now: NOW,
     goals: implementedGoals.goals,
@@ -546,9 +580,9 @@ test('scheduler goals are constructed from durable records and the canonical lan
   const activeApprovalOverlay = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     lane: lane(),
-    goalRecords: [goalRecord({ operatorApprovalReceipt: approvalReceipt })],
+    goalRecords: [goalRecord({ operatorApprovalReceipt: exactApprovalReceipt })],
   });
-  assert.deepEqual(activeApprovalOverlay.goals[0].operatorApprovalReceipt, approvalReceipt);
+  assert.equal(activeApprovalOverlay.goals[0].operatorApprovalReceipt.issue, 1497);
 
   for (const conflictingApprovalAliases of [
     { issue: 1497, issueNumber: 9999 },
@@ -563,7 +597,7 @@ test('scheduler goals are constructed from durable records and the canonical lan
         repository: REPOSITORY,
         branch: BRANCH,
         operatorApprovalReceipt: {
-          ...approvalReceipt,
+          ...exactApprovalReceipt,
           ...conflictingApprovalAliases,
         },
       })],
@@ -572,6 +606,55 @@ test('scheduler goals are constructed from durable records and the canonical lan
     assert.equal(malformedApproval.goals.length, 0);
     assert.ok(malformedApproval.blockers.includes('goal-record-0-approval-receipt-invalid'));
   }
+
+  for (const untrustedProvenance of [
+    { schemaVersion: 'self-attested.approval.v1' },
+    { requiredReviewer: 'untrusted-writer' },
+    { workflowRunId: null },
+    { mergeExecutionAuthority: 'caller' },
+  ]) {
+    const untrustedApproval = buildSchedulerGoalsFromProgrammeSources({
+      nowUtc: NOW,
+      goalRecords: [goalRecord({
+        state: 'IMPLEMENTED',
+        activePr: 1617,
+        headSha: HEAD,
+        operatorApprovalReceipt: approvalReceipt(untrustedProvenance),
+      })],
+    });
+    assert.equal(untrustedApproval.valid, false);
+    assert.equal(untrustedApproval.goals.length, 0);
+    assert.ok(untrustedApproval.blockers.includes('goal-record-0-approval-receipt-invalid'));
+  }
+
+  const aliasOnlyApprovalReceipt = approvalReceipt({
+    relatedIssue: '#1497',
+    relatedPr: '#1617',
+    sourceHead: HEAD,
+    repositoryFullName: REPOSITORY,
+    headBranch: BRANCH,
+  });
+  delete aliasOnlyApprovalReceipt.issue;
+  delete aliasOnlyApprovalReceipt.activePr;
+  delete aliasOnlyApprovalReceipt.headSha;
+  delete aliasOnlyApprovalReceipt.repository;
+  delete aliasOnlyApprovalReceipt.branch;
+  const aliasedApproval = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [goalRecord({
+      state: 'IMPLEMENTED',
+      activePr: 1617,
+      headSha: HEAD,
+      proofState: 'PASS',
+      operatorApprovalReceipt: aliasOnlyApprovalReceipt,
+    })],
+  });
+  assert.equal(aliasedApproval.valid, true);
+  assert.equal(aliasedApproval.goals[0].operatorApprovalReceipt.issue, 1497);
+  assert.equal(aliasedApproval.goals[0].operatorApprovalReceipt.activePr, 1617);
+  assert.equal(aliasedApproval.goals[0].operatorApprovalReceipt.headSha, HEAD);
+  assert.equal(aliasedApproval.goals[0].operatorApprovalReceipt.repository, REPOSITORY.toLowerCase());
+  assert.equal(aliasedApproval.goals[0].operatorApprovalReceipt.branch, BRANCH);
 
   for (const evidenceAt of ['2026-07-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z', 'malformed']) {
     const preservedEvidence = buildSchedulerGoalsFromProgrammeSources({
