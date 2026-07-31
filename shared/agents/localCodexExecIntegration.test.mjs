@@ -98,16 +98,18 @@ const TEST_PROCESS_IDENTITY = Object.freeze({
 const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
 const MUSIC_RATING_SCENARIO = 'MUSIC_RATING_PRESERVES_PLAYBACK';
 
-function musicRatingScenarioEvidence(overrides = {}) {
+function musicRatingScenarioEvidence(overrides = {}, sourceHead = 'a'.repeat(40)) {
   return {
-    schemaVersion: 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v1',
+    schemaVersion: 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v2',
     proofScenario: MUSIC_RATING_SCENARIO,
     collector: 'playwright-page-v1',
     observed: true,
     sourceResponseBinding: {
       exact: true,
       blocker: '',
+      sourceHead,
       fileCount: 3,
+      responseBinding: 'playwright-scenario-source-responses-git-blob-v2',
       paths: [
         'apps/music-tile/index.html',
         'apps/music-tile/main.js',
@@ -193,7 +195,7 @@ function browserRunnerPayload(expectedHead, {
     expectedDistFingerprintMatch: true,
     proofScenario,
     scenarioEvidenceAccepted: scenarioRequested ? true : null,
-    scenarioEvidence: scenarioRequested ? musicRatingScenarioEvidence() : null,
+    scenarioEvidence: scenarioRequested ? musicRatingScenarioEvidence({}, expectedHead) : null,
     ...overrides,
   };
 }
@@ -204,7 +206,10 @@ function browserRunnerPayloadForArgs(args, expectedHead, overrides = {}) {
   return browserRunnerPayload(expectedHead, { proofScenario, ...overrides });
 }
 
-function workerOwnedScenarioProof(expectedHead, evidence = musicRatingScenarioEvidence()) {
+function workerOwnedScenarioProof(
+  expectedHead,
+  evidence = musicRatingScenarioEvidence({}, expectedHead),
+) {
   return {
     ok: true,
     required: true,

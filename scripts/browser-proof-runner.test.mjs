@@ -6,6 +6,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -14,6 +15,7 @@ import {
   collectPlaywrightNavigationDistFingerprint,
   collectScenarioSourceResponseBinding,
   collectServedDistFingerprint,
+  createScenarioSourceGitEnvironment,
   evaluateBrowserProofResult,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
   parseBrowserProofArguments,
@@ -28,6 +30,41 @@ import {
 test('browser proof packet generated only when nextProof is browser-proof-checklist', () => {
   assert.equal(shouldGenerateBrowserProofPacket({ operatorProofConcierge: { nextProof: 'browser-proof-checklist' } }), true);
   assert.equal(shouldGenerateBrowserProofPacket({ operatorProofConcierge: { nextProof: 'verify-proof' } }), false);
+});
+
+test('scenario Git reads strip inherited Git controls case-insensitively on Windows', () => {
+  const environment = createScenarioSourceGitEnvironment({
+    Path: 'C:\\Windows\\System32',
+    git_dir: 'C:\\attacker\\repo',
+    Git_Object_Directory: 'C:\\attacker\\objects',
+    GIT_CONFIG_COUNT: '1',
+    git_config_key_0: 'core.sshCommand',
+    Git_Config_Value_0: 'unsafe',
+    GIT_REPLACE_REF_BASE: 'refs/attacker/',
+  }, { platform: 'win32' });
+  assert.equal(environment.Path, 'C:\\Windows\\System32');
+  assert.equal(environment.git_dir, undefined);
+  assert.equal(environment.Git_Object_Directory, undefined);
+  assert.equal(environment.GIT_CONFIG_COUNT, undefined);
+  assert.equal(environment.git_config_key_0, undefined);
+  assert.equal(environment.Git_Config_Value_0, undefined);
+  assert.equal(environment.GIT_REPLACE_REF_BASE, undefined);
+  assert.equal(environment.GIT_CONFIG_GLOBAL, 'NUL');
+  assert.equal(environment.GIT_CONFIG_NOSYSTEM, '1');
+  assert.deepEqual(
+    Object.keys(environment).filter((key) => (
+      key.toUpperCase().startsWith('GIT_')
+      && ![
+        'GIT_CONFIG_GLOBAL',
+        'GIT_CONFIG_NOSYSTEM',
+        'GIT_NO_LAZY_FETCH',
+        'GIT_NO_REPLACE_OBJECTS',
+        'GIT_OPTIONAL_LOCKS',
+        'GIT_TERMINAL_PROMPT',
+      ].includes(key)
+    )),
+    [],
+  );
 });
 
 test('successful DOM proof accepts browser-proof-checklist', () => {
@@ -130,10 +167,19 @@ test('parses an exact approved head without confusing it with the runtime URL', 
   );
   assert.equal(
     parseBrowserProofArguments([
+      '--expected-head',
+      expectedHead,
       '--proof-scenario',
       'MUSIC_RATING_PRESERVES_PLAYBACK',
     ]).proofScenario,
     'MUSIC_RATING_PRESERVES_PLAYBACK',
+  );
+  assert.equal(
+    parseBrowserProofArguments([
+      '--proof-scenario',
+      'MUSIC_RATING_PRESERVES_PLAYBACK',
+    ]).blocker,
+    'EXPECTED_HEAD_REQUIRED_FOR_PROOF_SCENARIO',
   );
   assert.equal(
     parseBrowserProofArguments(['--proof-scenario', 'UNTRUSTED_SCENARIO']).blocker,
@@ -204,14 +250,16 @@ test('machine result fails closed when observed browser evidence still has merge
 
 function musicScenarioEvidence(overrides = {}) {
   return {
-    schemaVersion: 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v1',
+    schemaVersion: 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v2',
     proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
     collector: 'playwright-page-v1',
     observed: true,
     sourceResponseBinding: {
       exact: true,
       blocker: '',
+      sourceHead: 'a'.repeat(40),
       fileCount: 3,
+      responseBinding: 'playwright-scenario-source-responses-git-blob-v2',
       paths: [
         'apps/music-tile/index.html',
         'apps/music-tile/main.js',
@@ -276,11 +324,26 @@ function musicScenarioEvidence(overrides = {}) {
 
 test('requested music scenario accepts only detailed Playwright-collected interaction evidence', () => {
   const evidence = musicScenarioEvidence();
-  const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence);
+  const expectedHead = 'a'.repeat(40);
+  const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    evidence,
+    { expectedHead },
+  );
   assert.equal(evaluation.accepted, true);
   assert.equal(evaluation.listeningDeckIframeIdentityPreserved, true);
   assert.equal(evaluation.discoveryIframeIdentityPreserved, true);
   assert.equal(evaluation.legacyRankingChanged, true);
+
+  const omittedCommit = evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence);
+  assert.equal(omittedCommit.accepted, false);
+  assert.match(omittedCommit.blocking.join(' | '), /SOURCE_HEAD_INVALID/);
+
+  const wrongCommit = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+    evidence,
+    { expectedHead: 'b'.repeat(40) },
+  );
+  assert.equal(wrongCommit.accepted, false);
+  assert.match(wrongCommit.blocking.join(' | '), /SOURCE_HEAD_MISMATCH/);
 
   const missing = evaluateBrowserProofResult({
     browserAutomationAvailable: true,
@@ -296,18 +359,21 @@ test('requested music scenario accepts only detailed Playwright-collected intera
         frameNavigationCount: 1,
       },
     }),
+    { expectedHead },
   );
   assert.equal(navigated.accepted, false);
   assert.match(navigated.blocking.join(' | '), /LISTENING_IFRAME_REPLACED/);
 });
 
 test('machine result binds requested scenario PASS to typed browser evidence', () => {
+  const expectedHead = 'a'.repeat(40);
   const evidence = musicScenarioEvidence();
   const result = buildBrowserProofMachineResult({
     browserAutomationAvailable: true,
     checks: {
       runtimeReachable: true,
       footerGitCommitPresent: true,
+      footerGitCommit: expectedHead,
       uiBuildTimestampPresent: true,
       proofConciergeDomNextProofMatches: true,
       proofConciergePrimaryButtonPresent: true,
@@ -317,7 +383,10 @@ test('machine result binds requested scenario PASS to typed browser evidence', (
       consoleErrorCount: 0,
     },
     scenarioEvidence: evidence,
-  }, { proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK' });
+  }, {
+    expectedHead,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+  });
   assert.equal(result.schemaVersion, 'stephanos.browser-runtime-exact-head-proof.v3');
   assert.equal(result.accepted, true);
   assert.equal(result.proofScenario, 'MUSIC_RATING_PRESERVES_PLAYBACK');
@@ -500,7 +569,42 @@ function playwrightResponse(url, contents, headers = {}) {
   };
 }
 
-test('scenario source binding compares browser responses with the clean checkout bytes', async () => {
+function commitAllScenarioSourceFiles(repoRoot, message) {
+  execFileSync('git', ['add', '--all'], {
+    cwd: repoRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  execFileSync('git', [
+    '-c',
+    'user.name=Stephanos Test',
+    '-c',
+    'user.email=stephanos-test@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '--quiet',
+    '-m',
+    message,
+  ], {
+    cwd: repoRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function commitScenarioSourceFixture(repoRoot) {
+  execFileSync('git', ['init', '--quiet'], {
+    cwd: repoRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return commitAllScenarioSourceFiles(repoRoot, 'scenario source fixture');
+}
+
+test('scenario source binding compares browser responses with immutable approved-commit blobs', async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'stephanos-scenario-source-binding-'));
   const files = {
     'apps/music-tile/index.html': '<!doctype html><script type="module" src="./main.js"></script>',
@@ -512,6 +616,7 @@ test('scenario source binding compares browser responses with the clean checkout
     mkdirSync(join(absolutePath, '..'), { recursive: true });
     writeFileSync(absolutePath, contents);
   }
+  const expectedHead = commitScenarioSourceFixture(repoRoot);
   const origin = 'http://127.0.0.1:4173';
   const canonical = await collectScenarioSourceResponseBinding(
     Object.entries(files).map(([path, contents]) => (
@@ -520,24 +625,61 @@ test('scenario source binding compares browser responses with the clean checkout
     {
       scenarioUrl: `${origin}/apps/music-tile/index.html`,
       repoRoot,
+      expectedHead,
     },
   );
   assert.equal(canonical.exact, true);
+  assert.equal(canonical.sourceHead, expectedHead);
+  assert.equal(canonical.responseBinding, 'playwright-scenario-source-responses-git-blob-v2');
   assert.equal(canonical.fileCount, 3);
   assert.deepEqual(canonical.paths, Object.keys(files).sort());
+  assert.equal(canonical.entries.every((entry) => /^[0-9a-f]{40}$/.test(entry.gitBlob)), true);
+
+  const transientMain = 'x'.repeat(Buffer.byteLength(files['apps/music-tile/main.js']));
+  writeFileSync(join(repoRoot, 'apps', 'music-tile', 'main.js'), transientMain);
+  const committedBytesDespiteDirtyWorktree = await collectScenarioSourceResponseBinding(
+    Object.entries(files).map(([path, contents]) => (
+      playwrightResponse(`${origin}/${path}`, contents)
+    )),
+    {
+      scenarioUrl: `${origin}/apps/music-tile/index.html`,
+      repoRoot,
+      expectedHead,
+    },
+  );
+  assert.equal(committedBytesDespiteDirtyWorktree.exact, true);
 
   const modified = await collectScenarioSourceResponseBinding([
     playwrightResponse(`${origin}/apps/music-tile/index.html`, files['apps/music-tile/index.html']),
     playwrightResponse(
       `${origin}/apps/music-tile/main.js`,
-      'x'.repeat(Buffer.byteLength(files['apps/music-tile/main.js'])),
+      transientMain,
     ),
   ], {
     scenarioUrl: `${origin}/apps/music-tile/index.html`,
     repoRoot,
+    expectedHead,
   });
   assert.equal(modified.exact, false);
   assert.equal(modified.blocker, 'BROWSER_SCENARIO_SOURCE_RESPONSE_MISMATCH');
+
+  const replacementHead = commitAllScenarioSourceFiles(repoRoot, 'transient replacement source');
+  execFileSync('git', ['replace', expectedHead, replacementHead], {
+    cwd: repoRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const replaceRefIgnored = await collectScenarioSourceResponseBinding(
+    Object.entries(files).map(([path, contents]) => (
+      playwrightResponse(`${origin}/${path}`, contents)
+    )),
+    {
+      scenarioUrl: `${origin}/apps/music-tile/index.html`,
+      repoRoot,
+      expectedHead,
+    },
+  );
+  assert.equal(replaceRefIgnored.exact, true);
+  assert.equal(replaceRefIgnored.sourceHead, expectedHead);
 
   const oversized = await collectScenarioSourceResponseBinding([
     playwrightResponse(
@@ -549,6 +691,7 @@ test('scenario source binding compares browser responses with the clean checkout
   ], {
     scenarioUrl: `${origin}/apps/music-tile/index.html`,
     repoRoot,
+    expectedHead,
   });
   assert.equal(oversized.exact, false);
   assert.equal(oversized.blocker, 'BROWSER_SCENARIO_SOURCE_RESPONSE_SIZE_INVALID');
@@ -563,9 +706,53 @@ test('scenario source binding compares browser responses with the clean checkout
   ], {
     scenarioUrl: `${origin}/apps/music-tile/index.html`,
     repoRoot,
+    expectedHead,
   });
   assert.equal(missingLength.exact, false);
   assert.equal(missingLength.blocker, 'BROWSER_SCENARIO_SOURCE_RESPONSE_LENGTH_MISSING');
+
+  const totalFixtureBytes = Object.values(files)
+    .reduce((sum, contents) => sum + Buffer.byteLength(contents), 0);
+  const duplicate = await collectScenarioSourceResponseBinding([
+    ...Object.entries(files).map(([path, contents]) => (
+      playwrightResponse(`${origin}/${path}`, contents)
+    )),
+    playwrightResponse(`${origin}/apps/music-tile/main.js`, files['apps/music-tile/main.js']),
+  ], {
+    scenarioUrl: `${origin}/apps/music-tile/index.html`,
+    repoRoot,
+    expectedHead,
+    maxFiles: Object.keys(files).length,
+    maxTotalBytes: totalFixtureBytes,
+  });
+  assert.equal(duplicate.exact, false);
+  assert.equal(duplicate.blocker, 'BROWSER_SCENARIO_SOURCE_RESPONSE_DUPLICATE');
+
+  const missingApprovedHead = await collectScenarioSourceResponseBinding(
+    Object.entries(files).map(([path, contents]) => (
+      playwrightResponse(`${origin}/${path}`, contents)
+    )),
+    {
+      scenarioUrl: `${origin}/apps/music-tile/index.html`,
+      repoRoot,
+    },
+  );
+  assert.equal(missingApprovedHead.exact, false);
+  assert.equal(missingApprovedHead.blocker, 'BROWSER_SCENARIO_SOURCE_HEAD_INVALID');
+
+  const invalidLimits = await collectScenarioSourceResponseBinding(
+    Object.entries(files).map(([path, contents]) => (
+      playwrightResponse(`${origin}/${path}`, contents)
+    )),
+    {
+      scenarioUrl: `${origin}/apps/music-tile/index.html`,
+      repoRoot,
+      expectedHead,
+      maxFiles: Number.NaN,
+    },
+  );
+  assert.equal(invalidLimits.exact, false);
+  assert.equal(invalidLimits.blocker, 'BROWSER_SCENARIO_SOURCE_LIMIT_INVALID');
 });
 
 test('exact dist proof hashes the Playwright navigation and resource responses, not a second client', async () => {

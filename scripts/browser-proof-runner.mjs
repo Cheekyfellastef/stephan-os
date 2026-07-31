@@ -5,7 +5,8 @@ import {
   realpathSync,
   writeFileSync,
 } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import {
@@ -24,8 +25,9 @@ const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
 const MUSIC_RATING_PRESERVES_PLAYBACK = 'MUSIC_RATING_PRESERVES_PLAYBACK';
 const ALLOWED_PROOF_SCENARIOS = new Set([MUSIC_RATING_PRESERVES_PLAYBACK]);
-const MUSIC_RATING_SCENARIO_EVIDENCE_SCHEMA = 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v1';
+const MUSIC_RATING_SCENARIO_EVIDENCE_SCHEMA = 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v2';
 const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
+const SCENARIO_SOURCE_RESPONSE_BINDING = 'playwright-scenario-source-responses-git-blob-v2';
 const MUSIC_TILE_STATE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const MUSIC_TILE_SCENARIO_PATH = '/apps/music-tile/index.html';
 const MUSIC_TILE_SCENARIO_TRACK_ID = 'anyma-pictures-of-you';
@@ -157,6 +159,20 @@ export function parseBrowserProofArguments(argv = []) {
       machineJson,
     };
   }
+  if (proofScenario && !expectedHead) {
+    return {
+      ok: false,
+      url,
+      expectedHead,
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+      expectedDistManifestPath,
+      proofScenario,
+      blocker: 'EXPECTED_HEAD_REQUIRED_FOR_PROOF_SCENARIO',
+      writeArtifacts,
+      machineJson,
+    };
+  }
   return {
     ok: true,
     url,
@@ -170,7 +186,9 @@ export function parseBrowserProofArguments(argv = []) {
   };
 }
 
-export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = {}) {
+export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = {}, {
+  expectedHead = '',
+} = {}) {
   const blocking = [];
   const listening = evidence?.listeningDeckIframe || {};
   const discovery = evidence?.discoveryIframe || {};
@@ -250,8 +268,18 @@ export function evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence = 
     || !Array.isArray(sourceBinding.paths)
     || !sourceBinding.paths.includes('apps/music-tile/index.html')
     || !sourceBinding.paths.includes('apps/music-tile/main.js')
+    || sourceBinding.responseBinding !== SCENARIO_SOURCE_RESPONSE_BINDING
+    || !EXACT_GIT_HEAD.test(String(sourceBinding.sourceHead || '').trim().toLowerCase())
   ) {
     blocking.push(sourceBinding.blocker || 'BROWSER_SCENARIO_SOURCE_RESPONSE_MISMATCH');
+  }
+  const normalizedExpectedHead = String(expectedHead || '').trim().toLowerCase();
+  if (!EXACT_GIT_HEAD.test(normalizedExpectedHead)) {
+    blocking.push('BROWSER_SCENARIO_SOURCE_HEAD_INVALID');
+  } else if (
+    String(sourceBinding.sourceHead || '').trim().toLowerCase() !== normalizedExpectedHead
+  ) {
+    blocking.push('BROWSER_SCENARIO_SOURCE_HEAD_MISMATCH');
   }
   if (!ratingInteractionObserved) blocking.push('BROWSER_SCENARIO_RATING_INTERACTION_MISSING');
   if (!listeningDeckIframeIdentityPreserved) blocking.push('BROWSER_SCENARIO_LISTENING_IFRAME_REPLACED');
@@ -348,7 +376,10 @@ export function evaluateBrowserProofResult(result = {}, {
       blocking.push('BROWSER_PROOF_SCENARIO_INVALID');
       scenarioEvidenceAccepted = false;
     } else if (normalizedProofScenario === MUSIC_RATING_PRESERVES_PLAYBACK) {
-      scenarioEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(result.scenarioEvidence);
+      scenarioEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+        result.scenarioEvidence,
+        { expectedHead: normalizedExpectedHead },
+      );
       scenarioEvidenceAccepted = scenarioEvaluation.accepted;
       blocking.push(...scenarioEvaluation.blocking);
     }
@@ -964,9 +995,149 @@ function scenarioSourcePathFromUrl(value, expectedOrigin) {
   return relativePath;
 }
 
-function pathInsideRoot(rootPath, candidatePath) {
-  const rel = relative(rootPath, candidatePath);
-  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+export function createScenarioSourceGitEnvironment(
+  environment = process.env,
+  {
+    platform = process.platform,
+  } = {},
+) {
+  const gitEnvironment = { ...environment };
+  for (const key of Object.keys(gitEnvironment)) {
+    if (key.toUpperCase().startsWith('GIT_')) delete gitEnvironment[key];
+  }
+  Object.assign(gitEnvironment, {
+    GIT_CONFIG_GLOBAL: platform === 'win32' ? 'NUL' : '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_NO_LAZY_FETCH: '1',
+    GIT_NO_REPLACE_OBJECTS: '1',
+    GIT_OPTIONAL_LOCKS: '0',
+    GIT_TERMINAL_PROMPT: '0',
+  });
+  return Object.freeze(gitEnvironment);
+}
+
+function scenarioSourceGitCapture(
+  repoRoot,
+  args,
+  {
+    encoding = 'utf8',
+    maxBuffer = 8 * 1024,
+    blocker = 'BROWSER_SCENARIO_SOURCE_COMMIT_UNAVAILABLE',
+  } = {},
+) {
+  const gitEnvironment = createScenarioSourceGitEnvironment();
+  let result;
+  try {
+    result = spawnSync(process.platform === 'win32' ? 'git.exe' : 'git', [
+      '--no-replace-objects',
+      ...args,
+    ], {
+      cwd: repoRoot,
+      encoding,
+      env: gitEnvironment,
+      maxBuffer,
+      shell: false,
+      windowsHide: true,
+      timeout: 15_000,
+    });
+  } catch {
+    throw servedDistError(blocker);
+  }
+  if (
+    result?.error
+    || result?.signal
+    || result?.status !== 0
+    || result?.stdout == null
+  ) {
+    throw servedDistError(blocker);
+  }
+  return result.stdout;
+}
+
+function verifyScenarioSourceCommit(repoRoot, expectedHead) {
+  const normalizedExpectedHead = String(expectedHead || '').trim().toLowerCase();
+  if (!EXACT_GIT_HEAD.test(normalizedExpectedHead)) {
+    throw servedDistError('BROWSER_SCENARIO_SOURCE_HEAD_INVALID');
+  }
+  const resolvedHead = String(scenarioSourceGitCapture(
+    repoRoot,
+    ['rev-parse', '--verify', `${normalizedExpectedHead}^{commit}`],
+  )).trim().toLowerCase();
+  if (resolvedHead !== normalizedExpectedHead) {
+    throw servedDistError('BROWSER_SCENARIO_SOURCE_COMMIT_UNAVAILABLE');
+  }
+  return normalizedExpectedHead;
+}
+
+function readScenarioSourceCommitBlob(
+  repoRoot,
+  expectedHead,
+  relativePath,
+  {
+    maxFileBytes = STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES,
+  } = {},
+) {
+  const treeOutput = scenarioSourceGitCapture(
+    repoRoot,
+    ['ls-tree', '-z', '--full-tree', expectedHead, '--', `:(literal)${relativePath}`],
+    {
+      encoding: null,
+      maxBuffer: 8 * 1024,
+      blocker: 'BROWSER_SCENARIO_SOURCE_BLOB_INVALID',
+    },
+  );
+  const treeRecords = Buffer.from(treeOutput)
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean);
+  if (treeRecords.length !== 1) {
+    throw servedDistError('BROWSER_SCENARIO_SOURCE_BLOB_INVALID');
+  }
+  const separatorIndex = treeRecords[0].indexOf('\t');
+  const metadata = separatorIndex >= 0 ? treeRecords[0].slice(0, separatorIndex) : '';
+  const entryPath = separatorIndex >= 0 ? treeRecords[0].slice(separatorIndex + 1) : '';
+  const [mode, type, blobSha, ...extra] = metadata.split(' ');
+  if (
+    extra.length > 0
+    || !['100644', '100755'].includes(mode)
+    || type !== 'blob'
+    || !EXACT_GIT_HEAD.test(blobSha)
+    || entryPath !== relativePath
+  ) {
+    throw servedDistError('BROWSER_SCENARIO_SOURCE_BLOB_INVALID');
+  }
+  const sizeText = String(scenarioSourceGitCapture(
+    repoRoot,
+    ['cat-file', '-s', blobSha],
+    {
+      maxBuffer: 128,
+      blocker: 'BROWSER_SCENARIO_SOURCE_BLOB_INVALID',
+    },
+  )).trim();
+  if (!/^(?:0|[1-9]\d*)$/.test(sizeText)) {
+    throw servedDistError('BROWSER_SCENARIO_SOURCE_BLOB_INVALID');
+  }
+  const size = Number(sizeText);
+  if (!Number.isSafeInteger(size) || size > maxFileBytes) {
+    throw servedDistError('BROWSER_SCENARIO_SOURCE_FILE_TOO_LARGE');
+  }
+  const bytes = Buffer.from(scenarioSourceGitCapture(
+    repoRoot,
+    ['cat-file', 'blob', blobSha],
+    {
+      encoding: null,
+      maxBuffer: size + 1,
+      blocker: 'BROWSER_SCENARIO_SOURCE_BLOB_INVALID',
+    },
+  ));
+  const canonicalBlobSha = createHash('sha1')
+    .update(Buffer.from(`blob ${size}\0`))
+    .update(bytes)
+    .digest('hex');
+  if (bytes.length !== size || canonicalBlobSha !== blobSha) {
+    throw servedDistError('BROWSER_SCENARIO_SOURCE_BLOB_INVALID');
+  }
+  return Object.freeze({ bytes, blobSha });
 }
 
 export async function collectScenarioSourceResponseBinding(
@@ -974,18 +1145,31 @@ export async function collectScenarioSourceResponseBinding(
   {
     scenarioUrl,
     repoRoot = process.cwd(),
+    expectedHead = '',
     maxFiles = STEPHANOS_DIST_MANIFEST_MAX_FILES,
     maxFileBytes = STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES,
     maxTotalBytes = STEPHANOS_DIST_MANIFEST_MAX_TOTAL_BYTES,
   } = {},
 ) {
+  let sourceHead = '';
   try {
+    if (
+      !Number.isSafeInteger(maxFiles)
+      || maxFiles < 1
+      || !Number.isSafeInteger(maxFileBytes)
+      || maxFileBytes < 1
+      || !Number.isSafeInteger(maxTotalBytes)
+      || maxTotalBytes < 1
+    ) {
+      throw servedDistError('BROWSER_SCENARIO_SOURCE_LIMIT_INVALID');
+    }
     const expectedOrigin = new URL(String(scenarioUrl || '')).origin;
     const repoInfo = lstatSync(repoRoot);
     if (repoInfo.isSymbolicLink() || !repoInfo.isDirectory()) {
       throw servedDistError('BROWSER_SCENARIO_SOURCE_ROOT_INVALID');
     }
     const realRepoRoot = realpathSync(repoRoot);
+    sourceHead = verifyScenarioSourceCommit(realRepoRoot, expectedHead);
     const responseGroups = new Map();
     for (const response of capturedResponses) {
       const relativePath = scenarioSourcePathFromUrl(responseUrl(response), expectedOrigin);
@@ -993,9 +1177,10 @@ export async function collectScenarioSourceResponseBinding(
       if (responseStatus(response) !== 200) {
         throw servedDistError('BROWSER_SCENARIO_SOURCE_RESPONSE_MISSING');
       }
-      const group = responseGroups.get(relativePath) || [];
-      group.push(response);
-      responseGroups.set(relativePath, group);
+      if (responseGroups.has(relativePath)) {
+        throw servedDistError('BROWSER_SCENARIO_SOURCE_RESPONSE_DUPLICATE');
+      }
+      responseGroups.set(relativePath, [response]);
     }
     if (
       responseGroups.size < 2
@@ -1008,16 +1193,12 @@ export async function collectScenarioSourceResponseBinding(
     let totalBytes = 0;
     const entries = [];
     for (const relativePath of [...responseGroups.keys()].sort()) {
-      const absolutePath = resolve(repoRoot, ...relativePath.split('/'));
-      const info = lstatSync(absolutePath);
-      if (info.isSymbolicLink() || !info.isFile() || info.size > maxFileBytes) {
-        throw servedDistError('BROWSER_SCENARIO_SOURCE_FILE_INVALID');
-      }
-      const realPath = realpathSync(absolutePath);
-      if (!pathInsideRoot(realRepoRoot, realPath)) {
-        throw servedDistError('BROWSER_SCENARIO_SOURCE_PATH_ESCAPE');
-      }
-      const expectedBytes = readFileSync(realPath);
+      const { bytes: expectedBytes, blobSha } = readScenarioSourceCommitBlob(
+        realRepoRoot,
+        sourceHead,
+        relativePath,
+        { maxFileBytes },
+      );
       if (expectedBytes.length > maxFileBytes || totalBytes + expectedBytes.length > maxTotalBytes) {
         throw servedDistError('BROWSER_SCENARIO_SOURCE_FILE_TOO_LARGE');
       }
@@ -1058,28 +1239,31 @@ export async function collectScenarioSourceResponseBinding(
         path: relativePath,
         size: expectedBytes.length,
         sha256: expectedSha,
+        gitBlob: blobSha,
       }));
     }
     return Object.freeze({
       exact: true,
       blocker: '',
+      sourceHead,
       fileCount: entries.length,
       totalBytes,
       fingerprint: computeStephanosDistManifestFingerprint(entries),
       paths: Object.freeze(entries.map((entry) => entry.path)),
       entries: Object.freeze(entries),
-      responseBinding: 'playwright-scenario-source-responses-v1',
+      responseBinding: SCENARIO_SOURCE_RESPONSE_BINDING,
     });
   } catch (error) {
     return Object.freeze({
       exact: false,
       blocker: String(error?.code || error?.message || 'BROWSER_SCENARIO_SOURCE_RESPONSE_MISMATCH'),
+      sourceHead,
       fileCount: 0,
       totalBytes: 0,
       fingerprint: '',
       paths: Object.freeze([]),
       entries: Object.freeze([]),
-      responseBinding: 'playwright-scenario-source-responses-v1',
+      responseBinding: SCENARIO_SOURCE_RESPONSE_BINDING,
     });
   }
 }
@@ -1158,6 +1342,7 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
   consoleErrors = [],
   pageErrors = [],
   repoRoot = process.cwd(),
+  expectedHead = '',
 } = {}) {
   const scenarioUrl = new URL(MUSIC_TILE_SCENARIO_PATH, runtimeUrl).href;
   const captureStart = capturedResponses.length;
@@ -1509,7 +1694,7 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     await discoveryHandleValue.dispose();
     sourceResponseBinding = await collectScenarioSourceResponseBinding(
       capturedResponses.slice(captureStart),
-      { scenarioUrl, repoRoot },
+      { scenarioUrl, repoRoot, expectedHead },
     );
     const evidence = {
       schemaVersion: MUSIC_RATING_SCENARIO_EVIDENCE_SCHEMA,
@@ -1525,7 +1710,10 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
       pageErrors: [...pageErrors],
       blockers: [],
     };
-    const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(evidence);
+    const evaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
+      evidence,
+      { expectedHead },
+    );
     return Object.freeze({
       ...evidence,
       blockers: [...evaluation.blocking],
@@ -1537,7 +1725,7 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
     if (!sourceResponseBinding) {
       sourceResponseBinding = await collectScenarioSourceResponseBinding(
         capturedResponses.slice(captureStart),
-        { scenarioUrl, repoRoot },
+        { scenarioUrl, repoRoot, expectedHead },
       );
     }
     return failedMusicRatingScenarioEvidence({
@@ -1556,6 +1744,7 @@ export async function collectMusicRatingPreservesPlaybackEvidence(page, runtimeU
 
 async function collectWithBrowser(url = DEFAULT_URL, {
   writeArtifacts = true,
+  expectedHead = '',
   expectedDistFingerprint = '',
   expectedDistManifestEntries = [],
   proofScenario = '',
@@ -1645,6 +1834,7 @@ async function collectWithBrowser(url = DEFAULT_URL, {
           consoleErrors: scenarioConsoleErrors,
           pageErrors: scenarioPageErrors,
           repoRoot: process.cwd(),
+          expectedHead,
         });
       } finally {
         await scenarioPage.close();
@@ -1754,6 +1944,7 @@ async function main() {
   try {
     const result = await collectWithBrowser(parsed.url, {
       writeArtifacts: parsed.writeArtifacts,
+      expectedHead: parsed.expectedHead,
       expectedDistFingerprint: parsed.expectedDistFingerprint,
       expectedDistManifestEntries: expectedDistManifest.entries,
       proofScenario: parsed.proofScenario,

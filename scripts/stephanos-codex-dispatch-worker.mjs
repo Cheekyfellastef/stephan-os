@@ -529,6 +529,7 @@ export function validateBrowserProofVerdict(lastMessage, task = {}, browserRunti
   }
   const scenarioEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
     browserRuntimeProof.scenarioEvidence,
+    { expectedHead },
   );
   if (!scenarioEvaluation.accepted) {
     return Object.freeze({
@@ -672,7 +673,7 @@ export function runBrowserRuntimeExactHeadProof(task, {
   const payloadProofScenario = String(payload?.proofScenario || '').trim();
   const scenarioEvidence = payload?.scenarioEvidence || null;
   const scenarioEvaluation = proofScenario
-    ? evaluateMusicRatingPreservesPlaybackScenarioEvidence(scenarioEvidence)
+    ? evaluateMusicRatingPreservesPlaybackScenarioEvidence(scenarioEvidence, { expectedHead })
     : null;
   if (runtimeSourceHead && runtimeSourceHead !== expectedHead) {
     return Object.freeze({
