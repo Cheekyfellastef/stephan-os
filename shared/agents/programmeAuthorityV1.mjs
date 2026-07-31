@@ -808,7 +808,8 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       blockers.push(`goal-record-${index}-not-canonical-goal`);
       continue;
     }
-    const goalIdIssue = number(text(record.goalId).match(/[1-9]\d*/)?.[0]);
+    const canonicalGoalId = /^goal-([1-9]\d*)$/i.exec(text(record.goalId));
+    const goalIdIssue = number(canonicalGoalId?.[1]);
     const issueAliases = canonicalSuppliedAliases(
       record,
       ['issueNumber', 'issue', 'relatedIssue'],
