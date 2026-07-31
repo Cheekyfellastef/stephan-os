@@ -165,7 +165,9 @@ function mergeEvidence(github = {}, expected = {}) {
   if (expected.prNumber && prNumber !== expected.prNumber) blockers.push('github-pr-number-mismatch');
   if (expected.headSha && headSha !== expected.headSha) blockers.push('github-head-mismatch');
   if (merged && (!TERMINAL_PR_STATES.has(prState) || mergedAtMs === null || !mergeCommitSha)) blockers.push('github-merge-evidence-incomplete');
-  if (!merged && (mergedAt || mergeCommitSha || prState === 'MERGED')) blockers.push('github-merge-evidence-contradictory');
+  // GitHub may expose a provisional/test merge commit SHA while an open PR is
+  // still unmerged. Only affirmative merge state makes that SHA authoritative.
+  if (!merged && (mergedAt || prState === 'MERGED')) blockers.push('github-merge-evidence-contradictory');
   if (prState === 'OPEN' && merged) blockers.push('github-open-pr-cannot-be-merged');
   const affirmativelyMerged = blockers.length === 0
     && merged
@@ -361,6 +363,7 @@ export function createSourceMutationLeaseReleaseRecord(lease = {}, input = {}) {
     headSha,
     ownerId: text(lease.ownerId),
     acquiredAtUtc: text(lease.acquiredAtUtc),
+    renewedAtUtc: text(lease.renewedAtUtc, lease.acquiredAtUtc),
     releasedAtUtc: text(input.timestampUtc),
     releaseOnlyExactLease: true,
     executionReceiptLeaseKeyIsCorrelationOnly: true,
