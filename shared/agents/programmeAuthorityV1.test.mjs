@@ -157,6 +157,21 @@ test('conflicting encoded and explicit lane identities fail closed', () => {
   assert.ok(projection.blockers.includes('pr-identity-conflict'));
 });
 
+test('malformed explicit lane aliases fail closed instead of disappearing', () => {
+  for (const [overrides, blocker] of [
+    [{ issueNumber: 'not-an-issue' }, 'issue-explicit-identity-invalid'],
+    [{ issue: 'not-an-issue' }, 'issue-explicit-identity-invalid'],
+    [{ prNumber: 'not-a-pr' }, 'pr-explicit-identity-invalid'],
+    [{ pr: 'not-a-pr' }, 'pr-explicit-identity-invalid'],
+    [{ headSha: 'not-a-sha' }, 'head-explicit-identity-invalid'],
+  ]) {
+    const projection = lane(overrides);
+    assert.equal(projection.valid, false);
+    assert.equal(projection.active, false);
+    assert.ok(projection.blockers.includes(blocker));
+  }
+});
+
 test('closed-but-unmerged and contradictory merge evidence never become terminal', () => {
   const closed = lane({
     github: github({ prState: 'closed' }),
@@ -219,6 +234,19 @@ test('source mutation lease validates, renews only the exact live owner, and nev
   assert.equal(validation.active, true);
   assert.equal(record.mergeAuthority, false);
   assert.equal(record.leaseSeizureAllowed, false);
+
+  for (const [field, value] of [
+    ['headSha', 'bad'],
+    ['ownerId', 123],
+    ['issueNumber', 'bad'],
+  ]) {
+    const malformedExpected = validateSourceMutationLease(record, {
+      nowUtc: NOW,
+      expected: { [field]: value },
+    });
+    assert.equal(malformedExpected.valid, false);
+    assert.ok(malformedExpected.errors.includes(`${field}-expected-invalid`));
+  }
 
   const wrongOwner = renewSourceMutationLeaseRecord(record, {
     ...record,
