@@ -56,6 +56,8 @@ function goalRecord(overrides = {}) {
     participantId: 'codex',
     timestampUtc: NOW,
     issueNumber: 1497,
+    repository: REPOSITORY,
+    branch: BRANCH,
     title: 'Durable controller',
     status: 'READY',
     prerequisites: [],
@@ -416,6 +418,39 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(goals.goals[0].state, 'ACTIVE');
   assert.equal(goals.goals[0].activePr, 1617);
   assert.equal(goals.goals[0].headSha, HEAD);
+
+  const approvalReceipt = { issue: 1497, activePr: 1617, headSha: HEAD };
+  const implementedGoals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [goalRecord({
+      state: 'IMPLEMENTED',
+      activePr: 1617,
+      headSha: HEAD,
+      proofState: 'PASS',
+      operatorApprovalReceipt: approvalReceipt,
+      evidenceAt: NOW,
+    })],
+  });
+  assert.deepEqual(implementedGoals.goals[0].operatorApprovalReceipt, approvalReceipt);
+  const implementedScheduler = buildMissionScheduler({
+    now: NOW,
+    goals: implementedGoals.goals,
+    proofReceipts: [{
+      issue: 1497,
+      activePr: 1617,
+      headSha: HEAD,
+      repository: REPOSITORY,
+      branch: BRANCH,
+    }],
+  });
+  assert.equal(implementedScheduler.portfolio[0].lifecycle, 'MERGE_READY');
+
+  const activeApprovalOverlay = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    lane: lane(),
+    goalRecords: [goalRecord({ operatorApprovalReceipt: approvalReceipt })],
+  });
+  assert.deepEqual(activeApprovalOverlay.goals[0].operatorApprovalReceipt, approvalReceipt);
 
   for (const evidenceAt of ['2026-07-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z', 'malformed']) {
     const preservedEvidence = buildSchedulerGoalsFromProgrammeSources({
