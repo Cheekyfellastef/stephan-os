@@ -317,6 +317,19 @@ function reconcileRepairIntentExecution(intent, snapshot) {
     };
   }
   const ordered = [...classification.validReceipts].sort((a, b) => a.sequence - b.sequence);
+  const recordedRoot = intent.queuedExecutionReceipt;
+  const observedRoot = ordered[0] ?? null;
+  const rootMatchesIntent = observedRoot
+    && Object.keys(observedRoot).length === Object.keys(recordedRoot).length
+    && Object.entries(recordedRoot).every(([key, value]) => (
+      JSON.stringify(observedRoot[key]) === JSON.stringify(value)
+    ));
+  if (!rootMatchesIntent) {
+    return {
+      valid:false,
+      reason:'Canonical execution history does not descend from the queued receipt recorded in the repair intent.',
+    };
+  }
   const latest = ordered.at(-1) ?? null;
   return {
     valid:true,

@@ -596,6 +596,46 @@ test('terminal execution evidence closes a recorded intent without replaying dis
   );
 });
 
+test('terminal reconciliation rejects a chain spliced onto another queued receipt', async () => {
+  const first = harness([snapshot()], {
+    dispatchRepair:async (repairOrder) => {
+      first.calls.dispatch.push(repairOrder);
+      return { accepted:false, reason:'worker unavailable' };
+    },
+    persistCycleReceipt:async (receipt) => {
+      first.calls.cycle.push(receipt);
+      return { ok:receipt.status !== 'blocked-dispatch-rejected' };
+    },
+  });
+  const lostCycleOutcome = await runGuardedContinuousRepairCycle(first.options);
+  const intent = lostCycleOutcome.history[0];
+  const recordedQueued = first.calls.execution[0];
+  const recordedFailed = first.calls.execution[1];
+  const splicedQueued = createExecutionReceipt({
+    ...recordedQueued,
+    receiptId:'spliced-queued-receipt',
+  });
+  const splicedFailed = createExecutionReceipt({
+    ...recordedFailed,
+    receiptId:'spliced-failed-receipt',
+    predecessorReceiptId:splicedQueued.receiptId,
+  });
+  const resumed = harness([snapshot({
+    activeRepairOrders:[intent.repairOrder],
+    receipts:[splicedQueued, splicedFailed],
+  })], {
+    attemptId:'attempt-2',
+    history:lostCycleOutcome.history,
+    maxRepairsPerHead:1,
+  });
+  const blocked = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(blocked.status, 'BLOCKED_EXECUTION_RECONCILIATION');
+  assert.equal(blocked.receipt.status, 'blocked-execution-reconciliation');
+  assert.match(blocked.receipt.reason, /does not descend from the queued receipt/);
+  assert.equal(resumed.calls.dispatch.length, 0);
+  assert.equal(resumed.calls.execution.length, 0);
+});
+
 test('verification intent preserves one idempotency key across receipt-store failure', async () => {
   const repairOrder = order();
   const state = snapshot({
