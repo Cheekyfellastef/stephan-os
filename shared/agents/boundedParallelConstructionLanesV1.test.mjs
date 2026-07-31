@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createConstructionLaneLease,
-  createReadyForIntegrationReceipt,
+  createBoundedParallelConstructionAuthority,
   evaluateConstructionLaneAdmission,
 } from './boundedParallelConstructionLanesV1.mjs';
 import { createVerifierResult } from './verificationHarness.mjs';
@@ -51,8 +50,7 @@ function inventory(overrides = {}) {
 
 function exactEvidence(evidenceKind, overrides = {}) {
   const ref = overrides.ref ?? `proof/${evidenceKind.toLowerCase()}-lane-1618.json`;
-  return {
-    ...createVerifierResult({
+  const result = createVerifierResult({
       checkId:`${evidenceKind.toLowerCase()}-lane-1618`,
       verifierType:evidenceKind === 'TEST' ? 'BuildVerifier' : 'ProofReferenceVerifier',
       status:'PASS',
@@ -61,12 +59,50 @@ function exactEvidence(evidenceKind, overrides = {}) {
       timestampUtc:'2026-07-29T14:45:00Z',
       finalVerdict:`CONSTRUCTION_${evidenceKind}_PASS`,
       proofRefs:[ref],
-    }),
+    });
+  return {
+    authenticated:true,
+    immutable:true,
     evidenceKind,
     ref,
     branch:'feat/whatsapp-merge-ready',
     headSha:SHA_B,
+    result,
     ...overrides,
+  };
+}
+
+function authorityHarness(options = {}) {
+  const evidence = new Map();
+  const reservedFingerprints = new Set();
+  const reserveCalls = [];
+  const api = createBoundedParallelConstructionAuthority({
+    nowMs:() => Date.parse(options.nowUtc ?? '2026-07-29T14:30:00Z'),
+    reserveConstructionLane:async (request) => {
+      reserveCalls.push(request);
+      if (typeof options.reserveConstructionLane === 'function') {
+        return options.reserveConstructionLane(request);
+      }
+      if (reservedFingerprints.has(request.expectedInventoryFingerprint)) {
+        return { accepted:false, reason:'CAPACITY_ALREADY_RESERVED' };
+      }
+      reservedFingerprints.add(request.expectedInventoryFingerprint);
+      return {
+        accepted:true,
+        reservationId:`reservation-${reserveCalls.length}`,
+        inventoryFingerprint:request.expectedInventoryFingerprint,
+      };
+    },
+    resolveVerifierEvidence:async ({ ref }) => evidence.get(ref) ?? null,
+  });
+  return {
+    api,
+    reserveCalls,
+    addEvidence(evidenceKind, overrides = {}) {
+      const record = exactEvidence(evidenceKind, overrides);
+      evidence.set(record.ref, record);
+      return record.ref;
+    },
   };
 }
 
@@ -178,6 +214,18 @@ test('malformed active inventory fails closed', () => {
   });
   assert.equal(missingIntegration.status, 'REJECTED');
   assert.deepEqual(missingIntegration.reasonCodes, ['INTEGRATION_LANE_INVENTORY_INVALID']);
+
+  const undefinedIntegration = evaluateConstructionLaneAdmission(candidate(), inventory({
+    integrationLane:undefined,
+  }));
+  assert.equal(undefinedIntegration.status, 'REJECTED');
+  assert.deepEqual(undefinedIntegration.reasonCodes, ['INTEGRATION_LANE_INVENTORY_INVALID']);
+
+  const sparseInventory = evaluateConstructionLaneAdmission(candidate(), inventory({
+    constructionLanes:new Array(1),
+  }));
+  assert.equal(sparseInventory.status, 'REJECTED');
+  assert.deepEqual(sparseInventory.reasonCodes, ['ACTIVE_LANE_INVENTORY_INVALID']);
 });
 
 test('candidate cannot request merge, deploy, approval, lease seizure or runtime mutation', () => {
@@ -190,16 +238,17 @@ test('candidate cannot request merge, deploy, approval, lease seizure or runtime
   assert.equal(evaluateConstructionLaneAdmission(candidate({ dependencies:'1617' }), inventory()).status, 'REJECTED');
 });
 
-test('construction lease preserves bounded authority', () => {
+test('construction lease preserves bounded authority through an atomic reservation', async () => {
+  const authority = authorityHarness();
   const currentInventory = inventory();
-  const admission = evaluateConstructionLaneAdmission(candidate(), currentInventory);
-  assert.throws(() => createConstructionLaneLease(admission, {
+  const admission = authority.api.evaluateAdmission(candidate(), currentInventory);
+  await assert.rejects(() => authority.api.issueLease(admission, {
     laneId:'lane-other',
     issuedAt:'2026-07-29T14:30:00Z',
     expiresAt:'2026-07-29T15:30:00Z',
     inventorySnapshot:currentInventory,
   }), /exactly match/);
-  const lease = createConstructionLaneLease(admission, {
+  const lease = await authority.api.issueLease(admission, {
     laneId:'lane-1618',
     issuedAt:'2026-07-29T14:30:00Z',
     expiresAt:'2026-07-29T15:30:00Z',
@@ -208,14 +257,15 @@ test('construction lease preserves bounded authority', () => {
   assert.equal(lease.mergeAuthority, false);
   assert.equal(lease.deploymentAuthority, false);
   assert.equal(lease.runtimeMutationAllowed, false);
+  assert.equal(lease.reservationId, 'reservation-1');
   assert.deepEqual(lease.ownedPaths, ['shared/notifications/whatsapp']);
-  assert.throws(() => createConstructionLaneLease(admission, {
+  await assert.rejects(() => authority.api.issueLease(admission, {
     laneId:'lane-1618',
     issuedAt:'2026-07-29T14:30:00Z',
     expiresAt:'2026-07-29T15:30:00Z',
     inventorySnapshot:currentInventory,
   }), /already been consumed/);
-  assert.throws(() => createConstructionLaneLease(structuredClone(admission), {
+  await assert.rejects(() => authority.api.issueLease(structuredClone(admission), {
     laneId:'lane-1618',
     issuedAt:'2026-07-29T14:30:00Z',
     expiresAt:'2026-07-29T15:30:00Z',
@@ -223,17 +273,17 @@ test('construction lease preserves bounded authority', () => {
   }), /returned by the evaluator/);
 
   const overlongInventory = inventory();
-  const overlongAdmission = evaluateConstructionLaneAdmission(candidate(), overlongInventory);
-  assert.throws(() => createConstructionLaneLease(overlongAdmission, {
+  const overlongAdmission = authority.api.evaluateAdmission(candidate(), overlongInventory);
+  await assert.rejects(() => authority.api.issueLease(overlongAdmission, {
     laneId:'lane-1618',
     issuedAt:'2026-07-29T14:30:00Z',
     expiresAt:'2026-07-31T14:30:00Z',
     inventorySnapshot:overlongInventory,
-  }), /valid increasing timestamps/);
+  }), /valid bounded timestamp/);
 
   const staleInventory = inventory();
-  const staleAdmission = evaluateConstructionLaneAdmission(candidate(), staleInventory);
-  assert.throws(() => createConstructionLaneLease(staleAdmission, {
+  const staleAdmission = authority.api.evaluateAdmission(candidate(), staleInventory);
+  await assert.rejects(() => authority.api.issueLease(staleAdmission, {
     laneId:'lane-1618',
     issuedAt:'2026-07-29T14:30:00Z',
     expiresAt:'2026-07-29T15:30:00Z',
@@ -243,14 +293,50 @@ test('construction lease preserves bounded authority', () => {
       })],
     }),
   }), /inventory is stale/);
+
+  const futureInventory = inventory();
+  const futureAdmission = authority.api.evaluateAdmission(candidate(), futureInventory);
+  await assert.rejects(() => authority.api.issueLease(futureAdmission, {
+    laneId:'lane-1618',
+    issuedAt:'2099-01-01T00:00:00Z',
+    expiresAt:'2099-01-01T01:00:00Z',
+    inventorySnapshot:futureInventory,
+  }), /trusted issuance clock/);
 });
 
-test('ready-for-integration receipt binds exact branch heads and records main drift', () => {
-  const receipt = createReadyForIntegrationReceipt(candidate(), {
+test('concurrent admissions cannot both reserve the same final capacity slot', async () => {
+  const authority = authorityHarness();
+  const currentInventory = inventory();
+  const first = authority.api.evaluateAdmission(candidate(), currentInventory, { maxLanes:1 });
+  const second = authority.api.evaluateAdmission(candidate({
+    id:'lane-1619',
+    goalId:'1619',
+    branch:'feat/another-isolated-lane',
+    ownership:{ paths:['isolated/other'], contracts:['isolated-other-v1'] },
+  }), currentInventory, { maxLanes:1 });
+  const options = (laneId) => ({
+    laneId,
+    issuedAt:'2026-07-29T14:30:00Z',
+    expiresAt:'2026-07-29T15:30:00Z',
+    inventorySnapshot:currentInventory,
+    maxLanes:1,
+  });
+  const results = await Promise.allSettled([
+    authority.api.issueLease(first, options('lane-1618')),
+    authority.api.issueLease(second, options('lane-1619')),
+  ]);
+  assert.equal(results.filter(({ status }) => status === 'fulfilled').length, 1);
+  assert.equal(results.filter(({ status }) => status === 'rejected').length, 1);
+  assert.equal(authority.reserveCalls.length, 2);
+});
+
+test('ready-for-integration receipt binds authenticated exact-head evidence and records main drift', async () => {
+  const authority = authorityHarness();
+  const receipt = await authority.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'2026-07-29T14:45:00Z',
-    testRefs:[exactEvidence('TEST')],
-    proofRefs:[exactEvidence('PROOF')],
+    testRefs:[authority.addEvidence('TEST')],
+    proofRefs:[authority.addEvidence('PROOF')],
   });
   assert.equal(receipt.status, 'READY_FOR_INTEGRATION');
   assert.equal(receipt.baseSha, SHA_A);
@@ -261,12 +347,13 @@ test('ready-for-integration receipt binds exact branch heads and records main dr
   assert.equal(receipt.mergeAuthority, false);
 });
 
-test('ready-for-integration receipt requires tests, proof and current main', () => {
-  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+test('ready-for-integration receipt requires tests, proof and current main', async () => {
+  const authority = authorityHarness();
+  await assert.rejects(() => authority.api.createReadyReceipt(candidate(), {
     observedAt:'2026-07-29T14:45:00Z',
     currentMainSha:SHA_C,
     testRefs:[],
-    proofRefs:[exactEvidence('PROOF')],
+    proofRefs:[authority.addEvidence('PROOF')],
   }), /non-empty/);
 });
 
@@ -320,37 +407,52 @@ test('unknown states, dot-segment overlap and malformed integration ownership fa
   assert.deepEqual(unsafeBranch.reasonCodes, ['CANDIDATE_CONTRACT_INVALID']);
 });
 
-test('ready-for-integration evidence is structured, exact-head bound and time-valid', () => {
-  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+test('ready-for-integration evidence is authenticated, exact-head bound and time-valid', async () => {
+  const wrongHead = authorityHarness();
+  await assert.rejects(() => wrongHead.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'2026-07-29T14:45:00Z',
-    testRefs:[exactEvidence('TEST', { headSha:SHA_A })],
-    proofRefs:[exactEvidence('PROOF')],
+    testRefs:[wrongHead.addEvidence('TEST', { headSha:SHA_A })],
+    proofRefs:[wrongHead.addEvidence('PROOF')],
   }), /exact head/);
-  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+  const badTimestamp = authorityHarness();
+  await assert.rejects(() => badTimestamp.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'2026-07-29T14:45:00Z',
-    testRefs:[exactEvidence('TEST', { timestampUtc:'not-a-time' })],
-    proofRefs:[exactEvidence('PROOF')],
+    testRefs:[badTimestamp.addEvidence('TEST', {
+      result:{ ...exactEvidence('TEST').result, timestampUtc:'not-a-time' },
+    })],
+    proofRefs:[badTimestamp.addEvidence('PROOF')],
   }), /exact head/);
-  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+  const invalidObserved = authorityHarness();
+  await assert.rejects(() => invalidObserved.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'not-a-time',
-    testRefs:[exactEvidence('TEST')],
-    proofRefs:[exactEvidence('PROOF')],
+    testRefs:[invalidObserved.addEvidence('TEST')],
+    proofRefs:[invalidObserved.addEvidence('PROOF')],
   }), /must be valid/);
-  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+  const invalidCalendar = authorityHarness();
+  await assert.rejects(() => invalidCalendar.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'2026-02-30T14:45:00Z',
-    testRefs:[exactEvidence('TEST')],
-    proofRefs:[exactEvidence('PROOF')],
+    testRefs:[invalidCalendar.addEvidence('TEST')],
+    proofRefs:[invalidCalendar.addEvidence('PROOF')],
   }), /must be valid/);
 
-  assert.throws(() => createReadyForIntegrationReceipt(candidate(), {
+  const forged = authorityHarness();
+  await assert.rejects(() => forged.api.createReadyReceipt(candidate(), {
     currentMainSha:SHA_C,
     observedAt:'2026-07-29T14:45:00Z',
     testRefs:[{ ref:'made-up', branch:'feat/whatsapp-merge-ready', headSha:SHA_B }],
-    proofRefs:[exactEvidence('PROOF')],
+    proofRefs:[forged.addEvidence('PROOF')],
+  }), /immutable evidence references/);
+
+  const unresolved = authorityHarness();
+  await assert.rejects(() => unresolved.api.createReadyReceipt(candidate(), {
+    currentMainSha:SHA_C,
+    observedAt:'2026-07-29T14:45:00Z',
+    testRefs:['proof/invented-pass.json'],
+    proofRefs:[unresolved.addEvidence('PROOF')],
   }), /exact head/);
 });
 
@@ -392,13 +494,14 @@ test('lane and integration identities cannot collide even with isolated ownershi
   assert.ok(integrationBranch.reasonCodes.includes('INTEGRATION_LANE_BRANCH_COLLISION'));
 });
 
-test('terminal lane outcomes cannot be converted into readiness receipts', () => {
+test('terminal lane outcomes cannot be converted into readiness receipts', async () => {
   for (const state of ['FAILED', 'CANCELLED', 'SUPERSEDED', 'BLOCKED']) {
-    assert.throws(() => createReadyForIntegrationReceipt(candidate({ state }), {
+    const authority = authorityHarness();
+    await assert.rejects(() => authority.api.createReadyReceipt(candidate({ state }), {
       currentMainSha:SHA_C,
       observedAt:'2026-07-29T14:45:00Z',
-      testRefs:[exactEvidence('TEST')],
-      proofRefs:[exactEvidence('PROOF')],
+      testRefs:[authority.addEvidence('TEST')],
+      proofRefs:[authority.addEvidence('PROOF')],
     }), /not eligible/);
   }
 });

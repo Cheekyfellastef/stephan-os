@@ -10,8 +10,14 @@ const INTEGRATION_STATES = new Set([...KNOWN_STATES, 'CI_REVIEW', 'INTEGRATING']
 const FORBIDDEN_CAPABILITIES = new Set(['MERGE', 'DEPLOY', 'APPROVE', 'LEASE_SEIZE', 'RUNTIME_MUTATE']);
 const DEFAULT_MAX_LANES = 4;
 const MAX_CONSTRUCTION_LEASE_MS = 24 * 60 * 60 * 1000;
+const MAX_ISSUANCE_CLOCK_SKEW_MS = 60 * 1000;
 const EXACT_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/i;
 const ADMITTED_DECISIONS = new WeakMap();
+
+function requiredFunction(value, name) {
+  if (typeof value !== 'function') throw new TypeError(`${name} must be a function`);
+  return value;
+}
 
 function text(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -24,6 +30,14 @@ function sha(value) {
 
 function array(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function denseArray(value) {
+  if (!Array.isArray(value)) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) return false;
+  }
+  return true;
 }
 
 function normalizedPath(value) {
@@ -141,7 +155,8 @@ function activeLane(lane) {
 }
 
 function normalizeIntegrationLane(candidate) {
-  if (candidate === undefined || candidate === null) return freeze({ invalid:false, lane:null });
+  if (candidate === null) return freeze({ invalid:false, lane:null });
+  if (candidate === undefined) return freeze({ invalid:true, lane:null });
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return freeze({ invalid:true, lane:null });
   const id = text(candidate.id);
   const branch = text(candidate.branch);
@@ -240,7 +255,7 @@ function inventoryFingerprint(lanes, integration, completedGoalIds, maxLanes) {
   });
 }
 
-export function evaluateConstructionLaneAdmission(candidateInput, snapshot = {}, options = {}) {
+function evaluateConstructionLaneAdmissionInternal(candidateInput, snapshot = {}, options = {}, authorityToken = null) {
   const candidate = normalizeLane(candidateInput);
   const optionRecord = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
   const maxLanesProvided = Object.hasOwn(optionRecord, 'maxLanes');
@@ -251,7 +266,7 @@ export function evaluateConstructionLaneAdmission(candidateInput, snapshot = {},
   const snapshotValid = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot);
   if (!snapshotValid) return decision('REJECTED', candidate, ['ACTIVE_LANE_INVENTORY_INVALID']);
   const laneInventoryProvided = Object.hasOwn(snapshot, 'constructionLanes');
-  if (!laneInventoryProvided || !Array.isArray(snapshot.constructionLanes)) {
+  if (!laneInventoryProvided || !denseArray(snapshot.constructionLanes)) {
     return decision('REJECTED', candidate, ['ACTIVE_LANE_INVENTORY_INVALID']);
   }
   if (!Object.hasOwn(snapshot, 'integrationLane')) {
@@ -286,9 +301,14 @@ export function evaluateConstructionLaneAdmission(candidateInput, snapshot = {},
   ADMITTED_DECISIONS.set(admitted, {
     candidate,
     consumed:false,
+    authorityToken,
     inventoryFingerprint:inventoryFingerprint(lanes, integration, snapshot.completedGoalIds, maxLanes),
   });
   return admitted;
+}
+
+export function evaluateConstructionLaneAdmission(candidateInput, snapshot = {}, options = {}) {
+  return evaluateConstructionLaneAdmissionInternal(candidateInput, snapshot, options);
 }
 
 function validAdmittedDecision(admission) {
@@ -325,13 +345,16 @@ function validAdmittedDecision(admission) {
   );
 }
 
-export function createConstructionLaneLease(admission, options = {}) {
+async function createConstructionLaneLease(admission, options, authorityToken, reserveConstructionLane, trustedNowMs) {
   if (!validAdmittedDecision(admission)) throw new TypeError('admission must be the validated ADMITTED decision returned by the evaluator');
   const reservation = ADMITTED_DECISIONS.get(admission);
+  if (!authorityToken || reservation.authorityToken !== authorityToken) {
+    throw new TypeError('admission must be issued by this bounded construction authority');
+  }
   if (reservation.consumed) throw new TypeError('admission reservation has already been consumed');
   const snapshot = options.inventorySnapshot;
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
-    || !Array.isArray(snapshot.constructionLanes)
+    || !denseArray(snapshot.constructionLanes)
     || !Object.hasOwn(snapshot, 'integrationLane')) {
     throw new TypeError('a current explicit inventory snapshot is required');
   }
@@ -340,6 +363,9 @@ export function createConstructionLaneLease(admission, options = {}) {
   if (!Number.isSafeInteger(maxLanes) || maxLanes <= 0) throw new TypeError('current inventory capacity must be valid');
   const currentLanes = snapshot.constructionLanes.map(normalizeLane);
   const currentIntegration = normalizeIntegrationLane(snapshot.integrationLane);
+  if (currentLanes.some(laneInvalid) || currentIntegration.invalid) {
+    throw new TypeError('current inventory must be canonical and complete');
+  }
   const currentFingerprint = inventoryFingerprint(
     currentLanes,
     currentIntegration,
@@ -355,14 +381,16 @@ export function createConstructionLaneLease(admission, options = {}) {
   const expiresAt = text(options.expiresAt);
   const issuedAtMs = timestamp(issuedAt);
   const expiresAtMs = timestamp(expiresAt);
+  const nowMs = Number(trustedNowMs());
   if (issuedAtMs === null
     || expiresAtMs === null
+    || !Number.isFinite(nowMs)
+    || Math.abs(issuedAtMs - nowMs) > MAX_ISSUANCE_CLOCK_SKEW_MS
     || expiresAtMs <= issuedAtMs
     || expiresAtMs - issuedAtMs > MAX_CONSTRUCTION_LEASE_MS) {
-    throw new TypeError('issuedAt and expiresAt must be valid increasing timestamps');
+    throw new TypeError('issuedAt must match the trusted issuance clock and expiresAt must be a valid bounded timestamp');
   }
-  reservation.consumed = true;
-  return freeze({
+  const lease = freeze({
     schema:'Stephanos Bounded Construction Lease V1',
     laneId,
     goalId:admission.goalId,
@@ -378,24 +406,52 @@ export function createConstructionLaneLease(admission, options = {}) {
     leaseSeizureAllowed:false,
     runtimeMutationAllowed:false,
   });
+  const reserved = await reserveConstructionLane({
+    lease,
+    expectedInventoryFingerprint:currentFingerprint,
+    expectedActiveLaneCount:currentLanes.filter(activeLane).length,
+    maxLanes,
+  });
+  const reservationId = text(reserved?.reservationId);
+  if (reserved?.accepted !== true
+    || !SAFE_ID.test(reservationId ?? '')
+    || reserved.inventoryFingerprint !== currentFingerprint) {
+    throw new TypeError('canonical construction-lane reservation was not atomically affirmed');
+  }
+  reservation.consumed = true;
+  return freeze({
+    ...lease,
+    reservationId,
+    inventoryFingerprint:currentFingerprint,
+  });
 }
 
-function exactHeadEvidenceRefs(values, lane, name, evidenceKind) {
+async function exactHeadEvidenceRefs(values, lane, name, evidenceKind, resolveVerifierEvidence) {
   if (!Array.isArray(values) || !values.length) throw new TypeError(`${name} must be a non-empty array`);
   const refs = [];
-  for (const value of values) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} must contain structured exact-head evidence`);
-    const ref = text(value.ref);
+  for (const suppliedRef of values) {
+    const ref = text(suppliedRef);
+    if (!ref) throw new TypeError(`${name} must contain immutable evidence references`);
+    const resolved = await resolveVerifierEvidence({
+      ref,
+      evidenceKind,
+      branch:lane.branch,
+      headSha:lane.headSha,
+    });
+    const value = resolved?.result;
     const validation = validateVerifierResult(value);
-    if (!validation.valid
+    if (resolved?.authenticated !== true
+      || resolved?.immutable !== true
+      || resolved.ref !== ref
+      || !validation.valid
       || value.status !== 'PASS'
       || !text(value.finalVerdict)?.endsWith('_PASS')
-      || value.evidenceKind !== evidenceKind
+      || resolved.evidenceKind !== evidenceKind
       || !ref
       || !array(value.proofRefs).includes(ref)
       || timestamp(value.timestampUtc) === null
-      || text(value.branch) !== lane.branch
-      || sha(value.headSha) !== lane.headSha) {
+      || text(resolved.branch) !== lane.branch
+      || sha(resolved.headSha) !== lane.headSha) {
       throw new TypeError(`${name} evidence must match the lane branch and exact head`);
     }
     refs.push(ref);
@@ -403,12 +459,12 @@ function exactHeadEvidenceRefs(values, lane, name, evidenceKind) {
   return unique(refs);
 }
 
-export function createReadyForIntegrationReceipt(laneInput, evidence = {}) {
+async function createReadyForIntegrationReceipt(laneInput, evidence, resolveVerifierEvidence) {
   const lane = normalizeLane(laneInput);
   if (laneInvalid(lane) || !lane.headSha) throw new TypeError('lane must include valid identity, ownership, baseSha and headSha');
   if (!ACTIVE_STATES.has(lane.state)) throw new TypeError('lane state is not eligible for readiness');
-  const testRefs = exactHeadEvidenceRefs(evidence.testRefs, lane, 'testRefs', 'TEST');
-  const proofRefs = exactHeadEvidenceRefs(evidence.proofRefs, lane, 'proofRefs', 'PROOF');
+  const testRefs = await exactHeadEvidenceRefs(evidence.testRefs, lane, 'testRefs', 'TEST', resolveVerifierEvidence);
+  const proofRefs = await exactHeadEvidenceRefs(evidence.proofRefs, lane, 'proofRefs', 'PROOF', resolveVerifierEvidence);
   const observedAt = text(evidence.observedAt);
   const observedAtMs = timestamp(observedAt);
   const currentMainSha = sha(evidence.currentMainSha);
@@ -436,5 +492,29 @@ export function createReadyForIntegrationReceipt(laneInput, evidence = {}) {
     mergeAuthority:false,
     deploymentAuthority:false,
     approvalAuthority:false,
+  });
+}
+
+export function createBoundedParallelConstructionAuthority(adapters = {}) {
+  const reserveConstructionLane = requiredFunction(adapters.reserveConstructionLane, 'reserveConstructionLane');
+  const resolveVerifierEvidence = requiredFunction(adapters.resolveVerifierEvidence, 'resolveVerifierEvidence');
+  const trustedNowMs = requiredFunction(adapters.nowMs, 'nowMs');
+  const authorityToken = freeze({});
+  return freeze({
+    evaluateAdmission(candidateInput, snapshot = {}, options = {}) {
+      return evaluateConstructionLaneAdmissionInternal(candidateInput, snapshot, options, authorityToken);
+    },
+    issueLease(admission, options = {}) {
+      return createConstructionLaneLease(
+        admission,
+        options,
+        authorityToken,
+        reserveConstructionLane,
+        trustedNowMs,
+      );
+    },
+    createReadyReceipt(laneInput, evidence = {}) {
+      return createReadyForIntegrationReceipt(laneInput, evidence, resolveVerifierEvidence);
+    },
   });
 }
