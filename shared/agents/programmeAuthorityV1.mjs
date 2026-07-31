@@ -188,10 +188,11 @@ function canonicalApprovalReceipt(receipt, expected = {}) {
       (value) => text(value).toLowerCase(),
     );
   const branch = canonicalSuppliedAliases(receipt, ['branch', 'headBranch'], text);
-  const identities = [issue, pr, head, repository, branch];
+  const identities = [pr, head, repository, branch];
+  const canonicalIssue = issue.supplied ? issue.value : number(expected.issueNumber);
   const canonical = {
     ...receipt,
-    issue: issue.value,
+    issue: canonicalIssue,
     activePr: pr.value,
     headSha: head.value,
     repository: repository.value,
@@ -203,7 +204,9 @@ function canonicalApprovalReceipt(receipt, expected = {}) {
     nowUtc: expected.nowUtc,
   });
   const valid = identities.every((identity) => identity.valid && identity.supplied)
-    && (!expected.issueNumber || issue.value === expected.issueNumber)
+    && issue.valid
+    && Boolean(canonicalIssue)
+    && (!expected.issueNumber || canonicalIssue === expected.issueNumber)
     && provenance.valid;
   return freeze({
     valid,
