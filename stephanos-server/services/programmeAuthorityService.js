@@ -1211,6 +1211,7 @@ function exactSourceMutationLeaseRelease(record, identity, nowUtc) {
   });
   const releasedAtMs = Date.parse(text(record?.releasedAtUtc));
   const acquiredAtMs = Date.parse(text(record?.acquiredAtUtc));
+  const renewedAtMs = Date.parse(text(record?.renewedAtUtc));
   const nowMs = Date.parse(text(nowUtc));
   return Boolean(
     record
@@ -1230,13 +1231,16 @@ function exactSourceMutationLeaseRelease(record, identity, nowUtc) {
     && record.headSha === identity.headSha
     && record.ownerId === identity.ownerId
     && (!text(identity.acquiredAtUtc) || record.acquiredAtUtc === identity.acquiredAtUtc)
+    && (!text(identity.renewedAtUtc) || record.renewedAtUtc === identity.renewedAtUtc)
     && record.releaseOnlyExactLease === true
     && record.executionReceiptLeaseKeyIsCorrelationOnly === true
     && record.mergeAuthority === false
     && Number.isFinite(releasedAtMs)
     && Number.isFinite(acquiredAtMs)
+    && Number.isFinite(renewedAtMs)
     && Number.isFinite(nowMs)
     && releasedAtMs >= acquiredAtMs
+    && releasedAtMs >= renewedAtMs
     && releasedAtMs - nowMs <= 60_000
   );
 }
