@@ -13,6 +13,7 @@ import {
   MONITOR_NOTIFICATION_POLICIES,
   createMonitorDefinition,
 } from './monitorMultiplexer.mjs';
+import { validateProtectedApprovalReceipt } from './operatorMergeApprovalGate.mjs';
 
 export const CANONICAL_IMPLEMENTATION_LANE_SCHEMA = 'stephanos.canonical-implementation-lane.v1';
 export const SOURCE_MUTATION_LEASE_SCHEMA = 'stephanos.source-mutation-lease.v1';
@@ -171,27 +172,42 @@ function canonicalSuppliedAliases(source, keys, normalizer, derivedValues = []) 
   });
 }
 
-function canonicalApprovalReceipt(receipt) {
+function canonicalApprovalReceipt(receipt, expected = {}) {
   if (receipt === null || receipt === undefined) {
     return freeze({ valid: true, value: null });
   }
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
     return freeze({ valid: false, value: null });
   }
-  const identities = [
-    canonicalSuppliedAliases(receipt, ['issue', 'issueNumber', 'relatedIssue'], number),
-    canonicalSuppliedAliases(receipt, ['activePr', 'pr', 'prNumber', 'relatedPr'], number),
-    canonicalSuppliedAliases(receipt, ['headSha', 'sourceHead'], sha),
-    canonicalSuppliedAliases(
+  const issue = canonicalSuppliedAliases(receipt, ['issue', 'issueNumber', 'relatedIssue'], number);
+  const pr = canonicalSuppliedAliases(receipt, ['activePr', 'pr', 'prNumber', 'relatedPr'], number);
+  const head = canonicalSuppliedAliases(receipt, ['headSha', 'sourceHead'], sha);
+  const repository = canonicalSuppliedAliases(
       receipt,
       ['repository', 'repositoryFullName'],
       (value) => text(value).toLowerCase(),
-    ),
-    canonicalSuppliedAliases(receipt, ['branch', 'headBranch'], text),
-  ];
+    );
+  const branch = canonicalSuppliedAliases(receipt, ['branch', 'headBranch'], text);
+  const identities = [issue, pr, head, repository, branch];
+  const canonical = {
+    ...receipt,
+    issue: issue.value,
+    activePr: pr.value,
+    headSha: head.value,
+    repository: repository.value,
+    branch: branch.value,
+    prNumber: pr.value,
+    sourceHead: head.value,
+  };
+  const provenance = validateProtectedApprovalReceipt(canonical, {
+    nowUtc: expected.nowUtc,
+  });
+  const valid = identities.every((identity) => identity.valid && identity.supplied)
+    && (!expected.issueNumber || issue.value === expected.issueNumber)
+    && provenance.valid;
   return freeze({
-    valid: identities.every((identity) => identity.valid && identity.supplied),
-    value: receipt,
+    valid,
+    value: valid ? canonical : null,
   });
 }
 
@@ -263,6 +279,8 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   const explicitIssue = number(input.issueNumber ?? input.issue);
   const explicitPr = number(input.prNumber ?? input.pr);
   const githubPr = number(input.github?.prNumber ?? input.github?.number);
+  const githubBranch = text(input.github?.headBranch);
+  const githubRepository = text(input.github?.repository);
   const leaseIssue = number(lease?.issueNumber);
   const leasePr = number(lease?.prNumber);
   const issueNumber = identityConflict('issue', [encoded.issueNumber, explicitIssue, leaseIssue], blockers);
@@ -272,14 +290,24 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     sha(lease?.headSha),
     sha(input.github?.headSha ?? input.github?.head?.sha),
   ], blockers);
-  const branch = identityConflict('branch', [text(input.branch), text(lease?.branch), text(input.github?.headBranch)], blockers);
-  const repository = identityConflict('repository', [text(input.repository), text(lease?.repository), text(input.github?.repository)], blockers);
+  const branch = identityConflict('branch', [text(input.branch), text(lease?.branch), githubBranch], blockers);
+  const repository = identityConflict('repository', [text(input.repository), text(lease?.repository), githubRepository], blockers);
   if (!laneId || !SAFE_ID.test(laneId)) blockers.push('lane-id-invalid');
   if (!issueNumber) blockers.push('lane-issue-invalid');
   if (!prNumber) blockers.push('lane-pr-invalid');
   if (!headSha) blockers.push('lane-head-invalid');
   if (!branch || !SAFE_BRANCH.test(branch) || branch.includes('..')) blockers.push('lane-branch-invalid');
   if (!repository || !SAFE_REPOSITORY.test(repository)) blockers.push('lane-repository-invalid');
+  if (!githubBranch || !SAFE_BRANCH.test(githubBranch) || githubBranch.includes('..')) {
+    blockers.push('github-head-branch-invalid');
+  } else if (branch && githubBranch !== branch) {
+    blockers.push('github-head-branch-mismatch');
+  }
+  if (!githubRepository || !SAFE_REPOSITORY.test(githubRepository)) {
+    blockers.push('github-head-repository-invalid');
+  } else if (repository && githubRepository.toLowerCase() !== repository.toLowerCase()) {
+    blockers.push('github-head-repository-mismatch');
+  }
   const github = mergeEvidence(input.github, { prNumber, headSha, nowUtc: input.nowUtc });
   blockers.push(...github.blockers);
 
@@ -800,6 +828,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
     }
     const approvalReceipt = canonicalApprovalReceipt(
       ownValueOr(record, 'operatorApprovalReceipt', null),
+      { issueNumber, nowUtc },
     );
     if (!approvalReceipt.valid) {
       blockers.push(`goal-record-${index}-approval-receipt-invalid`);
