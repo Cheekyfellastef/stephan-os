@@ -171,6 +171,30 @@ function canonicalSuppliedAliases(source, keys, normalizer, derivedValues = []) 
   });
 }
 
+function canonicalApprovalReceipt(receipt) {
+  if (receipt === null || receipt === undefined) {
+    return freeze({ valid: true, value: null });
+  }
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
+    return freeze({ valid: false, value: null });
+  }
+  const identities = [
+    canonicalSuppliedAliases(receipt, ['issue', 'issueNumber', 'relatedIssue'], number),
+    canonicalSuppliedAliases(receipt, ['activePr', 'pr', 'prNumber', 'relatedPr'], number),
+    canonicalSuppliedAliases(receipt, ['headSha', 'sourceHead'], sha),
+    canonicalSuppliedAliases(
+      receipt,
+      ['repository', 'repositoryFullName'],
+      (value) => text(value).toLowerCase(),
+    ),
+    canonicalSuppliedAliases(receipt, ['branch', 'headBranch'], text),
+  ];
+  return freeze({
+    valid: identities.every((identity) => identity.valid && identity.supplied),
+    value: receipt,
+  });
+}
+
 function mergeEvidence(github = {}, expected = {}) {
   github = github && typeof github === 'object' && !Array.isArray(github) ? github : {};
   const blockers = [];
@@ -774,6 +798,13 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       blockers.push(`goal-record-${index}-pr-invalid`);
       continue;
     }
+    const approvalReceipt = canonicalApprovalReceipt(
+      ownValueOr(record, 'operatorApprovalReceipt', null),
+    );
+    if (!approvalReceipt.valid) {
+      blockers.push(`goal-record-${index}-approval-receipt-invalid`);
+      continue;
+    }
     goals.push({
       issue: issueNumber,
       title: text(record.title, `Goal #${issueNumber}`),
@@ -790,7 +821,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       proofState: text(record.proofState, 'UNKNOWN'),
       approvalRequired: ownValueOr(record, 'approvalRequired', false),
       operatorPriority: ownValueOr(record, 'operatorPriority', false),
-      operatorApprovalReceipt: ownValueOr(record, 'operatorApprovalReceipt', null),
+      operatorApprovalReceipt: approvalReceipt.value,
       evidenceAt: ownValueOr(record, 'evidenceAt', record.timestampUtc),
       resultProofRefs: ownValueOr(record, 'resultProofRefs', []),
       reusableCapabilityId: text(record.reusableCapabilityId) || null,
@@ -804,6 +835,14 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   }
   if (lane?.valid && lane.active) {
     const existing = goals.find((goal) => goal.issue === lane.issueNumber);
+    if (existing && (
+      (existing.activePr !== null && existing.activePr !== lane.prNumber)
+      || (existing.repository !== null && existing.repository.toLowerCase() !== lane.repository.toLowerCase())
+      || (existing.branch !== null && existing.branch !== lane.branch)
+      || (existing.headSha !== null && existing.headSha !== lane.headSha)
+    )) {
+      blockers.push('active-goal-canonical-lane-identity-conflict');
+    }
     const activeGoal = {
       issue: lane.issueNumber,
       title: existing?.title ?? `Goal #${lane.issueNumber}`,
@@ -948,14 +987,23 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     ) {
       blockers.push('critical-backlog-active-lane-identity-mismatch');
     }
-    const missionPrAliases = [
-      conveyor?.activeMission?.prNumber,
-      conveyor?.activeMission?.relatedPr,
-      conveyor?.activeMission?.pullRequest?.number,
-    ].map((value) => number(value)).filter(Boolean);
-    if (!missionPrAliases.length) {
+    const activeMission = conveyor?.activeMission;
+    const nestedPullRequestSupplied = hasOwn(activeMission, 'pullRequest');
+    const nestedPullRequestNumber = nestedPullRequestSupplied
+      ? number(activeMission?.pullRequest?.number)
+      : null;
+    const nestedPullRequestValid = !nestedPullRequestSupplied || Boolean(nestedPullRequestNumber);
+    const missionPrAliases = canonicalSuppliedAliases(
+      activeMission,
+      ['prNumber', 'relatedPr'],
+      number,
+      [nestedPullRequestNumber],
+    );
+    if (!nestedPullRequestValid || !missionPrAliases.valid) {
+      blockers.push('critical-backlog-active-lane-pr-mismatch');
+    } else if (!missionPrAliases.supplied) {
       blockers.push('critical-backlog-active-lane-pr-missing');
-    } else if (missionPrAliases.some((value) => value !== lane.prNumber)) {
+    } else if (missionPrAliases.value !== lane.prNumber) {
       blockers.push('critical-backlog-active-lane-pr-mismatch');
     }
     if (activeMissionIdentity.prNumber && activeMissionIdentity.prNumber !== lane.prNumber) {
