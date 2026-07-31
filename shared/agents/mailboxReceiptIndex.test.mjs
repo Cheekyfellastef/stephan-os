@@ -241,6 +241,46 @@ test('sanitization retains bounded evidence and removes raw payloads, machine pa
   assert.doesNotMatch(json, /rawPayload|machinePath|apiToken|C:\\Users|\.env|\.\.\//i);
 });
 
+test('exact-head proof index projections retain verified heads and derive the match', () => {
+  const exactHeadReceipt = receipt({
+    requestId: 'windows-proof-1631-0001',
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    expectedHead: HEAD,
+    prNumber: 1628,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    result: {
+      ok: true,
+      result: {
+        ok: true,
+        operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+        finalVerdict: 'WINDOWS_BROWSER_PROOF_DISPATCHED',
+        expectedHead: HEAD,
+        prNumber: 1628,
+        proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+        taskId: 'codex-job-1631',
+        pullRequestHead: HEAD,
+        localHead: HEAD,
+        expectedHeadMatch: false,
+      },
+    },
+  });
+  const projected = sanitizeMailboxReceiptForIndex(exactHeadReceipt);
+  assert.equal(projected.prNumber, 1628);
+  assert.equal(projected.proofScenario, 'MUSIC_RATING_PRESERVES_PLAYBACK');
+  assert.equal(projected.taskId, 'codex-job-1631');
+  assert.equal(projected.pullRequestHead, HEAD);
+  assert.equal(projected.localHead, HEAD);
+  assert.equal(projected.expectedHeadMatch, true);
+  const mismatch = sanitizeMailboxReceiptForIndex({
+    ...exactHeadReceipt,
+    result: {
+      ...exactHeadReceipt.result,
+      result: { ...exactHeadReceipt.result.result, localHead: LATER_HEAD, expectedHeadMatch: true },
+    },
+  });
+  assert.equal(mismatch.expectedHeadMatch, false);
+});
+
 test('sanitization preserves on-demand worker telemetry without exposing machine paths', () => {
   const value = receipt();
   value.result.result.workerTelemetry = {

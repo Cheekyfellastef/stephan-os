@@ -176,6 +176,53 @@ test('GitHub receipt projections redact path- and credential-shaped free-form te
   assert.equal(projected.workerTelemetry.latestExecutionReceipt.blocker, '');
 });
 
+test('exact-head proof projections retain the verified PR and local heads', () => {
+  const expectedHead = 'a'.repeat(40);
+  const receipt = {
+    requestId: 'windows-proof-1631-0001',
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    state: 'DONE',
+    expectedHead,
+    prNumber: 1628,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    result: {
+      ok: true,
+      result: {
+        ok: true,
+        operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+        finalVerdict: 'WINDOWS_BROWSER_PROOF_DISPATCHED',
+        expectedHead,
+        prNumber: 1628,
+        proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+        taskId: 'codex-job-1631',
+        pullRequestHead: expectedHead,
+        localHead: expectedHead,
+        expectedHeadMatch: false,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.prNumber, 1628);
+  assert.equal(projected.proofScenario, 'MUSIC_RATING_PRESERVES_PLAYBACK');
+  assert.equal(projected.taskId, 'codex-job-1631');
+  assert.equal(projected.pullRequestHead, expectedHead);
+  assert.equal(projected.localHead, expectedHead);
+  assert.equal(projected.operationResult.expectedHeadMatch, true);
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(serialized.result.result.pullRequestHead, expectedHead);
+  assert.equal(serialized.result.result.localHead, expectedHead);
+  assert.equal(serialized.result.result.expectedHeadMatch, true);
+
+  const mismatch = createSanitizedMailboxReceiptProjection({
+    ...receipt,
+    result: {
+      ...receipt.result,
+      result: { ...receipt.result.result, localHead: 'b'.repeat(40), expectedHeadMatch: true },
+    },
+  });
+  assert.equal(mismatch.operationResult.expectedHeadMatch, false);
+});
+
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {
   const requestId = 'proof:2026-07-30T20:00:00Z';
   const filename = createWindowsSafeMailboxReceiptFilename(requestId);

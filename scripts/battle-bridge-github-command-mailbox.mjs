@@ -271,11 +271,25 @@ function projectWorkerTelemetry(value) {
   });
 }
 
+function isExactWindowsProofOperation(receipt = {}, operationResult = {}) {
+  return receipt?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
+    || operationResult?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF';
+}
+
 function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
+  const expectedHead = String(receipt?.expectedHead || operationResult?.expectedHead || '').trim().toLowerCase();
+  if (isExactWindowsProofOperation(receipt, operationResult)) {
+    const pullRequestHead = String(operationResult?.pullRequestHead || '').trim().toLowerCase();
+    const localHead = String(operationResult?.localHead || '').trim().toLowerCase();
+    return EXACT_GIT_HEAD_PATTERN.test(expectedHead)
+      && EXACT_GIT_HEAD_PATTERN.test(pullRequestHead)
+      && EXACT_GIT_HEAD_PATTERN.test(localHead)
+      && expectedHead === pullRequestHead
+      && expectedHead === localHead;
+  }
   if (typeof operationResult?.expectedHeadMatch === 'boolean') {
     return operationResult.expectedHeadMatch;
   }
-  const expectedHead = String(receipt?.expectedHead || '').trim().toLowerCase();
   const sourceHead = String(operationResult?.sourceHead || '').trim().toLowerCase();
   return EXACT_GIT_HEAD_PATTERN.test(expectedHead)
     && EXACT_GIT_HEAD_PATTERN.test(sourceHead)
@@ -314,6 +328,11 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+    prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
+    proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+    taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+    localHead: safeTelemetrySha(operationResult?.localHead),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
@@ -327,6 +346,12 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       ok: operationResult?.ok !== false,
       blocker: safeTelemetryText(operationResult?.blocker, 240),
       finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
+      expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+      prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
+      proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+      taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+      pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+      localHead: safeTelemetrySha(operationResult?.localHead),
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
@@ -384,6 +409,11 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+    prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
+    proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+    taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+    localHead: safeTelemetrySha(operationResult?.localHead),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
@@ -395,6 +425,12 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         ok: operationResult?.ok !== false,
         blocker: safeTelemetryText(operationResult?.blocker, 240),
         finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
+        expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+        prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
+        proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
+        taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+        pullRequestHead: safeTelemetrySha(operationResult?.pullRequestHead),
+        localHead: safeTelemetrySha(operationResult?.localHead),
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),

@@ -96,6 +96,27 @@ function safeTelemetryBranch(value) {
     : '';
 }
 
+function isExactWindowsProofOperation(receipt = {}, operationResult = {}) {
+  return receipt?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
+    || operationResult?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF';
+}
+
+function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
+  const expectedHead = String(receipt?.expectedHead || operationResult?.expectedHead || '').trim().toLowerCase();
+  if (isExactWindowsProofOperation(receipt, operationResult)) {
+    const pullRequestHead = String(operationResult?.pullRequestHead || '').trim().toLowerCase();
+    const localHead = String(operationResult?.localHead || '').trim().toLowerCase();
+    return SHA_PATTERN.test(expectedHead)
+      && SHA_PATTERN.test(pullRequestHead)
+      && SHA_PATTERN.test(localHead)
+      && expectedHead === pullRequestHead
+      && expectedHead === localHead;
+  }
+  if (typeof operationResult?.expectedHeadMatch === 'boolean') return operationResult.expectedHeadMatch;
+  const sourceHead = String(operationResult?.sourceHead || '').trim().toLowerCase();
+  return SHA_PATTERN.test(expectedHead) && SHA_PATTERN.test(sourceHead) && expectedHead === sourceHead;
+}
+
 function safeTelemetrySha(value) {
   return safeSha(value);
 }
@@ -237,9 +258,14 @@ export function sanitizeMailboxReceiptForIndex(receipt = {}) {
     heartbeatAt: safeTimestamp(receipt?.heartbeatAt),
     completedAt: safeTimestamp(receipt?.completedAt),
     expectedHead: safeSha(receipt?.expectedHead || operationResult?.expectedHead),
+    prNumber: safeCount(receipt?.prNumber || operationResult?.prNumber),
+    proofScenario: safeOperation(receipt?.proofScenario || operationResult?.proofScenario),
+    taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    pullRequestHead: safeSha(operationResult?.pullRequestHead),
+    localHead: safeSha(operationResult?.localHead),
     sourceHead: safeSha(operationResult?.sourceHead || operationResult?.recoveredHead),
     branch: String(operationResult?.branch || receipt?.branch || '') === 'main' ? 'main' : '',
-    expectedHeadMatch: operationResult?.expectedHeadMatch === true,
+    expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
     blocker: safeBlocker(receipt?.blocker || operationResult?.blocker),
     finalVerdict: safeVerdict(operationResult?.finalVerdict || receipt?.finalVerdict || execution?.verdict),
     proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
