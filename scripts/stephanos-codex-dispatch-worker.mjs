@@ -1857,6 +1857,7 @@ export async function runCodexWorker(taskPath, {
       expectedSourceFingerprint,
       expectedDistFingerprint,
       expectedDistManifestPath,
+      proofScenario: task.exactHeadProof?.proofScenario || '',
     })
     : Object.freeze({
       ok: false,

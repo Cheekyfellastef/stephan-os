@@ -1356,6 +1356,7 @@ test('worker reuses the detached runtime source fingerprint across both browser 
   const expectedHead = packet().exactHeadProof.expectedHead;
   const callOrder = [];
   let browserCalls = 0;
+  const browserArgv = [];
   let mutableCheckoutFingerprintCalls = 0;
   const result = await runCodexWorker(dispatchReceipt.taskPath, {
     platform: 'win32',
@@ -1368,6 +1369,7 @@ test('worker reuses the detached runtime source fingerprint across both browser 
     spawnSyncFn(executable, args) {
       if (executable === process.execPath) {
         browserCalls += 1;
+        browserArgv.push([...args]);
         callOrder.push(`browser-${browserCalls}`);
         return {
           status: 0,
@@ -1394,6 +1396,17 @@ test('worker reuses the detached runtime source fingerprint across both browser 
   assert.deepEqual(result.exactHeadProof, packet().exactHeadProof);
   assert.equal(mutableCheckoutFingerprintCalls, 0);
   assert.equal(browserCalls, 2);
+  assert.equal(browserArgv.length, 2);
+  for (const args of browserArgv) {
+    assert.deepEqual(args.slice(args.indexOf('--proof-scenario'), args.indexOf('--proof-scenario') + 2), [
+      '--proof-scenario',
+      MUSIC_RATING_SCENARIO,
+    ]);
+    assert.deepEqual(args.slice(args.indexOf('--proof-target'), args.indexOf('--proof-target') + 2), [
+      '--proof-target',
+      'PULL_REQUEST_HEAD',
+    ]);
+  }
   assert.deepEqual(callOrder.slice(-3), ['browser-2', 'final-head', 'final-status']);
   assert.equal(result.browserRuntimeProofBefore.expectedSourceFingerprint, SOURCE_FINGERPRINT);
   assert.equal(result.browserRuntimeProofAfter.expectedSourceFingerprint, SOURCE_FINGERPRINT);
