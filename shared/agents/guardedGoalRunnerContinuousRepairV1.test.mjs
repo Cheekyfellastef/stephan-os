@@ -289,6 +289,37 @@ test('queued receipt persistence must be affirmed before dispatch', async () => 
   assert.equal(h.calls.dispatch.length, 0);
 });
 
+test('durable dispatch intent recovers after queued-receipt persistence fails', async () => {
+  const first = harness([snapshot()], {
+    persistExecutionReceipt:async (receipt) => {
+      first.calls.execution.push(receipt);
+      return { ok:false, reason:'workspace lock unavailable' };
+    },
+  });
+  const blocked = await runGuardedContinuousRepairCycle(first.options);
+  assert.equal(blocked.status, 'BLOCKED_EXECUTION_RECEIPT_PERSISTENCE');
+  assert.deepEqual(
+    blocked.history.map(({ status }) => status),
+    ['repair-attempt-recorded', 'blocked-execution-receipt-persistence'],
+  );
+  assert.equal(first.calls.dispatch.length, 0);
+
+  const resumed = harness([snapshot()], {
+    attemptId:'attempt-2',
+    history:blocked.history,
+    maxRepairsPerHead:1,
+  });
+  const recovered = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(recovered.status, 'WAITING_FOR_REPAIR');
+  assert.equal(resumed.calls.execution.length, 1);
+  assert.equal(resumed.calls.execution[0].state, 'queued');
+  assert.equal(resumed.calls.dispatch.length, 1);
+  assert.equal(
+    recovered.receipt.recoveredDispatchIntentCycleId,
+    blocked.history[0].cycleId,
+  );
+});
+
 test('terminal receipt persistence must be affirmed after dispatch rejection', async () => {
   let persistenceAttempt = 0;
   const h = harness([snapshot()], {
@@ -453,6 +484,23 @@ test('post-merge verification requests exact-head CI before runtime proof', asyn
   assert.equal(waiting.receipt.verificationPurpose, 'POST_MERGE_EXACT_HEAD_CI');
 });
 
+test('pre-merge verification refreshes mergeability without re-running green exact-head CI', async () => {
+  const repairOrder = order();
+  const h = harness([snapshot({
+    findings:[],
+    activeRepairOrders:[repairOrder],
+    receipts:completedChain(repairOrder),
+    ciGreen:true,
+    ciHeadSha:HEAD,
+    mergeable:false,
+  })]);
+  const waiting = await runGuardedContinuousRepairCycle(h.options);
+  assert.equal(waiting.status, 'WAITING_FOR_VERIFICATION');
+  assert.equal(h.calls.verify.length, 1);
+  assert.equal(h.calls.verify[0].purpose, 'PRE_MERGE_MERGEABILITY');
+  assert.equal(waiting.receipt.verificationPurpose, 'PRE_MERGE_MERGEABILITY');
+});
+
 test('failed dispatch terminalization is retried durably before more evaluation', async () => {
   let executionPersistence = 0;
   const first = harness([snapshot()], {
@@ -482,7 +530,7 @@ test('failed dispatch terminalization is retried durably before more evaluation'
   assert.equal(recovered.receipt.status, 'dispatch-terminalization-recovered');
 });
 
-test('repair attempt debit survives failure to persist the later dispatch outcome', async () => {
+test('recorded repair intent is idempotently recovered before the repair budget is applied', async () => {
   const first = harness([snapshot()], {
     persistCycleReceipt:async (receipt) => {
       first.calls.cycle.push(receipt);
@@ -499,9 +547,13 @@ test('repair attempt debit survives failure to persist the later dispatch outcom
     history:failedOutcome.history,
     maxRepairsPerHead:1,
   });
-  const blocked = await runGuardedContinuousRepairCycle(resumed.options);
-  assert.equal(blocked.status, 'BLOCKED_REPAIR_BUDGET');
-  assert.equal(resumed.calls.dispatch.length, 0);
+  const recovered = await runGuardedContinuousRepairCycle(resumed.options);
+  assert.equal(recovered.status, 'WAITING_FOR_REPAIR');
+  assert.equal(resumed.calls.dispatch.length, 1);
+  assert.equal(resumed.calls.dispatch[0].executionId, failedOutcome.receipt?.dispatchAttemptId ?? failedOutcome.history[0].dispatchAttemptId);
+  assert.equal(recovered.receipt.status, 'repair-dispatched');
+  assert.equal(recovered.receipt.dispatchAttemptId, failedOutcome.history[0].dispatchAttemptId);
+  assert.equal(recovered.receipt.recoveredDispatchIntentCycleId, failedOutcome.history[0].cycleId);
 });
 
 test('verification intent preserves one idempotency key across receipt-store failure', async () => {
