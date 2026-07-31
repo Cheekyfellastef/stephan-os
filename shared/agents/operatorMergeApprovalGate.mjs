@@ -618,11 +618,16 @@ export function validateProtectedApprovalReceipt(receipt = {}, options = {}) {
 
 export function projectProtectedApprovalReceiptForWorkspace(receipt = {}, options = {}) {
   const validation = validateProtectedApprovalReceipt(receipt, options);
-  if (!validation.valid) {
+  const nativeEnvironmentValid = Object.prototype.hasOwnProperty.call(receipt ?? {}, 'environment')
+    && receipt?.environment === OPERATOR_MERGE_ENVIRONMENT;
+  if (!validation.valid || !nativeEnvironmentValid) {
     return Object.freeze({
       valid: false,
       receipt: null,
-      blockers: validation.blockers,
+      blockers: Object.freeze(unique([
+        ...validation.blockers,
+        ...(nativeEnvironmentValid ? [] : ['approval-environment-provenance-missing']),
+      ])),
       finalVerdict: 'PROTECTED_OPERATOR_APPROVAL_WORKSPACE_PROJECTION_BLOCKED',
     });
   }
