@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
@@ -663,6 +664,52 @@ test('worker owns the canonical build, verification, and frozen dist fingerprint
   });
   assert.equal(failed.ok, false);
   assert.equal(failed.blocker, 'CANONICAL_RUNTIME_BUILD_FAILED');
+});
+
+test('exact-head runtime builds use a detached approved worktree and bind copied dist to that build', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stephanos-exact-head-runtime-test-'));
+  const repoRoot = join(root, 'repo');
+  mkdirSync(repoRoot, { recursive: true });
+  const expectedHead = 'a'.repeat(40);
+  const calls = [];
+  const manifestRoots = [];
+  let buildRoot = '';
+  try {
+    const prepared = prepareExactHeadRuntimeBundle(repoRoot, {
+      expectedHead,
+      spawnSyncFn(executable, args, options) {
+        calls.push({ executable, args, options });
+        if (executable === 'git' && args[1] === 'add') {
+          buildRoot = args[3];
+          mkdirSync(buildRoot, { recursive: true });
+        }
+        if (executable === process.execPath && args[0].endsWith('build-stephanos-ui.mjs')) {
+          mkdirSync(join(options.cwd, 'apps', 'stephanos', 'dist'), { recursive: true });
+          writeFileSync(join(options.cwd, 'apps', 'stephanos', 'dist', 'index.html'), '<!-- approved -->\n');
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      },
+      distManifestFactory(rootDir) {
+        manifestRoots.push(rootDir);
+        return DIST_MANIFEST;
+      },
+    });
+    assert.equal(prepared.ok, true);
+    assert.equal(prepared.immutableBuildSource, expectedHead);
+    assert.equal(manifestRoots[0], buildRoot);
+    assert.equal(manifestRoots.at(-1), repoRoot);
+    assert.equal(manifestRoots.length, 3);
+    const add = calls.find((call) => call.executable === 'git' && call.args[1] === 'add');
+    assert.deepEqual(add.args, ['worktree', 'add', '--detach', buildRoot, expectedHead]);
+    const buildAndVerify = calls.filter((call) => call.executable === process.execPath);
+    assert.equal(buildAndVerify.length, 2);
+    assert.equal(buildAndVerify.every((call) => call.options.cwd === buildRoot), true);
+    assert.equal(buildAndVerify.every((call) => call.options.cwd !== repoRoot), true);
+    const remove = calls.find((call) => call.executable === 'git' && call.args[1] === 'remove');
+    assert.deepEqual(remove.args, ['worktree', 'remove', buildRoot]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('worker fails closed before proof execution when an exact head changes', () => {

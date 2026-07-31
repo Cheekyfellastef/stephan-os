@@ -9,6 +9,7 @@ import {
   createWindowsSafeMailboxReceiptFilename,
   parseBoundedGitHubJson,
   readMailboxReceipt,
+  serializeBoundedReceiptJson,
 } from './battle-bridge-github-command-mailbox.mjs';
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
@@ -132,6 +133,45 @@ test('GitHub receipt projection preserves bounded live worker telemetry', () => 
     'status/source-mutation-lease-current.json',
     'status/battle-bridge-mailbox-receipt-index.json',
   ]);
+});
+
+test('GitHub receipt projections redact path- and credential-shaped free-form telemetry', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'battle-bridge-observability-0002',
+    operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
+    state: 'BLOCKED',
+    blocker: 'worker at C:\\Users\\Stephan\\Documents\\secret.json',
+    result: {
+      ok: false,
+      result: {
+        blocker: 'token=ghp_this-must-not-leak',
+        finalVerdict: 'read /home/stephan/.env',
+        sourceHead: 'a'.repeat(40),
+        branch: 'main',
+        workerTelemetry: {
+          task: {
+            boundedAction: 'Inspect /workspace/stephan-os with password=must-not-leak',
+          },
+          blockers: ['C:\\Users\\Stephan\\credential.txt'],
+          nextAction: 'Use bearer secret at /var/run/stephanos/token',
+          latestExecutionReceipt: {
+            blocker: 'private_key=/tmp/private.pem',
+            expectedNextAction: 'Open C:\\Users\\Stephan\\Desktop\\proof.txt',
+          },
+        },
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const json = `${JSON.stringify(projected)}${serialized}`;
+  assert.doesNotMatch(json, /C:\\Users|\/home\/stephan|\/workspace\/stephan|ghp_this|password=|bearer secret|private_key|\.env/i);
+  assert.equal(projected.blocker, '');
+  assert.equal(projected.operationResult.blocker, '');
+  assert.equal(projected.workerTelemetry.task.boundedAction, '');
+  assert.deepEqual(projected.workerTelemetry.blockers, []);
+  assert.equal(projected.workerTelemetry.latestExecutionReceipt.blocker, '');
 });
 
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {

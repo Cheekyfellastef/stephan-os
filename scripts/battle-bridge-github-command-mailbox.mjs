@@ -48,6 +48,7 @@ const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SAFE_PROOF_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const SAFE_CONVEYOR_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
+const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:[A-Za-z]:[\\/])|(?:^|[\s=:(\[])(?:\\\\|~?\/(?:home|Users|tmp|var|workspace|root|private|mnt|opt|Volumes)(?:[\\/]|$))|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:ghp|github_pat|xox[baprs]|sk)_[A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set([
   'CREATE_NEXT_MISSION',
   'WAIT_ACTIVE_MISSION',
@@ -134,6 +135,7 @@ function safeNonNegativeNumber(value) {
 
 function safeTelemetryText(value, limit = 500) {
   const normalized = String(value ?? '').trim();
+  if (UNSAFE_TELEMETRY_PATTERN.test(normalized)) return '';
   return normalized.length > limit ? normalized.slice(0, limit) : normalized;
 }
 
@@ -304,28 +306,28 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const operationResult = execution?.result || {};
   const workerTelemetry = projectWorkerTelemetry(operationResult?.workerTelemetry);
   return Object.freeze({
-    schemaVersion: String(receipt?.schemaVersion || ''),
-    requestId: String(receipt?.requestId || ''),
-    operation: String(receipt?.operation || ''),
-    state: String(receipt?.state || ''),
-    acceptedAt: String(receipt?.acceptedAt || ''),
-    heartbeatAt: String(receipt?.heartbeatAt || ''),
-    completedAt: String(receipt?.completedAt || ''),
-    blocker: String(receipt?.blocker || operationResult?.blocker || ''),
+    schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
+    requestId: safeTelemetryText(receipt?.requestId, 160),
+    operation: safeTelemetryText(receipt?.operation, 120),
+    state: safeTelemetryText(receipt?.state, 80).toUpperCase(),
+    acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
+    heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
+    completedAt: safeTelemetryText(receipt?.completedAt, 80),
+    blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
       ok: execution?.ok !== false,
-      verdict: String(execution?.verdict || ''),
-      operation: String(execution?.operation || receipt?.operation || ''),
-      requestId: String(execution?.requestId || receipt?.requestId || ''),
+      verdict: safeTelemetryText(execution?.verdict, 120).toUpperCase(),
+      operation: safeTelemetryText(execution?.operation || receipt?.operation, 120),
+      requestId: safeTelemetryText(execution?.requestId || receipt?.requestId, 160),
     }),
     workerTelemetry,
     operationResult: Object.freeze({
       ok: operationResult?.ok !== false,
-      blocker: String(operationResult?.blocker || ''),
-      finalVerdict: String(operationResult?.finalVerdict || ''),
-      sourceHead: String(operationResult?.sourceHead || ''),
-      branch: String(operationResult?.branch || ''),
+      blocker: safeTelemetryText(operationResult?.blocker, 240),
+      finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
+      sourceHead: safeTelemetrySha(operationResult?.sourceHead),
+      branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
       monitorCount: Number(operationResult?.monitorCount || 0),
       executedCount: Number(operationResult?.executedCount || 0),
@@ -333,14 +335,14 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       expectedFailureCount: Number(operationResult?.expectedFailureCount || 0),
       notificationBatchCount: Number(operationResult?.notificationBatchCount || 0),
       notificationCount: Number(operationResult?.notificationCount || 0),
-      notificationSurface: String(operationResult?.notificationSurface || ''),
+      notificationSurface: safeTelemetryText(operationResult?.notificationSurface, 120),
       externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
       maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
       receiptCount: Number(operationResult?.receiptCount || 0),
       watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
-      watchdogRecoveryRoute: String(operationResult?.watchdogRecoveryRoute || ''),
-      initialHead: String(operationResult?.initialHead || ''),
-      recoveredHead: String(operationResult?.recoveredHead || ''),
+      watchdogRecoveryRoute: safeTelemetryText(operationResult?.watchdogRecoveryRoute, 160),
+      initialHead: safeTelemetrySha(operationResult?.initialHead),
+      recoveredHead: safeTelemetrySha(operationResult?.recoveredHead),
       initialPid: Number(operationResult?.initialPid || 0),
       recoveredPid: Number(operationResult?.recoveredPid || 0),
       workerKilled: operationResult?.workerKilled === true,
@@ -350,7 +352,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       workerRecovered: operationResult?.workerRecovered === true,
       workerFromMain: operationResult?.workerFromMain === true,
       proofWrittenToSharedWorkspace: operationResult?.proofWrittenToSharedWorkspace === true,
-      publicationState: String(operationResult?.publicationState || ''),
+      publicationState: safeTelemetryText(operationResult?.publicationState, 120),
       visiblePowerShellRequired: operationResult?.visiblePowerShellRequired === true,
       proofRefs: safeProofRefs(operationResult?.proofRefs),
       workerTelemetry,
@@ -366,34 +368,33 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
 export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
-  if (fullBytes <= maxBytes) return fullJson;
 
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
   const compactReceipt = {
-    schemaVersion: String(receipt?.schemaVersion || ''),
-    requestId: String(receipt?.requestId || ''),
-    operation: String(receipt?.operation || ''),
-    repository: String(receipt?.repository || ''),
+    schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
+    requestId: safeTelemetryText(receipt?.requestId, 160),
+    operation: safeTelemetryText(receipt?.operation, 120),
+    repository: safeTelemetryText(receipt?.repository, 180),
     issueNumber: Number(receipt?.issueNumber || 0),
-    branch: String(receipt?.branch || ''),
-    state: String(receipt?.state || ''),
-    acceptedAt: String(receipt?.acceptedAt || ''),
-    heartbeatAt: String(receipt?.heartbeatAt || ''),
-    completedAt: String(receipt?.completedAt || ''),
-    blocker: String(receipt?.blocker || operationResult?.blocker || ''),
+    branch: safeTelemetryBranch(receipt?.branch),
+    state: safeTelemetryText(receipt?.state, 80).toUpperCase(),
+    acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
+    heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
+    completedAt: safeTelemetryText(receipt?.completedAt, 80),
+    blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
       ok: execution?.ok !== false,
-      verdict: String(execution?.verdict || ''),
-      operation: String(execution?.operation || receipt?.operation || ''),
-      requestId: String(execution?.requestId || receipt?.requestId || ''),
+      verdict: safeTelemetryText(execution?.verdict, 120).toUpperCase(),
+      operation: safeTelemetryText(execution?.operation || receipt?.operation, 120),
+      requestId: safeTelemetryText(execution?.requestId || receipt?.requestId, 160),
       result: {
         ok: operationResult?.ok !== false,
-        blocker: String(operationResult?.blocker || ''),
-        finalVerdict: String(operationResult?.finalVerdict || ''),
-        sourceHead: String(operationResult?.sourceHead || ''),
-        branch: String(operationResult?.branch || ''),
+        blocker: safeTelemetryText(operationResult?.blocker, 240),
+        finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
+        sourceHead: safeTelemetrySha(operationResult?.sourceHead),
+        branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
         monitorCount: Number(operationResult?.monitorCount || 0),
         executedCount: Number(operationResult?.executedCount || 0),
@@ -401,11 +402,11 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         expectedFailureCount: Number(operationResult?.expectedFailureCount || 0),
         notificationBatchCount: Number(operationResult?.notificationBatchCount || 0),
         notificationCount: Number(operationResult?.notificationCount || 0),
-        notificationSurface: String(operationResult?.notificationSurface || ''),
+        notificationSurface: safeTelemetryText(operationResult?.notificationSurface, 120),
         externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
         maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
         receiptCount: Number(operationResult?.receiptCount || 0),
-        targetRequestId: String(operationResult?.targetRequestId || ''),
+        targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
         recoveredPid: Number(operationResult?.recoveredPid || 0),
@@ -419,14 +420,14 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofRefs: safeProofRefs(operationResult?.proofRefs),
         workerTelemetry: projectWorkerTelemetry(operationResult?.workerTelemetry),
         ...conveyorProjection(operationResult),
-        githubProjectionTruncated: true,
+        githubProjectionTruncated: fullBytes > maxBytes,
         originalBytes: fullBytes,
       },
     },
     arbitraryShellAllowed: false,
     destructiveGitAllowed: false,
     liveOpenClawUpdateAllowed: false,
-    githubProjectionTruncated: true,
+    githubProjectionTruncated: fullBytes > maxBytes,
   };
   const compactJson = JSON.stringify(compactReceipt, null, 2);
   if (Buffer.byteLength(compactJson, 'utf8') > maxBytes) {
@@ -450,7 +451,7 @@ function writeReceipt(receipt) {
   const filename = createWindowsSafeMailboxReceiptFilename(receipt.requestId);
   const legacyPath = join(mailboxStateRoot, filename);
   const canonicalPath = join(canonicalReceiptRoot, filename);
-  const payload = `${JSON.stringify(receipt, null, 2)}\n`;
+  const payload = `${serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES)}\n`;
   writeFileSync(legacyPath, payload, 'utf8');
   writeFileSync(canonicalPath, payload, 'utf8');
   return {
@@ -744,7 +745,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
   });
   writeReceipt(receipt);
   state.consumedRequestIds = [...new Set([...(state.consumedRequestIds || []), selected.command.requestId])].slice(-500);
-  state.lastReceipt = receipt;
+  state.lastReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   saveState(state);
   postReceipt({ ...receipt, receiptRef });
   return { ...receipt, receiptPath: receiptLocation.path, receiptRef };

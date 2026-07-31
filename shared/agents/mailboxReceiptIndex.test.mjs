@@ -317,6 +317,32 @@ test('sanitization preserves on-demand worker telemetry without exposing machine
   assert.doesNotMatch(JSON.stringify(projected), /C:\\Users|rawPayload|apiToken/i);
 });
 
+test('worker telemetry index redacts path- and credential-shaped free-form fields', () => {
+  const value = receipt();
+  value.result.result.workerTelemetry = {
+    task: {
+      boundedAction: 'Read /workspace/stephan-os with token=ghp_should-not-appear',
+    },
+    heartbeat: {
+      errors: ['C:\\Users\\Stephan\\secret.log'],
+    },
+    blockers: ['password=should-not-appear', '/home/stephan/.env'],
+    nextAction: 'Use private_key=/tmp/private.pem',
+    latestExecutionReceipt: {
+      blocker: 'authorization: Bearer should-not-appear',
+      expectedNextAction: 'Open C:\\Users\\Stephan\\proof.txt',
+    },
+  };
+  const projected = sanitizeMailboxReceiptForIndex(value);
+  const json = JSON.stringify(projected);
+  assert.doesNotMatch(json, /C:\\Users|\/workspace\/stephan|\/home\/stephan|ghp_should|password=|private_key|authorization:|\.env/i);
+  assert.equal(projected.workerTelemetry.task.boundedAction, '');
+  assert.deepEqual(projected.workerTelemetry.heartbeat.errors, []);
+  assert.deepEqual(projected.workerTelemetry.blockers, []);
+  assert.equal(projected.workerTelemetry.nextAction, '');
+  assert.equal(projected.workerTelemetry.latestExecutionReceipt.blocker, '');
+});
+
 test('index deduplicates each request to its latest receipt and separates active from recent', () => {
   const accepted = receipt({
     requestId: 'deploy-pr1549-20260717T1940Z',

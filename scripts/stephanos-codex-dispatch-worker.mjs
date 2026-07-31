@@ -1,13 +1,21 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
 import {
+  cpSync,
   createWriteStream,
+  existsSync,
   readFileSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
   renameSync,
+  rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOCAL_CODEX_TASK_SCHEMA } from '../shared/agents/localCodexExecIntegration.mjs';
@@ -36,6 +44,11 @@ const CANONICAL_BROWSER_PROOF_URL = 'http://127.0.0.1:4173/apps/stephanos/dist/i
 const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
 const CANONICAL_RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
+const CANONICAL_RUNTIME_WORKTREE_PREFIX = 'stephanos-exact-head-build-';
+const CANONICAL_RUNTIME_DEPENDENCY_LINKS = Object.freeze([
+  'stephanos-ui/node_modules',
+  'node_modules',
+]);
 const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
 const MUSIC_RATING_PRESERVES_PLAYBACK = 'MUSIC_RATING_PRESERVES_PLAYBACK';
 
@@ -323,26 +336,59 @@ export function validateExactHeadDistManifest(manifest = {}) {
   }
 }
 
-export function prepareExactHeadRuntimeBundle(repoRoot, {
-  spawnSyncFn = spawnSync,
-  distManifestFactory = (root) => createStephanosDistManifest({ rootDir: root }),
+function runtimePath(repoRoot, ...parts) {
+  return resolve(repoRoot, ...parts);
+}
+
+function runtimePathIsSymlink(path) {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function createIsolatedRuntimeBuildWorkspace() {
+  const temporaryRoot = mkdtempSync(join(tmpdir(), CANONICAL_RUNTIME_WORKTREE_PREFIX));
+  return Object.freeze({
+    temporaryRoot,
+    buildRoot: join(temporaryRoot, 'repo'),
+  });
+}
+
+function cleanupIsolatedRuntimeBuildWorkspace({
+  workspace,
+  repoRoot,
+  linkedPaths = [],
+  worktreeAdded = false,
+  spawnSyncFn,
 } = {}) {
-  const steps = [
-    {
-      name: 'build',
-      scriptPath: resolve(repoRoot, 'scripts', 'build-stephanos-ui.mjs'),
-      blocker: 'CANONICAL_RUNTIME_BUILD_FAILED',
-    },
-    {
-      name: 'verify',
-      scriptPath: resolve(repoRoot, 'scripts', 'verify-stephanos-dist.mjs'),
-      blocker: 'CANONICAL_RUNTIME_VERIFY_FAILED',
-    },
-  ];
-  for (const step of steps) {
-    let execution;
+  if (!workspace) return Object.freeze({ ok: true });
+  let cleanupError = '';
+  let worktreeRemoved = !worktreeAdded;
+  const temporaryDist = runtimePath(workspace.buildRoot, 'apps', 'stephanos', 'dist');
+  try {
+    if (existsSync(temporaryDist)) {
+      if (runtimePathIsSymlink(temporaryDist)) {
+        unlinkSync(temporaryDist);
+      } else {
+        rmSync(temporaryDist, { recursive: true, force: true });
+      }
+    }
+  } catch (error) {
+    cleanupError = `TEMPORARY_DIST_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
+  }
+  for (const linkedPath of linkedPaths) {
     try {
-      execution = spawnSyncFn(process.execPath, [step.scriptPath], {
+      if (existsSync(linkedPath) || runtimePathIsSymlink(linkedPath)) unlinkSync(linkedPath);
+    } catch (error) {
+      cleanupError ||= `DEPENDENCY_LINK_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
+    }
+  }
+  if (worktreeAdded) {
+    let removal;
+    try {
+      removal = spawnSyncFn('git', ['worktree', 'remove', workspace.buildRoot], {
         cwd: repoRoot,
         encoding: 'utf8',
         shell: false,
@@ -350,47 +396,285 @@ export function prepareExactHeadRuntimeBundle(repoRoot, {
         timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
       });
     } catch (error) {
-      return Object.freeze({
-        ok: false,
-        required: true,
-        blocker: step.blocker,
-        failedStep: step.name,
-        reason: boundedText(error?.message || error),
-      });
+      cleanupError ||= `WORKTREE_REMOVE_FAILED:${boundedText(error?.message || error, 800)}`;
     }
-    if (execution?.error || execution?.status !== 0) {
-      return Object.freeze({
-        ok: false,
-        required: true,
-        blocker: step.blocker,
-        failedStep: step.name,
-        status: execution?.status ?? null,
-        reason: boundedText(execution?.error?.message || execution?.stderr || execution?.stdout),
-      });
+    if (removal && (removal.error || removal.status !== 0)) {
+      cleanupError ||= `WORKTREE_REMOVE_FAILED:${boundedText(removal.stderr || removal.stdout || removal.error?.message, 800)}`;
+    } else if (removal) {
+      worktreeRemoved = true;
     }
   }
-  let distManifest;
   try {
-    distManifest = distManifestFactory(repoRoot);
-  } catch {
-    distManifest = null;
+    if (worktreeRemoved && existsSync(workspace.temporaryRoot)) {
+      rmSync(workspace.temporaryRoot, { recursive: true, force: true });
+    }
+  } catch (error) {
+    cleanupError ||= `TEMPORARY_ROOT_CLEANUP_FAILED:${boundedText(error?.message || error, 800)}`;
   }
-  const validatedManifest = validateExactHeadDistManifest(distManifest);
-  if (!validatedManifest.ok) {
+  return Object.freeze(cleanupError
+    ? { ok: false, blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_CLEANUP_FAILED', reason: cleanupError }
+    : { ok: true });
+}
+
+function linkRuntimeDependencies(repoRoot, buildRoot, platform) {
+  const linkedPaths = [];
+  for (const relativePath of CANONICAL_RUNTIME_DEPENDENCY_LINKS) {
+    const sourcePath = runtimePath(repoRoot, ...relativePath.split('/'));
+    const targetPath = runtimePath(buildRoot, ...relativePath.split('/'));
+    if (!existsSync(sourcePath) || existsSync(targetPath) || runtimePathIsSymlink(targetPath)) continue;
+    mkdirSync(dirname(targetPath), { recursive: true });
+    symlinkSync(sourcePath, targetPath, platform === 'win32' ? 'junction' : 'dir');
+    linkedPaths.push(targetPath);
+  }
+  return linkedPaths;
+}
+
+function copyVerifiedRuntimeDist({ repoRoot, buildRoot, distManifestFactory }) {
+  const sourceDist = runtimePath(buildRoot, 'apps', 'stephanos', 'dist');
+  const targetDist = runtimePath(repoRoot, 'apps', 'stephanos', 'dist');
+  if (!existsSync(sourceDist) || runtimePathIsSymlink(sourceDist)) {
+    return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DIST_MISSING_OR_SYMLINK' });
+  }
+  let sourceStat;
+  try {
+    sourceStat = lstatSync(sourceDist);
+  } catch {
+    sourceStat = null;
+  }
+  if (!sourceStat?.isDirectory() || sourceStat.isSymbolicLink()) {
+    return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DIST_MISSING_OR_SYMLINK' });
+  }
+  if (runtimePathIsSymlink(targetDist)) {
+    return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DESTINATION_SYMLINK' });
+  }
+  let sourceManifest;
+  try {
+    sourceManifest = distManifestFactory(buildRoot);
+  } catch (error) {
     return Object.freeze({
       ok: false,
-      required: true,
       blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED',
+      reason: boundedText(error?.message || error),
     });
   }
-  return Object.freeze({
-    ok: true,
-    required: true,
-    canonicalBuildPerformed: true,
-    canonicalVerifyPerformed: true,
-    expectedDistFingerprint: validatedManifest.fingerprint,
-    distManifest,
-  });
+  const validatedSource = validateExactHeadDistManifest(sourceManifest);
+  if (!validatedSource.ok) {
+    return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED' });
+  }
+  mkdirSync(dirname(targetDist), { recursive: true });
+  const stagingRoot = mkdtempSync(join(dirname(targetDist), '.stephanos-exact-head-dist-'));
+  const stagedDist = runtimePath(stagingRoot, 'apps', 'stephanos', 'dist');
+  const backupDist = `${targetDist}.previous-${randomUUID()}`;
+  let previousDistMoved = false;
+  let stagedDistInstalled = false;
+  try {
+    mkdirSync(dirname(stagedDist), { recursive: true });
+    cpSync(sourceDist, stagedDist, { recursive: true, force: true, dereference: true });
+    const stagedManifest = distManifestFactory(stagingRoot);
+    const validatedStaged = validateExactHeadDistManifest(stagedManifest);
+    if (!validatedStaged.ok || validatedStaged.fingerprint !== validatedSource.fingerprint) {
+      return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DIST_BINDING_FAILED' });
+    }
+    if (existsSync(targetDist)) {
+      renameSync(targetDist, backupDist);
+      previousDistMoved = true;
+    }
+    renameSync(stagedDist, targetDist);
+    stagedDistInstalled = true;
+    const targetManifest = distManifestFactory(repoRoot);
+    const validatedTarget = validateExactHeadDistManifest(targetManifest);
+    if (!validatedTarget.ok || validatedSource.fingerprint !== validatedTarget.fingerprint) {
+      rmSync(targetDist, { recursive: true, force: true });
+      stagedDistInstalled = false;
+      if (previousDistMoved) {
+        renameSync(backupDist, targetDist);
+        previousDistMoved = false;
+      }
+      return Object.freeze({ ok: false, blocker: 'CANONICAL_RUNTIME_DIST_BINDING_FAILED' });
+    }
+    if (previousDistMoved) {
+      rmSync(backupDist, { recursive: true, force: true });
+      previousDistMoved = false;
+    }
+    return Object.freeze({
+      ok: true,
+      distManifest: targetManifest,
+      expectedDistFingerprint: validatedTarget.fingerprint,
+    });
+  } catch (error) {
+    try {
+      if (stagedDistInstalled && existsSync(targetDist)) rmSync(targetDist, { recursive: true, force: true });
+      if (previousDistMoved && existsSync(backupDist)) {
+        renameSync(backupDist, targetDist);
+        previousDistMoved = false;
+      }
+    } catch (rollbackError) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'CANONICAL_RUNTIME_DIST_ROLLBACK_FAILED',
+        reason: boundedText(rollbackError?.message || rollbackError),
+      });
+    }
+    return Object.freeze({
+      ok: false,
+      blocker: 'CANONICAL_RUNTIME_DIST_COPY_FAILED',
+      reason: boundedText(error?.message || error),
+    });
+  }
+  finally {
+    try {
+      if (existsSync(stagingRoot)) rmSync(stagingRoot, { recursive: true, force: true });
+      if (!previousDistMoved && existsSync(backupDist)) rmSync(backupDist, { recursive: true, force: true });
+    } catch {
+      // The caller will fail closed on the next generated-runtime status check.
+    }
+  }
+}
+
+export function prepareExactHeadRuntimeBundle(repoRoot, {
+  spawnSyncFn = spawnSync,
+  distManifestFactory = (root) => createStephanosDistManifest({ rootDir: root }),
+  expectedHead = '',
+  platform = process.platform,
+  isolatedBuildWorkspaceFactory = createIsolatedRuntimeBuildWorkspace,
+} = {}) {
+  const isolated = Boolean(expectedHead);
+  if (isolated && !/^[0-9a-f]{40}$/i.test(expectedHead)) {
+    return Object.freeze({ ok: false, required: true, blocker: 'EXACT_HEAD_PROOF_INVALID' });
+  }
+  let workspace = null;
+  let worktreeAdded = false;
+  let linkedPaths = [];
+  let result = null;
+  try {
+    const buildRoot = isolated
+      ? (() => {
+        const candidate = isolatedBuildWorkspaceFactory({ repoRoot, expectedHead });
+        if (!candidate?.buildRoot || !candidate?.temporaryRoot) throw new Error('isolated workspace factory returned an invalid workspace');
+        workspace = candidate;
+        return candidate.buildRoot;
+      })()
+      : repoRoot;
+    if (isolated) {
+      let worktree;
+      try {
+        worktree = spawnSyncFn('git', ['worktree', 'add', '--detach', buildRoot, expectedHead], {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          shell: false,
+          windowsHide: true,
+          timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+        });
+      } catch (error) {
+        result = { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_FAILED', reason: boundedText(error?.message || error) };
+      }
+      if (!result && (worktree?.error || worktree?.status !== 0 || !existsSync(buildRoot))) {
+        result = {
+          ok: false,
+          required: true,
+          blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_FAILED',
+          reason: boundedText(worktree?.stderr || worktree?.stdout || worktree?.error?.message),
+        };
+      }
+      if (!result) {
+        worktreeAdded = true;
+        try {
+          linkedPaths = linkRuntimeDependencies(repoRoot, buildRoot, platform);
+        } catch (error) {
+          result = { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_DEPENDENCY_LINK_FAILED', reason: boundedText(error?.message || error) };
+        }
+      }
+    }
+    const steps = [
+      {
+        name: 'build',
+        scriptPath: resolve(isolated ? workspace.buildRoot : repoRoot, 'scripts', 'build-stephanos-ui.mjs'),
+        blocker: 'CANONICAL_RUNTIME_BUILD_FAILED',
+      },
+      {
+        name: 'verify',
+        scriptPath: resolve(isolated ? workspace.buildRoot : repoRoot, 'scripts', 'verify-stephanos-dist.mjs'),
+        blocker: 'CANONICAL_RUNTIME_VERIFY_FAILED',
+      },
+    ];
+    if (!result) {
+      for (const step of steps) {
+        let execution;
+        try {
+          execution = spawnSyncFn(process.execPath, [step.scriptPath], {
+            cwd: isolated ? workspace.buildRoot : repoRoot,
+            encoding: 'utf8',
+            shell: false,
+            windowsHide: true,
+            timeout: CANONICAL_RUNTIME_BUILD_TIMEOUT_MS,
+          });
+        } catch (error) {
+          result = { ok: false, required: true, blocker: step.blocker, failedStep: step.name, reason: boundedText(error?.message || error) };
+          break;
+        }
+        if (execution?.error || execution?.status !== 0) {
+          result = {
+            ok: false,
+            required: true,
+            blocker: step.blocker,
+            failedStep: step.name,
+            status: execution?.status ?? null,
+            reason: boundedText(execution?.error?.message || execution?.stderr || execution?.stdout),
+          };
+          break;
+        }
+      }
+    }
+    if (!result) {
+      if (isolated) {
+        const copied = copyVerifiedRuntimeDist({ repoRoot, buildRoot: workspace.buildRoot, distManifestFactory });
+        result = copied.ok
+          ? {
+            ok: true,
+            required: true,
+            canonicalBuildPerformed: true,
+            canonicalVerifyPerformed: true,
+            immutableBuildSource: expectedHead,
+            expectedDistFingerprint: copied.expectedDistFingerprint,
+            distManifest: copied.distManifest,
+          }
+          : { ok: false, required: true, blocker: copied.blocker, reason: copied.reason };
+      } else {
+        let distManifest;
+        try {
+          distManifest = distManifestFactory(repoRoot);
+        } catch {
+          distManifest = null;
+        }
+        const validatedManifest = validateExactHeadDistManifest(distManifest);
+        result = validatedManifest.ok
+          ? {
+            ok: true,
+            required: true,
+            canonicalBuildPerformed: true,
+            canonicalVerifyPerformed: true,
+            expectedDistFingerprint: validatedManifest.fingerprint,
+            distManifest,
+          }
+          : { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_FINGERPRINT_FAILED' };
+      }
+    }
+  } catch (error) {
+    result ||= { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_WORKTREE_FAILED', reason: boundedText(error?.message || error) };
+  }
+  if (workspace) {
+    const cleanup = cleanupIsolatedRuntimeBuildWorkspace({
+      workspace,
+      repoRoot,
+      linkedPaths,
+      worktreeAdded,
+      spawnSyncFn,
+    });
+    if (!cleanup.ok) {
+      result = { ok: false, required: true, blocker: cleanup.blocker, reason: cleanup.reason };
+    }
+  }
+  return Object.freeze(result || { ok: false, required: true, blocker: 'CANONICAL_RUNTIME_BUILD_FAILED' });
 }
 
 export function evaluateWorkerSourceSafety({
@@ -990,6 +1274,8 @@ export async function runCodexWorker(taskPath, {
       exactHeadRuntimeBundle = runtimeBundleFactory(task.repoRoot, {
         spawnSyncFn,
         distManifestFactory,
+        expectedHead: exactHeadValidation.expectedHead,
+        platform,
       });
     } catch (error) {
       exactHeadRuntimeBundle = Object.freeze({

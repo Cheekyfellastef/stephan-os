@@ -28,7 +28,7 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const SAFE_BLOCKER_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
 const SAFE_STATE = new Set(['ACCEPTED', 'RUNNING', 'DONE', 'BLOCKED']);
-const SECRET_OR_PATH_PATTERN = /secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|\.env\b|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|[A-Za-z]:[\\/]|(?:^|[\\/])\.\.(?:[\\/]|$)/i;
+const SECRET_OR_PATH_PATTERN = /secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:[A-Za-z]:[\\/])|(?:^|[\s=:(\[])(?:\\\\|~?\/(?:home|Users|tmp|var|workspace|root|private|mnt|opt|Volumes)(?:[\\/]|$))|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:ghp|github_pat|xox[baprs]|sk)_[A-Za-z0-9_-]{8,}/i;
 
 function safeTimestamp(value) {
   const ms = Date.parse(String(value || ''));
@@ -80,6 +80,7 @@ function safeCount(value) {
 
 function safeTelemetryText(value, limit = 500) {
   const normalized = String(value ?? '').trim();
+  if (SECRET_OR_PATH_PATTERN.test(normalized)) return '';
   return normalized.length > limit ? normalized.slice(0, limit) : normalized;
 }
 
