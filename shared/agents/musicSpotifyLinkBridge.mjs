@@ -2,6 +2,7 @@ import { constants as fsConstants } from 'node:fs';
 import { lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { resolveSharedWorkspacePath } from './sharedAgentWorkspaceStore.mjs';
 import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
 
@@ -20,6 +21,8 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_CANDIDATE_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const INBOX_LOCK_RETRY_COUNT = 200;
+const INBOX_LOCK_RETRY_DELAY_MS = 5;
 
 function spotifyPayloadSha256(candidate) {
   const payload = [
@@ -81,6 +84,66 @@ async function inspectOpenedInbox(root, target, handle) {
     mtimeMs: handleInfo.mtimeMs,
     ctimeMs: handleInfo.ctimeMs,
   };
+}
+
+async function acquireInboxLock(root, target) {
+  if (!(await verifySafeInboxParent(root, target))) {
+    return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE' };
+  }
+  const lockPath = `${target}.lock`;
+  for (let attempt = 0; attempt < INBOX_LOCK_RETRY_COUNT; attempt += 1) {
+    let handle;
+    try {
+      const noFollow = Number.isInteger(fsConstants.O_NOFOLLOW) ? fsConstants.O_NOFOLLOW : 0;
+      handle = await open(
+        lockPath,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
+        0o600,
+      );
+      await handle.writeFile(`${process.pid}:${randomUUID()}\n`, { encoding: 'utf8' });
+      await handle.sync();
+      const identity = await inspectOpenedInbox(root, lockPath, handle);
+      if (!identity) {
+        await handle.close();
+        return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_LOCK_UNSAFE' };
+      }
+      return { ok: true, handle, path: lockPath, identity };
+    } catch (error) {
+      await handle?.close().catch(() => {});
+      if (error?.code === 'EEXIST') {
+        await delay(INBOX_LOCK_RETRY_DELAY_MS);
+        continue;
+      }
+      if (['ELOOP', 'EMLINK', 'EISDIR', 'ENOTDIR'].includes(error?.code)) {
+        return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_LOCK_UNSAFE' };
+      }
+      throw error;
+    }
+  }
+  return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_BUSY' };
+}
+
+async function releaseInboxLock(root, lock) {
+  try {
+    const current = await inspectOpenedInbox(root, lock.path, lock.handle);
+    if (!current || current.dev !== lock.identity.dev || current.ino !== lock.identity.ino) {
+      return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_LOCK_CHANGED' };
+    }
+    await lock.handle.close();
+    lock.handle = null;
+    const pathInfo = await lstat(lock.path);
+    const sameFile = String(pathInfo.dev) === lock.identity.dev
+      && String(pathInfo.ino) === lock.identity.ino;
+    if (pathInfo.isSymbolicLink() || !pathInfo.isFile() || Number(pathInfo.nlink) !== 1 || !sameFile) {
+      return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_LOCK_CHANGED' };
+    }
+    await unlink(lock.path);
+    return { ok: true };
+  } catch {
+    return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_LOCK_RELEASE_FAILED' };
+  } finally {
+    await lock.handle?.close().catch(() => {});
+  }
 }
 
 async function readSafeInbox(root, target) {
@@ -226,7 +289,16 @@ export async function appendMusicSpotifyLinkCandidate(input = {}, options = {}) 
   }
   const payloadSha256 = spotifyPayloadSha256(validated.candidate);
   const line = `${JSON.stringify({ ...validated.candidate, expectedHead, receiptRef, payloadSha256 })}\n`;
-  const written = await replaceInboxAtomically(resolved.root, resolved.path, line);
+  const lock = await acquireInboxLock(resolved.root, resolved.path);
+  if (!lock.ok) return lock;
+  let written;
+  let released;
+  try {
+    written = await replaceInboxAtomically(resolved.root, resolved.path, line);
+  } finally {
+    released = await releaseInboxLock(resolved.root, lock);
+  }
+  if (!released.ok) return released;
   if (!written.ok) return written;
   return { ok: true, finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED', requestId: validated.candidate.requestId, payloadSha256 };
 }

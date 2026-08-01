@@ -120,6 +120,33 @@ test('rejects a hard-linked Spotify inbox without modifying the linked victim', 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('serializes concurrent approved inbox writes without losing successful records', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-spotify-concurrent-'));
+  const repoRoot = join(root, 'not-the-repo');
+  const workspace = join(root, 'external-workspace');
+  try {
+    const candidates = Array.from({ length: 20 }, (_, index) => ({
+      ...candidate,
+      requestId: `spotify-link-concurrent-${String(index).padStart(3, '0')}`,
+    }));
+    const results = await Promise.all(candidates.map((entry) => appendMusicSpotifyLinkCandidate(entry, {
+      root: workspace,
+      repoRoot,
+      expectedHead,
+      receiptRef: `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(entry.requestId)}`,
+    })));
+    assert.equal(results.every((result) => result.ok), true);
+    const lines = (await readFile(join(workspace, 'status', 'music-spotify-link-inbox.jsonl'), 'utf8'))
+      .trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    assert.equal(lines.length, candidates.length);
+    assert.deepEqual(new Set(lines.map((line) => line.requestId)), new Set(candidates.map((entry) => entry.requestId)));
+    await assert.rejects(
+      readFile(join(workspace, 'status', 'music-spotify-link-inbox.jsonl.lock'), 'utf8'),
+      (error) => error?.code === 'ENOENT',
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('uses validated copy-and-replace instead of mutating an existing inbox inode', async () => {
   const moduleSource = await readFile(join(dirname(fileURLToPath(import.meta.url)), 'musicSpotifyLinkBridge.mjs'), 'utf8');
   const start = moduleSource.indexOf('async function replaceInboxAtomically');
@@ -130,6 +157,8 @@ test('uses validated copy-and-replace instead of mutating an existing inbox inod
   assert.match(replacer, /replacementHandle\.writeFile\(nextText/);
   assert.match(replacer, /inboxSnapshotUnchanged\(root, target, snapshot\)/);
   assert.match(replacer, /rename\(replacementPath, target\)/);
+  assert.match(moduleSource, /acquireInboxLock\(resolved\.root, resolved\.path\)/);
+  assert.match(moduleSource, /releaseInboxLock\(resolved\.root, lock\)/);
   assert.doesNotMatch(moduleSource, /await appendFile\(resolved\.path/);
   assert.doesNotMatch(moduleSource, /\.appendFile\(/);
 });
