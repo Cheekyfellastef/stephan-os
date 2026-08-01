@@ -217,6 +217,34 @@ test('copy verification failure surfaces an ownership-bound cleanup failure', as
   assert.equal(await fs.readFile(input.destinationEventsPath, 'utf8'), jsonl([dreamEvent('2026-07-21T02:00:00.000Z', 'deep', '2026-07-21')]));
 });
 
+test('post-copy verification exception rolls back the copy and prior preservation artifacts', async () => {
+  const input = await disjointFixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const eventsPaths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  const deepEntry = plan.entries.find((entry) => entry.logicalSourcePath === 'memory/dreaming/deep/2026-07-21.md');
+  assert.ok(deepEntry);
+  let injected = false;
+  const fsImpl = fsProxy({
+    readFile: async (target, ...args) => {
+      if (!injected && path.resolve(String(target)) === path.resolve(deepEntry.destinationPath)) {
+        injected = true;
+        const error = new Error('post-copy verification failed');
+        error.code = 'EIO';
+        throw error;
+      }
+      return fs.readFile(target, ...args);
+    },
+  });
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(injected, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_COPY_VERIFICATION_FAILED');
+  assert.equal(result.cleanupBlocker, '');
+  await assert.rejects(() => fs.lstat(deepEntry.destinationPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(eventsPaths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(eventsPaths.manifestPath), (error) => error.code === 'ENOENT');
+});
+
 test('later copy blocker rolls back a prior preservation and its own copied output', async () => {
   const input = await disjointFixture();
   let changed = false;
@@ -554,6 +582,77 @@ test('partial receipt publication failure removes the handle-owned receipt and m
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED');
   assert.equal(result.receiptWriteReason, 'EIO');
+  assert.equal(result.cleanupBlocker, '');
+  await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
+test('receipt publication reports cleanup failure when created-file identity is unavailable', async () => {
+  const input = await disjointFixture();
+  let injected = false;
+  const fsImpl = fsProxy({
+    open: async (target, flags, mode) => {
+      const handle = await fs.open(target, flags, mode);
+      if (!String(target).includes(`${path.sep}runtime-boundary${path.sep}dream-migration-`)) return handle;
+      return {
+        writeFile: async (...args) => {
+          await handle.writeFile(...args);
+          injected = true;
+          const error = new Error('receipt publication failed');
+          error.code = 'EIO';
+          throw error;
+        },
+        stat: async () => {
+          const error = new Error('receipt identity unavailable');
+          error.code = 'EIO';
+          throw error;
+        },
+        close: (...args) => handle.close(...args),
+      };
+    },
+  });
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(injected, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED');
+  assert.equal(result.receiptWriteReason, 'EIO');
+  assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED');
+  await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.equal(receiptFiles.filter((name) => name.startsWith('dream-migration-')).length, 1);
+});
+
+test('partial manifest publication self-cleans before snapshot rollback', async () => {
+  const input = await disjointFixture();
+  let injected = false;
+  const fsImpl = fsProxy({
+    open: async (target, flags, mode) => {
+      const handle = await fs.open(target, flags, mode);
+      if (!String(target).includes(`${path.sep}runtime-boundary${path.sep}dream-preservation-v1-`)) return handle;
+      return {
+        writeFile: async (...args) => {
+          await handle.writeFile(...args);
+          injected = true;
+          const error = new Error('partial manifest write');
+          error.code = 'EIO';
+          throw error;
+        },
+        stat: (...args) => handle.stat(...args),
+        close: (...args) => handle.close(...args),
+      };
+    },
+  });
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(injected, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_VERSIONED_MANIFEST_WRITE_FAILED');
   assert.equal(result.cleanupBlocker, '');
   await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
