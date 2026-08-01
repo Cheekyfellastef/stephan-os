@@ -4,6 +4,7 @@ import {
   createMusicBrainzSearchClient,
   normalizeCatalogQuery,
   normalizeMusicBrainzRecording,
+  normalizeSpotifyTrack,
   searchProviderNeutralCatalog,
 } from '../stephanos-server/services/musicCatalogSearch.js';
 import musicRouter from '../stephanos-server/routes/music.js';
@@ -46,6 +47,19 @@ test('Spotify is preferred without requesting personal account access', async ()
   assert.equal(result.fallbackUsed, false);
   assert.equal(result.results[0].universalId, 'isrc:GBF089000920');
   assert.equal(result.results[0].spotifyUrl, 'https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC');
+  assert.equal(result.results[0].verificationStatus, 'metadata_verified');
+  assert.equal(result.results[0].playbackAvailability, 'playback_unverified');
+});
+
+test('Spotify normalization proves catalogue identity without claiming playable browser state', () => {
+  const track = normalizeSpotifyTrack({
+    id: '4uLU6hMCjMI75M1A2tKUQC',
+    name: 'Enjoy the Silence',
+    artists: [{ name: 'Depeche Mode' }],
+  });
+  assert.equal(track.verificationStatus, 'metadata_verified');
+  assert.equal(track.playbackAvailability, 'playback_unverified');
+  assert.match(track.spotifyUrl, /^https:\/\/open\.spotify\.com\/track\//);
 });
 
 test('missing Spotify credentials falls through to zero-configuration search', async () => {
@@ -72,6 +86,18 @@ test('Spotify denial falls through without surfacing credential setup', async ()
   assert.equal(result.provider, 'musicbrainz');
   assert.equal(result.results[0].spotifyUrl, '');
   assert.deepEqual(result.attempts[0], { provider: 'spotify', status: 'failed', reason: 'spotify_denied' });
+});
+
+test('a stalled Spotify provider is bounded before MusicBrainz fallback', async () => {
+  const result = await searchProviderNeutralCatalog({
+    query: 'Enjoy the Silence',
+    spotifyTimeoutMs: 5,
+    spotifyDiagnostics: () => ({ configured: true }),
+    spotifySearch: async () => new Promise(() => {}),
+    musicBrainzSearch: async () => [normalizeMusicBrainzRecording(recording)],
+  });
+  assert.equal(result.provider, 'musicbrainz');
+  assert.deepEqual(result.attempts[0], { provider: 'spotify', status: 'failed', reason: 'spotify_timeout' });
 });
 
 test('MusicBrainz client identifies Stephanos and serializes calls to one per second', async () => {

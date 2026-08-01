@@ -82,8 +82,8 @@ export function normalizeSpotifyTrack(track = {}) {
     durationMs: Math.max(0, Number(track.duration_ms || 0)),
     confidence: 'high',
     confidenceScore: 100,
-    verificationStatus: 'spotify_verified',
-    playbackAvailability: 'spotify_track',
+    verificationStatus: 'metadata_verified',
+    playbackAvailability: 'playback_unverified',
     spotifyUrl: verifiedUrl,
     spotifyUri: `spotify:track:${id}`,
     spotifySearchUrl: spotifySearchUrl({ artist, title }),
@@ -147,6 +147,7 @@ export async function searchProviderNeutralCatalog({
   spotifyDiagnostics = getSpotifyConfigDiagnostics,
   spotifySearch = searchSpotifyCatalog,
   musicBrainzSearch = searchMusicBrainzCatalog,
+  spotifyTimeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   const normalizedQuery = normalizeCatalogQuery(query);
   const resultLimit = boundedLimit(limit);
@@ -159,8 +160,19 @@ export async function searchProviderNeutralCatalog({
   const attempts = [];
   const spotify = spotifyDiagnostics(env);
   if (spotify.configured) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), spotifyTimeoutMs);
     try {
-      const payload = await spotifySearch({ query: normalizedQuery, type: 'track', limit: resultLimit, env });
+      const payload = await Promise.race([
+        spotifySearch({ query: normalizedQuery, type: 'track', limit: resultLimit, env, signal: controller.signal, timeoutMs: spotifyTimeoutMs }),
+        new Promise((_, reject) => {
+          controller.signal.addEventListener('abort', () => {
+            const error = new Error('Spotify catalogue search timed out');
+            error.code = 'spotify_timeout';
+            reject(error);
+          }, { once: true });
+        }),
+      ]);
       const results = (Array.isArray(payload?.tracks?.items) ? payload.tracks.items : [])
         .map(normalizeSpotifyTrack)
         .filter(Boolean);
@@ -180,6 +192,8 @@ export async function searchProviderNeutralCatalog({
       }
     } catch (error) {
       attempts.push({ provider: 'spotify', status: 'failed', reason: String(error?.code || 'spotify_failed') });
+    } finally {
+      clearTimeout(timer);
     }
   } else {
     attempts.push({ provider: 'spotify', status: 'not_configured' });

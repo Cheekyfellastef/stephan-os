@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getSpotifyConfigDiagnostics, getSpotifyAccessToken } from '../stephanos-server/services/spotifyClient.js';
+import { getSpotifyConfigDiagnostics, getSpotifyAccessToken, searchSpotifyCatalog } from '../stephanos-server/services/spotifyClient.js';
 import { scoreSpotifyMatch } from '../stephanos-server/routes/music.js';
 
 test('missing env returns configured false', () => {
@@ -16,6 +16,28 @@ test('token helper uses client credentials', async () => {
   assert.equal(token, 'abc');
   assert.match(seenAuth, /^Basic /);
   global.fetch = original;
+});
+
+test('Spotify HTTP calls abort instead of hanging indefinitely', async () => {
+  let receivedSignal = false;
+  const fetchImpl = async (_url, options = {}) => new Promise((resolve, reject) => {
+    receivedSignal = options.signal instanceof AbortSignal;
+    options.signal.addEventListener('abort', () => {
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      reject(error);
+    }, { once: true });
+  });
+  await assert.rejects(
+    searchSpotifyCatalog({
+      query: 'timeout',
+      env: { SPOTIFY_CLIENT_ID: 'id', SPOTIFY_CLIENT_SECRET: 'secret' },
+      fetchImpl,
+      timeoutMs: 5,
+    }),
+    (error) => error?.code === 'spotify_timeout',
+  );
+  assert.equal(receivedSignal, true);
 });
 
 test('confidence scoring works', () => {

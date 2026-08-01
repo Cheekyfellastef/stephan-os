@@ -26,6 +26,30 @@ test('catalog results become stable universal cards and deduplicate', () => {
   assert.equal(findExistingCatalogTrack([track], { universalId: 'spotify:track:different', provider: 'spotify', providerItemId: 'different', title: 'Track', artist: 'Artist' }), track);
 });
 
+test('catalogue identity never claims browser playback verification', () => {
+  const track = catalogResultToMusicTileTrack({
+    universalId: 'spotify:track:4uLU6hMCjMI75M1A2tKUQC',
+    provider: 'spotify',
+    providerItemId: '4uLU6hMCjMI75M1A2tKUQC',
+    title: 'Enjoy the Silence',
+    artist: 'Depeche Mode',
+    spotifyUrl: 'https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC',
+    verificationStatus: 'metadata_verified',
+    playbackAvailability: 'playback_unverified',
+  });
+  assert.equal(track.candidateVerificationStatus, 'search-only');
+  assert.equal(track.verificationStatus, 'catalogue_identity_only');
+  assert.equal(track.catalogVerificationStatus, 'metadata_verified');
+  assert.equal(track.catalogPlaybackAvailability, 'playback_unverified');
+});
+
+test('catalogue metadata is escaped at persistent card and presence HTML sinks', () => {
+  assert.match(main, /escapeHtml\(track\.artist \|\| 'Unknown Artist'\)/);
+  assert.match(main, /escapeHtml\(track\.verificationNote\)/);
+  assert.match(main, /escapeHtml\(item\.summary \|\| item\.kind\)/);
+  assert.match(main, /escapeHtml\(item\.impact \|\| ''\)/);
+});
+
 test('browser request is bounded and uses one provider-neutral endpoint', async () => {
   let requestedUrl = '';
   const response = await requestNativeCatalogSearch('  Enjoy   the Silence  ', {
