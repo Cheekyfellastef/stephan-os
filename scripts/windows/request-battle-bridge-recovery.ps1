@@ -261,8 +261,9 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
     $authorityTimeText = if ([string]$mailboxReceipt.state -eq 'DONE') { [string]$mailboxReceipt.completedAt } else { [string]$mailboxReceipt.acceptedAt }
     $authorityTime = [DateTimeOffset]::Parse($authorityTimeText)
     $canonicalReceiptFilename = Get-CanonicalMailboxReceiptFilename -RequestId ([string]$mailboxReceipt.requestId)
-    $sourceControlExecutable = Get-Command git.exe -ErrorAction Stop
-    $currentSourceHead = [string](& $sourceControlExecutable.Source -C $repoRoot rev-parse HEAD)
+    $sourceControlExecutable = 'C:\Program Files\Git\cmd\git.exe'
+    if (-not (Test-Path -LiteralPath $sourceControlExecutable -PathType Leaf)) { throw 'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING' }
+    $currentSourceHead = [string](& $sourceControlExecutable -C $repoRoot rev-parse HEAD)
     if ([string]$mailboxReceipt.schemaVersion -ne 'stephanos.battle-bridge-github-command-receipt.v1'
         -or [string]$mailboxReceipt.requestId -ne $EvidenceSubject -or [string]$mailboxReceipt.operation -ne 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'
         -or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne 1507

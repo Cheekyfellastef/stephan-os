@@ -28,6 +28,8 @@ import {
 export const BATTLE_BRIDGE_RECOVERY_MESH_RUNNER_SCHEMA = 'stephanos.battle-bridge-recovery-mesh-runner.v1';
 export const BATTLE_BRIDGE_RECOVERY_MESH_TASK = 'Stephanos Battle Bridge Recovery Mesh';
 export const BATTLE_BRIDGE_RECOVERY_MESH_LOCK_STALE_MS = 3 * 60 * 1000;
+export const BATTLE_BRIDGE_WINDOWS_POWERSHELL_EXECUTABLE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+export const BATTLE_BRIDGE_WINDOWS_GIT_EXECUTABLE = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const MAX_INGRESS_BYTES = 16 * 1024;
 const MAX_STATE_BYTES = 128 * 1024;
 const LOCK_TOKEN = /^[a-f0-9-]{36}$/;
@@ -50,7 +52,7 @@ function defaultProcessIsAlive(pid) {
 }
 
 function defaultSourceHeadReader(repoRoot) {
-  const executable = process.platform === 'win32' ? 'git.exe' : 'git';
+  const executable = process.platform === 'win32' ? BATTLE_BRIDGE_WINDOWS_GIT_EXECUTABLE : 'git';
   const result = spawnSync(executable, ['-C', path.resolve(repoRoot), 'rev-parse', 'HEAD'], {
     encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000,
   });
@@ -65,7 +67,7 @@ export function createFixedRecoveryMeshMutexVerifier({ verifierScriptPath, spawn
       if (!Number.isSafeInteger(launcherPid) || launcherPid <= 0 || !Number.isSafeInteger(nodePid) || nodePid <= 0) {
         return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_MUTEX_ATTESTATION_PID_INVALID' });
       }
-      const result = spawnSyncFn('powershell.exe', [
+      const result = spawnSyncFn(BATTLE_BRIDGE_WINDOWS_POWERSHELL_EXECUTABLE, [
         '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fixedPath,
         '-LauncherPid', String(launcherPid), '-NodePid', String(nodePid),
       ], { encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 });
@@ -153,7 +155,7 @@ export async function validateRecoveryMeshPathAncestors(paths, { baseline = null
 export function createFixedRecoveryMeshProbeAdapter({
   probeScriptPath,
   spawnSyncFn = spawnSync,
-  powershellExecutable = 'powershell.exe',
+  powershellExecutable = BATTLE_BRIDGE_WINDOWS_POWERSHELL_EXECUTABLE,
 } = {}) {
   const fixedPath = path.resolve(probeScriptPath);
   return Object.freeze({
@@ -275,6 +277,7 @@ export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, 
       return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_AUTH_PROOF_MISMATCH', route: request.route });
     }
 
+    let authorityHead = '';
     if (request.route === BATTLE_BRIDGE_RECOVERY_ROUTE.GITHUB_MAILBOX) {
       const mailboxReceiptPath = resolveBoundedWorkspaceRef(paths.workspaceRoot, record.upstreamProofRef, 'receipts/github-command-mailbox/');
       if (!mailboxReceiptPath) return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_GITHUB_AUTH_REF_INVALID' });
@@ -294,6 +297,7 @@ export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, 
         || liveSourceHead !== expectedHead) {
         return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_GITHUB_AUTH_RECEIPT_INVALID' });
       }
+      authorityHead = expectedHead;
     } else if (request.route === BATTLE_BRIDGE_RECOVERY_ROUTE.TAILSCALE_CONTROL) {
       if (!record.upstreamProofRef.startsWith('tailscale-status/')) return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_TAILSCALE_AUTH_RECEIPT_INVALID' });
     } else if (request.route === BATTLE_BRIDGE_RECOVERY_ROUTE.OPENCLAW_WHATSAPP) {
@@ -316,9 +320,26 @@ export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, 
       subject: record.subject,
       proofRef: request.authenticationEvidence.proofRef,
       upstreamProofRef: record.upstreamProofRef,
+      ...(authorityHead ? { authorityHead } : {}),
     }));
   }
   return Object.freeze({ ok: true, verified: Object.freeze(verified) });
+}
+
+export function verifyRecoveryDispatchSourceHead(paths, decision, evidenceVerification, sourceHeadReader = defaultSourceHeadReader) {
+  const acceptedRequestIds = new Set((decision?.accepted || []).map((request) => request.requestId));
+  const authorityHeads = [...new Set((evidenceVerification?.verified || [])
+    .filter((evidence) => evidence.route === BATTLE_BRIDGE_RECOVERY_ROUTE.GITHUB_MAILBOX
+      && acceptedRequestIds.has(evidence.requestId))
+    .map((evidence) => text(evidence.authorityHead).toLowerCase()))];
+  if (authorityHeads.length === 0) return Object.freeze({ ok: true, required: false, blocker: '' });
+  if (authorityHeads.length !== 1 || !EXACT_HEAD.test(authorityHeads[0])) {
+    return Object.freeze({ ok: false, required: true, blocker: 'RECOVERY_MESH_GITHUB_DISPATCH_HEAD_AMBIGUOUS' });
+  }
+  const liveSourceHead = text(sourceHeadReader(paths.repoRoot)).toLowerCase();
+  return liveSourceHead === authorityHeads[0]
+    ? Object.freeze({ ok: true, required: true, blocker: '', authorityHead: authorityHeads[0], liveSourceHead })
+    : Object.freeze({ ok: false, required: true, blocker: 'RECOVERY_MESH_GITHUB_DISPATCH_HEAD_CHANGED', authorityHead: authorityHeads[0], liveSourceHead });
 }
 
 export async function readRecoveryMeshIngressFiles(paths) {
@@ -581,6 +602,13 @@ export async function runBattleBridgeRecoveryMesh({
     let recoveryProbeCount = 0;
     if (!(initial.workerHealthy && initial.mailboxHealthy && initial.backendHealthy && initial.gatewayHealthy)) {
       recoveryAttempted = true;
+      // This synchronous check is deliberately adjacent to the only mutating
+      // recovery dispatch. GitHub authority must still bind the live checkout
+      // after adjudication, lease persistence, and the initial inspection.
+      const dispatchHeadVerification = verifyRecoveryDispatchSourceHead(paths, decision, evidenceVerification, sourceHeadReader);
+      if (!dispatchHeadVerification.ok) {
+        return Object.freeze({ ok: false, classification: dispatchHeadVerification.blocker, decision, initial, dispatchHeadVerification, lock });
+      }
       const recovery = probeAdapter.run('Recover');
       if (!recovery.ok) return Object.freeze({ ok: false, classification: recovery.blocker, decision, initial, recovery, lock });
       for (let index = 0; index < maximumRecoveryProbes; index += 1) {

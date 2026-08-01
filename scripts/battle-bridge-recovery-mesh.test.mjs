@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import {
   BATTLE_BRIDGE_RECOVERY_MESH_TASK,
+  BATTLE_BRIDGE_WINDOWS_POWERSHELL_EXECUTABLE,
   buildLocalSupervisorIngress,
   createFixedRecoveryMeshProbeAdapter,
   createFixedRecoveryMeshMutexVerifier,
@@ -42,6 +43,58 @@ function probeData(healthy) {
     mailbox: { healthy },
     backend: { healthy },
     openclawGateway: { healthy },
+  };
+}
+
+async function createGitHubAuthorityFixture(paths, suffix = 'dispatch-head-race') {
+  const mailboxRequestId = `req-1507-${suffix}`;
+  const requestId = `recovery-${suffix}`;
+  const mailboxRef = `receipts/github-command-mailbox/${mailboxRequestId}.json`;
+  const authRef = `receipts/battle-bridge-recovery-auth/${requestId}.json`;
+  const authorityHead = '6bafa9bdd4b62fc46821157bb4546229ad0680c7';
+  await mkdir(path.dirname(path.join(paths.workspaceRoot, ...mailboxRef.split('/'))), { recursive: true });
+  await mkdir(path.dirname(path.join(paths.workspaceRoot, ...authRef.split('/'))), { recursive: true });
+  await writeFile(path.join(paths.workspaceRoot, ...mailboxRef.split('/')), JSON.stringify({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: mailboxRequestId,
+    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1507,
+    state: 'ACCEPTED',
+    acceptedAt: '2026-08-01T02:59:30.000Z',
+    expectedHead: authorityHead,
+  }));
+  await writeFile(path.join(paths.workspaceRoot, ...authRef.split('/')), JSON.stringify({
+    schemaVersion: 'stephanos.battle-bridge-recovery-auth-receipt.v1',
+    requestId,
+    route: 'GITHUB_MAILBOX',
+    issuer: 'battle-bridge-github-command-mailbox',
+    subject: mailboxRequestId,
+    upstreamProofRef: mailboxRef,
+    issuedAtUtc: '2026-08-01T02:59:30.000Z',
+    expiresAtUtc: '2026-08-01T03:04:30.000Z',
+    verifiedByFixedAdapter: true,
+    authorityHead,
+  }));
+  return {
+    authorityHead,
+    request: {
+      schemaVersion: 'stephanos.battle-bridge-recovery-ingress.v1',
+      requestId,
+      route: 'GITHUB_MAILBOX',
+      action: 'WAKE_CANONICAL_BATTLE_BRIDGE_DISPATCHER',
+      issuedAtUtc: '2026-08-01T02:59:30.000Z',
+      expiresAtUtc: '2026-08-01T03:04:30.000Z',
+      sourceReceipt: mailboxRef,
+      authenticationEvidence: {
+        schemaVersion: 'stephanos.battle-bridge-recovery-auth-evidence.v1',
+        route: 'GITHUB_MAILBOX',
+        issuer: 'battle-bridge-github-command-mailbox',
+        subject: mailboxRequestId,
+        proofRef: authRef,
+        verified: true,
+      },
+    },
   };
 }
 
@@ -104,7 +157,13 @@ test('runner recovers once, re-probes, publishes and keeps one executor', async 
     }],
     recoveryProbeDelayMs: 0,
     maximumRecoveryProbes: 1,
-    sourceHeadReader: () => '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
+    sourceHeadReader: (() => {
+      const heads = [
+        '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
+        '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
+      ];
+      return () => heads.shift() || '';
+    })(),
   });
   assert.equal(result.ok, true);
   assert.deepEqual(modes, ['Inspect', 'Recover', 'Inspect']);
@@ -249,6 +308,32 @@ test('consumer rereads live checkout head before accepting GitHub authority', as
   assert.equal(result.blocker, 'RECOVERY_MESH_GITHUB_AUTH_RECEIPT_INVALID');
 });
 
+test('checkout drift after inspection blocks the actual recovery dispatch', async () => {
+  const paths = await fixture();
+  const { authorityHead, request } = await createGitHubAuthorityFixture(paths);
+  const modes = [];
+  let headReads = 0;
+  const result = await runBattleBridgeRecoveryMesh({
+    paths,
+    expectedPaths: paths,
+    now: new Date('2026-08-01T03:00:00.000Z'),
+    ingressRequests: [request],
+    sourceHeadReader: () => (++headReads === 1 ? authorityHead : 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+    probeAdapter: {
+      run(mode) {
+        modes.push(mode);
+        return { ok: true, data: probeData(false) };
+      },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'RECOVERY_MESH_GITHUB_DISPATCH_HEAD_CHANGED');
+  assert.equal(headReads, 2);
+  assert.deepEqual(modes, ['Inspect']);
+  assert.equal(result.dispatchHeadVerification.authorityHead, authorityHead);
+  assert.equal(result.dispatchHeadVerification.liveSourceHead, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+});
+
 test('forged external identity evidence is rejected without suppressing the local supervisor', async () => {
   const paths = await fixture();
   const authRef = 'receipts/battle-bridge-recovery-auth/recovery-forged-0001.json';
@@ -340,6 +425,7 @@ test('fixed probe adapter accepts only Inspect or Recover and never uses a shell
   assert.equal(adapter.run('Inspect').ok, true);
   assert.equal(adapter.run('Recover').ok, true);
   assert.equal(calls.length, 2);
+  assert.ok(calls.every((call) => call.executable === BATTLE_BRIDGE_WINDOWS_POWERSHELL_EXECUTABLE));
   assert.ok(calls.every((call) => call.options.shell === false && call.options.windowsHide === true));
   assert.throws(() => adapter.run('Start-ArbitraryTask'), /Unsupported/);
 });
@@ -356,6 +442,8 @@ test('mutex verifier requires fixed parent-bound Windows attestation', () => {
   assert.equal(verifier.verify({ launcherPid: 123, nodePid: 456 }).ok, true);
   assert.equal(verifier.verify({ launcherPid: 0, nodePid: 456 }).blocker, 'RECOVERY_MESH_MUTEX_ATTESTATION_PID_INVALID');
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].executable, BATTLE_BRIDGE_WINDOWS_POWERSHELL_EXECUTABLE);
+  assert.notEqual(calls[0].executable, 'powershell.exe');
   assert.equal(calls[0].options.shell, false);
   assert.deepEqual(calls[0].args.slice(-4), ['-LauncherPid', '123', '-NodePid', '456']);
 });

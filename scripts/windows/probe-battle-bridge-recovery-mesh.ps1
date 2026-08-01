@@ -122,8 +122,10 @@ $openClawHealth = Get-OpenClawIdentityHealth
 $mailboxTask = $after.mailbox
 $mailboxLastRunMs = if ($mailboxTask.lastRunTimeUtc) { ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($mailboxTask.lastRunTimeUtc)).TotalMilliseconds } else { [double]::PositiveInfinity }
 $mailboxHealthy = $mailboxTask.present -and $mailboxTask.actionCanonical -and ($mailboxTask.state -eq 'Running' -or $mailboxLastRunMs -le 420000)
-$sourceHeadRaw = & git.exe -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
-$branchRaw = & git.exe -C $repoRoot branch --show-current 2>$null | Select-Object -First 1
+$sourceControlExecutable = 'C:\Program Files\Git\cmd\git.exe'
+if (-not (Test-Path -LiteralPath $sourceControlExecutable -PathType Leaf)) { throw 'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING' }
+$sourceHeadRaw = & $sourceControlExecutable -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
+$branchRaw = & $sourceControlExecutable -C $repoRoot branch --show-current 2>$null | Select-Object -First 1
 $sourceHead = if ($sourceHeadRaw) { ([string]$sourceHeadRaw).Trim().ToLowerInvariant() } else { '' }
 $branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
 

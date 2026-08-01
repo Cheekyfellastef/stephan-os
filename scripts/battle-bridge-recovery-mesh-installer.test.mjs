@@ -34,10 +34,17 @@ test('windowless launcher pins recovery mesh to one fixed source runner', async 
   assert.match(hidden, /System\.Threading\.Mutex/);
   assert.match(hidden, /STEPHANOS_RECOVERY_MESH_MUTEX_HELD = '1'/);
   assert.match(hidden, /STEPHANOS_RECOVERY_MESH_LAUNCHER_PID/);
+  assert.match(hidden, /C:\\Program Files\\nodejs\\node\.exe/);
+  assert.doesNotMatch(hidden, /Get-Command node/);
   assert.match(hidden, /regardless of PID reuse/);
   assert.doesNotMatch(hidden, /Get-Process -Id/);
   assert.match(verifier, /Mutex\]::OpenExisting\('Local\\StephanosBattleBridgeRecoveryMeshV1'\)/);
   assert.match(verifier, /node\.ParentProcessId -ne \$LauncherPid/);
+  assert.match(verifier, /C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe/);
+  assert.match(verifier, /launcher\.ExecutablePath/);
+  assert.match(verifier, /node\.ExecutablePath/);
+  assert.match(verifier, /launcher\.CommandLine, \$expectedCommandLine/);
+  assert.doesNotMatch(verifier, /CommandLine -notmatch/);
   assert.match(verifier, /RECOVERY_MESH_MUTEX_NOT_OWNED_BY_LAUNCHER/);
   assert.doesNotMatch(hidden, /["']-Command["']|Invoke-Expression|Start-Process/);
 });
@@ -56,6 +63,8 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   assert.match(probe, /http:\/\/127\.0\.0\.1:18789\/identity/);
   assert.match(probe, /product\s+-eq\s+'OpenClaw'/);
   assert.match(probe, /identityVerified/);
+  assert.match(probe, /C:\\Program Files\\Git\\cmd\\git\.exe/);
+  assert.doesNotMatch(probe, /& git\.exe/);
   assert.doesNotMatch(probe, /Test-TcpHealth/);
   assert.match(probe, /expectedArguments = "\/\/B \/\/NoLogo/);
   assert.match(probe, /\[string\]::Equals\(\$arguments, \$expectedArguments/);
@@ -82,6 +91,8 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /RECOVERY_GITHUB_RECEIPT_AUTHORITY_INVALID/);
   assert.match(request, /Get-CanonicalMailboxReceiptFilename/);
   assert.match(request, /-C \$repoRoot rev-parse HEAD/);
+  assert.match(request, /C:\\Program Files\\Git\\cmd\\git\.exe/);
+  assert.doesNotMatch(request, /Get-Command git/);
   assert.match(request, /RECOVERY_ROUTE_EVIDENCE_ISSUER_INVALID/);
   assert.match(request, /stephanos\.battle-bridge-recovery-auth-evidence\.v1/);
   assert.match(request, /RECOVERY_MESH_TASK_ACTION_INVALID/);

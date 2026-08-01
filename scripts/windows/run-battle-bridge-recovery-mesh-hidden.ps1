@@ -11,8 +11,8 @@ $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 $expectedRepoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
 if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) { throw "Recovery mesh must run from $expectedRepoRoot" }
 $runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-recovery-mesh.mjs')).Path
-$node = Get-Command node.exe -ErrorAction SilentlyContinue
-if (-not $node) { $node = Get-Command node -ErrorAction Stop }
+$nodeExecutable = 'C:\Program Files\nodejs\node.exe'
+if (-not (Test-Path -LiteralPath $nodeExecutable -PathType Leaf)) { throw "Canonical Node executable missing: $nodeExecutable" }
 $mutex = New-Object System.Threading.Mutex($false, 'Local\StephanosBattleBridgeRecoveryMeshV1')
 $mutexHeld = $false
 try {
@@ -34,7 +34,7 @@ try {
 
     $env:STEPHANOS_RECOVERY_MESH_MUTEX_HELD = '1'
     $env:STEPHANOS_RECOVERY_MESH_LAUNCHER_PID = [string]$PID
-    & $node.Source $runnerPath *> $null
+    & $nodeExecutable $runnerPath *> $null
     exit $LASTEXITCODE
 } finally {
     if ($mutexHeld) { $mutex.ReleaseMutex() }
