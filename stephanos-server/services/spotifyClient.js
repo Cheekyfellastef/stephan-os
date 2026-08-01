@@ -129,7 +129,7 @@ export async function searchSpotifyCatalog({
       error.status = response.status;
       throw error;
     }
-    return response.json();
+    return await response.json();
   } catch (error) {
     throw classifySpotifyFetchError(error, 'spotify_network_failure');
   } finally {

@@ -122,6 +122,26 @@ test('MusicBrainz client identifies Stephanos and serializes calls to one per se
   assert.match(starts[0].userAgent, /StephanosOS/);
 });
 
+test('MusicBrainz request deadline includes time waiting for a start slot', async () => {
+  let fetchCalls = 0;
+  const client = createMusicBrainzSearchClient({
+    fetchImpl: async (_url, options = {}) => {
+      fetchCalls += 1;
+      return new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      });
+    },
+    minimumIntervalMs: 1000,
+    timeoutMs: 5,
+    sleep: async () => new Promise(() => {}),
+  });
+  const first = client({ query: 'first' }).catch((error) => error);
+  const secondError = await client({ query: 'second' }).catch((error) => error);
+  await first;
+  assert.equal(secondError.code, 'musicbrainz_timeout');
+  assert.equal(fetchCalls, 1);
+});
+
 test('malformed external provider identities are rejected', async () => {
   const result = await searchProviderNeutralCatalog({
     query: 'malformed result',

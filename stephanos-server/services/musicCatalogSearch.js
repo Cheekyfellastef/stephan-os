@@ -98,43 +98,54 @@ export function createMusicBrainzSearchClient({
   sleep = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
 } = {}) {
   let nextAllowedAt = 0;
-  let queue = Promise.resolve();
+  let startQueue = Promise.resolve();
 
-  return function searchMusicBrainzCatalog({ query, limit = 5 } = {}) {
+  return async function searchMusicBrainzCatalog({ query, limit = 5 } = {}) {
     const normalizedQuery = normalizeCatalogQuery(query);
     const resultLimit = boundedLimit(limit);
-    const request = queue.then(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const waitForAbort = new Promise((_, reject) => {
+      controller.signal.addEventListener('abort', () => {
+        const error = new Error('MusicBrainz catalogue search timed out');
+        error.name = 'AbortError';
+        error.code = 'musicbrainz_timeout';
+        reject(error);
+      }, { once: true });
+    });
+    const startSlot = startQueue.then(async () => {
       const delayMs = Math.max(0, nextAllowedAt - now());
       if (delayMs) await sleep(delayMs);
+      if (controller.signal.aborted) throw Object.assign(new Error('MusicBrainz catalogue search timed out'), { name: 'AbortError', code: 'musicbrainz_timeout' });
       nextAllowedAt = now() + minimumIntervalMs;
-
       const url = new URL(MUSICBRAINZ_SEARCH_ENDPOINT);
       url.searchParams.set('query', normalizedQuery);
       url.searchParams.set('limit', String(resultLimit));
       url.searchParams.set('fmt', 'json');
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        const response = await fetchImpl(url, {
-          headers: { Accept: 'application/json', 'User-Agent': MUSICBRAINZ_USER_AGENT },
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          const error = new Error(`MusicBrainz catalogue search failed (${response.status})`);
-          error.code = response.status === 503 ? 'musicbrainz_rate_limited' : 'musicbrainz_search_failed';
-          throw error;
-        }
-        const payload = await response.json();
-        return (Array.isArray(payload?.recordings) ? payload.recordings : [])
-          .map(normalizeMusicBrainzRecording)
-          .filter(Boolean)
-          .slice(0, resultLimit);
-      } finally {
-        clearTimeout(timer);
-      }
+      const responsePromise = Promise.resolve(fetchImpl(url, {
+        headers: { Accept: 'application/json', 'User-Agent': MUSICBRAINZ_USER_AGENT },
+        signal: controller.signal,
+      }));
+      return { responsePromise };
     });
-    queue = request.catch(() => undefined);
-    return request;
+    startQueue = startSlot.catch(() => undefined);
+
+    try {
+      const { responsePromise } = await Promise.race([startSlot, waitForAbort]);
+      const response = await Promise.race([responsePromise, waitForAbort]);
+      if (!response.ok) {
+        const error = new Error(`MusicBrainz catalogue search failed (${response.status})`);
+        error.code = response.status === 503 ? 'musicbrainz_rate_limited' : 'musicbrainz_search_failed';
+        throw error;
+      }
+      const payload = await Promise.race([response.json(), waitForAbort]);
+      return (Array.isArray(payload?.recordings) ? payload.recordings : [])
+        .map(normalizeMusicBrainzRecording)
+        .filter(Boolean)
+        .slice(0, resultLimit);
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
 

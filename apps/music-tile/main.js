@@ -195,17 +195,37 @@ function addNativeCatalogResultToListeningRoom(result) {
   }
   const track = catalogResultToMusicTileTrack(result);
   if (!track.title) return;
-  const preservedCards = Array.from(ui.listeningDeck.querySelectorAll(':scope > .player-deck-card'));
   state.listeningDeck.unshift(track);
   saveState();
-  renderListeningDeck();
-  const freshCards = Array.from(ui.listeningDeck.querySelectorAll(':scope > .player-deck-card'));
-  preservedCards.forEach((preservedCard, index) => {
-    if (freshCards[index + 1]) freshCards[index + 1].replaceWith(preservedCard);
-  });
+  if (!insertListeningDeckCardWithoutPlaybackReset(track)) {
+    state.listeningDeck = state.listeningDeck.filter((entry) => entry !== track);
+    saveState();
+    if (intelligenceUi.nativeSearchStatus) intelligenceUi.nativeSearchStatus.textContent = 'The track was not added because the current player could not be preserved safely.';
+    return;
+  }
   if (intelligenceUi.nativeSearchStatus) intelligenceUi.nativeSearchStatus.textContent = `${track.artist} — ${track.title} added without interrupting the current player.`;
   emitPresenceEvent({ kind: 'catalog_track_added', severity: 'info', summary: `Added ${track.artist} — ${track.title}`, impact: 'Universal card added to the Listening Room; existing player DOM preserved.' });
   renderNativeCatalogResults();
+}
+
+function insertListeningDeckCardWithoutPlaybackReset(track) {
+  const liveDeck = ui.listeningDeck;
+  if (!liveDeck || !track) return false;
+  const stagingDeck = document.createElement('div');
+  const completeDeck = state.listeningDeck;
+  try {
+    ui.listeningDeck = stagingDeck;
+    state.listeningDeck = [track];
+    renderListeningDeck();
+  } finally {
+    ui.listeningDeck = liveDeck;
+    state.listeningDeck = completeDeck;
+  }
+  const newCard = stagingDeck.querySelector(':scope > .player-deck-card');
+  if (!newCard) return false;
+  liveDeck.querySelector(':scope > .music-empty-state')?.remove();
+  liveDeck.prepend(newCard);
+  return true;
 }
 
 function renderNativeCatalogResults() {

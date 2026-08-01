@@ -40,6 +40,32 @@ test('Spotify HTTP calls abort instead of hanging indefinitely', async () => {
   assert.equal(receivedSignal, true);
 });
 
+test('Spotify timeout remains active while the response body is parsed', async () => {
+  let requestSignal;
+  const fetchImpl = async (url, options = {}) => {
+    requestSignal = options.signal;
+    if (String(url).includes('/api/token')) {
+      return { ok: true, json: async () => ({ access_token: 'body-timeout-token', expires_in: 3600 }) };
+    }
+    return {
+      ok: true,
+      json: async () => new Promise((resolve, reject) => {
+        requestSignal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      }),
+    };
+  };
+  await assert.rejects(
+    searchSpotifyCatalog({
+      query: 'body timeout',
+      env: { SPOTIFY_CLIENT_ID: 'body-timeout-id', SPOTIFY_CLIENT_SECRET: 'body-timeout-secret' },
+      fetchImpl,
+      timeoutMs: 5,
+    }),
+    (error) => error?.code === 'spotify_timeout',
+  );
+  assert.equal(requestSignal.aborted, true);
+});
+
 test('confidence scoring works', () => {
   const high = scoreSpotifyMatch({ artist: 'Anyma', title: 'Pictures Of You' }, { name: 'Pictures Of You', artists: [{ name: 'Anyma' }] });
   assert.equal(high.confidence, 'high');

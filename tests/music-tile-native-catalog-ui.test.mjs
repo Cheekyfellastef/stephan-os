@@ -67,9 +67,15 @@ test('browser request is bounded and uses one provider-neutral endpoint', async 
 
 test('card insertion preserves existing player DOM instead of rebuilding playback', () => {
   const start = main.indexOf('function addNativeCatalogResultToListeningRoom');
-  const end = main.indexOf('\n\nfunction renderNativeCatalogResults', start);
+  const end = main.indexOf('\n\nfunction insertListeningDeckCardWithoutPlaybackReset', start);
   const implementation = main.slice(start, end);
-  assert.match(implementation, /preservedCards/);
-  assert.match(implementation, /freshCards\[index \+ 1\]\.replaceWith\(preservedCard\)/);
+  assert.match(implementation, /insertListeningDeckCardWithoutPlaybackReset\(track\)/);
+  assert.doesNotMatch(implementation, /renderListeningDeck\(\)/);
   assert.doesNotMatch(implementation, /renderAll\(/);
+  const insertionStart = main.indexOf('function insertListeningDeckCardWithoutPlaybackReset');
+  const insertionEnd = main.indexOf('\n\nfunction renderNativeCatalogResults', insertionStart);
+  const insertion = main.slice(insertionStart, insertionEnd);
+  assert.match(insertion, /document\.createElement\('div'\)/);
+  assert.match(insertion, /liveDeck\.prepend\(newCard\)/);
+  assert.doesNotMatch(insertion, /liveDeck\.innerHTML|replaceWith\(/);
 });
