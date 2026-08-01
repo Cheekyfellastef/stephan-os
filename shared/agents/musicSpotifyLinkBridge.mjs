@@ -1,5 +1,6 @@
-import { appendFile, lstat, mkdir, readFile, stat } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { appendFile, lstat, mkdir, readFile, realpath, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { dirname, relative, resolve } from 'node:path';
 import { resolveSharedWorkspacePath } from './sharedAgentWorkspaceStore.mjs';
 import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
 
@@ -13,10 +14,51 @@ const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const TRACK_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/;
 const SPOTIFY_TRACK_URI = /^spotify:track:([A-Za-z0-9]{22})$/;
 const SHA = /^[0-9a-f]{40}$/i;
+const SHA256 = /^[0-9a-f]{64}$/i;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_CANDIDATE_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+function spotifyPayloadSha256(candidate) {
+  const payload = [
+    candidate.schemaVersion,
+    candidate.requestId,
+    candidate.source,
+    candidate.spotifyUri,
+    candidate.spotifyUrl,
+    candidate.targetTrackId,
+    candidate.targetArtist,
+    candidate.targetTitle,
+    candidate.requestedAtUtc,
+  ];
+  return createHash('sha256').update(JSON.stringify(payload), 'utf8').digest('hex');
+}
+
+async function verifySafeInboxPath(root, target) {
+  try {
+    const resolvedRoot = resolve(root);
+    const resolvedParent = dirname(target);
+    const [rootInfo, parentInfo, actualRoot, actualParent] = await Promise.all([
+      lstat(resolvedRoot),
+      lstat(resolvedParent),
+      realpath(resolvedRoot),
+      realpath(resolvedParent),
+    ]);
+    const parentRelative = relative(actualRoot, actualParent);
+    if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()
+      || parentInfo.isSymbolicLink() || !parentInfo.isDirectory()
+      || parentRelative.startsWith('..')) return false;
+    try {
+      const targetInfo = await lstat(target);
+      return targetInfo.isFile() && !targetInfo.isSymbolicLink();
+    } catch (error) {
+      return error?.code === 'ENOENT';
+    }
+  } catch {
+    return false;
+  }
+}
 
 function cleanText(value, max) {
   const text = String(value || '').trim();
@@ -67,10 +109,14 @@ export async function appendMusicSpotifyLinkCandidate(input = {}, options = {}) 
   if (receiptRef !== `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(validated.candidate.requestId)}`) {
     return { ok: false, blocker: 'MUSIC_SPOTIFY_PROVENANCE_RECEIPT_INVALID' };
   }
-  const line = `${JSON.stringify({ ...validated.candidate, expectedHead, receiptRef })}\n`;
+  if (!(await verifySafeInboxPath(resolved.root, resolved.path))) {
+    return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE' };
+  }
+  const payloadSha256 = spotifyPayloadSha256(validated.candidate);
+  const line = `${JSON.stringify({ ...validated.candidate, expectedHead, receiptRef, payloadSha256 })}\n`;
   if (size + Buffer.byteLength(line) > MAX_FILE_BYTES) return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_FULL' };
   await appendFile(resolved.path, line, { encoding: 'utf8', mode: 0o600 });
-  return { ok: true, finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED', requestId: validated.candidate.requestId };
+  return { ok: true, finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED', requestId: validated.candidate.requestId, payloadSha256 };
 }
 
 export async function validateMusicSpotifyLinkProvenance(record, options = {}) {
@@ -87,7 +133,10 @@ export async function validateMusicSpotifyLinkProvenance(record, options = {}) {
     const info = await lstat(resolved.path);
     if (info.isSymbolicLink() || !info.isFile() || info.size > 256 * 1024) return { ok: false, blocker: 'MUSIC_SPOTIFY_PROVENANCE_RECEIPT_UNSAFE' };
     const receipt = JSON.parse(await readFile(resolved.path, 'utf8'));
-    const trusted = receipt?.schemaVersion === 'stephanos.battle-bridge-github-command-receipt.v1'
+    const payloadSha256 = spotifyPayloadSha256(validateMusicSpotifyLinkCandidate(record).candidate || {});
+    const trusted = SHA256.test(String(record.payloadSha256 || ''))
+      && record.payloadSha256 === payloadSha256
+      && receipt?.schemaVersion === 'stephanos.battle-bridge-github-command-receipt.v1'
       && receipt?.state === 'DONE'
       && receipt?.operation === MUSIC_SPOTIFY_LINK_OPERATION
       && receipt?.requestId === record.requestId
@@ -96,7 +145,8 @@ export async function validateMusicSpotifyLinkProvenance(record, options = {}) {
       && receipt?.result?.ok === true
       && receipt?.result?.operation === MUSIC_SPOTIFY_LINK_OPERATION
       && receipt?.result?.requestId === record.requestId
-      && receipt?.result?.result?.finalVerdict === 'MUSIC_SPOTIFY_LINK_QUEUED';
+      && receipt?.result?.result?.finalVerdict === 'MUSIC_SPOTIFY_LINK_QUEUED'
+      && receipt?.result?.result?.payloadSha256 === payloadSha256;
     return trusted ? { ok: true } : { ok: false, blocker: 'MUSIC_SPOTIFY_PROVENANCE_RECEIPT_MISMATCH' };
   } catch { return { ok: false, blocker: 'MUSIC_SPOTIFY_PROVENANCE_RECEIPT_UNAVAILABLE' }; }
 }
@@ -106,7 +156,8 @@ export async function readMusicSpotifyLinkCandidates(options = {}) {
   if (!resolved.ok) return { ok: false, configured: false, blocker: resolved.reason, candidates: [] };
   let text = '';
   try {
-    const info = await stat(resolved.path);
+    const info = await lstat(resolved.path);
+    if (info.isSymbolicLink() || !info.isFile()) return { ok: false, configured: true, blocker: 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE', candidates: [] };
     if (info.size > MAX_FILE_BYTES) return { ok: false, configured: true, blocker: 'MUSIC_SPOTIFY_INBOX_TOO_LARGE', candidates: [] };
     text = await readFile(resolved.path, 'utf8');
   } catch (error) {

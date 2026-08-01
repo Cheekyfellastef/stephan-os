@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -44,6 +44,7 @@ test('appends externally and reads a sanitized, deduplicated projection', async 
     assert.equal((await appendMusicSpotifyLinkCandidate(candidate, provenance)).ok, true);
     const receiptRoot = join(workspace, 'receipts', 'github-command-mailbox');
     await mkdir(receiptRoot, { recursive: true });
+    const queuedRecord = JSON.parse((await readFile(join(workspace, 'status', 'music-spotify-link-inbox.jsonl'), 'utf8')).trim().split(/\r?\n/)[0]);
     await writeFile(join(receiptRoot, createWindowsSafeMailboxReceiptFilename(candidate.requestId)), JSON.stringify({
       schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
       state: 'DONE',
@@ -55,10 +56,10 @@ test('appends externally and reads a sanitized, deduplicated projection', async 
         ok: true,
         operation: 'APPLY_VERIFIED_SPOTIFY_LINK',
         requestId: candidate.requestId,
-        result: { finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED' },
+        result: { finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED', payloadSha256: queuedRecord.payloadSha256 },
       },
     }));
-    const raw = { ...candidate, expectedHead, receiptRef };
+    const raw = { ...candidate, expectedHead, receiptRef, payloadSha256: queuedRecord.payloadSha256 };
     assert.deepEqual(await validateMusicSpotifyLinkProvenance(raw, { root: workspace, repoRoot }), { ok: true });
     const result = await readMusicSpotifyLinkCandidates({ root: workspace, repoRoot, nowMs: Date.parse(candidate.requestedAtUtc) });
     assert.equal(result.ok, true);
@@ -67,6 +68,39 @@ test('appends externally and reads a sanitized, deduplicated projection', async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('rejects a receipt that is not bound to the exact Spotify payload', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-spotify-payload-'));
+  const repoRoot = join(root, 'not-the-repo');
+  const workspace = join(root, 'external-workspace');
+  try {
+    await appendMusicSpotifyLinkCandidate(candidate, { root: workspace, repoRoot, expectedHead, receiptRef });
+    const inboxPath = join(workspace, 'status', 'music-spotify-link-inbox.jsonl');
+    const record = JSON.parse((await readFile(inboxPath, 'utf8')).trim());
+    const receiptRoot = join(workspace, 'receipts', 'github-command-mailbox');
+    await mkdir(receiptRoot, { recursive: true });
+    await writeFile(join(receiptRoot, createWindowsSafeMailboxReceiptFilename(candidate.requestId)), JSON.stringify({
+      schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1', state: 'DONE', operation: 'APPLY_VERIFIED_SPOTIFY_LINK',
+      requestId: candidate.requestId, expectedHead, proofRefs: [receiptRef],
+      result: { ok: true, operation: 'APPLY_VERIFIED_SPOTIFY_LINK', requestId: candidate.requestId, result: { finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED', payloadSha256: '0'.repeat(64) } },
+    }));
+    assert.equal((await validateMusicSpotifyLinkProvenance(record, { root: workspace, repoRoot })).ok, false);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('rejects a symlinked Spotify inbox instead of appending through it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-spotify-symlink-'));
+  const repoRoot = join(root, 'not-the-repo');
+  const workspace = join(root, 'external-workspace');
+  try {
+    await mkdir(join(workspace, 'status'), { recursive: true });
+    const redirected = join(root, 'redirected.jsonl');
+    await writeFile(redirected, '');
+    await symlink(redirected, join(workspace, 'status', 'music-spotify-link-inbox.jsonl'));
+    const result = await appendMusicSpotifyLinkCandidate(candidate, { root: workspace, repoRoot, expectedHead, receiptRef });
+    assert.equal(result.blocker, 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('fails closed when a shape-valid workspace record lacks its trusted mailbox receipt', async () => {
