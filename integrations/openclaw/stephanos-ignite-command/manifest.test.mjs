@@ -28,7 +28,7 @@ test('registers one authenticated ignite command with no general tool or agent a
   assert.match(source, /name:\s*'stephanos-ignite'/);
   assert.match(source, /acceptsArgs:\s*true/);
   assert.match(source, /requireAuth:\s*true/);
-  assert.match(source, /wakeBattleBridgeRecoveryMesh\(\{ authenticatedByHost: true \}\)/);
+  assert.match(source, /authenticatedContext:\s*\{ authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'wake' \}/);
   assert.doesNotMatch(source, /registerTool\s*\(/);
   assert.doesNotMatch(source, /continueAgent:\s*true/);
   assert.doesNotMatch(source, /registerTool|openclaw\s+doctor|codex|merge|push|install/);

@@ -56,6 +56,8 @@ test('runner recovers once, re-probes, publishes and keeps one executor', async 
     repository: 'Cheekyfellastef/stephan-os',
     issueNumber: 1507,
     state: 'ACCEPTED',
+    acceptedAt: '2026-08-01T02:59:30.000Z',
+    expectedHead: '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
   }));
   await writeFile(path.join(paths.workspaceRoot, ...authRef.split('/')), JSON.stringify({
     schemaVersion: 'stephanos.battle-bridge-recovery-auth-receipt.v1',
@@ -65,8 +67,9 @@ test('runner recovers once, re-probes, publishes and keeps one executor', async 
     subject: 'req-1507-recovery-github-0001',
     upstreamProofRef: mailboxRef,
     issuedAtUtc: '2026-08-01T02:59:00.000Z',
-    expiresAtUtc: '2026-08-01T03:05:00.000Z',
+    expiresAtUtc: '2026-08-01T03:04:00.000Z',
     verifiedByFixedAdapter: true,
+    authorityHead: '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
   }));
   const modes = [];
   const probeAdapter = {
@@ -161,6 +164,59 @@ test('malformed durable state ledger blocks replay instead of resetting authorit
   assert.equal(calls, 0);
 });
 
+test('semantically invalid persisted lease timestamps block dispatch', async () => {
+  const paths = await fixture();
+  await mkdir(path.dirname(paths.statePath), { recursive: true });
+  await writeFile(paths.statePath, JSON.stringify({
+    schemaVersion: 'stephanos.battle-bridge-recovery-mesh-runner.v1',
+    consumedIdempotencyKeys: [],
+    activeLease: {
+      schemaVersion: 'stephanos.battle-bridge-recovery-mesh.v1',
+      leaseId: 'recovery-mesh:recovery-invalid-lease',
+      requestId: 'recovery-invalid-lease',
+      route: 'GITHUB_MAILBOX',
+      executor: 'Stephanos Battle Bridge Recovery Mesh',
+      acquiredAtUtc: '2026-08-01T02:59:00.000Z',
+      expiresAtUtc: 'not-a-date',
+      maximumConcurrentExecutors: 1,
+    },
+  }));
+  let calls = 0;
+  const result = await runBattleBridgeRecoveryMesh({
+    paths,
+    expectedPaths: paths,
+    probeAdapter: { run() { calls += 1; return { ok: true, data: probeData(true) }; } },
+  });
+  assert.equal(result.classification, 'RECOVERY_MESH_STATE_LEDGER_INVALID');
+  assert.equal(calls, 0);
+});
+
+test('stale or head-unbound GitHub authority receipts are rejected', async () => {
+  const paths = await fixture();
+  const mailboxRef = 'receipts/github-command-mailbox/recovery-github-stale.json';
+  const authRef = 'receipts/battle-bridge-recovery-auth/recovery-github-stale.json';
+  await mkdir(path.dirname(path.join(paths.workspaceRoot, ...mailboxRef.split('/'))), { recursive: true });
+  await mkdir(path.dirname(path.join(paths.workspaceRoot, ...authRef.split('/'))), { recursive: true });
+  await writeFile(path.join(paths.workspaceRoot, ...mailboxRef.split('/')), JSON.stringify({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1', requestId: 'req-1507-stale',
+    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH', repository: 'Cheekyfellastef/stephan-os', issueNumber: 1507,
+    state: 'ACCEPTED', acceptedAt: '2026-08-01T02:30:00.000Z', expectedHead: '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
+  }));
+  await writeFile(path.join(paths.workspaceRoot, ...authRef.split('/')), JSON.stringify({
+    schemaVersion: 'stephanos.battle-bridge-recovery-auth-receipt.v1', requestId: 'recovery-github-stale', route: 'GITHUB_MAILBOX',
+    issuer: 'battle-bridge-github-command-mailbox', subject: 'req-1507-stale', upstreamProofRef: mailboxRef,
+    authorityHead: '6bafa9bdd4b62fc46821157bb4546229ad0680c7', issuedAtUtc: '2026-08-01T02:59:00.000Z',
+    expiresAtUtc: '2026-08-01T03:04:00.000Z', verifiedByFixedAdapter: true,
+  }));
+  const result = await runBattleBridgeRecoveryMesh({ paths, expectedPaths: paths, now: new Date('2026-08-01T03:00:00.000Z'),
+    ingressRequests: [{ schemaVersion: 'stephanos.battle-bridge-recovery-ingress.v1', requestId: 'recovery-github-stale', route: 'GITHUB_MAILBOX',
+      action: 'WAKE_CANONICAL_BATTLE_BRIDGE_DISPATCHER', issuedAtUtc: '2026-08-01T02:59:00.000Z', expiresAtUtc: '2026-08-01T03:04:00.000Z', sourceReceipt: mailboxRef,
+      authenticationEvidence: { schemaVersion: 'stephanos.battle-bridge-recovery-auth-evidence.v1', route: 'GITHUB_MAILBOX', issuer: 'battle-bridge-github-command-mailbox', subject: 'req-1507-stale', proofRef: authRef, verified: true } }],
+    probeAdapter: { run() { return { ok: true, data: probeData(true) }; } } });
+  assert.equal(result.decision.selected.route, 'LOCAL_WINDOWS_SUPERVISOR');
+  assert.ok(result.decision.rejected.some((item) => item.blocker === 'RECOVERY_MESH_GITHUB_AUTH_RECEIPT_INVALID'));
+});
+
 test('forged external identity evidence is rejected without suppressing the local supervisor', async () => {
   const paths = await fixture();
   const authRef = 'receipts/battle-bridge-recovery-auth/recovery-forged-0001.json';
@@ -173,7 +229,7 @@ test('forged external identity evidence is rejected without suppressing the loca
     subject: 'req-1507-forged-0001',
     upstreamProofRef: 'forged/local/assertion',
     issuedAtUtc: '2026-08-01T02:59:00.000Z',
-    expiresAtUtc: '2026-08-01T03:05:00.000Z',
+    expiresAtUtc: '2026-08-01T03:04:00.000Z',
     verifiedByFixedAdapter: true,
   }));
   const result = await runBattleBridgeRecoveryMesh({

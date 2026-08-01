@@ -1,23 +1,72 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { closeSync, lstatSync, mkdirSync, openSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const OPENCLAW_RECOVERY_ROUTE = 'OPENCLAW_WHATSAPP';
 
-export function buildFixedRecoveryWakeInvocation({ env = process.env, authenticatedByHost = false, now = new Date(), nonce = randomUUID() } = {}) {
+export function buildOpenClawHostProof({ authenticatedContext, now = new Date(), nonce = randomUUID(), hostPid = process.pid } = {}) {
+  if (authenticatedContext?.authenticatedByHost !== true || authenticatedContext?.commandName !== 'stephanos-ignite'
+    || authenticatedContext?.command !== 'wake') throw new Error('RECOVERY_WAKE_OPENCLAW_AUTH_REQUIRED');
+  const proofId = String(nonce).replace(/[^a-f0-9]/gi, '').toLowerCase().slice(0, 32);
+  if (!/^[a-f0-9]{32}$/.test(proofId)) throw new Error('RECOVERY_WAKE_EVIDENCE_ID_INVALID');
+  return Object.freeze({
+    schemaVersion: 'stephanos.openclaw-authenticated-recovery-command.v1',
+    proofId,
+    route: OPENCLAW_RECOVERY_ROUTE,
+    command: 'wake',
+    subject: 'openclaw:authenticated-operator',
+    authenticatedByHost: true,
+    commandSurface: 'openclaw.plugin-sdk.authenticated-command',
+    hostPid,
+    issuedAtUtc: now.toISOString(),
+    expiresAtUtc: new Date(now.getTime() + 60_000).toISOString(),
+  });
+}
+
+export function writeOpenClawHostProof({ env = process.env, proof } = {}) {
   if (!env.USERPROFILE) throw new Error('RECOVERY_WAKE_USERPROFILE_REQUIRED');
-  if (authenticatedByHost !== true) throw new Error('RECOVERY_WAKE_OPENCLAW_AUTH_REQUIRED');
+  const root = path.resolve(env.USERPROFILE, 'Documents', 'Stephanos-openclaw-workspace', 'receipts', 'openclaw-authenticated-command');
+  const existingAncestorIdentities = new Map();
+  let cursor = path.parse(root).root;
+  for (const part of root.slice(cursor.length).split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, part);
+    try {
+      const info = lstatSync(cursor);
+      if (info.isSymbolicLink() || path.resolve(realpathSync(cursor)).toLowerCase() !== path.resolve(cursor).toLowerCase()) {
+        throw new Error('RECOVERY_WAKE_HOST_PROOF_LINKED_ANCESTOR');
+      }
+      existingAncestorIdentities.set(cursor, `${info.dev}:${info.ino}:${info.mode}`);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+  mkdirSync(root, { recursive: true });
+  for (const [pathname, identity] of existingAncestorIdentities) {
+    const info = lstatSync(pathname);
+    if (info.isSymbolicLink() || `${info.dev}:${info.ino}:${info.mode}` !== identity
+      || path.resolve(realpathSync(pathname)).toLowerCase() !== path.resolve(pathname).toLowerCase()) {
+      throw new Error('RECOVERY_WAKE_HOST_PROOF_ANCESTOR_CHANGED');
+    }
+  }
+  const proofPath = path.resolve(root, `${proof.proofId}.json`);
+  const relative = path.relative(root, proofPath);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('RECOVERY_WAKE_HOST_PROOF_PATH_INVALID');
+  const descriptor = openSync(proofPath, 'wx', 0o600);
+  try { writeFileSync(descriptor, `${JSON.stringify(proof, null, 2)}\n`, 'utf8'); } finally { closeSync(descriptor); }
+  return Object.freeze({ proofId: proof.proofId, proofPath });
+}
+
+export function buildFixedRecoveryWakeInvocation({ env = process.env, hostProofId } = {}) {
+  if (!env.USERPROFILE) throw new Error('RECOVERY_WAKE_USERPROFILE_REQUIRED');
   const scriptPath = path.resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os', 'scripts', 'windows', 'request-battle-bridge-recovery.ps1');
-  const evidenceId = String(nonce).replace(/[^a-f0-9-]/gi, '').slice(0, 36);
-  if (evidenceId.length < 8) throw new Error('RECOVERY_WAKE_EVIDENCE_ID_INVALID');
+  if (!/^[a-f0-9]{32}$/.test(String(hostProofId || ''))) throw new Error('RECOVERY_WAKE_HOST_PROOF_REQUIRED');
   return Object.freeze({
     executable: 'powershell.exe',
     args: Object.freeze([
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
       '-Route', OPENCLAW_RECOVERY_ROUTE,
-      '-EvidenceIssuer', 'openclaw-authenticated-command',
-      '-EvidenceSubject', 'openclaw:authenticated-operator',
-      '-EvidenceProofRef', `openclaw-authenticated-command/${now.toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}/${evidenceId}`,
+      '-OpenClawHostProofId', hostProofId,
     ]),
     cwd: path.resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os'),
     arbitraryShellAllowed: false,
@@ -31,13 +80,19 @@ export function wakeBattleBridgeRecoveryMesh({
   platform = process.platform,
   env = process.env,
   spawnSyncFn = spawnSync,
-  authenticatedByHost = false,
+  authenticatedContext = null,
   now = new Date(),
   nonce,
+  hostPid = process.pid,
+  writeHostProofFn = writeOpenClawHostProof,
 } = {}) {
   if (platform !== 'win32') return Object.freeze({ ok: false, blocker: 'RECOVERY_WAKE_WINDOWS_REQUIRED' });
   let invocation;
-  try { invocation = buildFixedRecoveryWakeInvocation({ env, authenticatedByHost, now, nonce }); } catch (error) {
+  try {
+    const proof = buildOpenClawHostProof({ authenticatedContext, now, nonce, hostPid });
+    const written = writeHostProofFn({ env, proof });
+    invocation = buildFixedRecoveryWakeInvocation({ env, hostProofId: written.proofId });
+  } catch (error) {
     return Object.freeze({ ok: false, blocker: error?.message || 'RECOVERY_WAKE_INVOCATION_INVALID' });
   }
   const result = spawnSyncFn(invocation.executable, invocation.args, {

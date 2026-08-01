@@ -19,13 +19,16 @@ try {
     try { $mutexHeld = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $mutexHeld = $true }
     if (-not $mutexHeld) { exit 3 }
 
-    # Only the OS-owned named mutex may reclaim a dead runner's fixed lock.
+    # Holding the OS-owned named mutex proves that no recovery runner owns the
+    # advisory Node lock. Reclaim it regardless of PID reuse.
     $lockPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\locks\battle-bridge-recovery-mesh.lock'
     if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
         try {
             $lockRecord = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
-            $ownerAlive = $null -ne (Get-Process -Id ([int]$lockRecord.pid) -ErrorAction SilentlyContinue)
-            if (-not $ownerAlive) { [System.IO.File]::Delete($lockPath) }
+            if ([int]$lockRecord.pid -le 0 -or [string]$lockRecord.token -notmatch '^[a-f0-9-]{36}$') { exit 4 }
+            $lockItem = Get-Item -LiteralPath $lockPath -Force
+            if (($lockItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { exit 4 }
+            [System.IO.File]::Delete($lockPath)
         } catch { exit 4 }
     }
 

@@ -32,7 +32,8 @@ test('windowless launcher pins recovery mesh to one fixed source runner', async 
   assert.match(hidden, /scripts\\battle-bridge-recovery-mesh\.mjs/);
   assert.match(hidden, /System\.Threading\.Mutex/);
   assert.match(hidden, /STEPHANOS_RECOVERY_MESH_MUTEX_HELD = '1'/);
-  assert.match(hidden, /Get-Process -Id/);
+  assert.match(hidden, /regardless of PID reuse/);
+  assert.doesNotMatch(hidden, /Get-Process -Id/);
   assert.doesNotMatch(hidden, /["']-Command["']|Invoke-Expression|Start-Process/);
 });
 
@@ -65,6 +66,14 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /FileMode\]::CreateNew/);
   assert.match(request, /BREAK_GLASS_NONCE_ALREADY_CLAIMED/);
   assert.match(request, /TAILSCALE_SSH_IDENTITY_NOT_VERIFIED/);
+  assert.match(request, /TAILSCALE_SSH_PROCESS_ANCESTOR_REQUIRED/);
+  assert.match(request, /Get-NetTCPConnection -State Established/);
+  assert.match(request, /OPENCLAW_HOST_PROOF_REQUIRED/);
+  assert.match(request, /OPENCLAW_HOST_PROCESS_IDENTITY_INVALID/);
+  assert.match(request, /openclaw\.plugin-sdk\.authenticated-command/);
+  assert.match(request, /OPENCLAW_CALLER_SUPPLIED_EVIDENCE_REJECTED/);
+  assert.match(request, /RECOVERY_GITHUB_RECEIPT_AUTHORITY_INVALID/);
+  assert.match(request, /-C \$repoRoot rev-parse HEAD/);
   assert.match(request, /RECOVERY_ROUTE_EVIDENCE_ISSUER_INVALID/);
   assert.match(request, /stephanos\.battle-bridge-recovery-auth-evidence\.v1/);
   assert.match(request, /RECOVERY_MESH_TASK_ACTION_INVALID/);
@@ -74,6 +83,8 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /ExecutionTimeLimit/);
   assert.match(request, /FileAttributes\]::ReparsePoint/);
   assert.match(request, /RECOVERY_PATH_REPARSE_ANCESTOR_REJECTED/);
+  assert.match(request, /StephanosRecoveryPathIdentity/);
+  assert.match(request, /Assert-StablePathBaseline -Baseline \$pathBaseline/);
   assert.match(request, /Start-ScheduledTask -TaskName \$taskName/);
   assert.doesNotMatch(request, /Invoke-Expression|Start-Process|Restart-Computer|Stop-Process|git\s+/i);
 });

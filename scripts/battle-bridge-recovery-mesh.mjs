@@ -32,6 +32,9 @@ const MAX_INGRESS_BYTES = 16 * 1024;
 const MAX_STATE_BYTES = 128 * 1024;
 const LOCK_TOKEN = /^[a-f0-9-]{36}$/;
 const AUTH_RECEIPT_SCHEMA = 'stephanos.battle-bridge-recovery-auth-receipt.v1';
+const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const EXACT_HEAD = /^[0-9a-f]{40}$/i;
+const GITHUB_AUTHORITY_MAX_AGE_MS = 5 * 60 * 1000;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -189,8 +192,17 @@ async function readRecoveryMeshState(statePath) {
   const state = result.value;
   const consumed = state?.consumedIdempotencyKeys;
   const lease = state?.activeLease;
-  const leaseValid = lease === null || (lease && lease.executor === BATTLE_BRIDGE_RECOVERY_EXECUTOR
-    && typeof lease.requestId === 'string' && typeof lease.expiresAtUtc === 'string');
+  const acquiredAtMs = Date.parse(text(lease?.acquiredAtUtc));
+  const expiresAtMs = Date.parse(text(lease?.expiresAtUtc));
+  const leaseValid = lease === null || (lease
+    && lease.schemaVersion === 'stephanos.battle-bridge-recovery-mesh.v1'
+    && lease.executor === BATTLE_BRIDGE_RECOVERY_EXECUTOR
+    && REQUEST_ID.test(text(lease.requestId))
+    && lease.leaseId === `recovery-mesh:${lease.requestId}`
+    && BATTLE_BRIDGE_RECOVERY_ROUTES.includes(lease.route)
+    && Number.isFinite(acquiredAtMs) && Number.isFinite(expiresAtMs)
+    && expiresAtMs > acquiredAtMs && expiresAtMs - acquiredAtMs === 2 * 60 * 1000
+    && lease.maximumConcurrentExecutors === 1);
   if (state?.schemaVersion !== BATTLE_BRIDGE_RECOVERY_MESH_RUNNER_SCHEMA || !Array.isArray(consumed)
     || consumed.length > 500 || consumed.some((item) => typeof item !== 'string' || item.length > 260) || !leaseValid) {
     return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_STATE_LEDGER_INVALID' });
@@ -225,10 +237,14 @@ export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, 
     const evidenceRead = await readStableJsonFile(evidencePath, { maximumBytes: MAX_INGRESS_BYTES });
     if (!evidenceRead.ok) return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_AUTH_PROOF_UNREADABLE', route: request.route });
     const record = evidenceRead.value;
+    const recordIssuedAtMs = Date.parse(text(record?.issuedAtUtc));
+    const recordExpiresAtMs = Date.parse(text(record?.expiresAtUtc));
     if (record?.schemaVersion !== AUTH_RECEIPT_SCHEMA || record.requestId !== request.requestId || record.route !== request.route
       || record.issuer !== request.authenticationEvidence.issuer || record.subject !== request.authenticationEvidence.subject
       || record.verifiedByFixedAdapter !== true || record.upstreamProofRef !== request.sourceReceipt
-      || Date.parse(text(record.issuedAtUtc)) > now.getTime() + 30_000 || Date.parse(text(record.expiresAtUtc)) <= now.getTime()) {
+      || !Number.isFinite(recordIssuedAtMs) || !Number.isFinite(recordExpiresAtMs)
+      || recordIssuedAtMs > now.getTime() + 30_000 || recordExpiresAtMs <= now.getTime()
+      || recordExpiresAtMs <= recordIssuedAtMs || recordExpiresAtMs - recordIssuedAtMs > 5 * 60 * 1000) {
       return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_AUTH_PROOF_MISMATCH', route: request.route });
     }
 
@@ -239,15 +255,22 @@ export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, 
       if (!mailboxAncestors.ok) return Object.freeze({ ok: false, blocker: mailboxAncestors.blocker });
       const mailboxReceiptRead = await readStableJsonFile(mailboxReceiptPath, { maximumBytes: MAX_STATE_BYTES });
       const receipt = mailboxReceiptRead.value;
+      const authorityAtMs = Date.parse(text(receipt?.state === 'DONE' ? receipt?.completedAt : receipt?.acceptedAt));
+      const expectedHead = text(receipt?.expectedHead).toLowerCase();
+      const observedHead = text(receipt?.result?.result?.sourceHead || receipt?.result?.result?.localHead || expectedHead).toLowerCase();
       if (!mailboxReceiptRead.ok || receipt?.schemaVersion !== 'stephanos.battle-bridge-github-command-receipt.v1'
         || receipt.requestId !== record.subject || receipt.operation !== 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'
-        || !['ACCEPTED', 'DONE'].includes(receipt.state) || receipt.repository !== 'Cheekyfellastef/stephan-os' || Number(receipt.issueNumber) !== 1507) {
+        || !['ACCEPTED', 'DONE'].includes(receipt.state) || receipt.repository !== 'Cheekyfellastef/stephan-os' || Number(receipt.issueNumber) !== 1507
+        || !Number.isFinite(authorityAtMs) || authorityAtMs > now.getTime() + 30_000 || now.getTime() - authorityAtMs > GITHUB_AUTHORITY_MAX_AGE_MS
+        || !EXACT_HEAD.test(expectedHead) || observedHead !== expectedHead || text(record.authorityHead).toLowerCase() !== expectedHead) {
         return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_GITHUB_AUTH_RECEIPT_INVALID' });
       }
     } else if (request.route === BATTLE_BRIDGE_RECOVERY_ROUTE.TAILSCALE_CONTROL) {
       if (!record.upstreamProofRef.startsWith('tailscale-status/')) return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_TAILSCALE_AUTH_RECEIPT_INVALID' });
     } else if (request.route === BATTLE_BRIDGE_RECOVERY_ROUTE.OPENCLAW_WHATSAPP) {
-      if (!record.upstreamProofRef.startsWith('openclaw-authenticated-command/')) return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_OPENCLAW_AUTH_RECEIPT_INVALID' });
+      if (!record.upstreamProofRef.startsWith('receipts/openclaw-authenticated-command/') || record.hostProofConsumed !== true) {
+        return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_OPENCLAW_AUTH_RECEIPT_INVALID' });
+      }
     } else if (request.route === BATTLE_BRIDGE_RECOVERY_ROUTE.AUTHENTICATED_BREAK_GLASS) {
       const nonce = request.authenticationEvidence.subject.match(/^nonce:([a-f0-9]{16})$/)?.[1] || '';
       const expectedRef = `status/battle-bridge-break-glass-nonce.json#${nonce}`;
