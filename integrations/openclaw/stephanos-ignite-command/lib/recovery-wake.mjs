@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { closeSync, lstatSync, mkdirSync, openSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
+
 export const OPENCLAW_RECOVERY_ROUTE = 'OPENCLAW_WHATSAPP';
 
 function buildOpenClawHostProof({ authenticatedContext, runtimeId, now = new Date(), nonce = randomUUID(), hostPid = process.pid } = {}) {
@@ -64,7 +66,7 @@ export function buildFixedRecoveryWakeInvocation({ env = process.env, hostProofI
   const scriptPath = path.resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os', 'scripts', 'windows', 'request-battle-bridge-recovery.ps1');
   if (!/^[a-f0-9]{32}$/.test(String(hostProofId || ''))) throw new Error('RECOVERY_WAKE_HOST_PROOF_REQUIRED');
   return Object.freeze({
-    executable: 'powershell.exe',
+    executable: BATTLE_BRIDGE_WINDOWS_HOST.powershell,
     args: Object.freeze([
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
       '-Route', OPENCLAW_RECOVERY_ROUTE,

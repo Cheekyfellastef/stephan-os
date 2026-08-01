@@ -30,6 +30,7 @@ import {
   createWindowsSafeMailboxReceiptFilename,
   getReadableMailboxReceiptFilenames,
 } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -581,7 +582,7 @@ function postReceipt(receipt) {
 async function installUnattendedSync() {
   const installer = join(repoRoot, 'scripts', 'windows', 'install-battle-bridge-github-sync.ps1');
   if (!existsSync(installer)) return { ok: false, blocker: 'MERGED_SYNC_INSTALLER_MISSING', installer };
-  const result = run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer, '-StartNow']);
+  const result = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer, '-StartNow']);
   return { ...result, installer, fixedCommand: true, arbitraryShellAllowed: false };
 }
 
@@ -590,7 +591,7 @@ async function installBattleBridgeRecoveryMesh(command = {}) {
   if (!identity.ok) return identity;
   const installer = join(repoRoot, 'scripts', 'windows', 'install-battle-bridge-recovery-mesh.ps1');
   if (!existsSync(installer)) return { ...identity, ok: false, blocker: 'RECOVERY_MESH_INSTALLER_MISSING' };
-  const result = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', installer, '-StartNow']);
+  const result = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', installer, '-StartNow']);
   return {
     ...identity,
     ...result,
@@ -614,7 +615,7 @@ async function wakeBattleBridgeRecoveryMesh(command = {}, { receiptRef = '' } = 
   }
   const adapter = join(repoRoot, 'scripts', 'windows', 'request-battle-bridge-recovery.ps1');
   if (!existsSync(adapter)) return { ...identity, ok: false, blocker: 'RECOVERY_MESH_WAKE_ADAPTER_MISSING' };
-  const invocation = run('powershell.exe', [
+  const invocation = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', adapter,
     '-Route', 'GITHUB_MAILBOX',
     '-EvidenceIssuer', 'battle-bridge-github-command-mailbox',
@@ -642,8 +643,8 @@ async function wakeBattleBridgeRecoveryMesh(command = {}, { receiptRef = '' } = 
 }
 
 function readCanonicalSourceIdentity(command = {}) {
-  const source = run('git.exe', ['rev-parse', 'HEAD'], { timeout: 120000 });
-  const branch = run('git.exe', ['branch', '--show-current'], { timeout: 120000 });
+  const source = run(BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', 'HEAD'], { timeout: 120000 });
+  const branch = run(BATTLE_BRIDGE_WINDOWS_HOST.git, ['branch', '--show-current'], { timeout: 120000 });
   const sourceHead = source.stdout.trim().toLowerCase();
   const branchName = branch.stdout.trim();
   if (!source.ok || !branch.ok || !/^[0-9a-f]{40}$/.test(sourceHead)) {
@@ -661,7 +662,7 @@ function readCanonicalSourceIdentity(command = {}) {
 
 async function readDeploymentStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
-  const task = run('powershell.exe', ['-NoProfile', '-Command', "Get-ScheduledTask -TaskName 'Stephanos Battle Bridge GitHub Sync' -ErrorAction SilentlyContinue | Select-Object TaskName,State | ConvertTo-Json -Compress"], { timeout: 120000 });
+  const task = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, ['-NoProfile', '-Command', "Get-ScheduledTask -TaskName 'Stephanos Battle Bridge GitHub Sync' -ErrorAction SilentlyContinue | Select-Object TaskName,State | ConvertTo-Json -Compress"], { timeout: 120000 });
   return { ...identity, task };
 }
 

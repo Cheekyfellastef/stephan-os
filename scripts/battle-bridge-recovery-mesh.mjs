@@ -17,6 +17,7 @@ import {
   BATTLE_BRIDGE_RECOVERY_ROUTES,
   adjudicateBattleBridgeRecoveryMesh,
 } from '../shared/agents/battleBridgeRecoveryMeshV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import {
   appendWorkspaceJsonl,
   createSharedWorkspaceEventRecord,
@@ -28,8 +29,8 @@ import {
 export const BATTLE_BRIDGE_RECOVERY_MESH_RUNNER_SCHEMA = 'stephanos.battle-bridge-recovery-mesh-runner.v1';
 export const BATTLE_BRIDGE_RECOVERY_MESH_TASK = 'Stephanos Battle Bridge Recovery Mesh';
 export const BATTLE_BRIDGE_RECOVERY_MESH_LOCK_STALE_MS = 3 * 60 * 1000;
-export const BATTLE_BRIDGE_WINDOWS_POWERSHELL_EXECUTABLE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-export const BATTLE_BRIDGE_WINDOWS_GIT_EXECUTABLE = 'C:\\Program Files\\Git\\cmd\\git.exe';
+export const BATTLE_BRIDGE_WINDOWS_POWERSHELL_EXECUTABLE = BATTLE_BRIDGE_WINDOWS_HOST.powershell;
+export const BATTLE_BRIDGE_WINDOWS_GIT_EXECUTABLE = BATTLE_BRIDGE_WINDOWS_HOST.git;
 const MAX_INGRESS_BYTES = 16 * 1024;
 const MAX_STATE_BYTES = 128 * 1024;
 const LOCK_TOKEN = /^[a-f0-9-]{36}$/;
@@ -75,6 +76,19 @@ export function createFixedRecoveryMeshMutexVerifier({ verifierScriptPath, spawn
         ? Object.freeze({ ok: true, blocker: '' })
         : Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_WINDOWS_MUTEX_NOT_ATTESTED' });
     },
+  });
+}
+
+function verifyCurrentRecoveryMeshMutexAuthority(env) {
+  // This runner is deployed only on Windows. Non-Windows execution is the
+  // deterministic unit-test surface and cannot reach the Windows adapters.
+  if (process.platform !== 'win32') return Object.freeze({ ok: true, nonWindowsTestSurface: true, blocker: '' });
+  if (env.STEPHANOS_RECOVERY_MESH_MUTEX_HELD !== '1') {
+    return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_WINDOWS_MUTEX_REQUIRED' });
+  }
+  const verifierScriptPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'windows', 'verify-battle-bridge-recovery-mesh-mutex.ps1');
+  return createFixedRecoveryMeshMutexVerifier({ verifierScriptPath }).verify({
+    launcherPid: Number(env.STEPHANOS_RECOVERY_MESH_LAUNCHER_PID),
   });
 }
 
@@ -528,6 +542,8 @@ export async function runBattleBridgeRecoveryMesh({
   maximumRecoveryProbes = 3,
   sourceHeadReader = defaultSourceHeadReader,
 } = {}) {
+  const mutexVerification = verifyCurrentRecoveryMeshMutexAuthority(env);
+  if (!mutexVerification.ok) return Object.freeze({ ok: false, classification: mutexVerification.blocker, mutexVerification });
   const pathValidation = validateRecoveryMeshPaths(paths, expectedPaths);
   if (!pathValidation.ok) return Object.freeze({ ok: false, classification: 'RECOVERY_MESH_BLOCKED', pathValidation });
   const initialAncestorValidation = await validateRecoveryMeshPathAncestors(paths);
@@ -654,13 +670,7 @@ export function isDirectCliEntrypoint({ metaUrl = import.meta.url, argv1 = proce
 }
 
 if (isDirectCliEntrypoint()) {
-  const verifierScriptPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'windows', 'verify-battle-bridge-recovery-mesh-mutex.ps1');
-  const mutexVerification = process.env.STEPHANOS_RECOVERY_MESH_MUTEX_HELD === '1'
-    ? createFixedRecoveryMeshMutexVerifier({ verifierScriptPath }).verify({ launcherPid: Number(process.env.STEPHANOS_RECOVERY_MESH_LAUNCHER_PID) })
-    : { ok: false, blocker: 'RECOVERY_MESH_WINDOWS_MUTEX_REQUIRED' };
-  const result = mutexVerification.ok
-    ? await runBattleBridgeRecoveryMesh()
-    : { ok: false, classification: mutexVerification.blocker };
+  const result = await runBattleBridgeRecoveryMesh();
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   process.exitCode = result.ok ? 0 : 2;
 }

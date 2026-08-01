@@ -14,7 +14,7 @@ test('wake invocation is fully fixed and cannot accept a command, task or route'
     env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
     hostProofId: 'aaaaaaaabbbbccccddddeeeeeeeeeeee',
   });
-  assert.equal(invocation.executable, 'powershell.exe');
+  assert.equal(invocation.executable, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
   assert.ok(invocation.args.includes('OPENCLAW_WHATSAPP'));
   assert.ok(invocation.args.includes('-OpenClawHostProofId'));
   assert.ok(invocation.args.includes('aaaaaaaabbbbccccddddeeeeeeeeeeee'));
@@ -45,7 +45,7 @@ test('authenticated adapter binds live gateway identity and returns only a sanit
     fetchFn: identityFetch,
     writeHostProofFn: ({ proof }) => { writtenProof = proof; return { proofId: proof.proofId }; },
     spawnSyncFn: (executable, args, options) => {
-      assert.equal(executable, 'powershell.exe');
+      assert.equal(executable, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
       assert.equal(options.shell, false);
       assert.equal(options.windowsHide, true);
       assert.ok(args.includes('OPENCLAW_WHATSAPP'));

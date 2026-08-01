@@ -64,6 +64,8 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   assert.match(probe, /product\s+-eq\s+'OpenClaw'/);
   assert.match(probe, /identityVerified/);
   assert.match(probe, /C:\\Program Files\\Git\\cmd\\git\.exe/);
+  assert.match(probe, /\$canonicalPowerShell/);
+  assert.doesNotMatch(probe, /& powershell\.exe/);
   assert.doesNotMatch(probe, /& git\.exe/);
   assert.doesNotMatch(probe, /Test-TcpHealth/);
   assert.match(probe, /expectedArguments = "\/\/B \/\/NoLogo/);

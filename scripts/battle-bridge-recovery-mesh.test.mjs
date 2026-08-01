@@ -448,6 +448,17 @@ test('mutex verifier requires fixed parent-bound Windows attestation', () => {
   assert.deepEqual(calls[0].args.slice(-4), ['-LauncherPid', '123', '-NodePid', '456']);
 });
 
+test('mutex attestation is inside every runner invocation rather than the CLI wrapper', async () => {
+  const source = await readFile(new URL('./battle-bridge-recovery-mesh.mjs', import.meta.url), 'utf8');
+  const runnerStart = source.indexOf('export async function runBattleBridgeRecoveryMesh');
+  const attestation = source.indexOf('const mutexVerification = verifyCurrentRecoveryMeshMutexAuthority(env);', runnerStart);
+  const pathValidation = source.indexOf('const pathValidation = validateRecoveryMeshPaths', runnerStart);
+  assert.ok(runnerStart >= 0 && attestation > runnerStart && pathValidation > attestation);
+  const directWrapper = source.slice(source.indexOf('if (isDirectCliEntrypoint())'));
+  assert.match(directWrapper, /const result = await runBattleBridgeRecoveryMesh\(\);/);
+  assert.doesNotMatch(directWrapper, /createFixedRecoveryMeshMutexVerifier|mutexVerification/);
+});
+
 test('task identity remains the single canonical recovery coordinator', () => {
   assert.equal(BATTLE_BRIDGE_RECOVERY_MESH_TASK, 'Stephanos Battle Bridge Recovery Mesh');
   const local = buildLocalSupervisorIngress(new Date('2026-08-01T03:00:00.000Z'));

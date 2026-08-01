@@ -14,6 +14,7 @@ $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Docu
 $launcherPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
 $workerProbePath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\windows\probe-mission-orchestrator-worker-watchdog.ps1'))
 $wscriptPath = [System.IO.Path]::GetFullPath((Join-Path $env:SystemRoot 'System32\wscript.exe'))
+$canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
 $taskSpecs = @(
     [pscustomobject]@{ Id = 'watchdog'; Name = 'Stephanos Mission Orchestrator Worker Watchdog'; LauncherId = 'worker-watchdog' },
@@ -86,7 +87,7 @@ function Get-OpenClawIdentityHealth {
 }
 
 function Get-WorkerHealth {
-    $raw = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $workerProbePath -Mode Inspect
+    $raw = & $canonicalPowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $workerProbePath -Mode Inspect
     if ($LASTEXITCODE -ne 0) { return [pscustomobject]@{ healthy = $false; blocker = 'WORKER_PROBE_FAILED' } }
     $probe = ($raw -join [Environment]::NewLine) | ConvertFrom-Json
     $heartbeatMs = 0

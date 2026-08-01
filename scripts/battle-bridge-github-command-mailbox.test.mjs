@@ -55,6 +55,9 @@ test('GitHub recovery wake binds the authenticated mailbox receipt instead of se
   assert.match(source, /'-EvidenceSubject', evidenceSubject/);
   assert.match(source, /'-EvidenceProofRef', evidenceProofRef/);
   assert.match(source, /wakeBattleBridgeRecoveryMesh\(command, \{ receiptRef \}\)/);
+  assert.match(source, /BATTLE_BRIDGE_WINDOWS_HOST\.powershell/);
+  assert.match(source, /BATTLE_BRIDGE_WINDOWS_HOST\.git/);
+  assert.doesNotMatch(source, /run\(['"]powershell\.exe['"]|run\(['"]git\.exe['"]/);
   assert.doesNotMatch(source, /ownerAuthenticated:\s*true/);
 });
 
