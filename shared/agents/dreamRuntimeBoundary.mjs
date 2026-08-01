@@ -473,9 +473,32 @@ async function writeReceipt(receipt, { fsImpl, receiptRoot }) {
   await ensureSafeDirectoryChain(receiptRoot, { fsImpl, create: true });
   const filename = `dream-migration-${safeTimestamp(new Date(receipt.completedAtUtc))}.json`;
   const receiptPath = path.join(receiptRoot, filename);
-  await fsImpl.writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-  const identity = await assertRegularSingleLink(receiptPath, { fsImpl });
-  return Object.freeze({ receiptPath, identity });
+  let handle = null;
+  let created = false;
+  let identity = null;
+  try {
+    handle = await fsImpl.open(receiptPath, 'wx', 0o600);
+    created = true;
+    await handle.writeFile(`${JSON.stringify(receipt, null, 2)}\n`, { encoding: 'utf8' });
+    identity = await handle.stat();
+    if (!identity.isFile?.() || Number(identity.nlink) !== 1) throw codedError('DREAM_MIGRATION_RECEIPT_IDENTITY_INVALID');
+    await handle.close();
+    handle = null;
+    const pathIdentity = await assertRegularSingleLink(receiptPath, { fsImpl });
+    if (!sameFileIdentity(identity, pathIdentity)) throw codedError('DREAM_MIGRATION_RECEIPT_IDENTITY_CHANGED');
+    return Object.freeze({ receiptPath, identity: pathIdentity });
+  } catch (error) {
+    if (handle) {
+      try { identity = await handle.stat(); } catch {}
+      try { await handle.close(); } catch {}
+      handle = null;
+    }
+    const cleaned = !created || await removeOwnedArtifact(receiptPath, identity, fsImpl);
+    const wrapped = codedError('DREAM_MIGRATION_RECEIPT_WRITE_FAILED');
+    wrapped.reasonCode = error?.code || 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED';
+    wrapped.cleanupBlocker = cleaned ? '' : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
+    throw wrapped;
+  }
 }
 
 function versionedProofRefs(paths) {
@@ -820,12 +843,13 @@ export async function executeDreamRuntimeMigration({
     if (entry.state === 'copy-required') {
       const copyResult = await copyRequiredEntry(entry, fsImpl);
       if (!copyResult.ok) {
+        const priorArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
         return Object.freeze({
           ok: false,
           status: 'BLOCKED',
           finalVerdict: copyResult.blocker,
           blocker: copyResult.blocker,
-          cleanupBlocker: copyResult.cleanupBlocker || '',
+          cleanupBlocker: copyResult.cleanupBlocker || (priorArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED'),
           failedEntry: entry,
           copied: Object.freeze(copied),
           preserved: Object.freeze(preserved),
@@ -919,8 +943,8 @@ export async function executeDreamRuntimeMigration({
       status: 'BLOCKED',
       finalVerdict: 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
       blocker: 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
-      receiptWriteReason: error?.code || 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
-      cleanupBlocker: migrationArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
+      receiptWriteReason: error?.reasonCode || error?.code || 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
+      cleanupBlocker: error?.cleanupBlocker || (migrationArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED'),
       copied: Object.freeze(copied),
       preserved: Object.freeze([]),
       sourceRemovalPerformed: false,
