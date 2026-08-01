@@ -192,6 +192,31 @@ test('source-head drift after receipt removes newly owned copy outputs and recei
   assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
 });
 
+test('copy verification failure surfaces an ownership-bound cleanup failure', async () => {
+  const input = await fixture();
+  let changed = false;
+  const fsImpl = fsProxy({
+    copyFile: async (source, destination, flags) => {
+      await fs.copyFile(source, destination, flags);
+      if (!changed) {
+        changed = true;
+        await fs.appendFile(source, ' ');
+      }
+    },
+    unlink: async () => {
+      const error = new Error('blocked cleanup');
+      error.code = 'EPERM';
+      throw error;
+    },
+  });
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(changed, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_HASH_MISMATCH');
+  assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_COPY_CLEANUP_FAILED');
+  assert.equal(await fs.readFile(input.destinationEventsPath, 'utf8'), jsonl([dreamEvent('2026-07-21T02:00:00.000Z', 'deep', '2026-07-21')]));
+});
+
 test('event identity contract classifies the investigated files as disjoint', () => {
   const relation = classifyDreamEventSets(jsonl(SOURCE_EVENTS), jsonl(DESTINATION_EVENTS));
   assert.equal(relation.ok, true);

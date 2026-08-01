@@ -820,6 +820,7 @@ export async function executeDreamRuntimeMigration({
           status: 'BLOCKED',
           finalVerdict: copyResult.blocker,
           blocker: copyResult.blocker,
+          cleanupBlocker: copyResult.cleanupBlocker || '',
           failedEntry: entry,
           copied: Object.freeze(copied),
           preserved: Object.freeze(preserved),

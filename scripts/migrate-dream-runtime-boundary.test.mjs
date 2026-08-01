@@ -24,6 +24,7 @@ test('copy mode forwards approval only when explicitly supplied', async () => {
     },
     executeFn: async (input) => {
       received = input;
+      assert.equal(await input.sourceHeadVerifierFn(input.repoRoot), HEAD);
       return { ok: true };
     },
   });
@@ -34,17 +35,20 @@ test('copy mode forwards approval only when explicitly supplied', async () => {
   assert.equal(headReads, 2);
 });
 
-test('copy mode fails closed when source head changes during migration', async () => {
+test('copy mode delegates source-head drift to the ownership-aware executor transaction', async () => {
   const heads = [HEAD, 'b'.repeat(40)];
   const result = await runDreamMigrationCli(['--copy', '--operator-approved', '--repo-root=/tmp/repo'], {
     sourceHeadFn: async () => heads.shift(),
-    executeFn: async () => ({ ok: true, finalVerdict: 'DREAM_RUNTIME_COPY_HASH_VERIFIED' }),
+    executeFn: async (input) => {
+      const observed = await input.sourceHeadVerifierFn(input.repoRoot);
+      return observed === input.sourceHead
+        ? { ok: true, finalVerdict: 'DREAM_RUNTIME_COPY_HASH_VERIFIED' }
+        : { ok: false, finalVerdict: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED', blocker: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED' };
+    },
   });
   assert.equal(result.ok, false);
   assert.equal(result.finalVerdict, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
   assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
-  assert.equal(result.sourceHeadBefore, HEAD);
-  assert.equal(result.sourceHeadAfter, 'b'.repeat(40));
 });
 
 test('copy mode derives source head through fixed git argv only', async () => {
