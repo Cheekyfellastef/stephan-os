@@ -95,6 +95,23 @@ function fsProxy(overrides = {}) {
   });
 }
 
+function fsProxyWithOwnedWriteHook(onWrite, overrides = {}) {
+  return fsProxy({
+    ...overrides,
+    open: async (target, flags, mode) => {
+      const handle = await fs.open(target, flags, mode);
+      return {
+        writeFile: async (...args) => {
+          await handle.writeFile(...args);
+          await onWrite(target);
+        },
+        stat: (...args) => handle.stat(...args),
+        close: (...args) => handle.close(...args),
+      };
+    },
+  });
+}
+
 async function runApproved(input, overrides = {}) {
   return executeDreamRuntimeMigration({
     repoRoot: input.repoRoot,
@@ -195,14 +212,12 @@ test('source-head drift after receipt removes newly owned copy outputs and recei
 test('copy verification failure surfaces an ownership-bound cleanup failure', async () => {
   const input = await fixture();
   let changed = false;
-  const fsImpl = fsProxy({
-    copyFile: async (source, destination, flags) => {
-      await fs.copyFile(source, destination, flags);
-      if (!changed) {
-        changed = true;
-        await fs.appendFile(source, ' ');
-      }
-    },
+  const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
+    if (!changed && path.resolve(String(target)) === path.resolve(input.destinationEventsPath)) {
+      changed = true;
+      await fs.appendFile(input.sourceEventsPath, ' ');
+    }
+  }, {
     unlink: async () => {
       const error = new Error('blocked cleanup');
       error.code = 'EPERM';
@@ -247,20 +262,17 @@ test('post-copy verification exception rolls back the copy and prior preservatio
 
 test('later copy blocker rolls back a prior preservation and its own copied output', async () => {
   const input = await disjointFixture();
-  let changed = false;
-  const fsImpl = fsProxy({
-    copyFile: async (source, destination, flags) => {
-      await fs.copyFile(source, destination, flags);
-      if (!String(destination).endsWith('.snapshot') && !changed) {
-        changed = true;
-        await fs.appendFile(source, ' ');
-      }
-    },
-  });
   const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
   const eventsPaths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
   const deepEntry = plan.entries.find((entry) => entry.logicalSourcePath === 'memory/dreaming/deep/2026-07-21.md');
   assert.ok(deepEntry);
+  let changed = false;
+  const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
+    if (!changed && path.resolve(String(target)) === path.resolve(deepEntry.destinationPath)) {
+      changed = true;
+      await fs.appendFile(deepEntry.sourcePath, ' ');
+    }
+  });
   const result = await runApproved(input, { fsImpl });
   assert.equal(changed, true);
   assert.equal(result.ok, false);
@@ -269,6 +281,38 @@ test('later copy blocker rolls back a prior preservation and its own copied outp
   await assert.rejects(() => fs.lstat(eventsPaths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(eventsPaths.manifestPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(deepEntry.destinationPath), (error) => error.code === 'ENOENT');
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
+test('later copy preflight exception rolls back prior preservation artifacts', async () => {
+  const input = await disjointFixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const eventsPaths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  const deepEntry = plan.entries.find((entry) => entry.logicalSourcePath === 'memory/dreaming/deep/2026-07-21.md');
+  assert.ok(deepEntry);
+  let deepSourceReads = 0;
+  const fsImpl = fsProxy({
+    readFile: async (target, ...args) => {
+      if (path.resolve(String(target)) === path.resolve(deepEntry.sourcePath)) {
+        deepSourceReads += 1;
+        if (deepSourceReads === 2) {
+          const error = new Error('copy preflight failed');
+          error.code = 'EIO';
+          throw error;
+        }
+      }
+      return fs.readFile(target, ...args);
+    },
+  });
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(deepSourceReads, 2);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_COPY_PREFLIGHT_FAILED');
+  assert.equal(result.cleanupBlocker, '');
+  await assert.rejects(() => fs.lstat(deepEntry.destinationPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(eventsPaths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(eventsPaths.manifestPath), (error) => error.code === 'ENOENT');
   const receiptFiles = await fs.readdir(plan.receiptRoot);
   assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
 });
@@ -686,17 +730,45 @@ test('later preservation blocker rolls back prior owned artifacts and preserves 
   assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
 });
 
+test('snapshot path-verification failure self-cleans through handle-owned identity', async () => {
+  const input = await disjointFixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  const sourceBefore = await fs.readFile(input.sourceEventsPath);
+  const canonicalBefore = await fs.readFile(input.destinationEventsPath);
+  let injected = false;
+  const fsImpl = fsProxy({
+    lstat: async (target, ...args) => {
+      if (!injected && path.resolve(String(target)) === path.resolve(paths.snapshotPath)) {
+        const info = await fs.lstat(target, ...args);
+        assert.equal(info.isFile(), true);
+        injected = true;
+        const error = new Error('snapshot path verification failed');
+        error.code = 'EIO';
+        throw error;
+      }
+      return fs.lstat(target, ...args);
+    },
+  });
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(injected, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_VERSIONED_COPY_FAILED');
+  assert.equal(result.cleanupBlocker, '');
+  await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
+  assert.deepEqual(await fs.readFile(input.sourceEventsPath), sourceBefore);
+  assert.deepEqual(await fs.readFile(input.destinationEventsPath), canonicalBefore);
+});
+
 test('changed source during snapshot copy fails and removes only the new snapshot', async () => {
   const input = await disjointFixture();
   let changed = false;
-  const fsImpl = fsProxy({
-    copyFile: async (source, destination, flags) => {
-      await fs.copyFile(source, destination, flags);
-      if (String(destination).endsWith('.snapshot')) {
-        await fs.appendFile(source, ' ');
-        changed = true;
-      }
-    },
+  const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
+    if (String(target).endsWith('.snapshot')) {
+      await fs.appendFile(input.sourceEventsPath, ' ');
+      changed = true;
+    }
   });
   const result = await runApproved(input, { fsImpl });
   assert.equal(changed, true);
@@ -714,11 +786,8 @@ test('changed source during snapshot copy fails and removes only the new snapsho
 test('canonical destination mutation during copy is detected and never repaired in place', async () => {
   const input = await disjointFixture();
   const canonicalBefore = await fs.readFile(input.destinationEventsPath, 'utf8');
-  const fsImpl = fsProxy({
-    copyFile: async (source, destination, flags) => {
-      await fs.copyFile(source, destination, flags);
-      if (String(destination).endsWith('.snapshot')) await fs.appendFile(input.destinationEventsPath, ' ');
-    },
+  const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
+    if (String(target).endsWith('.snapshot')) await fs.appendFile(input.destinationEventsPath, ' ');
   });
   const result = await runApproved(input, { fsImpl });
   assert.equal(result.ok, false);
@@ -732,14 +801,11 @@ test('conflicting concurrent preservation is serialized by existing operation-lo
   let reportEntered;
   const entered = new Promise((resolve) => { reportEntered = resolve; });
   const hold = new Promise((resolve) => { releaseCopy = resolve; });
-  const fsImpl = fsProxy({
-    copyFile: async (source, destination, flags) => {
-      await fs.copyFile(source, destination, flags);
-      if (String(destination).endsWith('.snapshot')) {
-        reportEntered();
-        await hold;
-      }
-    },
+  const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
+    if (String(target).endsWith('.snapshot')) {
+      reportEntered();
+      await hold;
+    }
   });
   const firstPromise = runApproved(input, { fsImpl });
   await entered;
@@ -756,6 +822,26 @@ test('conflicting concurrent preservation is serialized by existing operation-lo
   releaseCopy();
   const first = await firstPromise;
   assert.equal(first.ok, true);
+});
+
+test('blocked preservation surfaces an operation-lock release cleanup failure', async () => {
+  const input = await disjointFixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  await fs.mkdir(path.dirname(paths.snapshotPath), { recursive: true });
+  await fs.writeFile(paths.snapshotPath, 'pre-existing-collision');
+  const result = await runApproved(input, {
+    acquireOperationLockFn: async () => ({
+      ok: true,
+      release: async () => false,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_VERSIONED_SNAPSHOT_COLLISION');
+  assert.equal(result.cleanupBlocker, 'DREAM_VERSIONED_LOCK_RELEASE_FAILED');
+  assert.equal(result.lockCleanupBlocker, 'DREAM_VERSIONED_LOCK_RELEASE_FAILED');
+  assert.equal(await fs.readFile(paths.snapshotPath, 'utf8'), 'pre-existing-collision');
+  await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
 });
 
 test('malformed or ambiguous event conflicts fail closed', async () => {
