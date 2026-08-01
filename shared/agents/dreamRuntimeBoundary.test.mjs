@@ -113,6 +113,7 @@ function fsProxyWithOwnedWriteHook(onWrite, overrides = {}) {
     open: async (target, flags, mode) => {
       const handle = await fs.open(target, flags, mode);
       return {
+        fd: handle.fd,
         writeFile: async (...args) => {
           await handle.writeFile(...args);
           await onWrite(target);
@@ -261,7 +262,7 @@ test('already-verified changes during receipt write remove the owned receipt', a
   const input = await alreadyVerifiedFixture();
   let changed = false;
   const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
-    if (!changed && String(target).includes(`${path.sep}runtime-boundary${path.sep}dream-migration-`)) {
+    if (!changed && path.basename(String(target)).startsWith('dream-migration-')) {
       changed = true;
       await fs.appendFile(input.destinationEventsPath, ' ');
     }
@@ -317,7 +318,7 @@ test('copy verification failure surfaces an ownership-bound cleanup failure', as
   const input = await fixture();
   let changed = false;
   const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
-    if (!changed && path.resolve(String(target)) === path.resolve(input.destinationEventsPath)) {
+    if (!changed && path.basename(String(target)) === path.basename(input.destinationEventsPath)) {
       changed = true;
       await fs.appendFile(input.sourceEventsPath, ' ');
     }
@@ -372,7 +373,7 @@ test('later copy blocker rolls back a prior preservation and its own copied outp
   assert.ok(deepEntry);
   let changed = false;
   const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
-    if (!changed && path.resolve(String(target)) === path.resolve(deepEntry.destinationPath)) {
+    if (!changed && path.basename(String(target)) === path.basename(deepEntry.destinationPath)) {
       changed = true;
       await fs.appendFile(deepEntry.sourcePath, ' ');
     }
@@ -716,8 +717,9 @@ test('partial receipt publication failure removes the handle-owned receipt and m
   const fsImpl = fsProxy({
     open: async (target, flags, mode) => {
       const handle = await fs.open(target, flags, mode);
-      if (!String(target).includes(`${path.sep}runtime-boundary${path.sep}dream-migration-`)) return handle;
+      if (!path.basename(String(target)).startsWith('dream-migration-')) return handle;
       return {
+        fd: handle.fd,
         writeFile: async (...args) => {
           await handle.writeFile(...args);
           injected = true;
@@ -750,8 +752,9 @@ test('receipt publication reports cleanup failure when created-file identity is 
   const fsImpl = fsProxy({
     open: async (target, flags, mode) => {
       const handle = await fs.open(target, flags, mode);
-      if (!String(target).includes(`${path.sep}runtime-boundary${path.sep}dream-migration-`)) return handle;
+      if (!path.basename(String(target)).startsWith('dream-migration-')) return handle;
       return {
+        fd: handle.fd,
         writeFile: async (...args) => {
           await handle.writeFile(...args);
           injected = true;
@@ -788,8 +791,9 @@ test('partial manifest publication self-cleans before snapshot rollback', async 
   const fsImpl = fsProxy({
     open: async (target, flags, mode) => {
       const handle = await fs.open(target, flags, mode);
-      if (!String(target).includes(`${path.sep}runtime-boundary${path.sep}dream-preservation-v1-`)) return handle;
+      if (!path.basename(String(target)).startsWith('dream-preservation-v1-')) return handle;
       return {
+        fd: handle.fd,
         writeFile: async (...args) => {
           await handle.writeFile(...args);
           injected = true;
@@ -918,7 +922,7 @@ test('ancestor identity change during exclusive publication blocks success and r
   const fsImpl = fsProxy({
     open: async (target, flags, mode) => {
       const handle = await fs.open(target, flags, mode);
-      if (path.resolve(String(target)) === path.resolve(paths.snapshotPath)) snapshotOpened = true;
+      if (String(target).endsWith(path.basename(paths.snapshotPath))) snapshotOpened = true;
       return handle;
     },
     lstat: async (target, ...args) => {
@@ -947,6 +951,51 @@ test('ancestor identity change during exclusive publication blocks success and r
   assert.equal(result.cleanupBlocker, '');
   await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
+});
+
+test('ancestor swap during publication cannot redirect or retain an escaped artifact', { skip: process.platform !== 'linux' }, async () => {
+  const input = await disjointFixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  const snapshotParent = path.dirname(paths.snapshotPath);
+  const parkedParent = `${snapshotParent}.parked`;
+  const externalParent = await fs.mkdtemp(path.join(os.tmpdir(), 'stephanos-dream-external-'));
+  let injected = false;
+  const fsImpl = fsProxy({
+    open: async (target, flags, mode) => {
+      const targetPath = String(target);
+      const isSnapshotPublication = targetPath.startsWith('/proc/self/fd/')
+        && targetPath.endsWith(`/${path.basename(paths.snapshotPath)}`);
+      if (!isSnapshotPublication) return fs.open(target, flags, mode);
+      await fs.rename(snapshotParent, parkedParent);
+      await fs.symlink(externalParent, snapshotParent, 'dir');
+      const handle = await fs.open(target, flags, mode);
+      await fs.unlink(snapshotParent);
+      await fs.rename(parkedParent, snapshotParent);
+      injected = true;
+      return {
+        fd: handle.fd,
+        writeFile: async (...args) => {
+          await handle.writeFile(...args);
+          const error = new Error('forced post-open publication failure');
+          error.code = 'EIO';
+          throw error;
+        },
+        stat: (...args) => handle.stat(...args),
+        close: (...args) => handle.close(...args),
+      };
+    },
+  });
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(injected, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_VERSIONED_COPY_FAILED');
+  assert.equal(result.cleanupBlocker, '');
+  await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(
+    () => fs.lstat(path.join(externalParent, path.basename(paths.snapshotPath))),
+    (error) => error.code === 'ENOENT',
+  );
 });
 
 test('changed source during snapshot copy fails and removes only the new snapshot', async () => {

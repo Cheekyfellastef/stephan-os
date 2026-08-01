@@ -504,11 +504,30 @@ async function writeOwnedExclusiveArtifact(artifactPath, content, {
   identityChangedCode,
 }) {
   const ancestorIdentities = await ensureSafeDirectoryChain(path.dirname(artifactPath), { fsImpl, create: false });
+  const parentPath = path.dirname(artifactPath);
+  const parentIdentity = ancestorIdentities.at(-1)?.identity;
+  let parentHandle = null;
+  let descriptorParentPath = '';
+  let descriptorArtifactPath = '';
   let handle = null;
   let created = false;
   let identity = null;
   try {
-    handle = await fsImpl.open(artifactPath, 'wx', 0o600);
+    if (process.platform !== 'linux') {
+      throw codedError('DREAM_MIGRATION_DIRECTORY_RELATIVE_PUBLICATION_UNSUPPORTED');
+    }
+    parentHandle = await fsImpl.open(parentPath, 'r');
+    const openedParentIdentity = await parentHandle.stat();
+    if (!sameDirectoryIdentity(parentIdentity, openedParentIdentity)) {
+      throw codedError('DREAM_MIGRATION_ANCESTOR_CHANGED');
+    }
+    if (!Number.isSafeInteger(parentHandle.fd) || parentHandle.fd < 0) {
+      throw codedError('DREAM_MIGRATION_DIRECTORY_HANDLE_INVALID');
+    }
+    descriptorParentPath = path.join('/proc/self/fd', String(parentHandle.fd));
+    descriptorArtifactPath = path.join(descriptorParentPath, path.basename(artifactPath));
+    await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
+    handle = await fsImpl.open(descriptorArtifactPath, 'wx', 0o600);
     created = true;
     await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
     await handle.writeFile(content, typeof content === 'string' ? { encoding: 'utf8' } : undefined);
@@ -529,12 +548,56 @@ async function writeOwnedExclusiveArtifact(artifactPath, content, {
       try { await handle.close(); } catch {}
       handle = null;
     }
-    const cleaned = !created
-      || (identity ? await removeOwnedArtifact(artifactPath, identity, fsImpl) : false);
+    const cleaned = !created || (identity && descriptorParentPath
+      ? await removeOwnedArtifactFromDirectoryHandle(
+        descriptorParentPath,
+        path.basename(artifactPath),
+        identity,
+        fsImpl,
+      )
+      : false);
     const wrapped = codedError(writeFailureCode);
     wrapped.reasonCode = error?.code || writeFailureCode;
     wrapped.cleanupBlocker = cleaned ? '' : cleanupFailureCode;
     throw wrapped;
+  } finally {
+    if (parentHandle) {
+      try { await parentHandle.close(); } catch {}
+    }
+  }
+}
+
+async function removeOwnedArtifactFromDirectoryHandle(descriptorParentPath, artifactName, identity, fsImpl) {
+  if (!identity || !safeRelativePath(artifactName) || path.basename(artifactName) !== artifactName) return false;
+  const descriptorArtifactPath = path.join(descriptorParentPath, artifactName);
+  let quarantinePath = '';
+  let quarantineRoot = '';
+  let moved = false;
+  try {
+    const current = await fsImpl.lstat(descriptorArtifactPath);
+    if (!sameFileIdentity(identity, current) || current.isSymbolicLink?.() || Number(current.nlink) !== 1) return false;
+    quarantineRoot = await fsImpl.mkdtemp(path.join(descriptorParentPath, '.stephanos-owned-delete-'));
+    const quarantineInfo = await fsImpl.lstat(quarantineRoot);
+    if (!quarantineInfo.isDirectory?.() || quarantineInfo.isSymbolicLink?.()) return false;
+    quarantinePath = path.join(quarantineRoot, artifactName);
+    await fsImpl.rename(descriptorArtifactPath, quarantinePath);
+    moved = true;
+    const quarantined = await assertRegularSingleLink(quarantinePath, { fsImpl });
+    if (!sameFileIdentity(identity, quarantined)) return false;
+    await fsImpl.unlink(quarantinePath);
+    moved = false;
+    await fsImpl.rmdir(quarantineRoot);
+    quarantineRoot = '';
+    return true;
+  } catch (error) {
+    return error?.code === 'ENOENT' && !moved;
+  } finally {
+    if (moved) {
+      try { await fsImpl.rename(quarantinePath, descriptorArtifactPath); } catch {}
+    }
+    if (quarantineRoot && !moved) {
+      try { await fsImpl.rmdir(quarantineRoot); } catch {}
+    }
   }
 }
 
