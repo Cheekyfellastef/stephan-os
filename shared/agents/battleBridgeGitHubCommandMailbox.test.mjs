@@ -85,12 +85,31 @@ test('control-plane and banked reset commands are allowlisted', () => {
     'READ_SHARED_WORKSPACE_STATUS',
     'READ_CRITICAL_BACKLOG_STATUS',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
+    'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
     'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
     'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
     CODEX_BANKED_RESET_STATUS_OPERATION,
     CODEX_BANKED_RESET_OPERATION,
   ]) {
     assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
+  }
+});
+
+test('recovery mesh install and wake require exact main head and dispatch only to named handlers', async () => {
+  for (const operation of ['INSTALL_BATTLE_BRIDGE_RECOVERY_MESH', 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH']) {
+    assert.equal(validateBattleBridgeGitHubCommand(command({ operation, expectedHead: '' }), {
+      authorLogin: 'Cheekyfellastef', now,
+    }).blocker, 'RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
+    const validated = validateBattleBridgeGitHubCommand(command({ operation }), { authorLogin: 'Cheekyfellastef', now });
+    assert.equal(validated.ok, true);
+    let calls = 0;
+    const result = await executeBattleBridgeGitHubCommand(validated.command, {
+      installRecoveryMesh: operation === 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' ? async () => { calls += 1; return { ok: true }; } : undefined,
+      wakeRecoveryMesh: operation === 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH' ? async () => { calls += 1; return { ok: true }; } : undefined,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(calls, 1);
   }
 });
 

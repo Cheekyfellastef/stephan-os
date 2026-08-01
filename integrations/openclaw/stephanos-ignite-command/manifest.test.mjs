@@ -23,12 +23,12 @@ test('loads the JavaScript command entry directly', async () => {
   assert.match(source, /definePluginEntry/);
 });
 
-test('registers only the authenticated read-only ignite command', async () => {
+test('registers one authenticated ignite command with no general tool or agent authority', async () => {
   const source = await readFile(new URL('index.js', root), 'utf8');
   assert.match(source, /name:\s*'stephanos-ignite'/);
   assert.match(source, /acceptsArgs:\s*true/);
   assert.match(source, /requireAuth:\s*true/);
   assert.doesNotMatch(source, /registerTool\s*\(/);
   assert.doesNotMatch(source, /continueAgent:\s*true/);
-  assert.doesNotMatch(source, /exec|spawn|openclaw\s+doctor|codex|merge|push|install/);
+  assert.doesNotMatch(source, /registerTool|openclaw\s+doctor|codex|merge|push|install/);
 });

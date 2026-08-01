@@ -26,6 +26,8 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_CRITICAL_BACKLOG_STATUS',
   'READ_MAILBOX_RECEIPT',
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
+  'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
   'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
   MUSIC_SPOTIFY_LINK_OPERATION,
@@ -148,6 +150,10 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   }
   if (command.expectedHead && !SHA_PATTERN.test(String(command.expectedHead))) {
     return fail('COMMAND_EXPECTED_HEAD_INVALID');
+  }
+  if (['INSTALL_BATTLE_BRIDGE_RECOVERY_MESH', 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'].includes(command.operation)
+    && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
+    return fail('RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
   }
   if (command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF') {
     if (!SHA_PATTERN.test(String(command.expectedHead || ''))) {
@@ -296,6 +302,8 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readCriticalBacklogStatus,
   readMailboxReceipt,
   runWorkerWatchdogAcceptance,
+  installRecoveryMesh,
+  wakeRecoveryMesh,
   runMonitorMultiplexerAcceptance,
   runExactHeadWindowsBrowserProof,
   queueVerifiedSpotifyLink,
@@ -312,6 +320,8 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_CRITICAL_BACKLOG_STATUS: readCriticalBacklogStatus,
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
+    INSTALL_BATTLE_BRIDGE_RECOVERY_MESH: installRecoveryMesh,
+    WAKE_BATTLE_BRIDGE_RECOVERY_MESH: wakeRecoveryMesh,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
     RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF: runExactHeadWindowsBrowserProof,
     [MUSIC_SPOTIFY_LINK_OPERATION]: queueVerifiedSpotifyLink,

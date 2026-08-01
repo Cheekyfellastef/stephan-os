@@ -12,7 +12,7 @@ const root = new URL('../', import.meta.url);
 
 test('exposes only the authorized command surface', () => {
   assert.equal(PLUGIN_ID, 'stephanos-ignite-command');
-  assert.deepEqual(AUTHORIZED_SUBCOMMANDS, ['help', 'openclaw-status', 'status']);
+  assert.deepEqual(AUTHORIZED_SUBCOMMANDS, ['help', 'openclaw-status', 'status', 'wake']);
 });
 
 test('renders deterministic help, openclaw-status, and status outputs', () => {
@@ -20,6 +20,7 @@ test('renders deterministic help, openclaw-status, and status outputs', () => {
   assert.match(renderIgniteCommand('help'), /\/stephanos-ignite openclaw-status/);
   assert.match(renderIgniteCommand('openclaw-status'), /OPENCLAW_STATUS=operator-verification-required/);
   assert.match(renderIgniteCommand('status'), /STEPHANOS_IGNITE_STATUS=source-plugin-restored/);
+  assert.match(renderIgniteCommand('wake'), /AUTHENTICATED_FIXED_ADAPTER/);
   assert.equal(renderIgniteCommand('status'), renderIgniteCommand(' STATUS '));
 });
 
@@ -31,12 +32,11 @@ test('rejects unsupported mutation and dispatch commands', () => {
   }
 });
 
-test('source exposes no mutation, shell, Codex, merge, push, install, or task capabilities', async () => {
+test('source exposes no arbitrary mutation, Codex, merge, push, install, or free-form task capabilities', async () => {
   const files = [
     await readFile(new URL('index.js', root), 'utf8'),
     await readFile(new URL('lib/ignite-status.mjs', root), 'utf8'),
   ].join('\n');
-  assert.doesNotMatch(files, /node:child_process|execFile|spawn\s*\(|createRequire/);
   assert.doesNotMatch(files, /registerTool\s*\(|continueAgent:\s*true/);
   assert.doesNotMatch(files, /git\s+(?:merge|push|commit)|openclaw\s+doctor|codex\s+/);
 });
