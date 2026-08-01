@@ -274,6 +274,11 @@ test('disjoint occupied destination is preserved as a deterministic version with
   assert.equal(manifest.canonicalDestinationPreserved, true);
   assert.equal(manifest.sourceRemovalPerformed, false);
   assert.equal(manifest.proofRefs.length, 2);
+  assert.equal(
+    manifest.proofRefs[1],
+    path.relative(result.boundary.dreamMemoryRoot, preserved.versionedSnapshotPath).split(path.sep).join('/'),
+  );
+  assert.match(manifest.proofRefs[1], /^\.stephanos-preservation\/v1\//);
 });
 
 test('idempotent retry returns the same verified snapshot and manifest', async () => {
@@ -471,6 +476,27 @@ test('deterministic manifest proof references reject unrelated bounded replaceme
   const retry = await runApproved(input, { now: fixedNow('2026-08-01T12:31:00.000Z') });
   assert.equal(retry.ok, false);
   assert.equal(retry.blocker, 'DREAM_VERSIONED_RECEIPT_CONFLICT');
+});
+
+test('receipt publication collision rolls back only newly owned migration artifacts', async () => {
+  const input = await disjointFixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const receiptPath = path.join(plan.receiptRoot, 'dream-migration-2026-08-01T12-30-00-000Z.json');
+  await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+  await fs.writeFile(receiptPath, 'pre-existing-receipt');
+  const sourceBefore = await fs.readFile(input.sourceEventsPath);
+  const canonicalBefore = await fs.readFile(input.destinationEventsPath);
+  const result = await runApproved(input);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED');
+  assert.equal(result.receiptWriteReason, 'EEXIST');
+  assert.equal(result.cleanupBlocker, '');
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
+  assert.deepEqual(await fs.readFile(input.sourceEventsPath), sourceBefore);
+  assert.deepEqual(await fs.readFile(input.destinationEventsPath), canonicalBefore);
+  assert.equal(await fs.readFile(receiptPath, 'utf8'), 'pre-existing-receipt');
 });
 
 test('changed source during snapshot copy fails and removes only the new snapshot', async () => {

@@ -348,13 +348,17 @@ export function resolveDreamVersionedPreservationPaths(entry, boundary) {
   }
   if (!SHA256_PATTERN.test(String(entry.sourceSha256 || ''))) throw codedError('DREAM_VERSIONED_SOURCE_HASH_INVALID');
   const logicalPathSha256 = sha256(entry.logicalSourcePath);
-  const snapshotPath = path.resolve(
-    boundary.dreamMemoryRoot,
+  const snapshotRelativeSegments = Object.freeze([
     DREAM_VERSIONED_PRESERVATION_DIRECTORY,
     'v1',
     mapping.id,
     logicalPathSha256,
     `${entry.sourceSha256}.snapshot`,
+  ]);
+  const snapshotRelativePath = snapshotRelativeSegments.join('/');
+  const snapshotPath = path.resolve(
+    boundary.dreamMemoryRoot,
+    ...snapshotRelativeSegments,
   );
   const manifestFilename = `dream-preservation-v1-${mapping.id}-${logicalPathSha256}-${entry.sourceSha256}.json`;
   const manifestPath = path.resolve(boundary.receiptRoot, manifestFilename);
@@ -367,6 +371,7 @@ export function resolveDreamVersionedPreservationPaths(entry, boundary) {
   return Object.freeze({
     logicalPathSha256,
     snapshotPath,
+    snapshotRelativePath,
     manifestFilename,
     manifestPath,
     lockSegments: Object.freeze([
@@ -473,15 +478,15 @@ async function writeReceipt(receipt, { fsImpl, receiptRoot }) {
   return Object.freeze({ receiptPath, identity });
 }
 
-function versionedProofRefs(entry, paths) {
+function versionedProofRefs(paths) {
   return Object.freeze([
     `receipts/runtime-boundary/${paths.manifestFilename}`,
-    `dream-preservation/${entry.mappingId}/${paths.logicalPathSha256}/${entry.sourceSha256}.snapshot`,
+    paths.snapshotRelativePath,
   ]);
 }
 
 function buildVersionedManifest(entry, paths, sourceHead, capturedAtUtc) {
-  const proofRefs = versionedProofRefs(entry, paths);
+  const proofRefs = versionedProofRefs(paths);
   return Object.freeze({
     schemaVersion: DREAM_VERSIONED_PRESERVATION_SCHEMA,
     kind: 'dream-runtime-versioned-preservation-manifest',
@@ -516,7 +521,7 @@ function validateVersionedManifest(manifest, expected) {
   if (!Number.isFinite(Date.parse(String(manifest?.capturedAtUtc || '')))) errors.push('captured-at');
   if (manifest?.previousCanonicalDestinationSha256 !== expected.entry.destinationSha256) errors.push('previous-canonical-hash');
   if (manifest?.relationClassification !== expected.entry.relationClassification) errors.push('relation');
-  const expectedProofRefs = versionedProofRefs(expected.entry, expected.paths);
+  const expectedProofRefs = versionedProofRefs(expected.paths);
   if (!Array.isArray(manifest?.proofRefs)
     || manifest.proofRefs.length !== expectedProofRefs.length
     || manifest.proofRefs.some((ref, index) => ref !== expectedProofRefs[index])) errors.push('proof-refs');
@@ -906,7 +911,24 @@ export async function executeDreamRuntimeMigration({
     ]),
     finalVerdict,
   });
-  const writtenReceipt = await writeReceipt(receipt, { fsImpl, receiptRoot: plan.receiptRoot });
+  let writtenReceipt;
+  try {
+    writtenReceipt = await writeReceipt(receipt, { fsImpl, receiptRoot: plan.receiptRoot });
+  } catch (error) {
+    const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
+      blocker: 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
+      receiptWriteReason: error?.code || 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
+      cleanupBlocker: migrationArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
+      copied: Object.freeze(copied),
+      preserved: Object.freeze([]),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
   if (!(await verifySourceHead())) {
     const receiptCleaned = await removeOwnedArtifact(writtenReceipt.receiptPath, writtenReceipt.identity, fsImpl);
     const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
