@@ -1303,7 +1303,19 @@ test('cross-platform publication adapters preserve the structural commit invaria
   assert.match(posixHelper, /PROMOTED:\{info\.st_dev\}:\{info\.st_ino\}:\{info\.st_size\}/);
   const windowsHelper = await fs.readFile(path.resolve('scripts/windows/dream-runtime-artifact-io.ps1'), 'utf8');
   assert.match(windowsHelper, /AncestorPathsBase64/);
-  assert.equal((windowsHelper.match(/Assert-AncestorChainUnchanged/g) || []).length >= 5, true);
+  assert.equal((windowsHelper.match(/Assert-AncestorChainUnchanged/g) || []).length >= 6, true);
+  assert.match(
+    windowsHelper,
+    /if \(\$Mode -eq 'EnsureDirectory'\)[\s\S]*EnsureRelativeDirectory[\s\S]*Assert-AncestorChainUnchanged[\s\S]*DIRECTORY_READY/,
+  );
+  assert.match(
+    windowsHelper,
+    /if \(\$directoryCreated -and -not \$directoryReady\)[\s\S]*DeleteByHandle\(\$directory\)[\s\S]*DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED/,
+  );
+  assert.match(
+    boundarySource,
+    /DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED[\s\S]*error\.cleanupBlocker = 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED'/,
+  );
   assert.match(windowsHelper, /if \(\$renamed\)[\s\S]*DeleteByHandle\(\$pending\)/);
 });
 

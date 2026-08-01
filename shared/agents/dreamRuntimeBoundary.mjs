@@ -215,7 +215,11 @@ async function ensureWindowsDirectoryComponent(parentPath, directoryName, parent
   const output = await processState.awaitExit();
   const readyPattern = new RegExp(`^DIRECTORY_READY:${token}:[a-f0-9:]+$`, 'm');
   if (output.timedOut || output.exit?.code !== 0 || !readyPattern.test(output.stdout) || output.stderr.trim()) {
-    throw codedError('DREAM_MIGRATION_DIRECTORY_CREATE_FAILED');
+    const error = codedError('DREAM_MIGRATION_DIRECTORY_CREATE_FAILED');
+    if (output.stderr.split(/\r?\n/).includes('DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED')) {
+      error.cleanupBlocker = 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED';
+    }
+    throw error;
   }
 }
 

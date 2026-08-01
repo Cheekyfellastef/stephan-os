@@ -314,6 +314,28 @@ public static class StephanosDreamArtifactIo {
         uint share,
         uint createOptions
     ) {
+        UIntPtr createInformation;
+        return OpenRelative(
+            parent,
+            name,
+            desiredAccess,
+            disposition,
+            share,
+            createOptions,
+            out createInformation
+        );
+    }
+
+    private static SafeFileHandle OpenRelative(
+        SafeFileHandle parent,
+        string name,
+        uint desiredAccess,
+        uint disposition,
+        uint share,
+        uint createOptions,
+        out UIntPtr createInformation
+    ) {
+        createInformation = UIntPtr.Zero;
         IntPtr nameBuffer = Marshal.StringToHGlobalUni(name);
         IntPtr unicodePointer = IntPtr.Zero;
         try {
@@ -348,6 +370,7 @@ public static class StephanosDreamArtifactIo {
                 0
             );
             if (status < 0) throw new Win32Exception((int)RtlNtStatusToDosError(status));
+            createInformation = ioStatus.Information;
             return new SafeFileHandle(rawHandle, true);
         } finally {
             if (unicodePointer != IntPtr.Zero) Marshal.FreeHGlobal(unicodePointer);
@@ -377,15 +400,23 @@ public static class StephanosDreamArtifactIo {
         );
     }
 
-    public static SafeFileHandle EnsureRelativeDirectory(SafeFileHandle parent, string name) {
+    public static SafeFileHandle EnsureRelativeDirectory(
+        SafeFileHandle parent,
+        string name,
+        out bool created
+    ) {
+        created = false;
+        UIntPtr createInformation;
         var handle = OpenRelative(
             parent,
             name,
-            ReadAttributes | Synchronize,
+            DeleteAccess | ReadAttributes | Synchronize,
             FileOpenIf,
             ShareAll,
-            FileDirectory
+            FileDirectory,
+            out createInformation
         );
+        created = createInformation.ToUInt64() == 2;
         try {
             ReadInfo(handle, true);
             return handle;
@@ -557,13 +588,32 @@ try {
     $parent = [StephanosDreamArtifactIo]::OpenValidatedChain($resolvedParent, $ExpectedAncestorIdentities)
     try {
         if ($Mode -eq 'EnsureDirectory') {
-            $directory = [StephanosDreamArtifactIo]::EnsureRelativeDirectory($parent, $ArtifactName)
+            $directoryCreated = $false
+            $directoryReady = $false
+            $directoryCleanupFailed = $false
+            $directory = [StephanosDreamArtifactIo]::EnsureRelativeDirectory(
+                $parent,
+                $ArtifactName,
+                [ref]$directoryCreated
+            )
             try {
                 $directoryIdentity = [StephanosDreamArtifactIo]::ReadDirectoryIdentity($directory)
+                Assert-AncestorChainUnchanged
                 [Console]::Out.WriteLine("DIRECTORY_READY:$Token`:$directoryIdentity")
                 [Console]::Out.Flush()
+                $directoryReady = $true
             } finally {
+                if ($directoryCreated -and -not $directoryReady) {
+                    try {
+                        [StephanosDreamArtifactIo]::DeleteByHandle($directory)
+                    } catch {
+                        $directoryCleanupFailed = $true
+                    }
+                }
                 $directory.Dispose()
+                if ($directoryCleanupFailed) {
+                    throw 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED'
+                }
             }
             exit 0
         }
