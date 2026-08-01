@@ -52,16 +52,42 @@ test('copy mode delegates source-head drift to the ownership-aware executor tran
 });
 
 test('copy mode derives source head through fixed git argv only', async () => {
-  let invocation = null;
+  const invocations = [];
   const sourceHead = await resolveDreamMigrationSourceHead('/bounded/repo', async (...args) => {
-    invocation = args;
-    return { stdout: `${HEAD}\n` };
+    invocations.push(args);
+    return { stdout: invocations.length === 1 ? `${HEAD}\n` : '' };
   });
   assert.equal(sourceHead, HEAD);
-  assert.equal(invocation[0], 'git');
-  assert.deepEqual(invocation[1], ['-C', '/bounded/repo', 'rev-parse', 'HEAD']);
+  assert.equal(invocations.length, 2);
+  assert.equal(invocations[0][0], 'git');
+  assert.deepEqual(invocations[0][1], ['-C', '/bounded/repo', 'rev-parse', 'HEAD']);
+  assert.deepEqual(invocations[1][1], [
+    '-C', '/bounded/repo',
+    'status',
+    '--porcelain=v2',
+    '--untracked-files=no',
+    '--ignore-submodules=none',
+    '--',
+    '.',
+    ':(exclude)memory/.dreams/**',
+    ':(exclude)memory/dreaming/**',
+  ]);
   await assert.rejects(
     () => resolveDreamMigrationSourceHead('/bounded/repo', async () => ({ stdout: '../not-a-head' })),
     /DREAM_VERSIONED_SOURCE_HEAD_UNAVAILABLE/,
   );
+});
+
+test('copy mode rejects tracked implementation dirt before binding source head', async () => {
+  let invocationCount = 0;
+  await assert.rejects(
+    () => resolveDreamMigrationSourceHead('/bounded/repo', async () => {
+      invocationCount += 1;
+      return invocationCount === 1
+        ? { stdout: `${HEAD}\n` }
+        : { stdout: '1 .M N... scripts/migrate-dream-runtime-boundary.mjs\n' };
+    }),
+    /DREAM_VERSIONED_SOURCE_DIRTY/,
+  );
+  assert.equal(invocationCount, 2);
 });

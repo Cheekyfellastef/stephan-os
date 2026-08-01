@@ -13,12 +13,25 @@ import {
 const execFileAsync = promisify(execFile);
 
 export async function resolveDreamMigrationSourceHead(repoRoot, execFileFn = execFileAsync) {
-  const result = await execFileFn('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+  const gitOptions = {
     encoding: 'utf8',
     windowsHide: true,
-  });
-  const sourceHead = String(result?.stdout || '').trim().toLowerCase();
+  };
+  const headResult = await execFileFn('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], gitOptions);
+  const sourceHead = String(headResult?.stdout || '').trim().toLowerCase();
   if (!/^[a-f0-9]{40}$/.test(sourceHead)) throw new Error('DREAM_VERSIONED_SOURCE_HEAD_UNAVAILABLE');
+  const statusResult = await execFileFn('git', [
+    '-C', repoRoot,
+    'status',
+    '--porcelain=v2',
+    '--untracked-files=no',
+    '--ignore-submodules=none',
+    '--',
+    '.',
+    ':(exclude)memory/.dreams/**',
+    ':(exclude)memory/dreaming/**',
+  ], gitOptions);
+  if (String(statusResult?.stdout || '').trim()) throw new Error('DREAM_VERSIONED_SOURCE_DIRTY');
   return sourceHead;
 }
 

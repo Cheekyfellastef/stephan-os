@@ -153,6 +153,7 @@ function filesystemAncestors(target) {
 }
 
 async function ensureSafeDirectoryChain(target, { fsImpl = fs, create = false } = {}) {
+  const identities = [];
   for (const directory of filesystemAncestors(target)) {
     let info;
     try {
@@ -171,6 +172,27 @@ async function ensureSafeDirectoryChain(target, { fsImpl = fs, create = false } 
     }
     if (!info.isDirectory?.()) {
       throw codedError('DREAM_MIGRATION_ANCESTOR_UNSUPPORTED', `Non-directory ancestor rejected: ${directory}`);
+    }
+    identities.push(Object.freeze({ directory, identity: info }));
+  }
+  return Object.freeze(identities);
+}
+
+function sameDirectoryIdentity(before, after) {
+  return before?.isDirectory?.() === true
+    && after?.isDirectory?.() === true
+    && before?.isSymbolicLink?.() !== true
+    && after?.isSymbolicLink?.() !== true
+    && Number(before?.dev) === Number(after?.dev)
+    && Number(before?.ino) === Number(after?.ino)
+    && Number(before?.birthtimeMs) === Number(after?.birthtimeMs);
+}
+
+async function assertSafeDirectoryChainUnchanged(identities, { fsImpl = fs } = {}) {
+  for (const expected of identities) {
+    const current = await fsImpl.lstat(expected.directory);
+    if (!sameDirectoryIdentity(expected.identity, current)) {
+      throw codedError('DREAM_MIGRATION_ANCESTOR_CHANGED');
     }
   }
 }
@@ -475,17 +497,21 @@ async function writeOwnedExclusiveArtifact(artifactPath, content, {
   identityInvalidCode,
   identityChangedCode,
 }) {
+  const ancestorIdentities = await ensureSafeDirectoryChain(path.dirname(artifactPath), { fsImpl, create: false });
   let handle = null;
   let created = false;
   let identity = null;
   try {
     handle = await fsImpl.open(artifactPath, 'wx', 0o600);
     created = true;
+    await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
     await handle.writeFile(content, typeof content === 'string' ? { encoding: 'utf8' } : undefined);
     identity = await handle.stat();
     if (!identity.isFile?.() || Number(identity.nlink) !== 1) throw codedError(identityInvalidCode);
+    await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
     await handle.close();
     handle = null;
+    await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
     const pathIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
     if (!sameFileIdentity(identity, pathIdentity)) throw codedError(identityChangedCode);
     return Object.freeze({ artifactPath, identity: pathIdentity });
@@ -612,13 +638,57 @@ async function readExistingManifest(paths, expected, fsImpl) {
 
 async function removeOwnedArtifact(artifactPath, identity, fsImpl) {
   if (!identity) return true;
+  let stage = 'inspect';
+  let quarantineRoot = '';
+  let quarantinePath = '';
+  let moved = false;
+  const restoreQuarantinedArtifact = async () => {
+    if (!moved) return true;
+    try {
+      await fsImpl.lstat(artifactPath);
+      return false;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return false;
+    }
+    try {
+      await fsImpl.rename(quarantinePath, artifactPath);
+      moved = false;
+      return true;
+    } catch {
+      return false;
+    }
+  };
   try {
+    const ancestorIdentities = await ensureSafeDirectoryChain(path.dirname(artifactPath), { fsImpl, create: false });
     const current = await fsImpl.lstat(artifactPath);
     if (!sameFileIdentity(identity, current) || current.isSymbolicLink?.() || Number(current.nlink) !== 1) return false;
-    await fsImpl.unlink(artifactPath);
+    stage = 'quarantine';
+    quarantineRoot = await fsImpl.mkdtemp(path.join(path.dirname(artifactPath), '.stephanos-owned-delete-'));
+    const quarantineInfo = await fsImpl.lstat(quarantineRoot);
+    if (!quarantineInfo.isDirectory?.() || quarantineInfo.isSymbolicLink?.()) return false;
+    quarantinePath = path.join(quarantineRoot, path.basename(artifactPath));
+    await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
+    await fsImpl.rename(artifactPath, quarantinePath);
+    moved = true;
+    await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
+    const quarantined = await assertRegularSingleLink(quarantinePath, { fsImpl });
+    if (!sameFileIdentity(identity, quarantined)) {
+      await restoreQuarantinedArtifact();
+      return false;
+    }
+    stage = 'delete-owned';
+    await fsImpl.unlink(quarantinePath);
+    moved = false;
+    await fsImpl.rmdir(quarantineRoot);
+    quarantineRoot = '';
     return true;
   } catch (error) {
-    return error?.code === 'ENOENT';
+    if (moved) await restoreQuarantinedArtifact();
+    return stage === 'inspect' && error?.code === 'ENOENT';
+  } finally {
+    if (quarantineRoot && !moved) {
+      try { await fsImpl.rmdir(quarantineRoot); } catch {}
+    }
   }
 }
 

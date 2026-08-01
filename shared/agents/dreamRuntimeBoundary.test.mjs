@@ -209,6 +209,43 @@ test('source-head drift after receipt removes newly owned copy outputs and recei
   assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
 });
 
+test('owned-artifact cleanup never deletes a concurrent path replacement', async () => {
+  const input = await fixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const deepEntry = plan.entries.find((entry) => entry.logicalSourcePath === 'memory/dreaming/deep/2026-07-21.md');
+  assert.ok(deepEntry);
+  const savedOwnedCopy = path.join(input.root, 'saved-owned-copy.md');
+  let replacementInjected = false;
+  const fsImpl = fsProxy({
+    rename: async (source, destination) => {
+      if (
+        !replacementInjected
+        && path.resolve(String(source)) === path.resolve(deepEntry.destinationPath)
+        && String(destination).includes('.stephanos-owned-delete-')
+      ) {
+        replacementInjected = true;
+        await fs.rename(source, savedOwnedCopy);
+        await fs.writeFile(source, 'concurrent-replacement');
+      }
+      return fs.rename(source, destination);
+    },
+  });
+  let headReads = 0;
+  const result = await runApproved(input, {
+    fsImpl,
+    sourceHeadVerifierFn: async () => {
+      headReads += 1;
+      return headReads === 1 ? HEAD : 'b'.repeat(40);
+    },
+  });
+  assert.equal(replacementInjected, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
+  assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED');
+  assert.equal(await fs.readFile(deepEntry.destinationPath, 'utf8'), 'concurrent-replacement');
+  assert.equal(await fs.readFile(savedOwnedCopy, 'utf8'), '# dream\n');
+});
+
 test('copy verification failure surfaces an ownership-bound cleanup failure', async () => {
   const input = await fixture();
   let changed = false;
@@ -759,6 +796,47 @@ test('snapshot path-verification failure self-cleans through handle-owned identi
   await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
   assert.deepEqual(await fs.readFile(input.sourceEventsPath), sourceBefore);
   assert.deepEqual(await fs.readFile(input.destinationEventsPath), canonicalBefore);
+});
+
+test('ancestor identity change during exclusive publication blocks success and rolls back', async () => {
+  const input = await disjointFixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  const snapshotParent = path.dirname(paths.snapshotPath);
+  let snapshotOpened = false;
+  let ancestorChangeInjected = false;
+  const fsImpl = fsProxy({
+    open: async (target, flags, mode) => {
+      const handle = await fs.open(target, flags, mode);
+      if (path.resolve(String(target)) === path.resolve(paths.snapshotPath)) snapshotOpened = true;
+      return handle;
+    },
+    lstat: async (target, ...args) => {
+      const info = await fs.lstat(target, ...args);
+      if (
+        snapshotOpened
+        && !ancestorChangeInjected
+        && path.resolve(String(target)) === path.resolve(snapshotParent)
+      ) {
+        ancestorChangeInjected = true;
+        return {
+          isDirectory: () => true,
+          isSymbolicLink: () => false,
+          dev: info.dev,
+          ino: Number(info.ino) + 1,
+          birthtimeMs: info.birthtimeMs,
+        };
+      }
+      return info;
+    },
+  });
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(ancestorChangeInjected, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_VERSIONED_COPY_FAILED');
+  assert.equal(result.cleanupBlocker, '');
+  await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
 });
 
 test('changed source during snapshot copy fails and removes only the new snapshot', async () => {
