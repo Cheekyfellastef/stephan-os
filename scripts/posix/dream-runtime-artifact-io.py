@@ -39,7 +39,8 @@ if not stat.S_ISREG(owned.st_mode) or owned.st_nlink != 1:
 # destination from the already-open source descriptor and refuses an existing
 # destination, so the mutable pending pathname is never selected for
 # authoritative publication.
-if platform.system() == "Darwin":
+system = platform.system()
+if system == "Darwin":
     libc = ctypes.CDLL(None, use_errno=True)
     fclonefileat = libc.fclonefileat
     fclonefileat.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
@@ -47,11 +48,23 @@ if platform.system() == "Darwin":
         error = ctypes.get_errno()
         fail("EEXIST" if error == errno.EEXIST else "DREAM_MIGRATION_RECEIPT_COMMIT_FAILED")
     try:
-        pending = os.stat(args.pending_name, dir_fd=parent_fd, follow_symlinks=False)
-        if (pending.st_dev, pending.st_ino) == (owned.st_dev, owned.st_ino):
-            os.unlink(args.pending_name, dir_fd=parent_fd)
-    except FileNotFoundError:
-        pass
+        try:
+            pending = os.stat(args.pending_name, dir_fd=parent_fd, follow_symlinks=False)
+            if (pending.st_dev, pending.st_ino) == (owned.st_dev, owned.st_ino):
+                os.unlink(args.pending_name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+        promoted = os.stat(args.artifact_name, dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(promoted.st_mode)
+                or promoted.st_nlink != 1
+                or promoted.st_size != owned.st_size):
+            fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
+        print("PROMOTED", flush=True)
+    except SystemExit:
+        raise
+    except BaseException:
+        fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
+    raise SystemExit(0)
 else:
     libc = ctypes.CDLL(None, use_errno=True)
     linkat = libc.linkat
@@ -72,18 +85,14 @@ else:
         pass
 
 promoted = os.stat(args.artifact_name, dir_fd=parent_fd, follow_symlinks=False)
-promotion_invalid = not stat.S_ISREG(promoted.st_mode) or promoted.st_nlink != 1
-if platform.system() == "Darwin":
-    promotion_invalid = promotion_invalid or promoted.st_size != owned.st_size
-else:
-    promotion_invalid = promotion_invalid or (promoted.st_dev, promoted.st_ino) != (owned.st_dev, owned.st_ino)
+promotion_invalid = (not stat.S_ISREG(promoted.st_mode)
+                     or promoted.st_nlink != 1
+                     or (promoted.st_dev, promoted.st_ino) != (owned.st_dev, owned.st_ino))
 if promotion_invalid:
     # The link itself selected the owned descriptor.  If an attacker moved the
     # pending name and thereby retained another link, remove only the exact
     # authoritative link just created and fail closed.
-    if platform.system() != "Darwin" and (promoted.st_dev, promoted.st_ino) == (owned.st_dev, owned.st_ino):
+    if (promoted.st_dev, promoted.st_ino) == (owned.st_dev, owned.st_ino):
         os.unlink(args.artifact_name, dir_fd=parent_fd)
-    if platform.system() == "Darwin":
-        fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
     fail("DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED")
 print("PROMOTED", flush=True)

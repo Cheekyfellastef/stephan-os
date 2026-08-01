@@ -1241,9 +1241,13 @@ test('Linux promotion binds the authoritative name to the opened pending inode',
 test('cross-platform publication adapters preserve the structural commit invariant', async () => {
   const posixHelper = await fs.readFile(path.resolve('scripts/posix/dream-runtime-artifact-io.py'), 'utf8');
   assert.match(posixHelper, /linkat\(-100, b"\/proc\/self\/fd\/3"/);
-  assert.match(posixHelper, /platform\.system\(\) == "Darwin"/);
+  assert.match(posixHelper, /system = platform\.system\(\)[\s\S]*if system == "Darwin"/);
   assert.match(posixHelper, /fclonefileat\(pending_fd, parent_fd/);
   assert.doesNotMatch(posixHelper, /renameatx_np/);
+  assert.match(
+    posixHelper,
+    /except BaseException:\s+fail\("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED"\)/,
+  );
   const boundarySource = await fs.readFile(path.resolve('shared/agents/dreamRuntimeBoundary.mjs'), 'utf8');
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
   const windowsHelper = await fs.readFile(path.resolve('scripts/windows/dream-runtime-artifact-io.ps1'), 'utf8');
