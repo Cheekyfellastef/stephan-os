@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -262,7 +263,7 @@ test('already-verified changes during receipt write remove the owned receipt', a
   const input = await alreadyVerifiedFixture();
   let changed = false;
   const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
-    if (!changed && path.basename(String(target)).startsWith('dream-migration-')) {
+    if (!changed && path.basename(String(target)).includes('dream-migration-')) {
       changed = true;
       await fs.appendFile(input.destinationEventsPath, ' ');
     }
@@ -318,12 +319,13 @@ test('copy verification failure surfaces an ownership-bound cleanup failure', as
   const input = await fixture();
   let changed = false;
   const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
-    if (!changed && path.basename(String(target)) === path.basename(input.destinationEventsPath)) {
+    if (!changed && path.basename(String(target)).endsWith(path.basename(input.destinationEventsPath))) {
       changed = true;
       await fs.appendFile(input.sourceEventsPath, ' ');
     }
   }, {
-    unlink: async () => {
+    unlink: async (target, ...args) => {
+      if (path.basename(String(target)).startsWith('.stephanos-pending-')) return fs.unlink(target, ...args);
       const error = new Error('blocked cleanup');
       error.code = 'EPERM';
       throw error;
@@ -373,7 +375,7 @@ test('later copy blocker rolls back a prior preservation and its own copied outp
   assert.ok(deepEntry);
   let changed = false;
   const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
-    if (!changed && path.basename(String(target)) === path.basename(deepEntry.destinationPath)) {
+    if (!changed && path.basename(String(target)).endsWith(path.basename(deepEntry.destinationPath))) {
       changed = true;
       await fs.appendFile(deepEntry.sourcePath, ' ');
     }
@@ -717,7 +719,7 @@ test('partial receipt publication failure removes the handle-owned receipt and m
   const fsImpl = fsProxy({
     open: async (target, flags, mode) => {
       const handle = await fs.open(target, flags, mode);
-      if (!path.basename(String(target)).startsWith('dream-migration-')) return handle;
+      if (!path.basename(String(target)).includes('dream-migration-')) return handle;
       return {
         fd: handle.fd,
         writeFile: async (...args) => {
@@ -752,7 +754,7 @@ test('receipt publication reports cleanup failure when created-file identity is 
   const fsImpl = fsProxy({
     open: async (target, flags, mode) => {
       const handle = await fs.open(target, flags, mode);
-      if (!path.basename(String(target)).startsWith('dream-migration-')) return handle;
+      if (!path.basename(String(target)).includes('dream-migration-')) return handle;
       return {
         fd: handle.fd,
         writeFile: async (...args) => {
@@ -782,7 +784,48 @@ test('receipt publication reports cleanup failure when created-file identity is 
   await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
   const receiptFiles = await fs.readdir(plan.receiptRoot);
-  assert.equal(receiptFiles.filter((name) => name.startsWith('dream-migration-')).length, 1);
+  assert.equal(receiptFiles.filter((name) => name.startsWith('dream-migration-')).length, 0);
+  assert.equal(receiptFiles.filter((name) => name.startsWith('.stephanos-pending-') && name.includes('dream-migration-')).length, 1);
+});
+
+test('Windows native publication abort removes the final-name artifact by its owned handle', {
+  skip: process.platform !== 'win32',
+  timeout: 30_000,
+}, async () => {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'stephanos-native-artifact-'));
+  const artifactName = 'dream-migration-native-abort.json';
+  const artifactPath = path.join(parent, artifactName);
+  const token = '11111111-1111-4111-8111-111111111111';
+  const helper = path.resolve('scripts', 'windows', 'dream-runtime-artifact-io.ps1');
+  const child = spawn('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', helper,
+    '-Mode', 'Publish',
+    '-ParentPath', parent,
+    '-ArtifactName', artifactName,
+    '-Token', token,
+  ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.on('error', () => {});
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  let stdout = '';
+  let stderr = '';
+  let resolveReady;
+  const ready = new Promise((resolve) => { resolveReady = resolve; });
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+    if (stdout.includes(`READY:${token}:`)) resolveReady();
+  });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
+  child.stdin.write(`${Buffer.from('{"finalVerdict":"TEST_ONLY"}\n').toString('base64')}\n`);
+  await ready;
+  assert.equal(await fs.readFile(artifactPath, 'utf8'), '{"finalVerdict":"TEST_ONLY"}\n');
+  child.stdin.end('ABORT\n');
+  assert.equal(await exited, 0);
+  assert.equal(stderr, '');
+  assert.equal(stdout.split(/\r?\n/).includes(`ABORTED:${token}`), true);
+  await assert.rejects(() => fs.lstat(artifactPath), (error) => error.code === 'ENOENT');
 });
 
 test('partial manifest publication self-cleans before snapshot rollback', async () => {
@@ -791,7 +834,7 @@ test('partial manifest publication self-cleans before snapshot rollback', async 
   const fsImpl = fsProxy({
     open: async (target, flags, mode) => {
       const handle = await fs.open(target, flags, mode);
-      if (!path.basename(String(target)).startsWith('dream-preservation-v1-')) return handle;
+      if (!path.basename(String(target)).includes('dream-preservation-v1-')) return handle;
       return {
         fd: handle.fd,
         writeFile: async (...args) => {
