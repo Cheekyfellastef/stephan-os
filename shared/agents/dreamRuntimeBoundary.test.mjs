@@ -1072,6 +1072,58 @@ test('ancestor swap during publication cannot redirect or retain an escaped arti
   );
 });
 
+test('Linux promotion binds the authoritative name to the opened pending inode', { skip: process.platform !== 'linux' }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dream-linkat-'));
+  const pendingName = '.stephanos-pending-hostile-receipt.json';
+  const pendingPath = path.join(root, pendingName);
+  const displacedPath = path.join(root, 'owned-displaced');
+  const finalPath = path.join(root, 'dream-migration-hostile.json');
+  await fs.writeFile(pendingPath, 'owned-receipt');
+  const pendingHandle = await fs.open(pendingPath, 'r');
+  const parentHandle = await fs.open(root, 'r');
+  await fs.rename(pendingPath, displacedPath);
+  await fs.writeFile(pendingPath, 'attacker-replacement');
+  try {
+    const helper = spawn('python3', [
+      path.resolve('scripts/posix/dream-runtime-artifact-io.py'),
+      '--pending-name', pendingName,
+      '--artifact-name', path.basename(finalPath),
+    ], { stdio: ['ignore', 'pipe', 'pipe', pendingHandle.fd, parentHandle.fd] });
+    const outcome = await new Promise((resolve) => {
+      let stdout = '';
+      let stderr = '';
+      helper.stdout.setEncoding('utf8');
+      helper.stderr.setEncoding('utf8');
+      helper.stdout.on('data', (chunk) => { stdout += chunk; });
+      helper.stderr.on('data', (chunk) => { stderr += chunk; });
+      helper.once('exit', (code) => resolve({ code, stdout, stderr }));
+    });
+    assert.deepEqual(outcome, {
+      code: 2,
+      stdout: '',
+      stderr: 'DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED\n',
+    });
+    await assert.rejects(() => fs.lstat(finalPath), (error) => error.code === 'ENOENT');
+    assert.equal(await fs.readFile(pendingPath, 'utf8'), 'attacker-replacement');
+    assert.equal(await fs.readFile(displacedPath, 'utf8'), 'owned-receipt');
+  } finally {
+    await pendingHandle.close();
+    await parentHandle.close();
+  }
+});
+
+test('cross-platform publication adapters preserve the structural commit invariant', async () => {
+  const posixHelper = await fs.readFile(path.resolve('scripts/posix/dream-runtime-artifact-io.py'), 'utf8');
+  assert.match(posixHelper, /linkat\(-100, b"\/proc\/self\/fd\/3"/);
+  assert.match(posixHelper, /platform\.system\(\) == "Darwin"/);
+  assert.match(posixHelper, /flock\(parent_fd, fcntl\.LOCK_EX\)/);
+  assert.match(posixHelper, /renameatx_np/);
+  const windowsHelper = await fs.readFile(path.resolve('scripts/windows/dream-runtime-artifact-io.ps1'), 'utf8');
+  assert.match(windowsHelper, /AncestorPathsBase64/);
+  assert.equal((windowsHelper.match(/Assert-AncestorChainUnchanged/g) || []).length >= 5, true);
+  assert.match(windowsHelper, /if \(\$renamed\)[\s\S]*DeleteByHandle\(\$pending\)/);
+});
+
 test('missing preservation directories are created relative to the validated parent handle', { skip: process.platform !== 'linux' }, async () => {
   const input = await disjointFixture();
   const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });

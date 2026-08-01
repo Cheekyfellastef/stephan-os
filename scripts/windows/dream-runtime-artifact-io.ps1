@@ -17,7 +17,10 @@ param(
     [ValidatePattern('^[a-f0-9:]*$')]
     [string]$ExpectedOwnershipToken = '',
 
-    [string]$PendingName = ''
+    [string]$PendingName = '',
+
+    [ValidatePattern('^[A-Za-z0-9+/=]*$')]
+    [string]$AncestorPathsBase64 = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -429,6 +432,26 @@ try {
     if (-not [System.IO.Directory]::Exists($resolvedParent)) {
         throw 'DREAM_MIGRATION_ARTIFACT_PARENT_MISSING'
     }
+    $ancestorHandles = [System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
+    $ancestorPaths = @()
+    if (-not [string]::IsNullOrWhiteSpace($AncestorPathsBase64)) {
+        $ancestorJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($AncestorPathsBase64))
+        $ancestorPaths = @($ancestorJson | ConvertFrom-Json)
+    }
+    foreach ($ancestorPath in $ancestorPaths) {
+        $resolvedAncestor = [System.IO.Path]::GetFullPath([string]$ancestorPath)
+        $ancestorHandles.Add([StephanosDreamArtifactIo]::OpenValidatedParent($resolvedAncestor))
+    }
+    function Assert-AncestorChainUnchanged {
+        for ($index = 0; $index -lt $ancestorPaths.Count; $index += 1) {
+            $openedIdentity = [StephanosDreamArtifactIo]::ReadDirectoryIdentity($ancestorHandles[$index])
+            $pathIdentity = [StephanosDreamArtifactIo]::ReadPathIdentity([System.IO.Path]::GetFullPath([string]$ancestorPaths[$index]))
+            if (-not [string]::Equals($openedIdentity, $pathIdentity, [System.StringComparison]::Ordinal)) {
+                throw 'DREAM_MIGRATION_ANCESTOR_CHANGED'
+            }
+        }
+    }
+    Assert-AncestorChainUnchanged
     $parent = [StephanosDreamArtifactIo]::OpenValidatedParent($resolvedParent)
     try {
         if ($Mode -eq 'EnsureDirectory') {
@@ -468,16 +491,25 @@ try {
             }
             Assert-BoundedPendingName -Value $PendingName -FinalName $ArtifactName
             $pending = [StephanosDreamArtifactIo]::OpenRelativeForDelete($parent, $PendingName)
+            $renamed = $false
             try {
                 $observed = [StephanosDreamArtifactIo]::ReadOwnedIdentity($pending)
                 if (-not [string]::Equals($observed, $ExpectedOwnershipToken, [System.StringComparison]::Ordinal)) {
                     throw 'DREAM_MIGRATION_OWNERSHIP_IDENTITY_CHANGED'
                 }
+                Assert-AncestorChainUnchanged
                 [StephanosDreamArtifactIo]::RenameRelativeNoReplace($pending, $parent, $ArtifactName)
+                $renamed = $true
+                Assert-AncestorChainUnchanged
                 $promoted = [StephanosDreamArtifactIo]::ReadOwnedIdentity($pending)
                 if (-not [string]::Equals($observed, $promoted, [System.StringComparison]::Ordinal)) {
                     throw 'DREAM_MIGRATION_OWNERSHIP_IDENTITY_CHANGED'
                 }
+            } catch {
+                if ($renamed) {
+                    try { [StephanosDreamArtifactIo]::DeleteByHandle($pending) } catch {}
+                }
+                throw
             } finally {
                 $pending.Dispose()
             }
@@ -506,8 +538,17 @@ try {
             [Console]::Out.Flush()
             $command = [Console]::In.ReadLine()
             if ([string]::Equals($command, 'COMMIT', [System.StringComparison]::Ordinal)) {
+                Assert-AncestorChainUnchanged
                 [StephanosDreamArtifactIo]::RenameRelativeNoReplace($artifact, $parent, $ArtifactName)
                 $committed = $true
+                try {
+                    Assert-AncestorChainUnchanged
+                } catch {
+                    [StephanosDreamArtifactIo]::DeleteByHandle($artifact)
+                    $deleted = $true
+                    $committed = $false
+                    throw
+                }
                 [Console]::Out.WriteLine("COMMITTED:$Token")
                 [Console]::Out.Flush()
             } else {
@@ -529,6 +570,7 @@ try {
         }
     } finally {
         $parent.Dispose()
+        foreach ($ancestorHandle in $ancestorHandles) { $ancestorHandle.Dispose() }
     }
 } catch {
     $failure = $_.Exception
