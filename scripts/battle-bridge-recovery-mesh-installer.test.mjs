@@ -16,6 +16,10 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
   assert.match(installer, /-Hidden/);
   assert.match(installer, /recovery-mesh/);
   assert.match(installer, /maximumConcurrentExecutors = 1/);
+  assert.match(installer, /registrationApplied = \$false/);
+  assert.match(installer, /installed = \[bool\]\$registrationApplied/);
+  assert.match(installer, /startedNow = \[bool\]\$startApplied/);
+  assert.match(installer, /whatIf = \[bool\]\$WhatIfPreference/);
   assert.doesNotMatch(installer, /RunLevel Highest|Restart-Computer|Stop-Process|Invoke-Expression|git\s+(?:reset|clean|checkout)/i);
 });
 
@@ -42,6 +46,11 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   ]) assert.match(probe, new RegExp(task));
   assert.match(probe, /\[ValidateSet\('Inspect', 'Recover'\)\]/);
   assert.match(probe, /Start-ScheduledTask -TaskName \$spec\.Name/);
+  assert.match(probe, /http:\/\/127\.0\.0\.1:18789\/health/);
+  assert.match(probe, /http:\/\/127\.0\.0\.1:18789\/identity/);
+  assert.match(probe, /product\s+-eq\s+'OpenClaw'/);
+  assert.match(probe, /identityVerified/);
+  assert.doesNotMatch(probe, /Test-TcpHealth/);
   assert.match(probe, /expectedArguments = "\/\/B \/\/NoLogo/);
   assert.match(probe, /\[string\]::Equals\(\$arguments, \$expectedArguments/);
   assert.doesNotMatch(probe, /arguments -match/);
@@ -59,6 +68,10 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /RECOVERY_ROUTE_EVIDENCE_ISSUER_INVALID/);
   assert.match(request, /stephanos\.battle-bridge-recovery-auth-evidence\.v1/);
   assert.match(request, /RECOVERY_MESH_TASK_ACTION_INVALID/);
+  assert.match(request, /RECOVERY_MESH_TASK_PRINCIPAL_INVALID/);
+  assert.match(request, /RECOVERY_MESH_TASK_SETTINGS_INVALID/);
+  assert.match(request, /MultipleInstances/);
+  assert.match(request, /ExecutionTimeLimit/);
   assert.match(request, /FileAttributes\]::ReparsePoint/);
   assert.match(request, /RECOVERY_PATH_REPARSE_ANCESTOR_REJECTED/);
   assert.match(request, /Start-ScheduledTask -TaskName \$taskName/);

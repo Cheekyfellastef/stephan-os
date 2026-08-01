@@ -115,6 +115,16 @@ if (-not [string]::Equals($taskExecute, $wscriptPath, [System.StringComparison]:
     -or -not [string]::Equals(([string]$taskAction.Arguments).Trim(), $expectedArguments, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'RECOVERY_MESH_TASK_ACTION_INVALID'
 }
+$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+if (-not [string]::Equals([string]$task.Principal.UserId, $currentUser, [System.StringComparison]::OrdinalIgnoreCase)
+    -or [string]$task.Principal.LogonType -ne 'Interactive'
+    -or [string]$task.Principal.RunLevel -ne 'Limited') { throw 'RECOVERY_MESH_TASK_PRINCIPAL_INVALID' }
+if ([string]$task.Settings.MultipleInstances -ne 'IgnoreNew'
+    -or $task.Settings.Hidden -ne $true
+    -or $task.Settings.StartWhenAvailable -ne $true
+    -or $task.Settings.DisallowStartIfOnBatteries -ne $false
+    -or $task.Settings.StopIfGoingOnBatteries -ne $false
+    -or [string]$task.Settings.ExecutionTimeLimit -ne 'PT3M') { throw 'RECOVERY_MESH_TASK_SETTINGS_INVALID' }
 $now = [DateTimeOffset]::UtcNow
 $slug = $Route.ToLowerInvariant()
 $requestId = "recovery-$slug-$($now.ToString('yyyyMMddTHHmmss'))-$(([Guid]::NewGuid().ToString('N')).Substring(0,8))"

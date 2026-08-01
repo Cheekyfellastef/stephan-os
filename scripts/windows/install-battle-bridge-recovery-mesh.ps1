@@ -22,16 +22,22 @@ $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 3)
 
+$registrationApplied = $false
+$startApplied = $false
 if ($PSCmdlet.ShouldProcess($taskName, 'Register one hidden canonical Battle Bridge recovery coordinator')) {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Five authenticated recovery entrances feed one locked, fixed-task Battle Bridge recovery coordinator. No arbitrary shell, Git mutation, merge, PC restart or duplicate worker.' -Force | Out-Null
-    if ($StartNow) { Start-ScheduledTask -TaskName $taskName }
+    $registrationApplied = $null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
+    if ($StartNow -and $registrationApplied) { Start-ScheduledTask -TaskName $taskName; $startApplied = $true }
 }
+$taskPresentAfter = $null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
 
 [pscustomobject]@{
     schemaVersion = 'stephanos.battle-bridge-recovery-mesh-install.v1'
     taskName = $taskName
-    installed = $true
-    startedNow = [bool]$StartNow
+    installed = [bool]$registrationApplied
+    startedNow = [bool]$startApplied
+    taskPresentAfter = [bool]$taskPresentAfter
+    whatIf = [bool]$WhatIfPreference
     intervalMinutes = 1
     atLogon = $true
     hidden = $true

@@ -64,15 +64,25 @@ function Test-HttpHealth {
     } catch { return $false }
 }
 
-function Test-TcpHealth {
-    param([int]$Port)
-    $client = New-Object System.Net.Sockets.TcpClient
+function Get-OpenClawIdentityHealth {
     try {
-        $pending = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
-        if (-not $pending.AsyncWaitHandle.WaitOne(2500, $false)) { return $false }
-        $client.EndConnect($pending)
-        return $true
-    } catch { return $false } finally { $client.Dispose() }
+        $healthResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/health' -UseBasicParsing -TimeoutSec 4
+        $health = $healthResponse.Content | ConvertFrom-Json
+        $healthStateValue = if ($health.status) { $health.status } else { $health.state }
+        $healthState = ([string]$healthStateValue).ToLowerInvariant()
+        $healthReady = $healthResponse.StatusCode -eq 200 -and ($health.ok -eq $true -or @('ok','live','ready') -contains $healthState)
+        if (-not $healthReady) { throw 'OPENCLAW_HEALTH_NOT_READY' }
+        $identityResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/identity' -UseBasicParsing -TimeoutSec 4
+        $identity = $identityResponse.Content | ConvertFrom-Json
+        $identityState = ([string]$identity.status).ToLowerInvariant()
+        $identityReady = $identityResponse.StatusCode -eq 200 `
+            -and [string]$identity.product -eq 'OpenClaw' `
+            -and -not [string]::IsNullOrWhiteSpace([string]$identity.runtimeId) `
+            -and @('ok','live','ready') -contains $identityState
+        [pscustomobject]@{ healthy = [bool]$identityReady; product = [string]$identity.product; runtimeId = [string]$identity.runtimeId; status = [string]$identity.status; healthStatus = $healthState; identityVerified = [bool]$identityReady }
+    } catch {
+        [pscustomobject]@{ healthy = $false; product = ''; runtimeId = ''; status = ''; healthStatus = ''; identityVerified = $false; blocker = 'OPENCLAW_IDENTITY_HEALTH_NOT_PROVEN' }
+    }
 }
 
 function Get-WorkerHealth {
@@ -108,6 +118,7 @@ if ($Mode -eq 'Recover') {
 $after = @{}
 foreach ($spec in $taskSpecs) { $after[$spec.Id] = Get-TaskHealth -Spec $spec }
 $worker = Get-WorkerHealth
+$openClawHealth = Get-OpenClawIdentityHealth
 $mailboxTask = $after.mailbox
 $mailboxLastRunMs = if ($mailboxTask.lastRunTimeUtc) { ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($mailboxTask.lastRunTimeUtc)).TotalMilliseconds } else { [double]::PositiveInfinity }
 $mailboxHealthy = $mailboxTask.present -and $mailboxTask.actionCanonical -and ($mailboxTask.state -eq 'Running' -or $mailboxLastRunMs -le 420000)
@@ -124,7 +135,7 @@ $branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
     worker = $worker
     mailbox = [pscustomobject]@{ healthy = [bool]$mailboxHealthy; state = $mailboxTask.state; lastRunAgeMs = if ([double]::IsInfinity($mailboxLastRunMs)) { -1 } else { [int64]$mailboxLastRunMs } }
     backend = [pscustomobject]@{ healthy = [bool](Test-HttpHealth -Url 'http://127.0.0.1:8787/api/health'); task = $after.backend }
-    openclawGateway = [pscustomobject]@{ healthy = [bool](Test-TcpHealth -Port 18789); task = $after.openclawGateway }
+    openclawGateway = [pscustomobject]@{ healthy = [bool]$openClawHealth.healthy; identityVerified = [bool]$openClawHealth.identityVerified; product = $openClawHealth.product; runtimeId = $openClawHealth.runtimeId; status = $openClawHealth.status; healthStatus = $openClawHealth.healthStatus; task = $after.openclawGateway }
     watchdog = $after.watchdog
     startedTasks = @($startedTasks)
     maximumTaskStarts = 4
