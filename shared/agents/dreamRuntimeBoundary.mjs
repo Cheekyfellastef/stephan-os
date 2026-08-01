@@ -469,11 +469,15 @@ async function writeReceipt(receipt, { fsImpl, receiptRoot }) {
   return receiptPath;
 }
 
-function buildVersionedManifest(entry, paths, sourceHead, capturedAtUtc) {
-  const proofRefs = Object.freeze([
+function versionedProofRefs(entry, paths) {
+  return Object.freeze([
     `receipts/runtime-boundary/${paths.manifestFilename}`,
     `dream-preservation/${entry.mappingId}/${paths.logicalPathSha256}/${entry.sourceSha256}.snapshot`,
   ]);
+}
+
+function buildVersionedManifest(entry, paths, sourceHead, capturedAtUtc) {
+  const proofRefs = versionedProofRefs(entry, paths);
   return Object.freeze({
     schemaVersion: DREAM_VERSIONED_PRESERVATION_SCHEMA,
     kind: 'dream-runtime-versioned-preservation-manifest',
@@ -508,7 +512,10 @@ function validateVersionedManifest(manifest, expected) {
   if (!Number.isFinite(Date.parse(String(manifest?.capturedAtUtc || '')))) errors.push('captured-at');
   if (manifest?.previousCanonicalDestinationSha256 !== expected.entry.destinationSha256) errors.push('previous-canonical-hash');
   if (manifest?.relationClassification !== expected.entry.relationClassification) errors.push('relation');
-  if (!Array.isArray(manifest?.proofRefs) || manifest.proofRefs.length < 2 || manifest.proofRefs.some((ref) => typeof ref !== 'string' || ref.length > 512)) errors.push('proof-refs');
+  const expectedProofRefs = versionedProofRefs(expected.entry, expected.paths);
+  if (!Array.isArray(manifest?.proofRefs)
+    || manifest.proofRefs.length !== expectedProofRefs.length
+    || manifest.proofRefs.some((ref, index) => ref !== expectedProofRefs[index])) errors.push('proof-refs');
   if (manifest?.canonicalDestinationPreserved !== true || manifest?.sourceRemovalPerformed !== false) errors.push('rollback-truth');
   return Object.freeze({ valid: errors.length === 0, errors: Object.freeze(errors) });
 }

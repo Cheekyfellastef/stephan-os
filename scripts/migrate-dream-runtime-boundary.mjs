@@ -37,14 +37,28 @@ export async function runDreamMigrationCli(argv = process.argv.slice(2), depende
   const parsed = parseDreamMigrationArgs(argv);
   const repoRoot = parsed.repoRoot || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   if (parsed.mode === 'copy') {
+    const sourceHeadFn = dependencies.sourceHeadFn || resolveDreamMigrationSourceHead;
     const sourceHead = parsed.operatorApproved
-      ? await (dependencies.sourceHeadFn || resolveDreamMigrationSourceHead)(repoRoot)
+      ? await sourceHeadFn(repoRoot)
       : '';
-    return (dependencies.executeFn || executeDreamRuntimeMigration)({
+    const result = await (dependencies.executeFn || executeDreamRuntimeMigration)({
       repoRoot,
       operatorApproval: parsed.operatorApproved ? DREAM_RUNTIME_MIGRATION_APPROVAL : '',
       sourceHead,
     });
+    if (!parsed.operatorApproved || result?.ok !== true) return result;
+    const sourceHeadAfter = await sourceHeadFn(repoRoot);
+    if (sourceHeadAfter !== sourceHead) {
+      return Object.freeze({
+        ...result,
+        ok: false,
+        finalVerdict: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
+        blocker: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
+        sourceHeadBefore: sourceHead,
+        sourceHeadAfter,
+      });
+    }
+    return result;
   }
   return (dependencies.planFn || planDreamRuntimeMigration)({ repoRoot });
 }

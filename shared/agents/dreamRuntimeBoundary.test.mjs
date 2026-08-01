@@ -333,6 +333,18 @@ test('duplicate conflicting receipt is rejected', async () => {
   assert.equal(retry.blocker, 'DREAM_VERSIONED_RECEIPT_CONFLICT');
 });
 
+test('deterministic manifest proof references reject unrelated bounded replacements', async () => {
+  const input = await disjointFixture();
+  const first = await runApproved(input);
+  const manifestPath = first.preserved[0].preservationManifestPath;
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  manifest.proofRefs = ['receipts/runtime-boundary/unrelated.json', 'dream-preservation/unrelated.snapshot'];
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
+  const retry = await runApproved(input, { now: fixedNow('2026-08-01T12:31:00.000Z') });
+  assert.equal(retry.ok, false);
+  assert.equal(retry.blocker, 'DREAM_VERSIONED_RECEIPT_CONFLICT');
+});
+
 test('changed source during snapshot copy fails and removes only the new snapshot', async () => {
   const input = await disjointFixture();
   let changed = false;

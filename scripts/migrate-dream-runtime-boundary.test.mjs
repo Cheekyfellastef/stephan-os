@@ -16,8 +16,12 @@ test('Dream migration CLI defaults to read-only plan', () => {
 
 test('copy mode forwards approval only when explicitly supplied', async () => {
   let received = null;
+  let headReads = 0;
   const result = await runDreamMigrationCli(['--copy', '--operator-approved', '--repo-root=/tmp/repo'], {
-    sourceHeadFn: async () => HEAD,
+    sourceHeadFn: async () => {
+      headReads += 1;
+      return HEAD;
+    },
     executeFn: async (input) => {
       received = input;
       return { ok: true };
@@ -27,6 +31,20 @@ test('copy mode forwards approval only when explicitly supplied', async () => {
   assert.equal(received.operatorApproval, 'operator-approved-dream-migration');
   assert.equal(received.sourceHead, HEAD);
   assert.match(received.repoRoot, /tmp[\\/]repo$/);
+  assert.equal(headReads, 2);
+});
+
+test('copy mode fails closed when source head changes during migration', async () => {
+  const heads = [HEAD, 'b'.repeat(40)];
+  const result = await runDreamMigrationCli(['--copy', '--operator-approved', '--repo-root=/tmp/repo'], {
+    sourceHeadFn: async () => heads.shift(),
+    executeFn: async () => ({ ok: true, finalVerdict: 'DREAM_RUNTIME_COPY_HASH_VERIFIED' }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.finalVerdict, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
+  assert.equal(result.sourceHeadBefore, HEAD);
+  assert.equal(result.sourceHeadAfter, 'b'.repeat(40));
 });
 
 test('copy mode derives source head through fixed git argv only', async () => {
