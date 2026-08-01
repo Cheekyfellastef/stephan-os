@@ -499,6 +499,32 @@ test('receipt publication collision rolls back only newly owned migration artifa
   assert.equal(await fs.readFile(receiptPath, 'utf8'), 'pre-existing-receipt');
 });
 
+test('later preservation blocker rolls back prior owned artifacts and preserves the collision', async () => {
+  const input = await disjointFixture();
+  const deepDestinationPath = path.join(input.workspaceRoot, 'memory', 'dreaming', 'deep', '2026-07-21.md');
+  await fs.mkdir(path.dirname(deepDestinationPath), { recursive: true });
+  await fs.writeFile(deepDestinationPath, '# prior dream\n');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  assert.equal(plan.versionedPreservationRequired, 2);
+  const eventsEntry = eventEntry(plan);
+  const deepEntry = plan.entries.find((entry) => entry.logicalSourcePath === 'memory/dreaming/deep/2026-07-21.md');
+  assert.ok(deepEntry);
+  const eventsPaths = resolveDreamVersionedPreservationPaths(eventsEntry, plan);
+  const deepPaths = resolveDreamVersionedPreservationPaths(deepEntry, plan);
+  await fs.mkdir(path.dirname(deepPaths.snapshotPath), { recursive: true });
+  await fs.writeFile(deepPaths.snapshotPath, 'pre-existing-collision');
+  const result = await runApproved(input);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_VERSIONED_SNAPSHOT_COLLISION');
+  assert.equal(result.cleanupBlocker, '');
+  await assert.rejects(() => fs.lstat(eventsPaths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(eventsPaths.manifestPath), (error) => error.code === 'ENOENT');
+  assert.equal(await fs.readFile(deepPaths.snapshotPath, 'utf8'), 'pre-existing-collision');
+  await assert.rejects(() => fs.lstat(deepPaths.manifestPath), (error) => error.code === 'ENOENT');
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
 test('changed source during snapshot copy fails and removes only the new snapshot', async () => {
   const input = await disjointFixture();
   let changed = false;

@@ -845,9 +845,7 @@ export async function executeDreamRuntimeMigration({
         verifySourceHeadFn: verifySourceHead,
       });
       if (!preservation.ok) {
-        const priorArtifactsCleaned = preservation.blocker === 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED'
-          ? await cleanupCreatedMigrationArtifacts()
-          : true;
+        const priorArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
         return Object.freeze({
           ok: false,
           status: 'BLOCKED',
