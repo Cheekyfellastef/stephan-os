@@ -1250,6 +1250,14 @@ test('cross-platform publication adapters preserve the structural commit invaria
   );
   const boundarySource = await fs.readFile(path.resolve('shared/agents/dreamRuntimeBoundary.mjs'), 'utf8');
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
+  assert.match(
+    boundarySource,
+    /finalLinked = true;\s+publishedIdentity = await assertRegularSingleLink\(artifactPath, \{ fsImpl \}\);\s+\} finally \{\s+await pendingHandle\.close\(\);/,
+  );
+  assert.match(
+    boundarySource,
+    /if \(finalLinked && boundary\)[\s\S]*publishedIdentity \|\| identity/,
+  );
   const windowsHelper = await fs.readFile(path.resolve('scripts/windows/dream-runtime-artifact-io.ps1'), 'utf8');
   assert.match(windowsHelper, /AncestorPathsBase64/);
   assert.equal((windowsHelper.match(/Assert-AncestorChainUnchanged/g) || []).length >= 5, true);

@@ -1152,10 +1152,11 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
           }
           throw helperError;
         }
+        finalLinked = true;
+        publishedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
       } finally {
         await pendingHandle.close();
       }
-      finalLinked = true;
       pendingRemoved = !(await exists(operationPendingPath, fsImpl));
     } else {
       await fsImpl.link(operationPendingPath, operationArtifactPath);
