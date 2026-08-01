@@ -87,6 +87,18 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   ]) assert.match(probe, new RegExp(task));
   assert.match(probe, /\[ValidateSet\('Inspect', 'Recover'\)\]/);
   assert.match(probe, /Start-ScheduledTask -TaskName \$spec\.Name/);
+  assert.match(probe, /function Test-TaskAuthority/);
+  assert.match(probe, /Principal\.UserId/);
+  assert.match(probe, /Principal\.LogonType\s+-eq\s+'Interactive'/);
+  assert.match(probe, /Principal\.RunLevel\s+-eq\s+'Limited'/);
+  assert.match(probe, /Settings\.MultipleInstances\s+-eq\s+'IgnoreNew'/);
+  assert.match(probe, /Settings\.Enabled\s+-eq\s+\$true/);
+  assert.match(probe, /if \(-not \$observed\.authorityCanonical\) \{ continue \}/);
+  assert.match(probe, /mailboxTask\.lastTaskResult -eq 0/);
+  assert.match(probe, /battle-bridge-backend-freshness-probe\.mjs/);
+  assert.match(probe, /\/api\/mission-operations/);
+  assert.match(probe, /BACKEND_CURRENT/);
+  assert.doesNotMatch(probe, /function Test-HttpHealth/);
   assert.match(probe, /http:\/\/127\.0\.0\.1:18789\/health/);
   assert.match(probe, /http:\/\/127\.0\.0\.1:18789\/identity/);
   assert.match(probe, /product\s+-eq\s+'OpenClaw'/);
@@ -101,6 +113,13 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   assert.match(probe, /\[string\]::Equals\(\$arguments, \$expectedArguments/);
   assert.doesNotMatch(probe, /arguments -match/);
   assert.doesNotMatch(probe, /Restart-Computer|Stop-Process|Invoke-Expression|git\s+(?:reset|clean|checkout|switch)|Remove-Item/i);
+});
+
+test('backend autostart contract rejects overlapping task instances', async () => {
+  const installer = await source('install-stephanos-backend-autostart.ps1');
+  assert.match(installer, /New-ScheduledTaskPrincipal -UserId \$currentUser -LogonType Interactive -RunLevel Limited/);
+  assert.match(installer, /New-ScheduledTaskSettingsSet[^\r\n]*-MultipleInstances IgnoreNew/);
+  assert.doesNotMatch(installer, /RunLevel Highest|-MultipleInstances Parallel/);
 });
 
 test('ingress adapter has four fixed routes and nonce-gates break glass', async () => {

@@ -13,8 +13,10 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $launcherPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
 $workerProbePath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\windows\probe-mission-orchestrator-worker-watchdog.ps1'))
+$backendFreshnessProbePath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\battle-bridge-backend-freshness-probe.mjs'))
 $wscriptPath = 'C:\Windows\System32\wscript.exe'
 $canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
 
 $taskSpecs = @(
     [pscustomobject]@{ Id = 'watchdog'; Name = 'Stephanos Mission Orchestrator Worker Watchdog'; LauncherId = 'worker-watchdog' },
@@ -41,28 +43,60 @@ function Test-TaskAction {
     } catch { return $false }
 }
 
+function Test-TaskAuthority {
+    param([object]$Task)
+    try {
+        if (-not $Task -or -not $Task.Principal -or -not $Task.Settings) { return $false }
+        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        return [string]::Equals([string]$Task.Principal.UserId, $currentUser, [System.StringComparison]::OrdinalIgnoreCase) `
+            -and [string]$Task.Principal.LogonType -eq 'Interactive' `
+            -and [string]$Task.Principal.RunLevel -eq 'Limited' `
+            -and [string]$Task.Settings.MultipleInstances -eq 'IgnoreNew' `
+            -and $Task.Settings.Enabled -eq $true
+    } catch { return $false }
+}
+
 function Get-TaskHealth {
     param([object]$Spec)
     $task = Get-ScheduledTask -TaskName $Spec.Name -ErrorAction SilentlyContinue
     $info = if ($task) { Get-ScheduledTaskInfo -TaskName $Spec.Name -ErrorAction SilentlyContinue } else { $null }
     $actionCanonical = Test-TaskAction -Task $task -LauncherId $Spec.LauncherId
+    $authorityCanonical = Test-TaskAuthority -Task $task
     [pscustomobject]@{
         id = $Spec.Id
         taskName = $Spec.Name
         present = [bool]$task
         state = if ($task) { [string]$task.State } else { 'Missing' }
         actionCanonical = [bool]$actionCanonical
+        authorityCanonical = [bool]$authorityCanonical
         lastTaskResult = if ($info) { [int64]$info.LastTaskResult } else { -1 }
         lastRunTimeUtc = if ($info -and $info.LastRunTime.Year -gt 2000) { $info.LastRunTime.ToUniversalTime().ToString('o') } else { '' }
     }
 }
 
-function Test-HttpHealth {
-    param([string]$Url)
+function Get-BackendFreshnessHealth {
     try {
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 4
-        return $response.StatusCode -eq 200
-    } catch { return $false }
+        if (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) { throw 'RECOVERY_CANONICAL_NODE_EXECUTABLE_MISSING' }
+        if (-not (Test-Path -LiteralPath $backendFreshnessProbePath -PathType Leaf)) { throw 'RECOVERY_BACKEND_FRESHNESS_PROBE_MISSING' }
+        $raw = & $canonicalNode $backendFreshnessProbePath
+        if ($LASTEXITCODE -ne 0) { throw 'RECOVERY_BACKEND_FRESHNESS_PROBE_FAILED' }
+        $proof = ($raw -join [Environment]::NewLine) | ConvertFrom-Json
+        $requiredRoutes = @($proof.requiredRoutes)
+        $routeProofs = @($proof.routeProofs)
+        $routesCanonical = $requiredRoutes.Count -eq 2 `
+            -and $requiredRoutes[0] -eq '/api/health' `
+            -and $requiredRoutes[1] -eq '/api/mission-operations' `
+            -and $routeProofs.Count -eq 2 `
+            -and @($routeProofs | Where-Object { $_.route -eq '/api/health' -and $_.ok -eq $true }).Count -eq 1 `
+            -and @($routeProofs | Where-Object { $_.route -eq '/api/mission-operations' -and $_.ok -eq $true }).Count -eq 1
+        $healthy = [string]$proof.schemaVersion -eq 'stephanos.backend-freshness-supervisor.v1' `
+            -and [string]$proof.finalVerdict -eq 'BACKEND_CURRENT' `
+            -and $proof.backendCurrent -eq $true `
+            -and $routesCanonical
+        return [pscustomobject]@{ healthy = [bool]$healthy; proof = $proof; blocker = if ($healthy) { '' } else { 'BACKEND_CANONICAL_FRESHNESS_NOT_CURRENT' } }
+    } catch {
+        return [pscustomobject]@{ healthy = $false; proof = $null; blocker = 'BACKEND_CANONICAL_FRESHNESS_NOT_PROVEN' }
+    }
 }
 
 function Get-OpenClawIdentityHealth {
@@ -109,6 +143,7 @@ if ($Mode -eq 'Recover') {
         $observed = $before[$spec.Id]
         if (-not $observed.present) { continue }
         if (-not $observed.actionCanonical) { continue }
+        if (-not $observed.authorityCanonical) { continue }
         if ([string]$observed.state -ne 'Running') {
             Start-ScheduledTask -TaskName $spec.Name
             $startedTasks += $spec.Id
@@ -119,10 +154,16 @@ if ($Mode -eq 'Recover') {
 $after = @{}
 foreach ($spec in $taskSpecs) { $after[$spec.Id] = Get-TaskHealth -Spec $spec }
 $worker = Get-WorkerHealth
+$worker.healthy = [bool]($worker.healthy -and $after.watchdog.actionCanonical -and $after.watchdog.authorityCanonical)
 $openClawHealth = Get-OpenClawIdentityHealth
+$backendFreshness = Get-BackendFreshnessHealth
 $mailboxTask = $after.mailbox
 $mailboxLastRunMs = if ($mailboxTask.lastRunTimeUtc) { ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($mailboxTask.lastRunTimeUtc)).TotalMilliseconds } else { [double]::PositiveInfinity }
-$mailboxHealthy = $mailboxTask.present -and $mailboxTask.actionCanonical -and ($mailboxTask.state -eq 'Running' -or $mailboxLastRunMs -le 420000)
+$mailboxHealthy = $mailboxTask.present `
+    -and $mailboxTask.actionCanonical `
+    -and $mailboxTask.authorityCanonical `
+    -and $mailboxTask.lastTaskResult -eq 0 `
+    -and ($mailboxTask.state -eq 'Running' -or $mailboxLastRunMs -le 420000)
 $sourceControlExecutable = 'C:\Program Files\Git\cmd\git.exe'
 if (-not (Test-Path -LiteralPath $sourceControlExecutable -PathType Leaf)) { throw 'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING' }
 $sourceHeadRaw = & $sourceControlExecutable -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
@@ -136,9 +177,9 @@ $branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
     sourceHead = $sourceHead
     branch = $branch
     worker = $worker
-    mailbox = [pscustomobject]@{ healthy = [bool]$mailboxHealthy; state = $mailboxTask.state; lastRunAgeMs = if ([double]::IsInfinity($mailboxLastRunMs)) { -1 } else { [int64]$mailboxLastRunMs } }
-    backend = [pscustomobject]@{ healthy = [bool](Test-HttpHealth -Url 'http://127.0.0.1:8787/api/health'); task = $after.backend }
-    openclawGateway = [pscustomobject]@{ healthy = [bool]$openClawHealth.healthy; identityVerified = [bool]$openClawHealth.identityVerified; product = $openClawHealth.product; runtimeId = $openClawHealth.runtimeId; status = $openClawHealth.status; healthStatus = $openClawHealth.healthStatus; task = $after.openclawGateway }
+    mailbox = [pscustomobject]@{ healthy = [bool]$mailboxHealthy; state = $mailboxTask.state; lastTaskResult = $mailboxTask.lastTaskResult; lastRunAgeMs = if ([double]::IsInfinity($mailboxLastRunMs)) { -1 } else { [int64]$mailboxLastRunMs }; task = $mailboxTask }
+    backend = [pscustomobject]@{ healthy = [bool]($backendFreshness.healthy -and $after.backend.actionCanonical -and $after.backend.authorityCanonical); freshnessProof = $backendFreshness.proof; blocker = $backendFreshness.blocker; task = $after.backend }
+    openclawGateway = [pscustomobject]@{ healthy = [bool]($openClawHealth.healthy -and $after.openclawGateway.actionCanonical -and $after.openclawGateway.authorityCanonical); identityVerified = [bool]$openClawHealth.identityVerified; product = $openClawHealth.product; runtimeId = $openClawHealth.runtimeId; status = $openClawHealth.status; healthStatus = $openClawHealth.healthStatus; task = $after.openclawGateway }
     watchdog = $after.watchdog
     startedTasks = @($startedTasks)
     maximumTaskStarts = 4
