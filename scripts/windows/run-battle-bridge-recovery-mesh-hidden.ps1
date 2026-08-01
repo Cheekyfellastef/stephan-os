@@ -33,6 +33,7 @@ try {
     }
 
     $env:STEPHANOS_RECOVERY_MESH_MUTEX_HELD = '1'
+    $env:STEPHANOS_RECOVERY_MESH_LAUNCHER_PID = [string]$PID
     & $node.Source $runnerPath *> $null
     exit $LASTEXITCODE
 } finally {

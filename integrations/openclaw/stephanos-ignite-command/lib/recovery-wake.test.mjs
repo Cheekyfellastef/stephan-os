@@ -4,7 +4,10 @@ import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { buildFixedRecoveryWakeInvocation, buildOpenClawHostProof, wakeBattleBridgeRecoveryMesh, writeOpenClawHostProof } from './recovery-wake.mjs';
+import { buildFixedRecoveryWakeInvocation, wakeBattleBridgeRecoveryMesh } from './recovery-wake.mjs';
+
+const authenticatedContext = { authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'wake' };
+const identityFetch = async () => ({ ok: true, async json() { return { product: 'OpenClaw', runtimeId: 'openclaw-runtime-001' }; } });
 
 test('wake invocation is fully fixed and cannot accept a command, task or route', () => {
   const invocation = buildFixedRecoveryWakeInvocation({
@@ -20,38 +23,27 @@ test('wake invocation is fully fixed and cannot accept a command, task or route'
   assert.equal(invocation.arbitraryArgumentsAllowed, false);
 });
 
-test('host proof is bound to the authenticated fixed OpenClaw command', () => {
-  const proof = buildOpenClawHostProof({
-    authenticatedContext: { authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'wake' },
-    now: new Date('2026-08-01T03:00:00.000Z'), nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', hostPid: 1234,
-  });
-  assert.equal(proof.proofId, 'aaaaaaaabbbbccccddddeeeeeeeeeeee');
-  assert.equal(proof.hostPid, 1234);
-  assert.equal(proof.authenticatedByHost, true);
-  assert.throws(() => buildOpenClawHostProof({ authenticatedContext: { authenticatedByHost: true, commandName: 'other', command: 'wake' } }), /AUTH_REQUIRED/);
-});
-
-test('host proof writer rejects a linked workspace ancestor', () => {
+test('host proof writer rejects a linked workspace ancestor', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'openclaw-recovery-proof-'));
   const victim = path.join(root, 'victim');
   mkdirSync(victim);
   mkdirSync(path.join(root, 'Documents'));
   symlinkSync(victim, path.join(root, 'Documents', 'Stephanos-openclaw-workspace'), 'dir');
-  const proof = buildOpenClawHostProof({
-    authenticatedContext: { authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'wake' },
-    now: new Date('2026-08-01T03:00:00.000Z'), nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', hostPid: 1234,
-  });
-  assert.throws(() => writeOpenClawHostProof({ env: { USERPROFILE: root }, proof }), /LINKED_ANCESTOR/);
+  const result = await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: root }, authenticatedContext,
+    now: new Date('2026-08-01T03:00:00.000Z'), nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', fetchFn: identityFetch });
+  assert.equal(result.blocker, 'RECOVERY_WAKE_HOST_PROOF_LINKED_ANCESTOR');
 });
 
-test('authenticated adapter returns only a sanitized queued receipt', () => {
-  const result = wakeBattleBridgeRecoveryMesh({
+test('authenticated adapter binds live gateway identity and returns only a sanitized queued receipt', async () => {
+  let writtenProof;
+  const result = await wakeBattleBridgeRecoveryMesh({
     platform: 'win32',
     env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
-    authenticatedContext: { authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'wake' },
+    authenticatedContext,
     now: new Date('2026-08-01T03:00:00.000Z'),
     nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-    writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
+    fetchFn: identityFetch,
+    writeHostProofFn: ({ proof }) => { writtenProof = proof; return { proofId: proof.proofId }; },
     spawnSyncFn: (executable, args, options) => {
       assert.equal(executable, 'powershell.exe');
       assert.equal(options.shell, false);
@@ -65,10 +57,13 @@ test('authenticated adapter returns only a sanitized queued receipt', () => {
   assert.equal(result.requestId, 'recovery-openclaw-0001');
   assert.equal(result.arbitraryShellAllowed, false);
   assert.equal(result.sourceMutationAllowed, false);
+  assert.equal(writtenProof.runtimeId, 'openclaw-runtime-001');
+  assert.equal(writtenProof.hostPid, process.pid);
 });
 
-test('non-Windows and failed fixed adapter calls fail closed', () => {
-  assert.equal(wakeBattleBridgeRecoveryMesh({ platform: 'linux' }).blocker, 'RECOVERY_WAKE_WINDOWS_REQUIRED');
-  assert.equal(wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' } }).blocker, 'RECOVERY_WAKE_OPENCLAW_AUTH_REQUIRED');
-  assert.equal(wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, authenticatedContext: { authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'wake' }, nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }), spawnSyncFn: () => ({ status: 5 }) }).blocker, 'RECOVERY_WAKE_FIXED_ADAPTER_FAILED');
+test('non-Windows, unauthenticated, identity-less and failed adapter calls fail closed', async () => {
+  assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'linux' })).blocker, 'RECOVERY_WAKE_WINDOWS_REQUIRED');
+  assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, fetchFn: identityFetch })).blocker, 'RECOVERY_WAKE_OPENCLAW_AUTH_REQUIRED');
+  assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, authenticatedContext, fetchFn: async () => ({ ok: false }) })).blocker, 'RECOVERY_WAKE_GATEWAY_IDENTITY_REQUIRED');
+  assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, authenticatedContext, nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', fetchFn: identityFetch, writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }), spawnSyncFn: () => ({ status: 5 }) })).blocker, 'RECOVERY_WAKE_FIXED_ADAPTER_FAILED');
 });

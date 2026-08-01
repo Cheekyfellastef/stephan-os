@@ -49,6 +49,33 @@ function defaultProcessIsAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === 'EPERM'; }
 }
 
+function defaultSourceHeadReader(repoRoot) {
+  const executable = process.platform === 'win32' ? 'git.exe' : 'git';
+  const result = spawnSync(executable, ['-C', path.resolve(repoRoot), 'rev-parse', 'HEAD'], {
+    encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000,
+  });
+  const head = text(result?.stdout).toLowerCase();
+  return result?.status === 0 && EXACT_HEAD.test(head) ? head : '';
+}
+
+export function createFixedRecoveryMeshMutexVerifier({ verifierScriptPath, spawnSyncFn = spawnSync } = {}) {
+  const fixedPath = path.resolve(verifierScriptPath);
+  return Object.freeze({
+    verify({ launcherPid, nodePid = process.pid } = {}) {
+      if (!Number.isSafeInteger(launcherPid) || launcherPid <= 0 || !Number.isSafeInteger(nodePid) || nodePid <= 0) {
+        return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_MUTEX_ATTESTATION_PID_INVALID' });
+      }
+      const result = spawnSyncFn('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fixedPath,
+        '-LauncherPid', String(launcherPid), '-NodePid', String(nodePid),
+      ], { encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 });
+      return result?.status === 0 && text(result.stdout) === 'MUTEX_OWNERSHIP_VERIFIED=true'
+        ? Object.freeze({ ok: true, blocker: '' })
+        : Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_WINDOWS_MUTEX_NOT_ATTESTED' });
+    },
+  });
+}
+
 export function resolveRecoveryMeshPaths({ env = process.env, home = os.homedir() } = {}) {
   const userHome = path.resolve(env.USERPROFILE || env.HOME || home);
   const repoRoot = path.resolve(userHome, 'Documents', 'GitHub', 'stephan-os');
@@ -218,7 +245,7 @@ function resolveBoundedWorkspaceRef(workspaceRoot, proofRef, requiredPrefix) {
   return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? resolved : '';
 }
 
-export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, { now = new Date() } = {}) {
+export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, { now = new Date(), sourceHeadReader = defaultSourceHeadReader } = {}) {
   const verified = [];
   for (const request of requests) {
     if (request.route === BATTLE_BRIDGE_RECOVERY_ROUTE.LOCAL_WINDOWS_SUPERVISOR) {
@@ -258,11 +285,13 @@ export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, 
       const authorityAtMs = Date.parse(text(receipt?.state === 'DONE' ? receipt?.completedAt : receipt?.acceptedAt));
       const expectedHead = text(receipt?.expectedHead).toLowerCase();
       const observedHead = text(receipt?.result?.result?.sourceHead || receipt?.result?.result?.localHead || expectedHead).toLowerCase();
+      const liveSourceHead = text(sourceHeadReader(paths.repoRoot)).toLowerCase();
       if (!mailboxReceiptRead.ok || receipt?.schemaVersion !== 'stephanos.battle-bridge-github-command-receipt.v1'
         || receipt.requestId !== record.subject || receipt.operation !== 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'
         || !['ACCEPTED', 'DONE'].includes(receipt.state) || receipt.repository !== 'Cheekyfellastef/stephan-os' || Number(receipt.issueNumber) !== 1507
         || !Number.isFinite(authorityAtMs) || authorityAtMs > now.getTime() + 30_000 || now.getTime() - authorityAtMs > GITHUB_AUTHORITY_MAX_AGE_MS
-        || !EXACT_HEAD.test(expectedHead) || observedHead !== expectedHead || text(record.authorityHead).toLowerCase() !== expectedHead) {
+        || !EXACT_HEAD.test(expectedHead) || observedHead !== expectedHead || text(record.authorityHead).toLowerCase() !== expectedHead
+        || liveSourceHead !== expectedHead) {
         return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_GITHUB_AUTH_RECEIPT_INVALID' });
       }
     } else if (request.route === BATTLE_BRIDGE_RECOVERY_ROUTE.TAILSCALE_CONTROL) {
@@ -476,6 +505,7 @@ export async function runBattleBridgeRecoveryMesh({
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
   recoveryProbeDelayMs = 5_000,
   maximumRecoveryProbes = 3,
+  sourceHeadReader = defaultSourceHeadReader,
 } = {}) {
   const pathValidation = validateRecoveryMeshPaths(paths, expectedPaths);
   if (!pathValidation.ok) return Object.freeze({ ok: false, classification: 'RECOVERY_MESH_BLOCKED', pathValidation });
@@ -513,7 +543,7 @@ export async function runBattleBridgeRecoveryMesh({
     const verifiedEvidence = [];
     const evidenceRejected = [];
     for (const request of preliminaryDecision.accepted) {
-      const verification = await verifyRecoveryMeshAuthenticationEvidence(paths, [request], { now });
+      const verification = await verifyRecoveryMeshAuthenticationEvidence(paths, [request], { now, sourceHeadReader });
       if (verification.ok) {
         verifiedIngress.push(request);
         verifiedEvidence.push(...verification.verified);
@@ -596,9 +626,13 @@ export function isDirectCliEntrypoint({ metaUrl = import.meta.url, argv1 = proce
 }
 
 if (isDirectCliEntrypoint()) {
-  const result = process.env.STEPHANOS_RECOVERY_MESH_MUTEX_HELD === '1'
+  const verifierScriptPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'windows', 'verify-battle-bridge-recovery-mesh-mutex.ps1');
+  const mutexVerification = process.env.STEPHANOS_RECOVERY_MESH_MUTEX_HELD === '1'
+    ? createFixedRecoveryMeshMutexVerifier({ verifierScriptPath }).verify({ launcherPid: Number(process.env.STEPHANOS_RECOVERY_MESH_LAUNCHER_PID) })
+    : { ok: false, blocker: 'RECOVERY_MESH_WINDOWS_MUTEX_REQUIRED' };
+  const result = mutexVerification.ok
     ? await runBattleBridgeRecoveryMesh()
-    : { ok: false, classification: 'RECOVERY_MESH_WINDOWS_MUTEX_REQUIRED' };
+    : { ok: false, classification: mutexVerification.blocker };
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   process.exitCode = result.ok ? 0 : 2;
 }

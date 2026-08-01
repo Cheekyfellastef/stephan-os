@@ -24,16 +24,21 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
 });
 
 test('windowless launcher pins recovery mesh to one fixed source runner', async () => {
-  const [vbs, hidden] = await Promise.all([
+  const [vbs, hidden, verifier] = await Promise.all([
     source('run-stephanos-scheduled-task-windowless.vbs'),
     source('run-battle-bridge-recovery-mesh-hidden.ps1'),
+    source('verify-battle-bridge-recovery-mesh-mutex.ps1'),
   ]);
   assert.match(vbs, /Case "recovery-mesh"[\s\S]*run-battle-bridge-recovery-mesh-hidden\.ps1/);
   assert.match(hidden, /scripts\\battle-bridge-recovery-mesh\.mjs/);
   assert.match(hidden, /System\.Threading\.Mutex/);
   assert.match(hidden, /STEPHANOS_RECOVERY_MESH_MUTEX_HELD = '1'/);
+  assert.match(hidden, /STEPHANOS_RECOVERY_MESH_LAUNCHER_PID/);
   assert.match(hidden, /regardless of PID reuse/);
   assert.doesNotMatch(hidden, /Get-Process -Id/);
+  assert.match(verifier, /Mutex\]::OpenExisting\('Local\\StephanosBattleBridgeRecoveryMeshV1'\)/);
+  assert.match(verifier, /node\.ParentProcessId -ne \$LauncherPid/);
+  assert.match(verifier, /RECOVERY_MESH_MUTEX_NOT_OWNED_BY_LAUNCHER/);
   assert.doesNotMatch(hidden, /["']-Command["']|Invoke-Expression|Start-Process/);
 });
 
@@ -70,9 +75,12 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /Get-NetTCPConnection -State Established/);
   assert.match(request, /OPENCLAW_HOST_PROOF_REQUIRED/);
   assert.match(request, /OPENCLAW_HOST_PROCESS_IDENTITY_INVALID/);
+  assert.match(request, /OPENCLAW_GATEWAY_PROCESS_OWNERSHIP_INVALID/);
+  assert.match(request, /OPENCLAW_GATEWAY_RUNTIME_IDENTITY_INVALID/);
   assert.match(request, /openclaw\.plugin-sdk\.authenticated-command/);
   assert.match(request, /OPENCLAW_CALLER_SUPPLIED_EVIDENCE_REJECTED/);
   assert.match(request, /RECOVERY_GITHUB_RECEIPT_AUTHORITY_INVALID/);
+  assert.match(request, /Get-CanonicalMailboxReceiptFilename/);
   assert.match(request, /-C \$repoRoot rev-parse HEAD/);
   assert.match(request, /RECOVERY_ROUTE_EVIDENCE_ISSUER_INVALID/);
   assert.match(request, /stephanos\.battle-bridge-recovery-auth-evidence\.v1/);

@@ -116,6 +116,17 @@ function Write-ExclusiveUtf8Json {
     try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
 }
 
+function Get-CanonicalMailboxReceiptFilename {
+    param([string]$RequestId)
+    if ($RequestId -match '^[a-z0-9][a-z0-9._-]{7,120}$'
+        -and $RequestId -notmatch '^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)'
+        -and $RequestId -notmatch '^request-[0-9a-f]{32}$') { return "$RequestId.json" }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($RequestId)
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try { $digest = ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace('-','').ToLowerInvariant().Substring(0,32) } finally { $hasher.Dispose() }
+    return "_request-$digest.json"
+}
+
 Assert-NoReparseAncestor -TargetPath $workspaceRoot
 Assert-NoReparseAncestor -TargetPath $requestRoot
 Assert-NoReparseAncestor -TargetPath $evidenceRoot
@@ -207,7 +218,8 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
     if ([string]$hostProof.schemaVersion -ne 'stephanos.openclaw-authenticated-recovery-command.v1'
         -or [string]$hostProof.proofId -ne $OpenClawHostProofId -or [string]$hostProof.route -ne 'OPENCLAW_WHATSAPP'
         -or [string]$hostProof.command -ne 'wake' -or [string]$hostProof.subject -ne 'openclaw:authenticated-operator'
-        -or [string]$hostProof.commandSurface -ne 'openclaw.plugin-sdk.authenticated-command' -or $hostProof.authenticatedByHost -ne $true
+        -or [string]$hostProof.commandSurface -ne 'openclaw.plugin-sdk.authenticated-command'
+        -or [string]$hostProof.runtimeId -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$' -or $hostProof.authenticatedByHost -ne $true
         -or $hostIssuedAt -lt $hostNow.AddSeconds(-60) -or $hostIssuedAt -gt $hostNow.AddSeconds(30)
         -or $hostExpiresAt -le $hostNow -or $hostExpiresAt -le $hostIssuedAt -or ($hostExpiresAt - $hostIssuedAt).TotalSeconds -gt 60) {
         throw 'OPENCLAW_HOST_PROOF_INVALID'
@@ -217,6 +229,15 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
     if (-not $hostProcess -or [int]$hostProof.hostPid -ne [int]$hostProcess.ProcessId
         -or [string]$hostProcess.Name -notin @('node.exe','node','openclaw.exe','openclaw')
         -or [string]$hostProcess.CommandLine -notmatch '(?i)openclaw') { throw 'OPENCLAW_HOST_PROCESS_IDENTITY_INVALID' }
+    $gatewayListener = Get-NetTCPConnection -State Listen -LocalPort 18789 -ErrorAction Stop | Where-Object {
+        $_.OwningProcess -eq [int]$hostProof.hostPid -and $_.LocalAddress -in @('127.0.0.1','::1','0.0.0.0','::')
+    } | Select-Object -First 1
+    if (-not $gatewayListener) { throw 'OPENCLAW_GATEWAY_PROCESS_OWNERSHIP_INVALID' }
+    $gatewayIdentity = Invoke-RestMethod -Uri 'http://127.0.0.1:18789/identity' -Method Get -TimeoutSec 5
+    if ([string]$gatewayIdentity.product -ne 'OpenClaw'
+        -or -not [string]::Equals([string]$gatewayIdentity.runtimeId, [string]$hostProof.runtimeId, [System.StringComparison]::Ordinal)) {
+        throw 'OPENCLAW_GATEWAY_RUNTIME_IDENTITY_INVALID'
+    }
     $hostClaimPath = "$hostProofPath.claim"
     Assert-StablePathBaseline -Baseline $pathBaseline
     Assert-StablePathBaseline -Baseline $hostProofBaseline
@@ -239,6 +260,7 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
     Assert-StablePathBaseline -Baseline $mailboxBaseline
     $authorityTimeText = if ([string]$mailboxReceipt.state -eq 'DONE') { [string]$mailboxReceipt.completedAt } else { [string]$mailboxReceipt.acceptedAt }
     $authorityTime = [DateTimeOffset]::Parse($authorityTimeText)
+    $canonicalReceiptFilename = Get-CanonicalMailboxReceiptFilename -RequestId ([string]$mailboxReceipt.requestId)
     $sourceControlExecutable = Get-Command git.exe -ErrorAction Stop
     $currentSourceHead = [string](& $sourceControlExecutable.Source -C $repoRoot rev-parse HEAD)
     if ([string]$mailboxReceipt.schemaVersion -ne 'stephanos.battle-bridge-github-command-receipt.v1'
@@ -246,6 +268,7 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
         -or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne 1507
         -or [string]$mailboxReceipt.state -notin @('ACCEPTED','DONE') -or $authorityTime -lt [DateTimeOffset]::UtcNow.AddMinutes(-5)
         -or $authorityTime -gt [DateTimeOffset]::UtcNow.AddSeconds(30) -or [string]$mailboxReceipt.expectedHead -notmatch '^[0-9a-f]{40}$'
+        -or -not [string]::Equals((Split-Path -Leaf $mailboxReceiptPath), $canonicalReceiptFilename, [System.StringComparison]::Ordinal)
         -or -not [string]::Equals([string]$mailboxReceipt.expectedHead, $currentSourceHead.Trim(), [System.StringComparison]::OrdinalIgnoreCase)) {
         throw 'RECOVERY_GITHUB_RECEIPT_AUTHORITY_INVALID'
     }
@@ -275,7 +298,7 @@ if ([string]$task.Settings.MultipleInstances -ne 'IgnoreNew'
 $now = [DateTimeOffset]::UtcNow
 $slug = $Route.ToLowerInvariant()
 $requestId = if ($Route -eq 'GITHUB_MAILBOX') {
-    $hashInput = [System.Text.Encoding]::UTF8.GetBytes("$EvidenceSubject|$EvidenceProofRef")
+    $hashInput = [System.Text.Encoding]::UTF8.GetBytes($EvidenceSubject)
     $hash = [System.Security.Cryptography.SHA256]::Create()
     try { "recovery-github-$(([BitConverter]::ToString($hash.ComputeHash($hashInput))).Replace('-','').ToLowerInvariant().Substring(0,24))" } finally { $hash.Dispose() }
 } elseif ($Route -eq 'OPENCLAW_WHATSAPP') { "recovery-openclaw-$OpenClawHostProofId" }

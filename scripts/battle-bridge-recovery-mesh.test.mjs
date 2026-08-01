@@ -8,8 +8,10 @@ import {
   BATTLE_BRIDGE_RECOVERY_MESH_TASK,
   buildLocalSupervisorIngress,
   createFixedRecoveryMeshProbeAdapter,
+  createFixedRecoveryMeshMutexVerifier,
   readRecoveryMeshIngressFiles,
   runBattleBridgeRecoveryMesh,
+  verifyRecoveryMeshAuthenticationEvidence,
 } from './battle-bridge-recovery-mesh.mjs';
 import { validateBattleBridgeRecoveryIngress } from '../shared/agents/battleBridgeRecoveryMeshV1.mjs';
 
@@ -102,6 +104,7 @@ test('runner recovers once, re-probes, publishes and keeps one executor', async 
     }],
     recoveryProbeDelayMs: 0,
     maximumRecoveryProbes: 1,
+    sourceHeadReader: () => '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
   });
   assert.equal(result.ok, true);
   assert.deepEqual(modes, ['Inspect', 'Recover', 'Inspect']);
@@ -217,6 +220,35 @@ test('stale or head-unbound GitHub authority receipts are rejected', async () =>
   assert.ok(result.decision.rejected.some((item) => item.blocker === 'RECOVERY_MESH_GITHUB_AUTH_RECEIPT_INVALID'));
 });
 
+test('consumer rereads live checkout head before accepting GitHub authority', async () => {
+  const paths = await fixture();
+  const mailboxRef = 'receipts/github-command-mailbox/req-1507-head-race.json';
+  const authRef = 'receipts/battle-bridge-recovery-auth/recovery-head-race.json';
+  await mkdir(path.dirname(path.join(paths.workspaceRoot, ...mailboxRef.split('/'))), { recursive: true });
+  await mkdir(path.dirname(path.join(paths.workspaceRoot, ...authRef.split('/'))), { recursive: true });
+  await writeFile(path.join(paths.workspaceRoot, ...mailboxRef.split('/')), JSON.stringify({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1', requestId: 'req-1507-head-race',
+    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH', repository: 'Cheekyfellastef/stephan-os', issueNumber: 1507,
+    state: 'ACCEPTED', acceptedAt: '2026-08-01T02:59:30.000Z', expectedHead: '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
+  }));
+  await writeFile(path.join(paths.workspaceRoot, ...authRef.split('/')), JSON.stringify({
+    schemaVersion: 'stephanos.battle-bridge-recovery-auth-receipt.v1', requestId: 'recovery-head-race', route: 'GITHUB_MAILBOX',
+    issuer: 'battle-bridge-github-command-mailbox', subject: 'req-1507-head-race', upstreamProofRef: mailboxRef,
+    authorityHead: '6bafa9bdd4b62fc46821157bb4546229ad0680c7', issuedAtUtc: '2026-08-01T02:59:30.000Z',
+    expiresAtUtc: '2026-08-01T03:04:30.000Z', verifiedByFixedAdapter: true,
+  }));
+  const request = validateBattleBridgeRecoveryIngress({
+    schemaVersion: 'stephanos.battle-bridge-recovery-ingress.v1', requestId: 'recovery-head-race', route: 'GITHUB_MAILBOX',
+    action: 'WAKE_CANONICAL_BATTLE_BRIDGE_DISPATCHER', issuedAtUtc: '2026-08-01T02:59:30.000Z', expiresAtUtc: '2026-08-01T03:04:30.000Z',
+    sourceReceipt: mailboxRef, authenticationEvidence: { schemaVersion: 'stephanos.battle-bridge-recovery-auth-evidence.v1', route: 'GITHUB_MAILBOX',
+      issuer: 'battle-bridge-github-command-mailbox', subject: 'req-1507-head-race', proofRef: authRef, verified: true },
+  }, { nowMs: Date.parse('2026-08-01T03:00:00.000Z') }).request;
+  const result = await verifyRecoveryMeshAuthenticationEvidence(paths, [request], {
+    now: new Date('2026-08-01T03:00:00.000Z'), sourceHeadReader: () => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  });
+  assert.equal(result.blocker, 'RECOVERY_MESH_GITHUB_AUTH_RECEIPT_INVALID');
+});
+
 test('forged external identity evidence is rejected without suppressing the local supervisor', async () => {
   const paths = await fixture();
   const authRef = 'receipts/battle-bridge-recovery-auth/recovery-forged-0001.json';
@@ -310,6 +342,22 @@ test('fixed probe adapter accepts only Inspect or Recover and never uses a shell
   assert.equal(calls.length, 2);
   assert.ok(calls.every((call) => call.options.shell === false && call.options.windowsHide === true));
   assert.throws(() => adapter.run('Start-ArbitraryTask'), /Unsupported/);
+});
+
+test('mutex verifier requires fixed parent-bound Windows attestation', () => {
+  const calls = [];
+  const verifier = createFixedRecoveryMeshMutexVerifier({
+    verifierScriptPath: 'C:\\fixed\\verify-mutex.ps1',
+    spawnSyncFn: (executable, args, options) => {
+      calls.push({ executable, args, options });
+      return { status: 0, stdout: 'MUTEX_OWNERSHIP_VERIFIED=true\n' };
+    },
+  });
+  assert.equal(verifier.verify({ launcherPid: 123, nodePid: 456 }).ok, true);
+  assert.equal(verifier.verify({ launcherPid: 0, nodePid: 456 }).blocker, 'RECOVERY_MESH_MUTEX_ATTESTATION_PID_INVALID');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.shell, false);
+  assert.deepEqual(calls[0].args.slice(-4), ['-LauncherPid', '123', '-NodePid', '456']);
 });
 
 test('task identity remains the single canonical recovery coordinator', () => {
