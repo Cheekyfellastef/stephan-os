@@ -1,12 +1,26 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import process from 'node:process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import {
   DREAM_RUNTIME_MIGRATION_APPROVAL,
   executeDreamRuntimeMigration,
   planDreamRuntimeMigration,
 } from '../shared/agents/dreamRuntimeBoundary.mjs';
+
+const execFileAsync = promisify(execFile);
+
+export async function resolveDreamMigrationSourceHead(repoRoot, execFileFn = execFileAsync) {
+  const result = await execFileFn('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  const sourceHead = String(result?.stdout || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(sourceHead)) throw new Error('DREAM_VERSIONED_SOURCE_HEAD_UNAVAILABLE');
+  return sourceHead;
+}
 
 export function parseDreamMigrationArgs(argv = []) {
   const mode = argv.includes('--copy') ? 'copy' : 'plan';
@@ -23,9 +37,13 @@ export async function runDreamMigrationCli(argv = process.argv.slice(2), depende
   const parsed = parseDreamMigrationArgs(argv);
   const repoRoot = parsed.repoRoot || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   if (parsed.mode === 'copy') {
+    const sourceHead = parsed.operatorApproved
+      ? await (dependencies.sourceHeadFn || resolveDreamMigrationSourceHead)(repoRoot)
+      : '';
     return (dependencies.executeFn || executeDreamRuntimeMigration)({
       repoRoot,
       operatorApproval: parsed.operatorApproved ? DREAM_RUNTIME_MIGRATION_APPROVAL : '',
+      sourceHead,
     });
   }
   return (dependencies.planFn || planDreamRuntimeMigration)({ repoRoot });

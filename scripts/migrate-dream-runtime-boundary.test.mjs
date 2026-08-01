@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseDreamMigrationArgs, runDreamMigrationCli } from './migrate-dream-runtime-boundary.mjs';
+import {
+  parseDreamMigrationArgs,
+  resolveDreamMigrationSourceHead,
+  runDreamMigrationCli,
+} from './migrate-dream-runtime-boundary.mjs';
+
+const HEAD = 'a'.repeat(40);
 
 test('Dream migration CLI defaults to read-only plan', () => {
   const parsed = parseDreamMigrationArgs([]);
@@ -11,6 +17,7 @@ test('Dream migration CLI defaults to read-only plan', () => {
 test('copy mode forwards approval only when explicitly supplied', async () => {
   let received = null;
   const result = await runDreamMigrationCli(['--copy', '--operator-approved', '--repo-root=/tmp/repo'], {
+    sourceHeadFn: async () => HEAD,
     executeFn: async (input) => {
       received = input;
       return { ok: true };
@@ -18,5 +25,21 @@ test('copy mode forwards approval only when explicitly supplied', async () => {
   });
   assert.equal(result.ok, true);
   assert.equal(received.operatorApproval, 'operator-approved-dream-migration');
+  assert.equal(received.sourceHead, HEAD);
   assert.match(received.repoRoot, /tmp[\\/]repo$/);
+});
+
+test('copy mode derives source head through fixed git argv only', async () => {
+  let invocation = null;
+  const sourceHead = await resolveDreamMigrationSourceHead('/bounded/repo', async (...args) => {
+    invocation = args;
+    return { stdout: `${HEAD}\n` };
+  });
+  assert.equal(sourceHead, HEAD);
+  assert.equal(invocation[0], 'git');
+  assert.deepEqual(invocation[1], ['-C', '/bounded/repo', 'rev-parse', 'HEAD']);
+  await assert.rejects(
+    () => resolveDreamMigrationSourceHead('/bounded/repo', async () => ({ stdout: '../not-a-head' })),
+    /DREAM_VERSIONED_SOURCE_HEAD_UNAVAILABLE/,
+  );
 });
