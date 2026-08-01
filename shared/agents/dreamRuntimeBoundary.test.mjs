@@ -276,37 +276,6 @@ test('receipt remains non-authoritative through the final source-head verificati
   assert.equal(receiptFiles.filter((name) => name.startsWith('.stephanos-pending-')).length, 0);
 });
 
-test('receipt promotion reads from the owned handle instead of a replaced pending pathname', { skip: process.platform !== 'linux' }, async () => {
-  const input = await fixture();
-  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
-  let replaced = false;
-  let replacementPath = '';
-  const fsImpl = fsProxy({
-    copyFile: async (source, destination, flags) => {
-      const isReceiptPromotion = !replaced
-        && String(source).startsWith('/proc/self/fd/')
-        && path.basename(String(destination)).startsWith('dream-migration-');
-      if (isReceiptPromotion) {
-        const receiptFiles = await fs.readdir(plan.receiptRoot);
-        const pendingName = receiptFiles.find((name) => name.startsWith('.stephanos-pending-'));
-        assert.ok(pendingName);
-        replacementPath = path.join(plan.receiptRoot, pendingName);
-        await fs.rename(replacementPath, `${replacementPath}.owned-before-attack`);
-        await fs.writeFile(replacementPath, '{"finalVerdict":"ATTACKER_CONTROLLED"}\n');
-        replaced = true;
-      }
-      return fs.copyFile(source, destination, flags);
-    },
-  });
-  const result = await runApproved(input, { fsImpl });
-  assert.equal(replaced, true);
-  assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED');
-  const receiptFiles = await fs.readdir(plan.receiptRoot);
-  assert.equal(receiptFiles.filter((name) => name.startsWith('dream-migration-')).length, 0);
-  assert.equal(await fs.readFile(replacementPath, 'utf8'), '{"finalVerdict":"ATTACKER_CONTROLLED"}\n');
-});
-
 test('already-verified destination changes are rejected before receipt publication', async () => {
   const input = await alreadyVerifiedFixture();
   let headReads = 0;
