@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import {
   appendMusicSpotifyLinkCandidate,
@@ -100,7 +101,23 @@ test('rejects a symlinked Spotify inbox instead of appending through it', async 
     await symlink(redirected, join(workspace, 'status', 'music-spotify-link-inbox.jsonl'));
     const result = await appendMusicSpotifyLinkCandidate(candidate, { root: workspace, repoRoot, expectedHead, receiptRef });
     assert.equal(result.blocker, 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE');
+    assert.equal(await readFile(redirected, 'utf8'), '');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('holds and validates one file handle before appending inbox data', async () => {
+  const moduleSource = await readFile(join(dirname(fileURLToPath(import.meta.url)), 'musicSpotifyLinkBridge.mjs'), 'utf8');
+  const start = moduleSource.indexOf('async function openSafeInbox');
+  const end = moduleSource.indexOf('\nfunction cleanText', start);
+  const opener = moduleSource.slice(start, end);
+  assert.match(opener, /await open\(/);
+  assert.match(opener, /handle\.stat\(\).*lstat\(target\)/s);
+  assert.match(opener, /pathInfo\.isSymbolicLink\(\)/);
+  assert.match(opener, /handleInfo\.ino.*pathInfo\.ino/s);
+  assert.match(opener, /realpath\(root\).*realpath\(target\)/s);
+  assert.match(opener, /targetInsideRoot/);
+  assert.doesNotMatch(moduleSource, /await appendFile\(resolved\.path/);
+  assert.match(moduleSource, /opened\.handle\.appendFile\(line/);
 });
 
 test('fails closed when a shape-valid workspace record lacks its trusted mailbox receipt', async () => {

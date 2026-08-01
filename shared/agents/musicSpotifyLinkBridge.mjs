@@ -1,6 +1,7 @@
-import { appendFile, lstat, mkdir, readFile, realpath, stat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, mkdir, open, readFile, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { resolveSharedWorkspacePath } from './sharedAgentWorkspaceStore.mjs';
 import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
 
@@ -35,7 +36,7 @@ function spotifyPayloadSha256(candidate) {
   return createHash('sha256').update(JSON.stringify(payload), 'utf8').digest('hex');
 }
 
-async function verifySafeInboxPath(root, target) {
+async function verifySafeInboxParent(root, target) {
   try {
     const resolvedRoot = resolve(root);
     const resolvedParent = dirname(target);
@@ -46,17 +47,45 @@ async function verifySafeInboxPath(root, target) {
       realpath(resolvedParent),
     ]);
     const parentRelative = relative(actualRoot, actualParent);
-    if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()
+    return !(rootInfo.isSymbolicLink() || !rootInfo.isDirectory()
       || parentInfo.isSymbolicLink() || !parentInfo.isDirectory()
-      || parentRelative.startsWith('..')) return false;
-    try {
-      const targetInfo = await lstat(target);
-      return targetInfo.isFile() && !targetInfo.isSymbolicLink();
-    } catch (error) {
-      return error?.code === 'ENOENT';
-    }
+      || parentRelative.startsWith('..'));
   } catch {
     return false;
+  }
+}
+
+async function openSafeInbox(root, target) {
+  if (!(await verifySafeInboxParent(root, target))) return null;
+  let handle;
+  try {
+    const noFollow = Number.isInteger(fsConstants.O_NOFOLLOW) ? fsConstants.O_NOFOLLOW : 0;
+    handle = await open(
+      target,
+      fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | noFollow,
+      0o600,
+    );
+    const [handleInfo, pathInfo, actualRoot, actualTarget] = await Promise.all([
+      handle.stat(),
+      lstat(target),
+      realpath(root),
+      realpath(target),
+    ]);
+    const targetRelative = relative(actualRoot, actualTarget);
+    const targetInsideRoot = Boolean(targetRelative)
+      && !targetRelative.startsWith('..')
+      && !isAbsolute(targetRelative);
+    const sameFile = String(handleInfo.dev) === String(pathInfo.dev)
+      && String(handleInfo.ino) === String(pathInfo.ino);
+    if (!handleInfo.isFile() || pathInfo.isSymbolicLink() || !pathInfo.isFile() || !sameFile || !targetInsideRoot) {
+      await handle.close();
+      return null;
+    }
+    return { handle, size: handleInfo.size };
+  } catch (error) {
+    await handle?.close().catch(() => {});
+    if (['ELOOP', 'EMLINK', 'EISDIR', 'ENOTDIR'].includes(error?.code)) return null;
+    throw error;
   }
 }
 
@@ -101,21 +130,22 @@ export async function appendMusicSpotifyLinkCandidate(input = {}, options = {}) 
   const resolved = resolveSharedWorkspacePath({ root: options.root, repoRoot: options.repoRoot, segments: MUSIC_SPOTIFY_LINK_PATH });
   if (!resolved.ok) return { ok: false, blocker: resolved.reason };
   await mkdir(dirname(resolved.path), { recursive: true, mode: 0o700 });
-  let size = 0;
-  try { size = (await stat(resolved.path)).size; } catch (error) { if (error?.code !== 'ENOENT') throw error; }
   const expectedHead = String(options.expectedHead || input.expectedHead || '').toLowerCase();
   const receiptRef = String(options.receiptRef || '');
   if (!SHA.test(expectedHead)) return { ok: false, blocker: 'MUSIC_SPOTIFY_PROVENANCE_HEAD_REQUIRED' };
   if (receiptRef !== `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(validated.candidate.requestId)}`) {
     return { ok: false, blocker: 'MUSIC_SPOTIFY_PROVENANCE_RECEIPT_INVALID' };
   }
-  if (!(await verifySafeInboxPath(resolved.root, resolved.path))) {
-    return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE' };
-  }
   const payloadSha256 = spotifyPayloadSha256(validated.candidate);
   const line = `${JSON.stringify({ ...validated.candidate, expectedHead, receiptRef, payloadSha256 })}\n`;
-  if (size + Buffer.byteLength(line) > MAX_FILE_BYTES) return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_FULL' };
-  await appendFile(resolved.path, line, { encoding: 'utf8', mode: 0o600 });
+  const opened = await openSafeInbox(resolved.root, resolved.path);
+  if (!opened) return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE' };
+  try {
+    if (opened.size + Buffer.byteLength(line) > MAX_FILE_BYTES) return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_FULL' };
+    await opened.handle.appendFile(line, { encoding: 'utf8' });
+  } finally {
+    await opened.handle.close();
+  }
   return { ok: true, finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED', requestId: validated.candidate.requestId, payloadSha256 };
 }
 

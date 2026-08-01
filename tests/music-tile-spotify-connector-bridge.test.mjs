@@ -15,3 +15,14 @@ test('connector feed applies in place without rebuilding the listening deck', ()
   assert.match(source, /AI suggestion · \$\{getCandidateVerificationStatus\(track\)\}/);
   assert.match(source, /verificationBadge\.classList\.add\('music-badge--success'\)/);
 });
+
+test('connector target requires every supplied card identity to agree', () => {
+  const start = source.indexOf('function connectorTrackIdentityMatches');
+  const end = source.indexOf('\nfunction updateConnectorTargetCard', start);
+  const implementation = source.slice(start, end);
+  assert.match(implementation, /track\?\.artist.*candidate\.targetArtist/s);
+  assert.match(implementation, /track\?\.title \|\| track\?\.name.*candidate\.targetTitle/s);
+  assert.match(implementation, /if \(!exactId\) return null;/);
+  assert.match(implementation, /connectorTrackIdentityMatches\(exactId, candidate\) \? exactId : null/);
+  assert.doesNotMatch(implementation, /if \(exactId\) return exactId/);
+});

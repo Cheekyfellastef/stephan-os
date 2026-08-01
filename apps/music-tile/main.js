@@ -781,15 +781,17 @@ function loadState() { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY
 function saveState() { logBuildJourney('saveState:start'); localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); logBuildJourney('saveState:end'); }
 
 function normalizedConnectorIdentity(value = '') { return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function connectorTrackIdentityMatches(track, candidate) {
+  return normalizedConnectorIdentity(track?.artist) === normalizedConnectorIdentity(candidate.targetArtist)
+    && normalizedConnectorIdentity(track?.title || track?.name) === normalizedConnectorIdentity(candidate.targetTitle);
+}
 function findConnectorTarget(candidate) {
   if (candidate.targetTrackId) {
     const exactId = state.listeningDeck.find((track) => String(track.id) === String(candidate.targetTrackId));
-    if (exactId) return exactId;
+    if (!exactId) return null;
+    return connectorTrackIdentityMatches(exactId, candidate) ? exactId : null;
   }
-  const artist = normalizedConnectorIdentity(candidate.targetArtist);
-  const title = normalizedConnectorIdentity(candidate.targetTitle);
-  return state.listeningDeck.find((track) => normalizedConnectorIdentity(track.artist) === artist
-    && normalizedConnectorIdentity(track.title || track.name) === title) || null;
+  return state.listeningDeck.find((track) => connectorTrackIdentityMatches(track, candidate)) || null;
 }
 function updateConnectorTargetCard(track, parsed) {
   const input = ui.listeningDeck?.querySelector(`[data-link-input="spotify-${track.id}"]`);
