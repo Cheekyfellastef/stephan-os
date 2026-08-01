@@ -1,7 +1,7 @@
 {
   "id": "stephanos-ignite-command",
   "name": "Stephanos Ignite Command",
-  "description": "Adds a read-only /stephanos-ignite command surface for Stephanos/OpenClaw ignition status.",
+  "description": "Adds /stephanos-ignite status and one authenticated fixed recovery wake route.",
   "activation": {
     "onStartup": true
   },

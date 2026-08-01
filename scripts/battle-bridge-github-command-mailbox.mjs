@@ -30,6 +30,7 @@ import {
   createWindowsSafeMailboxReceiptFilename,
   getReadableMailboxReceiptFilenames,
 } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -559,7 +560,7 @@ function writeReceipt(receipt) {
 }
 
 function ghJson(args) {
-  const result = run('gh.exe', args, {
+  const result = run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, {
     timeout: 120000,
     preserveStdout: true,
     maxBuffer: MAX_GITHUB_JSON_BYTES,
@@ -575,19 +576,115 @@ function postReceipt(receipt) {
     serializeBoundedReceiptJson(receipt),
     '```',
   ].join('\n');
-  return run('gh.exe', ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+  return run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
 }
 
 async function installUnattendedSync() {
   const installer = join(repoRoot, 'scripts', 'windows', 'install-battle-bridge-github-sync.ps1');
   if (!existsSync(installer)) return { ok: false, blocker: 'MERGED_SYNC_INSTALLER_MISSING', installer };
-  const result = run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer, '-StartNow']);
+  const result = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installer, '-StartNow']);
   return { ...result, installer, fixedCommand: true, arbitraryShellAllowed: false };
 }
 
+export function validateBattleBridgeRecoveryMeshInstallReceipt(receipt, { startNow = true } = {}) {
+  const routes = Array.isArray(receipt?.recoveryRoutes) ? receipt.recoveryRoutes : [];
+  const expectedRoutes = [
+    'LOCAL_WINDOWS_SUPERVISOR',
+    'GITHUB_MAILBOX',
+    'TAILSCALE_CONTROL',
+    'OPENCLAW_WHATSAPP',
+    'AUTHENTICATED_BREAK_GLASS',
+  ];
+  const valid = receipt?.schemaVersion === 'stephanos.battle-bridge-recovery-mesh-install.v1'
+    && receipt?.taskName === 'Stephanos Battle Bridge Recovery Mesh'
+    && receipt?.installed === true
+    && receipt?.taskPresentAfter === true
+    && receipt?.whatIf === false
+    && receipt?.maximumConcurrentExecutors === 1
+    && receipt?.arbitraryShellAllowed === false
+    && receipt?.arbitraryTaskNameAllowed === false
+    && receipt?.sourceMutationAllowed === false
+    && receipt?.pcRestartAllowed === false
+    && routes.length === expectedRoutes.length
+    && expectedRoutes.every((route, index) => routes[index] === route)
+    && (!startNow || receipt?.startedNow === true);
+  return valid
+    ? Object.freeze({ ok: true, blocker: '', receipt })
+    : Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_POSTCONDITION_FAILED' });
+}
+
+async function installBattleBridgeRecoveryMesh(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const installer = join(repoRoot, 'scripts', 'windows', 'install-battle-bridge-recovery-mesh.ps1');
+  if (!existsSync(installer)) return { ...identity, ok: false, blocker: 'RECOVERY_MESH_INSTALLER_MISSING' };
+  const result = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', installer, '-StartNow'], {
+    preserveStdout: true,
+    maxBuffer: 16 * 1024,
+  });
+  let receiptValidation = Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_FAILED' });
+  if (result.ok) {
+    try {
+      receiptValidation = validateBattleBridgeRecoveryMeshInstallReceipt(parseBoundedGitHubJson(result.stdout, 16 * 1024), { startNow: true });
+    } catch {
+      receiptValidation = Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_RECEIPT_INVALID' });
+    }
+  }
+  return {
+    ...identity,
+    ...result,
+    stdout: '',
+    ok: receiptValidation.ok,
+    blocker: receiptValidation.blocker,
+    finalVerdict: receiptValidation.ok ? 'BATTLE_BRIDGE_RECOVERY_MESH_INSTALLED' : 'BATTLE_BRIDGE_RECOVERY_MESH_INSTALL_BLOCKED',
+    installReceiptVerified: receiptValidation.ok,
+    fixedCommand: true,
+    arbitraryShellAllowed: false,
+    arbitraryTaskNameAllowed: false,
+    sourceMutationAllowed: false,
+  };
+}
+
+async function wakeBattleBridgeRecoveryMesh(command = {}, { receiptRef = '' } = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const evidenceSubject = safeTelemetryId(command.requestId);
+  const evidenceProofRef = safeTelemetryText(receiptRef, 180);
+  if (!evidenceSubject || !/^receipts\/github-command-mailbox\/[A-Za-z0-9._-]+\.json$/.test(evidenceProofRef)) {
+    return { ...identity, ok: false, blocker: 'RECOVERY_MESH_GITHUB_EVIDENCE_INVALID' };
+  }
+  const adapter = join(repoRoot, 'scripts', 'windows', 'request-battle-bridge-recovery.ps1');
+  if (!existsSync(adapter)) return { ...identity, ok: false, blocker: 'RECOVERY_MESH_WAKE_ADAPTER_MISSING' };
+  const invocation = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', adapter,
+    '-Route', 'GITHUB_MAILBOX',
+    '-EvidenceIssuer', 'battle-bridge-github-command-mailbox',
+    '-EvidenceSubject', evidenceSubject,
+    '-EvidenceProofRef', evidenceProofRef,
+  ], { timeout: 60_000, preserveStdout: true });
+  if (!invocation.ok) return { ...identity, ok: false, blocker: 'RECOVERY_MESH_WAKE_ADAPTER_FAILED', exitCode: invocation.status };
+  let result;
+  try { result = parseBoundedGitHubJson(invocation.stdout, 16 * 1024); } catch {
+    return { ...identity, ok: false, blocker: 'RECOVERY_MESH_WAKE_RECEIPT_INVALID' };
+  }
+  const queued = result?.queued === true && result?.route === 'GITHUB_MAILBOX';
+  return {
+    ...identity,
+    ok: queued,
+    blocker: queued ? '' : 'RECOVERY_MESH_WAKE_NOT_QUEUED',
+    requestId: safeTelemetryId(result?.requestId),
+    route: safeTelemetryText(result?.route, 80),
+    coordinatorTask: safeTelemetryText(result?.coordinatorTask, 120),
+    finalVerdict: queued ? 'BATTLE_BRIDGE_RECOVERY_MESH_WAKE_QUEUED' : 'BATTLE_BRIDGE_RECOVERY_MESH_WAKE_BLOCKED',
+    arbitraryShellAllowed: false,
+    arbitraryTaskNameAllowed: false,
+    sourceMutationAllowed: false,
+  };
+}
+
 function readCanonicalSourceIdentity(command = {}) {
-  const source = run('git.exe', ['rev-parse', 'HEAD'], { timeout: 120000 });
-  const branch = run('git.exe', ['branch', '--show-current'], { timeout: 120000 });
+  const source = run(BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', 'HEAD'], { timeout: 120000 });
+  const branch = run(BATTLE_BRIDGE_WINDOWS_HOST.git, ['branch', '--show-current'], { timeout: 120000 });
   const sourceHead = source.stdout.trim().toLowerCase();
   const branchName = branch.stdout.trim();
   if (!source.ok || !branch.ok || !/^[0-9a-f]{40}$/.test(sourceHead)) {
@@ -605,7 +702,7 @@ function readCanonicalSourceIdentity(command = {}) {
 
 async function readDeploymentStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
-  const task = run('powershell.exe', ['-NoProfile', '-Command', "Get-ScheduledTask -TaskName 'Stephanos Battle Bridge GitHub Sync' -ErrorAction SilentlyContinue | Select-Object TaskName,State | ConvertTo-Json -Compress"], { timeout: 120000 });
+  const task = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, ['-NoProfile', '-Command', "Get-ScheduledTask -TaskName 'Stephanos Battle Bridge GitHub Sync' -ErrorAction SilentlyContinue | Select-Object TaskName,State | ConvertTo-Json -Compress"], { timeout: 120000 });
   return { ...identity, task };
 }
 
@@ -825,6 +922,8 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     readCriticalBacklogStatus,
     readMailboxReceipt,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
+    installRecoveryMesh: installBattleBridgeRecoveryMesh,
+    wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
     runExactHeadWindowsBrowserProof: (command) => dispatchExactHeadWindowsBrowserProof(command),
     queueVerifiedSpotifyLink: async (command) => {

@@ -45,11 +45,23 @@ test('mailbox receipt reads, watchdog acceptance, shared workspace and post-sync
   assert.ok(mailbox.operations.includes('READ_SHARED_WORKSPACE_STATUS'));
   assert.ok(mailbox.operations.includes('READ_MAILBOX_RECEIPT'));
   assert.ok(mailbox.operations.includes('RUN_WORKER_WATCHDOG_ACCEPTANCE'));
+  assert.ok(mailbox.operations.includes('INSTALL_BATTLE_BRIDGE_RECOVERY_MESH'));
+  assert.ok(mailbox.operations.includes('WAKE_BATTLE_BRIDGE_RECOVERY_MESH'));
   assert.equal(mailbox.runtimeMutationAllowed, true);
   assert.equal(workspace.discoveryRoute, 'mailbox:READ_SHARED_WORKSPACE_STATUS');
   assert.ok(refresh.operations.includes('RESTART_BACKEND_8787'));
   assert.ok(refresh.operations.includes('RESTART_MISSION_WORKER'));
   assert.equal(refresh.liveOpenClawUpdateAllowed, false);
+});
+
+test('five-door recovery mesh is discoverable without becoming a second execution authority', () => {
+  const mesh = findStephanosCapability('battle-bridge-recovery-mesh');
+  assert.equal(mesh.ownerIssue, 1291);
+  assert.equal(mesh.category, 'runtime-supervision');
+  assert.equal(mesh.discoveryRoute, 'shared-workspace:battle-bridge-recovery-mesh-current');
+  assert.ok(mesh.operations.includes('COALESCE_RECOVERY_WAKE'));
+  assert.equal(mesh.runtimeMutationAllowed, true);
+  assert.equal(mesh.arbitraryShellAllowed, false);
 });
 
 test('programme stall monitoring is registered as diagnosis on the existing monitor runtime', () => {
