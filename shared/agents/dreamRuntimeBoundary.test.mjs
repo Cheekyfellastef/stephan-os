@@ -289,7 +289,8 @@ test('owned-artifact cleanup never deletes a concurrent path replacement', async
     rename: async (source, destination) => {
       if (
         !replacementInjected
-        && path.resolve(String(source)) === path.resolve(deepEntry.destinationPath)
+        && String(source).startsWith('/proc/self/fd/')
+        && path.basename(String(source)) === path.basename(deepEntry.destinationPath)
         && String(destination).includes('.stephanos-owned-delete-')
       ) {
         replacementInjected = true;
@@ -1008,7 +1009,7 @@ test('ancestor swap during publication cannot redirect or retain an escaped arti
     open: async (target, flags, mode) => {
       const targetPath = String(target);
       const isSnapshotPublication = targetPath.startsWith('/proc/self/fd/')
-        && targetPath.endsWith(`/${path.basename(paths.snapshotPath)}`);
+        && path.basename(targetPath).endsWith(path.basename(paths.snapshotPath));
       if (!isSnapshotPublication) return fs.open(target, flags, mode);
       await fs.rename(snapshotParent, parkedParent);
       await fs.symlink(externalParent, snapshotParent, 'dir');
