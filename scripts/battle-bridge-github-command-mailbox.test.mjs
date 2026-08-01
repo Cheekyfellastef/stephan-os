@@ -15,6 +15,7 @@ import {
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-command-mailbox-hidden.ps1', import.meta.url);
 const windowlessLauncherPath = new URL('./windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url);
+const mailboxSourcePath = new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url);
 
 test('mailbox task uses the fixed windowless launcher instead of allocating a Node console', async () => {
   const [installer, hiddenLauncher, windowlessLauncher] = await Promise.all([
@@ -44,6 +45,17 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(hiddenLauncher, /Get-Command node\.exe/);
   assert.match(hiddenLauncher, /\*> \$null/);
   assert.doesNotMatch(hiddenLauncher, /\[string\]\s*\$|Invoke-Expression|Start-Process|cmd\.exe/i);
+});
+
+test('GitHub recovery wake binds the authenticated mailbox receipt instead of self-asserting a route boolean', async () => {
+  const source = await readFile(mailboxSourcePath, 'utf8');
+  assert.match(source, /RECOVERY_MESH_GITHUB_EVIDENCE_INVALID/);
+  assert.match(source, /receipts\\\/github-command-mailbox/);
+  assert.match(source, /'-EvidenceIssuer', 'battle-bridge-github-command-mailbox'/);
+  assert.match(source, /'-EvidenceSubject', evidenceSubject/);
+  assert.match(source, /'-EvidenceProofRef', evidenceProofRef/);
+  assert.match(source, /wakeBattleBridgeRecoveryMesh\(command, \{ receiptRef \}\)/);
+  assert.doesNotMatch(source, /ownerAuthenticated:\s*true/);
 });
 
 test('parses a GitHub issue-comment response larger than the diagnostic truncation limit', () => {

@@ -16,9 +16,13 @@ The Mission Orchestrator Worker, GitHub mailbox, source-update lock and source-m
 
 Every entrance creates the same bounded ingress schema. Simultaneous requests are deduplicated or coalesced behind one lock and one two-minute recovery lease.
 
+Each non-local adapter must also write a bounded authentication receipt. The coordinator reopens that receipt through a no-follow, single-link, identity-stable handle and checks its route, issuer, subject, upstream proof and expiry before accepting the request. GitHub evidence is additionally rebound to the canonical accepted mailbox receipt; Tailscale identity is derived from the active SSH connection and live Tailnet peer status; OpenClaw evidence can only be issued by the host-authenticated fixed command; and break glass is bound to the consumed nonce record.
+
 ## Install and rollback
 
 Installation is source-controlled and exact-head gated through `INSTALL_BATTLE_BRIDGE_RECOVERY_MESH`. It registers one limited, hidden, `IgnoreNew` Scheduled Task and may start it immediately.
+
+The hidden Windows launcher holds the OS named mutex `Local\StephanosBattleBridgeRecoveryMeshV1` for the complete Node coordinator lifetime. An abandoned mutex is the only production path allowed to reclaim a dead runner's fixed lock. The Node lock also carries a random ownership token and refuses to unlink a stale lock itself or release a lock owned by another process.
 
 Rollback uses `uninstall-battle-bridge-recovery-mesh.ps1`. It removes only the coordinator task. It preserves the worker, mailbox, backend, OpenClaw, source checkout and Shared Workspace evidence.
 
@@ -32,6 +36,7 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\script
 ```
 
 The nonce is single-use and expires after five minutes. This action can only wake the canonical coordinator.
+Nonce confirmation first creates a nonce-specific file with `CreateNew` and no sharing; concurrent confirmations therefore have exactly one winner before any request is queued.
 
 ## Acceptance
 

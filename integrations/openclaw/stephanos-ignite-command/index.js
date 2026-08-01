@@ -15,7 +15,7 @@ export default definePluginEntry({
       handler: async (ctx) => {
         const resolved = resolveIgniteCommand(ctx?.args || 'help');
         if (!resolved.ok || resolved.command !== 'wake') return { text: renderIgniteCommand(ctx?.args || 'help') };
-        const result = wakeBattleBridgeRecoveryMesh();
+        const result = wakeBattleBridgeRecoveryMesh({ authenticatedByHost: true });
         if (!result.ok) return { text: `BATTLE_BRIDGE_RECOVERY_WAKE=BLOCKED\nREASON=${result.blocker}` };
         return { text: `BATTLE_BRIDGE_RECOVERY_WAKE=QUEUED\nREQUEST_ID=${result.requestId}\nROUTE=${result.route}\nONE_CANONICAL_COORDINATOR=true` };
       },

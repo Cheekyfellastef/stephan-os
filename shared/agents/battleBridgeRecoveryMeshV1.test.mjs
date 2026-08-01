@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   BATTLE_BRIDGE_RECOVERY_ACTION,
+  BATTLE_BRIDGE_RECOVERY_AUTH_EVIDENCE_SCHEMA,
   BATTLE_BRIDGE_RECOVERY_EXECUTOR,
   BATTLE_BRIDGE_RECOVERY_INGRESS_SCHEMA,
   BATTLE_BRIDGE_RECOVERY_ROUTE,
@@ -16,12 +17,12 @@ import {
 const NOW = Date.parse('2026-08-01T03:00:00.000Z');
 
 function ingress(route, suffix = route.toLowerCase(), overrides = {}) {
-  const evidence = {
-    [BATTLE_BRIDGE_RECOVERY_ROUTE.LOCAL_WINDOWS_SUPERVISOR]: { scheduledTaskVerified: true },
-    [BATTLE_BRIDGE_RECOVERY_ROUTE.GITHUB_MAILBOX]: { ownerAuthenticated: true },
-    [BATTLE_BRIDGE_RECOVERY_ROUTE.TAILSCALE_CONTROL]: { tailnetIdentityVerified: true },
-    [BATTLE_BRIDGE_RECOVERY_ROUTE.OPENCLAW_WHATSAPP]: { operatorIdentityVerified: true },
-    [BATTLE_BRIDGE_RECOVERY_ROUTE.AUTHENTICATED_BREAK_GLASS]: { nonceConfirmed: true },
+  const issuer = {
+    [BATTLE_BRIDGE_RECOVERY_ROUTE.LOCAL_WINDOWS_SUPERVISOR]: 'windows-task-scheduler',
+    [BATTLE_BRIDGE_RECOVERY_ROUTE.GITHUB_MAILBOX]: 'battle-bridge-github-command-mailbox',
+    [BATTLE_BRIDGE_RECOVERY_ROUTE.TAILSCALE_CONTROL]: 'tailscale-ssh-identity-probe',
+    [BATTLE_BRIDGE_RECOVERY_ROUTE.OPENCLAW_WHATSAPP]: 'openclaw-authenticated-command',
+    [BATTLE_BRIDGE_RECOVERY_ROUTE.AUTHENTICATED_BREAK_GLASS]: 'battle-bridge-break-glass-nonce',
   }[route];
   return {
     schemaVersion: BATTLE_BRIDGE_RECOVERY_INGRESS_SCHEMA,
@@ -31,7 +32,14 @@ function ingress(route, suffix = route.toLowerCase(), overrides = {}) {
     issuedAtUtc: '2026-08-01T02:59:00.000Z',
     expiresAtUtc: '2026-08-01T03:05:00.000Z',
     sourceReceipt: `receipt/${suffix}/0001`,
-    ...evidence,
+    authenticationEvidence: {
+      schemaVersion: BATTLE_BRIDGE_RECOVERY_AUTH_EVIDENCE_SCHEMA,
+      route,
+      issuer,
+      subject: `subject/${suffix}`,
+      proofRef: `proof/${suffix}/identity`,
+      verified: true,
+    },
     ...overrides,
   };
 }
@@ -51,10 +59,19 @@ test('every route requires its own authentication evidence', () => {
     const candidate = ingress(route);
     const valid = validateBattleBridgeRecoveryIngress(candidate, { nowMs: NOW });
     assert.equal(valid.ok, true, route);
-    const evidenceField = valid.request.authenticationEvidence;
-    const invalid = validateBattleBridgeRecoveryIngress({ ...candidate, [evidenceField]: false }, { nowMs: NOW });
+    const invalid = validateBattleBridgeRecoveryIngress({
+      ...candidate,
+      authenticationEvidence: { ...candidate.authenticationEvidence, issuer: 'caller-selected-route' },
+    }, { nowMs: NOW });
     assert.equal(invalid.blocker, 'RECOVERY_INGRESS_AUTHENTICATION_EVIDENCE_REQUIRED', route);
   }
+});
+
+test('a caller-selected route cannot manufacture evidence with booleans', () => {
+  const candidate = ingress(BATTLE_BRIDGE_RECOVERY_ROUTE.GITHUB_MAILBOX, 'self-attested');
+  delete candidate.authenticationEvidence;
+  candidate.ownerAuthenticated = true;
+  assert.equal(validateBattleBridgeRecoveryIngress(candidate, { nowMs: NOW }).blocker, 'RECOVERY_INGRESS_AUTHENTICATION_EVIDENCE_REQUIRED');
 });
 
 test('unsafe free-form authority and stale requests fail closed', () => {

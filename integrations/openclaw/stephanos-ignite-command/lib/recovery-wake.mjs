@@ -1,15 +1,23 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 export const OPENCLAW_RECOVERY_ROUTE = 'OPENCLAW_WHATSAPP';
 
-export function buildFixedRecoveryWakeInvocation({ env = process.env } = {}) {
+export function buildFixedRecoveryWakeInvocation({ env = process.env, authenticatedByHost = false, now = new Date(), nonce = randomUUID() } = {}) {
   if (!env.USERPROFILE) throw new Error('RECOVERY_WAKE_USERPROFILE_REQUIRED');
+  if (authenticatedByHost !== true) throw new Error('RECOVERY_WAKE_OPENCLAW_AUTH_REQUIRED');
   const scriptPath = path.resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os', 'scripts', 'windows', 'request-battle-bridge-recovery.ps1');
+  const evidenceId = String(nonce).replace(/[^a-f0-9-]/gi, '').slice(0, 36);
+  if (evidenceId.length < 8) throw new Error('RECOVERY_WAKE_EVIDENCE_ID_INVALID');
   return Object.freeze({
     executable: 'powershell.exe',
     args: Object.freeze([
-      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-Route', OPENCLAW_RECOVERY_ROUTE,
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
+      '-Route', OPENCLAW_RECOVERY_ROUTE,
+      '-EvidenceIssuer', 'openclaw-authenticated-command',
+      '-EvidenceSubject', 'openclaw:authenticated-operator',
+      '-EvidenceProofRef', `openclaw-authenticated-command/${now.toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}/${evidenceId}`,
     ]),
     cwd: path.resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os'),
     arbitraryShellAllowed: false,
@@ -23,10 +31,13 @@ export function wakeBattleBridgeRecoveryMesh({
   platform = process.platform,
   env = process.env,
   spawnSyncFn = spawnSync,
+  authenticatedByHost = false,
+  now = new Date(),
+  nonce,
 } = {}) {
   if (platform !== 'win32') return Object.freeze({ ok: false, blocker: 'RECOVERY_WAKE_WINDOWS_REQUIRED' });
   let invocation;
-  try { invocation = buildFixedRecoveryWakeInvocation({ env }); } catch (error) {
+  try { invocation = buildFixedRecoveryWakeInvocation({ env, authenticatedByHost, now, nonce }); } catch (error) {
     return Object.freeze({ ok: false, blocker: error?.message || 'RECOVERY_WAKE_INVOCATION_INVALID' });
   }
   const result = spawnSyncFn(invocation.executable, invocation.args, {

@@ -34,8 +34,9 @@ function Test-TaskAction {
                 -and [string]::IsNullOrWhiteSpace([string]$action.Arguments)) { return $true }
         }
         if (-not [string]::Equals($execute, $wscriptPath, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
-        $arguments = [string]$action.Arguments
-        return $arguments -match [regex]::Escape($launcherPath) -and $arguments -match ("(?:^|\s)" + [regex]::Escape($LauncherId) + "(?:\s|$)")
+        $arguments = ([string]$action.Arguments).Trim()
+        $expectedArguments = "//B //NoLogo `"$launcherPath`" $LauncherId"
+        return [string]::Equals($arguments, $expectedArguments, [System.StringComparison]::OrdinalIgnoreCase)
     } catch { return $false }
 }
 

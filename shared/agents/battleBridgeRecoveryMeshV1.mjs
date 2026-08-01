@@ -1,5 +1,6 @@
 export const BATTLE_BRIDGE_RECOVERY_MESH_SCHEMA = 'stephanos.battle-bridge-recovery-mesh.v1';
 export const BATTLE_BRIDGE_RECOVERY_INGRESS_SCHEMA = 'stephanos.battle-bridge-recovery-ingress.v1';
+export const BATTLE_BRIDGE_RECOVERY_AUTH_EVIDENCE_SCHEMA = 'stephanos.battle-bridge-recovery-auth-evidence.v1';
 
 export const BATTLE_BRIDGE_RECOVERY_ROUTE = Object.freeze({
   LOCAL_WINDOWS_SUPERVISOR: 'LOCAL_WINDOWS_SUPERVISOR',
@@ -17,12 +18,13 @@ export const BATTLE_BRIDGE_RECOVERY_MAX_REQUEST_AGE_MS = 10 * 60 * 1000;
 
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const RECEIPT_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#-]{7,180}$/;
+const EVIDENCE_SUBJECT = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,160}$/;
 const ROUTE_REQUIREMENTS = Object.freeze({
-  [BATTLE_BRIDGE_RECOVERY_ROUTE.LOCAL_WINDOWS_SUPERVISOR]: Object.freeze({ evidence: 'scheduledTaskVerified', failureDomain: 'windows-task-scheduler' }),
-  [BATTLE_BRIDGE_RECOVERY_ROUTE.GITHUB_MAILBOX]: Object.freeze({ evidence: 'ownerAuthenticated', failureDomain: 'github-command-transport' }),
-  [BATTLE_BRIDGE_RECOVERY_ROUTE.TAILSCALE_CONTROL]: Object.freeze({ evidence: 'tailnetIdentityVerified', failureDomain: 'tailscale-control-plane' }),
-  [BATTLE_BRIDGE_RECOVERY_ROUTE.OPENCLAW_WHATSAPP]: Object.freeze({ evidence: 'operatorIdentityVerified', failureDomain: 'openclaw-whatsapp-transport' }),
-  [BATTLE_BRIDGE_RECOVERY_ROUTE.AUTHENTICATED_BREAK_GLASS]: Object.freeze({ evidence: 'nonceConfirmed', failureDomain: 'local-break-glass' }),
+  [BATTLE_BRIDGE_RECOVERY_ROUTE.LOCAL_WINDOWS_SUPERVISOR]: Object.freeze({ issuer: 'windows-task-scheduler', failureDomain: 'windows-task-scheduler' }),
+  [BATTLE_BRIDGE_RECOVERY_ROUTE.GITHUB_MAILBOX]: Object.freeze({ issuer: 'battle-bridge-github-command-mailbox', failureDomain: 'github-command-transport' }),
+  [BATTLE_BRIDGE_RECOVERY_ROUTE.TAILSCALE_CONTROL]: Object.freeze({ issuer: 'tailscale-ssh-identity-probe', failureDomain: 'tailscale-control-plane' }),
+  [BATTLE_BRIDGE_RECOVERY_ROUTE.OPENCLAW_WHATSAPP]: Object.freeze({ issuer: 'openclaw-authenticated-command', failureDomain: 'openclaw-whatsapp-transport' }),
+  [BATTLE_BRIDGE_RECOVERY_ROUTE.AUTHENTICATED_BREAK_GLASS]: Object.freeze({ issuer: 'battle-bridge-break-glass-nonce', failureDomain: 'local-break-glass' }),
 });
 
 function text(value) {
@@ -57,8 +59,11 @@ export function validateBattleBridgeRecoveryIngress(input = {}, {
   if (expiresAtMs - issuedAtMs > maxRequestAgeMs) return blocked('RECOVERY_INGRESS_EXPIRY_TOO_LONG');
 
   const requirement = ROUTE_REQUIREMENTS[route];
-  if (input[requirement.evidence] !== true) {
-    return blocked('RECOVERY_INGRESS_AUTHENTICATION_EVIDENCE_REQUIRED', { route, requiredEvidence: requirement.evidence });
+  const evidence = input.authenticationEvidence;
+  if (!evidence || evidence.schemaVersion !== BATTLE_BRIDGE_RECOVERY_AUTH_EVIDENCE_SCHEMA
+    || evidence.route !== route || evidence.issuer !== requirement.issuer || evidence.verified !== true
+    || !EVIDENCE_SUBJECT.test(text(evidence.subject)) || !RECEIPT_ID.test(text(evidence.proofRef))) {
+    return blocked('RECOVERY_INGRESS_AUTHENTICATION_EVIDENCE_REQUIRED', { route, requiredIssuer: requirement.issuer });
   }
   const sourceReceipt = text(input.sourceReceipt);
   if (!RECEIPT_ID.test(sourceReceipt)) return blocked('RECOVERY_INGRESS_SOURCE_RECEIPT_INVALID', { route });
@@ -79,7 +84,14 @@ export function validateBattleBridgeRecoveryIngress(input = {}, {
       issuedAtUtc: new Date(issuedAtMs).toISOString(),
       expiresAtUtc: new Date(expiresAtMs).toISOString(),
       sourceReceipt,
-      authenticationEvidence: requirement.evidence,
+      authenticationEvidence: Object.freeze({
+        schemaVersion: BATTLE_BRIDGE_RECOVERY_AUTH_EVIDENCE_SCHEMA,
+        route,
+        issuer: requirement.issuer,
+        subject: text(evidence.subject),
+        proofRef: text(evidence.proofRef),
+        verified: true,
+      }),
     }),
   });
 }

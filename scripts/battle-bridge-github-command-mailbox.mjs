@@ -604,13 +604,22 @@ async function installBattleBridgeRecoveryMesh(command = {}) {
   };
 }
 
-async function wakeBattleBridgeRecoveryMesh(command = {}) {
+async function wakeBattleBridgeRecoveryMesh(command = {}, { receiptRef = '' } = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
+  const evidenceSubject = safeTelemetryId(command.requestId);
+  const evidenceProofRef = safeTelemetryText(receiptRef, 180);
+  if (!evidenceSubject || !/^receipts\/github-command-mailbox\/[A-Za-z0-9._-]+\.json$/.test(evidenceProofRef)) {
+    return { ...identity, ok: false, blocker: 'RECOVERY_MESH_GITHUB_EVIDENCE_INVALID' };
+  }
   const adapter = join(repoRoot, 'scripts', 'windows', 'request-battle-bridge-recovery.ps1');
   if (!existsSync(adapter)) return { ...identity, ok: false, blocker: 'RECOVERY_MESH_WAKE_ADAPTER_MISSING' };
   const invocation = run('powershell.exe', [
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', adapter, '-Route', 'GITHUB_MAILBOX',
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', adapter,
+    '-Route', 'GITHUB_MAILBOX',
+    '-EvidenceIssuer', 'battle-bridge-github-command-mailbox',
+    '-EvidenceSubject', evidenceSubject,
+    '-EvidenceProofRef', evidenceProofRef,
   ], { timeout: 60_000, preserveStdout: true });
   if (!invocation.ok) return { ...identity, ok: false, blocker: 'RECOVERY_MESH_WAKE_ADAPTER_FAILED', exitCode: invocation.status };
   let result;
@@ -873,7 +882,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     readMailboxReceipt,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
     installRecoveryMesh: installBattleBridgeRecoveryMesh,
-    wakeRecoveryMesh: wakeBattleBridgeRecoveryMesh,
+    wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
     runExactHeadWindowsBrowserProof: (command) => dispatchExactHeadWindowsBrowserProof(command),
     queueVerifiedSpotifyLink: async (command) => {
