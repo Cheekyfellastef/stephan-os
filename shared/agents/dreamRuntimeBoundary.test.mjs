@@ -223,6 +223,29 @@ test('source-head drift after receipt removes newly owned copy outputs and recei
   assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
 });
 
+test('receipt remains non-authoritative through the final source-head verification', async () => {
+  const input = await fixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  let reads = 0;
+  let finalVerificationObservedPendingOnly = false;
+  const result = await runApproved(input, {
+    sourceHeadVerifierFn: async () => {
+      reads += 1;
+      if (reads === 3) {
+        const receiptFiles = await fs.readdir(plan.receiptRoot);
+        finalVerificationObservedPendingOnly = receiptFiles.some((name) => name.startsWith('.stephanos-pending-'))
+          && receiptFiles.every((name) => !name.startsWith('dream-migration-'));
+      }
+      return HEAD;
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(finalVerificationObservedPendingOnly, true);
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.equal(receiptFiles.filter((name) => name.startsWith('dream-migration-')).length, 1);
+  assert.equal(receiptFiles.filter((name) => name.startsWith('.stephanos-pending-')).length, 0);
+});
+
 test('already-verified destination changes are rejected before receipt publication', async () => {
   const input = await alreadyVerifiedFixture();
   let headReads = 0;
@@ -261,19 +284,23 @@ test('already-verified source changes are rejected before receipt publication', 
 
 test('already-verified changes during receipt write remove the owned receipt', async () => {
   const input = await alreadyVerifiedFixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
   let changed = false;
+  let authoritativeReceiptVisibleDuringWrite = null;
   const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
     if (!changed && path.basename(String(target)).includes('dream-migration-')) {
       changed = true;
+      const receiptFiles = await fs.readdir(plan.receiptRoot);
+      authoritativeReceiptVisibleDuringWrite = receiptFiles.some((name) => name.startsWith('dream-migration-'));
       await fs.appendFile(input.destinationEventsPath, ' ');
     }
   });
   const result = await runApproved(input, { fsImpl });
   assert.equal(changed, true);
+  assert.equal(authoritativeReceiptVisibleDuringWrite, false);
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_DESTINATION_CHANGED');
   assert.equal(result.cleanupBlocker, '');
-  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
   const receiptFiles = await fs.readdir(plan.receiptRoot);
   assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
 });
@@ -289,7 +316,7 @@ test('owned-artifact cleanup never deletes a concurrent path replacement', async
     rename: async (source, destination) => {
       if (
         !replacementInjected
-        && String(source).startsWith('/proc/self/fd/')
+        && (process.platform !== 'linux' || String(source).startsWith('/proc/self/fd/'))
         && path.basename(String(source)) === path.basename(deepEntry.destinationPath)
         && String(destination).includes('.stephanos-owned-delete-')
       ) {
@@ -789,7 +816,7 @@ test('receipt publication reports cleanup failure when created-file identity is 
   assert.equal(receiptFiles.filter((name) => name.startsWith('.stephanos-pending-') && name.includes('dream-migration-')).length, 1);
 });
 
-test('Windows native publication abort removes the final-name artifact by its owned handle', {
+test('Windows native publication keeps the final name hidden and aborts its owned staging file', {
   skip: process.platform !== 'win32',
   timeout: 30_000,
 }, async () => {
@@ -797,6 +824,7 @@ test('Windows native publication abort removes the final-name artifact by its ow
   const artifactName = 'dream-migration-native-abort.json';
   const artifactPath = path.join(parent, artifactName);
   const token = '11111111-1111-4111-8111-111111111111';
+  const stagingPath = path.join(parent, `.stephanos-pending-${token}-${artifactName}`);
   const helper = path.resolve('scripts', 'windows', 'dream-runtime-artifact-io.ps1');
   const child = spawn('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
@@ -821,12 +849,14 @@ test('Windows native publication abort removes the final-name artifact by its ow
   const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
   child.stdin.write(`${Buffer.from('{"finalVerdict":"TEST_ONLY"}\n').toString('base64')}\n`);
   await ready;
-  assert.equal(await fs.readFile(artifactPath, 'utf8'), '{"finalVerdict":"TEST_ONLY"}\n');
+  await assert.rejects(() => fs.lstat(artifactPath), (error) => error.code === 'ENOENT');
+  assert.equal(await fs.readFile(stagingPath, 'utf8'), '{"finalVerdict":"TEST_ONLY"}\n');
   child.stdin.end('ABORT\n');
   assert.equal(await exited, 0);
   assert.equal(stderr, '');
   assert.equal(stdout.split(/\r?\n/).includes(`ABORTED:${token}`), true);
   await assert.rejects(() => fs.lstat(artifactPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(stagingPath), (error) => error.code === 'ENOENT');
 });
 
 test('partial manifest publication self-cleans before snapshot rollback', async () => {
@@ -1040,6 +1070,40 @@ test('ancestor swap during publication cannot redirect or retain an escaped arti
     () => fs.lstat(path.join(externalParent, path.basename(paths.snapshotPath))),
     (error) => error.code === 'ENOENT',
   );
+});
+
+test('missing preservation directories are created relative to the validated parent handle', { skip: process.platform !== 'linux' }, async () => {
+  const input = await disjointFixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const preservationRoot = path.join(input.workspaceRoot, 'memory', DREAM_VERSIONED_PRESERVATION_DIRECTORY);
+  const preservationParent = path.dirname(preservationRoot);
+  const parkedParent = `${preservationParent}.parked`;
+  const externalParent = await fs.mkdtemp(path.join(os.tmpdir(), 'stephanos-dream-directory-external-'));
+  let injected = false;
+  const fsImpl = fsProxy({
+    mkdir: async (target, options) => {
+      const targetPath = String(target);
+      const isPreservationRootCreation = !injected
+        && targetPath.startsWith('/proc/self/fd/')
+        && path.basename(targetPath) === DREAM_VERSIONED_PRESERVATION_DIRECTORY;
+      if (!isPreservationRootCreation) return fs.mkdir(target, options);
+      await fs.rename(preservationParent, parkedParent);
+      await fs.symlink(externalParent, preservationParent, 'dir');
+      await fs.mkdir(target, options);
+      await fs.unlink(preservationParent);
+      await fs.rename(parkedParent, preservationParent);
+      injected = true;
+    },
+  });
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(injected, true);
+  assert.equal(result.ok, true);
+  await assert.rejects(
+    () => fs.lstat(path.join(externalParent, DREAM_VERSIONED_PRESERVATION_DIRECTORY)),
+    (error) => error.code === 'ENOENT',
+  );
+  assert.equal((await fs.lstat(preservationRoot)).isDirectory(), true);
+  assert.equal(result.boundary.repoRoot, plan.repoRoot);
 });
 
 test('changed source during snapshot copy fails and removes only the new snapshot', async () => {

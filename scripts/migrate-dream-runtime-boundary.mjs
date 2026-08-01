@@ -32,6 +32,11 @@ export async function resolveDreamMigrationSourceHead(repoRoot, execFileFn = exe
     ':(exclude)memory/dreaming/**',
   ], gitOptions);
   if (String(statusResult?.stdout || '').trim()) throw new Error('DREAM_VERSIONED_SOURCE_DIRTY');
+  const verifiedHeadResult = await execFileFn('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], gitOptions);
+  const verifiedSourceHead = String(verifiedHeadResult?.stdout || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(verifiedSourceHead) || verifiedSourceHead !== sourceHead) {
+    throw new Error('DREAM_VERSIONED_SOURCE_HEAD_CHANGED_DURING_CLEANLINESS_CHECK');
+  }
   return sourceHead;
 }
 

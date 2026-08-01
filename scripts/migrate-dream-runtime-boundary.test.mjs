@@ -55,10 +55,10 @@ test('copy mode derives source head through fixed git argv only', async () => {
   const invocations = [];
   const sourceHead = await resolveDreamMigrationSourceHead('/bounded/repo', async (...args) => {
     invocations.push(args);
-    return { stdout: invocations.length === 1 ? `${HEAD}\n` : '' };
+    return { stdout: invocations.length === 2 ? '' : `${HEAD}\n` };
   });
   assert.equal(sourceHead, HEAD);
-  assert.equal(invocations.length, 2);
+  assert.equal(invocations.length, 3);
   assert.equal(invocations[0][0], 'git');
   assert.deepEqual(invocations[0][1], ['-C', '/bounded/repo', 'rev-parse', 'HEAD']);
   assert.deepEqual(invocations[1][1], [
@@ -72,10 +72,20 @@ test('copy mode derives source head through fixed git argv only', async () => {
     ':(exclude)memory/.dreams/**',
     ':(exclude)memory/dreaming/**',
   ]);
+  assert.deepEqual(invocations[2][1], ['-C', '/bounded/repo', 'rev-parse', 'HEAD']);
   await assert.rejects(
     () => resolveDreamMigrationSourceHead('/bounded/repo', async () => ({ stdout: '../not-a-head' })),
     /DREAM_VERSIONED_SOURCE_HEAD_UNAVAILABLE/,
   );
+});
+
+test('copy mode rejects a clean checkout that changes HEAD during the cleanliness check', async () => {
+  const heads = [HEAD, '', `${'b'.repeat(40)}\n`];
+  await assert.rejects(
+    () => resolveDreamMigrationSourceHead('/bounded/repo', async () => ({ stdout: heads.shift() })),
+    /DREAM_VERSIONED_SOURCE_HEAD_CHANGED_DURING_CLEANLINESS_CHECK/,
+  );
+  assert.equal(heads.length, 0);
 });
 
 test('copy mode rejects tracked implementation dirt before binding source head', async () => {

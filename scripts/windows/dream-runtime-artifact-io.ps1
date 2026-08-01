@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Publish', 'DeleteOwned')]
+    [ValidateSet('Publish', 'DeleteOwned', 'PromoteOwned', 'EnsureDirectory')]
     [string]$Mode,
 
     [Parameter(Mandatory = $true)]
@@ -15,7 +15,9 @@ param(
     [string]$Token,
 
     [ValidatePattern('^[a-f0-9:]*$')]
-    [string]$ExpectedOwnershipToken = ''
+    [string]$ExpectedOwnershipToken = '',
+
+    [string]$PendingName = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -111,6 +113,15 @@ public static class StephanosDreamArtifactIo {
     );
 
     [DllImport("ntdll.dll")]
+    private static extern int NtSetInformationFile(
+        SafeFileHandle handle,
+        out IO_STATUS_BLOCK ioStatusBlock,
+        IntPtr fileInformation,
+        uint length,
+        int fileInformationClass
+    );
+
+    [DllImport("ntdll.dll")]
     private static extern int NtCreateFile(
         out IntPtr fileHandle,
         uint desiredAccess,
@@ -142,6 +153,8 @@ public static class StephanosDreamArtifactIo {
     private const uint ObjectCaseInsensitive = 0x00000040;
     private const uint FileCreate = 2;
     private const uint FileOpen = 1;
+    private const uint FileOpenIf = 3;
+    private const uint FileDirectory = 0x00000001;
     private const uint FileNonDirectory = 0x00000040;
     private const uint FileSynchronousIoNonAlert = 0x00000020;
     private const uint FileOpenReparsePoint = 0x00200000;
@@ -224,7 +237,8 @@ public static class StephanosDreamArtifactIo {
         string name,
         uint desiredAccess,
         uint disposition,
-        uint share
+        uint share,
+        uint createOptions
     ) {
         IntPtr nameBuffer = Marshal.StringToHGlobalUni(name);
         IntPtr unicodePointer = IntPtr.Zero;
@@ -255,7 +269,7 @@ public static class StephanosDreamArtifactIo {
                 FileAttributeNormal,
                 share,
                 disposition,
-                FileNonDirectory | FileSynchronousIoNonAlert | FileOpenReparsePoint,
+                createOptions | FileSynchronousIoNonAlert | FileOpenReparsePoint,
                 IntPtr.Zero,
                 0
             );
@@ -273,7 +287,8 @@ public static class StephanosDreamArtifactIo {
             name,
             GenericWrite | DeleteAccess | ReadAttributes | Synchronize,
             FileCreate,
-            ShareRead
+            ShareRead,
+            FileNonDirectory
         );
     }
 
@@ -283,12 +298,68 @@ public static class StephanosDreamArtifactIo {
             name,
             DeleteAccess | ReadAttributes | Synchronize,
             FileOpen,
-            ShareRead
+            ShareRead,
+            FileNonDirectory
         );
+    }
+
+    public static SafeFileHandle EnsureRelativeDirectory(SafeFileHandle parent, string name) {
+        var handle = OpenRelative(
+            parent,
+            name,
+            ReadAttributes | Synchronize,
+            FileOpenIf,
+            ShareAll,
+            FileDirectory
+        );
+        try {
+            ReadInfo(handle, true);
+            return handle;
+        } catch {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    public static void RenameRelativeNoReplace(
+        SafeFileHandle artifact,
+        SafeFileHandle parent,
+        string destinationName
+    ) {
+        byte[] nameBytes = System.Text.Encoding.Unicode.GetBytes(destinationName);
+        int handleOffset = IntPtr.Size == 8 ? 8 : 4;
+        int lengthOffset = handleOffset + IntPtr.Size;
+        int nameOffset = lengthOffset + 4;
+        byte[] buffer = new byte[nameOffset + nameBytes.Length + 2];
+        if (IntPtr.Size == 8) {
+            Buffer.BlockCopy(BitConverter.GetBytes(parent.DangerousGetHandle().ToInt64()), 0, buffer, handleOffset, 8);
+        } else {
+            Buffer.BlockCopy(BitConverter.GetBytes(parent.DangerousGetHandle().ToInt32()), 0, buffer, handleOffset, 4);
+        }
+        Buffer.BlockCopy(BitConverter.GetBytes((uint)nameBytes.Length), 0, buffer, lengthOffset, 4);
+        Buffer.BlockCopy(nameBytes, 0, buffer, nameOffset, nameBytes.Length);
+        var pinned = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try {
+            IO_STATUS_BLOCK ioStatus;
+            int status = NtSetInformationFile(
+                artifact,
+                out ioStatus,
+                pinned.AddrOfPinnedObject(),
+                (uint)buffer.Length,
+                10
+            );
+            if (status < 0) throw new Win32Exception((int)RtlNtStatusToDosError(status));
+        } finally {
+            pinned.Free();
+        }
     }
 
     public static string ReadOwnedIdentity(SafeFileHandle handle) {
         return Identity(ReadInfo(handle, false));
+    }
+
+    public static string ReadDirectoryIdentity(SafeFileHandle handle) {
+        return Identity(ReadInfo(handle, true));
     }
 
     public static void WriteAndFlush(SafeFileHandle handle, byte[] bytes) {
@@ -333,6 +404,25 @@ function Assert-SafeArtifactName {
     }
 }
 
+function Assert-BoundedPendingName {
+    param(
+        [string]$Value,
+        [string]$FinalName
+    )
+    Assert-SafeArtifactName -Value $Value
+    $prefix = '.stephanos-pending-'
+    $suffix = "-$FinalName"
+    if (-not $Value.StartsWith($prefix, [System.StringComparison]::Ordinal) -or
+        -not $Value.EndsWith($suffix, [System.StringComparison]::Ordinal)) {
+        throw 'DREAM_MIGRATION_PENDING_NAME_INVALID'
+    }
+    $identity = $Value.Substring($prefix.Length, $Value.Length - $prefix.Length - $suffix.Length)
+    $parsed = [Guid]::Empty
+    if (-not [Guid]::TryParseExact($identity, 'D', [ref]$parsed)) {
+        throw 'DREAM_MIGRATION_PENDING_NAME_INVALID'
+    }
+}
+
 try {
     Assert-SafeArtifactName -Value $ArtifactName
     $resolvedParent = [System.IO.Path]::GetFullPath($ParentPath)
@@ -341,6 +431,18 @@ try {
     }
     $parent = [StephanosDreamArtifactIo]::OpenValidatedParent($resolvedParent)
     try {
+        if ($Mode -eq 'EnsureDirectory') {
+            $directory = [StephanosDreamArtifactIo]::EnsureRelativeDirectory($parent, $ArtifactName)
+            try {
+                $directoryIdentity = [StephanosDreamArtifactIo]::ReadDirectoryIdentity($directory)
+                [Console]::Out.WriteLine("DIRECTORY_READY:$Token`:$directoryIdentity")
+                [Console]::Out.Flush()
+            } finally {
+                $directory.Dispose()
+            }
+            exit 0
+        }
+
         if ($Mode -eq 'DeleteOwned') {
             if ([string]::IsNullOrWhiteSpace($ExpectedOwnershipToken)) {
                 throw 'DREAM_MIGRATION_OWNERSHIP_TOKEN_REQUIRED'
@@ -360,6 +462,30 @@ try {
             exit 0
         }
 
+        if ($Mode -eq 'PromoteOwned') {
+            if ([string]::IsNullOrWhiteSpace($ExpectedOwnershipToken)) {
+                throw 'DREAM_MIGRATION_OWNERSHIP_TOKEN_REQUIRED'
+            }
+            Assert-BoundedPendingName -Value $PendingName -FinalName $ArtifactName
+            $pending = [StephanosDreamArtifactIo]::OpenRelativeForDelete($parent, $PendingName)
+            try {
+                $observed = [StephanosDreamArtifactIo]::ReadOwnedIdentity($pending)
+                if (-not [string]::Equals($observed, $ExpectedOwnershipToken, [System.StringComparison]::Ordinal)) {
+                    throw 'DREAM_MIGRATION_OWNERSHIP_IDENTITY_CHANGED'
+                }
+                [StephanosDreamArtifactIo]::RenameRelativeNoReplace($pending, $parent, $ArtifactName)
+                $promoted = [StephanosDreamArtifactIo]::ReadOwnedIdentity($pending)
+                if (-not [string]::Equals($observed, $promoted, [System.StringComparison]::Ordinal)) {
+                    throw 'DREAM_MIGRATION_OWNERSHIP_IDENTITY_CHANGED'
+                }
+            } finally {
+                $pending.Dispose()
+            }
+            [Console]::Out.WriteLine("PROMOTED:$Token")
+            [Console]::Out.Flush()
+            exit 0
+        }
+
         $encoded = [Console]::In.ReadLine()
         if ($null -eq $encoded -or $encoded.Length -gt 89478488) {
             throw 'DREAM_MIGRATION_WINDOWS_ARTIFACT_INPUT_INVALID'
@@ -368,7 +494,9 @@ try {
         if ($bytes.Length -gt 67108864) {
             throw 'DREAM_MIGRATION_WINDOWS_ARTIFACT_TOO_LARGE'
         }
-        $artifact = [StephanosDreamArtifactIo]::CreateRelativeExclusive($parent, $ArtifactName)
+        $stagingName = ".stephanos-pending-$Token-$ArtifactName"
+        Assert-BoundedPendingName -Value $stagingName -FinalName $ArtifactName
+        $artifact = [StephanosDreamArtifactIo]::CreateRelativeExclusive($parent, $stagingName)
         $committed = $false
         $deleted = $false
         try {
@@ -378,6 +506,7 @@ try {
             [Console]::Out.Flush()
             $command = [Console]::In.ReadLine()
             if ([string]::Equals($command, 'COMMIT', [System.StringComparison]::Ordinal)) {
+                [StephanosDreamArtifactIo]::RenameRelativeNoReplace($artifact, $parent, $ArtifactName)
                 $committed = $true
                 [Console]::Out.WriteLine("COMMITTED:$Token")
                 [Console]::Out.Flush()
@@ -389,7 +518,12 @@ try {
             }
         } finally {
             if (-not $committed -and -not $deleted) {
-                try { [StephanosDreamArtifactIo]::DeleteByHandle($artifact) } catch {}
+                try {
+                    [StephanosDreamArtifactIo]::DeleteByHandle($artifact)
+                    $deleted = $true
+                    [Console]::Out.WriteLine("ABORTED:$Token")
+                    [Console]::Out.Flush()
+                } catch {}
             }
             $artifact.Dispose()
         }
@@ -403,6 +537,8 @@ try {
     $isCollision = $isCollision -and $failure.NativeErrorCode -in @(80, 183)
     if ($isCollision) {
         [Console]::Error.WriteLine('EEXIST')
+    } elseif ($failure -is [System.ComponentModel.Win32Exception]) {
+        [Console]::Error.WriteLine("DREAM_RUNTIME_ARTIFACT_IO_FAILED:$($failure.NativeErrorCode)")
     } else {
         [Console]::Error.WriteLine('DREAM_RUNTIME_ARTIFACT_IO_FAILED')
     }
