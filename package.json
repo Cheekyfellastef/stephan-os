@@ -66,6 +66,7 @@
     "stephanos:chat:sync": "node scripts/stephanos-chat-update.mjs sync",
     "stephanos:chat:diagnostics": "node scripts/stephanos-chat-update.mjs diagnostics",
     "stephanos:monitor-multiplexer:test": "node --test shared/agents/monitorMultiplexer.test.mjs",
+    "stephanos:monitor-admission:test": "node --test shared/agents/monitorAdmissionBridge.test.mjs",
     "stephanos:monitor-multiplexer:canary:test": "node --test shared/agents/monitorMultiplexerCanary.test.mjs scripts/battle-bridge-monitor-multiplexer-canary.test.mjs",
     "stephanos:runtime-boundary:workbench": "node scripts/runtime-boundary-workbench.mjs",
     "stephanos:runtime-boundary:test": "node --test shared/agents/runtimeBoundaryRegistry.test.mjs shared/agents/dreamRuntimeBoundary.test.mjs scripts/runtime-boundary-workbench.test.mjs scripts/migrate-dream-runtime-boundary.test.mjs",
