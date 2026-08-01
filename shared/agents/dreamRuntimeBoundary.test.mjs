@@ -1272,7 +1272,7 @@ test('cross-platform publication adapters preserve the structural commit invaria
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
   assert.match(
     boundarySource,
-    /finalLinked = true;\s+publishedIdentity = helperIdentity;[\s\S]*\} finally \{\s+await pendingHandle\.close\(\);/,
+    /finalLinked = output\.code === 0;[\s\S]*publishedIdentity = helperIdentity;[\s\S]*\} finally \{\s+await pendingHandle\.close\(\);/,
   );
   assert.match(
     boundarySource,
@@ -1282,6 +1282,8 @@ test('cross-platform publication adapters preserve the structural commit invaria
     boundarySource.indexOf('async function promoteOwnedArtifact'),
     boundarySource.indexOf('async function writeReceipt'),
   );
+  const helperExitIndex = promotionSource.indexOf('finalLinked = output.code === 0;');
+  const helperParseIndex = promotionSource.indexOf('parsePosixPromotionIdentity(output.stdout)');
   const helperIdentityIndex = promotionSource.indexOf('publishedIdentity = helperIdentity;');
   const closeIndex = promotionSource.indexOf('await pendingHandle.close();');
   const heldVerificationIndex = promotionSource.lastIndexOf(
@@ -1293,7 +1295,8 @@ test('cross-platform publication adapters preserve the structural commit invaria
   const canonicalVerificationIndex = promotionSource.lastIndexOf(
     'assertRegularSingleLink(artifactPath, { fsImpl })',
   );
-  assert.equal(helperIdentityIndex > 0 && helperIdentityIndex < closeIndex, true);
+  assert.equal(helperExitIndex > 0 && helperExitIndex < helperParseIndex, true);
+  assert.equal(helperIdentityIndex > helperParseIndex && helperIdentityIndex < closeIndex, true);
   assert.equal(heldVerificationIndex > closeIndex, true);
   assert.equal(postPromotionChainIndex > heldVerificationIndex, true);
   assert.equal(canonicalVerificationIndex > postPromotionChainIndex, true);

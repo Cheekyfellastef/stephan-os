@@ -1157,6 +1157,7 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
           helper.once('error', (error) => resolve({ code: null, stdout, stderr, error }));
           helper.once('exit', (code) => resolve({ code, stdout, stderr }));
         });
+        finalLinked = output.code === 0;
         const helperIdentity = output.code === 0
           ? parsePosixPromotionIdentity(output.stdout)
           : null;
@@ -1174,7 +1175,6 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
           }
           throw helperError;
         }
-        finalLinked = true;
         publishedIdentity = helperIdentity;
         const helperBoundIdentity = await assertRegularSingleLink(operationArtifactPath, { fsImpl });
         if (!sameOwnedArtifactIdentity(publishedIdentity, helperBoundIdentity, 1)) {
