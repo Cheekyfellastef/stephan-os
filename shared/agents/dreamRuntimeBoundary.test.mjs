@@ -154,6 +154,44 @@ test('copy migration requires explicit approval and never removes source', async
   assert.match(result.receiptPath, /runtime[\\/]receipts[\\/]runtime-boundary[\\/]dream-migration-/);
 });
 
+test('source-head drift after copy-required outputs removes newly owned destinations before receipt', async () => {
+  const input = await fixture();
+  let reads = 0;
+  const result = await runApproved(input, {
+    sourceHeadVerifierFn: async () => {
+      reads += 1;
+      return reads === 1 ? HEAD : 'b'.repeat(40);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  for (const entry of plan.entries) {
+    await assert.rejects(() => fs.lstat(entry.destinationPath), (error) => error.code === 'ENOENT');
+  }
+  const receiptFiles = await fs.readdir(plan.receiptRoot).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
+test('source-head drift after receipt removes newly owned copy outputs and receipt', async () => {
+  const input = await fixture();
+  let reads = 0;
+  const result = await runApproved(input, {
+    sourceHeadVerifierFn: async () => {
+      reads += 1;
+      return reads < 3 ? HEAD : 'b'.repeat(40);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  for (const entry of plan.entries) {
+    await assert.rejects(() => fs.lstat(entry.destinationPath), (error) => error.code === 'ENOENT');
+  }
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
 test('event identity contract classifies the investigated files as disjoint', () => {
   const relation = classifyDreamEventSets(jsonl(SOURCE_EVENTS), jsonl(DESTINATION_EVENTS));
   assert.equal(relation.ok, true);

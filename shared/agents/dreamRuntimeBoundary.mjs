@@ -722,8 +722,19 @@ async function copyRequiredEntry(entry, fsImpl) {
     || destinationSha256 !== entry.sourceSha256
     || sourceSha256After !== entry.sourceSha256
     || !sameFileIdentity(sourceBefore, sourceAfter)
-  ) return Object.freeze({ ok: false, blocker: 'DREAM_MIGRATION_HASH_MISMATCH' });
-  return Object.freeze({ ok: true, entry: Object.freeze({ ...entry, destinationSha256, state: 'copied-and-verified' }) });
+  ) {
+    const cleaned = await removeOwnedArtifact(entry.destinationPath, destinationInfo, fsImpl);
+    return Object.freeze({
+      ok: false,
+      blocker: 'DREAM_MIGRATION_HASH_MISMATCH',
+      cleanupBlocker: cleaned ? '' : 'DREAM_MIGRATION_COPY_CLEANUP_FAILED',
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    entry: Object.freeze({ ...entry, destinationSha256, state: 'copied-and-verified' }),
+    createdArtifact: Object.freeze({ artifactPath: entry.destinationPath, identity: destinationInfo }),
+  });
 }
 
 export async function executeDreamRuntimeMigration({
@@ -790,10 +801,12 @@ export async function executeDreamRuntimeMigration({
   }
   const copied = [];
   const preserved = [];
+  const createdCopyArtifacts = [];
   const createdPreservationArtifacts = [];
-  const cleanupCreatedPreservationArtifacts = async () => {
+  const cleanupCreatedMigrationArtifacts = async () => {
     const results = [];
-    for (const artifact of [...createdPreservationArtifacts].reverse()) {
+    const artifacts = [...createdCopyArtifacts, ...createdPreservationArtifacts];
+    for (const artifact of artifacts.reverse()) {
       results.push(await removeOwnedArtifact(artifact.artifactPath, artifact.identity, fsImpl));
     }
     return results.every(Boolean);
@@ -815,6 +828,7 @@ export async function executeDreamRuntimeMigration({
         });
       }
       copied.push(copyResult.entry);
+      createdCopyArtifacts.push(copyResult.createdArtifact);
     } else if (entry.state === 'versioned-preservation-required') {
       const preservation = await preserveVersionedConflict(entry, plan, {
         fsImpl,
@@ -826,7 +840,7 @@ export async function executeDreamRuntimeMigration({
       });
       if (!preservation.ok) {
         const priorArtifactsCleaned = preservation.blocker === 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED'
-          ? await cleanupCreatedPreservationArtifacts()
+          ? await cleanupCreatedMigrationArtifacts()
           : true;
         return Object.freeze({
           ok: false,
@@ -834,7 +848,7 @@ export async function executeDreamRuntimeMigration({
           finalVerdict: preservation.blocker,
           blocker: preservation.blocker,
           lockReason: preservation.lockReason || '',
-          cleanupBlocker: preservation.cleanupBlocker || (priorArtifactsCleaned ? '' : 'DREAM_VERSIONED_ARTIFACT_CLEANUP_FAILED'),
+          cleanupBlocker: preservation.cleanupBlocker || (priorArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED'),
           failedEntry: entry,
           copied: Object.freeze(copied),
           preserved: Object.freeze(preserved),
@@ -853,13 +867,13 @@ export async function executeDreamRuntimeMigration({
     }
   }
   if (!(await verifySourceHead())) {
-    const cleaned = await cleanupCreatedPreservationArtifacts();
+    const cleaned = await cleanupCreatedMigrationArtifacts();
     return Object.freeze({
       ok: false,
       status: 'BLOCKED',
       finalVerdict: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
       blocker: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
-      cleanupBlocker: cleaned ? '' : 'DREAM_VERSIONED_ARTIFACT_CLEANUP_FAILED',
+      cleanupBlocker: cleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
       copied: Object.freeze(copied),
       preserved: Object.freeze([]),
       sourceRemovalPerformed: false,
@@ -894,13 +908,13 @@ export async function executeDreamRuntimeMigration({
   const writtenReceipt = await writeReceipt(receipt, { fsImpl, receiptRoot: plan.receiptRoot });
   if (!(await verifySourceHead())) {
     const receiptCleaned = await removeOwnedArtifact(writtenReceipt.receiptPath, writtenReceipt.identity, fsImpl);
-    const preservationCleaned = await cleanupCreatedPreservationArtifacts();
+    const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
     return Object.freeze({
       ok: false,
       status: 'BLOCKED',
       finalVerdict: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
       blocker: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
-      cleanupBlocker: receiptCleaned && preservationCleaned ? '' : 'DREAM_VERSIONED_ARTIFACT_CLEANUP_FAILED',
+      cleanupBlocker: receiptCleaned && migrationArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
       copied: Object.freeze(copied),
       preserved: Object.freeze([]),
       sourceRemovalPerformed: false,
