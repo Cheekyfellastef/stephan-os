@@ -1035,6 +1035,25 @@ function sameOwnedArtifactIdentity(expected, current, maxLinkCount) {
     && Number(expected?.mtimeMs) === Number(current?.mtimeMs);
 }
 
+export function parsePosixPromotionIdentity(value) {
+  const match = /^PROMOTED:(\d{1,20}):(\d{1,20}):(\d{1,20}):1:(\d{1,24})$/.exec(String(value || '').trim());
+  if (!match) return null;
+  const [dev, ino, size] = match.slice(1, 4).map(Number);
+  if (![dev, ino, size].every(Number.isSafeInteger)) return null;
+  const mtimeNs = BigInt(match[4]);
+  const mtimeMs = Number(mtimeNs / 1_000_000n) + Number(mtimeNs % 1_000_000n) / 1_000_000;
+  if (!Number.isFinite(mtimeMs)) return null;
+  return Object.freeze({
+    dev,
+    ino,
+    size,
+    nlink: 1,
+    mtimeMs,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+  });
+}
+
 async function removeOwnedArtifactWithinBoundary(
   operationParentPath,
   artifactName,
@@ -1138,7 +1157,10 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
           helper.once('error', (error) => resolve({ code: null, stdout, stderr, error }));
           helper.once('exit', (code) => resolve({ code, stdout, stderr }));
         });
-        if (output.code !== 0 || output.stdout.trim() !== 'PROMOTED') {
+        const helperIdentity = output.code === 0
+          ? parsePosixPromotionIdentity(output.stdout)
+          : null;
+        if (!helperIdentity || output.stderr.trim()) {
           const helperReason = output.stderr.split(/\r?\n/).find(Boolean) || '';
           const helperError = codedError(
             helperReason === 'EEXIST'
@@ -1153,7 +1175,11 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
           throw helperError;
         }
         finalLinked = true;
-        publishedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
+        publishedIdentity = helperIdentity;
+        const helperBoundIdentity = await assertRegularSingleLink(operationArtifactPath, { fsImpl });
+        if (!sameOwnedArtifactIdentity(publishedIdentity, helperBoundIdentity, 1)) {
+          throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
+        }
       } finally {
         await pendingHandle.close();
       }
@@ -1164,12 +1190,20 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
       await fsImpl.unlink(operationPendingPath);
       pendingRemoved = true;
     }
-    const promotedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
+    const promotedIdentity = await assertRegularSingleLink(operationArtifactPath, { fsImpl });
+    if (publishedIdentity && !sameOwnedArtifactIdentity(publishedIdentity, promotedIdentity, 1)) {
+      throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
+    }
     const promotionMatches = process.platform === 'darwin' && fsImpl === fs
       ? promotedIdentity.size === identity.size
-        && await sha256File(artifactPath, { fsImpl }) === expectedDarwinHash
+        && await sha256File(operationArtifactPath, { fsImpl }) === expectedDarwinHash
       : sameFileIdentity(identity, promotedIdentity);
     if (!promotionMatches) {
+      throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
+    }
+    await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
+    const canonicalIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
+    if (!sameOwnedArtifactIdentity(promotedIdentity, canonicalIdentity, 1)) {
       throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
     }
     publishedIdentity = promotedIdentity;

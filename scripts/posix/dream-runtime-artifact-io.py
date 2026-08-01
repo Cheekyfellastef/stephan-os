@@ -20,6 +20,13 @@ def fail(code: str) -> None:
     raise SystemExit(2)
 
 
+def promoted_identity(info: os.stat_result) -> str:
+    return (
+        f"PROMOTED:{info.st_dev}:{info.st_ino}:{info.st_size}:"
+        f"{info.st_nlink}:{info.st_mtime_ns}"
+    )
+
+
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--pending-name", required=True)
 parser.add_argument("--artifact-name", required=True)
@@ -59,7 +66,7 @@ if system == "Darwin":
                 or promoted.st_nlink != 1
                 or promoted.st_size != owned.st_size):
             fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
-        print("PROMOTED", flush=True)
+        print(promoted_identity(promoted), flush=True)
     except SystemExit:
         raise
     except BaseException:
@@ -95,4 +102,4 @@ if promotion_invalid:
     if (promoted.st_dev, promoted.st_ino) == (owned.st_dev, owned.st_ino):
         os.unlink(args.artifact_name, dir_fd=parent_fd)
     fail("DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED")
-print("PROMOTED", flush=True)
+print(promoted_identity(promoted), flush=True)

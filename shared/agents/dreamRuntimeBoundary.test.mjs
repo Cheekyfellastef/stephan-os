@@ -13,6 +13,7 @@ import {
   dreamDirectoryHandleNamespace,
   executeDreamRuntimeMigration,
   normalizeDreamHostRelativePath,
+  parsePosixPromotionIdentity,
   pathIsInside,
   planDreamRuntimeMigration,
   resolveDreamRuntimeBoundary,
@@ -26,6 +27,25 @@ test('Darwin uses the native file-descriptor namespace for handle-bound publicat
   assert.equal(dreamDirectoryHandleNamespace('darwin'), '/dev/fd');
   assert.equal(dreamDirectoryHandleNamespace('linux'), '/proc/self/fd');
   assert.equal(dreamDirectoryHandleNamespace('win32'), '');
+});
+
+test('POSIX helper promotion identity is bounded and malformed evidence fails closed', () => {
+  const identity = parsePosixPromotionIdentity('PROMOTED:1:2:3:1:4000001');
+  assert.equal(identity.dev, 1);
+  assert.equal(identity.ino, 2);
+  assert.equal(identity.size, 3);
+  assert.equal(identity.nlink, 1);
+  assert.equal(identity.mtimeMs, 4.000001);
+  for (const value of [
+    'PROMOTED',
+    'PROMOTED:1:2:3:2:4000001',
+    'PROMOTED:1:2:3:1:-1',
+    'PROMOTED:1:2:3:1:4000001:extra',
+    `PROMOTED:1:2:3:1:${'9'.repeat(25)}`,
+    `PROMOTED:${Number.MAX_SAFE_INTEGER + 1}:2:3:1:4000001`,
+  ]) {
+    assert.equal(parsePosixPromotionIdentity(value), null);
+  }
 });
 
 test('Windows pre-READY failure awaits bounded abort cleanup before process termination', async () => {
@@ -1252,12 +1272,32 @@ test('cross-platform publication adapters preserve the structural commit invaria
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
   assert.match(
     boundarySource,
-    /finalLinked = true;\s+publishedIdentity = await assertRegularSingleLink\(artifactPath, \{ fsImpl \}\);\s+\} finally \{\s+await pendingHandle\.close\(\);/,
+    /finalLinked = true;\s+publishedIdentity = helperIdentity;[\s\S]*\} finally \{\s+await pendingHandle\.close\(\);/,
   );
   assert.match(
     boundarySource,
     /if \(finalLinked && boundary\)[\s\S]*publishedIdentity \|\| identity/,
   );
+  const promotionSource = boundarySource.slice(
+    boundarySource.indexOf('async function promoteOwnedArtifact'),
+    boundarySource.indexOf('async function writeReceipt'),
+  );
+  const helperIdentityIndex = promotionSource.indexOf('publishedIdentity = helperIdentity;');
+  const closeIndex = promotionSource.indexOf('await pendingHandle.close();');
+  const heldVerificationIndex = promotionSource.lastIndexOf(
+    'assertRegularSingleLink(operationArtifactPath, { fsImpl })',
+  );
+  const postPromotionChainIndex = promotionSource.lastIndexOf(
+    'assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl })',
+  );
+  const canonicalVerificationIndex = promotionSource.lastIndexOf(
+    'assertRegularSingleLink(artifactPath, { fsImpl })',
+  );
+  assert.equal(helperIdentityIndex > 0 && helperIdentityIndex < closeIndex, true);
+  assert.equal(heldVerificationIndex > closeIndex, true);
+  assert.equal(postPromotionChainIndex > heldVerificationIndex, true);
+  assert.equal(canonicalVerificationIndex > postPromotionChainIndex, true);
+  assert.match(posixHelper, /PROMOTED:\{info\.st_dev\}:\{info\.st_ino\}:\{info\.st_size\}/);
   const windowsHelper = await fs.readFile(path.resolve('scripts/windows/dream-runtime-artifact-io.ps1'), 'utf8');
   assert.match(windowsHelper, /AncestorPathsBase64/);
   assert.equal((windowsHelper.match(/Assert-AncestorChainUnchanged/g) || []).length >= 5, true);
