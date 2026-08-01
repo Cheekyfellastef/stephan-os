@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -105,19 +105,33 @@ test('rejects a symlinked Spotify inbox instead of appending through it', async 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('holds and validates one file handle before appending inbox data', async () => {
+test('rejects a hard-linked Spotify inbox without modifying the linked victim', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-spotify-hardlink-'));
+  const repoRoot = join(root, 'not-the-repo');
+  const workspace = join(root, 'external-workspace');
+  try {
+    await mkdir(join(workspace, 'status'), { recursive: true });
+    const victim = join(root, 'victim.jsonl');
+    await writeFile(victim, 'protected\n');
+    await link(victim, join(workspace, 'status', 'music-spotify-link-inbox.jsonl'));
+    const result = await appendMusicSpotifyLinkCandidate(candidate, { root: workspace, repoRoot, expectedHead, receiptRef });
+    assert.equal(result.blocker, 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE');
+    assert.equal(await readFile(victim, 'utf8'), 'protected\n');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('uses validated copy-and-replace instead of mutating an existing inbox inode', async () => {
   const moduleSource = await readFile(join(dirname(fileURLToPath(import.meta.url)), 'musicSpotifyLinkBridge.mjs'), 'utf8');
-  const start = moduleSource.indexOf('async function openSafeInbox');
+  const start = moduleSource.indexOf('async function replaceInboxAtomically');
   const end = moduleSource.indexOf('\nfunction cleanText', start);
-  const opener = moduleSource.slice(start, end);
-  assert.match(opener, /await open\(/);
-  assert.match(opener, /handle\.stat\(\).*lstat\(target\)/s);
-  assert.match(opener, /pathInfo\.isSymbolicLink\(\)/);
-  assert.match(opener, /handleInfo\.ino.*pathInfo\.ino/s);
-  assert.match(opener, /realpath\(root\).*realpath\(target\)/s);
-  assert.match(opener, /targetInsideRoot/);
+  const replacer = moduleSource.slice(start, end);
+  assert.match(moduleSource, /Number\(handleInfo\.nlink\) === 1/);
+  assert.match(replacer, /O_EXCL/);
+  assert.match(replacer, /replacementHandle\.writeFile\(nextText/);
+  assert.match(replacer, /inboxSnapshotUnchanged\(root, target, snapshot\)/);
+  assert.match(replacer, /rename\(replacementPath, target\)/);
   assert.doesNotMatch(moduleSource, /await appendFile\(resolved\.path/);
-  assert.match(moduleSource, /opened\.handle\.appendFile\(line/);
+  assert.doesNotMatch(moduleSource, /\.appendFile\(/);
 });
 
 test('fails closed when a shape-valid workspace record lacks its trusted mailbox receipt', async () => {

@@ -1,7 +1,7 @@
 import { constants as fsConstants } from 'node:fs';
-import { lstat, mkdir, open, readFile, realpath } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { resolveSharedWorkspacePath } from './sharedAgentWorkspaceStore.mjs';
 import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
 
@@ -55,37 +55,125 @@ async function verifySafeInboxParent(root, target) {
   }
 }
 
-async function openSafeInbox(root, target) {
+function isInsideRoot(root, target) {
+  const targetRelative = relative(root, target);
+  return Boolean(targetRelative)
+    && !targetRelative.startsWith('..')
+    && !isAbsolute(targetRelative);
+}
+
+async function inspectOpenedInbox(root, target, handle) {
+  const [handleInfo, pathInfo, actualRoot, actualTarget] = await Promise.all([
+    handle.stat(),
+    lstat(target),
+    realpath(root),
+    realpath(target),
+  ]);
+  const sameFile = String(handleInfo.dev) === String(pathInfo.dev)
+    && String(handleInfo.ino) === String(pathInfo.ino);
+  const singleLink = Number(handleInfo.nlink) === 1 && Number(pathInfo.nlink) === 1;
+  if (!handleInfo.isFile() || pathInfo.isSymbolicLink() || !pathInfo.isFile()
+    || !sameFile || !singleLink || !isInsideRoot(actualRoot, actualTarget)) return null;
+  return {
+    dev: String(handleInfo.dev),
+    ino: String(handleInfo.ino),
+    size: handleInfo.size,
+    mtimeMs: handleInfo.mtimeMs,
+    ctimeMs: handleInfo.ctimeMs,
+  };
+}
+
+async function readSafeInbox(root, target) {
   if (!(await verifySafeInboxParent(root, target))) return null;
   let handle;
   try {
     const noFollow = Number.isInteger(fsConstants.O_NOFOLLOW) ? fsConstants.O_NOFOLLOW : 0;
-    handle = await open(
-      target,
-      fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | noFollow,
-      0o600,
-    );
-    const [handleInfo, pathInfo, actualRoot, actualTarget] = await Promise.all([
-      handle.stat(),
-      lstat(target),
-      realpath(root),
-      realpath(target),
-    ]);
-    const targetRelative = relative(actualRoot, actualTarget);
-    const targetInsideRoot = Boolean(targetRelative)
-      && !targetRelative.startsWith('..')
-      && !isAbsolute(targetRelative);
-    const sameFile = String(handleInfo.dev) === String(pathInfo.dev)
-      && String(handleInfo.ino) === String(pathInfo.ino);
-    if (!handleInfo.isFile() || pathInfo.isSymbolicLink() || !pathInfo.isFile() || !sameFile || !targetInsideRoot) {
-      await handle.close();
-      return null;
-    }
-    return { handle, size: handleInfo.size };
+    handle = await open(target, fsConstants.O_RDONLY | noFollow);
+    const identity = await inspectOpenedInbox(root, target, handle);
+    if (!identity || identity.size > MAX_FILE_BYTES) return null;
+    const text = await handle.readFile({ encoding: 'utf8' });
+    const finalIdentity = await inspectOpenedInbox(root, target, handle);
+    if (!finalIdentity
+      || finalIdentity.dev !== identity.dev
+      || finalIdentity.ino !== identity.ino
+      || finalIdentity.size !== identity.size
+      || finalIdentity.mtimeMs !== identity.mtimeMs
+      || finalIdentity.ctimeMs !== identity.ctimeMs) return null;
+    return { exists: true, identity, text };
   } catch (error) {
-    await handle?.close().catch(() => {});
+    if (error?.code === 'ENOENT') return { exists: false, identity: null, text: '' };
     if (['ELOOP', 'EMLINK', 'EISDIR', 'ENOTDIR'].includes(error?.code)) return null;
     throw error;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function inboxSnapshotUnchanged(root, target, snapshot) {
+  if (!snapshot.exists) {
+    try {
+      await lstat(target);
+      return false;
+    } catch (error) {
+      return error?.code === 'ENOENT';
+    }
+  }
+  const current = await readSafeInbox(root, target);
+  return Boolean(current?.exists
+    && current.identity.dev === snapshot.identity.dev
+    && current.identity.ino === snapshot.identity.ino
+    && current.identity.size === snapshot.identity.size
+    && current.identity.mtimeMs === snapshot.identity.mtimeMs
+    && current.identity.ctimeMs === snapshot.identity.ctimeMs
+    && current.text === snapshot.text);
+}
+
+async function replaceInboxAtomically(root, target, line) {
+  const snapshot = await readSafeInbox(root, target);
+  if (!snapshot) return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE' };
+  const nextText = `${snapshot.text}${line}`;
+  if (Buffer.byteLength(nextText) > MAX_FILE_BYTES) return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_FULL' };
+
+  const replacementPath = resolve(dirname(target), `.${basename(target)}.${randomUUID()}.tmp`);
+  let replacementHandle;
+  try {
+    const noFollow = Number.isInteger(fsConstants.O_NOFOLLOW) ? fsConstants.O_NOFOLLOW : 0;
+    replacementHandle = await open(
+      replacementPath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
+      0o600,
+    );
+    if (!(await inspectOpenedInbox(root, replacementPath, replacementHandle))) {
+      return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_REPLACEMENT_UNSAFE' };
+    }
+    await replacementHandle.writeFile(nextText, { encoding: 'utf8' });
+    await replacementHandle.sync();
+    const replacementIdentity = await inspectOpenedInbox(root, replacementPath, replacementHandle);
+    if (!replacementIdentity || replacementIdentity.size !== Buffer.byteLength(nextText)) {
+      return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_REPLACEMENT_UNSAFE' };
+    }
+    await replacementHandle.close();
+    replacementHandle = null;
+
+    if (!(await inboxSnapshotUnchanged(root, target, snapshot))) {
+      return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_CHANGED_DURING_WRITE' };
+    }
+    await rename(replacementPath, target);
+    const installed = await lstat(target);
+    if (installed.isSymbolicLink() || !installed.isFile() || Number(installed.nlink) !== 1) {
+      return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE' };
+    }
+    return { ok: true };
+  } catch (error) {
+    if (['EEXIST', 'ELOOP', 'EMLINK', 'EISDIR', 'ENOTDIR'].includes(error?.code)) {
+      return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE' };
+    }
+    throw error;
+  } finally {
+    await replacementHandle?.close().catch(() => {});
+    await unlink(replacementPath).catch((error) => {
+      if (error?.code !== 'ENOENT') throw error;
+    });
   }
 }
 
@@ -138,14 +226,8 @@ export async function appendMusicSpotifyLinkCandidate(input = {}, options = {}) 
   }
   const payloadSha256 = spotifyPayloadSha256(validated.candidate);
   const line = `${JSON.stringify({ ...validated.candidate, expectedHead, receiptRef, payloadSha256 })}\n`;
-  const opened = await openSafeInbox(resolved.root, resolved.path);
-  if (!opened) return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_PATH_UNSAFE' };
-  try {
-    if (opened.size + Buffer.byteLength(line) > MAX_FILE_BYTES) return { ok: false, blocker: 'MUSIC_SPOTIFY_INBOX_FULL' };
-    await opened.handle.appendFile(line, { encoding: 'utf8' });
-  } finally {
-    await opened.handle.close();
-  }
+  const written = await replaceInboxAtomically(resolved.root, resolved.path, line);
+  if (!written.ok) return written;
   return { ok: true, finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED', requestId: validated.candidate.requestId, payloadSha256 };
 }
 
