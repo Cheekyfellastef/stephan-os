@@ -13,7 +13,7 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $launcherPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
 $workerProbePath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\windows\probe-mission-orchestrator-worker-watchdog.ps1'))
-$wscriptPath = [System.IO.Path]::GetFullPath((Join-Path $env:SystemRoot 'System32\wscript.exe'))
+$wscriptPath = 'C:\Windows\System32\wscript.exe'
 $canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
 $taskSpecs = @(

@@ -33,7 +33,7 @@ $noncePath = Join-Path $workspaceRoot 'status\battle-bridge-break-glass-nonce.js
 $taskName = 'Stephanos Battle Bridge Recovery Mesh'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
 $launcherPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
-$wscriptPath = [System.IO.Path]::GetFullPath((Join-Path $env:SystemRoot 'System32\wscript.exe'))
+$wscriptPath = 'C:\Windows\System32\wscript.exe'
 $authorityHead = ''
 $hostProofConsumed = $false
 

@@ -34,7 +34,7 @@
     "stephanos:guard:scripts": "node scripts/guard-launcher-scripts.mjs",
     "stephanos:battle-bridge:status": "node scripts/battle-bridge-status.mjs",
     "stephanos:battle-bridge:repair": "node scripts/battle-bridge-repair.mjs",
-    "stephanos:battle-bridge:recovery-mesh": "node scripts/battle-bridge-recovery-mesh.mjs",
+    "stephanos:battle-bridge:recovery-mesh": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1",
     "stephanos:battle-bridge:recovery-mesh:install": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-battle-bridge-recovery-mesh.ps1 -StartNow",
     "stephanos:battle-bridge:recovery-mesh:status": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-battle-bridge-recovery-mesh.ps1",
     "stephanos:battle-bridge:recovery-mesh:uninstall": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File scripts/windows/uninstall-battle-bridge-recovery-mesh.ps1",

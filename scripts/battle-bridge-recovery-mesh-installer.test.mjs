@@ -16,6 +16,8 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
   assert.match(installer, /-Hidden/);
   assert.match(installer, /recovery-mesh/);
   assert.match(installer, /maximumConcurrentExecutors = 1/);
+  assert.match(installer, /wscriptExe = 'C:\\Windows\\System32\\wscript\.exe'/);
+  assert.doesNotMatch(installer, /env:SystemRoot/);
   assert.match(installer, /registrationApplied = \$false/);
   assert.match(installer, /installed = \[bool\]\$registrationApplied/);
   assert.match(installer, /startedNow = \[bool\]\$startApplied/);
@@ -33,6 +35,8 @@ test('package lifecycle commands pin the canonical PowerShell host', async () =>
     assert.match(packageJson.scripts[name], /^"C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe" /);
     assert.doesNotMatch(packageJson.scripts[name], /^powershell\b/i);
   }
+  assert.match(packageJson.scripts['stephanos:battle-bridge:recovery-mesh'], /^"C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe" [\s\S]*run-battle-bridge-recovery-mesh-hidden\.ps1$/);
+  assert.doesNotMatch(packageJson.scripts['stephanos:battle-bridge:recovery-mesh'], /^node\b/i);
 });
 
 test('windowless launcher pins recovery mesh to one fixed source runner', async () => {
@@ -42,6 +46,8 @@ test('windowless launcher pins recovery mesh to one fixed source runner', async 
     source('verify-battle-bridge-recovery-mesh-mutex.ps1'),
   ]);
   assert.match(vbs, /Case "recovery-mesh"[\s\S]*run-battle-bridge-recovery-mesh-hidden\.ps1/);
+  assert.match(vbs, /powershellExe = "C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe"/);
+  assert.doesNotMatch(vbs, /ExpandEnvironmentStrings\("%SystemRoot%"\)/);
   assert.match(hidden, /scripts\\battle-bridge-recovery-mesh\.mjs/);
   assert.match(hidden, /System\.Threading\.Mutex/);
   assert.match(hidden, /STEPHANOS_RECOVERY_MESH_MUTEX_HELD = '1'/);
@@ -82,6 +88,7 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   assert.match(probe, /product\s+-eq\s+'OpenClaw'/);
   assert.match(probe, /identityVerified/);
   assert.match(probe, /C:\\Program Files\\Git\\cmd\\git\.exe/);
+  assert.match(probe, /wscriptPath = 'C:\\Windows\\System32\\wscript\.exe'/);
   assert.match(probe, /\$canonicalPowerShell/);
   assert.doesNotMatch(probe, /& powershell\.exe/);
   assert.doesNotMatch(probe, /& git\.exe/);
@@ -114,6 +121,7 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /Get-CanonicalMailboxReceiptFilename/);
   assert.match(request, /-C \$repoRoot rev-parse HEAD/);
   assert.match(request, /C:\\Program Files\\Git\\cmd\\git\.exe/);
+  assert.match(request, /wscriptPath = 'C:\\Windows\\System32\\wscript\.exe'/);
   assert.doesNotMatch(request, /Get-Command git/);
   assert.match(request, /RECOVERY_ROUTE_EVIDENCE_ISSUER_INVALID/);
   assert.match(request, /stephanos\.battle-bridge-recovery-auth-evidence\.v1/);

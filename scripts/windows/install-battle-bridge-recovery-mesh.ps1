@@ -11,7 +11,7 @@ $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 $expectedRepoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
 if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) { throw "Installer must run from $expectedRepoRoot" }
 $launcherPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs')).Path
-$wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
+$wscriptExe = 'C:\Windows\System32\wscript.exe'
 if (-not (Test-Path -LiteralPath $wscriptExe -PathType Leaf)) { throw "Windowless host missing: $wscriptExe" }
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $escapedLauncherPath = $launcherPath.Replace('"', '""')
