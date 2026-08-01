@@ -25,6 +25,7 @@ import {
   selectNextBattleBridgeGitHubCommand,
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { dispatchExactHeadWindowsBrowserProof } from '../shared/agents/exactHeadWindowsBrowserProofDispatch.mjs';
+import { appendMusicSpotifyLinkCandidate } from '../shared/agents/musicSpotifyLinkBridge.mjs';
 import {
   createWindowsSafeMailboxReceiptFilename,
   getReadableMailboxReceiptFilenames,
@@ -826,6 +827,16 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
     runExactHeadWindowsBrowserProof: (command) => dispatchExactHeadWindowsBrowserProof(command),
+    queueVerifiedSpotifyLink: async (command) => {
+      const identity = readCanonicalSourceIdentity(command);
+      if (!identity.ok) return identity;
+      return appendMusicSpotifyLinkCandidate(command, {
+        root: sharedWorkspaceRoot,
+        repoRoot,
+        expectedHead: command.expectedHead,
+        receiptRef,
+      });
+    },
   });
 
   const completedAt = now().toISOString();

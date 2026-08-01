@@ -8,6 +8,7 @@ import {
   CODEX_BANKED_RESET_STATUS_OPERATION,
   readCodexBankedResetStatusOnBattleBridge,
 } from './codexBankedResetStatusBattleBridgeReader.mjs';
+import { MUSIC_SPOTIFY_LINK_OPERATION, MUSIC_SPOTIFY_LINK_SOURCE, validateMusicSpotifyLinkCandidate } from './musicSpotifyLinkBridge.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -27,6 +28,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
   'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+  MUSIC_SPOTIFY_LINK_OPERATION,
   CODEX_BANKED_RESET_STATUS_OPERATION,
   CODEX_BANKED_RESET_OPERATION,
 ]);
@@ -57,6 +59,7 @@ const FORBIDDEN_RESET_COMMAND_FIELDS = Object.freeze([
   'url', 'uri', 'selector', 'xpath', 'javascript', 'script', 'command', 'executable',
   'args', 'arguments', 'profilePath', 'userDataDir', 'cookie', 'cookies', 'token', 'credential',
 ]);
+const MUSIC_SPOTIFY_FIELDS = Object.freeze(['source', 'spotifyUri', 'targetTrackId', 'targetArtist', 'targetTitle', 'requestedAtUtc']);
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
@@ -170,6 +173,22 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     || hasValue(command.proofTarget) || hasValue(command.pullRequestHead)) {
     return fail('WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
   }
+  let musicSpotifyCandidate = null;
+  if (command.operation === MUSIC_SPOTIFY_LINK_OPERATION) {
+    const unsafeField = unsafeAutomationField(command);
+    if (unsafeField) return fail('MUSIC_SPOTIFY_UNSAFE_FIELD_PRESENT', { field: unsafeField });
+    if (!SHA_PATTERN.test(String(command.expectedHead || ''))) return fail('MUSIC_SPOTIFY_EXPECTED_HEAD_REQUIRED');
+    const validation = validateMusicSpotifyLinkCandidate({
+      ...command,
+      source: command.source,
+      requestedAtUtc: command.requestedAtUtc,
+    });
+    if (!validation.ok) return fail(validation.blocker);
+    musicSpotifyCandidate = validation.candidate;
+  } else {
+    const unexpectedMusicField = MUSIC_SPOTIFY_FIELDS.find((field) => hasValue(command[field]));
+    if (unexpectedMusicField) return fail('MUSIC_SPOTIFY_FIELD_NOT_ALLOWED', { field: unexpectedMusicField });
+  }
   if (command.operation === CODEX_BANKED_RESET_STATUS_OPERATION) {
     const unsafeField = unsafeAutomationField(command);
     if (unsafeField) return fail('RESET_STATUS_COMMAND_UNSAFE_FIELD_PRESENT', { field: unsafeField });
@@ -223,6 +242,14 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       pullRequestHead: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
         ? String(command.pullRequestHead || '').toLowerCase()
         : '',
+      ...(musicSpotifyCandidate ? {
+        source: MUSIC_SPOTIFY_LINK_SOURCE,
+        spotifyUri: musicSpotifyCandidate.spotifyUri,
+        targetTrackId: musicSpotifyCandidate.targetTrackId,
+        targetArtist: musicSpotifyCandidate.targetArtist,
+        targetTitle: musicSpotifyCandidate.targetTitle,
+        requestedAtUtc: musicSpotifyCandidate.requestedAtUtc,
+      } : {}),
       expiresAt: new Date(expiresAtMs).toISOString(),
       ...(reset || {}),
     }),
@@ -271,6 +298,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   runWorkerWatchdogAcceptance,
   runMonitorMultiplexerAcceptance,
   runExactHeadWindowsBrowserProof,
+  queueVerifiedSpotifyLink,
   readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
   redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
 } = {}) {
@@ -286,6 +314,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
     RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF: runExactHeadWindowsBrowserProof,
+    [MUSIC_SPOTIFY_LINK_OPERATION]: queueVerifiedSpotifyLink,
     [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
     [CODEX_BANKED_RESET_OPERATION]: redeemBankedCodexReset,
   };

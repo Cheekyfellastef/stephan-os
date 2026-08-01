@@ -16,6 +16,7 @@ import {
   CODEX_BANKED_RESET_POLICY_REF,
 } from './codexBankedResetBattleBridgeExecutor.mjs';
 import { CODEX_BANKED_RESET_STATUS_OPERATION } from './codexBankedResetStatusBattleBridgeReader.mjs';
+import { MUSIC_SPOTIFY_LINK_OPERATION, MUSIC_SPOTIFY_LINK_SOURCE } from './musicSpotifyLinkBridge.mjs';
 
 const now = new Date('2026-07-20T22:30:00.000Z');
 
@@ -322,6 +323,29 @@ test('dispatches only through the named injected handler', async () => {
   assert.equal(result.ok, true);
   assert.equal(calls, 1);
   assert.equal(result.result.expectedHead, command().expectedHead);
+});
+
+test('accepts and dispatches only a bounded connector Spotify track link', async () => {
+  const payload = command({
+    operation: MUSIC_SPOTIFY_LINK_OPERATION,
+    source: MUSIC_SPOTIFY_LINK_SOURCE,
+    spotifyUri: 'spotify:track:1234567890123456789012',
+    targetTrackId: 'deck-track-1',
+    targetArtist: 'Test Artist',
+    targetTitle: 'Test Track',
+    requestedAtUtc: now.toISOString(),
+  });
+  const validated = validateBattleBridgeGitHubCommand(payload, { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(validated.ok, true);
+  assert.equal(validated.command.spotifyUri, payload.spotifyUri);
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    queueVerifiedSpotifyLink: async () => { calls += 1; return { ok: true, finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED' }; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(calls, 1);
+  assert.equal(validateBattleBridgeGitHubCommand({ ...payload, spotifyUri: 'https://open.spotify.com/track/1234567890123456789012' }, { authorLogin: 'Cheekyfellastef', now }).blocker, 'MUSIC_SPOTIFY_TRACK_URI_INVALID');
+  assert.equal(validateBattleBridgeGitHubCommand({ ...payload, token: 'must-never-cross' }, { authorLogin: 'Cheekyfellastef', now }).blocker, 'MUSIC_SPOTIFY_UNSAFE_FIELD_PRESENT');
 });
 
 test('receipt records exact reset authority and safety boundary', () => {
