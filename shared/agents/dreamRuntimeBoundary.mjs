@@ -302,9 +302,9 @@ export function classifyDreamEventSets(sourceInput, destinationInput) {
     const isPrefix = (shorter, longer) => shorter.every((identity, index) => longer[index] === identity);
     let relation = DREAM_EVENT_SET_RELATIONS.PARTIAL_OVERLAP_COMPATIBLE;
     if (source.fileSha256 === destination.fileSha256) relation = DREAM_EVENT_SET_RELATIONS.IDENTICAL_CONTENT;
+    else if (conflicting.length) relation = DREAM_EVENT_SET_RELATIONS.CONFLICTING_DUPLICATE_IDENTITIES;
     else if (sourceSequence.length > destinationSequence.length && isPrefix(destinationSequence, sourceSequence)) relation = DREAM_EVENT_SET_RELATIONS.SOURCE_STRICT_APPEND_OF_DESTINATION;
     else if (destinationSequence.length > sourceSequence.length && isPrefix(sourceSequence, destinationSequence)) relation = DREAM_EVENT_SET_RELATIONS.DESTINATION_STRICT_APPEND_OF_SOURCE;
-    else if (conflicting.length) relation = DREAM_EVENT_SET_RELATIONS.CONFLICTING_DUPLICATE_IDENTITIES;
     else if (!overlap.length) relation = DREAM_EVENT_SET_RELATIONS.DISJOINT_EVENT_SETS;
     return Object.freeze({
       ok: true,
@@ -504,7 +504,7 @@ function validateVersionedManifest(manifest, expected) {
   if (manifest?.sourceSha256 !== expected.entry.sourceSha256 || !SHA256_PATTERN.test(String(manifest?.sourceSha256 || ''))) errors.push('source-hash');
   if (manifest?.destinationSha256 !== expected.entry.sourceSha256) errors.push('destination-hash');
   if (manifest?.byteSize !== expected.entry.bytes || !Number.isSafeInteger(manifest?.byteSize) || manifest.byteSize < 0) errors.push('byte-size');
-  if (!SOURCE_HEAD_PATTERN.test(String(manifest?.sourceHead || ''))) errors.push('source-head');
+  if (!SOURCE_HEAD_PATTERN.test(String(manifest?.sourceHead || '')) || manifest?.sourceHead !== expected.sourceHead) errors.push('source-head');
   if (!Number.isFinite(Date.parse(String(manifest?.capturedAtUtc || '')))) errors.push('captured-at');
   if (manifest?.previousCanonicalDestinationSha256 !== expected.entry.destinationSha256) errors.push('previous-canonical-hash');
   if (manifest?.relationClassification !== expected.entry.relationClassification) errors.push('relation');
@@ -586,7 +586,7 @@ async function preserveVersionedConflict(entry, boundary, {
     } else if (await sha256File(entry.destinationPath, { fsImpl }) !== entry.destinationSha256) {
       outcome = Object.freeze({ ok: false, blocker: 'DREAM_CANONICAL_DESTINATION_CHANGED' });
     } else {
-      const existingManifest = await readExistingManifest(paths, { entry, paths }, fsImpl);
+      const existingManifest = await readExistingManifest(paths, { entry, paths, sourceHead }, fsImpl);
       if (existingManifest.exists) {
         outcome = existingManifest.ok
           ? Object.freeze({

@@ -163,6 +163,20 @@ test('event identity contract classifies the investigated files as disjoint', ()
   assert.equal(relation.conflictingDuplicateIdentityCount, 0);
 });
 
+test('conflicting duplicate identities take precedence over append-shaped sequences', () => {
+  const destinationEvent = dreamEvent('2026-07-30T02:00:03.181Z', 'deep', '2026-07-30');
+  const conflictingEvent = { ...destinationEvent, lineCount: destinationEvent.lineCount + 1 };
+  const appendedEvent = dreamEvent('2026-08-01T02:00:06.909Z', 'deep', '2026-08-01');
+  const relation = classifyDreamEventSets(
+    jsonl([conflictingEvent, appendedEvent]),
+    jsonl([destinationEvent]),
+  );
+  assert.equal(relation.ok, true);
+  assert.equal(relation.relation, DREAM_EVENT_SET_RELATIONS.CONFLICTING_DUPLICATE_IDENTITIES);
+  assert.equal(relation.overlappingEventCount, 1);
+  assert.equal(relation.conflictingDuplicateIdentityCount, 1);
+});
+
 test('disjoint occupied destination is preserved as a deterministic version without mutating originals', async () => {
   const input = await disjointFixture();
   const sourceBefore = await fs.readFile(input.sourceEventsPath);
@@ -201,6 +215,20 @@ test('idempotent retry returns the same verified snapshot and manifest', async (
   assert.equal(second.preserved[0].preservationManifestPath, first.preserved[0].preservationManifestPath);
   const snapshotDirectory = path.dirname(first.preserved[0].versionedSnapshotPath);
   assert.deepEqual((await fs.readdir(snapshotDirectory)).filter((name) => name.endsWith('.snapshot')), [path.basename(first.preserved[0].versionedSnapshotPath)]);
+});
+
+test('idempotent snapshot reuse rejects a manifest bound to a different source head', async () => {
+  const input = await disjointFixture();
+  const first = await runApproved(input);
+  assert.equal(first.ok, true);
+  const retry = await runApproved(input, {
+    sourceHead: 'b'.repeat(40),
+    now: fixedNow('2026-08-01T12:31:00.000Z'),
+  });
+  assert.equal(retry.ok, false);
+  assert.equal(retry.blocker, 'DREAM_VERSIONED_RECEIPT_CONFLICT');
+  const manifest = JSON.parse(await fs.readFile(first.preserved[0].preservationManifestPath, 'utf8'));
+  assert.equal(manifest.sourceHead, HEAD);
 });
 
 test('same deterministic snapshot name with different content is rejected', async () => {
