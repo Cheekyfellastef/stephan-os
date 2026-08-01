@@ -10,6 +10,7 @@ import {
   parseBoundedGitHubJson,
   readMailboxReceipt,
   serializeBoundedReceiptJson,
+  validateBattleBridgeRecoveryMeshInstallReceipt,
 } from './battle-bridge-github-command-mailbox.mjs';
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
@@ -60,6 +61,53 @@ test('GitHub recovery wake binds the authenticated mailbox receipt instead of se
   assert.match(source, /BATTLE_BRIDGE_WINDOWS_HOST\.githubCli/);
   assert.doesNotMatch(source, /run\(['"]powershell\.exe['"]|run\(['"]git\.exe['"]|run\(['"]gh\.exe['"]/);
   assert.doesNotMatch(source, /ownerAuthenticated:\s*true/);
+});
+
+test('recovery mesh installation succeeds only from a truthful fixed postcondition receipt', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-recovery-mesh-install.v1',
+    taskName: 'Stephanos Battle Bridge Recovery Mesh',
+    installed: true,
+    startedNow: true,
+    taskPresentAfter: true,
+    whatIf: false,
+    maximumConcurrentExecutors: 1,
+    recoveryRoutes: [
+      'LOCAL_WINDOWS_SUPERVISOR',
+      'GITHUB_MAILBOX',
+      'TAILSCALE_CONTROL',
+      'OPENCLAW_WHATSAPP',
+      'AUTHENTICATED_BREAK_GLASS',
+    ],
+    arbitraryShellAllowed: false,
+    arbitraryTaskNameAllowed: false,
+    sourceMutationAllowed: false,
+    pcRestartAllowed: false,
+  };
+  assert.equal(validateBattleBridgeRecoveryMeshInstallReceipt(receipt).ok, true);
+  for (const corrupt of [
+    { ...receipt, installed: false },
+    { ...receipt, startedNow: false },
+    { ...receipt, taskPresentAfter: false },
+    { ...receipt, whatIf: true },
+    { ...receipt, maximumConcurrentExecutors: 2 },
+    { ...receipt, recoveryRoutes: receipt.recoveryRoutes.slice(0, 4) },
+  ]) {
+    assert.deepEqual(validateBattleBridgeRecoveryMeshInstallReceipt(corrupt), {
+      ok: false,
+      blocker: 'RECOVERY_MESH_INSTALL_POSTCONDITION_FAILED',
+    });
+  }
+});
+
+test('mailbox installer handler parses and validates the fixed install receipt before claiming success', async () => {
+  const source = await readFile(mailboxSourcePath, 'utf8');
+  assert.match(source, /preserveStdout: true/);
+  assert.match(source, /validateBattleBridgeRecoveryMeshInstallReceipt\(parseBoundedGitHubJson\(result\.stdout/);
+  assert.match(source, /installReceiptVerified: receiptValidation\.ok/);
+  assert.match(source, /RECOVERY_MESH_INSTALL_RECEIPT_INVALID/);
+  assert.match(source, /RECOVERY_MESH_INSTALL_POSTCONDITION_FAILED/);
+  assert.doesNotMatch(source, /ok: result\.ok,[\s\S]{0,160}BATTLE_BRIDGE_RECOVERY_MESH_INSTALLED/);
 });
 
 test('parses a GitHub issue-comment response larger than the diagnostic truncation limit', () => {

@@ -586,18 +586,58 @@ async function installUnattendedSync() {
   return { ...result, installer, fixedCommand: true, arbitraryShellAllowed: false };
 }
 
+export function validateBattleBridgeRecoveryMeshInstallReceipt(receipt, { startNow = true } = {}) {
+  const routes = Array.isArray(receipt?.recoveryRoutes) ? receipt.recoveryRoutes : [];
+  const expectedRoutes = [
+    'LOCAL_WINDOWS_SUPERVISOR',
+    'GITHUB_MAILBOX',
+    'TAILSCALE_CONTROL',
+    'OPENCLAW_WHATSAPP',
+    'AUTHENTICATED_BREAK_GLASS',
+  ];
+  const valid = receipt?.schemaVersion === 'stephanos.battle-bridge-recovery-mesh-install.v1'
+    && receipt?.taskName === 'Stephanos Battle Bridge Recovery Mesh'
+    && receipt?.installed === true
+    && receipt?.taskPresentAfter === true
+    && receipt?.whatIf === false
+    && receipt?.maximumConcurrentExecutors === 1
+    && receipt?.arbitraryShellAllowed === false
+    && receipt?.arbitraryTaskNameAllowed === false
+    && receipt?.sourceMutationAllowed === false
+    && receipt?.pcRestartAllowed === false
+    && routes.length === expectedRoutes.length
+    && expectedRoutes.every((route, index) => routes[index] === route)
+    && (!startNow || receipt?.startedNow === true);
+  return valid
+    ? Object.freeze({ ok: true, blocker: '', receipt })
+    : Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_POSTCONDITION_FAILED' });
+}
+
 async function installBattleBridgeRecoveryMesh(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
   const installer = join(repoRoot, 'scripts', 'windows', 'install-battle-bridge-recovery-mesh.ps1');
   if (!existsSync(installer)) return { ...identity, ok: false, blocker: 'RECOVERY_MESH_INSTALLER_MISSING' };
-  const result = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', installer, '-StartNow']);
+  const result = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', installer, '-StartNow'], {
+    preserveStdout: true,
+    maxBuffer: 16 * 1024,
+  });
+  let receiptValidation = Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_FAILED' });
+  if (result.ok) {
+    try {
+      receiptValidation = validateBattleBridgeRecoveryMeshInstallReceipt(parseBoundedGitHubJson(result.stdout, 16 * 1024), { startNow: true });
+    } catch {
+      receiptValidation = Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_RECEIPT_INVALID' });
+    }
+  }
   return {
     ...identity,
     ...result,
-    ok: result.ok,
-    blocker: result.ok ? '' : 'RECOVERY_MESH_INSTALL_FAILED',
-    finalVerdict: result.ok ? 'BATTLE_BRIDGE_RECOVERY_MESH_INSTALLED' : 'BATTLE_BRIDGE_RECOVERY_MESH_INSTALL_BLOCKED',
+    stdout: '',
+    ok: receiptValidation.ok,
+    blocker: receiptValidation.blocker,
+    finalVerdict: receiptValidation.ok ? 'BATTLE_BRIDGE_RECOVERY_MESH_INSTALLED' : 'BATTLE_BRIDGE_RECOVERY_MESH_INSTALL_BLOCKED',
+    installReceiptVerified: receiptValidation.ok,
     fixedCommand: true,
     arbitraryShellAllowed: false,
     arbitraryTaskNameAllowed: false,

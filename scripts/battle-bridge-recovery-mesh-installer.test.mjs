@@ -35,7 +35,11 @@ test('package lifecycle commands pin the canonical PowerShell host', async () =>
     assert.match(packageJson.scripts[name], /^"C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe" /);
     assert.doesNotMatch(packageJson.scripts[name], /^powershell\b/i);
   }
-  assert.match(packageJson.scripts['stephanos:battle-bridge:recovery-mesh'], /^"C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe" [\s\S]*run-battle-bridge-recovery-mesh-hidden\.ps1$/);
+  assert.equal(
+    packageJson.scripts['stephanos:battle-bridge:recovery-mesh'],
+    '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%USERPROFILE%\\Documents\\GitHub\\stephan-os\\scripts\\windows\\run-battle-bridge-recovery-mesh-hidden.ps1"',
+  );
+  assert.doesNotMatch(packageJson.scripts['stephanos:battle-bridge:recovery-mesh'], /-File scripts[\\/]/);
   assert.doesNotMatch(packageJson.scripts['stephanos:battle-bridge:recovery-mesh'], /^node\b/i);
 });
 
