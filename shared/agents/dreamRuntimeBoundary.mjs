@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -63,6 +62,14 @@ const WINDOWS_ARTIFACT_IO_SCRIPT = path.resolve(
   'scripts',
   'windows',
   'dream-runtime-artifact-io.ps1',
+);
+const POSIX_ARTIFACT_IO_SCRIPT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'scripts',
+  'posix',
+  'dream-runtime-artifact-io.py',
 );
 
 function codedError(code, message = code) {
@@ -202,6 +209,7 @@ async function ensureWindowsDirectoryComponent(parentPath, directoryName, parent
     '-ArtifactName', directoryName,
     '-Token', token,
     '-ExpectedAncestorIdentities', await windowsAncestorIdentityProof(parentIdentities),
+    '-AncestorPathsBase64', Buffer.from(JSON.stringify(filesystemAncestors(parentPath)), 'utf8').toString('base64'),
   ]);
   processState.child.stdin.end();
   const output = await processState.awaitExit();
@@ -657,6 +665,7 @@ async function startWindowsOwnedArtifactPublication(parentPath, artifactName, co
     '-ArtifactName', artifactName,
     '-Token', token,
     '-ExpectedAncestorIdentities', await windowsAncestorIdentityProof(ancestorIdentities),
+    '-AncestorPathsBase64', Buffer.from(JSON.stringify(filesystemAncestors(parentPath)), 'utf8').toString('base64'),
   ]);
   let inputError = null;
   processState.child.stdin.write(`${bytes.toString('base64')}\n`, (error) => { inputError = error || null; });
@@ -723,6 +732,7 @@ async function deleteWindowsOwnedArtifact(artifactPath, identity, ancestorIdenti
     '-Token', token,
     '-ExpectedOwnershipToken', ownershipToken,
     '-ExpectedAncestorIdentities', await windowsAncestorIdentityProof(provenAncestors),
+    '-AncestorPathsBase64', Buffer.from(JSON.stringify(filesystemAncestors(path.dirname(artifactPath))), 'utf8').toString('base64'),
   ]);
   processState.child.stdin.end();
   const output = await processState.awaitExit();
@@ -747,6 +757,7 @@ async function promoteWindowsOwnedArtifact(pendingPath, artifactPath, identity) 
     '-Token', token,
     '-ExpectedOwnershipToken', ownershipToken,
     '-ExpectedAncestorIdentities', await windowsAncestorIdentityProof(ancestorIdentities),
+    '-AncestorPathsBase64', Buffer.from(JSON.stringify(filesystemAncestors(path.dirname(artifactPath))), 'utf8').toString('base64'),
   ]);
   processState.child.stdin.end();
   const output = await processState.awaitExit();
@@ -782,8 +793,7 @@ async function promoteWindowsOwnedArtifact(pendingPath, artifactPath, identity) 
 
 async function acquireDirectoryMutationBoundary(parentPath, ancestorIdentities, fsImpl) {
   const parentIdentity = ancestorIdentities.at(-1)?.identity;
-  const handleNamespace = dreamDirectoryHandleNamespace();
-  if (handleNamespace) {
+  if (process.platform === 'linux') {
     const parentHandle = await fsImpl.open(parentPath, 'r');
     try {
       const openedParentIdentity = await parentHandle.stat();
@@ -795,7 +805,8 @@ async function acquireDirectoryMutationBoundary(parentPath, ancestorIdentities, 
       }
       await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
       return Object.freeze({
-        operationParentPath: path.join(handleNamespace, String(parentHandle.fd)),
+        operationParentPath: path.join(dreamDirectoryHandleNamespace('linux'), String(parentHandle.fd)),
+        parentHandle,
         release: async () => {
           try {
             await parentHandle.close();
@@ -815,6 +826,22 @@ async function acquireDirectoryMutationBoundary(parentPath, ancestorIdentities, 
     return Object.freeze({
       operationParentPath: parentPath,
       release: async () => true,
+    });
+  }
+  if (process.platform === 'darwin' && fsImpl === fs) {
+    const parentHandle = await fsImpl.open(parentPath, 'r');
+    const openedParentIdentity = await parentHandle.stat();
+    if (!sameDirectoryIdentity(parentIdentity, openedParentIdentity)) {
+      await parentHandle.close();
+      throw codedError('DREAM_MIGRATION_ANCESTOR_CHANGED');
+    }
+    await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
+    return Object.freeze({
+      operationParentPath: path.join('/dev/fd', String(parentHandle.fd)),
+      parentHandle,
+      release: async () => {
+        try { await parentHandle.close(); return true; } catch { return false; }
+      },
     });
   }
   throw codedError('DREAM_MIGRATION_DIRECTORY_RELATIVE_PUBLICATION_UNSUPPORTED');
@@ -1043,68 +1070,79 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
   }
   const ancestorIdentities = await ensureSafeDirectoryChain(parentPath, { fsImpl, create: false });
   let boundary = null;
-  let pendingHandle = null;
-  let finalIdentity = null;
+  let finalLinked = false;
+  let pendingRemoved = false;
   let result = null;
   let failure = null;
   try {
     boundary = await acquireDirectoryMutationBoundary(parentPath, ancestorIdentities, fsImpl);
     const operationPendingPath = path.join(boundary.operationParentPath, pendingName);
     const operationArtifactPath = path.join(boundary.operationParentPath, artifactName);
-    pendingHandle = await fsImpl.open(operationPendingPath, 'r');
-    const pendingIdentity = await pendingHandle.stat();
+    const pendingIdentity = await fsImpl.lstat(operationPendingPath);
     if (!sameOwnedArtifactIdentity(identity, pendingIdentity, 1)) {
       throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
     }
     await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
-    const handleRoot = dreamDirectoryHandleNamespace();
-    const handleSourcePath = handleRoot
-      ? path.join(handleRoot, String(pendingHandle.fd))
-      : operationPendingPath;
-    const expectedHash = sha256(await fsImpl.readFile(handleSourcePath));
-    await fsImpl.copyFile(handleSourcePath, operationArtifactPath, fsConstants.COPYFILE_EXCL);
-    finalIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
-    if (finalIdentity.size !== identity.size || await sha256File(artifactPath, { fsImpl }) !== expectedHash) {
+    if ((process.platform === 'linux' || process.platform === 'darwin') && fsImpl === fs) {
+      const pendingHandle = await fsImpl.open(operationPendingPath, 'r');
+      try {
+        const openedIdentity = await pendingHandle.stat();
+        if (!sameOwnedArtifactIdentity(identity, openedIdentity, 1)) {
+          throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
+        }
+        const helper = spawn('python3', [
+          POSIX_ARTIFACT_IO_SCRIPT,
+          '--pending-name', pendingName,
+          '--artifact-name', artifactName,
+        ], {
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe', pendingHandle.fd, boundary.parentHandle.fd],
+        });
+        const output = await new Promise((resolve) => {
+          let stdout = '';
+          let stderr = '';
+          helper.stdout.setEncoding('utf8');
+          helper.stderr.setEncoding('utf8');
+          helper.stdout.on('data', (chunk) => { stdout += chunk; });
+          helper.stderr.on('data', (chunk) => { stderr += chunk; });
+          helper.once('error', (error) => resolve({ code: null, stdout, stderr, error }));
+          helper.once('exit', (code) => resolve({ code, stdout, stderr }));
+        });
+        if (output.code !== 0 || output.stdout.trim() !== 'PROMOTED') {
+          const helperReason = output.stderr.split(/\r?\n/).find(Boolean) || '';
+          throw codedError(helperReason === 'EEXIST' ? 'EEXIST' : 'DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
+        }
+      } finally {
+        await pendingHandle.close();
+      }
+      finalLinked = true;
+      pendingRemoved = !(await exists(operationPendingPath, fsImpl));
+    } else {
+      await fsImpl.link(operationPendingPath, operationArtifactPath);
+      finalLinked = true;
+      await fsImpl.unlink(operationPendingPath);
+      pendingRemoved = true;
+    }
+    const promotedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
+    if (!sameFileIdentity(identity, promotedIdentity)) {
       throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
     }
-    const pendingRemoved = await removeOwnedArtifactWithinBoundary(
-      boundary.operationParentPath,
-      pendingName,
-      identity,
-      fsImpl,
-    );
-    if (!pendingRemoved) throw codedError('DREAM_MIGRATION_RECEIPT_PENDING_CLEANUP_FAILED');
-    result = Object.freeze({ artifactPath, identity: finalIdentity });
+    result = Object.freeze({ artifactPath, identity: promotedIdentity });
   } catch (error) {
     let cleaned = true;
-    if (finalIdentity && boundary) {
+    if (finalLinked && boundary) {
       cleaned = await removeOwnedArtifactWithinBoundary(
         boundary.operationParentPath,
         artifactName,
-        finalIdentity,
+        identity,
         fsImpl,
+        { maxLinkCount: pendingRemoved ? 1 : 2 },
       );
     }
     const wrapped = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
     wrapped.reasonCode = error?.code || 'DREAM_MIGRATION_RECEIPT_COMMIT_FAILED';
     wrapped.cleanupBlocker = cleaned ? '' : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
     failure = wrapped;
-  }
-  if (pendingHandle) {
-    try { await pendingHandle.close(); } catch {
-      if (!failure) {
-        const cleaned = Boolean(result && boundary && await removeOwnedArtifactWithinBoundary(
-          boundary.operationParentPath,
-          artifactName,
-          result.identity,
-          fsImpl,
-        ));
-        result = null;
-        failure = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
-        failure.reasonCode = 'DREAM_MIGRATION_RECEIPT_HANDLE_CLOSE_FAILED';
-        failure.cleanupBlocker = cleaned ? '' : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
-      }
-    }
   }
   const released = boundary ? await boundary.release() : true;
   if (!released) {

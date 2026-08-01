@@ -147,6 +147,15 @@ async function windowsAncestorIdentityProofForTest(target) {
   return identities.join(',');
 }
 
+function windowsAncestorPathsBase64ForTest(target) {
+  const resolved = path.resolve(target);
+  const parsed = path.parse(resolved);
+  const segments = path.relative(parsed.root, resolved).split(path.sep).filter(Boolean);
+  const ancestors = [parsed.root];
+  for (const segment of segments) ancestors.push(path.join(ancestors.at(-1), segment));
+  return Buffer.from(JSON.stringify(ancestors), 'utf8').toString('base64');
+}
+
 async function runApproved(input, overrides = {}) {
   return executeDreamRuntimeMigration({
     repoRoot: input.repoRoot,
@@ -887,6 +896,7 @@ test('Windows native publication keeps the final name hidden and aborts its owne
     '-ArtifactName', artifactName,
     '-Token', token,
     '-ExpectedAncestorIdentities', expectedAncestorIdentities,
+    '-AncestorPathsBase64', windowsAncestorPathsBase64ForTest(parent),
   ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => {});
   child.stdout.setEncoding('utf8');
@@ -902,7 +912,11 @@ test('Windows native publication keeps the final name hidden and aborts its owne
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
   child.stdin.write(`${Buffer.from('{"finalVerdict":"TEST_ONLY"}\n').toString('base64')}\n`);
-  await ready;
+  const started = await Promise.race([
+    ready.then(() => true),
+    exited.then(() => false),
+  ]);
+  assert.equal(started, true, `helper exited before READY: ${stderr.trim()}`);
   await assert.rejects(() => fs.lstat(artifactPath), (error) => error.code === 'ENOENT');
   assert.equal(await fs.readFile(stagingPath, 'utf8'), '{"finalVerdict":"TEST_ONLY"}\n');
   child.stdin.end('ABORT\n');
@@ -936,6 +950,7 @@ test('Windows native publication rejects a replaced earlier ancestor by exact ch
     '-ArtifactName', artifactName,
     '-Token', token,
     '-ExpectedAncestorIdentities', expectedAncestorIdentities,
+    '-AncestorPathsBase64', windowsAncestorPathsBase64ForTest(parent),
   ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => {});
   let stdout = '';
@@ -948,7 +963,7 @@ test('Windows native publication rejects a replaced earlier ancestor by exact ch
   child.stdin.end(`${Buffer.from('{"finalVerdict":"TEST_ONLY"}\n').toString('base64')}\nCOMMIT\n`);
   assert.equal(await exited, 2);
   assert.equal(stdout.includes(`COMMITTED:${token}`), false);
-  assert.match(stderr, /DREAM_RUNTIME_ARTIFACT_IO_FAILED/);
+  assert.match(stderr, /DREAM_MIGRATION_EXACT_ANCESTOR_CHANGED/);
   await assert.rejects(() => fs.lstat(path.join(parent, artifactName)), (error) => error.code === 'ENOENT');
   await assert.rejects(
     () => fs.lstat(path.join(parkedAncestor, 'receipt-root', artifactName)),
@@ -1167,6 +1182,58 @@ test('ancestor swap during publication cannot redirect or retain an escaped arti
     () => fs.lstat(path.join(externalParent, path.basename(paths.snapshotPath))),
     (error) => error.code === 'ENOENT',
   );
+});
+
+test('Linux promotion binds the authoritative name to the opened pending inode', { skip: process.platform !== 'linux' }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dream-linkat-'));
+  const pendingName = '.stephanos-pending-hostile-receipt.json';
+  const pendingPath = path.join(root, pendingName);
+  const displacedPath = path.join(root, 'owned-displaced');
+  const finalPath = path.join(root, 'dream-migration-hostile.json');
+  await fs.writeFile(pendingPath, 'owned-receipt');
+  const pendingHandle = await fs.open(pendingPath, 'r');
+  const parentHandle = await fs.open(root, 'r');
+  await fs.rename(pendingPath, displacedPath);
+  await fs.writeFile(pendingPath, 'attacker-replacement');
+  try {
+    const helper = spawn('python3', [
+      path.resolve('scripts/posix/dream-runtime-artifact-io.py'),
+      '--pending-name', pendingName,
+      '--artifact-name', path.basename(finalPath),
+    ], { stdio: ['ignore', 'pipe', 'pipe', pendingHandle.fd, parentHandle.fd] });
+    const outcome = await new Promise((resolve) => {
+      let stdout = '';
+      let stderr = '';
+      helper.stdout.setEncoding('utf8');
+      helper.stderr.setEncoding('utf8');
+      helper.stdout.on('data', (chunk) => { stdout += chunk; });
+      helper.stderr.on('data', (chunk) => { stderr += chunk; });
+      helper.once('exit', (code) => resolve({ code, stdout, stderr }));
+    });
+    assert.deepEqual(outcome, {
+      code: 2,
+      stdout: '',
+      stderr: 'DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED\n',
+    });
+    await assert.rejects(() => fs.lstat(finalPath), (error) => error.code === 'ENOENT');
+    assert.equal(await fs.readFile(pendingPath, 'utf8'), 'attacker-replacement');
+    assert.equal(await fs.readFile(displacedPath, 'utf8'), 'owned-receipt');
+  } finally {
+    await pendingHandle.close();
+    await parentHandle.close();
+  }
+});
+
+test('cross-platform publication adapters preserve the structural commit invariant', async () => {
+  const posixHelper = await fs.readFile(path.resolve('scripts/posix/dream-runtime-artifact-io.py'), 'utf8');
+  assert.match(posixHelper, /linkat\(-100, b"\/proc\/self\/fd\/3"/);
+  assert.match(posixHelper, /platform\.system\(\) == "Darwin"/);
+  assert.match(posixHelper, /flock\(parent_fd, fcntl\.LOCK_EX\)/);
+  assert.match(posixHelper, /renameatx_np/);
+  const windowsHelper = await fs.readFile(path.resolve('scripts/windows/dream-runtime-artifact-io.ps1'), 'utf8');
+  assert.match(windowsHelper, /AncestorPathsBase64/);
+  assert.equal((windowsHelper.match(/Assert-AncestorChainUnchanged/g) || []).length >= 5, true);
+  assert.match(windowsHelper, /if \(\$renamed\)[\s\S]*DeleteByHandle\(\$pending\)/);
 });
 
 test('missing preservation directories are created relative to the validated parent handle', { skip: process.platform !== 'linux' }, async () => {

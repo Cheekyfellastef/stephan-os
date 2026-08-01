@@ -21,7 +21,11 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[a-f0-9]{8}:[a-f0-9]{16}(,[a-f0-9]{8}:[a-f0-9]{16})*$')]
-    [string]$ExpectedAncestorIdentities
+    [string]$ExpectedAncestorIdentities,
+
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[A-Za-z0-9+/=]*$')]
+    [string]$AncestorPathsBase64
 )
 
 $ErrorActionPreference = 'Stop'
@@ -231,7 +235,7 @@ public static class StephanosDreamArtifactIo {
         try {
             string rootIdentity = DirectoryIdentity(ReadInfo(current, true));
             if (!String.Equals(rootIdentity, expected[0], StringComparison.Ordinal)) {
-                throw new InvalidOperationException("DREAM_MIGRATION_ANCESTOR_CHANGED");
+                throw new InvalidOperationException("DREAM_MIGRATION_EXACT_ANCESTOR_CHANGED");
             }
             for (int index = 0; index < segments.Length; index += 1) {
                 var next = OpenRelative(
@@ -245,7 +249,7 @@ public static class StephanosDreamArtifactIo {
                 try {
                     string observed = DirectoryIdentity(ReadInfo(next, true));
                     if (!String.Equals(observed, expected[index + 1], StringComparison.Ordinal)) {
-                        throw new InvalidOperationException("DREAM_MIGRATION_ANCESTOR_CHANGED");
+                        throw new InvalidOperationException("DREAM_MIGRATION_EXACT_ANCESTOR_CHANGED");
                     }
                 } catch {
                     next.Dispose();
@@ -274,7 +278,7 @@ public static class StephanosDreamArtifactIo {
         );
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
         try {
-            string opened = Identity(ReadInfo(handle, true));
+            string opened = DirectoryIdentity(ReadInfo(handle, true));
             string after = ReadPathIdentity(path);
             if (!String.Equals(before, opened, StringComparison.Ordinal)
                 || !String.Equals(opened, after, StringComparison.Ordinal)) {
@@ -298,7 +302,7 @@ public static class StephanosDreamArtifactIo {
             IntPtr.Zero
         )) {
             if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-            return Identity(ReadInfo(handle, true));
+            return DirectoryIdentity(ReadInfo(handle, true));
         }
     }
 
@@ -429,7 +433,7 @@ public static class StephanosDreamArtifactIo {
     }
 
     public static string ReadDirectoryIdentity(SafeFileHandle handle) {
-        return Identity(ReadInfo(handle, true));
+        return DirectoryIdentity(ReadInfo(handle, true));
     }
 
     public static void WriteAndFlush(SafeFileHandle handle, byte[] bytes) {
@@ -499,6 +503,57 @@ try {
     if (-not [System.IO.Directory]::Exists($resolvedParent)) {
         throw 'DREAM_MIGRATION_ARTIFACT_PARENT_MISSING'
     }
+    $ancestorHandles = [System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
+    $ancestorPaths = @()
+    if (-not [string]::IsNullOrWhiteSpace($AncestorPathsBase64)) {
+        $ancestorJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($AncestorPathsBase64))
+        $decodedAncestors = $ancestorJson | ConvertFrom-Json
+        foreach ($decodedAncestor in $decodedAncestors) {
+            $ancestorPaths += [string]$decodedAncestor
+        }
+    }
+    $expectedAncestorPaths = [System.Collections.Generic.List[string]]::new()
+    $rootPath = [System.IO.Path]::GetPathRoot($resolvedParent)
+    $expectedAncestorPaths.Add($rootPath)
+    $relativeAncestorPath = $resolvedParent.Substring($rootPath.Length).Trim(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )
+    $ancestorCursor = $rootPath
+    foreach ($segment in $relativeAncestorPath.Split(
+        @([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar),
+        [System.StringSplitOptions]::RemoveEmptyEntries
+    )) {
+        $ancestorCursor = [System.IO.Path]::Combine($ancestorCursor, $segment)
+        $expectedAncestorPaths.Add([System.IO.Path]::GetFullPath($ancestorCursor))
+    }
+    if ($ancestorPaths.Count -ne $expectedAncestorPaths.Count) {
+        throw 'DREAM_MIGRATION_ANCESTOR_PATH_PROOF_COUNT_INVALID'
+    }
+    for ($index = 0; $index -lt $ancestorPaths.Count; $index += 1) {
+        $resolvedAncestor = [System.IO.Path]::GetFullPath([string]$ancestorPaths[$index])
+        if (-not [string]::Equals(
+            $resolvedAncestor,
+            $expectedAncestorPaths[$index],
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw 'DREAM_MIGRATION_ANCESTOR_PATH_INVALID'
+        }
+    }
+    foreach ($ancestorPath in $ancestorPaths) {
+        $resolvedAncestor = [System.IO.Path]::GetFullPath([string]$ancestorPath)
+        $ancestorHandles.Add([StephanosDreamArtifactIo]::OpenValidatedParent($resolvedAncestor))
+    }
+    function Assert-AncestorChainUnchanged {
+        for ($index = 0; $index -lt $ancestorPaths.Count; $index += 1) {
+            $openedIdentity = [StephanosDreamArtifactIo]::ReadDirectoryIdentity($ancestorHandles[$index])
+            $pathIdentity = [StephanosDreamArtifactIo]::ReadPathIdentity([System.IO.Path]::GetFullPath([string]$ancestorPaths[$index]))
+            if (-not [string]::Equals($openedIdentity, $pathIdentity, [System.StringComparison]::Ordinal)) {
+                throw 'DREAM_MIGRATION_ANCESTOR_CHANGED'
+            }
+        }
+    }
+    Assert-AncestorChainUnchanged
     $parent = [StephanosDreamArtifactIo]::OpenValidatedChain($resolvedParent, $ExpectedAncestorIdentities)
     try {
         if ($Mode -eq 'EnsureDirectory') {
@@ -538,16 +593,25 @@ try {
             }
             Assert-BoundedPendingName -Value $PendingName -FinalName $ArtifactName
             $pending = [StephanosDreamArtifactIo]::OpenRelativeForDelete($parent, $PendingName)
+            $renamed = $false
             try {
                 $observed = [StephanosDreamArtifactIo]::ReadOwnedIdentity($pending)
                 if (-not [string]::Equals($observed, $ExpectedOwnershipToken, [System.StringComparison]::Ordinal)) {
                     throw 'DREAM_MIGRATION_OWNERSHIP_IDENTITY_CHANGED'
                 }
+                Assert-AncestorChainUnchanged
                 [StephanosDreamArtifactIo]::RenameRelativeNoReplace($pending, $parent, $ArtifactName)
+                $renamed = $true
+                Assert-AncestorChainUnchanged
                 $promoted = [StephanosDreamArtifactIo]::ReadOwnedIdentity($pending)
                 if (-not [string]::Equals($observed, $promoted, [System.StringComparison]::Ordinal)) {
                     throw 'DREAM_MIGRATION_OWNERSHIP_IDENTITY_CHANGED'
                 }
+            } catch {
+                if ($renamed) {
+                    try { [StephanosDreamArtifactIo]::DeleteByHandle($pending) } catch {}
+                }
+                throw
             } finally {
                 $pending.Dispose()
             }
@@ -576,8 +640,17 @@ try {
             [Console]::Out.Flush()
             $command = [Console]::In.ReadLine()
             if ([string]::Equals($command, 'COMMIT', [System.StringComparison]::Ordinal)) {
+                Assert-AncestorChainUnchanged
                 [StephanosDreamArtifactIo]::RenameRelativeNoReplace($artifact, $parent, $ArtifactName)
                 $committed = $true
+                try {
+                    Assert-AncestorChainUnchanged
+                } catch {
+                    [StephanosDreamArtifactIo]::DeleteByHandle($artifact)
+                    $deleted = $true
+                    $committed = $false
+                    throw
+                }
                 [Console]::Out.WriteLine("COMMITTED:$Token")
                 [Console]::Out.Flush()
             } else {
@@ -599,6 +672,7 @@ try {
         }
     } finally {
         $parent.Dispose()
+        foreach ($ancestorHandle in $ancestorHandles) { $ancestorHandle.Dispose() }
     }
 } catch {
     $failure = $_.Exception
@@ -609,6 +683,8 @@ try {
         [Console]::Error.WriteLine('EEXIST')
     } elseif ($failure -is [System.ComponentModel.Win32Exception]) {
         [Console]::Error.WriteLine("DREAM_RUNTIME_ARTIFACT_IO_FAILED:$($failure.NativeErrorCode)")
+    } elseif ($failure.Message -match '^DREAM_[A-Z0-9_]+$') {
+        [Console]::Error.WriteLine($failure.Message)
     } else {
         [Console]::Error.WriteLine('DREAM_RUNTIME_ARTIFACT_IO_FAILED')
     }
