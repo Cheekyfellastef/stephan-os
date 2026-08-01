@@ -77,6 +77,17 @@ async function disjointFixture() {
   return result;
 }
 
+async function alreadyVerifiedFixture() {
+  const result = await fixture();
+  await fs.mkdir(path.dirname(result.destinationEventsPath), { recursive: true });
+  await fs.copyFile(result.sourceEventsPath, result.destinationEventsPath);
+  const sourceDeepPath = path.join(result.repoRoot, 'memory', 'dreaming', 'deep', '2026-07-21.md');
+  const destinationDeepPath = path.join(result.workspaceRoot, 'memory', 'dreaming', 'deep', '2026-07-21.md');
+  await fs.mkdir(path.dirname(destinationDeepPath), { recursive: true });
+  await fs.copyFile(sourceDeepPath, destinationDeepPath);
+  return { ...result, sourceDeepPath, destinationDeepPath };
+}
+
 function eventEntry(plan) {
   const entry = plan.entries.find((candidate) => candidate.logicalSourcePath === 'memory/.dreams/events.jsonl');
   assert.ok(entry, 'event entry missing');
@@ -205,6 +216,61 @@ test('source-head drift after receipt removes newly owned copy outputs and recei
   for (const entry of plan.entries) {
     await assert.rejects(() => fs.lstat(entry.destinationPath), (error) => error.code === 'ENOENT');
   }
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
+test('already-verified destination changes are rejected before receipt publication', async () => {
+  const input = await alreadyVerifiedFixture();
+  let headReads = 0;
+  const result = await runApproved(input, {
+    sourceHeadVerifierFn: async () => {
+      headReads += 1;
+      if (headReads === 1) await fs.appendFile(input.destinationEventsPath, ' ');
+      return HEAD;
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_DESTINATION_CHANGED');
+  assert.equal(result.failedEntry.logicalSourcePath, 'memory/.dreams/events.jsonl');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const receiptFiles = await fs.readdir(plan.receiptRoot).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
+test('already-verified source changes are rejected before receipt publication', async () => {
+  const input = await alreadyVerifiedFixture();
+  let headReads = 0;
+  const result = await runApproved(input, {
+    sourceHeadVerifierFn: async () => {
+      headReads += 1;
+      if (headReads === 1) await fs.appendFile(input.sourceEventsPath, ' ');
+      return HEAD;
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_CHANGED');
+  assert.equal(result.failedEntry.logicalSourcePath, 'memory/.dreams/events.jsonl');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const receiptFiles = await fs.readdir(plan.receiptRoot).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
+test('already-verified changes during receipt write remove the owned receipt', async () => {
+  const input = await alreadyVerifiedFixture();
+  let changed = false;
+  const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
+    if (!changed && String(target).includes(`${path.sep}runtime-boundary${path.sep}dream-migration-`)) {
+      changed = true;
+      await fs.appendFile(input.destinationEventsPath, ' ');
+    }
+  });
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(changed, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_DESTINATION_CHANGED');
+  assert.equal(result.cleanupBlocker, '');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
   const receiptFiles = await fs.readdir(plan.receiptRoot);
   assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
 });

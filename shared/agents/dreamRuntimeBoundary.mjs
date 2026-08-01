@@ -930,6 +930,41 @@ async function copyRequiredEntry(entry, fsImpl) {
   }
 }
 
+async function revalidateMigrationReceiptInputs(plan, { fsImpl, sourceHead }) {
+  for (const entry of plan.entries) {
+    try {
+      const sourceInfo = await assertRegularSingleLink(entry.sourcePath, { fsImpl });
+      if (sourceInfo.size !== entry.bytes || await sha256File(entry.sourcePath, { fsImpl }) !== entry.sourceSha256) {
+        return Object.freeze({ ok: false, blocker: 'DREAM_MIGRATION_SOURCE_CHANGED', failedEntry: entry });
+      }
+      await assertRegularSingleLink(entry.destinationPath, { fsImpl });
+      if (entry.state === 'versioned-preservation-required') {
+        if (await sha256File(entry.destinationPath, { fsImpl }) !== entry.destinationSha256) {
+          return Object.freeze({ ok: false, blocker: 'DREAM_CANONICAL_DESTINATION_CHANGED', failedEntry: entry });
+        }
+        const paths = resolveDreamVersionedPreservationPaths(entry, plan);
+        const existingManifest = await readExistingManifest(paths, { entry, paths, sourceHead }, fsImpl);
+        if (!existingManifest.exists || !existingManifest.ok) {
+          return Object.freeze({
+            ok: false,
+            blocker: existingManifest.blocker || 'DREAM_VERSIONED_FINAL_REVALIDATION_FAILED',
+            failedEntry: entry,
+          });
+        }
+      } else if (await sha256File(entry.destinationPath, { fsImpl }) !== entry.sourceSha256) {
+        return Object.freeze({ ok: false, blocker: 'DREAM_MIGRATION_DESTINATION_CHANGED', failedEntry: entry });
+      }
+    } catch (error) {
+      return Object.freeze({
+        ok: false,
+        blocker: error?.code || 'DREAM_MIGRATION_FINAL_REVALIDATION_FAILED',
+        failedEntry: entry,
+      });
+    }
+  }
+  return Object.freeze({ ok: true, blocker: '' });
+}
+
 export async function executeDreamRuntimeMigration({
   repoRoot,
   env = process.env,
@@ -1061,6 +1096,22 @@ export async function executeDreamRuntimeMigration({
       createdPreservationArtifacts.push(...(preservation.createdArtifacts || []));
     }
   }
+  const finalRevalidation = await revalidateMigrationReceiptInputs(plan, { fsImpl, sourceHead });
+  if (!finalRevalidation.ok) {
+    const cleaned = await cleanupCreatedMigrationArtifacts();
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: finalRevalidation.blocker,
+      blocker: finalRevalidation.blocker,
+      cleanupBlocker: cleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
+      failedEntry: finalRevalidation.failedEntry,
+      copied: Object.freeze(copied),
+      preserved: Object.freeze([]),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
   if (!(await verifySourceHead())) {
     const cleaned = await cleanupCreatedMigrationArtifacts();
     return Object.freeze({
@@ -1112,6 +1163,23 @@ export async function executeDreamRuntimeMigration({
       blocker: 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
       receiptWriteReason: error?.reasonCode || error?.code || 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
       cleanupBlocker: error?.cleanupBlocker || (migrationArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED'),
+      copied: Object.freeze(copied),
+      preserved: Object.freeze([]),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
+  const postReceiptRevalidation = await revalidateMigrationReceiptInputs(plan, { fsImpl, sourceHead });
+  if (!postReceiptRevalidation.ok) {
+    const receiptCleaned = await removeOwnedArtifact(writtenReceipt.receiptPath, writtenReceipt.identity, fsImpl);
+    const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: postReceiptRevalidation.blocker,
+      blocker: postReceiptRevalidation.blocker,
+      cleanupBlocker: receiptCleaned && migrationArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
+      failedEntry: postReceiptRevalidation.failedEntry,
       copied: Object.freeze(copied),
       preserved: Object.freeze([]),
       sourceRemovalPerformed: false,
