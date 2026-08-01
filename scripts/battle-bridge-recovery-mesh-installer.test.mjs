@@ -98,6 +98,14 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   assert.match(probe, /battle-bridge-backend-freshness-probe\.mjs/);
   assert.match(probe, /\/api\/mission-operations/);
   assert.match(probe, /BACKEND_CURRENT/);
+  assert.match(probe, /Get-NetTCPConnection -LocalPort 8787 -State Listen/);
+  assert.match(probe, /Get-CimInstance Win32_Process/);
+  assert.match(probe, /BACKEND_LISTENER_IDENTITY_CHANGED/);
+  assert.match(probe, /BACKEND_TASK_PROCESS_OWNERSHIP_STALE_OR_INVALID/);
+  assert.match(probe, /BACKEND_TASK_PROCESS_LINEAGE_NOT_PROVEN/);
+  assert.match(probe, /processStartTimeUtc/);
+  assert.match(probe, /--expected-source-head \$ExpectedSourceHead/);
+  assert.match(probe, /BACKEND_LISTENER_OWNERSHIP_UNVERIFIABLE/);
   assert.doesNotMatch(probe, /function Test-HttpHealth/);
   assert.match(probe, /http:\/\/127\.0\.0\.1:18789\/health/);
   assert.match(probe, /http:\/\/127\.0\.0\.1:18789\/identity/);
@@ -120,6 +128,32 @@ test('backend autostart contract rejects overlapping task instances', async () =
   assert.match(installer, /New-ScheduledTaskPrincipal -UserId \$currentUser -LogonType Interactive -RunLevel Limited/);
   assert.match(installer, /New-ScheduledTaskSettingsSet[^\r\n]*-MultipleInstances IgnoreNew/);
   assert.doesNotMatch(installer, /RunLevel Highest|-MultipleInstances Parallel/);
+});
+
+test('canonical task definition beside an unrelated listener cannot establish backend ownership', async () => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  assert.match(probe, /Equals\(\$executable, \$canonicalNode/);
+  assert.match(probe, /BACKEND_LISTENER_EXECUTABLE_FOREIGN/);
+  assert.match(probe, /expectedQuotedCommand = [^\r\n]*stephanos-server\/server\.js/);
+  assert.match(probe, /Equals\(\$commandLine, \$expectedQuotedCommand/);
+  assert.match(probe, /BACKEND_LISTENER_COMMAND_FOREIGN/);
+  assert.match(probe, /receipt\.pid -eq \$listenerAfter\.pid/);
+});
+
+test('listener identity change between response probe and ownership recheck fails closed', async () => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  assert.match(probe, /\$listenerBefore = Get-BackendListenerIdentity[\s\S]*& \$canonicalNode[\s\S]*\$listenerAfter = Get-BackendListenerIdentity/);
+  assert.match(probe, /listenerBefore\.pid -ne \$listenerAfter\.pid/);
+  assert.match(probe, /listenerBefore\.creationTimeUtc -ne \$listenerAfter\.creationTimeUtc/);
+  assert.match(probe, /BACKEND_LISTENER_IDENTITY_CHANGED/);
+});
+
+test('unsupported ownership inspection reports an explicit fail-closed blocker', async () => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  assert.match(probe, /Get-NetTCPConnection[^\r\n]*-ErrorAction Stop/);
+  assert.match(probe, /Get-CimInstance Win32_Process[^\r\n]*-ErrorAction Stop/);
+  assert.match(probe, /\$reason = 'BACKEND_LISTENER_OWNERSHIP_UNVERIFIABLE'/);
+  assert.doesNotMatch(probe, /BACKEND_LISTENER_OWNERSHIP_UNVERIFIABLE'\s*}\s*catch\s*{\s*return[^\r\n]*healthy = \$true/);
 });
 
 test('ingress adapter has four fixed routes and nonce-gates break glass', async () => {

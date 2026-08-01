@@ -7,10 +7,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Test-BackendHealth {
-    param([string]$Url)
+    param([string]$Url, [string]$ExpectedSourceHead)
     try {
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5
-        return $response.StatusCode -eq 200
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -MaximumRedirection 0
+        $body = $response.Content | ConvertFrom-Json
+        return $response.StatusCode -eq 200 `
+            -and [string]$body.schemaVersion -eq 'stephanos.backend-health.v1' `
+            -and [string]$body.backendIdentity.runtimeId -eq 'stephanos-battle-bridge-backend' `
+            -and ([string]$body.backendIdentity.sourceHead).ToLowerInvariant() -eq $ExpectedSourceHead
     }
     catch { return $false }
 }
@@ -35,6 +39,7 @@ function Write-BackendRuntimeReceipt {
         [string]$Branch,
         [string]$HeadSha,
         [int]$ProcessId,
+        [string]$ProcessStartTimeUtc,
         [string]$HealthUrl
     )
     $statusDir = Join-Path $WorkspaceRoot 'status'
@@ -48,6 +53,7 @@ function Write-BackendRuntimeReceipt {
         headSha = $HeadSha
         taskName = 'Stephanos Battle Bridge Backend'
         pid = $ProcessId
+        processStartTimeUtc = $ProcessStartTimeUtc
         healthUrl = 'loopback-backend-health'
         exactHeadProofOk = $true
         arbitraryShellAllowed = $false
@@ -117,7 +123,7 @@ catch {
     Write-Log 'WARNING: Continuing backend startup. OpenClaw execution remains disabled.'
 }
 
-if (Test-BackendHealth -Url $healthUrl) {
+if ((Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $headSha) -and (Get-VerifiedBackendListener)) {
     Write-Log 'Backend already healthy; exiting without starting a new process.'
     exit 0
 }
@@ -129,6 +135,7 @@ if (-not $npmCommand) {
 }
 
 $arguments = @('run', 'stephanos:backend')
+$env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
 Write-Log ("Starting backend with command: {0} {1}" -f $npmCommand, ($arguments -join ' '))
 if ($PSCmdlet.ShouldProcess("$npmCommand $($arguments -join ' ')", 'Start Stephanos backend')) {
     $process = Start-Process -FilePath $npmCommand `
@@ -148,7 +155,7 @@ else {
 $deadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)
 $listener = $null
 while ((Get-Date) -lt $deadline) {
-    if (Test-BackendHealth -Url $healthUrl) {
+    if (Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $headSha) {
         $listener = Get-VerifiedBackendListener
         if ($listener) { break }
     }
@@ -156,7 +163,8 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if ($listener) {
-    Write-BackendRuntimeReceipt -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -ProcessId $listener.ProcessId -HealthUrl $healthUrl
+    $listenerProcess = Get-Process -Id $listener.ProcessId -ErrorAction Stop
+    Write-BackendRuntimeReceipt -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -ProcessId $listener.ProcessId -ProcessStartTimeUtc $listenerProcess.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') -HealthUrl $healthUrl
     Write-Log "Backend health and exact-head runtime receipt succeeded within $StartupTimeoutSeconds seconds."
     exit 0
 }
