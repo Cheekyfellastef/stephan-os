@@ -1,18 +1,40 @@
 const MAX_QUERY_LENGTH = 160;
+const DEFAULT_BROWSER_TIMEOUT_MS = 8000;
 
 export function normalizeNativeCatalogQuery(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY_LENGTH);
 }
 
-export async function requestNativeCatalogSearch(query, { fetchImpl = globalThis.fetch, limit = 5 } = {}) {
+export async function requestNativeCatalogSearch(query, { fetchImpl = globalThis.fetch, limit = 5, timeoutMs = DEFAULT_BROWSER_TIMEOUT_MS, signal } = {}) {
   const normalizedQuery = normalizeNativeCatalogQuery(query);
   if (!normalizedQuery) return { ok: false, error: 'Type a song, artist or musical direction.' };
-  const response = await fetchImpl(`/api/music/catalog/search?q=${encodeURIComponent(normalizedQuery)}&limit=${Math.min(Math.max(Number(limit) || 5, 1), 10)}`);
-  const payload = await response.json();
-  if (!response.ok || !payload?.ok) {
-    return { ok: false, error: payload?.error || 'Music search is temporarily unavailable.', results: [] };
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  signal?.addEventListener?.('abort', abortFromCaller, { once: true });
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(Object.assign(new Error('Music search timed out'), { code: 'catalog_search_timeout' }));
+    }, Math.max(1, Number(timeoutMs || DEFAULT_BROWSER_TIMEOUT_MS)));
+  });
+  try {
+    const url = `/api/music/catalog/search?q=${encodeURIComponent(normalizedQuery)}&limit=${Math.min(Math.max(Number(limit) || 5, 1), 10)}`;
+    const response = await Promise.race([fetchImpl(url, { signal: controller.signal }), deadline]);
+    const payload = await Promise.race([response.json(), deadline]);
+    if (!response.ok || !payload?.ok) {
+      return { ok: false, error: payload?.error || 'Music search is temporarily unavailable.', results: [] };
+    }
+    return payload;
+  } catch (error) {
+    if (error?.code === 'catalog_search_timeout' || error?.name === 'AbortError') {
+      return { ok: false, error: 'Music search timed out. Please try again.', results: [] };
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener?.('abort', abortFromCaller);
   }
-  return payload;
 }
 
 export function catalogResultToMusicTileTrack(result = {}) {

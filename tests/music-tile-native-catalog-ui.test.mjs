@@ -65,6 +65,28 @@ test('browser request is bounded and uses one provider-neutral endpoint', async 
   assert.doesNotMatch(requestedUrl, /spotify|musicbrainz/);
 });
 
+test('browser catalogue deadline bounds both transport and response body', async () => {
+  const transport = await requestNativeCatalogSearch('stalled transport', {
+    timeoutMs: 5,
+    fetchImpl: async () => new Promise(() => {}),
+  });
+  assert.equal(transport.ok, false);
+  assert.match(transport.error, /timed out/i);
+  const body = await requestNativeCatalogSearch('stalled body', {
+    timeoutMs: 5,
+    fetchImpl: async () => ({ ok: true, json: async () => new Promise(() => {}) }),
+  });
+  assert.equal(body.ok, false);
+  assert.match(body.error, /timed out/i);
+});
+
+test('catalogue Spotify links remain reachable without claiming browser playback', () => {
+  assert.match(main, /const hasValidatedCatalogLink = track\.sourceKind === 'native-catalog' && track\.catalogVerificationStatus === 'metadata_verified'/);
+  assert.match(main, /const hasReachableSpotifyTrack = spotifyRef\.valid && spotifyRef\.type === 'track' && \(verifiedCandidate \|\| hasValidatedCatalogLink\)/);
+  assert.match(main, /const hasPlayableSpotifyTrack = verifiedCandidate && hasReachableSpotifyTrack/);
+  assert.match(main, /const spotifyOpenUrl = hasReachableSpotifyTrack \? spotifyRef\.openUrl : ''/);
+});
+
 test('card insertion preserves existing player DOM instead of rebuilding playback', () => {
   const start = main.indexOf('function addNativeCatalogResultToListeningRoom');
   const end = main.indexOf('\n\nfunction insertListeningDeckCardWithoutPlaybackReset', start);
