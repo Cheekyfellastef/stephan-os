@@ -23,6 +23,18 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
   assert.doesNotMatch(installer, /RunLevel Highest|Restart-Computer|Stop-Process|Invoke-Expression|git\s+(?:reset|clean|checkout)/i);
 });
 
+test('package lifecycle commands pin the canonical PowerShell host', async () => {
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  for (const name of [
+    'stephanos:battle-bridge:recovery-mesh:install',
+    'stephanos:battle-bridge:recovery-mesh:status',
+    'stephanos:battle-bridge:recovery-mesh:uninstall',
+  ]) {
+    assert.match(packageJson.scripts[name], /^"C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe" /);
+    assert.doesNotMatch(packageJson.scripts[name], /^powershell\b/i);
+  }
+});
+
 test('windowless launcher pins recovery mesh to one fixed source runner', async () => {
   const [vbs, hidden, verifier] = await Promise.all([
     source('run-stephanos-scheduled-task-windowless.vbs'),
@@ -38,6 +50,12 @@ test('windowless launcher pins recovery mesh to one fixed source runner', async 
   assert.doesNotMatch(hidden, /Get-Command node/);
   assert.match(hidden, /regardless of PID reuse/);
   assert.doesNotMatch(hidden, /Get-Process -Id/);
+  assert.match(hidden, /Get-RecoveryLockPathBaseline/);
+  assert.match(hidden, /Assert-RecoveryLockPathBaseline/);
+  assert.match(hidden, /OpenVerifiedForDelete/);
+  assert.match(hidden, /DeleteByHandle/);
+  assert.match(hidden, /RECOVERY_LOCK_MULTIPLE_LINKS_REJECTED/);
+  assert.doesNotMatch(hidden, /\[System\.IO\.File\]::Delete\(\$lockPath\)/);
   assert.match(verifier, /Mutex\]::OpenExisting\('Local\\StephanosBattleBridgeRecoveryMeshV1'\)/);
   assert.match(verifier, /node\.ParentProcessId -ne \$LauncherPid/);
   assert.match(verifier, /C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe/);
@@ -83,6 +101,8 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /BREAK_GLASS_NONCE_ALREADY_CLAIMED/);
   assert.match(request, /TAILSCALE_SSH_IDENTITY_NOT_VERIFIED/);
   assert.match(request, /TAILSCALE_SSH_PROCESS_ANCESTOR_REQUIRED/);
+  assert.match(request, /C:\\Program Files\\Tailscale\\tailscale\.exe/);
+  assert.doesNotMatch(request, /Get-Command tailscale/);
   assert.match(request, /Get-NetTCPConnection -State Established/);
   assert.match(request, /OPENCLAW_HOST_PROOF_REQUIRED/);
   assert.match(request, /OPENCLAW_HOST_PROCESS_IDENTITY_INVALID/);

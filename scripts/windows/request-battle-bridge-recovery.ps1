@@ -189,9 +189,9 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
         $_.OwningProcess -eq [int]$sshAncestor.ProcessId -and $_.LocalPort -eq 22 -and $_.RemoteAddress -eq $remoteIp
     } | Select-Object -First 1
     if (-not $sshConnection) { throw 'TAILSCALE_SSH_SOCKET_IDENTITY_NOT_VERIFIED' }
-    $tailscale = Get-Command tailscale.exe -ErrorAction SilentlyContinue
-    if (-not $tailscale) { $tailscale = Get-Command tailscale -ErrorAction Stop }
-    $tailnet = (& $tailscale.Source status --json | ConvertFrom-Json)
+    $tailscaleExecutable = 'C:\Program Files\Tailscale\tailscale.exe'
+    if (-not (Test-Path -LiteralPath $tailscaleExecutable -PathType Leaf)) { throw 'TAILSCALE_CANONICAL_EXECUTABLE_MISSING' }
+    $tailnet = (& $tailscaleExecutable status --json | ConvertFrom-Json)
     $peer = @($tailnet.Peer.PSObject.Properties.Value) | Where-Object {
         $_.Online -eq $true -and @($_.TailscaleIPs) -contains $remoteIp
     } | Select-Object -First 1
