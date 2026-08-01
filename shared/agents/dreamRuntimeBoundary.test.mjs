@@ -8,6 +8,7 @@ import {
   DREAM_EVENT_SET_RELATIONS,
   DREAM_RUNTIME_MIGRATION_APPROVAL,
   DREAM_VERSIONED_PRESERVATION_DIRECTORY,
+  abortWindowsArtifactStartup,
   classifyDreamEventSets,
   dreamDirectoryHandleNamespace,
   executeDreamRuntimeMigration,
@@ -16,6 +17,7 @@ import {
   planDreamRuntimeMigration,
   resolveDreamRuntimeBoundary,
   resolveDreamVersionedPreservationPaths,
+  resolveWindowsArtifactCleanupBlocker,
 } from './dreamRuntimeBoundary.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -24,6 +26,49 @@ test('Darwin uses the native file-descriptor namespace for handle-bound publicat
   assert.equal(dreamDirectoryHandleNamespace('darwin'), '/dev/fd');
   assert.equal(dreamDirectoryHandleNamespace('linux'), '/proc/self/fd');
   assert.equal(dreamDirectoryHandleNamespace('win32'), '');
+});
+
+test('Windows pre-READY failure awaits bounded abort cleanup before process termination', async () => {
+  const token = '11111111-1111-4111-8111-111111111111';
+  const confirmedEvents = [];
+  const confirmed = await abortWindowsArtifactStartup({
+    child: {
+      stdin: { end: (value) => confirmedEvents.push(`stdin:${value.trim()}`) },
+      kill: () => confirmedEvents.push('kill'),
+    },
+    awaitExit: async () => {
+      confirmedEvents.push('await-exit');
+      return {
+        timedOut: false,
+        exit: { code: 0 },
+        stdout: `ABORTED:${token}\n`,
+        stderr: '',
+      };
+    },
+  }, token);
+  assert.equal(confirmed, true);
+  assert.deepEqual(confirmedEvents, ['stdin:ABORT', 'await-exit']);
+
+  const timedOutEvents = [];
+  const timedOutState = {
+    child: {
+      stdin: { end: (value) => timedOutEvents.push(`stdin:${value.trim()}`) },
+      kill: () => timedOutEvents.push('kill'),
+    },
+  };
+  timedOutState.awaitExit = async () => {
+    timedOutEvents.push('await-exit');
+    timedOutState.child.kill();
+    return { timedOut: true, exit: { code: null }, stdout: '', stderr: '' };
+  };
+  assert.equal(await abortWindowsArtifactStartup(timedOutState, token), false);
+  assert.deepEqual(timedOutEvents, ['stdin:ABORT', 'await-exit', 'kill']);
+  assert.equal(resolveWindowsArtifactCleanupBlocker({
+    error: { cleanupBlocker: 'DREAM_MIGRATION_WINDOWS_ARTIFACT_CLEANUP_FAILED' },
+    publication: null,
+    cleaned: false,
+    cleanupFailureCode: 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED',
+  }), 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED');
 });
 
 function dreamEvent(timestamp, phase, date) {
@@ -1197,8 +1242,10 @@ test('cross-platform publication adapters preserve the structural commit invaria
   const posixHelper = await fs.readFile(path.resolve('scripts/posix/dream-runtime-artifact-io.py'), 'utf8');
   assert.match(posixHelper, /linkat\(-100, b"\/proc\/self\/fd\/3"/);
   assert.match(posixHelper, /platform\.system\(\) == "Darwin"/);
-  assert.match(posixHelper, /flock\(parent_fd, fcntl\.LOCK_EX\)/);
-  assert.match(posixHelper, /renameatx_np/);
+  assert.match(posixHelper, /fclonefileat\(pending_fd, parent_fd/);
+  assert.doesNotMatch(posixHelper, /renameatx_np/);
+  const boundarySource = await fs.readFile(path.resolve('shared/agents/dreamRuntimeBoundary.mjs'), 'utf8');
+  assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
   const windowsHelper = await fs.readFile(path.resolve('scripts/windows/dream-runtime-artifact-io.ps1'), 'utf8');
   assert.match(windowsHelper, /AncestorPathsBase64/);
   assert.equal((windowsHelper.match(/Assert-AncestorChainUnchanged/g) || []).length >= 5, true);

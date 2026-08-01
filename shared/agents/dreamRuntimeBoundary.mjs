@@ -652,6 +652,25 @@ function startBoundedWindowsArtifactProcess(args) {
   return Object.freeze({ child, awaitExit, output: () => Object.freeze({ stdout, stderr }) });
 }
 
+export async function abortWindowsArtifactStartup(processState, token) {
+  let abortSent = true;
+  try {
+    processState.child.stdin.end('ABORT\n');
+  } catch {
+    abortSent = false;
+  }
+  const output = await processState.awaitExit();
+  return abortSent
+    && !output.timedOut
+    && output.exit?.code === 0
+    && output.stdout.split(/\r?\n/).includes(`ABORTED:${token}`)
+    && !output.stderr.trim();
+}
+
+export function resolveWindowsArtifactCleanupBlocker({ error, publication, cleaned, cleanupFailureCode }) {
+  return (error?.cleanupBlocker || (publication && !cleaned)) ? cleanupFailureCode : '';
+}
+
 async function startWindowsOwnedArtifactPublication(parentPath, artifactName, content, ancestorIdentities) {
   const bytes = Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
   if (bytes.length > MAX_WINDOWS_ARTIFACT_BYTES) {
@@ -684,15 +703,16 @@ async function startWindowsOwnedArtifactPublication(parentPath, artifactName, co
   }
   if (!ownershipToken) {
     const helperOutput = processState.output();
-    try { processState.child.stdin.end('ABORT\n'); } catch {}
-    try { processState.child.kill(); } catch {}
-    throw codedError(
+    const cleanupConfirmed = await abortWindowsArtifactStartup(processState, token);
+    const error = codedError(
       helperOutput.stderr.split(/\r?\n/).includes('EEXIST')
         ? 'EEXIST'
         : inputError
           ? 'DREAM_MIGRATION_WINDOWS_ARTIFACT_INPUT_FAILED'
           : 'DREAM_MIGRATION_WINDOWS_ARTIFACT_START_FAILED',
     );
+    error.cleanupBlocker = cleanupConfirmed ? '' : 'DREAM_MIGRATION_WINDOWS_ARTIFACT_CLEANUP_FAILED';
+    throw error;
   }
   let finished = false;
   const finish = async (command, marker) => {
@@ -893,7 +913,12 @@ async function writeWindowsOwnedExclusiveArtifact(artifactPath, content, {
     }
     const wrapped = codedError(writeFailureCode);
     wrapped.reasonCode = error?.code || writeFailureCode;
-    wrapped.cleanupBlocker = publication && !cleaned ? cleanupFailureCode : '';
+    wrapped.cleanupBlocker = resolveWindowsArtifactCleanupBlocker({
+      error,
+      publication,
+      cleaned,
+      cleanupFailureCode,
+    });
     throw wrapped;
   }
 }
@@ -1072,6 +1097,8 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
   let boundary = null;
   let finalLinked = false;
   let pendingRemoved = false;
+  let publishedIdentity = null;
+  let expectedDarwinHash = '';
   let result = null;
   let failure = null;
   try {
@@ -1089,6 +1116,9 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
         const openedIdentity = await pendingHandle.stat();
         if (!sameOwnedArtifactIdentity(identity, openedIdentity, 1)) {
           throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
+        }
+        if (process.platform === 'darwin') {
+          expectedDarwinHash = sha256(await pendingHandle.readFile());
         }
         const helper = spawn('python3', [
           POSIX_ARTIFACT_IO_SCRIPT,
@@ -1110,7 +1140,17 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
         });
         if (output.code !== 0 || output.stdout.trim() !== 'PROMOTED') {
           const helperReason = output.stderr.split(/\r?\n/).find(Boolean) || '';
-          throw codedError(helperReason === 'EEXIST' ? 'EEXIST' : 'DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
+          const helperError = codedError(
+            helperReason === 'EEXIST'
+              ? 'EEXIST'
+              : helperReason === 'DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED'
+                ? 'DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED'
+                : 'DREAM_MIGRATION_RECEIPT_COMMIT_FAILED',
+          );
+          if (helperReason === 'DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED') {
+            helperError.cleanupBlocker = 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
+          }
+          throw helperError;
         }
       } finally {
         await pendingHandle.close();
@@ -1124,9 +1164,14 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
       pendingRemoved = true;
     }
     const promotedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
-    if (!sameFileIdentity(identity, promotedIdentity)) {
+    const promotionMatches = process.platform === 'darwin' && fsImpl === fs
+      ? promotedIdentity.size === identity.size
+        && await sha256File(artifactPath, { fsImpl }) === expectedDarwinHash
+      : sameFileIdentity(identity, promotedIdentity);
+    if (!promotionMatches) {
       throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
     }
+    publishedIdentity = promotedIdentity;
     result = Object.freeze({ artifactPath, identity: promotedIdentity });
   } catch (error) {
     let cleaned = true;
@@ -1134,14 +1179,16 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
       cleaned = await removeOwnedArtifactWithinBoundary(
         boundary.operationParentPath,
         artifactName,
-        identity,
+        publishedIdentity || identity,
         fsImpl,
-        { maxLinkCount: pendingRemoved ? 1 : 2 },
+        { maxLinkCount: process.platform === 'darwin' ? 1 : pendingRemoved ? 1 : 2 },
       );
     }
     const wrapped = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
     wrapped.reasonCode = error?.code || 'DREAM_MIGRATION_RECEIPT_COMMIT_FAILED';
-    wrapped.cleanupBlocker = cleaned ? '' : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
+    wrapped.cleanupBlocker = (error?.cleanupBlocker || !cleaned)
+      ? 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED'
+      : '';
     failure = wrapped;
   }
   const released = boundary ? await boundary.release() : true;

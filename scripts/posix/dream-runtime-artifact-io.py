@@ -9,7 +9,6 @@ that enters the authoritative namespace.
 import argparse
 import ctypes
 import errno
-import fcntl
 import os
 import platform
 import stat
@@ -36,20 +35,23 @@ owned = os.fstat(pending_fd)
 if not stat.S_ISREG(owned.st_mode) or owned.st_nlink != 1:
     fail("DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_INVALID")
 
-# Darwin has no AT_EMPTY_PATH.  Its explicitly supported fallback serializes
-# cooperating publishers on the validated directory handle and uses
-# renameatx_np(RENAME_EXCL), with before/after ownership checks.
+# Darwin has no AT_EMPTY_PATH.  fclonefileat atomically creates the complete
+# destination from the already-open source descriptor and refuses an existing
+# destination, so the mutable pending pathname is never selected for
+# authoritative publication.
 if platform.system() == "Darwin":
-    fcntl.flock(parent_fd, fcntl.LOCK_EX)
-    before = os.stat(args.pending_name, dir_fd=parent_fd, follow_symlinks=False)
-    if (before.st_dev, before.st_ino) != (owned.st_dev, owned.st_ino):
-        fail("DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED")
     libc = ctypes.CDLL(None, use_errno=True)
-    renameatx_np = libc.renameatx_np
-    renameatx_np.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-    if renameatx_np(parent_fd, os.fsencode(args.pending_name), parent_fd, os.fsencode(args.artifact_name), 0x00000004) != 0:
+    fclonefileat = libc.fclonefileat
+    fclonefileat.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    if fclonefileat(pending_fd, parent_fd, os.fsencode(args.artifact_name), 0) != 0:
         error = ctypes.get_errno()
         fail("EEXIST" if error == errno.EEXIST else "DREAM_MIGRATION_RECEIPT_COMMIT_FAILED")
+    try:
+        pending = os.stat(args.pending_name, dir_fd=parent_fd, follow_symlinks=False)
+        if (pending.st_dev, pending.st_ino) == (owned.st_dev, owned.st_ino):
+            os.unlink(args.pending_name, dir_fd=parent_fd)
+    except FileNotFoundError:
+        pass
 else:
     libc = ctypes.CDLL(None, use_errno=True)
     linkat = libc.linkat
@@ -70,11 +72,18 @@ else:
         pass
 
 promoted = os.stat(args.artifact_name, dir_fd=parent_fd, follow_symlinks=False)
-if (promoted.st_dev, promoted.st_ino) != (owned.st_dev, owned.st_ino) or promoted.st_nlink != 1:
+promotion_invalid = not stat.S_ISREG(promoted.st_mode) or promoted.st_nlink != 1
+if platform.system() == "Darwin":
+    promotion_invalid = promotion_invalid or promoted.st_size != owned.st_size
+else:
+    promotion_invalid = promotion_invalid or (promoted.st_dev, promoted.st_ino) != (owned.st_dev, owned.st_ino)
+if promotion_invalid:
     # The link itself selected the owned descriptor.  If an attacker moved the
     # pending name and thereby retained another link, remove only the exact
     # authoritative link just created and fail closed.
-    if (promoted.st_dev, promoted.st_ino) == (owned.st_dev, owned.st_ino):
+    if platform.system() != "Darwin" and (promoted.st_dev, promoted.st_ino) == (owned.st_dev, owned.st_ino):
         os.unlink(args.artifact_name, dir_fd=parent_fd)
+    if platform.system() == "Darwin":
+        fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
     fail("DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED")
 print("PROMOTED", flush=True)
