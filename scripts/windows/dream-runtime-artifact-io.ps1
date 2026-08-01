@@ -17,7 +17,11 @@ param(
     [ValidatePattern('^[a-f0-9:]*$')]
     [string]$ExpectedOwnershipToken = '',
 
-    [string]$PendingName = ''
+    [string]$PendingName = '',
+
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[a-f0-9]{8}:[a-f0-9]{16}(,[a-f0-9]{8}:[a-f0-9]{16})*$')]
+    [string]$ExpectedAncestorIdentities
 )
 
 $ErrorActionPreference = 'Stop'
@@ -189,6 +193,72 @@ public static class StephanosDreamArtifactIo {
             + ":" + ((uint)info.LastWriteTime.dwHighDateTime).ToString("x8")
             + ((uint)info.LastWriteTime.dwLowDateTime).ToString("x8")
             + ":" + info.NumberOfLinks.ToString("x8");
+    }
+
+    private static string DirectoryIdentity(BY_HANDLE_FILE_INFORMATION info) {
+        return info.VolumeSerialNumber.ToString("x8")
+            + ":" + info.FileIndexHigh.ToString("x8")
+            + info.FileIndexLow.ToString("x8");
+    }
+
+    public static SafeFileHandle OpenValidatedChain(string path, string expectedIdentityCsv) {
+        string fullPath = System.IO.Path.GetFullPath(path);
+        string rootPath = System.IO.Path.GetPathRoot(fullPath);
+        string relative = fullPath.Substring(rootPath.Length).Trim(
+            System.IO.Path.DirectorySeparatorChar,
+            System.IO.Path.AltDirectorySeparatorChar
+        );
+        string[] segments = relative.Length == 0
+            ? new string[0]
+            : relative.Split(
+                new char[] { System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar },
+                StringSplitOptions.RemoveEmptyEntries
+            );
+        string[] expected = expectedIdentityCsv.Split(',');
+        if (expected.Length != segments.Length + 1) {
+            throw new InvalidOperationException("DREAM_MIGRATION_ANCESTOR_PROOF_COUNT_INVALID");
+        }
+        var current = CreateFile(
+            rootPath,
+            0,
+            ShareAll,
+            IntPtr.Zero,
+            OpenExisting,
+            BackupSemantics | OpenReparsePoint,
+            IntPtr.Zero
+        );
+        if (current.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            string rootIdentity = DirectoryIdentity(ReadInfo(current, true));
+            if (!String.Equals(rootIdentity, expected[0], StringComparison.Ordinal)) {
+                throw new InvalidOperationException("DREAM_MIGRATION_ANCESTOR_CHANGED");
+            }
+            for (int index = 0; index < segments.Length; index += 1) {
+                var next = OpenRelative(
+                    current,
+                    segments[index],
+                    ReadAttributes | Synchronize,
+                    FileOpen,
+                    ShareAll,
+                    FileDirectory
+                );
+                try {
+                    string observed = DirectoryIdentity(ReadInfo(next, true));
+                    if (!String.Equals(observed, expected[index + 1], StringComparison.Ordinal)) {
+                        throw new InvalidOperationException("DREAM_MIGRATION_ANCESTOR_CHANGED");
+                    }
+                } catch {
+                    next.Dispose();
+                    throw;
+                }
+                current.Dispose();
+                current = next;
+            }
+            return current;
+        } catch {
+            current.Dispose();
+            throw;
+        }
     }
 
     public static SafeFileHandle OpenValidatedParent(string path) {
@@ -429,7 +499,7 @@ try {
     if (-not [System.IO.Directory]::Exists($resolvedParent)) {
         throw 'DREAM_MIGRATION_ARTIFACT_PARENT_MISSING'
     }
-    $parent = [StephanosDreamArtifactIo]::OpenValidatedParent($resolvedParent)
+    $parent = [StephanosDreamArtifactIo]::OpenValidatedChain($resolvedParent, $ExpectedAncestorIdentities)
     try {
         if ($Mode -eq 'EnsureDirectory') {
             $directory = [StephanosDreamArtifactIo]::EnsureRelativeDirectory($parent, $ArtifactName)

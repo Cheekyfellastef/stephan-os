@@ -9,6 +9,7 @@ import {
   DREAM_RUNTIME_MIGRATION_APPROVAL,
   DREAM_VERSIONED_PRESERVATION_DIRECTORY,
   classifyDreamEventSets,
+  dreamDirectoryHandleNamespace,
   executeDreamRuntimeMigration,
   normalizeDreamHostRelativePath,
   pathIsInside,
@@ -18,6 +19,12 @@ import {
 } from './dreamRuntimeBoundary.mjs';
 
 const HEAD = 'a'.repeat(40);
+
+test('Darwin uses the native file-descriptor namespace for handle-bound publication', () => {
+  assert.equal(dreamDirectoryHandleNamespace('darwin'), '/dev/fd');
+  assert.equal(dreamDirectoryHandleNamespace('linux'), '/proc/self/fd');
+  assert.equal(dreamDirectoryHandleNamespace('win32'), '');
+});
 
 function dreamEvent(timestamp, phase, date) {
   return {
@@ -126,6 +133,20 @@ function fsProxyWithOwnedWriteHook(onWrite, overrides = {}) {
   });
 }
 
+async function windowsAncestorIdentityProofForTest(target) {
+  const resolved = path.resolve(target);
+  const parsed = path.parse(resolved);
+  const segments = path.relative(parsed.root, resolved).split(path.sep).filter(Boolean);
+  const ancestors = [parsed.root];
+  for (const segment of segments) ancestors.push(path.join(ancestors.at(-1), segment));
+  const identities = [];
+  for (const ancestor of ancestors) {
+    const stat = await fs.lstat(ancestor);
+    identities.push(`${BigInt(stat.dev).toString(16).padStart(8, '0')}:${BigInt(stat.ino).toString(16).padStart(16, '0')}`);
+  }
+  return identities.join(',');
+}
+
 async function runApproved(input, overrides = {}) {
   return executeDreamRuntimeMigration({
     repoRoot: input.repoRoot,
@@ -176,7 +197,7 @@ test('copy migration requires explicit approval and never removes source', async
   assert.equal(denied.blocker, 'DREAM_MIGRATION_APPROVAL_REQUIRED');
 
   const result = await runApproved(input, { now: fixedNow('2026-07-21T18:45:00.000Z') });
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, true, `${result.blocker || ''}:${result.copyFailureReason || ''}:${result.receiptWriteReason || ''}`);
   assert.equal(result.finalVerdict, 'DREAM_RUNTIME_COPY_HASH_VERIFIED');
   assert.equal(result.copied.length, 2);
   assert.equal(result.sourceRemovalPerformed, false);
@@ -244,6 +265,37 @@ test('receipt remains non-authoritative through the final source-head verificati
   const receiptFiles = await fs.readdir(plan.receiptRoot);
   assert.equal(receiptFiles.filter((name) => name.startsWith('dream-migration-')).length, 1);
   assert.equal(receiptFiles.filter((name) => name.startsWith('.stephanos-pending-')).length, 0);
+});
+
+test('receipt promotion reads from the owned handle instead of a replaced pending pathname', { skip: process.platform !== 'linux' }, async () => {
+  const input = await fixture();
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  let replaced = false;
+  let replacementPath = '';
+  const fsImpl = fsProxy({
+    copyFile: async (source, destination, flags) => {
+      const isReceiptPromotion = !replaced
+        && String(source).startsWith('/proc/self/fd/')
+        && path.basename(String(destination)).startsWith('dream-migration-');
+      if (isReceiptPromotion) {
+        const receiptFiles = await fs.readdir(plan.receiptRoot);
+        const pendingName = receiptFiles.find((name) => name.startsWith('.stephanos-pending-'));
+        assert.ok(pendingName);
+        replacementPath = path.join(plan.receiptRoot, pendingName);
+        await fs.rename(replacementPath, `${replacementPath}.owned-before-attack`);
+        await fs.writeFile(replacementPath, '{"finalVerdict":"ATTACKER_CONTROLLED"}\n');
+        replaced = true;
+      }
+      return fs.copyFile(source, destination, flags);
+    },
+  });
+  const result = await runApproved(input, { fsImpl });
+  assert.equal(replaced, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED');
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.equal(receiptFiles.filter((name) => name.startsWith('dream-migration-')).length, 0);
+  assert.equal(await fs.readFile(replacementPath, 'utf8'), '{"finalVerdict":"ATTACKER_CONTROLLED"}\n');
 });
 
 test('already-verified destination changes are rejected before receipt publication', async () => {
@@ -826,6 +878,7 @@ test('Windows native publication keeps the final name hidden and aborts its owne
   const token = '11111111-1111-4111-8111-111111111111';
   const stagingPath = path.join(parent, `.stephanos-pending-${token}-${artifactName}`);
   const helper = path.resolve('scripts', 'windows', 'dream-runtime-artifact-io.ps1');
+  const expectedAncestorIdentities = await windowsAncestorIdentityProofForTest(parent);
   const child = spawn('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', helper,
@@ -833,6 +886,7 @@ test('Windows native publication keeps the final name hidden and aborts its owne
     '-ParentPath', parent,
     '-ArtifactName', artifactName,
     '-Token', token,
+    '-ExpectedAncestorIdentities', expectedAncestorIdentities,
   ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => {});
   child.stdout.setEncoding('utf8');
@@ -857,6 +911,49 @@ test('Windows native publication keeps the final name hidden and aborts its owne
   assert.equal(stdout.split(/\r?\n/).includes(`ABORTED:${token}`), true);
   await assert.rejects(() => fs.lstat(artifactPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(stagingPath), (error) => error.code === 'ENOENT');
+});
+
+test('Windows native publication rejects a replaced earlier ancestor by exact chain identity', {
+  skip: process.platform !== 'win32',
+  timeout: 30_000,
+}, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'stephanos-native-chain-'));
+  const approvedAncestor = path.join(root, 'approved');
+  const parent = path.join(approvedAncestor, 'receipt-root');
+  await fs.mkdir(parent, { recursive: true });
+  const expectedAncestorIdentities = await windowsAncestorIdentityProofForTest(parent);
+  const parkedAncestor = `${approvedAncestor}.parked`;
+  await fs.rename(approvedAncestor, parkedAncestor);
+  await fs.mkdir(parent, { recursive: true });
+  const artifactName = 'dream-migration-chain-attack.json';
+  const token = '22222222-2222-4222-8222-222222222222';
+  const helper = path.resolve('scripts', 'windows', 'dream-runtime-artifact-io.ps1');
+  const child = spawn('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', helper,
+    '-Mode', 'Publish',
+    '-ParentPath', parent,
+    '-ArtifactName', artifactName,
+    '-Token', token,
+    '-ExpectedAncestorIdentities', expectedAncestorIdentities,
+  ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.on('error', () => {});
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
+  child.stdin.end(`${Buffer.from('{"finalVerdict":"TEST_ONLY"}\n').toString('base64')}\nCOMMIT\n`);
+  assert.equal(await exited, 2);
+  assert.equal(stdout.includes(`COMMITTED:${token}`), false);
+  assert.match(stderr, /DREAM_RUNTIME_ARTIFACT_IO_FAILED/);
+  await assert.rejects(() => fs.lstat(path.join(parent, artifactName)), (error) => error.code === 'ENOENT');
+  await assert.rejects(
+    () => fs.lstat(path.join(parkedAncestor, 'receipt-root', artifactName)),
+    (error) => error.code === 'ENOENT',
+  );
 });
 
 test('partial manifest publication self-cleans before snapshot rollback', async () => {

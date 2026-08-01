@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +16,12 @@ export const DREAM_RUNTIME_BOUNDARY_SCHEMA = 'stephanos.dream-runtime-boundary.v
 export const DREAM_VERSIONED_PRESERVATION_SCHEMA = 'stephanos.dream-versioned-preservation.v1';
 export const DREAM_RUNTIME_MIGRATION_APPROVAL = 'operator-approved-dream-migration';
 export const DREAM_VERSIONED_PRESERVATION_DIRECTORY = '.stephanos-preservation';
+
+export function dreamDirectoryHandleNamespace(platform = process.platform) {
+  if (platform === 'linux') return '/proc/self/fd';
+  if (platform === 'darwin') return '/dev/fd';
+  return '';
+}
 
 export const DREAM_EVENT_SET_RELATIONS = Object.freeze({
   IDENTICAL_CONTENT: 'IDENTICAL_CONTENT',
@@ -171,13 +178,30 @@ function filesystemAncestors(target) {
   return output;
 }
 
-async function ensureWindowsDirectoryComponent(parentPath, directoryName) {
+async function windowsAncestorIdentityProof(ancestorIdentities) {
+  const identities = [];
+  for (const { directory, identity } of ancestorIdentities) {
+    const nativeIdentity = await fs.lstat(directory, { bigint: true });
+    if (Number(nativeIdentity.dev) !== Number(identity?.dev) || Number(nativeIdentity.ino) !== Number(identity?.ino)) {
+      throw codedError('DREAM_MIGRATION_WINDOWS_ANCESTOR_CHANGED');
+    }
+    if (nativeIdentity.dev < 0n || nativeIdentity.ino < 0n) {
+      throw codedError('DREAM_MIGRATION_WINDOWS_ANCESTOR_IDENTITY_INVALID');
+    }
+    identities.push(`${nativeIdentity.dev.toString(16).padStart(8, '0')}:${nativeIdentity.ino.toString(16).padStart(16, '0')}`);
+  }
+  if (!identities.length) throw codedError('DREAM_MIGRATION_WINDOWS_ANCESTOR_IDENTITY_INVALID');
+  return identities.join(',');
+}
+
+async function ensureWindowsDirectoryComponent(parentPath, directoryName, parentIdentities) {
   const token = randomUUID();
   const processState = startBoundedWindowsArtifactProcess([
     '-Mode', 'EnsureDirectory',
     '-ParentPath', parentPath,
     '-ArtifactName', directoryName,
     '-Token', token,
+    '-ExpectedAncestorIdentities', await windowsAncestorIdentityProof(parentIdentities),
   ]);
   processState.child.stdin.end();
   const output = await processState.awaitExit();
@@ -194,7 +218,7 @@ async function createSafeDirectoryComponent(directory, parentIdentities, fsImpl)
     throw codedError('DREAM_MIGRATION_DIRECTORY_NAME_INVALID');
   }
   if (process.platform === 'win32' && fsImpl === fs) {
-    await ensureWindowsDirectoryComponent(parentPath, directoryName);
+    await ensureWindowsDirectoryComponent(parentPath, directoryName, parentIdentities);
     return fsImpl.lstat(directory);
   }
   let boundary = null;
@@ -620,7 +644,7 @@ function startBoundedWindowsArtifactProcess(args) {
   return Object.freeze({ child, awaitExit, output: () => Object.freeze({ stdout, stderr }) });
 }
 
-async function startWindowsOwnedArtifactPublication(parentPath, artifactName, content) {
+async function startWindowsOwnedArtifactPublication(parentPath, artifactName, content, ancestorIdentities) {
   const bytes = Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
   if (bytes.length > MAX_WINDOWS_ARTIFACT_BYTES) {
     throw codedError('DREAM_MIGRATION_WINDOWS_ARTIFACT_TOO_LARGE');
@@ -632,6 +656,7 @@ async function startWindowsOwnedArtifactPublication(parentPath, artifactName, co
     '-ParentPath', parentPath,
     '-ArtifactName', artifactName,
     '-Token', token,
+    '-ExpectedAncestorIdentities', await windowsAncestorIdentityProof(ancestorIdentities),
   ]);
   let inputError = null;
   processState.child.stdin.write(`${bytes.toString('base64')}\n`, (error) => { inputError = error || null; });
@@ -681,9 +706,15 @@ async function startWindowsOwnedArtifactPublication(parentPath, artifactName, co
   });
 }
 
-async function deleteWindowsOwnedArtifact(artifactPath, identity) {
+async function deleteWindowsOwnedArtifact(artifactPath, identity, ancestorIdentities = null) {
   const ownershipToken = String(identity?.windowsOwnershipToken || '');
   if (!/^[a-f0-9:]+$/.test(ownershipToken)) return false;
+  let provenAncestors = ancestorIdentities;
+  try {
+    provenAncestors ||= await ensureSafeDirectoryChain(path.dirname(artifactPath), { fsImpl: fs, create: false });
+  } catch {
+    return false;
+  }
   const token = randomUUID();
   const processState = startBoundedWindowsArtifactProcess([
     '-Mode', 'DeleteOwned',
@@ -691,6 +722,7 @@ async function deleteWindowsOwnedArtifact(artifactPath, identity) {
     '-ArtifactName', path.basename(artifactPath),
     '-Token', token,
     '-ExpectedOwnershipToken', ownershipToken,
+    '-ExpectedAncestorIdentities', await windowsAncestorIdentityProof(provenAncestors),
   ]);
   processState.child.stdin.end();
   const output = await processState.awaitExit();
@@ -705,6 +737,7 @@ async function promoteWindowsOwnedArtifact(pendingPath, artifactPath, identity) 
   if (!/^[a-f0-9:]+$/.test(ownershipToken) || !samePath(path.dirname(pendingPath), path.dirname(artifactPath))) {
     throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_INVALID');
   }
+  const ancestorIdentities = await ensureSafeDirectoryChain(path.dirname(artifactPath), { fsImpl: fs, create: false });
   const token = randomUUID();
   const processState = startBoundedWindowsArtifactProcess([
     '-Mode', 'PromoteOwned',
@@ -713,6 +746,7 @@ async function promoteWindowsOwnedArtifact(pendingPath, artifactPath, identity) 
     '-PendingName', path.basename(pendingPath),
     '-Token', token,
     '-ExpectedOwnershipToken', ownershipToken,
+    '-ExpectedAncestorIdentities', await windowsAncestorIdentityProof(ancestorIdentities),
   ]);
   processState.child.stdin.end();
   const output = await processState.awaitExit();
@@ -726,7 +760,7 @@ async function promoteWindowsOwnedArtifact(pendingPath, artifactPath, identity) 
       pendingStillOwned = sameOwnedArtifactIdentity(identity, await fs.lstat(pendingPath), 1);
     } catch {}
     let cleaned = pendingStillOwned;
-    if (!pendingStillOwned) cleaned = await deleteWindowsOwnedArtifact(artifactPath, identity);
+    if (!pendingStillOwned) cleaned = await deleteWindowsOwnedArtifact(artifactPath, identity, ancestorIdentities);
     const error = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
     error.reasonCode = output.stderr.split(/\r?\n/).includes('EEXIST')
       ? 'EEXIST'
@@ -734,9 +768,10 @@ async function promoteWindowsOwnedArtifact(pendingPath, artifactPath, identity) 
     error.cleanupBlocker = cleaned ? '' : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
     throw error;
   }
+  await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl: fs });
   const promotedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl: fs });
   if (!sameFileIdentity(identity, promotedIdentity)) {
-    const cleaned = await deleteWindowsOwnedArtifact(artifactPath, identity);
+    const cleaned = await deleteWindowsOwnedArtifact(artifactPath, identity, ancestorIdentities);
     const error = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
     error.reasonCode = 'DREAM_MIGRATION_RECEIPT_IDENTITY_CHANGED';
     error.cleanupBlocker = cleaned ? '' : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
@@ -747,7 +782,8 @@ async function promoteWindowsOwnedArtifact(pendingPath, artifactPath, identity) 
 
 async function acquireDirectoryMutationBoundary(parentPath, ancestorIdentities, fsImpl) {
   const parentIdentity = ancestorIdentities.at(-1)?.identity;
-  if (process.platform === 'linux') {
+  const handleNamespace = dreamDirectoryHandleNamespace();
+  if (handleNamespace) {
     const parentHandle = await fsImpl.open(parentPath, 'r');
     try {
       const openedParentIdentity = await parentHandle.stat();
@@ -759,7 +795,7 @@ async function acquireDirectoryMutationBoundary(parentPath, ancestorIdentities, 
       }
       await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
       return Object.freeze({
-        operationParentPath: path.join('/proc/self/fd', String(parentHandle.fd)),
+        operationParentPath: path.join(handleNamespace, String(parentHandle.fd)),
         release: async () => {
           try {
             await parentHandle.close();
@@ -800,6 +836,7 @@ async function writeWindowsOwnedExclusiveArtifact(artifactPath, content, {
       path.dirname(artifactPath),
       path.basename(artifactPath),
       content,
+      ancestorIdentities,
     );
     await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
     const pathIdentity = await assertRegularSingleLink(publication.stagingPath, { fsImpl });
@@ -824,6 +861,7 @@ async function writeWindowsOwnedExclusiveArtifact(artifactPath, content, {
       cleaned = await deleteWindowsOwnedArtifact(
         committed ? artifactPath : publication.stagingPath,
         identity || { windowsOwnershipToken: publication.ownershipToken },
+        ancestorIdentities,
       );
     }
     const wrapped = codedError(writeFailureCode);
@@ -1005,43 +1043,68 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
   }
   const ancestorIdentities = await ensureSafeDirectoryChain(parentPath, { fsImpl, create: false });
   let boundary = null;
-  let finalLinked = false;
-  let pendingRemoved = false;
+  let pendingHandle = null;
+  let finalIdentity = null;
   let result = null;
   let failure = null;
   try {
     boundary = await acquireDirectoryMutationBoundary(parentPath, ancestorIdentities, fsImpl);
     const operationPendingPath = path.join(boundary.operationParentPath, pendingName);
     const operationArtifactPath = path.join(boundary.operationParentPath, artifactName);
-    const pendingIdentity = await fsImpl.lstat(operationPendingPath);
+    pendingHandle = await fsImpl.open(operationPendingPath, 'r');
+    const pendingIdentity = await pendingHandle.stat();
     if (!sameOwnedArtifactIdentity(identity, pendingIdentity, 1)) {
       throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
     }
     await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
-    await fsImpl.link(operationPendingPath, operationArtifactPath);
-    finalLinked = true;
-    await fsImpl.unlink(operationPendingPath);
-    pendingRemoved = true;
-    const promotedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
-    if (!sameFileIdentity(identity, promotedIdentity)) {
+    const handleRoot = dreamDirectoryHandleNamespace();
+    const handleSourcePath = handleRoot
+      ? path.join(handleRoot, String(pendingHandle.fd))
+      : operationPendingPath;
+    const expectedHash = sha256(await fsImpl.readFile(handleSourcePath));
+    await fsImpl.copyFile(handleSourcePath, operationArtifactPath, fsConstants.COPYFILE_EXCL);
+    finalIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
+    if (finalIdentity.size !== identity.size || await sha256File(artifactPath, { fsImpl }) !== expectedHash) {
       throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
     }
-    result = Object.freeze({ artifactPath, identity: promotedIdentity });
+    const pendingRemoved = await removeOwnedArtifactWithinBoundary(
+      boundary.operationParentPath,
+      pendingName,
+      identity,
+      fsImpl,
+    );
+    if (!pendingRemoved) throw codedError('DREAM_MIGRATION_RECEIPT_PENDING_CLEANUP_FAILED');
+    result = Object.freeze({ artifactPath, identity: finalIdentity });
   } catch (error) {
     let cleaned = true;
-    if (finalLinked && boundary) {
+    if (finalIdentity && boundary) {
       cleaned = await removeOwnedArtifactWithinBoundary(
         boundary.operationParentPath,
         artifactName,
-        identity,
+        finalIdentity,
         fsImpl,
-        { maxLinkCount: pendingRemoved ? 1 : 2 },
       );
     }
     const wrapped = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
     wrapped.reasonCode = error?.code || 'DREAM_MIGRATION_RECEIPT_COMMIT_FAILED';
     wrapped.cleanupBlocker = cleaned ? '' : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
     failure = wrapped;
+  }
+  if (pendingHandle) {
+    try { await pendingHandle.close(); } catch {
+      if (!failure) {
+        const cleaned = Boolean(result && boundary && await removeOwnedArtifactWithinBoundary(
+          boundary.operationParentPath,
+          artifactName,
+          result.identity,
+          fsImpl,
+        ));
+        result = null;
+        failure = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
+        failure.reasonCode = 'DREAM_MIGRATION_RECEIPT_HANDLE_CLOSE_FAILED';
+        failure.cleanupBlocker = cleaned ? '' : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
+      }
+    }
   }
   const released = boundary ? await boundary.release() : true;
   if (!released) {
