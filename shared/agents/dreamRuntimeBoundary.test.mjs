@@ -9,6 +9,7 @@ import {
   DREAM_VERSIONED_PRESERVATION_DIRECTORY,
   classifyDreamEventSets,
   executeDreamRuntimeMigration,
+  normalizeDreamHostRelativePath,
   pathIsInside,
   planDreamRuntimeMigration,
   resolveDreamRuntimeBoundary,
@@ -630,6 +631,13 @@ test('path traversal and caller-controlled absolute paths are rejected by the fi
   );
 });
 
+test('POSIX literal backslashes are rejected instead of reinterpreted as separators', () => {
+  assert.equal(normalizeDreamHostRelativePath('a\\b', 'linux'), '');
+  assert.equal(normalizeDreamHostRelativePath('a\\b', 'darwin'), '');
+  assert.equal(normalizeDreamHostRelativePath('a\\b', 'win32'), 'a/b');
+  assert.equal(normalizeDreamHostRelativePath('a/b', 'linux'), 'a/b');
+});
+
 test('destination inside checkout remains blocked for versioned preservation', async () => {
   const input = await disjointFixture();
   const result = await executeDreamRuntimeMigration({
@@ -828,6 +836,42 @@ test('later preservation blocker rolls back prior owned artifacts and preserves 
   await assert.rejects(() => fs.lstat(eventsPaths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(eventsPaths.manifestPath), (error) => error.code === 'ENOENT');
   assert.equal(await fs.readFile(deepPaths.snapshotPath, 'utf8'), 'pre-existing-collision');
+  await assert.rejects(() => fs.lstat(deepPaths.manifestPath), (error) => error.code === 'ENOENT');
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
+test('later preservation setup exception rolls back prior preserved artifacts', async () => {
+  const input = await disjointFixture();
+  const deepDestinationPath = path.join(input.workspaceRoot, 'memory', 'dreaming', 'deep', '2026-07-21.md');
+  await fs.mkdir(path.dirname(deepDestinationPath), { recursive: true });
+  await fs.writeFile(deepDestinationPath, '# prior dream\n');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  assert.equal(plan.versionedPreservationRequired, 2);
+  const eventsPaths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  const deepEntry = plan.entries.find((entry) => entry.logicalSourcePath === 'memory/dreaming/deep/2026-07-21.md');
+  assert.ok(deepEntry);
+  const deepPaths = resolveDreamVersionedPreservationPaths(deepEntry, plan);
+  let lockCalls = 0;
+  const result = await runApproved(input, {
+    acquireOperationLockFn: async () => {
+      lockCalls += 1;
+      if (lockCalls === 2) {
+        const error = new Error('preservation lock setup failed');
+        error.code = 'EIO';
+        throw error;
+      }
+      return { ok: true, release: async () => true };
+    },
+  });
+  assert.equal(lockCalls, 2);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_VERSIONED_PRESERVATION_SETUP_FAILED');
+  assert.equal(result.preservationFailureReason, 'EIO');
+  assert.equal(result.cleanupBlocker, '');
+  await assert.rejects(() => fs.lstat(eventsPaths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(eventsPaths.manifestPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(deepPaths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(deepPaths.manifestPath), (error) => error.code === 'ENOENT');
   const receiptFiles = await fs.readdir(plan.receiptRoot);
   assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);

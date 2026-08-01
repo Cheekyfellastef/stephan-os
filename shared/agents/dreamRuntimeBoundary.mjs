@@ -72,11 +72,17 @@ export function pathIsInside(parent, candidate) {
 }
 
 function safeRelativePath(value) {
-  const normalized = String(value || '').replaceAll('\\', '/');
+  const normalized = String(value || '');
+  if (normalized.includes('\\')) return '';
   if (!normalized || normalized.includes('\0') || path.posix.isAbsolute(normalized)) return '';
   const segments = normalized.split('/');
   if (segments.some((segment) => !segment || segment === '.' || segment === '..')) return '';
   return segments.join('/');
+}
+
+export function normalizeDreamHostRelativePath(value, platform = process.platform) {
+  const raw = String(value || '');
+  return safeRelativePath(platform === 'win32' ? raw.replaceAll('\\', '/') : raw);
 }
 
 function logicalSourcePath(mapping, relativePath) {
@@ -416,7 +422,7 @@ export async function planDreamRuntimeMigration({
     for (const mapping of boundary.mappings) {
       const sourceFiles = await collectFiles(mapping.sourcePath, fsImpl);
       for (const sourcePath of sourceFiles) {
-        const relativePath = safeRelativePath(path.relative(mapping.sourcePath, sourcePath));
+        const relativePath = normalizeDreamHostRelativePath(path.relative(mapping.sourcePath, sourcePath));
         if (!relativePath) throw codedError('DREAM_MIGRATION_SOURCE_ESCAPE');
         const destinationPath = path.resolve(mapping.destinationPath, relativePath);
         if (!pathIsInside(mapping.destinationPath, destinationPath)) throw codedError('DREAM_MIGRATION_DESTINATION_ESCAPE');
@@ -1060,14 +1066,23 @@ export async function executeDreamRuntimeMigration({
       copied.push(copyResult.entry);
       createdCopyArtifacts.push(copyResult.createdArtifact);
     } else if (entry.state === 'versioned-preservation-required') {
-      const preservation = await preserveVersionedConflict(entry, plan, {
-        fsImpl,
-        sourceHead,
-        now,
-        operationLockOptions,
-        acquireOperationLockFn,
-        verifySourceHeadFn: verifySourceHead,
-      });
+      let preservation;
+      try {
+        preservation = await preserveVersionedConflict(entry, plan, {
+          fsImpl,
+          sourceHead,
+          now,
+          operationLockOptions,
+          acquireOperationLockFn,
+          verifySourceHeadFn: verifySourceHead,
+        });
+      } catch (error) {
+        preservation = Object.freeze({
+          ok: false,
+          blocker: 'DREAM_VERSIONED_PRESERVATION_SETUP_FAILED',
+          preservationFailureReason: error?.code || 'DREAM_VERSIONED_PRESERVATION_SETUP_FAILED',
+        });
+      }
       if (!preservation.ok) {
         const priorArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
         return Object.freeze({
@@ -1078,6 +1093,7 @@ export async function executeDreamRuntimeMigration({
           lockReason: preservation.lockReason || '',
           lockCleanupBlocker: preservation.lockCleanupBlocker || '',
           lockReleaseReason: preservation.lockReleaseReason || '',
+          preservationFailureReason: preservation.preservationFailureReason || '',
           cleanupBlocker: preservation.cleanupBlocker || (priorArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED'),
           failedEntry: entry,
           copied: Object.freeze(copied),
