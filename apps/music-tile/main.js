@@ -12,6 +12,7 @@ import { createTileEventBridge } from '../../shared/runtime/tileEventBridge.js';
 import { reducePresenceState, getPresenceSummary, acknowledgePresenceItem, dismissPresenceItem, approvePresenceAction } from '../../shared/runtime/stephanosPresenceModel.mjs';
 import { emitPresenceEvent as emitGlobalPresenceEvent } from '../../shared/runtime/stephanosPresenceBridge.mjs';
 import { runAiActionLifecycle } from '../../shared/runtime/aiActionLifecycle.mjs';
+import { catalogResultToMusicTileTrack, findExistingCatalogTrack, requestNativeCatalogSearch } from './engine/nativeCatalogSearch.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const RATING_VALUES = [-2, -1, 0, 1, 2];
@@ -47,10 +48,16 @@ const intelligenceUi = {
   tasteConfidence: document.getElementById('taste-confidence-chip'),
   tasteCopy: document.getElementById('taste-compass-copy'),
   tasteMeter: document.getElementById('taste-compass-meter'),
+  nativeSearchForm: document.getElementById('native-music-search-form'),
+  nativeSearchInput: document.getElementById('native-music-search-input'),
+  nativeSearchButton: document.getElementById('native-music-search-button'),
+  nativeSearchStatus: document.getElementById('native-music-search-status'),
+  nativeSearchResults: document.getElementById('native-music-search-results'),
 };
 
 const tileEventBridge = (() => { try { return createTileEventBridge({ tileId: 'music-tile', tileSource: 'music-cockpit' }); } catch { return null; } })();
 let presenceState = { status: 'idle', voiceMessages: [], awarenessQueue: [], recentEvents: [], lastSpokenSummary: '' };
+let nativeCatalogSearchState = { query: '', providerLabel: '', results: [], error: '' };
 
 const tileMemoryBridge = (() => { try { return createTileMemoryBridge({ tileId: 'music-tile', tileSource: 'music-cockpit' }); } catch { return null; } })();
 
@@ -120,6 +127,13 @@ function setAiAction(text, diagnostics = null) { if (ui.status) ui.status.textCo
 
 function wireIntelligenceExperience() {
   intelligenceUi.surpriseBtn?.addEventListener('click', startSurpriseJourney);
+  intelligenceUi.nativeSearchForm?.addEventListener('submit', runNativeCatalogSearch);
+  intelligenceUi.nativeSearchResults?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-action="add-native-catalog-result"]');
+    if (!button) return;
+    const result = nativeCatalogSearchState.results.find((item) => String(item.universalId) === String(button.dataset.resultId));
+    if (result) addNativeCatalogResultToListeningRoom(result);
+  });
   intelligenceUi.reasonBtn?.addEventListener('click', () => {
     intelligenceUi.stage?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     intelligenceUi.spotlight?.classList.remove('music-highlight-pulse');
@@ -139,6 +153,96 @@ function wireIntelligenceExperience() {
       renderAll();
     }
   });
+}
+
+async function runNativeCatalogSearch(event) {
+  event?.preventDefault?.();
+  const query = String(intelligenceUi.nativeSearchInput?.value || '').trim();
+  if (!query) {
+    nativeCatalogSearchState = { query: '', providerLabel: '', results: [], error: 'Type a song, artist or musical direction.' };
+    renderNativeCatalogResults();
+    return;
+  }
+  if (intelligenceUi.nativeSearchButton) intelligenceUi.nativeSearchButton.disabled = true;
+  if (intelligenceUi.nativeSearchStatus) intelligenceUi.nativeSearchStatus.textContent = `Searching for “${query}”…`;
+  try {
+    const result = await requestNativeCatalogSearch(query, { limit: 5 });
+    nativeCatalogSearchState = {
+      query,
+      providerLabel: String(result.providerLabel || ''),
+      results: Array.isArray(result.results) ? result.results : [],
+      error: result.ok ? '' : String(result.error || 'Music search is temporarily unavailable.'),
+    };
+    emitPresenceEvent({
+      kind: result.ok ? 'catalog_search_completed' : 'catalog_search_failed',
+      severity: result.ok ? 'info' : 'warning',
+      summary: result.ok ? `Music search found ${nativeCatalogSearchState.results.length} result(s)` : 'Music search unavailable',
+      impact: result.ok ? `Provider selected automatically: ${result.providerLabel || 'catalogue'}.` : nativeCatalogSearchState.error,
+    });
+  } catch (error) {
+    nativeCatalogSearchState = { query, providerLabel: '', results: [], error: String(error?.message || 'Music search is temporarily unavailable.') };
+  } finally {
+    if (intelligenceUi.nativeSearchButton) intelligenceUi.nativeSearchButton.disabled = false;
+    renderNativeCatalogResults();
+  }
+}
+
+function addNativeCatalogResultToListeningRoom(result) {
+  const existing = findExistingCatalogTrack(state.listeningDeck, result);
+  if (existing) {
+    if (intelligenceUi.nativeSearchStatus) intelligenceUi.nativeSearchStatus.textContent = `${existing.artist} — ${existing.title} is already in your Listening Room.`;
+    return;
+  }
+  const track = catalogResultToMusicTileTrack(result);
+  if (!track.title) return;
+  const preservedCards = Array.from(ui.listeningDeck.querySelectorAll(':scope > .player-deck-card'));
+  state.listeningDeck.unshift(track);
+  saveState();
+  renderListeningDeck();
+  const freshCards = Array.from(ui.listeningDeck.querySelectorAll(':scope > .player-deck-card'));
+  preservedCards.forEach((preservedCard, index) => {
+    if (freshCards[index + 1]) freshCards[index + 1].replaceWith(preservedCard);
+  });
+  if (intelligenceUi.nativeSearchStatus) intelligenceUi.nativeSearchStatus.textContent = `${track.artist} — ${track.title} added without interrupting the current player.`;
+  emitPresenceEvent({ kind: 'catalog_track_added', severity: 'info', summary: `Added ${track.artist} — ${track.title}`, impact: 'Universal card added to the Listening Room; existing player DOM preserved.' });
+  renderNativeCatalogResults();
+}
+
+function renderNativeCatalogResults() {
+  if (!intelligenceUi.nativeSearchResults || !intelligenceUi.nativeSearchStatus) return;
+  if (nativeCatalogSearchState.error) {
+    intelligenceUi.nativeSearchStatus.textContent = nativeCatalogSearchState.error;
+    intelligenceUi.nativeSearchResults.innerHTML = '';
+    return;
+  }
+  const results = nativeCatalogSearchState.results;
+  if (!nativeCatalogSearchState.query) return;
+  if (!results.length) {
+    intelligenceUi.nativeSearchStatus.textContent = `No real catalogue result was found for “${nativeCatalogSearchState.query}”. Try a track or artist name.`;
+    intelligenceUi.nativeSearchResults.innerHTML = '';
+    return;
+  }
+  intelligenceUi.nativeSearchStatus.textContent = `${results.length} result${results.length === 1 ? '' : 's'} · ${nativeCatalogSearchState.providerLabel || 'catalogue'} chosen automatically · no personal account access`;
+  intelligenceUi.nativeSearchResults.innerHTML = results.map((result) => {
+    const existing = findExistingCatalogTrack(state.listeningDeck, result);
+    const spotifyHref = result.spotifyUrl || result.spotifySearchUrl || '';
+    const spotifyLabel = result.spotifyUrl ? 'Open in Spotify' : 'Find on Spotify';
+    const evidenceLink = result.providerUrl && result.providerUrl !== result.spotifyUrl
+      ? `<a class="media-btn" target="_blank" rel="noopener noreferrer" href="${escapeHtml(result.providerUrl)}">View evidence</a>`
+      : '';
+    return `<article class="native-catalog-result">
+      <div class="native-catalog-result__identity">
+        <strong>${escapeHtml(result.title || 'Untitled')}</strong>
+        <span>${escapeHtml(result.artist || 'Unknown Artist')}${result.album ? ` · ${escapeHtml(result.album)}` : ''}</span>
+        <span>${escapeHtml(result.providerLabel || 'Catalogue')} · ${escapeHtml(result.verificationStatus || 'verification unknown')} · ${escapeHtml(result.playbackAvailability || 'availability unknown')}</span>
+      </div>
+      <div class="native-catalog-result__actions">
+        ${spotifyHref ? `<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${escapeHtml(spotifyHref)}">${spotifyLabel}</a>` : ''}
+        ${evidenceLink}
+        <button type="button" data-action="add-native-catalog-result" data-result-id="${escapeHtml(result.universalId || '')}"${existing ? ' disabled' : ''}>${existing ? 'In Listening Room' : 'Add to Listening Room'}</button>
+      </div>
+    </article>`;
+  }).join('');
 }
 
 function getJourneySeedArtist() {
