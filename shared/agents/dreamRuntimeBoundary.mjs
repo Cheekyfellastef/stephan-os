@@ -279,8 +279,11 @@ function identityMap(parsed) {
   const result = new Map();
   for (const record of parsed.records) {
     const previous = result.get(record.identitySha256);
-    if (previous && previous.canonicalRecordSha256 !== record.canonicalRecordSha256) {
-      throw codedError('DREAM_EVENT_SET_CONFLICTING_DUPLICATE_IDENTITIES');
+    if (previous) {
+      if (previous.canonicalRecordSha256 !== record.canonicalRecordSha256) {
+        throw codedError('DREAM_EVENT_SET_CONFLICTING_DUPLICATE_IDENTITIES');
+      }
+      throw codedError('DREAM_EVENT_SET_DUPLICATE_IDENTITIES');
     }
     result.set(record.identitySha256, record);
   }
@@ -466,7 +469,8 @@ async function writeReceipt(receipt, { fsImpl, receiptRoot }) {
   const filename = `dream-migration-${safeTimestamp(new Date(receipt.completedAtUtc))}.json`;
   const receiptPath = path.join(receiptRoot, filename);
   await fsImpl.writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-  return receiptPath;
+  const identity = await assertRegularSingleLink(receiptPath, { fsImpl });
+  return Object.freeze({ receiptPath, identity });
 }
 
 function versionedProofRefs(entry, paths) {
@@ -550,12 +554,12 @@ async function readExistingManifest(paths, expected, fsImpl) {
   return Object.freeze({ exists: true, ok: true, manifest });
 }
 
-async function removeOwnedSnapshot(snapshotPath, identity, fsImpl) {
+async function removeOwnedArtifact(artifactPath, identity, fsImpl) {
   if (!identity) return true;
   try {
-    const current = await fsImpl.lstat(snapshotPath);
+    const current = await fsImpl.lstat(artifactPath);
     if (!sameFileIdentity(identity, current) || current.isSymbolicLink?.() || Number(current.nlink) !== 1) return false;
-    await fsImpl.unlink(snapshotPath);
+    await fsImpl.unlink(artifactPath);
     return true;
   } catch (error) {
     return error?.code === 'ENOENT';
@@ -568,6 +572,7 @@ async function preserveVersionedConflict(entry, boundary, {
   now,
   operationLockOptions,
   acquireOperationLockFn,
+  verifySourceHeadFn,
 }) {
   const paths = resolveDreamVersionedPreservationPaths(entry, boundary);
   await ensureSafeDirectoryChain(boundary.runtimeRoot, { fsImpl, create: true });
@@ -581,6 +586,7 @@ async function preserveVersionedConflict(entry, boundary, {
   }
   let outcome;
   let createdSnapshotIdentity = null;
+  let createdManifestIdentity = null;
   try {
     await ensureSafeDirectoryChain(path.dirname(entry.sourcePath), { fsImpl, create: false });
     await ensureSafeDirectoryChain(path.dirname(entry.destinationPath), { fsImpl, create: false });
@@ -629,28 +635,40 @@ async function preserveVersionedConflict(entry, boundary, {
           } else if (canonicalHashAfter !== entry.destinationSha256) {
             outcome = Object.freeze({ ok: false, blocker: 'DREAM_CANONICAL_DESTINATION_CHANGED' });
           } else {
-            const capturedAtUtc = now().toISOString();
-            if (!Number.isFinite(Date.parse(capturedAtUtc))) throw codedError('DREAM_VERSIONED_CAPTURE_TIME_INVALID');
-            const manifest = buildVersionedManifest(entry, paths, sourceHead, capturedAtUtc);
-            try {
-              await fsImpl.writeFile(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
-                encoding: 'utf8',
-                flag: 'wx',
-                mode: 0o600,
-              });
-              outcome = Object.freeze({
-                ok: true,
-                state: 'versioned-and-verified',
-                snapshotPath: paths.snapshotPath,
-                manifestPath: paths.manifestPath,
-                manifest,
-              });
-              createdSnapshotIdentity = null;
-            } catch (error) {
-              outcome = Object.freeze({
-                ok: false,
-                blocker: error?.code === 'EEXIST' ? 'DREAM_VERSIONED_RECEIPT_CONFLICT' : 'DREAM_VERSIONED_MANIFEST_WRITE_FAILED',
-              });
+            if (!(await verifySourceHeadFn())) {
+              outcome = Object.freeze({ ok: false, blocker: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED' });
+            } else {
+              const capturedAtUtc = now().toISOString();
+              if (!Number.isFinite(Date.parse(capturedAtUtc))) throw codedError('DREAM_VERSIONED_CAPTURE_TIME_INVALID');
+              const manifest = buildVersionedManifest(entry, paths, sourceHead, capturedAtUtc);
+              try {
+                await fsImpl.writeFile(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+                  encoding: 'utf8',
+                  flag: 'wx',
+                  mode: 0o600,
+                });
+                createdManifestIdentity = await assertRegularSingleLink(paths.manifestPath, { fsImpl });
+                if (!(await verifySourceHeadFn())) {
+                  outcome = Object.freeze({ ok: false, blocker: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED' });
+                } else {
+                  outcome = Object.freeze({
+                    ok: true,
+                    state: 'versioned-and-verified',
+                    snapshotPath: paths.snapshotPath,
+                    manifestPath: paths.manifestPath,
+                    manifest,
+                    createdArtifacts: Object.freeze([
+                      Object.freeze({ artifactPath: paths.manifestPath, identity: createdManifestIdentity }),
+                      Object.freeze({ artifactPath: paths.snapshotPath, identity: createdSnapshotIdentity }),
+                    ]),
+                  });
+                }
+              } catch (error) {
+                outcome = Object.freeze({
+                  ok: false,
+                  blocker: error?.code === 'EEXIST' ? 'DREAM_VERSIONED_RECEIPT_CONFLICT' : 'DREAM_VERSIONED_MANIFEST_WRITE_FAILED',
+                });
+              }
             }
           }
         } catch (error) {
@@ -664,12 +682,21 @@ async function preserveVersionedConflict(entry, boundary, {
   } catch (error) {
     outcome = Object.freeze({ ok: false, blocker: error?.code || 'DREAM_VERSIONED_PRESERVATION_FAILED' });
   } finally {
-    if (outcome?.ok !== true && createdSnapshotIdentity) {
-      const cleaned = await removeOwnedSnapshot(paths.snapshotPath, createdSnapshotIdentity, fsImpl);
-      if (!cleaned) outcome = Object.freeze({ ...outcome, cleanupBlocker: 'DREAM_VERSIONED_SNAPSHOT_CLEANUP_FAILED' });
+    const cleanupOwnedArtifacts = async () => {
+      const manifestCleaned = await removeOwnedArtifact(paths.manifestPath, createdManifestIdentity, fsImpl);
+      const snapshotCleaned = await removeOwnedArtifact(paths.snapshotPath, createdSnapshotIdentity, fsImpl);
+      return manifestCleaned && snapshotCleaned;
+    };
+    if (outcome?.ok !== true && !(await cleanupOwnedArtifacts())) {
+      outcome = Object.freeze({ ...outcome, cleanupBlocker: 'DREAM_VERSIONED_ARTIFACT_CLEANUP_FAILED' });
     }
     const released = await lock.release();
-    if (!released && outcome?.ok === true) outcome = Object.freeze({ ok: false, blocker: 'DREAM_VERSIONED_LOCK_RELEASE_FAILED' });
+    if (!released && outcome?.ok === true) {
+      outcome = Object.freeze({ ok: false, blocker: 'DREAM_VERSIONED_LOCK_RELEASE_FAILED' });
+      if (!(await cleanupOwnedArtifacts())) {
+        outcome = Object.freeze({ ...outcome, cleanupBlocker: 'DREAM_VERSIONED_ARTIFACT_CLEANUP_FAILED' });
+      }
+    }
   }
   return outcome;
 }
@@ -709,6 +736,7 @@ export async function executeDreamRuntimeMigration({
   now = () => new Date(),
   operationLockOptions = {},
   acquireOperationLockFn = acquireSharedWorkspaceOperationLock,
+  sourceHeadVerifierFn = null,
 } = {}) {
   if (operatorApproval !== DREAM_RUNTIME_MIGRATION_APPROVAL) {
     return Object.freeze({
@@ -730,7 +758,7 @@ export async function executeDreamRuntimeMigration({
       destructiveGitOperationPerformed: false,
     });
   }
-  if (plan.versionedPreservationRequired > 0 && !SOURCE_HEAD_PATTERN.test(String(sourceHead || ''))) {
+  if (!SOURCE_HEAD_PATTERN.test(String(sourceHead || '')) || typeof sourceHeadVerifierFn !== 'function') {
     return Object.freeze({
       ...plan,
       ok: false,
@@ -741,8 +769,35 @@ export async function executeDreamRuntimeMigration({
       destructiveGitOperationPerformed: false,
     });
   }
+  const verifySourceHead = async () => {
+    try {
+      const observed = String(await sourceHeadVerifierFn(plan.repoRoot)).trim().toLowerCase();
+      return SOURCE_HEAD_PATTERN.test(observed) && observed === sourceHead;
+    } catch {
+      return false;
+    }
+  };
+  if (!(await verifySourceHead())) {
+    return Object.freeze({
+      ...plan,
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
+      blocker: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
   const copied = [];
   const preserved = [];
+  const createdPreservationArtifacts = [];
+  const cleanupCreatedPreservationArtifacts = async () => {
+    const results = [];
+    for (const artifact of [...createdPreservationArtifacts].reverse()) {
+      results.push(await removeOwnedArtifact(artifact.artifactPath, artifact.identity, fsImpl));
+    }
+    return results.every(Boolean);
+  };
   for (const entry of plan.entries) {
     if (entry.state === 'copy-required') {
       const copyResult = await copyRequiredEntry(entry, fsImpl);
@@ -767,15 +822,19 @@ export async function executeDreamRuntimeMigration({
         now,
         operationLockOptions,
         acquireOperationLockFn,
+        verifySourceHeadFn: verifySourceHead,
       });
       if (!preservation.ok) {
+        const priorArtifactsCleaned = preservation.blocker === 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED'
+          ? await cleanupCreatedPreservationArtifacts()
+          : true;
         return Object.freeze({
           ok: false,
           status: 'BLOCKED',
           finalVerdict: preservation.blocker,
           blocker: preservation.blocker,
           lockReason: preservation.lockReason || '',
-          cleanupBlocker: preservation.cleanupBlocker || '',
+          cleanupBlocker: preservation.cleanupBlocker || (priorArtifactsCleaned ? '' : 'DREAM_VERSIONED_ARTIFACT_CLEANUP_FAILED'),
           failedEntry: entry,
           copied: Object.freeze(copied),
           preserved: Object.freeze(preserved),
@@ -790,7 +849,22 @@ export async function executeDreamRuntimeMigration({
         preservationManifestPath: preservation.manifestPath,
         manifest: preservation.manifest,
       }));
+      createdPreservationArtifacts.push(...(preservation.createdArtifacts || []));
     }
+  }
+  if (!(await verifySourceHead())) {
+    const cleaned = await cleanupCreatedPreservationArtifacts();
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
+      blocker: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
+      cleanupBlocker: cleaned ? '' : 'DREAM_VERSIONED_ARTIFACT_CLEANUP_FAILED',
+      copied: Object.freeze(copied),
+      preserved: Object.freeze([]),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
   }
   const completedAtUtc = now().toISOString();
   const finalVerdict = preserved.length
@@ -809,6 +883,7 @@ export async function executeDreamRuntimeMigration({
     sourceRemovalPerformed: false,
     canonicalDestinationRemovalPerformed: false,
     destructiveGitOperationPerformed: false,
+    sourceHead,
     files: Object.freeze([
       ...plan.entries.filter((entry) => entry.state === 'already-verified'),
       ...copied,
@@ -816,7 +891,23 @@ export async function executeDreamRuntimeMigration({
     ]),
     finalVerdict,
   });
-  const receiptPath = await writeReceipt(receipt, { fsImpl, receiptRoot: plan.receiptRoot });
+  const writtenReceipt = await writeReceipt(receipt, { fsImpl, receiptRoot: plan.receiptRoot });
+  if (!(await verifySourceHead())) {
+    const receiptCleaned = await removeOwnedArtifact(writtenReceipt.receiptPath, writtenReceipt.identity, fsImpl);
+    const preservationCleaned = await cleanupCreatedPreservationArtifacts();
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
+      blocker: 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED',
+      cleanupBlocker: receiptCleaned && preservationCleaned ? '' : 'DREAM_VERSIONED_ARTIFACT_CLEANUP_FAILED',
+      copied: Object.freeze(copied),
+      preserved: Object.freeze([]),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
+  const receiptPath = writtenReceipt.receiptPath;
   return Object.freeze({
     ok: true,
     status: 'DONE',

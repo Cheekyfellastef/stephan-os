@@ -101,6 +101,7 @@ async function runApproved(input, overrides = {}) {
     env: input.env,
     operatorApproval: DREAM_RUNTIME_MIGRATION_APPROVAL,
     sourceHead: HEAD,
+    sourceHeadVerifierFn: async () => HEAD,
     now: fixedNow(),
     ...overrides,
   });
@@ -177,6 +178,14 @@ test('conflicting duplicate identities take precedence over append-shaped sequen
   assert.equal(relation.conflictingDuplicateIdentityCount, 1);
 });
 
+test('repeated identical event identities are ambiguous rather than append relations', () => {
+  const event = dreamEvent('2026-07-30T02:00:03.181Z', 'deep', '2026-07-30');
+  const relation = classifyDreamEventSets(jsonl([event, event]), jsonl([event]));
+  assert.equal(relation.ok, false);
+  assert.equal(relation.relation, DREAM_EVENT_SET_RELATIONS.MALFORMED_OR_AMBIGUOUS);
+  assert.equal(relation.blocker, 'DREAM_EVENT_SET_DUPLICATE_IDENTITIES');
+});
+
 test('disjoint occupied destination is preserved as a deterministic version without mutating originals', async () => {
   const input = await disjointFixture();
   const sourceBefore = await fs.readFile(input.sourceEventsPath);
@@ -223,12 +232,68 @@ test('idempotent snapshot reuse rejects a manifest bound to a different source h
   assert.equal(first.ok, true);
   const retry = await runApproved(input, {
     sourceHead: 'b'.repeat(40),
+    sourceHeadVerifierFn: async () => 'b'.repeat(40),
     now: fixedNow('2026-08-01T12:31:00.000Z'),
   });
   assert.equal(retry.ok, false);
   assert.equal(retry.blocker, 'DREAM_VERSIONED_RECEIPT_CONFLICT');
   const manifest = JSON.parse(await fs.readFile(first.preserved[0].preservationManifestPath, 'utf8'));
   assert.equal(manifest.sourceHead, HEAD);
+});
+
+test('source-head drift before manifest publication leaves no success artifact', async () => {
+  const input = await disjointFixture();
+  let reads = 0;
+  const result = await runApproved(input, {
+    sourceHeadVerifierFn: async () => {
+      reads += 1;
+      return reads === 1 ? HEAD : 'b'.repeat(40);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
+  const receiptFiles = await fs.readdir(plan.receiptRoot).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
+});
+
+test('source-head drift immediately after manifest write removes owned preservation artifacts', async () => {
+  const input = await disjointFixture();
+  let reads = 0;
+  const result = await runApproved(input, {
+    sourceHeadVerifierFn: async () => {
+      reads += 1;
+      return reads < 3 ? HEAD : 'b'.repeat(40);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
+});
+
+test('source-head drift immediately after migration receipt write removes all owned success artifacts', async () => {
+  const input = await disjointFixture();
+  let reads = 0;
+  const result = await runApproved(input, {
+    sourceHeadVerifierFn: async () => {
+      reads += 1;
+      return reads < 5 ? HEAD : 'b'.repeat(40);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
+  const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
+  const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
+  await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
+  await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
+  const receiptFiles = await fs.readdir(plan.receiptRoot);
+  assert.deepEqual(receiptFiles.filter((name) => name.startsWith('dream-migration-')), []);
 });
 
 test('same deterministic snapshot name with different content is rejected', async () => {

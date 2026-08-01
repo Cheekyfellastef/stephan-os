@@ -45,6 +45,7 @@ export async function runDreamMigrationCli(argv = process.argv.slice(2), depende
       repoRoot,
       operatorApproval: parsed.operatorApproved ? DREAM_RUNTIME_MIGRATION_APPROVAL : '',
       sourceHead,
+      sourceHeadVerifierFn: sourceHeadFn,
     });
     if (!parsed.operatorApproved || result?.ok !== true) return result;
     const sourceHeadAfter = await sourceHeadFn(repoRoot);
