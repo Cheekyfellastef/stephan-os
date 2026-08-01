@@ -5,4 +5,5 @@ export const BATTLE_BRIDGE_WINDOWS_HOST = Object.freeze({
   node: 'C:\\Program Files\\nodejs\\node.exe',
   git: 'C:\\Program Files\\Git\\cmd\\git.exe',
   tailscale: 'C:\\Program Files\\Tailscale\\tailscale.exe',
+  githubCli: 'C:\\Program Files\\GitHub CLI\\gh.exe',
 });

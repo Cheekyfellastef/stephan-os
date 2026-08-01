@@ -560,7 +560,7 @@ function writeReceipt(receipt) {
 }
 
 function ghJson(args) {
-  const result = run('gh.exe', args, {
+  const result = run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, {
     timeout: 120000,
     preserveStdout: true,
     maxBuffer: MAX_GITHUB_JSON_BYTES,
@@ -576,7 +576,7 @@ function postReceipt(receipt) {
     serializeBoundedReceiptJson(receipt),
     '```',
   ].join('\n');
-  return run('gh.exe', ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+  return run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
 }
 
 async function installUnattendedSync() {

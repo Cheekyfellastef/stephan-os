@@ -133,6 +133,9 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
 test('uninstall removes only the coordinator and preserves every underlying service and receipt', async () => {
   const uninstall = await source('uninstall-battle-bridge-recovery-mesh.ps1');
   assert.match(uninstall, /Unregister-ScheduledTask -TaskName \$taskName/);
+  assert.match(uninstall, /unregisterApplied = \$false/);
+  assert.match(uninstall, /removed = \[bool\]\(\$unregisterApplied -and -not \$taskPresentAfter\)/);
+  assert.match(uninstall, /whatIf = \[bool\]\$WhatIfPreference/);
   assert.match(uninstall, /workerPreserved = \$true/);
   assert.match(uninstall, /mailboxPreserved = \$true/);
   assert.match(uninstall, /sharedWorkspaceReceiptsPreserved = \$true/);
