@@ -1189,6 +1189,7 @@ async function startLinuxIsolatedReceiptPublication(artifactPath, content, { fsI
     const committedIdentity = committedLine
       ? parsePosixPromotionIdentity(committedLine.slice(committedPrefix.length))
       : null;
+    const reason = output.stderr.split(/\r?\n/).find(Boolean) || '';
     let verifiedIdentity = null;
     let verificationFailed = true;
     try {
@@ -1201,14 +1202,27 @@ async function startLinuxIsolatedReceiptPublication(artifactPath, content, { fsI
     } catch {
       verificationFailed = true;
     }
+    let cleaned = true;
+    if (verificationFailed && reason !== 'EEXIST') {
+      cleaned = await removeOwnedArtifactWithinBoundary(
+        boundary.operationParentPath,
+        artifactName,
+        verifiedIdentity || stagedIdentity,
+        fsImpl,
+      );
+    }
     const released = await boundary.release();
+    if (!verificationFailed && !released) {
+      cleaned = await removeOwnedArtifact(artifactPath, verifiedIdentity || stagedIdentity, fsImpl);
+    }
     if (verificationFailed || !released) {
-      const reason = output.stderr.split(/\r?\n/).find(Boolean) || '';
       const error = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
       error.reasonCode = reason === 'EEXIST' ? 'EEXIST' : reason || 'DREAM_MIGRATION_RECEIPT_COMMIT_FAILED';
       error.cleanupBlocker = reason === 'EEXIST' && released
         ? ''
-        : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
+        : cleaned && released
+          ? ''
+          : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
       throw error;
     }
     return Object.freeze({ artifactPath, identity: verifiedIdentity });
@@ -1227,7 +1241,7 @@ async function removeOwnedArtifactWithinBoundary(
   const operationArtifactPath = path.join(operationParentPath, artifactName);
   let quarantinePath = '';
   let quarantineRoot = '';
-  let moved = false;
+  let quarantined = false;
   try {
     const current = await fsImpl.lstat(operationArtifactPath);
     if (!sameOwnedArtifactIdentity(identity, current, maxLinkCount)) return false;
@@ -1236,21 +1250,24 @@ async function removeOwnedArtifactWithinBoundary(
     if (!quarantineInfo.isDirectory?.() || quarantineInfo.isSymbolicLink?.()) return false;
     quarantinePath = path.join(quarantineRoot, artifactName);
     await fsImpl.rename(operationArtifactPath, quarantinePath);
-    moved = true;
-    const quarantined = await fsImpl.lstat(quarantinePath);
-    if (!sameOwnedArtifactIdentity(identity, quarantined, maxLinkCount)) return false;
-    await fsImpl.unlink(quarantinePath);
-    moved = false;
+    quarantined = true;
+    const quarantineIdentity = await fsImpl.lstat(quarantinePath);
+    if (!sameOwnedArtifactIdentity(identity, quarantineIdentity, maxLinkCount)) return false;
+    if (typeof fsImpl.deleteOwnedArtifactByHandle !== 'function') return false;
+    const deleted = await fsImpl.deleteOwnedArtifactByHandle(
+      quarantinePath,
+      identity,
+      { maxLinkCount },
+    );
+    if (!deleted) return false;
+    quarantined = false;
     await fsImpl.rmdir(quarantineRoot);
     quarantineRoot = '';
     return true;
   } catch (error) {
-    return error?.code === 'ENOENT' && !moved;
+    return error?.code === 'ENOENT' && !quarantined;
   } finally {
-    if (moved) {
-      try { await fsImpl.rename(quarantinePath, operationArtifactPath); } catch {}
-    }
-    if (quarantineRoot && !moved) {
+    if (quarantineRoot && !quarantined) {
       try { await fsImpl.rmdir(quarantineRoot); } catch {}
     }
   }

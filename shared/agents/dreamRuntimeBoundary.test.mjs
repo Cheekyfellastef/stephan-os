@@ -175,9 +175,28 @@ function fixedNow(value = '2026-08-01T12:30:00.000Z') {
 }
 
 function fsProxy(overrides = {}) {
+  const defaults = {
+    deleteOwnedArtifactByHandle: async (target, expected, { maxLinkCount = 1 } = {}) => {
+      const current = await fs.lstat(target);
+      const links = Number(current.nlink);
+      if (!current.isFile()
+          || current.isSymbolicLink()
+          || links < 1
+          || links > maxLinkCount
+          || Number(current.dev) !== Number(expected?.dev)
+          || Number(current.ino) !== Number(expected?.ino)
+          || Number(current.size) !== Number(expected?.size)
+          || Number(current.mtimeMs) !== Number(expected?.mtimeMs)) {
+        return false;
+      }
+      await fs.unlink(target);
+      return true;
+    },
+  };
   return new Proxy(fs, {
     get(target, property) {
-      return Object.hasOwn(overrides, property) ? overrides[property] : target[property];
+      if (Object.hasOwn(overrides, property)) return overrides[property];
+      return Object.hasOwn(defaults, property) ? defaults[property] : target[property];
     },
   });
 }
@@ -439,7 +458,14 @@ test('owned-artifact cleanup never deletes a concurrent path replacement', async
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
   assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED');
-  assert.equal(await fs.readFile(deepEntry.destinationPath, 'utf8'), 'concurrent-replacement');
+  await assert.rejects(() => fs.lstat(deepEntry.destinationPath), (error) => error.code === 'ENOENT');
+  const quarantineRoots = (await fs.readdir(path.dirname(deepEntry.destinationPath), { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('.stephanos-owned-delete-'));
+  assert.equal(quarantineRoots.length, 1);
+  assert.equal(
+    await fs.readFile(path.join(path.dirname(deepEntry.destinationPath), quarantineRoots[0].name, path.basename(deepEntry.destinationPath)), 'utf8'),
+    'concurrent-replacement',
+  );
   assert.equal(await fs.readFile(savedOwnedCopy, 'utf8'), '# dream\n');
 });
 
@@ -452,19 +478,26 @@ test('copy verification failure surfaces an ownership-bound cleanup failure', as
       await fs.appendFile(input.sourceEventsPath, ' ');
     }
   }, {
-    unlink: async (target, ...args) => {
-      if (path.basename(String(target)).startsWith('.stephanos-pending-')) return fs.unlink(target, ...args);
-      const error = new Error('blocked cleanup');
-      error.code = 'EPERM';
-      throw error;
-    },
+    deleteOwnedArtifactByHandle: async () => false,
   });
   const result = await runApproved(input, { fsImpl });
   assert.equal(changed, true);
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_HASH_MISMATCH');
   assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_COPY_CLEANUP_FAILED');
-  assert.equal(await fs.readFile(input.destinationEventsPath, 'utf8'), jsonl([dreamEvent('2026-07-21T02:00:00.000Z', 'deep', '2026-07-21')]));
+  await assert.rejects(() => fs.lstat(input.destinationEventsPath), (error) => error.code === 'ENOENT');
+  const quarantineRoots = (await fs.readdir(path.dirname(input.destinationEventsPath), { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('.stephanos-owned-delete-'));
+  assert.equal(quarantineRoots.length, 1);
+  const quarantinedCopy = path.join(
+    path.dirname(input.destinationEventsPath),
+    quarantineRoots[0].name,
+    path.basename(input.destinationEventsPath),
+  );
+  assert.equal(
+    await fs.readFile(quarantinedCopy, 'utf8'),
+    jsonl([dreamEvent('2026-07-21T02:00:00.000Z', 'deep', '2026-07-21')]),
+  );
 });
 
 test('post-copy verification exception rolls back the copy and prior preservation artifacts', async () => {
@@ -1310,6 +1343,21 @@ test('cross-platform publication adapters preserve the structural commit invaria
   assert.match(boundarySource, /!committedIdentity\s+\|\| sameOwnedArtifactIdentity\(committedIdentity, verifiedIdentity, 1\)/);
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
   assert.match(boundarySource, /verifyDarwinPublishedArtifactIdentity\(operationArtifactPath/);
+  assert.doesNotMatch(boundarySource, /fsImpl\.unlink\(quarantinePath\)/);
+  assert.match(boundarySource, /typeof fsImpl\.deleteOwnedArtifactByHandle !== 'function'/);
+  assert.doesNotMatch(boundarySource, /rename\(quarantinePath, operationArtifactPath\)/);
+  const isolatedCommitSource = boundarySource.slice(
+    boundarySource.indexOf('const commit = async () => {'),
+    boundarySource.indexOf('return Object.freeze({ artifactPath, stagedIdentity, abort, commit });'),
+  );
+  assert.match(
+    isolatedCommitSource,
+    /if \(verificationFailed && reason !== 'EEXIST'\)[\s\S]*removeOwnedArtifactWithinBoundary/,
+  );
+  assert.match(
+    isolatedCommitSource,
+    /if \(!verificationFailed && !released\)[\s\S]*removeOwnedArtifact\(artifactPath/,
+  );
   assert.match(
     boundarySource,
     /if \(!cleanupIdentity && process\.platform === 'darwin'[\s\S]*removeVerifiedDarwinPublishedArtifact[\s\S]*Boolean\(cleanupIdentity\) && await removeOwnedArtifactWithinBoundary/,
@@ -1360,7 +1408,7 @@ test('cross-platform publication adapters preserve the structural commit invaria
   assert.match(windowsHelper, /if \(\$renamed\)[\s\S]*DeleteByHandle\(\$pending\)/);
 });
 
-test('Darwin post-clone failure removes the exact content-bound authoritative inode', async () => {
+test('Darwin post-clone failure quarantines the exact inode when handle deletion is unavailable', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dream-darwin-recovery-'));
   const artifactPath = path.join(root, 'dream-migration-receipt.json');
   const content = Buffer.from('{"owned":true}\n');
@@ -1369,8 +1417,13 @@ test('Darwin post-clone failure removes the exact content-bound authoritative in
     expectedSize: content.length,
     expectedHash: createHash('sha256').update(content).digest('hex'),
   });
-  assert.equal(removed, true);
+  assert.equal(removed, false);
   await assert.rejects(() => fs.lstat(artifactPath), (error) => error.code === 'ENOENT');
+  const quarantineRoots = (await fs.readdir(root, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('.stephanos-owned-delete-'));
+  assert.equal(quarantineRoots.length, 1);
+  const quarantinedPath = path.join(root, quarantineRoots[0].name, path.basename(artifactPath));
+  assert.equal(await fs.readFile(quarantinedPath, 'utf8'), content.toString());
 });
 
 test('Darwin post-clone cleanup rejects a pathname swap after opening the owned clone', async () => {
