@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: pr1638-meterless-exact-head-repair
@@ -35,14 +37,38 @@ jobs:
           test "$(git hash-object scripts/battle-bridge-recovery-mesh-installer.test.mjs)" = "2779de753bb86f0486c51d728ae3843030939b53"
 
       - name: Apply bounded exact-head repairs
+        id: apply
         shell: bash
         run: |
-          python3 scripts/pr1638-meterless-exact-head-repair.py
-          git diff --check
-          git diff --quiet -- \
+          set -o pipefail
+          python3 scripts/pr1638-meterless-exact-head-repair.py 2>&1 | tee repair.log
+          git diff --check 2>&1 | tee -a repair.log
+          if git diff --quiet -- \
             scripts/windows/start-stephanos-backend.ps1 \
             scripts/windows/probe-battle-bridge-recovery-mesh.ps1 \
-            scripts/battle-bridge-recovery-mesh-installer.test.mjs && exit 1 || true
+            scripts/battle-bridge-recovery-mesh-installer.test.mjs; then
+            echo 'repair produced no source diff' | tee -a repair.log
+            exit 1
+          fi
+
+      - name: Publish bounded failure diagnostic
+        if: failure() && steps.apply.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tail -n 80 repair.log > repair-tail.log || true
+          {
+            echo '<!-- stephanos:pr1638-meterless-repair-diagnostic -->'
+            echo '## Meterless PR #1638 repair diagnostic'
+            echo
+            echo 'The bounded source transformer failed before publication. No source repair commit was pushed.'
+            echo
+            echo '```text'
+            cat repair-tail.log
+            echo '```'
+          } > repair-comment.md
+          gh api repos/${{ github.repository }}/issues/1638/comments --method POST --input repair-comment.md
 
       - name: Commit repaired source and regressions
         shell: bash
