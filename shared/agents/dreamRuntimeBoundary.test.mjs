@@ -22,6 +22,7 @@ import {
   resolveDreamVersionedPreservationPaths,
   resolveWindowsArtifactCleanupBlocker,
   sameExactFilesystemIdentifier,
+  sameFileIdentity,
 } from './dreamRuntimeBoundary.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -59,6 +60,20 @@ test('filesystem identifiers reject collisions hidden by Number rounding', () =>
   assert.equal(sameExactFilesystemIdentifier(left, left), true);
   assert.equal(sameExactFilesystemIdentifier(Number(left), left), false);
   assert.equal(sameExactFilesystemIdentifier(42, 42n), true);
+});
+
+test('artifact identity comparison preserves distinct Windows indexes above 2^53', async () => {
+  const high = 9_007_199_254_740_992n;
+  const identity = (ino) => ({
+    dev: high,
+    ino,
+    size: 42n,
+    nlink: 1n,
+    mtimeMs: 1000,
+  });
+  assert.equal(Number(high), Number(high + 1n));
+  assert.equal(sameFileIdentity(identity(high), identity(high + 1n)), false);
+  assert.equal(sameFileIdentity(identity(high), identity(high)), true);
 });
 
 test('Windows pre-READY failure awaits bounded abort cleanup before process termination', async () => {
@@ -1363,7 +1378,7 @@ test('cross-platform publication adapters preserve the structural commit invaria
     boundarySource.indexOf('export async function executeDreamRuntimeMigration(options = {})'),
   );
   const acquireMigrationLockIndex = migrationWrapperSource.indexOf('acquireMigrationLockFn(');
-  const executeWithinLockIndex = migrationWrapperSource.lastIndexOf('executeDreamRuntimeMigrationWithinLock(options)');
+  const executeWithinLockIndex = migrationWrapperSource.lastIndexOf('executeDreamRuntimeMigrationWithinLock({');
   assert.ok(acquireMigrationLockIndex >= 0 && executeWithinLockIndex > acquireMigrationLockIndex);
   assert.match(boundarySource, /DREAM_MIGRATION_LOCK_SEGMENTS = Object\.freeze\(\[[\s\S]*'migration\.lock'/);
   assert.match(boundarySource, /startLinuxIsolatedReceiptPublication\(receiptPath, content/);
@@ -1620,6 +1635,22 @@ test('migration-wide lock prevents another run from consuming rollback-owned cop
   releaseCopy();
   const first = await firstPromise;
   assert.equal(first.ok, true);
+});
+
+test('migration-wide lock release failure converts success to a blocked outcome', async () => {
+  const input = await fixture();
+  const result = await runApproved(input, {
+    acquireMigrationLockFn: async () => ({
+      ok: true,
+      verifyOwnership: async () => true,
+      release: async () => false,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.finalVerdict, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
+  assert.equal(result.blocker, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
+  assert.equal(result.lockCleanupBlocker, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
 });
 
 test('blocked preservation surfaces an operation-lock release cleanup failure', async () => {

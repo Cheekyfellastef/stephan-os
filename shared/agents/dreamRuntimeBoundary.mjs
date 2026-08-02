@@ -336,16 +336,18 @@ async function assertSafeDirectoryChainUnchanged(identities, { fsImpl = fs } = {
 }
 
 async function assertRegularSingleLink(target, { fsImpl = fs } = {}) {
-  const info = await fsImpl.lstat(target);
+  const info = process.platform === 'win32' && fsImpl === fs
+    ? await fsImpl.lstat(target, { bigint: true })
+    : await fsImpl.lstat(target);
   if (info.isSymbolicLink?.()) throw codedError('DREAM_MIGRATION_REPARSE_ENTRY_BLOCKED');
   if (!info.isFile?.()) throw codedError('DREAM_MIGRATION_ENTRY_UNSUPPORTED');
   if (Number(info.nlink) !== 1) throw codedError('DREAM_MIGRATION_HARD_LINK_BLOCKED');
   return info;
 }
 
-function sameFileIdentity(before, after) {
-  return Number(before?.dev) === Number(after?.dev)
-    && Number(before?.ino) === Number(after?.ino)
+export function sameFileIdentity(before, after) {
+  return sameExactFilesystemIdentifier(before?.dev, after?.dev)
+    && sameExactFilesystemIdentifier(before?.ino, after?.ino)
     && Number(before?.size) === Number(after?.size)
     && Number(before?.nlink) === 1
     && Number(after?.nlink) === 1
@@ -1068,8 +1070,8 @@ function sameOwnedArtifactIdentity(expected, current, maxLinkCount) {
     && current?.isSymbolicLink?.() !== true
     && links >= 1
     && links <= maxLinkCount
-    && Number(expected?.dev) === Number(current?.dev)
-    && Number(expected?.ino) === Number(current?.ino)
+    && sameExactFilesystemIdentifier(expected?.dev, current?.dev)
+    && sameExactFilesystemIdentifier(expected?.ino, current?.ino)
     && Number(expected?.size) === Number(current?.size)
     && Number(expected?.mtimeMs) === Number(current?.mtimeMs);
 }
@@ -1949,6 +1951,7 @@ async function executeDreamRuntimeMigrationWithinLock({
   operationLockOptions = {},
   acquireOperationLockFn = acquireSharedWorkspaceOperationLock,
   sourceHeadVerifierFn = null,
+  migrationLockVerifierFn = null,
 } = {}) {
   if (operatorApproval !== DREAM_RUNTIME_MIGRATION_APPROVAL) {
     return Object.freeze({
@@ -1966,6 +1969,16 @@ async function executeDreamRuntimeMigrationWithinLock({
       ...plan,
       status: 'BLOCKED',
       finalVerdict: plan.blocker || 'DREAM_MIGRATION_PLAN_BLOCKED',
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
+  if (migrationLockVerifierFn && !(await migrationLockVerifierFn())) {
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_LOCK_OWNERSHIP_LOST',
+      blocker: 'DREAM_MIGRATION_LOCK_OWNERSHIP_LOST',
       sourceRemovalPerformed: false,
       destructiveGitOperationPerformed: false,
     });
@@ -2189,6 +2202,21 @@ async function executeDreamRuntimeMigrationWithinLock({
     });
   }
   let committedReceipt;
+  if (migrationLockVerifierFn && !(await migrationLockVerifierFn())) {
+    const receiptCleaned = await abortWrittenReceipt(writtenReceipt, fsImpl);
+    const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_LOCK_OWNERSHIP_LOST',
+      blocker: 'DREAM_MIGRATION_LOCK_OWNERSHIP_LOST',
+      cleanupBlocker: receiptCleaned && migrationArtifactsCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
+      copied: Object.freeze(copied),
+      preserved: Object.freeze([]),
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
   try {
     committedReceipt = writtenReceipt.isolatedPublication
       ? await writtenReceipt.isolatedPublication.commit()
@@ -2262,7 +2290,7 @@ export async function executeDreamRuntimeMigration(options = {}) {
       destructiveGitOperationPerformed: false,
     });
   }
-  if (!migrationLock?.ok || typeof migrationLock.release !== 'function') {
+  if (!migrationLock?.ok || typeof migrationLock.release !== 'function' || typeof migrationLock.verifyOwnership !== 'function') {
     return Object.freeze({
       ok: false,
       status: 'BLOCKED',
@@ -2276,7 +2304,10 @@ export async function executeDreamRuntimeMigration(options = {}) {
   let outcome = null;
   let executionError = null;
   try {
-    outcome = await executeDreamRuntimeMigrationWithinLock(options);
+    outcome = await executeDreamRuntimeMigrationWithinLock({
+      ...options,
+      migrationLockVerifierFn: migrationLock.verifyOwnership,
+    });
   } catch (error) {
     executionError = error;
   }
@@ -2290,6 +2321,10 @@ export async function executeDreamRuntimeMigration(options = {}) {
   if (outcome?.ok) {
     return Object.freeze({
       ...outcome,
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+      blocker: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
       migrationLockReleaseReason: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
       lockCleanupBlocker: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
     });
