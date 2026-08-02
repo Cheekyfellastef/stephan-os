@@ -51,6 +51,14 @@ export function parseDreamMigrationArgs(argv = []) {
   });
 }
 
+export function serializeDreamMigrationCliResult(result) {
+  const serializableResult = result && typeof result === 'object'
+    ? { ...result }
+    : result;
+  if (serializableResult?.ok === false) delete serializableResult.receipt;
+  return `${JSON.stringify(serializableResult, null, 2)}\n`;
+}
+
 export async function runDreamMigrationCli(argv = process.argv.slice(2), dependencies = {}) {
   const parsed = parseDreamMigrationArgs(argv);
   const repoRoot = parsed.repoRoot || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -72,7 +80,7 @@ export async function runDreamMigrationCli(argv = process.argv.slice(2), depende
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   runDreamMigrationCli()
     .then((result) => {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      process.stdout.write(serializeDreamMigrationCliResult(result));
       process.exitCode = result?.ok === false ? 1 : 0;
     })
     .catch((error) => {

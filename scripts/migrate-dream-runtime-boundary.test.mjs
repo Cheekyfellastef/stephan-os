@@ -4,6 +4,7 @@ import {
   parseDreamMigrationArgs,
   resolveDreamMigrationSourceHead,
   runDreamMigrationCli,
+  serializeDreamMigrationCliResult,
 } from './migrate-dream-runtime-boundary.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -49,6 +50,23 @@ test('copy mode delegates source-head drift to the ownership-aware executor tran
   assert.equal(result.ok, false);
   assert.equal(result.finalVerdict, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
   assert.equal(result.blocker, 'DREAM_MIGRATION_SOURCE_HEAD_CHANGED');
+});
+
+test('blocked CLI output cannot serialize a nested success receipt', () => {
+  const output = serializeDreamMigrationCliResult({
+    ok: false,
+    status: 'BLOCKED',
+    finalVerdict: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+    receiptPath: '',
+    receipt: {
+      schema: 'dream-runtime-migration-receipt',
+      finalVerdict: 'DREAM_RUNTIME_COPY_HASH_VERIFIED',
+    },
+  });
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.finalVerdict, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
+  assert.equal(Object.hasOwn(parsed, 'receipt'), false);
 });
 
 test('copy mode derives source head through fixed git argv only', async () => {

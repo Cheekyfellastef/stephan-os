@@ -2555,8 +2555,10 @@ export async function executeDreamRuntimeMigration(options = {}) {
     ? 'DREAM_MIGRATION_LOCK_RELEASE_FAILED'
     : 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED';
   if (outcome?.ok) {
+    const blockedOutcome = { ...outcome };
+    delete blockedOutcome.receipt;
     return Object.freeze({
-      ...outcome,
+      ...blockedOutcome,
       ok: false,
       status: 'BLOCKED',
       finalVerdict: releaseBlocker,

@@ -1718,6 +1718,8 @@ test('migration-wide lock release failure converts success to a blocked outcome'
   assert.equal(result.blocker, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
   assert.equal(result.lockCleanupBlocker, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
   assert.equal(result.receiptPath, '');
+  assert.equal(Object.hasOwn(result, 'receipt'), false);
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(result)), 'receipt'), false);
   assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED');
   await assert.rejects(() => fs.lstat(input.destinationEventsPath), (error) => error.code === 'ENOENT');
   const receiptRoot = path.join(input.runtimeRoot, 'receipts', 'runtime-boundary');
@@ -1739,6 +1741,8 @@ test('host mutex release failure also removes committed success evidence', async
   assert.equal(result.status, 'BLOCKED');
   assert.equal(result.blocker, 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED');
   assert.equal(result.receiptPath, '');
+  assert.equal(Object.hasOwn(result, 'receipt'), false);
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(result)), 'receipt'), false);
   assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED');
   const receiptRoot = path.join(input.runtimeRoot, 'receipts', 'runtime-boundary');
   const receipts = await fs.readdir(receiptRoot).catch(() => []);
