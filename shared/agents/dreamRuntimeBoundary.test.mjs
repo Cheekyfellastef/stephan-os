@@ -866,7 +866,10 @@ test('receipt publication collision rolls back only newly owned migration artifa
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED');
   assert.equal(result.receiptWriteReason, 'EEXIST');
-  assert.equal(result.cleanupBlocker, '');
+  assert.equal(
+    result.cleanupBlocker,
+    process.platform === 'win32' ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
+  );
   const paths = resolveDreamVersionedPreservationPaths(eventEntry(plan), plan);
   await assert.rejects(() => fs.lstat(paths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(paths.manifestPath), (error) => error.code === 'ENOENT');
@@ -1095,7 +1098,10 @@ test('later preservation blocker rolls back prior owned artifacts and preserves 
   const result = await runApproved(input);
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_VERSIONED_SNAPSHOT_COLLISION');
-  assert.equal(result.cleanupBlocker, '');
+  assert.equal(
+    result.cleanupBlocker,
+    process.platform === 'win32' ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
+  );
   await assert.rejects(() => fs.lstat(eventsPaths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(eventsPaths.manifestPath), (error) => error.code === 'ENOENT');
   assert.equal(await fs.readFile(deepPaths.snapshotPath, 'utf8'), 'pre-existing-collision');
