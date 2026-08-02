@@ -211,6 +211,16 @@ test('cross-device teachings hydrate from the canonical owned-record index befor
   assert.match(main, /function teachingFromDurableRecord/);
   assert.match(main, /await synchronizeDurableConversationTeachings\(\{ render: false \}\)/);
   assert.match(main, /revokeDurableConversationTeachingsForReset[\s\S]*await synchronizeDurableConversationTeachings\(\{ render: false \}\)/);
+  assert.match(main, /for \(let pass = 0; pass < 3; pass \+= 1\)[\s\S]*await synchronizeDurableConversationTeachings\(\{ render: false \}\)/);
+  assert.match(main, /return \{ ok: false, teaching: \{ trait: 'a teaching added concurrently on another device' \} \}/);
+});
+
+test('cross-device Forget repaint keeps projections truthful when the target is already gone', () => {
+  const start = main.indexOf('async function forgetConversationTeaching');
+  const end = main.indexOf('\n\nfunction getJourneySeedArtist', start);
+  const forgetting = main.slice(start, end);
+  assert.match(forgetting, /if \(!teaching\) \{[\s\S]*if \(synchronization\.changed\)[\s\S]*renderTasteDNA\(\)[\s\S]*renderCandidates\(\)[\s\S]*renderMusicIntelligenceCentre\(\)[\s\S]*renderMusicConversation\(\)/);
+  assert.doesNotMatch(forgetting, /renderAll\(/);
 });
 
 test('teaching and forgetting avoid full redraws that would interrupt playback', () => {

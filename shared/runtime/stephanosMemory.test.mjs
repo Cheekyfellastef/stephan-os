@@ -663,6 +663,78 @@ test('durable record listing refreshes canonical authority before filtering owne
   assert.equal(result.records[0].id, 'remote-teaching');
 });
 
+test('legacy mirror writes queued behind authority refresh rebase instead of deleting fetched records', async () => {
+  let releaseGet;
+  let markGetStarted;
+  let markPutFinished;
+  const getGate = new Promise((resolve) => { releaseGet = resolve; });
+  const getStarted = new Promise((resolve) => { markGetStarted = resolve; });
+  const putFinished = new Promise((resolve) => { markPutFinished = resolve; });
+  let writtenBody = null;
+  const remoteRecord = {
+    schemaVersion: 2,
+    type: 'continuity.note',
+    source: 'other-device',
+    scope: 'runtime',
+    summary: 'Remote record',
+    payload: {},
+    tags: ['shared'],
+    importance: 'normal',
+    retentionHint: 'default',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    surface: 'hosted',
+  };
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage: createStorage(),
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+    fetchImpl: async (_url, options = {}) => {
+      if ((options.method || 'GET') === 'GET') {
+        markGetStarted();
+        await getGate;
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ success: true, data: {
+              schemaVersion: 2,
+              updatedAt: '2026-08-02T00:01:00.000Z',
+              records: { 'continuity::remote': remoteRecord },
+            } });
+          },
+        };
+      }
+      writtenBody = JSON.parse(options.body || '{}');
+      markPutFinished();
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ success: true, data: { ...writtenBody, updatedAt: '2026-08-02T00:02:00.000Z' } });
+        },
+      };
+    },
+  });
+  const memory = createStephanosMemory({ adapter, source: 'music-tile', surface: 'hosted' });
+
+  const refresh = memory.listRecordsDurably({ namespace: 'continuity' });
+  await getStarted;
+  memory.saveRecord({
+    namespace: 'continuity',
+    id: 'local-event',
+    type: 'tile.event',
+    summary: 'Local event queued during refresh',
+  });
+  releaseGet();
+  await refresh;
+  await putFinished;
+
+  assert.equal(writtenBody.ifUnmodifiedSince, '2026-08-02T00:01:00.000Z');
+  assert.equal(writtenBody.records['continuity::remote'].summary, 'Remote record');
+  assert.equal(writtenBody.records['continuity::local-event'].summary, 'Local event queued during refresh');
+});
+
 test('shared memory adapter rehydrates canonical backend state after conflict instead of silently overwriting newer shared truth', async () => {
   const storage = createStorage();
   let putCount = 0;

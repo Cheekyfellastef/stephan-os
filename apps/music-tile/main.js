@@ -703,7 +703,17 @@ async function forgetConversationTeaching(teachingId) {
     const synchronization = await synchronizeDurableConversationTeachings({ render: false });
     if (!isCurrentMusicOperation(operationGeneration)) return;
     const teaching = (state.musicConversationTeachings || []).find((entry) => entry.id === teachingId && entry.status === 'active');
-    if (!teaching) return;
+    if (!teaching) {
+      if (synchronization.changed) {
+        musicConversationState.answer = 'That teaching was already forgotten on another device. The current Taste DNA projection is now refreshed.';
+        musicConversationState.mode = 'forgotten';
+        renderTasteDNA();
+        renderCandidates();
+        renderMusicIntelligenceCentre();
+        renderMusicConversation();
+      }
+      return;
+    }
     if (teaching.memoryPersisted && synchronization.authorityConfirmed !== true) {
       musicConversationState.answer = `I could not safely forget “${teaching.trait}” because the shared teaching index could not be confirmed. Nothing was changed.`;
       musicConversationState.mode = 'forget blocked';
@@ -1250,37 +1260,39 @@ async function buildJourney({ operationGeneration = musicOperationGeneration } =
 function startJourney() { const artists = parseArtists(ui.artistInput?.value || ''); if (!artists.length) { ui.status.textContent = 'Enter an artist to build a journey.'; return; } const term = artists[0]; if (!state.candidates.length) state.candidates = rankCandidatesByTaste(buildSeededCandidates(term), buildTasteWeightsForState()); if (!state.listeningDeck.length) state.listeningDeck = state.candidates.slice(0, 3); ui.status.textContent = `Starting journey for: ${term}.`; saveState(); renderAll(); }
 function addTrackByUrl() { const raw = String(ui.addTrackUrlInput?.value || '').trim(); if (!raw) return; const spotify = resolveSpotifyReference(raw); const youtube = normalizeYouTubeUrl(raw); if (spotify.valid && spotify.type !== 'track') { ui.status.textContent = 'Paste a Spotify track URL to create a playable card.'; return; } if (!spotify.valid && !youtube) { ui.status.textContent = spotify.reason === 'search-url' ? 'This is a Spotify search link, not a playable track link. Open a result in Spotify and paste the track URL.' : 'Paste a valid Spotify track URL or YouTube URL.'; return; } const track = { id: `manual-${Date.now()}`, title: spotify.valid ? 'Spotify track' : 'YouTube track', artist: 'Unknown', spotifyUrl: spotify.valid ? spotify.openUrl : null, spotifyUri: spotify.valid ? spotify.uri : null, candidateVerificationStatus: spotify.valid ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.unverified, youtubeUrl: youtube || null, lane: 'Manual URL import' }; state.listeningDeck.unshift(track); ui.addTrackUrlInput.value = ''; ui.status.textContent = spotify.valid ? 'Spotify track verified. Listening Deck card updated.' : 'Add track by URL: added YouTube URL to Listening Deck.'; saveState(); renderListeningDeck(); }
 async function revokeDurableConversationTeachingsForReset() {
-  const synchronization = await synchronizeDurableConversationTeachings({ render: false });
-  if (synchronization.authorityConfirmed !== true) {
-    return { ok: false, teaching: { trait: 'the shared teaching index' } };
-  }
-  const durableTeachings = (state.musicConversationTeachings || [])
-    .filter((teaching) => teaching?.status === 'active' && teaching?.memoryPersisted === true);
-  if (!durableTeachings.length) return { ok: true };
-  const invalidTeaching = durableTeachings.find((teaching) => !teaching.memoryRecord?.id);
-  if (invalidTeaching || typeof tileMemoryBridge?.revokeMemoryCandidate !== 'function') {
-    return { ok: false, teaching: invalidTeaching || durableTeachings[0] };
-  }
-  for (const teaching of durableTeachings) {
-    let revocation = null;
-    try {
-      revocation = await tileMemoryBridge.revokeMemoryCandidate({
-        record: teaching.memoryRecord,
-        sourceRef: 'apps/music-tile/main.js#resetAll',
-        reason: 'Operator reset the Music Tile and requested its durable teachings be revoked.',
-      });
-    } catch {
-      revocation = null;
+  for (let pass = 0; pass < 3; pass += 1) {
+    const synchronization = await synchronizeDurableConversationTeachings({ render: false });
+    if (synchronization.authorityConfirmed !== true) {
+      return { ok: false, teaching: { trait: 'the shared teaching index' } };
     }
-    if (revocation?.revoked !== true) {
-      saveState();
-      return { ok: false, teaching };
+    const durableTeachings = (state.musicConversationTeachings || [])
+      .filter((teaching) => teaching?.status === 'active' && teaching?.memoryPersisted === true);
+    if (!durableTeachings.length) return { ok: true };
+    const invalidTeaching = durableTeachings.find((teaching) => !teaching.memoryRecord?.id);
+    if (invalidTeaching || typeof tileMemoryBridge?.revokeMemoryCandidate !== 'function') {
+      return { ok: false, teaching: invalidTeaching || durableTeachings[0] };
     }
-    teaching.memoryPersisted = false;
-    teaching.memoryPromoted = false;
-    teaching.memoryRecord = null;
+    for (const teaching of durableTeachings) {
+      let revocation = null;
+      try {
+        revocation = await tileMemoryBridge.revokeMemoryCandidate({
+          record: teaching.memoryRecord,
+          sourceRef: 'apps/music-tile/main.js#resetAll',
+          reason: 'Operator reset the Music Tile and requested its durable teachings be revoked.',
+        });
+      } catch {
+        revocation = null;
+      }
+      if (revocation?.revoked !== true) {
+        saveState();
+        return { ok: false, teaching };
+      }
+      teaching.memoryPersisted = false;
+      teaching.memoryPromoted = false;
+      teaching.memoryRecord = null;
+    }
   }
-  return { ok: true };
+  return { ok: false, teaching: { trait: 'a teaching added concurrently on another device' } };
 }
 async function resetAll() {
   if (!beginMusicMemoryMutation()) {

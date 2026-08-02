@@ -342,6 +342,29 @@ export function createStephanosSharedMemoryAdapter({
     return normalizeMemoryState(cache);
   }
 
+  function rebaseStateIntent(baseState, previousState, desiredState) {
+    const base = normalizeMemoryState(baseState);
+    const previous = normalizeMemoryState(previousState);
+    const desired = normalizeMemoryState(desiredState);
+    const records = { ...(base.records || {}) };
+    const intentKeys = new Set([
+      ...Object.keys(previous.records || {}),
+      ...Object.keys(desired.records || {}),
+    ]);
+    for (const key of intentKeys) {
+      const before = previous.records?.[key];
+      const after = desired.records?.[key];
+      if (JSON.stringify(before) === JSON.stringify(after)) continue;
+      if (after === undefined) delete records[key];
+      else records[key] = after;
+    }
+    return {
+      schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+      updatedAt: desired.updatedAt,
+      records,
+    };
+  }
+
   function writeState(state) {
     const previousState = normalizeMemoryState(cache);
     const normalizedState = normalizeMemoryState(state);
@@ -354,12 +377,14 @@ export function createStephanosSharedMemoryAdapter({
 
     void enqueueBackendOperation(async () => {
       try {
-        const response = await saveToBackend(normalizedState);
+        const rebasedState = rebaseStateIntent(authoritativeState, previousState, normalizedState);
+        const response = await saveToBackend(rebasedState);
         backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
         authoritativeState = normalizeMemoryState({
-          ...normalizedState,
-          updatedAt: backendUpdatedAt || normalizedState.updatedAt,
+          ...rebasedState,
+          updatedAt: backendUpdatedAt || rebasedState.updatedAt,
         });
+        updateMirror(authoritativeState);
         authorityHydrated = true;
         lastSaveSource = 'shared-backend';
         fallbackReason = '';
@@ -370,7 +395,7 @@ export function createStephanosSharedMemoryAdapter({
           hydrationCompleted: hydrated,
           fallbackReason,
           resolvedBackendUrl: response.baseUrl,
-          memoryRecordCount: Object.keys(normalizedState.records || {}).length,
+          memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
           stateClass: 'shared-durable-truth',
         });
       } catch (error) {
@@ -410,12 +435,19 @@ export function createStephanosSharedMemoryAdapter({
       throw Object.assign(new Error('Shared durable memory backend is unavailable.'), { code: 'durable-memory-authority-unavailable' });
     }
     try {
-      const response = await enqueueBackendOperation(() => saveToBackend(normalizedState, 'memory-runtime-durable'));
-      backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
-      authoritativeState = normalizeMemoryState({
-        ...normalizedState,
-        updatedAt: backendUpdatedAt || normalizedState.updatedAt,
+      const response = await enqueueBackendOperation(async () => {
+        if (!authorityHydrated) await rehydrateAuthority({ conflict: false });
+        const rebasedState = rebaseStateIntent(authoritativeState, previousState, normalizedState);
+        const backendResponse = await saveToBackend(rebasedState, 'memory-runtime-durable');
+        return { backendResponse, rebasedState };
       });
+      const { backendResponse, rebasedState } = response;
+      backendUpdatedAt = normalizeString(backendResponse?.json?.data?.updatedAt, backendUpdatedAt);
+      authoritativeState = normalizeMemoryState({
+        ...rebasedState,
+        updatedAt: backendUpdatedAt || rebasedState.updatedAt,
+      });
+      updateMirror(authoritativeState);
       authorityHydrated = true;
       lastSaveSource = 'shared-backend';
       fallbackReason = '';
@@ -425,17 +457,17 @@ export function createStephanosSharedMemoryAdapter({
         sourceUsedOnSave: lastSaveSource,
         hydrationCompleted: hydrated,
         fallbackReason,
-        resolvedBackendUrl: response.baseUrl,
-        memoryRecordCount: Object.keys(normalizedState.records || {}).length,
+        resolvedBackendUrl: backendResponse.baseUrl,
+        memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
         stateClass: 'shared-durable-truth',
       });
       return {
         authorityConfirmed: true,
         source: 'shared-backend',
-        resolvedBackendUrl: response.baseUrl,
+        resolvedBackendUrl: backendResponse.baseUrl,
       };
     } catch (error) {
-      updateMirror(previousState);
+      updateMirror(authorityHydrated ? authoritativeState : previousState);
       lastSaveSource = 'local-mirror-fallback';
       fallbackReason = normalizeString(error?.code || error?.message, 'backend-save-failed');
       throw error;
