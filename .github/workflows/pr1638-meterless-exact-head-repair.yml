@@ -1,9 +1,13 @@
 name: PR 1638 Meterless Exact-Head Repair
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/battle-bridge-recovery-health-authority
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
     paths:
       - '.github/workflows/pr1638-meterless-exact-head-repair.yml'
       - 'scripts/pr1638-meterless-exact-head-repair.py'
@@ -19,14 +23,18 @@ concurrency:
 
 jobs:
   repair:
-    if: github.repository == 'Cheekyfellastef/stephan-os'
+    if: >-
+      github.repository == 'Cheekyfellastef/stephan-os' &&
+      github.event.pull_request.number == 1638 &&
+      github.event.pull_request.head.ref == 'fix/battle-bridge-recovery-health-authority' &&
+      github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Check out exact branch head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Verify reviewed source identities
@@ -68,7 +76,7 @@ jobs:
             cat repair-tail.log
             echo '```'
           } > repair-comment.md
-          gh api repos/${{ github.repository }}/issues/1638/comments --method POST --input repair-comment.md
+          gh api --method POST "repos/${{ github.repository }}/issues/1638/comments" -f body="$(cat repair-comment.md)"
 
       - name: Commit repaired source and regressions
         shell: bash
@@ -81,4 +89,4 @@ jobs:
             scripts/battle-bridge-recovery-mesh-installer.test.mjs
           git diff --cached --check
           git commit -m "Bind backend recovery to exact clean source"
-          git push origin HEAD:${{ github.ref_name }}
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
