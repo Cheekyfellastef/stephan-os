@@ -17,11 +17,24 @@ function defaultAdjudicate(candidate) {
   };
 }
 
+export function resolveTileHostRuntime(name, runtime = globalThis) {
+  const runtimeName = normalizeString(name);
+  if (!runtimeName || !runtime) return null;
+  try {
+    if (runtime[runtimeName]) return runtime[runtimeName];
+    const parentRuntime = runtime.parent;
+    if (parentRuntime && parentRuntime !== runtime && parentRuntime[runtimeName]) return parentRuntime[runtimeName];
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export function createTileMemoryBridge({
   tileId,
   tileSource = 'tile-runtime',
-  stephanosMemory = globalThis.stephanosMemory,
-  executionLoop = globalThis.StephanosExecutionLoop,
+  stephanosMemory = resolveTileHostRuntime('stephanosMemory'),
+  executionLoop = resolveTileHostRuntime('StephanosExecutionLoop'),
   adjudicate = defaultAdjudicate,
   truthAdapter = createTileTruthAdapter(),
 } = {}) {
@@ -31,6 +44,8 @@ export function createTileMemoryBridge({
   }
 
   function submitMemoryCandidate(candidate = {}) {
+    const memoryRuntime = stephanosMemory || resolveTileHostRuntime('stephanosMemory');
+    const eventRuntime = executionLoop || resolveTileHostRuntime('StephanosExecutionLoop');
     const normalized = createMemoryCandidate({
       tileId: normalizedTileId,
       tileSource,
@@ -39,8 +54,8 @@ export function createTileMemoryBridge({
     const adjudication = adjudicate(normalized);
 
     let persistedRecord = null;
-    if (adjudication.promoted && stephanosMemory?.saveRecord) {
-      persistedRecord = stephanosMemory.saveRecord({
+    if (adjudication.promoted && memoryRuntime?.saveRecord) {
+      persistedRecord = memoryRuntime.saveRecord({
         namespace: 'continuity',
         id: `tile-memory-${normalizedTileId}-${Date.now()}`,
         type: normalized.type,
@@ -77,7 +92,7 @@ export function createTileMemoryBridge({
     const executionMetadata = truthAdapter.toExecutionMetadata(truth);
     const execution = createExecution({
       mode: adjudication.promoted ? 'promoted' : 'rejected',
-      adapter: stephanosMemory?.saveRecord ? 'stephanos-memory' : 'memory-unavailable',
+      adapter: memoryRuntime?.saveRecord ? 'stephanos-memory' : 'memory-unavailable',
       adjudication: adjudication.promoted ? 'promoted' : 'rejected',
       persisted: Boolean(persistedRecord),
       diagnostics: {
@@ -86,7 +101,7 @@ export function createTileMemoryBridge({
       },
     });
 
-    executionLoop?.publishTileEvent?.({
+    eventRuntime?.publishTileEvent?.({
       tileId: normalizedTileId,
       tileTitle: normalizedTileId,
       action: 'tile.memory.candidate.submit',
@@ -114,7 +129,78 @@ export function createTileMemoryBridge({
     };
   }
 
+  function revokeMemoryCandidate({ record = {}, reason = '', sourceRef = '' } = {}) {
+    const memoryRuntime = stephanosMemory || resolveTileHostRuntime('stephanosMemory');
+    const eventRuntime = executionLoop || resolveTileHostRuntime('StephanosExecutionLoop');
+    const namespace = normalizeString(record?.namespace, 'continuity');
+    const id = normalizeString(record?.id);
+    const operatorReason = normalizeString(reason);
+    const ownedRecord = namespace === 'continuity' && id.startsWith(`tile-memory-${normalizedTileId}-`);
+    const eligible = ownedRecord && operatorReason.length >= 12;
+    let revoked = false;
+
+    if (eligible && memoryRuntime?.deleteRecord) {
+      revoked = memoryRuntime.deleteRecord({ namespace, id }) === true;
+    }
+
+    const revocationReason = revoked
+      ? 'Original durable tile memory record revoked.'
+      : eligible
+        ? 'Memory revocation failed: durable delete adapter unavailable or record not found.'
+        : 'Memory revocation rejected: require an original record owned by this tile and an operator reason.';
+    const truth = truthAdapter.createTruthPayload({
+      tileActionType: 'tile.memory.candidate.revoke',
+      tileSource,
+      tileId: normalizedTileId,
+      sourceRef: normalizeString(sourceRef, `tile:${normalizedTileId}`),
+      memoryCandidateSubmitted: false,
+      memoryPromoted: false,
+      memoryReason: revocationReason,
+      retrievalContributionSubmitted: false,
+      retrievalIngested: false,
+      retrievalSourceRef: '',
+      additional: {
+        memoryRevocationRequested: eligible,
+        memoryRevoked: revoked,
+        revokedRecordNamespace: namespace,
+        revokedRecordId: id,
+      },
+    });
+    const executionMetadata = truthAdapter.toExecutionMetadata(truth);
+    const execution = createExecution({
+      mode: revoked ? 'revoked' : 'revocation-blocked',
+      adapter: memoryRuntime?.deleteRecord ? 'stephanos-memory' : 'memory-unavailable',
+      adjudication: eligible ? 'revocation-eligible' : 'rejected',
+      persisted: revoked,
+      diagnostics: { eligible, ownedRecord, revoked },
+    });
+
+    eventRuntime?.publishTileEvent?.({
+      tileId: normalizedTileId,
+      tileTitle: normalizedTileId,
+      action: 'tile.memory.candidate.revoke',
+      summary: revocationReason,
+      result: {
+        record: { namespace, id },
+        execution,
+        execution_metadata: executionMetadata,
+      },
+      tags: ['tile.contract.v1', 'tile.memory.revocation'],
+      source: tileSource,
+    });
+
+    return {
+      ok: eligible,
+      revoked,
+      record: { namespace, id },
+      execution,
+      executionMetadata,
+      truth,
+    };
+  }
+
   return {
+    revokeMemoryCandidate,
     submitMemoryCandidate,
   };
 }

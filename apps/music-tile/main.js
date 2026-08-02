@@ -13,6 +13,7 @@ import { reducePresenceState, getPresenceSummary, acknowledgePresenceItem, dismi
 import { emitPresenceEvent as emitGlobalPresenceEvent } from '../../shared/runtime/stephanosPresenceBridge.mjs';
 import { runAiActionLifecycle } from '../../shared/runtime/aiActionLifecycle.mjs';
 import { catalogResultToMusicTileTrack, findExistingCatalogTrack, requestNativeCatalogSearch } from './engine/nativeCatalogSearch.js';
+import { applyTasteTeachingContribution, buildConversationAiPayload, buildMusicConversationPlan, removeTasteTeachingContribution, retainConversationTeachingHistory, summarizeTasteEvidence } from './engine/musicConversationPlanner.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const RATING_VALUES = [-2, -1, 0, 1, 2];
@@ -53,11 +54,24 @@ const intelligenceUi = {
   nativeSearchButton: document.getElementById('native-music-search-button'),
   nativeSearchStatus: document.getElementById('native-music-search-status'),
   nativeSearchResults: document.getElementById('native-music-search-results'),
+  conversationForm: document.getElementById('music-conversation-form'),
+  conversationInput: document.getElementById('music-conversation-input'),
+  conversationSend: document.getElementById('music-conversation-send'),
+  conversationResponse: document.getElementById('music-conversation-response'),
+  conversationStatus: document.getElementById('music-conversation-status'),
+  conversationPrompts: Array.from(document.querySelectorAll('[data-music-prompt]')),
 };
 
 const tileEventBridge = (() => { try { return createTileEventBridge({ tileId: 'music-tile', tileSource: 'music-cockpit' }); } catch { return null; } })();
 let presenceState = { status: 'idle', voiceMessages: [], awarenessQueue: [], recentEvents: [], lastSpokenSummary: '' };
-let nativeCatalogSearchState = { query: '', providerLabel: '', results: [], error: '' };
+function createIdleNativeCatalogSearchState() {
+  return { query: '', providerLabel: '', results: [], error: '' };
+}
+function createIdleMusicConversationState() {
+  return { plan: null, answer: '', mode: 'idle', pendingTeaching: null, busy: false, catalogResults: [], showAllCatalogResults: false };
+}
+let nativeCatalogSearchState = createIdleNativeCatalogSearchState();
+let musicConversationState = createIdleMusicConversationState();
 
 const tileMemoryBridge = (() => { try { return createTileMemoryBridge({ tileId: 'music-tile', tileSource: 'music-cockpit' }); } catch { return null; } })();
 
@@ -128,11 +142,34 @@ function setAiAction(text, diagnostics = null) { if (ui.status) ui.status.textCo
 function wireIntelligenceExperience() {
   intelligenceUi.surpriseBtn?.addEventListener('click', startSurpriseJourney);
   intelligenceUi.nativeSearchForm?.addEventListener('submit', runNativeCatalogSearch);
-  intelligenceUi.nativeSearchResults?.addEventListener('click', (event) => {
+  intelligenceUi.conversationForm?.addEventListener('submit', runMusicConversation);
+  intelligenceUi.conversationInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      intelligenceUi.conversationForm?.requestSubmit();
+    }
+  });
+  intelligenceUi.conversationPrompts.forEach((button) => button.addEventListener('click', () => {
+    if (intelligenceUi.conversationInput) intelligenceUi.conversationInput.value = button.dataset.musicPrompt || '';
+    intelligenceUi.conversationForm?.requestSubmit();
+  }));
+  const handleCatalogResultAction = (event, results = nativeCatalogSearchState.results) => {
     const button = event.target.closest('[data-action="add-native-catalog-result"]');
     if (!button) return;
-    const result = nativeCatalogSearchState.results.find((item) => String(item.universalId) === String(button.dataset.resultId));
+    const result = results.find((item) => String(item.universalId) === String(button.dataset.resultId));
     if (result) addNativeCatalogResultToListeningRoom(result);
+  };
+  intelligenceUi.nativeSearchResults?.addEventListener('click', handleCatalogResultAction);
+  intelligenceUi.conversationResponse?.addEventListener('click', (event) => {
+    handleCatalogResultAction(event, musicConversationState.catalogResults);
+    const action = event.target.closest('[data-conversation-action]');
+    if (!action) return;
+    if (action.dataset.conversationAction === 'teach') applyConversationTeaching();
+    if (action.dataset.conversationAction === 'forget') forgetConversationTeaching(action.dataset.teachingId);
+    if (action.dataset.conversationAction === 'show-all-results') {
+      musicConversationState.showAllCatalogResults = true;
+      renderMusicConversation();
+    }
   });
   intelligenceUi.reasonBtn?.addEventListener('click', () => {
     intelligenceUi.stage?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -158,10 +195,14 @@ function wireIntelligenceExperience() {
 async function runNativeCatalogSearch(event) {
   event?.preventDefault?.();
   const query = String(intelligenceUi.nativeSearchInput?.value || '').trim();
+  await performNativeCatalogSearch(query);
+}
+
+async function performNativeCatalogSearch(query) {
   if (!query) {
     nativeCatalogSearchState = { query: '', providerLabel: '', results: [], error: 'Type a song, artist or musical direction.' };
     renderNativeCatalogResults();
-    return;
+    return nativeCatalogSearchState;
   }
   if (intelligenceUi.nativeSearchButton) intelligenceUi.nativeSearchButton.disabled = true;
   if (intelligenceUi.nativeSearchStatus) intelligenceUi.nativeSearchStatus.textContent = `Searching for “${query}”…`;
@@ -185,6 +226,7 @@ async function runNativeCatalogSearch(event) {
     if (intelligenceUi.nativeSearchButton) intelligenceUi.nativeSearchButton.disabled = false;
     renderNativeCatalogResults();
   }
+  return nativeCatalogSearchState;
 }
 
 function addNativeCatalogResultToListeningRoom(result) {
@@ -265,6 +307,245 @@ function renderNativeCatalogResults() {
   }).join('');
 }
 
+function getConversationCurrentTrack() {
+  return state.candidates?.[0] || state.listeningDeck?.[0] || null;
+}
+
+function getConversationTeachings() {
+  return (Array.isArray(state.musicConversationTeachings) ? state.musicConversationTeachings : [])
+    .filter((entry) => entry?.status === 'active');
+}
+
+function setMusicConversationBusy(busy, status = '') {
+  musicConversationState.busy = Boolean(busy);
+  if (intelligenceUi.conversationSend) intelligenceUi.conversationSend.disabled = Boolean(busy);
+  if (intelligenceUi.conversationInput) intelligenceUi.conversationInput.disabled = Boolean(busy);
+  if (intelligenceUi.conversationStatus && status) intelligenceUi.conversationStatus.textContent = status;
+}
+
+function conversationCatalogMarkup(result) {
+  const existing = findExistingCatalogTrack(state.listeningDeck, result);
+  const spotifyHref = result.spotifyUrl || result.spotifySearchUrl || '';
+  return `<article class="native-catalog-result">
+    <div class="native-catalog-result__identity">
+      <strong>${escapeHtml(result.title || 'Untitled')}</strong>
+      <span>${escapeHtml(result.artist || 'Unknown Artist')}${result.album ? ` · ${escapeHtml(result.album)}` : ''}</span>
+      <span>${escapeHtml(result.providerLabel || 'Catalogue')} · ${escapeHtml(result.verificationStatus || 'verification unknown')}</span>
+    </div>
+    <div class="native-catalog-result__actions">
+      ${spotifyHref ? `<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${escapeHtml(spotifyHref)}">${result.spotifyUrl ? 'Open in Spotify' : 'Find on Spotify'}</a>` : ''}
+      <button type="button" data-action="add-native-catalog-result" data-result-id="${escapeHtml(result.universalId || '')}"${existing ? ' disabled' : ''}>${existing ? 'In Listening Room' : 'Add to Listening Room'}</button>
+    </div>
+  </article>`;
+}
+
+function renderMusicConversation() {
+  const target = intelligenceUi.conversationResponse;
+  if (!target) return;
+  const activeTeachings = getConversationTeachings();
+  const teachingRows = activeTeachings.length
+    ? `<div class="music-conversation__teachings">${activeTeachings.slice().reverse().map((entry) => `<article class="music-conversation__teaching">
+        <div class="music-conversation__teaching-head"><strong>${escapeHtml(entry.trait)}</strong><span>${escapeHtml(entry.polarity)} · explicitly taught</span></div>
+        <div class="music-conversation__actions"><button type="button" class="ghost" data-conversation-action="forget" data-teaching-id="${escapeHtml(entry.id)}">Forget this</button></div>
+      </article>`).join('')}</div>`
+    : '';
+  if (musicConversationState.mode === 'idle' && !activeTeachings.length) return;
+  if (musicConversationState.mode === 'idle') {
+    target.innerHTML = `<div class="music-conversation__answer"><div class="music-conversation__answer-head"><strong>What you have taught me</strong><span>operator-owned memory</span></div><p>These signals carry more authority than inferred preferences.</p></div>${teachingRows}`;
+    return;
+  }
+  const plan = musicConversationState.plan || {};
+  const pending = musicConversationState.pendingTeaching;
+  const conversationResults = Array.isArray(musicConversationState.catalogResults) ? musicConversationState.catalogResults : [];
+  const visibleConversationResults = musicConversationState.showAllCatalogResults ? conversationResults : conversationResults.slice(0, 3);
+  const resultRows = plan.mayUseCatalog && visibleConversationResults.length
+    ? `<div class="native-music-search__results">${visibleConversationResults.map(conversationCatalogMarkup).join('')}</div>`
+    : '';
+  const pendingTeaching = pending
+    ? `<article class="music-conversation__teaching">
+        <div class="music-conversation__teaching-head"><strong>${escapeHtml(pending.trait)}</strong><span>${escapeHtml(pending.polarity)} · waiting for you</span></div>
+        <p>This will change Taste DNA only after you confirm it. You can forget it later.</p>
+        <div class="music-conversation__actions"><button type="button" data-conversation-action="teach">Teach this</button></div>
+      </article>`
+    : '';
+  target.innerHTML = `<article class="music-conversation__answer">
+      <div class="music-conversation__answer-head"><strong>Stephanos</strong><span>${escapeHtml(musicConversationState.mode)} · ${escapeHtml(plan.intent || 'conversation')}</span></div>
+      <p>${escapeHtml(musicConversationState.answer || 'I need a little more signal before I can act.')}</p>
+      ${plan.mayUseCatalog && conversationResults.length > 3 && !musicConversationState.showAllCatalogResults ? `<div class="music-conversation__actions"><button type="button" class="ghost" data-conversation-action="show-all-results">See all ${conversationResults.length} results</button></div>` : ''}
+    </article>${pendingTeaching}${resultRows}${teachingRows}`;
+}
+
+function localConversationAnswer(plan) {
+  const track = getConversationCurrentTrack();
+  const evidence = summarizeTasteEvidence(state.tasteDNA, Object.keys(state.ratings || {}).length);
+  if (plan.intent === 'empty') return 'Give me a feeling, a track, a direction or something you want me to learn.';
+  if (plan.intent === 'help') return 'Ask me to find music, bend the current signal, build a journey, explain a choice, read your Taste DNA, or remember a preference.';
+  if (plan.intent === 'teach') return plan.teachingCandidate
+    ? `I heard a ${plan.teachingCandidate.polarity} taste signal: “${plan.teachingCandidate.trait}”. I have not changed your Taste DNA yet.`
+    : 'I can learn that, but I need the actual preference—for example, “remember that I dislike breathy vocals”.';
+  if (plan.intent === 'forget') return getConversationTeachings().length
+    ? 'Choose the learned signal you want me to forget. Nothing is removed until you press its Forget button.'
+    : 'There are no explicit conversation teachings to forget yet.';
+  if (plan.intent === 'explain') return track
+    ? `${track.artist || 'Unknown Artist'} — ${getDisplayTrackTitle(track)} surfaced because ${getTrackReason(track)} ${getNoveltyStatement(track)}.`
+    : 'Evidence unavailable: there is no current doorway track to explain yet. Ask me to build a journey first.';
+  if (plan.intent === 'reflect') {
+    if (!evidence.evidenceAvailable) return 'I do not have enough operator-owned evidence to describe a change in your taste yet.';
+    const likes = evidence.positive.length ? `Your strongest positive signals are ${evidence.positive.join(', ')}` : 'No positive signals are strong enough yet';
+    const avoids = evidence.negative.length ? `; your clearest avoidance signals are ${evidence.negative.join(', ')}` : '';
+    return `${likes}${avoids}. This is a snapshot of ${evidence.ratedTrackCount} rated track${evidence.ratedTrackCount === 1 ? '' : 's'}, not a claim about your wider listening history.`;
+  }
+  return '';
+}
+
+async function runMusicConversation(event) {
+  event?.preventDefault?.();
+  if (musicConversationState.busy) return;
+  const message = String(intelligenceUi.conversationInput?.value || '').trim();
+  const plan = buildMusicConversationPlan(message, { currentTrack: getConversationCurrentTrack() });
+  musicConversationState = { plan, answer: localConversationAnswer(plan), mode: 'local', pendingTeaching: plan.teachingCandidate, busy: false, catalogResults: [], showAllCatalogResults: false };
+  renderMusicConversation();
+  if (plan.intent === 'empty') return;
+  setMusicConversationBusy(true, 'Understanding your signal…');
+  emitPresenceEvent({ kind: 'conversation_started', severity: 'info', summary: `Music conversation: ${plan.intent}`, impact: 'Deterministic intent plan created before provider or memory access.' });
+  try {
+    if (plan.mayUseCatalog) {
+      const result = await performNativeCatalogSearch(plan.searchQuery);
+      musicConversationState.catalogResults = Array.isArray(result.results) ? result.results.slice() : [];
+      musicConversationState.answer = result.error
+        ? `I understood the direction, but the catalogue doors are temporarily unavailable: ${result.error}`
+        : result.results.length
+          ? `I opened ${result.results.length} real catalogue door${result.results.length === 1 ? '' : 's'} for “${plan.message}”. Nothing has been added or learned until you choose it.`
+          : `I found no real catalogue result for “${plan.message}”. I have not invented one.`;
+      renderMusicConversation();
+    }
+    if (plan.intent === 'journey') {
+      const journeyResult = await startSurpriseJourney();
+      const doorway = journeyResult?.ok ? journeyResult.doorwayTrack : null;
+      musicConversationState.answer = journeyResult?.ok && doorway
+        ? `The journey is open. ${doorway.artist || 'Unknown Artist'} — ${getDisplayTrackTitle(doorway)} is the doorway because ${getTrackReason(doorway)}`
+        : 'I could not build an evidence-backed journey, so I did not report one as ready.';
+      renderMusicConversation();
+    }
+    if (plan.mayUseAi) await enrichMusicConversationWithAi(plan);
+    emitPresenceEvent({ kind: 'conversation_completed', severity: 'info', summary: `Music conversation completed: ${plan.intent}`, impact: musicConversationState.mode === 'ai-assisted' ? 'Canonical AI router added an inference-labelled perspective.' : 'Local bounded intelligence answered.' });
+  } finally {
+    setMusicConversationBusy(false, plan.durableMutationRequested
+      ? 'No preference changes until you confirm them.'
+      : 'Request complete · no Taste DNA was changed.');
+    renderMusicConversation();
+  }
+}
+
+async function enrichMusicConversationWithAi(plan) {
+  const payload = buildConversationAiPayload(plan, {
+    tasteDNA: state.tasteDNA,
+    ratedTrackCount: Object.keys(state.ratings || {}).length,
+    explicitTeachings: getConversationTeachings(),
+  });
+  const lifecycle = await runAiActionLifecycle({
+    actionId: `music-conversation-${plan.intent}`,
+    timeoutMs: IMMERSION_REQUEST_TIMEOUT_MS,
+    emitEvent: emitPresenceEvent,
+    run: async () => {
+      const response = await askMusicAi('music-conversation', payload);
+      if (!response.ok) return { ok: false, mode: 'rule-fallback', response };
+      const answer = String(response.parsed?.answer || response.text || '').trim().slice(0, 700);
+      return { ok: Boolean(answer), mode: response.parsed ? 'structured' : 'text-fallback', answer, response };
+    },
+  });
+  if (!lifecycle.ok || !lifecycle.answer) return;
+  const localAnswer = String(musicConversationState.answer || '').trim();
+  musicConversationState.answer = `${localAnswer}${localAnswer ? ' ' : ''}AI-stack perspective (inference): ${lifecycle.answer}`;
+  musicConversationState.mode = 'ai-assisted';
+  renderMusicConversation();
+}
+
+function applyConversationTeaching() {
+  const candidate = musicConversationState.pendingTeaching;
+  if (!candidate) return;
+  state.musicConversationTeachings = Array.isArray(state.musicConversationTeachings) ? state.musicConversationTeachings : [];
+  const previousTrait = state.tasteDNA[candidate.trait] ? { ...state.tasteDNA[candidate.trait] } : null;
+  const activeTeachings = getConversationTeachings();
+  const teaching = {
+    id: `music-teaching-${Date.now()}`,
+    trait: candidate.trait,
+    polarity: candidate.polarity,
+    status: 'active',
+    source: 'explicit-conversation',
+    previousTrait,
+    weightDelta: Number(candidate.weightDelta || 0),
+    createdAt: new Date().toISOString(),
+  };
+  const projection = applyTasteTeachingContribution(state.tasteDNA, teaching, activeTeachings, teaching.createdAt);
+  teaching.baselineTrait = projection.baselineTrait;
+  activeTeachings.filter((entry) => entry.trait === teaching.trait && !entry.baselineTrait)
+    .forEach((entry) => { entry.baselineTrait = projection.baselineTrait; });
+  state.tasteDNA = projection.tasteDNA;
+  const record = projection.record;
+  const memoryResult = tileMemoryBridge?.submitMemoryCandidate?.({
+    key: `music.taste_dna.conversation.${teaching.id}`,
+    value: { trait: teaching.trait, polarity: teaching.polarity, status: teaching.status },
+    type: 'preference',
+    tags: ['music', 'taste-dna', 'explicit-teaching'],
+    sourceRef: 'apps/music-tile/main.js#applyConversationTeaching',
+    reason: 'Operator explicitly confirmed a Music Tile conversation teaching.',
+  });
+  teaching.memoryPromoted = memoryResult?.promoted === true;
+  teaching.memoryPersisted = memoryResult?.execution?.persisted === true;
+  teaching.memoryRecord = memoryResult?.record?.id
+    ? { namespace: memoryResult.record.namespace || 'continuity', id: memoryResult.record.id }
+    : null;
+  state.musicConversationTeachings.push(teaching);
+  state.appliedTasteDnaChanges = Array.isArray(state.appliedTasteDnaChanges) ? state.appliedTasteDnaChanges : [];
+  state.appliedTasteDnaChanges.push({ traitName: teaching.trait, oldWeight: previousTrait?.weight || 0, newWeight: record?.weight || 0, reason: 'explicit conversation teaching', at: teaching.createdAt });
+  musicConversationState.pendingTeaching = null;
+  musicConversationState.answer = `Learned: “${teaching.trait}” is a ${teaching.polarity} signal. It is visible below and can be forgotten.`;
+  musicConversationState.mode = teaching.memoryPersisted ? 'learned · durable memory' : 'learned · tile memory';
+  state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
+  saveState();
+  renderTasteDNA();
+  renderCandidates();
+  renderMusicIntelligenceCentre();
+  renderMusicConversation();
+  emitPresenceEvent({ kind: 'conversation_teaching_applied', severity: 'notice', summary: `Explicit music teaching applied: ${teaching.trait}`, impact: teaching.memoryPersisted ? 'Taste DNA and durable Stephanos memory updated.' : 'Taste DNA updated; durable memory adapter was unavailable.', suggestedAction: 'Use Forget this to undo the teaching.' });
+}
+
+function forgetConversationTeaching(teachingId) {
+  const teaching = (state.musicConversationTeachings || []).find((entry) => entry.id === teachingId && entry.status === 'active');
+  if (!teaching) return;
+  if (teaching.memoryPersisted) {
+    const revocation = tileMemoryBridge?.revokeMemoryCandidate?.({
+      record: teaching.memoryRecord,
+      sourceRef: 'apps/music-tile/main.js#forgetConversationTeaching',
+      reason: 'Operator explicitly asked the Music Tile to revoke this durable teaching.',
+    });
+    if (revocation?.revoked !== true) {
+      musicConversationState.answer = `I could not safely forget “${teaching.trait}” because its durable memory record was not revoked. Nothing was changed.`;
+      musicConversationState.mode = 'forget blocked';
+      renderMusicConversation();
+      emitPresenceEvent({ kind: 'conversation_teaching_forget_blocked', severity: 'warning', summary: `Music teaching forget blocked: ${teaching.trait}`, impact: 'Durable memory revocation failed; local Taste DNA was left unchanged.' });
+      return;
+    }
+  }
+  const removal = removeTasteTeachingContribution(state.tasteDNA, teaching, state.musicConversationTeachings);
+  state.tasteDNA = removal.tasteDNA;
+  state.musicConversationTeachings
+    .filter((entry) => entry.status === 'active' && entry.trait === teaching.trait && entry.id !== teaching.id && !entry.baselineTrait)
+    .forEach((entry) => { entry.baselineTrait = removal.baselineTrait; });
+  teaching.status = 'forgotten';
+  teaching.forgottenAt = new Date().toISOString();
+  state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
+  musicConversationState.answer = `Forgotten: “${teaching.trait}”. Only that teaching's Taste DNA contribution was removed.`;
+  musicConversationState.mode = 'forgotten';
+  saveState();
+  renderTasteDNA();
+  renderCandidates();
+  renderMusicIntelligenceCentre();
+  renderMusicConversation();
+  emitPresenceEvent({ kind: 'conversation_teaching_forgotten', severity: 'notice', summary: `Music teaching forgotten: ${teaching.trait}`, impact: 'Prior Taste DNA value restored through explicit operator action.' });
+}
+
 function getJourneySeedArtist() {
   const typedArtist = parseArtists(ui.artistInput?.value || '')[0];
   if (typedArtist) return typedArtist;
@@ -279,7 +560,7 @@ function getJourneySeedArtist() {
 
 async function startSurpriseJourney() {
   const button = intelligenceUi.surpriseBtn;
-  if (!button || button.disabled) return;
+  if (!button || button.disabled) return { ok: false, doorwayTrack: null, reason: 'journey-control-unavailable' };
   const seedArtist = getJourneySeedArtist();
   if (ui.artistInput) ui.artistInput.value = seedArtist;
   button.disabled = true;
@@ -290,7 +571,7 @@ async function startSurpriseJourney() {
   if (subtitle) subtitle.textContent = `Reading your ${seedArtist} signal`;
   try {
     const buildOutcome = await buildJourney();
-    if (!buildOutcome?.ok) return;
+    if (!buildOutcome?.ok) return { ok: false, doorwayTrack: null, reason: buildOutcome?.message || 'journey-build-failed' };
     const doorwayTrack = state.candidates?.[0] || null;
     if (doorwayTrack && !state.listeningDeck.some((track) => `${track.id}` === `${doorwayTrack.id}`)) {
       state.listeningDeck.unshift(doorwayTrack);
@@ -300,11 +581,14 @@ async function startSurpriseJourney() {
     if (doorwayTrack) {
       ui.status.textContent = `Journey ready. ${doorwayTrack.artist || 'Unknown Artist'} — ${getDisplayTrackTitle(doorwayTrack)} is your doorway track.`;
       intelligenceUi.stage?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return { ok: true, doorwayTrack, buildOutcome };
     } else {
       ui.status.textContent = 'No evidence-backed doorway track was available. Try an artist in Advanced Studio.';
+      return { ok: false, doorwayTrack: null, reason: 'doorway-track-unavailable', buildOutcome };
     }
   } catch (error) {
     setTerminalStatus(`Journey not ready: ${String(error?.message || error)}. Your existing listening room was not reported as ready.`);
+    return { ok: false, doorwayTrack: null, reason: String(error?.message || error) };
   } finally {
     button.disabled = false;
     button.classList.remove('is-loading');
@@ -753,8 +1037,55 @@ async function buildJourney() {
 }
 function startJourney() { const artists = parseArtists(ui.artistInput?.value || ''); if (!artists.length) { ui.status.textContent = 'Enter an artist to build a journey.'; return; } const term = artists[0]; if (!state.candidates.length) state.candidates = rankCandidatesByTaste(buildSeededCandidates(term), buildTasteWeightsForState()); if (!state.listeningDeck.length) state.listeningDeck = state.candidates.slice(0, 3); ui.status.textContent = `Starting journey for: ${term}.`; saveState(); renderAll(); }
 function addTrackByUrl() { const raw = String(ui.addTrackUrlInput?.value || '').trim(); if (!raw) return; const spotify = resolveSpotifyReference(raw); const youtube = normalizeYouTubeUrl(raw); if (spotify.valid && spotify.type !== 'track') { ui.status.textContent = 'Paste a Spotify track URL to create a playable card.'; return; } if (!spotify.valid && !youtube) { ui.status.textContent = spotify.reason === 'search-url' ? 'This is a Spotify search link, not a playable track link. Open a result in Spotify and paste the track URL.' : 'Paste a valid Spotify track URL or YouTube URL.'; return; } const track = { id: `manual-${Date.now()}`, title: spotify.valid ? 'Spotify track' : 'YouTube track', artist: 'Unknown', spotifyUrl: spotify.valid ? spotify.openUrl : null, spotifyUri: spotify.valid ? spotify.uri : null, candidateVerificationStatus: spotify.valid ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.unverified, youtubeUrl: youtube || null, lane: 'Manual URL import' }; state.listeningDeck.unshift(track); ui.addTrackUrlInput.value = ''; ui.status.textContent = spotify.valid ? 'Spotify track verified. Listening Deck card updated.' : 'Add track by URL: added YouTube URL to Listening Deck.'; saveState(); renderListeningDeck(); }
-function resetAll() { localStorage.removeItem(STORAGE_KEY); Object.assign(state, loadState()); ui.status.textContent = 'Reset complete.'; renderAll(); }
-function renderAll() { renderTasteDNA(); renderCandidates(); renderListeningDeck(); renderDiscoveryResults(); renderAiSuggestions(); renderPendingTasteDnaChanges(); renderAppliedTasteDnaChanges(); renderImmersionSession(); renderJourneyQueue(); renderActiveJourneySummary(); renderMusicIntelligenceCentre(); }
+function revokeDurableConversationTeachingsForReset() {
+  const durableTeachings = (state.musicConversationTeachings || [])
+    .filter((teaching) => teaching?.status === 'active' && teaching?.memoryPersisted === true);
+  if (!durableTeachings.length) return { ok: true };
+  const invalidTeaching = durableTeachings.find((teaching) => !teaching.memoryRecord?.id);
+  if (invalidTeaching || typeof tileMemoryBridge?.revokeMemoryCandidate !== 'function') {
+    return { ok: false, teaching: invalidTeaching || durableTeachings[0] };
+  }
+  for (const teaching of durableTeachings) {
+    let revocation = null;
+    try {
+      revocation = tileMemoryBridge.revokeMemoryCandidate({
+        record: teaching.memoryRecord,
+        sourceRef: 'apps/music-tile/main.js#resetAll',
+        reason: 'Operator reset the Music Tile and requested its durable teachings be revoked.',
+      });
+    } catch {
+      revocation = null;
+    }
+    if (revocation?.revoked !== true) {
+      saveState();
+      return { ok: false, teaching };
+    }
+    teaching.memoryPersisted = false;
+    teaching.memoryPromoted = false;
+    teaching.memoryRecord = null;
+  }
+  return { ok: true };
+}
+function resetAll() {
+  const revocation = revokeDurableConversationTeachingsForReset();
+  if (!revocation.ok) {
+    const trait = String(revocation.teaching?.trait || 'a durable teaching');
+    musicConversationState.answer = `Reset was blocked because I could not safely revoke “${trait}”. Your tile and remaining Forget controls were preserved.`;
+    musicConversationState.mode = 'reset blocked';
+    ui.status.textContent = 'Reset blocked: durable music memory could not be safely revoked.';
+    renderMusicConversation();
+    emitPresenceEvent({ kind: 'conversation_reset_blocked', severity: 'warning', summary: 'Music Tile reset blocked', impact: 'A durable teaching could not be revoked, so tile state was preserved.' });
+    return false;
+  }
+  localStorage.removeItem(STORAGE_KEY);
+  Object.assign(state, loadState());
+  nativeCatalogSearchState = createIdleNativeCatalogSearchState();
+  musicConversationState = createIdleMusicConversationState();
+  ui.status.textContent = 'Reset complete.';
+  renderAll();
+  return true;
+}
+function renderAll() { renderTasteDNA(); renderCandidates(); renderListeningDeck(); renderDiscoveryResults(); renderAiSuggestions(); renderPendingTasteDnaChanges(); renderAppliedTasteDnaChanges(); renderImmersionSession(); renderJourneyQueue(); renderActiveJourneySummary(); renderMusicIntelligenceCentre(); renderMusicConversation(); }
 function renderTasteDNA() { const anchors = Object.entries(state.tasteDNA).filter(([,meta]) => meta?.polarity !== 'negative' && Number(meta?.weight || 0) > 0).map(([name]) => name).filter(Boolean); ui.positiveAnchors.innerHTML = `<h3>✨ Positive anchors</h3>${anchors.length ? anchors.slice(0, 10).map((name) => `<div class="meta">${name}</div>`).join('') : '<div class="music-empty-state">🎯 No positive anchors yet. Rate tracks or add custom traits to shape your sound.</div>'}`; ui.rejectPatterns.innerHTML = '<h3>🚫 Reject patterns</h3>'; const counts = RATING_VALUES.reduce((acc, val) => ({ ...acc, [val]: 0 }), {}); for (const value of Object.values(state.ratings)) counts[value] = (counts[value] || 0) + 1; ui.ratingCounts.innerHTML = `<h3>Rating counts</h3><div class="card">${Object.entries(counts).map(([k,v]) => `<div>${k}: ${v}</div>`).join('')}</div>`; const weights = buildTasteWeightsForState(); const topPositive = topSignals(weights.positiveWeights); const topReject = topSignals(weights.rejectWeights); const recent = Object.entries(state.tasteDNA).sort((a,b)=>String(b[1].updatedAt||'').localeCompare(String(a[1].updatedAt||''))).slice(0,5).map(([k])=>k); ui.learningSignals.innerHTML = `<h3>🧬 Learning Signals</h3><div class="card dna-grid"><div><strong>Strongest positive</strong>${topPositive.map(([k,v])=>`<div class="dna-row dna-row--positive"><span>${k}</span><strong>+${v.toFixed(2)}</strong></div>`).join('') || '<div class="meta">None</div>'}</div><div><strong>Strongest negative</strong>${topReject.map(([k,v])=>`<div class="dna-row dna-row--negative"><span>${k}</span><strong>-${v.toFixed(2)}</strong></div>`).join('') || '<div class="meta">None</div>'}</div><div><strong>Recently changed</strong>${recent.map((x)=>`<div class="meta">${x}</div>`).join('') || '<div class="meta">None</div>'}</div><div class="meta"><strong>Ratings contributed</strong> ${Object.keys(state.ratings).length}</div><div class="meta"><strong>Last feedback interpreted</strong> ${state.lastFeedbackInterpreted?.raw || 'none yet'}</div></div>`; ui.traitRows.innerHTML = Object.entries(state.tasteDNA).map(([name, meta]) => `<div class="card trait-row"><strong>${name}</strong><div class="meta">${meta.polarity} · ${meta.category} · tracks ${meta.contributions}</div><div class="actions"><button data-action="weight-dec" data-trait="${name}">-</button><span data-weight="${name}">${Number(meta.weight).toFixed(2)}</span><button data-action="weight-inc" data-trait="${name}">+</button><input type="range" min="-5" max="10" step="0.2" value="${Number(meta.weight)}" data-action="weight-slider" data-trait="${name}" /></div></div>`).join(''); ui.traitRows.querySelectorAll('[data-action="weight-inc"]').forEach((btn)=>btn.addEventListener('click',()=>adjustTraitWeight(btn.dataset.trait,0.5))); ui.traitRows.querySelectorAll('[data-action="weight-dec"]').forEach((btn)=>btn.addEventListener('click',()=>adjustTraitWeight(btn.dataset.trait,-0.5))); ui.traitRows.querySelectorAll('[data-action="weight-slider"]').forEach((input)=>input.addEventListener('input',()=>setTraitWeight(input.dataset.trait, Number(input.value)))); }
 function adjustTraitWeight(name, delta) { if (!state.tasteDNA[name]) return; state.tasteDNA[name].weight = Number((state.tasteDNA[name].weight + delta).toFixed(2)); state.tasteDNA[name].updatedAt = new Date().toISOString(); state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); }
 function setTraitWeight(name, value) { if (!state.tasteDNA[name]) return; state.tasteDNA[name].weight = Number(value.toFixed(2)); state.tasteDNA[name].updatedAt = new Date().toISOString(); state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState()); saveState(); renderAll(); }
@@ -901,7 +1232,7 @@ function resolveArtistOnSpotify() { const artists = parseArtists(ui.artistInput?
 function parseArtists(raw) { return raw.split(',').map((a) => a.trim()).filter(Boolean).map((name) => normalizeArtistAlias(name)); }
 function normalizeArtistAlias(name = '') { const lower = String(name || '').trim().toLowerCase(); return lower === 'y do i' || lower === 'ydoi' ? 'Y do I' : String(name || '').trim(); }
 function initialTasteDNA() { const map = {}; DEFAULT_POSITIVE_TRAITS.forEach((name)=>{ map[name] = { weight: 1, polarity: 'positive', category: 'core', contributions: 0, custom: false, updatedAt: '' }; }); DEFAULT_NEGATIVE_TRAITS.forEach((name)=>{ map[name] = { weight: 1, polarity: 'negative', category: name === 'too harsh' ? 'banned' : 'avoid', contributions: 0, custom: false, updatedAt: '' }; }); return map; }
-function loadState() { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); return { candidates: Array.isArray(saved.candidates) ? saved.candidates : [], listeningDeck: Array.isArray(saved.listeningDeck) ? saved.listeningDeck : [], ratings: saved.ratings && typeof saved.ratings === 'object' ? saved.ratings : {}, tags: saved.tags && typeof saved.tags === 'object' ? saved.tags : {}, tasteDNA: saved.tasteDNA && typeof saved.tasteDNA === 'object' ? saved.tasteDNA : initialTasteDNA(), feedbackHistory: Array.isArray(saved.feedbackHistory) ? saved.feedbackHistory : [], trackFeedback: saved.trackFeedback && typeof saved.trackFeedback === 'object' ? saved.trackFeedback : {}, linkMessages: saved.linkMessages && typeof saved.linkMessages === 'object' ? saved.linkMessages : {}, appliedSpotifyLinkRequestIds: Array.isArray(saved.appliedSpotifyLinkRequestIds) ? saved.appliedSpotifyLinkRequestIds.slice(-200) : [], lastFeedbackInterpreted: saved.lastFeedbackInterpreted || null, aiSuggestions: Array.isArray(saved.aiSuggestions) ? saved.aiSuggestions : [], aiSmarterJourney: Array.isArray(saved.aiSmarterJourney) ? saved.aiSmarterJourney : [], pendingTasteDnaChanges: Array.isArray(saved.pendingTasteDnaChanges) ? saved.pendingTasteDnaChanges : [], appliedTasteDnaChanges: Array.isArray(saved.appliedTasteDnaChanges) ? saved.appliedTasteDnaChanges : [], immersionSession: saved.immersionSession && typeof saved.immersionSession === 'object' ? saved.immersionSession : null, recentlyShownCandidateIds: Array.isArray(saved.recentlyShownCandidateIds) ? saved.recentlyShownCandidateIds : [], sessionCounter: Number(saved.sessionCounter || 0), lastDiscoveryMeta: saved.lastDiscoveryMeta || null }; }
+function loadState() { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); return { candidates: Array.isArray(saved.candidates) ? saved.candidates : [], listeningDeck: Array.isArray(saved.listeningDeck) ? saved.listeningDeck : [], ratings: saved.ratings && typeof saved.ratings === 'object' ? saved.ratings : {}, tags: saved.tags && typeof saved.tags === 'object' ? saved.tags : {}, tasteDNA: saved.tasteDNA && typeof saved.tasteDNA === 'object' ? saved.tasteDNA : initialTasteDNA(), feedbackHistory: Array.isArray(saved.feedbackHistory) ? saved.feedbackHistory : [], trackFeedback: saved.trackFeedback && typeof saved.trackFeedback === 'object' ? saved.trackFeedback : {}, linkMessages: saved.linkMessages && typeof saved.linkMessages === 'object' ? saved.linkMessages : {}, appliedSpotifyLinkRequestIds: Array.isArray(saved.appliedSpotifyLinkRequestIds) ? saved.appliedSpotifyLinkRequestIds.slice(-200) : [], lastFeedbackInterpreted: saved.lastFeedbackInterpreted || null, aiSuggestions: Array.isArray(saved.aiSuggestions) ? saved.aiSuggestions : [], aiSmarterJourney: Array.isArray(saved.aiSmarterJourney) ? saved.aiSmarterJourney : [], pendingTasteDnaChanges: Array.isArray(saved.pendingTasteDnaChanges) ? saved.pendingTasteDnaChanges : [], appliedTasteDnaChanges: Array.isArray(saved.appliedTasteDnaChanges) ? saved.appliedTasteDnaChanges : [], immersionSession: saved.immersionSession && typeof saved.immersionSession === 'object' ? saved.immersionSession : null, recentlyShownCandidateIds: Array.isArray(saved.recentlyShownCandidateIds) ? saved.recentlyShownCandidateIds : [], sessionCounter: Number(saved.sessionCounter || 0), lastDiscoveryMeta: saved.lastDiscoveryMeta || null, musicConversationTeachings: retainConversationTeachingHistory(saved.musicConversationTeachings, 100) }; }
 function saveState() { logBuildJourney('saveState:start'); localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); logBuildJourney('saveState:end'); }
 
 function normalizedConnectorIdentity(value = '') { return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
