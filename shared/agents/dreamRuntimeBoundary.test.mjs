@@ -1272,8 +1272,9 @@ test('cross-platform publication adapters preserve the structural commit invaria
   );
   assert.match(
     posixHelper,
-    /else:[\s\S]*except BaseException:[\s\S]*cleanup_owned_promoted\(parent_fd, args\.artifact_name, owned\)[\s\S]*DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED/,
+    /else:[\s\S]*except BaseException:\s+fail\("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED"\)/,
   );
+  assert.doesNotMatch(posixHelper, /cleanup_owned_promoted/);
   const boundarySource = await fs.readFile(path.resolve('shared/agents/dreamRuntimeBoundary.mjs'), 'utf8');
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
   assert.match(
@@ -1359,7 +1360,7 @@ test('missing preservation directories are created relative to the validated par
   assert.equal(result.boundary.repoRoot, plan.repoRoot);
 });
 
-test('post-create POSIX ancestor failure removes only the owned directory through the held parent', { skip: process.platform !== 'linux' }, async () => {
+test('post-create POSIX ancestor failure preserves residual truth without deleting by pathname', { skip: process.platform !== 'linux' }, async () => {
   const input = await disjointFixture();
   const preservationRoot = path.join(input.workspaceRoot, 'memory', DREAM_VERSIONED_PRESERVATION_DIRECTORY);
   const preservationParent = path.dirname(preservationRoot);
@@ -1391,8 +1392,8 @@ test('post-create POSIX ancestor failure removes only the owned directory throug
   assert.equal(injected, true);
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_ANCESTOR_CHANGED');
-  assert.equal(result.cleanupBlocker, '');
-  await assert.rejects(() => fs.lstat(preservationRoot), (error) => error.code === 'ENOENT');
+  assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED');
+  assert.equal((await fs.lstat(preservationRoot)).isDirectory(), true);
   await assert.rejects(
     () => fs.lstat(path.join(externalParent, DREAM_VERSIONED_PRESERVATION_DIRECTORY)),
     (error) => error.code === 'ENOENT',

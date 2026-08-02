@@ -237,7 +237,6 @@ async function createSafeDirectoryComponent(directory, parentIdentities, fsImpl)
   let info = null;
   let failure = null;
   let created = false;
-  let createdIdentity = null;
   let operationPath = '';
   try {
     boundary = await acquireDirectoryMutationBoundary(parentPath, parentIdentities, fsImpl);
@@ -249,7 +248,6 @@ async function createSafeDirectoryComponent(directory, parentIdentities, fsImpl)
       if (error?.code !== 'EEXIST') throw error;
     }
     const relativeInfo = await fsImpl.lstat(operationPath);
-    if (created) createdIdentity = relativeInfo;
     if (relativeInfo.isSymbolicLink?.() || !relativeInfo.isDirectory?.()) {
       throw codedError('DREAM_MIGRATION_ANCESTOR_UNSUPPORTED');
     }
@@ -260,13 +258,7 @@ async function createSafeDirectoryComponent(directory, parentIdentities, fsImpl)
     failure = error;
   }
   if (failure && created) {
-    const cleaned = await removeOwnedDirectoryWithinBoundary(
-      boundary?.operationParentPath,
-      directoryName,
-      createdIdentity,
-      fsImpl,
-    );
-    if (!cleaned) failure.cleanupBlocker = 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED';
+    failure.cleanupBlocker = 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED';
   }
   const released = boundary ? await boundary.release() : true;
   if (!released && !failure) failure = codedError('DREAM_MIGRATION_DIRECTORY_GUARD_RELEASE_FAILED');
@@ -303,42 +295,6 @@ function sameDirectoryIdentity(before, after) {
     && Number(before?.dev) === Number(after?.dev)
     && Number(before?.ino) === Number(after?.ino)
     && Number(before?.birthtimeMs) === Number(after?.birthtimeMs);
-}
-
-async function removeOwnedDirectoryWithinBoundary(operationParentPath, directoryName, identity, fsImpl) {
-  if (!operationParentPath || !identity || !safeRelativePath(directoryName) || path.basename(directoryName) !== directoryName) {
-    return false;
-  }
-  const operationDirectoryPath = path.join(operationParentPath, directoryName);
-  let quarantinePath = '';
-  let quarantineRoot = '';
-  let moved = false;
-  try {
-    const current = await fsImpl.lstat(operationDirectoryPath);
-    if (!sameDirectoryIdentity(identity, current)) return false;
-    quarantineRoot = await fsImpl.mkdtemp(path.join(operationParentPath, '.stephanos-owned-directory-delete-'));
-    const quarantineInfo = await fsImpl.lstat(quarantineRoot);
-    if (!quarantineInfo.isDirectory?.() || quarantineInfo.isSymbolicLink?.()) return false;
-    quarantinePath = path.join(quarantineRoot, directoryName);
-    await fsImpl.rename(operationDirectoryPath, quarantinePath);
-    moved = true;
-    const quarantined = await fsImpl.lstat(quarantinePath);
-    if (!sameDirectoryIdentity(identity, quarantined)) return false;
-    await fsImpl.rmdir(quarantinePath);
-    moved = false;
-    await fsImpl.rmdir(quarantineRoot);
-    quarantineRoot = '';
-    return true;
-  } catch (error) {
-    return error?.code === 'ENOENT' && !moved;
-  } finally {
-    if (moved) {
-      try { await fsImpl.rename(quarantinePath, operationDirectoryPath); } catch {}
-    }
-    if (quarantineRoot && !moved) {
-      try { await fsImpl.rmdir(quarantineRoot); } catch {}
-    }
-  }
 }
 
 async function assertSafeDirectoryChainUnchanged(identities, { fsImpl = fs } = {}) {

@@ -27,19 +27,6 @@ def promoted_identity(info: os.stat_result) -> str:
     )
 
 
-def cleanup_owned_promoted(parent_fd: int, artifact_name: str, owned: os.stat_result) -> bool:
-    try:
-        promoted = os.stat(artifact_name, dir_fd=parent_fd, follow_symlinks=False)
-        if (promoted.st_dev, promoted.st_ino) != (owned.st_dev, owned.st_ino):
-            return False
-        os.unlink(artifact_name, dir_fd=parent_fd)
-        return True
-    except FileNotFoundError:
-        return True
-    except BaseException:
-        return False
-
-
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--pending-name", required=True)
 parser.add_argument("--artifact-name", required=True)
@@ -109,16 +96,9 @@ else:
                              or promoted.st_nlink != 1
                              or (promoted.st_dev, promoted.st_ino) != (owned.st_dev, owned.st_ino))
         if promotion_invalid:
-            # The link itself selected the owned descriptor.  If an attacker moved the
-            # pending name and thereby retained another link, remove only the exact
-            # authoritative link just created and fail closed.
-            if (promoted.st_dev, promoted.st_ino) == (owned.st_dev, owned.st_ino):
-                os.unlink(args.artifact_name, dir_fd=parent_fd)
-            fail("DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED")
+            fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
         print(promoted_identity(promoted), flush=True)
     except SystemExit:
         raise
     except BaseException:
-        if cleanup_owned_promoted(parent_fd, args.artifact_name, owned):
-            fail("DREAM_MIGRATION_RECEIPT_COMMIT_FAILED")
         fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
