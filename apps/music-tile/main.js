@@ -73,9 +73,26 @@ function createIdleMusicConversationState() {
 let nativeCatalogSearchState = createIdleNativeCatalogSearchState();
 let musicConversationState = createIdleMusicConversationState();
 let musicOperationGeneration = 0;
+let musicMemoryMutationLocked = false;
 
 function isCurrentMusicOperation(operationGeneration) {
   return operationGeneration === musicOperationGeneration;
+}
+
+function setMusicMemoryMutationLocked(locked) {
+  musicMemoryMutationLocked = Boolean(locked);
+  if (ui.resetBtn) ui.resetBtn.disabled = musicMemoryMutationLocked;
+  renderMusicConversation();
+}
+
+function beginMusicMemoryMutation() {
+  if (musicMemoryMutationLocked) return false;
+  setMusicMemoryMutationLocked(true);
+  return true;
+}
+
+function endMusicMemoryMutation() {
+  setMusicMemoryMutationLocked(false);
 }
 
 const tileMemoryBridge = (() => { try { return createTileMemoryBridge({ tileId: 'music-tile', tileSource: 'music-cockpit' }); } catch { return null; } })();
@@ -370,7 +387,7 @@ function renderMusicConversation({ scrollToFinalAnswer = false } = {}) {
   const teachingRows = activeTeachings.length
     ? `<div class="music-conversation__teachings">${activeTeachings.slice().reverse().map((entry) => `<article class="music-conversation__teaching">
         <div class="music-conversation__teaching-head"><strong>${escapeHtml(entry.trait)}</strong><span>${escapeHtml(entry.polarity)} · explicitly taught</span></div>
-        <div class="music-conversation__actions"><button type="button" class="ghost" data-conversation-action="forget" data-teaching-id="${escapeHtml(entry.id)}">Forget this</button></div>
+        <div class="music-conversation__actions"><button type="button" class="ghost" data-conversation-action="forget" data-teaching-id="${escapeHtml(entry.id)}"${musicMemoryMutationLocked ? ' disabled' : ''}>Forget this</button></div>
       </article>`).join('')}</div>`
     : '';
   if (musicConversationState.mode === 'idle' && !activeTeachings.length) {
@@ -393,7 +410,7 @@ function renderMusicConversation({ scrollToFinalAnswer = false } = {}) {
     ? `<article class="music-conversation__teaching">
         <div class="music-conversation__teaching-head"><strong>${escapeHtml(pending.trait)}</strong><span>${escapeHtml(pending.polarity)} · waiting for you</span></div>
         <p>This will change Taste DNA only after you confirm it. You can forget it later.</p>
-        <div class="music-conversation__actions"><button type="button" data-conversation-action="teach">Teach this</button></div>
+        <div class="music-conversation__actions"><button type="button" data-conversation-action="teach"${musicMemoryMutationLocked ? ' disabled' : ''}>Teach this</button></div>
       </article>`
     : '';
   target.innerHTML = `<article class="music-conversation__answer">
@@ -499,12 +516,19 @@ async function enrichMusicConversationWithAi(plan, { operationGeneration = music
   renderMusicConversation();
 }
 
-function applyConversationTeaching() {
+async function applyConversationTeaching() {
   const candidate = musicConversationState.pendingTeaching;
-  if (!candidate) return;
-  state.musicConversationTeachings = Array.isArray(state.musicConversationTeachings) ? state.musicConversationTeachings : [];
+  if (!candidate || !beginMusicMemoryMutation()) return;
+  const operationGeneration = musicOperationGeneration;
+  const previousTeachings = Array.isArray(state.musicConversationTeachings) ? state.musicConversationTeachings.slice() : [];
+  const previousTasteDNA = state.tasteDNA;
+  const previousAppliedChanges = Array.isArray(state.appliedTasteDnaChanges) ? state.appliedTasteDnaChanges.slice() : [];
+  const previousCandidates = state.candidates;
   const previousTrait = state.tasteDNA[candidate.trait] ? { ...state.tasteDNA[candidate.trait] } : null;
-  const activeTeachings = getConversationTeachings();
+  const activeTeachings = getConversationTeachings().map((entry) => ({
+    ...entry,
+    baselineTrait: entry.baselineTrait ? { ...entry.baselineTrait } : entry.baselineTrait,
+  }));
   const teaching = {
     id: `music-teaching-${Date.now()}`,
     trait: candidate.trait,
@@ -519,71 +543,113 @@ function applyConversationTeaching() {
   teaching.baselineTrait = projection.baselineTrait;
   activeTeachings.filter((entry) => entry.trait === teaching.trait && !entry.baselineTrait)
     .forEach((entry) => { entry.baselineTrait = projection.baselineTrait; });
-  state.tasteDNA = projection.tasteDNA;
   const record = projection.record;
-  const memoryResult = tileMemoryBridge?.submitMemoryCandidate?.({
-    key: `music.taste_dna.conversation.${teaching.id}`,
-    value: { trait: teaching.trait, polarity: teaching.polarity, status: teaching.status },
-    type: 'preference',
-    tags: ['music', 'taste-dna', 'explicit-teaching'],
-    sourceRef: 'apps/music-tile/main.js#applyConversationTeaching',
-    reason: 'Operator explicitly confirmed a Music Tile conversation teaching.',
-  });
-  teaching.memoryPromoted = memoryResult?.promoted === true;
-  teaching.memoryPersisted = memoryResult?.execution?.persisted === true;
-  teaching.memoryRecord = memoryResult?.record?.id
-    ? { namespace: memoryResult.record.namespace || 'continuity', id: memoryResult.record.id }
-    : null;
-  state.musicConversationTeachings.push(teaching);
-  state.appliedTasteDnaChanges = Array.isArray(state.appliedTasteDnaChanges) ? state.appliedTasteDnaChanges : [];
-  state.appliedTasteDnaChanges.push({ traitName: teaching.trait, oldWeight: previousTrait?.weight || 0, newWeight: record?.weight || 0, reason: 'explicit conversation teaching', at: teaching.createdAt });
-  musicConversationState.pendingTeaching = null;
-  musicConversationState.answer = `Learned: “${teaching.trait}” is a ${teaching.polarity} signal. It is visible below and can be forgotten.`;
-  musicConversationState.mode = teaching.memoryPersisted ? 'learned · durable memory' : 'learned · tile memory';
-  state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
-  saveState();
-  renderTasteDNA();
-  renderCandidates();
-  renderMusicIntelligenceCentre();
-  renderMusicConversation();
-  emitPresenceEvent({ kind: 'conversation_teaching_applied', severity: 'notice', summary: `Explicit music teaching applied: ${teaching.trait}`, impact: teaching.memoryPersisted ? 'Taste DNA and durable Stephanos memory updated.' : 'Taste DNA updated; durable memory adapter was unavailable.', suggestedAction: 'Use Forget this to undo the teaching.' });
+  let memoryResult = null;
+  try {
+    memoryResult = await tileMemoryBridge?.submitMemoryCandidateDurably?.({
+      key: `music.taste_dna.conversation.${teaching.id}`,
+      value: { trait: teaching.trait, polarity: teaching.polarity, status: teaching.status },
+      type: 'preference',
+      tags: ['music', 'taste-dna', 'explicit-teaching'],
+      sourceRef: 'apps/music-tile/main.js#applyConversationTeaching',
+      reason: 'Operator explicitly confirmed a Music Tile conversation teaching.',
+    });
+    if (!isCurrentMusicOperation(operationGeneration)) return;
+    teaching.memoryPromoted = memoryResult?.promoted === true;
+    teaching.memoryPersisted = memoryResult?.execution?.persisted === true
+      && memoryResult?.authorityReceipt?.authorityConfirmed === true;
+    teaching.memoryRecord = teaching.memoryPersisted && memoryResult?.record?.id
+      ? { namespace: memoryResult.record.namespace || 'continuity', id: memoryResult.record.id }
+      : null;
+    state.tasteDNA = projection.tasteDNA;
+    const activeById = new Map(activeTeachings.map((entry) => [entry.id, entry]));
+    state.musicConversationTeachings = [
+      ...previousTeachings.map((entry) => activeById.get(entry.id) || entry),
+      teaching,
+    ];
+    state.appliedTasteDnaChanges = [...previousAppliedChanges, { traitName: teaching.trait, oldWeight: previousTrait?.weight || 0, newWeight: record?.weight || 0, reason: 'explicit conversation teaching', at: teaching.createdAt }];
+    musicConversationState.pendingTeaching = null;
+    musicConversationState.answer = `Learned: “${teaching.trait}” is a ${teaching.polarity} signal. It is visible below and can be forgotten.`;
+    musicConversationState.mode = teaching.memoryPersisted ? 'learned · durable memory' : 'learned · tile memory';
+    state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
+    try {
+      saveState();
+    } catch (error) {
+      if (teaching.memoryPersisted) {
+        const rollback = await tileMemoryBridge?.revokeMemoryCandidate?.({
+          record: teaching.memoryRecord,
+          sourceRef: 'apps/music-tile/main.js#applyConversationTeaching.rollback',
+          reason: 'Local Music Tile state could not retain the confirmed teaching, so its durable record must be revoked.',
+        });
+        if (rollback?.revoked !== true) {
+          throw Object.assign(error, { durableRollbackUnconfirmed: true });
+        }
+      }
+      state.tasteDNA = previousTasteDNA;
+      state.musicConversationTeachings = previousTeachings;
+      state.appliedTasteDnaChanges = previousAppliedChanges;
+      state.candidates = previousCandidates;
+      throw error;
+    }
+    renderTasteDNA();
+    renderCandidates();
+    renderMusicIntelligenceCentre();
+    renderMusicConversation();
+    emitPresenceEvent({ kind: 'conversation_teaching_applied', severity: 'notice', summary: `Explicit music teaching applied: ${teaching.trait}`, impact: teaching.memoryPersisted ? 'Taste DNA and durable Stephanos memory updated.' : 'Taste DNA updated; shared durable memory was not confirmed.', suggestedAction: 'Use Forget this to undo the teaching.' });
+  } catch (error) {
+    musicConversationState.answer = error?.durableRollbackUnconfirmed
+      ? `I could not finish learning “${teaching.trait}”, and durable rollback is not confirmed. Reset/Forget controls remain available for recovery.`
+      : `I could not safely retain “${teaching.trait}”. No durable-memory success was claimed.`;
+    musicConversationState.mode = 'teaching blocked';
+    emitPresenceEvent({ kind: 'conversation_teaching_blocked', severity: 'warning', summary: `Music teaching blocked: ${teaching.trait}`, impact: 'The shared durable-memory transaction did not complete safely.' });
+  } finally {
+    endMusicMemoryMutation();
+  }
 }
 
 async function forgetConversationTeaching(teachingId) {
+  if (!beginMusicMemoryMutation()) return;
   const operationGeneration = musicOperationGeneration;
   const teaching = (state.musicConversationTeachings || []).find((entry) => entry.id === teachingId && entry.status === 'active');
-  if (!teaching) return;
-  if (teaching.memoryPersisted) {
-    const revocation = await tileMemoryBridge?.revokeMemoryCandidate?.({
-      record: teaching.memoryRecord,
-      sourceRef: 'apps/music-tile/main.js#forgetConversationTeaching',
-      reason: 'Operator explicitly asked the Music Tile to revoke this durable teaching.',
-    });
-    if (!isCurrentMusicOperation(operationGeneration)) return;
-    if (revocation?.revoked !== true) {
-      musicConversationState.answer = `I could not safely forget “${teaching.trait}” because its durable memory record was not revoked. Nothing was changed.`;
-      musicConversationState.mode = 'forget blocked';
-      renderMusicConversation();
-      emitPresenceEvent({ kind: 'conversation_teaching_forget_blocked', severity: 'warning', summary: `Music teaching forget blocked: ${teaching.trait}`, impact: 'Durable memory revocation failed; local Taste DNA was left unchanged.' });
-      return;
+  try {
+    if (!teaching) return;
+    if (teaching.memoryPersisted) {
+      const revocation = await tileMemoryBridge?.revokeMemoryCandidate?.({
+        record: teaching.memoryRecord,
+        sourceRef: 'apps/music-tile/main.js#forgetConversationTeaching',
+        reason: 'Operator explicitly asked the Music Tile to revoke this durable teaching.',
+      });
+      if (!isCurrentMusicOperation(operationGeneration)) return;
+      if (revocation?.revoked !== true) {
+        musicConversationState.answer = `I could not safely forget “${teaching.trait}” because its durable memory record was not revoked. Nothing was changed.`;
+        musicConversationState.mode = 'forget blocked';
+        renderMusicConversation();
+        emitPresenceEvent({ kind: 'conversation_teaching_forget_blocked', severity: 'warning', summary: `Music teaching forget blocked: ${teaching.trait}`, impact: 'Durable memory revocation failed; local Taste DNA was left unchanged.' });
+        return;
+      }
     }
+    const removal = removeTasteTeachingContribution(state.tasteDNA, teaching, state.musicConversationTeachings);
+    state.tasteDNA = removal.tasteDNA;
+    state.musicConversationTeachings
+      .filter((entry) => entry.status === 'active' && entry.trait === teaching.trait && entry.id !== teaching.id && !entry.baselineTrait)
+      .forEach((entry) => { entry.baselineTrait = removal.baselineTrait; });
+    teaching.status = 'forgotten';
+    teaching.forgottenAt = new Date().toISOString();
+    teaching.memoryPersisted = false;
+    teaching.memoryPromoted = false;
+    teaching.memoryRecord = null;
+    state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
+    musicConversationState.answer = `Forgotten: “${teaching.trait}”. Only that teaching's Taste DNA contribution was removed.`;
+    musicConversationState.mode = 'forgotten';
+    saveState();
+    renderTasteDNA();
+    renderCandidates();
+    renderMusicIntelligenceCentre();
+    renderMusicConversation();
+    emitPresenceEvent({ kind: 'conversation_teaching_forgotten', severity: 'notice', summary: `Music teaching forgotten: ${teaching.trait}`, impact: 'Prior Taste DNA value restored through explicit operator action.' });
+  } finally {
+    endMusicMemoryMutation();
   }
-  const removal = removeTasteTeachingContribution(state.tasteDNA, teaching, state.musicConversationTeachings);
-  state.tasteDNA = removal.tasteDNA;
-  state.musicConversationTeachings
-    .filter((entry) => entry.status === 'active' && entry.trait === teaching.trait && entry.id !== teaching.id && !entry.baselineTrait)
-    .forEach((entry) => { entry.baselineTrait = removal.baselineTrait; });
-  teaching.status = 'forgotten';
-  teaching.forgottenAt = new Date().toISOString();
-  state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
-  musicConversationState.answer = `Forgotten: “${teaching.trait}”. Only that teaching's Taste DNA contribution was removed.`;
-  musicConversationState.mode = 'forgotten';
-  saveState();
-  renderTasteDNA();
-  renderCandidates();
-  renderMusicIntelligenceCentre();
-  renderMusicConversation();
-  emitPresenceEvent({ kind: 'conversation_teaching_forgotten', severity: 'notice', summary: `Music teaching forgotten: ${teaching.trait}`, impact: 'Prior Taste DNA value restored through explicit operator action.' });
 }
 
 function getJourneySeedArtist() {
@@ -1116,35 +1182,43 @@ async function revokeDurableConversationTeachingsForReset() {
   return { ok: true };
 }
 async function resetAll() {
-  const revocation = await revokeDurableConversationTeachingsForReset();
-  if (!revocation.ok) {
-    const trait = String(revocation.teaching?.trait || 'a durable teaching');
-    musicConversationState.answer = `Reset was blocked because I could not safely revoke “${trait}”. Your tile and remaining Forget controls were preserved.`;
-    musicConversationState.mode = 'reset blocked';
-    ui.status.textContent = 'Reset blocked: durable music memory could not be safely revoked.';
-    renderMusicConversation();
-    emitPresenceEvent({ kind: 'conversation_reset_blocked', severity: 'warning', summary: 'Music Tile reset blocked', impact: 'A durable teaching could not be revoked, so tile state was preserved.' });
+  if (!beginMusicMemoryMutation()) {
+    ui.status.textContent = 'A music-memory change is already finishing. Reset has not started.';
     return false;
   }
   musicOperationGeneration += 1;
-  localStorage.removeItem(STORAGE_KEY);
-  Object.assign(state, loadState());
-  nativeCatalogSearchState = createIdleNativeCatalogSearchState();
-  musicConversationState = createIdleMusicConversationState();
-  if (intelligenceUi.nativeSearchButton) intelligenceUi.nativeSearchButton.disabled = false;
-  if (ui.buildImmersionSessionBtn) ui.buildImmersionSessionBtn.disabled = false;
-  if (intelligenceUi.surpriseBtn) {
-    intelligenceUi.surpriseBtn.disabled = false;
-    intelligenceUi.surpriseBtn.classList.remove('is-loading');
-    const title = intelligenceUi.surpriseBtn.querySelector('strong');
-    const subtitle = intelligenceUi.surpriseBtn.querySelector('small');
-    if (title) title.textContent = 'Surprise Me';
-    if (subtitle) subtitle.textContent = 'Start my journey';
+  try {
+    const revocation = await revokeDurableConversationTeachingsForReset();
+    if (!revocation.ok) {
+      const trait = String(revocation.teaching?.trait || 'a durable teaching');
+      musicConversationState.answer = `Reset was blocked because I could not safely revoke “${trait}”. Your tile and remaining Forget controls were preserved.`;
+      musicConversationState.mode = 'reset blocked';
+      ui.status.textContent = 'Reset blocked: durable music memory could not be safely revoked.';
+      renderMusicConversation();
+      emitPresenceEvent({ kind: 'conversation_reset_blocked', severity: 'warning', summary: 'Music Tile reset blocked', impact: 'A durable teaching could not be revoked, so tile state was preserved.' });
+      return false;
+    }
+    localStorage.removeItem(STORAGE_KEY);
+    Object.assign(state, loadState());
+    nativeCatalogSearchState = createIdleNativeCatalogSearchState();
+    musicConversationState = createIdleMusicConversationState();
+    if (intelligenceUi.nativeSearchButton) intelligenceUi.nativeSearchButton.disabled = false;
+    if (ui.buildImmersionSessionBtn) ui.buildImmersionSessionBtn.disabled = false;
+    if (intelligenceUi.surpriseBtn) {
+      intelligenceUi.surpriseBtn.disabled = false;
+      intelligenceUi.surpriseBtn.classList.remove('is-loading');
+      const title = intelligenceUi.surpriseBtn.querySelector('strong');
+      const subtitle = intelligenceUi.surpriseBtn.querySelector('small');
+      if (title) title.textContent = 'Surprise Me';
+      if (subtitle) subtitle.textContent = 'Start my journey';
+    }
+    setMusicConversationBusy(false);
+    ui.status.textContent = 'Reset complete.';
+    renderAll();
+    return true;
+  } finally {
+    endMusicMemoryMutation();
   }
-  setMusicConversationBusy(false);
-  ui.status.textContent = 'Reset complete.';
-  renderAll();
-  return true;
 }
 function renderAll() { renderTasteDNA(); renderCandidates(); renderListeningDeck(); renderDiscoveryResults(); renderAiSuggestions(); renderPendingTasteDnaChanges(); renderAppliedTasteDnaChanges(); renderImmersionSession(); renderJourneyQueue(); renderActiveJourneySummary(); renderMusicIntelligenceCentre(); renderNativeCatalogResults(); renderMusicConversation(); }
 function renderTasteDNA() { const anchors = Object.entries(state.tasteDNA).filter(([,meta]) => meta?.polarity !== 'negative' && Number(meta?.weight || 0) > 0).map(([name]) => name).filter(Boolean); ui.positiveAnchors.innerHTML = `<h3>✨ Positive anchors</h3>${anchors.length ? anchors.slice(0, 10).map((name) => `<div class="meta">${name}</div>`).join('') : '<div class="music-empty-state">🎯 No positive anchors yet. Rate tracks or add custom traits to shape your sound.</div>'}`; ui.rejectPatterns.innerHTML = '<h3>🚫 Reject patterns</h3>'; const counts = RATING_VALUES.reduce((acc, val) => ({ ...acc, [val]: 0 }), {}); for (const value of Object.values(state.ratings)) counts[value] = (counts[value] || 0) + 1; ui.ratingCounts.innerHTML = `<h3>Rating counts</h3><div class="card">${Object.entries(counts).map(([k,v]) => `<div>${k}: ${v}</div>`).join('')}</div>`; const weights = buildTasteWeightsForState(); const topPositive = topSignals(weights.positiveWeights); const topReject = topSignals(weights.rejectWeights); const recent = Object.entries(state.tasteDNA).sort((a,b)=>String(b[1].updatedAt||'').localeCompare(String(a[1].updatedAt||''))).slice(0,5).map(([k])=>k); ui.learningSignals.innerHTML = `<h3>🧬 Learning Signals</h3><div class="card dna-grid"><div><strong>Strongest positive</strong>${topPositive.map(([k,v])=>`<div class="dna-row dna-row--positive"><span>${k}</span><strong>+${v.toFixed(2)}</strong></div>`).join('') || '<div class="meta">None</div>'}</div><div><strong>Strongest negative</strong>${topReject.map(([k,v])=>`<div class="dna-row dna-row--negative"><span>${k}</span><strong>-${v.toFixed(2)}</strong></div>`).join('') || '<div class="meta">None</div>'}</div><div><strong>Recently changed</strong>${recent.map((x)=>`<div class="meta">${x}</div>`).join('') || '<div class="meta">None</div>'}</div><div class="meta"><strong>Ratings contributed</strong> ${Object.keys(state.ratings).length}</div><div class="meta"><strong>Last feedback interpreted</strong> ${state.lastFeedbackInterpreted?.raw || 'none yet'}</div></div>`; ui.traitRows.innerHTML = Object.entries(state.tasteDNA).map(([name, meta]) => `<div class="card trait-row"><strong>${name}</strong><div class="meta">${meta.polarity} · ${meta.category} · tracks ${Number(meta.contributions || 0)} · teachings ${Number(meta.teachingContributions || 0)}</div><div class="actions"><button data-action="weight-dec" data-trait="${name}">-</button><span data-weight="${name}">${Number(meta.weight).toFixed(2)}</span><button data-action="weight-inc" data-trait="${name}">+</button><input type="range" min="-5" max="10" step="0.2" value="${Number(meta.weight)}" data-action="weight-slider" data-trait="${name}" /></div></div>`).join(''); ui.traitRows.querySelectorAll('[data-action="weight-inc"]').forEach((btn)=>btn.addEventListener('click',()=>adjustTraitWeight(btn.dataset.trait,0.5))); ui.traitRows.querySelectorAll('[data-action="weight-dec"]').forEach((btn)=>btn.addEventListener('click',()=>adjustTraitWeight(btn.dataset.trait,-0.5))); ui.traitRows.querySelectorAll('[data-action="weight-slider"]').forEach((input)=>input.addEventListener('input',()=>setTraitWeight(input.dataset.trait, Number(input.value)))); }

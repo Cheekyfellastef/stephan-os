@@ -197,6 +197,7 @@ export function createStephanosSharedMemoryAdapter({
   let lastDiagnostics = null;
   let backendWriteQueue = Promise.resolve();
   let backendUpdatedAt = normalizeString(cache.updatedAt);
+  let authoritativeState = normalizeMemoryState(cache);
 
   function log(event, payload = {}) {
     const target = logger && typeof logger.info === 'function' ? logger : console;
@@ -239,6 +240,21 @@ export function createStephanosSharedMemoryAdapter({
     });
   }
 
+  function isBackendConflict(error) {
+    return Number(error?.status) === 409
+      || String(error?.payload?.error_code || '').trim() === 'DURABLE_MEMORY_CONFLICT';
+  }
+
+  async function rehydrateAuthority() {
+    const response = await loadFromBackend();
+    authoritativeState = normalizeMemoryState(response?.json?.data || {});
+    backendUpdatedAt = normalizeString(authoritativeState.updatedAt);
+    hydrationSource = 'shared-backend';
+    fallbackReason = 'backend-memory-conflict-resolved-by-rehydrate';
+    hydrationState = 'ready';
+    return response;
+  }
+
   function enqueueBackendOperation(operationFactory) {
     const operation = backendWriteQueue.then(operationFactory);
     backendWriteQueue = operation.catch(() => undefined);
@@ -259,6 +275,7 @@ export function createStephanosSharedMemoryAdapter({
       hydrationState = 'hydrating';
       const response = await loadFromBackend();
       const backendState = normalizeMemoryState(response?.json?.data || {});
+      authoritativeState = backendState;
       updateMirror(backendState);
       backendUpdatedAt = normalizeString(backendState.updatedAt);
       hydrationSource = 'shared-backend';
@@ -320,6 +337,10 @@ export function createStephanosSharedMemoryAdapter({
       try {
         const response = await saveToBackend(normalizedState);
         backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
+        authoritativeState = normalizeMemoryState({
+          ...normalizedState,
+          updatedAt: backendUpdatedAt || normalizedState.updatedAt,
+        });
         lastSaveSource = 'shared-backend';
         fallbackReason = '';
         hydrationState = 'ready';
@@ -333,7 +354,7 @@ export function createStephanosSharedMemoryAdapter({
           stateClass: 'shared-durable-truth',
         });
       } catch (error) {
-        const isConflict = Number(error?.status) === 409 || String(error?.payload?.error_code || '').trim() === 'DURABLE_MEMORY_CONFLICT';
+        const isConflict = isBackendConflict(error);
         lastSaveSource = 'local-mirror-fallback';
         fallbackReason = isConflict
           ? 'backend-memory-conflict'
@@ -341,13 +362,9 @@ export function createStephanosSharedMemoryAdapter({
         hydrationState = isConflict ? 'degraded' : hydrationState;
         if (isConflict) {
           try {
-            const response = await loadFromBackend();
-            const backendState = normalizeMemoryState(response?.json?.data || {});
+            await rehydrateAuthority();
+            const backendState = authoritativeState;
             updateMirror(backendState);
-            backendUpdatedAt = normalizeString(backendState.updatedAt);
-            hydrationSource = 'shared-backend';
-            fallbackReason = 'backend-memory-conflict-resolved-by-rehydrate';
-            hydrationState = 'ready';
           } catch {
             updateMirror(previousState);
           }
@@ -375,6 +392,10 @@ export function createStephanosSharedMemoryAdapter({
     try {
       const response = await enqueueBackendOperation(() => saveToBackend(normalizedState, 'memory-runtime-durable'));
       backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
+      authoritativeState = normalizeMemoryState({
+        ...normalizedState,
+        updatedAt: backendUpdatedAt || normalizedState.updatedAt,
+      });
       lastSaveSource = 'shared-backend';
       fallbackReason = '';
       hydrationState = 'ready';
@@ -400,11 +421,66 @@ export function createStephanosSharedMemoryAdapter({
     }
   }
 
+  async function mutateStateDurably(mutate, { source = 'memory-runtime-durable-mutation' } = {}) {
+    if (typeof mutate !== 'function') {
+      throw new Error('Durable memory mutation requires a mutation function.');
+    }
+    if (!preferSharedBackend || typeof fetchImpl !== 'function') {
+      throw Object.assign(new Error('Shared durable memory backend is unavailable.'), { code: 'durable-memory-authority-unavailable' });
+    }
+
+    return enqueueBackendOperation(async () => {
+      let attempt = 0;
+      while (attempt < 2) {
+        const baseState = normalizeMemoryState(authoritativeState);
+        const nextState = normalizeMemoryState(mutate(baseState));
+        try {
+          const response = await saveToBackend(nextState, source);
+          backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
+          authoritativeState = normalizeMemoryState({
+            ...nextState,
+            updatedAt: backendUpdatedAt || nextState.updatedAt,
+          });
+          updateMirror(mutate(normalizeMemoryState(cache)));
+          lastSaveSource = 'shared-backend';
+          fallbackReason = '';
+          hydrationState = 'ready';
+          log('mutation-confirmed', {
+            sourceUsedOnLoad: hydrationSource,
+            sourceUsedOnSave: lastSaveSource,
+            hydrationCompleted: hydrated,
+            fallbackReason,
+            resolvedBackendUrl: response.baseUrl,
+            memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
+            stateClass: 'shared-durable-truth',
+          });
+          return {
+            authorityConfirmed: true,
+            source: 'shared-backend',
+            resolvedBackendUrl: response.baseUrl,
+            baseState,
+            state: authoritativeState,
+          };
+        } catch (error) {
+          if (!isBackendConflict(error) || attempt > 0) {
+            lastSaveSource = 'local-mirror-fallback';
+            fallbackReason = normalizeString(error?.code || error?.message, 'backend-save-failed');
+            throw error;
+          }
+          await rehydrateAuthority();
+          attempt += 1;
+        }
+      }
+      throw new Error('Durable memory mutation exhausted its conflict retry.');
+    });
+  }
+
   return {
     mode: 'shared-backend-with-local-mirror',
     readState,
     writeState,
     writeStateDurably,
+    mutateStateDurably,
     hydrate,
     diagnostics() {
       return {
@@ -438,6 +514,12 @@ export function createStephanosMemory({
       updatedAt: new Date().toISOString(),
       records,
     });
+  }
+
+  function toPublicDurableReceipt(receipt) {
+    if (!receipt || typeof receipt !== 'object') return null;
+    const { baseState: _baseState, state: _state, ...publicReceipt } = receipt;
+    return publicReceipt;
   }
 
   function listRecords(filters = {}) {
@@ -527,6 +609,81 @@ export function createStephanosMemory({
     };
   }
 
+  async function saveRecordDurably({
+    namespace = 'default',
+    id,
+    schemaVersion = STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+    type = 'note',
+    source: recordSource = source,
+    scope = 'runtime',
+    summary = '',
+    title = '',
+    payload = {},
+    tags = [],
+    importance = 'normal',
+    retentionHint = 'default',
+    recordSurface = surface,
+    createdAt,
+    updatedAt,
+  } = {}) {
+    const identity = normalizeRecordIdentity({ namespace, id });
+    if (!identity) {
+      throw new Error('Stephanos memory saveRecordDurably requires a non-empty id.');
+    }
+    if (typeof adapter.mutateStateDurably !== 'function' && typeof adapter.writeStateDurably !== 'function') {
+      return { record: null, authorityConfirmed: false, receipt: null };
+    }
+
+    const now = new Date().toISOString();
+    const mutate = (currentState) => {
+      const existing = currentState.records?.[identity.key] || null;
+      const normalizedRecord = normalizeRecordShape({
+        schemaVersion,
+        type,
+        source: recordSource,
+        scope,
+        summary: summary || title,
+        payload,
+        tags,
+        importance,
+        retentionHint,
+        surface: recordSurface,
+        createdAt: existing?.createdAt || createdAt || now,
+        updatedAt: updatedAt || now,
+      }, { source, surface });
+      return {
+        schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+        updatedAt: now,
+        records: {
+          ...(currentState.records || {}),
+          [identity.key]: normalizedRecord,
+        },
+      };
+    };
+    const receipt = typeof adapter.mutateStateDurably === 'function'
+      ? await adapter.mutateStateDurably(mutate, { source: 'memory-record-save-durable' })
+      : await adapter.writeStateDurably(mutate(adapter.readState()));
+
+    const confirmedRecord = receipt?.state?.records?.[identity.key]
+      || adapter.readState()?.records?.[identity.key]
+      || null;
+    const record = receipt?.authorityConfirmed === true && confirmedRecord
+      ? {
+          namespace: identity.namespace,
+          id: identity.id,
+          ...confirmedRecord,
+          title: confirmedRecord.summary,
+          recordSource: confirmedRecord.source,
+          recordSurface: confirmedRecord.surface,
+        }
+      : null;
+    return {
+      record,
+      authorityConfirmed: receipt?.authorityConfirmed === true,
+      receipt: toPublicDurableReceipt(receipt),
+    };
+  }
+
   function getRecord({ namespace = 'default', id } = {}) {
     const identity = normalizeRecordIdentity({ namespace, id });
     if (!identity) {
@@ -591,24 +748,32 @@ export function createStephanosMemory({
 
   async function deleteRecordDurably({ namespace = 'default', id } = {}) {
     const identity = normalizeRecordIdentity({ namespace, id });
-    if (!identity || typeof adapter.writeStateDurably !== 'function') {
+    if (!identity || (typeof adapter.mutateStateDurably !== 'function' && typeof adapter.writeStateDurably !== 'function')) {
       return { deleted: false, alreadyAbsent: false, authorityConfirmed: false, receipt: null };
     }
-    const state = adapter.readState();
-    const existed = Boolean(state.records?.[identity.key]);
-    const nextRecords = { ...(state.records || {}) };
-    delete nextRecords[identity.key];
     try {
-      const receipt = await adapter.writeStateDurably({
-        schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
-        updatedAt: new Date().toISOString(),
-        records: nextRecords,
-      });
+      const now = new Date().toISOString();
+      const mutate = (currentState) => {
+        const nextRecords = { ...(currentState.records || {}) };
+        delete nextRecords[identity.key];
+        return {
+          schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+          updatedAt: now,
+          records: nextRecords,
+        };
+      };
+      const fallbackBaseState = typeof adapter.mutateStateDurably === 'function' ? null : adapter.readState();
+      const receipt = typeof adapter.mutateStateDurably === 'function'
+        ? await adapter.mutateStateDurably(mutate, { source: 'memory-record-delete-durable' })
+        : await adapter.writeStateDurably(mutate(fallbackBaseState));
+      const existed = receipt?.baseState
+        ? Boolean(receipt.baseState.records?.[identity.key])
+        : Boolean(fallbackBaseState?.records?.[identity.key]);
       return {
         deleted: existed,
         alreadyAbsent: !existed,
         authorityConfirmed: receipt?.authorityConfirmed === true,
-        receipt: receipt || null,
+        receipt: toPublicDurableReceipt(receipt),
       };
     } catch (error) {
       return {
@@ -636,6 +801,7 @@ export function createStephanosMemory({
       hydrationCompleted: false,
     }),
     saveRecord,
+    saveRecordDurably,
     createRecord: saveRecord,
     getRecord,
     listRecords,

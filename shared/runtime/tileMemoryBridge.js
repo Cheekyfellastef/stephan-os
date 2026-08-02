@@ -129,6 +129,110 @@ export function createTileMemoryBridge({
     };
   }
 
+  async function submitMemoryCandidateDurably(candidate = {}) {
+    const memoryRuntime = stephanosMemory || resolveTileHostRuntime('stephanosMemory');
+    const eventRuntime = executionLoop || resolveTileHostRuntime('StephanosExecutionLoop');
+    const normalized = createMemoryCandidate({
+      tileId: normalizedTileId,
+      tileSource,
+      candidate,
+    });
+    const adjudication = adjudicate(normalized);
+    let persistedRecord = null;
+    let authorityReceipt = null;
+
+    if (adjudication.promoted && typeof memoryRuntime?.saveRecordDurably === 'function') {
+      try {
+        const result = await memoryRuntime.saveRecordDurably({
+          namespace: 'continuity',
+          id: `tile-memory-${normalizedTileId}-${Date.now()}`,
+          type: normalized.type,
+          summary: `${normalized.key}: ${String(normalized.value).slice(0, 140)}`,
+          payload: {
+            key: normalized.key,
+            value: normalized.value,
+            sourceType: 'tile',
+            sourceRef: normalized.provenance.sourceRef,
+            reason: normalized.provenance.operatorReason,
+            relatedIdeaIds: normalized.relatedIdeaIds,
+          },
+          tags: normalizeTags(['tile.memory.candidate', `tile.${normalizedTileId}`, ...normalized.tags]),
+          importance: normalized.importance,
+        });
+        if (result?.authorityConfirmed === true && result?.record?.id) {
+          persistedRecord = result.record;
+          authorityReceipt = result.receipt || null;
+        }
+      } catch {
+        persistedRecord = null;
+        authorityReceipt = null;
+      }
+    }
+
+    const persisted = Boolean(persistedRecord && authorityReceipt?.authorityConfirmed === true);
+    const memoryReason = adjudication.promoted && !persisted
+      ? 'Candidate was eligible, but shared durable-memory authority did not confirm persistence.'
+      : adjudication.reason;
+    const truth = truthAdapter.createTruthPayload({
+      tileActionType: 'tile.memory.candidate.submit',
+      tileSource,
+      tileId: normalizedTileId,
+      sourceRef: normalized.provenance.sourceRef,
+      memoryCandidateSubmitted: true,
+      memoryPromoted: adjudication.promoted === true,
+      memoryReason,
+      retrievalContributionSubmitted: false,
+      retrievalIngested: false,
+      retrievalSourceRef: '',
+      additional: {
+        memoryConfidence: adjudication.confidence || 'low',
+        candidateSchema: normalized.schemaVersion,
+        durableAuthorityConfirmed: persisted,
+      },
+    });
+    const executionMetadata = truthAdapter.toExecutionMetadata(truth);
+    const execution = createExecution({
+      mode: persisted ? 'promoted' : adjudication.promoted ? 'authority-unconfirmed' : 'rejected',
+      adapter: typeof memoryRuntime?.saveRecordDurably === 'function' ? 'stephanos-memory-durable' : 'memory-unavailable',
+      adjudication: adjudication.promoted ? 'promoted' : 'rejected',
+      persisted,
+      diagnostics: {
+        eligible: adjudication.eligible === true,
+        confidence: adjudication.confidence || 'low',
+        authorityConfirmed: persisted,
+      },
+    });
+
+    eventRuntime?.publishTileEvent?.({
+      tileId: normalizedTileId,
+      tileTitle: normalizedTileId,
+      action: 'tile.memory.candidate.submit',
+      summary: memoryReason,
+      result: {
+        candidate: normalized,
+        adjudication,
+        execution,
+        persistedRecord,
+        authorityReceipt,
+        execution_metadata: executionMetadata,
+      },
+      tags: ['tile.contract.v1', 'tile.memory.candidate'],
+      source: tileSource,
+    });
+
+    return {
+      ok: true,
+      candidate: normalized,
+      adjudication,
+      execution,
+      promoted: adjudication.promoted === true,
+      record: persistedRecord,
+      authorityReceipt,
+      executionMetadata,
+      truth,
+    };
+  }
+
   async function revokeMemoryCandidate({ record = {}, reason = '', sourceRef = '' } = {}) {
     const memoryRuntime = stephanosMemory || resolveTileHostRuntime('stephanosMemory');
     const eventRuntime = executionLoop || resolveTileHostRuntime('StephanosExecutionLoop');
@@ -220,5 +324,6 @@ export function createTileMemoryBridge({
   return {
     revokeMemoryCandidate,
     submitMemoryCandidate,
+    submitMemoryCandidateDurably,
   };
 }

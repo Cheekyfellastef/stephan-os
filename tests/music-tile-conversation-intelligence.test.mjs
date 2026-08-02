@@ -195,7 +195,8 @@ test('primary experience is conversational without model or provider controls', 
 test('conversation uses canonical AI lifecycle and governed memory bridge', () => {
   assert.match(main, /runAiActionLifecycle\(\{/);
   assert.match(main, /askMusicAi\('music-conversation', payload\)/);
-  assert.match(main, /tileMemoryBridge\?\.submitMemoryCandidate\?\.\(\{/);
+  assert.match(main, /await tileMemoryBridge\?\.submitMemoryCandidateDurably\?\.\(\{/);
+  assert.match(main, /memoryResult\?\.authorityReceipt\?\.authorityConfirmed === true/);
   assert.match(main, /await tileMemoryBridge\?\.revokeMemoryCandidate\?\.\(\{/);
   assert.match(main, /applyTasteTeachingContribution\(state\.tasteDNA, teaching, activeTeachings/);
   assert.match(main, /explicit conversation teaching/);
@@ -251,6 +252,9 @@ test('reset revokes durable teachings before clearing state and drops transient 
   assert.match(reset, /musicConversationState = createIdleMusicConversationState\(\)/);
   assert.match(reset, /musicOperationGeneration \+= 1/);
   assert.ok(reset.indexOf('musicOperationGeneration += 1') < reset.indexOf('localStorage.removeItem(STORAGE_KEY)'));
+  assert.ok(reset.indexOf('beginMusicMemoryMutation()') < reset.indexOf('const revocation = await revokeDurableConversationTeachingsForReset()'));
+  assert.ok(reset.indexOf('musicOperationGeneration += 1') < reset.indexOf('const revocation = await revokeDurableConversationTeachingsForReset()'));
+  assert.match(reset, /finally \{[\s\S]*endMusicMemoryMutation\(\)/);
 });
 
 test('reset invalidates late catalogue, AI and journey completions', () => {

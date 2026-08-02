@@ -332,6 +332,102 @@ test('durable shared-memory deletion waits behind earlier writes and is the fina
   assert.deepEqual(adapter.readState().records, {});
 });
 
+test('queued durable record mutation rebases after conflict and preserves another device record', async () => {
+  const teaching = {
+    schemaVersion: 2,
+    type: 'operator.preference',
+    source: 'music-tile',
+    scope: 'runtime',
+    summary: 'Teaching to forget',
+    payload: {},
+    tags: ['music'],
+    importance: 'normal',
+    retentionHint: 'default',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    surface: 'hosted',
+  };
+  const remoteRecord = {
+    ...teaching,
+    type: 'continuity.note',
+    source: 'other-device',
+    summary: 'Another device record',
+  };
+  const storage = createStorage({
+    [STEPHANOS_DURABLE_MEMORY_STORAGE_KEY]: JSON.stringify({
+      schemaVersion: 2,
+      updatedAt: '2026-08-02T00:00:00.000Z',
+      records: { 'continuity::teaching': teaching },
+    }),
+  });
+  const writes = [];
+  let putCount = 0;
+  const fetchImpl = async (_url, options = {}) => {
+    if ((options.method || 'GET') === 'GET') {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            success: true,
+            data: {
+              schemaVersion: 2,
+              updatedAt: '2026-08-02T00:01:00.000Z',
+              records: {
+                'continuity::teaching': teaching,
+                'continuity::remote': remoteRecord,
+              },
+            },
+          });
+        },
+      };
+    }
+    putCount += 1;
+    const body = JSON.parse(options.body || '{}');
+    writes.push(body);
+    if (putCount === 1) {
+      return {
+        ok: false,
+        status: 409,
+        async text() {
+          return JSON.stringify({ success: false, error_code: 'DURABLE_MEMORY_CONFLICT', error: 'conflict' });
+        },
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({ success: true, data: { ...body, updatedAt: '2026-08-02T00:02:00.000Z' } });
+      },
+    };
+  };
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage,
+    fetchImpl,
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+  });
+  const memory = createStephanosMemory({ adapter, source: 'music-tile', surface: 'hosted' });
+
+  adapter.writeState({
+    schemaVersion: 2,
+    updatedAt: '2026-08-02T00:00:30.000Z',
+    records: { 'continuity::teaching': teaching },
+  });
+  const deletion = memory.deleteRecordDurably({ namespace: 'continuity', id: 'teaching' });
+  const result = await deletion;
+
+  assert.equal(result.authorityConfirmed, true);
+  assert.equal(writes.length, 2);
+  assert.equal(result.receipt.state, undefined);
+  assert.equal(result.receipt.baseState, undefined);
+  assert.equal(writes[1].ifUnmodifiedSince, '2026-08-02T00:01:00.000Z');
+  assert.equal(writes[1].records['continuity::teaching'], undefined);
+  assert.equal(writes[1].records['continuity::remote'].summary, 'Another device record');
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'remote' })?.summary, 'Another device record');
+});
+
 test('shared memory adapter rehydrates canonical backend state after conflict instead of silently overwriting newer shared truth', async () => {
   const storage = createStorage();
   let putCount = 0;

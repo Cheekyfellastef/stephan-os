@@ -61,6 +61,41 @@ test('tile memory bridge preserves related idea provenance through adjudication'
   assert.equal(savedPayload.payload.relatedIdeaIds[0], 'idea_2');
 });
 
+test('durable tile submission waits for backend authority before reporting persistence', async () => {
+  const events = [];
+  let releaseAuthority;
+  const authority = new Promise((resolve) => { releaseAuthority = resolve; });
+  const bridge = createTileMemoryBridge({
+    tileId: 'music-tile',
+    stephanosMemory: {
+      async saveRecordDurably(payload) {
+        await authority;
+        return {
+          record: { namespace: 'continuity', id: payload.id, ...payload },
+          authorityConfirmed: true,
+          receipt: { authorityConfirmed: true, id: 'authority-1' },
+        };
+      },
+    },
+    executionLoop: { publishTileEvent(event) { events.push(event); } },
+  });
+
+  const pending = bridge.submitMemoryCandidateDurably({
+    key: 'music.preference',
+    value: 'dark club pressure',
+    reason: 'Operator explicitly confirmed this durable music preference.',
+  });
+  await Promise.resolve();
+  assert.equal(events.length, 0);
+
+  releaseAuthority();
+  const result = await pending;
+  assert.equal(result.execution.persisted, true);
+  assert.equal(result.authorityReceipt.id, 'authority-1');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].result.execution.persisted, true);
+});
+
 test('tile memory bridge revokes the original durable record through the guarded adapter', async () => {
   const deleted = [];
   const events = [];
