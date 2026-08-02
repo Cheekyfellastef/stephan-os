@@ -53,6 +53,37 @@
             <button id="show-briefing-reason-btn" class="quiet-action" type="button">Why this journey?</button>
           </div>
 
+          <section class="music-conversation" aria-labelledby="music-conversation-title">
+            <div class="music-conversation__heading">
+              <div>
+                <small>RESIDENT MUSIC INTELLIGENCE</small>
+                <strong id="music-conversation-title">Talk to your Music Intelligence</strong>
+              </div>
+              <span class="music-conversation__presence"><i aria-hidden="true"></i> Listening</span>
+            </div>
+            <p class="music-conversation__invitation">Describe a feeling, bend the current signal, ask why, or teach Stephanos what only you can hear.</p>
+            <div class="music-conversation__prompts" aria-label="Conversation ideas">
+              <button type="button" data-music-prompt="Find something darker than this, with more club pressure">Darker, more pressure</button>
+              <button type="button" data-music-prompt="Build me a journey that starts atmospheric and ends with club pressure">Build an arc</button>
+              <button type="button" data-music-prompt="Why did you choose this doorway track?">Why this?</button>
+              <button type="button" data-music-prompt="How is my taste changing?">Read my signal</button>
+            </div>
+            <form id="music-conversation-form" class="music-conversation__form">
+              <label class="visually-hidden" for="music-conversation-input">Talk to your Music Intelligence</label>
+              <textarea id="music-conversation-input" name="music-conversation" rows="2" maxlength="320" placeholder="Try “surprise me, but make it darker” or “remember that I dislike breathy vocals”"></textarea>
+              <button id="music-conversation-send" type="submit">
+                <span>Send signal</span><span aria-hidden="true">↗</span>
+              </button>
+            </form>
+            <div id="music-conversation-response" class="music-conversation__response" aria-live="polite" aria-atomic="false">
+              <div class="music-conversation__empty">
+                <span aria-hidden="true">◇</span>
+                <p>I can discover, explain, shape a journey or learn—without asking you which AI or music service to use.</p>
+              </div>
+            </div>
+            <p id="music-conversation-status" class="music-conversation__status" aria-live="polite">Requests are temporary unless you explicitly teach or forget a preference.</p>
+          </section>
+
           <section class="native-music-search" aria-labelledby="native-music-search-title">
             <div class="native-music-search__heading">
               <div>
