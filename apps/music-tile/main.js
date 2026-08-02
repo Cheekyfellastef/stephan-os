@@ -615,35 +615,24 @@ async function enrichMusicConversationWithAi(plan, { operationGeneration = music
 }
 
 async function applyConversationTeaching() {
-  const candidate = musicConversationState.pendingTeaching;
+  const confirmedConversationState = musicConversationState;
+  const candidate = confirmedConversationState.pendingTeaching;
   if (!candidate || !beginMusicMemoryMutation()) return;
+  const isConfirmedConversationCurrent = () => musicConversationState === confirmedConversationState
+    && musicConversationState.pendingTeaching === candidate;
   const operationGeneration = musicOperationGeneration;
-  const previousTeachings = Array.isArray(state.musicConversationTeachings) ? state.musicConversationTeachings.slice() : [];
-  const previousTasteDNA = state.tasteDNA;
-  const previousAppliedChanges = Array.isArray(state.appliedTasteDnaChanges) ? state.appliedTasteDnaChanges.slice() : [];
-  const previousCandidates = state.candidates;
-  const previousTrait = state.tasteDNA[candidate.trait] ? { ...state.tasteDNA[candidate.trait] } : null;
-  const activeTeachings = getConversationTeachings().map((entry) => ({
-    ...entry,
-    baselineTrait: entry.baselineTrait ? { ...entry.baselineTrait } : entry.baselineTrait,
-  }));
-  const teaching = {
-    id: createCollisionResistantTileIdentity('music-teaching'),
-    trait: candidate.trait,
-    polarity: candidate.polarity,
-    status: 'active',
-    source: 'explicit-conversation',
-    previousTrait,
-    weightDelta: Number(candidate.weightDelta || 0),
-    createdAt: new Date().toISOString(),
-  };
-  const projection = applyTasteTeachingContribution(state.tasteDNA, teaching, activeTeachings, teaching.createdAt);
-  teaching.baselineTrait = projection.baselineTrait;
-  activeTeachings.filter((entry) => entry.trait === teaching.trait && !entry.baselineTrait)
-    .forEach((entry) => { entry.baselineTrait = projection.baselineTrait; });
-  const record = projection.record;
+  let teaching = null;
   let memoryResult = null;
   try {
+    teaching = {
+      id: createCollisionResistantTileIdentity('music-teaching'),
+      trait: candidate.trait,
+      polarity: candidate.polarity,
+      status: 'active',
+      source: 'explicit-conversation',
+      weightDelta: Number(candidate.weightDelta || 0),
+      createdAt: new Date().toISOString(),
+    };
     memoryResult = await tileMemoryBridge?.submitMemoryCandidateDurably?.({
       key: `music.taste_dna.conversation.${teaching.id}`,
       value: { id: teaching.id, trait: teaching.trait, polarity: teaching.polarity, status: teaching.status, weightDelta: teaching.weightDelta, createdAt: teaching.createdAt },
@@ -653,6 +642,24 @@ async function applyConversationTeaching() {
       reason: 'Operator explicitly confirmed a Music Tile conversation teaching.',
     });
     if (!isCurrentMusicOperation(operationGeneration)) return;
+    // Durable persistence may take long enough for independent rating/slider feedback to
+    // change Taste DNA. Snapshot and project only now so the teaching composes with the
+    // current evidence instead of restoring the pre-request projection.
+    const previousTeachings = Array.isArray(state.musicConversationTeachings) ? state.musicConversationTeachings.slice() : [];
+    const previousTasteDNA = state.tasteDNA;
+    const previousAppliedChanges = Array.isArray(state.appliedTasteDnaChanges) ? state.appliedTasteDnaChanges.slice() : [];
+    const previousCandidates = state.candidates;
+    const previousTrait = state.tasteDNA[candidate.trait] ? { ...state.tasteDNA[candidate.trait] } : null;
+    const activeTeachings = getConversationTeachings().map((entry) => ({
+      ...entry,
+      baselineTrait: entry.baselineTrait ? { ...entry.baselineTrait } : entry.baselineTrait,
+    }));
+    teaching.previousTrait = previousTrait;
+    const projection = applyTasteTeachingContribution(state.tasteDNA, teaching, activeTeachings, teaching.createdAt);
+    teaching.baselineTrait = projection.baselineTrait;
+    activeTeachings.filter((entry) => entry.trait === teaching.trait && !entry.baselineTrait)
+      .forEach((entry) => { entry.baselineTrait = projection.baselineTrait; });
+    const record = projection.record;
     teaching.memoryPromoted = memoryResult?.promoted === true;
     teaching.memoryPersisted = memoryResult?.execution?.persisted === true
       && memoryResult?.authorityReceipt?.authorityConfirmed === true;
@@ -666,9 +673,11 @@ async function applyConversationTeaching() {
       teaching,
     ];
     state.appliedTasteDnaChanges = [...previousAppliedChanges, { traitName: teaching.trait, oldWeight: previousTrait?.weight || 0, newWeight: record?.weight || 0, reason: 'explicit conversation teaching', at: teaching.createdAt }];
-    musicConversationState.pendingTeaching = null;
-    musicConversationState.answer = `Learned: “${teaching.trait}” is a ${teaching.polarity} signal. It is visible below and can be forgotten.`;
-    musicConversationState.mode = teaching.memoryPersisted ? 'learned · durable memory' : 'learned · tile memory';
+    if (isConfirmedConversationCurrent()) {
+      musicConversationState.pendingTeaching = null;
+      musicConversationState.answer = `Learned: “${teaching.trait}” is a ${teaching.polarity} signal. It is visible below and can be forgotten.`;
+      musicConversationState.mode = teaching.memoryPersisted ? 'learned · durable memory' : 'learned · tile memory';
+    }
     state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
     try {
       saveState();
@@ -695,10 +704,13 @@ async function applyConversationTeaching() {
     renderMusicConversation();
     emitPresenceEvent({ kind: 'conversation_teaching_applied', severity: 'notice', summary: 'Explicit music teaching applied', impact: teaching.memoryPersisted ? 'Taste DNA and durable Stephanos memory updated.' : 'Taste DNA updated; shared durable memory was not confirmed.', suggestedAction: 'Use Forget this to undo the teaching.' });
   } catch (error) {
-    musicConversationState.answer = error?.durableRollbackUnconfirmed
-      ? `I could not finish learning “${teaching.trait}”, and durable rollback is not confirmed. Reset/Forget controls remain available for recovery.`
-      : `I could not safely retain “${teaching.trait}”. No durable-memory success was claimed.`;
-    musicConversationState.mode = 'teaching blocked';
+    if (isConfirmedConversationCurrent()) {
+      const trait = teaching?.trait || candidate.trait;
+      musicConversationState.answer = error?.durableRollbackUnconfirmed
+        ? `I could not finish learning “${trait}”, and durable rollback is not confirmed. Reset/Forget controls remain available for recovery.`
+        : `I could not safely retain “${trait}”. No durable-memory success was claimed.`;
+      musicConversationState.mode = 'teaching blocked';
+    }
     emitPresenceEvent({ kind: 'conversation_teaching_blocked', severity: 'warning', summary: 'Music teaching blocked', impact: 'The shared durable-memory transaction did not complete safely.' });
   } finally {
     endMusicMemoryMutation();

@@ -173,6 +173,23 @@ test('teaching evidence stays separate from rated-track contribution counts', ()
   assert.match(main, /tracks \$\{Number\(meta\.contributions \|\| 0\)\} · teachings \$\{Number\(meta\.teachingContributions \|\| 0\)\}/);
 });
 
+test('teaching projection composes with feedback that arrived during durable persistence', () => {
+  const concurrentTrait = { weight: 2.4, polarity: 'positive', category: 'core', contributions: 3 };
+  const teaching = {
+    id: 'durable-teaching',
+    trait: 'dark club pressure',
+    polarity: 'positive',
+    weightDelta: 0.6,
+    status: 'active',
+    createdAt: '2026-01-02T00:00:00.000Z',
+    previousTrait: { ...concurrentTrait },
+  };
+  const result = applyTasteTeachingContribution({ 'dark club pressure': concurrentTrait }, teaching, []);
+  assert.equal(result.record.weight, 3);
+  assert.equal(result.record.contributions, 3);
+  assert.equal(result.record.teachingContributions, 1);
+});
+
 test('state retention bounds forgotten history without orphaning active teachings', () => {
   const active = Array.from({ length: 105 }, (_, index) => ({ id: `active-${index}`, status: 'active' }));
   const forgotten = Array.from({ length: 105 }, (_, index) => ({ id: `forgotten-${index}`, status: 'forgotten' }));
@@ -242,6 +259,28 @@ test('teaching and forgetting avoid full redraws that would interrupt playback',
   assert.match(forgetting, /rankCandidatesByTaste\(state\.candidates, buildTasteWeightsForState\(\)\)/);
   assert.match(teaching, /renderCandidates\(\)/);
   assert.match(forgetting, /renderCandidates\(\)/);
+});
+
+test('durable Teach rebases at completion and cannot overwrite a newer conversation', () => {
+  const teachingStart = main.indexOf('async function applyConversationTeaching');
+  const teachingEnd = main.indexOf('\n\nasync function forgetConversationTeaching', teachingStart);
+  const teaching = main.slice(teachingStart, teachingEnd);
+  const durableAwait = teaching.indexOf('await tileMemoryBridge?.submitMemoryCandidateDurably?.({');
+  const projection = teaching.indexOf('applyTasteTeachingContribution(state.tasteDNA, teaching, activeTeachings');
+  const commitSnapshot = teaching.indexOf('const previousTasteDNA = state.tasteDNA');
+  assert.ok(durableAwait >= 0 && durableAwait < commitSnapshot && commitSnapshot < projection);
+  assert.match(teaching, /const confirmedConversationState = musicConversationState/);
+  assert.match(teaching, /const isConfirmedConversationCurrent = \(\) => musicConversationState === confirmedConversationState[\s\S]*musicConversationState\.pendingTeaching === candidate/);
+  assert.match(teaching, /if \(isConfirmedConversationCurrent\(\)\) \{[\s\S]*musicConversationState\.pendingTeaching = null/);
+  assert.match(teaching, /catch \(error\) \{[\s\S]*if \(isConfirmedConversationCurrent\(\)\) \{[\s\S]*musicConversationState\.mode = 'teaching blocked'/);
+});
+
+test('Teach always releases its mutation lock when secure identity generation fails', () => {
+  const teachingStart = main.indexOf('async function applyConversationTeaching');
+  const teachingEnd = main.indexOf('\n\nasync function forgetConversationTeaching', teachingStart);
+  const teaching = main.slice(teachingStart, teachingEnd);
+  assert.ok(teaching.indexOf('try {') < teaching.indexOf("createCollisionResistantTileIdentity('music-teaching')"));
+  assert.match(teaching, /catch \(error\) \{[\s\S]*finally \{[\s\S]*endMusicMemoryMutation\(\)/);
 });
 
 test('journey conversation reports success only from the current build outcome', () => {
