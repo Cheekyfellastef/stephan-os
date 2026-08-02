@@ -15,6 +15,8 @@ export const INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_KIND = 'stephanos.independent-
 export const INDEPENDENT_REVIEW_ARTIFACT_FILE = 'independent-review-result.json';
 export const INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES = 256 * 1024;
 
+const INDEPENDENT_REVIEW_FINDINGS_MAX_PROOF_REFS = 200;
+const INDEPENDENT_REVIEW_FINDINGS_INLINE_PROOF_REFS = INDEPENDENT_REVIEW_FINDINGS_MAX_PROOF_REFS - 1;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const API_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -70,6 +72,27 @@ function canonicalJson(value) {
   return `{${Object.keys(value).sort().map((key) => (
     `${JSON.stringify(key)}:${canonicalJson(value[key])}`
   )).join(',')}}`;
+}
+
+function boundFindingsAnalysis(analysis = {}) {
+  const proofRefs = Array.isArray(analysis.proofRefs) ? analysis.proofRefs : [];
+  if (proofRefs.length <= INDEPENDENT_REVIEW_FINDINGS_MAX_PROOF_REFS) return analysis;
+  const included = proofRefs.slice(0, INDEPENDENT_REVIEW_FINDINGS_INLINE_PROOF_REFS);
+  const omitted = proofRefs.length - included.length;
+  const digest = createHash('sha256').update(canonicalJson(proofRefs), 'utf8').digest('hex');
+  return Object.freeze({
+    ...analysis,
+    proofRefs: Object.freeze([
+      ...included,
+      [
+        'proofs/independent-review/proof-ref-overflow',
+        `total-${proofRefs.length}`,
+        `included-${included.length}`,
+        `omitted-${omitted}`,
+        `sha256-${digest}`,
+      ].join('/'),
+    ]),
+  });
 }
 
 function payloadCore(artifact = {}) {
@@ -133,10 +156,10 @@ export function buildIndependentReviewFindingsArtifact(input = {}) {
   const workflowRunId = strictPositiveInteger(input.workflowRunId);
   const workflowRunAttempt = strictPositiveInteger(input.workflowRunAttempt);
   const createdAtUtc = text(input.createdAtUtc || new Date().toISOString());
-  const analysis = input.analysis && typeof input.analysis === 'object' && !Array.isArray(input.analysis)
+  const sourceAnalysis = input.analysis && typeof input.analysis === 'object' && !Array.isArray(input.analysis)
     ? input.analysis
     : {};
-  const findings = Array.isArray(analysis.findings) ? analysis.findings : [];
+  const findings = Array.isArray(sourceAnalysis.findings) ? sourceAnalysis.findings : [];
   if (!REPOSITORY_PATTERN.test(repository)
       || !prNumber
       || !BRANCH_PATTERN.test(branch)
@@ -149,16 +172,16 @@ export function buildIndependentReviewFindingsArtifact(input = {}) {
       || !Number.isFinite(Date.parse(createdAtUtc))) {
     throw new Error('Independent review findings artifact identity is invalid.');
   }
-  if (analysis.schemaVersion !== 'stephanos.independent-security-analysis.v1'
-      || analysis.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_FINDINGS'
-      || analysis.verdict !== 'findings'
+  if (sourceAnalysis.schemaVersion !== 'stephanos.independent-security-analysis.v1'
+      || sourceAnalysis.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_FINDINGS'
+      || sourceAnalysis.verdict !== 'findings'
       || findings.length < 1
       || findings.length > 100
-      || !Array.isArray(analysis.proofRefs)
-      || analysis.proofRefs.length < 1
-      || analysis.proofRefs.length > 200) {
+      || !Array.isArray(sourceAnalysis.proofRefs)
+      || sourceAnalysis.proofRefs.length < 1) {
     throw new Error('Independent review findings artifact requires bounded findings analysis.');
   }
+  const analysis = boundFindingsAnalysis(sourceAnalysis);
   const core = {
     schemaVersion: INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_SCHEMA_VERSION,
     kind: INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_KIND,
