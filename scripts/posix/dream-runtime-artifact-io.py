@@ -35,6 +35,13 @@ def promoted_identity(info: os.stat_result) -> str:
     )
 
 
+def committed_identity(info: os.stat_result) -> str:
+    return (
+        f"PROMOTED:{info.st_dev}:{info.st_ino}:{info.st_size}:"
+        f"1:{info.st_mtime_ns}"
+    )
+
+
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--mode", choices=("promote", "isolated"), default="promote")
 parser.add_argument("--pending-name", default="")
@@ -101,15 +108,10 @@ if args.mode == "isolated":
             error = ctypes.get_errno()
             fail("EEXIST" if error == errno.EEXIST else "DREAM_MIGRATION_RECEIPT_COMMIT_FAILED")
         final_linked = True
-        promoted = os.fstat(temporary_fd)
-        canonical = os.stat(args.artifact_name, dir_fd=parent_fd, follow_symlinks=False)
-        if (not stat.S_ISREG(promoted.st_mode)
-                or promoted.st_nlink != 1
-                or (canonical.st_dev, canonical.st_ino) != (promoted.st_dev, promoted.st_ino)
-                or canonical.st_nlink != 1
-                or canonical.st_size != len(content)):
-            fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
-        print(f"COMMITTED:{args.token}:{promoted_identity(promoted)}", flush=True)
+        # linkat is the commit point. Every fallible validation is completed
+        # before it; the parent recovers a lost acknowledgement by comparing
+        # the final path with this exact staged inode identity.
+        print(f"COMMITTED:{args.token}:{committed_identity(staged)}", flush=True)
         raise SystemExit(0)
     except SystemExit:
         raise

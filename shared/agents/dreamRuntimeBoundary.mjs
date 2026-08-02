@@ -1190,16 +1190,15 @@ async function startLinuxIsolatedReceiptPublication(artifactPath, content, { fsI
       ? parsePosixPromotionIdentity(committedLine.slice(committedPrefix.length))
       : null;
     let verifiedIdentity = null;
-    let verificationFailed = false;
-    if (committedIdentity && !output.stderr.trim() && !output.timedOut && output.exit?.code === 0) {
-      try {
-        await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
-        verifiedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
-        if (!sameOwnedArtifactIdentity(committedIdentity, verifiedIdentity, 1)) verificationFailed = true;
-      } catch {
-        verificationFailed = true;
-      }
-    } else {
+    let verificationFailed = true;
+    try {
+      await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
+      verifiedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
+      const exactStagedInodeCommitted = sameOwnedArtifactIdentity(stagedIdentity, verifiedIdentity, 1);
+      const acknowledgementMatches = !committedIdentity
+        || sameOwnedArtifactIdentity(committedIdentity, verifiedIdentity, 1);
+      verificationFailed = !(exactStagedInodeCommitted && acknowledgementMatches);
+    } catch {
       verificationFailed = true;
     }
     const released = await boundary.release();

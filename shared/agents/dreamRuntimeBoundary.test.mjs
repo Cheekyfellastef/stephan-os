@@ -1275,6 +1275,14 @@ test('cross-platform publication adapters preserve the structural commit invaria
   assert.match(posixHelper, /linkat\(temporary_fd, b"", parent_fd/);
   assert.match(posixHelper, /COMMITTED:\{args\.token\}/);
   assert.doesNotMatch(posixHelper, /\/proc\/self\/fd\/3/);
+  const isolatedHelper = posixHelper.slice(
+    posixHelper.indexOf('if args.mode == "isolated":'),
+    posixHelper.indexOf('pending_fd = 3'),
+  );
+  const isolatedLinkIndex = isolatedHelper.indexOf('linkat(temporary_fd, b"", parent_fd');
+  const isolatedCommittedIndex = isolatedHelper.indexOf('print(f"COMMITTED:');
+  assert.ok(isolatedLinkIndex >= 0 && isolatedCommittedIndex > isolatedLinkIndex);
+  assert.doesNotMatch(isolatedHelper.slice(isolatedLinkIndex, isolatedCommittedIndex), /os\.(?:fstat|stat)\(/);
   assert.match(posixHelper, /system = platform\.system\(\)[\s\S]*if system == "Darwin"/);
   assert.match(posixHelper, /fclonefileat\(pending_fd, parent_fd/);
   assert.doesNotMatch(posixHelper, /renameatx_np/);
@@ -1287,6 +1295,8 @@ test('cross-platform publication adapters preserve the structural commit invaria
   assert.match(boundarySource, /startLinuxIsolatedReceiptPublication\(receiptPath, content/);
   assert.match(boundarySource, /writtenReceipt\.isolatedPublication\.commit\(\)/);
   assert.match(boundarySource, /writtenReceipt\.isolatedPublication\.abort\(\)/);
+  assert.match(boundarySource, /exactStagedInodeCommitted = sameOwnedArtifactIdentity\(stagedIdentity, verifiedIdentity, 1\)/);
+  assert.match(boundarySource, /!committedIdentity\s+\|\| sameOwnedArtifactIdentity\(committedIdentity, verifiedIdentity, 1\)/);
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
   assert.match(
     boundarySource,
