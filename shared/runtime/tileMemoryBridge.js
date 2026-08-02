@@ -129,7 +129,7 @@ export function createTileMemoryBridge({
     };
   }
 
-  function revokeMemoryCandidate({ record = {}, reason = '', sourceRef = '' } = {}) {
+  async function revokeMemoryCandidate({ record = {}, reason = '', sourceRef = '' } = {}) {
     const memoryRuntime = stephanosMemory || resolveTileHostRuntime('stephanosMemory');
     const eventRuntime = executionLoop || resolveTileHostRuntime('StephanosExecutionLoop');
     const namespace = normalizeString(record?.namespace, 'continuity');
@@ -140,7 +140,12 @@ export function createTileMemoryBridge({
     let revoked = false;
     let alreadyAbsent = false;
 
-    if (eligible && memoryRuntime?.deleteRecord) {
+    if (eligible && typeof memoryRuntime?.deleteRecordDurably === 'function') {
+      const durableResult = await memoryRuntime.deleteRecordDurably({ namespace, id });
+      alreadyAbsent = durableResult?.alreadyAbsent === true;
+      revoked = durableResult?.authorityConfirmed === true
+        && (durableResult?.deleted === true || alreadyAbsent);
+    } else if (eligible && memoryRuntime?.deleteRecord) {
       revoked = memoryRuntime.deleteRecord({ namespace, id }) === true;
       if (!revoked && typeof memoryRuntime.getRecord === 'function') {
         try {
@@ -181,7 +186,7 @@ export function createTileMemoryBridge({
     const executionMetadata = truthAdapter.toExecutionMetadata(truth);
     const execution = createExecution({
       mode: revoked ? (alreadyAbsent ? 'already-absent' : 'revoked') : 'revocation-blocked',
-      adapter: memoryRuntime?.deleteRecord ? 'stephanos-memory' : 'memory-unavailable',
+      adapter: memoryRuntime?.deleteRecordDurably || memoryRuntime?.deleteRecord ? 'stephanos-memory' : 'memory-unavailable',
       adjudication: eligible ? 'revocation-eligible' : 'rejected',
       persisted: revoked,
       diagnostics: { eligible, ownedRecord, revoked, alreadyAbsent },

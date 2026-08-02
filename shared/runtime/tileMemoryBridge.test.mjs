@@ -61,7 +61,7 @@ test('tile memory bridge preserves related idea provenance through adjudication'
   assert.equal(savedPayload.payload.relatedIdeaIds[0], 'idea_2');
 });
 
-test('tile memory bridge revokes the original durable record through the guarded adapter', () => {
+test('tile memory bridge revokes the original durable record through the guarded adapter', async () => {
   const deleted = [];
   const events = [];
   const bridge = createTileMemoryBridge({
@@ -75,7 +75,7 @@ test('tile memory bridge revokes the original durable record through the guarded
     executionLoop: { publishTileEvent(event) { events.push(event); } },
   });
 
-  const result = bridge.revokeMemoryCandidate({
+  const result = await bridge.revokeMemoryCandidate({
     record: { namespace: 'continuity', id: 'tile-memory-music-tile-1' },
     reason: 'Operator explicitly asked to forget this durable preference.',
     sourceRef: 'music-teaching:1',
@@ -87,7 +87,44 @@ test('tile memory bridge revokes the original durable record through the guarded
   assert.equal(events[0].result.execution.persisted, true);
 });
 
-test('tile memory revocation is idempotent when canonical storage proves the record is already absent', () => {
+test('tile memory revocation waits for durable deletion authority when available', async () => {
+  let synchronousDeleteCalled = false;
+  const bridge = createTileMemoryBridge({
+    tileId: 'music-tile',
+    stephanosMemory: {
+      deleteRecord() { synchronousDeleteCalled = true; return true; },
+      async deleteRecordDurably() {
+        return { deleted: true, alreadyAbsent: false, authorityConfirmed: true, receipt: { id: 'durable-1' } };
+      },
+    },
+  });
+
+  const result = await bridge.revokeMemoryCandidate({
+    record: { namespace: 'continuity', id: 'tile-memory-music-tile-durable' },
+    reason: 'Operator explicitly asked to forget this durable preference.',
+  });
+
+  assert.equal(result.revoked, true);
+  assert.equal(synchronousDeleteCalled, false);
+});
+
+test('tile memory revocation retains identity when durable deletion is unconfirmed', async () => {
+  const bridge = createTileMemoryBridge({
+    tileId: 'music-tile',
+    stephanosMemory: {
+      async deleteRecordDurably() {
+        return { deleted: true, alreadyAbsent: false, authorityConfirmed: false, receipt: null };
+      },
+    },
+  });
+  const result = await bridge.revokeMemoryCandidate({
+    record: { namespace: 'continuity', id: 'tile-memory-music-tile-unconfirmed' },
+    reason: 'Operator explicitly asked to forget this durable preference.',
+  });
+  assert.equal(result.revoked, false);
+});
+
+test('tile memory revocation is idempotent when canonical storage proves the record is already absent', async () => {
   const events = [];
   const bridge = createTileMemoryBridge({
     tileId: 'music-tile',
@@ -98,7 +135,7 @@ test('tile memory revocation is idempotent when canonical storage proves the rec
     executionLoop: { publishTileEvent(event) { events.push(event); } },
   });
 
-  const result = bridge.revokeMemoryCandidate({
+  const result = await bridge.revokeMemoryCandidate({
     record: { namespace: 'continuity', id: 'tile-memory-music-tile-already-gone' },
     reason: 'Operator reset the Music Tile and requested its durable teachings be revoked.',
   });
@@ -110,7 +147,7 @@ test('tile memory revocation is idempotent when canonical storage proves the rec
   assert.equal(events[0].result.execution.persisted, true);
 });
 
-test('tile memory revocation fails closed when absence cannot be canonically verified', () => {
+test('tile memory revocation fails closed when absence cannot be canonically verified', async () => {
   const bridge = createTileMemoryBridge({
     tileId: 'music-tile',
     stephanosMemory: {
@@ -118,7 +155,7 @@ test('tile memory revocation fails closed when absence cannot be canonically ver
       getRecord() { throw new Error('storage unavailable'); },
     },
   });
-  const result = bridge.revokeMemoryCandidate({
+  const result = await bridge.revokeMemoryCandidate({
     record: { namespace: 'continuity', id: 'tile-memory-music-tile-unknown' },
     reason: 'Operator reset the Music Tile and requested its durable teachings be revoked.',
   });
@@ -126,25 +163,25 @@ test('tile memory revocation fails closed when absence cannot be canonically ver
   assert.equal(result.alreadyAbsent, false);
 });
 
-test('tile memory revocation fails closed without original record identity', () => {
+test('tile memory revocation fails closed without original record identity', async () => {
   let deleted = false;
   const bridge = createTileMemoryBridge({
     tileId: 'music-tile',
     stephanosMemory: { deleteRecord() { deleted = true; return true; } },
   });
-  const result = bridge.revokeMemoryCandidate({ reason: 'Operator explicitly asked to forget this durable preference.' });
+  const result = await bridge.revokeMemoryCandidate({ reason: 'Operator explicitly asked to forget this durable preference.' });
   assert.equal(result.ok, false);
   assert.equal(result.revoked, false);
   assert.equal(deleted, false);
 });
 
-test('tile memory revocation cannot delete a record owned by another tile', () => {
+test('tile memory revocation cannot delete a record owned by another tile', async () => {
   let deleted = false;
   const bridge = createTileMemoryBridge({
     tileId: 'music-tile',
     stephanosMemory: { deleteRecord() { deleted = true; return true; } },
   });
-  const result = bridge.revokeMemoryCandidate({
+  const result = await bridge.revokeMemoryCandidate({
     record: { namespace: 'continuity', id: 'tile-memory-ideas-1' },
     reason: 'Operator explicitly asked to forget this durable preference.',
   });

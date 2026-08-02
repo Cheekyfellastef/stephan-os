@@ -123,10 +123,11 @@ export function buildConversationAiPayload(plan, context = {}) {
 
 export function summarizeTasteEvidence(tasteDNA = {}, ratedTrackCount = 0) {
   const entries = Object.entries(tasteDNA || {})
-    .filter(([, value]) => Number(value?.weight || 0) > 0)
-    .sort((a, b) => Number(b[1]?.weight || 0) - Number(a[1]?.weight || 0));
-  const positive = entries.filter(([, value]) => value?.polarity !== 'negative').slice(0, 3).map(([name]) => name);
-  const negative = entries.filter(([, value]) => value?.polarity === 'negative').slice(0, 2).map(([name]) => name);
+    .map(([name, value]) => [name, signedTraitWeight(value)])
+    .filter(([, signedWeight]) => Math.abs(signedWeight) > 0)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const positive = entries.filter(([, signedWeight]) => signedWeight > 0).slice(0, 3).map(([name]) => name);
+  const negative = entries.filter(([, signedWeight]) => signedWeight < 0).slice(0, 2).map(([name]) => name);
   return {
     positive,
     negative,

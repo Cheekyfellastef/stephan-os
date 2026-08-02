@@ -104,6 +104,43 @@ test('stephanos memory update and delete keep durable memory distinct and stable
   assert.equal(memory.getRecord({ namespace: 'tiles', id: 'artifact-42' }), null);
 });
 
+test('durable deletion waits for an authority-bearing adapter receipt', async () => {
+  let state = { schemaVersion: 2, updatedAt: '2026-08-02T00:00:00.000Z', records: {} };
+  let durableWrites = 0;
+  const adapter = {
+    mode: 'authority-test-adapter',
+    readState() { return state; },
+    writeState(nextState) { state = nextState; },
+    async writeStateDurably(nextState) {
+      durableWrites += 1;
+      state = nextState;
+      return { authorityConfirmed: true, source: 'test-durable-authority', receiptId: 'receipt-1' };
+    },
+  };
+  const memory = createStephanosMemory({ adapter, source: 'tile-system', surface: 'hosted' });
+  memory.saveRecord({ namespace: 'continuity', id: 'owned-1', type: 'operator.preference', summary: 'Owned preference' });
+
+  const result = await memory.deleteRecordDurably({ namespace: 'continuity', id: 'owned-1' });
+
+  assert.equal(result.deleted, true);
+  assert.equal(result.authorityConfirmed, true);
+  assert.equal(result.receipt.receiptId, 'receipt-1');
+  assert.equal(durableWrites, 1);
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'owned-1' }), null);
+});
+
+test('durable deletion fails closed without an authority receipt', async () => {
+  const adapter = createInMemoryAdapter();
+  const memory = createStephanosMemory({ adapter, source: 'tile-system', surface: 'hosted' });
+  memory.saveRecord({ namespace: 'continuity', id: 'owned-2', type: 'operator.preference', summary: 'Owned preference' });
+
+  const result = await memory.deleteRecordDurably({ namespace: 'continuity', id: 'owned-2' });
+
+  assert.equal(result.deleted, false);
+  assert.equal(result.authorityConfirmed, false);
+  assert.notEqual(memory.getRecord({ namespace: 'continuity', id: 'owned-2' }), null);
+});
+
 test('stephanos memory rejects untyped arbitrary records', () => {
   const memory = createStephanosMemory({
     adapter: createInMemoryAdapter(),
@@ -234,6 +271,65 @@ test('shared memory adapter falls back to local mirror when backend is unavailab
   assert.equal(hydration.source, 'local-mirror-fallback');
   assert.equal(adapter.readState().records['continuity::local-note'].summary, 'local fallback');
   assert.equal(adapter.diagnostics().stateClass, 'local-fallback-mirror');
+});
+
+test('durable shared-memory deletion waits behind earlier writes and is the final backend authority', async () => {
+  const storage = createStorage({
+    [STEPHANOS_DURABLE_MEMORY_STORAGE_KEY]: JSON.stringify({
+      schemaVersion: 2,
+      updatedAt: '2026-08-02T00:00:00.000Z',
+      records: {},
+    }),
+  });
+  const writes = [];
+  let releaseFirstWrite;
+  const firstWriteBlocked = new Promise((resolve) => { releaseFirstWrite = resolve; });
+  const fetchImpl = async (_url, options = {}) => {
+    const body = JSON.parse(options.body || '{}');
+    writes.push(body);
+    if (writes.length === 1) await firstWriteBlocked;
+    return {
+      ok: true,
+      status: 200,
+      async text() { return JSON.stringify({ success: true, data: body }); },
+    };
+  };
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage,
+    fetchImpl,
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+  });
+  const record = {
+    schemaVersion: 2,
+    type: 'operator.preference',
+    source: 'music-tile',
+    scope: 'runtime',
+    summary: 'Temporary teaching',
+    payload: {},
+    tags: ['music'],
+    importance: 'normal',
+    retentionHint: 'default',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    surface: 'hosted',
+  };
+  adapter.writeState({ schemaVersion: 2, updatedAt: '2026-08-02T00:01:00.000Z', records: { 'continuity::teaching': record } });
+  const durableDelete = adapter.writeStateDurably({ schemaVersion: 2, updatedAt: '2026-08-02T00:02:00.000Z', records: {} });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].source, 'memory-runtime');
+  assert.equal(writes[0].ifUnmodifiedSince, '2026-08-02T00:00:00.000Z');
+
+  releaseFirstWrite();
+  const receipt = await durableDelete;
+  assert.equal(receipt.authorityConfirmed, true);
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].source, 'memory-runtime-durable');
+  assert.equal(writes[1].ifUnmodifiedSince, '2026-08-02T00:01:00.000Z');
+  assert.deepEqual(writes[1].records, {});
+  assert.deepEqual(adapter.readState().records, {});
 });
 
 test('shared memory adapter rehydrates canonical backend state after conflict instead of silently overwriting newer shared truth', async () => {

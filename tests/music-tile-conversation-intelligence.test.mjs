@@ -82,6 +82,17 @@ test('taste reflection labels its bounded evidence', () => {
   assert.equal(summary.ratedTrackCount, 7);
 });
 
+test('taste reflection includes signed negative manual weights as avoidance evidence', () => {
+  const summary = summarizeTasteEvidence({
+    'manual avoidance': { weight: -2, polarity: 'positive' },
+    'explicit avoid': { weight: 1.5, polarity: 'negative' },
+    'positive signal': { weight: 1, polarity: 'positive' },
+  }, 0);
+  assert.deepEqual(summary.positive, ['positive signal']);
+  assert.deepEqual(summary.negative, ['manual avoidance', 'explicit avoid']);
+  assert.equal(summary.evidenceAvailable, true);
+});
+
 test('forgetting removes only the selected teaching contribution', () => {
   const teachings = [
     { id: 'first', trait: 'breathy vocals', polarity: 'negative', weightDelta: 0.8, status: 'active', createdAt: '2026-01-01T00:00:00.000Z', previousTrait: null },
@@ -185,7 +196,7 @@ test('conversation uses canonical AI lifecycle and governed memory bridge', () =
   assert.match(main, /runAiActionLifecycle\(\{/);
   assert.match(main, /askMusicAi\('music-conversation', payload\)/);
   assert.match(main, /tileMemoryBridge\?\.submitMemoryCandidate\?\.\(\{/);
-  assert.match(main, /tileMemoryBridge\?\.revokeMemoryCandidate\?\.\(\{/);
+  assert.match(main, /await tileMemoryBridge\?\.revokeMemoryCandidate\?\.\(\{/);
   assert.match(main, /applyTasteTeachingContribution\(state\.tasteDNA, teaching, activeTeachings/);
   assert.match(main, /explicit conversation teaching/);
   assert.match(main, /data-conversation-action="forget"/);
@@ -193,7 +204,7 @@ test('conversation uses canonical AI lifecycle and governed memory bridge', () =
 
 test('teaching and forgetting avoid full redraws that would interrupt playback', () => {
   const teachingStart = main.indexOf('function applyConversationTeaching');
-  const teachingEnd = main.indexOf('\n\nfunction forgetConversationTeaching', teachingStart);
+  const teachingEnd = main.indexOf('\n\nasync function forgetConversationTeaching', teachingStart);
   const forgetEnd = main.indexOf('\n\nfunction getJourneySeedArtist', teachingEnd);
   const teaching = main.slice(teachingStart, teachingEnd);
   const forgetting = main.slice(teachingEnd, forgetEnd);
@@ -233,7 +244,7 @@ test('reset revokes durable teachings before clearing state and drops transient 
   const resetEnd = main.indexOf('\nfunction renderAll', resetStart);
   const reset = main.slice(resetStart, resetEnd);
   assert.match(reset, /memoryPersisted === true/);
-  assert.match(reset, /tileMemoryBridge\.revokeMemoryCandidate/);
+  assert.match(reset, /await tileMemoryBridge\.revokeMemoryCandidate/);
   assert.match(reset, /if \(revocation\?\.revoked !== true\)[\s\S]*return \{ ok: false, teaching \}/);
   assert.ok(reset.indexOf('revokeDurableConversationTeachingsForReset()') < reset.indexOf('localStorage.removeItem(STORAGE_KEY)'));
   assert.match(reset, /nativeCatalogSearchState = createIdleNativeCatalogSearchState\(\)/);
@@ -250,6 +261,12 @@ test('reset invalidates late catalogue, AI and journey completions', () => {
   assert.match(main, /buildJourney\(\{ operationGeneration \}\)/);
   assert.match(main, /Journey build superseded by reset\./);
   assert.match(main, /emitEvent: \(event\) => \{[\s\S]*if \(isCurrentMusicOperation\(operationGeneration\)\) emitPresenceEvent\(event\)/);
+  assert.match(main, /askAiTrackTask[\s\S]*const operationGeneration=musicOperationGeneration[\s\S]*if\(!isCurrentMusicOperation\(operationGeneration\)\) return/);
+  assert.match(main, /buildJourneyAiAssisted[\s\S]*await askMusicAi\('build-journey'[\s\S]*if\(!isCurrentMusicOperation\(operationGeneration\)\) return/);
+  assert.match(main, /buildImmersionSessionWithAi[\s\S]*await withTimeout[\s\S]*if\(!isCurrentMusicOperation\(operationGeneration\)\) return/);
+  assert.match(main, /resolveSpotifyLink\(trackId, \{ operationGeneration = musicOperationGeneration \} = \{\}\)[\s\S]*await searchSpotifyCatalogForTrack\(track\)[\s\S]*if \(!isCurrentMusicOperation\(operationGeneration\)\) return/);
+  assert.match(main, /refreshVerifiedSpotifyLinks[\s\S]*const operationGeneration=musicOperationGeneration[\s\S]*await response\.json\(\)[\s\S]*if \(!isCurrentMusicOperation\(operationGeneration\)\) return/);
+  assert.match(main, /forgetConversationTeaching[\s\S]*await tileMemoryBridge\?\.revokeMemoryCandidate[\s\S]*if \(!isCurrentMusicOperation\(operationGeneration\)\) return/);
 });
 
 test('idle rendering clears stale native-search and conversation snapshots', () => {
