@@ -53,6 +53,23 @@
             <button id="show-briefing-reason-btn" class="quiet-action" type="button">Why this journey?</button>
           </div>
 
+          <section class="native-music-search" aria-labelledby="native-music-search-title">
+            <div class="native-music-search__heading">
+              <div>
+                <small>SEARCH EVERY DOOR</small>
+                <strong id="native-music-search-title">Find a song, artist or sound</strong>
+              </div>
+              <span class="truth-chip"><i aria-hidden="true"></i> No account link needed</span>
+            </div>
+            <form id="native-music-search-form" class="native-music-search__form" role="search">
+              <label class="visually-hidden" for="native-music-search-input">Find a song, artist or musical direction</label>
+              <input id="native-music-search-input" name="music-search" type="search" maxlength="160" autocomplete="off" placeholder="Try “Enjoy the Silence”, Anyma, or dark electronic vocal…”" />
+              <button id="native-music-search-button" type="submit">Find music <span aria-hidden="true">→</span></button>
+            </form>
+            <p id="native-music-search-status" class="native-music-search__status" aria-live="polite">Stephanos chooses the best available catalogue automatically.</p>
+            <div id="native-music-search-results" class="native-music-search__results" aria-live="polite"></div>
+          </section>
+
           <p id="status-text" class="status-line" aria-live="polite">Ready. Your next journey will use local Taste DNA and clearly label anything that still needs verification.</p>
 
           <div class="briefing-answers" aria-label="Daily briefing contract">
