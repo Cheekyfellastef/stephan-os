@@ -1220,50 +1220,58 @@ test('ancestor swap during publication cannot redirect or retain an escaped arti
   );
 });
 
-test('Linux promotion fails closed without pathname cleanup when the pending name is replaced', { skip: process.platform !== 'linux' }, async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dream-linkat-'));
-  const pendingName = '.stephanos-pending-hostile-receipt.json';
-  const pendingPath = path.join(root, pendingName);
+test('Linux isolated receipt publication cannot share a writable displaced inode', { skip: process.platform !== 'linux' }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dream-otmpfile-'));
   const displacedPath = path.join(root, 'owned-displaced');
   const finalPath = path.join(root, 'dream-migration-hostile.json');
-  await fs.writeFile(pendingPath, 'owned-receipt');
-  const pendingHandle = await fs.open(pendingPath, 'r');
+  const token = '11111111-1111-4111-8111-111111111111';
+  await fs.writeFile(displacedPath, 'owned-receipt');
   const parentHandle = await fs.open(root, 'r');
-  await fs.rename(pendingPath, displacedPath);
-  await fs.writeFile(pendingPath, 'attacker-replacement');
   try {
     const helper = spawn('python3', [
       path.resolve('scripts/posix/dream-runtime-artifact-io.py'),
-      '--pending-name', pendingName,
+      '--mode', 'isolated',
       '--artifact-name', path.basename(finalPath),
-    ], { stdio: ['ignore', 'pipe', 'pipe', pendingHandle.fd, parentHandle.fd] });
-    const outcome = await new Promise((resolve) => {
-      let stdout = '';
-      let stderr = '';
-      helper.stdout.setEncoding('utf8');
-      helper.stderr.setEncoding('utf8');
-      helper.stdout.on('data', (chunk) => { stdout += chunk; });
-      helper.stderr.on('data', (chunk) => { stderr += chunk; });
-      helper.once('exit', (code) => resolve({ code, stdout, stderr }));
+      '--token', token,
+    ], { stdio: ['pipe', 'pipe', 'pipe', parentHandle.fd] });
+    helper.stdin.on('error', () => {});
+    helper.stdout.setEncoding('utf8');
+    helper.stderr.setEncoding('utf8');
+    let stdout = '';
+    let stderr = '';
+    let resolveReady;
+    const ready = new Promise((resolve) => { resolveReady = resolve; });
+    helper.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      if (stdout.includes(`READY:${token}:`)) resolveReady();
     });
-    assert.deepEqual(outcome, {
-      code: 2,
-      stdout: '',
-      stderr: 'DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED\n',
-    });
+    helper.stderr.on('data', (chunk) => { stderr += chunk; });
+    const exited = new Promise((resolve) => helper.once('exit', (code) => resolve(code)));
+    helper.stdin.write(`${Buffer.from('owned-receipt').toString('base64')}\n`);
+    assert.equal(await Promise.race([ready.then(() => true), exited.then(() => false)]), true, stderr);
+    helper.stdin.end('COMMIT\n');
+    assert.equal(await exited, 0);
+    assert.equal(stderr, '');
+    assert.equal(stdout.split(/\r?\n/).some((line) => line.startsWith(`COMMITTED:${token}:PROMOTED:`)), true);
+    const finalInfo = await fs.lstat(finalPath);
+    const displacedInfo = await fs.lstat(displacedPath);
+    assert.equal(Number(finalInfo.nlink), 1);
+    assert.equal(Number(displacedInfo.nlink), 1);
+    assert.notEqual(Number(finalInfo.ino), Number(displacedInfo.ino));
     assert.equal(await fs.readFile(finalPath, 'utf8'), 'owned-receipt');
-    assert.equal(Number((await fs.lstat(finalPath)).nlink), 2);
-    assert.equal(await fs.readFile(pendingPath, 'utf8'), 'attacker-replacement');
-    assert.equal(await fs.readFile(displacedPath, 'utf8'), 'owned-receipt');
+    await fs.writeFile(displacedPath, 'attacker-rewrite');
+    assert.equal(await fs.readFile(finalPath, 'utf8'), 'owned-receipt');
   } finally {
-    await pendingHandle.close();
     await parentHandle.close();
   }
 });
 
 test('cross-platform publication adapters preserve the structural commit invariant', async () => {
   const posixHelper = await fs.readFile(path.resolve('scripts/posix/dream-runtime-artifact-io.py'), 'utf8');
-  assert.match(posixHelper, /linkat\(-100, b"\/proc\/self\/fd\/3"/);
+  assert.match(posixHelper, /os\.O_TMPFILE \| os\.O_RDWR/);
+  assert.match(posixHelper, /linkat\(temporary_fd, b"", parent_fd/);
+  assert.match(posixHelper, /COMMITTED:\{args\.token\}/);
+  assert.doesNotMatch(posixHelper, /\/proc\/self\/fd\/3/);
   assert.match(posixHelper, /system = platform\.system\(\)[\s\S]*if system == "Darwin"/);
   assert.match(posixHelper, /fclonefileat\(pending_fd, parent_fd/);
   assert.doesNotMatch(posixHelper, /renameatx_np/);
@@ -1271,12 +1279,11 @@ test('cross-platform publication adapters preserve the structural commit invaria
     posixHelper,
     /except BaseException:\s+fail\("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED"\)/,
   );
-  assert.match(
-    posixHelper,
-    /else:[\s\S]*except BaseException:\s+fail\("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED"\)/,
-  );
   assert.doesNotMatch(posixHelper, /cleanup_owned_promoted/);
   const boundarySource = await fs.readFile(path.resolve('shared/agents/dreamRuntimeBoundary.mjs'), 'utf8');
+  assert.match(boundarySource, /startLinuxIsolatedReceiptPublication\(receiptPath, content/);
+  assert.match(boundarySource, /writtenReceipt\.isolatedPublication\.commit\(\)/);
+  assert.match(boundarySource, /writtenReceipt\.isolatedPublication\.abort\(\)/);
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
   assert.match(
     boundarySource,

@@ -1045,23 +1045,176 @@ function sameOwnedArtifactIdentity(expected, current, maxLinkCount) {
     && Number(expected?.mtimeMs) === Number(current?.mtimeMs);
 }
 
-export function parsePosixPromotionIdentity(value) {
-  const match = /^PROMOTED:(\d{1,20}):(\d{1,20}):(\d{1,20}):1:(\d{1,24})$/.exec(String(value || '').trim());
+function parsePosixArtifactIdentity(value, expectedLinkCount) {
+  const match = /^(?:PROMOTED:)?(\d{1,20}):(\d{1,20}):(\d{1,20}):(\d):(\d{1,24})$/.exec(String(value || '').trim());
   if (!match) return null;
   const [dev, ino, size] = match.slice(1, 4).map(Number);
   if (![dev, ino, size].every(Number.isSafeInteger)) return null;
-  const mtimeNs = BigInt(match[4]);
+  const nlink = Number(match[4]);
+  if (nlink !== expectedLinkCount) return null;
+  const mtimeNs = BigInt(match[5]);
   const mtimeMs = Number(mtimeNs / 1_000_000n) + Number(mtimeNs % 1_000_000n) / 1_000_000;
   if (!Number.isFinite(mtimeMs)) return null;
   return Object.freeze({
     dev,
     ino,
     size,
-    nlink: 1,
+    nlink,
     mtimeMs,
     isFile: () => true,
     isSymbolicLink: () => false,
   });
+}
+
+export function parsePosixPromotionIdentity(value) {
+  return parsePosixArtifactIdentity(value, 1);
+}
+
+async function startLinuxIsolatedReceiptPublication(artifactPath, content, { fsImpl = fs } = {}) {
+  const bytes = Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
+  if (bytes.length > MAX_WINDOWS_ARTIFACT_BYTES) {
+    throw codedError('DREAM_MIGRATION_RECEIPT_ISOLATED_INPUT_INVALID');
+  }
+  const parentPath = path.dirname(artifactPath);
+  const artifactName = path.basename(artifactPath);
+  const ancestorIdentities = await ensureSafeDirectoryChain(parentPath, { fsImpl, create: false });
+  const boundary = await acquireDirectoryMutationBoundary(parentPath, ancestorIdentities, fsImpl);
+  const token = randomUUID();
+  const child = spawn('python3', [
+    POSIX_ARTIFACT_IO_SCRIPT,
+    '--mode', 'isolated',
+    '--artifact-name', artifactName,
+    '--token', token,
+  ], {
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe', boundary.parentHandle.fd],
+  });
+  let stdout = '';
+  let stderr = '';
+  let inputError = null;
+  let processExited = false;
+  let resolveExit;
+  const exitPromise = new Promise((resolve) => { resolveExit = resolve; });
+  const appendOutput = (current, chunk) => {
+    const next = `${current}${String(chunk || '')}`;
+    if (Buffer.byteLength(next, 'utf8') > DIRECTORY_GUARD_OUTPUT_LIMIT) {
+      try { child.kill(); } catch {}
+      return current;
+    }
+    return next;
+  };
+  child.stdin.on('error', () => {});
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout = appendOutput(stdout, chunk); });
+  child.stderr.on('data', (chunk) => { stderr = appendOutput(stderr, chunk); });
+  child.once('error', () => {
+    processExited = true;
+    resolveExit(Object.freeze({ code: null }));
+  });
+  child.once('exit', (code) => {
+    processExited = true;
+    resolveExit(Object.freeze({ code }));
+  });
+  const awaitExit = async () => {
+    let timedOut = false;
+    const timeout = new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try { child.kill(); } catch {}
+        resolve(Object.freeze({ code: null }));
+      }, DIRECTORY_GUARD_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    const exit = await Promise.race([exitPromise, timeout]);
+    return Object.freeze({ exit, timedOut, stdout, stderr });
+  };
+  child.stdin.write(`${bytes.toString('base64')}\n`, (error) => { inputError = error || null; });
+  const readyPrefix = `READY:${token}:`;
+  const startedAt = Date.now();
+  let stagedIdentity = null;
+  while (Date.now() - startedAt < DIRECTORY_GUARD_TIMEOUT_MS) {
+    const readyLine = stdout.split(/\r?\n/).find((line) => line.startsWith(readyPrefix));
+    if (readyLine) {
+      stagedIdentity = parsePosixArtifactIdentity(readyLine.slice(readyPrefix.length), 0);
+      break;
+    }
+    if (inputError || stderr.trim() || processExited) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (!stagedIdentity) {
+    try { child.stdin.end('ABORT\n'); } catch {}
+    const output = await awaitExit();
+    const released = await boundary.release();
+    const reason = output.stderr.split(/\r?\n/).find(Boolean) || '';
+    const error = codedError('DREAM_MIGRATION_RECEIPT_WRITE_FAILED');
+    error.reasonCode = reason === 'EEXIST' ? 'EEXIST' : reason || 'DREAM_MIGRATION_RECEIPT_ISOLATED_STAGE_FAILED';
+    error.cleanupBlocker = reason === 'DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED' || !released
+      ? 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED'
+      : '';
+    throw error;
+  }
+
+  let finished = false;
+  const abort = async () => {
+    if (finished) return false;
+    finished = true;
+    let abortSent = true;
+    try { child.stdin.end('ABORT\n'); } catch { abortSent = false; }
+    const output = await awaitExit();
+    const released = await boundary.release();
+    return abortSent
+      && released
+      && !output.timedOut
+      && output.exit?.code === 0
+      && output.stdout.split(/\r?\n/).includes(`ABORTED:${token}`)
+      && !output.stderr.trim();
+  };
+  const commit = async () => {
+    if (finished) throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
+    try {
+      await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
+    } catch (error) {
+      const cleaned = await abort();
+      const wrapped = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
+      wrapped.reasonCode = error?.code || 'DREAM_MIGRATION_ANCESTOR_CHANGED';
+      wrapped.cleanupBlocker = cleaned ? '' : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
+      throw wrapped;
+    }
+    finished = true;
+    try { child.stdin.end('COMMIT\n'); } catch {}
+    const output = await awaitExit();
+    const committedPrefix = `COMMITTED:${token}:`;
+    const committedLine = output.stdout.split(/\r?\n/).find((line) => line.startsWith(committedPrefix));
+    const committedIdentity = committedLine
+      ? parsePosixPromotionIdentity(committedLine.slice(committedPrefix.length))
+      : null;
+    let verifiedIdentity = null;
+    let verificationFailed = false;
+    if (committedIdentity && !output.stderr.trim() && !output.timedOut && output.exit?.code === 0) {
+      try {
+        await assertSafeDirectoryChainUnchanged(ancestorIdentities, { fsImpl });
+        verifiedIdentity = await assertRegularSingleLink(artifactPath, { fsImpl });
+        if (!sameOwnedArtifactIdentity(committedIdentity, verifiedIdentity, 1)) verificationFailed = true;
+      } catch {
+        verificationFailed = true;
+      }
+    } else {
+      verificationFailed = true;
+    }
+    const released = await boundary.release();
+    if (verificationFailed || !released) {
+      const reason = output.stderr.split(/\r?\n/).find(Boolean) || '';
+      const error = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
+      error.reasonCode = reason === 'EEXIST' ? 'EEXIST' : reason || 'DREAM_MIGRATION_RECEIPT_COMMIT_FAILED';
+      error.cleanupBlocker = reason === 'EEXIST' && released
+        ? ''
+        : 'DREAM_MIGRATION_RECEIPT_CLEANUP_FAILED';
+      throw error;
+    }
+    return Object.freeze({ artifactPath, identity: verifiedIdentity });
+  };
+  return Object.freeze({ artifactPath, stagedIdentity, abort, commit });
 }
 
 async function removeOwnedArtifactWithinBoundary(
@@ -1255,10 +1408,20 @@ async function writeReceipt(receipt, { fsImpl, receiptRoot }) {
   await ensureSafeDirectoryChain(receiptRoot, { fsImpl, create: true });
   const filename = `dream-migration-${safeTimestamp(new Date(receipt.completedAtUtc))}.json`;
   const receiptPath = path.join(receiptRoot, filename);
+  const content = `${JSON.stringify(receipt, null, 2)}\n`;
+  if (process.platform === 'linux' && fsImpl === fs) {
+    const isolatedPublication = await startLinuxIsolatedReceiptPublication(receiptPath, content, { fsImpl });
+    return Object.freeze({
+      receiptPath,
+      pendingReceiptPath: '',
+      identity: isolatedPublication.stagedIdentity,
+      isolatedPublication,
+    });
+  }
   const pendingReceiptPath = path.join(receiptRoot, `.stephanos-pending-${randomUUID()}-${filename}`);
   const publication = await writeOwnedExclusiveArtifact(
     pendingReceiptPath,
-    `${JSON.stringify(receipt, null, 2)}\n`,
+    content,
     {
       fsImpl,
       writeFailureCode: 'DREAM_MIGRATION_RECEIPT_WRITE_FAILED',
@@ -1268,6 +1431,11 @@ async function writeReceipt(receipt, { fsImpl, receiptRoot }) {
     },
   );
   return Object.freeze({ receiptPath, pendingReceiptPath, identity: publication.identity });
+}
+
+async function abortWrittenReceipt(writtenReceipt, fsImpl) {
+  if (writtenReceipt?.isolatedPublication) return writtenReceipt.isolatedPublication.abort();
+  return removeOwnedArtifact(writtenReceipt.pendingReceiptPath, writtenReceipt.identity, fsImpl);
 }
 
 function versionedProofRefs(paths) {
@@ -1874,7 +2042,7 @@ export async function executeDreamRuntimeMigration({
   }
   const postReceiptRevalidation = await revalidateMigrationReceiptInputs(plan, { fsImpl, sourceHead });
   if (!postReceiptRevalidation.ok) {
-    const receiptCleaned = await removeOwnedArtifact(writtenReceipt.pendingReceiptPath, writtenReceipt.identity, fsImpl);
+    const receiptCleaned = await abortWrittenReceipt(writtenReceipt, fsImpl);
     const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
     return Object.freeze({
       ok: false,
@@ -1890,7 +2058,7 @@ export async function executeDreamRuntimeMigration({
     });
   }
   if (!(await verifySourceHead())) {
-    const receiptCleaned = await removeOwnedArtifact(writtenReceipt.pendingReceiptPath, writtenReceipt.identity, fsImpl);
+    const receiptCleaned = await abortWrittenReceipt(writtenReceipt, fsImpl);
     const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
     return Object.freeze({
       ok: false,
@@ -1906,18 +2074,18 @@ export async function executeDreamRuntimeMigration({
   }
   let committedReceipt;
   try {
-    committedReceipt = await promoteOwnedArtifact(
-      writtenReceipt.pendingReceiptPath,
-      writtenReceipt.receiptPath,
-      writtenReceipt.identity,
-      fsImpl,
-    );
+    committedReceipt = writtenReceipt.isolatedPublication
+      ? await writtenReceipt.isolatedPublication.commit()
+      : await promoteOwnedArtifact(
+        writtenReceipt.pendingReceiptPath,
+        writtenReceipt.receiptPath,
+        writtenReceipt.identity,
+        fsImpl,
+      );
   } catch (error) {
-    const pendingReceiptCleaned = await removeOwnedArtifact(
-      writtenReceipt.pendingReceiptPath,
-      writtenReceipt.identity,
-      fsImpl,
-    );
+    const pendingReceiptCleaned = writtenReceipt.isolatedPublication
+      ? !error?.cleanupBlocker
+      : await abortWrittenReceipt(writtenReceipt, fsImpl);
     const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
     return Object.freeze({
       ok: false,
