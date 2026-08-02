@@ -1270,6 +1270,10 @@ test('cross-platform publication adapters preserve the structural commit invaria
     posixHelper,
     /except BaseException:\s+fail\("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED"\)/,
   );
+  assert.match(
+    posixHelper,
+    /else:[\s\S]*except BaseException:[\s\S]*cleanup_owned_promoted\(parent_fd, args\.artifact_name, owned\)[\s\S]*DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED/,
+  );
   const boundarySource = await fs.readFile(path.resolve('shared/agents/dreamRuntimeBoundary.mjs'), 'utf8');
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
   assert.match(
@@ -1353,6 +1357,46 @@ test('missing preservation directories are created relative to the validated par
   );
   assert.equal((await fs.lstat(preservationRoot)).isDirectory(), true);
   assert.equal(result.boundary.repoRoot, plan.repoRoot);
+});
+
+test('post-create POSIX ancestor failure removes only the owned directory through the held parent', { skip: process.platform !== 'linux' }, async () => {
+  const input = await disjointFixture();
+  const preservationRoot = path.join(input.workspaceRoot, 'memory', DREAM_VERSIONED_PRESERVATION_DIRECTORY);
+  const preservationParent = path.dirname(preservationRoot);
+  const parkedParent = `${preservationParent}.parked`;
+  const externalParent = await fs.mkdtemp(path.join(os.tmpdir(), 'stephanos-dream-directory-failure-'));
+  let injected = false;
+  const fsImpl = fsProxy({
+    mkdir: async (target, options) => {
+      const targetPath = String(target);
+      const isPreservationRootCreation = !injected
+        && targetPath.startsWith('/proc/self/fd/')
+        && path.basename(targetPath) === DREAM_VERSIONED_PRESERVATION_DIRECTORY;
+      await fs.mkdir(target, options);
+      if (!isPreservationRootCreation) return;
+      await fs.rename(preservationParent, parkedParent);
+      await fs.symlink(externalParent, preservationParent, 'dir');
+      injected = true;
+    },
+  });
+  let result;
+  try {
+    result = await runApproved(input, { fsImpl });
+  } finally {
+    if (injected) {
+      await fs.unlink(preservationParent);
+      await fs.rename(parkedParent, preservationParent);
+    }
+  }
+  assert.equal(injected, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DREAM_MIGRATION_ANCESTOR_CHANGED');
+  assert.equal(result.cleanupBlocker, '');
+  await assert.rejects(() => fs.lstat(preservationRoot), (error) => error.code === 'ENOENT');
+  await assert.rejects(
+    () => fs.lstat(path.join(externalParent, DREAM_VERSIONED_PRESERVATION_DIRECTORY)),
+    (error) => error.code === 'ENOENT',
+  );
 });
 
 test('changed source during snapshot copy fails and removes only the new snapshot', async () => {
