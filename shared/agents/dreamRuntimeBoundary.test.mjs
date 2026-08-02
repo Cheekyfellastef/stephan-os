@@ -1220,7 +1220,7 @@ test('ancestor swap during publication cannot redirect or retain an escaped arti
   );
 });
 
-test('Linux promotion binds the authoritative name to the opened pending inode', { skip: process.platform !== 'linux' }, async () => {
+test('Linux promotion fails closed without pathname cleanup when the pending name is replaced', { skip: process.platform !== 'linux' }, async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dream-linkat-'));
   const pendingName = '.stephanos-pending-hostile-receipt.json';
   const pendingPath = path.join(root, pendingName);
@@ -1249,9 +1249,10 @@ test('Linux promotion binds the authoritative name to the opened pending inode',
     assert.deepEqual(outcome, {
       code: 2,
       stdout: '',
-      stderr: 'DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED\n',
+      stderr: 'DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED\n',
     });
-    await assert.rejects(() => fs.lstat(finalPath), (error) => error.code === 'ENOENT');
+    assert.equal(await fs.readFile(finalPath, 'utf8'), 'owned-receipt');
+    assert.equal(Number((await fs.lstat(finalPath)).nlink), 2);
     assert.equal(await fs.readFile(pendingPath, 'utf8'), 'attacker-replacement');
     assert.equal(await fs.readFile(displacedPath, 'utf8'), 'owned-receipt');
   } finally {
