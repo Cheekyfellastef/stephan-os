@@ -83,6 +83,28 @@ async function exists(target, fsImpl) {
   }
 }
 
+async function assertNoSymbolicLinkInPath(target, fsImpl) {
+  const resolved = path.resolve(target);
+  const parsed = path.parse(resolved);
+  const segments = path.relative(parsed.root, resolved).split(path.sep).filter(Boolean);
+  let current = parsed.root;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    let stat;
+    try {
+      stat = await fsImpl.lstat(current);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) {
+      const error = new Error(`Symbolic link not allowed in Dream migration destination: ${current}`);
+      error.code = 'DREAM_MIGRATION_DESTINATION_SYMLINK_BLOCKED';
+      throw error;
+    }
+  }
+}
+
 async function collectFiles(root, fsImpl, current = root, output = []) {
   if (!(await exists(root, fsImpl))) return output;
   const stat = await fsImpl.lstat(current);
@@ -125,6 +147,31 @@ export async function sha256File(filePath, { fsImpl = fs } = {}) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
+function readOnlyPlanEvidence({
+  boundary,
+  ok,
+  blocker = '',
+  error = '',
+  destinationMetadataInspection,
+  entries,
+}) {
+  return Object.freeze({
+    ...boundary,
+    ok,
+    blocker,
+    ...(error ? { error } : {}),
+    mode: 'plan',
+    copyMode: 'disabled',
+    destinationMetadataInspection,
+    destinationContentInspection: 'not-performed',
+    sourceInventoryCount: entries.length,
+    entries: Object.freeze(entries),
+    copyRequired: null,
+    alreadyVerified: null,
+    conflicts: null,
+  });
+}
+
 export async function planDreamRuntimeMigration({
   repoRoot,
   env = process.env,
@@ -132,25 +179,37 @@ export async function planDreamRuntimeMigration({
   fsImpl = fs,
 } = {}) {
   const boundary = resolveDreamRuntimeBoundary({ repoRoot, env, homeDir });
-  if (!boundary.ok) return Object.freeze({ ...boundary, mode: 'plan', entries: Object.freeze([]), copyRequired: 0, alreadyVerified: 0, conflicts: 0 });
+  if (!boundary.ok) {
+    return readOnlyPlanEvidence({
+      boundary,
+      ok: false,
+      blocker: boundary.blocker,
+      destinationMetadataInspection: 'not-performed',
+      entries: [],
+    });
+  }
+
   const entries = [];
+  let destinationMetadataInspection = 'not-performed';
   try {
     for (const mapping of boundary.mappings) {
+      destinationMetadataInspection = 'metadata-only-partial';
+      await assertNoSymbolicLinkInPath(mapping.destinationPath, fsImpl);
       const sourceFiles = await collectFiles(mapping.sourcePath, fsImpl);
       for (const sourcePath of sourceFiles) {
         const relativePath = path.relative(mapping.sourcePath, sourcePath);
         const destinationPath = path.resolve(mapping.destinationPath, relativePath);
         if (!pathIsInside(mapping.destinationPath, destinationPath)) {
-          return Object.freeze({ ...boundary, ok: false, blocker: 'DREAM_MIGRATION_DESTINATION_ESCAPE', mode: 'plan', entries: Object.freeze(entries), copyRequired: 0, alreadyVerified: 0, conflicts: 0 });
+          return readOnlyPlanEvidence({
+            boundary,
+            ok: false,
+            blocker: 'DREAM_MIGRATION_DESTINATION_ESCAPE',
+            destinationMetadataInspection,
+            entries,
+          });
         }
         const sourceStat = await fsImpl.stat(sourcePath);
         const sourceSha256 = await sha256File(sourcePath, { fsImpl });
-        let state = 'copy-required';
-        let destinationSha256 = '';
-        if (await exists(destinationPath, fsImpl)) {
-          destinationSha256 = await sha256File(destinationPath, { fsImpl });
-          state = destinationSha256 === sourceSha256 ? 'already-verified' : 'destination-conflict';
-        }
         entries.push(Object.freeze({
           mappingId: mapping.id,
           relativePath: relativePath.replaceAll('\\', '/'),
@@ -158,47 +217,28 @@ export async function planDreamRuntimeMigration({
           destinationPath,
           bytes: sourceStat.size,
           sourceSha256,
-          destinationSha256,
-          state,
+          destinationSha256: null,
+          state: 'source-inventoried-destination-unknown',
         }));
       }
     }
   } catch (error) {
-    return Object.freeze({
-      ...boundary,
+    return readOnlyPlanEvidence({
+      boundary,
       ok: false,
       blocker: error?.code || 'DREAM_MIGRATION_SCAN_FAILED',
       error: error?.message || String(error),
-      mode: 'plan',
-      entries: Object.freeze(entries),
-      copyRequired: 0,
-      alreadyVerified: 0,
-      conflicts: 0,
+      destinationMetadataInspection,
+      entries,
     });
   }
-  const conflicts = entries.filter((entry) => entry.state === 'destination-conflict').length;
-  return Object.freeze({
-    ...boundary,
-    ok: conflicts === 0,
-    blocker: conflicts ? 'DREAM_MIGRATION_DESTINATION_CONFLICT' : '',
-    mode: 'plan',
-    entries: Object.freeze(entries),
-    copyRequired: entries.filter((entry) => entry.state === 'copy-required').length,
-    alreadyVerified: entries.filter((entry) => entry.state === 'already-verified').length,
-    conflicts,
+
+  return readOnlyPlanEvidence({
+    boundary,
+    ok: true,
+    destinationMetadataInspection: 'metadata-only-complete',
+    entries,
   });
-}
-
-function safeTimestamp(value = new Date()) {
-  return value.toISOString().replace(/[:.]/g, '-');
-}
-
-async function writeReceipt(receipt, { fsImpl, receiptRoot }) {
-  await fsImpl.mkdir(receiptRoot, { recursive: true });
-  const filename = `dream-migration-${safeTimestamp(new Date(receipt.completedAtUtc))}.json`;
-  const receiptPath = path.join(receiptRoot, filename);
-  await fsImpl.writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
-  return receiptPath;
 }
 
 export async function executeDreamRuntimeMigration({
@@ -207,7 +247,6 @@ export async function executeDreamRuntimeMigration({
   homeDir = os.homedir(),
   fsImpl = fs,
   operatorApproval = '',
-  now = () => new Date(),
 } = {}) {
   if (operatorApproval !== DREAM_RUNTIME_MIGRATION_APPROVAL) {
     return Object.freeze({
@@ -219,6 +258,7 @@ export async function executeDreamRuntimeMigration({
       destructiveGitOperationPerformed: false,
     });
   }
+
   const plan = await planDreamRuntimeMigration({ repoRoot, env, homeDir, fsImpl });
   if (!plan.ok) {
     return Object.freeze({
@@ -229,70 +269,16 @@ export async function executeDreamRuntimeMigration({
       destructiveGitOperationPerformed: false,
     });
   }
-  const copied = [];
-  try {
-    for (const entry of plan.entries) {
-      if (entry.state !== 'copy-required') continue;
-      await fsImpl.mkdir(path.dirname(entry.destinationPath), { recursive: true });
-      await fsImpl.copyFile(entry.sourcePath, entry.destinationPath, fs.constants.COPYFILE_EXCL);
-      const destinationSha256 = await sha256File(entry.destinationPath, { fsImpl });
-      if (destinationSha256 !== entry.sourceSha256) {
-        return Object.freeze({
-          ok: false,
-          status: 'BLOCKED',
-          finalVerdict: 'DREAM_MIGRATION_HASH_MISMATCH',
-          blocker: 'DREAM_MIGRATION_HASH_MISMATCH',
-          failedEntry: entry,
-          copied: Object.freeze(copied),
-          sourceRemovalPerformed: false,
-          destructiveGitOperationPerformed: false,
-        });
-      }
-      copied.push(Object.freeze({ ...entry, destinationSha256, state: 'copied-and-verified' }));
-    }
-  } catch (error) {
-    return Object.freeze({
-      ok: false,
-      status: 'BLOCKED',
-      finalVerdict: error?.code === 'EEXIST' ? 'DREAM_MIGRATION_DESTINATION_RACE' : 'DREAM_MIGRATION_COPY_FAILED',
-      blocker: error?.code === 'EEXIST' ? 'DREAM_MIGRATION_DESTINATION_RACE' : 'DREAM_MIGRATION_COPY_FAILED',
-      error: error?.message || String(error),
-      copied: Object.freeze(copied),
-      sourceRemovalPerformed: false,
-      destructiveGitOperationPerformed: false,
-    });
-  }
-  const completedAtUtc = now().toISOString();
-  const receipt = Object.freeze({
-    schemaVersion: DREAM_RUNTIME_BOUNDARY_SCHEMA,
-    kind: 'dream-runtime-migration-receipt',
-    completedAtUtc,
-    repoRoot: plan.repoRoot,
-    workspaceRoot: plan.workspaceRoot,
-    dreamMemoryRoot: plan.dreamMemoryRoot,
-    copiedCount: copied.length,
-    alreadyVerifiedCount: plan.alreadyVerified,
-    sourceRemovalPerformed: false,
-    destructiveGitOperationPerformed: false,
-    files: Object.freeze([
-      ...plan.entries.filter((entry) => entry.state === 'already-verified'),
-      ...copied,
-    ]),
-    finalVerdict: 'DREAM_RUNTIME_COPY_HASH_VERIFIED',
-  });
-  const receiptPath = await writeReceipt(receipt, { fsImpl, receiptRoot: plan.receiptRoot });
+
   return Object.freeze({
-    ok: true,
-    status: 'DONE',
-    finalVerdict: 'DREAM_RUNTIME_COPY_HASH_VERIFIED',
-    blocker: '',
+    ok: false,
+    status: 'BLOCKED',
+    finalVerdict: 'DREAM_MIGRATION_COPY_MODE_DISABLED',
+    blocker: 'DREAM_MIGRATION_COPY_MODE_DISABLED',
     boundary: plan,
-    copied: Object.freeze(copied),
-    receipt,
-    receiptPath,
-    launchContext: plan.launchContext,
+    copied: Object.freeze([]),
     sourceRemovalPerformed: false,
     destructiveGitOperationPerformed: false,
-    nextOperatorAction: 'Use the external OpenClaw workspace launch context. Legacy source remains preserved until the separate rollback-proven reconciliation milestone.',
+    nextOperatorAction: 'Use read-only plan mode only. Copy mode remains disabled until the rollback-proven migration milestone supplies a platform-safe, writer-quiesced implementation.',
   });
 }
