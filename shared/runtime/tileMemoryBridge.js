@@ -209,11 +209,11 @@ export function createTileMemoryBridge({
       action: 'tile.memory.candidate.submit',
       summary: memoryReason,
       result: {
-        candidate: normalized,
-        adjudication,
         execution,
-        persistedRecord,
-        authorityReceipt,
+        memoryRecordIdentity: persistedRecord?.id
+          ? { namespace: persistedRecord.namespace || 'continuity', id: persistedRecord.id }
+          : null,
+        authorityConfirmed: persisted,
         execution_metadata: executionMetadata,
       },
       tags: ['tile.contract.v1', 'tile.memory.candidate'],

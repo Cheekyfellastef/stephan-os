@@ -201,6 +201,7 @@ test('conversation uses canonical AI lifecycle and governed memory bridge', () =
   assert.match(main, /applyTasteTeachingContribution\(state\.tasteDNA, teaching, activeTeachings/);
   assert.match(main, /explicit conversation teaching/);
   assert.match(main, /data-conversation-action="forget"/);
+  assert.doesNotMatch(main, /summary: `(?:Explicit music teaching applied|Music teaching (?:blocked|forget blocked|forgotten)):\s*\$\{teaching\.trait\}`/);
 });
 
 test('teaching and forgetting avoid full redraws that would interrupt playback', () => {

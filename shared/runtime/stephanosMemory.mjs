@@ -198,6 +198,7 @@ export function createStephanosSharedMemoryAdapter({
   let backendWriteQueue = Promise.resolve();
   let backendUpdatedAt = normalizeString(cache.updatedAt);
   let authoritativeState = normalizeMemoryState(cache);
+  let authorityHydrated = false;
 
   function log(event, payload = {}) {
     const target = logger && typeof logger.info === 'function' ? logger : console;
@@ -245,12 +246,13 @@ export function createStephanosSharedMemoryAdapter({
       || String(error?.payload?.error_code || '').trim() === 'DURABLE_MEMORY_CONFLICT';
   }
 
-  async function rehydrateAuthority() {
+  async function rehydrateAuthority({ conflict = true } = {}) {
     const response = await loadFromBackend();
     authoritativeState = normalizeMemoryState(response?.json?.data || {});
     backendUpdatedAt = normalizeString(authoritativeState.updatedAt);
+    authorityHydrated = true;
     hydrationSource = 'shared-backend';
-    fallbackReason = 'backend-memory-conflict-resolved-by-rehydrate';
+    fallbackReason = conflict ? 'backend-memory-conflict-resolved-by-rehydrate' : '';
     hydrationState = 'ready';
     return response;
   }
@@ -276,6 +278,7 @@ export function createStephanosSharedMemoryAdapter({
       const response = await loadFromBackend();
       const backendState = normalizeMemoryState(response?.json?.data || {});
       authoritativeState = backendState;
+      authorityHydrated = true;
       updateMirror(backendState);
       backendUpdatedAt = normalizeString(backendState.updatedAt);
       hydrationSource = 'shared-backend';
@@ -341,6 +344,7 @@ export function createStephanosSharedMemoryAdapter({
           ...normalizedState,
           updatedAt: backendUpdatedAt || normalizedState.updatedAt,
         });
+        authorityHydrated = true;
         lastSaveSource = 'shared-backend';
         fallbackReason = '';
         hydrationState = 'ready';
@@ -396,6 +400,7 @@ export function createStephanosSharedMemoryAdapter({
         ...normalizedState,
         updatedAt: backendUpdatedAt || normalizedState.updatedAt,
       });
+      authorityHydrated = true;
       lastSaveSource = 'shared-backend';
       fallbackReason = '';
       hydrationState = 'ready';
@@ -430,6 +435,9 @@ export function createStephanosSharedMemoryAdapter({
     }
 
     return enqueueBackendOperation(async () => {
+      if (!authorityHydrated) {
+        await rehydrateAuthority({ conflict: false });
+      }
       let attempt = 0;
       while (attempt < 2) {
         const baseState = normalizeMemoryState(authoritativeState);
@@ -441,7 +449,8 @@ export function createStephanosSharedMemoryAdapter({
             ...nextState,
             updatedAt: backendUpdatedAt || nextState.updatedAt,
           });
-          updateMirror(mutate(normalizeMemoryState(cache)));
+          authorityHydrated = true;
+          updateMirror(authoritativeState);
           lastSaveSource = 'shared-backend';
           fallbackReason = '';
           hydrationState = 'ready';

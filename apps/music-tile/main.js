@@ -595,13 +595,13 @@ async function applyConversationTeaching() {
     renderCandidates();
     renderMusicIntelligenceCentre();
     renderMusicConversation();
-    emitPresenceEvent({ kind: 'conversation_teaching_applied', severity: 'notice', summary: `Explicit music teaching applied: ${teaching.trait}`, impact: teaching.memoryPersisted ? 'Taste DNA and durable Stephanos memory updated.' : 'Taste DNA updated; shared durable memory was not confirmed.', suggestedAction: 'Use Forget this to undo the teaching.' });
+    emitPresenceEvent({ kind: 'conversation_teaching_applied', severity: 'notice', summary: 'Explicit music teaching applied', impact: teaching.memoryPersisted ? 'Taste DNA and durable Stephanos memory updated.' : 'Taste DNA updated; shared durable memory was not confirmed.', suggestedAction: 'Use Forget this to undo the teaching.' });
   } catch (error) {
     musicConversationState.answer = error?.durableRollbackUnconfirmed
       ? `I could not finish learning “${teaching.trait}”, and durable rollback is not confirmed. Reset/Forget controls remain available for recovery.`
       : `I could not safely retain “${teaching.trait}”. No durable-memory success was claimed.`;
     musicConversationState.mode = 'teaching blocked';
-    emitPresenceEvent({ kind: 'conversation_teaching_blocked', severity: 'warning', summary: `Music teaching blocked: ${teaching.trait}`, impact: 'The shared durable-memory transaction did not complete safely.' });
+    emitPresenceEvent({ kind: 'conversation_teaching_blocked', severity: 'warning', summary: 'Music teaching blocked', impact: 'The shared durable-memory transaction did not complete safely.' });
   } finally {
     endMusicMemoryMutation();
   }
@@ -624,7 +624,7 @@ async function forgetConversationTeaching(teachingId) {
         musicConversationState.answer = `I could not safely forget “${teaching.trait}” because its durable memory record was not revoked. Nothing was changed.`;
         musicConversationState.mode = 'forget blocked';
         renderMusicConversation();
-        emitPresenceEvent({ kind: 'conversation_teaching_forget_blocked', severity: 'warning', summary: `Music teaching forget blocked: ${teaching.trait}`, impact: 'Durable memory revocation failed; local Taste DNA was left unchanged.' });
+        emitPresenceEvent({ kind: 'conversation_teaching_forget_blocked', severity: 'warning', summary: 'Music teaching forget blocked', impact: 'Durable memory revocation failed; local Taste DNA was left unchanged.' });
         return;
       }
     }
@@ -646,7 +646,7 @@ async function forgetConversationTeaching(teachingId) {
     renderCandidates();
     renderMusicIntelligenceCentre();
     renderMusicConversation();
-    emitPresenceEvent({ kind: 'conversation_teaching_forgotten', severity: 'notice', summary: `Music teaching forgotten: ${teaching.trait}`, impact: 'Prior Taste DNA value restored through explicit operator action.' });
+    emitPresenceEvent({ kind: 'conversation_teaching_forgotten', severity: 'notice', summary: 'Music teaching forgotten', impact: 'Prior Taste DNA value restored through explicit operator action.' });
   } finally {
     endMusicMemoryMutation();
   }

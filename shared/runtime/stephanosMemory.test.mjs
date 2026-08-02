@@ -428,6 +428,148 @@ test('queued durable record mutation rebases after conflict and preserves anothe
   assert.equal(memory.getRecord({ namespace: 'continuity', id: 'remote' })?.summary, 'Another device record');
 });
 
+test('durable mutation rehydrates recovered backend authority before its first write', async () => {
+  const remoteRecord = {
+    schemaVersion: 2,
+    type: 'continuity.note',
+    source: 'other-device',
+    scope: 'runtime',
+    summary: 'Remote record must survive recovery',
+    payload: {},
+    tags: ['shared'],
+    importance: 'normal',
+    retentionHint: 'default',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    surface: 'shared',
+  };
+  let getCount = 0;
+  let writtenBody = null;
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage: createStorage(),
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+    fetchImpl: async (_url, options = {}) => {
+      if ((options.method || 'GET') === 'GET') {
+        getCount += 1;
+        if (getCount === 1) throw new Error('backend temporarily offline');
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              success: true,
+              data: {
+                schemaVersion: 2,
+                updatedAt: '2026-08-02T00:01:00.000Z',
+                records: { 'continuity::remote': remoteRecord },
+              },
+            });
+          },
+        };
+      }
+      writtenBody = JSON.parse(options.body || '{}');
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ success: true, data: { ...writtenBody, updatedAt: '2026-08-02T00:02:00.000Z' } });
+        },
+      };
+    },
+  });
+  const memory = createStephanosMemory({ adapter, source: 'music-tile', surface: 'hosted' });
+  const degraded = await memory.hydrate();
+  assert.equal(degraded.source, 'local-mirror-fallback');
+
+  const result = await memory.saveRecordDurably({
+    namespace: 'continuity',
+    id: 'new-teaching',
+    type: 'operator.preference',
+    summary: 'New teaching',
+  });
+
+  assert.equal(result.authorityConfirmed, true);
+  assert.equal(getCount, 2);
+  assert.equal(writtenBody.ifUnmodifiedSince, '2026-08-02T00:01:00.000Z');
+  assert.equal(writtenBody.records['continuity::remote'].summary, 'Remote record must survive recovery');
+  assert.equal(writtenBody.records['continuity::new-teaching'].summary, 'New teaching');
+});
+
+test('durable mutation mirrors the rebased authority after its own conflict', async () => {
+  const teaching = {
+    schemaVersion: 2,
+    type: 'operator.preference',
+    source: 'music-tile',
+    scope: 'runtime',
+    summary: 'Teaching to forget',
+    payload: {},
+    tags: ['music'],
+    importance: 'normal',
+    retentionHint: 'default',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    surface: 'hosted',
+  };
+  const remoteRecord = { ...teaching, type: 'continuity.note', source: 'other-device', summary: 'Conflict winner' };
+  let getCount = 0;
+  let putCount = 0;
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage: createStorage(),
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+    fetchImpl: async (_url, options = {}) => {
+      if ((options.method || 'GET') === 'GET') {
+        getCount += 1;
+        const conflicted = getCount > 1;
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              success: true,
+              data: {
+                schemaVersion: 2,
+                updatedAt: conflicted ? '2026-08-02T00:01:00.000Z' : '2026-08-02T00:00:00.000Z',
+                records: conflicted
+                  ? { 'continuity::teaching': teaching, 'continuity::remote': remoteRecord }
+                  : { 'continuity::teaching': teaching },
+              },
+            });
+          },
+        };
+      }
+      putCount += 1;
+      const body = JSON.parse(options.body || '{}');
+      if (putCount === 1) {
+        return {
+          ok: false,
+          status: 409,
+          async text() {
+            return JSON.stringify({ success: false, error_code: 'DURABLE_MEMORY_CONFLICT', error: 'conflict' });
+          },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ success: true, data: { ...body, updatedAt: '2026-08-02T00:02:00.000Z' } });
+        },
+      };
+    },
+  });
+  const memory = createStephanosMemory({ adapter, source: 'music-tile', surface: 'hosted' });
+
+  const result = await memory.deleteRecordDurably({ namespace: 'continuity', id: 'teaching' });
+
+  assert.equal(result.authorityConfirmed, true);
+  assert.equal(getCount, 2);
+  assert.equal(putCount, 2);
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'teaching' }), null);
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'remote' })?.summary, 'Conflict winner');
+});
+
 test('shared memory adapter rehydrates canonical backend state after conflict instead of silently overwriting newer shared truth', async () => {
   const storage = createStorage();
   let putCount = 0;

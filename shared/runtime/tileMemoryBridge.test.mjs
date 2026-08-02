@@ -94,6 +94,14 @@ test('durable tile submission waits for backend authority before reporting persi
   assert.equal(result.authorityReceipt.id, 'authority-1');
   assert.equal(events.length, 1);
   assert.equal(events[0].result.execution.persisted, true);
+  assert.deepEqual(events[0].result.memoryRecordIdentity, {
+    namespace: 'continuity',
+    id: result.record.id,
+  });
+  assert.equal(events[0].result.candidate, undefined);
+  assert.equal(events[0].result.persistedRecord, undefined);
+  assert.equal(events[0].result.authorityReceipt, undefined);
+  assert.doesNotMatch(JSON.stringify(events[0]), /dark club pressure|Operator explicitly confirmed/);
 });
 
 test('tile memory bridge revokes the original durable record through the guarded adapter', async () => {
