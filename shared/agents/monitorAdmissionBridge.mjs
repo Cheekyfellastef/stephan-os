@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import {
   createMonitorDefinition,
   MONITOR_MULTIPLEXER_MAX_MONITORS,
@@ -25,11 +26,14 @@ export const MONITOR_ADMISSION_OPERATIONS = Object.freeze({
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,55}$/i;
 const SAFE_REF = /^(?:#[1-9][0-9]*|goal:[a-z0-9][a-z0-9._-]{0,50})$/i;
 const SAFE_PROOF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[a-z0-9._/-]+$/i;
-const OUTER_FIELDS = new Set(['schemaVersion', 'operation', 'owner', 'requestId', 'issuedAtUtc', 'expiresAtUtc', 'idempotencyKey', 'proposal', 'monitorId']);
+const OUTER_FIELDS = new Set(['schemaVersion', 'operation', 'owner', 'claimsHash', 'requestId', 'issuedAtUtc', 'expiresAtUtc', 'idempotencyKey', 'proposal', 'monitorId']);
 const PROPOSAL_FIELDS = new Set(['schemaVersion', 'monitorId', 'idempotencyKey', 'handlerType', 'boundedSubject', 'schedule', 'mode', 'notificationPolicy', 'relatedIssueOrGoal', 'enabled', 'proofRefs']);
 const SCHEDULE_FIELDS = new Set(['intervalMs', 'nextDueUtc']);
 const UNIVERSALLY_FORBIDDEN = /command|shell|powershell|executable|argv|cwd|path|credential|password|secret|token|cookie|browser|selector|javascript|script|url|uri|source|mutation/i;
 const unsafeObjectKeys = new Set(['__proto__', 'prototype', 'constructor']);
+const MAX_SUBJECT_ITEMS = 32;
+const MAX_SUBJECT_BYTES = 4 * 1024;
+const MAX_PROOF_REFS = 32;
 const hash = (value) => createHash('sha256').update(String(value)).digest('hex');
 const canonical = (value) => {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -71,19 +75,25 @@ function validateSubject(subject, entry, errors) {
   for (const [key, value] of Object.entries(subject)) {
     if (!allowed.has(key)) errors.push(`unknown-bounded-subject-field:${key}`);
     if (unsafeObjectKeys.has(key) || UNIVERSALLY_FORBIDDEN.test(key)) errors.push(`unsafe-field:boundedSubject.${key}`);
-    if (!['string', 'number', 'boolean'].includes(typeof value) && !(Array.isArray(value) && value.every((item) => typeof item === 'string'))) errors.push(`invalid-bounded-subject-value:${key}`);
-    if (typeof value === 'string' && (value.length > 240 || /(?:https?:\/\/|[a-z]:\\|\.\.\/|\/home\/|\/workspace\/)/i.test(value))) errors.push(`unsafe-bounded-subject-value:${key}`);
+    const values = Array.isArray(value) ? value : [value];
+    if (Array.isArray(value) && value.length > MAX_SUBJECT_ITEMS) errors.push(`bounded-subject-array-too-large:${key}`);
+    if (values.some((item) => !['string', 'number', 'boolean'].includes(typeof item))) errors.push(`invalid-bounded-subject-value:${key}`);
+    if (values.some((item) => typeof item === 'string' && (item.length > 240 || /(?:https?:\/\/|[a-z]:\\|\.\.\/|\/home\/|\/workspace\/)/i.test(item)))) errors.push(`unsafe-bounded-subject-value:${key}`);
   }
   if (!Object.keys(subject).length) errors.push('empty-bounded-subject');
+  if (Buffer.byteLength(canonical(subject), 'utf8') > MAX_SUBJECT_BYTES) errors.push('bounded-subject-too-large');
 }
 
 export function validateMonitorAdmissionEnvelope(envelope = {}, options = {}) {
   const errors = [];
   inspect(envelope, OUTER_FIELDS, 'envelope', errors);
+  if (!plainObject(envelope)) return Object.freeze({ valid: false, errors: Object.freeze([...new Set(errors)]) });
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   if (envelope.schemaVersion !== MONITOR_ADMISSION_ENVELOPE_VERSION) errors.push('invalid-envelope-version');
   if (!Object.values(MONITOR_ADMISSION_OPERATIONS).includes(envelope.operation)) errors.push('unsupported-operation');
-  if (!safeId(envelope.owner) || envelope.owner !== options.trustedOwner) errors.push('owner-authentication-failed');
+  const principal = options.authenticatedPrincipal;
+  if (!plainObject(principal) || !safeId(principal.subject) || !/^[a-f0-9]{64}$/i.test(String(principal.claimsHash || ''))) errors.push('authenticated-principal-required');
+  if (!safeId(envelope.owner) || envelope.owner !== principal?.subject || envelope.claimsHash !== principal?.claimsHash) errors.push('principal-claims-mismatch');
   if (!safeId(envelope.requestId)) errors.push('invalid-request-id');
   if (!safeId(envelope.idempotencyKey)) errors.push('invalid-idempotency-key');
   const issued = timestamp(envelope.issuedAtUtc); const expires = timestamp(envelope.expiresAtUtc);
@@ -105,7 +115,7 @@ export function validateMonitorAdmissionEnvelope(envelope = {}, options = {}) {
     if (!entry?.notificationPolicy.includes(proposal.notificationPolicy)) errors.push('invalid-notification-policy');
     if (!SAFE_REF.test(String(proposal.relatedIssueOrGoal || ''))) errors.push('invalid-related-issue-or-goal');
     if (typeof proposal.enabled !== 'boolean') errors.push('invalid-enabled');
-    if (!Array.isArray(proposal.proofRefs) || proposal.proofRefs.some((ref) => !SAFE_PROOF.test(String(ref)) || String(ref).includes('..'))) errors.push('unsafe-proof-refs');
+    if (!Array.isArray(proposal.proofRefs) || proposal.proofRefs.length > MAX_PROOF_REFS || proposal.proofRefs.some((ref) => typeof ref !== 'string' || ref.length > 240 || !SAFE_PROOF.test(ref) || ref.includes('..'))) errors.push('unsafe-proof-refs');
   } else {
     if (!safeId(envelope.monitorId)) errors.push('invalid-monitor-id');
     if (envelope.proposal !== undefined) errors.push('unexpected-proposal-for-operation');
@@ -134,65 +144,108 @@ async function readRegistry(root, repoRoot) {
   const resolved = resolveSharedWorkspacePath({ root, repoRoot, segments: ['status', 'monitor-admission-registry.json'] });
   try {
     const value = JSON.parse(await readFile(resolved.path, 'utf8'));
-    return value.registrySchemaVersion === MONITOR_ADMISSION_REGISTRY_VERSION ? value : null;
-  } catch { return null; }
+    return validateRegistry(value) ? value : false;
+  } catch (error) { return error?.code === 'ENOENT' ? null : false; }
+}
+
+const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+function validMonitor(value, id) {
+  return plainObject(value) && value.monitorId === id && plainObject(value.proposal) && plainObject(value.definition)
+    && value.proposal.monitorId === id && typeof value.updatedAtUtc === 'string';
+}
+function validCachedResult(value) {
+  return plainObject(value) && typeof value.ok === 'boolean' && typeof value.reason === 'string'
+    && Number.isInteger(value.monitorCount) && (value.monitor === null || plainObject(value.monitor));
+}
+function validateRegistry(value) {
+  if (!plainObject(value) || value.registrySchemaVersion !== MONITOR_ADMISSION_REGISTRY_VERSION || !plainObject(value.monitors) || !plainObject(value.idempotency)) return false;
+  if (Object.keys(value.monitors).length > MONITOR_MULTIPLEXER_MAX_MONITORS) return false;
+  if (Object.entries(value.monitors).some(([id, monitor]) => !safeId(id) || !validMonitor(monitor, id))) return false;
+  return !Object.entries(value.idempotency).some(([id, replay]) => !safeId(id) || !plainObject(replay)
+    || !/^[a-f0-9]{64}$/.test(String(replay.fingerprint || '')) || !['pending', 'committed'].includes(replay.state)
+    || !validCachedResult(replay.result));
+}
+
+async function withRegistryLock(root, repoRoot, action) {
+  const resolved = resolveSharedWorkspacePath({ root, repoRoot, segments: ['locks', 'monitor-admission-registry.lock'] });
+  if (!resolved.ok) return { lockFailure: resolved.reason };
+  await mkdir(dirname(resolved.path), { recursive: true });
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      await mkdir(resolved.path);
+      try { return await action(); } finally { await rm(resolved.path, { recursive: true, force: true }); }
+    } catch (error) {
+      if (error?.code !== 'EEXIST') return { lockFailure: 'MONITOR_ADMISSION_LOCK_FAILED' };
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  return { lockFailure: 'MONITOR_ADMISSION_LOCK_BUSY' };
 }
 
 function evidence(envelope, verdict, monitor, timestampUtc, reason = '') {
   const receiptId = `monitor-admission-${hash(envelope.requestId).slice(0, 16)}`;
   const proofRefs = monitor?.proposal?.proofRefs?.length ? monitor.proposal.proofRefs : ['proof/monitor-admission.json'];
   return {
-    status: { ...createSharedWorkspaceStatusRecord({ statusId: `monitor-admission-${monitor?.monitorId || envelope.monitorId || 'fallback'}`, participantId: 'monitor-admission-bridge', timestampUtc, status: verdict.includes('BLOCKED') || verdict.includes('FALLBACK') ? 'ATTENTION_REQUIRED' : 'READY', summary: reason || verdict, proofRefs }), verdict, monitorId: monitor?.monitorId || envelope.monitorId || '', notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE, executableAuthority: false },
-    receipt: { ...createSharedWorkspaceReceiptRecord({ receiptId, participantId: 'monitor-admission-bridge', timestampUtc, correlationId: envelope.requestId, relatedIssue: '#1585', receivedRecordId: envelope.requestId, disposition: verdict.includes('BLOCKED') || verdict.includes('FALLBACK') ? 'blocked' : 'published', summary: reason || verdict, proofRefs }), verdict, reason, monitorId: monitor?.monitorId || envelope.monitorId || '', notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE, handlerExecuted: false, standaloneFallbackCreated: false, sourceMutationAllowed: false, mergeAuthority: false },
+    status: { ...createSharedWorkspaceStatusRecord({ statusId: `monitor-admission-${monitor?.monitorId || envelope.monitorId || 'fallback'}`, participantId: 'monitor-admission-bridge', timestampUtc, status: verdict === 'MULTIPLEXER_ADMISSION_READY' ? 'READY' : 'ATTENTION_REQUIRED', summary: reason || verdict, proofRefs }), verdict, monitorId: monitor?.monitorId || envelope.monitorId || '', notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE, executableAuthority: false },
+    receipt: { ...createSharedWorkspaceReceiptRecord({ receiptId, participantId: 'monitor-admission-bridge', timestampUtc, correlationId: envelope.requestId, relatedIssue: String(monitor?.proposal?.relatedIssueOrGoal || '').startsWith('#') ? monitor.proposal.relatedIssueOrGoal : '#1585', receivedRecordId: envelope.requestId, disposition: verdict.includes('READY') ? 'published' : 'blocked', summary: reason || verdict, proofRefs }), relatedIssueOrGoal: monitor?.proposal?.relatedIssueOrGoal || '', principalSubject: envelope.owner || '', claimsHash: envelope.claimsHash || '', verdict, reason, monitorId: monitor?.monitorId || envelope.monitorId || '', notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE, handlerExecuted: false, standaloneFallbackCreated: false, sourceMutationAllowed: false, mergeAuthority: false },
   };
 }
 
 export async function admitLogicalMonitor(envelope = {}, options = {}) {
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   const timestampUtc = new Date(nowMs).toISOString();
-  const validation = validateMonitorAdmissionEnvelope(envelope, { trustedOwner: options.trustedOwner, nowMs });
+  const validation = validateMonitorAdmissionEnvelope(envelope, { authenticatedPrincipal: options.authenticatedPrincipal, nowMs });
   const unsupported = validation.errors.includes('unsupported-handler-type');
   const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
   if (!layout.ok) return Object.freeze({ ok: false, reason: 'MONITOR_ADMISSION_FALLBACK_REQUIRED', fallbackReason: 'MULTIPLEXER_ADMISSION_UNAVAILABLE', durable: false, validation, handlerExecuted: false });
-  let registry = await readRegistry(layout.root, options.repoRoot) || {
-    ...createSharedWorkspaceStatusRecord({ statusId: 'monitor-admission-registry', participantId: 'monitor-admission-bridge', timestampUtc, status: 'READY', summary: 'Canonical logical monitor admission registry.', proofRefs: ['proof/monitor-admission.json'] }),
-    registrySchemaVersion: MONITOR_ADMISSION_REGISTRY_VERSION, monitors: {}, idempotency: {},
-  };
-  const fingerprint = hash(canonical(envelope));
-  const prior = registry.idempotency[envelope.idempotencyKey];
-  if (prior) {
-    if (prior.fingerprint !== fingerprint) return Object.freeze({ ok: false, reason: 'MONITOR_ADMISSION_BLOCKED', blocker: 'IDEMPOTENCY_REPLAY_CONFLICT', validation, handlerExecuted: false });
-    return Object.freeze({ ...prior.result, idempotentRetry: true, handlerExecuted: false });
-  }
   if (!validation.valid) {
     const reason = 'MONITOR_ADMISSION_FALLBACK_REQUIRED';
     const proof = evidence(envelope, reason, null, timestampUtc, unsupported ? 'MULTIPLEXER_HANDLER_UNSUPPORTED' : validation.errors.join(','));
     const write = await writeAtomicJson(layout.root, ['receipts', `${proof.receipt.receiptId}.json`], proof.receipt, { repoRoot: options.repoRoot, nowMs });
     return Object.freeze({ ok: false, reason, fallbackReason: unsupported ? 'MULTIPLEXER_HANDLER_UNSUPPORTED' : 'MONITOR_ADMISSION_BLOCKED', durable: write.ok, receipt: proof.receipt, validation, handlerExecuted: false });
   }
-  const monitors = { ...registry.monitors };
-  let verdict;
-  if (envelope.operation === MONITOR_ADMISSION_OPERATIONS.UPSERT) {
-    if (!monitors[envelope.proposal.monitorId] && Object.keys(monitors).length >= MONITOR_MULTIPLEXER_MAX_MONITORS) return Object.freeze({ ok: false, reason: 'MONITOR_ADMISSION_BLOCKED', blocker: 'MONITOR_REGISTRY_CAPACITY_REACHED', handlerExecuted: false });
-    verdict = monitors[envelope.proposal.monitorId] ? 'MONITOR_UPDATE_APPLIED' : 'MULTIPLEXER_ADMISSION_READY';
-    monitors[envelope.proposal.monitorId] = { monitorId: envelope.proposal.monitorId, proposal: envelope.proposal, definition: proposalToMonitorDefinition(envelope.proposal), updatedAtUtc: timestampUtc };
-  } else if (envelope.operation === MONITOR_ADMISSION_OPERATIONS.DISABLE) {
-    if (!monitors[envelope.monitorId]) return Object.freeze({ ok: false, reason: 'MONITOR_ADMISSION_BLOCKED', blocker: 'MONITOR_NOT_FOUND', handlerExecuted: false });
-    verdict = 'MONITOR_DISABLED';
-    monitors[envelope.monitorId] = { ...monitors[envelope.monitorId], proposal: { ...monitors[envelope.monitorId].proposal, enabled: false }, definition: { ...monitors[envelope.monitorId].definition, enabled: false }, updatedAtUtc: timestampUtc };
-  } else {
-    const monitor = monitors[envelope.monitorId] || null;
-    return Object.freeze({ ok: Boolean(monitor), reason: monitor ? 'MONITOR_STATUS_READ' : 'MONITOR_NOT_FOUND', monitor, monitorCount: Object.keys(monitors).length, handlerExecuted: false });
-  }
-  const monitor = monitors[envelope.proposal?.monitorId || envelope.monitorId];
-  const result = { ok: true, reason: verdict, monitor, monitorCount: Object.keys(monitors).length };
-  registry = { ...registry, timestampUtc, monitors, idempotency: { ...registry.idempotency, [envelope.idempotencyKey]: { fingerprint, result } }, updatedAtUtc: timestampUtc, notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE };
-  const proof = evidence(envelope, verdict, monitor, timestampUtc);
-  const writes = [
-    await writeAtomicJson(layout.root, ['status', 'monitor-admission-registry.json'], registry, { repoRoot: options.repoRoot, nowMs }),
-    await writeAtomicJson(layout.root, ['status', `${proof.status.statusId}.json`], proof.status, { repoRoot: options.repoRoot, nowMs }),
-    await writeAtomicJson(layout.root, ['receipts', `${proof.receipt.receiptId}.json`], proof.receipt, { repoRoot: options.repoRoot, nowMs }),
-  ];
-  const failure = writes.find((write) => !write.ok);
-  return Object.freeze({ ...result, ok: !failure, reason: failure ? 'MONITOR_ADMISSION_FALLBACK_REQUIRED' : verdict, fallbackReason: failure ? 'MULTIPLEXER_ADMISSION_UNAVAILABLE' : '', receipt: proof.receipt, status: proof.status, writes: Object.freeze(writes), handlerExecuted: false, standaloneFallbackCreated: false });
+  const storageWrite = options.testWriteAtomicJson || writeAtomicJson;
+  const transaction = await withRegistryLock(layout.root, options.repoRoot, async () => {
+    let registry = await readRegistry(layout.root, options.repoRoot);
+    if (registry === false) return { ok: false, reason: 'MONITOR_ADMISSION_BLOCKED', blocker: 'MALFORMED_DURABLE_REGISTRY', handlerExecuted: false };
+    registry ||= {
+      ...createSharedWorkspaceStatusRecord({ statusId: 'monitor-admission-registry', participantId: 'monitor-admission-bridge', timestampUtc, status: 'ATTENTION_REQUIRED', summary: 'Logical monitor proposals awaiting canonical multiplexer projection.', proofRefs: ['proof/monitor-admission.json'] }),
+      registrySchemaVersion: MONITOR_ADMISSION_REGISTRY_VERSION, monitors: {}, idempotency: {},
+    };
+    const fingerprint = hash(canonical(envelope));
+    const prior = own(registry.idempotency, envelope.idempotencyKey) ? registry.idempotency[envelope.idempotencyKey] : null;
+    if (prior?.fingerprint !== undefined && prior.fingerprint !== fingerprint) return { ok: false, reason: 'MONITOR_ADMISSION_BLOCKED', blocker: 'IDEMPOTENCY_REPLAY_CONFLICT', validation, handlerExecuted: false };
+    if (prior?.state === 'committed') return { ...prior.result, idempotentRetry: true, handlerExecuted: false };
+
+    const monitors = Object.assign(Object.create(null), registry.monitors);
+    if (envelope.operation === MONITOR_ADMISSION_OPERATIONS.READ) {
+      const monitor = own(monitors, envelope.monitorId) ? monitors[envelope.monitorId] : null;
+      return { ok: Boolean(monitor), reason: monitor ? 'MONITOR_STATUS_READ' : 'MONITOR_NOT_FOUND', monitor, monitorCount: Object.keys(monitors).length, handlerExecuted: false };
+    }
+    if (!prior && envelope.operation === MONITOR_ADMISSION_OPERATIONS.UPSERT) {
+      if (!own(monitors, envelope.proposal.monitorId) && Object.keys(monitors).length >= MONITOR_MULTIPLEXER_MAX_MONITORS) return { ok: false, reason: 'MONITOR_ADMISSION_BLOCKED', blocker: 'MONITOR_REGISTRY_CAPACITY_REACHED', handlerExecuted: false };
+      monitors[envelope.proposal.monitorId] = { monitorId: envelope.proposal.monitorId, proposal: envelope.proposal, definition: proposalToMonitorDefinition(envelope.proposal), updatedAtUtc: timestampUtc };
+    } else if (!prior && envelope.operation === MONITOR_ADMISSION_OPERATIONS.DISABLE) {
+      if (!own(monitors, envelope.monitorId)) return { ok: false, reason: 'MONITOR_ADMISSION_BLOCKED', blocker: 'MONITOR_NOT_FOUND', handlerExecuted: false };
+      monitors[envelope.monitorId] = { ...monitors[envelope.monitorId], proposal: { ...monitors[envelope.monitorId].proposal, enabled: false }, definition: { ...monitors[envelope.monitorId].definition, enabled: false }, updatedAtUtc: timestampUtc };
+    }
+    const monitor = monitors[envelope.proposal?.monitorId || envelope.monitorId];
+    // No canonical runtime consumer currently loads this proposal store. Fail closed until that boundary exists.
+    const verdict = 'MULTIPLEXER_PROJECTION_NOT_PROVEN';
+    const result = { ok: false, reason: verdict, blocker: verdict, monitor, monitorCount: Object.keys(monitors).length };
+    const proof = evidence(envelope, verdict, monitor, timestampUtc, 'Canonical runtime multiplexer consumption is not proven.');
+    const pending = { ...registry, timestampUtc, monitors, idempotency: { ...registry.idempotency, [envelope.idempotencyKey]: { fingerprint, state: 'pending', result } }, updatedAtUtc: timestampUtc, notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE };
+    const writes = [];
+    if (!prior) writes.push(await storageWrite(layout.root, ['status', 'monitor-admission-registry.json'], pending, { repoRoot: options.repoRoot, nowMs }));
+    if (!writes.some((write) => !write.ok)) writes.push(await storageWrite(layout.root, ['status', `${proof.status.statusId}.json`], proof.status, { repoRoot: options.repoRoot, nowMs }));
+    if (!writes.some((write) => !write.ok)) writes.push(await storageWrite(layout.root, ['receipts', `${proof.receipt.receiptId}.json`], proof.receipt, { repoRoot: options.repoRoot, nowMs }));
+    if (!writes.some((write) => !write.ok)) {
+      const committed = { ...pending, idempotency: { ...pending.idempotency, [envelope.idempotencyKey]: { fingerprint, state: 'committed', result } } };
+      writes.push(await storageWrite(layout.root, ['status', 'monitor-admission-registry.json'], committed, { repoRoot: options.repoRoot, nowMs }));
+    }
+    const failure = writes.find((write) => !write.ok);
+    return { ...result, reason: failure ? 'MONITOR_ADMISSION_FALLBACK_REQUIRED' : verdict, fallbackReason: failure ? 'MULTIPLEXER_ADMISSION_EVIDENCE_INCOMPLETE' : '', receipt: proof.receipt, status: proof.status, writes: Object.freeze(writes), handlerExecuted: false, standaloneFallbackCreated: false };
+  });
+  if (transaction.lockFailure) return Object.freeze({ ok: false, reason: 'MONITOR_ADMISSION_FALLBACK_REQUIRED', fallbackReason: transaction.lockFailure, handlerExecuted: false });
+  return Object.freeze(transaction);
 }

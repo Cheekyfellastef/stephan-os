@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -15,12 +15,14 @@ import {
 
 const NOW = Date.parse('2026-08-01T12:00:00.000Z');
 const OWNER = 'stephan';
+const CLAIMS_HASH = 'a'.repeat(64);
 const root = () => mkdtemp(join(tmpdir(), 'monitor-admission-'));
 function request(overrides = {}, proposalOverrides = {}) {
   return {
     schemaVersion: MONITOR_ADMISSION_ENVELOPE_VERSION,
     operation: MONITOR_ADMISSION_OPERATIONS.UPSERT,
     owner: OWNER,
+    claimsHash: CLAIMS_HASH,
     requestId: 'request-1',
     issuedAtUtc: '2026-08-01T11:59:00.000Z',
     expiresAtUtc: '2026-08-01T12:05:00.000Z',
@@ -36,7 +38,7 @@ function request(overrides = {}, proposalOverrides = {}) {
     ...overrides,
   };
 }
-const options = (workspace) => ({ root: workspace, repoRoot: process.cwd(), trustedOwner: OWNER, nowMs: NOW });
+const options = (workspace) => ({ root: workspace, repoRoot: process.cwd(), authenticatedPrincipal: { subject: OWNER, claimsHash: CLAIMS_HASH }, nowMs: NOW });
 
 test('catalogue is provider-neutral, bounded and covers every required family', () => {
   assert.deepEqual(Object.keys(MONITOR_ADMISSION_HANDLER_CATALOGUE), [
@@ -50,15 +52,28 @@ test('catalogue is provider-neutral, bounded and covers every required family', 
   }
 });
 
-test('authentication, expiry, unknown fields and all executable authority fail closed', () => {
+test('authenticated claims, expiry, unknown fields and all executable authority fail closed', () => {
   const hostile = [
-    request({ owner: 'attacker' }), request({ expiresAtUtc: '2026-08-01T11:00:00.000Z' }),
+    request({ owner: 'attacker' }), request({ claimsHash: 'b'.repeat(64) }), request({ expiresAtUtc: '2026-08-01T11:00:00.000Z' }),
     request({ surprise: true }), request({}, { command: 'whoami' }), request({}, { nested: { shell: 'sh' } }),
     request({}, { boundedSubject: { product: 'x', url: 'https://evil.invalid' } }),
     request({}, { boundedSubject: { product: '/workspace/secret' } }), request({}, { handlerType: 'ARBITRARY_JOB' }),
     request({}, { proofRefs: ['../secret'] }),
   ];
-  for (const envelope of hostile) assert.equal(validateMonitorAdmissionEnvelope(envelope, { trustedOwner: OWNER, nowMs: NOW }).valid, false);
+  for (const envelope of hostile) assert.equal(validateMonitorAdmissionEnvelope(envelope, options('/tmp')).valid, false);
+  assert.equal(validateMonitorAdmissionEnvelope(request(), { nowMs: NOW }).valid, false);
+  assert.equal(validateMonitorAdmissionEnvelope(null, options('/tmp')).valid, false);
+});
+
+test('array subjects reject URLs, paths, oversized items, counts, and aggregate payloads', () => {
+  const subjects = [
+    { product: 'x', keywords: ['https://evil.invalid'] },
+    { product: 'x', keywords: ['/workspace/private'] },
+    { product: 'x', keywords: ['x'.repeat(241)] },
+    { product: 'x', keywords: Array.from({ length: 33 }, () => 'x') },
+    { product: 'x'.repeat(3000), keywords: ['x'] },
+  ];
+  for (const boundedSubject of subjects) assert.equal(validateMonitorAdmissionEnvelope(request({}, { boundedSubject }), options('/tmp')).valid, false);
 });
 
 test('proposal converts deterministically to runner-registry-only multiplexer shape', () => {
@@ -72,22 +87,23 @@ test('proposal converts deterministically to runner-registry-only multiplexer sh
   assert.equal(definition.maxRuntimeMs, 120_000);
 });
 
-test('upsert publishes truthful registration evidence without executing a handler', async () => {
+test('upsert remains explicitly non-ready until canonical multiplexer consumption exists', async () => {
   const workspace = await root();
   const result = await admitLogicalMonitor(request(), options(workspace));
-  assert.equal(result.ok, true); assert.equal(result.reason, 'MULTIPLEXER_ADMISSION_READY');
+  assert.equal(result.ok, false); assert.equal(result.reason, 'MULTIPLEXER_PROJECTION_NOT_PROVEN');
   assert.equal(result.handlerExecuted, false); assert.equal(result.standaloneFallbackCreated, false);
   assert.equal(result.receipt.monitorId, 'release-watch'); assert.equal(result.receipt.handlerExecuted, false);
   const registry = JSON.parse(await readFile(join(workspace, 'status', 'monitor-admission-registry.json'), 'utf8'));
   assert.equal(Object.keys(registry.monitors).length, 1);
   assert.equal(registry.notificationSurface, 'chatgpt-task-outbox');
+  assert.equal(registry.idempotency['intent-1'].state, 'committed');
 });
 
 test('identical retry is idempotent and conflicting replay fails closed', async () => {
   const workspace = await root(); const config = options(workspace);
   await admitLogicalMonitor(request(), config);
   const retry = await admitLogicalMonitor(request(), config);
-  assert.equal(retry.ok, true); assert.equal(retry.idempotentRetry, true); assert.equal(retry.monitorCount, 1);
+  assert.equal(retry.ok, false); assert.equal(retry.idempotentRetry, true); assert.equal(retry.monitorCount, 1);
   const conflict = await admitLogicalMonitor(request({}, { boundedSubject: { product: 'different' } }), config);
   assert.equal(conflict.ok, false); assert.equal(conflict.blocker, 'IDEMPOTENCY_REPLAY_CONFLICT');
 });
@@ -96,9 +112,9 @@ test('updates preserve identity and disable/read affect only selected monitor', 
   const workspace = await root(); const config = options(workspace);
   await admitLogicalMonitor(request(), config);
   const update = request({ requestId: 'request-2', idempotencyKey: 'intent-2' }, { idempotencyKey: 'intent-2', schedule: { intervalMs: 120_000, nextDueUtc: '2026-08-01T12:05:00.000Z' } });
-  assert.equal((await admitLogicalMonitor(update, config)).reason, 'MONITOR_UPDATE_APPLIED');
+  assert.equal((await admitLogicalMonitor(update, config)).reason, 'MULTIPLEXER_PROJECTION_NOT_PROVEN');
   const disable = request({ operation: MONITOR_ADMISSION_OPERATIONS.DISABLE, requestId: 'request-3', idempotencyKey: 'disable-1', monitorId: 'release-watch' }); delete disable.proposal;
-  assert.equal((await admitLogicalMonitor(disable, config)).reason, 'MONITOR_DISABLED');
+  assert.equal((await admitLogicalMonitor(disable, config)).reason, 'MULTIPLEXER_PROJECTION_NOT_PROVEN');
   const read = request({ operation: MONITOR_ADMISSION_OPERATIONS.READ, requestId: 'request-4', idempotencyKey: 'read-1', monitorId: 'release-watch' }); delete read.proposal;
   const status = await admitLogicalMonitor(read, config);
   assert.equal(status.ok, true); assert.equal(status.monitor.monitorId, 'release-watch'); assert.equal(status.monitor.definition.enabled, false);
@@ -113,7 +129,7 @@ test('unsupported admission writes one fallback receipt and no monitor', async (
 });
 
 test('unavailable storage returns fallback required without fabricated durability', async () => {
-  const result = await admitLogicalMonitor(request(), { root: process.cwd(), repoRoot: process.cwd(), trustedOwner: OWNER, nowMs: NOW });
+  const result = await admitLogicalMonitor(request(), { root: process.cwd(), repoRoot: process.cwd(), authenticatedPrincipal: { subject: OWNER, claimsHash: CLAIMS_HASH }, nowMs: NOW });
   assert.equal(result.ok, false); assert.equal(result.reason, 'MONITOR_ADMISSION_FALLBACK_REQUIRED');
   assert.equal(result.fallbackReason, 'MULTIPLEXER_ADMISSION_UNAVAILABLE'); assert.equal(result.durable, false);
 });
@@ -123,9 +139,54 @@ test('capacity edge rejects monitor 1001', async () => {
   const first = request(); await admitLogicalMonitor(first, config);
   const registryPath = join(workspace, 'status', 'monitor-admission-registry.json');
   const registry = JSON.parse(await readFile(registryPath, 'utf8'));
-  for (let index = 1; index < 1000; index += 1) registry.monitors[`m-${index}`] = { monitorId: `m-${index}` };
-  const { writeFile } = await import('node:fs/promises'); await writeFile(registryPath, JSON.stringify(registry));
+  for (let index = 1; index < 1000; index += 1) registry.monitors[`m-${index}`] = { ...registry.monitors['release-watch'], monitorId: `m-${index}`, proposal: { ...registry.monitors['release-watch'].proposal, monitorId: `m-${index}` }, definition: { ...registry.monitors['release-watch'].definition, monitorId: `m-${index}` } };
+  await writeFile(registryPath, JSON.stringify(registry));
   const extra = request({ requestId: 'request-extra', idempotencyKey: 'intent-extra' }, { monitorId: 'extra', idempotencyKey: 'intent-extra' });
   const result = await admitLogicalMonitor(extra, config);
   assert.equal(result.ok, false); assert.equal(result.blocker, 'MONITOR_REGISTRY_CAPACITY_REACHED');
+});
+
+test('prototype identities are own properties and proposal provenance is preserved', async () => {
+  const workspace = await root();
+  const hostileName = request({ idempotencyKey: 'constructor' }, { monitorId: 'constructor', idempotencyKey: 'constructor', relatedIssueOrGoal: '#42' });
+  const result = await admitLogicalMonitor(hostileName, options(workspace));
+  assert.equal(result.reason, 'MULTIPLEXER_PROJECTION_NOT_PROVEN');
+  assert.equal(result.receipt.relatedIssue, '#42');
+  assert.equal(result.receipt.relatedIssueOrGoal, '#42');
+  assert.equal(result.receipt.claimsHash, CLAIMS_HASH);
+});
+
+test('concurrent admissions are serialized without losing either monitor', async () => {
+  const workspace = await root(); const config = options(workspace);
+  const second = request({ requestId: 'request-2', idempotencyKey: 'intent-2' }, { monitorId: 'second', idempotencyKey: 'intent-2' });
+  await Promise.all([admitLogicalMonitor(request(), config), admitLogicalMonitor(second, config)]);
+  const registry = JSON.parse(await readFile(join(workspace, 'status', 'monitor-admission-registry.json'), 'utf8'));
+  assert.deepEqual(Object.keys(registry.monitors).sort(), ['release-watch', 'second']);
+  assert.deepEqual(Object.keys(registry.idempotency).sort(), ['intent-1', 'intent-2']);
+});
+
+test('pending publication is repaired on retry before idempotency commits', async () => {
+  const workspace = await root(); let calls = 0;
+  const failReceiptOnce = async (...args) => {
+    calls += 1;
+    if (calls === 3) return { ok: false, reason: 'INJECTED_FAILURE' };
+    const { writeAtomicJson } = await import('./sharedAgentWorkspaceStore.mjs');
+    return writeAtomicJson(...args);
+  };
+  const first = await admitLogicalMonitor(request(), { ...options(workspace), testWriteAtomicJson: failReceiptOnce });
+  assert.equal(first.reason, 'MONITOR_ADMISSION_FALLBACK_REQUIRED');
+  let registry = JSON.parse(await readFile(join(workspace, 'status', 'monitor-admission-registry.json'), 'utf8'));
+  assert.equal(registry.idempotency['intent-1'].state, 'pending');
+  const retry = await admitLogicalMonitor(request(), options(workspace));
+  assert.equal(retry.reason, 'MULTIPLEXER_PROJECTION_NOT_PROVEN');
+  registry = JSON.parse(await readFile(join(workspace, 'status', 'monitor-admission-registry.json'), 'utf8'));
+  assert.equal(registry.idempotency['intent-1'].state, 'committed');
+});
+
+test('malformed durable state fails closed', async () => {
+  const workspace = await root();
+  await import('./sharedAgentWorkspaceStore.mjs').then(({ ensureSharedWorkspaceLayout }) => ensureSharedWorkspaceLayout({ root: workspace, repoRoot: process.cwd() }));
+  await writeFile(join(workspace, 'status', 'monitor-admission-registry.json'), JSON.stringify({ registrySchemaVersion: 'stephanos.monitor-admission-registry.v1', monitors: {} }));
+  const result = await admitLogicalMonitor(request(), options(workspace));
+  assert.equal(result.blocker, 'MALFORMED_DURABLE_REGISTRY');
 });
