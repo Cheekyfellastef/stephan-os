@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTileMemoryBridge, resolveTileHostRuntime } from './tileMemoryBridge.js';
 
+function ownedMusicRecord(id, overrides = {}) {
+  return {
+    namespace: 'continuity',
+    id,
+    type: 'operator.preference',
+    tags: ['tile.memory.candidate', 'tile.music-tile', 'explicit-teaching'],
+    ...overrides,
+  };
+}
+
 test('tile runtime resolves the canonical same-origin parent adapter', () => {
   const parentMemory = { saveRecord() {} };
   const localMemory = { saveRecord() {} };
@@ -104,6 +114,36 @@ test('durable tile submission waits for backend authority before reporting persi
   assert.doesNotMatch(JSON.stringify(events[0]), /dark club pressure|Operator explicitly confirmed/);
 });
 
+test('durable tile submissions use collision-resistant identities even in the same millisecond', async () => {
+  const savedIds = [];
+  const uuids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+  const bridge = createTileMemoryBridge({
+    tileId: 'music-tile',
+    cryptoImpl: { randomUUID() { return uuids.shift(); } },
+    stephanosMemory: {
+      async saveRecordDurably(payload) {
+        savedIds.push(payload.id);
+        return {
+          record: { namespace: 'continuity', ...payload },
+          authorityConfirmed: true,
+          receipt: { authorityConfirmed: true },
+        };
+      },
+    },
+  });
+
+  await Promise.all([
+    bridge.submitMemoryCandidateDurably({ key: 'music.preference.one', value: 'one', reason: 'Operator explicitly confirmed the first preference.' }),
+    bridge.submitMemoryCandidateDurably({ key: 'music.preference.two', value: 'two', reason: 'Operator explicitly confirmed the second preference.' }),
+  ]);
+
+  assert.deepEqual(savedIds, [
+    'tile-memory-music-tile-11111111-1111-4111-8111-111111111111',
+    'tile-memory-music-tile-22222222-2222-4222-8222-222222222222',
+  ]);
+  assert.equal(new Set(savedIds).size, 2);
+});
+
 test('tile memory bridge lists only authoritative owned durable teachings', async () => {
   const bridge = createTileMemoryBridge({
     tileId: 'music-tile',
@@ -118,8 +158,9 @@ test('tile memory bridge lists only authoritative owned durable teachings', asyn
           authorityConfirmed: true,
           receipt: { authorityConfirmed: true },
           records: [
-            { id: 'teaching', tags: ['tile.music-tile', 'explicit-teaching'] },
-            { id: 'other', tags: ['tile.music-tile'] },
+            ownedMusicRecord('tile-memory-music-tile-teaching'),
+            ownedMusicRecord('generic-writer-record'),
+            ownedMusicRecord('tile-memory-music-tile-other', { tags: ['tile.memory.candidate', 'tile.music-tile'] }),
           ],
         };
       },
@@ -129,7 +170,7 @@ test('tile memory bridge lists only authoritative owned durable teachings', asyn
   const result = await bridge.listDurableMemoryCandidates({ tags: ['explicit-teaching'] });
 
   assert.equal(result.authorityConfirmed, true);
-  assert.deepEqual(result.records.map((record) => record.id), ['teaching']);
+  assert.deepEqual(result.records.map((record) => record.id), ['tile-memory-music-tile-teaching']);
 });
 
 test('tile memory bridge revokes its complete teaching set through one atomic owned-set mutation', async () => {
@@ -179,7 +220,7 @@ test('tile memory bridge revokes the original durable record through the guarded
   });
 
   const result = await bridge.revokeMemoryCandidate({
-    record: { namespace: 'continuity', id: 'tile-memory-music-tile-1' },
+    record: ownedMusicRecord('tile-memory-music-tile-1'),
     reason: 'Operator explicitly asked to forget this durable preference.',
     sourceRef: 'music-teaching:1',
   });
@@ -203,7 +244,7 @@ test('tile memory revocation waits for durable deletion authority when available
   });
 
   const result = await bridge.revokeMemoryCandidate({
-    record: { namespace: 'continuity', id: 'tile-memory-music-tile-durable' },
+    record: ownedMusicRecord('tile-memory-music-tile-durable'),
     reason: 'Operator explicitly asked to forget this durable preference.',
   });
 
@@ -221,7 +262,7 @@ test('tile memory revocation retains identity when durable deletion is unconfirm
     },
   });
   const result = await bridge.revokeMemoryCandidate({
-    record: { namespace: 'continuity', id: 'tile-memory-music-tile-unconfirmed' },
+    record: ownedMusicRecord('tile-memory-music-tile-unconfirmed'),
     reason: 'Operator explicitly asked to forget this durable preference.',
   });
   assert.equal(result.revoked, false);
@@ -239,7 +280,7 @@ test('tile memory revocation is idempotent when canonical storage proves the rec
   });
 
   const result = await bridge.revokeMemoryCandidate({
-    record: { namespace: 'continuity', id: 'tile-memory-music-tile-already-gone' },
+    record: ownedMusicRecord('tile-memory-music-tile-already-gone'),
     reason: 'Operator reset the Music Tile and requested its durable teachings be revoked.',
   });
 
@@ -259,7 +300,7 @@ test('tile memory revocation fails closed when absence cannot be canonically ver
     },
   });
   const result = await bridge.revokeMemoryCandidate({
-    record: { namespace: 'continuity', id: 'tile-memory-music-tile-unknown' },
+    record: ownedMusicRecord('tile-memory-music-tile-unknown'),
     reason: 'Operator reset the Music Tile and requested its durable teachings be revoked.',
   });
   assert.equal(result.revoked, false);
@@ -285,7 +326,7 @@ test('tile memory revocation cannot delete a record owned by another tile', asyn
     stephanosMemory: { deleteRecord() { deleted = true; return true; } },
   });
   const result = await bridge.revokeMemoryCandidate({
-    record: { namespace: 'continuity', id: 'tile-memory-ideas-1' },
+    record: ownedMusicRecord('tile-memory-ideas-1', { tags: ['tile.memory.candidate', 'tile.ideas', 'explicit-teaching'] }),
     reason: 'Operator explicitly asked to forget this durable preference.',
   });
   assert.equal(result.ok, false);

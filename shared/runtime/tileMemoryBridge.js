@@ -37,10 +37,34 @@ export function createTileMemoryBridge({
   executionLoop = resolveTileHostRuntime('StephanosExecutionLoop'),
   adjudicate = defaultAdjudicate,
   truthAdapter = createTileTruthAdapter(),
+  cryptoImpl = globalThis.crypto,
 } = {}) {
   const normalizedTileId = normalizeString(tileId);
   if (!normalizedTileId) {
     throw new Error('Tile memory bridge requires tileId.');
+  }
+  const ownedRecordIdPrefix = `tile-memory-${normalizedTileId}-`;
+  const ownedRecordTags = Object.freeze(['tile.memory.candidate', `tile.${normalizedTileId}`]);
+
+  function createOwnedRecordId() {
+    if (typeof cryptoImpl?.randomUUID === 'function') {
+      return `${ownedRecordIdPrefix}${cryptoImpl.randomUUID()}`;
+    }
+    if (typeof cryptoImpl?.getRandomValues === 'function') {
+      const entropy = cryptoImpl.getRandomValues(new Uint32Array(4));
+      const suffix = Array.from(entropy, (value) => value.toString(16).padStart(8, '0')).join('');
+      return `${ownedRecordIdPrefix}${suffix}`;
+    }
+    throw new Error('Tile memory persistence requires collision-resistant Web Crypto identity generation.');
+  }
+
+  function isOwnedMemoryRecord(record = {}, requiredTags = []) {
+    const recordTags = Array.isArray(record?.tags) ? record.tags : [];
+    const tags = normalizeTags([...ownedRecordTags, ...requiredTags]);
+    return normalizeString(record?.namespace, 'continuity') === 'continuity'
+      && normalizeString(record?.id).startsWith(ownedRecordIdPrefix)
+      && record?.type === 'operator.preference'
+      && tags.every((tag) => recordTags.includes(tag));
   }
 
   function submitMemoryCandidate(candidate = {}) {
@@ -57,7 +81,7 @@ export function createTileMemoryBridge({
     if (adjudication.promoted && memoryRuntime?.saveRecord) {
       persistedRecord = memoryRuntime.saveRecord({
         namespace: 'continuity',
-        id: `tile-memory-${normalizedTileId}-${Date.now()}`,
+        id: createOwnedRecordId(),
         type: normalized.type,
         summary: `${normalized.key}: ${String(normalized.value).slice(0, 140)}`,
         payload: {
@@ -145,7 +169,7 @@ export function createTileMemoryBridge({
       try {
         const result = await memoryRuntime.saveRecordDurably({
           namespace: 'continuity',
-          id: `tile-memory-${normalizedTileId}-${Date.now()}`,
+          id: createOwnedRecordId(),
           type: normalized.type,
           summary: `${normalized.key}: ${String(normalized.value).slice(0, 140)}`,
           payload: {
@@ -245,7 +269,7 @@ export function createTileMemoryBridge({
     });
     const requiredTags = normalizeTags(tags);
     const records = result?.authorityConfirmed === true
-      ? (Array.isArray(result.records) ? result.records : []).filter((record) => requiredTags.every((tag) => (record.tags || []).includes(tag)))
+      ? (Array.isArray(result.records) ? result.records : []).filter((record) => isOwnedMemoryRecord(record, requiredTags))
       : [];
     return {
       records,
@@ -260,7 +284,7 @@ export function createTileMemoryBridge({
     const namespace = normalizeString(record?.namespace, 'continuity');
     const id = normalizeString(record?.id);
     const operatorReason = normalizeString(reason);
-    const ownedRecord = namespace === 'continuity' && id.startsWith(`tile-memory-${normalizedTileId}-`);
+    const ownedRecord = isOwnedMemoryRecord(record);
     const eligible = ownedRecord && operatorReason.length >= 12;
     let revoked = false;
     let alreadyAbsent = false;
@@ -352,9 +376,9 @@ export function createTileMemoryBridge({
     if (eligible && typeof memoryRuntime?.deleteRecordsDurably === 'function') {
       durableResult = await memoryRuntime.deleteRecordsDurably({
         namespace: 'continuity',
-        idPrefix: `tile-memory-${normalizedTileId}-`,
+        idPrefix: ownedRecordIdPrefix,
         type: 'operator.preference',
-        tags: normalizeTags(['tile.memory.candidate', `tile.${normalizedTileId}`, ...requiredTags]),
+        tags: normalizeTags([...ownedRecordTags, ...requiredTags]),
       });
     }
     const revoked = durableResult?.authorityConfirmed === true;
