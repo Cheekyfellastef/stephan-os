@@ -322,20 +322,23 @@ test('receipt remains non-authoritative through the final source-head verificati
   const input = await fixture();
   const plan = await planDreamRuntimeMigration({ repoRoot: input.repoRoot, env: input.env });
   let reads = 0;
-  let finalVerificationObservedPendingOnly = false;
+  let finalVerificationObservedNonAuthoritativeOnly = false;
   const result = await runApproved(input, {
     sourceHeadVerifierFn: async () => {
       reads += 1;
       if (reads === 3) {
         const receiptFiles = await fs.readdir(plan.receiptRoot);
-        finalVerificationObservedPendingOnly = receiptFiles.some((name) => name.startsWith('.stephanos-pending-'))
-          && receiptFiles.every((name) => !name.startsWith('dream-migration-'));
+        const noAuthoritativeReceipt = receiptFiles.every((name) => !name.startsWith('dream-migration-'));
+        finalVerificationObservedNonAuthoritativeOnly = noAuthoritativeReceipt
+          && (process.platform === 'linux'
+            ? receiptFiles.every((name) => !name.startsWith('.stephanos-pending-'))
+            : receiptFiles.some((name) => name.startsWith('.stephanos-pending-')));
       }
       return HEAD;
     },
   });
   assert.equal(result.ok, true);
-  assert.equal(finalVerificationObservedPendingOnly, true);
+  assert.equal(finalVerificationObservedNonAuthoritativeOnly, true);
   const receiptFiles = await fs.readdir(plan.receiptRoot);
   assert.equal(receiptFiles.filter((name) => name.startsWith('dream-migration-')).length, 1);
   assert.equal(receiptFiles.filter((name) => name.startsWith('.stephanos-pending-')).length, 0);
