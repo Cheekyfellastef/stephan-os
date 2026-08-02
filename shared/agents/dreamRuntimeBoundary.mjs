@@ -55,6 +55,11 @@ const MAX_MANIFEST_BYTES = 64 * 1024;
 const DIRECTORY_GUARD_TIMEOUT_MS = 15_000;
 const DIRECTORY_GUARD_OUTPUT_LIMIT = 4 * 1024;
 const MAX_WINDOWS_ARTIFACT_BYTES = 64 * 1024 * 1024;
+const DREAM_MIGRATION_LOCK_SEGMENTS = Object.freeze([
+  'receipt-locks',
+  'dream-migration',
+  'migration.lock',
+]);
 const WINDOWS_ARTIFACT_IO_SCRIPT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
@@ -189,7 +194,8 @@ async function windowsAncestorIdentityProof(ancestorIdentities) {
   const identities = [];
   for (const { directory, identity } of ancestorIdentities) {
     const nativeIdentity = await fs.lstat(directory, { bigint: true });
-    if (Number(nativeIdentity.dev) !== Number(identity?.dev) || Number(nativeIdentity.ino) !== Number(identity?.ino)) {
+    if (!sameExactFilesystemIdentifier(nativeIdentity.dev, identity?.dev)
+        || !sameExactFilesystemIdentifier(nativeIdentity.ino, identity?.ino)) {
       throw codedError('DREAM_MIGRATION_WINDOWS_ANCESTOR_CHANGED');
     }
     if (nativeIdentity.dev < 0n || nativeIdentity.ino < 0n) {
@@ -231,7 +237,7 @@ async function createSafeDirectoryComponent(directory, parentIdentities, fsImpl)
   }
   if (process.platform === 'win32' && fsImpl === fs) {
     await ensureWindowsDirectoryComponent(parentPath, directoryName, parentIdentities);
-    return fsImpl.lstat(directory);
+    return fsImpl.lstat(directory, { bigint: true });
   }
   let boundary = null;
   let info = null;
@@ -271,7 +277,9 @@ async function ensureSafeDirectoryChain(target, { fsImpl = fs, create = false } 
   for (const directory of filesystemAncestors(target)) {
     let info;
     try {
-      info = await fsImpl.lstat(directory);
+      info = process.platform === 'win32' && fsImpl === fs
+        ? await fsImpl.lstat(directory, { bigint: true })
+        : await fsImpl.lstat(directory);
     } catch (error) {
       if (error?.code !== 'ENOENT' || !create) throw error;
       info = await createSafeDirectoryComponent(directory, identities, fsImpl);
@@ -287,19 +295,40 @@ async function ensureSafeDirectoryChain(target, { fsImpl = fs, create = false } 
   return Object.freeze(identities);
 }
 
+function exactFilesystemIdentifier(value) {
+  if (typeof value === 'bigint') return value >= 0n ? value : null;
+  if (Number.isSafeInteger(value) && value >= 0) return BigInt(value);
+  return null;
+}
+
+export function sameExactFilesystemIdentifier(left, right) {
+  const normalizedLeft = exactFilesystemIdentifier(left);
+  const normalizedRight = exactFilesystemIdentifier(right);
+  return normalizedLeft !== null && normalizedRight !== null && normalizedLeft === normalizedRight;
+}
+
+function sameDirectoryBirthIdentity(before, after) {
+  if (typeof before?.birthtimeNs === 'bigint' || typeof after?.birthtimeNs === 'bigint') {
+    return sameExactFilesystemIdentifier(before?.birthtimeNs, after?.birthtimeNs);
+  }
+  return Number(before?.birthtimeMs) === Number(after?.birthtimeMs);
+}
+
 function sameDirectoryIdentity(before, after) {
   return before?.isDirectory?.() === true
     && after?.isDirectory?.() === true
     && before?.isSymbolicLink?.() !== true
     && after?.isSymbolicLink?.() !== true
-    && Number(before?.dev) === Number(after?.dev)
-    && Number(before?.ino) === Number(after?.ino)
-    && Number(before?.birthtimeMs) === Number(after?.birthtimeMs);
+    && sameExactFilesystemIdentifier(before?.dev, after?.dev)
+    && sameExactFilesystemIdentifier(before?.ino, after?.ino)
+    && sameDirectoryBirthIdentity(before, after);
 }
 
 async function assertSafeDirectoryChainUnchanged(identities, { fsImpl = fs } = {}) {
   for (const expected of identities) {
-    const current = await fsImpl.lstat(expected.directory);
+    const current = process.platform === 'win32' && fsImpl === fs
+      ? await fsImpl.lstat(expected.directory, { bigint: true })
+      : await fsImpl.lstat(expected.directory);
     if (!sameDirectoryIdentity(expected.identity, current)) {
       throw codedError('DREAM_MIGRATION_ANCESTOR_CHANGED');
     }
@@ -1909,7 +1938,7 @@ async function revalidateMigrationReceiptInputs(plan, { fsImpl, sourceHead }) {
   return Object.freeze({ ok: true, blocker: '' });
 }
 
-export async function executeDreamRuntimeMigration({
+async function executeDreamRuntimeMigrationWithinLock({
   repoRoot,
   env = process.env,
   homeDir = os.homedir(),
@@ -2204,5 +2233,71 @@ export async function executeDreamRuntimeMigration({
     canonicalDestinationRemovalPerformed: false,
     destructiveGitOperationPerformed: false,
     nextOperatorAction: 'Keep canonical destination and legacy source in place until separately approved source reconciliation and cleanup.',
+  });
+}
+
+export async function executeDreamRuntimeMigration(options = {}) {
+  if (options.operatorApproval !== DREAM_RUNTIME_MIGRATION_APPROVAL) {
+    return executeDreamRuntimeMigrationWithinLock(options);
+  }
+  const boundary = resolveDreamRuntimeBoundary(options);
+  if (!boundary.ok) return executeDreamRuntimeMigrationWithinLock(options);
+  const acquireMigrationLockFn = options.acquireMigrationLockFn
+    || acquireSharedWorkspaceOperationLock;
+  let migrationLock;
+  try {
+    migrationLock = await acquireMigrationLockFn(
+      boundary.runtimeRoot,
+      DREAM_MIGRATION_LOCK_SEGMENTS,
+      { ...(options.operationLockOptions || {}), repoRoot: boundary.repoRoot },
+    );
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_LOCK_FAILED',
+      blocker: 'DREAM_MIGRATION_LOCK_FAILED',
+      lockReason: error?.code || 'DREAM_MIGRATION_LOCK_FAILED',
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
+  if (!migrationLock?.ok || typeof migrationLock.release !== 'function') {
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_CONCURRENT',
+      blocker: 'DREAM_MIGRATION_CONCURRENT',
+      lockReason: migrationLock?.reason || 'DREAM_MIGRATION_LOCK_UNAVAILABLE',
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
+  let outcome = null;
+  let executionError = null;
+  try {
+    outcome = await executeDreamRuntimeMigrationWithinLock(options);
+  } catch (error) {
+    executionError = error;
+  }
+  let released = false;
+  try { released = await migrationLock.release(); } catch {}
+  if (executionError) {
+    if (!released) executionError.cleanupBlocker ||= 'DREAM_MIGRATION_LOCK_RELEASE_FAILED';
+    throw executionError;
+  }
+  if (released) return outcome;
+  if (outcome?.ok) {
+    return Object.freeze({
+      ...outcome,
+      migrationLockReleaseReason: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+      lockCleanupBlocker: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+    });
+  }
+  return Object.freeze({
+    ...outcome,
+    cleanupBlocker: outcome?.cleanupBlocker || 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+    migrationLockReleaseReason: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+    lockCleanupBlocker: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
   });
 }

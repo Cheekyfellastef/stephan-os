@@ -21,6 +21,7 @@ import {
   resolveDreamRuntimeBoundary,
   resolveDreamVersionedPreservationPaths,
   resolveWindowsArtifactCleanupBlocker,
+  sameExactFilesystemIdentifier,
 } from './dreamRuntimeBoundary.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -48,6 +49,16 @@ test('POSIX helper promotion identity is bounded and malformed evidence fails cl
   ]) {
     assert.equal(parsePosixPromotionIdentity(value), null);
   }
+});
+
+test('filesystem identifiers reject collisions hidden by Number rounding', () => {
+  const left = 9_007_199_254_740_992n;
+  const right = 9_007_199_254_740_993n;
+  assert.equal(Number(left), Number(right));
+  assert.equal(sameExactFilesystemIdentifier(left, right), false);
+  assert.equal(sameExactFilesystemIdentifier(left, left), true);
+  assert.equal(sameExactFilesystemIdentifier(Number(left), left), false);
+  assert.equal(sameExactFilesystemIdentifier(42, 42n), true);
 });
 
 test('Windows pre-READY failure awaits bounded abort cleanup before process termination', async () => {
@@ -1342,6 +1353,19 @@ test('cross-platform publication adapters preserve the structural commit invaria
     /os\.(?:stat|unlink|open|write)|print\(|fail\(/,
   );
   const boundarySource = await fs.readFile(path.resolve('shared/agents/dreamRuntimeBoundary.mjs'), 'utf8');
+  const windowsAncestorProofSource = boundarySource.slice(
+    boundarySource.indexOf('async function windowsAncestorIdentityProof'),
+    boundarySource.indexOf('async function ensureWindowsDirectoryComponent'),
+  );
+  assert.doesNotMatch(windowsAncestorProofSource, /Number\(/);
+  assert.match(windowsAncestorProofSource, /sameExactFilesystemIdentifier\(nativeIdentity\.dev, identity\?\.dev\)/);
+  const migrationWrapperSource = boundarySource.slice(
+    boundarySource.indexOf('export async function executeDreamRuntimeMigration(options = {})'),
+  );
+  const acquireMigrationLockIndex = migrationWrapperSource.indexOf('acquireMigrationLockFn(');
+  const executeWithinLockIndex = migrationWrapperSource.lastIndexOf('executeDreamRuntimeMigrationWithinLock(options)');
+  assert.ok(acquireMigrationLockIndex >= 0 && executeWithinLockIndex > acquireMigrationLockIndex);
+  assert.match(boundarySource, /DREAM_MIGRATION_LOCK_SEGMENTS = Object\.freeze\(\[[\s\S]*'migration\.lock'/);
   assert.match(boundarySource, /startLinuxIsolatedReceiptPublication\(receiptPath, content/);
   assert.match(boundarySource, /writtenReceipt\.isolatedPublication\.commit\(\)/);
   assert.match(boundarySource, /writtenReceipt\.isolatedPublication\.abort\(\)/);
@@ -1569,14 +1593,14 @@ test('canonical destination mutation during copy is detected and never repaired 
   assert.equal(await fs.readFile(input.destinationEventsPath, 'utf8'), `${canonicalBefore} `);
 });
 
-test('conflicting concurrent preservation is serialized by existing operation-lock machinery', async () => {
-  const input = await disjointFixture();
+test('migration-wide lock prevents another run from consuming rollback-owned copy output', async () => {
+  const input = await fixture();
   let releaseCopy;
   let reportEntered;
   const entered = new Promise((resolve) => { reportEntered = resolve; });
   const hold = new Promise((resolve) => { releaseCopy = resolve; });
   const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
-    if (String(target).endsWith('.snapshot')) {
+    if (path.basename(String(target)).endsWith(path.basename(input.destinationEventsPath))) {
       reportEntered();
       await hold;
     }
@@ -1592,7 +1616,7 @@ test('conflicting concurrent preservation is serialized by existing operation-lo
     },
   });
   assert.equal(second.ok, false);
-  assert.equal(second.blocker, 'DREAM_VERSIONED_PRESERVATION_CONCURRENT');
+  assert.equal(second.blocker, 'DREAM_MIGRATION_CONCURRENT');
   releaseCopy();
   const first = await firstPromise;
   assert.equal(first.ok, true);
