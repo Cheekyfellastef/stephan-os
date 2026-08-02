@@ -209,6 +209,14 @@ test('primary experience is conversational without model or provider controls', 
   assert.doesNotMatch(primaryExperience, /model selector|provider selector|ollama|openrouter|OAuth|client secret/i);
 });
 
+test('conversation composer uses the canonical persisted static-surface panel primitive', () => {
+  assert.match(html, /class="music-conversation"[^>]*data-stephanos-collapsible-panel[^>]*data-panel-id="music-conversation"/);
+  assert.match(html, /<h2 class="title" id="music-conversation-title">Talk to your Music Intelligence<\/h2>/);
+  assert.match(main, /import \{ initStephanosSurfacePanels \} from '\.\.\/\.\.\/shared\/runtime\/stephanosSurfacePanels\.mjs'/);
+  assert.match(main, /initStephanosSurfacePanels\(\{ surfaceId: 'music-tile' \}\)/);
+  assert.doesNotMatch(html, /<details[^>]*class="music-conversation"/);
+});
+
 test('conversation uses canonical AI lifecycle and governed memory bridge', () => {
   assert.match(main, /runAiActionLifecycle\(\{/);
   assert.match(main, /askMusicAi\('music-conversation', payload\)/);
@@ -271,7 +279,7 @@ test('durable Teach rebases at completion and cannot overwrite a newer conversat
   assert.ok(durableAwait >= 0 && durableAwait < commitSnapshot && commitSnapshot < projection);
   assert.match(teaching, /const confirmedConversationState = musicConversationState/);
   assert.match(teaching, /const isConfirmedConversationCurrent = \(\) => musicConversationState === confirmedConversationState[\s\S]*musicConversationState\.pendingTeaching === candidate/);
-  assert.match(teaching, /if \(isConfirmedConversationCurrent\(\)\) \{[\s\S]*musicConversationState\.pendingTeaching = null/);
+  assert.match(teaching, /const confirmedConversationIsCurrent = isConfirmedConversationCurrent\(\)[\s\S]*if \(confirmedConversationIsCurrent\) \{[\s\S]*musicConversationState\.pendingTeaching = null/);
   assert.match(teaching, /catch \(error\) \{[\s\S]*if \(isConfirmedConversationCurrent\(\)\) \{[\s\S]*musicConversationState\.mode = 'teaching blocked'/);
 });
 
@@ -281,6 +289,15 @@ test('Teach always releases its mutation lock when secure identity generation fa
   const teaching = main.slice(teachingStart, teachingEnd);
   assert.ok(teaching.indexOf('try {') < teaching.indexOf("createCollisionResistantTileIdentity('music-teaching')"));
   assert.match(teaching, /catch \(error\) \{[\s\S]*finally \{[\s\S]*endMusicMemoryMutation\(\)/);
+});
+
+test('durable Teach completion autoscrolls only its initiating conversation', () => {
+  const teachingStart = main.indexOf('async function applyConversationTeaching');
+  const teachingEnd = main.indexOf('\n\nasync function forgetConversationTeaching', teachingStart);
+  const teaching = main.slice(teachingStart, teachingEnd);
+  assert.match(teaching, /const confirmedConversationIsCurrent = isConfirmedConversationCurrent\(\)/);
+  assert.match(teaching, /if \(confirmedConversationIsCurrent\) \{[\s\S]*shouldScrollFinalTeachingAnswer = true/);
+  assert.match(teaching, /finally \{[\s\S]*endMusicMemoryMutation\(\);[\s\S]*if \(shouldScrollFinalTeachingAnswer\) renderMusicConversation\(\{ scrollToFinalAnswer: true \}\)/);
 });
 
 test('journey conversation reports success only from the current build outcome', () => {

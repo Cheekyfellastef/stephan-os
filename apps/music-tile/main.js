@@ -12,6 +12,7 @@ import { createTileEventBridge } from '../../shared/runtime/tileEventBridge.js';
 import { reducePresenceState, getPresenceSummary, acknowledgePresenceItem, dismissPresenceItem, approvePresenceAction } from '../../shared/runtime/stephanosPresenceModel.mjs';
 import { emitPresenceEvent as emitGlobalPresenceEvent } from '../../shared/runtime/stephanosPresenceBridge.mjs';
 import { runAiActionLifecycle } from '../../shared/runtime/aiActionLifecycle.mjs';
+import { initStephanosSurfacePanels } from '../../shared/runtime/stephanosSurfacePanels.mjs';
 import { catalogResultActionKey, catalogResultToMusicTileTrack, findExistingCatalogTrack, requestNativeCatalogSearch } from './engine/nativeCatalogSearch.js';
 import { applyTasteTeachingContribution, buildConversationAiPayload, buildMusicConversationPlan, removeTasteTeachingContribution, retainConversationTeachingHistory, summarizeTasteEvidence } from './engine/musicConversationPlanner.js';
 
@@ -152,7 +153,7 @@ function buildMusicAiStatusView(diagnostics = {}) {
   return { statusKind, headline, details:'Rule-based parser remains available.', badge, providerMetadataHelp:'The Music Tile can reach the AI backend, but this embedded tile cannot currently read the selected provider/model metadata. Provider details will appear when route truth is available.', shouldShowRuleFallback:true, diagnosticsRows:[`Endpoint: ${runtime.endpointUrl}`,`Backend base: ${runtime.backendBaseUrl}`,`Last HTTP status: ${lastStatus ?? 'n/a'}`,`Last error: ${lastError || 'none'}`,`Request reached backend: ${reached===true?'yes':reached===false?'no':'unknown'}`,`Backend responded: ${responded===true?'yes':responded===false?'no':'unknown'}`,`Response mode: ${responseMode}`,`Route/provider metadata: ${status.routeKind}/${status.provider}`] };
 }
 
-const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false }); refreshVerifiedSpotifyLinks(); void hydrateDurableConversationTeachings(); setInterval(() => { if (!document.hidden) refreshVerifiedSpotifyLinks(); }, SPOTIFY_LINK_FEED_POLL_MS);
+const state = loadState(); initStephanosSurfacePanels({ surfaceId: 'music-tile' }); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false }); refreshVerifiedSpotifyLinks(); void hydrateDurableConversationTeachings(); setInterval(() => { if (!document.hidden) refreshVerifiedSpotifyLinks(); }, SPOTIFY_LINK_FEED_POLL_MS);
 
 function updateAiStatus(extra = {}) {
   if (!ui.aiStatusText) return;
@@ -623,6 +624,7 @@ async function applyConversationTeaching() {
   const operationGeneration = musicOperationGeneration;
   let teaching = null;
   let memoryResult = null;
+  let shouldScrollFinalTeachingAnswer = false;
   try {
     teaching = {
       id: createCollisionResistantTileIdentity('music-teaching'),
@@ -673,10 +675,12 @@ async function applyConversationTeaching() {
       teaching,
     ];
     state.appliedTasteDnaChanges = [...previousAppliedChanges, { traitName: teaching.trait, oldWeight: previousTrait?.weight || 0, newWeight: record?.weight || 0, reason: 'explicit conversation teaching', at: teaching.createdAt }];
-    if (isConfirmedConversationCurrent()) {
+    const confirmedConversationIsCurrent = isConfirmedConversationCurrent();
+    if (confirmedConversationIsCurrent) {
       musicConversationState.pendingTeaching = null;
       musicConversationState.answer = `Learned: “${teaching.trait}” is a ${teaching.polarity} signal. It is visible below and can be forgotten.`;
       musicConversationState.mode = teaching.memoryPersisted ? 'learned · durable memory' : 'learned · tile memory';
+      shouldScrollFinalTeachingAnswer = true;
     }
     state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
     try {
@@ -710,10 +714,12 @@ async function applyConversationTeaching() {
         ? `I could not finish learning “${trait}”, and durable rollback is not confirmed. Reset/Forget controls remain available for recovery.`
         : `I could not safely retain “${trait}”. No durable-memory success was claimed.`;
       musicConversationState.mode = 'teaching blocked';
+      shouldScrollFinalTeachingAnswer = true;
     }
     emitPresenceEvent({ kind: 'conversation_teaching_blocked', severity: 'warning', summary: 'Music teaching blocked', impact: 'The shared durable-memory transaction did not complete safely.' });
   } finally {
     endMusicMemoryMutation();
+    if (shouldScrollFinalTeachingAnswer) renderMusicConversation({ scrollToFinalAnswer: true });
   }
 }
 
