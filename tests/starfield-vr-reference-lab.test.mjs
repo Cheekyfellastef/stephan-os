@@ -27,6 +27,15 @@ test('workspace consumes the canonical shared catalogue and exposes truth and pr
   assert.ok(fs.existsSync(path.join(repoRoot, 'VR-Research-Lab', 'knowledge-sources', 'starfield-vr-reference-lab', 'README.md')));
 });
 
+test('truth boundary renders every mandatory promotion-evidence gate', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  assert.match(
+    source,
+    /appendTextList\(nodes\.truthGates, STARFIELD_VR_EVIDENCE_BOUNDARY\.requiredPromotionEvidence\);/,
+  );
+  assert.doesNotMatch(source, /requiredPromotionEvidence\.slice/);
+});
+
 test('workspace is responsive, reduced-motion safe and has no remote runtime asset dependency', () => {
   const html = fs.readFileSync(path.join(appRoot, 'index.html'), 'utf8');
   const css = fs.readFileSync(path.join(appRoot, 'styles.css'), 'utf8');
