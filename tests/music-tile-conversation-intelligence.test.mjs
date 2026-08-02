@@ -210,9 +210,9 @@ test('cross-device teachings hydrate from the canonical owned-record index befor
   assert.match(main, /listDurableMemoryCandidates\?\.\(\{ tags: \['explicit-teaching'\] \}\)/);
   assert.match(main, /function teachingFromDurableRecord/);
   assert.match(main, /await synchronizeDurableConversationTeachings\(\{ render: false \}\)/);
-  assert.match(main, /revokeDurableConversationTeachingsForReset[\s\S]*await synchronizeDurableConversationTeachings\(\{ render: false \}\)/);
-  assert.match(main, /for \(let pass = 0; pass < 3; pass \+= 1\)[\s\S]*await synchronizeDurableConversationTeachings\(\{ render: false \}\)/);
-  assert.match(main, /return \{ ok: false, teaching: \{ trait: 'a teaching added concurrently on another device' \} \}/);
+  assert.match(main, /revokeDurableConversationTeachingsForReset[\s\S]*await tileMemoryBridge\.revokeAllMemoryCandidates\(\{/);
+  assert.match(main, /tags: \['explicit-teaching'\]/);
+  assert.doesNotMatch(main, /for \(let pass = 0; pass < 3; pass \+= 1\)/);
 });
 
 test('cross-device Forget repaint keeps projections truthful when the target is already gone', () => {
@@ -264,9 +264,8 @@ test('reset revokes durable teachings before clearing state and drops transient 
   const resetStart = main.indexOf('function revokeDurableConversationTeachingsForReset');
   const resetEnd = main.indexOf('\nfunction renderAll', resetStart);
   const reset = main.slice(resetStart, resetEnd);
-  assert.match(reset, /memoryPersisted === true/);
-  assert.match(reset, /await tileMemoryBridge\.revokeMemoryCandidate/);
-  assert.match(reset, /if \(revocation\?\.revoked !== true\)[\s\S]*return \{ ok: false, teaching \}/);
+  assert.match(reset, /await tileMemoryBridge\.revokeAllMemoryCandidates/);
+  assert.match(reset, /if \(revocation\?\.revoked !== true\)[\s\S]*return \{ ok: false, teaching: \{ trait: 'the canonical shared teaching set' \} \}/);
   assert.ok(reset.indexOf('revokeDurableConversationTeachingsForReset()') < reset.indexOf('localStorage.removeItem(STORAGE_KEY)'));
   assert.match(reset, /nativeCatalogSearchState = createIdleNativeCatalogSearchState\(\)/);
   assert.match(reset, /musicConversationState = createIdleMusicConversationState\(\)/);

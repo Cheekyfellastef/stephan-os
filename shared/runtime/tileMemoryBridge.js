@@ -342,8 +342,87 @@ export function createTileMemoryBridge({
     };
   }
 
+  async function revokeAllMemoryCandidates({ tags = [], reason = '', sourceRef = '' } = {}) {
+    const memoryRuntime = stephanosMemory || resolveTileHostRuntime('stephanosMemory');
+    const eventRuntime = executionLoop || resolveTileHostRuntime('StephanosExecutionLoop');
+    const operatorReason = normalizeString(reason);
+    const requiredTags = normalizeTags(tags);
+    const eligible = operatorReason.length >= 12 && requiredTags.length > 0;
+    let durableResult = null;
+    if (eligible && typeof memoryRuntime?.deleteRecordsDurably === 'function') {
+      durableResult = await memoryRuntime.deleteRecordsDurably({
+        namespace: 'continuity',
+        idPrefix: `tile-memory-${normalizedTileId}-`,
+        type: 'operator.preference',
+        tags: normalizeTags(['tile.memory.candidate', `tile.${normalizedTileId}`, ...requiredTags]),
+      });
+    }
+    const revoked = durableResult?.authorityConfirmed === true;
+    const deletedCount = revoked ? Number(durableResult?.deletedCount || 0) : 0;
+    const alreadyEmpty = revoked && durableResult?.alreadyEmpty === true;
+    const revocationReason = revoked
+      ? alreadyEmpty
+        ? 'The canonical owned tile-memory set was already empty.'
+        : 'The canonical owned tile-memory set was revoked atomically.'
+      : eligible
+        ? 'Owned-set memory revocation failed: atomic durable authority was unavailable.'
+        : 'Owned-set memory revocation rejected: require scoped tags and an operator reason.';
+    const truth = truthAdapter.createTruthPayload({
+      tileActionType: 'tile.memory.candidate.revoke-set',
+      tileSource,
+      tileId: normalizedTileId,
+      sourceRef: normalizeString(sourceRef, `tile:${normalizedTileId}`),
+      memoryCandidateSubmitted: false,
+      memoryPromoted: false,
+      memoryReason: revocationReason,
+      retrievalContributionSubmitted: false,
+      retrievalIngested: false,
+      retrievalSourceRef: '',
+      additional: {
+        memoryRevocationRequested: eligible,
+        memoryRevoked: revoked,
+        memoryRecordAlreadyAbsent: alreadyEmpty,
+        revokedRecordCount: deletedCount,
+      },
+    });
+    const executionMetadata = truthAdapter.toExecutionMetadata(truth);
+    const execution = createExecution({
+      mode: revoked ? (alreadyEmpty ? 'already-absent' : 'revoked') : 'revocation-blocked',
+      adapter: typeof memoryRuntime?.deleteRecordsDurably === 'function' ? 'stephanos-memory-durable-owned-set' : 'memory-unavailable',
+      adjudication: eligible ? 'revocation-eligible' : 'rejected',
+      persisted: revoked,
+      diagnostics: { eligible, revoked, alreadyEmpty, deletedCount },
+    });
+
+    eventRuntime?.publishTileEvent?.({
+      tileId: normalizedTileId,
+      tileTitle: normalizedTileId,
+      action: 'tile.memory.candidate.revoke-set',
+      summary: revocationReason,
+      result: {
+        execution,
+        authorityConfirmed: revoked,
+        revokedRecordCount: deletedCount,
+        execution_metadata: executionMetadata,
+      },
+      tags: ['tile.contract.v1', 'tile.memory.revocation'],
+      source: tileSource,
+    });
+
+    return {
+      ok: eligible,
+      revoked,
+      alreadyEmpty,
+      deletedCount,
+      execution,
+      executionMetadata,
+      truth,
+    };
+  }
+
   return {
     revokeMemoryCandidate,
+    revokeAllMemoryCandidates,
     submitMemoryCandidate,
     submitMemoryCandidateDurably,
     listDurableMemoryCandidates,

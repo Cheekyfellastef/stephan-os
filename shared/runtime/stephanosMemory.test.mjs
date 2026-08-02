@@ -735,6 +735,124 @@ test('legacy mirror writes queued behind authority refresh rebase instead of del
   assert.equal(writtenBody.records['continuity::local-event'].summary, 'Local event queued during refresh');
 });
 
+test('confirmed legacy writes preserve every later pending mirror intent', async () => {
+  let releaseFirstPut;
+  let releaseSecondPut;
+  let markSecondPutStarted;
+  const firstPutGate = new Promise((resolve) => { releaseFirstPut = resolve; });
+  const secondPutGate = new Promise((resolve) => { releaseSecondPut = resolve; });
+  const secondPutStarted = new Promise((resolve) => { markSecondPutStarted = resolve; });
+  const writes = [];
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage: createStorage(),
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+    fetchImpl: async (_url, options = {}) => {
+      const body = JSON.parse(options.body || '{}');
+      writes.push(body);
+      if (writes.length === 1) await firstPutGate;
+      if (writes.length === 2) {
+        markSecondPutStarted();
+        await secondPutGate;
+      }
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ success: true, data: { ...body, updatedAt: `2026-08-02T00:0${writes.length}:00.000Z` } });
+        },
+      };
+    },
+  });
+  const memory = createStephanosMemory({ adapter, source: 'music-tile', surface: 'hosted' });
+
+  memory.saveRecord({ namespace: 'continuity', id: 'first', type: 'tile.event', summary: 'First pending record' });
+  memory.saveRecord({ namespace: 'continuity', id: 'second', type: 'tile.event', summary: 'Second pending record' });
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'first' })?.summary, 'First pending record');
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'second' })?.summary, 'Second pending record');
+
+  releaseFirstPut();
+  await secondPutStarted;
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'first' })?.summary, 'First pending record');
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'second' })?.summary, 'Second pending record');
+  assert.equal(writes[1].records['continuity::first'].summary, 'First pending record');
+  assert.equal(writes[1].records['continuity::second'].summary, 'Second pending record');
+  releaseSecondPut();
+});
+
+test('atomic owned-set deletion rebases over a concurrent teaching and preserves unrelated records', async () => {
+  const teaching = (summary) => ({
+    schemaVersion: 2,
+    type: 'operator.preference',
+    source: 'music-tile',
+    scope: 'runtime',
+    summary,
+    payload: {},
+    tags: ['tile.memory.candidate', 'tile.music-tile', 'explicit-teaching'],
+    importance: 'normal',
+    retentionHint: 'default',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    surface: 'hosted',
+  });
+  const unrelated = { ...teaching('Unrelated'), tags: ['tile.memory.candidate', 'tile.other-tile', 'explicit-teaching'] };
+  let getCount = 0;
+  let putCount = 0;
+  const writes = [];
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage: createStorage(),
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+    fetchImpl: async (_url, options = {}) => {
+      if ((options.method || 'GET') === 'GET') {
+        getCount += 1;
+        const records = {
+          'continuity::tile-memory-music-tile-first': teaching('First teaching'),
+          'continuity::tile-memory-other-tile-first': unrelated,
+        };
+        if (getCount > 1) records['continuity::tile-memory-music-tile-concurrent'] = teaching('Concurrent teaching');
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ success: true, data: { schemaVersion: 2, updatedAt: `2026-08-02T00:0${getCount}:00.000Z`, records } });
+          },
+        };
+      }
+      putCount += 1;
+      const body = JSON.parse(options.body || '{}');
+      writes.push(body);
+      if (putCount === 1) {
+        return {
+          ok: false,
+          status: 409,
+          async text() { return JSON.stringify({ success: false, error_code: 'DURABLE_MEMORY_CONFLICT' }); },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async text() { return JSON.stringify({ success: true, data: { ...body, updatedAt: '2026-08-02T00:03:00.000Z' } }); },
+      };
+    },
+  });
+  const memory = createStephanosMemory({ adapter, source: 'music-tile', surface: 'hosted' });
+
+  const result = await memory.deleteRecordsDurably({
+    namespace: 'continuity',
+    idPrefix: 'tile-memory-music-tile-',
+    type: 'operator.preference',
+    tags: ['tile.memory.candidate', 'tile.music-tile', 'explicit-teaching'],
+  });
+
+  assert.equal(result.authorityConfirmed, true);
+  assert.equal(result.deletedCount, 2);
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].records['continuity::tile-memory-music-tile-first'], undefined);
+  assert.equal(writes[1].records['continuity::tile-memory-music-tile-concurrent'], undefined);
+  assert.equal(writes[1].records['continuity::tile-memory-other-tile-first'].summary, 'Unrelated');
+});
+
 test('shared memory adapter rehydrates canonical backend state after conflict instead of silently overwriting newer shared truth', async () => {
   const storage = createStorage();
   let putCount = 0;

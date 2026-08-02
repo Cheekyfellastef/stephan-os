@@ -199,6 +199,8 @@ export function createStephanosSharedMemoryAdapter({
   let backendUpdatedAt = normalizeString(cache.updatedAt);
   let authoritativeState = normalizeMemoryState(cache);
   let authorityHydrated = false;
+  let nextLegacyIntentId = 0;
+  const pendingLegacyStateIntents = [];
 
   function log(event, payload = {}) {
     const target = logger && typeof logger.info === 'function' ? logger : console;
@@ -208,6 +210,32 @@ export function createStephanosSharedMemoryAdapter({
   function updateMirror(nextState) {
     cache = normalizeMemoryState(nextState);
     writeStorageState(storage, mirrorStorageKey, cache);
+  }
+
+  function projectLegacyStateIntents(baseState, intents = pendingLegacyStateIntents) {
+    return intents.reduce(
+      (projected, intent) => rebaseStateIntent(projected, intent.previousState, intent.desiredState),
+      normalizeMemoryState(baseState),
+    );
+  }
+
+  function updateProjectedMirror() {
+    updateMirror(projectLegacyStateIntents(authoritativeState));
+  }
+
+  function coalesceLegacyStateIntentsThrough(boundaryId) {
+    const applicableIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= boundaryId);
+    if (applicableIntents.length <= 1) return;
+    const desiredState = projectLegacyStateIntents(authoritativeState, applicableIntents);
+    for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+      if (pendingLegacyStateIntents[index].id <= boundaryId) pendingLegacyStateIntents.splice(index, 1);
+    }
+    pendingLegacyStateIntents.push({
+      id: boundaryId,
+      previousState: normalizeMemoryState(authoritativeState),
+      desiredState,
+    });
+    pendingLegacyStateIntents.sort((left, right) => left.id - right.id);
   }
 
   async function loadFromBackend() {
@@ -251,7 +279,7 @@ export function createStephanosSharedMemoryAdapter({
     authoritativeState = normalizeMemoryState(response?.json?.data || {});
     backendUpdatedAt = normalizeString(authoritativeState.updatedAt);
     authorityHydrated = true;
-    updateMirror(authoritativeState);
+    updateProjectedMirror();
     hydrationSource = 'shared-backend';
     fallbackReason = conflict ? 'backend-memory-conflict-resolved-by-rehydrate' : '';
     hydrationState = 'ready';
@@ -295,7 +323,7 @@ export function createStephanosSharedMemoryAdapter({
       const backendState = normalizeMemoryState(response?.json?.data || {});
       authoritativeState = backendState;
       authorityHydrated = true;
-      updateMirror(backendState);
+      updateProjectedMirror();
       backendUpdatedAt = normalizeString(backendState.updatedAt);
       hydrationSource = 'shared-backend';
       fallbackReason = '';
@@ -368,23 +396,33 @@ export function createStephanosSharedMemoryAdapter({
   function writeState(state) {
     const previousState = normalizeMemoryState(cache);
     const normalizedState = normalizeMemoryState(state);
-    updateMirror(normalizedState);
-
     if (!preferSharedBackend || typeof fetchImpl !== 'function') {
+      updateMirror(normalizedState);
       lastSaveSource = 'local-mirror-fallback';
       return;
     }
+    const intent = {
+      id: ++nextLegacyIntentId,
+      previousState,
+      desiredState: normalizedState,
+    };
+    pendingLegacyStateIntents.push(intent);
+    updateProjectedMirror();
 
     void enqueueBackendOperation(async () => {
       try {
-        const rebasedState = rebaseStateIntent(authoritativeState, previousState, normalizedState);
+        const applicableIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= intent.id);
+        const rebasedState = projectLegacyStateIntents(authoritativeState, applicableIntents);
         const response = await saveToBackend(rebasedState);
         backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
         authoritativeState = normalizeMemoryState({
           ...rebasedState,
           updatedAt: backendUpdatedAt || rebasedState.updatedAt,
         });
-        updateMirror(authoritativeState);
+        for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+          if (pendingLegacyStateIntents[index].id <= intent.id) pendingLegacyStateIntents.splice(index, 1);
+        }
+        updateProjectedMirror();
         authorityHydrated = true;
         lastSaveSource = 'shared-backend';
         fallbackReason = '';
@@ -399,21 +437,27 @@ export function createStephanosSharedMemoryAdapter({
           stateClass: 'shared-durable-truth',
         });
       } catch (error) {
-        const isConflict = isBackendConflict(error);
-        lastSaveSource = 'local-mirror-fallback';
-        fallbackReason = isConflict
-          ? 'backend-memory-conflict'
-          : normalizeString(error?.code || error?.message, 'backend-save-failed');
-        hydrationState = isConflict ? 'degraded' : hydrationState;
-        if (isConflict) {
+        let conflictRehydrated = false;
+        if (isBackendConflict(error)) {
           try {
             await rehydrateAuthority();
-            const backendState = authoritativeState;
-            updateMirror(backendState);
+            conflictRehydrated = true;
+            for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+              if (pendingLegacyStateIntents[index].id <= intent.id) pendingLegacyStateIntents.splice(index, 1);
+            }
           } catch {
-            updateMirror(previousState);
+            conflictRehydrated = false;
           }
         }
+        lastSaveSource = 'local-mirror-fallback';
+        fallbackReason = conflictRehydrated
+          ? 'backend-memory-conflict-resolved-by-rehydrate'
+          : isBackendConflict(error)
+            ? 'backend-memory-conflict'
+            : normalizeString(error?.code || error?.message, 'backend-save-failed');
+        hydrationState = isBackendConflict(error) ? 'degraded' : hydrationState;
+        if (!conflictRehydrated) coalesceLegacyStateIntentsThrough(intent.id);
+        updateProjectedMirror();
         log('save', {
           sourceUsedOnLoad: hydrationSource,
           sourceUsedOnSave: lastSaveSource,
@@ -429,45 +473,50 @@ export function createStephanosSharedMemoryAdapter({
   async function writeStateDurably(state) {
     const previousState = normalizeMemoryState(cache);
     const normalizedState = normalizeMemoryState(state);
+    const legacyIntentBoundary = nextLegacyIntentId;
     updateMirror(normalizedState);
     if (!preferSharedBackend || typeof fetchImpl !== 'function') {
       updateMirror(previousState);
       throw Object.assign(new Error('Shared durable memory backend is unavailable.'), { code: 'durable-memory-authority-unavailable' });
     }
     try {
-      const response = await enqueueBackendOperation(async () => {
+      return await enqueueBackendOperation(async () => {
         if (!authorityHydrated) await rehydrateAuthority({ conflict: false });
-        const rebasedState = rebaseStateIntent(authoritativeState, previousState, normalizedState);
+        const earlierLegacyIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= legacyIntentBoundary);
+        const authorityWithEarlierIntents = projectLegacyStateIntents(authoritativeState, earlierLegacyIntents);
+        const rebasedState = rebaseStateIntent(authorityWithEarlierIntents, previousState, normalizedState);
         const backendResponse = await saveToBackend(rebasedState, 'memory-runtime-durable');
-        return { backendResponse, rebasedState };
+        backendUpdatedAt = normalizeString(backendResponse?.json?.data?.updatedAt, backendUpdatedAt);
+        authoritativeState = normalizeMemoryState({
+          ...rebasedState,
+          updatedAt: backendUpdatedAt || rebasedState.updatedAt,
+        });
+        for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+          if (pendingLegacyStateIntents[index].id <= legacyIntentBoundary) pendingLegacyStateIntents.splice(index, 1);
+        }
+        updateProjectedMirror();
+        authorityHydrated = true;
+        lastSaveSource = 'shared-backend';
+        fallbackReason = '';
+        hydrationState = 'ready';
+        log('save-confirmed', {
+          sourceUsedOnLoad: hydrationSource,
+          sourceUsedOnSave: lastSaveSource,
+          hydrationCompleted: hydrated,
+          fallbackReason,
+          resolvedBackendUrl: backendResponse.baseUrl,
+          memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
+          stateClass: 'shared-durable-truth',
+        });
+        return {
+          authorityConfirmed: true,
+          source: 'shared-backend',
+          resolvedBackendUrl: backendResponse.baseUrl,
+        };
       });
-      const { backendResponse, rebasedState } = response;
-      backendUpdatedAt = normalizeString(backendResponse?.json?.data?.updatedAt, backendUpdatedAt);
-      authoritativeState = normalizeMemoryState({
-        ...rebasedState,
-        updatedAt: backendUpdatedAt || rebasedState.updatedAt,
-      });
-      updateMirror(authoritativeState);
-      authorityHydrated = true;
-      lastSaveSource = 'shared-backend';
-      fallbackReason = '';
-      hydrationState = 'ready';
-      log('save-confirmed', {
-        sourceUsedOnLoad: hydrationSource,
-        sourceUsedOnSave: lastSaveSource,
-        hydrationCompleted: hydrated,
-        fallbackReason,
-        resolvedBackendUrl: backendResponse.baseUrl,
-        memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
-        stateClass: 'shared-durable-truth',
-      });
-      return {
-        authorityConfirmed: true,
-        source: 'shared-backend',
-        resolvedBackendUrl: backendResponse.baseUrl,
-      };
     } catch (error) {
-      updateMirror(authorityHydrated ? authoritativeState : previousState);
+      if (authorityHydrated) updateProjectedMirror();
+      else updateMirror(previousState);
       lastSaveSource = 'local-mirror-fallback';
       fallbackReason = normalizeString(error?.code || error?.message, 'backend-save-failed');
       throw error;
@@ -482,13 +531,15 @@ export function createStephanosSharedMemoryAdapter({
       throw Object.assign(new Error('Shared durable memory backend is unavailable.'), { code: 'durable-memory-authority-unavailable' });
     }
 
+    const legacyIntentBoundary = nextLegacyIntentId;
     return enqueueBackendOperation(async () => {
       if (!authorityHydrated) {
         await rehydrateAuthority({ conflict: false });
       }
       let attempt = 0;
       while (attempt < 2) {
-        const baseState = normalizeMemoryState(authoritativeState);
+        const earlierLegacyIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= legacyIntentBoundary);
+        const baseState = projectLegacyStateIntents(authoritativeState, earlierLegacyIntents);
         const nextState = normalizeMemoryState(mutate(baseState));
         try {
           const response = await saveToBackend(nextState, source);
@@ -498,7 +549,10 @@ export function createStephanosSharedMemoryAdapter({
             updatedAt: backendUpdatedAt || nextState.updatedAt,
           });
           authorityHydrated = true;
-          updateMirror(authoritativeState);
+          for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+            if (pendingLegacyStateIntents[index].id <= legacyIntentBoundary) pendingLegacyStateIntents.splice(index, 1);
+          }
+          updateProjectedMirror();
           lastSaveSource = 'shared-backend';
           fallbackReason = '';
           hydrationState = 'ready';
@@ -865,6 +919,60 @@ export function createStephanosMemory({
     }
   }
 
+  async function deleteRecordsDurably({
+    namespace = 'default',
+    idPrefix = '',
+    type = '',
+    tags = [],
+  } = {}) {
+    const normalizedNamespace = normalizeString(namespace, 'default');
+    const normalizedIdPrefix = normalizeString(idPrefix);
+    const normalizedType = normalizeString(type);
+    const requiredTags = [...new Set((Array.isArray(tags) ? tags : [tags]).map((tag) => normalizeString(tag)).filter(Boolean))];
+    if (!normalizedIdPrefix || !normalizedType || !requiredTags.length || typeof adapter.mutateStateDurably !== 'function') {
+      return { deletedCount: 0, alreadyEmpty: false, authorityConfirmed: false, receipt: null };
+    }
+    try {
+      const now = new Date().toISOString();
+      let deletedKeys = [];
+      const receipt = await adapter.mutateStateDurably((currentState) => {
+        const nextRecords = { ...(currentState.records || {}) };
+        deletedKeys = Object.entries(nextRecords).flatMap(([key, record]) => {
+          const separator = key.indexOf('::');
+          const recordNamespace = separator >= 0 ? key.slice(0, separator) : 'default';
+          const recordId = separator >= 0 ? key.slice(separator + 2) : key;
+          const recordTags = Array.isArray(record?.tags) ? record.tags : [];
+          const owned = recordNamespace === normalizedNamespace
+            && recordId.startsWith(normalizedIdPrefix)
+            && record?.type === normalizedType
+            && requiredTags.every((tag) => recordTags.includes(tag));
+          if (!owned) return [];
+          delete nextRecords[key];
+          return [key];
+        });
+        return {
+          schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+          updatedAt: now,
+          records: nextRecords,
+        };
+      }, { source: 'memory-owned-record-set-delete-durable' });
+      return {
+        deletedCount: deletedKeys.length,
+        alreadyEmpty: deletedKeys.length === 0,
+        authorityConfirmed: receipt?.authorityConfirmed === true,
+        receipt: toPublicDurableReceipt(receipt),
+      };
+    } catch (error) {
+      return {
+        deletedCount: 0,
+        alreadyEmpty: false,
+        authorityConfirmed: false,
+        receipt: null,
+        error: normalizeString(error?.code || error?.message, 'durable-memory-owned-set-delete-failed'),
+      };
+    }
+  }
+
   return {
     surfaceMode: detectMemorySurfaceMode(),
     adapterMode: adapter.mode || 'custom',
@@ -888,6 +996,7 @@ export function createStephanosMemory({
     updateRecord,
     deleteRecord,
     deleteRecordDurably,
+    deleteRecordsDurably,
   };
 }
 

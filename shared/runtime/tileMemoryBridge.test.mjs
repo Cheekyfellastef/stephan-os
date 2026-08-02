@@ -132,6 +132,38 @@ test('tile memory bridge lists only authoritative owned durable teachings', asyn
   assert.deepEqual(result.records.map((record) => record.id), ['teaching']);
 });
 
+test('tile memory bridge revokes its complete teaching set through one atomic owned-set mutation', async () => {
+  const calls = [];
+  const events = [];
+  const bridge = createTileMemoryBridge({
+    tileId: 'music-tile',
+    stephanosMemory: {
+      async deleteRecordsDurably(filters) {
+        calls.push(filters);
+        return { deletedCount: 3, alreadyEmpty: false, authorityConfirmed: true, receipt: { authorityConfirmed: true } };
+      },
+    },
+    executionLoop: { publishTileEvent(event) { events.push(event); } },
+  });
+
+  const result = await bridge.revokeAllMemoryCandidates({
+    tags: ['explicit-teaching'],
+    reason: 'Operator reset the Music Tile and requested all durable teachings be revoked.',
+  });
+
+  assert.equal(result.revoked, true);
+  assert.equal(result.deletedCount, 3);
+  assert.deepEqual(calls, [{
+    namespace: 'continuity',
+    idPrefix: 'tile-memory-music-tile-',
+    type: 'operator.preference',
+    tags: ['tile.memory.candidate', 'tile.music-tile', 'explicit-teaching'],
+  }]);
+  assert.equal(events[0].action, 'tile.memory.candidate.revoke-set');
+  assert.equal(events[0].result.authorityConfirmed, true);
+  assert.equal(events[0].result.revokedRecordCount, 3);
+});
+
 test('tile memory bridge revokes the original durable record through the guarded adapter', async () => {
   const deleted = [];
   const events = [];
