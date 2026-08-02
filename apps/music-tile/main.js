@@ -12,7 +12,7 @@ import { createTileEventBridge } from '../../shared/runtime/tileEventBridge.js';
 import { reducePresenceState, getPresenceSummary, acknowledgePresenceItem, dismissPresenceItem, approvePresenceAction } from '../../shared/runtime/stephanosPresenceModel.mjs';
 import { emitPresenceEvent as emitGlobalPresenceEvent } from '../../shared/runtime/stephanosPresenceBridge.mjs';
 import { runAiActionLifecycle } from '../../shared/runtime/aiActionLifecycle.mjs';
-import { catalogResultToMusicTileTrack, findExistingCatalogTrack, requestNativeCatalogSearch } from './engine/nativeCatalogSearch.js';
+import { catalogResultActionKey, catalogResultToMusicTileTrack, findExistingCatalogTrack, requestNativeCatalogSearch } from './engine/nativeCatalogSearch.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const RATING_VALUES = [-2, -1, 0, 1, 2];
@@ -131,7 +131,7 @@ function wireIntelligenceExperience() {
   intelligenceUi.nativeSearchResults?.addEventListener('click', (event) => {
     const button = event.target.closest('[data-action="add-native-catalog-result"]');
     if (!button) return;
-    const result = nativeCatalogSearchState.results.find((item) => String(item.universalId) === String(button.dataset.resultId));
+    const result = nativeCatalogSearchState.results.find((item) => catalogResultActionKey(item) === String(button.dataset.resultKey));
     if (result) addNativeCatalogResultToListeningRoom(result);
   });
   intelligenceUi.reasonBtn?.addEventListener('click', () => {
@@ -259,7 +259,7 @@ function renderNativeCatalogResults() {
       <div class="native-catalog-result__actions">
         ${spotifyHref ? `<a class="media-btn spotify" target="_blank" rel="noopener noreferrer" href="${escapeHtml(spotifyHref)}">${spotifyLabel}</a>` : ''}
         ${evidenceLink}
-        <button type="button" data-action="add-native-catalog-result" data-result-id="${escapeHtml(result.universalId || '')}"${existing ? ' disabled' : ''}>${existing ? 'In Listening Room' : 'Add to Listening Room'}</button>
+        <button type="button" data-action="add-native-catalog-result" data-result-key="${escapeHtml(catalogResultActionKey(result))}"${existing ? ' disabled' : ''}>${existing ? 'In Listening Room' : 'Add to Listening Room'}</button>
       </div>
     </article>`;
   }).join('');

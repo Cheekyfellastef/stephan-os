@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  catalogResultActionKey,
   catalogResultToMusicTileTrack,
   DEFAULT_BROWSER_TIMEOUT_MS,
   DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_MS,
@@ -26,6 +27,14 @@ test('catalog results become stable universal cards and deduplicate', () => {
   assert.equal(track.candidateVerificationStatus, 'search-only');
   assert.equal(findExistingCatalogTrack([track], result), track);
   assert.equal(findExistingCatalogTrack([track], { universalId: 'spotify:track:different', provider: 'spotify', providerItemId: 'different', title: 'Track', artist: 'Artist' }), track);
+});
+
+test('catalogue action rows keep provider-specific identity when universal IDs match', () => {
+  const first = { universalId: 'isrc:SAME', provider: 'spotify', providerItemId: 'track-one' };
+  const second = { universalId: 'isrc:SAME', provider: 'spotify', providerItemId: 'track-two' };
+  assert.notEqual(catalogResultActionKey(first), catalogResultActionKey(second));
+  assert.match(main, /catalogResultActionKey\(item\) === String\(button\.dataset\.resultKey\)/);
+  assert.match(main, /data-result-key="\$\{escapeHtml\(catalogResultActionKey\(result\)\)\}"/);
 });
 
 test('catalogue identity never claims browser playback verification', () => {

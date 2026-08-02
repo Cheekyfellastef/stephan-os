@@ -6,6 +6,12 @@ export function normalizeNativeCatalogQuery(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY_LENGTH);
 }
 
+export function catalogResultActionKey(result = {}) {
+  const provider = String(result.provider || 'unknown').trim().toLowerCase();
+  const providerItemId = String(result.providerItemId || result.universalId || '').trim();
+  return `${provider}:${providerItemId}`;
+}
+
 export async function requestNativeCatalogSearch(query, { fetchImpl = globalThis.fetch, limit = 5, timeoutMs = DEFAULT_BROWSER_TIMEOUT_MS, signal } = {}) {
   const normalizedQuery = normalizeNativeCatalogQuery(query);
   if (!normalizedQuery) return { ok: false, error: 'Type a song, artist or musical direction.' };
