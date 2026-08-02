@@ -27,6 +27,18 @@ test('workspace consumes the canonical shared catalogue and exposes truth and pr
   assert.ok(fs.existsSync(path.join(repoRoot, 'VR-Research-Lab', 'knowledge-sources', 'starfield-vr-reference-lab', 'README.md')));
 });
 
+test('workspace DOM contract provides every node referenced by the controller', () => {
+  const html = fs.readFileSync(path.join(appRoot, 'index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  const referencedIds = [...source.matchAll(/document\.getElementById\('([^']+)'\)/g)]
+    .map((match) => match[1]);
+  assert.ok(referencedIds.length >= 14);
+  assert.equal(new Set(referencedIds).size, referencedIds.length);
+  for (const id of referencedIds) {
+    assert.equal(html.includes(`id="${id}"`), true, `missing DOM node: ${id}`);
+  }
+});
+
 test('truth boundary renders every mandatory promotion-evidence gate', () => {
   const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
   assert.match(
