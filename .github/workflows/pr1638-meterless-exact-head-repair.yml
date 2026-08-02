@@ -6,6 +6,7 @@ on:
       - fix/battle-bridge-recovery-health-authority
     paths:
       - '.github/workflows/pr1638-meterless-exact-head-repair.yml'
+      - 'scripts/pr1638-meterless-exact-head-repair.py'
 
 permissions:
   contents: write
@@ -54,7 +55,7 @@ jobs:
           npm run stephanos:guard:scripts
           git diff --check
 
-      - name: Commit repaired source and regression
+      - name: Commit repaired source and regressions
         shell: bash
         run: |
           git config user.name "stephanos-meterless-builder[bot]"
@@ -64,5 +65,5 @@ jobs:
             scripts/windows/probe-battle-bridge-recovery-mesh.ps1 \
             scripts/battle-bridge-recovery-mesh-installer.test.mjs
           git diff --cached --check
-          git commit -m "Bind backend exact-head proof to clean tracked source"
+          git commit -m "Bind backend recovery to exact clean source"
           git push origin HEAD:${{ github.ref_name }}
