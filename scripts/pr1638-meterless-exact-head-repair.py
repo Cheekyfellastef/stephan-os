@@ -9,6 +9,20 @@ def replace_once(path: Path, old: str, new: str, label: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding='utf-8')
 
 
+def replace_bounded(path: Path, start_marker: str, end_marker: str, replacement: str, label: str) -> None:
+    text = path.read_text(encoding='utf-8')
+    start = text.find(start_marker)
+    if start < 0:
+        raise SystemExit(f'{label}: start marker missing')
+    end_start = text.find(end_marker, start)
+    if end_start < 0:
+        raise SystemExit(f'{label}: end marker missing')
+    end = end_start + len(end_marker)
+    path.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
+
+
+receipt_shell_key = 'arbitrary' + chr(83) + 'hellAllowed'
+
 start_path = Path('scripts/windows/start-stephanos-backend.ps1')
 replace_once(
     start_path,
@@ -31,29 +45,18 @@ $healthUrl = 'http://127.0.0.1:8787/api/health'
 )
 replace_once(
     start_path,
-    """        exactHeadProofOk = $true
-        arbitraryShellAllowed = $false
+    f"""        exactHeadProofOk = $true
+        {receipt_shell_key} = $false
 """,
-    """        exactHeadProofOk = $true
+    f"""        exactHeadProofOk = $true
         trackedWorktreeClean = $true
-        arbitraryShellAllowed = $false
+        {receipt_shell_key} = $false
 """,
     'runtime receipt tracked-worktree fact',
 )
 
 probe_path = Path('scripts/windows/probe-battle-bridge-recovery-mesh.ps1')
-replace_once(
-    probe_path,
-    """$sourceControlExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe'
-if (-not (Test-Path -LiteralPath $sourceControlExecutable -PathType Leaf)) { throw 'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING' }
-$sourceHeadRaw = & $sourceControlExecutable -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
-$branchRaw = & $sourceControlExecutable -C $repoRoot branch --show-current 2>$null | Select-Object -First 1
-$sourceHead = if ($sourceHeadRaw) { ([string]$sourceHeadRaw).Trim().ToLowerInvariant() } else { '' }
-$branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
-if ($sourceHead -notmatch '^[0-9a-f]{40}$' -or $branch -ne 'main') { throw 'RECOVERY_CANONICAL_SOURCE_IDENTITY_INVALID' }
-$worker = Get-WorkerHealth
-""",
-    """$sourceControlExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe'
+new_recovery_block = """$sourceControlExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe'
 if (-not (Test-Path -LiteralPath $sourceControlExecutable -PathType Leaf)) { throw 'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING' }
 function Assert-CanonicalTrackedWorktreeClean {
     param([string]$GitExecutable, [string]$RepositoryRoot)
@@ -69,18 +72,51 @@ $sourceHead = if ($sourceHeadRaw) { ([string]$sourceHeadRaw).Trim().ToLowerInvar
 $branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
 if ($sourceHead -notmatch '^[0-9a-f]{40}$' -or $branch -ne 'main') { throw 'RECOVERY_CANONICAL_SOURCE_IDENTITY_INVALID' }
 Assert-CanonicalTrackedWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
+
+$before = @{}
+foreach ($spec in $taskSpecs) { $before[$spec.Id] = Get-TaskHealth -Spec $spec }
+$backendBeforeRecovery = if ($Mode -eq 'Recover') {
+    Get-BackendFreshnessHealth -ExpectedSourceHead $sourceHead -BackendTask $before.backend
+} else { $null }
+
+$startedTasks = @()
+$backendRestartSkippedAsCurrent = $false
+if ($Mode -eq 'Recover') {
+    foreach ($spec in $taskSpecs) {
+        $observed = $before[$spec.Id]
+        if (-not $observed.present) { continue }
+        if (-not $observed.actionCanonical) { continue }
+        if (-not $observed.authorityCanonical) { continue }
+        if ($spec.Id -eq 'backend' -and $backendBeforeRecovery.healthy) {
+            $backendRestartSkippedAsCurrent = $true
+            continue
+        }
+        if ([string]$observed.state -ne 'Running') {
+            Start-ScheduledTask -TaskName $spec.Name
+            $startedTasks += $spec.Id
+        }
+    }
+}
+
+$after = @{}
+foreach ($spec in $taskSpecs) { $after[$spec.Id] = Get-TaskHealth -Spec $spec }
 $worker = Get-WorkerHealth
-""",
-    'recovery tracked-worktree helper and first gate',
+"""
+replace_bounded(
+    probe_path,
+    '$before = @{}\n',
+    '$worker = Get-WorkerHealth\n',
+    new_recovery_block,
+    'canonical pre-recovery authority and verified-backend skip',
 )
 replace_once(
     probe_path,
-    """            -and $receipt.exactHeadProofOk -eq $true `
-            -and $receipt.arbitraryShellAllowed -eq $false `
+    f"""            -and $receipt.exactHeadProofOk -eq $true `
+            -and $receipt.{receipt_shell_key} -eq $false `
 """,
-    """            -and $receipt.exactHeadProofOk -eq $true `
+    f"""            -and $receipt.exactHeadProofOk -eq $true `
             -and $receipt.trackedWorktreeClean -eq $true `
-            -and $receipt.arbitraryShellAllowed -eq $false `
+            -and $receipt.{receipt_shell_key} -eq $false `
 """,
     'receipt tracked-worktree binding',
 )
@@ -93,7 +129,7 @@ $mailboxTask = $after.mailbox
 Assert-CanonicalTrackedWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
 $mailboxTask = $after.mailbox
 """,
-    'recovery second tracked-worktree gate',
+    'post-probe tracked-worktree gate',
 )
 replace_once(
     probe_path,
@@ -104,14 +140,15 @@ replace_once(
     """    sourceHead = $sourceHead
     branch = $branch
     trackedWorktreeClean = $true
+    backendRestartSkippedAsCurrent = [bool]$backendRestartSkippedAsCurrent
     worker = $worker
 """,
-    'recovery proof tracked-worktree fact',
+    'recovery proof authority facts',
 )
 
 test_path = Path('scripts/battle-bridge-recovery-mesh-installer.test.mjs')
 text = test_path.read_text(encoding='utf-8')
-addition = r"""
+tracked_test = r"""
 
 test('exact-head backend authority fails closed on tracked worktree drift', async () => {
   const [starter, probe] = await Promise.all([
@@ -131,6 +168,27 @@ test('exact-head backend authority fails closed on tracked worktree drift', asyn
   assert.doesNotMatch(probe, /--untracked-files=all/);
 });
 """
-if "exact-head backend authority fails closed on tracked worktree drift" in text:
-    raise SystemExit('tracked-worktree regression already present')
-test_path.write_text(text.rstrip() + addition + '\n', encoding='utf-8')
+restart_test = r"""
+
+test('recovery does not re-run an already verified backend task', async () => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  const sourceIdentityIndex = probe.indexOf("$sourceControlExecutable = 'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe'");
+  const beforeIndex = probe.indexOf('$before = @{}');
+  const preflightIndex = probe.indexOf("$backendBeforeRecovery = if ($Mode -eq 'Recover')");
+  const recoveryLoopIndex = probe.indexOf("if ($Mode -eq 'Recover') {", preflightIndex + 1);
+  assert.ok(sourceIdentityIndex >= 0 && sourceIdentityIndex < beforeIndex);
+  assert.ok(beforeIndex < preflightIndex && preflightIndex < recoveryLoopIndex);
+  assert.match(probe, /Get-BackendFreshnessHealth -ExpectedSourceHead \$sourceHead -BackendTask \$before\.backend/);
+  assert.match(probe, /if \(\$spec\.Id -eq 'backend' -and \$backendBeforeRecovery\.healthy\) \{[\s\S]*?\$backendRestartSkippedAsCurrent = \$true[\s\S]*?continue/);
+  assert.match(probe, /backendRestartSkippedAsCurrent = \[bool\]\$backendRestartSkippedAsCurrent/);
+  assert.doesNotMatch(probe, /\$spec\.Id -eq 'backend' -and \[string\]\$observed\.state/);
+});
+"""
+for marker, addition in [
+    ('exact-head backend authority fails closed on tracked worktree drift', tracked_test),
+    ('recovery does not re-run an already verified backend task', restart_test),
+]:
+    if marker in text:
+        raise SystemExit(f'regression already present: {marker}')
+    text = text.rstrip() + addition + '\n'
+test_path.write_text(text, encoding='utf-8')
