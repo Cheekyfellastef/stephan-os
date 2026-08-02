@@ -855,6 +855,7 @@ test('conflicted legacy intent is retried and preserved ahead of later queued wr
   assert.equal(writes[2].records['continuity::second'].summary, 'Second pending record');
   assert.equal(memory.getRecord({ namespace: 'continuity', id: 'first' })?.summary, 'First pending record');
   assert.equal(memory.getRecord({ namespace: 'continuity', id: 'second' })?.summary, 'Second pending record');
+  assert.equal(adapter.diagnostics().stateClass, 'shared-durable-truth');
 });
 
 test('atomic owned-set deletion rebases over a concurrent teaching and preserves unrelated records', async () => {
@@ -1015,5 +1016,6 @@ test('shared memory adapter retains its projected local intent after an exhauste
   assert.equal(adapter.readState().records['continuity::canonical'], undefined);
   assert.equal(adapter.readState().records['continuity::local-change'].summary, 'Stale local change');
   assert.equal(adapter.diagnostics().sourceUsedOnSave, 'local-mirror-fallback');
+  assert.equal(adapter.diagnostics().stateClass, 'local-fallback-mirror');
   assert.equal(adapter.diagnostics().fallbackReason, 'backend-memory-conflict-after-retry');
 });

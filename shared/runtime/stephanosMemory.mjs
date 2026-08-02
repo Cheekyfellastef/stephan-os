@@ -599,10 +599,13 @@ export function createStephanosSharedMemoryAdapter({
     refreshAuthority,
     hydrate,
     diagnostics() {
-      return {
-        stateClass: lastSaveSource === 'shared-backend' || hydrationSource === 'shared-backend'
+      const stateClass = lastSaveSource === 'local-mirror-fallback'
+        ? 'local-fallback-mirror'
+        : lastSaveSource === 'shared-backend' || hydrationSource === 'shared-backend'
           ? 'shared-durable-truth'
-          : 'local-fallback-mirror',
+          : 'local-fallback-mirror';
+      return {
+        stateClass,
         sourceUsedOnLoad: hydrationSource,
         sourceUsedOnSave: lastSaveSource,
         hydrationCompleted: hydrated,
