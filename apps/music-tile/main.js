@@ -152,7 +152,7 @@ function buildMusicAiStatusView(diagnostics = {}) {
   return { statusKind, headline, details:'Rule-based parser remains available.', badge, providerMetadataHelp:'The Music Tile can reach the AI backend, but this embedded tile cannot currently read the selected provider/model metadata. Provider details will appear when route truth is available.', shouldShowRuleFallback:true, diagnosticsRows:[`Endpoint: ${runtime.endpointUrl}`,`Backend base: ${runtime.backendBaseUrl}`,`Last HTTP status: ${lastStatus ?? 'n/a'}`,`Last error: ${lastError || 'none'}`,`Request reached backend: ${reached===true?'yes':reached===false?'no':'unknown'}`,`Backend responded: ${responded===true?'yes':responded===false?'no':'unknown'}`,`Response mode: ${responseMode}`,`Route/provider metadata: ${status.routeKind}/${status.provider}`] };
 }
 
-const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false }); refreshVerifiedSpotifyLinks(); setInterval(() => { if (!document.hidden) refreshVerifiedSpotifyLinks(); }, SPOTIFY_LINK_FEED_POLL_MS);
+const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false }); refreshVerifiedSpotifyLinks(); void hydrateDurableConversationTeachings(); setInterval(() => { if (!document.hidden) refreshVerifiedSpotifyLinks(); }, SPOTIFY_LINK_FEED_POLL_MS);
 
 function updateAiStatus(extra = {}) {
   if (!ui.aiStatusText) return;
@@ -346,6 +346,95 @@ function getConversationCurrentTrack() {
 function getConversationTeachings() {
   return (Array.isArray(state.musicConversationTeachings) ? state.musicConversationTeachings : [])
     .filter((entry) => entry?.status === 'active');
+}
+
+function teachingFromDurableRecord(record = {}) {
+  const value = record?.payload?.value && typeof record.payload.value === 'object' ? record.payload.value : {};
+  const keyId = String(record?.payload?.key || '').split('.').pop();
+  const id = String(value.id || keyId || '').trim();
+  const trait = String(value.trait || '').trim().slice(0, 120);
+  const polarity = value.polarity === 'negative' ? 'negative' : 'positive';
+  if (!id || !trait || value.status !== 'active') return null;
+  return {
+    id,
+    trait,
+    polarity,
+    status: 'active',
+    source: 'explicit-conversation',
+    weightDelta: Math.max(0, Number(value.weightDelta || (polarity === 'negative' ? 0.8 : 0.6))),
+    createdAt: String(value.createdAt || record.createdAt || new Date().toISOString()),
+    memoryPromoted: true,
+    memoryPersisted: true,
+    memoryRecord: { namespace: record.namespace || 'continuity', id: record.id },
+  };
+}
+
+async function synchronizeDurableConversationTeachings({ persist = true, render = true } = {}) {
+  const result = await tileMemoryBridge?.listDurableMemoryCandidates?.({ tags: ['explicit-teaching'] });
+  if (result?.authorityConfirmed !== true) return { authorityConfirmed: false, changed: false };
+  const canonical = (Array.isArray(result.records) ? result.records : [])
+    .map(teachingFromDurableRecord)
+    .filter(Boolean);
+  const canonicalRecordKeys = new Set(canonical.map((entry) => `${entry.memoryRecord.namespace}::${entry.memoryRecord.id}`));
+  let changed = false;
+
+  for (const teaching of getConversationTeachings().filter((entry) => entry.memoryPersisted === true)) {
+    const recordKey = `${teaching.memoryRecord?.namespace || 'continuity'}::${teaching.memoryRecord?.id || ''}`;
+    if (canonicalRecordKeys.has(recordKey)) continue;
+    const removal = removeTasteTeachingContribution(state.tasteDNA, teaching, state.musicConversationTeachings);
+    state.tasteDNA = removal.tasteDNA;
+    teaching.status = 'forgotten';
+    teaching.forgottenAt = new Date().toISOString();
+    teaching.memoryPersisted = false;
+    teaching.memoryPromoted = false;
+    teaching.memoryRecord = null;
+    changed = true;
+  }
+
+  for (const canonicalTeaching of canonical) {
+    const existing = (state.musicConversationTeachings || []).find((entry) => entry.id === canonicalTeaching.id);
+    if (existing?.status === 'active') {
+      const previousRecordKey = `${existing.memoryRecord?.namespace || 'continuity'}::${existing.memoryRecord?.id || ''}`;
+      const canonicalRecordKey = `${canonicalTeaching.memoryRecord.namespace}::${canonicalTeaching.memoryRecord.id}`;
+      changed = changed || existing.memoryPersisted !== true || previousRecordKey !== canonicalRecordKey;
+      existing.memoryPromoted = true;
+      existing.memoryPersisted = true;
+      existing.memoryRecord = canonicalTeaching.memoryRecord;
+      continue;
+    }
+    const activeTeachings = getConversationTeachings();
+    const projection = applyTasteTeachingContribution(state.tasteDNA, canonicalTeaching, activeTeachings, canonicalTeaching.createdAt);
+    canonicalTeaching.baselineTrait = projection.baselineTrait;
+    activeTeachings.filter((entry) => entry.trait === canonicalTeaching.trait && !entry.baselineTrait)
+      .forEach((entry) => { entry.baselineTrait = projection.baselineTrait; });
+    state.tasteDNA = projection.tasteDNA;
+    if (existing) Object.assign(existing, canonicalTeaching);
+    else state.musicConversationTeachings = [...(state.musicConversationTeachings || []), canonicalTeaching];
+    changed = true;
+  }
+
+  if (changed) {
+    state.musicConversationTeachings = retainConversationTeachingHistory(state.musicConversationTeachings, 100);
+    state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
+    if (persist) saveState();
+    if (render) {
+      renderTasteDNA();
+      renderCandidates();
+      renderMusicIntelligenceCentre();
+      renderMusicConversation();
+    }
+  }
+  return { authorityConfirmed: true, changed };
+}
+
+async function hydrateDurableConversationTeachings() {
+  if (!beginMusicMemoryMutation()) return false;
+  try {
+    const result = await synchronizeDurableConversationTeachings();
+    return result.authorityConfirmed === true;
+  } finally {
+    endMusicMemoryMutation();
+  }
 }
 
 function setMusicConversationBusy(busy, status = '') {
@@ -548,8 +637,8 @@ async function applyConversationTeaching() {
   try {
     memoryResult = await tileMemoryBridge?.submitMemoryCandidateDurably?.({
       key: `music.taste_dna.conversation.${teaching.id}`,
-      value: { trait: teaching.trait, polarity: teaching.polarity, status: teaching.status },
-      type: 'preference',
+      value: { id: teaching.id, trait: teaching.trait, polarity: teaching.polarity, status: teaching.status, weightDelta: teaching.weightDelta, createdAt: teaching.createdAt },
+      type: 'operator.preference',
       tags: ['music', 'taste-dna', 'explicit-teaching'],
       sourceRef: 'apps/music-tile/main.js#applyConversationTeaching',
       reason: 'Operator explicitly confirmed a Music Tile conversation teaching.',
@@ -610,9 +699,17 @@ async function applyConversationTeaching() {
 async function forgetConversationTeaching(teachingId) {
   if (!beginMusicMemoryMutation()) return;
   const operationGeneration = musicOperationGeneration;
-  const teaching = (state.musicConversationTeachings || []).find((entry) => entry.id === teachingId && entry.status === 'active');
   try {
+    const synchronization = await synchronizeDurableConversationTeachings({ render: false });
+    if (!isCurrentMusicOperation(operationGeneration)) return;
+    const teaching = (state.musicConversationTeachings || []).find((entry) => entry.id === teachingId && entry.status === 'active');
     if (!teaching) return;
+    if (teaching.memoryPersisted && synchronization.authorityConfirmed !== true) {
+      musicConversationState.answer = `I could not safely forget “${teaching.trait}” because the shared teaching index could not be confirmed. Nothing was changed.`;
+      musicConversationState.mode = 'forget blocked';
+      renderMusicConversation();
+      return;
+    }
     if (teaching.memoryPersisted) {
       const revocation = await tileMemoryBridge?.revokeMemoryCandidate?.({
         record: teaching.memoryRecord,
@@ -1153,6 +1250,10 @@ async function buildJourney({ operationGeneration = musicOperationGeneration } =
 function startJourney() { const artists = parseArtists(ui.artistInput?.value || ''); if (!artists.length) { ui.status.textContent = 'Enter an artist to build a journey.'; return; } const term = artists[0]; if (!state.candidates.length) state.candidates = rankCandidatesByTaste(buildSeededCandidates(term), buildTasteWeightsForState()); if (!state.listeningDeck.length) state.listeningDeck = state.candidates.slice(0, 3); ui.status.textContent = `Starting journey for: ${term}.`; saveState(); renderAll(); }
 function addTrackByUrl() { const raw = String(ui.addTrackUrlInput?.value || '').trim(); if (!raw) return; const spotify = resolveSpotifyReference(raw); const youtube = normalizeYouTubeUrl(raw); if (spotify.valid && spotify.type !== 'track') { ui.status.textContent = 'Paste a Spotify track URL to create a playable card.'; return; } if (!spotify.valid && !youtube) { ui.status.textContent = spotify.reason === 'search-url' ? 'This is a Spotify search link, not a playable track link. Open a result in Spotify and paste the track URL.' : 'Paste a valid Spotify track URL or YouTube URL.'; return; } const track = { id: `manual-${Date.now()}`, title: spotify.valid ? 'Spotify track' : 'YouTube track', artist: 'Unknown', spotifyUrl: spotify.valid ? spotify.openUrl : null, spotifyUri: spotify.valid ? spotify.uri : null, candidateVerificationStatus: spotify.valid ? AI_CANDIDATE_STATUSES.userConfirmed : AI_CANDIDATE_STATUSES.unverified, youtubeUrl: youtube || null, lane: 'Manual URL import' }; state.listeningDeck.unshift(track); ui.addTrackUrlInput.value = ''; ui.status.textContent = spotify.valid ? 'Spotify track verified. Listening Deck card updated.' : 'Add track by URL: added YouTube URL to Listening Deck.'; saveState(); renderListeningDeck(); }
 async function revokeDurableConversationTeachingsForReset() {
+  const synchronization = await synchronizeDurableConversationTeachings({ render: false });
+  if (synchronization.authorityConfirmed !== true) {
+    return { ok: false, teaching: { trait: 'the shared teaching index' } };
+  }
   const durableTeachings = (state.musicConversationTeachings || [])
     .filter((teaching) => teaching?.status === 'active' && teaching?.memoryPersisted === true);
   if (!durableTeachings.length) return { ok: true };

@@ -570,6 +570,99 @@ test('durable mutation mirrors the rebased authority after its own conflict', as
   assert.equal(memory.getRecord({ namespace: 'continuity', id: 'remote' })?.summary, 'Conflict winner');
 });
 
+test('authority refresh mirrors canonical records before a later durable mutation failure', async () => {
+  const remoteRecord = {
+    schemaVersion: 2,
+    type: 'operator.preference',
+    source: 'other-device',
+    scope: 'runtime',
+    summary: 'Remote teaching',
+    payload: {},
+    tags: ['tile.memory.candidate', 'tile.music-tile', 'explicit-teaching'],
+    importance: 'normal',
+    retentionHint: 'default',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    surface: 'hosted',
+  };
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage: createStorage(),
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+    fetchImpl: async (_url, options = {}) => {
+      if ((options.method || 'GET') === 'GET') {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ success: true, data: {
+              schemaVersion: 2,
+              updatedAt: '2026-08-02T00:01:00.000Z',
+              records: { 'continuity::remote-teaching': remoteRecord },
+            } });
+          },
+        };
+      }
+      return {
+        ok: false,
+        status: 503,
+        async text() { return JSON.stringify({ success: false, error: 'write unavailable' }); },
+      };
+    },
+  });
+  const memory = createStephanosMemory({ adapter, source: 'music-tile', surface: 'hosted' });
+
+  await assert.rejects(memory.saveRecordDurably({
+    namespace: 'continuity',
+    id: 'new-teaching',
+    type: 'operator.preference',
+    summary: 'New teaching',
+  }));
+
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'remote-teaching' })?.summary, 'Remote teaching');
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'new-teaching' }), null);
+});
+
+test('durable record listing refreshes canonical authority before filtering owned records', async () => {
+  const record = {
+    schemaVersion: 2,
+    type: 'operator.preference',
+    source: 'music-tile',
+    scope: 'runtime',
+    summary: 'Shared music teaching',
+    payload: { value: { id: 'music-teaching-remote', trait: 'ghost vocals', polarity: 'positive', status: 'active' } },
+    tags: ['tile.memory.candidate', 'tile.music-tile', 'explicit-teaching'],
+    importance: 'normal',
+    retentionHint: 'default',
+    createdAt: '2026-08-02T00:00:00.000Z',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    surface: 'hosted',
+  };
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage: createStorage(),
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({ success: true, data: {
+          schemaVersion: 2,
+          updatedAt: '2026-08-02T00:01:00.000Z',
+          records: { 'continuity::remote-teaching': record },
+        } });
+      },
+    }),
+  });
+  const memory = createStephanosMemory({ adapter, source: 'music-tile', surface: 'hosted' });
+
+  const result = await memory.listRecordsDurably({ namespace: 'continuity', type: 'operator.preference', tag: 'tile.music-tile' });
+
+  assert.equal(result.authorityConfirmed, true);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].id, 'remote-teaching');
+});
+
 test('shared memory adapter rehydrates canonical backend state after conflict instead of silently overwriting newer shared truth', async () => {
   const storage = createStorage();
   let putCount = 0;

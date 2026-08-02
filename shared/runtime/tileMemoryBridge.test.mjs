@@ -104,6 +104,34 @@ test('durable tile submission waits for backend authority before reporting persi
   assert.doesNotMatch(JSON.stringify(events[0]), /dark club pressure|Operator explicitly confirmed/);
 });
 
+test('tile memory bridge lists only authoritative owned durable teachings', async () => {
+  const bridge = createTileMemoryBridge({
+    tileId: 'music-tile',
+    stephanosMemory: {
+      async listRecordsDurably(filters) {
+        assert.deepEqual(filters, {
+          namespace: 'continuity',
+          type: 'operator.preference',
+          tag: 'tile.music-tile',
+        });
+        return {
+          authorityConfirmed: true,
+          receipt: { authorityConfirmed: true },
+          records: [
+            { id: 'teaching', tags: ['tile.music-tile', 'explicit-teaching'] },
+            { id: 'other', tags: ['tile.music-tile'] },
+          ],
+        };
+      },
+    },
+  });
+
+  const result = await bridge.listDurableMemoryCandidates({ tags: ['explicit-teaching'] });
+
+  assert.equal(result.authorityConfirmed, true);
+  assert.deepEqual(result.records.map((record) => record.id), ['teaching']);
+});
+
 test('tile memory bridge revokes the original durable record through the guarded adapter', async () => {
   const deleted = [];
   const events = [];

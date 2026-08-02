@@ -196,12 +196,21 @@ test('conversation uses canonical AI lifecycle and governed memory bridge', () =
   assert.match(main, /runAiActionLifecycle\(\{/);
   assert.match(main, /askMusicAi\('music-conversation', payload\)/);
   assert.match(main, /await tileMemoryBridge\?\.submitMemoryCandidateDurably\?\.\(\{/);
+  assert.match(main, /type: 'operator\.preference'/);
   assert.match(main, /memoryResult\?\.authorityReceipt\?\.authorityConfirmed === true/);
   assert.match(main, /await tileMemoryBridge\?\.revokeMemoryCandidate\?\.\(\{/);
   assert.match(main, /applyTasteTeachingContribution\(state\.tasteDNA, teaching, activeTeachings/);
   assert.match(main, /explicit conversation teaching/);
   assert.match(main, /data-conversation-action="forget"/);
   assert.doesNotMatch(main, /summary: `(?:Explicit music teaching applied|Music teaching (?:blocked|forget blocked|forgotten)):\s*\$\{teaching\.trait\}`/);
+});
+
+test('cross-device teachings hydrate from the canonical owned-record index before Forget and Reset', () => {
+  assert.match(main, /void hydrateDurableConversationTeachings\(\)/);
+  assert.match(main, /listDurableMemoryCandidates\?\.\(\{ tags: \['explicit-teaching'\] \}\)/);
+  assert.match(main, /function teachingFromDurableRecord/);
+  assert.match(main, /await synchronizeDurableConversationTeachings\(\{ render: false \}\)/);
+  assert.match(main, /revokeDurableConversationTeachingsForReset[\s\S]*await synchronizeDurableConversationTeachings\(\{ render: false \}\)/);
 });
 
 test('teaching and forgetting avoid full redraws that would interrupt playback', () => {

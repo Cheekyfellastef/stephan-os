@@ -233,6 +233,27 @@ export function createTileMemoryBridge({
     };
   }
 
+  async function listDurableMemoryCandidates({ tags = [] } = {}) {
+    const memoryRuntime = stephanosMemory || resolveTileHostRuntime('stephanosMemory');
+    if (typeof memoryRuntime?.listRecordsDurably !== 'function') {
+      return { records: [], authorityConfirmed: false };
+    }
+    const result = await memoryRuntime.listRecordsDurably({
+      namespace: 'continuity',
+      type: 'operator.preference',
+      tag: `tile.${normalizedTileId}`,
+    });
+    const requiredTags = normalizeTags(tags);
+    const records = result?.authorityConfirmed === true
+      ? (Array.isArray(result.records) ? result.records : []).filter((record) => requiredTags.every((tag) => (record.tags || []).includes(tag)))
+      : [];
+    return {
+      records,
+      authorityConfirmed: result?.authorityConfirmed === true,
+      authorityReceipt: result?.receipt || null,
+    };
+  }
+
   async function revokeMemoryCandidate({ record = {}, reason = '', sourceRef = '' } = {}) {
     const memoryRuntime = stephanosMemory || resolveTileHostRuntime('stephanosMemory');
     const eventRuntime = executionLoop || resolveTileHostRuntime('StephanosExecutionLoop');
@@ -325,5 +346,6 @@ export function createTileMemoryBridge({
     revokeMemoryCandidate,
     submitMemoryCandidate,
     submitMemoryCandidateDurably,
+    listDurableMemoryCandidates,
   };
 }

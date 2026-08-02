@@ -251,10 +251,26 @@ export function createStephanosSharedMemoryAdapter({
     authoritativeState = normalizeMemoryState(response?.json?.data || {});
     backendUpdatedAt = normalizeString(authoritativeState.updatedAt);
     authorityHydrated = true;
+    updateMirror(authoritativeState);
     hydrationSource = 'shared-backend';
     fallbackReason = conflict ? 'backend-memory-conflict-resolved-by-rehydrate' : '';
     hydrationState = 'ready';
     return response;
+  }
+
+  async function refreshAuthority() {
+    if (!preferSharedBackend || typeof fetchImpl !== 'function') {
+      throw Object.assign(new Error('Shared durable memory backend is unavailable.'), { code: 'durable-memory-authority-unavailable' });
+    }
+    return enqueueBackendOperation(async () => {
+      const response = await rehydrateAuthority({ conflict: false });
+      hydrated = true;
+      return {
+        authorityConfirmed: true,
+        source: 'shared-backend',
+        resolvedBackendUrl: response.baseUrl,
+      };
+    });
   }
 
   function enqueueBackendOperation(operationFactory) {
@@ -490,6 +506,7 @@ export function createStephanosSharedMemoryAdapter({
     writeState,
     writeStateDurably,
     mutateStateDurably,
+    refreshAuthority,
     hydrate,
     diagnostics() {
       return {
@@ -560,6 +577,27 @@ export function createStephanosMemory({
       }
       return true;
     });
+  }
+
+  async function listRecordsDurably(filters = {}) {
+    if (typeof adapter.refreshAuthority !== 'function') {
+      return { records: [], authorityConfirmed: false, receipt: null };
+    }
+    try {
+      const receipt = await adapter.refreshAuthority();
+      return {
+        records: receipt?.authorityConfirmed === true ? listRecords(filters) : [],
+        authorityConfirmed: receipt?.authorityConfirmed === true,
+        receipt: toPublicDurableReceipt(receipt),
+      };
+    } catch (error) {
+      return {
+        records: [],
+        authorityConfirmed: false,
+        receipt: null,
+        error: normalizeString(error?.code || error?.message, 'durable-memory-read-failed'),
+      };
+    }
   }
 
   function saveRecord({
@@ -814,6 +852,7 @@ export function createStephanosMemory({
     createRecord: saveRecord,
     getRecord,
     listRecords,
+    listRecordsDurably,
     updateRecord,
     deleteRecord,
     deleteRecordDurably,
