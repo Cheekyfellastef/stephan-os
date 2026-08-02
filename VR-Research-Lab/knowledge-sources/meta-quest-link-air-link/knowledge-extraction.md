@@ -7,16 +7,34 @@
 - Wireless mode: Air Link
 - Primary operator headset: Meta Quest 3
 - Primary operator route: Battle Bridge to Quest 3 over Wi-Fi
+- Wired Meta Link availability: **not available to the operator**
 - Snapshot date: 2026-08-02
 - Licence class: commercial proprietary
 
 This is an operational and vendor-evidence record. It does not provide authority to copy Meta's implementation or redistribute Meta software.
 
+## Operator transport truth
+
+The available operator routes are:
+
+```text
+Meta Air Link over Wi-Fi
+  = primary PCVR route
+
+Virtual Desktop
+  = separately selected and separately proven alternative
+
+Wired Meta Link
+  = unavailable; do not plan, request, test or claim it as a fallback
+```
+
+This constraint remains authoritative unless the operator explicitly reports obtaining compatible wired-Link hardware in the future.
+
 ## Why this is a priority source
 
-Air Link is the operator's normal PCVR transport. It is therefore the primary acceptance route for Starfield VR, the Monocular Flat-to-VR Reconstruction Layer and future Stephanos spatial experiences unless a bounded experiment explicitly selects another transport.
+Air Link is the operator's normal PCVR transport. It is therefore the primary acceptance route for Starfield VR, the Monocular Flat-to-VR Reconstruction Layer and future Stephanos spatial experiences unless a bounded experiment explicitly selects Virtual Desktop.
 
-Virtual Desktop remains a valuable comparison and optional transport. Wired Link remains a diagnostic fallback. Neither silently replaces the operator's preferred Air Link route.
+Virtual Desktop remains a valuable comparison and optional transport. It must be separately admitted and proven. It does not silently replace the operator's preferred Air Link route.
 
 ## Capability model
 
@@ -63,7 +81,7 @@ For repeatable wireless proof, record:
 - bitrate mode and configured ceiling;
 - end-to-end latency components where exposed.
 
-Meta support commonly recommends a wired PC connection to the router/access point, a 5 GHz AC/AX headset connection and close access-point placement. These are setup recommendations, not proof of the user's actual network state.
+Meta support commonly recommends a wired PC connection to the router/access point, a 5 GHz AC/AX headset connection and close access-point placement. Here, "wired PC connection" means the PC's network connection to the router, not a wired cable between the Quest 3 and Battle Bridge. These are setup recommendations, not proof of the user's actual network state.
 
 ### 3. OpenXR and runtime responsibility
 
@@ -104,7 +122,9 @@ Capture bounded recovery evidence for:
 - half-rate cadence caused by smoothing;
 - network instability;
 - service or application repair/restart;
-- safe fallback to wired Link or Virtual Desktop for diagnosis.
+- safe fallback to Virtual Desktop only when it has been separately configured and proven.
+
+Do not prescribe wired Meta Link as a recovery route because the operator does not have it.
 
 ## Role in #1643 monocular reconstruction
 
@@ -117,10 +137,9 @@ coherent left/right reconstruction
   -> standard SBS or OpenXR presentation adapter
   -> Air Link primary adapter
   -> Virtual Desktop optional adapter
-  -> wired Link diagnostic adapter
 ```
 
-This prevents the sovereign reconstruction engine from becoming dependent on Meta's proprietary transport implementation.
+This prevents the sovereign reconstruction engine from becoming dependent on Meta's proprietary transport implementation while respecting the operator's actual available hardware.
 
 ## Role in Starfield VR
 
@@ -134,7 +153,7 @@ pinned Starfield build
 + operator-authorised headset proof
 ```
 
-The desktop launcher must continue to fail closed when the expected Air Link, OpenXR or provider evidence is absent. Virtual Desktop or another route must be separately admitted rather than silently substituted.
+The desktop launcher must continue to fail closed when the expected Air Link, OpenXR or provider evidence is absent. Virtual Desktop or another route must be separately admitted rather than silently substituted. Wired Meta Link must not appear as an available fallback.
 
 ## Capability Graph candidates
 
@@ -148,6 +167,7 @@ The desktop launcher must continue to fail closed when the expected Air Link, Op
 - headset/controller return path
 - transport fallback and comparative proof
 - vendor lock-in and transport-neutral adapter boundary
+- operator hardware-availability constraint
 
 ## Licence and sovereignty
 
@@ -159,4 +179,4 @@ The desktop launcher must continue to fail closed when the expected Air Link, Op
 
 ## Next bounded proof
 
-#1595 should produce one Air Link transport evidence packet from the Battle Bridge containing exact installed identity, active OpenXR runtime, Quest 3 session state, network topology, selected refresh rate, resolution/bitrate settings and a short frame/latency observation. This is an evidence task, not an automatic configuration mutation.
+#1595 should produce one Air Link transport evidence packet from the Battle Bridge containing exact installed identity, active OpenXR runtime, Quest 3 session state, network topology, selected refresh rate, resolution/bitrate settings and a short frame/latency observation. This is an evidence task, not an automatic configuration mutation. It must not request or depend on wired Meta Link.
