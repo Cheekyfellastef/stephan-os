@@ -172,7 +172,7 @@ restart_test = r"""
 
 test('recovery does not re-run an already verified backend task', async () => {
   const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
-  const sourceIdentityIndex = probe.indexOf("$sourceControlExecutable = 'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe'");
+  const sourceIdentityIndex = probe.indexOf("$sourceControlExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe'");
   const beforeIndex = probe.indexOf('$before = @{}');
   const preflightIndex = probe.indexOf("$backendBeforeRecovery = if ($Mode -eq 'Recover')");
   const recoveryLoopIndex = probe.indexOf("if ($Mode -eq 'Recover') {", preflightIndex + 1);
