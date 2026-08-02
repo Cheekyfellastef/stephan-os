@@ -191,4 +191,4 @@ for marker, addition in [
     if marker in text:
         raise SystemExit(f'regression already present: {marker}')
     text = text.rstrip() + addition + '\n'
-test_path.write_text(text, encoding='utf-8')
+test_path.write_text(text.rstrip() + '\n', encoding='utf-8')
