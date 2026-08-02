@@ -9,6 +9,7 @@ import {
   PROTECTED_REVIEW_MARKER,
   analyzeIndependentSecurityReview,
   bindRequiredExactHeadWorkflowIdentities,
+  exactHeadWorkflowFailureIsTerminal,
   isApprovalBoundaryBootstrapAnalysis,
   validateExactHeadWorkflowRuns,
 } from '../shared/agents/operatorMergeApprovalGateV2.mjs';
@@ -227,13 +228,9 @@ async function waitForExactHeadWorkflows(
       requiredIdentities,
     });
     if (lastVerdict.valid) return { runs, verdict: lastVerdict };
-    const terminalFailure = lastVerdict.blockers.some((blocker) => (
-      blocker.startsWith('workflow-not-green:')
-      || blocker.startsWith('workflow-identity-spoof:')
-      || blocker.startsWith('workflow-path-identity-mismatch:')
-      || blocker === 'required-workflow-identities-invalid-or-ambiguous'
-    ));
-    if (terminalFailure) throw new Error(`Exact-head workflow failure: ${lastVerdict.blockers.join(', ')}`);
+    if (exactHeadWorkflowFailureIsTerminal(lastVerdict)) {
+      throw new Error(`Exact-head workflow failure: ${lastVerdict.blockers.join(', ')}`);
+    }
     await sleep(POLL_INTERVAL_MS);
   }
   throw new Error(`Exact-head workflows did not become green within ${POLL_TIMEOUT_MS / 60000} minutes: ${lastVerdict?.blockers?.join(', ') || 'unknown'}`);
