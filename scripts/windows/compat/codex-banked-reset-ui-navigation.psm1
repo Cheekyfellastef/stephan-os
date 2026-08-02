@@ -41,7 +41,9 @@ $script:BaseNavigationModule = Import-Module $baseModulePath -Force -PassThru -E
             if (-not $item.Enabled -or $item.Offscreen) { continue }
             if ($item.Type -notmatch 'ControlType\.(Button|MenuItem|Hyperlink|ListItem|Custom|Group)') { continue }
             $name = Convert-ToCodexSafeText $item.Name 120
+            $automationId = Convert-ToCodexSafeText $item.AutomationId 120
             if (-not $name -or $name -match $forbidden -or $name -match $email -or $name -notmatch $allowed) { continue }
+            if ($automationId -match $forbidden -or $automationId -match $email) { continue }
             if ($seen.ContainsKey($name)) { continue }
             $seen[$name] = $true
             $candidates += $item
@@ -78,6 +80,7 @@ $script:BaseNavigationModule = Import-Module $baseModulePath -Force -PassThru -E
             $fallback = @($After | Where-Object {
                 $_.Enabled -and -not $_.Offscreen -and
                 $_.Name -notmatch $forbidden -and
+                $_.AutomationId -notmatch $forbidden -and
                 (
                     $_.Name -match $usageLabel -or
                     $_.AutomationId -match '(?i)usage|limit|reset'
