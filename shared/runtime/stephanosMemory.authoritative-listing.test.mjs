@@ -81,6 +81,10 @@ test('durable listings exclude pending local intents from authoritative truth', 
   );
 
   const memory = createStephanosMemory({ adapter, source: 'test', surface: 'hosted' });
+  assert.equal(
+    memory.listRecords({ namespace: 'continuity' }).some((entry) => entry.id === 'pending-local'),
+    true,
+  );
   const listing = await memory.listRecordsDurably({ namespace: 'continuity' });
 
   assert.equal(listing.authorityConfirmed, true);
