@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   catalogResultToMusicTileTrack,
+  DEFAULT_BROWSER_TIMEOUT_MS,
+  DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_MS,
   findExistingCatalogTrack,
   requestNativeCatalogSearch,
 } from '../apps/music-tile/engine/nativeCatalogSearch.js';
@@ -78,6 +80,10 @@ test('browser catalogue deadline bounds both transport and response body', async
   });
   assert.equal(body.ok, false);
   assert.match(body.error, /timed out/i);
+});
+
+test('default browser deadline covers Spotify and fallback provider attempts', () => {
+  assert.ok(DEFAULT_BROWSER_TIMEOUT_MS > DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_MS * 2);
 });
 
 test('catalogue Spotify links remain reachable without claiming browser playback', () => {

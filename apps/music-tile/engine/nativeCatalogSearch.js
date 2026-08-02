@@ -1,5 +1,6 @@
 const MAX_QUERY_LENGTH = 160;
-const DEFAULT_BROWSER_TIMEOUT_MS = 8000;
+export const DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_MS = 8000;
+export const DEFAULT_BROWSER_TIMEOUT_MS = (DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_MS * 2) + 2000;
 
 export function normalizeNativeCatalogQuery(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY_LENGTH);
