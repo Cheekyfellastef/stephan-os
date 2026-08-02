@@ -194,6 +194,19 @@ test('protected workflow evidence is bound to exact ref, size, blob and least-au
   assert.equal(isApprovalBoundaryBootstrapAnalysis(permissionResult), false);
 });
 
+test('failed independent reviews still publish immutable findings evidence', () => {
+  const workflow = workflowContent('.github/workflows/independent-merge-security-review.yml');
+  assert.match(workflow, /Upload the exact-run immutable independent review result[\s\S]*?if: \$\{\{ always\(\) \}\}[\s\S]*?actions\/upload-artifact@v4/);
+  const reviewer = readFileSync(new URL('../../scripts/independent-merge-security-review-v2.mjs', import.meta.url), 'utf8');
+  const findingsBranch = reviewer.slice(
+    reviewer.indexOf("if (analysis.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_CLEAN'"),
+    reviewer.indexOf('const artifact = buildIndependentReviewArtifact'),
+  );
+  assert.ok(findingsBranch.indexOf('buildIndependentReviewFindingsArtifact') >= 0);
+  assert.ok(findingsBranch.indexOf('writeReviewArtifact(artifact)') > findingsBranch.indexOf('buildIndependentReviewFindingsArtifact'));
+  assert.ok(findingsBranch.indexOf('throw new Error') > findingsBranch.indexOf('writeReviewArtifact(artifact)'));
+});
+
 test('protects the live v2 policy engine and wrapper from clean self-attestation', () => {
   for (const path of [
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',

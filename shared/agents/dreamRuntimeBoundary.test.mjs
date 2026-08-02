@@ -14,6 +14,7 @@ import {
   deriveDreamMigrationMutexEndpoint,
   dreamDirectoryHandleNamespace,
   executeDreamRuntimeMigration,
+  finalizeDreamMigrationLockLifecycle,
   normalizeDreamHostRelativePath,
   normalizeWindowsArtifactStat,
   parsePosixPromotionIdentity,
@@ -99,7 +100,7 @@ test('Windows artifact stats preserve exact identifiers and numeric receipt meta
   assert.doesNotThrow(() => JSON.stringify({ bytes: normalized.size, modifiedAt: normalized.mtimeMs }));
 });
 
-test('migration host mutex endpoints are stable, root-specific and filesystem-independent', () => {
+test('migration host mutex endpoints are stable, root-specific and collision-resistant', () => {
   const linux = deriveDreamMigrationMutexEndpoint('/runtime/one', 'linux');
   const retry = deriveDreamMigrationMutexEndpoint('/runtime/one', 'linux');
   const second = deriveDreamMigrationMutexEndpoint('/runtime/two', 'linux');
@@ -107,9 +108,44 @@ test('migration host mutex endpoints are stable, root-specific and filesystem-in
   const darwin = deriveDreamMigrationMutexEndpoint('/runtime/one', 'darwin');
   assert.equal(linux, retry);
   assert.notEqual(linux, second);
-  assert.match(linux, /^tcp:127\.0\.0\.1:\d{5}$/);
+  assert.match(linux, /^tcp-auth:127\.0\.0\.1:[a-f0-9]{64}$/);
   assert.match(windows, /^\\\\\.\\pipe\\stephanos-dream-migration-[a-f0-9]{32}$/);
-  assert.match(darwin, /^tcp:127\.0\.0\.1:\d{5}$/);
+  assert.match(darwin, /^tcp-auth:127\.0\.0\.1:[a-f0-9]{64}$/);
+});
+
+test('distinct roots that collided in the legacy POSIX port bucket now have distinct endpoints', () => {
+  const buckets = new Map();
+  let collision = null;
+  for (let index = 0; index < 20_000 && !collision; index += 1) {
+    const runtimeRoot = `/runtime/legacy-port-collision-${index}`;
+    const digest = createHash('sha256').update(path.resolve(runtimeRoot)).digest();
+    const bucket = digest.readUInt16BE(0) % 12_000;
+    if (buckets.has(bucket)) collision = [buckets.get(bucket), runtimeRoot];
+    else buckets.set(bucket, runtimeRoot);
+  }
+  assert.ok(collision, 'expected a collision in the legacy 12,000-port bucket');
+  assert.notEqual(
+    deriveDreamMigrationMutexEndpoint(collision[0], 'linux'),
+    deriveDreamMigrationMutexEndpoint(collision[1], 'linux'),
+  );
+});
+
+test('host mutex release remains guaranteed when rollback cleanup throws', async () => {
+  let hostReleaseCalls = 0;
+  const finalized = await finalizeDreamMigrationLockLifecycle({
+    outcome: { ok: true },
+    migrationLockReleased: false,
+    rollbackOutcome: async () => {
+      throw new Error('hostile rollback cleanup failure');
+    },
+    releaseHostMutex: async () => {
+      hostReleaseCalls += 1;
+      return true;
+    },
+  });
+  assert.equal(hostReleaseCalls, 1);
+  assert.equal(finalized.hostMutexReleased, true);
+  assert.equal(finalized.rollbackCleaned, false);
 });
 
 test('Windows pre-READY failure awaits bounded abort cleanup before process termination', async () => {

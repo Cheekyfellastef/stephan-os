@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   INDEPENDENT_REVIEW_ARTIFACT_FILE,
+  INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_KIND,
+  buildIndependentReviewFindingsArtifact,
   buildIndependentReviewArtifact,
+  independentReviewFindingsArtifactPayloadSha256,
   independentReviewArtifactName,
   validateIndependentReviewArtifact,
   validateIndependentReviewArtifactSet,
@@ -41,6 +44,22 @@ function bootstrapAnalysis() {
     counts: { P0: 1, P1: 0, P2: 0 },
     verdict: 'findings',
     proofRefs: ['proofs/approval-boundary-v2/shared/agents/operatorMergeApprovalGate.mjs'],
+    finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
+  };
+}
+
+function blockingAnalysis() {
+  return {
+    schemaVersion: 'stephanos.independent-security-analysis.v1',
+    findings: [{
+      severity: 'P0',
+      code: 'unsupported-high-risk-surface',
+      summary: 'A qualified specialist review is required.',
+      path: 'scripts/windows/dream-runtime-artifact-io.ps1',
+    }],
+    counts: { P0: 1, P1: 0, P2: 0 },
+    verdict: 'findings',
+    proofRefs: ['proofs/changed-file/scripts/windows/dream-runtime-artifact-io.ps1'],
     finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
   };
 }
@@ -98,6 +117,35 @@ test('builds and validates exact-run clean and bootstrap artifacts', () => {
   const bootstrapValidation = validateIndependentReviewArtifact(bootstrap, options());
   assert.equal(bootstrapValidation.valid, true);
   assert.equal(bootstrapValidation.review.operatorBootstrapRequired, true);
+});
+
+test('builds immutable exact-run evidence for blocking findings without minting a clean receipt', () => {
+  const findings = buildIndependentReviewFindingsArtifact({
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+    createdAtUtc: '2026-08-02T19:00:00.000Z',
+    analysis: blockingAnalysis(),
+  });
+  assert.equal(findings.kind, INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_KIND);
+  assert.equal(findings.artifactFile, INDEPENDENT_REVIEW_ARTIFACT_FILE);
+  assert.equal(findings.analysis.findings[0].code, 'unsupported-high-risk-surface');
+  assert.equal(findings.payloadSha256, independentReviewFindingsArtifactPayloadSha256(findings));
+  assert.equal(Object.hasOwn(findings, 'receipt'), false);
+  assert.throws(() => buildIndependentReviewFindingsArtifact({
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+    analysis: cleanAnalysis(),
+  }), /bounded findings analysis/);
 });
 
 test('artifact payload binds repository, PR, branch, head, base, run and attempt', () => {

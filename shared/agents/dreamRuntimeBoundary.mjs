@@ -55,8 +55,6 @@ const MAX_MANIFEST_BYTES = 64 * 1024;
 const DIRECTORY_GUARD_TIMEOUT_MS = 15_000;
 const DIRECTORY_GUARD_OUTPUT_LIMIT = 4 * 1024;
 const MAX_WINDOWS_ARTIFACT_BYTES = 64 * 1024 * 1024;
-const DREAM_MIGRATION_MUTEX_PORT_BASE = 20_000;
-const DREAM_MIGRATION_MUTEX_PORT_RANGE = 12_000;
 const DREAM_MIGRATION_ROLLBACK = Symbol('dream-migration-rollback');
 const DREAM_MIGRATION_LOCK_SEGMENTS = Object.freeze([
   'receipt-locks',
@@ -675,35 +673,101 @@ function windowsIdentity(stat, ownershipToken) {
 }
 
 export function deriveDreamMigrationMutexEndpoint(runtimeRoot, platform = process.platform) {
-  const digest = createHash('sha256').update(normalizeComparable(runtimeRoot)).digest();
-  const key = digest.toString('hex').slice(0, 32);
-  if (platform === 'win32') return `\\\\.\\pipe\\stephanos-dream-migration-${key}`;
-  const port = DREAM_MIGRATION_MUTEX_PORT_BASE
-    + (digest.readUInt16BE(0) % DREAM_MIGRATION_MUTEX_PORT_RANGE);
-  return `tcp:127.0.0.1:${port}`;
+  const key = createHash('sha256').update(normalizeComparable(runtimeRoot)).digest('hex');
+  if (platform === 'win32') return `\\\\.\\pipe\\stephanos-dream-migration-${key.slice(0, 32)}`;
+  return `tcp-auth:127.0.0.1:${key}`;
 }
 
 const DREAM_MIGRATION_MUTEX_WORKER = String.raw`
+  const crypto = require('node:crypto');
   const net = require('node:net');
   const token = process.argv[1];
   const endpoint = process.argv[2];
-  const server = net.createServer();
+  const tcpIdentity = endpoint.startsWith('tcp-auth:127.0.0.1:')
+    ? endpoint.slice('tcp-auth:127.0.0.1:'.length)
+    : '';
+  const ownerIdentity = tcpIdentity || endpoint;
+  let server = null;
   let phase = 'acquiring';
   let closing = false;
   const closeServer = () => new Promise((resolve) => {
+    if (!server) return resolve();
     try { server.close(() => resolve()); } catch { resolve(); }
   });
-  const listen = () => new Promise((resolve, reject) => {
-    server.unref();
-    server.once('error', reject);
-    const target = endpoint.startsWith('tcp:')
-        ? { host: '127.0.0.1', port: Number(endpoint.slice(endpoint.lastIndexOf(':') + 1)), exclusive: true }
-        : endpoint;
-    server.listen(target, () => {
-      server.removeListener('error', reject);
+  const handleProbe = (socket) => {
+    let input = '';
+    socket.setEncoding('utf8');
+    socket.setTimeout(1000, () => socket.destroy());
+    socket.on('data', (chunk) => {
+      input += chunk;
+      if (input === 'IDENTIFY\n') socket.end('OWNER:' + ownerIdentity + '\n');
+    });
+  };
+  const tryListen = (target) => new Promise((resolve, reject) => {
+    const candidate = net.createServer(handleProbe);
+    candidate.unref();
+    candidate.once('error', reject);
+    candidate.listen(target, () => {
+      candidate.removeListener('error', reject);
+      server = candidate;
       resolve();
     });
   });
+  const probeOwner = (port) => new Promise((resolve) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port });
+    let output = '';
+    let settled = false;
+    const finishProbe = (value) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(value);
+    };
+    socket.setEncoding('utf8');
+    socket.setTimeout(200, () => finishProbe(''));
+    socket.once('connect', () => socket.write('IDENTIFY\n'));
+    socket.on('data', (chunk) => {
+      output += chunk;
+      const match = output.match(/^OWNER:([^\r\n]+)\r?\n/);
+      if (match) finishProbe(match[1]);
+    });
+    socket.once('error', () => finishProbe(''));
+    socket.once('end', () => finishProbe(''));
+  });
+  const tcpPorts = () => {
+    const ports = [];
+    for (let index = 0; index < 16; index += 1) {
+      const digest = crypto.createHash('sha256').update(tcpIdentity + ':' + index).digest();
+      const port = 20000 + (digest.readUInt16BE(0) % 40000);
+      if (!ports.includes(port)) ports.push(port);
+    }
+    return ports;
+  };
+  const listen = async () => {
+    if (!tcpIdentity) {
+      await tryListen(endpoint);
+      return;
+    }
+    for (const port of tcpPorts()) {
+      try {
+        await tryListen({ host: '127.0.0.1', port, exclusive: true });
+        return;
+      } catch (error) {
+        if (error && error.code === 'EADDRINUSE') {
+          if (await probeOwner(port) === tcpIdentity) {
+            const busy = new Error('DREAM_MIGRATION_HOST_MUTEX_BUSY');
+            busy.code = 'DREAM_MIGRATION_HOST_MUTEX_BUSY';
+            throw busy;
+          }
+          continue;
+        }
+        throw error;
+      }
+    }
+    const exhausted = new Error('DREAM_MIGRATION_HOST_MUTEX_FAILED');
+    exhausted.code = 'DREAM_MIGRATION_HOST_MUTEX_FAILED';
+    throw exhausted;
+  };
   const finish = async (code) => {
     if (closing) return;
     closing = true;
@@ -716,7 +780,7 @@ const DREAM_MIGRATION_MUTEX_WORKER = String.raw`
       await listen();
     } catch (error) {
       await closeServer();
-      process.stderr.write((error && error.code === 'EADDRINUSE'
+      process.stderr.write((error && (error.code === 'EADDRINUSE' || error.code === 'DREAM_MIGRATION_HOST_MUTEX_BUSY')
         ? 'DREAM_MIGRATION_HOST_MUTEX_BUSY'
         : 'DREAM_MIGRATION_HOST_MUTEX_FAILED') + '\n');
       process.exit(2);
@@ -1813,7 +1877,11 @@ async function readExistingManifest(paths, expected, fsImpl) {
 async function removeOwnedArtifact(artifactPath, identity, fsImpl) {
   if (!identity) return true;
   if (process.platform === 'win32' && fsImpl === fs) {
-    return deleteWindowsOwnedArtifact(artifactPath, identity);
+    try {
+      return await deleteWindowsOwnedArtifact(artifactPath, identity);
+    } catch {
+      return false;
+    }
   }
   let boundary = null;
   let removed = false;
@@ -1830,7 +1898,13 @@ async function removeOwnedArtifact(artifactPath, identity, fsImpl) {
   } catch {
     removed = false;
   } finally {
-    if (boundary && !(await boundary.release())) removed = false;
+    if (boundary) {
+      try {
+        if (!(await boundary.release())) removed = false;
+      } catch {
+        removed = false;
+      }
+    }
   }
   return removed;
 }
@@ -2194,7 +2268,11 @@ async function executeDreamRuntimeMigrationWithinLock({
     const results = [];
     const artifacts = [...createdCopyArtifacts, ...createdPreservationArtifacts];
     for (const artifact of artifacts.reverse()) {
-      results.push(await removeOwnedArtifact(artifact.artifactPath, artifact.identity, fsImpl));
+      try {
+        results.push(await removeOwnedArtifact(artifact.artifactPath, artifact.identity, fsImpl));
+      } catch {
+        results.push(false);
+      }
     }
     return results.every(Boolean);
   };
@@ -2440,13 +2518,67 @@ async function executeDreamRuntimeMigrationWithinLock({
     enumerable: false,
     value: async () => {
       if (rollbackResult !== null) return rollbackResult;
-      const receiptCleaned = await removeOwnedArtifact(receiptPath, committedReceipt.identity, fsImpl);
-      const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
+      let receiptCleaned = false;
+      let migrationArtifactsCleaned = false;
+      try {
+        receiptCleaned = await removeOwnedArtifact(receiptPath, committedReceipt.identity, fsImpl);
+      } catch {}
+      try {
+        migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
+      } catch {}
       rollbackResult = receiptCleaned && migrationArtifactsCleaned;
       return rollbackResult;
     },
   });
   return Object.freeze(result);
+}
+
+async function safelyReleaseDreamMigrationMutex(mutex) {
+  try {
+    return await mutex?.release?.() === true;
+  } catch {
+    return false;
+  }
+}
+
+async function safelyRollbackDreamMigrationOutcome(outcome) {
+  if (!outcome?.ok || typeof outcome[DREAM_MIGRATION_ROLLBACK] !== 'function') return true;
+  try {
+    return await outcome[DREAM_MIGRATION_ROLLBACK]() === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function finalizeDreamMigrationLockLifecycle({
+  outcome,
+  migrationLockReleased,
+  releaseHostMutex,
+  rollbackOutcome,
+} = {}) {
+  let rollbackCleaned = true;
+  let hostMutexReleased = false;
+  try {
+    if (!migrationLockReleased && outcome?.ok) {
+      rollbackCleaned = await rollbackOutcome();
+    }
+  } catch {
+    rollbackCleaned = false;
+  } finally {
+    try {
+      hostMutexReleased = await releaseHostMutex() === true;
+    } catch {
+      hostMutexReleased = false;
+    }
+  }
+  if (migrationLockReleased && !hostMutexReleased && outcome?.ok) {
+    try {
+      rollbackCleaned = await rollbackOutcome();
+    } catch {
+      rollbackCleaned = false;
+    }
+  }
+  return Object.freeze({ rollbackCleaned, hostMutexReleased });
 }
 
 export async function executeDreamRuntimeMigration(options = {}) {
@@ -2494,7 +2626,7 @@ export async function executeDreamRuntimeMigration(options = {}) {
       { ...(options.operationLockOptions || {}), repoRoot: boundary.repoRoot },
     );
   } catch (error) {
-    const hostMutexReleased = await migrationHostMutex.release();
+    const hostMutexReleased = await safelyReleaseDreamMigrationMutex(migrationHostMutex);
     return Object.freeze({
       ok: false,
       status: 'BLOCKED',
@@ -2507,7 +2639,7 @@ export async function executeDreamRuntimeMigration(options = {}) {
     });
   }
   if (!migrationLock?.ok || typeof migrationLock.release !== 'function' || typeof migrationLock.verifyOwnership !== 'function') {
-    const hostMutexReleased = await migrationHostMutex.release();
+    const hostMutexReleased = await safelyReleaseDreamMigrationMutex(migrationHostMutex);
     return Object.freeze({
       ok: false,
       status: 'BLOCKED',
@@ -2532,24 +2664,19 @@ export async function executeDreamRuntimeMigration(options = {}) {
   } catch (error) {
     executionError = error;
   }
-  let released = false;
-  try { released = await migrationLock.release(); } catch {}
+  const released = await safelyReleaseDreamMigrationMutex(migrationLock);
   if (executionError) {
     if (!released) executionError.cleanupBlocker ||= 'DREAM_MIGRATION_LOCK_RELEASE_FAILED';
-    const hostMutexReleased = await migrationHostMutex.release();
+    const hostMutexReleased = await safelyReleaseDreamMigrationMutex(migrationHostMutex);
     if (!hostMutexReleased) executionError.cleanupBlocker ||= 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED';
     throw executionError;
   }
-  let rollbackCleaned = true;
-  if (!released && outcome?.ok) {
-    rollbackCleaned = typeof outcome[DREAM_MIGRATION_ROLLBACK] === 'function'
-      && await outcome[DREAM_MIGRATION_ROLLBACK]();
-  }
-  const hostMutexReleased = await migrationHostMutex.release();
-  if (released && !hostMutexReleased && outcome?.ok) {
-    rollbackCleaned = typeof outcome[DREAM_MIGRATION_ROLLBACK] === 'function'
-      && await outcome[DREAM_MIGRATION_ROLLBACK]();
-  }
+  const { rollbackCleaned, hostMutexReleased } = await finalizeDreamMigrationLockLifecycle({
+    outcome,
+    migrationLockReleased: released,
+    releaseHostMutex: () => safelyReleaseDreamMigrationMutex(migrationHostMutex),
+    rollbackOutcome: () => safelyRollbackDreamMigrationOutcome(outcome),
+  });
   if (released && hostMutexReleased) return Object.freeze({ ...outcome });
   const releaseBlocker = !released
     ? 'DREAM_MIGRATION_LOCK_RELEASE_FAILED'
