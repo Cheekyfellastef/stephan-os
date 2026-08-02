@@ -11,9 +11,11 @@ import {
   DREAM_VERSIONED_PRESERVATION_DIRECTORY,
   abortWindowsArtifactStartup,
   classifyDreamEventSets,
+  deriveDreamMigrationMutexEndpoint,
   dreamDirectoryHandleNamespace,
   executeDreamRuntimeMigration,
   normalizeDreamHostRelativePath,
+  normalizeWindowsArtifactStat,
   parsePosixPromotionIdentity,
   pathIsInside,
   planDreamRuntimeMigration,
@@ -74,6 +76,40 @@ test('artifact identity comparison preserves distinct Windows indexes above 2^53
   assert.equal(Number(high), Number(high + 1n));
   assert.equal(sameFileIdentity(identity(high), identity(high + 1n)), false);
   assert.equal(sameFileIdentity(identity(high), identity(high)), true);
+});
+
+test('Windows artifact stats preserve exact identifiers and numeric receipt metadata', () => {
+  const high = 9_007_199_254_740_992n;
+  const normalized = normalizeWindowsArtifactStat({
+    dev: high,
+    ino: high + 1n,
+    size: 42n,
+    nlink: 1n,
+    mtimeMs: 1000n,
+    birthtimeMs: 900n,
+    isFile: () => true,
+    isDirectory: () => false,
+    isSymbolicLink: () => false,
+  });
+  assert.equal(normalized.dev, high);
+  assert.equal(normalized.ino, high + 1n);
+  assert.equal(typeof normalized.size, 'number');
+  assert.equal(typeof normalized.nlink, 'number');
+  assert.equal(typeof normalized.mtimeMs, 'number');
+  assert.doesNotThrow(() => JSON.stringify({ bytes: normalized.size, modifiedAt: normalized.mtimeMs }));
+});
+
+test('migration host mutex endpoints are stable, root-specific and filesystem-independent', () => {
+  const linux = deriveDreamMigrationMutexEndpoint('/runtime/one', 'linux');
+  const retry = deriveDreamMigrationMutexEndpoint('/runtime/one', 'linux');
+  const second = deriveDreamMigrationMutexEndpoint('/runtime/two', 'linux');
+  const windows = deriveDreamMigrationMutexEndpoint('C:\\runtime\\one', 'win32');
+  const darwin = deriveDreamMigrationMutexEndpoint('/runtime/one', 'darwin');
+  assert.equal(linux, retry);
+  assert.notEqual(linux, second);
+  assert.match(linux, /^tcp:127\.0\.0\.1:\d{5}$/);
+  assert.match(windows, /^\\\\\.\\pipe\\stephanos-dream-migration-[a-f0-9]{32}$/);
+  assert.match(darwin, /^tcp:127\.0\.0\.1:\d{5}$/);
 });
 
 test('Windows pre-READY failure awaits bounded abort cleanup before process termination', async () => {
@@ -1637,6 +1673,36 @@ test('migration-wide lock prevents another run from consuming rollback-owned cop
   assert.equal(first.ok, true);
 });
 
+test('host mutex preserves exclusivity when the acquired lock directory is renamed', async () => {
+  const input = await fixture();
+  let releaseCopy;
+  let reportEntered;
+  const entered = new Promise((resolve) => { reportEntered = resolve; });
+  const hold = new Promise((resolve) => { releaseCopy = resolve; });
+  const fsImpl = fsProxyWithOwnedWriteHook(async (target) => {
+    if (path.basename(String(target)).endsWith(path.basename(input.destinationEventsPath))) {
+      reportEntered();
+      await hold;
+    }
+  });
+  const firstPromise = runApproved(input, { fsImpl });
+  await entered;
+  const lockPath = path.join(input.runtimeRoot, 'receipt-locks', 'dream-migration', 'migration.lock');
+  const displacedPath = `${lockPath}.displaced`;
+  await fs.rename(lockPath, displacedPath);
+  const second = await runApproved(input, {
+    now: fixedNow('2026-08-01T12:31:00.000Z'),
+  });
+  assert.equal(second.ok, false);
+  assert.equal(second.blocker, 'DREAM_MIGRATION_CONCURRENT');
+  assert.equal(second.lockReason, 'DREAM_MIGRATION_HOST_MUTEX_BUSY');
+  releaseCopy();
+  const first = await firstPromise;
+  assert.equal(first.ok, false);
+  assert.equal(first.blocker, 'DREAM_MIGRATION_LOCK_OWNERSHIP_LOST');
+  assert.equal(first.lockCleanupBlocker, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
+});
+
 test('migration-wide lock release failure converts success to a blocked outcome', async () => {
   const input = await fixture();
   const result = await runApproved(input, {
@@ -1651,6 +1717,32 @@ test('migration-wide lock release failure converts success to a blocked outcome'
   assert.equal(result.finalVerdict, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
   assert.equal(result.blocker, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
   assert.equal(result.lockCleanupBlocker, 'DREAM_MIGRATION_LOCK_RELEASE_FAILED');
+  assert.equal(result.receiptPath, '');
+  assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED');
+  await assert.rejects(() => fs.lstat(input.destinationEventsPath), (error) => error.code === 'ENOENT');
+  const receiptRoot = path.join(input.runtimeRoot, 'receipts', 'runtime-boundary');
+  const receipts = await fs.readdir(receiptRoot).catch(() => []);
+  assert.equal(receipts.some((name) => /^dream-migration-.*\.json$/.test(name)), false);
+  assert.equal(receipts.some((name) => name.startsWith('.stephanos-owned-delete-')), true);
+});
+
+test('host mutex release failure also removes committed success evidence', async () => {
+  const input = await fixture();
+  const result = await runApproved(input, {
+    acquireMigrationHostMutexFn: async () => ({
+      ok: true,
+      verifyOwnership: async () => true,
+      release: async () => false,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.blocker, 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED');
+  assert.equal(result.receiptPath, '');
+  assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED');
+  const receiptRoot = path.join(input.runtimeRoot, 'receipts', 'runtime-boundary');
+  const receipts = await fs.readdir(receiptRoot).catch(() => []);
+  assert.equal(receipts.some((name) => /^dream-migration-.*\.json$/.test(name)), false);
 });
 
 test('blocked preservation surfaces an operation-lock release cleanup failure', async () => {

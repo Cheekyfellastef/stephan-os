@@ -55,6 +55,9 @@ const MAX_MANIFEST_BYTES = 64 * 1024;
 const DIRECTORY_GUARD_TIMEOUT_MS = 15_000;
 const DIRECTORY_GUARD_OUTPUT_LIMIT = 4 * 1024;
 const MAX_WINDOWS_ARTIFACT_BYTES = 64 * 1024 * 1024;
+const DREAM_MIGRATION_MUTEX_PORT_BASE = 20_000;
+const DREAM_MIGRATION_MUTEX_PORT_RANGE = 12_000;
+const DREAM_MIGRATION_ROLLBACK = Symbol('dream-migration-rollback');
 const DREAM_MIGRATION_LOCK_SEGMENTS = Object.freeze([
   'receipt-locks',
   'dream-migration',
@@ -324,6 +327,30 @@ function sameDirectoryIdentity(before, after) {
     && sameDirectoryBirthIdentity(before, after);
 }
 
+export function normalizeWindowsArtifactStat(info) {
+  const size = Number(info?.size);
+  const nlink = Number(info?.nlink);
+  const mtimeMs = Number(info?.mtimeMs);
+  const birthtimeMs = Number(info?.birthtimeMs);
+  if (!Number.isSafeInteger(size) || size < 0
+      || !Number.isSafeInteger(nlink) || nlink < 0
+      || !Number.isFinite(mtimeMs)
+      || !Number.isFinite(birthtimeMs)) {
+    throw codedError('DREAM_MIGRATION_ENTRY_METADATA_INVALID');
+  }
+  return Object.freeze({
+    dev: info.dev,
+    ino: info.ino,
+    size,
+    nlink,
+    mtimeMs,
+    birthtimeMs,
+    isFile: () => info.isFile?.() === true,
+    isDirectory: () => info.isDirectory?.() === true,
+    isSymbolicLink: () => info.isSymbolicLink?.() === true,
+  });
+}
+
 async function assertSafeDirectoryChainUnchanged(identities, { fsImpl = fs } = {}) {
   for (const expected of identities) {
     const current = process.platform === 'win32' && fsImpl === fs
@@ -336,9 +363,12 @@ async function assertSafeDirectoryChainUnchanged(identities, { fsImpl = fs } = {
 }
 
 async function assertRegularSingleLink(target, { fsImpl = fs } = {}) {
-  const info = process.platform === 'win32' && fsImpl === fs
+  const nativeInfo = process.platform === 'win32' && fsImpl === fs
     ? await fsImpl.lstat(target, { bigint: true })
     : await fsImpl.lstat(target);
+  const info = process.platform === 'win32' && fsImpl === fs
+    ? normalizeWindowsArtifactStat(nativeInfo)
+    : nativeInfo;
   if (info.isSymbolicLink?.()) throw codedError('DREAM_MIGRATION_REPARSE_ENTRY_BLOCKED');
   if (!info.isFile?.()) throw codedError('DREAM_MIGRATION_ENTRY_UNSUPPORTED');
   if (Number(info.nlink) !== 1) throw codedError('DREAM_MIGRATION_HARD_LINK_BLOCKED');
@@ -634,13 +664,156 @@ function windowsIdentity(stat, ownershipToken) {
   return Object.freeze({
     dev: stat.dev,
     ino: stat.ino,
-    size: stat.size,
-    nlink: stat.nlink,
-    mtimeMs: stat.mtimeMs,
-    birthtimeMs: stat.birthtimeMs,
+    size: Number(stat.size),
+    nlink: Number(stat.nlink),
+    mtimeMs: Number(stat.mtimeMs),
+    birthtimeMs: Number(stat.birthtimeMs),
     isFile: () => stat.isFile(),
     isSymbolicLink: () => stat.isSymbolicLink(),
     windowsOwnershipToken: ownershipToken,
+  });
+}
+
+export function deriveDreamMigrationMutexEndpoint(runtimeRoot, platform = process.platform) {
+  const digest = createHash('sha256').update(normalizeComparable(runtimeRoot)).digest();
+  const key = digest.toString('hex').slice(0, 32);
+  if (platform === 'win32') return `\\\\.\\pipe\\stephanos-dream-migration-${key}`;
+  const port = DREAM_MIGRATION_MUTEX_PORT_BASE
+    + (digest.readUInt16BE(0) % DREAM_MIGRATION_MUTEX_PORT_RANGE);
+  return `tcp:127.0.0.1:${port}`;
+}
+
+const DREAM_MIGRATION_MUTEX_WORKER = String.raw`
+  const net = require('node:net');
+  const token = process.argv[1];
+  const endpoint = process.argv[2];
+  const server = net.createServer();
+  let phase = 'acquiring';
+  let closing = false;
+  const closeServer = () => new Promise((resolve) => {
+    try { server.close(() => resolve()); } catch { resolve(); }
+  });
+  const listen = () => new Promise((resolve, reject) => {
+    server.unref();
+    server.once('error', reject);
+    const target = endpoint.startsWith('tcp:')
+        ? { host: '127.0.0.1', port: Number(endpoint.slice(endpoint.lastIndexOf(':') + 1)), exclusive: true }
+        : endpoint;
+    server.listen(target, () => {
+      server.removeListener('error', reject);
+      resolve();
+    });
+  });
+  const finish = async (code) => {
+    if (closing) return;
+    closing = true;
+    phase = 'closed';
+    await closeServer();
+    process.exit(code);
+  };
+  (async () => {
+    try {
+      await listen();
+    } catch (error) {
+      await closeServer();
+      process.stderr.write((error && error.code === 'EADDRINUSE'
+        ? 'DREAM_MIGRATION_HOST_MUTEX_BUSY'
+        : 'DREAM_MIGRATION_HOST_MUTEX_FAILED') + '\n');
+      process.exit(2);
+      return;
+    }
+    phase = 'held';
+    process.stdout.write('READY:' + token + '\n');
+    let input = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', async (chunk) => {
+      input += chunk;
+      let newline;
+      while ((newline = input.indexOf('\n')) >= 0) {
+        const command = input.slice(0, newline).trim();
+        input = input.slice(newline + 1);
+        if (command === 'RELEASE' && phase === 'held') {
+          phase = 'release-acknowledged';
+          process.stdout.write('RELEASED:' + token + '\n');
+        } else if (command === 'ACK' && phase === 'release-acknowledged') {
+          await finish(0);
+        }
+      }
+    });
+    process.stdin.on('end', async () => {
+      await finish(phase === 'release-acknowledged' ? 0 : 2);
+    });
+  })();
+`;
+
+async function acquireDreamMigrationHostMutex(runtimeRoot) {
+  const token = randomUUID();
+  const endpoint = deriveDreamMigrationMutexEndpoint(runtimeRoot);
+  const child = spawn(process.execPath, [
+    '--eval',
+    DREAM_MIGRATION_MUTEX_WORKER,
+    token,
+    endpoint,
+  ], {
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  let exited = false;
+  let exitCode = null;
+  let resolveExit;
+  const exitPromise = new Promise((resolve) => { resolveExit = resolve; });
+  child.stdin.on('error', () => {});
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  const appendOutput = (current, chunk) => {
+    const next = `${current}${String(chunk || '')}`;
+    if (Buffer.byteLength(next, 'utf8') > DIRECTORY_GUARD_OUTPUT_LIMIT) {
+      try { child.kill(); } catch {}
+      return current;
+    }
+    return next;
+  };
+  child.stdout.on('data', (chunk) => { stdout = appendOutput(stdout, chunk); });
+  child.stderr.on('data', (chunk) => { stderr = appendOutput(stderr, chunk); });
+  child.once('error', () => { exited = true; resolveExit(null); });
+  child.once('exit', (code) => { exited = true; exitCode = code; resolveExit(code); });
+  const waitForMarker = async (marker) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < DIRECTORY_GUARD_TIMEOUT_MS) {
+      if (stdout.split(/\r?\n/).includes(marker)) return true;
+      if (exited || stderr.trim()) return false;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return false;
+  };
+  const readyMarker = `READY:${token}`;
+  if (!(await waitForMarker(readyMarker))) {
+    try { child.stdin.end(); } catch {}
+    if (!exited) try { child.kill(); } catch {}
+    const reason = stderr.split(/\r?\n/).find(Boolean)
+      || (exitCode === 2 ? 'DREAM_MIGRATION_HOST_MUTEX_BUSY' : 'DREAM_MIGRATION_HOST_MUTEX_FAILED');
+    return Object.freeze({ ok: false, reason, endpoint });
+  }
+  let releaseStarted = false;
+  return Object.freeze({
+    ok: true,
+    reason: 'DREAM_MIGRATION_HOST_MUTEX_ACQUIRED',
+    endpoint,
+    verifyOwnership: async () => !exited && !releaseStarted,
+    async release() {
+      if (releaseStarted || exited) return false;
+      releaseStarted = true;
+      try { child.stdin.write('RELEASE\n'); } catch { return false; }
+      if (!(await waitForMarker(`RELEASED:${token}`))) return false;
+      try { child.stdin.end('ACK\n'); } catch { return false; }
+      const timeout = new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), DIRECTORY_GUARD_TIMEOUT_MS);
+        timer.unref?.();
+      });
+      return await Promise.race([exitPromise, timeout]) === 0;
+    },
   });
 }
 
@@ -2246,7 +2419,8 @@ async function executeDreamRuntimeMigrationWithinLock({
     });
   }
   const receiptPath = committedReceipt.artifactPath;
-  return Object.freeze({
+  let rollbackResult = null;
+  const result = {
     ok: true,
     status: 'DONE',
     finalVerdict,
@@ -2261,7 +2435,18 @@ async function executeDreamRuntimeMigrationWithinLock({
     canonicalDestinationRemovalPerformed: false,
     destructiveGitOperationPerformed: false,
     nextOperatorAction: 'Keep canonical destination and legacy source in place until separately approved source reconciliation and cleanup.',
+  };
+  Object.defineProperty(result, DREAM_MIGRATION_ROLLBACK, {
+    enumerable: false,
+    value: async () => {
+      if (rollbackResult !== null) return rollbackResult;
+      const receiptCleaned = await removeOwnedArtifact(receiptPath, committedReceipt.identity, fsImpl);
+      const migrationArtifactsCleaned = await cleanupCreatedMigrationArtifacts();
+      rollbackResult = receiptCleaned && migrationArtifactsCleaned;
+      return rollbackResult;
+    },
   });
+  return Object.freeze(result);
 }
 
 export async function executeDreamRuntimeMigration(options = {}) {
@@ -2270,6 +2455,35 @@ export async function executeDreamRuntimeMigration(options = {}) {
   }
   const boundary = resolveDreamRuntimeBoundary(options);
   if (!boundary.ok) return executeDreamRuntimeMigrationWithinLock(options);
+  const acquireMigrationHostMutexFn = options.acquireMigrationHostMutexFn
+    || acquireDreamMigrationHostMutex;
+  let migrationHostMutex;
+  try {
+    migrationHostMutex = await acquireMigrationHostMutexFn(boundary.runtimeRoot);
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_HOST_MUTEX_FAILED',
+      blocker: 'DREAM_MIGRATION_HOST_MUTEX_FAILED',
+      lockReason: error?.code || 'DREAM_MIGRATION_HOST_MUTEX_FAILED',
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
+  if (!migrationHostMutex?.ok
+      || typeof migrationHostMutex.release !== 'function'
+      || typeof migrationHostMutex.verifyOwnership !== 'function') {
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      finalVerdict: 'DREAM_MIGRATION_CONCURRENT',
+      blocker: 'DREAM_MIGRATION_CONCURRENT',
+      lockReason: migrationHostMutex?.reason || 'DREAM_MIGRATION_HOST_MUTEX_UNAVAILABLE',
+      sourceRemovalPerformed: false,
+      destructiveGitOperationPerformed: false,
+    });
+  }
   const acquireMigrationLockFn = options.acquireMigrationLockFn
     || acquireSharedWorkspaceOperationLock;
   let migrationLock;
@@ -2280,23 +2494,27 @@ export async function executeDreamRuntimeMigration(options = {}) {
       { ...(options.operationLockOptions || {}), repoRoot: boundary.repoRoot },
     );
   } catch (error) {
+    const hostMutexReleased = await migrationHostMutex.release();
     return Object.freeze({
       ok: false,
       status: 'BLOCKED',
       finalVerdict: 'DREAM_MIGRATION_LOCK_FAILED',
       blocker: 'DREAM_MIGRATION_LOCK_FAILED',
       lockReason: error?.code || 'DREAM_MIGRATION_LOCK_FAILED',
+      lockCleanupBlocker: hostMutexReleased ? '' : 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED',
       sourceRemovalPerformed: false,
       destructiveGitOperationPerformed: false,
     });
   }
   if (!migrationLock?.ok || typeof migrationLock.release !== 'function' || typeof migrationLock.verifyOwnership !== 'function') {
+    const hostMutexReleased = await migrationHostMutex.release();
     return Object.freeze({
       ok: false,
       status: 'BLOCKED',
       finalVerdict: 'DREAM_MIGRATION_CONCURRENT',
       blocker: 'DREAM_MIGRATION_CONCURRENT',
       lockReason: migrationLock?.reason || 'DREAM_MIGRATION_LOCK_UNAVAILABLE',
+      lockCleanupBlocker: hostMutexReleased ? '' : 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED',
       sourceRemovalPerformed: false,
       destructiveGitOperationPerformed: false,
     });
@@ -2306,7 +2524,10 @@ export async function executeDreamRuntimeMigration(options = {}) {
   try {
     outcome = await executeDreamRuntimeMigrationWithinLock({
       ...options,
-      migrationLockVerifierFn: migrationLock.verifyOwnership,
+      migrationLockVerifierFn: async () => (
+        await migrationHostMutex.verifyOwnership()
+        && await migrationLock.verifyOwnership()
+      ),
     });
   } catch (error) {
     executionError = error;
@@ -2315,24 +2536,45 @@ export async function executeDreamRuntimeMigration(options = {}) {
   try { released = await migrationLock.release(); } catch {}
   if (executionError) {
     if (!released) executionError.cleanupBlocker ||= 'DREAM_MIGRATION_LOCK_RELEASE_FAILED';
+    const hostMutexReleased = await migrationHostMutex.release();
+    if (!hostMutexReleased) executionError.cleanupBlocker ||= 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED';
     throw executionError;
   }
-  if (released) return outcome;
+  let rollbackCleaned = true;
+  if (!released && outcome?.ok) {
+    rollbackCleaned = typeof outcome[DREAM_MIGRATION_ROLLBACK] === 'function'
+      && await outcome[DREAM_MIGRATION_ROLLBACK]();
+  }
+  const hostMutexReleased = await migrationHostMutex.release();
+  if (released && !hostMutexReleased && outcome?.ok) {
+    rollbackCleaned = typeof outcome[DREAM_MIGRATION_ROLLBACK] === 'function'
+      && await outcome[DREAM_MIGRATION_ROLLBACK]();
+  }
+  if (released && hostMutexReleased) return Object.freeze({ ...outcome });
+  const releaseBlocker = !released
+    ? 'DREAM_MIGRATION_LOCK_RELEASE_FAILED'
+    : 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED';
   if (outcome?.ok) {
     return Object.freeze({
       ...outcome,
       ok: false,
       status: 'BLOCKED',
-      finalVerdict: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
-      blocker: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
-      migrationLockReleaseReason: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
-      lockCleanupBlocker: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+      finalVerdict: releaseBlocker,
+      blocker: releaseBlocker,
+      receiptPath: '',
+      copied: Object.freeze([]),
+      preserved: Object.freeze([]),
+      cleanupBlocker: rollbackCleaned ? '' : 'DREAM_MIGRATION_ARTIFACT_CLEANUP_FAILED',
+      migrationLockReleaseReason: released ? '' : 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+      hostMutexReleaseReason: hostMutexReleased ? '' : 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED',
+      lockCleanupBlocker: releaseBlocker,
     });
   }
   return Object.freeze({
     ...outcome,
-    cleanupBlocker: outcome?.cleanupBlocker || 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
-    migrationLockReleaseReason: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
-    lockCleanupBlocker: 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+    cleanupBlocker: outcome?.cleanupBlocker || releaseBlocker,
+    migrationLockReleaseReason: released ? '' : 'DREAM_MIGRATION_LOCK_RELEASE_FAILED',
+    hostMutexReleaseReason: hostMutexReleased ? '' : 'DREAM_MIGRATION_HOST_MUTEX_RELEASE_FAILED',
+    lockCleanupBlocker: releaseBlocker,
   });
 }
