@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,6 +17,7 @@ import {
   parsePosixPromotionIdentity,
   pathIsInside,
   planDreamRuntimeMigration,
+  removeVerifiedDarwinPublishedArtifact,
   resolveDreamRuntimeBoundary,
   resolveDreamVersionedPreservationPaths,
   resolveWindowsArtifactCleanupBlocker,
@@ -1286,11 +1288,20 @@ test('cross-platform publication adapters preserve the structural commit invaria
   assert.match(posixHelper, /system = platform\.system\(\)[\s\S]*if system == "Darwin"/);
   assert.match(posixHelper, /fclonefileat\(pending_fd, parent_fd/);
   assert.doesNotMatch(posixHelper, /renameatx_np/);
-  assert.match(
-    posixHelper,
-    /except BaseException:\s+fail\("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED"\)/,
+  const darwinHelper = posixHelper.slice(
+    posixHelper.indexOf('if system == "Darwin":'),
+    posixHelper.indexOf('else:\n    fail("DREAM_MIGRATION_RECEIPT_PROMOTION_UNSUPPORTED")'),
   );
-  assert.doesNotMatch(posixHelper, /cleanup_owned_promoted/);
+  const darwinPendingCleanupIndex = darwinHelper.indexOf('os.unlink(args.pending_name');
+  const darwinCloneIndex = darwinHelper.indexOf('fclonefileat(pending_fd, parent_fd');
+  const darwinPostCommitIndex = darwinHelper.indexOf('# fclonefileat is the sole commit point');
+  const darwinExitIndex = darwinHelper.indexOf('os._exit(0)');
+  assert.ok(darwinPendingCleanupIndex >= 0 && darwinPendingCleanupIndex < darwinCloneIndex);
+  assert.ok(darwinPostCommitIndex > darwinCloneIndex && darwinExitIndex > darwinPostCommitIndex);
+  assert.doesNotMatch(
+    darwinHelper.slice(darwinPostCommitIndex, darwinExitIndex),
+    /os\.(?:stat|unlink|open|write)|print\(|fail\(/,
+  );
   const boundarySource = await fs.readFile(path.resolve('shared/agents/dreamRuntimeBoundary.mjs'), 'utf8');
   assert.match(boundarySource, /startLinuxIsolatedReceiptPublication\(receiptPath, content/);
   assert.match(boundarySource, /writtenReceipt\.isolatedPublication\.commit\(\)/);
@@ -1298,18 +1309,20 @@ test('cross-platform publication adapters preserve the structural commit invaria
   assert.match(boundarySource, /exactStagedInodeCommitted = sameOwnedArtifactIdentity\(stagedIdentity, verifiedIdentity, 1\)/);
   assert.match(boundarySource, /!committedIdentity\s+\|\| sameOwnedArtifactIdentity\(committedIdentity, verifiedIdentity, 1\)/);
   assert.match(boundarySource, /expectedDarwinHash = sha256\(await pendingHandle\.readFile\(\)\)/);
+  assert.match(boundarySource, /verifyDarwinPublishedArtifactIdentity\(operationArtifactPath/);
   assert.match(
     boundarySource,
-    /finalLinked = output\.code === 0;[\s\S]*publishedIdentity = helperIdentity;[\s\S]*\} finally \{\s+await pendingHandle\.close\(\);/,
+    /if \(!cleanupIdentity && process\.platform === 'darwin'[\s\S]*removeVerifiedDarwinPublishedArtifact[\s\S]*Boolean\(cleanupIdentity\) && await removeOwnedArtifactWithinBoundary/,
   );
   assert.match(
     boundarySource,
-    /if \(finalLinked && boundary\)[\s\S]*publishedIdentity \|\| identity/,
+    /finalLinked = output\.code === 0;[\s\S]*publishedIdentity = helperIdentity;[\s\S]*\} finally \{\s+await pendingHandle\.close\(\);/,
   );
   const promotionSource = boundarySource.slice(
     boundarySource.indexOf('async function promoteOwnedArtifact'),
     boundarySource.indexOf('async function writeReceipt'),
   );
+  assert.doesNotMatch(promotionSource, /publishedIdentity \|\| identity/);
   const helperExitIndex = promotionSource.indexOf('finalLinked = output.code === 0;');
   const helperParseIndex = promotionSource.indexOf('parsePosixPromotionIdentity(output.stdout)');
   const helperIdentityIndex = promotionSource.indexOf('publishedIdentity = helperIdentity;');
@@ -1345,6 +1358,48 @@ test('cross-platform publication adapters preserve the structural commit invaria
     /DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED[\s\S]*error\.cleanupBlocker = 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED'/,
   );
   assert.match(windowsHelper, /if \(\$renamed\)[\s\S]*DeleteByHandle\(\$pending\)/);
+});
+
+test('Darwin post-clone failure removes the exact content-bound authoritative inode', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dream-darwin-recovery-'));
+  const artifactPath = path.join(root, 'dream-migration-receipt.json');
+  const content = Buffer.from('{"owned":true}\n');
+  await fs.writeFile(artifactPath, content);
+  const removed = await removeVerifiedDarwinPublishedArtifact(root, path.basename(artifactPath), {
+    expectedSize: content.length,
+    expectedHash: createHash('sha256').update(content).digest('hex'),
+  });
+  assert.equal(removed, true);
+  await assert.rejects(() => fs.lstat(artifactPath), (error) => error.code === 'ENOENT');
+});
+
+test('Darwin post-clone cleanup rejects a pathname swap after opening the owned clone', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dream-darwin-swap-'));
+  const artifactPath = path.join(root, 'dream-migration-receipt.json');
+  const displacedPath = path.join(root, 'owned-displaced.json');
+  const content = Buffer.from('{"owned":true}\n');
+  await fs.writeFile(artifactPath, content);
+  let swapped = false;
+  const hostileFs = {
+    open: (...args) => fs.open(...args),
+    lstat: async (...args) => {
+      if (!swapped) {
+        await fs.rename(artifactPath, displacedPath);
+        await fs.writeFile(artifactPath, content);
+        swapped = true;
+      }
+      return fs.lstat(...args);
+    },
+  };
+  const removed = await removeVerifiedDarwinPublishedArtifact(root, path.basename(artifactPath), {
+    expectedSize: content.length,
+    expectedHash: createHash('sha256').update(content).digest('hex'),
+    fsImpl: hostileFs,
+  });
+  assert.equal(swapped, true);
+  assert.equal(removed, false);
+  assert.equal(await fs.readFile(displacedPath, 'utf8'), content.toString());
+  assert.equal(await fs.readFile(artifactPath, 'utf8'), content.toString());
 });
 
 test('missing preservation directories are created relative to the validated parent handle', { skip: process.platform !== 'linux' }, async () => {

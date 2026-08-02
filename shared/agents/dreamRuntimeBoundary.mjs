@@ -1261,6 +1261,55 @@ async function copyOwnedExclusiveArtifact(sourcePath, artifactPath, options) {
   return writeOwnedExclusiveArtifact(artifactPath, content, options);
 }
 
+export async function verifyDarwinPublishedArtifactIdentity(
+  artifactPath,
+  { expectedSize, expectedHash, fsImpl = fs } = {},
+) {
+  let handle = null;
+  try {
+    handle = await fsImpl.open(artifactPath, 'r');
+    const openedIdentity = await handle.stat();
+    if (!openedIdentity.isFile?.()
+        || openedIdentity.isSymbolicLink?.()
+        || Number(openedIdentity.nlink) !== 1
+        || Number(openedIdentity.size) !== Number(expectedSize)) {
+      return null;
+    }
+    const actualHash = sha256(await handle.readFile());
+    if (!SHA256_PATTERN.test(String(expectedHash || '')) || actualHash !== expectedHash) return null;
+    const reboundIdentity = await fsImpl.lstat(artifactPath);
+    if (!sameOwnedArtifactIdentity(openedIdentity, reboundIdentity, 1)) return null;
+    return openedIdentity;
+  } catch {
+    return null;
+  } finally {
+    if (handle) {
+      try { await handle.close(); } catch {}
+    }
+  }
+}
+
+export async function removeVerifiedDarwinPublishedArtifact(
+  operationParentPath,
+  artifactName,
+  { expectedSize, expectedHash, fsImpl = fs } = {},
+) {
+  if (!safeRelativePath(artifactName) || path.basename(artifactName) !== artifactName) return false;
+  const artifactPath = path.join(operationParentPath, artifactName);
+  const identity = await verifyDarwinPublishedArtifactIdentity(
+    artifactPath,
+    { expectedSize, expectedHash, fsImpl },
+  );
+  if (!identity) return false;
+  return removeOwnedArtifactWithinBoundary(
+    operationParentPath,
+    artifactName,
+    identity,
+    fsImpl,
+    { maxLinkCount: 1 },
+  );
+}
+
 async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl) {
   if (!samePath(path.dirname(pendingPath), path.dirname(artifactPath))) {
     throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_PATH_INVALID');
@@ -1319,12 +1368,15 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
           helper.once('error', (error) => resolve({ code: null, stdout, stderr, error }));
           helper.once('exit', (code) => resolve({ code, stdout, stderr }));
         });
+        const helperReason = output.stderr.split(/\r?\n/).find(Boolean) || '';
         finalLinked = output.code === 0;
-        const helperIdentity = output.code === 0
+        const helperIdentity = output.code === 0 && process.platform !== 'darwin'
           ? parsePosixPromotionIdentity(output.stdout)
           : null;
-        if (!helperIdentity || output.stderr.trim()) {
-          const helperReason = output.stderr.split(/\r?\n/).find(Boolean) || '';
+        const helperEvidenceValid = process.platform === 'darwin'
+          ? output.code === 0 && !output.stdout.trim() && !output.stderr.trim()
+          : Boolean(helperIdentity) && !output.stderr.trim();
+        if (!helperEvidenceValid) {
           const helperError = codedError(
             helperReason === 'EEXIST'
               ? 'EEXIST'
@@ -1337,10 +1389,12 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
           }
           throw helperError;
         }
-        publishedIdentity = helperIdentity;
-        const helperBoundIdentity = await assertRegularSingleLink(operationArtifactPath, { fsImpl });
-        if (!sameOwnedArtifactIdentity(publishedIdentity, helperBoundIdentity, 1)) {
-          throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
+        if (helperIdentity) {
+          publishedIdentity = helperIdentity;
+          const helperBoundIdentity = await assertRegularSingleLink(operationArtifactPath, { fsImpl });
+          if (!sameOwnedArtifactIdentity(publishedIdentity, helperBoundIdentity, 1)) {
+            throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
+          }
         }
       } finally {
         await pendingHandle.close();
@@ -1352,13 +1406,21 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
       await fsImpl.unlink(operationPendingPath);
       pendingRemoved = true;
     }
-    const promotedIdentity = await assertRegularSingleLink(operationArtifactPath, { fsImpl });
+    const promotedIdentity = process.platform === 'darwin' && fsImpl === fs
+      ? await verifyDarwinPublishedArtifactIdentity(operationArtifactPath, {
+        expectedSize: identity.size,
+        expectedHash: expectedDarwinHash,
+        fsImpl,
+      })
+      : await assertRegularSingleLink(operationArtifactPath, { fsImpl });
+    if (!promotedIdentity) {
+      throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
+    }
     if (publishedIdentity && !sameOwnedArtifactIdentity(publishedIdentity, promotedIdentity, 1)) {
       throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
     }
     const promotionMatches = process.platform === 'darwin' && fsImpl === fs
-      ? promotedIdentity.size === identity.size
-        && await sha256File(operationArtifactPath, { fsImpl }) === expectedDarwinHash
+      ? true
       : sameFileIdentity(identity, promotedIdentity);
     if (!promotionMatches) {
       throw codedError('DREAM_MIGRATION_RECEIPT_COMMIT_IDENTITY_CHANGED');
@@ -1373,13 +1435,22 @@ async function promoteOwnedArtifact(pendingPath, artifactPath, identity, fsImpl)
   } catch (error) {
     let cleaned = true;
     if (finalLinked && boundary) {
-      cleaned = await removeOwnedArtifactWithinBoundary(
-        boundary.operationParentPath,
-        artifactName,
-        publishedIdentity || identity,
-        fsImpl,
-        { maxLinkCount: process.platform === 'darwin' ? 1 : pendingRemoved ? 1 : 2 },
-      );
+      let cleanupIdentity = publishedIdentity;
+      if (!cleanupIdentity && process.platform === 'darwin' && fsImpl === fs) {
+        cleaned = await removeVerifiedDarwinPublishedArtifact(
+          boundary.operationParentPath,
+          artifactName,
+          { expectedSize: identity.size, expectedHash: expectedDarwinHash, fsImpl },
+        );
+      } else {
+        cleaned = Boolean(cleanupIdentity) && await removeOwnedArtifactWithinBoundary(
+          boundary.operationParentPath,
+          artifactName,
+          cleanupIdentity,
+          fsImpl,
+          { maxLinkCount: process.platform === 'darwin' ? 1 : pendingRemoved ? 1 : 2 },
+        );
+      }
     }
     const wrapped = codedError('DREAM_MIGRATION_RECEIPT_COMMIT_FAILED');
     wrapped.reasonCode = error?.code || 'DREAM_MIGRATION_RECEIPT_COMMIT_FAILED';

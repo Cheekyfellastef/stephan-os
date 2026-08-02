@@ -140,26 +140,24 @@ if system == "Darwin":
     libc = ctypes.CDLL(None, use_errno=True)
     fclonefileat = libc.fclonefileat
     fclonefileat.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    # The owned descriptor remains valid after its directory entry is removed.
+    # Complete every fallible pathname operation before fclonefileat exposes the
+    # authoritative name.  A replacement pending entry is never removed.
+    try:
+        pending = os.stat(args.pending_name, dir_fd=parent_fd, follow_symlinks=False)
+        if (pending.st_dev, pending.st_ino) == (owned.st_dev, owned.st_ino):
+            os.unlink(args.pending_name, dir_fd=parent_fd)
+    except FileNotFoundError:
+        pass
+    except BaseException:
+        fail("DREAM_MIGRATION_RECEIPT_COMMIT_FAILED")
     if fclonefileat(pending_fd, parent_fd, os.fsencode(args.artifact_name), 0) != 0:
         error = ctypes.get_errno()
         fail("EEXIST" if error == errno.EEXIST else "DREAM_MIGRATION_RECEIPT_COMMIT_FAILED")
-    try:
-        try:
-            pending = os.stat(args.pending_name, dir_fd=parent_fd, follow_symlinks=False)
-            if (pending.st_dev, pending.st_ino) == (owned.st_dev, owned.st_ino):
-                os.unlink(args.pending_name, dir_fd=parent_fd)
-        except FileNotFoundError:
-            pass
-        promoted = os.stat(args.artifact_name, dir_fd=parent_fd, follow_symlinks=False)
-        if (not stat.S_ISREG(promoted.st_mode)
-                or promoted.st_nlink != 1
-                or promoted.st_size != owned.st_size):
-            fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
-        print(promoted_identity(promoted), flush=True)
-    except SystemExit:
-        raise
-    except BaseException:
-        fail("DREAM_MIGRATION_RECEIPT_COMMIT_CLEANUP_UNVERIFIED")
-    raise SystemExit(0)
+    # fclonefileat is the sole commit point.  Do not add stat, unlink, buffered
+    # output, or any other fallible operation after it.  The parent observes the
+    # zero exit and binds the clone through an open handle before publication is
+    # accepted or exact-inode cleanup is attempted.
+    os._exit(0)
 else:
     fail("DREAM_MIGRATION_RECEIPT_PROMOTION_UNSUPPORTED")
