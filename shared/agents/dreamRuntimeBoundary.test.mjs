@@ -529,6 +529,7 @@ test('later copy preflight exception rolls back prior preservation artifacts', a
         if (deepSourceReads === 2) {
           const error = new Error('copy preflight failed');
           error.code = 'EIO';
+          error.cleanupBlocker = 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED';
           throw error;
         }
       }
@@ -539,7 +540,7 @@ test('later copy preflight exception rolls back prior preservation artifacts', a
   assert.equal(deepSourceReads, 2);
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_MIGRATION_COPY_PREFLIGHT_FAILED');
-  assert.equal(result.cleanupBlocker, '');
+  assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED');
   await assert.rejects(() => fs.lstat(deepEntry.destinationPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(eventsPaths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(eventsPaths.manifestPath), (error) => error.code === 'ENOENT');
@@ -1083,6 +1084,7 @@ test('later preservation setup exception rolls back prior preserved artifacts', 
       if (lockCalls === 2) {
         const error = new Error('preservation lock setup failed');
         error.code = 'EIO';
+        error.cleanupBlocker = 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED';
         throw error;
       }
       return { ok: true, release: async () => true };
@@ -1092,7 +1094,7 @@ test('later preservation setup exception rolls back prior preserved artifacts', 
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'DREAM_VERSIONED_PRESERVATION_SETUP_FAILED');
   assert.equal(result.preservationFailureReason, 'EIO');
-  assert.equal(result.cleanupBlocker, '');
+  assert.equal(result.cleanupBlocker, 'DREAM_MIGRATION_DIRECTORY_CREATE_CLEANUP_FAILED');
   await assert.rejects(() => fs.lstat(eventsPaths.snapshotPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(eventsPaths.manifestPath), (error) => error.code === 'ENOENT');
   await assert.rejects(() => fs.lstat(deepPaths.snapshotPath), (error) => error.code === 'ENOENT');

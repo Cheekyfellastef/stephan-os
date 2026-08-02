@@ -1504,7 +1504,11 @@ async function preserveVersionedConflict(entry, boundary, {
       }
     }
   } catch (error) {
-    outcome = Object.freeze({ ok: false, blocker: error?.code || 'DREAM_VERSIONED_PRESERVATION_FAILED' });
+    outcome = Object.freeze({
+      ok: false,
+      blocker: error?.code || 'DREAM_VERSIONED_PRESERVATION_FAILED',
+      cleanupBlocker: error?.cleanupBlocker || '',
+    });
   } finally {
     const cleanupOwnedArtifacts = async () => {
       const manifestCleaned = await removeOwnedArtifact(paths.manifestPath, createdManifestIdentity, fsImpl);
@@ -1586,6 +1590,7 @@ async function copyRequiredEntry(entry, fsImpl) {
         ok: false,
         blocker: 'DREAM_MIGRATION_COPY_PREFLIGHT_FAILED',
         copyFailureReason: error?.code || 'DREAM_MIGRATION_COPY_PREFLIGHT_FAILED',
+        cleanupBlocker: error?.cleanupBlocker || '',
       });
     }
     if (phase === 'publication') {
@@ -1754,6 +1759,7 @@ export async function executeDreamRuntimeMigration({
           ok: false,
           blocker: 'DREAM_VERSIONED_PRESERVATION_SETUP_FAILED',
           preservationFailureReason: error?.code || 'DREAM_VERSIONED_PRESERVATION_SETUP_FAILED',
+          cleanupBlocker: error?.cleanupBlocker || '',
         });
       }
       if (!preservation.ok) {
