@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   admitLogicalMonitor,
+  MONITOR_ADMISSION_MAX_IDEMPOTENCY_ENTRIES,
   MONITOR_ADMISSION_ENVELOPE_VERSION,
   MONITOR_ADMISSION_HANDLER_CATALOGUE,
   MONITOR_ADMISSION_OPERATIONS,
@@ -128,6 +129,28 @@ test('unsupported admission writes one fallback receipt and no monitor', async (
   assert.equal(result.receipt.standaloneFallbackCreated, false);
 });
 
+test('rejected request identities cannot overwrite an accepted request receipt', async () => {
+  const workspace = await root();
+  const accepted = await admitLogicalMonitor(request(), options(workspace));
+  const acceptedPath = join(workspace, 'receipts', `${accepted.receipt.receiptId}.json`);
+  const acceptedBytes = await readFile(acceptedPath, 'utf8');
+  const rejected = await admitLogicalMonitor(request({ owner: 'attacker' }), options(workspace));
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.receipt.receiptId, /^monitor-admission-rejected-/);
+  assert.notEqual(rejected.receipt.receiptId, accepted.receipt.receiptId);
+  assert.equal(await readFile(acceptedPath, 'utf8'), acceptedBytes);
+});
+
+test('null envelopes return durable fallback evidence without dereferencing input', async () => {
+  const workspace = await root();
+  const result = await admitLogicalMonitor(null, options(workspace));
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'MONITOR_ADMISSION_FALLBACK_REQUIRED');
+  assert.equal(result.fallbackReason, 'MONITOR_ADMISSION_BLOCKED');
+  assert.equal(result.durable, true);
+  assert.match(result.receipt.receiptId, /^monitor-admission-rejected-/);
+});
+
 test('unavailable storage returns fallback required without fabricated durability', async () => {
   const result = await admitLogicalMonitor(request(), { root: process.cwd(), repoRoot: process.cwd(), authenticatedPrincipal: { subject: OWNER, claimsHash: CLAIMS_HASH }, nowMs: NOW });
   assert.equal(result.ok, false); assert.equal(result.reason, 'MONITOR_ADMISSION_FALLBACK_REQUIRED');
@@ -139,7 +162,16 @@ test('capacity edge rejects monitor 1001', async () => {
   const first = request(); await admitLogicalMonitor(first, config);
   const registryPath = join(workspace, 'status', 'monitor-admission-registry.json');
   const registry = JSON.parse(await readFile(registryPath, 'utf8'));
-  for (let index = 1; index < 1000; index += 1) registry.monitors[`m-${index}`] = { ...registry.monitors['release-watch'], monitorId: `m-${index}`, proposal: { ...registry.monitors['release-watch'].proposal, monitorId: `m-${index}` }, definition: { ...registry.monitors['release-watch'].definition, monitorId: `m-${index}` } };
+  for (let index = 1; index < 1000; index += 1) {
+    const monitorId = `m-${index}`;
+    const proposal = { ...registry.monitors['release-watch'].proposal, monitorId };
+    registry.monitors[monitorId] = {
+      ...registry.monitors['release-watch'],
+      monitorId,
+      proposal,
+      definition: proposalToMonitorDefinition(proposal),
+    };
+  }
   await writeFile(registryPath, JSON.stringify(registry));
   const extra = request({ requestId: 'request-extra', idempotencyKey: 'intent-extra' }, { monitorId: 'extra', idempotencyKey: 'intent-extra' });
   const result = await admitLogicalMonitor(extra, config);
@@ -163,6 +195,40 @@ test('concurrent admissions are serialized without losing either monitor', async
   const registry = JSON.parse(await readFile(join(workspace, 'status', 'monitor-admission-registry.json'), 'utf8'));
   assert.deepEqual(Object.keys(registry.monitors).sort(), ['release-watch', 'second']);
   assert.deepEqual(Object.keys(registry.idempotency).sort(), ['intent-1', 'intent-2']);
+});
+
+test('abandoned registry lock is reclaimed through the canonical operation lease', async () => {
+  const workspace = await root();
+  await mkdir(join(workspace, 'locks', 'monitor-admission-registry.lock'), { recursive: true });
+  await utimes(join(workspace, 'locks', 'monitor-admission-registry.lock'), new Date(0), new Date(0));
+  const result = await admitLogicalMonitor(request(), {
+    ...options(workspace),
+    operationStaleLockMs: 1,
+    operationLockHeartbeatMs: 1,
+  });
+  assert.equal(result.reason, 'MULTIPLEXER_PROJECTION_NOT_PROVEN');
+});
+
+test('idempotency history compacts oldest committed results at its independent bound', async () => {
+  const workspace = await root(); const config = options(workspace);
+  await admitLogicalMonitor(request(), config);
+  const registryPath = join(workspace, 'status', 'monitor-admission-registry.json');
+  const registry = JSON.parse(await readFile(registryPath, 'utf8'));
+  const template = registry.idempotency['intent-1'];
+  for (let index = 1; index < MONITOR_ADMISSION_MAX_IDEMPOTENCY_ENTRIES; index += 1) {
+    registry.idempotency[`history-${index}`] = {
+      ...template,
+      fingerprint: String(index).padStart(64, '0'),
+      updatedAtUtc: new Date(NOW - ((MONITOR_ADMISSION_MAX_IDEMPOTENCY_ENTRIES - index) * 1000)).toISOString(),
+    };
+  }
+  await writeFile(registryPath, JSON.stringify(registry));
+  const next = request({ requestId: 'request-next', idempotencyKey: 'intent-next' }, { idempotencyKey: 'intent-next' });
+  assert.equal((await admitLogicalMonitor(next, config)).reason, 'MULTIPLEXER_PROJECTION_NOT_PROVEN');
+  const compacted = JSON.parse(await readFile(registryPath, 'utf8'));
+  assert.equal(Object.keys(compacted.idempotency).length, MONITOR_ADMISSION_MAX_IDEMPOTENCY_ENTRIES);
+  assert.equal(compacted.idempotency['intent-next'].state, 'committed');
+  assert.equal(compacted.idempotency['history-1'], undefined);
 });
 
 test('pending publication is repaired on retry before idempotency commits', async () => {
@@ -189,4 +255,23 @@ test('malformed durable state fails closed', async () => {
   await writeFile(join(workspace, 'status', 'monitor-admission-registry.json'), JSON.stringify({ registrySchemaVersion: 'stephanos.monitor-admission-registry.v1', monitors: {} }));
   const result = await admitLogicalMonitor(request(), options(workspace));
   assert.equal(result.blocker, 'MALFORMED_DURABLE_REGISTRY');
+});
+
+test('stored monitor proposal, definition and timestamp require their complete canonical schemas', async () => {
+  for (const mutate of [
+    (monitor) => { monitor.proposal = { monitorId: monitor.monitorId }; },
+    (monitor) => { monitor.definition = {}; },
+    (monitor) => { monitor.updatedAtUtc = 'not-a-timestamp'; },
+  ]) {
+    const workspace = await root();
+    await admitLogicalMonitor(request(), options(workspace));
+    const registryPath = join(workspace, 'status', 'monitor-admission-registry.json');
+    const registry = JSON.parse(await readFile(registryPath, 'utf8'));
+    mutate(registry.monitors['release-watch']);
+    await writeFile(registryPath, JSON.stringify(registry));
+    const read = request({ operation: MONITOR_ADMISSION_OPERATIONS.READ, requestId: 'read-2', idempotencyKey: 'read-2', monitorId: 'release-watch' });
+    delete read.proposal;
+    const result = await admitLogicalMonitor(read, options(workspace));
+    assert.equal(result.blocker, 'MALFORMED_DURABLE_REGISTRY');
+  }
 });

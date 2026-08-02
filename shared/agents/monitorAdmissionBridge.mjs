@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { acquireSharedWorkspaceOperationLock } from './executionReceiptV1.mjs';
 import {
   createMonitorDefinition,
   MONITOR_MULTIPLEXER_MAX_MONITORS,
@@ -34,6 +34,7 @@ const unsafeObjectKeys = new Set(['__proto__', 'prototype', 'constructor']);
 const MAX_SUBJECT_ITEMS = 32;
 const MAX_SUBJECT_BYTES = 4 * 1024;
 const MAX_PROOF_REFS = 32;
+export const MONITOR_ADMISSION_MAX_IDEMPOTENCY_ENTRIES = 2048;
 const hash = (value) => createHash('sha256').update(String(value)).digest('hex');
 const canonical = (value) => {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -149,46 +150,92 @@ async function readRegistry(root, repoRoot) {
 }
 
 const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+function validStoredProposal(value, id) {
+  if (!plainObject(value) || value.monitorId !== id || !safeId(value.idempotencyKey)) return false;
+  return validateMonitorAdmissionEnvelope({
+    schemaVersion: MONITOR_ADMISSION_ENVELOPE_VERSION,
+    operation: MONITOR_ADMISSION_OPERATIONS.UPSERT,
+    owner: 'registry-validator',
+    claimsHash: 'a'.repeat(64),
+    requestId: 'registry-validation',
+    issuedAtUtc: '1970-01-01T00:00:00.000Z',
+    expiresAtUtc: '1970-01-01T00:10:00.000Z',
+    idempotencyKey: value.idempotencyKey,
+    proposal: value,
+  }, {
+    authenticatedPrincipal: { subject: 'registry-validator', claimsHash: 'a'.repeat(64) },
+    nowMs: 1,
+  }).valid;
+}
+
 function validMonitor(value, id) {
-  return plainObject(value) && value.monitorId === id && plainObject(value.proposal) && plainObject(value.definition)
-    && value.proposal.monitorId === id && typeof value.updatedAtUtc === 'string';
+  if (!plainObject(value) || value.monitorId !== id || !validStoredProposal(value.proposal, id)
+    || !plainObject(value.definition) || !Number.isFinite(timestamp(value.updatedAtUtc))) return false;
+  try {
+    return canonical(value.definition) === canonical(proposalToMonitorDefinition(value.proposal));
+  } catch {
+    return false;
+  }
 }
 function validCachedResult(value) {
   return plainObject(value) && typeof value.ok === 'boolean' && typeof value.reason === 'string'
-    && Number.isInteger(value.monitorCount) && (value.monitor === null || plainObject(value.monitor));
+    && Number.isInteger(value.monitorCount) && (value.monitor === null
+      || (safeId(value.monitor?.monitorId) && validMonitor(value.monitor, value.monitor.monitorId)));
 }
 function validateRegistry(value) {
   if (!plainObject(value) || value.registrySchemaVersion !== MONITOR_ADMISSION_REGISTRY_VERSION || !plainObject(value.monitors) || !plainObject(value.idempotency)) return false;
   if (Object.keys(value.monitors).length > MONITOR_MULTIPLEXER_MAX_MONITORS) return false;
+  if (Object.keys(value.idempotency).length > MONITOR_ADMISSION_MAX_IDEMPOTENCY_ENTRIES) return false;
   if (Object.entries(value.monitors).some(([id, monitor]) => !safeId(id) || !validMonitor(monitor, id))) return false;
   return !Object.entries(value.idempotency).some(([id, replay]) => !safeId(id) || !plainObject(replay)
     || !/^[a-f0-9]{64}$/.test(String(replay.fingerprint || '')) || !['pending', 'committed'].includes(replay.state)
-    || !validCachedResult(replay.result));
+    || !Number.isFinite(timestamp(replay.updatedAtUtc)) || !validCachedResult(replay.result));
 }
 
-async function withRegistryLock(root, repoRoot, action) {
-  const resolved = resolveSharedWorkspacePath({ root, repoRoot, segments: ['locks', 'monitor-admission-registry.lock'] });
-  if (!resolved.ok) return { lockFailure: resolved.reason };
-  await mkdir(dirname(resolved.path), { recursive: true });
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      await mkdir(resolved.path);
-      try { return await action(); } finally { await rm(resolved.path, { recursive: true, force: true }); }
-    } catch (error) {
-      if (error?.code !== 'EEXIST') return { lockFailure: 'MONITOR_ADMISSION_LOCK_FAILED' };
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+async function withRegistryLock(root, repoRoot, action, options = {}) {
+  const acquireLock = options.testAcquireOperationLock || acquireSharedWorkspaceOperationLock;
+  const lock = await acquireLock(root, ['locks', 'monitor-admission-registry.lock'], {
+    repoRoot,
+    operationLockTimeoutMs: options.operationLockTimeoutMs ?? 500,
+    operationLockRetryMs: options.operationLockRetryMs ?? 5,
+    operationStaleLockMs: options.operationStaleLockMs ?? 30_000,
+    operationLockHeartbeatMs: options.operationLockHeartbeatMs ?? 5_000,
+  });
+  if (!lock.ok) return { lockFailure: lock.reason || 'MONITOR_ADMISSION_LOCK_FAILED' };
+  let result;
+  let released = false;
+  try {
+    result = await action();
+  } finally {
+    released = await lock.release();
   }
-  return { lockFailure: 'MONITOR_ADMISSION_LOCK_BUSY' };
+  return released ? result : { lockFailure: 'MONITOR_ADMISSION_LOCK_RELEASE_FAILED' };
 }
 
-function evidence(envelope, verdict, monitor, timestampUtc, reason = '') {
-  const receiptId = `monitor-admission-${hash(envelope.requestId).slice(0, 16)}`;
+function evidence(envelope, verdict, monitor, timestampUtc, reason = '', options = {}) {
+  const record = plainObject(envelope) ? envelope : {};
+  const receiptId = options.rejected
+    ? `monitor-admission-rejected-${hash(canonical(envelope)).slice(0, 24)}`
+    : `monitor-admission-${hash(record.requestId).slice(0, 16)}`;
   const proofRefs = monitor?.proposal?.proofRefs?.length ? monitor.proposal.proofRefs : ['proof/monitor-admission.json'];
   return {
-    status: { ...createSharedWorkspaceStatusRecord({ statusId: `monitor-admission-${monitor?.monitorId || envelope.monitorId || 'fallback'}`, participantId: 'monitor-admission-bridge', timestampUtc, status: verdict === 'MULTIPLEXER_ADMISSION_READY' ? 'READY' : 'ATTENTION_REQUIRED', summary: reason || verdict, proofRefs }), verdict, monitorId: monitor?.monitorId || envelope.monitorId || '', notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE, executableAuthority: false },
-    receipt: { ...createSharedWorkspaceReceiptRecord({ receiptId, participantId: 'monitor-admission-bridge', timestampUtc, correlationId: envelope.requestId, relatedIssue: String(monitor?.proposal?.relatedIssueOrGoal || '').startsWith('#') ? monitor.proposal.relatedIssueOrGoal : '#1585', receivedRecordId: envelope.requestId, disposition: verdict.includes('READY') ? 'published' : 'blocked', summary: reason || verdict, proofRefs }), relatedIssueOrGoal: monitor?.proposal?.relatedIssueOrGoal || '', principalSubject: envelope.owner || '', claimsHash: envelope.claimsHash || '', verdict, reason, monitorId: monitor?.monitorId || envelope.monitorId || '', notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE, handlerExecuted: false, standaloneFallbackCreated: false, sourceMutationAllowed: false, mergeAuthority: false },
+    status: { ...createSharedWorkspaceStatusRecord({ statusId: `monitor-admission-${monitor?.monitorId || record.monitorId || 'fallback'}`, participantId: 'monitor-admission-bridge', timestampUtc, status: verdict === 'MULTIPLEXER_ADMISSION_READY' ? 'READY' : 'ATTENTION_REQUIRED', summary: reason || verdict, proofRefs }), verdict, monitorId: monitor?.monitorId || record.monitorId || '', notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE, executableAuthority: false },
+    receipt: { ...createSharedWorkspaceReceiptRecord({ receiptId, participantId: 'monitor-admission-bridge', timestampUtc, correlationId: record.requestId || receiptId, relatedIssue: String(monitor?.proposal?.relatedIssueOrGoal || '').startsWith('#') ? monitor.proposal.relatedIssueOrGoal : '#1585', receivedRecordId: record.requestId || receiptId, disposition: verdict.includes('READY') ? 'published' : 'blocked', summary: reason || verdict, proofRefs }), relatedIssueOrGoal: monitor?.proposal?.relatedIssueOrGoal || '', principalSubject: record.owner || '', claimsHash: record.claimsHash || '', verdict, reason, monitorId: monitor?.monitorId || record.monitorId || '', notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE, handlerExecuted: false, standaloneFallbackCreated: false, sourceMutationAllowed: false, mergeAuthority: false },
   };
+}
+
+function compactIdempotency(records, incomingKey) {
+  const compacted = Object.assign(Object.create(null), records);
+  if (own(compacted, incomingKey)) return compacted;
+  while (Object.keys(compacted).length >= MONITOR_ADMISSION_MAX_IDEMPOTENCY_ENTRIES) {
+    const oldest = Object.entries(compacted)
+      .filter(([, replay]) => replay.state === 'committed')
+      .sort((left, right) => timestamp(left[1].updatedAtUtc) - timestamp(right[1].updatedAtUtc)
+        || left[0].localeCompare(right[0]))[0];
+    if (!oldest) return null;
+    delete compacted[oldest[0]];
+  }
+  return compacted;
 }
 
 export async function admitLogicalMonitor(envelope = {}, options = {}) {
@@ -200,7 +247,7 @@ export async function admitLogicalMonitor(envelope = {}, options = {}) {
   if (!layout.ok) return Object.freeze({ ok: false, reason: 'MONITOR_ADMISSION_FALLBACK_REQUIRED', fallbackReason: 'MULTIPLEXER_ADMISSION_UNAVAILABLE', durable: false, validation, handlerExecuted: false });
   if (!validation.valid) {
     const reason = 'MONITOR_ADMISSION_FALLBACK_REQUIRED';
-    const proof = evidence(envelope, reason, null, timestampUtc, unsupported ? 'MULTIPLEXER_HANDLER_UNSUPPORTED' : validation.errors.join(','));
+    const proof = evidence(envelope, reason, null, timestampUtc, unsupported ? 'MULTIPLEXER_HANDLER_UNSUPPORTED' : validation.errors.join(','), { rejected: true });
     const write = await writeAtomicJson(layout.root, ['receipts', `${proof.receipt.receiptId}.json`], proof.receipt, { repoRoot: options.repoRoot, nowMs });
     return Object.freeze({ ok: false, reason, fallbackReason: unsupported ? 'MULTIPLEXER_HANDLER_UNSUPPORTED' : 'MONITOR_ADMISSION_BLOCKED', durable: write.ok, receipt: proof.receipt, validation, handlerExecuted: false });
   }
@@ -234,18 +281,20 @@ export async function admitLogicalMonitor(envelope = {}, options = {}) {
     const verdict = 'MULTIPLEXER_PROJECTION_NOT_PROVEN';
     const result = { ok: false, reason: verdict, blocker: verdict, monitor, monitorCount: Object.keys(monitors).length };
     const proof = evidence(envelope, verdict, monitor, timestampUtc, 'Canonical runtime multiplexer consumption is not proven.');
-    const pending = { ...registry, timestampUtc, monitors, idempotency: { ...registry.idempotency, [envelope.idempotencyKey]: { fingerprint, state: 'pending', result } }, updatedAtUtc: timestampUtc, notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE };
+    const idempotency = compactIdempotency(registry.idempotency, envelope.idempotencyKey);
+    if (!idempotency) return { ok: false, reason: 'MONITOR_ADMISSION_BLOCKED', blocker: 'IDEMPOTENCY_REGISTRY_CAPACITY_REACHED', handlerExecuted: false };
+    const pending = { ...registry, timestampUtc, monitors, idempotency: { ...idempotency, [envelope.idempotencyKey]: { fingerprint, state: 'pending', result, updatedAtUtc: timestampUtc } }, updatedAtUtc: timestampUtc, notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE };
     const writes = [];
     if (!prior) writes.push(await storageWrite(layout.root, ['status', 'monitor-admission-registry.json'], pending, { repoRoot: options.repoRoot, nowMs }));
     if (!writes.some((write) => !write.ok)) writes.push(await storageWrite(layout.root, ['status', `${proof.status.statusId}.json`], proof.status, { repoRoot: options.repoRoot, nowMs }));
     if (!writes.some((write) => !write.ok)) writes.push(await storageWrite(layout.root, ['receipts', `${proof.receipt.receiptId}.json`], proof.receipt, { repoRoot: options.repoRoot, nowMs }));
     if (!writes.some((write) => !write.ok)) {
-      const committed = { ...pending, idempotency: { ...pending.idempotency, [envelope.idempotencyKey]: { fingerprint, state: 'committed', result } } };
+      const committed = { ...pending, idempotency: { ...pending.idempotency, [envelope.idempotencyKey]: { fingerprint, state: 'committed', result, updatedAtUtc: timestampUtc } } };
       writes.push(await storageWrite(layout.root, ['status', 'monitor-admission-registry.json'], committed, { repoRoot: options.repoRoot, nowMs }));
     }
     const failure = writes.find((write) => !write.ok);
     return { ...result, reason: failure ? 'MONITOR_ADMISSION_FALLBACK_REQUIRED' : verdict, fallbackReason: failure ? 'MULTIPLEXER_ADMISSION_EVIDENCE_INCOMPLETE' : '', receipt: proof.receipt, status: proof.status, writes: Object.freeze(writes), handlerExecuted: false, standaloneFallbackCreated: false };
-  });
+  }, options);
   if (transaction.lockFailure) return Object.freeze({ ok: false, reason: 'MONITOR_ADMISSION_FALLBACK_REQUIRED', fallbackReason: transaction.lockFailure, handlerExecuted: false });
   return Object.freeze(transaction);
 }
