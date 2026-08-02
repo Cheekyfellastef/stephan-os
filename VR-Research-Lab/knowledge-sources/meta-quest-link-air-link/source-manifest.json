@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "source_id": "official-meta-quest-link-air-link",
   "title": "Meta Quest Link and Air Link",
   "classification": [
@@ -22,7 +22,15 @@
     "headset": "Meta Quest 3",
     "preferred_transport": "Air Link over Wi-Fi",
     "pc": "Battle Bridge",
-    "programme_role": "Primary PCVR transport for Starfield VR and Stephanos VR runtime proof"
+    "programme_role": "Primary PCVR transport for Starfield VR and Stephanos VR runtime proof",
+    "available_transports": [
+      "Meta Air Link over Wi-Fi",
+      "Virtual Desktop when separately selected and proven"
+    ],
+    "unavailable_transports": [
+      "Wired Meta Link"
+    ],
+    "hard_constraint": "Do not plan, request, test or claim wired Meta Link as an available fallback unless the operator explicitly reports acquiring compatible wired-Link hardware in the future."
   },
   "licence": {
     "class": "Commercial proprietary",
@@ -42,7 +50,8 @@
       "copying proprietary client or runtime implementation",
       "redistributing Meta binaries",
       "publishing credentials, account tokens or private diagnostic data",
-      "assuming installed version or compatibility without Battle Bridge proof"
+      "assuming installed version or compatibility without Battle Bridge proof",
+      "treating wired Meta Link as an available operator route"
     ]
   },
   "knowledge_targets": [
@@ -54,8 +63,9 @@
     "Quest 3 controller and headset pose transport",
     "Meta Dash and PC desktop presentation",
     "failure recovery, re-pairing and rollback",
-    "comparison with Virtual Desktop and wired Link",
-    "transport-neutral interfaces for sovereign replacement"
+    "comparison with Virtual Desktop",
+    "transport-neutral interfaces for sovereign replacement",
+    "explicit absence of wired Meta Link"
   ],
   "programme_links": [1591, 1593, 1595, 1596, 1597, 1643],
   "refresh_policy": {
@@ -63,6 +73,7 @@
     "installed_identity_owner": 1595,
     "track_product_and_support_changes": true,
     "capture_exact_local_version_before_claim": true,
-    "never_auto_promote_vendor_claims": true
+    "never_auto_promote_vendor_claims": true,
+    "preserve_operator_transport_availability": true
   }
 }
