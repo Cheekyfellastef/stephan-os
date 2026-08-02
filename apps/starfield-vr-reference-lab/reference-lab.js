@@ -50,7 +50,7 @@ function createTextElement(tag, text, className = '') {
 
 function renderTruthBoundary() {
   nodes.truthSummary.textContent = STARFIELD_VR_EVIDENCE_BOUNDARY.summary;
-  appendTextList(nodes.truthGates, STARFIELD_VR_EVIDENCE_BOUNDARY.requiredPromotionEvidence.slice(0, 4));
+  appendTextList(nodes.truthGates, STARFIELD_VR_EVIDENCE_BOUNDARY.requiredPromotionEvidence);
 }
 
 function renderFilters() {
