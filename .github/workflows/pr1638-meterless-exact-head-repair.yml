@@ -1,0 +1,68 @@
+name: PR 1638 Meterless Exact-Head Repair
+
+on:
+  push:
+    branches:
+      - fix/battle-bridge-recovery-health-authority
+    paths:
+      - '.github/workflows/pr1638-meterless-exact-head-repair.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr1638-meterless-exact-head-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.repository == 'Cheekyfellastef/stephan-os'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify reviewed source identities
+        shell: bash
+        run: |
+          test "$(git hash-object scripts/windows/start-stephanos-backend.ps1)" = "9c209daebcd08a9b5b5822ebf9f777f91afdbc88"
+          test "$(git hash-object scripts/windows/probe-battle-bridge-recovery-mesh.ps1)" = "e9a1587ce71d22159d0abc1ca2544a7418423f3a"
+          test "$(git hash-object scripts/battle-bridge-recovery-mesh-installer.test.mjs)" = "2779de753bb86f0486c51d728ae3843030939b53"
+
+      - name: Apply bounded exact-head repairs
+        run: python3 scripts/pr1638-meterless-exact-head-repair.py
+
+      - name: Validate focused recovery authority
+        shell: bash
+        run: |
+          node --check scripts/battle-bridge-backend-freshness-probe.mjs
+          node --check shared/agents/backendFreshnessSupervisor.mjs
+          node --test \
+            shared/agents/backendFreshnessSupervisor.test.mjs \
+            scripts/battle-bridge-backend-freshness-probe.test.mjs \
+            scripts/battle-bridge-recovery-mesh-installer.test.mjs \
+            tests/mission-operations-dashboard.test.mjs
+          npm run stephanos:guard:scripts
+          git diff --check
+
+      - name: Commit repaired source and regression
+        shell: bash
+        run: |
+          git config user.name "stephanos-meterless-builder[bot]"
+          git config user.email "stephanos-meterless-builder[bot]@users.noreply.github.com"
+          git add \
+            scripts/windows/start-stephanos-backend.ps1 \
+            scripts/windows/probe-battle-bridge-recovery-mesh.ps1 \
+            scripts/battle-bridge-recovery-mesh-installer.test.mjs
+          git diff --cached --check
+          git commit -m "Bind backend exact-head proof to clean tracked source"
+          git push origin HEAD:${{ github.ref_name }}
