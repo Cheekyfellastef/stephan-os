@@ -206,3 +206,35 @@ test('uninstall removes only the coordinator and preserves every underlying serv
   assert.match(uninstall, /sharedWorkspaceReceiptsPreserved = \$true/);
   assert.doesNotMatch(uninstall, /Remove-Item|git\s+|Stop-Process|Restart-Computer/i);
 });
+
+test('exact-head backend authority fails closed on tracked worktree drift', async () => {
+  const [starter, probe] = await Promise.all([
+    source('start-stephanos-backend.ps1'),
+    source('probe-battle-bridge-recovery-mesh.ps1'),
+  ]);
+  assert.match(starter, /status '--porcelain=v1' '--untracked-files=no'/);
+  assert.match(starter, /Backend startup requires an unmodified tracked worktree at exact head/);
+  assert.match(starter, /trackedWorktreeClean = \$true/);
+  assert.match(probe, /function Assert-CanonicalTrackedWorktreeClean/);
+  assert.equal((probe.match(/Assert-CanonicalTrackedWorktreeClean -GitExecutable/g) || []).length, 2);
+  assert.match(probe, /RECOVERY_CANONICAL_TRACKED_WORKTREE_INSPECTION_FAILED/);
+  assert.match(probe, /RECOVERY_CANONICAL_TRACKED_WORKTREE_DIRTY/);
+  assert.match(probe, /receipt\.trackedWorktreeClean -eq \$true/);
+  assert.match(probe, /trackedWorktreeClean = \$true/);
+  assert.doesNotMatch(starter, /--untracked-files=all/);
+  assert.doesNotMatch(probe, /--untracked-files=all/);
+});
+
+test('recovery does not re-run an already verified backend task', async () => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  const sourceIdentityIndex = probe.indexOf("$sourceControlExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe'");
+  const beforeIndex = probe.indexOf('$before = @{}');
+  const preflightIndex = probe.indexOf("$backendBeforeRecovery = if ($Mode -eq 'Recover')");
+  const recoveryLoopIndex = probe.indexOf("if ($Mode -eq 'Recover') {", preflightIndex + 1);
+  assert.ok(sourceIdentityIndex >= 0 && sourceIdentityIndex < beforeIndex);
+  assert.ok(beforeIndex < preflightIndex && preflightIndex < recoveryLoopIndex);
+  assert.match(probe, /Get-BackendFreshnessHealth -ExpectedSourceHead \$sourceHead -BackendTask \$before\.backend/);
+  assert.match(probe, /if \(\$spec\.Id -eq 'backend' -and \$backendBeforeRecovery\.healthy\) \{[\s\S]*?\$backendRestartSkippedAsCurrent = \$true[\s\S]*?continue/);
+  assert.match(probe, /backendRestartSkippedAsCurrent = \[bool\]\$backendRestartSkippedAsCurrent/);
+  assert.doesNotMatch(probe, /\$spec\.Id -eq 'backend' -and \[string\]\$observed\.state/);
+});

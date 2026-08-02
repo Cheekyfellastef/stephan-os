@@ -130,6 +130,7 @@ function Get-BackendFreshnessHealth {
             -and [int]$receipt.pid -eq $listenerAfter.pid `
             -and [string]$receipt.processStartTimeUtc -eq $listenerAfter.creationTimeUtc `
             -and $receipt.exactHeadProofOk -eq $true `
+            -and $receipt.trackedWorktreeClean -eq $true `
             -and $receipt.arbitraryShellAllowed -eq $false `
             -and $receipt.sourceMutationAllowed -eq $false
         if (-not $receiptCanonical) { throw 'BACKEND_TASK_PROCESS_OWNERSHIP_STALE_OR_INVALID' }
@@ -181,16 +182,41 @@ function Get-WorkerHealth {
     [pscustomobject]@{ healthy = [bool]$healthy; heartbeatAgeMs = [int64]$heartbeatMs; pid = [int]$probe.process.pid }
 }
 
+$sourceControlExecutable = 'C:\Program Files\Git\cmd\git.exe'
+if (-not (Test-Path -LiteralPath $sourceControlExecutable -PathType Leaf)) { throw 'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING' }
+function Assert-CanonicalTrackedWorktreeClean {
+    param([string]$GitExecutable, [string]$RepositoryRoot)
+    $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw 'RECOVERY_CANONICAL_TRACKED_WORKTREE_INSPECTION_FAILED' }
+    if (@($trackedStatus | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -ne 0) {
+        throw 'RECOVERY_CANONICAL_TRACKED_WORKTREE_DIRTY'
+    }
+}
+$sourceHeadRaw = & $sourceControlExecutable -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
+$branchRaw = & $sourceControlExecutable -C $repoRoot branch --show-current 2>$null | Select-Object -First 1
+$sourceHead = if ($sourceHeadRaw) { ([string]$sourceHeadRaw).Trim().ToLowerInvariant() } else { '' }
+$branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
+if ($sourceHead -notmatch '^[0-9a-f]{40}$' -or $branch -ne 'main') { throw 'RECOVERY_CANONICAL_SOURCE_IDENTITY_INVALID' }
+Assert-CanonicalTrackedWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
+
 $before = @{}
 foreach ($spec in $taskSpecs) { $before[$spec.Id] = Get-TaskHealth -Spec $spec }
+$backendBeforeRecovery = if ($Mode -eq 'Recover') {
+    Get-BackendFreshnessHealth -ExpectedSourceHead $sourceHead -BackendTask $before.backend
+} else { $null }
 
 $startedTasks = @()
+$backendRestartSkippedAsCurrent = $false
 if ($Mode -eq 'Recover') {
     foreach ($spec in $taskSpecs) {
         $observed = $before[$spec.Id]
         if (-not $observed.present) { continue }
         if (-not $observed.actionCanonical) { continue }
         if (-not $observed.authorityCanonical) { continue }
+        if ($spec.Id -eq 'backend' -and $backendBeforeRecovery.healthy) {
+            $backendRestartSkippedAsCurrent = $true
+            continue
+        }
         if ([string]$observed.state -ne 'Running') {
             Start-ScheduledTask -TaskName $spec.Name
             $startedTasks += $spec.Id
@@ -200,17 +226,11 @@ if ($Mode -eq 'Recover') {
 
 $after = @{}
 foreach ($spec in $taskSpecs) { $after[$spec.Id] = Get-TaskHealth -Spec $spec }
-$sourceControlExecutable = 'C:\Program Files\Git\cmd\git.exe'
-if (-not (Test-Path -LiteralPath $sourceControlExecutable -PathType Leaf)) { throw 'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING' }
-$sourceHeadRaw = & $sourceControlExecutable -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
-$branchRaw = & $sourceControlExecutable -C $repoRoot branch --show-current 2>$null | Select-Object -First 1
-$sourceHead = if ($sourceHeadRaw) { ([string]$sourceHeadRaw).Trim().ToLowerInvariant() } else { '' }
-$branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
-if ($sourceHead -notmatch '^[0-9a-f]{40}$' -or $branch -ne 'main') { throw 'RECOVERY_CANONICAL_SOURCE_IDENTITY_INVALID' }
 $worker = Get-WorkerHealth
 $worker.healthy = [bool]($worker.healthy -and $after.watchdog.actionCanonical -and $after.watchdog.authorityCanonical)
 $openClawHealth = Get-OpenClawIdentityHealth
 $backendFreshness = Get-BackendFreshnessHealth -ExpectedSourceHead $sourceHead -BackendTask $after.backend
+Assert-CanonicalTrackedWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
 $mailboxTask = $after.mailbox
 $mailboxLastRunMs = if ($mailboxTask.lastRunTimeUtc) { ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($mailboxTask.lastRunTimeUtc)).TotalMilliseconds } else { [double]::PositiveInfinity }
 $mailboxHealthy = $mailboxTask.present `
@@ -224,6 +244,8 @@ $mailboxHealthy = $mailboxTask.present `
     mode = $Mode
     sourceHead = $sourceHead
     branch = $branch
+    trackedWorktreeClean = $true
+    backendRestartSkippedAsCurrent = [bool]$backendRestartSkippedAsCurrent
     worker = $worker
     mailbox = [pscustomobject]@{ healthy = [bool]$mailboxHealthy; state = $mailboxTask.state; lastTaskResult = $mailboxTask.lastTaskResult; lastRunAgeMs = if ([double]::IsInfinity($mailboxLastRunMs)) { -1 } else { [int64]$mailboxLastRunMs }; task = $mailboxTask }
     backend = [pscustomobject]@{ healthy = [bool]($backendFreshness.healthy -and $after.backend.actionCanonical -and $after.backend.authorityCanonical); freshnessProof = $backendFreshness.proof; listener = $backendFreshness.listener; blocker = $backendFreshness.blocker; task = $after.backend }

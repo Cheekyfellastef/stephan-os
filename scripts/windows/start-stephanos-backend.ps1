@@ -56,6 +56,7 @@ function Write-BackendRuntimeReceipt {
         processStartTimeUtc = $ProcessStartTimeUtc
         healthUrl = 'loopback-backend-health'
         exactHeadProofOk = $true
+        trackedWorktreeClean = $true
         arbitraryShellAllowed = $false
         sourceMutationAllowed = $false
         pathValuesPublished = $false
@@ -73,6 +74,11 @@ $branch = (& $git.Source -C $repoRoot branch --show-current).Trim()
 $headSha = (& $git.Source -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
 if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { throw 'Backend startup requires canonical branch main.' }
 if ($headSha -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup could not prove a canonical 40-character Git head.' }
+$trackedStatus = @(& $git.Source -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect tracked worktree state.' }
+if (@($trackedStatus | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -ne 0) {
+    throw 'Backend startup requires an unmodified tracked worktree at exact head.'
+}
 
 $healthUrl = 'http://127.0.0.1:8787/api/health'
 $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { throw 'USERPROFILE or HOME is required.' }
