@@ -297,6 +297,7 @@ export function createStephanosSharedMemoryAdapter({
         authorityConfirmed: true,
         source: 'shared-backend',
         resolvedBackendUrl: response.baseUrl,
+        state: normalizeMemoryState(authoritativeState),
       };
     });
   }
@@ -641,8 +642,8 @@ export function createStephanosMemory({
     return publicReceipt;
   }
 
-  function listRecords(filters = {}) {
-    const state = adapter.readState();
+  function listRecords(filters = {}, memoryState = adapter.readState()) {
+    const state = memoryState;
     const allRecords = Object.entries(state.records || {}).map(([key, record]) => {
       const [namespace = 'default', id = ''] = String(key).split('::');
       return {
@@ -679,7 +680,7 @@ export function createStephanosMemory({
     try {
       const receipt = await adapter.refreshAuthority();
       return {
-        records: receipt?.authorityConfirmed === true ? listRecords(filters) : [],
+        records: receipt?.authorityConfirmed === true ? listRecords(filters, receipt.state) : [],
         authorityConfirmed: receipt?.authorityConfirmed === true,
         receipt: toPublicDurableReceipt(receipt),
       };

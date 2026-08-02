@@ -725,6 +725,8 @@ async function applyConversationTeaching() {
 
 async function forgetConversationTeaching(teachingId) {
   if (!beginMusicMemoryMutation()) return;
+  const confirmedConversationState = musicConversationState;
+  const isConfirmedConversationCurrent = () => musicConversationState === confirmedConversationState;
   const operationGeneration = musicOperationGeneration;
   try {
     const synchronization = await synchronizeDurableConversationTeachings({ render: false });
@@ -732,19 +734,23 @@ async function forgetConversationTeaching(teachingId) {
     const teaching = (state.musicConversationTeachings || []).find((entry) => entry.id === teachingId && entry.status === 'active');
     if (!teaching) {
       if (synchronization.changed) {
-        musicConversationState.answer = 'That teaching was already forgotten on another device. The current Taste DNA projection is now refreshed.';
-        musicConversationState.mode = 'forgotten';
+        if (isConfirmedConversationCurrent()) {
+          musicConversationState.answer = 'That teaching was already forgotten on another device. The current Taste DNA projection is now refreshed.';
+          musicConversationState.mode = 'forgotten';
+        }
         renderTasteDNA();
         renderCandidates();
         renderMusicIntelligenceCentre();
-        renderMusicConversation();
+        if (isConfirmedConversationCurrent()) renderMusicConversation();
       }
       return;
     }
     if (teaching.memoryPersisted && synchronization.authorityConfirmed !== true) {
-      musicConversationState.answer = `I could not safely forget “${teaching.trait}” because the shared teaching index could not be confirmed. Nothing was changed.`;
-      musicConversationState.mode = 'forget blocked';
-      renderMusicConversation();
+      if (isConfirmedConversationCurrent()) {
+        musicConversationState.answer = `I could not safely forget “${teaching.trait}” because the shared teaching index could not be confirmed. Nothing was changed.`;
+        musicConversationState.mode = 'forget blocked';
+        renderMusicConversation();
+      }
       return;
     }
     if (teaching.memoryPersisted) {
@@ -755,9 +761,11 @@ async function forgetConversationTeaching(teachingId) {
       });
       if (!isCurrentMusicOperation(operationGeneration)) return;
       if (revocation?.revoked !== true) {
-        musicConversationState.answer = `I could not safely forget “${teaching.trait}” because its durable memory record was not revoked. Nothing was changed.`;
-        musicConversationState.mode = 'forget blocked';
-        renderMusicConversation();
+        if (isConfirmedConversationCurrent()) {
+          musicConversationState.answer = `I could not safely forget “${teaching.trait}” because its durable memory record was not revoked. Nothing was changed.`;
+          musicConversationState.mode = 'forget blocked';
+          renderMusicConversation();
+        }
         emitPresenceEvent({ kind: 'conversation_teaching_forget_blocked', severity: 'warning', summary: 'Music teaching forget blocked', impact: 'Durable memory revocation failed; local Taste DNA was left unchanged.' });
         return;
       }
@@ -773,13 +781,16 @@ async function forgetConversationTeaching(teachingId) {
     teaching.memoryPromoted = false;
     teaching.memoryRecord = null;
     state.candidates = rankCandidatesByTaste(state.candidates, buildTasteWeightsForState());
-    musicConversationState.answer = `Forgotten: “${teaching.trait}”. Only that teaching's Taste DNA contribution was removed.`;
-    musicConversationState.mode = 'forgotten';
+    const confirmedConversationIsCurrent = isConfirmedConversationCurrent();
+    if (confirmedConversationIsCurrent) {
+      musicConversationState.answer = `Forgotten: “${teaching.trait}”. Only that teaching's Taste DNA contribution was removed.`;
+      musicConversationState.mode = 'forgotten';
+    }
     saveState();
     renderTasteDNA();
     renderCandidates();
     renderMusicIntelligenceCentre();
-    renderMusicConversation();
+    if (confirmedConversationIsCurrent) renderMusicConversation({ scrollToFinalAnswer: true });
     emitPresenceEvent({ kind: 'conversation_teaching_forgotten', severity: 'notice', summary: 'Music teaching forgotten', impact: 'Prior Taste DNA value restored through explicit operator action.' });
   } finally {
     endMusicMemoryMutation();
@@ -1306,6 +1317,19 @@ async function revokeDurableConversationTeachingsForReset() {
   }
   return { ok: true, deletedCount: Number(revocation.deletedCount || 0) };
 }
+function restoreInvalidatedMusicOperationControls({ conversationStatus = '' } = {}) {
+  if (intelligenceUi.nativeSearchButton) intelligenceUi.nativeSearchButton.disabled = false;
+  if (ui.buildImmersionSessionBtn) ui.buildImmersionSessionBtn.disabled = false;
+  if (intelligenceUi.surpriseBtn) {
+    intelligenceUi.surpriseBtn.disabled = false;
+    intelligenceUi.surpriseBtn.classList.remove('is-loading');
+    const title = intelligenceUi.surpriseBtn.querySelector('strong');
+    const subtitle = intelligenceUi.surpriseBtn.querySelector('small');
+    if (title) title.textContent = 'Surprise Me';
+    if (subtitle) subtitle.textContent = 'Start my journey';
+  }
+  setMusicConversationBusy(false, conversationStatus);
+}
 async function resetAll() {
   if (!beginMusicMemoryMutation()) {
     ui.status.textContent = 'A music-memory change is already finishing. Reset has not started.';
@@ -1319,6 +1343,7 @@ async function resetAll() {
       musicConversationState.answer = `Reset was blocked because I could not safely revoke “${trait}”. Your tile and remaining Forget controls were preserved.`;
       musicConversationState.mode = 'reset blocked';
       ui.status.textContent = 'Reset blocked: durable music memory could not be safely revoked.';
+      restoreInvalidatedMusicOperationControls({ conversationStatus: 'Reset blocked · controls restored.' });
       renderMusicConversation();
       emitPresenceEvent({ kind: 'conversation_reset_blocked', severity: 'warning', summary: 'Music Tile reset blocked', impact: 'A durable teaching could not be revoked, so tile state was preserved.' });
       return false;
@@ -1327,17 +1352,7 @@ async function resetAll() {
     Object.assign(state, loadState());
     nativeCatalogSearchState = createIdleNativeCatalogSearchState();
     musicConversationState = createIdleMusicConversationState();
-    if (intelligenceUi.nativeSearchButton) intelligenceUi.nativeSearchButton.disabled = false;
-    if (ui.buildImmersionSessionBtn) ui.buildImmersionSessionBtn.disabled = false;
-    if (intelligenceUi.surpriseBtn) {
-      intelligenceUi.surpriseBtn.disabled = false;
-      intelligenceUi.surpriseBtn.classList.remove('is-loading');
-      const title = intelligenceUi.surpriseBtn.querySelector('strong');
-      const subtitle = intelligenceUi.surpriseBtn.querySelector('small');
-      if (title) title.textContent = 'Surprise Me';
-      if (subtitle) subtitle.textContent = 'Start my journey';
-    }
-    setMusicConversationBusy(false);
+    restoreInvalidatedMusicOperationControls();
     ui.status.textContent = 'Reset complete.';
     renderAll();
     return true;
