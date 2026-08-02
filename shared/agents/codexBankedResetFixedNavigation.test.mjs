@@ -70,6 +70,17 @@ test('keeps labeled-ancestor selection bounded and fail closed', () => {
   assert.match(navigation, /billing\|security\|privacy\|upgrade\|purchase\|buy credits\|add credits\|auto\.\?top\.\?up/i);
 });
 
+test('captures bounded safe navigation evidence when the usage route moves without invoking new controls', () => {
+  assert.match(navigationCompat, /function script:Get-CodexSafeNavigationCandidates/);
+  assert.match(navigationCompat, /safe-menu-navigation-candidates-captured/);
+  assert.match(navigationCompat, /safe-navigation-diagnostics-only/);
+  assert.match(navigationCompat, /\$candidates\.Count -ge 12/);
+  assert.match(navigationCompat, /settings\|preferences\|usage\|limit\|reset\|plan\|subscription\|account\|manage\|help\|about/i);
+  assert.match(navigationCompat, /billing\|security\|privacy\|upgrade\|purchase\|buy credits\|add credits\|auto\.\?top\.\?up\|sign out\|log out/i);
+  assert.match(navigationCompat, /\$email =/);
+  assert.doesNotMatch(navigationCompat, /Invoke-CodexUiElement|Start-Process|SendKeys|SetCursorPos|mouse_event/);
+});
+
 test('live cores scan all UIA surfaces owned by the selected ChatGPT process', () => {
   assert.match(statusCore, /function Get-ProcessSnapshot/);
   assert.match(executionCore, /function Get-ProcessSnapshot/);
