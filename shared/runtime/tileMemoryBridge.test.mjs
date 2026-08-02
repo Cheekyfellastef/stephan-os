@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTileMemoryBridge, resolveTileHostRuntime } from './tileMemoryBridge.js';
+import { createCollisionResistantTileIdentity, createTileMemoryBridge, resolveTileHostRuntime } from './tileMemoryBridge.js';
 
 function ownedMusicRecord(id, overrides = {}) {
   return {
@@ -69,6 +69,39 @@ test('tile memory bridge preserves related idea provenance through adjudication'
   assert.equal(result.promoted, true);
   assert.deepEqual(result.candidate.relatedIdeaIds, ['idea_2']);
   assert.equal(savedPayload.payload.relatedIdeaIds[0], 'idea_2');
+});
+
+test('synchronous tile event receipts redact candidate and persisted preference content', () => {
+  const events = [];
+  const bridge = createTileMemoryBridge({
+    tileId: 'music-tile',
+    cryptoImpl: { randomUUID() { return '11111111-1111-4111-8111-111111111111'; } },
+    stephanosMemory: { saveRecord(record) { return { namespace: 'continuity', ...record }; } },
+    executionLoop: { publishTileEvent(event) { events.push(event); } },
+  });
+
+  const result = bridge.submitMemoryCandidate({
+    key: 'music.preference.private',
+    value: 'private teaching content',
+    reason: 'Operator explicitly confirmed this private preference.',
+  });
+
+  assert.equal(result.execution.persisted, true);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].result.candidate, undefined);
+  assert.equal(events[0].result.persistedRecord, undefined);
+  assert.deepEqual(events[0].result.memoryRecordIdentity, {
+    namespace: 'continuity',
+    id: 'tile-memory-music-tile-11111111-1111-4111-8111-111111111111',
+  });
+  assert.doesNotMatch(JSON.stringify(events[0]), /private teaching content|private preference/);
+});
+
+test('collision-resistant identity fails closed without Web Crypto', () => {
+  assert.throws(
+    () => createCollisionResistantTileIdentity('music-teaching', null),
+    /requires collision-resistant Web Crypto identity generation/,
+  );
 });
 
 test('durable tile submission waits for backend authority before reporting persistence', async () => {

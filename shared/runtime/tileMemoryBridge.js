@@ -17,6 +17,20 @@ function defaultAdjudicate(candidate) {
   };
 }
 
+export function createCollisionResistantTileIdentity(prefix, cryptoImpl = globalThis.crypto) {
+  const normalizedPrefix = normalizeString(prefix);
+  if (!normalizedPrefix) throw new Error('Collision-resistant tile identity requires a prefix.');
+  if (typeof cryptoImpl?.randomUUID === 'function') {
+    return `${normalizedPrefix}-${cryptoImpl.randomUUID()}`;
+  }
+  if (typeof cryptoImpl?.getRandomValues === 'function') {
+    const entropy = cryptoImpl.getRandomValues(new Uint32Array(4));
+    const suffix = Array.from(entropy, (value) => value.toString(16).padStart(8, '0')).join('');
+    return `${normalizedPrefix}-${suffix}`;
+  }
+  throw new Error('Tile memory persistence requires collision-resistant Web Crypto identity generation.');
+}
+
 export function resolveTileHostRuntime(name, runtime = globalThis) {
   const runtimeName = normalizeString(name);
   if (!runtimeName || !runtime) return null;
@@ -43,19 +57,12 @@ export function createTileMemoryBridge({
   if (!normalizedTileId) {
     throw new Error('Tile memory bridge requires tileId.');
   }
-  const ownedRecordIdPrefix = `tile-memory-${normalizedTileId}-`;
+  const ownedRecordIdentityPrefix = `tile-memory-${normalizedTileId}`;
+  const ownedRecordIdPrefix = `${ownedRecordIdentityPrefix}-`;
   const ownedRecordTags = Object.freeze(['tile.memory.candidate', `tile.${normalizedTileId}`]);
 
   function createOwnedRecordId() {
-    if (typeof cryptoImpl?.randomUUID === 'function') {
-      return `${ownedRecordIdPrefix}${cryptoImpl.randomUUID()}`;
-    }
-    if (typeof cryptoImpl?.getRandomValues === 'function') {
-      const entropy = cryptoImpl.getRandomValues(new Uint32Array(4));
-      const suffix = Array.from(entropy, (value) => value.toString(16).padStart(8, '0')).join('');
-      return `${ownedRecordIdPrefix}${suffix}`;
-    }
-    throw new Error('Tile memory persistence requires collision-resistant Web Crypto identity generation.');
+    return createCollisionResistantTileIdentity(ownedRecordIdentityPrefix, cryptoImpl);
   }
 
   function isOwnedMemoryRecord(record = {}, requiredTags = []) {
@@ -131,10 +138,11 @@ export function createTileMemoryBridge({
       action: 'tile.memory.candidate.submit',
       summary: adjudication.reason,
       result: {
-        candidate: normalized,
-        adjudication,
         execution,
-        persistedRecord,
+        memoryRecordIdentity: persistedRecord?.id
+          ? { namespace: persistedRecord.namespace || 'continuity', id: persistedRecord.id }
+          : null,
+        authorityConfirmed: false,
         execution_metadata: executionMetadata,
       },
       tags: ['tile.contract.v1', 'tile.memory.candidate'],

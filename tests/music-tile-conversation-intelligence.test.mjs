@@ -202,6 +202,11 @@ test('conversation uses canonical AI lifecycle and governed memory bridge', () =
   assert.match(main, /applyTasteTeachingContribution\(state\.tasteDNA, teaching, activeTeachings/);
   assert.match(main, /explicit conversation teaching/);
   assert.match(main, /data-conversation-action="forget"/);
+  assert.match(main, /id: createCollisionResistantTileIdentity\('music-teaching'\)/);
+  assert.match(main, /function ownedMemoryRecordEvidence/);
+  assert.match(main, /memoryRecord: ownedMemoryRecordEvidence\(record\)/);
+  assert.match(main, /\? ownedMemoryRecordEvidence\(memoryResult\.record\)/);
+  assert.doesNotMatch(main, /id: `music-teaching-\$\{Date\.now\(\)\}`/);
   assert.doesNotMatch(main, /summary: `(?:Explicit music teaching applied|Music teaching (?:blocked|forget blocked|forgotten)):\s*\$\{teaching\.trait\}`/);
 });
 

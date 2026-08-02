@@ -7,7 +7,7 @@ import { parseFeedback } from './engine/tasteFeedbackRules.js';
 import { buildArtistAwareCandidates, DEFAULT_DISCOVERY_RESULT_TARGET, MIN_DISCOVERY_RESULT_TARGET } from './engine/musicCandidateEngine.js';
 import { runMusicDiscoveryPipeline } from './engine/musicDiscoveryPipeline.js';
 import { askMusicAi, getMusicAiStatus, getMusicAiRuntimeDiagnostics, testMusicAiRoute } from './engine/musicAiBridge.js';
-import { createTileMemoryBridge } from '../../shared/runtime/tileMemoryBridge.js';
+import { createCollisionResistantTileIdentity, createTileMemoryBridge } from '../../shared/runtime/tileMemoryBridge.js';
 import { createTileEventBridge } from '../../shared/runtime/tileEventBridge.js';
 import { reducePresenceState, getPresenceSummary, acknowledgePresenceItem, dismissPresenceItem, approvePresenceAction } from '../../shared/runtime/stephanosPresenceModel.mjs';
 import { emitPresenceEvent as emitGlobalPresenceEvent } from '../../shared/runtime/stephanosPresenceBridge.mjs';
@@ -348,6 +348,15 @@ function getConversationTeachings() {
     .filter((entry) => entry?.status === 'active');
 }
 
+function ownedMemoryRecordEvidence(record = {}) {
+  return {
+    namespace: record.namespace || 'continuity',
+    id: String(record.id || ''),
+    type: String(record.type || ''),
+    tags: Array.isArray(record.tags) ? record.tags.map((tag) => String(tag)).filter(Boolean) : [],
+  };
+}
+
 function teachingFromDurableRecord(record = {}) {
   const value = record?.payload?.value && typeof record.payload.value === 'object' ? record.payload.value : {};
   const keyId = String(record?.payload?.key || '').split('.').pop();
@@ -365,7 +374,7 @@ function teachingFromDurableRecord(record = {}) {
     createdAt: String(value.createdAt || record.createdAt || new Date().toISOString()),
     memoryPromoted: true,
     memoryPersisted: true,
-    memoryRecord: { namespace: record.namespace || 'continuity', id: record.id },
+    memoryRecord: ownedMemoryRecordEvidence(record),
   };
 }
 
@@ -619,7 +628,7 @@ async function applyConversationTeaching() {
     baselineTrait: entry.baselineTrait ? { ...entry.baselineTrait } : entry.baselineTrait,
   }));
   const teaching = {
-    id: `music-teaching-${Date.now()}`,
+    id: createCollisionResistantTileIdentity('music-teaching'),
     trait: candidate.trait,
     polarity: candidate.polarity,
     status: 'active',
@@ -648,7 +657,7 @@ async function applyConversationTeaching() {
     teaching.memoryPersisted = memoryResult?.execution?.persisted === true
       && memoryResult?.authorityReceipt?.authorityConfirmed === true;
     teaching.memoryRecord = teaching.memoryPersisted && memoryResult?.record?.id
-      ? { namespace: memoryResult.record.namespace || 'continuity', id: memoryResult.record.id }
+      ? ownedMemoryRecordEvidence(memoryResult.record)
       : null;
     state.tasteDNA = projection.tasteDNA;
     const activeById = new Map(activeTeachings.map((entry) => [entry.id, entry]));
