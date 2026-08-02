@@ -410,63 +410,67 @@ export function createStephanosSharedMemoryAdapter({
     updateProjectedMirror();
 
     void enqueueBackendOperation(async () => {
-      try {
-        const applicableIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= intent.id);
-        const rebasedState = projectLegacyStateIntents(authoritativeState, applicableIntents);
-        const response = await saveToBackend(rebasedState);
-        backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
-        authoritativeState = normalizeMemoryState({
-          ...rebasedState,
-          updatedAt: backendUpdatedAt || rebasedState.updatedAt,
-        });
-        for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
-          if (pendingLegacyStateIntents[index].id <= intent.id) pendingLegacyStateIntents.splice(index, 1);
-        }
-        updateProjectedMirror();
-        authorityHydrated = true;
-        lastSaveSource = 'shared-backend';
-        fallbackReason = '';
-        hydrationState = 'ready';
-        log('save', {
-          sourceUsedOnLoad: hydrationSource,
-          sourceUsedOnSave: lastSaveSource,
-          hydrationCompleted: hydrated,
-          fallbackReason,
-          resolvedBackendUrl: response.baseUrl,
-          memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
-          stateClass: 'shared-durable-truth',
-        });
-      } catch (error) {
-        let conflictRehydrated = false;
-        if (isBackendConflict(error)) {
+      let attempt = 0;
+      let conflictRehydrated = false;
+      let lastError = null;
+      while (attempt < 2) {
+        try {
+          const applicableIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= intent.id);
+          const rebasedState = projectLegacyStateIntents(authoritativeState, applicableIntents);
+          const response = await saveToBackend(rebasedState);
+          backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
+          authoritativeState = normalizeMemoryState({
+            ...rebasedState,
+            updatedAt: backendUpdatedAt || rebasedState.updatedAt,
+          });
+          for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+            if (pendingLegacyStateIntents[index].id <= intent.id) pendingLegacyStateIntents.splice(index, 1);
+          }
+          updateProjectedMirror();
+          authorityHydrated = true;
+          lastSaveSource = 'shared-backend';
+          fallbackReason = '';
+          hydrationState = 'ready';
+          log('save', {
+            sourceUsedOnLoad: hydrationSource,
+            sourceUsedOnSave: lastSaveSource,
+            hydrationCompleted: hydrated,
+            fallbackReason,
+            resolvedBackendUrl: response.baseUrl,
+            memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
+            stateClass: 'shared-durable-truth',
+          });
+          return;
+        } catch (error) {
+          lastError = error;
+          if (!isBackendConflict(error) || attempt > 0) break;
           try {
             await rehydrateAuthority();
             conflictRehydrated = true;
-            for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
-              if (pendingLegacyStateIntents[index].id <= intent.id) pendingLegacyStateIntents.splice(index, 1);
-            }
           } catch {
             conflictRehydrated = false;
+            break;
           }
+          attempt += 1;
         }
-        lastSaveSource = 'local-mirror-fallback';
-        fallbackReason = conflictRehydrated
-          ? 'backend-memory-conflict-resolved-by-rehydrate'
-          : isBackendConflict(error)
-            ? 'backend-memory-conflict'
-            : normalizeString(error?.code || error?.message, 'backend-save-failed');
-        hydrationState = isBackendConflict(error) ? 'degraded' : hydrationState;
-        if (!conflictRehydrated) coalesceLegacyStateIntentsThrough(intent.id);
-        updateProjectedMirror();
-        log('save', {
-          sourceUsedOnLoad: hydrationSource,
-          sourceUsedOnSave: lastSaveSource,
-          hydrationCompleted: hydrated,
-          fallbackReason,
-          memoryRecordCount: Object.keys(normalizedState.records || {}).length,
-          stateClass: 'local-fallback-mirror',
-        });
       }
+      lastSaveSource = 'local-mirror-fallback';
+      fallbackReason = isBackendConflict(lastError)
+        ? conflictRehydrated
+          ? 'backend-memory-conflict-after-retry'
+          : 'backend-memory-conflict'
+        : normalizeString(lastError?.code || lastError?.message, 'backend-save-failed');
+      hydrationState = isBackendConflict(lastError) ? 'degraded' : hydrationState;
+      coalesceLegacyStateIntentsThrough(intent.id);
+      updateProjectedMirror();
+      log('save', {
+        sourceUsedOnLoad: hydrationSource,
+        sourceUsedOnSave: lastSaveSource,
+        hydrationCompleted: hydrated,
+        fallbackReason,
+        memoryRecordCount: Object.keys(normalizedState.records || {}).length,
+        stateClass: 'local-fallback-mirror',
+      });
     });
   }
 

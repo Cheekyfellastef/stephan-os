@@ -419,12 +419,14 @@ test('queued durable record mutation rebases after conflict and preserves anothe
   const result = await deletion;
 
   assert.equal(result.authorityConfirmed, true);
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 3);
   assert.equal(result.receipt.state, undefined);
   assert.equal(result.receipt.baseState, undefined);
   assert.equal(writes[1].ifUnmodifiedSince, '2026-08-02T00:01:00.000Z');
-  assert.equal(writes[1].records['continuity::teaching'], undefined);
+  assert.equal(writes[1].records['continuity::teaching'].summary, 'Teaching to forget');
   assert.equal(writes[1].records['continuity::remote'].summary, 'Another device record');
+  assert.equal(writes[2].records['continuity::teaching'], undefined);
+  assert.equal(writes[2].records['continuity::remote'].summary, 'Another device record');
   assert.equal(memory.getRecord({ namespace: 'continuity', id: 'remote' })?.summary, 'Another device record');
 });
 
@@ -780,6 +782,81 @@ test('confirmed legacy writes preserve every later pending mirror intent', async
   releaseSecondPut();
 });
 
+test('conflicted legacy intent is retried and preserved ahead of later queued writes', async () => {
+  let markThirdPutFinished;
+  const thirdPutFinished = new Promise((resolve) => { markThirdPutFinished = resolve; });
+  const writes = [];
+  const adapter = createStephanosSharedMemoryAdapter({
+    storage: createStorage(),
+    runtimeContext: { baseUrl: 'http://localhost:8787' },
+    logger: { info() {} },
+    fetchImpl: async (_url, options = {}) => {
+      if ((options.method || 'GET') === 'GET') {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ success: true, data: {
+              schemaVersion: 2,
+              updatedAt: '2026-08-02T00:01:00.000Z',
+              records: {
+                'continuity::remote': {
+                  schemaVersion: 2,
+                  type: 'continuity.note',
+                  source: 'other-device',
+                  scope: 'runtime',
+                  summary: 'Remote record',
+                  payload: {},
+                  tags: ['shared'],
+                  importance: 'normal',
+                  retentionHint: 'default',
+                  createdAt: '2026-08-02T00:00:00.000Z',
+                  updatedAt: '2026-08-02T00:00:00.000Z',
+                  surface: 'hosted',
+                },
+              },
+            } });
+          },
+        };
+      }
+      const body = JSON.parse(options.body || '{}');
+      writes.push(body);
+      if (writes.length === 1) {
+        return {
+          ok: false,
+          status: 409,
+          async text() { return JSON.stringify({ success: false, error_code: 'DURABLE_MEMORY_CONFLICT' }); },
+        };
+      }
+      if (writes.length === 3) markThirdPutFinished();
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ success: true, data: { ...body, updatedAt: `2026-08-02T00:0${writes.length}:00.000Z` } });
+        },
+      };
+    },
+  });
+  const memory = createStephanosMemory({ adapter, source: 'music-tile', surface: 'hosted' });
+
+  memory.saveRecord({ namespace: 'continuity', id: 'first', type: 'tile.event', summary: 'First pending record' });
+  memory.saveRecord({ namespace: 'continuity', id: 'second', type: 'tile.event', summary: 'Second pending record' });
+  await thirdPutFinished;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(writes.length, 3);
+  assert.equal(writes[1].ifUnmodifiedSince, '2026-08-02T00:01:00.000Z');
+  assert.equal(writes[1].records['continuity::remote'].summary, 'Remote record');
+  assert.equal(writes[1].records['continuity::first'].summary, 'First pending record');
+  assert.equal(writes[1].records['continuity::second'], undefined);
+  assert.equal(writes[2].records['continuity::remote'].summary, 'Remote record');
+  assert.equal(writes[2].records['continuity::first'].summary, 'First pending record');
+  assert.equal(writes[2].records['continuity::second'].summary, 'Second pending record');
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'first' })?.summary, 'First pending record');
+  assert.equal(memory.getRecord({ namespace: 'continuity', id: 'second' })?.summary, 'Second pending record');
+});
+
 test('atomic owned-set deletion rebases over a concurrent teaching and preserves unrelated records', async () => {
   const teaching = (summary) => ({
     schemaVersion: 2,
@@ -853,7 +930,7 @@ test('atomic owned-set deletion rebases over a concurrent teaching and preserves
   assert.equal(writes[1].records['continuity::tile-memory-other-tile-first'].summary, 'Unrelated');
 });
 
-test('shared memory adapter rehydrates canonical backend state after conflict instead of silently overwriting newer shared truth', async () => {
+test('shared memory adapter retains its projected local intent after an exhausted conflict retry', async () => {
   const storage = createStorage();
   let putCount = 0;
   const fetchImpl = async (_url, options = {}) => {
@@ -934,7 +1011,9 @@ test('shared memory adapter rehydrates canonical backend state after conflict in
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.equal(putCount, 1);
-  assert.equal(adapter.readState().records['continuity::canonical'].summary, 'Canonical backend truth');
-  assert.equal(adapter.diagnostics().fallbackReason, 'backend-memory-conflict-resolved-by-rehydrate');
+  assert.equal(putCount, 2);
+  assert.equal(adapter.readState().records['continuity::canonical'], undefined);
+  assert.equal(adapter.readState().records['continuity::local-change'].summary, 'Stale local change');
+  assert.equal(adapter.diagnostics().sourceUsedOnSave, 'local-mirror-fallback');
+  assert.equal(adapter.diagnostics().fallbackReason, 'backend-memory-conflict-after-retry');
 });
