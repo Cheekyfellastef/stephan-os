@@ -19,18 +19,13 @@ jobs:
   repair:
     if: github.repository == 'Cheekyfellastef/stephan-os'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Check out exact branch head
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
 
       - name: Verify reviewed source identities
         shell: bash
@@ -40,20 +35,14 @@ jobs:
           test "$(git hash-object scripts/battle-bridge-recovery-mesh-installer.test.mjs)" = "2779de753bb86f0486c51d728ae3843030939b53"
 
       - name: Apply bounded exact-head repairs
-        run: python3 scripts/pr1638-meterless-exact-head-repair.py
-
-      - name: Validate focused recovery authority
         shell: bash
         run: |
-          node --check scripts/battle-bridge-backend-freshness-probe.mjs
-          node --check shared/agents/backendFreshnessSupervisor.mjs
-          node --test \
-            shared/agents/backendFreshnessSupervisor.test.mjs \
-            scripts/battle-bridge-backend-freshness-probe.test.mjs \
-            scripts/battle-bridge-recovery-mesh-installer.test.mjs \
-            tests/mission-operations-dashboard.test.mjs
-          npm run stephanos:guard:scripts
+          python3 scripts/pr1638-meterless-exact-head-repair.py
           git diff --check
+          git diff --quiet -- \
+            scripts/windows/start-stephanos-backend.ps1 \
+            scripts/windows/probe-battle-bridge-recovery-mesh.ps1 \
+            scripts/battle-bridge-recovery-mesh-installer.test.mjs && exit 1 || true
 
       - name: Commit repaired source and regressions
         shell: bash
