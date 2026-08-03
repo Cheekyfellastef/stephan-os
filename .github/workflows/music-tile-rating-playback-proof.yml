@@ -52,8 +52,15 @@ jobs:
         env:
           STEPHANOS_BROWSER_CHANNEL: msedge
         run: |
-          node --test tests/music-tile-native-catalog-auto-apply.test.mjs
-          node --test tests/music-tile-native-catalog-ui.test.mjs
-          node --test tests/music-tile-native-catalog-auto-apply-browser.test.mjs
-          node --test tests/music-intelligence-centre-vnext.test.mjs
-          node --test tests/music-tile-rating-playback-browser.test.mjs
+          $ErrorActionPreference = 'Stop'
+          function Invoke-NodeTest([string]$Path) {
+            & node --test $Path
+            if ($LASTEXITCODE -ne 0) {
+              throw "Node test failed with exit code $LASTEXITCODE: $Path"
+            }
+          }
+          Invoke-NodeTest 'tests/music-tile-native-catalog-auto-apply.test.mjs'
+          Invoke-NodeTest 'tests/music-tile-native-catalog-ui.test.mjs'
+          Invoke-NodeTest 'tests/music-tile-native-catalog-auto-apply-browser.test.mjs'
+          Invoke-NodeTest 'tests/music-intelligence-centre-vnext.test.mjs'
+          Invoke-NodeTest 'tests/music-tile-rating-playback-browser.test.mjs'
