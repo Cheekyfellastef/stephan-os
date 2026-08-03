@@ -1,0 +1,72 @@
+name: Provider-Neutral Exact-Head Continuity Hardening
+
+on:
+  push:
+    branches:
+      - agent/provider-neutral-exact-head-continuity-v1
+    paths:
+      - '.github/workflows/provider-neutral-exact-head-continuity-hardening.yml'
+      - 'scripts/provider-neutral-exact-head-continuity-hardening.py'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: provider-neutral-exact-head-continuity-hardening
+  cancel-in-progress: false
+
+jobs:
+  harden:
+    if: github.repository == 'Cheekyfellastef/stephan-os'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify reviewed source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object shared/agents/exactHeadReviewDispatchCoordinator.mjs)" = "7ee2997a1334b1eacdee4d7d8ee638c83f593b94"
+          test "$(git hash-object scripts/exact-head-review-dispatch.mjs)" = "2cef56334ba76a05740be08f0d49782db73c11b5"
+          test "$(git hash-object shared/agents/exactHeadReviewDispatchCoordinator.test.mjs)" = "c485ae881a4a79cb15b3ac52fc3d0e1fe349e3d4"
+
+      - name: Apply workflow-bound review hardening
+        run: python3 scripts/provider-neutral-exact-head-continuity-hardening.py
+
+      - name: Validate hardened provider-neutral continuity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check shared/agents/exactHeadReviewDispatchCoordinator.mjs
+          node --check scripts/exact-head-review-dispatch.mjs
+          node --test \
+            shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
+            shared/agents/providerNeutralReviewV1.test.mjs \
+            shared/agents/providerNeutralReviewV1IdentityRegression.test.mjs \
+            shared/agents/operatorMergeApprovalGate.test.mjs
+          npm run stephanos:guard:imports
+          git diff --check
+
+      - name: Commit hardened source and hostile regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "stephanos-provider-neutral-builder[bot]"
+          git config user.email "stephanos-provider-neutral-builder[bot]@users.noreply.github.com"
+          git add \
+            shared/agents/exactHeadReviewDispatchCoordinator.mjs \
+            shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
+            scripts/exact-head-review-dispatch.mjs
+          git diff --cached --check
+          git commit -m "Bind provider-neutral review receipts to canonical workflow runs"
+          git push origin HEAD:agent/provider-neutral-exact-head-continuity-v1
