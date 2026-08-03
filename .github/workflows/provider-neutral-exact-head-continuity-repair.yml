@@ -1,10 +1,19 @@
-# Retrigger after the bounded runner exists on this branch.
 name: Provider-Neutral Exact-Head Continuity Repair
 
 on:
   push:
     branches:
       - agent/provider-neutral-exact-head-continuity-v1
+    paths:
+      - '.github/workflows/provider-neutral-exact-head-continuity-repair.yml'
+      - 'scripts/provider-neutral-exact-head-continuity-repair.py'
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
     paths:
       - '.github/workflows/provider-neutral-exact-head-continuity-repair.yml'
       - 'scripts/provider-neutral-exact-head-continuity-repair.py'
@@ -18,14 +27,45 @@ concurrency:
 
 jobs:
   repair:
-    if: github.repository == 'Cheekyfellastef/stephan-os'
+    if: >-
+      github.repository == 'Cheekyfellastef/stephan-os' &&
+      (
+        github.event_name == 'push' ||
+        (
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.head.ref == 'agent/provider-neutral-exact-head-continuity-v1'
+        )
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Resolve exact same-repository branch identity
+        id: branch
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BRANCH: ${{ github.ref_name }}
+          PR_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            branch="${PR_HEAD_BRANCH}"
+            sha="${PR_HEAD_SHA}"
+          else
+            branch="${PUSH_BRANCH}"
+            sha="${PUSH_SHA}"
+          fi
+          test "${branch}" = "agent/provider-neutral-exact-head-continuity-v1"
+          [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
+          echo "name=${branch}" >> "${GITHUB_OUTPUT}"
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
       - name: Check out exact branch head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ steps.branch.outputs.sha }}
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -36,6 +76,7 @@ jobs:
       - name: Verify reviewed source identities
         shell: bash
         run: |
+          set -euo pipefail
           test "$(git hash-object shared/agents/exactHeadReviewDispatchCoordinator.mjs)" = "233fcdcbec89af9a678148fb13816a0c34d65346"
           test "$(git hash-object scripts/exact-head-review-dispatch.mjs)" = "2610eda2c18989763a3f06685aaf45808e8d87ea"
           test "$(git hash-object shared/agents/exactHeadReviewDispatchCoordinator.test.mjs)" = "68166594615331ff5624c43a7411ec9f48db2e4b"
@@ -46,6 +87,7 @@ jobs:
       - name: Validate provider-neutral continuity
         shell: bash
         run: |
+          set -euo pipefail
           node --check shared/agents/exactHeadReviewDispatchCoordinator.mjs
           node --check scripts/exact-head-review-dispatch.mjs
           node --test \
@@ -57,7 +99,10 @@ jobs:
 
       - name: Commit repaired source and regressions
         shell: bash
+        env:
+          TARGET_BRANCH: ${{ steps.branch.outputs.name }}
         run: |
+          set -euo pipefail
           git config user.name "stephanos-provider-neutral-builder[bot]"
           git config user.email "stephanos-provider-neutral-builder[bot]@users.noreply.github.com"
           git add \
@@ -66,4 +111,4 @@ jobs:
             scripts/exact-head-review-dispatch.mjs
           git diff --cached --check
           git commit -m "Accept provider-neutral exact-head review receipts"
-          git push origin HEAD:${{ github.ref_name }}
+          git push origin "HEAD:${TARGET_BRANCH}"
