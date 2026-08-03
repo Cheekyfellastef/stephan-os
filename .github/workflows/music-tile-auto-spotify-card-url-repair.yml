@@ -1,9 +1,13 @@
 name: Music Tile Auto Spotify Card URL Repair
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/music-tile-auto-spotify-card-url
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
     paths:
       - .github/workflows/music-tile-auto-spotify-card-url-repair.yml
 
@@ -16,13 +20,14 @@ permissions:
 
 jobs:
   repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/music-tile-auto-spotify-card-url'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/music-tile-auto-spotify-card-url
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: true
       - uses: actions/setup-node@v4
         with:
@@ -31,8 +36,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "f17766c182364428f0f72aee796223e38011a153"
-          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/music-tile-auto-spotify-card-url-repair.yml"
+          test "$(git merge-base HEAD f17766c182364428f0f72aee796223e38011a153)" = "f17766c182364428f0f72aee796223e38011a153"
+          test "$(git diff --name-only f17766c182364428f0f72aee796223e38011a153...HEAD)" = ".github/workflows/music-tile-auto-spotify-card-url-repair.yml"
       - name: Apply exact bounded repair
         shell: bash
         run: |
@@ -217,10 +222,6 @@ test('existing unresolved cards are queued for one automatic attempt.', () => {
           save_test = save_test.replace(
             "  assert.match(js, /Spotify catalog search is not configured\\. Use Spotify search and paste a confirmed track URL\\./);",
             "  assert.match(js, /Get Spotify link automatically/);\n  assert.match(js, /Stephanos normally fills this automatically/);",
-          )
-          save_test = save_test.replace(
-            "  assert.match(js, /This is a Spotify search link, not a playable track link\\./);",
-            "  assert.match(js, /This is a Spotify search link, not a playable track link\\./);",
           )
 
           new_test_path.write_text("""import test from 'node:test';
