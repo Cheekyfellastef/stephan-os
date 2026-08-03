@@ -84,7 +84,7 @@ jobs:
       - name: Apply bounded provider-neutral repair
         run: python3 scripts/provider-neutral-exact-head-continuity-repair.py
 
-      - name: Align the legacy dispatch rendering regression
+      - name: Align legacy provider-specific rendering regressions
         shell: bash
         run: |
           set -euo pipefail
@@ -93,15 +93,26 @@ jobs:
 
           path = Path('shared/agents/exactHeadReviewDispatchCoordinator.test.mjs')
           text = path.read_text(encoding='utf-8')
-          old = "  assert.match(dispatch, /@codex review/);\n"
-          new = (
-              "  assert.match(dispatch, /Provider-neutral exact-head review handoff/);\n"
-              "  assert.match(dispatch, /does not request or consume Codex review capacity/);\n"
-              "  assert.doesNotMatch(dispatch, /@codex review/);\n"
-          )
-          if text.count(old) != 1:
-              raise SystemExit(f'legacy dispatch assertion: expected exactly one match, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          replacements = [
+              (
+                  "  assert.match(dispatch, /@codex review/);\n",
+                  "  assert.match(dispatch, /Provider-neutral exact-head review handoff/);\n"
+                  "  assert.match(dispatch, /does not request or consume Codex review capacity/);\n"
+                  "  assert.doesNotMatch(dispatch, /@codex review/);\n",
+                  'legacy dispatch assertion',
+              ),
+              (
+                  "  assert.match(escalation, /Duplicate review dispatch is rejected/);\n",
+                  "  assert.match(escalation, /Duplicate dispatch is rejected/);\n",
+                  'legacy escalation assertion',
+              ),
+          ]
+          for old, new, label in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
           PY
 
       - name: Validate provider-neutral continuity
