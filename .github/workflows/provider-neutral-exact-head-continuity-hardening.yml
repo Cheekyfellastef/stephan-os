@@ -104,7 +104,7 @@ jobs:
           set -euo pipefail
           git config user.name "stephanos-provider-neutral-builder[bot]"
           git config user.email "stephanos-provider-neutral-builder[bot]@users.noreply.github.com"
-          git rm \
+          git rm -f \
             .github/workflows/provider-neutral-exact-head-continuity-hardening.yml \
             scripts/provider-neutral-exact-head-continuity-hardening.py
           git add \
