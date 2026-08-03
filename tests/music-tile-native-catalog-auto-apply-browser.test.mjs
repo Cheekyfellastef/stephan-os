@@ -120,7 +120,7 @@ test('iPad-width native search writes the Spotify URL into an existing card auto
     }, { key: STORAGE_KEY, trackId: TRACK_ID });
 
     await page.goto(`${server.origin}/apps/music-tile/index.html`);
-    await page.waitForSelector(`[data-link-input="spotify-${TRACK_ID}"]`);
+    await page.waitForSelector(`[data-link-input="spotify-${TRACK_ID}"]`, { state: 'attached' });
     await page.evaluate(() => {
       window.__catalogAutoApplyCard = document.querySelector('.player-deck-card');
     });
