@@ -62,6 +62,23 @@ jobs:
           test "$(git hash-object shared/agents/exactHeadReviewDispatchCoordinator.test.mjs)" = "c485ae881a4a79cb15b3ac52fc3d0e1fe349e3d4"
           test "$(git hash-object scripts/provider-neutral-exact-head-continuity-hardening.py)" = "1f27fc395b0a7096fe893aeb25b96446113bf468"
 
+      - name: Repair bounded hostile-test matcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/provider-neutral-exact-head-continuity-hardening.py')
+          text = path.read_text(encoding='utf-8')
+          old = r'''provider_block = r"\nfunction providerNeutralComment\(\{.*?\n\}\n\ntest\('provider-neutral handoff never dispatches the Codex reviewer'"'''
+          new = r'''provider_block = r"\nfunction providerNeutralComment\(\{.*?test\('provider-neutral handoff never dispatches the Codex reviewer'"'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'hostile-test matcher repair: expected exactly one match, found {count}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Apply workflow-bound review hardening
         run: python3 scripts/provider-neutral-exact-head-continuity-hardening.py
 
