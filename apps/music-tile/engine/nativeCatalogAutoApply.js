@@ -3,6 +3,9 @@ import { resolveSpotifyReference } from '../utils/spotifyEmbed.js';
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const AUTO_APPLY_MESSAGE = 'Spotify track URL found by Stephanos and applied automatically.';
 const pendingAnnouncements = new Map();
+const scheduleMicrotask = typeof globalThis.queueMicrotask === 'function'
+  ? globalThis.queueMicrotask.bind(globalThis)
+  : (callback) => Promise.resolve().then(callback);
 let announcementQueued = false;
 let hydrationQueued = false;
 let observerInstalled = false;
@@ -13,6 +16,17 @@ function normalizedIdentity(value = '') {
 
 function plainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function browserStorage() {
+  try {
+    const storage = globalThis.localStorage;
+    return storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function'
+      ? storage
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function validatedDetail(detail = {}) {
@@ -74,9 +88,10 @@ export function mergePersistedCatalogState(snapshot, rawDetail = {}) {
   return { ok: true, changed, track, detail };
 }
 
-function readStoredState() {
+function readStoredState(storage = browserStorage()) {
+  if (!storage) return null;
   try {
-    const parsed = JSON.parse(globalThis.localStorage?.getItem(STORAGE_KEY) || '{}');
+    const parsed = JSON.parse(storage.getItem(STORAGE_KEY) || '{}');
     return plainObject(parsed) ? parsed : null;
   } catch {
     return null;
@@ -138,7 +153,7 @@ function announceAppliedTrack(track) {
   pendingAnnouncements.set(String(track.id || `${track.artist}::${track.title}`), track);
   if (announcementQueued) return;
   announcementQueued = true;
-  queueMicrotask(() => {
+  scheduleMicrotask(() => {
     announcementQueued = false;
     const count = pendingAnnouncements.size;
     pendingAnnouncements.clear();
@@ -150,8 +165,10 @@ function announceAppliedTrack(track) {
 }
 
 export function hydratePersistedCatalogLinks() {
-  if (typeof document === 'undefined' || !globalThis.localStorage) return 0;
-  const snapshot = readStoredState();
+  if (typeof document === 'undefined') return 0;
+  const storage = browserStorage();
+  if (!storage) return 0;
+  const snapshot = readStoredState(storage);
   if (!snapshot || !Array.isArray(snapshot.listeningDeck)) return 0;
   let hydrated = 0;
   for (const track of snapshot.listeningDeck) {
@@ -167,21 +184,23 @@ export function hydratePersistedCatalogLinks() {
 function queueHydration() {
   if (hydrationQueued) return;
   hydrationQueued = true;
-  queueMicrotask(() => {
+  scheduleMicrotask(() => {
     hydrationQueued = false;
     hydratePersistedCatalogLinks();
   });
 }
 
 export function applyCatalogEnrichmentToBrowser(rawDetail = {}) {
-  if (!globalThis.localStorage || typeof document === 'undefined') {
+  if (typeof document === 'undefined') {
     return { ok: true, changed: false, reason: 'non-browser-runtime' };
   }
-  const snapshot = readStoredState();
+  const storage = browserStorage();
+  if (!storage) return { ok: false, changed: false, reason: 'music-state-storage-unavailable' };
+  const snapshot = readStoredState(storage);
   const merged = mergePersistedCatalogState(snapshot, rawDetail);
   if (!merged.ok) return merged;
   try {
-    if (merged.changed) globalThis.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    if (merged.changed) storage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
     return { ok: false, changed: false, reason: 'music-state-persistence-failed' };
   }
@@ -207,6 +226,6 @@ if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', installHydrationObserver, { once: true });
   } else {
-    queueMicrotask(installHydrationObserver);
+    scheduleMicrotask(installHydrationObserver);
   }
 }
