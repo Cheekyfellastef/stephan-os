@@ -1,0 +1,68 @@
+name: Provider-Neutral Exact-Head Continuity Repair
+
+on:
+  push:
+    branches:
+      - agent/provider-neutral-exact-head-continuity-v1
+    paths:
+      - '.github/workflows/provider-neutral-exact-head-continuity-repair.yml'
+      - 'scripts/provider-neutral-exact-head-continuity-repair.py'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: provider-neutral-exact-head-continuity-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.repository == 'Cheekyfellastef/stephan-os'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify reviewed source identities
+        shell: bash
+        run: |
+          test "$(git hash-object shared/agents/exactHeadReviewDispatchCoordinator.mjs)" = "233fcdcbec89af9a678148fb13816a0c34d65346"
+          test "$(git hash-object scripts/exact-head-review-dispatch.mjs)" = "2610eda2c18989763a3f06685aaf45808e8d87ea"
+          test "$(git hash-object shared/agents/exactHeadReviewDispatchCoordinator.test.mjs)" = "68166594615331ff5624c43a7411ec9f48db2e4b"
+
+      - name: Apply bounded provider-neutral repair
+        run: python3 scripts/provider-neutral-exact-head-continuity-repair.py
+
+      - name: Validate provider-neutral continuity
+        shell: bash
+        run: |
+          node --check shared/agents/exactHeadReviewDispatchCoordinator.mjs
+          node --check scripts/exact-head-review-dispatch.mjs
+          node --test \
+            shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
+            shared/agents/providerNeutralReviewV1.test.mjs \
+            shared/agents/providerNeutralReviewV1IdentityRegression.test.mjs
+          npm run stephanos:guard:imports
+          git diff --check
+
+      - name: Commit repaired source and regressions
+        shell: bash
+        run: |
+          git config user.name "stephanos-provider-neutral-builder[bot]"
+          git config user.email "stephanos-provider-neutral-builder[bot]@users.noreply.github.com"
+          git add \
+            shared/agents/exactHeadReviewDispatchCoordinator.mjs \
+            shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
+            scripts/exact-head-review-dispatch.mjs
+          git diff --cached --check
+          git commit -m "Accept provider-neutral exact-head review receipts"
+          git push origin HEAD:${{ github.ref_name }}
