@@ -194,8 +194,12 @@ function emptySharedWorkspaceConnection({
   });
 }
 
-function buildSharedWorkspaceConnection(status = {}, blockers) {
-  if (!plainObject(status)) return emptySharedWorkspaceConnection();
+function buildSharedWorkspaceConnection(status, blockers) {
+  if (status === undefined || status === null) return emptySharedWorkspaceConnection();
+  if (!plainObject(status)) {
+    blockers.push('shared-workspace-status-receipt-invalid');
+    return emptySharedWorkspaceConnection({ observed: true });
+  }
 
   const execution = plainObject(status.execution) ? status.execution : {};
   const operationResult = plainObject(status.operationResult) ? status.operationResult : {};
