@@ -64,6 +64,16 @@ function blockingAnalysis() {
   };
 }
 
+function oversizedBlockingAnalysis() {
+  return {
+    ...blockingAnalysis(),
+    proofRefs: Array.from(
+      { length: 201 },
+      (_, index) => `proofs/changed-file/oversized-review/path-${index}.mjs`,
+    ),
+  };
+}
+
 function artifact(analysis = cleanAnalysis()) {
   return buildIndependentReviewArtifact({
     repository,
@@ -146,6 +156,45 @@ test('builds immutable exact-run evidence for blocking findings without minting 
     workflowRunAttempt,
     analysis: cleanAnalysis(),
   }), /bounded findings analysis/);
+});
+
+test('preserves oversized review findings with a bounded digest-bound proof handoff', () => {
+  const analysis = oversizedBlockingAnalysis();
+  const findings = buildIndependentReviewFindingsArtifact({
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+    createdAtUtc: '2026-08-02T19:00:00.000Z',
+    analysis,
+  });
+  assert.equal(analysis.proofRefs.length, 201);
+  assert.equal(findings.analysis.proofRefs.length, 200);
+  assert.deepEqual(findings.analysis.proofRefs.slice(0, 199), analysis.proofRefs.slice(0, 199));
+  const overflowRef = findings.analysis.proofRefs.at(-1);
+  assert.match(
+    overflowRef,
+    /^proofs\/independent-review\/proof-ref-overflow\/total-201\/included-199\/omitted-2\/sha256-[a-f0-9]{64}$/,
+  );
+  assert.equal(findings.payloadSha256, independentReviewFindingsArtifactPayloadSha256(findings));
+
+  const changedAnalysis = oversizedBlockingAnalysis();
+  changedAnalysis.proofRefs[200] = 'proofs/changed-file/oversized-review/tampered-last-path.mjs';
+  const changedFindings = buildIndependentReviewFindingsArtifact({
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+    createdAtUtc: '2026-08-02T19:00:00.000Z',
+    analysis: changedAnalysis,
+  });
+  assert.notEqual(changedFindings.analysis.proofRefs.at(-1), overflowRef);
 });
 
 test('artifact payload binds repository, PR, branch, head, base, run and attempt', () => {
