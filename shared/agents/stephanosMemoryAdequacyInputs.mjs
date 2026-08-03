@@ -9,6 +9,11 @@ export const STEPHANOS_MEMORY_ADEQUACY_INPUT_SCHEMA_VERSION = 'stephanos.memory-
 const MAX_MEMORY_RECORDS = 50_000;
 const MAX_COMPONENTS = 1_000;
 const SAFE_PROOF_REF = /^(?:proof|proofs|receipt|receipts|evidence|github|shared-workspace|runtime|memory)\/[a-z0-9._/#:-]+$/i;
+const EXACT_HEAD = /^[a-f0-9]{40}$/;
+const SAFE_REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const SHARED_WORKSPACE_RECEIPT_SCHEMA = 'stephanos.battle-bridge-github-command-receipt.v1';
+const SHARED_WORKSPACE_STATUS_OPERATION = 'READ_SHARED_WORKSPACE_STATUS';
+const SHARED_WORKSPACE_RECEIPT_SOURCE = 'battle-bridge-read-shared-workspace-status';
 
 function text(value, maximum = 240) {
   return String(value ?? '').trim().slice(0, maximum);
@@ -174,27 +179,63 @@ function buildProgrammeObservation({ programmeComponents, observedAtUtc }, block
   });
 }
 
-function buildSharedWorkspaceConnection(status = {}, observedAtUtc) {
-  if (!plainObject(status) || status.observed !== true) {
-    return Object.freeze({
-      state: STEPHANOS_MEMORY_CONNECTION_STATE.UNKNOWN,
-      observed: false,
-      observedAtUtc: '',
-      source: '',
-      proofRefs: Object.freeze([]),
+function emptySharedWorkspaceConnection({
+  observed = false,
+  observedAtUtc = '',
+  source = '',
+  proofRefs = [],
+} = {}) {
+  return Object.freeze({
+    state: STEPHANOS_MEMORY_CONNECTION_STATE.UNKNOWN,
+    observed,
+    observedAtUtc,
+    source,
+    proofRefs: Object.freeze(proofRefs),
+  });
+}
+
+function buildSharedWorkspaceConnection(status = {}, blockers) {
+  if (!plainObject(status)) return emptySharedWorkspaceConnection();
+
+  const execution = plainObject(status.execution) ? status.execution : {};
+  const operationResult = plainObject(status.operationResult) ? status.operationResult : {};
+  const completedAtUtc = iso(status.completedAt);
+  const expectedHead = text(status.expectedHead, 40).toLowerCase();
+  const sourceHead = text(operationResult.sourceHead, 40).toLowerCase();
+  const proofRefs = safeProofRefs(status.proofRefs);
+  const validReceipt = status.schemaVersion === SHARED_WORKSPACE_RECEIPT_SCHEMA
+    && SAFE_REQUEST_ID.test(text(status.requestId, 160))
+    && text(status.operation, 120) === SHARED_WORKSPACE_STATUS_OPERATION
+    && text(status.state, 40).toUpperCase() === 'DONE'
+    && execution.ok === true
+    && operationResult.ok === true
+    && text(operationResult.finalVerdict, 160).toUpperCase() === 'SHARED_WORKSPACE_STATUS_READY'
+    && text(operationResult.branch, 80) === 'main'
+    && operationResult.expectedHeadMatch === true
+    && Boolean(completedAtUtc)
+    && EXACT_HEAD.test(expectedHead)
+    && EXACT_HEAD.test(sourceHead)
+    && expectedHead === sourceHead
+    && !text(status.blocker)
+    && !text(operationResult.blocker)
+    && proofRefs.length > 0;
+
+  if (!validReceipt) {
+    blockers.push('shared-workspace-status-receipt-invalid');
+    return emptySharedWorkspaceConnection({
+      observed: true,
+      observedAtUtc: completedAtUtc,
+      source: SHARED_WORKSPACE_RECEIPT_SOURCE,
+      proofRefs,
     });
   }
-  const ready = status.ok === true
-    && status.finalVerdict === 'SHARED_WORKSPACE_STATUS_READY'
-    && status.expectedHeadMatch === true;
+
   return Object.freeze({
-    state: ready
-      ? STEPHANOS_MEMORY_CONNECTION_STATE.CONNECTED
-      : STEPHANOS_MEMORY_CONNECTION_STATE.UNKNOWN,
+    state: STEPHANOS_MEMORY_CONNECTION_STATE.CONNECTED,
     observed: true,
-    observedAtUtc: iso(status.observedAtUtc || status.completedAt || status.timestampUtc) || observedAtUtc,
-    source: text(status.source || 'battle-bridge-read-shared-workspace-status', 160),
-    proofRefs: Object.freeze(safeProofRefs(status.proofRefs || ['shared-workspace/status/connection'])),
+    observedAtUtc: completedAtUtc,
+    source: SHARED_WORKSPACE_RECEIPT_SOURCE,
+    proofRefs: Object.freeze(proofRefs),
   });
 }
 
@@ -218,7 +259,7 @@ export function buildStephanosMemoryAdequacyInputs(input = {}) {
   if (programmeObservation) observations.push(programmeObservation);
   const sharedWorkspaceConnection = buildSharedWorkspaceConnection(
     input.sharedWorkspaceStatus,
-    safeObservedAtUtc,
+    blockers,
   );
   return Object.freeze({
     schemaVersion: STEPHANOS_MEMORY_ADEQUACY_INPUT_SCHEMA_VERSION,
