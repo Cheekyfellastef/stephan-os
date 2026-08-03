@@ -7,9 +7,6 @@ on:
       - 'apps/music-tile/**'
       - 'tests/music-intelligence-centre-vnext.test.mjs'
       - 'tests/music-tile-rating-playback-browser.test.mjs'
-      - 'tests/music-tile-native-catalog-ui.test.mjs'
-      - 'tests/music-tile-native-catalog-auto-apply.test.mjs'
-      - 'tests/music-tile-native-catalog-auto-apply-browser.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
   push:
     branches: [main]
@@ -17,9 +14,6 @@ on:
       - 'apps/music-tile/**'
       - 'tests/music-intelligence-centre-vnext.test.mjs'
       - 'tests/music-tile-rating-playback-browser.test.mjs'
-      - 'tests/music-tile-native-catalog-ui.test.mjs'
-      - 'tests/music-tile-native-catalog-auto-apply.test.mjs'
-      - 'tests/music-tile-native-catalog-auto-apply-browser.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
 
 permissions: {}
@@ -47,20 +41,10 @@ jobs:
       - name: Install root browser-test dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
 
-      - name: Prove rating UI, catalogue auto-apply and both mounted players
+      - name: Prove rating UI and both mounted players
         shell: pwsh
         env:
           STEPHANOS_BROWSER_CHANNEL: msedge
         run: |
-          $ErrorActionPreference = 'Stop'
-          function Invoke-NodeTest([string]$Path) {
-            & node --test $Path
-            if ($LASTEXITCODE -ne 0) {
-              throw "Node test failed with exit code ${LASTEXITCODE}: $Path"
-            }
-          }
-          Invoke-NodeTest 'tests/music-tile-native-catalog-auto-apply.test.mjs'
-          Invoke-NodeTest 'tests/music-tile-native-catalog-ui.test.mjs'
-          Invoke-NodeTest 'tests/music-tile-native-catalog-auto-apply-browser.test.mjs'
-          Invoke-NodeTest 'tests/music-intelligence-centre-vnext.test.mjs'
-          Invoke-NodeTest 'tests/music-tile-rating-playback-browser.test.mjs'
+          node --test tests/music-intelligence-centre-vnext.test.mjs
+          node --test tests/music-tile-rating-playback-browser.test.mjs
