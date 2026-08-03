@@ -6,6 +6,7 @@ import { buildStephanosMemoryAdequacyInputs } from './stephanosMemoryAdequacyInp
 import { buildStephanosMemoryAdequacyAudit } from '../runtime/stephanosMemoryAdequacy.mjs';
 
 const NOW = '2026-08-03T20:00:00.000Z';
+const HEAD = 'a'.repeat(40);
 
 function record(type, id, overrides = {}) {
   return {
@@ -36,6 +37,45 @@ function sharedDiagnostics(overrides = {}) {
     fallbackReason: '',
     recordCount: 3,
     ...overrides,
+  };
+}
+
+function sharedWorkspaceReceipt(overrides = {}) {
+  const base = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'shared-workspace-status-20260803',
+    operation: 'READ_SHARED_WORKSPACE_STATUS',
+    state: 'DONE',
+    completedAt: NOW,
+    expectedHead: HEAD,
+    blocker: '',
+    proofRefs: ['receipts/github-command-mailbox/shared-workspace-status.json'],
+    execution: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_SHARED_WORKSPACE_STATUS',
+      requestId: 'shared-workspace-status-20260803',
+    },
+    operationResult: {
+      ok: true,
+      blocker: '',
+      finalVerdict: 'SHARED_WORKSPACE_STATUS_READY',
+      sourceHead: HEAD,
+      branch: 'main',
+      expectedHeadMatch: true,
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    execution: {
+      ...base.execution,
+      ...(overrides.execution || {}),
+    },
+    operationResult: {
+      ...base.operationResult,
+      ...(overrides.operationResult || {}),
+    },
   };
 }
 
@@ -116,7 +156,7 @@ test('reuses canonical programme-authority components as source inventory eviden
   assert.deepEqual(programme.proofRefs, ['github/programme-authority/components']);
 });
 
-test('does not claim a Shared Workspace connection without a fresh observed ready receipt', () => {
+test('does not claim a Shared Workspace connection without an authentic exact-head mailbox receipt', () => {
   const unknown = buildStephanosMemoryAdequacyInputs({
     observedAtUtc: NOW,
     memoryDiagnostics: sharedDiagnostics(),
@@ -125,23 +165,9 @@ test('does not claim a Shared Workspace connection without a fresh observed read
   });
   assert.equal(unknown.sharedWorkspaceConnection.state, 'UNKNOWN');
   assert.equal(unknown.sharedWorkspaceConnection.observed, false);
+  assert.equal(unknown.valid, true);
 
-  const blocked = buildStephanosMemoryAdequacyInputs({
-    observedAtUtc: NOW,
-    memoryDiagnostics: sharedDiagnostics(),
-    memoryRecords: [],
-    sharedWorkspaceStatus: {
-      observed: true,
-      ok: false,
-      finalVerdict: 'SHARED_WORKSPACE_STATUS_BLOCKED',
-      observedAtUtc: NOW,
-      expectedHeadMatch: true,
-    },
-  });
-  assert.equal(blocked.sharedWorkspaceConnection.state, 'UNKNOWN');
-  assert.equal(blocked.sharedWorkspaceConnection.observed, true);
-
-  const ready = buildStephanosMemoryAdequacyInputs({
+  const forged = buildStephanosMemoryAdequacyInputs({
     observedAtUtc: NOW,
     memoryDiagnostics: sharedDiagnostics(),
     memoryRecords: [],
@@ -151,11 +177,66 @@ test('does not claim a Shared Workspace connection without a fresh observed read
       finalVerdict: 'SHARED_WORKSPACE_STATUS_READY',
       expectedHeadMatch: true,
       observedAtUtc: NOW,
-      proofRefs: ['receipts/github-command-mailbox/shared-workspace-status.json'],
+      proofRefs: ['shared-workspace/status/connection'],
     },
+  });
+  assert.equal(forged.sharedWorkspaceConnection.state, 'UNKNOWN');
+  assert.equal(forged.sharedWorkspaceConnection.observed, true);
+  assert.equal(forged.valid, false);
+  assert.ok(forged.blockers.includes('shared-workspace-status-receipt-invalid'));
+
+  const ready = buildStephanosMemoryAdequacyInputs({
+    observedAtUtc: NOW,
+    memoryDiagnostics: sharedDiagnostics(),
+    memoryRecords: [],
+    sharedWorkspaceStatus: sharedWorkspaceReceipt(),
   });
   assert.equal(ready.sharedWorkspaceConnection.state, 'CONNECTED');
   assert.equal(ready.sharedWorkspaceConnection.observed, true);
+  assert.equal(ready.sharedWorkspaceConnection.observedAtUtc, NOW);
+  assert.equal(ready.sharedWorkspaceConnection.source, 'battle-bridge-read-shared-workspace-status');
+  assert.equal(ready.valid, true);
+});
+
+test('rejects a mailbox receipt whose source head does not match its expected head', () => {
+  const inputs = buildStephanosMemoryAdequacyInputs({
+    observedAtUtc: NOW,
+    memoryDiagnostics: sharedDiagnostics(),
+    memoryRecords: [],
+    sharedWorkspaceStatus: sharedWorkspaceReceipt({
+      operationResult: { sourceHead: 'b'.repeat(40) },
+    }),
+  });
+
+  assert.equal(inputs.sharedWorkspaceConnection.state, 'UNKNOWN');
+  assert.equal(inputs.sharedWorkspaceConnection.observed, true);
+  assert.equal(inputs.valid, false);
+  assert.ok(inputs.blockers.includes('shared-workspace-status-receipt-invalid'));
+});
+
+test('rejects a blocked or proofless mailbox receipt as connection authority', () => {
+  for (const status of [
+    sharedWorkspaceReceipt({
+      state: 'BLOCKED',
+      operationResult: {
+        ok: false,
+        blocker: 'SHARED_WORKSPACE_STATUS_NOT_READY',
+        finalVerdict: 'SHARED_WORKSPACE_STATUS_BLOCKED',
+      },
+    }),
+    sharedWorkspaceReceipt({ proofRefs: [] }),
+    sharedWorkspaceReceipt({ completedAt: '' }),
+  ]) {
+    const inputs = buildStephanosMemoryAdequacyInputs({
+      observedAtUtc: NOW,
+      memoryDiagnostics: sharedDiagnostics(),
+      memoryRecords: [],
+      sharedWorkspaceStatus: status,
+    });
+    assert.equal(inputs.sharedWorkspaceConnection.state, 'UNKNOWN');
+    assert.equal(inputs.valid, false);
+    assert.ok(inputs.blockers.includes('shared-workspace-status-receipt-invalid'));
+  }
 });
 
 test('feeds existing evidence into the adequacy audit while preserving lifecycle gaps', () => {
@@ -169,14 +250,7 @@ test('feeds existing evidence into the adequacy audit while preserving lifecycle
       record('route.diagnostic', 'incident-1'),
       record('tile.event', 'proof-1'),
     ],
-    sharedWorkspaceStatus: {
-      observed: true,
-      ok: true,
-      finalVerdict: 'SHARED_WORKSPACE_STATUS_READY',
-      expectedHeadMatch: true,
-      observedAtUtc: NOW,
-      proofRefs: ['shared-workspace/status/connection'],
-    },
+    sharedWorkspaceStatus: sharedWorkspaceReceipt(),
   });
   const audit = buildStephanosMemoryAdequacyAudit({
     nowUtc: NOW,
@@ -184,6 +258,7 @@ test('feeds existing evidence into the adequacy audit while preserving lifecycle
     sharedWorkspaceConnection: inputs.sharedWorkspaceConnection,
   });
 
+  assert.equal(inputs.valid, true);
   assert.equal(audit.sharedWorkspaceConnected, true);
   assert.equal(audit.memoryAdequate, false);
   assert.equal(audit.finalVerdict, 'STEPHANOS_MEMORY_ADEQUACY_GAPS_FOUND');
