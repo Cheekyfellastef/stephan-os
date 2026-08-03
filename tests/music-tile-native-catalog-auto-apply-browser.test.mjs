@@ -100,6 +100,7 @@ test('iPad-width native search writes the Spotify URL into an existing card auto
       });
     });
     await page.addInitScript(({ key, trackId }) => {
+      if (localStorage.getItem(key)) return;
       localStorage.setItem(key, JSON.stringify({
         candidates: [],
         listeningDeck: [{
@@ -130,7 +131,7 @@ test('iPad-width native search writes the Spotify URL into an existing card auto
       document.getElementById('native-music-search-status')?.textContent?.includes('updated automatically')
     ));
 
-    const proof = await page.evaluate(({ key, trackId, spotifyUrl, spotifyUri }) => {
+    const proof = await page.evaluate(({ key, trackId, spotifyUrl }) => {
       const card = document.querySelector('.player-deck-card');
       const input = document.querySelector(`[data-link-input="spotify-${trackId}"]`);
       const openLink = Array.from(card.querySelectorAll('a')).find((link) => link.href === spotifyUrl);
@@ -158,7 +159,7 @@ test('iPad-width native search writes the Spotify URL into an existing card auto
         storedFeedback: stored.trackFeedback?.[trackId],
         noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
       };
-    }, { key: STORAGE_KEY, trackId: TRACK_ID, spotifyUrl: SPOTIFY_URL, spotifyUri: SPOTIFY_URI });
+    }, { key: STORAGE_KEY, trackId: TRACK_ID, spotifyUrl: SPOTIFY_URL });
 
     assert.deepEqual(proof, {
       cardPreserved: true,
