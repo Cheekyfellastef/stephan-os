@@ -9,6 +9,7 @@ import {
   PROTECTED_REVIEW_MARKER,
   analyzeIndependentSecurityReview,
   bindRequiredExactHeadWorkflowIdentities,
+  exactHeadWorkflowFailureIsTerminal,
   isApprovalBoundaryBootstrapAnalysis,
   validateExactHeadWorkflowRuns,
 } from '../shared/agents/operatorMergeApprovalGateV2.mjs';
@@ -18,6 +19,7 @@ import {
 } from '../shared/agents/operatorMergeBaseBindingV1.mjs';
 import {
   INDEPENDENT_REVIEW_ARTIFACT_FILE,
+  buildIndependentReviewFindingsArtifact,
   buildIndependentReviewArtifact,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import { resolve } from 'node:path';
@@ -226,13 +228,9 @@ async function waitForExactHeadWorkflows(
       requiredIdentities,
     });
     if (lastVerdict.valid) return { runs, verdict: lastVerdict };
-    const terminalFailure = lastVerdict.blockers.some((blocker) => (
-      blocker.startsWith('workflow-not-green:')
-      || blocker.startsWith('workflow-identity-spoof:')
-      || blocker.startsWith('workflow-path-identity-mismatch:')
-      || blocker === 'required-workflow-identities-invalid-or-ambiguous'
-    ));
-    if (terminalFailure) throw new Error(`Exact-head workflow failure: ${lastVerdict.blockers.join(', ')}`);
+    if (exactHeadWorkflowFailureIsTerminal(lastVerdict)) {
+      throw new Error(`Exact-head workflow failure: ${lastVerdict.blockers.join(', ')}`);
+    }
     await sleep(POLL_INTERVAL_MS);
   }
   throw new Error(`Exact-head workflows did not become green within ${POLL_TIMEOUT_MS / 60000} minutes: ${lastVerdict?.blockers?.join(', ') || 'unknown'}`);
@@ -358,7 +356,26 @@ async function main() {
   });
 
   const bootstrapRequired = isApprovalBoundaryBootstrapAnalysis(analysis);
+  const finalPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
+  const finalMainRef = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`);
+  if (text(finalPullRequest?.head?.sha).toLowerCase() !== sourceHead || text(finalPullRequest?.state).toLowerCase() !== 'open') {
+    throw new Error('Pull-request head or state changed during review.');
+  }
+  requireExactBase(finalPullRequest, finalMainRef, baseSha, 'pre-artifact');
+  const createdAtUtc = new Date().toISOString();
   if (analysis.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_CLEAN' && !bootstrapRequired) {
+    const artifact = buildIndependentReviewFindingsArtifact({
+      repository,
+      prNumber,
+      sourceHead,
+      baseSha,
+      branch,
+      workflowRunId: runId,
+      workflowRunAttempt: runAttempt,
+      createdAtUtc,
+      analysis,
+    });
+    const artifactPath = writeReviewArtifact(artifact);
     const body = [
       '<!-- stephanos-independent-security-review-findings -->',
       '## Independent deterministic security review findings',
@@ -375,15 +392,11 @@ async function main() {
       'This read-only review did not authorise merge or mark the PR ready.',
     ].join('\n');
     await postDisplayComment(owner, repo, prNumber, body);
+    console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_NAME=${artifact.artifactName}`);
+    console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_PATH=${artifactPath}`);
+    console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_PAYLOAD_SHA256=${artifact.payloadSha256}`);
     throw new Error(`Independent security review found ${analysis.counts.P0} P0, ${analysis.counts.P1} P1 and ${analysis.counts.P2} P2 finding(s).`);
   }
-
-  const finalPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
-  const finalMainRef = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`);
-  if (text(finalPullRequest?.head?.sha).toLowerCase() !== sourceHead || text(finalPullRequest?.state).toLowerCase() !== 'open') {
-    throw new Error('Pull-request head or state changed during review.');
-  }
-  requireExactBase(finalPullRequest, finalMainRef, baseSha, 'pre-receipt');
 
   const artifact = buildIndependentReviewArtifact({
     repository,
@@ -393,7 +406,7 @@ async function main() {
     branch,
     workflowRunId: runId,
     workflowRunAttempt: runAttempt,
-    createdAtUtc: new Date().toISOString(),
+    createdAtUtc,
     analysis,
   });
   const artifactPath = writeReviewArtifact(artifact);
