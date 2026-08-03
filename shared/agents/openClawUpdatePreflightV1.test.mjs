@@ -127,16 +127,19 @@ test('requires digests for protected identities but not rebuildable generated ou
   assert.equal(result.blockers.filter((value) => value.startsWith('MISSING_DIGEST:')).length, 1);
 });
 
-test('rejects conflicting duplicate path identities', () => {
-  const result = buildOpenClawUpdatePreflightV1(validInput({
-    inventory: [
-      { path: 'plugins/openclaw/command.mjs', digestSha256: HEX_A },
-      { path: 'plugins\\openclaw\\command.mjs', digestSha256: HEX_B },
-    ],
-  }));
+test('rejects conflicting duplicate path identities with order-independent blocked evidence', () => {
+  const inventory = [
+    { path: 'plugins/openclaw/command.mjs', digestSha256: HEX_A },
+    { path: 'plugins\\openclaw\\command.mjs', digestSha256: HEX_B },
+  ];
+  const forward = buildOpenClawUpdatePreflightV1(validInput({ inventory }));
+  const reversed = buildOpenClawUpdatePreflightV1(validInput({ inventory: [...inventory].reverse() }));
 
-  assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
-  assert.ok(result.blockers.some((value) => value.startsWith('CONFLICTING_INVENTORY_IDENTITY:')));
+  assert.equal(forward.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
+  assert.ok(forward.blockers.some((value) => value.startsWith('CONFLICTING_INVENTORY_IDENTITY:')));
+  assert.deepEqual(forward.blockers, reversed.blockers);
+  assert.equal(forward.preservationManifest.manifestSha256, reversed.preservationManifest.manifestSha256);
+  assert.deepEqual(forward.preservationManifest.entries, reversed.preservationManifest.entries);
 });
 
 test('reports no update needed when the pinned target version already matches', () => {
@@ -158,5 +161,5 @@ test('renders a compact mutation-free summary', () => {
   assert.match(summary, /OPENCLAW_UPDATE_PREFLIGHT=APPROVAL_REQUIRED/);
   assert.match(summary, /MUTATION_ALLOWED=NO/);
   assert.match(summary, /OPERATOR_APPROVAL_REQUIRED=YES/);
-  assert.match(summary, new RegExp('MANIFEST_SHA256=[a-f0-9]{64}'));
+  assert.match(summary, new RegExp(`MANIFEST_SHA256=[a-f0-9]{64}`));
 });
