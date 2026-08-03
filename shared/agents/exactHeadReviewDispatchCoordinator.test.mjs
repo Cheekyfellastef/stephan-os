@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
+import {
+  INDEPENDENT_REVIEW_JOB,
+  INDEPENDENT_REVIEW_WORKFLOW_NAME,
+  INDEPENDENT_REVIEW_WORKFLOW_PATH,
+  buildProtectedSecurityReviewReceipt,
+} from './operatorMergeApprovalGate.mjs';
 import {
   EXACT_HEAD_REVIEW_DECISION,
   EXACT_HEAD_REVIEW_MARKERS,
@@ -24,6 +29,10 @@ const TRUSTED_COORDINATOR = 'Cheekyfellastef';
 const UNTRUSTED_ACTOR = 'untrusted-commenter';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const BRANCH = 'agent/provider-neutral-review';
+const BASE_SHA = 'c'.repeat(40);
+const REVIEW_RUN_ID = 123;
+const REVIEW_RUN_ATTEMPT = 1;
+const REVIEW_WORKFLOW_ID = 456;
 const TRUSTED_CODEX_REVIEWER = Object.freeze({
   login: 'chatgpt-codex-connector[bot]',
   type: 'Bot',
@@ -34,6 +43,39 @@ const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({
   type: 'Bot',
   id: 41898282,
 });
+
+function independentReviewRun(overrides = {}) {
+  const run = {
+    id: REVIEW_RUN_ID,
+    run_attempt: REVIEW_RUN_ATTEMPT,
+    workflow_id: REVIEW_WORKFLOW_ID,
+    name: INDEPENDENT_REVIEW_WORKFLOW_NAME,
+    path: INDEPENDENT_REVIEW_WORKFLOW_PATH,
+    event: 'pull_request_target',
+    repository: { full_name: REPOSITORY },
+    head_sha: BASE_SHA,
+    status: 'completed',
+    conclusion: 'success',
+    pull_requests: [{
+      number: 1559,
+      head: { sha: HEAD, ref: BRANCH },
+      base: { sha: BASE_SHA, ref: 'main' },
+    }],
+  };
+  return { ...run, ...overrides };
+}
+
+function independentReviewJobs(overrides = {}) {
+  return [{
+    id: 9001,
+    name: INDEPENDENT_REVIEW_JOB,
+    run_attempt: REVIEW_RUN_ATTEMPT,
+    run_url: `https://api.github.com/repos/${REPOSITORY}/actions/runs/${REVIEW_RUN_ID}`,
+    status: 'completed',
+    conclusion: 'success',
+    ...overrides,
+  }];
+}
 
 function successfulRuns(headSha = HEAD) {
   return REQUIRED_EXACT_HEAD_WORKFLOWS.map((name, index) => ({
@@ -57,11 +99,17 @@ function baseInput(overrides = {}) {
       number: 1559,
       state: 'open',
       baseRef: 'main',
+      baseSha: BASE_SHA,
       headRef: BRANCH,
       headSha: HEAD,
       sameRepository: true,
     },
     workflowRuns: successfulRuns(),
+    independentReviewWorkflowId: REVIEW_WORKFLOW_ID,
+    independentReviewRuns: [independentReviewRun()],
+    independentReviewJobsByRunId: {
+      [String(REVIEW_RUN_ID)]: independentReviewJobs(),
+    },
     comments: [],
     reviews: [],
     ...overrides,
@@ -162,40 +210,38 @@ function providerNeutralComment({
   headSha = HEAD,
   user = TRUSTED_GITHUB_ACTIONS_REVIEWER,
   createdAt = '2026-07-19T16:29:30Z',
+  workflowRunId = REVIEW_RUN_ID,
+  workflowRunAttempt = REVIEW_RUN_ATTEMPT,
 } = {}) {
-  const receipt = createProviderNeutralReviewReceipt({
-    receiptId: `review-1559-${headSha.slice(0, 12)}`,
+  const receipt = buildProtectedSecurityReviewReceipt({
     repository: REPOSITORY,
-    issueNumber: 1559,
     prNumber: 1559,
     branch: BRANCH,
     sourceHead: headSha,
-    reviewerId: 'github-actions-independent-security-review',
-    reviewerClass: 'external-qualified',
-    provider: 'github-actions-independent-review',
-    modelClass: 'source-controlled-high-assurance',
-    reviewerSessionId: 'github-actions-independent-review-run-123-attempt-1',
-    implementerProvider: 'github-first',
-    implementerSessionId: 'source-change-session-1',
-    riskTier: 'standard',
-    assuranceMode: 'independent',
-    reviewScope: ['complete-diff'],
-    findings: [],
-    verdict: 'clean',
+    workflowRunId,
+    workflowRunAttempt,
     timestampUtc: createdAt,
-    proofRefs: ['proofs/independent-review/receipt'],
-    quorumChecks: [],
-    blocker: '',
+    analysis: {
+      schemaVersion: 'stephanos.independent-security-analysis.v1',
+      findings: [],
+      counts: { P0: 0, P1: 0, P2: 0 },
+      verdict: 'clean',
+      proofRefs: ['proofs/changed-file/shared/agents/example.mjs'],
+      finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN',
+    },
   });
   return {
     id,
-    body: `<!-- stephanos-protected-security-review -->\n\`\`\`json\n${JSON.stringify(receipt, null, 2)}\n\`\`\``,
+    body: `<!-- stephanos-protected-security-review -->
+\`\`\`json
+${JSON.stringify(receipt, null, 2)}
+\`\`\``,
     user,
     createdAt,
   };
 }
 
-test('records an authenticated provider-neutral GitHub Actions receipt', () => {
+test('records only a workflow-bound authenticated provider-neutral GitHub Actions receipt', () => {
   const result = evaluateExactHeadReviewDispatch(baseInput({
     comments: [providerNeutralComment()],
   }));
@@ -204,18 +250,53 @@ test('records an authenticated provider-neutral GitHub Actions receipt', () => {
   assert.match(result.reason, /authenticated exact-head review receipt/i);
 });
 
-test('rejects forged or stale provider-neutral review comments', () => {
-  const forged = evaluateExactHeadReviewDispatch(baseInput({
+test('rejects forged, stale or workflow-unbound provider-neutral review comments', () => {
+  const forgedActor = evaluateExactHeadReviewDispatch(baseInput({
     comments: [providerNeutralComment({
       user: { ...TRUSTED_GITHUB_ACTIONS_REVIEWER, id: 7 },
     })],
   }));
-  assert.equal(forged.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+  assert.equal(forgedActor.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 
-  const stale = evaluateExactHeadReviewDispatch(baseInput({
+  const staleHead = evaluateExactHeadReviewDispatch(baseInput({
     comments: [providerNeutralComment({ headSha: OLD_HEAD })],
   }));
-  assert.equal(stale.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+  assert.equal(staleHead.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const missingRun = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+    independentReviewRuns: [],
+    independentReviewJobsByRunId: {},
+  }));
+  assert.equal(missingRun.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const lookalikeWorkflow = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+    independentReviewRuns: [independentReviewRun({
+      path: '.github/workflows/lookalike-independent-review.yml',
+    })],
+  }));
+  assert.equal(lookalikeWorkflow.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const wrongBase = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+    independentReviewRuns: [independentReviewRun({
+      pull_requests: [{
+        number: 1559,
+        head: { sha: HEAD, ref: BRANCH },
+        base: { sha: OLD_HEAD, ref: 'main' },
+      }],
+    })],
+  }));
+  assert.equal(wrongBase.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const failedJob = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+    independentReviewJobsByRunId: {
+      [String(REVIEW_RUN_ID)]: independentReviewJobs({ conclusion: 'failure' }),
+    },
+  }));
+  assert.equal(failedJob.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
 test('provider-neutral handoff never dispatches the Codex reviewer', () => {

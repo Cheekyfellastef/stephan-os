@@ -1,8 +1,13 @@
-import { PROTECTED_REVIEW_MARKER } from './operatorMergeApprovalGate.mjs';
-import { validateProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
+import {
+  INDEPENDENT_REVIEW_JOB,
+  PROTECTED_REVIEW_MARKER,
+  parseIndependentReviewSessionId,
+  validateIndependentReviewWorkflowRun,
+  validateTrustedProtectedReviewReceipt,
+} from './operatorMergeApprovalGate.mjs';
 
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.7';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.8';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -185,14 +190,48 @@ function providerNeutralReviewMatchesHead(item, context = {}) {
   const receipt = fencedJsonObjects(body).find((candidate) => (
     candidate?.kind === 'stephanos.provider-neutral.review'
   ));
-  if (!receipt || receipt.verdict !== 'clean') return false;
-  const validation = validateProviderNeutralReviewReceipt(receipt, {
+  const session = parseIndependentReviewSessionId(receipt?.reviewerSessionId);
+  if (!receipt || receipt.verdict !== 'clean' || !session) return false;
+
+  const workflowRunId = Number(session.workflowRunId);
+  const workflowRunAttempt = Number(session.workflowRunAttempt);
+  const workflowId = Number(context.independentReviewWorkflowId);
+  const run = (Array.isArray(context.independentReviewRuns) ? context.independentReviewRuns : []).find((candidate) => (
+    Number(candidate?.id) === workflowRunId
+    && Number(candidate?.run_attempt ?? candidate?.runAttempt) === workflowRunAttempt
+  ));
+  const jobsByRunId = context.independentReviewJobsByRunId
+    && typeof context.independentReviewJobsByRunId === 'object'
+    && !Array.isArray(context.independentReviewJobsByRunId)
+    ? context.independentReviewJobsByRunId
+    : {};
+  const jobs = Array.isArray(jobsByRunId[String(workflowRunId)])
+    ? jobsByRunId[String(workflowRunId)]
+    : [];
+
+  const receiptValidation = validateTrustedProtectedReviewReceipt(receipt, {
     repository: text(context.repository),
     prNumber: Number(context.prNumber),
     branch: text(context.branch),
     expectedHead: text(context.headSha).toLowerCase(),
+    workflowRunId,
+    workflowRunAttempt,
   });
-  return validation.valid;
+  if (!receiptValidation.valid || receiptValidation.operatorBootstrapRequired === true) return false;
+
+  const workflowValidation = validateIndependentReviewWorkflowRun(run || {}, jobs, {
+    repository: text(context.repository),
+    prNumber: Number(context.prNumber),
+    expectedHead: text(context.headSha).toLowerCase(),
+    expectedBranch: text(context.branch),
+    expectedBaseBranch: text(context.baseRef),
+    expectedBaseSha: text(context.baseSha).toLowerCase(),
+    expectedWorkflowId: workflowId,
+    workflowRunId,
+    workflowRunAttempt,
+  });
+  return workflowValidation.valid
+    && jobs.some((job) => text(job?.name) === INDEPENDENT_REVIEW_JOB);
 }
 
 function reviewMatchesHead(item, context = {}) {
@@ -415,6 +454,11 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     prNumber: base.prNumber,
     branch: text(pr.headRef ?? pr.head_ref),
     headSha,
+    baseRef,
+    baseSha: text(pr.baseSha ?? pr.base_sha),
+    independentReviewWorkflowId: input.independentReviewWorkflowId,
+    independentReviewRuns: input.independentReviewRuns,
+    independentReviewJobsByRunId: input.independentReviewJobsByRunId,
   }, workflowsCompletedAtMs);
   const externalReceiptTime = itemTimestamp(externalReceipt);
   const recordedReceipt = externalReceipt && externalReceiptTime !== null
