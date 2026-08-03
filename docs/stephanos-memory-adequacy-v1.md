@@ -35,6 +35,19 @@ UNKNOWN
 
 A local mirror is never promoted into shared authority. An observation older than its domain freshness bound is reclassified as stale even when it originally claimed shared authority.
 
+## Existing-source adapter
+
+`shared/agents/stephanosMemoryAdequacyInputs.mjs` converts the current machinery into bounded audit inputs without copying memory payloads:
+
+- typed `stephanosMemory` records are classified into the seven domains;
+- adapter diagnostics determine shared authority, local mirror or pending-intent posture;
+- the canonical `PROGRAMME_AUTHORITY_COMPONENTS` inventory becomes project/architecture source evidence;
+- a Battle Bridge `READ_SHARED_WORKSPACE_STATUS` receipt becomes the connection observation only when it is directly observed, exact-head bound and ready;
+- current retention hints are classified as `DECLARED`, not falsely upgraded to enforced policy;
+- deletion, conflict and backup remain `UNKNOWN` until a lifecycle proof explicitly supplies them.
+
+The adapter intentionally omits record summary and payload data. It publishes only bounded identity/indexability metadata, counts, approximate bytes, authority class, lifecycle posture and proof references.
+
 ## Shared Workspace connection
 
 Repository source presence is not a live Shared Workspace connection.
@@ -62,32 +75,35 @@ The V1 audit is bounded to:
 - 32 proof references per observation;
 - an explicit total capacity, defaulting to 1 GiB for source-model evaluation.
 
+The existing-source adapter is additionally bounded to 50,000 typed records and 1,000 programme components per evaluation.
+
 Crossing the declared capacity blocks the audit. Crossing 80% reports capacity pressure.
 
 ## Safety
 
-- read-only model;
+- read-only model and adapter;
 - no source, runtime or Shared Workspace mutation;
-- no credentials, sessions, secrets or unrestricted logs;
+- no memory payload, summary, credential, session, secret or unrestricted-log projection;
 - no inference of connection, durability or deletion from source presence;
 - malformed or unsafe evidence blocks instead of being truncated into authority.
 
-## First source proof
+## Source proof
 
 ```bash
 node --check shared/runtime/stephanosMemoryAdequacy.mjs
-node --test shared/runtime/stephanosMemoryAdequacy.test.mjs
+node --check shared/agents/stephanosMemoryAdequacyInputs.mjs
+node --test shared/runtime/stephanosMemoryAdequacy.test.mjs shared/agents/stephanosMemoryAdequacyInputs.test.mjs
 git diff --check
 ```
 
 ## Next live slice
 
-The next implementation must build an adapter that gathers bounded observations from existing sources:
+The next implementation must add bounded collectors for sources not yet represented by the typed-memory and programme-authority adapter:
 
-- `stephanosMemory` diagnostics and typed records;
-- Shared Workspace status and receipts;
-- GitHub machinery and goal inventories;
+- Shared Workspace status, receipts and freshness counts;
+- GitHub goal and active-PR inventories;
 - Mission Operations and runtime-proof receipts;
-- lesson and continuity records.
+- lesson and continuity relationship edges;
+- enforced retention, archive/export and lifecycle proof.
 
-That adapter must preserve each source's authority, provenance and freshness. It must not flatten repository presence, local mirrors and live runtime proof into one optimistic status.
+Those collectors must preserve each source's authority, provenance and freshness. They must not flatten repository presence, local mirrors and live runtime proof into one optimistic status.
