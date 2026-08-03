@@ -6,6 +6,7 @@ const MUSIC_TILE_STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const SPOTIFY_TRACK_ID_PATTERN = /^[A-Za-z0-9]{22}$/;
 const AUTO_LINK_BUTTON_ATTRIBUTE = 'data-auto-spotify-card-url';
 const AUTO_LINK_MESSAGE_ATTRIBUTE = 'data-auto-spotify-card-url-message';
+const AUTO_LINK_RESOLVED_ATTRIBUTE = 'data-auto-spotify-card-url-resolved';
 export const DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_MS = 8000;
 export const DEFAULT_BROWSER_TIMEOUT_MS = (DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_MS * 2) + 2000;
 
@@ -149,19 +150,9 @@ function readMusicTileState(storage) {
     const parsed = JSON.parse(storage?.getItem?.(MUSIC_TILE_STORAGE_KEY) || '{}');
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     if (!Array.isArray(parsed.listeningDeck)) parsed.listeningDeck = [];
-    if (!parsed.linkMessages || typeof parsed.linkMessages !== 'object' || Array.isArray(parsed.linkMessages)) parsed.linkMessages = {};
     return parsed;
   } catch {
     return null;
-  }
-}
-
-function writeMusicTileState(storage, state) {
-  try {
-    storage?.setItem?.(MUSIC_TILE_STORAGE_KEY, JSON.stringify(state));
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -175,8 +166,10 @@ function trackCanBeAutomaticallyResolved(track = {}) {
   const artist = normalizeAutomaticMatchText(track.artist || '');
   const title = normalizeAutomaticMatchText(track.title || track.name || '');
   if (!artist || !title) return false;
-  if (artist === 'unknown' || artist === 'unknown artist' || title === 'unknown' || title === 'untitled') return false;
-  return !track.spotifyAutoResolutionState;
+  return artist !== 'unknown'
+    && artist !== 'unknown artist'
+    && title !== 'unknown'
+    && title !== 'untitled';
 }
 
 function cardTrackId(card) {
@@ -195,15 +188,16 @@ function ensureCardMessage(card, message) {
     const editor = card.querySelector('.links-editor');
     (editor || card).append(node);
   }
-  node.textContent = String(message || '');
+  const nextMessage = String(message || '');
+  if (node.textContent !== nextMessage) node.textContent = nextMessage;
 }
 
 function removeSpotifySearchLinks(card) {
   card?.querySelectorAll?.('a[href*="open.spotify.com/search/"]').forEach((link) => link.remove());
 }
 
-function ensureAutomaticResolveButton(card, trackId, onResolve, label = 'Get Spotify link automatically') {
-  if (!card || !trackId) return null;
+function ensureAutomaticResolveButton(card, onResolve, label = 'Get Spotify link automatically') {
+  if (!card) return null;
   let button = card.querySelector(`[${AUTO_LINK_BUTTON_ATTRIBUTE}]`);
   if (!button) {
     button = card.ownerDocument.createElement('button');
@@ -214,17 +208,48 @@ function ensureAutomaticResolveButton(card, trackId, onResolve, label = 'Get Spo
     controls.append(button);
     button.addEventListener('click', onResolve);
   }
-  button.textContent = label;
+  if (button.textContent !== label) button.textContent = label;
   return button;
+}
+
+function invokeExistingSpotifySaveWithoutDeckRebuild(card, spotifyUrl) {
+  const deck = card?.closest?.('#listening-deck');
+  const input = card?.querySelector?.('input[data-link-input^="spotify-"]');
+  const saveButton = card?.querySelector?.('[data-action="save-spotify-link"]');
+  if (!deck || !input || !saveButton) return { ok: false, blocker: 'MUSIC_TILE_EXISTING_SAVE_HANDLER_UNAVAILABLE' };
+
+  input.value = spotifyUrl;
+  const originalMarkup = deck.innerHTML;
+  let rebuildAttempted = false;
+  Object.defineProperty(deck, 'innerHTML', {
+    configurable: true,
+    get: () => originalMarkup,
+    set: () => { rebuildAttempted = true; },
+  });
+  Object.defineProperty(deck, 'querySelectorAll', {
+    configurable: true,
+    value: () => [],
+  });
+  try {
+    saveButton.click();
+  } finally {
+    delete deck.innerHTML;
+    delete deck.querySelectorAll;
+  }
+
+  return rebuildAttempted
+    ? { ok: true, playbackDomPreserved: true }
+    : { ok: false, blocker: 'MUSIC_TILE_EXISTING_SAVE_HANDLER_NOT_INVOKED' };
 }
 
 function updateResolvedCardDom(card, track, spotify) {
   if (!card || !spotify) return;
+  const alreadySynchronized = card.getAttribute(AUTO_LINK_RESOLVED_ATTRIBUTE) === spotify.openUrl;
   removeSpotifySearchLinks(card);
   card.querySelector(`[${AUTO_LINK_BUTTON_ATTRIBUTE}]`)?.remove();
   card.querySelectorAll('[data-action="resolve-spotify-link"]').forEach((button) => button.remove());
   const input = card.querySelector('input[data-link-input^="spotify-"]');
-  if (input) input.value = spotify.openUrl;
+  if (input && input.value !== spotify.openUrl) input.value = spotify.openUrl;
   const controls = card.querySelector('.media-controls');
   if (controls && !controls.querySelector(`a[href="${spotify.openUrl}"]`)) {
     const link = card.ownerDocument.createElement('a');
@@ -236,10 +261,16 @@ function updateResolvedCardDom(card, track, spotify) {
     controls.prepend(link);
   }
   ensureCardMessage(card, 'Stephanos found the exact Spotify track and added its URL to this song card automatically.');
-  card.dispatchEvent(new CustomEvent('music-tile:spotify-url-resolved', {
-    bubbles: true,
-    detail: { trackId: String(track.id || ''), spotifyUrl: spotify.openUrl },
-  }));
+  card.setAttribute(AUTO_LINK_RESOLVED_ATTRIBUTE, spotify.openUrl);
+  if (!alreadySynchronized) {
+    const CustomEventImpl = card.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
+    if (typeof CustomEventImpl === 'function') {
+      card.dispatchEvent(new CustomEventImpl('music-tile:spotify-url-resolved', {
+        bubbles: true,
+        detail: { trackId: String(track.id || ''), spotifyUrl: spotify.openUrl },
+      }));
+    }
+  }
 }
 
 export function installAutomaticSpotifyCardUrlBridge({
@@ -258,6 +289,7 @@ export function installAutomaticSpotifyCardUrlBridge({
   deck.dataset.autoSpotifyCardUrlBridge = 'installed';
 
   const inFlight = new Set();
+  const attempted = new Set();
   let scanQueued = false;
 
   const resolveTrack = async (trackId, card, { retry = false } = {}) => {
@@ -270,61 +302,57 @@ export function installAutomaticSpotifyCardUrlBridge({
       updateResolvedCardDom(card, track, existing);
       return;
     }
-    if (retry) delete track.spotifyAutoResolutionState;
     if (!trackCanBeAutomaticallyResolved(track)) return;
+    if (retry) attempted.delete(trackId);
+    if (attempted.has(trackId)) return;
 
+    attempted.add(trackId);
     inFlight.add(trackId);
-    track.spotifyAutoResolutionState = 'pending';
-    track.spotifyAutoResolutionAttemptedAt = new Date().toISOString();
-    before.linkMessages[trackId] = 'Stephanos is finding and adding the exact Spotify track URL…';
-    writeMusicTileState(storage, before);
     removeSpotifySearchLinks(card);
-    const button = ensureAutomaticResolveButton(card, trackId, () => resolveTrack(trackId, card, { retry: true }), 'Finding Spotify link…');
+    const button = ensureAutomaticResolveButton(card, () => resolveTrack(trackId, card, { retry: true }), 'Finding Spotify link…');
     if (button) button.disabled = true;
-    ensureCardMessage(card, before.linkMessages[trackId]);
+    ensureCardMessage(card, 'Stephanos is finding and adding the exact Spotify track URL…');
 
     try {
       const query = `${track.artist || ''} ${track.title || track.name || ''}`.trim();
       const payload = await requestNativeCatalogSearch(query, { fetchImpl, limit: 10 });
       const latest = readMusicTileState(storage);
       const latestTrack = latest?.listeningDeck?.find((entry) => String(entry?.id || '') === trackId);
-      if (!latest || !latestTrack) return;
+      if (!latestTrack) return;
       const nowResolved = directSpotifyReference(latestTrack);
       if (nowResolved) {
-        latestTrack.spotifyAutoResolutionState = 'resolved';
-        latest.linkMessages[trackId] = 'Spotify link already present.';
-        writeMusicTileState(storage, latest);
         updateResolvedCardDom(card, latestTrack, nowResolved);
         return;
       }
       const match = payload?.ok
         ? selectAutomaticSpotifyTrackMatch(latestTrack, Array.isArray(payload.results) ? payload.results : [])
         : null;
-      const applied = match ? applyAutomaticSpotifyMatchToTrack(latestTrack, match) : { ok: false };
-      if (!applied.ok) {
-        latestTrack.spotifyAutoResolutionState = 'blocked';
-        latest.linkMessages[trackId] = payload?.ok
+      const proposed = match
+        ? applyAutomaticSpotifyMatchToTrack({ ...latestTrack }, match)
+        : { ok: false };
+      if (!proposed.ok) {
+        ensureCardMessage(card, payload?.ok
           ? 'Stephanos did not receive one exact Spotify title-and-artist match. Nothing was pasted or guessed. Tap retry later, or paste a direct track URL only as a fallback.'
-          : String(payload?.error || 'Automatic Spotify lookup is temporarily unavailable.');
-        writeMusicTileState(storage, latest);
-        ensureCardMessage(card, latest.linkMessages[trackId]);
-        const retryButton = ensureAutomaticResolveButton(card, trackId, () => resolveTrack(trackId, card, { retry: true }), 'Retry automatic Spotify link');
+          : String(payload?.error || 'Automatic Spotify lookup is temporarily unavailable.'));
+        const retryButton = ensureAutomaticResolveButton(card, () => resolveTrack(trackId, card, { retry: true }), 'Retry automatic Spotify link');
         if (retryButton) retryButton.disabled = false;
         return;
       }
-      latest.linkMessages[trackId] = 'Stephanos found the exact Spotify track and added its URL to this song card automatically.';
-      writeMusicTileState(storage, latest);
-      updateResolvedCardDom(card, latestTrack, resolveSpotifyReference(latestTrack.spotifyUrl));
-    } catch (error) {
-      const latest = readMusicTileState(storage);
-      const latestTrack = latest?.listeningDeck?.find((entry) => String(entry?.id || '') === trackId);
-      if (latest && latestTrack) {
-        latestTrack.spotifyAutoResolutionState = 'blocked';
-        latest.linkMessages[trackId] = `Automatic Spotify lookup failed safely: ${String(error?.message || error)}. The card stayed unchanged.`;
-        writeMusicTileState(storage, latest);
-        ensureCardMessage(card, latest.linkMessages[trackId]);
+
+      const saveResult = invokeExistingSpotifySaveWithoutDeckRebuild(card, proposed.spotifyUrl);
+      const persisted = readMusicTileState(storage);
+      const persistedTrack = persisted?.listeningDeck?.find((entry) => String(entry?.id || '') === trackId);
+      const persistedSpotify = directSpotifyReference(persistedTrack);
+      if (!saveResult.ok || !persistedSpotify || persistedSpotify.openUrl !== proposed.spotifyUrl) {
+        ensureCardMessage(card, 'Stephanos found a catalogue match but could not prove that the existing song card retained it. The card stayed unresolved.');
+        const retryButton = ensureAutomaticResolveButton(card, () => resolveTrack(trackId, card, { retry: true }), 'Retry automatic Spotify link');
+        if (retryButton) retryButton.disabled = false;
+        return;
       }
-      const retryButton = ensureAutomaticResolveButton(card, trackId, () => resolveTrack(trackId, card, { retry: true }), 'Retry automatic Spotify link');
+      updateResolvedCardDom(card, persistedTrack, persistedSpotify);
+    } catch (error) {
+      ensureCardMessage(card, `Automatic Spotify lookup failed safely: ${String(error?.message || error)}. The card stayed unchanged.`);
+      const retryButton = ensureAutomaticResolveButton(card, () => resolveTrack(trackId, card, { retry: true }), 'Retry automatic Spotify link');
       if (retryButton) retryButton.disabled = false;
     } finally {
       inFlight.delete(trackId);
@@ -345,17 +373,14 @@ export function installAutomaticSpotifyCardUrlBridge({
         return;
       }
       removeSpotifySearchLinks(card);
-      const pending = track.spotifyAutoResolutionState === 'pending';
-      const blocked = track.spotifyAutoResolutionState === 'blocked';
+      const busy = inFlight.has(trackId);
       const button = ensureAutomaticResolveButton(
         card,
-        trackId,
-        () => resolveTrack(trackId, card, { retry: blocked }),
-        pending ? 'Finding Spotify link…' : blocked ? 'Retry automatic Spotify link' : 'Get Spotify link automatically',
+        () => resolveTrack(trackId, card, { retry: attempted.has(trackId) }),
+        busy ? 'Finding Spotify link…' : attempted.has(trackId) ? 'Retry automatic Spotify link' : 'Get Spotify link automatically',
       );
-      if (button) button.disabled = pending;
-      if (state.linkMessages?.[trackId]) ensureCardMessage(card, state.linkMessages[trackId]);
-      if (trackCanBeAutomaticallyResolved(track)) void resolveTrack(trackId, card);
+      if (button) button.disabled = busy;
+      if (trackCanBeAutomaticallyResolved(track) && !attempted.has(trackId)) void resolveTrack(trackId, card);
     });
   };
 
