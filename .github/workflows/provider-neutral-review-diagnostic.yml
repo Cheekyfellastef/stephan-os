@@ -1,0 +1,150 @@
+name: Provider-Neutral Reviewer Diagnostic
+
+on:
+  pull_request:
+    types: [synchronize]
+    paths:
+      - '.github/workflows/provider-neutral-review-diagnostic.yml'
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  diagnose:
+    name: diagnose-protected-reviewer
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect recent protected reviewer runs without mutation authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_PR: '1652'
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const token = String(process.env.GH_TOKEN || '');
+          const repository = String(process.env.REPOSITORY || '');
+          const targetPr = Number(process.env.TARGET_PR || 0);
+          const apiRoot = `https://api.github.com/repos/${repository}`;
+          const headers = {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${token}`,
+            'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': 'stephanos-provider-neutral-review-diagnostic',
+          };
+
+          async function request(path, accept = 'application/vnd.github+json') {
+            const response = await fetch(`${apiRoot}${path}`, {
+              headers: { ...headers, Accept: accept },
+              redirect: 'follow',
+            });
+            const body = await response.text();
+            if (!response.ok) throw new Error(`GET ${path} failed (${response.status}): ${body.slice(0, 300)}`);
+            return accept.includes('json') ? JSON.parse(body) : body;
+          }
+
+          function safeLogLines(raw) {
+            return String(raw || '')
+              .split(/\r?\n/)
+              .filter((line) => /INDEPENDENT_SECURITY_REVIEW|Exact-head workflow|base binding|review thread|Error|failed|BLOCKED|timeout/i.test(line))
+              .map((line) => line
+                .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer <redacted>')
+                .replace(/github_pat_[A-Za-z0-9_]+/gi, '<redacted-github-pat>')
+                .replace(/gh[pousr]_[A-Za-z0-9]+/gi, '<redacted-github-token>'))
+              .slice(-120);
+          }
+
+          const workflows = await request('/actions/workflows?per_page=100');
+          const workflow = workflows.workflows.find((item) => (
+            item.path === '.github/workflows/independent-merge-security-review.yml'
+            && item.name === 'Independent Merge Security Review'
+          ));
+          if (!workflow) throw new Error('Canonical independent reviewer workflow definition was not found.');
+
+          const runsPayload = await request(`/actions/workflows/${workflow.id}/runs?event=pull_request_target&per_page=50`);
+          const recentCutoff = Date.parse('2026-08-03T17:00:00Z');
+          const candidates = runsPayload.workflow_runs
+            .filter((run) => Date.parse(run.created_at) >= recentCutoff)
+            .filter((run) => (
+              Array.isArray(run.pull_requests) && run.pull_requests.some((pr) => Number(pr.number) === targetPr)
+            ) || String(run.display_title || '').includes('#1652') || String(run.display_title || '').includes('Codex dependency'))
+            .slice(0, 10);
+
+          const report = {
+            schema: 'stephanos.provider-neutral-review-diagnostic.v1',
+            repository,
+            targetPr,
+            workflow: { id: workflow.id, name: workflow.name, path: workflow.path, state: workflow.state },
+            runs: [],
+          };
+
+          for (const run of candidates) {
+            const jobsPayload = await request(`/actions/runs/${run.id}/jobs?filter=all&per_page=100`);
+            const jobs = [];
+            for (const job of jobsPayload.jobs) {
+              let diagnosticLines = [];
+              if (job.status === 'completed' && job.conclusion !== 'success') {
+                try {
+                  diagnosticLines = safeLogLines(await request(`/actions/jobs/${job.id}/logs`, 'text/plain'));
+                } catch (error) {
+                  diagnosticLines = [`JOB_LOG_UNAVAILABLE=${error instanceof Error ? error.message : String(error)}`];
+                }
+              }
+              jobs.push({
+                id: job.id,
+                name: job.name,
+                status: job.status,
+                conclusion: job.conclusion,
+                startedAt: job.started_at,
+                completedAt: job.completed_at,
+                steps: Array.isArray(job.steps) ? job.steps.map((step) => ({
+                  name: step.name,
+                  status: step.status,
+                  conclusion: step.conclusion,
+                  number: step.number,
+                })) : [],
+                diagnosticLines,
+              });
+            }
+            const artifacts = await request(`/actions/runs/${run.id}/artifacts?per_page=100`);
+            report.runs.push({
+              id: run.id,
+              runNumber: run.run_number,
+              attempt: run.run_attempt,
+              status: run.status,
+              conclusion: run.conclusion,
+              event: run.event,
+              createdAt: run.created_at,
+              updatedAt: run.updated_at,
+              headSha: run.head_sha,
+              headBranch: run.head_branch,
+              displayTitle: run.display_title,
+              pullRequests: run.pull_requests,
+              jobs,
+              artifacts: artifacts.artifacts.map((artifact) => ({
+                id: artifact.id,
+                name: artifact.name,
+                sizeInBytes: artifact.size_in_bytes,
+                expired: artifact.expired,
+                digest: artifact.digest || null,
+              })),
+            });
+          }
+
+          fs.writeFileSync('provider-neutral-review-diagnostic.json', `${JSON.stringify(report, null, 2)}\n`);
+          console.log(JSON.stringify(report, null, 2));
+          if (report.runs.length === 0) process.exitCode = 2;
+          NODE
+
+      - name: Upload bounded diagnostic record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-neutral-review-diagnostic-${{ github.run_id }}
+          path: provider-neutral-review-diagnostic.json
+          if-no-files-found: warn
+          retention-days: 3
