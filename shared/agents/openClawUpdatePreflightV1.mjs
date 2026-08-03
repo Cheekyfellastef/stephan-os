@@ -43,6 +43,7 @@ const SOURCE_PATH_PATTERN = /^(?:integrations\/openclaw\/|plugins\/|commands\/|m
 const RUNTIME_PATH_PATTERN = /(?:^|\/)(?:memory|dreams?|logs?|proof|proofs|receipts?|events?|status|archive)(?:\/|$)/i;
 const UPDATE_TARGET_PATTERN = /(?:^|\/)(?:node_modules\/openclaw(?:\/|$)|openclaw\.mjs$|openclaw\.(?:cmd|bat|exe|ps1)$)/i;
 const GENERATED_PATH_PATTERN = /(?:^|\/)(?:apps\/stephanos\/dist|dist|build|coverage|\.cache|cache|tmp|temp|node_modules)(?:\/|$)/i;
+const SUPPORTED_INVENTORY_KINDS = Object.freeze(['file', 'directory', 'command', 'package']);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -84,9 +85,7 @@ function isAbsolutePath(value) {
 function safePathIdentity(value) {
   const normalized = normalizePath(value);
   if (!normalized) return null;
-  const comparable = process.platform === 'win32' || WINDOWS_ABSOLUTE_PATH.test(normalized)
-    ? normalized.toLowerCase()
-    : normalized;
+  const comparable = normalized.toLowerCase();
   const fingerprint = sha256(comparable);
   return Object.freeze({
     normalized,
@@ -176,8 +175,13 @@ function normalizeInventory(inventory, blockers) {
     }
     const classified = classifyOpenClawPreservationPath(item.path);
     const digestSha256 = normalizeDigest(item.digestSha256 ?? item.sha256);
-    const exists = item.exists !== false;
-    const kind = ['file', 'directory', 'command', 'package'].includes(text(item.kind)) ? text(item.kind) : 'file';
+    const existsProvided = Object.prototype.hasOwnProperty.call(item, 'exists');
+    const existsValid = !existsProvided || typeof item.exists === 'boolean';
+    const exists = existsValid ? item.exists !== false : null;
+    const rawKind = item.kind === undefined ? 'file' : text(item.kind);
+    const kindValid = SUPPORTED_INVENTORY_KINDS.includes(rawKind);
+    const kind = kindValid ? rawKind : 'unsupported';
+    const sizeProvided = Object.prototype.hasOwnProperty.call(item, 'size');
     const size = normalizeSize(item.size);
     const entry = Object.freeze({
       displayPath: classified.displayPath,
@@ -187,11 +191,15 @@ function normalizeInventory(inventory, blockers) {
       kind,
       exists,
       size,
-      digestSha256: exists ? digestSha256 || null : null,
+      digestSha256: exists === true ? digestSha256 || null : null,
     });
 
     if (!classified.pathFingerprintSha256) blockers.push('INVENTORY_PATH_UNSAFE');
-    if (exists && classified.classification !== OPENCLAW_PRESERVATION_CLASS.REBUILDABLE_GENERATED && !digestSha256) {
+    if (!kindValid) blockers.push(`UNSUPPORTED_INVENTORY_KIND:${classified.pathFingerprintSha256 || 'unsafe'}`);
+    if (!existsValid) blockers.push(`INVENTORY_EXISTS_INVALID:${classified.pathFingerprintSha256 || 'unsafe'}`);
+    if (sizeProvided && size === null) blockers.push(`INVENTORY_SIZE_INVALID:${classified.pathFingerprintSha256 || 'unsafe'}`);
+    if (exists === false && digestSha256) blockers.push(`ABSENT_INVENTORY_DIGEST_PRESENT:${classified.pathFingerprintSha256 || 'unsafe'}`);
+    if (exists === true && classified.classification !== OPENCLAW_PRESERVATION_CLASS.REBUILDABLE_GENERATED && !digestSha256) {
       blockers.push(`MISSING_DIGEST:${classified.pathFingerprintSha256 || 'unsafe'}`);
     }
     if (classified.classification === OPENCLAW_PRESERVATION_CLASS.MANUAL_ONLY) {
