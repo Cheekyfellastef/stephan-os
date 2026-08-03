@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import path from 'node:path';
 import {
   OPENCLAW_GATEWAY_APPROVED_ENDPOINT,
   OPENCLAW_GATEWAY_STARTUP_SOURCE,
@@ -203,8 +202,13 @@ function normalizeInventory(inventory, blockers) {
     }
 
     const existing = byFingerprint.get(classified.pathFingerprintSha256);
-    if (existing && canonicalJson(existing) !== canonicalJson(entry)) {
-      blockers.push(`CONFLICTING_INVENTORY_IDENTITY:${classified.pathFingerprintSha256}`);
+    if (existing) {
+      const existingCanonical = canonicalJson(existing);
+      const entryCanonical = canonicalJson(entry);
+      if (existingCanonical !== entryCanonical) {
+        blockers.push(`CONFLICTING_INVENTORY_IDENTITY:${classified.pathFingerprintSha256}`);
+        if (entryCanonical < existingCanonical) byFingerprint.set(classified.pathFingerprintSha256, entry);
+      }
       continue;
     }
     if (classified.pathFingerprintSha256) byFingerprint.set(classified.pathFingerprintSha256, entry);
