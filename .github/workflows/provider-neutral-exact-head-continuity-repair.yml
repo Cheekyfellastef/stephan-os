@@ -84,6 +84,26 @@ jobs:
       - name: Apply bounded provider-neutral repair
         run: python3 scripts/provider-neutral-exact-head-continuity-repair.py
 
+      - name: Align the legacy dispatch rendering regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('shared/agents/exactHeadReviewDispatchCoordinator.test.mjs')
+          text = path.read_text(encoding='utf-8')
+          old = "  assert.match(dispatch, /@codex review/);\n"
+          new = (
+              "  assert.match(dispatch, /Provider-neutral exact-head review handoff/);\n"
+              "  assert.match(dispatch, /does not request or consume Codex review capacity/);\n"
+              "  assert.doesNotMatch(dispatch, /@codex review/);\n"
+          )
+          if text.count(old) != 1:
+              raise SystemExit(f'legacy dispatch assertion: expected exactly one match, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Validate provider-neutral continuity
         shell: bash
         run: |
