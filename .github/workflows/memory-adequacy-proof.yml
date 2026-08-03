@@ -7,6 +7,8 @@ on:
     paths:
       - 'shared/runtime/stephanosMemoryAdequacy.mjs'
       - 'shared/runtime/stephanosMemoryAdequacy.test.mjs'
+      - 'shared/agents/stephanosMemoryAdequacyInputs.mjs'
+      - 'shared/agents/stephanosMemoryAdequacyInputs.test.mjs'
       - 'docs/stephanos-memory-adequacy-v1.md'
       - '.github/workflows/memory-adequacy-proof.yml'
   workflow_dispatch:
@@ -30,11 +32,13 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Parse memory adequacy model
-        run: node --check shared/runtime/stephanosMemoryAdequacy.mjs
+      - name: Parse memory adequacy sources
+        run: |
+          node --check shared/runtime/stephanosMemoryAdequacy.mjs
+          node --check shared/agents/stephanosMemoryAdequacyInputs.mjs
 
       - name: Run memory adequacy truth regressions
-        run: node --test shared/runtime/stephanosMemoryAdequacy.test.mjs
+        run: node --test shared/runtime/stephanosMemoryAdequacy.test.mjs shared/agents/stephanosMemoryAdequacyInputs.test.mjs
 
       - name: Check exact diff
         run: git diff --check origin/main...HEAD
