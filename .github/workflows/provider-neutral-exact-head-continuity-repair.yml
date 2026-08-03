@@ -1,3 +1,4 @@
+# Retrigger after the bounded runner exists on this branch.
 name: Provider-Neutral Exact-Head Continuity Repair
 
 on:
