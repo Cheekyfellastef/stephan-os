@@ -104,10 +104,11 @@ test('missing canonical VR projection stays explicit instead of inventing resear
   assert.ok(snapshot.providerWarnings.some((warning) => warning.includes('Canonical vr-research Shared Workspace projection is unavailable')));
 });
 
-test('prEvidence summary falls back to parsedPrNumber when prNumber is missing', () => {
+test('prEvidence summary preserves parsed identity from base evidence when live GitHub evidence is unavailable', () => {
   const snapshot = buildContextProviderSnapshot({
     contextProviderIdsRequested: ['prEvidence'],
-    githubPrEvidence: { status: 'needs-connector', parsedPrNumber: 123, mergeReadiness: 'wait' },
+    prEvidence: { prNumber: 123, parsedPrNumber: 123 },
+    githubPrEvidence: { status: 'needs-connector', mergeReadiness: 'wait' },
   });
   assert.equal(snapshot.providerSummaries.prEvidence.prNumber, '123');
   assert.equal(snapshot.providerSummaries.prEvidence.parsedPrNumber, '123');
@@ -127,7 +128,7 @@ test('prEvidence summary carries canonical build/verify projection from fetched 
       mergeReadiness: 'already-merged',
     },
   });
-  assert.equal(snapshot.providerSummaries.prEvidence.status, 'fetched');
+  assert.equal(snapshot.providerSummaries.prEvidence.status, 'merged');
   assert.equal(snapshot.providerSummaries.prEvidence.buildStatus, 'passed');
   assert.equal(snapshot.providerSummaries.prEvidence.verifyStatus, 'passed');
   assert.equal(snapshot.providerSummaries.prEvidence.changedFileCount, 4);
