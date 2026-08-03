@@ -9,6 +9,7 @@ on:
       - 'tests/music-tile-rating-playback-browser.test.mjs'
       - 'tests/music-tile-native-catalog-ui.test.mjs'
       - 'tests/music-tile-native-catalog-auto-apply.test.mjs'
+      - 'tests/music-tile-native-catalog-auto-apply-browser.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
   push:
     branches: [main]
@@ -18,6 +19,7 @@ on:
       - 'tests/music-tile-rating-playback-browser.test.mjs'
       - 'tests/music-tile-native-catalog-ui.test.mjs'
       - 'tests/music-tile-native-catalog-auto-apply.test.mjs'
+      - 'tests/music-tile-native-catalog-auto-apply-browser.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
 
 permissions: {}
@@ -52,5 +54,6 @@ jobs:
         run: |
           node --test tests/music-tile-native-catalog-auto-apply.test.mjs
           node --test tests/music-tile-native-catalog-ui.test.mjs
+          node --test tests/music-tile-native-catalog-auto-apply-browser.test.mjs
           node --test tests/music-intelligence-centre-vnext.test.mjs
           node --test tests/music-tile-rating-playback-browser.test.mjs
