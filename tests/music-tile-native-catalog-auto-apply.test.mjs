@@ -123,7 +123,7 @@ test('persisted Music Tile state receives the canonical URL while ratings, tags 
 test('the browser adapter fills and persists the card without embedding or promoting playback truth', async () => {
   const source = await readFile(new URL('../apps/music-tile/engine/nativeCatalogAutoApply.js', import.meta.url), 'utf8');
   assert.match(source, /input\.value = spotify\.openUrl/);
-  assert.match(source, /globalThis\.localStorage\.setItem\(STORAGE_KEY/);
+  assert.match(source, /storage\.setItem\(STORAGE_KEY, JSON\.stringify\(snapshot\)\)/);
   assert.match(source, /Open in Spotify/);
   assert.match(source, /browser playback not yet verified/);
   assert.match(source, /MutationObserver/);
