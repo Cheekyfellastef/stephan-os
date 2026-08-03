@@ -1,0 +1,48 @@
+name: Temporary Music Tile Auto Spotify URL Fix
+
+on:
+  push:
+    branches:
+      - fix/music-tile-auto-apply-spotify-url
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temporary-music-tile-auto-spotify-url-fix
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/music-tile-auto-apply-spotify-url
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Apply exact bounded repair
+        run: node scripts/temporary/apply-music-tile-auto-spotify-url-fix.mjs
+      - name: Syntax and focused tests
+        run: |
+          node --check apps/music-tile/main.js
+          node --check apps/music-tile/engine/nativeCatalogSearch.js
+          node --test tests/music-tile-native-catalog-ui.test.mjs tests/music-provider-neutral-catalog-search.test.mjs tests/music-tile-spotify-resolver-integration.test.mjs
+          git diff --check
+      - name: Locked production build
+        run: |
+          npm ci
+          npm run stephanos:build
+          npm run stephanos:verify
+      - name: Commit bounded source repair
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/music-tile/main.js apps/music-tile/engine/nativeCatalogSearch.js tests/music-tile-native-catalog-ui.test.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m 'Auto-apply Spotify URLs to existing Music Tile cards'
+          git push origin HEAD:fix/music-tile-auto-apply-spotify-url
