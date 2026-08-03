@@ -129,8 +129,8 @@ test('requires digests for protected identities but not rebuildable generated ou
 
 test('rejects conflicting duplicate path identities with order-independent blocked evidence', () => {
   const inventory = [
-    { path: 'plugins/openclaw/command.mjs', digestSha256: HEX_A },
-    { path: 'plugins\\openclaw\\command.mjs', digestSha256: HEX_B },
+    { path: 'Plugins\\OpenClaw\\command.mjs', digestSha256: HEX_A },
+    { path: 'plugins/openclaw/command.mjs', digestSha256: HEX_B },
   ];
   const forward = buildOpenClawUpdatePreflightV1(validInput({ inventory }));
   const reversed = buildOpenClawUpdatePreflightV1(validInput({ inventory: [...inventory].reverse() }));
@@ -140,6 +140,22 @@ test('rejects conflicting duplicate path identities with order-independent block
   assert.deepEqual(forward.blockers, reversed.blockers);
   assert.equal(forward.preservationManifest.manifestSha256, reversed.preservationManifest.manifestSha256);
   assert.deepEqual(forward.preservationManifest.entries, reversed.preservationManifest.entries);
+});
+
+test('fails closed on links, malformed existence evidence, invalid sizes and stale absent digests', () => {
+  const result = buildOpenClawUpdatePreflightV1(validInput({
+    inventory: [
+      { path: 'plugins/openclaw/link.mjs', kind: 'symlink', exists: 'yes', size: -1, digestSha256: HEX_A },
+      { path: 'plugins/openclaw/absent.mjs', exists: false, digestSha256: HEX_B },
+    ],
+  }));
+
+  assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
+  assert.ok(result.blockers.some((value) => value.startsWith('UNSUPPORTED_INVENTORY_KIND:')));
+  assert.ok(result.blockers.some((value) => value.startsWith('INVENTORY_EXISTS_INVALID:')));
+  assert.ok(result.blockers.some((value) => value.startsWith('INVENTORY_SIZE_INVALID:')));
+  assert.ok(result.blockers.some((value) => value.startsWith('ABSENT_INVENTORY_DIGEST_PRESENT:')));
+  assert.ok(result.preservationManifest.entries.some((entry) => entry.kind === 'unsupported' && entry.exists === null));
 });
 
 test('reports no update needed when the pinned target version already matches', () => {
