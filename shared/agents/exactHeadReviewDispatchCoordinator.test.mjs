@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
+import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 import {
   EXACT_HEAD_REVIEW_DECISION,
   EXACT_HEAD_REVIEW_MARKERS,
@@ -21,10 +22,17 @@ const OLD_HEAD = 'b'.repeat(40);
 const NOW = '2026-07-19T16:30:00Z';
 const TRUSTED_COORDINATOR = 'Cheekyfellastef';
 const UNTRUSTED_ACTOR = 'untrusted-commenter';
+const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const BRANCH = 'agent/provider-neutral-review';
 const TRUSTED_CODEX_REVIEWER = Object.freeze({
   login: 'chatgpt-codex-connector[bot]',
   type: 'Bot',
   id: 199175422,
+});
+const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({
+  login: 'github-actions[bot]',
+  type: 'Bot',
+  id: 41898282,
 });
 
 function successfulRuns(headSha = HEAD) {
@@ -41,6 +49,7 @@ function successfulRuns(headSha = HEAD) {
 
 function baseInput(overrides = {}) {
   return {
+    repository: REPOSITORY,
     now: NOW,
     trustedCoordinatorLogin: TRUSTED_COORDINATOR,
     canonicalLaneConfirmed: true,
@@ -48,6 +57,7 @@ function baseInput(overrides = {}) {
       number: 1559,
       state: 'open',
       baseRef: 'main',
+      headRef: BRANCH,
       headSha: HEAD,
       sameRepository: true,
     },
@@ -144,6 +154,75 @@ test('records a matching Codex receipt once and then remains terminal for that h
   }));
   assert.equal(recorded.decision, EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED);
   assert.equal(recorded.actionRequired, false);
+});
+
+
+function providerNeutralComment({
+  id = 93,
+  headSha = HEAD,
+  user = TRUSTED_GITHUB_ACTIONS_REVIEWER,
+  createdAt = '2026-07-19T16:29:30Z',
+} = {}) {
+  const receipt = createProviderNeutralReviewReceipt({
+    receiptId: `review-1559-${headSha.slice(0, 12)}`,
+    repository: REPOSITORY,
+    issueNumber: 1559,
+    prNumber: 1559,
+    branch: BRANCH,
+    sourceHead: headSha,
+    reviewerId: 'github-actions-independent-security-review',
+    reviewerClass: 'external-qualified',
+    provider: 'github-actions-independent-review',
+    modelClass: 'source-controlled-high-assurance',
+    reviewerSessionId: 'github-actions-independent-review-run-123-attempt-1',
+    implementerProvider: 'github-first',
+    implementerSessionId: 'source-change-session-1',
+    riskTier: 'standard',
+    assuranceMode: 'independent',
+    reviewScope: ['complete-diff'],
+    findings: [],
+    verdict: 'clean',
+    timestampUtc: createdAt,
+    proofRefs: ['proofs/independent-review/receipt'],
+    quorumChecks: [],
+    blocker: '',
+  });
+  return {
+    id,
+    body: `<!-- stephanos-protected-security-review -->\n\`\`\`json\n${JSON.stringify(receipt, null, 2)}\n\`\`\``,
+    user,
+    createdAt,
+  };
+}
+
+test('records an authenticated provider-neutral GitHub Actions receipt', () => {
+  const result = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+  }));
+  assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  assert.equal(result.externalReceiptId, 93);
+  assert.match(result.reason, /authenticated exact-head review receipt/i);
+});
+
+test('rejects forged or stale provider-neutral review comments', () => {
+  const forged = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment({
+      user: { ...TRUSTED_GITHUB_ACTIONS_REVIEWER, id: 7 },
+    })],
+  }));
+  assert.equal(forged.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const stale = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment({ headSha: OLD_HEAD })],
+  }));
+  assert.equal(stale.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+});
+
+test('provider-neutral handoff never dispatches the Codex reviewer', () => {
+  const body = buildReviewDispatchComment({ prNumber: 1559, headSha: HEAD });
+  assert.match(body, /Provider-neutral exact-head review handoff/);
+  assert.match(body, /does not request or consume Codex review capacity/);
+  assert.doesNotMatch(body, /@codex review/);
 });
 
 test('accepts a review object only when its exact commit matches', () => {
@@ -525,7 +604,9 @@ test('runs every required proof workflow for every pull request head', () => {
 test('renders exact-head dispatch, receipt and escalation comments with durable markers', () => {
   const dispatch = buildReviewDispatchComment({ prNumber: 1559, headSha: HEAD });
   assert.match(dispatch, new RegExp(EXACT_HEAD_REVIEW_MARKERS.DISPATCH));
-  assert.match(dispatch, /@codex review/);
+  assert.match(dispatch, /Provider-neutral exact-head review handoff/);
+  assert.match(dispatch, /does not request or consume Codex review capacity/);
+  assert.doesNotMatch(dispatch, /@codex review/);
   assert.match(dispatch, new RegExp(HEAD));
 
   const receipt = buildReviewReceiptComment({ prNumber: 1559, headSha: HEAD, externalReceiptId: 91 });
@@ -534,7 +615,7 @@ test('renders exact-head dispatch, receipt and escalation comments with durable 
 
   const escalation = buildMissingReceiptEscalationComment({ prNumber: 1559, headSha: HEAD, timeoutMinutes: 10, dispatchCommentId: 40 });
   assert.match(escalation, new RegExp(EXACT_HEAD_REVIEW_MARKERS.ESCALATION));
-  assert.match(escalation, /Duplicate review dispatch is rejected/);
+  assert.match(escalation, /Duplicate dispatch is rejected/);
 
   assert.throws(() => buildReviewDispatchComment({ prNumber: 0, headSha: HEAD }), /valid PR number/);
   assert.throws(() => buildReviewReceiptComment({ prNumber: -1, headSha: HEAD }), /valid PR number/);
