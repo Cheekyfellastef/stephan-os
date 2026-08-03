@@ -182,6 +182,7 @@ async function loadPrContext({ owner, repo, repository, token, prNumber, trusted
       number: positiveInteger(pr?.number),
       state: text(pr?.state),
       baseRef: text(pr?.base?.ref),
+      headRef: text(pr?.head?.ref),
       headSha: text(pr?.head?.sha),
       sameRepository: text(pr?.head?.repo?.full_name).toLowerCase() === repository.toLowerCase(),
     },
@@ -256,6 +257,7 @@ async function main() {
   }
   const timeoutMinutes = positiveInteger(process.env.STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES, Math.round(DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS / 60000));
   const decision = evaluateExactHeadReviewDispatch({
+    repository,
     now: new Date().toISOString(),
     receiptTimeoutMs: timeoutMinutes * 60 * 1000,
     trustedCoordinatorLogin: coordinatorLogin,
