@@ -1,10 +1,53 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import {
+  findExistingCatalogTrack,
+  mergeCatalogResultIntoExistingTrack,
+  planCatalogResultEnrichment,
+} from '../apps/music-tile/engine/nativeCatalogSearch.js';
+import { mergePersistedCatalogState } from '../apps/music-tile/engine/nativeCatalogAutoApply.js';
 
 const html = readFileSync(new URL('../apps/music-tile/index.html', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../apps/music-tile/main.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../apps/music-tile/style.css', import.meta.url), 'utf8');
+const nativeAutoApplySource = readFileSync(new URL('../apps/music-tile/engine/nativeCatalogAutoApply.js', import.meta.url), 'utf8');
+const AUTO_SPOTIFY_ID = '4uLU6hMCjMI75M1A2tKUQC';
+const AUTO_SPOTIFY_URL = `https://open.spotify.com/track/${AUTO_SPOTIFY_ID}`;
+const AUTO_SPOTIFY_URI = `spotify:track:${AUTO_SPOTIFY_ID}`;
+const OTHER_SPOTIFY_URI = 'spotify:track:0VjIjW4GlUZAMYd2vXMi3b';
+
+function verifiedCatalogResult(overrides = {}) {
+  return {
+    universalId: `spotify:track:${AUTO_SPOTIFY_ID}`,
+    provider: 'spotify',
+    providerItemId: AUTO_SPOTIFY_ID,
+    providerLabel: 'Spotify',
+    providerUrl: AUTO_SPOTIFY_URL,
+    title: 'Enjoy the Silence',
+    artist: 'Depeche Mode',
+    album: 'Violator',
+    confidence: 'high',
+    verificationStatus: 'metadata_verified',
+    playbackAvailability: 'playback_unverified',
+    spotifyUrl: AUTO_SPOTIFY_URL,
+    spotifyUri: AUTO_SPOTIFY_URI,
+    ...overrides,
+  };
+}
+
+function existingCatalogTrack(overrides = {}) {
+  return {
+    id: 'journey-enjoy-the-silence',
+    title: 'Enjoy the Silence',
+    artist: 'Depeche Mode',
+    lane: 'doorway-track',
+    sourceKind: 'journey-candidate',
+    candidateVerificationStatus: 'search-only',
+    traits: ['dark club pressure'],
+    ...overrides,
+  };
+}
 
 test('daily briefing leads with one dominant journey action and the three-question contract', () => {
   assert.match(html, /data-experience="daily-briefing"/);
@@ -104,7 +147,6 @@ test('cinematic layout has iPad, phone and reduced-motion safeguards', () => {
   assert.match(css, /\.discovery-spotlight/);
 });
 
-
 test('rating a deck track preserves the live player node and refreshes only dependent UI', () => {
   const deckSource = js.slice(js.indexOf('function renderListeningDeck()'), js.indexOf('function listeningCardMarkup'));
   const ratingHandler = deckSource.slice(deckSource.indexOf("querySelectorAll('[data-rate]')"), deckSource.indexOf("querySelectorAll('[data-tag]')"));
@@ -123,4 +165,88 @@ test('rating a deck track preserves the live player node and refreshes only depe
   const discoveryRefreshHelper = js.slice(js.indexOf('function refreshDiscoveryRankingPresentation'), js.indexOf('function renderDiscoveryResults'));
   assert.match(discoveryRefreshHelper, /querySelectorAll\('section'\)/);
   assert.doesNotMatch(discoveryRefreshHelper, /iframe|ui\.discoveryResults\.innerHTML/);
+});
+
+test('metadata-verified Spotify results enrich an existing card without replacing its identity or lane', () => {
+  const track = existingCatalogTrack();
+  const result = mergeCatalogResultIntoExistingTrack(track, verifiedCatalogResult());
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  assert.equal(track.id, 'journey-enjoy-the-silence');
+  assert.equal(track.lane, 'doorway-track');
+  assert.equal(track.sourceKind, 'journey-candidate');
+  assert.equal(track.candidateVerificationStatus, 'search-only');
+  assert.deepEqual(track.traits, ['dark club pressure']);
+  assert.equal(track.spotifyUrl, AUTO_SPOTIFY_URL);
+  assert.equal(track.spotifyUri, AUTO_SPOTIFY_URI);
+  assert.equal(track.catalogVerificationStatus, 'metadata_verified');
+  assert.equal(track.catalogPlaybackAvailability, 'playback_unverified');
+  assert.equal(track.catalogLinkSource, 'native-catalog-search');
+});
+
+test('duplicate detection enriches before the existing-card control is disabled and retries are idempotent', () => {
+  const track = existingCatalogTrack();
+  assert.equal(findExistingCatalogTrack([track], verifiedCatalogResult()), track);
+  assert.equal(track.spotifyUri, AUTO_SPOTIFY_URI);
+  const retry = planCatalogResultEnrichment(track, verifiedCatalogResult());
+  assert.equal(retry.ok, true);
+  assert.equal(retry.changed, false);
+});
+
+test('unverified catalogue rows and mismatched identities cannot mutate an existing card', () => {
+  const unverifiedTrack = existingCatalogTrack();
+  const unverified = mergeCatalogResultIntoExistingTrack(unverifiedTrack, verifiedCatalogResult({ verificationStatus: 'search_only' }));
+  assert.equal(unverified.ok, false);
+  assert.equal(unverified.reason, 'catalogue-metadata-not-verified');
+  assert.equal(unverifiedTrack.spotifyUrl, undefined);
+
+  const wrongIdentity = existingCatalogTrack();
+  const mismatch = mergeCatalogResultIntoExistingTrack(wrongIdentity, verifiedCatalogResult({ title: 'Personal Jesus' }));
+  assert.equal(mismatch.ok, false);
+  assert.equal(mismatch.reason, 'catalogue-identity-mismatch');
+  assert.equal(wrongIdentity.spotifyUrl, undefined);
+});
+
+test('an existing different Spotify track fails closed and is never overwritten', () => {
+  const track = existingCatalogTrack({
+    spotifyUrl: 'https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b',
+    spotifyUri: OTHER_SPOTIFY_URI,
+  });
+  const result = mergeCatalogResultIntoExistingTrack(track, verifiedCatalogResult());
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'spotify-track-conflict');
+  assert.equal(track.spotifyUri, OTHER_SPOTIFY_URI);
+});
+
+test('persisted Music Tile state receives the canonical URL while ratings, tags and feedback remain unchanged', () => {
+  const snapshot = {
+    listeningDeck: [existingCatalogTrack()],
+    ratings: { 'journey-enjoy-the-silence': 2 },
+    tags: { 'journey-enjoy-the-silence': ['ghost in the track'] },
+    trackFeedback: { 'journey-enjoy-the-silence': 'Keep this.' },
+  };
+  const planned = planCatalogResultEnrichment(snapshot.listeningDeck[0], verifiedCatalogResult());
+  const result = mergePersistedCatalogState(snapshot, {
+    trackId: 'journey-enjoy-the-silence',
+    artist: 'Depeche Mode',
+    title: 'Enjoy the Silence',
+    spotifyUrl: planned.spotify.openUrl,
+    spotifyUri: planned.spotify.uri,
+    enrichment: planned.enrichment,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  assert.equal(snapshot.listeningDeck[0].spotifyUrl, AUTO_SPOTIFY_URL);
+  assert.equal(snapshot.ratings['journey-enjoy-the-silence'], 2);
+  assert.deepEqual(snapshot.tags['journey-enjoy-the-silence'], ['ghost in the track']);
+  assert.equal(snapshot.trackFeedback['journey-enjoy-the-silence'], 'Keep this.');
+});
+
+test('the browser adapter fills and persists the card without embedding or promoting playback truth', () => {
+  assert.match(nativeAutoApplySource, /input\.value = spotify\.openUrl/);
+  assert.match(nativeAutoApplySource, /storage\.setItem\(STORAGE_KEY, JSON\.stringify\(snapshot\)\)/);
+  assert.match(nativeAutoApplySource, /Open in Spotify/);
+  assert.match(nativeAutoApplySource, /browser playback not yet verified/);
+  assert.match(nativeAutoApplySource, /MutationObserver/);
+  assert.doesNotMatch(nativeAutoApplySource, /createElement\(['"]iframe['"]\)|embedUrl|candidateVerificationStatus\s*=/);
 });

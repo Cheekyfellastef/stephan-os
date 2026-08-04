@@ -12,6 +12,7 @@ import {
   bindRequiredExactHeadWorkflowIdentities,
   buildProtectedApprovalReceipt,
   buildProtectedSecurityReviewReceipt,
+  exactHeadWorkflowFailureIsTerminal,
   extractJsonObjects,
   parseIndependentReviewSessionId,
   isApprovalBoundaryBootstrapAnalysis,
@@ -24,6 +25,25 @@ import {
   validateProtectedOperatorMergePrerequisites,
   validateTrustedProtectedReviewReceipt,
 } from './operatorMergeApprovalGate.mjs';
+
+test('independent review waits for active exact-head workflows but stops on terminal failures', () => {
+  assert.equal(exactHeadWorkflowFailureIsTerminal({
+    blockers: ['workflow-not-green:Build Stephanos UI'],
+    evidence: [{ name: 'Build Stephanos UI', status: 'in_progress', conclusion: '' }],
+  }), false);
+  assert.equal(exactHeadWorkflowFailureIsTerminal({
+    blockers: ['missing-workflow:Build Stephanos UI'],
+    evidence: [],
+  }), false);
+  assert.equal(exactHeadWorkflowFailureIsTerminal({
+    blockers: ['workflow-not-green:Build Stephanos UI'],
+    evidence: [{ name: 'Build Stephanos UI', status: 'completed', conclusion: 'failure' }],
+  }), true);
+  assert.equal(exactHeadWorkflowFailureIsTerminal({
+    blockers: ['workflow-identity-spoof:Build Stephanos UI'],
+    evidence: [],
+  }), true);
+});
 
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1600;

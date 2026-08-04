@@ -6,6 +6,9 @@ on:
       - 'stephanos-ui/**'
       - 'shared/ai/**'
       - 'shared/runtime/**'
+      - 'shared/agents/vrResearchAgentV1*.mjs'
+      - 'shared/agents/vrResearchWorkspaceProjectionV1*.mjs'
+      - 'VR-Research-Lab/lab-workspace.json'
       - 'system/apps/app_validator.js'
       - 'scripts/**'
       - 'windows/**'
@@ -65,6 +68,12 @@ jobs:
             scripts/windows-ignition-browser-surfaces.test.mjs \
             scripts/run-battle-bridge-ignition.test.mjs \
             scripts/refresh-stephanos-ui-4173.test.mjs
+
+      - name: Run VR Research Agent and workspace projection tests
+        run: |
+          node --test --test-concurrency=1 \
+            shared/agents/vrResearchAgentV1.test.mjs \
+            shared/agents/vrResearchWorkspaceProjectionV1.test.mjs
 
       - name: Build Stephanos UI pipeline from repo root
         run: npm run stephanos:build
