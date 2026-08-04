@@ -1,2 +1,0 @@
-Owner-authored workflow retrigger for PR #1662 only.
-This file is deleted immediately and must not remain in the final PR estate.
