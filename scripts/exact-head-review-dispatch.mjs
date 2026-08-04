@@ -13,6 +13,12 @@ import {
   parseOptionalManualPrNumber,
 } from '../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
 import {
+  MACHINE_COORDINATOR_SENTINEL_LOGIN,
+  normalizeReviewCoordinatorMarkerComments,
+  selectReviewCoordinatorToken,
+  validateReviewCoordinatorActor,
+} from '../shared/agents/exactHeadReviewCoordinatorAuthority.mjs';
+import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
   PROTECTED_REVIEW_MARKER,
@@ -55,18 +61,14 @@ function repositoryParts(repository) {
   return { owner: match[1], repo: match[2] };
 }
 
-function authToken() {
-  return text(
-    process.env.STEPHANOS_REVIEW_DISPATCH_TOKEN
-      ?? process.env.GITHUB_TOKEN
-      ?? process.env.GH_TOKEN,
-  );
-}
-
-function trustedCoordinatorLogin(repositoryOwner) {
-  const login = text(process.env.STEPHANOS_REVIEW_COORDINATOR_LOGIN, repositoryOwner);
+function trustedLaneAuthorityLogin(repositoryOwner) {
+  const login = [
+    process.env.STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN,
+    process.env.STEPHANOS_REVIEW_COORDINATOR_LOGIN,
+    repositoryOwner,
+  ].map((value) => text(value)).find(Boolean) || '';
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(login)) {
-    throw new Error('STEPHANOS_REVIEW_COORDINATOR_LOGIN must name one GitHub actor');
+    throw new Error('review lane authority must name one GitHub actor');
   }
   return login;
 }
@@ -286,7 +288,7 @@ async function listOpenPullRequests({ owner, repo, token }) {
   return githubPages(`/repos/${owner}/${repo}/pulls?state=open&sort=updated&direction=desc`, { token });
 }
 
-async function loadPrContext({ owner, repo, repository, token, prNumber, trustedCoordinatorLogin: coordinatorLogin }) {
+async function loadPrContext({ owner, repo, repository, token, prNumber, laneAuthorityLogin }) {
   const pr = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { token });
   const comments = (await githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token })).map(mapComment);
   const reviews = (await githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { token })).map(mapReview);
@@ -303,7 +305,7 @@ async function loadPrContext({ owner, repo, repository, token, prNumber, trusted
   });
   const laneEvidence = canonicalLaneEvidence(comments, {
     prNumber,
-    trustedCoordinatorLogin: coordinatorLogin,
+    trustedCoordinatorLogin: laneAuthorityLogin,
   });
   return {
     rawPr: pr,
@@ -334,7 +336,7 @@ async function postPrComment({ owner, repo, token, prNumber, body }) {
   return result?.id ?? null;
 }
 
-async function discoverCanonicalContexts({ owner, repo, repository, token, trustedCoordinatorLogin: coordinatorLogin }) {
+async function discoverCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin }) {
   const numbers = (await listOpenPullRequests({ owner, repo, token }))
     .map((pr) => positiveInteger(pr?.number))
     .filter(Boolean);
@@ -346,7 +348,7 @@ async function discoverCanonicalContexts({ owner, repo, repository, token, trust
       repository,
       token,
       prNumber,
-      trustedCoordinatorLogin: coordinatorLogin,
+      laneAuthorityLogin,
     });
     if (context.canonicalLaneConfirmed) contexts.push(context);
   }
@@ -356,13 +358,20 @@ async function discoverCanonicalContexts({ owner, repo, repository, token, trust
 async function main() {
   const repository = text(process.env.GITHUB_REPOSITORY);
   const { owner, repo } = repositoryParts(repository);
-  const token = authToken();
+  const token = selectReviewCoordinatorToken(process.env);
   if (!token) throw new Error('a bounded GitHub token is required');
-  const coordinatorLogin = trustedCoordinatorLogin(owner);
+  const laneAuthorityLogin = trustedLaneAuthorityLogin(owner);
   const authenticatedUser = await githubRequest('/user', { token });
-  if (text(authenticatedUser?.login).toLowerCase() !== coordinatorLogin.toLowerCase()) {
-    throw new Error(`bounded GitHub token actor must match trusted coordinator ${coordinatorLogin}`);
+  const coordinatorActor = validateReviewCoordinatorActor(
+    authenticatedUser,
+    laneAuthorityLogin,
+  );
+  if (!coordinatorActor.valid) {
+    throw new Error(`bounded GitHub token actor is not authorised: ${coordinatorActor.reason}`);
   }
+  console.log(`EXACT_HEAD_REVIEW_COORDINATOR_ACTOR=${coordinatorActor.actorLogin}`);
+  console.log(`EXACT_HEAD_REVIEW_COORDINATOR_MODE=${coordinatorActor.mode}`);
+  console.log(`EXACT_HEAD_REVIEW_LANE_AUTHORITY=${laneAuthorityLogin}`);
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
   const manualPrNumber = parseOptionalManualPrNumber(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
@@ -372,7 +381,7 @@ async function main() {
     repo,
     repository,
     token,
-    trustedCoordinatorLogin: coordinatorLogin,
+    laneAuthorityLogin,
   });
 
   if (contexts.length === 0) {
@@ -392,18 +401,22 @@ async function main() {
     return;
   }
   const timeoutMinutes = positiveInteger(process.env.STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES, Math.round(DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS / 60000));
+  const coordinatorComments = normalizeReviewCoordinatorMarkerComments(
+    context.comments,
+    { laneAuthorityLogin },
+  );
   const decision = evaluateExactHeadReviewDispatch({
     repository,
     now: new Date().toISOString(),
     receiptTimeoutMs: timeoutMinutes * 60 * 1000,
-    trustedCoordinatorLogin: coordinatorLogin,
+    trustedCoordinatorLogin: MACHINE_COORDINATOR_SENTINEL_LOGIN,
     canonicalLaneConfirmed: context.canonicalLaneConfirmed,
     pr: context.pr,
     workflowRuns: context.workflowRuns,
     independentReviewWorkflowId: context.independentReviewWorkflowId,
     independentReviewRuns: context.independentReviewRuns,
     independentReviewJobsByRunId: context.independentReviewJobsByRunId,
-    comments: context.comments,
+    comments: coordinatorComments,
     reviews: context.reviews,
   });
 
