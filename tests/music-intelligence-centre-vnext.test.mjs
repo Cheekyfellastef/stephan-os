@@ -7,11 +7,14 @@ import {
   planCatalogResultEnrichment,
 } from '../apps/music-tile/engine/nativeCatalogSearch.js';
 import { mergePersistedCatalogState } from '../apps/music-tile/engine/nativeCatalogAutoApply.js';
+import { buildArtistAwareCandidates } from '../apps/music-tile/engine/musicCandidateEngine.js';
+import { planFreshJourneyState } from '../apps/music-tile/engine/freshJourneyPlanner.js';
 
 const html = readFileSync(new URL('../apps/music-tile/index.html', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../apps/music-tile/main.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../apps/music-tile/style.css', import.meta.url), 'utf8');
 const nativeAutoApplySource = readFileSync(new URL('../apps/music-tile/engine/nativeCatalogAutoApply.js', import.meta.url), 'utf8');
+const freshJourneyControllerSource = readFileSync(new URL('../apps/music-tile/engine/freshJourneyController.js', import.meta.url), 'utf8');
 const AUTO_SPOTIFY_ID = '4uLU6hMCjMI75M1A2tKUQC';
 const AUTO_SPOTIFY_URL = `https://open.spotify.com/track/${AUTO_SPOTIFY_ID}`;
 const AUTO_SPOTIFY_URI = `spotify:track:${AUTO_SPOTIFY_ID}`;
@@ -133,7 +136,7 @@ test('optional presence adapters cannot reverse a persisted and rendered journey
 
 test('artist-prefixed seed titles are de-duplicated in the daily experience', () => {
   assert.match(js, /function getDisplayTrackTitle\(track = \{\}\)/);
-  assert.match(js, /rawTitle\.toLowerCase\(\)\.startsWith\(artistPrefix\.toLowerCase\(\)\)/);
+  assert.match(js, /rawTitle\.toLowerCase\(\)\.startsWith\(artistPrefix\.toLowerCase\(\)/);
   assert.match(js, /const title = getDisplayTrackTitle\(track\)/);
   assert.match(js, /music-card-title"\>\$\{escapeHtml\(getDisplayTrackTitle\(track\)\)\}/);
 });
@@ -249,4 +252,74 @@ test('the browser adapter fills and persists the card without embedding or promo
   assert.match(nativeAutoApplySource, /browser playback not yet verified/);
   assert.match(nativeAutoApplySource, /MutationObserver/);
   assert.doesNotMatch(nativeAutoApplySource, /createElement\(['"]iframe['"]\)|embedUrl|candidateVerificationStatus\s*=/);
+});
+
+test('fresh journey candidate generation never silently recycles already shown tracks', () => {
+  const shown = [];
+  let exhausted = false;
+  for (let cycle = 1; cycle <= 12; cycle += 1) {
+    const result = buildArtistAwareCandidates({
+      artistInput: 'Anyma',
+      tasteDNA: {},
+      recentlyShownIds: shown,
+      sessionCounter: cycle,
+      recycleSeen: false,
+    });
+    assert.equal(result.recycledCount, 0);
+    assert.ok(result.candidates.every((candidate) => !shown.includes(candidate.id)));
+    if (result.noveltyExhausted) {
+      assert.equal(result.candidates.length, 0);
+      exhausted = true;
+      break;
+    }
+    shown.push(...result.candidates.map((candidate) => candidate.id));
+  }
+  assert.equal(exhausted, true);
+});
+
+test('fresh journey planning preserves existing truth and adds only unseen tracks', () => {
+  const snapshot = {
+    candidates: [{ id: 'old-candidate', artist: 'Old Artist', title: 'Old Candidate' }],
+    listeningDeck: [{ id: 'playing-track', artist: 'Current Artist', title: 'Current Track' }],
+    ratings: { 'playing-track': 2, 'old-candidate': -1 },
+    tags: { 'playing-track': ['ghost in the track'] },
+    trackFeedback: { 'playing-track': 'Keep this.' },
+    journeyHistoryKeys: ['id:older-history'],
+    recentlyShownCandidateIds: ['older-history'],
+  };
+  const incoming = [
+    { id: 'old-candidate', artist: 'Old Artist', title: 'Old Candidate' },
+    ...Array.from({ length: 7 }, (_, index) => ({
+      id: `fresh-${index + 1}`,
+      artist: `Fresh Artist ${index + 1}`,
+      title: `Fresh Track ${index + 1}`,
+      sourceKind: index < 3 ? 'native-catalog' : 'taste-dna',
+      catalogVerificationStatus: index < 3 ? 'metadata_verified' : undefined,
+    })),
+  ];
+  const plan = planFreshJourneyState({ snapshot, candidates: incoming, startedAt: '2026-08-04T03:00:00.000Z' });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.freshCount, 7);
+  assert.equal(plan.addedCount, 3);
+  assert.equal(plan.catalogueCount, 3);
+  assert.equal(plan.recycledCount, 0);
+  assert.ok(plan.selected.every((track) => track.id.startsWith('fresh-')));
+  assert.deepEqual(plan.state.listeningDeck.slice(0, 3).map((track) => track.id), ['fresh-1', 'fresh-2', 'fresh-3']);
+  assert.equal(plan.state.listeningDeck.at(-1).id, 'playing-track');
+  assert.equal(plan.state.ratings['playing-track'], 2);
+  assert.deepEqual(plan.state.tags['playing-track'], ['ghost in the track']);
+  assert.equal(plan.state.trackFeedback['playing-track'], 'Keep this.');
+  assert.equal(plan.state.lastFreshJourneySummary.recycledCount, 0);
+});
+
+test('Start Journey is split into fresh-start and non-mutating continue actions', () => {
+  assert.match(freshJourneyControllerSource, /startButton\.textContent = 'Start New Journey'/);
+  assert.match(freshJourneyControllerSource, /continueButton\.textContent = 'Continue Current Journey'/);
+  assert.match(freshJourneyControllerSource, /requestNativeCatalogSearch\(artist/);
+  assert.match(freshJourneyControllerSource, /planFreshJourneyState\(/);
+  assert.match(freshJourneyControllerSource, /event\.stopImmediatePropagation\(\)/);
+  assert.match(freshJourneyControllerSource, /document\.addEventListener\('click',[\s\S]*true\)/);
+  assert.match(freshJourneyControllerSource, /recycledCount: 0/);
+  assert.match(freshJourneyControllerSource, /reload\(\)/);
+  assert.match(freshJourneyControllerSource, /No songs were replaced or added/);
 });
