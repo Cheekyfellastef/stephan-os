@@ -11,6 +11,7 @@ import {
 } from './freshJourneyPlanner.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
+const FRESHNESS_STORAGE_KEY = 'stephanos.musicTile.freshJourneyState.v1';
 const CATALOGUE_TIMEOUT_MS = 6000;
 const CATALOGUE_LIMIT = 10;
 let controllerInstalled = false;
@@ -27,7 +28,10 @@ function safeObject(value) {
 function browserStorage() {
   try {
     const storage = globalThis.localStorage;
-    return storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function'
+    return storage
+      && typeof storage.getItem === 'function'
+      && typeof storage.setItem === 'function'
+      && typeof storage.removeItem === 'function'
       ? storage
       : null;
   } catch {
@@ -35,24 +39,98 @@ function browserStorage() {
   }
 }
 
-function readMusicState(storage = browserStorage()) {
+function readStoredObject(storage, key) {
   if (!storage) return null;
   try {
-    const parsed = JSON.parse(storage.getItem(STORAGE_KEY) || '{}');
+    const parsed = JSON.parse(storage.getItem(key) || '{}');
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
   } catch {
     return null;
   }
 }
 
-function writeMusicState(state, storage = browserStorage()) {
-  if (!storage || !state || typeof state !== 'object' || Array.isArray(state)) return false;
+function readMusicState(storage = browserStorage()) {
+  return readStoredObject(storage, STORAGE_KEY);
+}
+
+function readFreshnessLedger(storage = browserStorage()) {
+  const parsed = readStoredObject(storage, FRESHNESS_STORAGE_KEY);
+  if (!parsed) {
+    return {
+      schemaVersion: 1,
+      journeyHistoryKeys: [],
+      recentlyShownCandidateIds: [],
+      lastFreshJourneySummary: null,
+      lastFreshJourneyNotice: '',
+      updatedAt: '',
+    };
+  }
+  return {
+    schemaVersion: 1,
+    journeyHistoryKeys: safeArray(parsed.journeyHistoryKeys)
+      .map((key) => String(key || '').trim())
+      .filter(Boolean)
+      .slice(-240),
+    recentlyShownCandidateIds: safeArray(parsed.recentlyShownCandidateIds)
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+      .slice(-120),
+    lastFreshJourneySummary: safeObject(parsed.lastFreshJourneySummary),
+    lastFreshJourneyNotice: String(parsed.lastFreshJourneyNotice || '').slice(0, 1000),
+    updatedAt: String(parsed.updatedAt || ''),
+  };
+}
+
+function restoreStorageValue(storage, key, rawValue) {
+  if (rawValue == null) storage.removeItem(key);
+  else storage.setItem(key, rawValue);
+}
+
+function writeFreshJourneyTransaction({ storage, previousState, nextState, nextLedger }) {
+  if (!storage || !nextState || !nextLedger) return false;
+  const previousStateRaw = storage.getItem(STORAGE_KEY);
+  const previousLedgerRaw = storage.getItem(FRESHNESS_STORAGE_KEY);
   try {
-    storage.setItem(STORAGE_KEY, JSON.stringify(state));
+    storage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    storage.setItem(FRESHNESS_STORAGE_KEY, JSON.stringify(nextLedger));
+    return true;
+  } catch {
+    try {
+      restoreStorageValue(
+        storage,
+        STORAGE_KEY,
+        previousStateRaw ?? JSON.stringify(previousState || {}),
+      );
+      restoreStorageValue(storage, FRESHNESS_STORAGE_KEY, previousLedgerRaw);
+    } catch {
+      return false;
+    }
+    return false;
+  }
+}
+
+function writeFreshnessLedger(ledger, storage = browserStorage()) {
+  if (!storage || !ledger) return false;
+  try {
+    storage.setItem(FRESHNESS_STORAGE_KEY, JSON.stringify(ledger));
     return true;
   } catch {
     return false;
   }
+}
+
+function mergeFreshnessLedgerIntoState(snapshot = {}, ledger = {}) {
+  return {
+    ...snapshot,
+    journeyHistoryKeys: [...new Set([
+      ...safeArray(ledger.journeyHistoryKeys),
+      ...safeArray(snapshot.journeyHistoryKeys),
+    ])].slice(-240),
+    recentlyShownCandidateIds: [...new Set([
+      ...safeArray(ledger.recentlyShownCandidateIds),
+      ...safeArray(snapshot.recentlyShownCandidateIds),
+    ])].slice(-120),
+  };
 }
 
 function setStatus(message) {
@@ -174,11 +252,13 @@ export async function startFreshJourney({
     setStatus('Enter an artist or creative direction before starting a new journey.');
     return { ok: false, reason: 'artist-required' };
   }
-  const snapshot = readMusicState(storage);
-  if (!snapshot) {
+  const rawSnapshot = readMusicState(storage);
+  if (!rawSnapshot) {
     setStatus('Music Tile state is unavailable, so the current journey was left unchanged.');
     return { ok: false, reason: 'music-state-unavailable' };
   }
+  const freshnessLedger = readFreshnessLedger(storage);
+  const snapshot = mergeFreshnessLedgerIntoState(rawSnapshot, freshnessLedger);
 
   const pool = await buildFreshCandidatePool({ snapshot, artist: normalizedArtist, buildCandidates });
   const startedAt = new Date().toISOString();
@@ -240,9 +320,26 @@ export async function startFreshJourney({
       candidateKeys: plan.selected.flatMap((track) => journeyCandidateKeys(track)).slice(0, 40),
     },
   };
-  if (!writeMusicState(nextState, storage)) {
-    setStatus('The fresh journey was found but could not be saved, so the current journey was left unchanged.');
-    return { ok: false, reason: 'music-state-persistence-failed', recycledCount: 0 };
+  const nextLedger = {
+    schemaVersion: 1,
+    journeyHistoryKeys: safeArray(nextState.journeyHistoryKeys).slice(-240),
+    recentlyShownCandidateIds: safeArray(nextState.recentlyShownCandidateIds).slice(-120),
+    lastFreshJourneySummary: nextState.lastFreshJourneySummary,
+    lastFreshJourneyNotice: plan.notice,
+    updatedAt: startedAt,
+  };
+  if (!writeFreshJourneyTransaction({
+    storage,
+    previousState: rawSnapshot,
+    nextState,
+    nextLedger,
+  })) {
+    setStatus('The fresh journey was found but its durable freshness history could not be saved, so the current journey was left unchanged.');
+    return {
+      ok: false,
+      reason: 'fresh-journey-transaction-failed',
+      recycledCount: 0,
+    };
   }
 
   setStatus(plan.notice);
@@ -258,16 +355,18 @@ export async function startFreshJourney({
 
 function restoreFreshJourneyNotice() {
   const storage = browserStorage();
-  const snapshot = readMusicState(storage);
-  const notice = String(snapshot?.lastFreshJourneyNotice || '').trim();
-  if (!snapshot || !notice) return;
+  const ledger = readFreshnessLedger(storage);
+  const notice = String(ledger.lastFreshJourneyNotice || '').trim();
+  if (!notice) return;
   setStatus(notice);
-  const summary = safeObject(snapshot.lastFreshJourneySummary);
+  const summary = safeObject(ledger.lastFreshJourneySummary);
   if (summary.freshCount != null) {
     setNovelty(`${summary.freshCount} genuinely new · ${summary.recycledCount || 0} recycled`);
   }
-  delete snapshot.lastFreshJourneyNotice;
-  writeMusicState(snapshot, storage);
+  writeFreshnessLedger({
+    ...ledger,
+    lastFreshJourneyNotice: '',
+  }, storage);
 }
 
 function installVisibleJourneyControls(startButton) {
