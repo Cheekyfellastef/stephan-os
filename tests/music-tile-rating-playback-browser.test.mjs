@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import { createReadStream } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { extname, join, relative, resolve } from 'node:path';
+import { extname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
+const AUTO_TRACK_ID = 'journey-enjoy-the-silence';
+const AUTO_SPOTIFY_ID = '4uLU6hMCjMI75M1A2tKUQC';
+const AUTO_SPOTIFY_URL = `https://open.spotify.com/track/${AUTO_SPOTIFY_ID}`;
+const AUTO_SPOTIFY_URI = `spotify:track:${AUTO_SPOTIFY_ID}`;
 const MIME_TYPES = Object.freeze({
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -170,6 +174,284 @@ test('rating preserves the mounted Listening Deck and verified Discovery players
       ratingMeta: 'Stephanos Proof · rating 2',
       legacyText: 'Discovery Results (Legacy / local results — secondary)Stephanos Proof - First candidateStephanos Proof - Second candidate',
     });
+  } finally {
+    if (browser) await browser.close();
+    await server.close();
+  }
+});
+
+test('iPad-width native search writes the Spotify URL into an existing card automatically', async () => {
+  const server = await startRepositoryServer();
+  let browser;
+  try {
+    browser = await chromium.launch(
+      process.env.STEPHANOS_BROWSER_CHANNEL
+        ? { channel: process.env.STEPHANOS_BROWSER_CHANNEL, headless: true }
+        : { headless: true },
+    );
+    const page = await browser.newPage({ viewport: { width: 820, height: 1180 } });
+    await page.route(/\/api\/music\/catalog\/search\?/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify({
+          ok: true,
+          provider: 'spotify',
+          providerLabel: 'Spotify',
+          results: [{
+            universalId: `spotify:track:${AUTO_SPOTIFY_ID}`,
+            provider: 'spotify',
+            providerItemId: AUTO_SPOTIFY_ID,
+            providerLabel: 'Spotify',
+            providerUrl: AUTO_SPOTIFY_URL,
+            title: 'Enjoy the Silence',
+            artist: 'Depeche Mode',
+            album: 'Violator',
+            confidence: 'high',
+            verificationStatus: 'metadata_verified',
+            playbackAvailability: 'playback_unverified',
+            spotifyUrl: AUTO_SPOTIFY_URL,
+            spotifyUri: AUTO_SPOTIFY_URI,
+          }],
+        }),
+      });
+    });
+    await page.addInitScript(({ key, trackId }) => {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, JSON.stringify({
+        candidates: [],
+        listeningDeck: [{
+          id: trackId,
+          title: 'Enjoy the Silence',
+          artist: 'Depeche Mode',
+          lane: 'doorway-track',
+          sourceKind: 'journey-candidate',
+          candidateVerificationStatus: 'search-only',
+          traits: ['dark club pressure'],
+        }],
+        ratings: { [trackId]: 2 },
+        tags: { [trackId]: ['ghost in the track'] },
+        trackFeedback: { [trackId]: 'Keep this.' },
+        linkMessages: {},
+      }));
+    }, { key: STORAGE_KEY, trackId: AUTO_TRACK_ID });
+
+    await page.goto(`${server.origin}/apps/music-tile/index.html`);
+    await page.waitForSelector(`[data-link-input="spotify-${AUTO_TRACK_ID}"]`, { state: 'attached' });
+    await page.evaluate(() => {
+      window.__catalogAutoApplyCard = document.querySelector('.player-deck-card');
+    });
+
+    await page.fill('#native-music-search-input', 'Enjoy the Silence');
+    await page.click('#native-music-search-button');
+    await page.waitForFunction(() => (
+      document.getElementById('native-music-search-status')?.textContent?.includes('updated automatically')
+    ));
+
+    const proof = await page.evaluate(({ key, trackId, spotifyUrl }) => {
+      const card = document.querySelector('.player-deck-card');
+      const input = document.querySelector(`[data-link-input="spotify-${trackId}"]`);
+      const openLink = Array.from(card.querySelectorAll('a')).find((link) => link.href === spotifyUrl);
+      const stored = JSON.parse(localStorage.getItem(key));
+      const track = stored.listeningDeck.find((item) => item.id === trackId);
+      const resultButton = document.querySelector('[data-action="add-native-catalog-result"]');
+      return {
+        cardPreserved: card === window.__catalogAutoApplyCard,
+        spotifyInput: input?.value,
+        openLink: openLink?.href,
+        resolveButtonPresent: Boolean(card.querySelector(`[data-action="resolve-spotify-link"][data-id="${trackId}"]`)),
+        iframeCount: card.querySelectorAll('iframe').length,
+        message: card.querySelector('[data-catalog-auto-apply-message]')?.textContent,
+        catalogueTruth: Array.from(card.querySelectorAll('.meta')).some((node) => (
+          node.textContent === 'Spotify catalogue link found; browser playback not yet verified.'
+        )),
+        resultDisabled: resultButton?.disabled,
+        resultLabel: resultButton?.textContent,
+        storedSpotifyUrl: track?.spotifyUrl,
+        storedSpotifyUri: track?.spotifyUri,
+        storedSourceKind: track?.sourceKind,
+        storedCandidateStatus: track?.candidateVerificationStatus,
+        storedRating: stored.ratings?.[trackId],
+        storedTags: stored.tags?.[trackId],
+        storedFeedback: stored.trackFeedback?.[trackId],
+        noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      };
+    }, { key: STORAGE_KEY, trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL });
+
+    assert.deepEqual(proof, {
+      cardPreserved: true,
+      spotifyInput: AUTO_SPOTIFY_URL,
+      openLink: AUTO_SPOTIFY_URL,
+      resolveButtonPresent: false,
+      iframeCount: 0,
+      message: 'Spotify track URL found by Stephanos and applied automatically.',
+      catalogueTruth: true,
+      resultDisabled: true,
+      resultLabel: 'In Listening Room',
+      storedSpotifyUrl: AUTO_SPOTIFY_URL,
+      storedSpotifyUri: AUTO_SPOTIFY_URI,
+      storedSourceKind: 'journey-candidate',
+      storedCandidateStatus: 'search-only',
+      storedRating: 2,
+      storedTags: ['ghost in the track'],
+      storedFeedback: 'Keep this.',
+      noHorizontalOverflow: true,
+    });
+
+    await page.reload();
+    await page.waitForFunction(({ trackId, spotifyUrl }) => (
+      document.querySelector(`[data-link-input="spotify-${trackId}"]`)?.value === spotifyUrl
+    ), { trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL });
+    const reloadProof = await page.evaluate(({ trackId, spotifyUrl }) => {
+      const card = document.querySelector('.player-deck-card');
+      return {
+        spotifyInput: document.querySelector(`[data-link-input="spotify-${trackId}"]`)?.value,
+        openLinkPresent: Array.from(card.querySelectorAll('a')).some((link) => link.href === spotifyUrl),
+        iframeCount: card.querySelectorAll('iframe').length,
+        message: card.querySelector('[data-catalog-auto-apply-message]')?.textContent,
+      };
+    }, { trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL });
+    assert.deepEqual(reloadProof, {
+      spotifyInput: AUTO_SPOTIFY_URL,
+      openLinkPresent: true,
+      iframeCount: 0,
+      message: 'Spotify track URL found by Stephanos and applied automatically.',
+    });
+  } finally {
+    if (browser) await browser.close();
+    await server.close();
+  }
+});
+
+test('iPad-width Start New Journey brings in unseen catalogue tracks and Continue changes nothing', async () => {
+  const server = await startRepositoryServer();
+  let browser;
+  try {
+    browser = await chromium.launch(
+      process.env.STEPHANOS_BROWSER_CHANNEL
+        ? { channel: process.env.STEPHANOS_BROWSER_CHANNEL, headless: true }
+        : { headless: true },
+    );
+    const page = await browser.newPage({ viewport: { width: 820, height: 1180 } });
+    const catalogueRows = Array.from({ length: 6 }, (_, index) => {
+      const number = String(index + 1);
+      const spotifyId = number.repeat(22);
+      return {
+        universalId: `spotify:track:${spotifyId}`,
+        provider: 'spotify',
+        providerItemId: spotifyId,
+        providerLabel: 'Spotify',
+        providerUrl: `https://open.spotify.com/track/${spotifyId}`,
+        title: `Fresh Catalogue Track ${number}`,
+        artist: `Fresh Catalogue Artist ${number}`,
+        album: 'Fresh Journey Proof',
+        confidence: 'high',
+        verificationStatus: 'metadata_verified',
+        playbackAvailability: 'playback_unverified',
+        spotifyUrl: `https://open.spotify.com/track/${spotifyId}`,
+        spotifyUri: `spotify:track:${spotifyId}`,
+      };
+    });
+    await page.route(/\/api\/music\/catalog\/search\?/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify({
+          ok: true,
+          provider: 'spotify',
+          providerLabel: 'Spotify',
+          results: catalogueRows,
+        }),
+      });
+    });
+    await page.addInitScript(({ key }) => {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, JSON.stringify({
+        candidates: [{
+          id: 'old-candidate',
+          title: 'The Same Old Candidate',
+          artist: 'Repeated Artist',
+          traits: ['club engine'],
+        }],
+        listeningDeck: [{
+          id: 'existing-room-track',
+          title: 'Keep Existing Track',
+          artist: 'Current Artist',
+          traits: ['ghost in the track'],
+          candidateVerificationStatus: 'search-only',
+        }],
+        ratings: { 'existing-room-track': 2, 'old-candidate': -1 },
+        tags: { 'existing-room-track': ['ghost in the track'] },
+        trackFeedback: { 'existing-room-track': 'Keep this existing card.' },
+        linkMessages: {},
+        recentlyShownCandidateIds: ['old-candidate'],
+        journeyHistoryKeys: ['id:old-candidate'],
+        sessionCounter: 4,
+      }));
+    }, { key: STORAGE_KEY });
+
+    await page.goto(`${server.origin}/apps/music-tile/index.html`);
+    await page.waitForFunction(() => (
+      document.getElementById('start-journey-btn')?.textContent === 'Start New Journey'
+      && Boolean(document.getElementById('continue-journey-btn'))
+    ));
+    await page.fill('#artist-input', 'Anyma');
+    await page.click('#start-journey-btn');
+    await page.waitForFunction(() => (
+      performance.getEntriesByType('navigation')[0]?.type === 'reload'
+      && document.getElementById('start-journey-btn')?.textContent === 'Start New Journey'
+    ));
+
+    const proof = await page.evaluate(({ key }) => {
+      const stored = JSON.parse(localStorage.getItem(key));
+      const candidateIds = stored.candidates.map((track) => track.id);
+      const deckIds = stored.listeningDeck.map((track) => track.id);
+      const catalogueCandidates = stored.candidates.filter((track) => track.sourceKind === 'native-catalog');
+      return {
+        freshCount: stored.lastFreshJourneySummary?.freshCount,
+        addedCount: stored.lastFreshJourneySummary?.addedCount,
+        catalogueCount: stored.lastFreshJourneySummary?.catalogueCount,
+        recycledCount: stored.lastFreshJourneySummary?.recycledCount,
+        oldCandidateReused: candidateIds.includes('old-candidate'),
+        freshCataloguePresent: catalogueCandidates.some((track) => track.title === 'Fresh Catalogue Track 1'),
+        firstThreeAreNew: deckIds.slice(0, 3).every((id) => id !== 'existing-room-track'),
+        existingTrackPreserved: deckIds.includes('existing-room-track'),
+        existingRating: stored.ratings?.['existing-room-track'],
+        existingTags: stored.tags?.['existing-room-track'],
+        existingFeedback: stored.trackFeedback?.['existing-room-track'],
+        startLabel: document.getElementById('start-journey-btn')?.textContent,
+        continueLabel: document.getElementById('continue-journey-btn')?.textContent,
+        status: document.getElementById('status-text')?.textContent,
+        novelty: document.getElementById('briefing-novelty')?.textContent,
+        noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      };
+    }, { key: STORAGE_KEY });
+
+    assert.equal(proof.freshCount, 10);
+    assert.equal(proof.addedCount, 3);
+    assert.ok(proof.catalogueCount >= 4);
+    assert.equal(proof.recycledCount, 0);
+    assert.equal(proof.oldCandidateReused, false);
+    assert.equal(proof.freshCataloguePresent, true);
+    assert.equal(proof.firstThreeAreNew, true);
+    assert.equal(proof.existingTrackPreserved, true);
+    assert.equal(proof.existingRating, 2);
+    assert.deepEqual(proof.existingTags, ['ghost in the track']);
+    assert.equal(proof.existingFeedback, 'Keep this existing card.');
+    assert.equal(proof.startLabel, 'Start New Journey');
+    assert.equal(proof.continueLabel, 'Continue Current Journey');
+    assert.match(proof.status, /genuinely new/);
+    assert.match(proof.novelty, /0 recycled/);
+    assert.equal(proof.noHorizontalOverflow, true);
+
+    const beforeContinue = await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY);
+    await page.click('#continue-journey-btn');
+    const afterContinue = await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY);
+    assert.equal(afterContinue, beforeContinue);
+    assert.equal(
+      await page.textContent('#status-text'),
+      'Continuing the current journey. No songs were replaced or added.',
+    );
   } finally {
     if (browser) await browser.close();
     await server.close();
