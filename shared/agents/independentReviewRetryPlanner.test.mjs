@@ -21,6 +21,10 @@ const COORDINATOR_WORKFLOW = readFileSync(
   new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
   'utf8',
 );
+const RETRY_EXECUTOR = readFileSync(
+  new URL('../../scripts/retry-independent-review.mjs', import.meta.url),
+  'utf8',
+);
 
 function workflow(overrides = {}) {
   return {
@@ -196,4 +200,36 @@ test('trusted workflow re-evaluates a bounded retry after dispatch, wait and one
   );
   assert.match(retryStep, /run: node scripts\/retry-independent-review\.mjs/);
   assert.doesNotMatch(retryStep, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_(?:RUN|WORKFLOW)_ID/);
+});
+
+test('retry executor has one fixed mutation and no shell, dispatch, ref or merge path', () => {
+  assert.match(RETRY_EXECUTOR, /process\.env\.GITHUB_ACTIONS !== 'true'/);
+  assert.match(
+    RETRY_EXECUTOR,
+    /\['issue_comment', 'workflow_run', 'schedule', 'workflow_dispatch'\]\.includes\(eventName\)/,
+  );
+  assert.match(
+    RETRY_EXECUTOR,
+    /\/actions\/workflows\/\$\{workflowId\}\/runs\?event=pull_request_target/,
+  );
+  assert.match(RETRY_EXECUTOR, /\/git\/ref\/heads\/main/);
+  assert.match(
+    RETRY_EXECUTOR,
+    /text\(mainRef\?\.object\?\.sha\)\.toLowerCase\(\) !== pr\.baseSha/,
+  );
+  assert.match(
+    RETRY_EXECUTOR,
+    /\/actions\/runs\/\$\{plan\.runId\}\/rerun-failed-jobs/,
+  );
+  assert.equal((RETRY_EXECUTOR.match(/method:\s*'POST'/g) || []).length, 1);
+  assert.doesNotMatch(RETRY_EXECUTOR, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_(?:RUN|WORKFLOW)_ID/);
+  for (const forbidden of [
+    /\/dispatches\b/,
+    /\/git\/refs\b/,
+    /\/pulls\/[^`'"\s]+\/merge\b/,
+    /child_process|execFile|execSync|spawn\s*\(/,
+    /force[-_ ]?push|reset --hard|git clean/i,
+  ]) {
+    assert.equal(forbidden.test(RETRY_EXECUTOR), false, `forbidden retry authority: ${forbidden}`);
+  }
 });
