@@ -14,9 +14,10 @@ import {
 } from '../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
 import {
   MACHINE_COORDINATOR_SENTINEL_LOGIN,
+  REVIEW_COORDINATOR_CREDENTIAL_SOURCE,
   normalizeReviewCoordinatorMarkerComments,
-  selectReviewCoordinatorToken,
-  validateReviewCoordinatorActor,
+  selectReviewCoordinatorCredential,
+  validateReviewCoordinatorCredential,
 } from '../shared/agents/exactHeadReviewCoordinatorAuthority.mjs';
 import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
@@ -358,19 +359,25 @@ async function discoverCanonicalContexts({ owner, repo, repository, token, laneA
 async function main() {
   const repository = text(process.env.GITHUB_REPOSITORY);
   const { owner, repo } = repositoryParts(repository);
-  const token = selectReviewCoordinatorToken(process.env);
+  const credential = selectReviewCoordinatorCredential(process.env);
+  const token = credential.token;
   if (!token) throw new Error('a bounded GitHub token is required');
   const laneAuthorityLogin = trustedLaneAuthorityLogin(owner);
-  const authenticatedUser = await githubRequest('/user', { token });
-  const coordinatorActor = validateReviewCoordinatorActor(
+  const authenticatedUser = credential.source === REVIEW_COORDINATOR_CREDENTIAL_SOURCE.GITHUB_ACTIONS
+    ? {}
+    : await githubRequest('/user', { token });
+  const coordinatorActor = validateReviewCoordinatorCredential({
+    credential,
     authenticatedUser,
     laneAuthorityLogin,
-  );
+    environment: process.env,
+  });
   if (!coordinatorActor.valid) {
     throw new Error(`bounded GitHub token actor is not authorised: ${coordinatorActor.reason}`);
   }
   console.log(`EXACT_HEAD_REVIEW_COORDINATOR_ACTOR=${coordinatorActor.actorLogin}`);
   console.log(`EXACT_HEAD_REVIEW_COORDINATOR_MODE=${coordinatorActor.mode}`);
+  console.log(`EXACT_HEAD_REVIEW_COORDINATOR_CREDENTIAL_SOURCE=${coordinatorActor.credentialSource}`);
   console.log(`EXACT_HEAD_REVIEW_LANE_AUTHORITY=${laneAuthorityLogin}`);
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
