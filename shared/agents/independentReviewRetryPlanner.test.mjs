@@ -3,6 +3,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  MACHINE_COORDINATOR_SENTINEL_LOGIN,
+  REVIEW_COORDINATOR_CREDENTIAL_SOURCE,
+  normalizeReviewCoordinatorMarkerComments,
+  selectReviewCoordinatorCredential,
+  selectReviewCoordinatorToken,
+  validateReviewCoordinatorActor,
+  validateReviewCoordinatorCredential,
+} from './exactHeadReviewCoordinatorAuthority.mjs';
+import {
+  EXACT_HEAD_REVIEW_MARKERS,
+} from './exactHeadReviewDispatchCoordinator.mjs';
+import {
   INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT,
   INDEPENDENT_REVIEW_RETRY_DECISION,
   planIndependentReviewRetry,
@@ -10,6 +22,7 @@ import {
 import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
+  PROTECTED_REVIEW_MARKER,
 } from './operatorMergeApprovalGate.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -19,6 +32,10 @@ const BRANCH = 'fix/recovery';
 const WORKFLOW_ID = 326000001;
 const COORDINATOR_WORKFLOW = readFileSync(
   new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
+  'utf8',
+);
+const COORDINATOR_RUNNER = readFileSync(
+  new URL('../../scripts/exact-head-review-dispatch.mjs', import.meta.url),
   'utf8',
 );
 const RETRY_EXECUTOR = readFileSync(
@@ -78,6 +95,18 @@ function input(overrides = {}) {
     workflow: workflow(),
     pr: pullRequest(),
     runs: [run()],
+    ...overrides,
+  };
+}
+
+function machineEnvironment(overrides = {}) {
+  return {
+    GITHUB_ACTIONS: 'true',
+    GITHUB_JOB: 'coordinate',
+    GITHUB_WORKFLOW: 'Exact-Head Review Dispatch',
+    GITHUB_EVENT_NAME: 'schedule',
+    GITHUB_REPOSITORY: REPOSITORY,
+    GITHUB_WORKFLOW_REF: `${REPOSITORY}/.github/workflows/exact-head-review-dispatch.yml@refs/heads/main`,
     ...overrides,
   };
 }
@@ -174,6 +203,144 @@ test('rejects invalid workflow or pull-request authority before considering runs
   }
 });
 
+test('selects the first nonblank coordinator credential and does not let an empty secret mask the repository token', () => {
+  assert.deepEqual(selectReviewCoordinatorCredential({
+    STEPHANOS_REVIEW_DISPATCH_TOKEN: 'owner-token',
+    GITHUB_TOKEN: 'repository-token',
+  }), {
+    token: 'owner-token',
+    source: REVIEW_COORDINATOR_CREDENTIAL_SOURCE.OWNER_SECRET,
+  });
+  assert.deepEqual(selectReviewCoordinatorCredential({
+    STEPHANOS_REVIEW_DISPATCH_TOKEN: '   ',
+    GITHUB_TOKEN: 'repository-token',
+    GH_TOKEN: 'fallback-token',
+  }), {
+    token: 'repository-token',
+    source: REVIEW_COORDINATOR_CREDENTIAL_SOURCE.GITHUB_ACTIONS,
+  });
+  assert.equal(selectReviewCoordinatorToken({
+    STEPHANOS_REVIEW_DISPATCH_TOKEN: '',
+    GITHUB_TOKEN: '',
+    GH_TOKEN: 'fallback-token',
+  }), 'fallback-token');
+  assert.deepEqual(selectReviewCoordinatorCredential({}), {
+    token: '',
+    source: REVIEW_COORDINATOR_CREDENTIAL_SOURCE.NONE,
+  });
+});
+
+test('separates owner lane authority from the exact trusted GitHub Actions machine boundary', () => {
+  const owner = validateReviewCoordinatorActor(
+    { login: 'Cheekyfellastef', type: 'User', id: 267490109 },
+    'Cheekyfellastef',
+  );
+  assert.equal(owner.valid, true);
+  assert.equal(owner.mode, 'lane-authority-token');
+
+  const exactBot = validateReviewCoordinatorActor(
+    { login: 'github-actions[bot]', type: 'Bot', id: 41898282 },
+    'Cheekyfellastef',
+  );
+  assert.equal(exactBot.valid, true);
+  assert.equal(exactBot.mode, 'github-actions-token');
+
+  for (const hostile of [
+    { login: 'github-actions[bot]', type: 'Bot', id: 7 },
+    { login: 'github-actions[bot]', type: 'User', id: 41898282 },
+    { login: 'other-user', type: 'User', id: 267490109 },
+  ]) {
+    assert.equal(
+      validateReviewCoordinatorActor(hostile, 'Cheekyfellastef').valid,
+      false,
+    );
+  }
+
+  const repositoryCredential = {
+    token: 'repository-token',
+    source: REVIEW_COORDINATOR_CREDENTIAL_SOURCE.GITHUB_ACTIONS,
+  };
+  const trustedMachine = validateReviewCoordinatorCredential({
+    credential: repositoryCredential,
+    laneAuthorityLogin: 'Cheekyfellastef',
+    environment: machineEnvironment(),
+  });
+  assert.equal(trustedMachine.valid, true);
+  assert.equal(trustedMachine.actorLogin, 'github-actions[bot]');
+
+  for (const hostileEnvironment of [
+    machineEnvironment({ GITHUB_ACTIONS: 'false' }),
+    machineEnvironment({ GITHUB_JOB: 'verify' }),
+    machineEnvironment({ GITHUB_WORKFLOW: 'Lookalike Review Dispatch' }),
+    machineEnvironment({ GITHUB_EVENT_NAME: 'pull_request' }),
+    machineEnvironment({ GITHUB_WORKFLOW_REF: `${REPOSITORY}/.github/workflows/lookalike.yml@refs/heads/main` }),
+    machineEnvironment({ GITHUB_WORKFLOW_REF: `${REPOSITORY}/.github/workflows/exact-head-review-dispatch.yml@refs/heads/feature` }),
+  ]) {
+    assert.equal(validateReviewCoordinatorCredential({
+      credential: repositoryCredential,
+      laneAuthorityLogin: 'Cheekyfellastef',
+      environment: hostileEnvironment,
+    }).valid, false);
+  }
+
+  const ownerCredential = validateReviewCoordinatorCredential({
+    credential: {
+      token: 'owner-token',
+      source: REVIEW_COORDINATOR_CREDENTIAL_SOURCE.OWNER_SECRET,
+    },
+    authenticatedUser: { login: 'Cheekyfellastef', type: 'User', id: 267490109 },
+    laneAuthorityLogin: 'Cheekyfellastef',
+    environment: {},
+  });
+  assert.equal(ownerCredential.valid, true);
+  assert.equal(ownerCredential.credentialSource, REVIEW_COORDINATOR_CREDENTIAL_SOURCE.OWNER_SECRET);
+});
+
+test('normalizes only trusted mechanical markers while preserving owner lane evidence and protected review identity', () => {
+  const ownerDispatch = {
+    id: 1,
+    body: `<!-- ${EXACT_HEAD_REVIEW_MARKERS.DISPATCH} head=${HEAD} -->`,
+    user: { login: 'Cheekyfellastef', type: 'User', id: 267490109 },
+  };
+  const botReceipt = {
+    id: 2,
+    body: `<!-- ${EXACT_HEAD_REVIEW_MARKERS.RECEIPT} head=${HEAD} -->`,
+    user: { login: 'github-actions[bot]', type: 'Bot', id: 41898282 },
+  };
+  const protectedReview = {
+    id: 3,
+    body: `${PROTECTED_REVIEW_MARKER}\n\`\`\`json\n{}\n\`\`\``,
+    user: { login: 'github-actions[bot]', type: 'Bot', id: 41898282 },
+  };
+  const forgedBotMarker = {
+    id: 4,
+    body: `<!-- ${EXACT_HEAD_REVIEW_MARKERS.ESCALATION} head=${HEAD} -->`,
+    user: { login: 'github-actions[bot]', type: 'Bot', id: 7 },
+  };
+  const ownerLaneReceipt = {
+    id: 5,
+    body: '## Programme Completion Controller\n\nActive lane: PR #1638.',
+    user: { login: 'Cheekyfellastef', type: 'User', id: 267490109 },
+  };
+  const comments = [
+    ownerDispatch,
+    botReceipt,
+    protectedReview,
+    forgedBotMarker,
+    ownerLaneReceipt,
+  ];
+  const normalized = normalizeReviewCoordinatorMarkerComments(comments, {
+    laneAuthorityLogin: 'Cheekyfellastef',
+  });
+
+  assert.equal(normalized[0].user.login, MACHINE_COORDINATOR_SENTINEL_LOGIN);
+  assert.equal(normalized[1].user.login, MACHINE_COORDINATOR_SENTINEL_LOGIN);
+  assert.equal(normalized[2], protectedReview);
+  assert.equal(normalized[2].user.login, 'github-actions[bot]');
+  assert.equal(normalized[3], forgedBotMarker);
+  assert.equal(normalized[4], ownerLaneReceipt);
+});
+
 test('trusted workflow re-evaluates a bounded retry after dispatch, wait and one escalation', () => {
   assert.match(COORDINATOR_WORKFLOW, /permissions:\s*\n\s+actions: write\b/);
   const retryStepStart = COORDINATOR_WORKFLOW.indexOf(
@@ -200,6 +367,22 @@ test('trusted workflow re-evaluates a bounded retry after dispatch, wait and one
   );
   assert.match(retryStep, /run: node scripts\/retry-independent-review\.mjs/);
   assert.doesNotMatch(retryStep, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_(?:RUN|WORKFLOW)_ID/);
+});
+
+test('workflow and runner wire repository fallback, owner lane authority and sentinel marker continuity', () => {
+  assert.ok(COORDINATOR_WORKFLOW.includes('GITHUB_TOKEN: ${{ github.token }}'));
+  assert.ok(COORDINATOR_WORKFLOW.includes('STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}'));
+  assert.ok(COORDINATOR_WORKFLOW.includes('node --check shared/agents/exactHeadReviewCoordinatorAuthority.mjs'));
+  assert.ok(COORDINATOR_RUNNER.includes('selectReviewCoordinatorCredential(process.env)'));
+  assert.ok(COORDINATOR_RUNNER.includes('validateReviewCoordinatorCredential({'));
+  assert.ok(COORDINATOR_RUNNER.includes('credential.source === REVIEW_COORDINATOR_CREDENTIAL_SOURCE.GITHUB_ACTIONS'));
+  assert.ok(COORDINATOR_RUNNER.includes('trustedCoordinatorLogin: laneAuthorityLogin'));
+  assert.ok(COORDINATOR_RUNNER.includes('normalizeReviewCoordinatorMarkerComments('));
+  assert.ok(COORDINATOR_RUNNER.includes('trustedCoordinatorLogin: MACHINE_COORDINATOR_SENTINEL_LOGIN'));
+  assert.doesNotMatch(
+    COORDINATOR_RUNNER,
+    /process\.env\.STEPHANOS_REVIEW_DISPATCH_TOKEN\s*\?\?\s*process\.env\.GITHUB_TOKEN/,
+  );
 });
 
 test('retry executor has one fixed mutation and no shell, dispatch, ref or merge path', () => {
