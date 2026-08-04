@@ -33,6 +33,18 @@ test('owner secret remains preferred outside the trusted GitHub Actions boundary
   });
 });
 
+test('owner secret remains available when an Actions token is genuinely absent', () => {
+  const credential = selectReviewCoordinatorCredential({
+    GITHUB_ACTIONS: 'true',
+    STEPHANOS_REVIEW_DISPATCH_TOKEN: 'owner-secret',
+  });
+
+  assert.deepEqual(credential, {
+    token: 'owner-secret',
+    source: REVIEW_COORDINATOR_CREDENTIAL_SOURCE.OWNER_SECRET,
+  });
+});
+
 test('repository token remains the fallback when no owner secret exists', () => {
   const credential = selectReviewCoordinatorCredential({
     GITHUB_TOKEN: 'repository-token',
