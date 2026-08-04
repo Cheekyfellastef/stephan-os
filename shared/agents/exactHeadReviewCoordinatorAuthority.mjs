@@ -51,6 +51,13 @@ function hasMechanicalCoordinatorMarker(body) {
 }
 
 export function selectReviewCoordinatorCredential(environment = {}) {
+  const actionsToken = text(environment.GITHUB_TOKEN);
+  if (environment.GITHUB_ACTIONS === 'true' && actionsToken) {
+    return Object.freeze({
+      token: actionsToken,
+      source: REVIEW_COORDINATOR_CREDENTIAL_SOURCE.GITHUB_ACTIONS,
+    });
+  }
   for (const [source, candidate] of [
     [REVIEW_COORDINATOR_CREDENTIAL_SOURCE.OWNER_SECRET, environment.STEPHANOS_REVIEW_DISPATCH_TOKEN],
     [REVIEW_COORDINATOR_CREDENTIAL_SOURCE.GITHUB_ACTIONS, environment.GITHUB_TOKEN],
