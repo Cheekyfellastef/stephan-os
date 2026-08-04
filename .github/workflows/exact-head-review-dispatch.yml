@@ -99,7 +99,11 @@ jobs:
         run: node scripts/exact-head-review-dispatch.mjs
 
       - name: Retry only the exact failed canonical independent review
-        if: steps.coordinate.outputs.decision == 'DISPATCH_REVIEW'
+        if: >-
+          always() &&
+          (steps.coordinate.outputs.decision == 'DISPATCH_REVIEW' ||
+           steps.coordinate.outputs.decision == 'WAIT_REVIEW_RECEIPT' ||
+           steps.coordinate.outputs.decision == 'ESCALATE_MISSING_RECEIPT')
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR: ${{ steps.coordinate.outputs.pr_number }}
