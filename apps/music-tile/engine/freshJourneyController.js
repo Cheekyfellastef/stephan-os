@@ -87,13 +87,15 @@ function restoreStorageValue(storage, key, rawValue) {
 }
 
 function writeFreshJourneyTransaction({ storage, previousState, nextState, nextLedger }) {
-  if (!storage || !nextState || !nextLedger) return false;
+  if (!storage || !nextState || !nextLedger) {
+    return { ok: false, rollbackOk: true, reason: 'fresh-journey-storage-unavailable' };
+  }
   const previousStateRaw = storage.getItem(STORAGE_KEY);
   const previousLedgerRaw = storage.getItem(FRESHNESS_STORAGE_KEY);
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(nextState));
     storage.setItem(FRESHNESS_STORAGE_KEY, JSON.stringify(nextLedger));
-    return true;
+    return { ok: true, rollbackOk: true, reason: '' };
   } catch {
     try {
       restoreStorageValue(
@@ -102,10 +104,14 @@ function writeFreshJourneyTransaction({ storage, previousState, nextState, nextL
         previousStateRaw ?? JSON.stringify(previousState || {}),
       );
       restoreStorageValue(storage, FRESHNESS_STORAGE_KEY, previousLedgerRaw);
+      return { ok: false, rollbackOk: true, reason: 'fresh-journey-transaction-failed' };
     } catch {
-      return false;
+      return {
+        ok: false,
+        rollbackOk: false,
+        reason: 'fresh-journey-transaction-and-rollback-failed',
+      };
     }
-    return false;
   }
 }
 
@@ -113,6 +119,16 @@ function writeFreshnessLedger(ledger, storage = browserStorage()) {
   if (!storage || !ledger) return false;
   try {
     storage.setItem(FRESHNESS_STORAGE_KEY, JSON.stringify(ledger));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearFreshnessLedger(storage = browserStorage()) {
+  if (!storage) return false;
+  try {
+    storage.removeItem(FRESHNESS_STORAGE_KEY);
     return true;
   } catch {
     return false;
@@ -328,16 +344,22 @@ export async function startFreshJourney({
     lastFreshJourneyNotice: plan.notice,
     updatedAt: startedAt,
   };
-  if (!writeFreshJourneyTransaction({
+  const transaction = writeFreshJourneyTransaction({
     storage,
     previousState: rawSnapshot,
     nextState,
     nextLedger,
-  })) {
-    setStatus('The fresh journey was found but its durable freshness history could not be saved, so the current journey was left unchanged.');
+  });
+  if (!transaction.ok) {
+    if (transaction.rollbackOk) {
+      setStatus('The fresh journey was found but its durable freshness history could not be saved, so the current journey was left unchanged.');
+    } else {
+      setStatus('Fresh journey storage failed and rollback could not be confirmed. Reload the Music Tile before continuing.');
+    }
     return {
       ok: false,
-      reason: 'fresh-journey-transaction-failed',
+      reason: transaction.reason,
+      rollbackOk: transaction.rollbackOk,
       recycledCount: 0,
     };
   }
@@ -367,6 +389,19 @@ function restoreFreshJourneyNotice() {
     ...ledger,
     lastFreshJourneyNotice: '',
   }, storage);
+}
+
+function getFreshJourneySeedArtist(storage = browserStorage()) {
+  const typed = String(globalThis.document?.getElementById('artist-input')?.value || '').trim();
+  if (typed) return typed;
+  const snapshot = readMusicState(storage) || {};
+  const previous = String(snapshot.lastDiscoveryMeta?.canonicalArtist || '').trim();
+  if (previous && previous.toLowerCase() !== 'unknown artist') return previous;
+  const deckArtist = safeArray(snapshot.listeningDeck).find((track) => {
+    const artistName = String(track?.artist || '').trim().toLowerCase();
+    return artistName && artistName !== 'unknown' && artistName !== 'unknown artist';
+  })?.artist;
+  return String(deckArtist || 'Anyma');
 }
 
 function installVisibleJourneyControls(startButton) {
@@ -403,6 +438,42 @@ function installContinueCurrentJourneyButton(startButton) {
   startButton.after(continueButton);
 }
 
+function installFreshnessResetBinding() {
+  const resetButton = globalThis.document?.getElementById('reset-btn');
+  if (!resetButton) return;
+  resetButton.addEventListener('click', () => {
+    if (clearFreshnessLedger()) {
+      setStatus('Reset complete, including fresh journey history.');
+      setNovelty('Novelty evidence not available yet');
+    } else {
+      setStatus('Music state reset, but fresh journey history could not be cleared. Reload before continuing.');
+    }
+  });
+}
+
+function beginJourneyButtonBusy(target) {
+  target.disabled = true;
+  if (target.id === 'surprise-me-btn') {
+    const title = target.querySelector('strong');
+    const subtitle = target.querySelector('small');
+    const previousTitle = title?.textContent || 'Surprise Me';
+    const previousSubtitle = subtitle?.textContent || 'Start my journey';
+    if (title) title.textContent = 'Finding New Music…';
+    if (subtitle) subtitle.textContent = 'Searching unseen catalogue and Taste DNA matches';
+    return () => {
+      target.disabled = false;
+      if (title) title.textContent = previousTitle;
+      if (subtitle) subtitle.textContent = previousSubtitle;
+    };
+  }
+  const previousLabel = target.textContent;
+  target.textContent = 'Finding New Music…';
+  return () => {
+    target.disabled = false;
+    target.textContent = previousLabel || 'Start New Journey';
+  };
+}
+
 export function installFreshJourneyController({ buildCandidates } = {}) {
   if (controllerInstalled || typeof globalThis.document === 'undefined') return false;
   const startButton = globalThis.document.getElementById('start-journey-btn');
@@ -412,25 +483,26 @@ export function installFreshJourneyController({ buildCandidates } = {}) {
   startButton.textContent = 'Start New Journey';
   startButton.title = 'Build a genuinely fresh candidate set and add new tracks to the Listening Room.';
   installContinueCurrentJourneyButton(startButton);
+  installFreshnessResetBinding();
   restoreFreshJourneyNotice();
 
   globalThis.document.addEventListener('click', (event) => {
     const target = event.target instanceof Element
-      ? event.target.closest('#start-journey-btn')
+      ? event.target.closest('#start-journey-btn, #surprise-me-btn')
       : null;
     if (!target) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (journeyInFlight) return;
     journeyInFlight = true;
-    target.disabled = true;
-    const previousLabel = target.textContent;
-    target.textContent = 'Finding New Music…';
+    const restoreButton = beginJourneyButtonBusy(target);
     setStatus('Searching unseen local and live catalogue candidates…');
-    void startFreshJourney({ buildCandidates }).finally(() => {
+    const artist = target.id === 'surprise-me-btn'
+      ? getFreshJourneySeedArtist()
+      : undefined;
+    void startFreshJourney({ buildCandidates, artist }).finally(() => {
       journeyInFlight = false;
-      target.disabled = false;
-      target.textContent = previousLabel || 'Start New Journey';
+      restoreButton();
     });
   }, true);
   return true;
