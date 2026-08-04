@@ -59,3 +59,5 @@ jobs:
           git add -A
           git commit -m "Repair and audit complete Music Tile journeys"
           git push origin HEAD:fix/music-tile-complete-journey-audit
+
+# Triggered after workflow installation so the repair runs from a pre-existing workflow definition.
