@@ -52,6 +52,7 @@ jobs:
       - name: Run coordinator regressions
         run: |
           npm run stephanos:exact-head-review:test
+          node --test shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
 
       - name: Parse review coordinator sources
