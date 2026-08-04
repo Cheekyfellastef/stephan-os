@@ -208,7 +208,7 @@ export async function startFreshJourney({
     const message = `No unseen tracks were available for ${normalizedArtist}. Stephanos did not recycle the old journey. Try another artist or creative direction.${catalogueSuffix}`;
     setStatus(message);
     setNovelty('No unseen result available; old songs were not recycled');
-    return { ...plan, message, catalogueError: pool.catalogueError };
+    return { ...plan, message, catalogueError: pool.catalogueError, recycledCount: 0 };
   }
 
   let discoveryPipeline;
@@ -242,13 +242,18 @@ export async function startFreshJourney({
   };
   if (!writeMusicState(nextState, storage)) {
     setStatus('The fresh journey was found but could not be saved, so the current journey was left unchanged.');
-    return { ok: false, reason: 'music-state-persistence-failed' };
+    return { ok: false, reason: 'music-state-persistence-failed', recycledCount: 0 };
   }
 
   setStatus(plan.notice);
   setNovelty(`${plan.freshCount} genuinely new · 0 recycled`);
   reload();
-  return { ...plan, state: nextState, catalogueError: pool.catalogueError };
+  return {
+    ...plan,
+    state: nextState,
+    catalogueError: pool.catalogueError,
+    recycledCount: 0,
+  };
 }
 
 function restoreFreshJourneyNotice() {
@@ -263,6 +268,23 @@ function restoreFreshJourneyNotice() {
   }
   delete snapshot.lastFreshJourneyNotice;
   writeMusicState(snapshot, storage);
+}
+
+function installVisibleJourneyControls(startButton) {
+  const room = globalThis.document?.querySelector('.listening-room');
+  const artistInput = globalThis.document?.getElementById('artist-input');
+  const artistControl = artistInput?.closest('.artist-control');
+  if (!room || !startButton || !artistControl) return;
+  let controls = globalThis.document.getElementById('fresh-journey-controls');
+  if (!controls) {
+    controls = globalThis.document.createElement('div');
+    controls.id = 'fresh-journey-controls';
+    controls.className = 'actions fresh-journey-controls';
+    const heading = room.querySelector(':scope > .section-heading');
+    if (heading) heading.after(controls);
+    else room.prepend(controls);
+  }
+  controls.append(artistControl, startButton);
 }
 
 function installContinueCurrentJourneyButton(startButton) {
@@ -287,6 +309,7 @@ export function installFreshJourneyController({ buildCandidates } = {}) {
   const startButton = globalThis.document.getElementById('start-journey-btn');
   if (!startButton || typeof buildCandidates !== 'function') return false;
   controllerInstalled = true;
+  installVisibleJourneyControls(startButton);
   startButton.textContent = 'Start New Journey';
   startButton.title = 'Build a genuinely fresh candidate set and add new tracks to the Listening Room.';
   installContinueCurrentJourneyButton(startButton);
