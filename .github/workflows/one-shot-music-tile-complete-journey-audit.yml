@@ -54,6 +54,22 @@ jobs:
           echo "2ddcbd8691b4bbe55002cb0feb75f77a88bea3f991febaf9e109a8e4d901d2ac  scripts/one-shot-music-tile-complete-journey-audit.mjs" | sha256sum --check
           node --check scripts/one-shot-music-tile-complete-journey-audit.mjs
           node scripts/one-shot-music-tile-complete-journey-audit.mjs
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/music-tile-journey-function-audit.test.mjs')
+          source = path.read_text(encoding='utf-8')
+          before = "  assert.match(controllerSource, /Promise.all(catalogueQueries.map/);"
+          after = r"  assert.match(controllerSource, /Promise\.all\(catalogueQueries\.map/);"
+          if source.count(before) != 1:
+              raise SystemExit(f'Expected one malformed audit regex, found {source.count(before)}')
+          path.write_text(source.replace(before, after), encoding='utf-8')
+          PY
+
+      - name: Install focused audit dependencies
+        shell: bash
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm --prefix stephanos-server install --ignore-scripts --no-audit --no-fund
 
       - name: Run complete journey audit tests
         shell: bash
