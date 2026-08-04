@@ -57,6 +57,7 @@ function rollbackCommand(overrides = {}) {
 }
 
 function handlers({ failAt = '', publishFails = false, calls = [] } = {}) {
+  const failures = new Set(Array.isArray(failAt) ? failAt : [failAt].filter(Boolean));
   const named = [
     'readCanonicalSourceIdentity',
     'verifyPrivateExecutionPacket',
@@ -74,7 +75,7 @@ function handlers({ failAt = '', publishFails = false, calls = [] } = {}) {
   ];
   const result = Object.fromEntries(named.map((name) => [name, async (input, context) => {
     calls.push([name, context.step]);
-    const failed = failAt === name;
+    const failed = failures.has(name);
     return {
       ok: !failed,
       blocker: failed ? `FAILED_${name.toUpperCase()}` : '',
@@ -200,7 +201,7 @@ test('rollback failure remains blocked with restore path instead of claiming rec
   const calls = [];
   const result = await executeOpenClawUpdateBattleBridgeAdapter(
     command(),
-    handlers({ failAt: 'restoreProtectedBackup', calls }),
+    handlers({ failAt: ['verifyPostUpdateHealth', 'restoreProtectedBackup'], calls }),
   );
   assert.equal(result.ok, false);
   assert.equal(result.receipt.verdict, OPENCLAW_UPDATE_BATTLE_BRIDGE_VERDICT.BLOCKED);
