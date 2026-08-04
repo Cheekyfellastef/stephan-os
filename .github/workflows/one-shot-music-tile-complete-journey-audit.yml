@@ -7,12 +7,17 @@ on:
     paths:
       - .github/workflows/one-shot-music-tile-complete-journey-audit.yml
       - scripts/one-shot-music-tile-complete-journey-audit.mjs.gz.b64
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
 
 jobs:
   repair:
+    if: github.ref_name == 'fix/music-tile-complete-journey-audit' || github.head_ref == 'fix/music-tile-complete-journey-audit'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out exact audit branch
@@ -59,5 +64,3 @@ jobs:
           git add -A
           git commit -m "Repair and audit complete Music Tile journeys"
           git push origin HEAD:fix/music-tile-complete-journey-audit
-
-# Triggered after workflow installation so the repair runs from a pre-existing workflow definition.
