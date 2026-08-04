@@ -1,0 +1,126 @@
+map((payload) => payload.providerLabel).filter(Boolean))].join(' + '),
+    queries: catalogueQueries,
+  };
+
+  return {
+    candidates: interleaveFreshLanes(catalogueCandidates, localCandidates),
+    sessionCounter,
+    localResult,
+    cataloguePayload,
+    catalogueQueries,
+    catalogueError: catalogueErrors.join(' | '),
+  };
+}
+
+function buildFallbackPipeline`,
+  'fresh candidate pool',
+);
+controller = replaceOnce(
+  controller,
+  '    listeningRoomAdditionCount: 3,\n    minimumFreshTarget: 6,\n',
+  '    listeningRoomAdditionCount: 10,\n    minimumFreshTarget: 6,\n    deckLimit: 20,\n',
+  'complete room target',
+);
+controller = replaceOnce(
+  controller,
+  "  startButton.title = 'Build a genuinely fresh candidate set and add new tracks to the Listening Room.';",
+  "  startButton.title = 'Build a complete fresh journey and make every result available in the Listening Room.';",
+  'start button title',
+);
+controller = replaceOnce(
+  controller,
+  "      ? event.target.closest('#start-journey-btn, #surprise-me-btn')",
+  "      ? event.target.closest('#start-journey-btn, #surprise-me-btn, #build-journey-btn')",
+  'all journey entrances',
+);
+writeFileSync(controllerPath, controller);
+
+const mainPath = 'apps/music-tile/main.js';
+let main = readFileSync(mainPath, 'utf8');
+main = replaceOnce(
+  main,
+  "  intelligenceUi.surpriseBtn?.addEventListener('click', startSurpriseJourney);\n",
+  "  // Surprise Me is governed by freshJourneyController's single capture path.\n",
+  'remove legacy surprise listener',
+);
+main = replaceOnce(
+  main,
+  "function wireEvents() { ui.buildBtn?.addEventListener('click', buildJourney); ui.startBtn?.addEventListener('click', startJourney);",
+  "function wireEvents() {",
+  'remove legacy build/start listeners',
+);
+const newLoadState = `function loadState() {
+  let saved = {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    saved = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    saved = {};
+  }
+  const candidates = Array.isArray(saved.candidates) ? saved.candidates : [];
+  const originalDeck = Array.isArray(saved.listeningDeck) ? saved.listeningDeck : [];
+  const priorSummary = saved.lastFreshJourneySummary && typeof saved.lastFreshJourneySummary === 'object'
+    ? saved.lastFreshJourneySummary
+    : null;
+  const legacyFreshCount = Math.max(0, Number(priorSummary?.freshCount || 0));
+  const legacyAddedCount = Math.max(0, Number(priorSummary?.addedCount || 0));
+  const hasCanonicalActiveJourney = Array.isArray(saved.activeJourneyTrackIds)
+    && saved.activeJourneyTrackIds.length > 0;
+  const shouldRecoverTruncatedJourney = !hasCanonicalActiveJourney
+    && legacyFreshCount >= 6
+    && legacyAddedCount <= 3
+    && candidates.length > originalDeck.length;
+  let listeningDeck = originalDeck;
+  let activeJourneyTrackIds = Array.isArray(saved.activeJourneyTrackIds)
+    ? saved.activeJourneyTrackIds.map((id) => String(id || '')).filter(Boolean).slice(0, 20)
+    : [];
+  if (shouldRecoverTruncatedJourney) {
+    const activeTarget = Math.min(10, legacyFreshCount, candidates.length);
+    const seen = new Set();
+    listeningDeck = [...candidates.slice(0, activeTarget), ...originalDeck].filter((track) => {
+      const key = String(track?.id || track?.universalMusicId || '').trim();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 20);
+    activeJourneyTrackIds = candidates.slice(0, activeTarget)
+      .map((track) => String(track?.id || track?.universalMusicId || '').trim())
+      .filter(Boolean);
+  }
+  const nextState = {
+    ...saved,
+    candidates,
+    listeningDeck,
+    activeJourneyTrackIds,
+    ratings: saved.ratings && typeof saved.ratings === 'object' ? saved.ratings : {},
+    tags: saved.tags && typeof saved.tags === 'object' ? saved.tags : {},
+    tasteDNA: saved.tasteDNA && typeof saved.tasteDNA === 'object' ? saved.tasteDNA : initialTasteDNA(),
+    feedbackHistory: Array.isArray(saved.feedbackHistory) ? saved.feedbackHistory : [],
+    trackFeedback: saved.trackFeedback && typeof saved.trackFeedback === 'object' ? saved.trackFeedback : {},
+    linkMessages: saved.linkMessages && typeof saved.linkMessages === 'object' ? saved.linkMessages : {},
+    appliedSpotifyLinkRequestIds: Array.isArray(saved.appliedSpotifyLinkRequestIds) ? saved.appliedSpotifyLinkRequestIds.slice(-200) : [],
+    lastFeedbackInterpreted: saved.lastFeedbackInterpreted || null,
+    aiSuggestions: Array.isArray(saved.aiSuggestions) ? saved.aiSuggestions : [],
+    aiSmarterJourney: Array.isArray(saved.aiSmarterJourney) ? saved.aiSmarterJourney : [],
+    pendingTasteDnaChanges: Array.isArray(saved.pendingTasteDnaChanges) ? saved.pendingTasteDnaChanges : [],
+    appliedTasteDnaChanges: Array.isArray(saved.appliedTasteDnaChanges) ? saved.appliedTasteDnaChanges : [],
+    immersionSession: saved.immersionSession && typeof saved.immersionSession === 'object' ? saved.immersionSession : null,
+    recentlyShownCandidateIds: Array.isArray(saved.recentlyShownCandidateIds) ? saved.recentlyShownCandidateIds : [],
+    journeyHistoryKeys: Array.isArray(saved.journeyHistoryKeys) ? saved.journeyHistoryKeys : [],
+    sessionCounter: Number(saved.sessionCounter || 0),
+    lastDiscoveryMeta: saved.lastDiscoveryMeta || null,
+    discoveryPipeline: saved.discoveryPipeline && typeof saved.discoveryPipeline === 'object'
+      ? saved.discoveryPipeline
+      : null,
+    aiCandidateAudit: Array.isArray(saved.aiCandidateAudit) ? saved.aiCandidateAudit : [],
+    lastFreshJourneySummary: shouldRecoverTruncatedJourney
+      ? {
+          ...priorSummary,
+          schemaVersion: 2,
+          activeJourneyCount: activeJourneyTrackIds.length,
+          addedCount: activeJourneyTrackIds.length,
+          roomCount: listeningDeck.length,
+          preservedCount: Math.max(0, listeningDeck.length - activeJourneyTrackIds.length),
+          legacyTruncatedJourneyRecovered: true,
+        }
+      : pri
