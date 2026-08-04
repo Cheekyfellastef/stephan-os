@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,6 +17,10 @@ const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
 const BRANCH = 'fix/recovery';
 const WORKFLOW_ID = 326000001;
+const COORDINATOR_WORKFLOW = readFileSync(
+  new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
+  'utf8',
+);
 
 function workflow(overrides = {}) {
   return {
@@ -163,4 +168,32 @@ test('rejects invalid workflow or pull-request authority before considering runs
     assert.equal(plan.decision, INDEPENDENT_REVIEW_RETRY_DECISION.INVALID_INPUT);
     assert.equal(plan.mutationAllowed, false);
   }
+});
+
+test('trusted workflow re-evaluates a bounded retry after dispatch, wait and one escalation', () => {
+  assert.match(COORDINATOR_WORKFLOW, /permissions:\s*\n\s+actions: write\b/);
+  const retryStepStart = COORDINATOR_WORKFLOW.indexOf(
+    '- name: Retry only the exact failed canonical independent review',
+  );
+  assert.ok(retryStepStart >= 0, 'bounded retry step must exist');
+  const retryStep = COORDINATOR_WORKFLOW.slice(retryStepStart);
+
+  assert.match(retryStep, /if:\s*>-\s*\n\s+always\(\) &&/);
+  for (const decision of [
+    'DISPATCH_REVIEW',
+    'WAIT_REVIEW_RECEIPT',
+    'ESCALATE_MISSING_RECEIPT',
+  ]) {
+    assert.match(retryStep, new RegExp(`steps\\.coordinate\\.outputs\\.decision == '${decision}'`));
+  }
+  assert.match(
+    retryStep,
+    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ steps\.coordinate\.outputs\.pr_number \}\}/,
+  );
+  assert.match(
+    retryStep,
+    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ steps\.coordinate\.outputs\.exact_head \}\}/,
+  );
+  assert.match(retryStep, /run: node scripts\/retry-independent-review\.mjs/);
+  assert.doesNotMatch(retryStep, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_(?:RUN|WORKFLOW)_ID/);
 });
