@@ -1,0 +1,50 @@
+name: OpenClaw Update Battle Bridge Adapter Proof
+
+on:
+  pull_request:
+    branches:
+      - main
+      - agent/1415-openclaw-update-preflight-v1
+      - agent/1415-openclaw-staged-updater-v1
+    paths:
+      - 'shared/agents/openClawUpdateBattleBridgeAdapterV1.mjs'
+      - 'shared/agents/openClawUpdateBattleBridgeAdapterV1.test.mjs'
+      - 'scripts/openclaw-update-battle-bridge-adapter.mjs'
+      - 'scripts/openclaw-update-battle-bridge-adapter.test.mjs'
+      - '.github/workflows/openclaw-update-battle-bridge-adapter-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Parse adapter sources
+        run: |
+          node --check shared/agents/openClawUpdateBattleBridgeAdapterV1.mjs
+          node --check scripts/openclaw-update-battle-bridge-adapter.mjs
+
+      - name: Run adapter authority and rollback regressions
+        run: node --test shared/agents/openClawUpdateBattleBridgeAdapterV1.test.mjs scripts/openclaw-update-battle-bridge-adapter.test.mjs
+
+      - name: Check exact diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+          else
+            git diff --check HEAD^...HEAD
+          fi
