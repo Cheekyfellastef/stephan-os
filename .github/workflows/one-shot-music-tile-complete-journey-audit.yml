@@ -1,0 +1,61 @@
+name: One-shot Music Tile Complete Journey Audit
+
+on:
+  push:
+    branches:
+      - fix/music-tile-complete-journey-audit
+    paths:
+      - .github/workflows/one-shot-music-tile-complete-journey-audit.yml
+      - scripts/one-shot-music-tile-complete-journey-audit.mjs.gz.b64
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact audit branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/music-tile-complete-journey-audit
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Decode and apply bounded repair
+        shell: bash
+        run: |
+          base64 --decode scripts/one-shot-music-tile-complete-journey-audit.mjs.gz.b64 \
+            | gzip --decompress \
+            > scripts/one-shot-music-tile-complete-journey-audit.mjs
+          node --check scripts/one-shot-music-tile-complete-journey-audit.mjs
+          node scripts/one-shot-music-tile-complete-journey-audit.mjs
+
+      - name: Run complete journey audit tests
+        shell: bash
+        run: |
+          node --check apps/music-tile/main.js
+          node --check apps/music-tile/engine/freshJourneyController.js
+          node --check apps/music-tile/engine/freshJourneyPlanner.js
+          node --test \
+            tests/music-intelligence-centre-vnext.test.mjs \
+            tests/music-tile-journey-function-audit.test.mjs \
+            tests/music-provider-neutral-catalog-search.test.mjs \
+            tests/music-tile-candidate-verification-init-order.test.mjs
+
+      - name: Publish only settled repair files
+        shell: bash
+        run: |
+          rm -f scripts/one-shot-music-tile-complete-journey-audit.mjs
+          rm -f scripts/one-shot-music-tile-complete-journey-audit.mjs.gz.b64
+          rm -f .github/workflows/one-shot-music-tile-complete-journey-audit.yml
+          git diff --check
+          git config user.name "Stephanos GitHub Repair"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Repair and audit complete Music Tile journeys"
+          git push origin HEAD:fix/music-tile-complete-journey-audit
