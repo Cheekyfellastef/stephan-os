@@ -16,6 +16,7 @@ test('unresolved Listening Room cards self-resolve without manual catalogue inte
   assert.match(autoApply, /queueAutomaticResolution\(\)/);
   assert.match(autoApply, /if \(typeof document !== 'undefined'\) announceAppliedTrack/);
   assert.match(autoApply, /observer\.observe\(deck, \{ childList: true, subtree: false \}\)/);
+  assert.match(autoApply, /changedNodes\.some\(\(node\) =>/);
   assert.match(autoApply, /if \(title\.textContent !== nextTitle\) title\.textContent = nextTitle/);
   assert.doesNotMatch(autoApply, /observer\.observe\(deck, \{ childList: true, subtree: true \}\)/);
 });
