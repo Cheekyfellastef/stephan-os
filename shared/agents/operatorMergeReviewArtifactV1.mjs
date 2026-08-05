@@ -10,9 +10,13 @@ import {
 
 export const INDEPENDENT_REVIEW_ARTIFACT_SCHEMA_VERSION = 'stephanos.independent-review-artifact.v1';
 export const INDEPENDENT_REVIEW_ARTIFACT_KIND = 'stephanos.independent-review.artifact';
+export const INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_SCHEMA_VERSION = 'stephanos.independent-review-findings-artifact.v1';
+export const INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_KIND = 'stephanos.independent-review.findings-artifact';
 export const INDEPENDENT_REVIEW_ARTIFACT_FILE = 'independent-review-result.json';
 export const INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES = 256 * 1024;
 
+const INDEPENDENT_REVIEW_FINDINGS_MAX_PROOF_REFS = 200;
+const INDEPENDENT_REVIEW_FINDINGS_INLINE_PROOF_REFS = INDEPENDENT_REVIEW_FINDINGS_MAX_PROOF_REFS - 1;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const API_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -70,6 +74,27 @@ function canonicalJson(value) {
   )).join(',')}}`;
 }
 
+function boundFindingsAnalysis(analysis = {}) {
+  const proofRefs = Array.isArray(analysis.proofRefs) ? analysis.proofRefs : [];
+  if (proofRefs.length <= INDEPENDENT_REVIEW_FINDINGS_MAX_PROOF_REFS) return analysis;
+  const included = proofRefs.slice(0, INDEPENDENT_REVIEW_FINDINGS_INLINE_PROOF_REFS);
+  const omitted = proofRefs.length - included.length;
+  const digest = createHash('sha256').update(canonicalJson(proofRefs), 'utf8').digest('hex');
+  return Object.freeze({
+    ...analysis,
+    proofRefs: Object.freeze([
+      ...included,
+      [
+        'proofs/independent-review/proof-ref-overflow',
+        `total-${proofRefs.length}`,
+        `included-${included.length}`,
+        `omitted-${omitted}`,
+        `sha256-${digest}`,
+      ].join('/'),
+    ]),
+  });
+}
+
 function payloadCore(artifact = {}) {
   return {
     schemaVersion: artifact.schemaVersion,
@@ -89,6 +114,24 @@ function payloadCore(artifact = {}) {
   };
 }
 
+function findingsPayloadCore(artifact = {}) {
+  return {
+    schemaVersion: artifact.schemaVersion,
+    kind: artifact.kind,
+    artifactName: artifact.artifactName,
+    artifactFile: artifact.artifactFile,
+    repository: artifact.repository,
+    prNumber: artifact.prNumber,
+    branch: artifact.branch,
+    sourceHead: artifact.sourceHead,
+    baseSha: artifact.baseSha,
+    workflowRunId: artifact.workflowRunId,
+    workflowRunAttempt: artifact.workflowRunAttempt,
+    createdAtUtc: artifact.createdAtUtc,
+    analysis: artifact.analysis,
+  };
+}
+
 export function independentReviewArtifactName(workflowRunId, workflowRunAttempt) {
   const runId = strictPositiveInteger(workflowRunId);
   const runAttempt = strictPositiveInteger(workflowRunAttempt);
@@ -98,6 +141,66 @@ export function independentReviewArtifactName(workflowRunId, workflowRunAttempt)
 
 export function independentReviewArtifactPayloadSha256(artifact = {}) {
   return createHash('sha256').update(canonicalJson(payloadCore(artifact)), 'utf8').digest('hex');
+}
+
+export function independentReviewFindingsArtifactPayloadSha256(artifact = {}) {
+  return createHash('sha256').update(canonicalJson(findingsPayloadCore(artifact)), 'utf8').digest('hex');
+}
+
+export function buildIndependentReviewFindingsArtifact(input = {}) {
+  const repository = text(input.repository);
+  const prNumber = strictPositiveInteger(input.prNumber);
+  const branch = text(input.branch);
+  const sourceHead = text(input.sourceHead).toLowerCase();
+  const baseSha = text(input.baseSha).toLowerCase();
+  const workflowRunId = strictPositiveInteger(input.workflowRunId);
+  const workflowRunAttempt = strictPositiveInteger(input.workflowRunAttempt);
+  const createdAtUtc = text(input.createdAtUtc || new Date().toISOString());
+  const sourceAnalysis = input.analysis && typeof input.analysis === 'object' && !Array.isArray(input.analysis)
+    ? input.analysis
+    : {};
+  const findings = Array.isArray(sourceAnalysis.findings) ? sourceAnalysis.findings : [];
+  if (!REPOSITORY_PATTERN.test(repository)
+      || !prNumber
+      || !BRANCH_PATTERN.test(branch)
+      || branch.includes('..')
+      || !SHA_PATTERN.test(sourceHead)
+      || !SHA_PATTERN.test(baseSha)
+      || !workflowRunId
+      || !workflowRunAttempt
+      || !EXPLICIT_TIMEZONE.test(createdAtUtc)
+      || !Number.isFinite(Date.parse(createdAtUtc))) {
+    throw new Error('Independent review findings artifact identity is invalid.');
+  }
+  if (sourceAnalysis.schemaVersion !== 'stephanos.independent-security-analysis.v1'
+      || sourceAnalysis.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_FINDINGS'
+      || sourceAnalysis.verdict !== 'findings'
+      || findings.length < 1
+      || findings.length > 100
+      || !Array.isArray(sourceAnalysis.proofRefs)
+      || sourceAnalysis.proofRefs.length < 1) {
+    throw new Error('Independent review findings artifact requires bounded findings analysis.');
+  }
+  const analysis = boundFindingsAnalysis(sourceAnalysis);
+  const core = {
+    schemaVersion: INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_SCHEMA_VERSION,
+    kind: INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_KIND,
+    artifactName: independentReviewArtifactName(workflowRunId, workflowRunAttempt),
+    artifactFile: INDEPENDENT_REVIEW_ARTIFACT_FILE,
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+    createdAtUtc,
+    analysis,
+  };
+  return Object.freeze({
+    ...core,
+    payloadSha256: independentReviewFindingsArtifactPayloadSha256(core),
+  });
 }
 
 export function buildIndependentReviewArtifact(input = {}) {

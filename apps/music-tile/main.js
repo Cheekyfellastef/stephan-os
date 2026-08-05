@@ -119,38 +119,77 @@ function renderPresencePanel() {
 }
 async function testAiRouteAction() {
   const operationGeneration = musicOperationGeneration;
-  setAiAction('Contacting Stephanos AI for smarter journey…'); emitPresenceEvent({ kind: 'music.ai_smarter_journey_started', severity: 'info', summary: 'AI smarter journey started', impact: 'Waiting for AI candidates.' }); state.aiSmarterJourney=[{id:`ai-loading-${Date.now()}`, title:'AI Smarter Journey', summary:'Contacting Stephanos AI for smarter journey…', badge:'loading'}]; renderAiSuggestions();
+  setAiAction('Contacting Stephanos AI for smarter journey…');
+  emitPresenceEvent({ kind: 'music.ai_smarter_journey_started', severity: 'info', summary: 'AI smarter journey started', impact: 'Waiting for AI candidates.' });
+  state.aiSmarterJourney = [{ id: `ai-loading-${Date.now()}`, title: 'AI Smarter Journey', summary: 'Contacting Stephanos AI for smarter journey…', badge: 'loading' }];
+  renderAiSuggestions();
   const result = await testMusicAiRoute();
   if (!isCurrentMusicOperation(operationGeneration)) return;
-  if (result.ok) {
-    setAiAction(`AI router ready. Test AI route succeeded (${result.status}).`, result.diagnostics);
-    emitPresenceEvent({ kind: 'music.ai_transport_ready', severity: 'info', summary: 'Music Tile AI router ready', impact: `AI transport reachable: status ${result.status}.`, suggestedAction: 'Use AI journey tools.' });
+  const routeUnavailable = result.status === 404 || result.diagnostics?.routeStatus === 'route_unavailable';
+  const routeReachable = result.diagnostics?.requestReachedBackend === true && !routeUnavailable;
+  if (routeReachable) {
+    const outcome = result.ok ? 'succeeded' : `reached the backend with status ${result.status}`;
+    setAiAction(`AI router reachable. Test AI route ${outcome}.`, result.diagnostics);
+    emitPresenceEvent({
+      kind: 'music.ai_transport_ready',
+      severity: result.ok ? 'info' : 'warning',
+      summary: 'Music Tile AI router reachable',
+      impact: `AI transport reached the canonical backend: status ${result.status}.`,
+      suggestedAction: result.ok ? 'Use AI journey tools.' : 'Inspect provider diagnostics; the route itself is reachable.',
+    });
   } else {
     setAiAction(`AI transport failed: ${result.failureReason || result.status || result.snippet}. Rule-based mode active.`, result.diagnostics);
     emitPresenceEvent({ kind: 'music.ai_route_unavailable', severity: 'warning', summary: 'Music Tile AI router unavailable', impact: 'AI journey building and interpretation degraded; rule-based mode remains active.', suggestedAction: 'Test or repair the Music AI bridge.' });
   }
 }
 
-
 function buildMusicAiStatusView(diagnostics = {}) {
   const status = getMusicAiStatus();
   const runtime = getMusicAiRuntimeDiagnostics();
   const lastStatus = diagnostics.lastStatus == null ? null : Number(diagnostics.lastStatus);
-  const lastError = String(diagnostics.lastError || '').trim();
+  const lastError = String(diagnostics.lastError || diagnostics.routeError || '').trim();
   const reached = diagnostics.requestReachedBackend;
   const responded = diagnostics.backendResponded;
   const responseMode = diagnostics.responseKind || 'n/a';
-  const providerUnknown = status.routeKind === 'unknown' || status.provider === 'unknown';
-  let statusKind = 'unknown'; let headline = 'AI transport status unknown. Press Test AI route.'; let badge='music-badge';
-  if ((lastStatus == null || Number.isNaN(lastStatus) || lastStatus <= 0) && reached !== true && !lastError) { statusKind='not-tested'; headline='AI transport not tested yet. Press Test AI route.'; badge='music-badge'; }
-  else if (lastError && (reached === false || lastStatus === 0)) { statusKind='network-error'; headline=`AI backend unreachable/network error. ${lastError}`; badge='music-badge music-badge--warning'; }
-  else if (lastStatus === 404) { statusKind='route-missing'; headline='AI route missing. 404 /api/ai/chat.'; badge='music-badge music-badge--warning'; }
-  else if (lastStatus === 405) { statusKind='method-mismatch'; headline='AI method mismatch: 405.'; badge='music-badge music-badge--warning'; }
-  else if (lastStatus === 400) { statusKind='payload-invalid'; headline='AI payload invalid: 400.'; badge='music-badge music-badge--warning'; }
-  else if (lastStatus >= 500) { statusKind='backend-error'; headline=`AI backend/provider error: ${lastStatus}.`; badge='music-badge music-badge--warning'; }
-  else if (lastStatus === 200 && responded === true) { statusKind = providerUnknown ? 'degraded' : 'ready'; headline = providerUnknown ? 'AI transport ready. Provider details unavailable in this tile.' : 'AI transport ready.'; badge='music-badge music-badge--success'; }
+  const requestedProvider = diagnostics.requestedProvider || 'unknown';
+  const selectedProvider = diagnostics.selectedProvider || 'unknown';
+  const actualProvider = diagnostics.actualProvider || 'unknown';
+  const actualModel = diagnostics.actualModel || 'unknown';
+  const fallbackUsed = diagnostics.fallbackUsed === true;
+  const fallbackReason = diagnostics.fallbackReason || 'none';
+  const routeStatus = diagnostics.routeStatus || 'unknown';
+  let statusKind = 'unknown'; let headline = 'AI transport status unknown. Press Test AI route.'; let badge = 'music-badge';
+  if ((lastStatus == null || Number.isNaN(lastStatus) || lastStatus <= 0) && reached !== true && !lastError) { statusKind = 'not-tested'; headline = 'AI transport not tested yet. Press Test AI route.'; badge = 'music-badge'; }
+  else if (lastError && (reached === false || lastStatus === 0)) { statusKind = 'network-error'; headline = `AI backend unreachable/network error. ${lastError}`; badge = 'music-badge music-badge--warning'; }
+  else if (routeStatus === 'route_unavailable' || lastStatus === 404) { statusKind = 'route-missing'; headline = `AI route unavailable. ${lastError || 'No canonical provider route is ready.'}`; badge = 'music-badge music-badge--warning'; }
+  else if (lastStatus === 405) { statusKind = 'method-mismatch'; headline = 'AI backend reached, but the method was rejected: 405.'; badge = 'music-badge music-badge--warning'; }
+  else if (lastStatus === 400) { statusKind = 'payload-invalid'; headline = 'AI backend reached, but the payload was rejected: 400.'; badge = 'music-badge music-badge--warning'; }
+  else if (lastStatus >= 500) { statusKind = 'backend-error'; headline = `AI backend reached; provider execution failed: ${lastStatus}.`; badge = 'music-badge music-badge--warning'; }
+  else if (responded === true) { statusKind = actualProvider === 'unknown' ? 'degraded' : 'ready'; headline = actualProvider === 'unknown' ? 'AI transport reachable. Execution provider was not reported.' : `AI ready — ${actualProvider}/${actualModel} answered${fallbackUsed ? ' via fallback' : ''}.`; badge = 'music-badge music-badge--success'; }
   if (responseMode === 'text-fallback') headline += ' Text fallback mode active.';
-  return { statusKind, headline, details:'Rule-based parser remains available.', badge, providerMetadataHelp:'The Music Tile can reach the AI backend, but this embedded tile cannot currently read the selected provider/model metadata. Provider details will appear when route truth is available.', shouldShowRuleFallback:true, diagnosticsRows:[`Endpoint: ${runtime.endpointUrl}`,`Backend base: ${runtime.backendBaseUrl}`,`Last HTTP status: ${lastStatus ?? 'n/a'}`,`Last error: ${lastError || 'none'}`,`Request reached backend: ${reached===true?'yes':reached===false?'no':'unknown'}`,`Backend responded: ${responded===true?'yes':responded===false?'no':'unknown'}`,`Response mode: ${responseMode}`,`Route/provider metadata: ${status.routeKind}/${status.provider}`] };
+  return {
+    statusKind,
+    headline,
+    details: 'Canonical router pool active; rule-based parser remains available. OpenClaw agents are a separate route.',
+    badge,
+    providerMetadataHelp: 'Requested, selected, and executed provider truth comes from the canonical Stephanos AI response. A fallback provider may answer when policy permits.',
+    shouldShowRuleFallback: true,
+    diagnosticsRows: [
+      `Endpoint: ${runtime.endpointUrl}`,
+      `Backend base: ${runtime.backendBaseUrl}`,
+      `Last HTTP status: ${lastStatus ?? 'n/a'}`,
+      `Last error: ${lastError || 'none'}`,
+      `Request reached backend: ${reached === true ? 'yes' : reached === false ? 'no' : 'unknown'}`,
+      `Backend responded: ${responded === true ? 'yes' : responded === false ? 'no' : 'unknown'}`,
+      `Response mode: ${responseMode}`,
+      `Canonical route status: ${routeStatus}`,
+      `Runtime route/provider: ${status.routeKind}/${status.provider}`,
+      `Requested provider: ${requestedProvider}`,
+      `Router-selected provider: ${selectedProvider}`,
+      `Executed provider/model: ${actualProvider}/${actualModel}`,
+      `Fallback used/reason: ${fallbackUsed ? 'yes' : 'no'} / ${fallbackReason}`,
+    ],
+  };
 }
 
 const state = loadState(); initStephanosSurfacePanels({ surfaceId: 'music-tile' }); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false }); refreshVerifiedSpotifyLinks(); void hydrateDurableConversationTeachings(); setInterval(() => { if (!document.hidden) refreshVerifiedSpotifyLinks(); }, SPOTIFY_LINK_FEED_POLL_MS);
@@ -158,14 +197,17 @@ const state = loadState(); initStephanosSurfacePanels({ surfaceId: 'music-tile' 
 function updateAiStatus(extra = {}) {
   if (!ui.aiStatusText) return;
   const view = buildMusicAiStatusView(extra);
-  const providerMetaBadge = view.statusKind === 'degraded' ? '<span class="music-badge" title="The Music Tile can reach the AI backend, but this embedded tile cannot currently read the selected provider/model metadata.">provider_metadata_unavailable · info</span>' : '';
-  ui.aiStatusText.innerHTML = `<span class="${view.badge}">${view.statusKind}</span> ${view.headline} ${view.details} ${providerMetaBadge} ${view.providerMetadataHelp ? `<span class="meta" title="${view.providerMetadataHelp}">ⓘ</span>` : ''}`;
-  if (ui.aiLastAction) ui.aiLastAction.innerHTML = `<details class="music-diagnostics"><summary>Show diagnostics</summary>${view.diagnosticsRows.map((lineText) => `<div class="meta">${lineText}</div>`).join('')}</details>`;
+  const providerMetaBadge = view.statusKind === 'degraded'
+    ? '<span class="music-badge" title="The backend response did not report the executed provider/model.">execution_metadata_unavailable · info</span>'
+    : '';
+  ui.aiStatusText.innerHTML = `<span class="${view.badge}">${escapeHtml(view.statusKind)}</span> ${escapeHtml(view.headline)} ${escapeHtml(view.details)} ${providerMetaBadge} ${view.providerMetadataHelp ? `<span class="meta" title="${escapeHtml(view.providerMetadataHelp)}">ⓘ</span>` : ''}`;
+  if (ui.aiLastAction) ui.aiLastAction.innerHTML = `<details class="music-diagnostics"><summary>Show diagnostics</summary>${view.diagnosticsRows.map((lineText) => `<div class="meta">${escapeHtml(lineText)}</div>`).join('')}</details>`;
 }
+
 function setAiAction(text, diagnostics = null) { if (ui.status) ui.status.textContent = text; updateAiStatus(diagnostics || {}); }
 
 function wireIntelligenceExperience() {
-  intelligenceUi.surpriseBtn?.addEventListener('click', startSurpriseJourney);
+  // Surprise Me is governed by freshJourneyController's single capture path.
   intelligenceUi.nativeSearchForm?.addEventListener('submit', runNativeCatalogSearch);
   intelligenceUi.conversationForm?.addEventListener('submit', runMusicConversation);
   intelligenceUi.conversationInput?.addEventListener('keydown', (event) => {
@@ -1179,7 +1221,7 @@ let integrationSetupSnapshot = null;
 async function refreshIntegrationSetupStatus({ announce = true } = {}) { try { const response = await fetch('/api/setup/integrations'); const payload = await response.json(); const spotify = (payload.integrations || []).find((row) => row.id === 'spotify-catalog'); integrationSetupSnapshot = spotify || null; if (!spotify) return; const missing = Array.isArray(spotify.missingSecrets) ? spotify.missingSecrets : []; const missingLabel = missing.length ? missing.join(', ') : 'none'; if (ui.assistedSetupStatus) ui.assistedSetupStatus.innerHTML = `Spotify Catalogue Search · <strong>${spotify.status}</strong><br/>SPOTIFY_CLIENT_ID: ${spotify.requiredSecretPresence?.SPOTIFY_CLIENT_ID ? 'present' : 'missing'}<br/>SPOTIFY_CLIENT_SECRET: ${spotify.requiredSecretPresence?.SPOTIFY_CLIENT_SECRET ? 'present' : 'missing'}<br/>What it enables: Resolve Spotify links automatically for Music Tile.`; if (ui.assistedSetupPlan) ui.assistedSetupPlan.textContent = `Next action: ${spotify.nextAction}
 Missing secrets: ${missingLabel}`; if (announce) { const kind = !spotify.configured ? 'setup.spotify_catalog_missing' : 'setup.spotify_catalog_configured'; emitPresenceEvent({ kind, severity: spotify.configured ? 'info' : 'warning', summary: spotify.configured ? 'Spotify catalog setup configured' : 'Spotify catalog setup missing', impact: spotify.nextAction, suggestedAction: spotify.nextAction }); } } catch { if (ui.assistedSetupStatus) ui.assistedSetupStatus.textContent = 'Assisted Setup unavailable. Check backend /api/setup/integrations.'; }}
 
-function wireEvents() { ui.buildBtn?.addEventListener('click', buildJourney); ui.startBtn?.addEventListener('click', startJourney); ui.resetBtn?.addEventListener('click', resetAll); ui.resolveAllBtn?.addEventListener('click', resolveAllMissingLinks); ui.resolveAllAiBtn?.addEventListener('click', resolveAllMissingLinksAiAssisted); ui.resolveArtistSpotifyBtn?.addEventListener('click', resolveArtistOnSpotify); ui.jumpAiSmarterJourneyBtn?.addEventListener('click',()=>ui.aiSmarterJourneyPanel?.scrollIntoView({behavior:'smooth',block:'start'})); ui.addTraitBtn?.addEventListener('click', addCustomTrait); ui.aiBtn?.addEventListener('click', () => { ui.status.textContent = 'AI interpretation not connected yet. Rule-based interpretation applied.'; }); ui.aiBuildJourneyBtn?.addEventListener('click', buildJourneyAiAssisted); ui.synthesiseTasteDnaBtn?.addEventListener('click', synthesiseTasteDnaWithAi); ui.buildImmersionSessionBtn?.addEventListener('click', buildImmersionSessionWithAi); ui.aiSummariseDnaBtn?.addEventListener('click', summariseDnaWithAi); ui.aiSuggestTraitsBtn?.addEventListener('click', suggestTraitsWithAi); ui.testAiRouteBtn?.addEventListener('click', testAiRouteAction); ui.promoteMemoryBtn?.addEventListener('click', promoteTasteMemory); ui.addTrackBtn?.addEventListener('click', addTrackByUrl); ui.copyAiSuggestionsBtn?.addEventListener('click', ()=>copyTextAction('Copied AI Suggestions.', JSON.stringify(state.aiSuggestions || [], null, 2))); ui.copyJourneySummaryBtn?.addEventListener('click', ()=>copyTextAction('Copied Journey Summary.', JSON.stringify({ candidates: state.candidates || [], listeningDeck: state.listeningDeck || [] }, null, 2))); ui.exportJourneyJsonBtn?.addEventListener('click', ()=>copyTextAction('Exported Journey JSON.', JSON.stringify({ controls: {}, tasteDNA: state.tasteDNA, currentJourney: { candidates: state.candidates || [] }, aiSuggestions: state.aiSuggestions || [], immersionSession: state.immersionSession || state.aiImmersionSession || null, listeningQueue: state.listeningDeck || [], timestamp: new Date().toISOString() }, null, 2))); ui.copyCodexPromptBtn?.addEventListener('click', ()=>copyTextAction('Copied Codex Prompt.', `Improve music journey.\nTaste DNA:${JSON.stringify(state.tasteDNA)}\nJourney:${JSON.stringify(state.candidates || [])}`)); ui.setupViewStepsBtn?.addEventListener('click', ()=>{ ui.status.textContent = 'View setup steps: create Spotify app credentials, add backend .env entries, restart backend, then retest.'; }); ui.setupPrepareEnvBtn?.addEventListener('click', ()=>{ const block = 'SPOTIFY_CLIENT_ID=\nSPOTIFY_CLIENT_SECRET='; ui.assistedSetupPlan && (ui.assistedSetupPlan.textContent = `Copy into stephanos-server/.env (operator approval required):\n${block}\nRestart backend after saving.`); emitPresenceEvent({ kind: 'setup.secret_write_requires_approval', severity: 'warning', summary: 'Secret write requires operator approval', impact: 'Guided mode only: copy .env block manually.', requiresApproval: true }); }); ui.setupMarkAddedBtn?.addEventListener('click', ()=>refreshIntegrationSetupStatus({ announce: true })); ui.setupRetestBtn?.addEventListener('click', ()=>refreshIntegrationSetupStatus({ announce: true })); ui.setupTestSpotifyBtn?.addEventListener('click', async ()=>{ try { const r = await fetch('/api/music/spotify/search?q=Sevdaliza%20Save%20Me&type=track&limit=1'); const p = await r.json(); if (p?.configured && !p?.error) { emitPresenceEvent({ kind: 'setup.spotify_catalog_test_passed', severity: 'info', summary: 'Spotify catalog resolver test passed', impact: 'Route returned configured response.' }); ui.status.textContent = 'Spotify resolver test passed.'; } else { emitPresenceEvent({ kind: 'setup.spotify_catalog_test_failed', severity: 'warning', summary: 'Spotify catalog resolver test failed', impact: p?.error || 'Unknown Spotify resolver issue.' }); ui.status.textContent = p?.error || 'Spotify resolver test failed.'; } } catch (error) { emitPresenceEvent({ kind: 'setup.spotify_catalog_test_failed', severity: 'warning', summary: 'Spotify catalog resolver test failed', impact: String(error?.message || error) }); } }); ui.setupAskCodexBtn?.addEventListener('click', ()=>{ const mission = `Mission: Enable Spotify Catalogue Search for Music Tile
+function wireEvents() { ui.resetBtn?.addEventListener('click', resetAll); ui.resolveAllBtn?.addEventListener('click', resolveAllMissingLinks); ui.resolveAllAiBtn?.addEventListener('click', resolveAllMissingLinksAiAssisted); ui.resolveArtistSpotifyBtn?.addEventListener('click', resolveArtistOnSpotify); ui.jumpAiSmarterJourneyBtn?.addEventListener('click',()=>ui.aiSmarterJourneyPanel?.scrollIntoView({behavior:'smooth',block:'start'})); ui.addTraitBtn?.addEventListener('click', addCustomTrait); ui.aiBtn?.addEventListener('click', () => { ui.status.textContent = 'AI interpretation not connected yet. Rule-based interpretation applied.'; }); ui.aiBuildJourneyBtn?.addEventListener('click', buildJourneyAiAssisted); ui.synthesiseTasteDnaBtn?.addEventListener('click', synthesiseTasteDnaWithAi); ui.buildImmersionSessionBtn?.addEventListener('click', buildImmersionSessionWithAi); ui.aiSummariseDnaBtn?.addEventListener('click', summariseDnaWithAi); ui.aiSuggestTraitsBtn?.addEventListener('click', suggestTraitsWithAi); ui.testAiRouteBtn?.addEventListener('click', testAiRouteAction); ui.promoteMemoryBtn?.addEventListener('click', promoteTasteMemory); ui.addTrackBtn?.addEventListener('click', addTrackByUrl); ui.copyAiSuggestionsBtn?.addEventListener('click', ()=>copyTextAction('Copied AI Suggestions.', JSON.stringify(state.aiSuggestions || [], null, 2))); ui.copyJourneySummaryBtn?.addEventListener('click', ()=>copyTextAction('Copied Journey Summary.', JSON.stringify({ candidates: state.candidates || [], listeningDeck: state.listeningDeck || [] }, null, 2))); ui.exportJourneyJsonBtn?.addEventListener('click', ()=>copyTextAction('Exported Journey JSON.', JSON.stringify({ controls: {}, tasteDNA: state.tasteDNA, currentJourney: { candidates: state.candidates || [] }, aiSuggestions: state.aiSuggestions || [], immersionSession: state.immersionSession || state.aiImmersionSession || null, listeningQueue: state.listeningDeck || [], timestamp: new Date().toISOString() }, null, 2))); ui.copyCodexPromptBtn?.addEventListener('click', ()=>copyTextAction('Copied Codex Prompt.', `Improve music journey.\nTaste DNA:${JSON.stringify(state.tasteDNA)}\nJourney:${JSON.stringify(state.candidates || [])}`)); ui.setupViewStepsBtn?.addEventListener('click', ()=>{ ui.status.textContent = 'View setup steps: create Spotify app credentials, add backend .env entries, restart backend, then retest.'; }); ui.setupPrepareEnvBtn?.addEventListener('click', ()=>{ const block = 'SPOTIFY_CLIENT_ID=\nSPOTIFY_CLIENT_SECRET='; ui.assistedSetupPlan && (ui.assistedSetupPlan.textContent = `Copy into stephanos-server/.env (operator approval required):\n${block}\nRestart backend after saving.`); emitPresenceEvent({ kind: 'setup.secret_write_requires_approval', severity: 'warning', summary: 'Secret write requires operator approval', impact: 'Guided mode only: copy .env block manually.', requiresApproval: true }); }); ui.setupMarkAddedBtn?.addEventListener('click', ()=>refreshIntegrationSetupStatus({ announce: true })); ui.setupRetestBtn?.addEventListener('click', ()=>refreshIntegrationSetupStatus({ announce: true })); ui.setupTestSpotifyBtn?.addEventListener('click', async ()=>{ try { const r = await fetch('/api/music/spotify/search?q=Sevdaliza%20Save%20Me&type=track&limit=1'); const p = await r.json(); if (p?.configured && !p?.error) { emitPresenceEvent({ kind: 'setup.spotify_catalog_test_passed', severity: 'info', summary: 'Spotify catalog resolver test passed', impact: 'Route returned configured response.' }); ui.status.textContent = 'Spotify resolver test passed.'; } else { emitPresenceEvent({ kind: 'setup.spotify_catalog_test_failed', severity: 'warning', summary: 'Spotify catalog resolver test failed', impact: p?.error || 'Unknown Spotify resolver issue.' }); ui.status.textContent = p?.error || 'Spotify resolver test failed.'; } } catch (error) { emitPresenceEvent({ kind: 'setup.spotify_catalog_test_failed', severity: 'warning', summary: 'Spotify catalog resolver test failed', impact: String(error?.message || error) }); } }); ui.setupAskCodexBtn?.addEventListener('click', ()=>{ const mission = `Mission: Enable Spotify Catalogue Search for Music Tile
 1) confirm backend route exists
 2) confirm env vars present
 3) guide operator credentials
@@ -1512,7 +1554,93 @@ function resolveArtistOnSpotify() { const artists = parseArtists(ui.artistInput?
 function parseArtists(raw) { return raw.split(',').map((a) => a.trim()).filter(Boolean).map((name) => normalizeArtistAlias(name)); }
 function normalizeArtistAlias(name = '') { const lower = String(name || '').trim().toLowerCase(); return lower === 'y do i' || lower === 'ydoi' ? 'Y do I' : String(name || '').trim(); }
 function initialTasteDNA() { const map = {}; DEFAULT_POSITIVE_TRAITS.forEach((name)=>{ map[name] = { weight: 1, polarity: 'positive', category: 'core', contributions: 0, custom: false, updatedAt: '' }; }); DEFAULT_NEGATIVE_TRAITS.forEach((name)=>{ map[name] = { weight: 1, polarity: 'negative', category: name === 'too harsh' ? 'banned' : 'avoid', contributions: 0, custom: false, updatedAt: '' }; }); return map; }
-function loadState() { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); return { candidates: Array.isArray(saved.candidates) ? saved.candidates : [], listeningDeck: Array.isArray(saved.listeningDeck) ? saved.listeningDeck : [], ratings: saved.ratings && typeof saved.ratings === 'object' ? saved.ratings : {}, tags: saved.tags && typeof saved.tags === 'object' ? saved.tags : {}, tasteDNA: saved.tasteDNA && typeof saved.tasteDNA === 'object' ? saved.tasteDNA : initialTasteDNA(), feedbackHistory: Array.isArray(saved.feedbackHistory) ? saved.feedbackHistory : [], trackFeedback: saved.trackFeedback && typeof saved.trackFeedback === 'object' ? saved.trackFeedback : {}, linkMessages: saved.linkMessages && typeof saved.linkMessages === 'object' ? saved.linkMessages : {}, appliedSpotifyLinkRequestIds: Array.isArray(saved.appliedSpotifyLinkRequestIds) ? saved.appliedSpotifyLinkRequestIds.slice(-200) : [], lastFeedbackInterpreted: saved.lastFeedbackInterpreted || null, aiSuggestions: Array.isArray(saved.aiSuggestions) ? saved.aiSuggestions : [], aiSmarterJourney: Array.isArray(saved.aiSmarterJourney) ? saved.aiSmarterJourney : [], pendingTasteDnaChanges: Array.isArray(saved.pendingTasteDnaChanges) ? saved.pendingTasteDnaChanges : [], appliedTasteDnaChanges: Array.isArray(saved.appliedTasteDnaChanges) ? saved.appliedTasteDnaChanges : [], immersionSession: saved.immersionSession && typeof saved.immersionSession === 'object' ? saved.immersionSession : null, recentlyShownCandidateIds: Array.isArray(saved.recentlyShownCandidateIds) ? saved.recentlyShownCandidateIds : [], sessionCounter: Number(saved.sessionCounter || 0), lastDiscoveryMeta: saved.lastDiscoveryMeta || null, musicConversationTeachings: retainConversationTeachingHistory(saved.musicConversationTeachings, 100) }; }
+function loadState() {
+  let saved = {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    saved = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    saved = {};
+  }
+  const candidates = Array.isArray(saved.candidates) ? saved.candidates : [];
+  const originalDeck = Array.isArray(saved.listeningDeck) ? saved.listeningDeck : [];
+  const priorSummary = saved.lastFreshJourneySummary && typeof saved.lastFreshJourneySummary === 'object'
+    ? saved.lastFreshJourneySummary
+    : null;
+  const legacyFreshCount = Math.max(0, Number(priorSummary?.freshCount || 0));
+  const legacyAddedCount = Math.max(0, Number(priorSummary?.addedCount || 0));
+  const hasCanonicalActiveJourney = Array.isArray(saved.activeJourneyTrackIds)
+    && saved.activeJourneyTrackIds.length > 0;
+  const shouldRecoverTruncatedJourney = !hasCanonicalActiveJourney
+    && legacyFreshCount >= 6
+    && legacyAddedCount <= 3
+    && candidates.length > originalDeck.length;
+  let listeningDeck = originalDeck;
+  let activeJourneyTrackIds = Array.isArray(saved.activeJourneyTrackIds)
+    ? saved.activeJourneyTrackIds.map((id) => String(id || '')).filter(Boolean).slice(0, 20)
+    : [];
+  if (shouldRecoverTruncatedJourney) {
+    const activeTarget = Math.min(10, legacyFreshCount, candidates.length);
+    const seen = new Set();
+    listeningDeck = [...candidates.slice(0, activeTarget), ...originalDeck].filter((track) => {
+      const key = String(track?.id || track?.universalMusicId || '').trim();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 20);
+    activeJourneyTrackIds = candidates.slice(0, activeTarget)
+      .map((track) => String(track?.id || track?.universalMusicId || '').trim())
+      .filter(Boolean);
+  }
+  const nextState = {
+    ...saved,
+    candidates,
+    listeningDeck,
+    activeJourneyTrackIds,
+    ratings: saved.ratings && typeof saved.ratings === 'object' ? saved.ratings : {},
+    tags: saved.tags && typeof saved.tags === 'object' ? saved.tags : {},
+    tasteDNA: saved.tasteDNA && typeof saved.tasteDNA === 'object' ? saved.tasteDNA : initialTasteDNA(),
+    feedbackHistory: Array.isArray(saved.feedbackHistory) ? saved.feedbackHistory : [],
+    musicConversationTeachings: retainConversationTeachingHistory(saved.musicConversationTeachings, 100),
+    trackFeedback: saved.trackFeedback && typeof saved.trackFeedback === 'object' ? saved.trackFeedback : {},
+    linkMessages: saved.linkMessages && typeof saved.linkMessages === 'object' ? saved.linkMessages : {},
+    appliedSpotifyLinkRequestIds: Array.isArray(saved.appliedSpotifyLinkRequestIds) ? saved.appliedSpotifyLinkRequestIds.slice(-200) : [],
+    lastFeedbackInterpreted: saved.lastFeedbackInterpreted || null,
+    aiSuggestions: Array.isArray(saved.aiSuggestions) ? saved.aiSuggestions : [],
+    aiSmarterJourney: Array.isArray(saved.aiSmarterJourney) ? saved.aiSmarterJourney : [],
+    pendingTasteDnaChanges: Array.isArray(saved.pendingTasteDnaChanges) ? saved.pendingTasteDnaChanges : [],
+    appliedTasteDnaChanges: Array.isArray(saved.appliedTasteDnaChanges) ? saved.appliedTasteDnaChanges : [],
+    immersionSession: saved.immersionSession && typeof saved.immersionSession === 'object' ? saved.immersionSession : null,
+    recentlyShownCandidateIds: Array.isArray(saved.recentlyShownCandidateIds) ? saved.recentlyShownCandidateIds : [],
+    journeyHistoryKeys: Array.isArray(saved.journeyHistoryKeys) ? saved.journeyHistoryKeys : [],
+    sessionCounter: Number(saved.sessionCounter || 0),
+    lastDiscoveryMeta: saved.lastDiscoveryMeta || null,
+    discoveryPipeline: saved.discoveryPipeline && typeof saved.discoveryPipeline === 'object'
+      ? saved.discoveryPipeline
+      : null,
+    aiCandidateAudit: Array.isArray(saved.aiCandidateAudit) ? saved.aiCandidateAudit : [],
+    lastFreshJourneySummary: shouldRecoverTruncatedJourney
+      ? {
+          ...priorSummary,
+          schemaVersion: 2,
+          activeJourneyCount: activeJourneyTrackIds.length,
+          addedCount: activeJourneyTrackIds.length,
+          roomCount: listeningDeck.length,
+          preservedCount: Math.max(0, listeningDeck.length - activeJourneyTrackIds.length),
+          legacyTruncatedJourneyRecovered: true,
+        }
+      : priorSummary,
+  };
+  if (shouldRecoverTruncatedJourney) {
+    nextState.legacyTruncatedJourneyRecoveredAt = new Date().toISOString();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    } catch {
+      // Rendering the repaired in-memory journey is still safer than collapsing back to three cards.
+    }
+  }
+  return nextState;
+}
 function saveState() { logBuildJourney('saveState:start'); localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); logBuildJourney('saveState:end'); }
 
 function normalizedConnectorIdentity(value = '') { return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }

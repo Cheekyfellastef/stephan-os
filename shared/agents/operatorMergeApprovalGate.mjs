@@ -734,6 +734,24 @@ export function validateExactHeadWorkflowRuns(runs = [], options = {}) {
   });
 }
 
+export function exactHeadWorkflowFailureIsTerminal(verdict = {}) {
+  const evidenceByName = new Map((Array.isArray(verdict?.evidence) ? verdict.evidence : []).map((item) => [
+    text(item?.name),
+    item,
+  ]));
+  return (Array.isArray(verdict?.blockers) ? verdict.blockers : []).some((blocker) => {
+    const normalized = text(blocker);
+    if (normalized.startsWith('missing-workflow:')) return false;
+    if (normalized.startsWith('workflow-not-green:')) {
+      const name = normalized.slice('workflow-not-green:'.length);
+      const evidence = evidenceByName.get(name);
+      return text(evidence?.status).toLowerCase() === 'completed'
+        && text(evidence?.conclusion).toLowerCase() !== 'success';
+    }
+    return true;
+  });
+}
+
 export function analyzeIndependentSecurityReview(input = {}) {
   const changedFiles = (Array.isArray(input.changedFiles) ? input.changedFiles : [])
     .flatMap(changedFilePaths)

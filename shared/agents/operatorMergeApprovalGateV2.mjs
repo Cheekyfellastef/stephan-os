@@ -7,6 +7,7 @@ export {
   REQUIRED_EXACT_HEAD_WORKFLOW_IDENTITIES,
   bindRequiredExactHeadWorkflowIdentities,
   buildProtectedSecurityReviewReceipt,
+  exactHeadWorkflowFailureIsTerminal,
   isApprovalBoundaryBootstrapAnalysis,
   validateExactHeadWorkflowRuns,
 } from './operatorMergeApprovalGate.mjs';
