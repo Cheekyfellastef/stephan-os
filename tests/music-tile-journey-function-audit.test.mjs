@@ -47,6 +47,8 @@ test('source-limited journey exposes every available unseen track rather than co
 
 test('all user journey entrances converge on one controller and legacy duplicate listeners are absent', () => {
   assert.match(controllerSource, /#start-journey-btn, #surprise-me-btn, #build-journey-btn/);
+  assert.match(controllerSource, /artist \|\| getFreshJourneySeedArtist\(storage\)/);
+  assert.match(controllerSource, /const artist = getFreshJourneySeedArtist\(\);/);
   assert.doesNotMatch(mainSource, /surpriseBtn\?\.addEventListener\('click', startSurpriseJourney\)/);
   assert.doesNotMatch(mainSource, /ui\.buildBtn\?\.addEventListener\('click', buildJourney\)/);
   assert.doesNotMatch(mainSource, /ui\.startBtn\?\.addEventListener\('click', startJourney\)/);

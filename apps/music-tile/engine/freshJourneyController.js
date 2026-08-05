@@ -299,7 +299,7 @@ export async function startFreshJourney({
     return { ok: false, reason: 'candidate-builder-unavailable' };
   }
   const normalizedArtist = String(
-    artist || globalThis.document?.getElementById('artist-input')?.value || '',
+    artist || getFreshJourneySeedArtist(storage),
   ).trim();
   if (!normalizedArtist) {
     setStatus('Enter an artist or creative direction before starting a new journey.');
@@ -535,9 +535,7 @@ export function installFreshJourneyController({ buildCandidates } = {}) {
     journeyInFlight = true;
     const restoreButton = beginJourneyButtonBusy(target);
     setStatus('Searching unseen local and live catalogue candidates…');
-    const artist = target.id === 'surprise-me-btn'
-      ? getFreshJourneySeedArtist()
-      : undefined;
+    const artist = getFreshJourneySeedArtist();
     void startFreshJourney({ buildCandidates, artist }).finally(() => {
       journeyInFlight = false;
       restoreButton();

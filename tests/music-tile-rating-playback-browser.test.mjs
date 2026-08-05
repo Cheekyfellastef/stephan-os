@@ -365,6 +365,7 @@ test('iPad-width complete journey renders every fresh track and Continue changes
       });
     });
     await page.addInitScript(({ key }) => {
+      if (localStorage.getItem(key)) return;
       localStorage.setItem(key, JSON.stringify({
         candidates: [{
           id: 'old-candidate',
@@ -395,7 +396,7 @@ test('iPad-width complete journey renders every fresh track and Continue changes
       && Boolean(document.getElementById('continue-journey-btn'))
     ));
     await page.fill('#artist-input', 'Anyma');
-    await page.click('#build-journey-btn');
+    await page.click('#start-journey-btn');
     await page.waitForFunction(() => (
       performance.getEntriesByType('navigation')[0]?.type === 'reload'
       && document.querySelectorAll('#listening-deck > .player-deck-card').length >= 10
