@@ -45,7 +45,13 @@ test('mailbox accepts only exact bounded protected merge evidence', () => {
     now: new Date('2026-08-05T16:30:00.000Z'),
   });
   assert.equal(accepted.ok, true);
-  for (const patch of [{ expectedBase: 'bad' }, { mergeApprovalToken: 'wrong' }, { executable: 'gh.exe' }]) {
+  for (const patch of [
+    { expectedBase: 'bad' },
+    { mergeApprovalToken: 'wrong' },
+    { reviewMode: 'clean-independent' },
+    { reviewFindingCode: 'different-finding' },
+    { executable: 'gh.exe' },
+  ]) {
     const rejected = validateBattleBridgeGitHubCommand({ ...command, ...patch }, {
       authorLogin: BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR,
       now: new Date('2026-08-05T16:30:00.000Z'),
