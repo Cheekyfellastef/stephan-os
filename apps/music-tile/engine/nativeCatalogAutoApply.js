@@ -219,9 +219,11 @@ function updateTrackArtwork(card, track) {
   const image = panel.querySelector('img');
   const title = panel.querySelector('[data-catalog-artwork-title]');
   if (!image || !title) return false;
-  image.src = artworkUrl;
-  image.alt = 'Artwork for ' + String(track.title || track.name || 'this track');
-  title.textContent = String(track.title || track.name || 'Unknown track') + ' · ' + String(track.artist || 'Unknown artist');
+  const nextAlt = 'Artwork for ' + String(track.title || track.name || 'this track');
+  const nextTitle = String(track.title || track.name || 'Unknown track') + ' · ' + String(track.artist || 'Unknown artist');
+  if (image.getAttribute('src') !== artworkUrl) image.src = artworkUrl;
+  if (image.alt !== nextAlt) image.alt = nextAlt;
+  if (title.textContent !== nextTitle) title.textContent = nextTitle;
   return true;
 }
 
@@ -467,11 +469,22 @@ function installHydrationObserver() {
   const deck = document.getElementById('listening-deck');
   if (!deck) return;
   observerInstalled = true;
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((records) => {
+    const deckStructureChanged = records.some((record) => {
+      const changedNodes = [
+        ...Array.from(record.addedNodes || []),
+        ...Array.from(record.removedNodes || []),
+      ];
+      return changedNodes.some((node) => (
+        node?.nodeType === 1
+        && (node.matches?.('.player-deck-card') || node.querySelector?.('.player-deck-card'))
+      ));
+    });
+    if (!deckStructureChanged) return;
     queueHydration();
     queueAutomaticResolution();
   });
-  observer.observe(deck, { childList: true, subtree: true });
+  observer.observe(deck, { childList: true, subtree: false });
   queueHydration();
   queueAutomaticResolution();
 }

@@ -15,6 +15,9 @@ test('unresolved Listening Room cards self-resolve without manual catalogue inte
   assert.match(autoApply, /AUTO_RESOLVE_TIMEOUT_MS = 8000/);
   assert.match(autoApply, /queueAutomaticResolution\(\)/);
   assert.match(autoApply, /if \(typeof document !== 'undefined'\) announceAppliedTrack/);
+  assert.match(autoApply, /observer\.observe\(deck, \{ childList: true, subtree: false \}\)/);
+  assert.match(autoApply, /if \(title\.textContent !== nextTitle\) title\.textContent = nextTitle/);
+  assert.doesNotMatch(autoApply, /observer\.observe\(deck, \{ childList: true, subtree: true \}\)/);
 });
 
 test('Spotify artwork remains trusted, persisted and separate from playback verification', () => {
