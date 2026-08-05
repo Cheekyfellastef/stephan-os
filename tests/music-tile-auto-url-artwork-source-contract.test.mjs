@@ -34,4 +34,5 @@ test('real iPad-width browser proof requires no search click and preserves card 
   assert.match(browserProof, /storedFeedback: 'Keep this\.'/);
   assert.match(browserProof, /iframeCount: 0/);
   assert.match(browserProof, /assert\.equal\(catalogRequests, 1\)/);
+  assert.match(browserProof, /AUTO_URL_ARTWORK_DIAGNOSTIC=/);
 });
