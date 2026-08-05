@@ -46,17 +46,13 @@ jobs:
 
           controller_path = Path('apps/music-tile/engine/freshJourneyController.js')
           controller_source = controller_path.read_text(encoding='utf-8')
-          artist_before = """  const normalizedArtist = String(
-            artist || globalThis.document?.getElementById('artist-input')?.value || '',
-          ).trim();"""
-          artist_after = "  const normalizedArtist = String(artist || getFreshJourneySeedArtist(storage)).trim();"
+          artist_before = "artist || globalThis.document?.getElementById('artist-input')?.value || ''"
+          artist_after = "artist || getFreshJourneySeedArtist(storage)"
           if controller_source.count(artist_before) != 1:
-              raise SystemExit(f'Expected one direct artist-input normalization block, found {controller_source.count(artist_before)}')
+              raise SystemExit(f'Expected one direct artist-input token, found {controller_source.count(artist_before)}')
           controller_source = controller_source.replace(artist_before, artist_after)
 
-          click_before = """    const artist = target.id === 'surprise-me-btn'
-              ? getFreshJourneySeedArtist()
-              : undefined;"""
+          click_before = "    const artist = target.id === 'surprise-me-btn'\n      ? getFreshJourneySeedArtist()\n      : undefined;"
           click_after = "    const artist = getFreshJourneySeedArtist();"
           if controller_source.count(click_before) != 1:
               raise SystemExit(f'Expected one surprise-only seed block, found {controller_source.count(click_before)}')
@@ -65,12 +61,8 @@ jobs:
 
           audit_path = Path('tests/music-tile-journey-function-audit.test.mjs')
           audit_source = audit_path.read_text(encoding='utf-8')
-          audit_before = """  assert.match(controllerSource, /#start-journey-btn, #surprise-me-btn, #build-journey-btn/);
-          assert.doesNotMatch(mainSource, /surpriseBtn\\?\\.addEventListener\\('click', startSurpriseJourney\\)/);"""
-          audit_after = """  assert.match(controllerSource, /#start-journey-btn, #surprise-me-btn, #build-journey-btn/);
-          assert.match(controllerSource, /artist \\|\\| getFreshJourneySeedArtist\\(storage\\)/);
-          assert.match(controllerSource, /const artist = getFreshJourneySeedArtist\\(\\);/);
-          assert.doesNotMatch(mainSource, /surpriseBtn\\?\\.addEventListener\\('click', startSurpriseJourney\\)/);"""
+          audit_before = "  assert.match(controllerSource, /#start-journey-btn, #surprise-me-btn, #build-journey-btn/);"
+          audit_after = audit_before + "\n  assert.match(controllerSource, /artist \\|\\| getFreshJourneySeedArtist\\(storage\\)/);\n  assert.match(controllerSource, /const artist = getFreshJourneySeedArtist\\(\\);/);"
           if audit_source.count(audit_before) != 1:
               raise SystemExit(f'Expected one journey entrance assertion anchor, found {audit_source.count(audit_before)}')
           audit_path.write_text(audit_source.replace(audit_before, audit_after), encoding='utf-8')
