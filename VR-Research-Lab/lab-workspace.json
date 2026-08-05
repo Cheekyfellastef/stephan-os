@@ -1,10 +1,12 @@
 {
-  "schemaVersion": "stephanos.vr-research-lab.workspace.v2",
-  "updatedAt": "2026-08-03T14:15:00Z",
+  "schemaVersion": "stephanos.vr-research-lab.workspace.v3",
+  "updatedAt": "2026-08-05T20:58:00+01:00",
   "mission": "Grow a compounding flat-to-VR capability factory: turn verified external knowledge, Battle Bridge proof and Stephan's headset judgement into reusable methods that accelerate Starfield VR and every later conversion.",
   "overview": [
-    "The Lab now coordinates an 18-source VR knowledge stack rather than a small collection of game notes. Every source retains provenance, licence, freshness, confidence and reuse boundaries.",
+    "The Lab now coordinates a 22-source VR knowledge stack rather than a small collection of game notes. Every source retains provenance, licence, freshness, confidence and reuse boundaries.",
     "Starfield VR is the flagship proving ground. The current path combines Starfield and Creation Kit authoring evidence, Mutar/OpenXR implementation evidence, Skyrim VR parity references and exact Quest 3 Battle Bridge proof.",
+    "CyberpunkVR Port adds a current open implementation reference for genuine per-eye engine rendering, OpenXR, embodiment, tracked hands, physical weapons, holsters, stereo HUD and in-headset diagnostics.",
+    "The Witcher 3 route adds a different conversion grammar: compose a first-person camera adapter, stereo presentation layer and creator headset evidence when a native engine route is unavailable.",
     "Meta Air Link over Wi-Fi is Stephan's primary PCVR transport. Virtual Desktop is a separately proven alternative; wired Meta Link is unavailable and must never be requested as a fallback.",
     "A resistant game is no longer classified as impossible. The route ladder continues through engine adapters, title-specific adapters, external reconstructed stereo, spatial-screen presentation and lawful independent recreation.",
     "Compounding agency is the governing measure: each experiment should leave reusable interfaces, tests, methods, evidence and licence freedom behind."
@@ -90,6 +92,18 @@
       "focus": "Mutar OpenXR baseline, exact Battle Bridge identity, Creation Kit attachment points, dialogue presentation, cutscene theatre, HUD, ships, performance and continuous capability transplantation."
     },
     {
+      "name": "Cyberpunk 2077 VR",
+      "priority": "P1",
+      "mode": "Open source title-specific implementation and embodiment reference",
+      "focus": "Genuine second-eye engine rendering, modular OpenXR stereo, body and hand IK, physical weapon alignment, motion melee, holsters, HUD depth and diagnostic instrumentation."
+    },
+    {
+      "name": "The Witcher 3 VR",
+      "priority": "P1",
+      "mode": "Composed first-person camera plus stereo presentation route",
+      "focus": "Exact game/mod/profile versions, combat and horseback camera policy, dialogue and cutscene fallback, clipping, comfort and creator-to-local evidence progression."
+    },
+    {
       "name": "Resistant Flat Games",
       "priority": "P0",
       "mode": "Best lawful rung: injector, adapter, reconstructed stereo, spatial theatre or independent recreation",
@@ -103,12 +117,16 @@
     }
   ],
   "knowledgeBuckets": [
-    "18-source canonical registry: provenance, revision, licence, freshness and promotion state",
+    "22-source canonical registry: provenance, revision, licence, freshness and promotion state",
     "Flat-to-VR route planner and failure-layer ownership",
     "Starfield / Creation Kit authoring evidence",
     "Mutar / NoMoreFlat Starfield implementation evidence",
     "Skyrim VR parity: SKSE, VRIK, HIGGS and PLANCK",
     "Halo MCC VR multi-title runtime and room-fixed 3D cutscene theatre",
+    "CyberpunkVR Port genuine dual-view rendering, embodiment and instrumented proof",
+    "Universal Hands transport-neutral pose contract and title skeleton adaptation",
+    "The Witcher 3 composed camera-mod plus vorpX route",
+    "Creator field evidence from VoodooDE, Beardo Benjo and Paradise Decay",
     "OpenXR specification, loader, API layers and Meta runtime routing",
     "Quest 3 Meta Air Link wireless transport and comfort proof",
     "Virtual Desktop SBS, VDXR and operational comparison evidence",
@@ -140,6 +158,24 @@
       "status": "active",
       "path": "VR-Research-Lab/knowledge-sources/skyrim-vr-ecosystem/knowledge-extraction.md",
       "goal": "Translate VRIK body/holsters, HIGGS interaction and PLANCK character response into named Starfield attachment points and acceptance tests."
+    },
+    {
+      "name": "Genuine Dual-view Engine Rendering",
+      "status": "new-source-extraction",
+      "path": "VR-Research-Lab/knowledge-sources/cyberpunk-vr-port/knowledge-extraction.md",
+      "goal": "Extract the CyberpunkVR Port method for independent eye cameras, dual frame-graph execution, graceful mono fallback and stage-by-stage runtime diagnostics without assuming REDengine hooks exist in Creation Engine."
+    },
+    {
+      "name": "Transport-neutral Hand Pose Contract",
+      "status": "new-source-extraction",
+      "path": "VR-Research-Lab/knowledge-sources/cyberpunk-universal-hands-vr/knowledge-extraction.md",
+      "goal": "Separate OpenXR or SteamVR tracking producers from title-specific skeleton adapters using a bounded pose contract, calibration and explicit source/licence boundaries."
+    },
+    {
+      "name": "Composable Third-person VR Route",
+      "status": "new-source-extraction",
+      "path": "VR-Research-Lab/knowledge-sources/witcher-3-vr-route/knowledge-extraction.md",
+      "goal": "Evaluate camera adaptation, proprietary stereo presentation and scene-specific fallbacks as a lawful route for games without a native OpenXR conversion."
     },
     {
       "name": "Room-fixed 3D Cutscene Theatre",
@@ -220,6 +256,41 @@
       ]
     },
     {
+      "id": "exp-cyberpunk-method-extraction",
+      "title": "CyberpunkVR Port method and licence extraction",
+      "hypothesis": "Pinning the exact repository revision and dependency graph will yield reusable dual-view, embodiment and diagnostic methods without importing title-specific or restrictively packaged content.",
+      "status": "researching",
+      "notes": "Pin the exact GitHub commit, reconcile repository and Nexus version labels, inventory dependency licences and keep Quest 3 Air Link proof separate.",
+      "relatedTechniques": [
+        "Genuine Dual-view Engine Rendering",
+        "Transport-neutral Hand Pose Contract",
+        "Licence Bottleneck Radar"
+      ]
+    },
+    {
+      "id": "exp-witcher-showcase-extraction",
+      "title": "VoodooDE Witcher 3 VR route extraction",
+      "hypothesis": "The current showcase can reveal a repeatable composed route and its comfort boundaries once the exact video, game, mod, vorpX, headset and runtime versions are pinned.",
+      "status": "awaiting-source-metadata",
+      "notes": "Operator reported the showcase on 2026-08-05. Do not invent the video ID or promote assumptions about the route.",
+      "relatedTechniques": [
+        "Composable Third-person VR Route",
+        "Room-fixed 3D Cutscene Theatre",
+        "Licence Bottleneck Radar"
+      ]
+    },
+    {
+      "id": "exp-beardo-cyberpunk-field-review",
+      "title": "Beardo Benjo Cyberpunk VR field-evidence extraction",
+      "hypothesis": "Creator headset evidence can identify setup, motion-control, visual, performance and comfort gaps that direct source documentation does not expose.",
+      "status": "awaiting-exact-video-pin",
+      "notes": "The June 9, 2026 showcase title is indexed, but its exact permalink remains pending. Treat all claims as field evidence requiring source and local corroboration.",
+      "relatedTechniques": [
+        "Genuine Dual-view Engine Rendering",
+        "Transport-neutral Hand Pose Contract"
+      ]
+    },
+    {
       "id": "exp-resistant-game-offline-stereo",
       "title": "Offline monocular reconstruction to coherent SBS",
       "hypothesis": "A permitted prerecorded sequence can produce temporally stable depth and a dual-eye proxy render with measurable comfort advantages over one-original-eye/one-synthetic-eye presentation.",
@@ -254,7 +325,10 @@
     }
   ],
   "nextActions": [
-    "Land this refreshed workspace model so the visible VR Research Lab reflects the current source stack, route ladder, transport truth and active experiments.",
+    "Land this refreshed workspace model so the visible VR Research Lab reflects the 22-source stack, route ladder, transport truth and active experiments.",
+    "Pin the exact CyberpunkVR Port GitHub commit and reconcile its source, package, dependency and licence boundaries before promoting implementation methods.",
+    "Pin the exact Beardo Benjo Cyberpunk showcase permalink and extract headset, runtime, setup, motion-control, performance and comfort evidence with timestamps.",
+    "Pin the exact current VoodooDE Witcher 3 showcase and extract the complete game, first-person mod, vorpX, headset and runtime route without inventing missing metadata.",
     "Repair and complete PR #1642 so the separate Starfield VR Reference Lab can become the detailed 11-system decision surface without duplicating the general VR Lab.",
     "Complete #1595 exact Battle Bridge identity, Meta OpenXR, Air Link and provider proof before installing or trusting the Starfield VR shortcut.",
     "Build the first #1643 offline reconstruction slice from permitted prerecorded gameplay and compare dual-synthetic stereo with the original-eye/synthetic-eye experiment.",
@@ -281,6 +355,26 @@
     {
       "label": "Halo MCC VR Extraction",
       "path": "VR-Research-Lab/examples/other-vr-mods/halo-mcc-vr/knowledge-extraction.md"
+    },
+    {
+      "label": "CyberpunkVR Port Extraction",
+      "path": "VR-Research-Lab/knowledge-sources/cyberpunk-vr-port/knowledge-extraction.md"
+    },
+    {
+      "label": "Universal Hands Extraction",
+      "path": "VR-Research-Lab/knowledge-sources/cyberpunk-universal-hands-vr/knowledge-extraction.md"
+    },
+    {
+      "label": "Beardo Benjo Field Evidence",
+      "path": "VR-Research-Lab/knowledge-sources/beardo-benjo/knowledge-extraction.md"
+    },
+    {
+      "label": "The Witcher 3 VR Route",
+      "path": "VR-Research-Lab/knowledge-sources/witcher-3-vr-route/knowledge-extraction.md"
+    },
+    {
+      "label": "VoodooDE Field Evidence",
+      "path": "VR-Research-Lab/knowledge-sources/voodoode/knowledge-extraction.md"
     },
     {
       "label": "Meta Air Link Source",
@@ -323,6 +417,8 @@
     "Capability Graph seam: every promoted method retains provider, revision, evidence plane, confidence, licence and Starfield attachment point.",
     "Source-registry seam: future UI should derive source cards and counts directly from knowledge-sources.json so visual truth cannot lag canonical truth.",
     "Licence seam: proprietary and analysis-only sources inform requirements but remain isolated behind Stephanos-owned interfaces and replacement plans.",
+    "Implementation seam: CyberpunkVR Port contributes direct source methods while Universal Hands contributes a transport-neutral tracking interface; neither creator field evidence nor title-specific assets may be mistaken for reusable code.",
+    "Creator-evidence seam: VoodooDE, Beardo Benjo and Paradise Decay observations remain headset-level field evidence linked to exact videos, versions, hardware and timestamps.",
     "Presentation seam: immersive world, focused dialogue, room-fixed theatre and safe curved-screen modes share one VR Presentation Controller.",
     "Transport seam: Starfield and reconstructed stereo emit through a transport-neutral boundary; Air Link is primary and Virtual Desktop is optional.",
     "Reconstruction seam: resistant games can feed temporal depth, proxy-map and stereo-synthesis experiments without touching protected renderer internals.",
