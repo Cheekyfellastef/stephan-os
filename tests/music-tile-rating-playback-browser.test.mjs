@@ -323,7 +323,7 @@ test('iPad-width native search writes the Spotify URL into an existing card auto
   }
 });
 
-test('iPad-width Start New Journey brings in unseen catalogue tracks and Continue changes nothing', async () => {
+test('iPad-width complete journey renders every fresh track and Continue changes nothing', async () => {
   const server = await startRepositoryServer();
   let browser;
   try {
@@ -399,26 +399,35 @@ test('iPad-width Start New Journey brings in unseen catalogue tracks and Continu
     await page.click('#start-journey-btn');
     await page.waitForFunction(() => (
       performance.getEntriesByType('navigation')[0]?.type === 'reload'
-      && document.getElementById('start-journey-btn')?.textContent === 'Start New Journey'
+      && document.querySelectorAll('#listening-deck > .player-deck-card').length >= 10
     ));
 
     const proof = await page.evaluate(({ key }) => {
       const stored = JSON.parse(localStorage.getItem(key));
       const candidateIds = stored.candidates.map((track) => track.id);
       const deckIds = stored.listeningDeck.map((track) => track.id);
+      const renderedCards = Array.from(document.querySelectorAll('#listening-deck > .player-deck-card'));
       const catalogueCandidates = stored.candidates.filter((track) => track.sourceKind === 'native-catalog');
       return {
         freshCount: stored.lastFreshJourneySummary?.freshCount,
+        activeJourneyCount: stored.lastFreshJourneySummary?.activeJourneyCount,
         addedCount: stored.lastFreshJourneySummary?.addedCount,
+        roomCount: stored.lastFreshJourneySummary?.roomCount,
+        preservedCount: stored.lastFreshJourneySummary?.preservedCount,
         catalogueCount: stored.lastFreshJourneySummary?.catalogueCount,
         recycledCount: stored.lastFreshJourneySummary?.recycledCount,
+        renderedCardCount: renderedCards.length,
+        allCandidatesReachable: candidateIds.every((id) => deckIds.includes(id)),
+        everyCardHasMediaControls: renderedCards.every((card) => Boolean(card.querySelector('.media-controls'))),
         oldCandidateReused: candidateIds.includes('old-candidate'),
         freshCataloguePresent: catalogueCandidates.some((track) => track.title === 'Fresh Catalogue Track 1'),
-        firstThreeAreNew: deckIds.slice(0, 3).every((id) => id !== 'existing-room-track'),
         existingTrackPreserved: deckIds.includes('existing-room-track'),
         existingRating: stored.ratings?.['existing-room-track'],
         existingTags: stored.tags?.['existing-room-track'],
         existingFeedback: stored.trackFeedback?.['existing-room-track'],
+        activeJourneyTrackIds: stored.activeJourneyTrackIds,
+        discoveryPipelineStored: Boolean(stored.discoveryPipeline),
+        discoveryPipelineRendered: Boolean(document.getElementById('discovery-pipeline-summary')),
         startLabel: document.getElementById('start-journey-btn')?.textContent,
         continueLabel: document.getElementById('continue-journey-btn')?.textContent,
         status: document.getElementById('status-text')?.textContent,
@@ -428,19 +437,27 @@ test('iPad-width Start New Journey brings in unseen catalogue tracks and Continu
     }, { key: STORAGE_KEY });
 
     assert.equal(proof.freshCount, 10);
-    assert.equal(proof.addedCount, 3);
+    assert.equal(proof.activeJourneyCount, 10);
+    assert.equal(proof.addedCount, 10);
+    assert.equal(proof.roomCount, 11);
+    assert.equal(proof.preservedCount, 1);
     assert.ok(proof.catalogueCount >= 4);
     assert.equal(proof.recycledCount, 0);
+    assert.equal(proof.renderedCardCount, 11);
+    assert.equal(proof.allCandidatesReachable, true);
+    assert.equal(proof.everyCardHasMediaControls, true);
     assert.equal(proof.oldCandidateReused, false);
     assert.equal(proof.freshCataloguePresent, true);
-    assert.equal(proof.firstThreeAreNew, true);
     assert.equal(proof.existingTrackPreserved, true);
     assert.equal(proof.existingRating, 2);
     assert.deepEqual(proof.existingTags, ['ghost in the track']);
     assert.equal(proof.existingFeedback, 'Keep this existing card.');
+    assert.equal(proof.activeJourneyTrackIds.length, 10);
+    assert.equal(proof.discoveryPipelineStored, true);
+    assert.equal(proof.discoveryPipelineRendered, true);
     assert.equal(proof.startLabel, 'Start New Journey');
     assert.equal(proof.continueLabel, 'Continue Current Journey');
-    assert.match(proof.status, /genuinely new/);
+    assert.match(proof.status, /complete journey|genuinely new/);
     assert.match(proof.novelty, /0 recycled/);
     assert.equal(proof.noHorizontalOverflow, true);
 
@@ -452,6 +469,69 @@ test('iPad-width Start New Journey brings in unseen catalogue tracks and Continu
       await page.textContent('#status-text'),
       'Continuing the current journey. No songs were replaced or added.',
     );
+  } finally {
+    if (browser) await browser.close();
+    await server.close();
+  }
+});
+
+test('legacy three-card fresh journey state self-recovers to the complete active journey', async () => {
+  const server = await startRepositoryServer();
+  let browser;
+  try {
+    browser = await chromium.launch(
+      process.env.STEPHANOS_BROWSER_CHANNEL
+        ? { channel: process.env.STEPHANOS_BROWSER_CHANNEL, headless: true }
+        : { headless: true },
+    );
+    const page = await browser.newPage({ viewport: { width: 820, height: 1180 } });
+    await page.addInitScript(({ key }) => {
+      const candidates = Array.from({ length: 10 }, (_, index) => ({
+        id: `legacy-fresh-${index + 1}`,
+        title: `Legacy Fresh Track ${index + 1}`,
+        artist: `Legacy Artist ${index + 1}`,
+        tasteScore: 10 - index,
+      }));
+      localStorage.setItem(key, JSON.stringify({
+        candidates,
+        listeningDeck: candidates.slice(0, 3),
+        ratings: { 'legacy-fresh-1': 2 },
+        tags: { 'legacy-fresh-1': ['ghost in the track'] },
+        trackFeedback: { 'legacy-fresh-1': 'Keep this.' },
+        lastFreshJourneySummary: {
+          schemaVersion: 1,
+          freshCount: 10,
+          addedCount: 3,
+          recycledCount: 0,
+        },
+      }));
+    }, { key: STORAGE_KEY });
+
+    await page.goto(`${server.origin}/apps/music-tile/index.html`);
+    await page.waitForFunction(() => (
+      document.querySelectorAll('#listening-deck > .player-deck-card').length === 10
+    ));
+    const proof = await page.evaluate((key) => {
+      const stored = JSON.parse(localStorage.getItem(key));
+      return {
+        renderedCards: document.querySelectorAll('#listening-deck > .player-deck-card').length,
+        storedCards: stored.listeningDeck.length,
+        activeJourneyCount: stored.activeJourneyTrackIds?.length,
+        recovered: stored.lastFreshJourneySummary?.legacyTruncatedJourneyRecovered,
+        rating: stored.ratings?.['legacy-fresh-1'],
+        tags: stored.tags?.['legacy-fresh-1'],
+        feedback: stored.trackFeedback?.['legacy-fresh-1'],
+      };
+    }, STORAGE_KEY);
+    assert.deepEqual(proof, {
+      renderedCards: 10,
+      storedCards: 10,
+      activeJourneyCount: 10,
+      recovered: true,
+      rating: 2,
+      tags: ['ghost in the track'],
+      feedback: 'Keep this.',
+    });
   } finally {
     if (browser) await browser.close();
     await server.close();
