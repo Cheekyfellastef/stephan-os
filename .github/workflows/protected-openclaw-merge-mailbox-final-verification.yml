@@ -1,0 +1,47 @@
+name: Verify protected OpenClaw merge mailbox adapter
+
+on:
+  push:
+    branches:
+      - fix/protected-openclaw-merge-mailbox-adapter-v1
+    paths:
+      - .github/workflows/protected-openclaw-merge-mailbox-final-verification.yml
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/protected-openclaw-merge-mailbox-adapter-v1
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Parse source
+        run: |
+          node --check shared/agents/battleBridgeGitHubCommandMailbox.mjs
+          node --check shared/agents/protectedOpenClawMergeMailboxAdapter.mjs
+          node --check shared/agents/openClawGitHubOperator.mjs
+          node --check scripts/openclaw-github-operator.mjs
+          node --check scripts/stephanos-issue-openclaw-github-authorization.mjs
+      - name: Run complete focused regressions
+        run: |
+          node --test shared/agents/battleBridgeGitHubCommandMailboxProtectedMerge.test.mjs
+          node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
+          node --test shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs
+      - name: Remove temporary verifier and verify diff
+        run: |
+          rm .github/workflows/protected-openclaw-merge-mailbox-final-verification.yml
+          git diff --check
+      - name: Publish verified final estate
+        run: |
+          git config user.name "Cheekyfellastef"
+          git config user.email "stef.stef@hotmail.co.uk"
+          git add --all
+          git commit -m "Remove temporary protected merge verifier"
+          git push origin HEAD:fix/protected-openclaw-merge-mailbox-adapter-v1
