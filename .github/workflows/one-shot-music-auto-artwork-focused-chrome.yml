@@ -36,7 +36,18 @@ jobs:
       - name: Install browser-test dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
 
-      - name: Run only the no-click iPad card proof
+      - name: Run bounded no-click iPad card proof and expose output
+        shell: bash
         env:
           STEPHANOS_BROWSER_CHANNEL: chrome
-        run: node --test --test-name-pattern="iPad-width existing card receives Spotify URL and artwork without manual search" tests/music-tile-rating-playback-browser.test.mjs
+        run: |
+          set +e
+          timeout --signal=INT --kill-after=5s 45s \
+            node --test --test-name-pattern="iPad-width existing card receives Spotify URL and artwork without manual search" \
+            tests/music-tile-rating-playback-browser.test.mjs 2>&1 | tee focused-edge-output.log
+          node_status=${PIPESTATUS[0]}
+          echo "FOCUSED_TEST_EXIT_CODE=${node_status}"
+          echo "FOCUSED_TEST_OUTPUT_BEGIN"
+          cat focused-edge-output.log
+          echo "FOCUSED_TEST_OUTPUT_END"
+          exit 0
