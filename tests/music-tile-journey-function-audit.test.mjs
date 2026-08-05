@@ -1,33 +1,4 @@
- stored.lastFreshJourneySummary?.legacyTruncatedJourneyRecovered,
-        rating: stored.ratings?.['legacy-fresh-1'],
-        tags: stored.tags?.['legacy-fresh-1'],
-        feedback: stored.trackFeedback?.['legacy-fresh-1'],
-      };
-    }, STORAGE_KEY);
-    assert.deepEqual(proof, {
-      renderedCards: 10,
-      storedCards: 10,
-      activeJourneyCount: 10,
-      recovered: true,
-      rating: 2,
-      tags: ['ghost in the track'],
-      feedback: 'Keep this.',
-    });
-  } finally {
-    if (browser) await browser.close();
-    await server.close();
-  }
-});
-`;
-browserTest = replaceRegexOnce(
-  browserTest,
-  /test\('iPad-width Start New Journey brings in unseen catalogue tracks and Continue changes nothing',[\s\S]*$/,
-  completeJourneyBrowserTests,
-  'complete journey browser tests',
-);
-writeFileSync(browserTestPath, browserTest);
-
-const auditTest = `import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { planFreshJourneyState } from '../apps/music-tile/engine/freshJourneyPlanner.js';
@@ -83,12 +54,12 @@ test('all user journey entrances converge on one controller and legacy duplicate
 
 test('persisted state hydration keeps discovery and unknown forward-compatible fields', () => {
   const loadStateSource = mainSource.slice(mainSource.indexOf('function loadState()'), mainSource.indexOf('function saveState()'));
-  assert.match(loadStateSource, /\.\.\.saved/);
+  assert.match(loadStateSource, /...saved/);
   assert.match(loadStateSource, /discoveryPipeline:/);
   assert.match(loadStateSource, /journeyHistoryKeys:/);
   assert.match(loadStateSource, /legacyTruncatedJourneyRecovered/);
   assert.match(loadStateSource, /localStorage\.setItem\(STORAGE_KEY, JSON\.stringify\(nextState\)\)/);
-  assert.match(loadStateSource, /catch \{/);
+  assert.match(loadStateSource, /catch {/);
 });
 
 test('catalogue expansion is bounded, provider-neutral and never promotes playback truth', () => {
@@ -96,9 +67,5 @@ test('catalogue expansion is bounded, provider-neutral and never promotes playba
   assert.match(controllerSource, /slice\(0, 2\)/);
   assert.match(controllerSource, /Promise\.all\(catalogueQueries\.map/);
   assert.match(controllerSource, /dedupeFreshJourneyCandidates/);
-  assert.doesNotMatch(controllerSource, /candidateVerificationStatus\s*=\s*['"]verified/);
+  assert.doesNotMatch(controllerSource, /candidateVerificationStatuss*=s*['"]verified/);
 });
-`;
-writeFileSync('tests/music-tile-journey-function-audit.test.mjs', auditTest);
-
-console.log('Music Tile complete-journey audit repair applied.');
