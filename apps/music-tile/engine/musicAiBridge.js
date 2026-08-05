@@ -30,13 +30,18 @@ function musicAiRouterSettings() {
   const finalRouteTruth = status.finalRouteTruth || {};
   const persistedPreferences = readPersistedStephanosSessionMemory(globalThis?.localStorage)
     ?.session?.providerPreferences || {};
-  const preferences = firstValue(
-    status.providerPreferences,
-    runtimeContext.providerPreferences,
-    runtimeTruth.providerPreferences,
-    persistedPreferences,
-    {},
-  );
+  const preferences = {
+    ...persistedPreferences,
+    ...(runtimeTruth.providerPreferences && typeof runtimeTruth.providerPreferences === 'object'
+      ? runtimeTruth.providerPreferences
+      : {}),
+    ...(runtimeContext.providerPreferences && typeof runtimeContext.providerPreferences === 'object'
+      ? runtimeContext.providerPreferences
+      : {}),
+    ...(status.providerPreferences && typeof status.providerPreferences === 'object'
+      ? status.providerPreferences
+      : {}),
+  };
   const provider = String(firstValue(
     preferences.provider,
     finalRouteTruth.requestedProvider,
@@ -49,7 +54,13 @@ function musicAiRouterSettings() {
     routeMode: String(firstValue(preferences.routeMode, finalRouteTruth.requestedRouteMode, status.routeMode, 'auto')),
     fallbackEnabled: firstValue(preferences.fallbackEnabled, status.fallbackEnabled, true) !== false,
     fallbackOrder: firstValue(preferences.fallbackOrder, status.fallbackOrder, undefined),
-    providerConfigs: firstValue(preferences.providerConfigs, runtimeContext.providerConfigs, runtimeTruth.providerConfigs, persistedPreferences.providerConfigs, undefined),
+    providerConfigs: firstValue(
+      preferences.providerConfigs,
+      runtimeContext.providerConfigs,
+      runtimeTruth.providerConfigs,
+      persistedPreferences.providerConfigs,
+      undefined,
+    ),
   };
 }
 
@@ -152,15 +163,65 @@ export function normalizeMusicAiResponse(response = {}) {
   const execution = data.execution_metadata && typeof data.execution_metadata === 'object'
     ? data.execution_metadata
     : {};
-  const text = String(response?.output_text || data.reply || response?.reply || response?.text || '').trim();
+  const raw = response?.raw && typeof response.raw === 'object'
+    ? response.raw
+    : (data.raw && typeof data.raw === 'object' ? data.raw : {});
+  const router = raw.router && typeof raw.router === 'object' ? raw.router : {};
+  const text = String(
+    response?.output_text
+    || data.output_text
+    || data.reply
+    || response?.reply
+    || response?.text
+    || '',
+  ).trim();
   return {
     text,
-    requestedProvider: String(firstValue(execution.requested_provider, data.requested_provider, 'unknown')),
-    selectedProvider: String(firstValue(execution.selected_provider, data.selected_provider, 'unknown')),
-    actualProvider: String(firstValue(execution.actual_provider_used, data.actual_provider_used, 'unknown')),
-    actualModel: String(firstValue(execution.model_used, data.model_used, 'unknown')),
-    fallbackUsed: firstValue(execution.fallback_used, data.fallback_used, false) === true,
-    fallbackReason: String(firstValue(execution.fallback_reason, data.fallback_reason, 'none')),
+    requestedProvider: String(firstValue(
+      execution.requested_provider,
+      data.requested_provider,
+      router.requested_provider,
+      'unknown',
+    )),
+    selectedProvider: String(firstValue(
+      execution.selected_provider,
+      data.selected_provider,
+      router.selected_provider,
+      'unknown',
+    )),
+    actualProvider: String(firstValue(
+      execution.actual_provider_used,
+      data.actual_provider_used,
+      router.actual_provider_used,
+      'unknown',
+    )),
+    actualModel: String(firstValue(
+      execution.model_used,
+      data.model_used,
+      router.model_used,
+      'unknown',
+    )),
+    fallbackUsed: firstValue(execution.fallback_used, data.fallback_used, router.fallback_used, false) === true,
+    fallbackReason: String(firstValue(
+      execution.fallback_reason,
+      data.fallback_reason,
+      router.fallback_reason,
+      'none',
+    )),
+    routeStatus: String(firstValue(
+      execution.route_status,
+      data.route_status,
+      response?.route_status,
+      router.status,
+      'unknown',
+    )),
+    routeError: String(firstValue(
+      execution.route_error,
+      data.route_error,
+      response?.route_error,
+      router.error,
+      '',
+    )),
   };
 }
 
@@ -231,11 +292,56 @@ export async function testMusicAiRoute({ fetchImpl = globalThis.fetch } = {}) {
     });
     const text = await res.text();
     const snippet = String(text || '').slice(0, 180);
-    let parsedText = '';
     let normalized = normalizeMusicAiResponse({});
-    try { normalized = normalizeMusicAiResponse(JSON.parse(text)); parsedText = normalized.text; } catch {}
-    return { ok: res.ok, status: res.status, snippet, parsedText, requestUrl: diagnostics.endpointUrl, method: 'POST', failureReason: res.ok ? '' : classifyAiFailure({ status: res.status }), diagnostics: { ...diagnostics, lastStatus: res.status, backendResponded: true, requestReachedBackend: true, responseKind: 'http-response', requestedProvider: normalized.requestedProvider, selectedProvider: normalized.selectedProvider, actualProvider: normalized.actualProvider, actualModel: normalized.actualModel, fallbackUsed: normalized.fallbackUsed, fallbackReason: normalized.fallbackReason } };
+    try { normalized = normalizeMusicAiResponse(JSON.parse(text)); } catch {}
+    const routeUnavailable = normalized.routeStatus === 'route_unavailable';
+    const ok = res.ok && !routeUnavailable;
+    const failureReason = routeUnavailable
+      ? (normalized.routeError || 'route_unavailable')
+      : (res.ok ? '' : classifyAiFailure({ status: res.status }));
+    return {
+      ok,
+      status: res.status,
+      snippet,
+      parsedText: normalized.text,
+      requestUrl: diagnostics.endpointUrl,
+      method: 'POST',
+      failureReason,
+      diagnostics: {
+        ...diagnostics,
+        lastStatus: res.status,
+        backendResponded: true,
+        requestReachedBackend: true,
+        responseKind: 'http-response',
+        requestedProvider: normalized.requestedProvider,
+        selectedProvider: normalized.selectedProvider,
+        actualProvider: normalized.actualProvider,
+        actualModel: normalized.actualModel,
+        fallbackUsed: normalized.fallbackUsed,
+        fallbackReason: normalized.fallbackReason,
+        routeStatus: normalized.routeStatus,
+        routeError: normalized.routeError,
+      },
+    };
   } catch (error) {
-    return { ok: false, status: 0, snippet: String(error?.message || 'fetch failed'), parsedText: '', requestUrl: diagnostics.endpointUrl, method: 'POST', failureReason: classifyAiFailure(error), diagnostics: { ...diagnostics, lastStatus: 0, backendResponded: false, requestReachedBackend: false, responseKind: 'network-failure', lastError: String(error?.message || 'fetch failed') } };
+    return {
+      ok: false,
+      status: 0,
+      snippet: String(error?.message || 'fetch failed'),
+      parsedText: '',
+      requestUrl: diagnostics.endpointUrl,
+      method: 'POST',
+      failureReason: classifyAiFailure(error),
+      diagnostics: {
+        ...diagnostics,
+        lastStatus: 0,
+        backendResponded: false,
+        requestReachedBackend: false,
+        responseKind: 'network-failure',
+        lastError: String(error?.message || 'fetch failed'),
+        routeStatus: 'transport_unreachable',
+        routeError: String(error?.message || 'fetch failed'),
+      },
+    };
   }
 }
