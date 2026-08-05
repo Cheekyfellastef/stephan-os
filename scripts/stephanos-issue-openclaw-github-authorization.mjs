@@ -27,6 +27,7 @@ const previewBlockers = preview.blockers.filter((blocker) => {
   if (claims.operation !== 'merge-pr') return true;
   return ![
     'Pull request head SHA changed or could not be verified.',
+    'Pull request base SHA changed or could not be verified.',
     'Pull request must be mergeable.',
     'Every required check must report success.',
     'Exact operator squash-merge approval token is required.',
