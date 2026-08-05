@@ -44,7 +44,7 @@ function exactApprovalToken(prNumber, headSha) {
 }
 
 export function protectedOpenClawMergeFields() {
-  return [...COMMAND_FIELDS];
+  return COMMAND_FIELDS.filter((field) => field !== 'prNumber');
 }
 
 export function validateProtectedOpenClawMergeCommand(command = {}, { now = new Date() } = {}) {
