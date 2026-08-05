@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -89,4 +89,10 @@ test('OpenClaw operation fails closed on exact-base movement', () => {
   const stale = buildOpenClawGitHubOperation({ ...common, actualBaseSha: '1'.repeat(40) });
   assert.equal(stale.finalVerdict, 'BLOCKED');
   assert.ok(stale.blockers.includes('Pull request base SHA changed or could not be verified.'));
+});
+
+test('authorization issuer defers only live exact-base observation to the executor', () => {
+  const source = readFileSync(new URL('../../scripts/stephanos-issue-openclaw-github-authorization.mjs', import.meta.url), 'utf8');
+  assert.match(source, /Pull request base SHA changed or could not be verified\./);
+  assert.doesNotMatch(source, /Exact lowercase pull request base SHA is required\.[\s\S]*\.includes\(blocker\)/);
 });
