@@ -115,6 +115,6 @@ test('status messaging keeps rule fallback without declaring 200 as unavailable'
   assert.match(musicTileJs, /AI ready —/);
   assert.match(musicTileJs, /Rule-based parser remains available\./);
   assert.match(musicTileJs, /OpenClaw agents are a separate route\./);
-  assert.match(musicTileJs, /AI route missing\./);
+  assert.match(musicTileJs, /AI route unavailable\./);
   assert.match(musicTileJs, /AI backend unreachable\/network error\./);
 });
