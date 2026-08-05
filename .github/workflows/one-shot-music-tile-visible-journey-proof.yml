@@ -44,10 +44,10 @@ jobs:
               raise SystemExit(f'Expected one hidden Build Journey browser click, found {browser_source.count(browser_before)}')
           browser_source = browser_source.replace(browser_before, browser_after)
 
-          wait_before = """    await page.waitForFunction(() => (
-              performance.getEntriesByType('navigation')[0]?.type === 'reload'
-              && document.querySelectorAll('#listening-deck > .player-deck-card').length >= 10
-            ));"""
+          click_index = browser_source.index(browser_after)
+          wait_start = browser_source.index('    await page.waitForFunction', click_index)
+          wait_end = browser_source.index('    ));', wait_start) + len('    ));')
+          original_wait = browser_source[wait_start:wait_end]
           wait_after = """    try {
               await page.waitForFunction(() => (
                 performance.getEntriesByType('navigation')[0]?.type === 'reload'
@@ -75,9 +75,8 @@ jobs:
               }, { key: STORAGE_KEY });
               throw new Error(`Complete journey diagnostic: ${JSON.stringify(diagnostic)}; ${error.message}`);
             }"""
-          if browser_source.count(wait_before) != 1:
-              raise SystemExit(f'Expected one complete-journey wait block, found {browser_source.count(wait_before)}')
-          browser_path.write_text(browser_source.replace(wait_before, wait_after), encoding='utf-8')
+          browser_source = browser_source[:wait_start] + wait_after + browser_source[wait_end:]
+          browser_path.write_text(browser_source, encoding='utf-8')
 
           controller_path = Path('apps/music-tile/engine/freshJourneyController.js')
           controller_source = controller_path.read_text(encoding='utf-8')
