@@ -30,45 +30,89 @@ jobs:
         with:
           node-version: 20
 
-      - name: Repair visible journey browser proof
+      - name: Repair visible journey seed and browser proof
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          path = Path('tests/music-tile-rating-playback-browser.test.mjs')
-          source = path.read_text(encoding='utf-8')
-          before = "    await page.click('#build-journey-btn');"
-          after = "    await page.click('#start-journey-btn');"
-          count = source.count(before)
-          if count != 1:
-              raise SystemExit(f'Expected exactly one hidden Build Journey browser click, found {count}')
-          path.write_text(source.replace(before, after), encoding='utf-8')
+
+          browser_path = Path('tests/music-tile-rating-playback-browser.test.mjs')
+          browser_source = browser_path.read_text(encoding='utf-8')
+          browser_before = "    await page.click('#build-journey-btn');"
+          browser_after = "    await page.click('#start-journey-btn');"
+          if browser_source.count(browser_before) != 1:
+              raise SystemExit(f'Expected one hidden Build Journey browser click, found {browser_source.count(browser_before)}')
+          browser_path.write_text(browser_source.replace(browser_before, browser_after), encoding='utf-8')
+
+          controller_path = Path('apps/music-tile/engine/freshJourneyController.js')
+          controller_source = controller_path.read_text(encoding='utf-8')
+          artist_before = """  const normalizedArtist = String(
+            artist || globalThis.document?.getElementById('artist-input')?.value || '',
+          ).trim();"""
+          artist_after = "  const normalizedArtist = String(artist || getFreshJourneySeedArtist(storage)).trim();"
+          if controller_source.count(artist_before) != 1:
+              raise SystemExit(f'Expected one direct artist-input normalization block, found {controller_source.count(artist_before)}')
+          controller_source = controller_source.replace(artist_before, artist_after)
+
+          click_before = """    const artist = target.id === 'surprise-me-btn'
+              ? getFreshJourneySeedArtist()
+              : undefined;"""
+          click_after = "    const artist = getFreshJourneySeedArtist();"
+          if controller_source.count(click_before) != 1:
+              raise SystemExit(f'Expected one surprise-only seed block, found {controller_source.count(click_before)}')
+          controller_source = controller_source.replace(click_before, click_after)
+          controller_path.write_text(controller_source, encoding='utf-8')
+
+          audit_path = Path('tests/music-tile-journey-function-audit.test.mjs')
+          audit_source = audit_path.read_text(encoding='utf-8')
+          audit_before = """  assert.match(controllerSource, /#start-journey-btn, #surprise-me-btn, #build-journey-btn/);
+          assert.doesNotMatch(mainSource, /surpriseBtn\\?\\.addEventListener\\('click', startSurpriseJourney\\)/);"""
+          audit_after = """  assert.match(controllerSource, /#start-journey-btn, #surprise-me-btn, #build-journey-btn/);
+          assert.match(controllerSource, /artist \\|\\| getFreshJourneySeedArtist\\(storage\\)/);
+          assert.match(controllerSource, /const artist = getFreshJourneySeedArtist\\(\\);/);
+          assert.doesNotMatch(mainSource, /surpriseBtn\\?\\.addEventListener\\('click', startSurpriseJourney\\)/);"""
+          if audit_source.count(audit_before) != 1:
+              raise SystemExit(f'Expected one journey entrance assertion anchor, found {audit_source.count(audit_before)}')
+          audit_path.write_text(audit_source.replace(audit_before, audit_after), encoding='utf-8')
           PY
+          node --check apps/music-tile/engine/freshJourneyController.js
           node --check tests/music-tile-rating-playback-browser.test.mjs
           git diff --check
 
-      - name: Install browser-test dependencies
+      - name: Install focused audit dependencies
         shell: bash
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm --prefix stephanos-server install --ignore-scripts --no-audit --no-fund
 
-      - name: Prove complete journey through visible primary action
+      - name: Run complete function audit
+        shell: bash
+        run: |
+          node --check apps/music-tile/main.js
+          node --check apps/music-tile/engine/freshJourneyPlanner.js
+          node --test \
+            tests/music-intelligence-centre-vnext.test.mjs \
+            tests/music-tile-journey-function-audit.test.mjs \
+            tests/music-provider-neutral-catalog-search.test.mjs \
+            tests/music-tile-candidate-verification-init-order.test.mjs
+
+      - name: Prove complete journey through visible primary action in Edge
         shell: bash
         env:
           STEPHANOS_BROWSER_CHANNEL: msedge
-        run: |
-          node --test tests/music-intelligence-centre-vnext.test.mjs
-          node --test tests/music-tile-rating-playback-browser.test.mjs
+        run: node --test tests/music-tile-rating-playback-browser.test.mjs
 
-      - name: Publish bounded proof repair and self-remove
+      - name: Publish bounded repair and self-remove
         shell: bash
         run: |
           rm -f package-lock.json
+          rm -f stephanos-server/package-lock.json
           rm -f .github/workflows/one-shot-music-tile-visible-journey-proof.yml
           git diff --check
           git config user.name "Stephanos GitHub Repair"
           git config user.email "actions@users.noreply.github.com"
           git add -A
-          git commit -m "Exercise the visible Music Tile journey action"
+          git commit -m "Make every Music Tile journey entrance self-starting"
           git fetch origin fix/music-tile-complete-journey-audit
           git rebase origin/fix/music-tile-complete-journey-audit
           git push origin HEAD:fix/music-tile-complete-journey-audit
