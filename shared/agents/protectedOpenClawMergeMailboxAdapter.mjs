@@ -220,8 +220,6 @@ export function buildProtectedOpenClawMergePlan(command = {}, options = {}) {
     changedFiles: [],
     prNumber: normalized.prNumber,
     expectedHeadSha: normalized.expectedHead,
-    requireExactBaseSha: true,
-    expectedBaseSha: normalized.expectedBase,
     singleUse: true,
     issuedAt,
     expiresAt,

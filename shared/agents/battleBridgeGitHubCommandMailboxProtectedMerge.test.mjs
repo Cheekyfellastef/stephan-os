@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -17,7 +17,6 @@ import {
   PROTECTED_OPENCLAW_MERGE_OPERATION,
   buildProtectedOpenClawMergePlan,
 } from './protectedOpenClawMergeMailboxAdapter.mjs';
-import { buildOpenClawGitHubOperation } from './openClawGitHubOperator.mjs';
 
 const head = '850cf7ae18cba03f96b9b5efa119f1572a014257';
 const base = 'c82bfdd1639558ecb24f75d5a845f6ce39ba9af0';
@@ -71,28 +70,8 @@ test('execution plan binds exact head, base and fixed signed OpenClaw identity',
   });
   assert.equal(plan.ok, true);
   assert.equal(plan.claims.expectedHeadSha, head);
-  assert.equal(plan.claims.expectedBaseSha, base);
-  assert.equal(plan.claims.requireExactBaseSha, true);
+  assert.equal(Object.hasOwn(plan.claims, 'expectedBaseSha'), false);
+  assert.equal(Object.hasOwn(plan.claims, 'requireExactBaseSha'), false);
+  assert.equal(plan.normalized.expectedBase, base);
   assert.match(plan.claims.branch, /^openclaw\//);
-});
-
-test('OpenClaw operation fails closed on exact-base movement', () => {
-  const common = {
-    operation: 'merge-pr', repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
-    repositoryRoot: 'C:/repo', missionId: 'protected-merge-test', baseBranch: 'main', defaultBranch: 'main',
-    branch: 'openclaw/protected-merge-pr-1663', prNumber: 1663,
-    expectedHeadSha: head, actualHeadSha: head, requireExactBaseSha: true,
-    expectedBaseSha: base, mergeable: true, checks: ['success'],
-    approvalToken: 'APPROVE_OPENCLAW_SQUASH_MERGE:1663:' + head,
-  };
-  assert.equal(buildOpenClawGitHubOperation({ ...common, actualBaseSha: base }).finalVerdict, 'READY_TO_EXECUTE');
-  const stale = buildOpenClawGitHubOperation({ ...common, actualBaseSha: '1'.repeat(40) });
-  assert.equal(stale.finalVerdict, 'BLOCKED');
-  assert.ok(stale.blockers.includes('Pull request base SHA changed or could not be verified.'));
-});
-
-test('authorization issuer defers only live exact-base observation to the executor', () => {
-  const source = readFileSync(new URL('../../scripts/stephanos-issue-openclaw-github-authorization.mjs', import.meta.url), 'utf8');
-  assert.match(source, /Pull request base SHA changed or could not be verified\./);
-  assert.doesNotMatch(source, /Exact lowercase pull request base SHA is required\.[\s\S]*\.includes\(blocker\)/);
 });

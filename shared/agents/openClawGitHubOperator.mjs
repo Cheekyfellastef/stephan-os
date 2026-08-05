@@ -77,9 +77,6 @@ export function buildOpenClawGitHubOperation(input = {}) {
   const worktreePath = text(input.worktreePath);
   const expectedHeadSha = text(input.expectedHeadSha).toLowerCase();
   const actualHeadSha = text(input.actualHeadSha).toLowerCase();
-  const requireExactBaseSha = input.requireExactBaseSha === true;
-  const expectedBaseSha = text(input.expectedBaseSha).toLowerCase();
-  const actualBaseSha = text(input.actualBaseSha).toLowerCase();
   const prNumber = Number.isInteger(input.prNumber) ? input.prNumber : Number.parseInt(input.prNumber, 10);
   const allowedFiles = unique(list(input.allowedFiles).map(normalizePath));
   const changedFiles = unique(list(input.changedFiles).map(normalizePath));
@@ -122,8 +119,6 @@ export function buildOpenClawGitHubOperation(input = {}) {
   if (operation === 'merge-pr') {
     if (!LOWERCASE_SHA_PATTERN.test(expectedHeadSha)) blockers.push('Exact lowercase pull request head SHA is required.');
     if (actualHeadSha !== expectedHeadSha) blockers.push('Pull request head SHA changed or could not be verified.');
-    if (requireExactBaseSha && !LOWERCASE_SHA_PATTERN.test(expectedBaseSha)) blockers.push('Exact lowercase pull request base SHA is required.');
-    if (requireExactBaseSha && actualBaseSha !== expectedBaseSha) blockers.push('Pull request base SHA changed or could not be verified.');
     if (input.mergeable !== true) blockers.push('Pull request must be mergeable.');
     if (!checks.length || checks.some((check) => check !== 'success')) blockers.push('Every required check must report success.');
     if (text(input.approvalToken) !== exactMergeApproval(prNumber, expectedHeadSha)) {
@@ -171,9 +166,6 @@ export function buildOpenClawGitHubOperation(input = {}) {
     prNumber: Number.isInteger(prNumber) ? prNumber : null,
     expectedHeadSha,
     actualHeadSha,
-    requireExactBaseSha,
-    expectedBaseSha,
-    actualBaseSha,
     allowedFiles,
     changedFiles,
     actualChangedFiles,

@@ -144,7 +144,7 @@ input = { ...input, actualChangedFiles };
 if (String(input.operation || '').toLowerCase() === 'merge-pr') {
   const view = run('gh.exe', [
     'pr', 'view', String(input.prNumber), '--repo', String(input.repository),
-    '--json', 'headRefOid,baseRefName,baseRefOid,mergeable,state',
+    '--json', 'headRefOid,baseRefName,mergeable,state',
   ]);
   const checks = run('gh.exe', [
     'pr', 'checks', String(input.prNumber), '--repo', String(input.repository),
@@ -163,7 +163,6 @@ if (String(input.operation || '').toLowerCase() === 'merge-pr') {
   input = {
     ...input,
     actualHeadSha: viewPayload.headRefOid,
-    actualBaseSha: viewPayload.baseRefOid,
     baseBranch: viewPayload.baseRefName,
     mergeable: viewPayload.mergeable === 'MERGEABLE' && viewPayload.state === 'OPEN',
     checks: checkPayload.map((check) => String(check.state || '').toLowerCase()),
