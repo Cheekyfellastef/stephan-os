@@ -6,6 +6,7 @@ const autoApply = await readFile(new URL('../apps/music-tile/engine/nativeCatalo
 const catalogSearch = await readFile(new URL('../apps/music-tile/engine/nativeCatalogSearch.js', import.meta.url), 'utf8');
 const serverCatalog = await readFile(new URL('../stephanos-server/services/musicCatalogSearch.js', import.meta.url), 'utf8');
 const browserProof = await readFile(new URL('./music-tile-rating-playback-browser.test.mjs', import.meta.url), 'utf8');
+const intelligenceProof = await readFile(new URL('./music-intelligence-centre-vnext.test.mjs', import.meta.url), 'utf8');
 
 test('unresolved Listening Room cards self-resolve without manual catalogue interaction', () => {
   assert.match(autoApply, /export async function resolveUnlinkedDeckTracks/);
@@ -19,6 +20,12 @@ test('unresolved Listening Room cards self-resolve without manual catalogue inte
   assert.match(autoApply, /changedNodes\.some\(\(node\) =>/);
   assert.match(autoApply, /if \(title\.textContent !== nextTitle\) title\.textContent = nextTitle/);
   assert.doesNotMatch(autoApply, /observer\.observe\(deck, \{ childList: true, subtree: true \}\)/);
+});
+
+test('automatic matching requires strong title and artist identity', () => {
+  assert.match(autoApply, /if \(titleCoverage < 0\.8\) return 0/);
+  assert.match(autoApply, /if \(artistCoverage < 0\.8\) return 0/);
+  assert.match(intelligenceProof, /automatic deck resolution rejects a same-title result with only incidental artist overlap/);
 });
 
 test('Spotify artwork remains trusted, persisted and separate from playback verification', () => {
