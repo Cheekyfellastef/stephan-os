@@ -9,6 +9,8 @@ on:
       - 'shared/agents/vrResearchAgentV1*.mjs'
       - 'shared/agents/vrResearchWorkspaceProjectionV1*.mjs'
       - 'VR-Research-Lab/lab-workspace.json'
+      - 'VR-Research-Lab/knowledge-sources.json'
+      - 'VR-Research-Lab/knowledge-sources/**'
       - 'system/apps/app_validator.js'
       - 'scripts/**'
       - 'windows/**'
@@ -69,11 +71,12 @@ jobs:
             scripts/run-battle-bridge-ignition.test.mjs \
             scripts/refresh-stephanos-ui-4173.test.mjs
 
-      - name: Run VR Research Agent, workspace and context tests
+      - name: Run VR Research Agent, workspace, registry and context tests
         run: |
           node --test --test-concurrency=1 \
             shared/agents/vrResearchAgentV1.test.mjs \
             shared/agents/vrResearchWorkspaceProjectionV1.test.mjs \
+            scripts/vr-research-source-registry.test.mjs \
             stephanos-ui/src/state/vrResearchContextProvider.test.mjs \
             stephanos-ui/src/state/contextProviderRegistry.test.mjs
 
