@@ -1,7 +1,7 @@
 # Beardo Benjo VR Field Evidence
 
-Status date: 2026-08-05  
-Priority: P1  
+Status date: 2026-08-05
+Priority: P1
 Evidence class: creator headset demonstration and operational evaluation
 
 ## Why this source matters
