@@ -37,6 +37,28 @@ jobs:
           test "$(git merge-base HEAD origin/main)" = "e41d7a90da563fe1e54cc6c799b0a9c275c30592"
           git merge-base --is-ancestor e41d7a90da563fe1e54cc6c799b0a9c275c30592 HEAD
 
+      - name: Gate browser-only announcement outside the DOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const path = 'scripts/one-shot-music-url-artwork-repair.mjs';
+          const before = fs.readFileSync(path, 'utf8');
+          const needle = `    for (const item of resolved) {
+                updateTrackCard(item.track, item.spotify);
+                announceAppliedTrack(item.track);
+              }`;
+          const replacement = `    for (const item of resolved) {
+                updateTrackCard(item.track, item.spotify);
+                if (typeof document !== 'undefined') announceAppliedTrack(item.track);
+              }`;
+          if (!before.includes(needle)) throw new Error('DOM announcement patch anchor missing');
+          if (before.indexOf(needle) !== before.lastIndexOf(needle)) throw new Error('DOM announcement patch anchor is not unique');
+          fs.writeFileSync(path, before.replace(needle, replacement), 'utf8');
+          NODE
+          node --check scripts/one-shot-music-url-artwork-repair.mjs
+
       - name: Apply bounded six-file repair
         run: node scripts/one-shot-music-url-artwork-repair.mjs
 
