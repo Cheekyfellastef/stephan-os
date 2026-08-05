@@ -40,3 +40,8 @@ test('real iPad-width browser proof requires no search click and preserves card 
   assert.match(browserProof, /assert\.equal\(catalogRequests, 1\)/);
   assert.match(browserProof, /AUTO_URL_ARTWORK_DIAGNOSTIC=/);
 });
+
+test('manual catalogue proof waits for both enriched card truth and settled duplicate state', () => {
+  assert.match(browserProof, /resultButton\?\.disabled === true/);
+  assert.match(browserProof, /resultButton\?\.textContent\?\.trim\(\) === 'In Listening Room'/);
+});
