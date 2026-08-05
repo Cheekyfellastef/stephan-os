@@ -1,4 +1,4 @@
-name: One-shot Music Conversation Conflict Microscope
+name: One-shot Music Conversation Main Resolution
 
 on:
   push:
@@ -8,10 +8,10 @@ on:
       - .github/workflows/one-shot-music-conversation-main-sync.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  inspect:
+  resolve-and-test:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out existing conversational Music Tile branch
@@ -20,7 +20,12 @@ jobs:
           ref: agent/music-tile-conversational-intelligence
           fetch-depth: 0
 
-      - name: Print exact three-way conflict regions
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Merge current main and resolve the three bounded conflict regions
         shell: bash
         run: |
           git config user.name "Stephanos GitHub Repair"
@@ -28,33 +33,115 @@ jobs:
           git fetch origin main
           git config merge.conflictstyle zdiff3
           git merge --no-commit --no-edit origin/main || true
-          echo 'UNMERGED_FILES_BEGIN'
-          git diff --name-only --diff-filter=U
-          echo 'UNMERGED_FILES_END'
           python - <<'PY'
           from pathlib import Path
+          import re
 
-          for name in [
-              'apps/music-tile/main.js',
-              'tests/music-intelligence-centre-vnext.test.mjs',
-          ]:
-              text = Path(name).read_text(encoding='utf-8')
-              lines = text.splitlines()
-              print(f'CONFLICT_FILE_BEGIN {name}')
-              inside = False
-              chunk = []
-              for line in lines:
-                  if line.startswith('<<<<<<< '):
-                      inside = True
-                      chunk = [line]
-                      continue
-                  if inside:
-                      chunk.append(line)
-                      if line.startswith('>>>>>>> '):
-                          print('\n'.join(chunk))
-                          print('CONFLICT_CHUNK_END')
-                          inside = False
-                          chunk = []
-              print(f'CONFLICT_FILE_END {name}')
+          conflict_pattern = re.compile(
+              r'<<<<<<< HEAD\n(.*?)\n\|\|\|\|\|\|\| .*?\n.*?\n=======\n(.*?)\n>>>>>>> origin/main',
+              re.DOTALL,
+          )
+
+          main_path = Path('apps/music-tile/main.js')
+          main = main_path.read_text(encoding='utf-8')
+          resolved_kinds = []
+
+          def resolve_main(match):
+              ours, theirs = match.group(1), match.group(2)
+              if 'const operationGeneration = musicOperationGeneration;' in ours and 'setAiAction(' in theirs:
+                  resolved_kinds.append('operation-capture')
+                  return '  const operationGeneration = musicOperationGeneration;\n' + theirs
+              if 'if (!isCurrentMusicOperation(operationGeneration)) return;' in ours and 'const routeUnavailable' in theirs:
+                  resolved_kinds.append('route-truth')
+                  return '  if (!isCurrentMusicOperation(operationGeneration)) return;\n' + theirs
+              if 'function loadState()' in ours and 'function loadState()' in theirs:
+                  resolved_kinds.append('state-loader')
+                  needle = "    feedbackHistory: Array.isArray(saved.feedbackHistory) ? saved.feedbackHistory : [],\n"
+                  addition = needle + "    musicConversationTeachings: retainConversationTeachingHistory(saved.musicConversationTeachings, 100),\n"
+                  if needle not in theirs:
+                      raise SystemExit('Current robust loadState feedbackHistory anchor not found')
+                  return theirs.replace(needle, addition, 1)
+              raise SystemExit('Unexpected main.js conflict region')
+
+          main, main_count = conflict_pattern.subn(resolve_main, main)
+          if main_count != 3 or sorted(resolved_kinds) != ['operation-capture', 'route-truth', 'state-loader']:
+              raise SystemExit(f'Expected exactly three bounded main.js conflicts, got {main_count}: {resolved_kinds}')
+          if any(marker in main for marker in ('<<<<<<<', '|||||||', '=======', '>>>>>>>')):
+              raise SystemExit('Unresolved marker remains in main.js')
+          main_path.write_text(main, encoding='utf-8')
+
+          test_path = Path('tests/music-intelligence-centre-vnext.test.mjs')
+          test_source = test_path.read_text(encoding='utf-8')
+          test_conflicts = []
+
+          def resolve_test(match):
+              ours, theirs = match.group(1), match.group(2)
+              if 'Surprise Me reuses stored truth' not in ours or 'all journey entrances use the complete fresh controller' not in theirs:
+                  raise SystemExit('Unexpected Music Intelligence Centre test conflict')
+              test_conflicts.append('journey-controller')
+              return theirs
+
+          test_source, test_count = conflict_pattern.subn(resolve_test, test_source)
+          if test_count != 1 or test_conflicts != ['journey-controller']:
+              raise SystemExit(f'Expected one bounded test conflict, got {test_count}: {test_conflicts}')
+
+          controller_test = "test('all journey entrances use the complete fresh controller while playback truth remains guarded', () => {"
+          controller_start = test_source.find(controller_test)
+          if controller_start < 0:
+              raise SystemExit('Current journey controller test not found after conflict resolution')
+          controller_end = test_source.find('\n});', controller_start)
+          if controller_end < 0:
+              raise SystemExit('Current journey controller test end not found')
+          controller_end += len('\n});')
+          stale_operation_test = r'''
+
+          test('legacy Surprise Me helper cannot publish a stale operation result', () => {
+            assert.match(js, /async function startSurpriseJourney\(\{ operationGeneration = musicOperationGeneration \} = \{\}\)/);
+            assert.match(js, /const seedArtist = getJourneySeedArtist\(\)/);
+            assert.match(js, /const buildOutcome = await buildJourney\(\{ operationGeneration \}\)/);
+            assert.match(js, /if \(!isCurrentMusicOperation\(operationGeneration\)\) return \{ ok: false, doorwayTrack: null, reason: 'operation-invalidated' \}/);
+            assert.match(js, /if \(!buildOutcome\?\.ok\) return/);
+          });'''
+          test_source = test_source[:controller_end] + stale_operation_test + test_source[controller_end:]
+          if any(marker in test_source for marker in ('<<<<<<<', '|||||||', '=======', '>>>>>>>')):
+              raise SystemExit('Unresolved marker remains in Music Intelligence Centre test')
+          test_path.write_text(test_source, encoding='utf-8')
+
+          unresolved = [line for line in __import__('subprocess').check_output(
+              ['git', 'diff', '--name-only', '--diff-filter=U'], text=True
+          ).splitlines() if line.strip()]
+          if set(unresolved) != {'apps/music-tile/main.js', 'tests/music-intelligence-centre-vnext.test.mjs'}:
+              raise SystemExit(f'Unexpected unmerged files before staging: {unresolved}')
           PY
-          git merge --abort || true
+          git add apps/music-tile/main.js tests/music-intelligence-centre-vnext.test.mjs
+          test -z "$(git diff --name-only --diff-filter=U)"
+          node --check apps/music-tile/main.js
+          node --check apps/music-tile/engine/musicConversationPlanner.js
+          node --check shared/runtime/stephanosMemory.mjs
+          node --check shared/runtime/tileMemoryBridge.js
+          git diff --check --cached
+
+      - name: Run conversation, memory, routing, journey and playback-preservation regressions
+        shell: bash
+        run: |
+          node --test \
+            tests/music-tile-conversation-intelligence.test.mjs \
+            tests/music-tile-current-head-safety.test.mjs \
+            shared/runtime/stephanosMemory.test.mjs \
+            shared/runtime/stephanosMemory.authoritative-listing.test.mjs \
+            shared/runtime/tileMemoryBridge.test.mjs \
+            tests/music-intelligence-centre-vnext.test.mjs \
+            tests/music-tile-candidate-verification-init-order.test.mjs \
+            tests/music-tile-immersion-session-lifecycle.test.mjs \
+            tests/music-tile-ai-router-connection.test.mjs \
+            tests/music-tile-ai-routing-settlement.test.mjs \
+            tests/music-tile-journey-function-audit.test.mjs
+
+      - name: Publish synchronized branch and self-remove
+        shell: bash
+        run: |
+          rm -f .github/workflows/one-shot-music-conversation-main-sync.yml
+          git add -A
+          git diff --check --cached
+          git commit -m "Sync conversational Music Intelligence with current main"
+          git push origin HEAD:agent/music-tile-conversational-intelligence
