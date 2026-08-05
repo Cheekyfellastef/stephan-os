@@ -5,11 +5,15 @@ import { buildMissionScheduler, answerMissionQuery } from './missionScheduler.mj
 const NOW = '2026-07-24T21:00:00.000Z';
 const fresh = '2026-07-24T20:55:00.000Z';
 const PROVEN_HEAD = '1111111111111111111111111111111111111111';
+const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const BRANCH = 'feat/review-regression-proof-binding';
 const flywheelOutputs = { resultProofRefs:['proof:result'], reusableCapabilityId:'CAPABILITY_V1', sharedLessonId:'LESSON_V1' };
 function goal(issue, overrides = {}) {
   return { issue, title:`Goal ${issue}`, state:'QUEUED', prerequisites:[], priority:1, criticalPathWeight:1, reversibility:'HIGH', route:'CHATGPT_GITHUB', evidenceAt:fresh, ...overrides };
 }
-function binding(issue, activePr, headSha = PROVEN_HEAD) { return { issue, activePr, headSha }; }
+function binding(issue, activePr, headSha = PROVEN_HEAD) {
+  return { issue, activePr, headSha, repository:REPOSITORY, branch:BRANCH };
+}
 
 test('supplied non-array goals evidence fails closed', () => {
   for (const goals of [{}, 'not-a-portfolio', 42, null]) {
@@ -28,12 +32,12 @@ test('omitted goals remains a valid empty programme', () => {
 });
 
 test('exact-head proof requires goal/PR/head-bound operator approval before merge readiness', () => {
-  const awaiting = buildMissionScheduler({ now:NOW, proofReceipts:[binding(1556,1601)], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD})] });
+  const awaiting = buildMissionScheduler({ now:NOW, proofReceipts:[binding(1556,1601)], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,repository:REPOSITORY,branch:BRANCH,headSha:PROVEN_HEAD})] });
   assert.equal(awaiting.programmeStatus, 'APPROVAL_REQUIRED');
   assert.equal(awaiting.operatorAction, 'OPERATOR_APPROVAL_REQUIRED');
   assert.equal(awaiting.portfolio[0].lifecycle, 'APPROVAL_REQUIRED');
 
-  const result = buildMissionScheduler({ now:NOW, proofReceipts:[binding(1556,1601)], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD,operatorApprovalReceipt:binding(1556,1601)})] });
+  const result = buildMissionScheduler({ now:NOW, proofReceipts:[binding(1556,1601)], goals:[goal(1556,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,repository:REPOSITORY,branch:BRANCH,headSha:PROVEN_HEAD,operatorApprovalReceipt:binding(1556,1601)})] });
   assert.equal(result.programmeStatus, 'MERGE_READY');
   assert.equal(result.selectedGoal, '#1556');
   assert.equal(result.selectedLifecycle, 'MERGE_READY');
@@ -78,7 +82,7 @@ test('any unidentified goal fails the whole portfolio closed', () => {
 test('fail-closed portfolios withhold every authority-bearing lifecycle', () => {
   const candidates = [
     [goal(2), 'READY'],
-    [goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROVEN_HEAD,operatorApprovalReceipt:binding(2,1601)}), 'MERGE_READY'],
+    [goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,repository:REPOSITORY,branch:BRANCH,headSha:PROVEN_HEAD,operatorApprovalReceipt:binding(2,1601)}), 'MERGE_READY'],
     [goal(2,{state:'COMPLETE',...flywheelOutputs}), 'CLOSE_READY'],
     [goal(2,{approvalRequired:true}), 'APPROVAL_REQUIRED'],
   ];

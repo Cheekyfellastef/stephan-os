@@ -1,4 +1,6 @@
 const SHA_RE = /^[0-9a-f]{40}$/i;
+const REPOSITORY_RE = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
+const BRANCH_RE = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const EXPLICIT_TZ_RE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const ACTIVE_STATES = new Set(['ACTIVE', 'IMPLEMENTING', 'CI_REVIEW', 'PROOF_RUNNING']);
 const RUNNABLE_STATES = new Set(['QUEUED', 'READY']);
@@ -57,6 +59,23 @@ function normalizeBindingReceipt(value) {
   return { receipt:invalid ? null : freeze({ issue, activePr, headSha }), invalid };
 }
 function bindingKey(issue, activePr, headSha) { return `${issue}:${activePr}:${headSha}`; }
+function normalizeProofReceipt(value) {
+  const binding = normalizeBindingReceipt(value);
+  const repository = text(value?.repository);
+  const branch = text(value?.branch);
+  const invalid = binding.invalid
+    || !binding.receipt
+    || !REPOSITORY_RE.test(repository)
+    || !BRANCH_RE.test(branch)
+    || branch.includes('..');
+  return {
+    receipt: invalid ? null : freeze({ ...binding.receipt, repository, branch }),
+    invalid,
+  };
+}
+function proofBindingKey(issue, activePr, headSha, repository, branch) {
+  return JSON.stringify([issue, activePr, headSha, text(repository).toLowerCase(), branch]);
+}
 function explicitTimestampMs(value) {
   if (typeof value !== 'string') return NaN;
   const normalized = value.trim();
@@ -118,14 +137,31 @@ function normalizeGoal(candidate = {}) {
   const route = ROUTES.has(goal.route) ? goal.route : 'BLOCKED_UNSAFE_OR_UNKNOWN';
   const activePr = issueNumber(goal.activePr);
   const headSha = sha(goal.headSha);
+  const repository = REPOSITORY_RE.test(text(goal.repository)) ? text(goal.repository) : null;
   const rawBranch = text(goal.branch) || null;
   const branchBoundExceeded = Boolean(rawBranch && rawBranch.length > MAX_LANE_IDENTITY_LENGTH);
   const branch = branchBoundExceeded ? null : rawBranch;
-  const approvalBinding = normalizeBindingReceipt(goal.operatorApprovalReceipt);
+  const approvalBinding = goal.operatorApprovalReceipt === undefined || goal.operatorApprovalReceipt === null
+    ? { receipt:null, invalid:false }
+    : normalizeProofReceipt(goal.operatorApprovalReceipt);
   const operatorApprovalReceipt = approvalBinding.receipt;
   const invalidOperatorApprovalReceipt = approvalBinding.invalid;
-  const exactHeadApprovalSatisfied = Boolean(operatorApprovalReceipt && number && activePr && headSha && bindingKey(operatorApprovalReceipt.issue, operatorApprovalReceipt.activePr, operatorApprovalReceipt.headSha) === bindingKey(number, activePr, headSha));
-  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, boundExceededFlywheelEvidence, invalidFlywheelEvidenceEntries, invalidOperatorApprovalReceipt, branchBoundExceeded, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr, branch, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalReceipt, exactHeadApprovalSatisfied, duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
+  const exactHeadApprovalSatisfied = Boolean(
+    operatorApprovalReceipt
+    && number
+    && activePr
+    && headSha
+    && repository
+    && branch
+    && proofBindingKey(
+      operatorApprovalReceipt.issue,
+      operatorApprovalReceipt.activePr,
+      operatorApprovalReceipt.headSha,
+      operatorApprovalReceipt.repository,
+      operatorApprovalReceipt.branch,
+    ) === proofBindingKey(number, activePr, headSha, repository, branch)
+  );
+  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, boundExceededFlywheelEvidence, invalidFlywheelEvidenceEntries, invalidOperatorApprovalReceipt, branchBoundExceeded, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr, repository, branch, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalReceipt, exactHeadApprovalSatisfied, duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
 }
 
 function cycleEvidence(path, start, dependency) {
@@ -209,7 +245,20 @@ function classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, stale, 
     return goal.state === 'COMPLETE' ? 'CLOSE_READY' : goal.state;
   }
   if (goal.state === 'IMPLEMENTED') {
-    const exactHeadProven = Boolean(goal.issue && goal.activePr && goal.headSha && provenBindings.has(bindingKey(goal.issue, goal.activePr, goal.headSha)));
+    const exactHeadProven = Boolean(
+      goal.issue
+      && goal.activePr
+      && goal.headSha
+      && goal.repository
+      && goal.branch
+      && provenBindings.has(proofBindingKey(
+        goal.issue,
+        goal.activePr,
+        goal.headSha,
+        goal.repository,
+        goal.branch,
+      ))
+    );
     if (!(goal.proofState === 'PASS' && goal.activePr && exactHeadProven)) return 'IMPLEMENTED_NEEDS_PROOF';
     return goal.exactHeadApprovalSatisfied ? 'MERGE_READY' : 'APPROVAL_REQUIRED';
   }
@@ -261,11 +310,17 @@ export function buildMissionScheduler(input = {}) {
   const invalidProofReceipts = [];
   for (let index = 0; index < rawProofReceipts.length; index += 1) {
     if (!hasOwn(rawProofReceipts, index)) { invalidProofReceipts.push({ index }); continue; }
-    const normalized = normalizeBindingReceipt(rawProofReceipts[index]);
+    const normalized = normalizeProofReceipt(rawProofReceipts[index]);
     if (normalized.invalid || !normalized.receipt) invalidProofReceipts.push({ index });
     else proofReceipts.push(normalized.receipt);
   }
-  const provenBindings = new Set(proofReceipts.map(({ issue, activePr, headSha }) => bindingKey(issue, activePr, headSha)));
+  const provenBindings = new Set(proofReceipts.map((receipt) => proofBindingKey(
+    receipt.issue,
+    receipt.activePr,
+    receipt.headSha,
+    receipt.repository,
+    receipt.branch,
+  )));
   const proofRefEvidence = normalizeStringEvidenceArray(source, 'proofRefs');
   const proofRefsContainerInvalid = proofRefEvidence.invalidContainer;
   const proofRefsBoundExceeded = proofRefEvidence.boundExceeded;

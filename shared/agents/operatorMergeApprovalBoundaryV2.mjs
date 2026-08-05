@@ -1,9 +1,27 @@
-import { analyzeIndependentSecurityReview } from './operatorMergeApprovalGate.mjs';
+import {
+  APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE,
+  analyzeIndependentSecurityReview,
+} from './operatorMergeApprovalGate.mjs';
 
 export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
+  '.github/workflows/operator-merge-approval-gate.yml',
+  '.github/workflows/independent-merge-security-review.yml',
+  '.github/workflows/build-stephanos-ui.yml',
+  '.github/workflows/pr-clean.yml',
+  '.github/workflows/exact-head-review-dispatch.yml',
+  '.github/workflows/battle-bridge-publisher-proof.yml',
+  '.github/workflows/codex-dispatch-queue-proof.yml',
+  '.github/workflows/openclaw-github-operator.yml',
+  '.github/workflows/operator-merge-approval-gate-test.yml',
+  '.github/workflows/stephanos-deploy.yml',
   'scripts/operator-protected-merge-gate-v2.mjs',
   'scripts/independent-merge-security-review-v2.mjs',
+  'shared/agents/operatorMergeApprovalGate.mjs',
+  'shared/agents/operatorMergeApprovalGateV2.mjs',
+  'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+  'shared/agents/operatorMergeReviewArtifactV1.mjs',
+  'shared/agents/providerNeutralReviewV1.mjs',
 ]);
 
 const OPERATOR_EXECUTOR_PATHS = Object.freeze([
@@ -26,8 +44,12 @@ function unique(values) {
   return [...new Set(values)];
 }
 
-function changedFilePath(item) {
-  return text(typeof item === 'string' ? item : item?.filename ?? item?.path);
+function changedFilePaths(item) {
+  if (typeof item === 'string') return [text(item)].filter(Boolean);
+  return unique([
+    text(item?.filename ?? item?.path),
+    text(item?.previous_filename),
+  ]).filter(Boolean);
 }
 
 function diffForPath(diff, path) {
@@ -50,7 +72,7 @@ function finding(code, summary, path) {
 export function analyzeIndependentSecurityReviewV2(input = {}) {
   const legacy = analyzeIndependentSecurityReview(input);
   const changedFiles = (Array.isArray(input.changedFiles) ? input.changedFiles : [])
-    .map(changedFilePath)
+    .flatMap(changedFilePaths)
     .filter(Boolean);
   const diff = String(input.diff || '');
   const findings = [...(Array.isArray(legacy.findings) ? legacy.findings : [])];
@@ -58,6 +80,11 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
 
   for (const path of APPROVAL_BOUNDARY_PATHS_V2.filter((item) => changedFiles.includes(item))) {
     proofRefs.push(`proofs/approval-boundary-v2/${path}`);
+    findings.push(finding(
+      APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE,
+      'A live v2 approval-boundary self-change requires a separate qualified bootstrap review and cannot self-attest clean.',
+      path,
+    ));
   }
 
   for (const path of OPERATOR_EXECUTOR_PATHS.filter((item) => changedFiles.includes(item))) {
@@ -91,14 +118,16 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
   for (const path of INDEPENDENT_REVIEWER_PATHS.filter((item) => changedFiles.includes(item))) {
     const patch = diffForPath(diff, path);
     const additions = addedLines(patch);
+    const contentApiMutation = /repos\/[^\s]+\/contents/.test(additions)
+      && /method\s*:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i.test(additions);
     if (/\bgh\s+pr\s+(?:ready|merge)\b/.test(additions)
       || /['"]pr['"]\s*,\s*['"](?:ready|merge)['"]/.test(additions)
-      || /repos\/[^\s]+\/contents/.test(additions)
+      || contentApiMutation
       || /git\s+(?:push|reset|clean|rebase)/.test(additions)
       || /\b(?:eval|execSync)\s*\(|shell\s*:\s*true/.test(additions)) {
       findings.push(finding(
         'independent-reviewer-v2-gained-mutation-authority',
-        'The live v2 independent reviewer must remain read-only except for its bounded receipt comment.',
+        'The live v2 independent reviewer must remain read-only except for its bounded immutable result artifact and non-authoritative display comment.',
         path,
       ));
     }

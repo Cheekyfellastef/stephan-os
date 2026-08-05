@@ -5,10 +5,12 @@ import { answerMissionQuery, buildMissionScheduler } from './missionScheduler.mj
 const NOW = '2026-07-24T21:00:00.000Z';
 const fresh = '2026-07-24T20:55:00.000Z';
 const PROOF_SHA = '1111111111111111111111111111111111111111';
+const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const BRANCH = 'feat/mission-scheduler-proof-binding';
 function goal(issue, overrides = {}) {
   return { issue, title:`Goal ${issue}`, state:'QUEUED', prerequisites:[], priority:1, criticalPathWeight:1, reversibility:'HIGH', route:'CHATGPT_GITHUB', evidenceAt:fresh, ...overrides };
 }
-function binding(issue, activePr, headSha = PROOF_SHA) { return { issue, activePr, headSha }; }
+function binding(issue, activePr, headSha = PROOF_SHA, overrides = {}) { return { issue, activePr, headSha, repository:REPOSITORY, branch:BRANCH, ...overrides }; }
 
 test('completed prerequisite unlocks dependant and selects one lane', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'COMPLETE',resultProofRefs:['proof://goal-1-result'],reusableCapabilityId:'CAPABILITY_GOAL_1',sharedLessonId:'LESSON_GOAL_1'}), goal(2,{prerequisites:[1],priority:5}), goal(3,{priority:2})] });
@@ -158,8 +160,31 @@ test('merge readiness is restricted to implemented goals', () => {
     const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state,proofState:'PASS',activePr:1601})] });
     assert.notEqual(result.portfolio[0].lifecycle,'MERGE_READY');
   }
-  const implemented = buildMissionScheduler({ now:NOW, proofReceipts:[binding(2,1601)], goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,headSha:PROOF_SHA,operatorApprovalReceipt:binding(2,1601)})] });
+  const implemented = buildMissionScheduler({ now:NOW, proofReceipts:[binding(2,1601)], goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,repository:REPOSITORY,branch:BRANCH,headSha:PROOF_SHA,operatorApprovalReceipt:binding(2,1601)})] });
   assert.equal(implemented.portfolio[0].lifecycle,'MERGE_READY');
+
+  for (const mismatchedApproval of [
+    binding(2,1601,PROOF_SHA, { repository:'other/repository' }),
+    binding(2,1601,PROOF_SHA, { branch:'feat/other-lane' }),
+  ]) {
+    const held = buildMissionScheduler({
+      now:NOW,
+      proofReceipts:[binding(2,1601)],
+      goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,repository:REPOSITORY,branch:BRANCH,headSha:PROOF_SHA,operatorApprovalReceipt:mismatchedApproval})],
+    });
+    assert.equal(held.portfolio[0].lifecycle,'APPROVAL_REQUIRED');
+  }
+
+  for (const mismatchedProof of [
+    binding(2,1601,PROOF_SHA, { repository:'other/repository' }),
+  ]) {
+    const held = buildMissionScheduler({
+      now:NOW,
+      proofReceipts:[mismatchedProof],
+      goals:[goal(2,{state:'IMPLEMENTED',proofState:'PASS',activePr:1601,repository:REPOSITORY,branch:BRANCH,headSha:PROOF_SHA,operatorApprovalReceipt:binding(2,1601)})],
+    });
+    assert.equal(held.portfolio[0].lifecycle,'IMPLEMENTED_NEEDS_PROOF');
+  }
 });
 
 test('merge readiness respects blocked and waiting routes', () => {

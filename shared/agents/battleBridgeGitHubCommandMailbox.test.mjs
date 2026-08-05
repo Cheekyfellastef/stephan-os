@@ -16,6 +16,7 @@ import {
   CODEX_BANKED_RESET_POLICY_REF,
 } from './codexBankedResetBattleBridgeExecutor.mjs';
 import { CODEX_BANKED_RESET_STATUS_OPERATION } from './codexBankedResetStatusBattleBridgeReader.mjs';
+import { MUSIC_SPOTIFY_LINK_OPERATION, MUSIC_SPOTIFY_LINK_SOURCE } from './musicSpotifyLinkBridge.mjs';
 
 const now = new Date('2026-07-20T22:30:00.000Z');
 
@@ -84,12 +85,91 @@ test('control-plane and banked reset commands are allowlisted', () => {
     'READ_SHARED_WORKSPACE_STATUS',
     'READ_CRITICAL_BACKLOG_STATUS',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
+    'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
     'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+    'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
     CODEX_BANKED_RESET_STATUS_OPERATION,
     CODEX_BANKED_RESET_OPERATION,
   ]) {
     assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
   }
+});
+
+test('recovery mesh install and wake require exact main head and dispatch only to named handlers', async () => {
+  for (const operation of ['INSTALL_BATTLE_BRIDGE_RECOVERY_MESH', 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH']) {
+    assert.equal(validateBattleBridgeGitHubCommand(command({ operation, expectedHead: '' }), {
+      authorLogin: 'Cheekyfellastef', now,
+    }).blocker, 'RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
+    const validated = validateBattleBridgeGitHubCommand(command({ operation }), { authorLogin: 'Cheekyfellastef', now });
+    assert.equal(validated.ok, true);
+    let calls = 0;
+    const result = await executeBattleBridgeGitHubCommand(validated.command, {
+      installRecoveryMesh: operation === 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' ? async () => { calls += 1; return { ok: true }; } : undefined,
+      wakeRecoveryMesh: operation === 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH' ? async () => { calls += 1; return { ok: true }; } : undefined,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(calls, 1);
+  }
+});
+
+test('accepts only typed exact-head Windows browser proof requests', () => {
+  const proof = command({
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    prNumber: 1628,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+  });
+  const accepted = validateBattleBridgeGitHubCommand(proof, { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(accepted.verdict, 'COMMAND_ACCEPTED');
+  assert.equal(accepted.command.prNumber, 1628);
+  assert.equal(accepted.command.proofScenario, 'MUSIC_RATING_PRESERVES_PLAYBACK');
+  assert.equal(validateBattleBridgeGitHubCommand({ ...proof, proofScenario: 'ARBITRARY_BROWSER' }, {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_SCENARIO_NOT_ALLOWED');
+  assert.equal(validateBattleBridgeGitHubCommand(command({ prNumber: 1628 }), {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
+});
+
+test('accepts a merged-main proof only with a distinct immutable PR provenance head', () => {
+  const pullRequestHead = 'a'.repeat(40);
+  const proof = command({
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    prNumber: 1631,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead,
+  });
+  const accepted = validateBattleBridgeGitHubCommand(proof, { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.command.proofTarget, 'MERGED_MAIN');
+  assert.equal(accepted.command.pullRequestHead, pullRequestHead);
+  assert.equal(validateBattleBridgeGitHubCommand({ ...proof, pullRequestHead: '' }, {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_PR_PROVENANCE_HEAD_REQUIRED');
+  assert.equal(validateBattleBridgeGitHubCommand({ ...proof, proofTarget: 'ARBITRARY_COMMIT' }, {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_TARGET_NOT_ALLOWED');
+  assert.equal(validateBattleBridgeGitHubCommand(command({ pullRequestHead }), {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
+});
+
+test('dispatches Windows browser proof only through its named handler', async () => {
+  const proof = validateBattleBridgeGitHubCommand(command({
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    prNumber: 1628,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+  }), { authorLogin: 'Cheekyfellastef', now }).command;
+  const calls = [];
+  const result = await executeBattleBridgeGitHubCommand(proof, {
+    runExactHeadWindowsBrowserProof: async (input) => {
+      calls.push([input.prNumber, input.expectedHead, input.proofScenario]);
+      return { ok: true, finalVerdict: 'WINDOWS_BROWSER_PROOF_DISPATCHED' };
+    },
+  });
+  assert.deepEqual(calls, [[1628, proof.expectedHead, 'MUSIC_RATING_PRESERVES_PLAYBACK']]);
+  assert.equal(result.ok, true);
 });
 
 test('accepts read-only Codex reset status commands without reset authority fields', () => {
@@ -262,6 +342,29 @@ test('dispatches only through the named injected handler', async () => {
   assert.equal(result.ok, true);
   assert.equal(calls, 1);
   assert.equal(result.result.expectedHead, command().expectedHead);
+});
+
+test('accepts and dispatches only a bounded connector Spotify track link', async () => {
+  const payload = command({
+    operation: MUSIC_SPOTIFY_LINK_OPERATION,
+    source: MUSIC_SPOTIFY_LINK_SOURCE,
+    spotifyUri: 'spotify:track:1234567890123456789012',
+    targetTrackId: 'deck-track-1',
+    targetArtist: 'Test Artist',
+    targetTitle: 'Test Track',
+    requestedAtUtc: now.toISOString(),
+  });
+  const validated = validateBattleBridgeGitHubCommand(payload, { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(validated.ok, true);
+  assert.equal(validated.command.spotifyUri, payload.spotifyUri);
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    queueVerifiedSpotifyLink: async () => { calls += 1; return { ok: true, finalVerdict: 'MUSIC_SPOTIFY_LINK_QUEUED' }; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(calls, 1);
+  assert.equal(validateBattleBridgeGitHubCommand({ ...payload, spotifyUri: 'https://open.spotify.com/track/1234567890123456789012' }, { authorLogin: 'Cheekyfellastef', now }).blocker, 'MUSIC_SPOTIFY_TRACK_URI_INVALID');
+  assert.equal(validateBattleBridgeGitHubCommand({ ...payload, token: 'must-never-cross' }, { authorLogin: 'Cheekyfellastef', now }).blocker, 'MUSIC_SPOTIFY_UNSAFE_FIELD_PRESENT');
 });
 
 test('receipt records exact reset authority and safety boundary', () => {

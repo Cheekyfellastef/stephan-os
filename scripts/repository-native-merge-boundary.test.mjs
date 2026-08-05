@@ -25,25 +25,37 @@ test('no local npm command exposes merge authority', async () => {
   assert.equal(packageJson.scripts['stephanos:publish-merge'], 'node scripts/repository-native-publish-merge-lane.mjs');
 });
 
-test('trusted workflows use default-branch code and the base-bound v2 executors', async () => {
+test('protected boundary is an exact merge-group required check with read-only permissions', async () => {
   const protectedSource = await readFile(protectedWorkflow, 'utf8');
   const independentSource = await readFile(independentWorkflow, 'utf8');
-  for (const source of [protectedSource, independentSource]) {
-    assert.match(source, /pull_request_target:/);
-    assert.doesNotMatch(source, /^\s+pull_request:\s*$/m);
-    assert.match(source, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
-    assert.match(source, /persist-credentials: false/);
-    assert.doesNotMatch(source, /github\.event\.pull_request\.head\.sha/);
-  }
+  assert.match(protectedSource, /^  merge_group:\s*$/m);
+  assert.match(protectedSource, /^    types: \[checks_requested\]\s*$/m);
+  assert.doesNotMatch(protectedSource, /pull_request_target:|^\s+pull_request:\s*$/m);
+  assert.equal(
+    [...protectedSource.matchAll(/ref: \$\{\{ github\.event\.merge_group\.base_sha \}\}/g)].length,
+    2,
+  );
+  assert.equal([...protectedSource.matchAll(/persist-credentials: false/g)].length, 2);
+  assert.match(protectedSource, /merge-group-evidence:/);
+  assert.match(protectedSource, /operator-merge-queue-boundary:/);
+  assert.match(protectedSource, /needs: \[merge-group-evidence\]/);
+  assert.match(protectedSource, /operator-protected-merge-gate-v2\.mjs evidence/);
   assert.match(protectedSource, /operator-protected-merge-gate-v2\.mjs approve/);
-  assert.match(protectedSource, /operator-protected-merge-gate-v2\.mjs merge/);
+  assert.match(protectedSource, /group: protected-operator-merge-group-\$\{\{ github\.event\.merge_group\.head_sha \}\}/);
+  assert.match(protectedSource, /cancel-in-progress: false/);
+  assert.doesNotMatch(protectedSource, /\b(?:actions|contents|deployments|issues|pull-requests|statuses|checks): write\b/);
+  assert.doesNotMatch(protectedSource, /recover|dispatch|deploy|continue-on-error/);
+
+  assert.match(independentSource, /pull_request_target:/);
+  assert.match(independentSource, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
+  assert.match(independentSource, /persist-credentials: false/);
   assert.match(independentSource, /independent-merge-security-review-v2\.mjs/);
 });
 
 test('independent review binds the complete review to the exact base without merge authority', async () => {
   const source = await readFile(independentReviewScript, 'utf8');
   assert.match(source, /event\?\.pull_request\?\.base\?\.sha/);
-  assert.match(source, /bindIndependentReviewReceiptToBase/);
+  assert.match(source, /buildIndependentReviewArtifact/);
   assert.match(source, /validatePullRequestBaseBinding/);
   assert.match(source, /validateMainRefBaseBinding/);
   assert.match(source, /git\/ref\/heads\/main/);
@@ -51,24 +63,39 @@ test('independent review binds the complete review to the exact base without mer
   assert.doesNotMatch(source, /git\s+(?:push|reset|clean|rebase)/);
 });
 
-test('only the protected GitHub Actions v2 script can merge and it revalidates exact head and base', async () => {
+test('protected executor only verifies the exact merge group and never mutates or claims delivery', async () => {
   const source = await readFile(protectedMergeScript, 'utf8');
   assert.match(source, /GITHUB_ACTIONS !== 'true'/);
-  assert.match(source, /GITHUB_EVENT_NAME !== 'pull_request_target'/);
-  assert.match(source, /OPERATOR_MERGE_GATE_JOB/);
-  assert.match(source, /OPERATOR_MERGE_EXECUTOR_JOB/);
-  assert.match(source, /github-actions\[bot\]/);
-  assert.match(source, /validateIndependentReviewBaseBinding/);
-  assert.match(source, /validateIndependentWorkflowBaseBinding/);
-  assert.match(source, /validatePullRequestBaseBinding/);
-  assert.match(source, /validateMainRefBaseBinding/);
-  assert.match(source, /buildBaseBoundApprovalReceipt/);
-  assert.match(source, /validateBaseBoundApprovalReceipt/);
+  assert.match(source, /GITHUB_EVENT_NAME !== 'merge_group'/);
+  assert.match(source, /event\.action !== 'checks_requested'/);
+  assert.match(source, /commits\/\$\{context\.mergeGroupSha\}\/pulls/);
+  assert.doesNotMatch(source, /merge_group\?\.head_ref|merge_group\.head_ref/);
+  assert.match(source, /validateMergeGroupEvidence/);
+  assert.match(source, /validateMergeQueueConfiguration/);
+  assert.match(source, /native change-request state/);
+  assert.match(source, /Object\.hasOwn\(pullRequest, 'reviewDecision'\)/);
+  assert.match(source, /buildMergeQueueApprovalReceipt/);
+  assert.match(source, /validateMergeQueueApprovalReceipt/);
+  assert.match(source, /validateIndependentReviewArtifact/);
   assert.match(source, /git\/ref\/heads\/main/);
-  assert.match(source, /immediately-before-merge/);
-  assert.match(source, /--match-head-commit/);
-  assert.match(source, /'pr', 'merge'/);
-  assert.doesNotMatch(source, /request\.approvalReceipt/);
-  assert.doesNotMatch(source, /request\.trustedReviewReceipt/);
-  assert.doesNotMatch(source, /nonce/);
+  assert.match(source, /rules\/branches\/main/);
+  assert.match(source, /CONFIGURATION_NOT_PROVED:ruleset-detail-read/);
+  assert.match(source, /MERGE_QUEUE_REQUIRED_CHECK_READY/);
+  assert.match(source, /mutationAuthority: false/);
+  assert.doesNotMatch(source, /\bgit\s+(?:push|reset|clean|rebase)|--force-with-lease|commit-tree|merge-tree/);
+  assert.doesNotMatch(source, /pulls\/\$\{[^}]+\}\/merge|\/statuses|check-runs|dispatches/);
+  assert.doesNotMatch(source, /MERGED|DELIVERED|PAGES_DEPLOY|windowsRuntimeStatus|browserRuntimeStatus/);
+});
+
+test('single-owner queue policy does not depend on impossible native self-approval', async () => {
+  const source = await readFile(
+    new URL('../shared/agents/operatorMergeBaseBindingV1.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /required_approving_review_count !== 0/);
+  assert.match(source, /merge-group-changes-requested/);
+  assert.match(source, /require_last_push_approval !== false/);
+  assert.match(source, /require_code_owner_review !== false/);
+  assert.doesNotMatch(source, /reviewDecision !== 'APPROVED'/);
+  assert.doesNotMatch(source, /required_approving_review_count < 1/);
 });
