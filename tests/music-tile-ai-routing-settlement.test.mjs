@@ -7,6 +7,7 @@ import {
 } from '../apps/music-tile/engine/musicAiBridge.js';
 import { sanitizeStephanosProviderConfigsForTransport } from '../shared/ai/stephanosClient.mjs';
 
+// Keep transport reachability, route availability, and provider execution truth separate.
 test('nested canonical router errors survive route_unavailable normalization', () => {
   const normalized = normalizeMusicAiResponse({
     raw: { router: { status: 'route_unavailable', error: 'No approved provider route is ready.' } },
