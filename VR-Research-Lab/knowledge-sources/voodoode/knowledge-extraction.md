@@ -1,7 +1,7 @@
 # VoodooDE VR Field Evidence
 
-Status date: 2026-08-05  
-Priority: P1  
+Status date: 2026-08-05
+Priority: P1
 Evidence class: creator demonstration, tutorial and operational evaluation
 
 ## Useful discovery
