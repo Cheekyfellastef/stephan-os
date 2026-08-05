@@ -1,0 +1,74 @@
+name: One-shot Music Tile Visible Journey Proof Repair
+
+on:
+  push:
+    branches:
+      - fix/music-tile-complete-journey-audit
+    paths:
+      - .github/workflows/one-shot-music-tile-visible-journey-proof.yml
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-prove:
+    if: github.ref_name == 'fix/music-tile-complete-journey-audit' || github.head_ref == 'fix/music-tile-complete-journey-audit'
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Check out exact repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/music-tile-complete-journey-audit
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Repair visible journey browser proof
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/music-tile-rating-playback-browser.test.mjs')
+          source = path.read_text(encoding='utf-8')
+          before = "    await page.click('#build-journey-btn');"
+          after = "    await page.click('#start-journey-btn');"
+          count = source.count(before)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one hidden Build Journey browser click, found {count}')
+          path.write_text(source.replace(before, after), encoding='utf-8')
+          PY
+          node --check tests/music-tile-rating-playback-browser.test.mjs
+          git diff --check
+
+      - name: Install browser-test dependencies
+        shell: bash
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Prove complete journey through visible primary action
+        shell: bash
+        env:
+          STEPHANOS_BROWSER_CHANNEL: msedge
+        run: |
+          node --test tests/music-intelligence-centre-vnext.test.mjs
+          node --test tests/music-tile-rating-playback-browser.test.mjs
+
+      - name: Publish bounded proof repair and self-remove
+        shell: bash
+        run: |
+          rm -f package-lock.json
+          rm -f .github/workflows/one-shot-music-tile-visible-journey-proof.yml
+          git diff --check
+          git config user.name "Stephanos GitHub Repair"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Exercise the visible Music Tile journey action"
+          git fetch origin fix/music-tile-complete-journey-audit
+          git rebase origin/fix/music-tile-complete-journey-audit
+          git push origin HEAD:fix/music-tile-complete-journey-audit
