@@ -1,7 +1,7 @@
 # CyberpunkVR Port
 
-Status date: 2026-08-05  
-Priority: P0  
+Status date: 2026-08-05
+Priority: P0
 Evidence class: direct public implementation source with separate package and dependency boundaries
 
 ## Why this source matters
