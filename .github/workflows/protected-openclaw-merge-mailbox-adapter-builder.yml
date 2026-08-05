@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/protected-openclaw-merge-mailbox-adapter-builder.yml
       - scripts/apply-protected-openclaw-merge-mailbox-adapter.mjs
+      - scripts/repair-protected-merge-field-overlap.mjs
 
 permissions:
   contents: write
@@ -30,6 +31,9 @@ jobs:
       - name: Apply bounded adapter patch
         run: node scripts/apply-protected-openclaw-merge-mailbox-adapter.mjs
 
+      - name: Remove shared prNumber field collision
+        run: node scripts/repair-protected-merge-field-overlap.mjs
+
       - name: Parse changed source
         run: |
           node --check shared/agents/battleBridgeGitHubCommandMailbox.mjs
@@ -48,6 +52,7 @@ jobs:
           git diff --check
           test ! -e .github/workflows/protected-openclaw-merge-mailbox-adapter-builder.yml
           test ! -e scripts/apply-protected-openclaw-merge-mailbox-adapter.mjs
+          test ! -e scripts/repair-protected-merge-field-overlap.mjs
           git status --short
 
       - name: Publish settled source
