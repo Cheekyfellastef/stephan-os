@@ -1,7 +1,7 @@
 # Cyberpunk Universal Hands VR
 
-Status date: 2026-08-05  
-Priority: P1  
+Status date: 2026-08-05
+Priority: P1
 Evidence class: operational and interface evidence with unresolved source-licence pin
 
 ## Useful method
