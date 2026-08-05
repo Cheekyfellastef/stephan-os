@@ -1,0 +1,63 @@
+name: One-shot Music Conversation Main Sync
+
+on:
+  push:
+    branches:
+      - agent/music-tile-conversational-intelligence
+    paths:
+      - .github/workflows/one-shot-music-conversation-main-sync.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out existing conversational Music Tile branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/music-tile-conversational-intelligence
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Merge current main normally
+        shell: bash
+        run: |
+          git config user.name "Stephanos GitHub Repair"
+          git config user.email "actions@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+
+      - name: Verify conversational, memory, routing and journey boundaries
+        shell: bash
+        run: |
+          node --check apps/music-tile/engine/musicConversationPlanner.js
+          node --check apps/music-tile/main.js
+          node --check shared/runtime/stephanosMemory.mjs
+          node --check shared/runtime/tileMemoryBridge.js
+          node --test \
+            tests/music-tile-conversation-intelligence.test.mjs \
+            tests/music-tile-current-head-safety.test.mjs \
+            shared/runtime/stephanosMemory.test.mjs \
+            shared/runtime/stephanosMemory.authoritative-listing.test.mjs \
+            shared/runtime/tileMemoryBridge.test.mjs \
+            tests/music-intelligence-centre-vnext.test.mjs \
+            tests/music-tile-candidate-verification-init-order.test.mjs \
+            tests/music-tile-immersion-session-lifecycle.test.mjs \
+            tests/music-tile-ai-router-connection.test.mjs \
+            tests/music-tile-ai-routing-settlement.test.mjs \
+            tests/music-tile-journey-function-audit.test.mjs
+          git diff --check
+
+      - name: Publish synchronized branch and self-remove
+        shell: bash
+        run: |
+          rm -f .github/workflows/one-shot-music-conversation-main-sync.yml
+          git add -A
+          git commit -m "Sync conversational Music Intelligence with current main"
+          git push origin HEAD:agent/music-tile-conversational-intelligence
