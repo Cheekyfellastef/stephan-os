@@ -29,7 +29,7 @@ tests = replaceOnce(
 );
 const start = tests.indexOf("\ntest('OpenClaw operation fails closed on exact-base movement'");
 if (start < 0) throw new Error('Missing generic OpenClaw exact-base test block.');
-tests = tests.slice(0, start) + '\n';
+tests = `${tests.slice(0, start).trimEnd()}\n`;
 writeFileSync(testPath, tests, 'utf8');
 
 unlinkSync('.github/workflows/shrink-protected-openclaw-merge-adapter.yml');
