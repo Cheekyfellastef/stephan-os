@@ -13,6 +13,7 @@ const AUTO_TRACK_ID = 'journey-enjoy-the-silence';
 const AUTO_SPOTIFY_ID = '4uLU6hMCjMI75M1A2tKUQC';
 const AUTO_SPOTIFY_URL = `https://open.spotify.com/track/${AUTO_SPOTIFY_ID}`;
 const AUTO_SPOTIFY_URI = `spotify:track:${AUTO_SPOTIFY_ID}`;
+const AUTO_ARTWORK_URL = 'https://i.scdn.co/image/ab67616d00001e02f7f1f53af3505f5638d7d8b1';
 const MIME_TYPES = Object.freeze({
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -532,6 +533,126 @@ test('legacy three-card fresh journey state self-recovers to the complete active
       tags: ['ghost in the track'],
       feedback: 'Keep this.',
     });
+  } finally {
+    if (browser) await browser.close();
+    await server.close();
+  }
+});
+
+
+test('iPad-width existing card receives Spotify URL and artwork without manual search', async () => {
+  const server = await startRepositoryServer();
+  let browser;
+  try {
+    browser = await chromium.launch(
+      process.env.STEPHANOS_BROWSER_CHANNEL
+        ? { channel: process.env.STEPHANOS_BROWSER_CHANNEL, headless: true }
+        : { headless: true },
+    );
+    const page = await browser.newPage({ viewport: { width: 820, height: 1180 } });
+    let catalogRequests = 0;
+    await page.route('https://i.scdn.co/**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" />' });
+    });
+    await page.route(/\/api\/music\/catalog\/search\?/, async (route) => {
+      catalogRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify({
+          ok: true,
+          provider: 'spotify',
+          providerLabel: 'Spotify',
+          results: [{
+            universalId: `spotify:track:${AUTO_SPOTIFY_ID}`,
+            provider: 'spotify',
+            providerItemId: AUTO_SPOTIFY_ID,
+            providerLabel: 'Spotify',
+            providerUrl: AUTO_SPOTIFY_URL,
+            title: 'Enjoy the Silence',
+            artist: 'Depeche Mode',
+            album: 'Violator',
+            confidence: 'high',
+            verificationStatus: 'metadata_verified',
+            playbackAvailability: 'playback_unverified',
+            spotifyUrl: AUTO_SPOTIFY_URL,
+            spotifyUri: AUTO_SPOTIFY_URI,
+            artworkUrl: AUTO_ARTWORK_URL,
+          }],
+        }),
+      });
+    });
+    await page.addInitScript(({ key, trackId }) => {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, JSON.stringify({
+        candidates: [],
+        listeningDeck: [{
+          id: trackId,
+          title: 'Enjoy the Silence',
+          artist: 'Depeche Mode',
+          lane: 'doorway-track',
+          sourceKind: 'journey-candidate',
+          candidateVerificationStatus: 'search-only',
+          traits: ['dark club pressure'],
+        }],
+        ratings: { [trackId]: 2 },
+        tags: { [trackId]: ['ghost in the track'] },
+        trackFeedback: { [trackId]: 'Keep this.' },
+        linkMessages: {},
+      }));
+    }, { key: STORAGE_KEY, trackId: AUTO_TRACK_ID });
+
+    await page.goto(`${server.origin}/apps/music-tile/index.html`);
+    await page.waitForFunction(({ trackId, spotifyUrl, artworkUrl }) => {
+      const input = document.querySelector(`[data-link-input="spotify-${trackId}"]`);
+      const image = document.querySelector('[data-catalog-artwork] img');
+      return input?.value === spotifyUrl && image?.src === artworkUrl;
+    }, { trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL, artworkUrl: AUTO_ARTWORK_URL });
+
+    const proof = await page.evaluate(({ key, trackId, spotifyUrl, artworkUrl }) => {
+      const stored = JSON.parse(localStorage.getItem(key));
+      const track = stored.listeningDeck.find((item) => item.id === trackId);
+      const card = document.querySelector('.player-deck-card');
+      const image = card.querySelector('[data-catalog-artwork] img');
+      return {
+        spotifyInput: document.querySelector(`[data-link-input="spotify-${trackId}"]`)?.value,
+        openLinkPresent: Array.from(card.querySelectorAll('a')).some((link) => link.href === spotifyUrl),
+        artworkSrc: image?.src,
+        artworkAlt: image?.alt,
+        iframeCount: card.querySelectorAll('iframe').length,
+        storedSpotifyUrl: track?.spotifyUrl,
+        storedArtworkUrl: track?.artworkUrl,
+        storedArtworkSource: track?.artworkSource,
+        storedRating: stored.ratings?.[trackId],
+        storedTags: stored.tags?.[trackId],
+        storedFeedback: stored.trackFeedback?.[trackId],
+        noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+        expectedArtworkUrl: artworkUrl,
+      };
+    }, { key: STORAGE_KEY, trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL, artworkUrl: AUTO_ARTWORK_URL });
+    assert.equal(catalogRequests, 1);
+    assert.deepEqual(proof, {
+      spotifyInput: AUTO_SPOTIFY_URL,
+      openLinkPresent: true,
+      artworkSrc: AUTO_ARTWORK_URL,
+      artworkAlt: 'Artwork for Enjoy the Silence',
+      iframeCount: 0,
+      storedSpotifyUrl: AUTO_SPOTIFY_URL,
+      storedArtworkUrl: AUTO_ARTWORK_URL,
+      storedArtworkSource: 'spotify-catalogue',
+      storedRating: 2,
+      storedTags: ['ghost in the track'],
+      storedFeedback: 'Keep this.',
+      noHorizontalOverflow: true,
+      expectedArtworkUrl: AUTO_ARTWORK_URL,
+    });
+
+    await page.reload();
+    await page.waitForFunction(({ trackId, spotifyUrl, artworkUrl }) => (
+      document.querySelector(`[data-link-input="spotify-${trackId}"]`)?.value === spotifyUrl
+      && document.querySelector('[data-catalog-artwork] img')?.src === artworkUrl
+    ), { trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL, artworkUrl: AUTO_ARTWORK_URL });
+    assert.equal(catalogRequests, 1);
   } finally {
     if (browser) await browser.close();
     await server.close();
