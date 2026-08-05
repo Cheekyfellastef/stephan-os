@@ -404,3 +404,33 @@ test('automatic deck resolution rejects the wrong track identity and unsafe artw
   assert.equal(stored.listeningDeck[0].spotifyUrl, undefined);
   assert.equal(stored.listeningDeck[0].artworkUrl, undefined);
 });
+
+
+test('automatic deck resolution rejects a same-title result with only incidental artist overlap', async () => {
+  const snapshot = {
+    listeningDeck: [existingCatalogTrack()],
+    ratings: {},
+    tags: {},
+    trackFeedback: {},
+  };
+  const data = new Map([[STORAGE_KEY_FOR_TEST, JSON.stringify(snapshot)]]);
+  const storage = {
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+  };
+  const result = await resolveUnlinkedDeckTracks({
+    storage,
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        results: [verifiedCatalogResult({ artist: 'Mode Seven' })],
+      }),
+    }),
+  });
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY_FOR_TEST));
+  assert.equal(result.resolvedCount, 0);
+  assert.equal(stored.listeningDeck[0].spotifyUrl, undefined);
+  assert.equal(stored.listeningDeck[0].artworkUrl, undefined);
+});

@@ -58,7 +58,7 @@ function catalogMatchScore(track = {}, result = {}) {
     tokenCoverage(track.artist, result.artist),
     tokenCoverage(result.artist, track.artist),
   );
-  if (artistCoverage <= 0) return 0;
+  if (artistCoverage < 0.8) return 0;
   const exactTitle = normalizedIdentity(track.title || track.name) === normalizedIdentity(result.title);
   return (exactTitle ? 1000 : 0) + Math.round(titleCoverage * 100) + Math.round(artistCoverage * 10);
 }
