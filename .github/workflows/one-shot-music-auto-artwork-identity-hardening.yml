@@ -1,0 +1,68 @@
+name: One-shot Music Auto Artwork Identity Hardening
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/one-shot-music-auto-artwork-identity-hardening.mjs'
+      - '.github/workflows/one-shot-music-auto-artwork-identity-hardening.yml'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: one-shot-music-auto-artwork-identity-hardening-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  harden:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/music-tile-automatic-url-artwork-v2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/music-tile-automatic-url-artwork-v2
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Apply bounded identity hardening
+        run: node scripts/one-shot-music-auto-artwork-identity-hardening.mjs
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install focused dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run focused identity and source regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check apps/music-tile/engine/nativeCatalogAutoApply.js
+          node --test tests/music-intelligence-centre-vnext.test.mjs
+          node --test tests/music-tile-auto-url-artwork-source-contract.test.mjs
+          git diff --check
+
+      - name: Publish permanent hardening and remove runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Stephanos GitHub Repair"
+          git config user.email "actions@users.noreply.github.com"
+          git restore -- package-lock.json 2>/dev/null || true
+          rm -f scripts/one-shot-music-auto-artwork-identity-hardening.mjs
+          rm -f .github/workflows/one-shot-music-auto-artwork-identity-hardening.yml
+          git add \
+            apps/music-tile/engine/nativeCatalogAutoApply.js \
+            tests/music-intelligence-centre-vnext.test.mjs \
+            scripts/one-shot-music-auto-artwork-identity-hardening.mjs \
+            .github/workflows/one-shot-music-auto-artwork-identity-hardening.yml
+          git diff --cached --check
+          git commit -m "Harden Music Tile automatic track identity"
+          git push origin HEAD:fix/music-tile-automatic-url-artwork-v2
