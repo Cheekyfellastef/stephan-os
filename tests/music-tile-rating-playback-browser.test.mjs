@@ -245,9 +245,9 @@ test('iPad-width native search writes the Spotify URL into an existing card auto
 
     await page.fill('#native-music-search-input', 'Enjoy the Silence');
     await page.click('#native-music-search-button');
-    await page.waitForFunction(() => (
-      document.getElementById('native-music-search-status')?.textContent?.includes('updated automatically')
-    ));
+    await page.waitForFunction(({ trackId, spotifyUrl }) => (
+      document.querySelector(`[data-link-input="spotify-${trackId}"]`)?.value === spotifyUrl
+    ), { trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL });
 
     const proof = await page.evaluate(({ key, trackId, spotifyUrl }) => {
       const card = document.querySelector('.player-deck-card');
@@ -551,6 +551,10 @@ test('iPad-width existing card receives Spotify URL and artwork without manual s
     );
     const page = await browser.newPage({ viewport: { width: 820, height: 1180 } });
     let catalogRequests = 0;
+    const pageErrors = [];
+    const browserConsole = [];
+    page.on('pageerror', (error) => pageErrors.push(String(error?.stack || error?.message || error)));
+    page.on('console', (message) => browserConsole.push(`${message.type()}: ${message.text()}`));
     await page.route('https://i.scdn.co/**', async (route) => {
       await route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" />' });
     });
@@ -603,11 +607,40 @@ test('iPad-width existing card receives Spotify URL and artwork without manual s
     }, { key: STORAGE_KEY, trackId: AUTO_TRACK_ID });
 
     await page.goto(`${server.origin}/apps/music-tile/index.html`);
-    await page.waitForFunction(({ trackId, spotifyUrl, artworkUrl }) => {
-      const input = document.querySelector(`[data-link-input="spotify-${trackId}"]`);
-      const image = document.querySelector('[data-catalog-artwork] img');
-      return input?.value === spotifyUrl && image?.src === artworkUrl;
-    }, { trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL, artworkUrl: AUTO_ARTWORK_URL });
+    try {
+      await page.waitForFunction(({ trackId, spotifyUrl, artworkUrl }) => {
+        const input = document.querySelector(`[data-link-input="spotify-${trackId}"]`);
+        const image = document.querySelector('[data-catalog-artwork] img');
+        return input?.value === spotifyUrl && image?.src === artworkUrl;
+      }, { trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL, artworkUrl: AUTO_ARTWORK_URL }, { timeout: 10000 });
+    } catch (error) {
+      const diagnostic = await page.evaluate(({ key, trackId }) => {
+        let stored = null;
+        try { stored = JSON.parse(localStorage.getItem(key)); } catch {}
+        const track = stored?.listeningDeck?.find?.((item) => item.id === trackId) || null;
+        const input = document.querySelector(`[data-link-input="spotify-${trackId}"]`);
+        const card = input?.closest('.player-deck-card') || document.querySelector('.player-deck-card');
+        const image = card?.querySelector('[data-catalog-artwork] img');
+        return {
+          readyState: document.readyState,
+          track,
+          inputValue: input?.value || '',
+          artworkSrc: image?.src || '',
+          artworkPanelPresent: Boolean(card?.querySelector('[data-catalog-artwork]')),
+          cardPresent: Boolean(card),
+          cardText: String(card?.textContent || '').slice(0, 1200),
+          nativeStatus: document.getElementById('native-music-search-status')?.textContent || '',
+          bodyText: String(document.body?.textContent || '').slice(0, 1600),
+        };
+      }, { key: STORAGE_KEY, trackId: AUTO_TRACK_ID });
+      throw new Error(`AUTO_URL_ARTWORK_DIAGNOSTIC=${JSON.stringify({
+        catalogRequests,
+        pageErrors,
+        browserConsole: browserConsole.slice(-30),
+        diagnostic,
+        waitError: String(error?.message || error),
+      })}`);
+    }
 
     const proof = await page.evaluate(({ key, trackId, spotifyUrl, artworkUrl }) => {
       const stored = JSON.parse(localStorage.getItem(key));
