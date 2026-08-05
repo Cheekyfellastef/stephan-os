@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const main = await readFile(new URL('../apps/music-tile/main.js', import.meta.url), 'utf8');
 
+// Protect current-head ownership whenever durable operations finish asynchronously.
 function functionSlice(startMarker, endMarker) {
   const start = main.indexOf(startMarker);
   const end = main.indexOf(endMarker, start);
