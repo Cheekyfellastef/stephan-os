@@ -1,7 +1,7 @@
 # The Witcher 3 VR Route
 
-Status date: 2026-08-05  
-Priority: P1  
+Status date: 2026-08-05
+Priority: P1
 Evidence class: title-specific route synthesis and creator field evidence
 
 ## Why this source family matters
