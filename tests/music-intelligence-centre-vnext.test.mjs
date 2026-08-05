@@ -88,6 +88,14 @@ test('all journey entrances use the complete fresh controller while playback tru
   assert.match(js, /Local candidate · verify/);
 });
 
+test('legacy Surprise Me helper cannot publish a stale operation result', () => {
+  assert.match(js, /async function startSurpriseJourney\(\{ operationGeneration = musicOperationGeneration \} = \{\}\)/);
+  assert.match(js, /const seedArtist = getJourneySeedArtist\(\)/);
+  assert.match(js, /const buildOutcome = await buildJourney\(\{ operationGeneration \}\)/);
+  assert.match(js, /if \(!isCurrentMusicOperation\(operationGeneration\)\) return \{ ok: false, doorwayTrack: null, reason: 'operation-invalidated' \}/);
+  assert.match(js, /if \(!buildOutcome\?\.ok\) return/);
+});
+
 test('listening tools are progressively disclosed without removing their existing controls', () => {
   assert.match(js, /function enhanceListeningDeckCards\(\)/);
   assert.match(js, /function renderListeningDeck\(\)[\s\S]*enhanceListeningDeckCards\(\); \}/);
@@ -114,7 +122,7 @@ test('journey build returns an explicit outcome so persistence failures cannot b
 });
 
 test('journey-built presence evidence is emitted only after persistence and rendering succeed', () => {
-  const buildSource = js.slice(js.indexOf('async function buildJourney()'), js.indexOf('function startJourney()'));
+  const buildSource = js.slice(js.indexOf('async function buildJourney('), js.indexOf('function startJourney()'));
   const saveIndex = buildSource.indexOf('saveState();');
   const renderIndex = buildSource.indexOf("safeRenderAll('buildJourney')");
   const successIndex = buildSource.indexOf('emitJourneyBuildSuccess(term, state.candidates.length)');
