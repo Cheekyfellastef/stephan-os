@@ -1,0 +1,53 @@
+name: One-shot Music Auto Artwork Browser Diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/one-shot-music-auto-artwork-browser-diagnostics.mjs'
+      - '.github/workflows/one-shot-music-auto-artwork-browser-diagnostics.yml'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: one-shot-music-auto-artwork-browser-diagnostics-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  patch-test:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/music-tile-automatic-url-artwork-v2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/music-tile-automatic-url-artwork-v2
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Apply test-only browser truth patch
+        run: node scripts/one-shot-music-auto-artwork-browser-diagnostics.mjs
+
+      - name: Verify test syntax
+        run: node --check tests/music-tile-rating-playback-browser.test.mjs
+
+      - name: Publish settled browser proof and remove diagnostics machinery
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Stephanos GitHub Repair"
+          git config user.email "actions@users.noreply.github.com"
+          rm -f scripts/one-shot-music-auto-artwork-browser-diagnostics.mjs
+          rm -f .github/workflows/one-shot-music-auto-artwork-browser-diagnostics.yml
+          git add \
+            tests/music-tile-rating-playback-browser.test.mjs \
+            scripts/one-shot-music-auto-artwork-browser-diagnostics.mjs \
+            .github/workflows/one-shot-music-auto-artwork-browser-diagnostics.yml
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "3"
+          git diff --cached --check
+          git commit -m "Make Music Tile browser proof follow card truth"
+          git push origin HEAD:fix/music-tile-automatic-url-artwork-v2
