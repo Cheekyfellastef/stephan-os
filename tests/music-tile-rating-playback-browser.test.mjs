@@ -245,9 +245,13 @@ test('iPad-width native search writes the Spotify URL into an existing card auto
 
     await page.fill('#native-music-search-input', 'Enjoy the Silence');
     await page.click('#native-music-search-button');
-    await page.waitForFunction(({ trackId, spotifyUrl }) => (
-      document.querySelector(`[data-link-input="spotify-${trackId}"]`)?.value === spotifyUrl
-    ), { trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL });
+    await page.waitForFunction(({ trackId, spotifyUrl }) => {
+      const input = document.querySelector(`[data-link-input="spotify-${trackId}"]`);
+      const resultButton = document.querySelector('[data-action="add-native-catalog-result"]');
+      return input?.value === spotifyUrl
+        && resultButton?.disabled === true
+        && resultButton?.textContent?.trim() === 'In Listening Room';
+    }, { trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL });
 
     const proof = await page.evaluate(({ key, trackId, spotifyUrl }) => {
       const card = document.querySelector('.player-deck-card');
