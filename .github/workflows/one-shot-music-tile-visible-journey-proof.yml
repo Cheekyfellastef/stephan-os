@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Repair visible journey seed and instrument browser proof
+      - name: Repair complete visible journey contract and proof
         shell: bash
         run: |
           python - <<'PY'
@@ -44,38 +44,12 @@ jobs:
               raise SystemExit(f'Expected one hidden Build Journey browser click, found {browser_source.count(browser_before)}')
           browser_source = browser_source.replace(browser_before, browser_after)
 
-          click_index = browser_source.index(browser_after)
-          wait_start = browser_source.index('    await page.waitForFunction', click_index)
-          wait_end = browser_source.index('    ));', wait_start) + len('    ));')
-          original_wait = browser_source[wait_start:wait_end]
-          wait_after = """    try {
-              await page.waitForFunction(() => (
-                performance.getEntriesByType('navigation')[0]?.type === 'reload'
-                && document.querySelectorAll('#listening-deck > .player-deck-card').length >= 10
-              ), null, { timeout: 15000 });
-            } catch (error) {
-              const diagnostic = await page.evaluate(({ key }) => {
-                const raw = localStorage.getItem(key);
-                let stored = {};
-                try { stored = JSON.parse(raw || '{}'); } catch {}
-                return {
-                  href: location.href,
-                  navigationType: performance.getEntriesByType('navigation')[0]?.type,
-                  status: document.getElementById('status-text')?.textContent,
-                  novelty: document.getElementById('briefing-novelty')?.textContent,
-                  startLabel: document.getElementById('start-journey-btn')?.textContent,
-                  startDisabled: document.getElementById('start-journey-btn')?.disabled,
-                  candidateCount: Array.isArray(stored.candidates) ? stored.candidates.length : -1,
-                  deckCount: Array.isArray(stored.listeningDeck) ? stored.listeningDeck.length : -1,
-                  activeJourneyCount: Array.isArray(stored.activeJourneyTrackIds) ? stored.activeJourneyTrackIds.length : -1,
-                  renderedCardCount: document.querySelectorAll('#listening-deck > .player-deck-card').length,
-                  summary: stored.lastFreshJourneySummary || null,
-                  rawLength: raw?.length || 0,
-                };
-              }, { key: STORAGE_KEY });
-              throw new Error(`Complete journey diagnostic: ${JSON.stringify(diagnostic)}; ${error.message}`);
-            }"""
-          browser_source = browser_source[:wait_start] + wait_after + browser_source[wait_end:]
+          test_marker = "test('iPad-width complete journey renders every fresh track and Continue changes nothing'"
+          test_index = browser_source.index(test_marker)
+          seed_anchor = "    await page.addInitScript(({ key }) => {\n      localStorage.setItem(key, JSON.stringify({"
+          seed_index = browser_source.index(seed_anchor, test_index)
+          guarded_seed = "    await page.addInitScript(({ key }) => {\n      if (localStorage.getItem(key)) return;\n      localStorage.setItem(key, JSON.stringify({"
+          browser_source = browser_source[:seed_index] + guarded_seed + browser_source[seed_index + len(seed_anchor):]
           browser_path.write_text(browser_source, encoding='utf-8')
 
           controller_path = Path('apps/music-tile/engine/freshJourneyController.js')
@@ -122,7 +96,7 @@ jobs:
             tests/music-provider-neutral-catalog-search.test.mjs \
             tests/music-tile-candidate-verification-init-order.test.mjs
 
-      - name: Diagnose complete journey through visible primary action in Edge
+      - name: Prove complete journey and playback in Edge
         shell: bash
         env:
           STEPHANOS_BROWSER_CHANNEL: msedge
@@ -138,7 +112,7 @@ jobs:
           git config user.name "Stephanos GitHub Repair"
           git config user.email "actions@users.noreply.github.com"
           git add -A
-          git commit -m "Make every Music Tile journey entrance self-starting"
+          git commit -m "Make every Music Tile journey complete and self-starting"
           git fetch origin fix/music-tile-complete-journey-audit
           git rebase origin/fix/music-tile-complete-journey-audit
           git push origin HEAD:fix/music-tile-complete-journey-audit
