@@ -236,7 +236,7 @@ test('spawned but port never opens reports not ready with log paths under shared
   const { stdout, json } = stdoutCapture();
   const code = await runUi4173Repair({ dryRun: false, sharedWorkspace, collectFactsFn: fakeCollector, plannerFn: readyPlanner, stdout, preflightDepsFn: depsOk, probeFetch: failFetch, readyTimeoutMs: 1, spawnFn: () => fakeChild(4174) });
   const output = json();
-  assert.equal(code, 0);
+  assert.equal(code, 1);
   assert.equal(output.action, 'start-ui-4173-spawned-but-not-ready');
   assert.equal(output.started, true);
   assert.equal(output.ready, false);
@@ -247,10 +247,12 @@ test('spawned but port never opens reports not ready with log paths under shared
 
 test('child exits early reports failed with exit metadata', async () => {
   const child = fakeChild(4175);
-  queueMicrotask(() => { child.exitCode = 1; child.signalCode = null; child.emit('exit', 1, null); });
+  child.exitCode = 1;
+  child.signalCode = null;
   const { stdout, json } = stdoutCapture();
-  await runUi4173Repair({ dryRun: false, collectFactsFn: fakeCollector, plannerFn: readyPlanner, stdout, preflightDepsFn: depsOk, probeFetch: failFetch, readyTimeoutMs: 1, spawnFn: () => child });
+  const code = await runUi4173Repair({ dryRun: false, collectFactsFn: fakeCollector, plannerFn: readyPlanner, stdout, preflightDepsFn: depsOk, probeFetch: failFetch, readyTimeoutMs: 1, spawnFn: () => child });
   const output = json();
+  assert.equal(code, 1);
   assert.equal(output.action, 'start-ui-4173-failed');
   assert.deepEqual(output.exit, { code: 1, signal: null });
 });

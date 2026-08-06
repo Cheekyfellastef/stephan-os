@@ -14,6 +14,7 @@ const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const FRESHNESS_STORAGE_KEY = 'stephanos.musicTile.freshJourneyState.v1';
 const CATALOGUE_TIMEOUT_MS = 6000;
 const CATALOGUE_LIMIT = 10;
+const CATALOGUE_QUERY_VARIANTS = Object.freeze(['remix', 'extended mix', 'edit', 'live']);
 let controllerInstalled = false;
 let journeyInFlight = false;
 
@@ -189,6 +190,17 @@ function interleaveFreshLanes(catalogueCandidates = [], localCandidates = []) {
   return dedupeFreshJourneyCandidates(rows);
 }
 
+function buildCatalogueQueries(artist, sessionCounter) {
+  const normalizedArtist = String(artist || '').trim();
+  const variant = CATALOGUE_QUERY_VARIANTS[
+    Math.abs(Number(sessionCounter) || 0) % CATALOGUE_QUERY_VARIANTS.length
+  ];
+  return [...new Set([
+    normalizedArtist,
+    `${normalizedArtist} ${variant}`.trim(),
+  ].filter(Boolean))].slice(0, 2);
+}
+
 async function buildFreshCandidatePool({ snapshot, artist, buildCandidates }) {
   const sessionCounter = Number(snapshot.sessionCounter || 0) + 1;
   const localResult = buildCandidates({
@@ -205,30 +217,55 @@ async function buildFreshCandidatePool({ snapshot, artist, buildCandidates }) {
     tasteWeights,
   );
 
-  let cataloguePayload = null;
-  let catalogueError = '';
-  try {
-    cataloguePayload = await requestNativeCatalogSearch(artist, {
-      limit: CATALOGUE_LIMIT,
-      timeoutMs: CATALOGUE_TIMEOUT_MS,
-    });
-    if (!cataloguePayload?.ok) catalogueError = String(cataloguePayload?.error || 'Catalogue unavailable.');
-  } catch (error) {
-    catalogueError = String(error?.message || error || 'Catalogue unavailable.');
-  }
+  const catalogueQueries = buildCatalogueQueries(artist, sessionCounter);
+  const catalogueAttempts = await Promise.all(catalogueQueries.map(async (query) => {
+    try {
+      const payload = await requestNativeCatalogSearch(query, {
+        limit: CATALOGUE_LIMIT,
+        timeoutMs: CATALOGUE_TIMEOUT_MS,
+      });
+      return {
+        query,
+        payload,
+        error: payload?.ok ? '' : String(payload?.error || 'Catalogue unavailable.'),
+      };
+    } catch (error) {
+      return {
+        query,
+        payload: null,
+        error: String(error?.message || error || 'Catalogue unavailable.'),
+      };
+    }
+  }));
+  const catalogueResults = catalogueAttempts.flatMap((attempt) => safeArray(attempt.payload?.results));
   const catalogueCandidates = rankCandidatesByTaste(
-    safeArray(cataloguePayload?.results)
-      .map((result) => catalogResultToMusicTileTrack(result))
-      .filter((track) => isMetadataVerifiedCatalogueTrack(track)),
+    dedupeFreshJourneyCandidates(
+      catalogueResults
+        .map((result) => catalogResultToMusicTileTrack(result))
+        .filter((track) => isMetadataVerifiedCatalogueTrack(track)),
+    ),
     tasteWeights,
   );
+  const catalogueErrors = catalogueAttempts
+    .filter((attempt) => attempt.error)
+    .map((attempt) => `${attempt.query}: ${attempt.error}`);
+  const successfulPayloads = catalogueAttempts
+    .map((attempt) => attempt.payload)
+    .filter((payload) => payload?.ok);
+  const cataloguePayload = {
+    ok: successfulPayloads.length > 0,
+    results: catalogueResults,
+    providerLabel: [...new Set(successfulPayloads.map((payload) => payload.providerLabel).filter(Boolean))].join(' + '),
+    queries: catalogueQueries,
+  };
 
   return {
     candidates: interleaveFreshLanes(catalogueCandidates, localCandidates),
     sessionCounter,
     localResult,
     cataloguePayload,
-    catalogueError,
+    catalogueQueries,
+    catalogueError: catalogueErrors.join(' | '),
   };
 }
 
@@ -262,7 +299,7 @@ export async function startFreshJourney({
     return { ok: false, reason: 'candidate-builder-unavailable' };
   }
   const normalizedArtist = String(
-    artist || globalThis.document?.getElementById('artist-input')?.value || '',
+    artist || getFreshJourneySeedArtist(storage),
   ).trim();
   if (!normalizedArtist) {
     setStatus('Enter an artist or creative direction before starting a new journey.');
@@ -294,8 +331,9 @@ export async function startFreshJourney({
     },
     candidates: pool.candidates,
     targetCount: 10,
-    listeningRoomAdditionCount: 3,
+    listeningRoomAdditionCount: 10,
     minimumFreshTarget: 6,
+    deckLimit: 20,
     startedAt,
   });
 
@@ -481,14 +519,14 @@ export function installFreshJourneyController({ buildCandidates } = {}) {
   controllerInstalled = true;
   installVisibleJourneyControls(startButton);
   startButton.textContent = 'Start New Journey';
-  startButton.title = 'Build a genuinely fresh candidate set and add new tracks to the Listening Room.';
+  startButton.title = 'Build a complete fresh journey and make every result available in the Listening Room.';
   installContinueCurrentJourneyButton(startButton);
   installFreshnessResetBinding();
   restoreFreshJourneyNotice();
 
   globalThis.document.addEventListener('click', (event) => {
     const target = event.target instanceof Element
-      ? event.target.closest('#start-journey-btn, #surprise-me-btn')
+      ? event.target.closest('#start-journey-btn, #surprise-me-btn, #build-journey-btn')
       : null;
     if (!target) return;
     event.preventDefault();
@@ -497,9 +535,7 @@ export function installFreshJourneyController({ buildCandidates } = {}) {
     journeyInFlight = true;
     const restoreButton = beginJourneyButtonBusy(target);
     setStatus('Searching unseen local and live catalogue candidates…');
-    const artist = target.id === 'surprise-me-btn'
-      ? getFreshJourneySeedArtist()
-      : undefined;
+    const artist = getFreshJourneySeedArtist();
     void startFreshJourney({ buildCandidates, artist }).finally(() => {
       journeyInFlight = false;
       restoreButton();

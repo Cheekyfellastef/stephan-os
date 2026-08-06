@@ -77,16 +77,23 @@ test('setup, diagnostics, Taste DNA editing and legacy controls remain available
   ].forEach((id) => assert.match(html, new RegExp(`id="${id}"`)));
 });
 
-test('Surprise Me reuses stored truth and never labels an unverified candidate as playable', () => {
-  assert.match(js, /async function startSurpriseJourney\(\)/);
-  assert.match(js, /const seedArtist = getJourneySeedArtist\(\)/);
-  assert.match(js, /const buildOutcome = await buildJourney\(\)/);
-  assert.match(js, /if \(!buildOutcome\?\.ok\) return/);
+test('all journey entrances use the complete fresh controller while playback truth remains guarded', () => {
+  assert.doesNotMatch(js, /surpriseBtn\?\.addEventListener\('click', startSurpriseJourney\)/);
+  assert.doesNotMatch(js, /ui\.buildBtn\?\.addEventListener\('click', buildJourney\)/);
+  assert.doesNotMatch(js, /ui\.startBtn\?\.addEventListener\('click', startJourney\)/);
+  assert.match(freshJourneyControllerSource, /#start-journey-btn, #surprise-me-btn, #build-journey-btn/);
+  assert.match(freshJourneyControllerSource, /listeningRoomAdditionCount: 10/);
   assert.match(js, /isVerifiedCandidateTrack\(track\) && spotify\.valid && spotify\.type === 'track'/);
   assert.match(js, /AI lead · unverified/);
   assert.match(js, /Local candidate · verify/);
-  assert.match(js, /wider listening history is unavailable/);
-  assert.match(js, /Evidence unavailable/);
+});
+
+test('legacy Surprise Me helper cannot publish a stale operation result', () => {
+  assert.match(js, /async function startSurpriseJourney\(\{ operationGeneration = musicOperationGeneration \} = \{\}\)/);
+  assert.match(js, /const seedArtist = getJourneySeedArtist\(\)/);
+  assert.match(js, /const buildOutcome = await buildJourney\(\{ operationGeneration \}\)/);
+  assert.match(js, /if \(!isCurrentMusicOperation\(operationGeneration\)\) return \{ ok: false, doorwayTrack: null, reason: 'operation-invalidated' \}/);
+  assert.match(js, /if \(!buildOutcome\?\.ok\) return/);
 });
 
 test('listening tools are progressively disclosed without removing their existing controls', () => {
@@ -115,7 +122,7 @@ test('journey build returns an explicit outcome so persistence failures cannot b
 });
 
 test('journey-built presence evidence is emitted only after persistence and rendering succeed', () => {
-  const buildSource = js.slice(js.indexOf('async function buildJourney()'), js.indexOf('function startJourney()'));
+  const buildSource = js.slice(js.indexOf('async function buildJourney('), js.indexOf('function startJourney()'));
   const saveIndex = buildSource.indexOf('saveState();');
   const renderIndex = buildSource.indexOf("safeRenderAll('buildJourney')");
   const successIndex = buildSource.indexOf('emitJourneyBuildSuccess(term, state.candidates.length)');
@@ -300,11 +307,13 @@ test('fresh journey planning preserves existing truth and adds only unseen track
   const plan = planFreshJourneyState({ snapshot, candidates: incoming, startedAt: '2026-08-04T03:00:00.000Z' });
   assert.equal(plan.ok, true);
   assert.equal(plan.freshCount, 7);
-  assert.equal(plan.addedCount, 3);
+  assert.equal(plan.addedCount, 7);
   assert.equal(plan.catalogueCount, 3);
   assert.equal(plan.recycledCount, 0);
   assert.ok(plan.selected.every((track) => track.id.startsWith('fresh-')));
-  assert.deepEqual(plan.state.listeningDeck.slice(0, 3).map((track) => track.id), ['fresh-1', 'fresh-2', 'fresh-3']);
+  assert.deepEqual(plan.state.listeningDeck.slice(0, 7).map((track) => track.id), ['fresh-1', 'fresh-2', 'fresh-3', 'fresh-4', 'fresh-5', 'fresh-6', 'fresh-7']);
+  assert.equal(plan.state.lastFreshJourneySummary.activeJourneyCount, 7);
+  assert.equal(plan.state.lastFreshJourneySummary.roomCount, 8);
   assert.equal(plan.state.listeningDeck.at(-1).id, 'playing-track');
   assert.equal(plan.state.ratings['playing-track'], 2);
   assert.deepEqual(plan.state.tags['playing-track'], ['ghost in the track']);
@@ -315,7 +324,9 @@ test('fresh journey planning preserves existing truth and adds only unseen track
 test('Start Journey is split into fresh-start and non-mutating continue actions', () => {
   assert.match(freshJourneyControllerSource, /startButton\.textContent = 'Start New Journey'/);
   assert.match(freshJourneyControllerSource, /continueButton\.textContent = 'Continue Current Journey'/);
-  assert.match(freshJourneyControllerSource, /requestNativeCatalogSearch\(artist/);
+  assert.match(freshJourneyControllerSource, /requestNativeCatalogSearch\(query/);
+  assert.match(freshJourneyControllerSource, /CATALOGUE_QUERY_VARIANTS/);
+  assert.match(freshJourneyControllerSource, /#build-journey-btn/);
   assert.match(freshJourneyControllerSource, /planFreshJourneyState\(/);
   assert.match(freshJourneyControllerSource, /event\.stopImmediatePropagation\(\)/);
   assert.match(freshJourneyControllerSource, /document\.addEventListener\('click',[\s\S]*true\)/);

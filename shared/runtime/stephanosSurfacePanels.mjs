@@ -136,6 +136,7 @@ function createPanelShell({ panel, titleNode }) {
   const heading = document.createElement('h2');
   heading.className = titleNode?.className || 'title';
   heading.textContent = headingText;
+  if (safeString(titleNode?.id)) heading.id = titleNode.id;
 
   const button = createStephanosCanonRotatingChevronButton({ documentRef: document });
 
