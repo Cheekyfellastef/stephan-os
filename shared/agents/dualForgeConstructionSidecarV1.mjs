@@ -7,6 +7,7 @@ const LANE_STATES = new Set(['building', 'ready', 'blocked', 'complete']);
 const PACKET_STATES = new Set(['ready', 'held', 'published', 'rejected']);
 const MAX_LANES = 32;
 const MAX_PACKETS = 128;
+const MAX_PUBLISHED_PACKET_IDS = 1024;
 const MAX_CHANGED_FILES = 256;
 const MAX_PROOF_REFS = 128;
 
@@ -53,13 +54,10 @@ function safePath(value) {
 }
 
 function safeProofRef(value) {
-  const ref = text(value);
-  return ref.length > 0
-    && ref.length <= 512
-    && !ref.includes('\0')
-    && !/^[a-z]+:\/\//i.test(ref)
-    && !/^[a-z]:\\/i.test(ref)
-    && !ref.startsWith('\\\\');
+  const ref = text(value).replaceAll('\\', '/');
+  return safePath(ref)
+    && /^(?:proof|proofs|receipts|evidence\/receipts)\//.test(ref)
+    && !/^[a-z][a-z0-9+.-]*:/i.test(ref);
 }
 
 function normalizeLane(lane = {}) {
@@ -97,6 +95,17 @@ function normalizePacket(packet = {}) {
     dependsOnPacketIds: dependencies,
     settledAtUtc: text(packet.settledAtUtc),
     priority: integer(packet.priority),
+  });
+}
+
+function normalizeActiveIntegration(activeIntegration) {
+  if (activeIntegration === null || activeIntegration === undefined) return null;
+  if (!activeIntegration || typeof activeIntegration !== 'object' || Array.isArray(activeIntegration)) {
+    return Object.freeze({ packetId: '', head: '' });
+  }
+  return Object.freeze({
+    packetId: text(activeIntegration.packetId),
+    head: text(activeIntegration.head).toLowerCase(),
   });
 }
 
@@ -169,7 +178,10 @@ function validatePacket(packet, lanesById, canonicalMainHead, nowMs) {
   else if (packet.proofRefs.length > MAX_PROOF_REFS) blockers.push('packet-proof-refs-exceed-bound');
   else if (packet.proofRefs.some((ref) => !safeProofRef(ref))) blockers.push('packet-proof-ref-unsafe');
   if (!Array.isArray(packet.dependsOnPacketIds)) blockers.push('packet-dependencies-invalid');
-  else if (packet.dependsOnPacketIds.some((id) => !SAFE_ID.test(id))) blockers.push('packet-dependency-id-invalid');
+  else {
+    if (packet.dependsOnPacketIds.some((id) => !SAFE_ID.test(id))) blockers.push('packet-dependency-id-invalid');
+    if (packet.dependsOnPacketIds.includes(packet.packetId)) blockers.push('packet-dependency-self');
+  }
   if (!Number.isSafeInteger(packet.priority) || packet.priority < 0 || packet.priority > 1000) {
     blockers.push('packet-priority-invalid');
   }
@@ -211,7 +223,7 @@ export function planDualForgeConstructionSidecar(input = {}) {
   const publishedPacketIds = Array.isArray(input.publishedPacketIds)
     ? unique(input.publishedPacketIds.map(text).filter(Boolean)).sort()
     : null;
-  const activeIntegration = input.activeIntegration ?? null;
+  const activeIntegration = normalizeActiveIntegration(input.activeIntegration);
   const apiBudget = validateApiBudget(input.githubApiBudget);
   const blockers = [];
 
@@ -226,7 +238,11 @@ export function planDualForgeConstructionSidecar(input = {}) {
   if (!Array.isArray(packets)) blockers.push('packets-invalid');
   else if (packets.length > MAX_PACKETS) blockers.push('packets-exceed-bound');
   if (!Array.isArray(publishedPacketIds)) blockers.push('published-packet-ids-invalid');
+  else if (publishedPacketIds.length > MAX_PUBLISHED_PACKET_IDS) blockers.push('published-packet-ids-exceed-bound');
   else if (publishedPacketIds.some((id) => !SAFE_ID.test(id))) blockers.push('published-packet-id-invalid');
+  if (activeIntegration && (!SAFE_ID.test(activeIntegration.packetId) || !SHA.test(activeIntegration.head))) {
+    blockers.push('active-integration-invalid');
+  }
   if (!apiBudget.valid) blockers.push(...apiBudget.blockers);
 
   const lanesById = new Map();
@@ -330,8 +346,7 @@ export function planDualForgeConstructionSidecar(input = {}) {
     waitingPackets.push(Object.freeze({ packetId, reason: 'packet-path-conflict-with-higher-ranked-packet' }));
   }
 
-  const integrationBusy = Boolean(activeIntegration && typeof activeIntegration === 'object');
-  if (integrationBusy) {
+  if (activeIntegration) {
     return Object.freeze({
       schemaVersion: DUAL_FORGE_SCHEMA,
       valid: true,
@@ -343,10 +358,7 @@ export function planDualForgeConstructionSidecar(input = {}) {
       apiBudget,
       selectedPacket: null,
       waitingPackets: Object.freeze(waitingPackets),
-      activeIntegration: Object.freeze({
-        packetId: text(activeIntegration.packetId),
-        head: text(activeIntegration.head).toLowerCase(),
-      }),
+      activeIntegration,
       authority,
     });
   }
