@@ -40,9 +40,28 @@ test('machine creation and inspection are WSL rootless bounded identities', () =
   has("'machine', 'init', '--provider', 'wsl', '--rootful=false', '--cpus', '4', '--memory', '4096', '--disk-size', '40'");
   has("'machine', 'inspect', '--format', '{{json .}}', $MachineName");
   has("$MachineName = 'stephanos-forge-shadow'");
-  has("if ($machine.Rootful -eq $true) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }");
-  has("if ($machine.State -ne 'running')");
+  has("if ($machine.Rootful -ne $false) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }");
+  has("Fail 'PODMAN_MACHINE_RUNNING_ROOTLESS_NOT_PROVED'");
   lacks('--privileged');
+});
+
+test('every remote Podman operation is bound to the named Forge machine connection', () => {
+  has('function Invoke-PodmanRemote');
+  has("$boundArguments = @('--connection', $MachineName) + @($Arguments)");
+  has("$connectionProbe = Invoke-PodmanRemote $PodmanExe @('info') -AllowFailure");
+  has("Fail 'PODMAN_MACHINE_CONNECTION_UNAVAILABLE'");
+  has('podmanConnection = $MachineName');
+  for (const unbound of [
+    "Invoke-Fixed $Podman @('container'",
+    "Invoke-Fixed $Podman @('volume'",
+    "Invoke-Fixed $Podman @('inspect'",
+    "Invoke-Fixed $Podman @('port'",
+    "Invoke-Fixed $Podman @('run'",
+    "Invoke-Fixed $Podman @('exec'",
+    "Invoke-Fixed $Podman @('stop'",
+    "Invoke-Fixed $Podman @('start'",
+    "Invoke-Fixed $Podman @('rm'",
+  ]) lacks(unbound);
 });
 
 test('Forgejo is current-LTS digest pinned and exposes only loopback HTTP with no SSH port', () => {
@@ -54,7 +73,7 @@ test('Forgejo is current-LTS digest pinned and exposes only loopback HTTP with n
   has("\"FORGEJO__server__ROOT_URL=http://127.0.0.1:$PublicPort/\"");
   has("'FORGEJO__server__DISABLE_SSH=true'");
   has("'FORGEJO__server__START_SSH_SERVER=false'");
-  has("'pull', $ImageRef");
+  has("Invoke-PodmanRemote $PodmanExe @('pull', $ImageRef)");
   lacks('0.0.0.0:');
   lacks(':2222');
   lacks('/var/run/docker.sock');
@@ -118,12 +137,19 @@ test('Actions packages federation and scheduled mirror updates are disabled', ()
   has("'FORGEJO__mirror__DISABLE_NEW_PUSH=true'");
 });
 
-test('one local bootstrap token is scoped memory-only and revoked after the mirror operation', () => {
+test('bootstrap token revocation is attempted even when mirror migration fails', () => {
   has("$BootstrapTokenName = 'stephanos-m2-bootstrap'");
   has("'--scopes', 'write:repository,write:user'");
   has("$token = (($tokenResult.Output -join '').Trim())");
+  has('$migrationSucceeded = $false');
+  has('$revocationSucceeded = $false');
   has("Invoke-RestMethod -Method Post -Uri \"$ApiRoot/repos/migrate\"");
   has("Invoke-RestMethod -Method Delete -Uri \"$ApiRoot/users/$Owner/tokens/$BootstrapTokenName\"");
+  has("Fail 'FORGE_BOOTSTRAP_TOKEN_REVOCATION_FAILED'");
+  has('bootstrapTokenRevoked = $false');
+  has('credentialPersisted = $true');
+  has("Fail 'FORGE_MIRROR_MIGRATION_FAILED'");
+  has('bootstrapTokenRevoked = $true');
   has('$token = $null');
   has('$tokenResult = $null');
   has('[GC]::Collect()');
