@@ -1,0 +1,397 @@
+name: Qualified Specialist Review Sealing Bootstrap
+
+on:
+  push:
+    branches:
+      - fix/qualified-specialist-review-sealing-v1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: qualified-specialist-review-sealing-v1
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out exact construction branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/qualified-specialist-review-sealing-v1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify exact base and bootstrap-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          exact_main='5272af4d998d3a4f82841ddf735d0850e97f09a6'
+          bootstrap='.github/workflows/qualified-specialist-review-sealing-bootstrap.yml'
+          test "$(git rev-parse origin/main)" = "$exact_main"
+          test "$(git rev-parse HEAD^)" = "$exact_main"
+          test "$(git diff --name-only HEAD^..HEAD)" = "$bootstrap"
+
+      - name: Build bounded specialist sealing contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > shared/agents/qualifiedSpecialistReviewV1.mjs <<'EOF'
+          import { createHash } from 'node:crypto';
+          import { validateProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
+
+          export const QUALIFIED_SPECIALIST_REVIEW_MARKER = '<!-- stephanos-qualified-specialist-review -->';
+          export const QUALIFIED_SPECIALIST_REVIEWER_LOGIN = 'chatgpt-codex-connector';
+          export const QUALIFIED_SPECIALIST_REVIEWER_ID = 'chatgpt-github-specialist';
+          export const QUALIFIED_SPECIALIST_REVIEWER_CLASS = 'external-qualified';
+          export const QUALIFIED_SPECIALIST_REVIEW_PROVIDER = 'chatgpt-github-specialist';
+          export const QUALIFIED_SPECIALIST_REVIEW_MODEL_CLASS = 'gpt-5-6-thinking';
+          export const QUALIFIED_SPECIALIST_REVIEW_SCOPE = 'windows-authority-specialist';
+          export const QUALIFIED_SPECIALIST_IMPLEMENTER_PROVIDER = 'canonical-programme-builder';
+          export const QUALIFIED_SPECIALIST_FINDING_CODE = 'unsupported-high-risk-surface';
+          export const QUALIFIED_SPECIALIST_PROGRAMME_ISSUE = 1568;
+
+          const EXACT_HEAD = /^[a-f0-9]{40}$/;
+          const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+          const MAX_REVIEW_CLOCK_SKEW_MS = 15 * 60 * 1000;
+
+          function text(value) {
+            return String(value ?? '').trim();
+          }
+
+          function positiveInteger(value) {
+            const parsed = Number.parseInt(String(value ?? ''), 10);
+            return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+          }
+
+          function unique(values) {
+            return [...new Set(values)];
+          }
+
+          function canonicalJson(value) {
+            if (value === null || typeof value !== 'object') return JSON.stringify(value);
+            if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+            return `{${Object.keys(value).sort().map((key) => (
+              `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+            )).join(',')}}`;
+          }
+
+          function extractJsonObjects(markdown = '') {
+            const objects = [];
+            const pattern = /```json\s*([\s\S]*?)```/gi;
+            for (const match of text(markdown).matchAll(pattern)) {
+              try {
+                const parsed = JSON.parse(match[1]);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) objects.push(parsed);
+              } catch {
+                // Malformed JSON cannot satisfy specialist review.
+              }
+            }
+            return objects;
+          }
+
+          function specialistPathProof(path) {
+            return `proofs/specialist-review/path/${path}`;
+          }
+
+          export function qualifiedSpecialistEscalationPaths(analysis = {}) {
+            const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+            if (analysis?.schemaVersion !== 'stephanos.independent-security-analysis.v1'
+              || analysis?.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_FINDINGS'
+              || analysis?.verdict !== 'findings'
+              || findings.length < 1
+              || findings.some((item) => (
+                text(item?.severity).toUpperCase() !== 'P0'
+                || text(item?.code) !== QUALIFIED_SPECIALIST_FINDING_CODE
+                || !text(item?.path)
+              ))
+              || Number(analysis?.counts?.P0) !== findings.length
+              || Number(analysis?.counts?.P1) !== 0
+              || Number(analysis?.counts?.P2) !== 0) {
+              return Object.freeze([]);
+            }
+            return Object.freeze(unique(findings.map((item) => text(item.path))).sort());
+          }
+
+          function validateSpecialistReviewCandidate(review = {}, options = {}) {
+            const repository = text(options.repository);
+            const prNumber = positiveInteger(options.prNumber);
+            const branch = text(options.branch);
+            const sourceHead = text(options.sourceHead).toLowerCase();
+            const baseSha = text(options.baseSha).toLowerCase();
+            const paths = Array.isArray(options.paths) ? options.paths : [];
+            const blockers = [];
+            const reviewId = positiveInteger(review?.id);
+            const body = text(review?.body);
+            const submittedAt = text(review?.submitted_at);
+            const submittedAtMs = Date.parse(submittedAt);
+
+            if (!reviewId) blockers.push('specialist-review-id-invalid');
+            if (text(review?.state).toUpperCase() !== 'APPROVED') blockers.push('specialist-review-not-approved');
+            if (text(review?.commit_id).toLowerCase() !== sourceHead) blockers.push('specialist-review-head-mismatch');
+            if (text(review?.user?.login).toLowerCase() !== QUALIFIED_SPECIALIST_REVIEWER_LOGIN) {
+              blockers.push('specialist-reviewer-login-mismatch');
+            }
+            if (!EXPLICIT_TIMEZONE.test(submittedAt) || !Number.isFinite(submittedAtMs)) {
+              blockers.push('specialist-review-time-invalid');
+            }
+            if (!body.includes(QUALIFIED_SPECIALIST_REVIEW_MARKER)) blockers.push('specialist-review-marker-missing');
+
+            const objects = extractJsonObjects(body);
+            if (objects.length !== 1) blockers.push('specialist-review-receipt-count-not-one');
+            const receipt = objects[0] || {};
+            const receiptValidation = validateProviderNeutralReviewReceipt(receipt, {
+              repository,
+              issueNumber: QUALIFIED_SPECIALIST_PROGRAMME_ISSUE,
+              prNumber,
+              branch,
+              expectedHead: sourceHead,
+              riskTier: 'high',
+            });
+            if (!receiptValidation.valid) blockers.push(...receiptValidation.errors.map((item) => `specialist-receipt:${item}`));
+
+            const expectedSession = `github-specialist-${sourceHead.slice(0, 12)}`;
+            const expectedImplementerSession = `pr-${prNumber}-implementation-lane`;
+            if (receipt.reviewerId !== QUALIFIED_SPECIALIST_REVIEWER_ID) blockers.push('specialist-reviewer-id-mismatch');
+            if (receipt.reviewerClass !== QUALIFIED_SPECIALIST_REVIEWER_CLASS) blockers.push('specialist-reviewer-class-mismatch');
+            if (receipt.provider !== QUALIFIED_SPECIALIST_REVIEW_PROVIDER) blockers.push('specialist-review-provider-mismatch');
+            if (receipt.modelClass !== QUALIFIED_SPECIALIST_REVIEW_MODEL_CLASS) blockers.push('specialist-review-model-class-mismatch');
+            if (receipt.reviewerSessionId !== expectedSession) blockers.push('specialist-review-session-mismatch');
+            if (receipt.implementerProvider !== QUALIFIED_SPECIALIST_IMPLEMENTER_PROVIDER
+              || receipt.implementerSessionId !== expectedImplementerSession) {
+              blockers.push('specialist-review-implementation-binding-mismatch');
+            }
+            if (receipt.assuranceMode !== 'specialist' || receipt.riskTier !== 'high') {
+              blockers.push('specialist-review-assurance-mismatch');
+            }
+            if (receipt.verdict !== 'clean' || receipt.findings?.length !== 0 || receipt.blocker !== '') {
+              blockers.push('specialist-review-not-clean');
+            }
+            if (!Array.isArray(receipt.reviewScope)
+              || !receipt.reviewScope.includes('complete-exact-head-diff')
+              || !receipt.reviewScope.includes(QUALIFIED_SPECIALIST_REVIEW_SCOPE)
+              || !receipt.reviewScope.includes('fixed-executable-and-task-authority')) {
+              blockers.push('specialist-review-scope-incomplete');
+            }
+
+            const expectedProofs = [
+              `proofs/specialist-review/head-${sourceHead.slice(0, 12)}`,
+              `proofs/specialist-review/base-${baseSha.slice(0, 12)}`,
+              ...paths.map(specialistPathProof),
+            ];
+            for (const proof of expectedProofs) {
+              if (!Array.isArray(receipt.proofRefs) || !receipt.proofRefs.includes(proof)) {
+                blockers.push(`specialist-review-proof-missing:${proof}`);
+              }
+            }
+
+            const receiptAtMs = Date.parse(text(receipt.timestampUtc));
+            if (!Number.isFinite(receiptAtMs)
+              || !Number.isFinite(submittedAtMs)
+              || receiptAtMs > submittedAtMs
+              || submittedAtMs - receiptAtMs > MAX_REVIEW_CLOCK_SKEW_MS) {
+              blockers.push('specialist-review-receipt-time-not-bound');
+            }
+
+            return Object.freeze({
+              valid: blockers.length === 0,
+              reviewId,
+              submittedAt,
+              receipt,
+              receiptValidation,
+              blockers: Object.freeze(unique(blockers)),
+            });
+          }
+
+          export function adjudicateQualifiedSpecialistReview(input = {}) {
+            const analysis = input.analysis && typeof input.analysis === 'object' ? input.analysis : {};
+            if (analysis?.finalVerdict === 'INDEPENDENT_SECURITY_REVIEW_CLEAN'
+              && analysis?.verdict === 'clean'
+              && Array.isArray(analysis?.findings)
+              && analysis.findings.length === 0) {
+              return Object.freeze({ required: false, valid: true, analysis, receipt: null, reviewId: 0, blockers: Object.freeze([]) });
+            }
+
+            const paths = qualifiedSpecialistEscalationPaths(analysis);
+            if (paths.length === 0) {
+              return Object.freeze({
+                required: false,
+                valid: false,
+                analysis,
+                receipt: null,
+                reviewId: 0,
+                blockers: Object.freeze(['specialist-review-cannot-cover-non-escalation-findings']),
+              });
+            }
+
+            const reviews = Array.isArray(input.reviews) ? input.reviews : [];
+            const candidates = reviews.map((review) => validateSpecialistReviewCandidate(review, {
+              repository: input.repository,
+              prNumber: input.prNumber,
+              branch: input.branch,
+              sourceHead: input.sourceHead,
+              baseSha: input.baseSha,
+              paths,
+            })).filter((candidate) => candidate.valid);
+
+            if (candidates.length !== 1) {
+              return Object.freeze({
+                required: true,
+                valid: false,
+                analysis,
+                receipt: null,
+                reviewId: 0,
+                blockers: Object.freeze([
+                  candidates.length === 0
+                    ? 'qualified-specialist-review-missing'
+                    : 'qualified-specialist-review-ambiguous',
+                ]),
+              });
+            }
+
+            const candidate = candidates[0];
+            const receiptDigest = createHash('sha256')
+              .update(canonicalJson(candidate.receipt), 'utf8')
+              .digest('hex');
+            const proofRefs = unique([
+              ...(Array.isArray(analysis.proofRefs) ? analysis.proofRefs : []),
+              ...(Array.isArray(candidate.receipt.proofRefs) ? candidate.receipt.proofRefs : []),
+              `proofs/specialist-review/review-${candidate.reviewId}`,
+              `proofs/specialist-review/receipt-sha256-${receiptDigest}`,
+              `proofs/specialist-review/reviewer-${QUALIFIED_SPECIALIST_REVIEWER_LOGIN}`,
+            ]);
+            const cleanAnalysis = Object.freeze({
+              schemaVersion: 'stephanos.independent-security-analysis.v1',
+              findings: Object.freeze([]),
+              counts: Object.freeze({ P0: 0, P1: 0, P2: 0 }),
+              verdict: 'clean',
+              proofRefs: Object.freeze(proofRefs),
+              finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN',
+            });
+
+            return Object.freeze({
+              required: true,
+              valid: true,
+              analysis: cleanAnalysis,
+              receipt: candidate.receipt,
+              reviewId: candidate.reviewId,
+              paths,
+              blockers: Object.freeze([]),
+            });
+          }
+          EOF
+
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+
+          function replaceOnce(source, before, after, label) {
+            const count = source.split(before).length - 1;
+            if (count !== 1) throw new Error(`${label}: expected one seam, observed ${count}`);
+            return source.replace(before, after);
+          }
+
+          const boundaryPath = 'shared/agents/operatorMergeApprovalBoundaryV2.mjs';
+          let boundary = readFileSync(boundaryPath, 'utf8');
+          boundary = replaceOnce(
+            boundary,
+            "  'shared/agents/providerNeutralReviewV1.mjs',\n]);",
+            "  'shared/agents/providerNeutralReviewV1.mjs',\n  'shared/agents/qualifiedSpecialistReviewV1.mjs',\n]);",
+            'approval-boundary specialist path',
+          );
+          writeFileSync(boundaryPath, boundary, 'utf8');
+
+          const testPath = 'shared/agents/operatorMergeApprovalBoundaryV2.test.mjs';
+          let tests = readFileSync(testPath, 'utf8');
+          tests = replaceOnce(
+            tests,
+            "import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';\n",
+            "import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';\nimport { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';\nimport {\n  QUALIFIED_SPECIALIST_REVIEW_MARKER,\n  QUALIFIED_SPECIALIST_REVIEWER_LOGIN,\n  adjudicateQualifiedSpecialistReview,\n} from './qualifiedSpecialistReviewV1.mjs';\n",
+            'specialist test imports',
+          );
+          tests = replaceOnce(
+            tests,
+            "    'shared/agents/providerNeutralReviewV1.mjs',\n  ]);",
+            "    'shared/agents/providerNeutralReviewV1.mjs',\n    'shared/agents/qualifiedSpecialistReviewV1.mjs',\n  ]);",
+            'approval-boundary expected paths',
+          );
+          tests += `\n\nfunction specialistAnalysis(paths = ['scripts/windows/start-stephanos-backend.ps1']) {\n  const findings = paths.map((path) => ({\n    severity: 'P0',\n    code: 'unsupported-high-risk-surface',\n    summary: 'Separate specialist review required.',\n    path,\n  }));\n  return {\n    schemaVersion: 'stephanos.independent-security-analysis.v1',\n    findings,\n    counts: { P0: findings.length, P1: 0, P2: 0 },\n    verdict: 'findings',\n    proofRefs: paths.map((path) => \`proofs/changed-file/\${path}\`),\n    finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',\n  };\n}\n\nfunction specialistReceipt(paths, overrides = {}) {\n  const head = sourceHead;\n  const base = 'b'.repeat(40);\n  return createProviderNeutralReviewReceipt({\n    receiptId: 'specialist-pr-1638-a',\n    repository,\n    issueNumber: 1568,\n    prNumber: 1638,\n    branch: 'fix/battle-bridge-recovery-health-authority',\n    sourceHead: head,\n    reviewerId: 'chatgpt-github-specialist',\n    reviewerClass: 'external-qualified',\n    provider: 'chatgpt-github-specialist',\n    modelClass: 'gpt-5-6-thinking',\n    reviewerSessionId: \`github-specialist-\${head.slice(0, 12)}\`,\n    implementerProvider: 'canonical-programme-builder',\n    implementerSessionId: 'pr-1638-implementation-lane',\n    riskTier: 'high',\n    assuranceMode: 'specialist',\n    reviewScope: ['complete-exact-head-diff', 'windows-authority-specialist', 'fixed-executable-and-task-authority'],\n    findings: [],\n    verdict: 'clean',\n    timestampUtc: '2026-08-06T12:00:00.000Z',\n    proofRefs: [\n      \`proofs/specialist-review/head-\${head.slice(0, 12)}\`,\n      \`proofs/specialist-review/base-\${base.slice(0, 12)}\`,\n      ...paths.map((path) => \`proofs/specialist-review/path/\${path}\`),\n    ],\n    quorumChecks: [],\n    blocker: '',\n    ...overrides,\n  });\n}\n\nfunction specialistReview(receipt, overrides = {}) {\n  return {\n    id: 91001,\n    state: 'APPROVED',\n    commit_id: sourceHead,\n    submitted_at: '2026-08-06T12:01:00.000Z',\n    user: { login: QUALIFIED_SPECIALIST_REVIEWER_LOGIN },\n    body: \`${QUALIFIED_SPECIALIST_REVIEW_MARKER}\\n\\n\\`\\`\\`json\\n\${JSON.stringify(receipt)}\\n\\`\\`\\`\`,\n    ...overrides,\n  };\n}\n\ntest('exact app-authored specialist approval seals only Windows escalation findings', () => {\n  const paths = ['scripts/windows/start-stephanos-backend.ps1'];\n  const receipt = specialistReceipt(paths);\n  const result = adjudicateQualifiedSpecialistReview({\n    analysis: specialistAnalysis(paths),\n    reviews: [specialistReview(receipt)],\n    repository,\n    prNumber: 1638,\n    branch: 'fix/battle-bridge-recovery-health-authority',\n    sourceHead,\n    baseSha: 'b'.repeat(40),\n  });\n  assert.equal(result.required, true);\n  assert.equal(result.valid, true);\n  assert.equal(result.analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_CLEAN');\n  assert.deepEqual(result.analysis.findings, []);\n  assert.match(result.analysis.proofRefs.join(' '), /specialist-review\\/review-91001/);\n});\n\ntest('specialist approval fails closed on stale head, wrong app, missing path coverage and non-escalation findings', () => {\n  const paths = ['scripts/windows/start-stephanos-backend.ps1'];\n  const receipt = specialistReceipt(paths);\n  for (const review of [\n    specialistReview(receipt, { commit_id: 'c'.repeat(40) }),\n    specialistReview(receipt, { user: { login: 'Cheekyfellastef' } }),\n    specialistReview(specialistReceipt([])),\n  ]) {\n    const result = adjudicateQualifiedSpecialistReview({\n      analysis: specialistAnalysis(paths),\n      reviews: [review],\n      repository,\n      prNumber: 1638,\n      branch: 'fix/battle-bridge-recovery-health-authority',\n      sourceHead,\n      baseSha: 'b'.repeat(40),\n    });\n    assert.equal(result.valid, false);\n    assert.equal(result.blockers.includes('qualified-specialist-review-missing'), true);\n  }\n\n  const mixed = specialistAnalysis(paths);\n  mixed.findings.push({ severity: 'P1', code: 'real-defect', summary: 'Must repair.', path: 'x.mjs' });\n  mixed.counts.P1 = 1;\n  const result = adjudicateQualifiedSpecialistReview({\n    analysis: mixed,\n    reviews: [specialistReview(receipt)],\n    repository,\n    prNumber: 1638,\n    branch: 'fix/battle-bridge-recovery-health-authority',\n    sourceHead,\n    baseSha: 'b'.repeat(40),\n  });\n  assert.equal(result.required, false);\n  assert.equal(result.valid, false);\n});\n\ntest('trusted reviewer fetches exact PR reviews and seals only through the specialist adjudicator', () => {\n  const source = readFileSync(new URL('../../scripts/independent-merge-security-review-v2.mjs', import.meta.url), 'utf8');\n  assert.match(source, /pulls\\/\\$\\{prNumber\\}\\/reviews/);\n  assert.match(source, /adjudicateQualifiedSpecialistReview/);\n  assert.match(source, /SPECIALIST_REVIEW_DECISION/);\n  assert.doesNotMatch(source, /gh\\s+pr\\s+(?:merge|ready)/);\n});\n`;
+          writeFileSync(testPath, tests, 'utf8');
+
+          const reviewerPath = 'scripts/independent-merge-security-review-v2.mjs';
+          let reviewer = readFileSync(reviewerPath, 'utf8');
+          reviewer = replaceOnce(
+            reviewer,
+            "import { resolve } from 'node:path';\n",
+            "import { resolve } from 'node:path';\nimport { adjudicateQualifiedSpecialistReview } from '../shared/agents/qualifiedSpecialistReviewV1.mjs';\n",
+            'specialist reviewer import',
+          );
+          reviewer = replaceOnce(
+            reviewer,
+            "  const [{ verdict: workflowVerdict }, files, diff, threads] = await Promise.all([",
+            "  const [{ verdict: workflowVerdict }, files, diff, threads, reviews] = await Promise.all([",
+            'review collection destructuring',
+          );
+          reviewer = replaceOnce(
+            reviewer,
+            "    unresolvedThreadCount(owner, repo, prNumber),\n  ]);",
+            "    unresolvedThreadCount(owner, repo, prNumber),\n    githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),\n  ]);",
+            'review collection endpoint',
+          );
+          reviewer = replaceOnce(
+            reviewer,
+            "  const analysis = analyzeIndependentSecurityReview({\n    repository,\n    sourceHead,\n    changedFiles: files,\n    diff,\n    protectedWorkflowSources,\n    requireReviewerFilesInDiff: false,\n  });\n\n  const bootstrapRequired = isApprovalBoundaryBootstrapAnalysis(analysis);",
+            "  const deterministicAnalysis = analyzeIndependentSecurityReview({\n    repository,\n    sourceHead,\n    changedFiles: files,\n    diff,\n    protectedWorkflowSources,\n    requireReviewerFilesInDiff: false,\n  });\n  const specialist = adjudicateQualifiedSpecialistReview({\n    analysis: deterministicAnalysis,\n    reviews,\n    repository,\n    prNumber,\n    branch,\n    sourceHead,\n    baseSha,\n  });\n  const analysis = specialist.required && specialist.valid\n    ? specialist.analysis\n    : deterministicAnalysis;\n  console.log(`SPECIALIST_REVIEW_DECISION=${specialist.required ? (specialist.valid ? 'SEALED' : 'REQUIRED') : 'NOT_REQUIRED'}`);\n  console.log(`SPECIALIST_REVIEW_ID=${specialist.reviewId || ''}`);\n\n  const bootstrapRequired = isApprovalBoundaryBootstrapAnalysis(analysis);",
+            'specialist analysis adjudication',
+          );
+          writeFileSync(reviewerPath, reviewer, 'utf8');
+          NODE
+
+      - name: Remove bootstrap and verify exact four-file estate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/qualified-specialist-review-sealing-bootstrap.yml
+          git add --all
+          expected="$(printf '%s\n' \
+            scripts/independent-merge-security-review-v2.mjs \
+            shared/agents/operatorMergeApprovalBoundaryV2.mjs \
+            shared/agents/operatorMergeApprovalBoundaryV2.test.mjs \
+            shared/agents/qualifiedSpecialistReviewV1.mjs | sort)"
+          actual="$(git diff --cached --name-only origin/main | sort)"
+          printf 'EXPECTED\n%s\nACTUAL\n%s\n' "$expected" "$actual"
+          test "$actual" = "$expected"
+          git diff --cached --check origin/main
+
+      - name: Parse and run protected merge suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check shared/agents/qualifiedSpecialistReviewV1.mjs
+          node --check shared/agents/operatorMergeApprovalBoundaryV2.mjs
+          node --check shared/agents/operatorMergeApprovalBoundaryV2.test.mjs
+          node --check scripts/independent-merge-security-review-v2.mjs
+          npm run stephanos:operator-merge-approval:test
+          npm run stephanos:provider-neutral-review:test
+
+      - name: Revalidate main, commit and push normally
+        shell: bash
+        run: |
+          set -euo pipefail
+          exact_main='5272af4d998d3a4f82841ddf735d0850e97f09a6'
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$exact_main"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Seal qualified specialist reviews into exact-head artifacts'
+          git push origin HEAD:fix/qualified-specialist-review-sealing-v1
+          echo "QUALIFIED_SPECIALIST_REVIEW_HEAD=$(git rev-parse HEAD)"
+          echo 'QUALIFIED_SPECIALIST_REVIEW_SEALING_READY=true'
