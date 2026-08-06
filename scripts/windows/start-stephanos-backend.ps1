@@ -5,15 +5,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-
-$gitExecutable = 'C:\Program Files\Git\cmd\git.exe'
-$npmCommand = 'C:\Program Files\nodejs\npm.cmd'
+$canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
+$canonicalNpm = 'C:\Program Files\nodejs\npm.cmd'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
-foreach ($requiredExecutable in @($gitExecutable, $npmCommand, $canonicalNode)) {
-    if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
-        throw "Required fixed backend executable is missing: $requiredExecutable"
-    }
-}
 
 function Test-BackendHealth {
     param([string]$Url, [string]$ExpectedSourceHead)
@@ -29,20 +23,24 @@ function Test-BackendHealth {
 }
 
 function Get-VerifiedBackendListener {
-    $connections = @(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue)
-    $processIds = @($connections | Select-Object -ExpandProperty OwningProcess -Unique)
-    if ($processIds.Count -ne 1) { return $null }
-    $processId = [int]$processIds[0]
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
-    if (-not $process) { return $null }
-    $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
-    if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
-    $commandLine = ([string]$process.CommandLine).Trim()
-    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
-    $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
-    if (-not [string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
-        -and -not [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
-    return [PSCustomObject]@{ ProcessId = $processId }
+    try {
+        $connections = @(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction Stop)
+        $processIds = @($connections | Select-Object -ExpandProperty OwningProcess -Unique)
+        if ($processIds.Count -ne 1) { return $null }
+        $processId = [int]$processIds[0]
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
+        if (-not $process) { return $null }
+        $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
+        if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
+        $commandLine = ([string]$process.CommandLine).Trim()
+        $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
+        $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
+        if (-not [string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
+            -and -not [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
+        $processStartTimeUtc = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$process.CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        return [PSCustomObject]@{ ProcessId = $processId; ProcessStartTimeUtc = $processStartTimeUtc }
+    }
+    catch { return $null }
 }
 
 function Write-BackendRuntimeReceipt {
@@ -76,15 +74,50 @@ function Write-BackendRuntimeReceipt {
     Move-Item -LiteralPath $temporaryPath -Destination $statusPath -Force
 }
 
+function Publish-VerifiedBackendRuntimeReceipt {
+    param(
+        [object]$Listener,
+        [string]$WorkspaceRoot,
+        [string]$Branch,
+        [string]$HeadSha,
+        [string]$HealthUrl
+    )
+    if (-not $Listener) { throw 'Backend listener identity is required before publishing its runtime receipt.' }
+    Write-BackendRuntimeReceipt `
+        -WorkspaceRoot $WorkspaceRoot `
+        -Branch $Branch `
+        -HeadSha $HeadSha `
+        -ProcessId $Listener.ProcessId `
+        -ProcessStartTimeUtc $Listener.ProcessStartTimeUtc `
+        -HealthUrl $HealthUrl
+    $confirmedListener = Get-VerifiedBackendListener
+    if (-not $confirmedListener `
+        -or $confirmedListener.ProcessId -ne $Listener.ProcessId `
+        -or $confirmedListener.ProcessStartTimeUtc -ne $Listener.ProcessStartTimeUtc `
+        -or -not (Test-BackendHealth -Url $HealthUrl -ExpectedSourceHead $HeadSha)) {
+        throw 'Backend listener identity or exact-head health changed while publishing the runtime receipt.'
+    }
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 Set-Location -Path $repoRoot
 
-$branch = (& $gitExecutable -C $repoRoot branch --show-current).Trim()
-$headSha = (& $gitExecutable -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
-if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { throw 'Backend startup requires canonical branch main.' }
+foreach ($requiredExecutable in @($canonicalGit, $canonicalNpm, $canonicalNode)) {
+    if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
+        throw "Required canonical executable is missing: $requiredExecutable"
+    }
+}
+
+$branchRaw = & $canonicalGit -C $repoRoot branch --show-current 2>$null | Select-Object -First 1
+if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect the canonical Git branch.' }
+$headRaw = & $canonicalGit -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
+if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect the canonical Git head.' }
+$branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
+$headSha = if ($headRaw) { ([string]$headRaw).Trim().ToLowerInvariant() } else { '' }
+if ($branch -ne 'main') { throw 'Backend startup requires canonical branch main.' }
 if ($headSha -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup could not prove a canonical 40-character Git head.' }
-$trackedStatus = @(& $gitExecutable -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+$trackedStatus = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
 if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect tracked worktree state.' }
 if (@($trackedStatus | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -ne 0) {
     throw 'Backend startup requires an unmodified tracked worktree at exact head.'
@@ -131,7 +164,7 @@ Write-Log 'Frontend/dist server not started by this backend script (port 4173).'
 Write-Log 'Ensuring OpenClaw readonly adapter stub lifecycle (execution remains disabled).'
 
 try {
-    $openClawEnsureOutput = npm run --silent openclaw:stub:ensure 2>&1 | Out-String
+    $openClawEnsureOutput = & $canonicalNpm run --silent openclaw:stub:ensure 2>&1 | Out-String
     Write-Log ("openclaw:stub:ensure -> {0}" -f $openClawEnsureOutput.Trim())
 }
 catch {
@@ -139,16 +172,20 @@ catch {
     Write-Log 'WARNING: Continuing backend startup. OpenClaw execution remains disabled.'
 }
 
-if ((Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $headSha) -and (Get-VerifiedBackendListener)) {
-    Write-Log 'Backend already healthy; exiting without starting a new process.'
+$existingListener = if (Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $headSha) {
+    Get-VerifiedBackendListener
+} else { $null }
+if ($existingListener) {
+    Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl
+    Write-Log 'Backend already healthy; exact listener receipt refreshed without starting a new process.'
     exit 0
 }
 
 $arguments = @('run', 'stephanos:backend')
 $env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
-Write-Log ("Starting backend with command: {0} {1}" -f $npmCommand, ($arguments -join ' '))
-if ($PSCmdlet.ShouldProcess("$npmCommand $($arguments -join ' ')", 'Start Stephanos backend')) {
-    $process = Start-Process -FilePath $npmCommand `
+Write-Log ("Starting backend with command: {0} {1}" -f $canonicalNpm, ($arguments -join ' '))
+if ($PSCmdlet.ShouldProcess("$canonicalNpm $($arguments -join ' ')", 'Start Stephanos backend')) {
+    $process = Start-Process -FilePath $canonicalNpm `
         -ArgumentList $arguments `
         -WorkingDirectory $repoRoot `
         -RedirectStandardOutput $stdoutLogPath `
@@ -173,9 +210,8 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if ($listener) {
-    $listenerProcess = Get-Process -Id $listener.ProcessId -ErrorAction Stop
-    Write-BackendRuntimeReceipt -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -ProcessId $listener.ProcessId -ProcessStartTimeUtc $listenerProcess.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') -HealthUrl $healthUrl
-    Write-Log "Backend health and exact-head runtime receipt succeeded within $StartupTimeoutSeconds seconds."
+    Publish-VerifiedBackendRuntimeReceipt -Listener $listener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl
+    Write-Log "Backend health, stable listener identity and exact-head runtime receipt succeeded within $StartupTimeoutSeconds seconds."
     exit 0
 }
 
