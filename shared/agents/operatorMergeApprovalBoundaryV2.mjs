@@ -22,7 +22,6 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   'shared/agents/operatorMergeBaseBindingV1.mjs',
   'shared/agents/operatorMergeReviewArtifactV1.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
-  'shared/agents/qualifiedSpecialistReviewV1.mjs',
 ]);
 
 const OPERATOR_EXECUTOR_PATHS = Object.freeze([
