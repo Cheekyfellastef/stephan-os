@@ -71,6 +71,11 @@ $canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'
 schemaVersion -eq 'stephanos.backend-health.v1'; runtimeId -eq 'stephanos-battle-bridge-backend'; sourceHead
 & $canonicalGit status '--porcelain=v1' '--untracked-files=no'
 $env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
+$existingListener = Get-VerifiedBackendListener
+if ($existingListener) {
+  Write-BackendRuntimeReceipt -ProcessStartTimeUtc $processStartTimeUtc
+  exit 0
+}
 Start-Process -FilePath $canonicalNpm -ArgumentList $arguments
 Write-BackendRuntimeReceipt -ProcessStartTimeUtc $processStartTimeUtc
 `;
@@ -110,6 +115,21 @@ test('PATH-resolved tools and substring listener proof are concrete P0 findings'
   assert.ok(codes.includes('windows-backend-starter-git-unpinned'));
   assert.ok(codes.includes('windows-backend-starter-npm-unpinned'));
   assert.ok(codes.includes('windows-backend-starter-substring-listener-proof'));
+});
+
+test('reusing a current listener without refreshing its receipt is a concrete P0 finding', () => {
+  const insecure = starter.replace(
+    'Write-BackendRuntimeReceipt -ProcessStartTimeUtc $processStartTimeUtc\n  exit 0',
+    'exit 0',
+  );
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: escalation(),
+    sources: [record(paths[0], installer), record(paths[1], probe), record(paths[2], insecure)],
+  });
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'windows-backend-starter-reuse-receipt-missing'));
 });
 
 test('unknown Windows paths remain escalated to an external specialist', () => {
