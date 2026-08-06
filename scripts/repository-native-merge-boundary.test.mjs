@@ -5,6 +5,7 @@ import test from 'node:test';
 const publishScript = new URL('./repository-native-publish-merge-lane.mjs', import.meta.url);
 const protectedMergeScript = new URL('./operator-protected-merge-gate-v2.mjs', import.meta.url);
 const independentReviewScript = new URL('./independent-merge-security-review-v2.mjs', import.meta.url);
+const independentReviewWrapper = new URL('./independent-merge-security-review-with-windows-specialist-v1.mjs', import.meta.url);
 const protectedWorkflow = new URL('../.github/workflows/operator-merge-approval-gate.yml', import.meta.url);
 const independentWorkflow = new URL('../.github/workflows/independent-merge-security-review.yml', import.meta.url);
 const packageFile = new URL('../package.json', import.meta.url);
@@ -28,6 +29,7 @@ test('no local npm command exposes merge authority', async () => {
 test('protected boundary is an exact merge-group required check with read-only permissions', async () => {
   const protectedSource = await readFile(protectedWorkflow, 'utf8');
   const independentSource = await readFile(independentWorkflow, 'utf8');
+  const wrapperSource = await readFile(independentReviewWrapper, 'utf8');
   assert.match(protectedSource, /^  merge_group:\s*$/m);
   assert.match(protectedSource, /^    types: \[checks_requested\]\s*$/m);
   assert.doesNotMatch(protectedSource, /pull_request_target:|^\s+pull_request:\s*$/m);
@@ -49,7 +51,12 @@ test('protected boundary is an exact merge-group required check with read-only p
   assert.match(independentSource, /pull_request_target:/);
   assert.match(independentSource, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
   assert.match(independentSource, /persist-credentials: false/);
-  assert.match(independentSource, /independent-merge-security-review-v2\.mjs/);
+  assert.match(independentSource, /independent-merge-security-review-with-windows-specialist-v1\.mjs/);
+  assert.match(wrapperSource, /spawnSync\(process\.execPath/);
+  assert.match(wrapperSource, /independent-merge-security-review-v2\.mjs/);
+  assert.doesNotMatch(wrapperSource, /\bgh\s+pr\s+(?:ready|merge)\b/);
+  assert.doesNotMatch(wrapperSource, /git\s+(?:push|reset|clean|rebase)/);
+  assert.doesNotMatch(wrapperSource, /method\s*:\s*['"](?:POST|PUT|PATCH|DELETE)['"][\s\S]*\/contents\//i);
 });
 
 test('independent review binds the complete review to the exact base without merge authority', async () => {
