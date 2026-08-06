@@ -340,3 +340,65 @@ test('unchanged malformed request bodies are rejected once without unbounded eve
   assert.equal(workspace.events.length, 1);
   assert.equal(workspace.writes.filter((entry) => entry.segments[0] === 'receipts').length, 2);
 });
+
+
+test('scoped delivery read uses exact subject evidence rather than the unrelated latest global status', async () => {
+  let responseBody = '';
+  let globalProjectionCalls = 0;
+  const workspace = fakeWorkspace();
+  const statusSubject = {
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 1668,
+    mergeCommit: 'b83f7df46d9d52233f0b4f5dc2e034f50c0bae93',
+    deploymentRequestId: 'req-1507-deploy-1668-20260806T1459Z',
+    featureId: 'music-tile-auto-url-artwork',
+  };
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, {
+      readRequest: () => ({
+        ok: true,
+        body: envelope(request({
+          operation: 'READ_DELIVERY_STATUS',
+          recordKind: 'delivery-status-projection',
+          relatedGoal: '#1507',
+          relatedPr: '#1668',
+          boundedPayload: { statusSubject },
+        })),
+        authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      }),
+      writeResponse: (body) => {
+        responseBody = body;
+        return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' };
+      },
+    }),
+    projectionBuilder: async () => {
+      globalProjectionCalls += 1;
+      return projection();
+    },
+    deliveryEvidenceLoader: async () => ({
+      ok: true,
+      reason: 'SCOPED_DELIVERY_EVIDENCE_LOADED',
+      records: [{
+        schemaVersion: 'stephanos.runtime-proof.v1',
+        recordId: 'music-live',
+        timestampUtc: '2026-07-16T19:09:00.000Z',
+        relatedPr: '#1668',
+        correlationId: statusSubject.deploymentRequestId,
+        servedBrowserHead: statusSubject.mergeCommit,
+        updatedMusicTileServed: true,
+        playbackContinuedAfterRating: true,
+        autoUrlAndArtworkRuntimeProof: true,
+        status: 'SOURCE_AND_RUNTIME_EXACT_HEAD',
+        proofRefs: ['proof/music-live.json'],
+      }],
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_READ_PASS');
+  assert.equal(globalProjectionCalls, 0);
+  assert.match(responseBody, /"projectionKind": "scoped-delivery-status"/);
+  assert.match(responseBody, /"overallStatus": "LIVE"/);
+  assert.match(responseBody, /"live": true/);
+  assert.doesNotMatch(responseBody, /Programme controller is STARTING/);
+});
