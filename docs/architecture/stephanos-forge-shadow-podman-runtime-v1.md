@@ -57,12 +57,13 @@ The runtime planner and fixed Windows adapter progress only through these states
 12. revoke the temporary local migration token;
 13. require the mirror `main` head to equal the authorised exact source head;
 14. recreate the same container from the same digest and data volume with registration, SSH, Actions, packages, migrations, push-create, forks, webhooks, Git hooks, local imports, new mirrors, periodic mirror updates, runner registration and public/Tailscale exposure disabled;
-15. prove exact Git head/tree parity;
-16. create a bounded content-addressed backup using the same digest-pinned image as the copy helper;
-17. restore that backup into an isolated temporary volume and start a temporary loopback Forgejo restore probe on port 3341 with its own exact `ROOT_URL`;
-18. require the restored service to become healthy and expose the exact expected `main` head;
-19. tear down the restore probe, restart the canonical shadow, and re-prove health;
-20. only then return `FORGE_SHADOW_M2_READY` and permit a separate M3 runner slice.
+15. prove the container itself is rootless, read-only-rootfs, capability-free and `no-new-privileges`, with exactly one persistent writable data volume plus three bounded ephemeral tmpfs surfaces;
+16. prove exact Git head/tree parity;
+17. create a bounded content-addressed backup using the same digest-pinned image as the copy helper;
+18. restore that backup into an isolated temporary volume and start a temporary loopback Forgejo restore probe on port 3341 with its own exact `ROOT_URL` and the same privilege seal;
+19. require the restored service to become healthy and expose the exact expected `main` head;
+20. tear down the restore probe, restart the canonical shadow, and re-prove service health and privilege identity;
+21. only then return `FORGE_SHADOW_M2_READY` and permit a separate M3 runner slice.
 
 A wrong mirror head blocks. It is not silently force-updated.
 
@@ -98,11 +99,23 @@ The final service configuration requires:
 - new pull/push mirror creation disabled;
 - no runner registration or M3 authority.
 
-## Podman boundary
+## Podman privilege and writable-surface boundary
 
 The machine is explicitly rootless and uses the WSL provider. Machine inspection is read with Podman's fixed JSON formatter and must report `Rootful=false`; the state must be `running` before Forge mutation continues. Runtime source does not accept a caller-selected machine name, provider, container name, port, image repository, data volume, network target or host path.
 
-No canonical Stephanos source path and no host Podman/Docker socket may be mounted into the Forgejo container. The rootless Forgejo data volume is mounted only at `/var/lib/gitea`, matching Forgejo's current rootless image contract.
+The Forgejo service and restore-probe containers are started with:
+
+- `--user 1000:1000`;
+- `--read-only` and `--read-only-tmpfs=false`;
+- `--cap-drop ALL`;
+- `--security-opt no-new-privileges`;
+- bounded PID, memory and CPU limits;
+- exactly three explicit ephemeral tmpfs mounts: `/run` 16 MiB, `/tmp` 64 MiB and `/var/tmp` 32 MiB, all `nosuid,nodev,noexec`;
+- exactly one persistent writable volume at `/var/lib/gitea`.
+
+After start, Podman inspect must independently prove the configured user, read-only root filesystem, dropped capabilities, `no-new-privileges`, exact data volume, absence of any unexpected writable mount and exact three tmpfs destinations. The same inspection is repeated on the restore probe and after the canonical container restarts.
+
+No canonical Stephanos source path and no host Podman/Docker socket may be mounted into the Forgejo container. The rootless Forgejo data volume is mounted only at `/var/lib/gitea`, matching Forgejo's rootless image contract. Podman documents that read-only containers can use explicit tmpfs mounts for bounded writable runtime directories, leaving the image root filesystem read-only.
 
 The source does not automatically install Podman. If fixed Podman 6.0.2 is absent, it returns `PODMAN_6_0_2_USER_PREREQUISITE_REQUIRED`; host prerequisite installation must be a separately reviewed fixed operation.
 
@@ -110,9 +123,13 @@ The source does not automatically install Podman. If fixed Podman 6.0.2 is absen
 
 Backup copies are named from a SHA-256 digest of the complete quiesced Forgejo data volume. A maximum of seven source-controlled backup identities is admitted; reaching the bound fails closed rather than silently deleting prior backups.
 
-The copy and hash helpers use only the exact Forgejo OCI digest already authorised for the service. They receive fixed volume mounts and fixed literal shell programs; no caller-supplied command, executable, path or shell fragment is accepted. Before backup begins, a fixed helper probe proves the digest-pinned image actually contains `tar` and `sha256sum`.
+The copy and hash helpers use only the exact Forgejo OCI digest already authorised for the service. They receive fixed volume mounts and fixed literal shell programs; no caller-supplied command, executable, path or shell fragment is accepted. The helper containers also use read-only root filesystems, drop all capabilities and set `no-new-privileges`. Before backup begins, a fixed helper probe proves the digest-pinned image actually contains `tar` and `sha256sum`.
 
-A backup is not called restorable merely because it can be hashed or copied. The adapter copies it into a fresh temporary volume, starts the exact sealed Forgejo image against it, proves the restored service health and exact expected repository head, then deletes only the fixed restore-probe container and volume.
+A backup is not called restorable merely because it can be hashed or copied. The adapter copies it into a fresh temporary volume, starts the exact sealed Forgejo image against it, proves the restored service health, privilege seal and exact expected repository head, then deletes only the fixed restore-probe container and volume.
+
+## Strict runtime facts
+
+The pure runtime planner treats observed runtime facts as typed evidence. Every declared boolean fact must be a JavaScript boolean, and `podmanVersion` plus `mirrorSourceHead` must be strings. Stringified values such as `"false"`, numeric truthiness, nulls or arrays fail closed and cannot be promoted into runtime authority.
 
 ## Fixed Windows adapter
 
@@ -140,7 +157,12 @@ M2 is not complete from service health alone. `FORGE_SHADOW_M2_READY` requires a
 - no GitHub credential;
 - contained and revoked local bootstrap token;
 - one exact public pull mirror;
-- final sealed read-only posture;
+- final sealed Forgejo write posture;
+- read-only root filesystem;
+- all Linux capabilities dropped;
+- `no-new-privileges` proved;
+- exactly one persistent writable surface `/var/lib/gitea`;
+- only the three bounded ephemeral tmpfs writable surfaces;
 - exact Git object/head and tree parity;
 - bounded content-addressed backup;
 - successful isolated restore drill against the exact head;
