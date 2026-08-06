@@ -172,3 +172,21 @@ test('provider-neutral route rejects missing and oversized queries before provid
   assert.equal(oversized.status, 400);
   assert.match(oversized.payload.error, /160 characters/);
 });
+
+
+test('Spotify catalogue normalization carries only trusted CDN artwork', () => {
+  const trusted = normalizeSpotifyTrack({
+    id: '4uLU6hMCjMI75M1A2tKUQC',
+    name: 'Enjoy the Silence',
+    artists: [{ name: 'Depeche Mode' }],
+    album: { images: [{ url: 'https://i.scdn.co/image/ab67616d00001e02f7f1f53af3505f5638d7d8b1' }] },
+  });
+  assert.equal(trusted.artworkUrl, 'https://i.scdn.co/image/ab67616d00001e02f7f1f53af3505f5638d7d8b1');
+  const untrusted = normalizeSpotifyTrack({
+    id: '4uLU6hMCjMI75M1A2tKUQC',
+    name: 'Enjoy the Silence',
+    artists: [{ name: 'Depeche Mode' }],
+    album: { images: [{ url: 'https://attacker.invalid/cover.jpg' }] },
+  });
+  assert.equal(untrusted.artworkUrl, '');
+});

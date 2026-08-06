@@ -6,7 +6,7 @@ import {
   mergeCatalogResultIntoExistingTrack,
   planCatalogResultEnrichment,
 } from '../apps/music-tile/engine/nativeCatalogSearch.js';
-import { mergePersistedCatalogState } from '../apps/music-tile/engine/nativeCatalogAutoApply.js';
+import { mergePersistedCatalogState, resolveUnlinkedDeckTracks } from '../apps/music-tile/engine/nativeCatalogAutoApply.js';
 import { buildArtistAwareCandidates } from '../apps/music-tile/engine/musicCandidateEngine.js';
 import { planFreshJourneyState } from '../apps/music-tile/engine/freshJourneyPlanner.js';
 
@@ -18,7 +18,9 @@ const freshJourneyControllerSource = readFileSync(new URL('../apps/music-tile/en
 const AUTO_SPOTIFY_ID = '4uLU6hMCjMI75M1A2tKUQC';
 const AUTO_SPOTIFY_URL = `https://open.spotify.com/track/${AUTO_SPOTIFY_ID}`;
 const AUTO_SPOTIFY_URI = `spotify:track:${AUTO_SPOTIFY_ID}`;
+const AUTO_ARTWORK_URL = 'https://i.scdn.co/image/ab67616d00001e02f7f1f53af3505f5638d7d8b1';
 const OTHER_SPOTIFY_URI = 'spotify:track:0VjIjW4GlUZAMYd2vXMi3b';
+const STORAGE_KEY_FOR_TEST = 'stephanos.musicTile.dashboardState.v1';
 
 function verifiedCatalogResult(overrides = {}) {
   return {
@@ -333,4 +335,102 @@ test('Start Journey is split into fresh-start and non-mutating continue actions'
   assert.match(freshJourneyControllerSource, /recycledCount: 0/);
   assert.match(freshJourneyControllerSource, /reload\(\)/);
   assert.match(freshJourneyControllerSource, /No songs were replaced or added/);
+});
+
+
+test('automatic deck resolution persists verified Spotify URL and artwork without manual search', async () => {
+  const snapshot = {
+    listeningDeck: [existingCatalogTrack()],
+    ratings: { 'journey-enjoy-the-silence': 2 },
+    tags: { 'journey-enjoy-the-silence': ['ghost in the track'] },
+    trackFeedback: { 'journey-enjoy-the-silence': 'Keep this.' },
+  };
+  const data = new Map([[STORAGE_KEY_FOR_TEST, JSON.stringify(snapshot)]]);
+  const storage = {
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+  };
+  let requestedUrl = '';
+  const result = await resolveUnlinkedDeckTracks({
+    storage,
+    fetchImpl: async (url) => {
+      requestedUrl = String(url);
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          results: [verifiedCatalogResult({ artworkUrl: AUTO_ARTWORK_URL })],
+        }),
+      };
+    },
+  });
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY_FOR_TEST));
+  assert.equal(result.ok, true);
+  assert.equal(result.attemptedCount, 1);
+  assert.equal(result.resolvedCount, 1);
+  assert.match(requestedUrl, /Depeche%20Mode%20Enjoy%20the%20Silence/);
+  assert.equal(stored.listeningDeck[0].spotifyUrl, AUTO_SPOTIFY_URL);
+  assert.equal(stored.listeningDeck[0].artworkUrl, AUTO_ARTWORK_URL);
+  assert.equal(stored.listeningDeck[0].artworkSource, 'spotify-catalogue');
+  assert.equal(stored.ratings['journey-enjoy-the-silence'], 2);
+  assert.deepEqual(stored.tags['journey-enjoy-the-silence'], ['ghost in the track']);
+  assert.equal(stored.trackFeedback['journey-enjoy-the-silence'], 'Keep this.');
+});
+
+test('automatic deck resolution rejects the wrong track identity and unsafe artwork', async () => {
+  const snapshot = { listeningDeck: [existingCatalogTrack({ id: 'journey-wrong-identity', title: 'Wrong Expected Track', artist: 'Wrong Expected Artist' })], ratings: {}, tags: {}, trackFeedback: {} };
+  const data = new Map([[STORAGE_KEY_FOR_TEST, JSON.stringify(snapshot)]]);
+  const storage = {
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+  };
+  const result = await resolveUnlinkedDeckTracks({
+    storage,
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        results: [verifiedCatalogResult({
+          title: 'Personal Jesus',
+          artworkUrl: 'https://attacker.invalid/cover.jpg',
+        })],
+      }),
+    }),
+  });
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY_FOR_TEST));
+  assert.equal(result.resolvedCount, 0);
+  assert.equal(stored.listeningDeck[0].spotifyUrl, undefined);
+  assert.equal(stored.listeningDeck[0].artworkUrl, undefined);
+});
+
+
+test('automatic deck resolution rejects a same-title result with only incidental artist overlap', async () => {
+  const snapshot = {
+    listeningDeck: [existingCatalogTrack()],
+    ratings: {},
+    tags: {},
+    trackFeedback: {},
+  };
+  const data = new Map([[STORAGE_KEY_FOR_TEST, JSON.stringify(snapshot)]]);
+  const storage = {
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+  };
+  const result = await resolveUnlinkedDeckTracks({
+    storage,
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        results: [verifiedCatalogResult({ artist: 'Mode Seven' })],
+      }),
+    }),
+  });
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY_FOR_TEST));
+  assert.equal(result.resolvedCount, 0);
+  assert.equal(stored.listeningDeck[0].spotifyUrl, undefined);
+  assert.equal(stored.listeningDeck[0].artworkUrl, undefined);
 });
