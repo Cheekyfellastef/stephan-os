@@ -71,9 +71,15 @@ $canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'
 schemaVersion -eq 'stephanos.backend-health.v1'; runtimeId -eq 'stephanos-battle-bridge-backend'; sourceHead
 & $canonicalGit status '--porcelain=v1' '--untracked-files=no'
 $env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
+function Publish-VerifiedBackendRuntimeReceipt {
+  Write-BackendRuntimeReceipt -ProcessStartTimeUtc $Listener.ProcessStartTimeUtc
+  $confirmedListener = Get-VerifiedBackendListener
+  if ($confirmedListener.ProcessId -ne $Listener.ProcessId -or $confirmedListener.ProcessStartTimeUtc -ne $Listener.ProcessStartTimeUtc -or -not (Test-BackendHealth)) { throw 'changed' }
+}
+& $canonicalNpm run --silent openclaw:stub:ensure
 $existingListener = Get-VerifiedBackendListener
 if ($existingListener) {
-  Write-BackendRuntimeReceipt -ProcessStartTimeUtc $processStartTimeUtc
+  Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener
   exit 0
 }
 Start-Process -FilePath $canonicalNpm -ArgumentList $arguments
@@ -99,10 +105,11 @@ test('exact allowlisted Windows authority sources pass specialist review', () =>
   assert.equal(result.proofRefs.length, 3);
 });
 
-test('PATH-resolved tools and substring listener proof are concrete P0 findings', () => {
+test('PATH-resolved tools, direct npm, and substring listener proof are concrete P0 findings', () => {
   const insecure = starter
     .replace("$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", '$git = Get-Command git')
     .replace("$canonicalNpm = 'C:\\Program Files\\nodejs\\npm.cmd'", '$npm = Get-Command npm')
+    .replace('& $canonicalNpm run --silent openclaw:stub:ensure', 'npm run --silent openclaw:stub:ensure')
     .replace('[string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase)', "$commandLine.Contains('stephanos-server/server.js')");
   const result = analyzeWindowsAuthoritySpecialistReview({
     repository: REPOSITORY,
@@ -114,12 +121,13 @@ test('PATH-resolved tools and substring listener proof are concrete P0 findings'
   const codes = result.findings.map((item) => item.code);
   assert.ok(codes.includes('windows-backend-starter-git-unpinned'));
   assert.ok(codes.includes('windows-backend-starter-npm-unpinned'));
+  assert.ok(codes.includes('windows-backend-starter-unpinned-npm-invocation'));
   assert.ok(codes.includes('windows-backend-starter-substring-listener-proof'));
 });
 
 test('reusing a current listener without refreshing its receipt is a concrete P0 finding', () => {
   const insecure = starter.replace(
-    'Write-BackendRuntimeReceipt -ProcessStartTimeUtc $processStartTimeUtc\n  exit 0',
+    'Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener\n  exit 0',
     'exit 0',
   );
   const result = analyzeWindowsAuthoritySpecialistReview({
@@ -130,6 +138,21 @@ test('reusing a current listener without refreshing its receipt is a concrete P0
   });
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'windows-backend-starter-reuse-receipt-missing'));
+});
+
+test('receipt publication without stable listener recheck is a concrete P0 finding', () => {
+  const insecure = starter.replace(
+    '  $confirmedListener = Get-VerifiedBackendListener\n  if ($confirmedListener.ProcessId -ne $Listener.ProcessId -or $confirmedListener.ProcessStartTimeUtc -ne $Listener.ProcessStartTimeUtc -or -not (Test-BackendHealth)) { throw \'changed\' }',
+    '',
+  );
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: escalation(),
+    sources: [record(paths[0], installer), record(paths[1], probe), record(paths[2], insecure)],
+  });
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'windows-backend-starter-receipt-stability-recheck-missing'));
 });
 
 test('unknown Windows paths remain escalated to an external specialist', () => {
