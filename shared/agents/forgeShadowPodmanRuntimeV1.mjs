@@ -83,7 +83,8 @@ function authority() {
     actionsExecution: false,
     githubCredentialCreation: false,
     githubCredentialUse: false,
-    credentialExport: false,
+    credentialPersistence: false,
+    credentialLogging: false,
     hostSourceMount: false,
     hostSocketMount: false,
     merge: false,
@@ -224,7 +225,8 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       nextAction: action('START_FIXED_FORGEJO_BOOTSTRAP_CONTAINER', {
         bootstrapOnly: true,
         localCredentialCreation: 'isolated-random-local-only',
-        credentialExportAllowed: false,
+        credentialPersistenceAllowed: false,
+        credentialLoggingAllowed: false,
         githubCredentialAllowed: false,
       }),
     });
@@ -238,10 +240,13 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       blockers: Object.freeze([]),
       nextAction: action('COMPLETE_LOCAL_ONLY_FORGE_BOOTSTRAP', {
         localOwner: FORGE_SHADOW_LOCAL_OWNER,
-        randomPasswordGeneratedInsideBoundary: true,
-        temporaryRepositoryTokenScope: 'write:repository',
-        tokenMustBeDeletedBeforeSeal: true,
-        tokenMayLeaveBoundary: false,
+        randomPasswordGeneratedByForgeCli: true,
+        temporaryRepositoryTokenScope: 'write:repository,write:user',
+        temporaryTokenTransport: 'fixed-installer-process-memory-only',
+        tokenPersistenceAllowed: false,
+        tokenLoggingAllowed: false,
+        tokenMustBeRevokedImmediatelyAfterMirrorCreation: true,
+        githubCredentialAllowed: false,
       }),
     });
   }
@@ -275,6 +280,8 @@ export function planForgeShadowPodmanRuntime(input = {}) {
         disablePackages: true,
         disableMigrations: true,
         disablePushCreate: true,
+        disableNewMirrors: true,
+        disablePeriodicMirrorUpdates: true,
         runnerRegistration: false,
         webhookCreation: false,
         publicExposure: false,
