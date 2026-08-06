@@ -3,7 +3,7 @@ const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
 
 export const FORGE_SHADOW_PODMAN_RUNTIME_SCHEMA = 'stephanos.forge-shadow-podman-runtime.v1';
 export const FORGE_SHADOW_PODMAN_RUNTIME_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const FORGE_SHADOW_PODMAN_RUNTIME_VERSION = '15.0.5';
+export const FORGE_SHADOW_PODMAN_RUNTIME_VERSION = '15.0.6';
 export const FORGE_SHADOW_PODMAN_IMAGE = 'code.forgejo.org/forgejo/forgejo';
 export const FORGE_SHADOW_PODMAN_IMAGE_TAG = `${FORGE_SHADOW_PODMAN_RUNTIME_VERSION}-rootless`;
 export const FORGE_SHADOW_PODMAN_MACHINE = 'stephanos-forge-shadow';
