@@ -1,4 +1,5 @@
 name: One-shot ChatGPT Scoped Live Status V1
+# runner allocation refresh after hosted setup failure
 
 on:
   pull_request:
