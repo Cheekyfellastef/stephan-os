@@ -7,6 +7,12 @@ import {
   analyzeIndependentSecurityReviewV2,
 } from './operatorMergeApprovalBoundaryV2.mjs';
 import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';
+import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
+import {
+  QUALIFIED_SPECIALIST_REVIEW_MARKER,
+  QUALIFIED_SPECIALIST_REVIEWER_LOGIN,
+  adjudicateQualifiedSpecialistReview,
+} from './qualifiedSpecialistReviewV1.mjs';
 
 const repository = 'Cheekyfellastef/stephan-os';
 const sourceHead = 'a'.repeat(40);
@@ -299,4 +305,130 @@ test('rejects command authority in the exact-base binding module', () => {
     diff: diffFor(path, ["import { spawnSync } from 'node:child_process';"]),
   });
   assert.ok(result.findings.some((item) => item.code === 'base-binding-module-gained-command-authority'));
+});
+
+function specialistAnalysis(paths = ['scripts/windows/start-stephanos-backend.ps1']) {
+  const findings = paths.map((path) => ({
+    severity: 'P0',
+    code: 'unsupported-high-risk-surface',
+    summary: 'Separate specialist review required.',
+    path,
+  }));
+  return {
+    schemaVersion: 'stephanos.independent-security-analysis.v1',
+    findings,
+    counts: { P0: findings.length, P1: 0, P2: 0 },
+    verdict: 'findings',
+    proofRefs: paths.map((path) => `proofs/changed-file/${path}`),
+    finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
+  };
+}
+
+function specialistReceipt(paths, overrides = {}) {
+  const head = sourceHead;
+  const base = 'b'.repeat(40);
+  return createProviderNeutralReviewReceipt({
+    receiptId: 'specialist-pr-1638-a',
+    repository,
+    issueNumber: 1568,
+    prNumber: 1638,
+    branch: 'fix/battle-bridge-recovery-health-authority',
+    sourceHead: head,
+    reviewerId: 'chatgpt-github-specialist',
+    reviewerClass: 'external-qualified',
+    provider: 'chatgpt-github-specialist',
+    modelClass: 'gpt-5-6-thinking',
+    reviewerSessionId: `github-specialist-${head.slice(0, 12)}`,
+    implementerProvider: 'canonical-programme-builder',
+    implementerSessionId: 'pr-1638-implementation-lane',
+    riskTier: 'high',
+    assuranceMode: 'specialist',
+    reviewScope: ['complete-exact-head-diff', 'windows-authority-specialist', 'fixed-executable-and-task-authority'],
+    findings: [],
+    verdict: 'clean',
+    timestampUtc: '2026-08-06T12:00:00.000Z',
+    proofRefs: [
+      `proofs/specialist-review/head-${head.slice(0, 12)}`,
+      `proofs/specialist-review/base-${base.slice(0, 12)}`,
+      ...paths.map((path) => `proofs/specialist-review/path/${path}`),
+    ],
+    quorumChecks: [],
+    blocker: '',
+    ...overrides,
+  });
+}
+
+function specialistReview(receipt, overrides = {}) {
+  return {
+    id: 91001,
+    state: 'APPROVED',
+    commit_id: sourceHead,
+    submitted_at: '2026-08-06T12:01:00.000Z',
+    user: { login: QUALIFIED_SPECIALIST_REVIEWER_LOGIN },
+    body: `${QUALIFIED_SPECIALIST_REVIEW_MARKER}\n\n\`\`\`json\n${JSON.stringify(receipt)}\n\`\`\``,
+    ...overrides,
+  };
+}
+
+test('exact app-authored specialist approval seals only Windows escalation findings', () => {
+  const paths = ['scripts/windows/start-stephanos-backend.ps1'];
+  const result = adjudicateQualifiedSpecialistReview({
+    analysis: specialistAnalysis(paths),
+    reviews: [specialistReview(specialistReceipt(paths))],
+    repository,
+    prNumber: 1638,
+    branch: 'fix/battle-bridge-recovery-health-authority',
+    sourceHead,
+    baseSha: 'b'.repeat(40),
+  });
+  assert.equal(result.required, true);
+  assert.equal(result.valid, true);
+  assert.equal(result.analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_CLEAN');
+  assert.deepEqual(result.analysis.findings, []);
+  assert.match(result.analysis.proofRefs.join(' '), /specialist-review\/review-91001/);
+});
+
+test('specialist approval fails closed on stale head, wrong app, missing path coverage and non-escalation findings', () => {
+  const paths = ['scripts/windows/start-stephanos-backend.ps1'];
+  const receipt = specialistReceipt(paths);
+  for (const review of [
+    specialistReview(receipt, { commit_id: 'c'.repeat(40) }),
+    specialistReview(receipt, { user: { login: 'Cheekyfellastef' } }),
+    specialistReview(specialistReceipt([])),
+  ]) {
+    const result = adjudicateQualifiedSpecialistReview({
+      analysis: specialistAnalysis(paths),
+      reviews: [review],
+      repository,
+      prNumber: 1638,
+      branch: 'fix/battle-bridge-recovery-health-authority',
+      sourceHead,
+      baseSha: 'b'.repeat(40),
+    });
+    assert.equal(result.valid, false);
+    assert.equal(result.blockers.includes('qualified-specialist-review-missing'), true);
+  }
+
+  const mixed = specialistAnalysis(paths);
+  mixed.findings.push({ severity: 'P1', code: 'real-defect', summary: 'Must repair.', path: 'x.mjs' });
+  mixed.counts.P1 = 1;
+  const result = adjudicateQualifiedSpecialistReview({
+    analysis: mixed,
+    reviews: [specialistReview(receipt)],
+    repository,
+    prNumber: 1638,
+    branch: 'fix/battle-bridge-recovery-health-authority',
+    sourceHead,
+    baseSha: 'b'.repeat(40),
+  });
+  assert.equal(result.required, false);
+  assert.equal(result.valid, false);
+});
+
+test('trusted reviewer fetches exact PR reviews and seals only through the specialist adjudicator', () => {
+  const source = readFileSync(new URL('../../scripts/independent-merge-security-review-v2.mjs', import.meta.url), 'utf8');
+  assert.match(source, /pulls\/\$\{prNumber\}\/reviews/);
+  assert.match(source, /adjudicateQualifiedSpecialistReview/);
+  assert.match(source, /SPECIALIST_REVIEW_DECISION/);
+  assert.doesNotMatch(source, /gh\s+pr\s+(?:merge|ready)/);
 });
