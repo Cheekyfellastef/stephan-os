@@ -28,50 +28,98 @@ The public GitHub source requires no GitHub token, cookie, session, SSH key or o
 
 A fresh Forgejo instance nevertheless needs a local owner to create its one pull mirror. The bounded bootstrap may therefore create exactly one random local Forge credential under these rules:
 
-- generated only for `stephanos-shadow`;
-- used only against the loopback Forgejo instance;
-- never persisted in the Stephanos repository, Shared Workspace, logs, GitHub comments or runtime receipts;
-- never reused as a GitHub credential;
-- never grants runner registration or external service authority;
-- any temporary migration token must be revoked before the runtime is sealed read-only.
+- generated only for `stephanos-shadow` by the Forgejo administrative CLI;
+- the random local password is never supplied on a Windows process command line;
+- one temporary local access token is scoped only to `write:repository,write:user`;
+- the raw token may exist only in memory of the fixed installer process while it calls the loopback Forgejo API;
+- it is never persisted in the Stephanos repository, Shared Workspace, filesystem, logs, GitHub comments or runtime receipts;
+- it is never reused as a GitHub credential and no GitHub credential is created;
+- the token must be deleted immediately after the one mirror migration and before the runtime is sealed read-only;
+- the retained local owner has an unknown random password after bootstrap and no retained access token.
 
 Credential material is not proof. Receipts expose only the fact that containment and revocation checks passed.
 
 ## Exact progression
 
-The runtime planner progresses only through these states:
+The runtime planner and fixed Windows adapter progress only through these states:
 
-1. prove Windows 11+, WSL2 and fixed source identity;
-2. prove Podman 6.0.2 or stop at a separately authorised host prerequisite;
+1. prove Windows 11+, WSL2, `main` and the exact source head;
+2. prove Podman 6.0.2 from one of two source-controlled installation paths, or stop at a separately authorised host prerequisite;
 3. initialise the fixed rootless WSL Podman machine if absent;
 4. start that exact machine if stopped;
 5. pull only the exact Forgejo OCI digest;
-6. require the fixed loopback port to be free;
-7. start the fixed Forgejo bootstrap container with no host source or host socket mount;
-8. create the contained local owner if absent;
-9. create exactly one unauthenticated public pull mirror from the canonical GitHub repository;
-10. seal the service so registration, SSH, Actions, packages, migrations, push-create, runner registration and public/Tailscale exposure are disabled;
-11. prove the mirror is bound to exact canonical `main`;
-12. prove exact Git object/tree parity and a current restorable backup;
-13. only then return `FORGE_SHADOW_M2_READY` and permit a separate M3 runner slice.
+6. create the fixed named Forgejo data volume;
+7. require the fixed loopback port to be free;
+8. start the fixed Forgejo bootstrap container with no host source or host socket mount;
+9. create the contained local owner if absent;
+10. create exactly one unauthenticated public pull mirror from the canonical GitHub repository;
+11. revoke the temporary local migration token;
+12. require the mirror `main` head to equal the authorised exact source head;
+13. recreate the same container from the same digest and data volume with registration, SSH, Actions, packages, migrations, push-create, new mirrors, periodic mirror updates, runner registration and public/Tailscale exposure disabled;
+14. prove exact Git head/tree parity;
+15. create a bounded content-addressed backup using the same digest-pinned image as the copy helper;
+16. restore that backup into an isolated temporary volume and start a temporary loopback Forgejo restore probe on port 3341;
+17. require the restored service to become healthy and expose the exact expected `main` head;
+18. tear down the restore probe, restart the canonical shadow, and re-prove health;
+19. only then return `FORGE_SHADOW_M2_READY` and permit a separate M3 runner slice.
 
 A wrong mirror head blocks. It is not silently force-updated.
 
 ## Network boundary
 
-The host publishes only `127.0.0.1:3340` and no SSH port.
+The canonical service publishes only `127.0.0.1:3340` and no SSH port. The temporary restore drill uses only `127.0.0.1:3341` and is removed before completion.
 
-Forgejo migration/mirror configuration must allow only `github.com` / `*.github.com` as migration domains. New pull mirrors are disabled after the canonical mirror is created. Actions, packages, webhooks, federation and runner registration remain disabled in M2.
+Forgejo migration/mirror configuration allows only `github.com` / `*.github.com` as migration domains, rejects local-network migration targets and keeps TLS verification enabled. After the canonical mirror is created, repository migrations are disabled, the mirror service is disabled so periodic pull updates stop, and creation of new pull or push mirrors remains disabled.
 
-No generic URL input exists in the runtime contract.
+No generic URL input exists in the runtime contract or Windows adapter.
+
+## Forgejo write-surface seal
+
+The final service configuration requires:
+
+- registration disabled and registration button hidden;
+- regular organisation creation disabled;
+- default organisation creation disabled;
+- per-user repository creation limit fixed at one, already occupied by the canonical mirror;
+- push-to-create disabled for users and organisations;
+- repository forks disabled;
+- issue, pull-request, wiki, project, package and Actions repository units globally disabled for this shadow;
+- Forgejo Actions disabled;
+- package registry disabled;
+- federation disabled;
+- SSH disabled and no SSH host port;
+- repository migration disabled;
+- mirror scheduler disabled;
+- new pull/push mirror creation disabled;
+- no runner registration or M3 authority.
 
 ## Podman boundary
 
-The machine is explicitly rootless and uses the WSL provider. Runtime source does not accept a caller-selected machine name, provider, container name, port, image repository, data volume or host path.
+The machine is explicitly rootless and uses the WSL provider. Runtime source does not accept a caller-selected machine name, provider, container name, port, image repository, data volume, network target or host path.
 
-No canonical Stephanos source path and no host Podman/Docker socket may be mounted into the Forgejo container.
+No canonical Stephanos source path and no host Podman/Docker socket may be mounted into the Forgejo container. The rootless Forgejo data volume is mounted only at `/var/lib/gitea`, matching Forgejo's current rootless image contract.
 
-The source planner does not automatically install Podman. If fixed Podman 6.0.2 is absent, it returns `FORGE_SHADOW_PODMAN_PREREQUISITE_REQUIRED`; host prerequisite installation must be a separately reviewed fixed operation.
+The source does not automatically install Podman. If fixed Podman 6.0.2 is absent, it returns `PODMAN_6_0_2_USER_PREREQUISITE_REQUIRED`; host prerequisite installation must be a separately reviewed fixed operation.
+
+## Backup and restore boundary
+
+Backup copies are named from a SHA-256 digest of the complete quiesced Forgejo data volume. A maximum of seven source-controlled backup identities is admitted; reaching the bound fails closed rather than silently deleting prior backups.
+
+The copy and hash helpers use only the exact Forgejo OCI digest already authorised for the service. They receive fixed volume mounts and fixed literal shell programs; no caller-supplied command, executable, path or shell fragment is accepted.
+
+A backup is not called restorable merely because it can be hashed or copied. The adapter copies it into a fresh temporary volume, starts the exact sealed Forgejo image against it, proves the restored service health and exact expected repository head, then deletes only the fixed restore-probe container and volume.
+
+## Fixed Windows adapter
+
+`scripts/windows/install-forge-shadow-podman-v1.ps1` is the only M2 host mutation surface in this slice.
+
+Inputs are limited to:
+
+- exact 40-character `ExpectedHead`;
+- exact OCI `ForgejoImageDigest`;
+- explicit `OperatorApproved` switch.
+
+It uses PowerShell `SupportsShouldProcess`, supports a non-mutating `-WhatIf` projection, selects Git/WSL/Podman only from fixed source-controlled paths, and emits a sanitized machine receipt. It has no merge, branch, GitHub-ref, runner, public-listener or arbitrary command authority.
 
 ## M2 acceptance
 
@@ -85,12 +133,13 @@ M2 is not complete from service health alone. `FORGE_SHADOW_M2_READY` requires a
 - rootless machine proof;
 - loopback-only published service;
 - no GitHub credential;
-- contained local bootstrap credential;
+- contained and revoked local bootstrap token;
 - one exact public pull mirror;
 - final sealed read-only posture;
-- `stephanos.forge-shadow-parity.v1` exact object/tree parity;
-- current restorable backup;
-- Shared Workspace runtime and parity proof receipts.
+- exact Git object/head and tree parity;
+- bounded content-addressed backup;
+- successful isolated restore drill against the exact head;
+- current sanitized runtime receipt.
 
 Until every item is current, the sidecar must not be described as running goal construction capacity.
 
