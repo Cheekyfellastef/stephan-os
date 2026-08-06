@@ -31,6 +31,26 @@ function normalizeIsrc(value) {
   return /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(isrc) ? isrc : '';
 }
 
+const SPOTIFY_ARTWORK_HOST_SUFFIXES = Object.freeze(['scdn.co', 'spotifycdn.com']);
+
+export function normalizeSpotifyArtworkUrl(images = []) {
+  for (const image of Array.isArray(images) ? images : []) {
+    const raw = String(image?.url || '').trim();
+    if (!raw) continue;
+    try {
+      const url = new URL(raw);
+      const host = url.hostname.toLowerCase();
+      const trustedHost = SPOTIFY_ARTWORK_HOST_SUFFIXES.some((suffix) => (
+        host === suffix || host.endsWith(`.${suffix}`)
+      ));
+      if (url.protocol === 'https:' && trustedHost) return url.toString();
+    } catch {
+      // Ignore malformed provider artwork instead of projecting it to the browser.
+    }
+  }
+  return '';
+}
+
 export function normalizeMusicBrainzRecording(recording = {}) {
   const id = String(recording.id || '').trim();
   const title = String(recording.title || '').trim();
@@ -51,6 +71,7 @@ export function normalizeMusicBrainzRecording(recording = {}) {
     releaseDate: String(release?.date || ''),
     isrc,
     durationMs: Math.max(0, Number(recording.length || 0)),
+    artworkUrl: '',
     confidence: score >= 90 ? 'high' : score >= 70 ? 'medium' : 'low',
     confidenceScore: score,
     verificationStatus: 'metadata_verified',
@@ -80,6 +101,7 @@ export function normalizeSpotifyTrack(track = {}) {
     releaseDate: String(track.album?.release_date || ''),
     isrc,
     durationMs: Math.max(0, Number(track.duration_ms || 0)),
+    artworkUrl: normalizeSpotifyArtworkUrl(track.album?.images),
     confidence: 'high',
     confidenceScore: 100,
     verificationStatus: 'metadata_verified',

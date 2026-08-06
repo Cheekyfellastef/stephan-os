@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: exact-head-review-dispatch-${{ github.repository }}
+  group: exact-head-review-dispatch-${{ github.repository }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'coordinator' }}
   cancel-in-progress: false
 
 jobs:
@@ -50,12 +50,18 @@ jobs:
           node-version: '22'
 
       - name: Run coordinator regressions
-        run: npm run stephanos:exact-head-review:test
+        run: |
+          npm run stephanos:exact-head-review:test
+          node --test shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs
+          node --test shared/agents/independentReviewRetryPlanner.test.mjs
 
       - name: Parse review coordinator sources
         run: |
           node --check shared/agents/exactHeadReviewDispatchCoordinator.mjs
+          node --check shared/agents/exactHeadReviewCoordinatorAuthority.mjs
+          node --check shared/agents/independentReviewRetryPlanner.mjs
           node --check scripts/exact-head-review-dispatch.mjs
+          node --check scripts/retry-independent-review.mjs
 
       - name: Diff check
         if: always()
@@ -68,10 +74,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      actions: read
+      actions: write
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: Check out trusted default-branch coordinator
         uses: actions/checkout@v4
@@ -86,9 +92,23 @@ jobs:
           node-version: '22'
 
       - name: Evaluate and advance exact-head review state
+        id: coordinate
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_REVIEW_DISPATCH_TOKEN: ${{ secrets.STEPHANOS_REVIEW_DISPATCH_TOKEN }}
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
-          STEPHANOS_REVIEW_COORDINATOR_LOGIN: ${{ github.repository_owner }}
+          STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
           STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
         run: node scripts/exact-head-review-dispatch.mjs
+
+      - name: Retry only the exact failed canonical independent review
+        if: >-
+          always() &&
+          (steps.coordinate.outputs.decision == 'DISPATCH_REVIEW' ||
+           steps.coordinate.outputs.decision == 'WAIT_REVIEW_RECEIPT' ||
+           steps.coordinate.outputs.decision == 'ESCALATE_MISSING_RECEIPT')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR: ${{ steps.coordinate.outputs.pr_number }}
+          STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD: ${{ steps.coordinate.outputs.exact_head }}
+        run: node scripts/retry-independent-review.mjs
