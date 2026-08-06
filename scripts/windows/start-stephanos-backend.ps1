@@ -6,6 +6,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$gitExecutable = 'C:\Program Files\Git\cmd\git.exe'
+$npmCommand = 'C:\Program Files\nodejs\npm.cmd'
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
+foreach ($requiredExecutable in @($gitExecutable, $npmCommand, $canonicalNode)) {
+    if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
+        throw "Required fixed backend executable is missing: $requiredExecutable"
+    }
+}
+
 function Test-BackendHealth {
     param([string]$Url, [string]$ExpectedSourceHead)
     try {
@@ -26,10 +35,13 @@ function Get-VerifiedBackendListener {
     $processId = [int]$processIds[0]
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
     if (-not $process) { return $null }
-    $name = ([string]$process.Name).ToLowerInvariant()
-    $commandLine = ([string]$process.CommandLine).Replace('\', '/').ToLowerInvariant()
-    if ($name -notin @('node.exe', 'node')) { return $null }
-    if (-not $commandLine.Contains('stephanos-server/server.js')) { return $null }
+    $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
+    if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
+    $commandLine = ([string]$process.CommandLine).Trim()
+    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
+    $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
+    if (-not [string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
+        -and -not [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
     return [PSCustomObject]@{ ProcessId = $processId }
 }
 
@@ -68,13 +80,11 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 Set-Location -Path $repoRoot
 
-$git = Get-Command git.exe -ErrorAction SilentlyContinue
-if (-not $git) { $git = Get-Command git -ErrorAction Stop }
-$branch = (& $git.Source -C $repoRoot branch --show-current).Trim()
-$headSha = (& $git.Source -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
+$branch = (& $gitExecutable -C $repoRoot branch --show-current).Trim()
+$headSha = (& $gitExecutable -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
 if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { throw 'Backend startup requires canonical branch main.' }
 if ($headSha -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup could not prove a canonical 40-character Git head.' }
-$trackedStatus = @(& $git.Source -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+$trackedStatus = @(& $gitExecutable -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
 if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect tracked worktree state.' }
 if (@($trackedStatus | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -ne 0) {
     throw 'Backend startup requires an unmodified tracked worktree at exact head.'
@@ -132,12 +142,6 @@ catch {
 if ((Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $headSha) -and (Get-VerifiedBackendListener)) {
     Write-Log 'Backend already healthy; exiting without starting a new process.'
     exit 0
-}
-
-$npmCommand = if (Get-Command npm.cmd -ErrorAction SilentlyContinue) { 'npm.cmd' } elseif (Get-Command npm -ErrorAction SilentlyContinue) { 'npm' } else { $null }
-if (-not $npmCommand) {
-    Write-Log 'ERROR: npm was not found in PATH.'
-    exit 1
 }
 
 $arguments = @('run', 'stephanos:backend')

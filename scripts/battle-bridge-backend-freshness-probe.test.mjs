@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   BATTLE_BRIDGE_BACKEND_BASE_URL,
@@ -65,4 +66,21 @@ test('missing, malformed, and oversized identity content cannot establish health
     const proof = await runBattleBridgeBackendFreshnessProbe({ expectedSourceHead: HEAD, fetchImpl: canonicalFetch({ '/api/health': hostile }) });
     assert.equal(proof.backendCurrent, false);
   }
+});
+
+
+test('Windows backend recovery authority pins every executable and listener identity', async () => {
+  const installer = await readFile(new URL('./windows/install-stephanos-backend-autostart.ps1', import.meta.url), 'utf8');
+  const starter = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
+  assert.match(installer, /\$wscriptExe = 'C:\\Windows\\System32\\wscript\.exe'/);
+  assert.doesNotMatch(installer, /env:SystemRoot/);
+  assert.match(starter, /\$gitExecutable = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
+  assert.match(starter, /\$npmCommand = 'C:\\Program Files\\nodejs\\npm\.cmd'/);
+  assert.match(starter, /\$canonicalNode = 'C:\\Program Files\\nodejs\\node\.exe'/);
+  assert.match(starter, /process\.ExecutablePath/);
+  assert.match(starter, /StringComparison\]::OrdinalIgnoreCase/);
+  assert.match(starter, /expectedQuotedCommand/);
+  assert.match(starter, /expectedUnquotedCommand/);
+  assert.doesNotMatch(starter, /Get-Command (?:git|npm)/i);
+  assert.doesNotMatch(starter, /npm was not found in PATH/i);
 });
