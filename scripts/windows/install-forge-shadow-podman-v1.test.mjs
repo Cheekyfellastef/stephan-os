@@ -45,8 +45,8 @@ test('machine creation and inspection are WSL rootless bounded identities', () =
   lacks('--privileged');
 });
 
-test('Forgejo is digest pinned and exposes only loopback HTTP with no SSH port', () => {
-  has("$ForgejoVersion = '15.0.5'");
+test('Forgejo is current-LTS digest pinned and exposes only loopback HTTP with no SSH port', () => {
+  has("$ForgejoVersion = '15.0.6'");
   has("$HostAddress = '127.0.0.1'");
   has('$HostPort = 3340');
   has("'-p', \"127.0.0.1:$Port`:3000\"");
