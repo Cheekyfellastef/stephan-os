@@ -1,0 +1,65 @@
+name: Scoped Live Status Import Literal Repair
+
+on:
+  push:
+    branches:
+      - fix/chatgpt-scoped-live-status-v1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scoped-live-status-import-literal-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/chatgpt-scoped-live-status-v1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Escape generated-module import literals only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/one-shot-chatgpt-scoped-live-status-v1.mjs')
+          text = path.read_text(encoding='utf-8')
+          needle = '\nimport '
+          count = text.count(needle)
+          if count != 7:
+              raise SystemExit(f'embedded import seam count changed: {count}')
+          text = text.replace(needle, "\n${'import'} ")
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          node --check scripts/one-shot-chatgpt-scoped-live-status-v1.mjs
+          node scripts/guard-import-structure.mjs
+          git diff --check
+
+      - name: Remove repair workflow and publish normally
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/scoped-live-status-import-literal-repair.yml
+          git add scripts/one-shot-chatgpt-scoped-live-status-v1.mjs .github/workflows/scoped-live-status-import-literal-repair.yml
+          actual="$(git diff --cached --name-only | sort)"
+          expected="$(printf '%s\n' .github/workflows/scoped-live-status-import-literal-repair.yml scripts/one-shot-chatgpt-scoped-live-status-v1.mjs | sort)"
+          test "$actual" = "$expected"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Escape generated module import literals'
+          git push origin HEAD:fix/chatgpt-scoped-live-status-v1
