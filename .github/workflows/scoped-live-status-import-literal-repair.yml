@@ -1,22 +1,27 @@
 name: Scoped Live Status Import Literal Repair
 
 on:
-  push:
-    branches:
-      - fix/chatgpt-scoped-live-status-v1
+  pull_request:
+    branches: [main]
+    types: [synchronize, reopened]
+    paths:
+      - 'scripts/one-shot-chatgpt-scoped-live-status-v1.mjs'
+      - '.github/workflows/one-shot-chatgpt-scoped-live-status-v1.yml'
+      - '.github/workflows/scoped-live-status-import-literal-repair.yml'
 
 permissions:
   contents: write
+  pull-requests: read
 
 concurrency:
-  group: scoped-live-status-import-literal-repair
+  group: scoped-live-status-import-literal-repair-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   repair:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/chatgpt-scoped-live-status-v1'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out exact branch
         uses: actions/checkout@v4
@@ -29,10 +34,12 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Escape generated-module import literals only
+      - name: Bind exact parent and repair only embedded import seams
         shell: bash
         run: |
           set -euo pipefail
+          git fetch origin main
+          test "$(git merge-base HEAD origin/main)" = "b83f7df46d9d52233f0b4f5dc2e034f50c0bae93"
           python3 - <<'PY'
           from pathlib import Path
 
@@ -50,16 +57,60 @@ jobs:
           node scripts/guard-import-structure.mjs
           git diff --check
 
-      - name: Remove repair workflow and publish normally
+      - name: Generate permanent scoped-status source
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/one-shot-chatgpt-scoped-live-status-v1.mjs
+
+      - name: Verify focused contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs
+          node --check shared/agents/chatGptParticipantBridgeV1.mjs
+          node --check scripts/chatgpt-shared-workspace-github-relay.mjs
+          node --test shared/agents/sharedWorkspaceScopedDeliveryStatusV1.test.mjs
+          node --test shared/agents/chatGptParticipantBridgeV1.test.mjs
+          node --test scripts/chatgpt-shared-workspace-github-relay.test.mjs
+          node scripts/guard-import-structure.mjs
+          git diff --check
+
+      - name: Remove all temporary machinery and publish exact final estate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/one-shot-chatgpt-scoped-live-status-v1.mjs
+          rm -f .github/workflows/one-shot-chatgpt-scoped-live-status-v1.yml
           rm -f .github/workflows/scoped-live-status-import-literal-repair.yml
-          git add scripts/one-shot-chatgpt-scoped-live-status-v1.mjs .github/workflows/scoped-live-status-import-literal-repair.yml
+
+          git add \
+            shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs \
+            shared/agents/sharedWorkspaceScopedDeliveryStatusV1.test.mjs \
+            shared/agents/chatGptParticipantBridgeV1.mjs \
+            shared/agents/chatGptParticipantBridgeV1.test.mjs \
+            scripts/chatgpt-shared-workspace-github-relay.mjs \
+            scripts/chatgpt-shared-workspace-github-relay.test.mjs \
+            docs/operations/chatgpt-shared-workspace-live-status.md \
+            scripts/one-shot-chatgpt-scoped-live-status-v1.mjs \
+            .github/workflows/one-shot-chatgpt-scoped-live-status-v1.yml \
+            .github/workflows/scoped-live-status-import-literal-repair.yml
+
           actual="$(git diff --cached --name-only | sort)"
-          expected="$(printf '%s\n' .github/workflows/scoped-live-status-import-literal-repair.yml scripts/one-shot-chatgpt-scoped-live-status-v1.mjs | sort)"
+          expected="$(printf '%s\n' \
+            .github/workflows/one-shot-chatgpt-scoped-live-status-v1.yml \
+            .github/workflows/scoped-live-status-import-literal-repair.yml \
+            docs/operations/chatgpt-shared-workspace-live-status.md \
+            scripts/chatgpt-shared-workspace-github-relay.mjs \
+            scripts/chatgpt-shared-workspace-github-relay.test.mjs \
+            scripts/one-shot-chatgpt-scoped-live-status-v1.mjs \
+            shared/agents/chatGptParticipantBridgeV1.mjs \
+            shared/agents/chatGptParticipantBridgeV1.test.mjs \
+            shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs \
+            shared/agents/sharedWorkspaceScopedDeliveryStatusV1.test.mjs | sort)"
           test "$actual" = "$expected"
+          git diff --cached --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Escape generated module import literals'
+          git commit -m 'Scope ChatGPT live status to exact delivery evidence'
           git push origin HEAD:fix/chatgpt-scoped-live-status-v1
