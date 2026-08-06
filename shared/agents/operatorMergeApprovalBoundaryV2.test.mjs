@@ -82,6 +82,7 @@ test('classifies every live v2 approval-boundary path', () => {
     'shared/agents/operatorMergeBaseBindingV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
     'shared/agents/providerNeutralReviewV1.mjs',
+    'shared/agents/qualifiedSpecialistReviewV1.mjs',
   ]);
 });
 
