@@ -12,10 +12,28 @@ import {
   evaluateExactHeadReviewDispatch,
   parseOptionalManualPrNumber,
 } from '../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
+import {
+  MACHINE_COORDINATOR_SENTINEL_LOGIN,
+  REVIEW_COORDINATOR_CREDENTIAL_SOURCE,
+  normalizeReviewCoordinatorMarkerComments,
+  selectReviewCoordinatorCredential,
+  validateReviewCoordinatorCredential,
+} from '../shared/agents/exactHeadReviewCoordinatorAuthority.mjs';
+import {
+  INDEPENDENT_REVIEW_WORKFLOW_NAME,
+  INDEPENDENT_REVIEW_WORKFLOW_PATH,
+  PROTECTED_REVIEW_MARKER,
+} from '../shared/agents/operatorMergeApprovalGate.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-exact-head-review-dispatch-v1';
 const MAX_GITHUB_PAGES = 20;
+const MAX_INDEPENDENT_REVIEW_SESSIONS = 20;
+const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({
+  login: 'github-actions[bot]',
+  type: 'bot',
+  id: 41898282,
+});
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -44,18 +62,14 @@ function repositoryParts(repository) {
   return { owner: match[1], repo: match[2] };
 }
 
-function authToken() {
-  return text(
-    process.env.STEPHANOS_REVIEW_DISPATCH_TOKEN
-      ?? process.env.GITHUB_TOKEN
-      ?? process.env.GH_TOKEN,
-  );
-}
-
-function trustedCoordinatorLogin(repositoryOwner) {
-  const login = text(process.env.STEPHANOS_REVIEW_COORDINATOR_LOGIN, repositoryOwner);
+function trustedLaneAuthorityLogin(repositoryOwner) {
+  const login = [
+    process.env.STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN,
+    process.env.STEPHANOS_REVIEW_COORDINATOR_LOGIN,
+    repositoryOwner,
+  ].map((value) => text(value)).find(Boolean) || '';
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(login)) {
-    throw new Error('STEPHANOS_REVIEW_COORDINATOR_LOGIN must name one GitHub actor');
+    throw new Error('review lane authority must name one GitHub actor');
   }
   return login;
 }
@@ -155,11 +169,127 @@ function mapWorkflowRun(run) {
   };
 }
 
+function mapIndependentReviewRun(run) {
+  return {
+    id: run?.id ?? null,
+    run_attempt: Number(run?.run_attempt ?? 0),
+    workflow_id: Number(run?.workflow_id ?? 0),
+    name: text(run?.name),
+    path: text(run?.path),
+    event: text(run?.event),
+    repository: { full_name: text(run?.repository?.full_name) },
+    head_sha: text(run?.head_sha),
+    status: text(run?.status),
+    conclusion: text(run?.conclusion),
+    pull_requests: Array.isArray(run?.pull_requests)
+      ? run.pull_requests.map((pullRequest) => ({
+        number: positiveInteger(pullRequest?.number, 0),
+        head: {
+          sha: text(pullRequest?.head?.sha),
+          ref: text(pullRequest?.head?.ref),
+        },
+        base: {
+          sha: text(pullRequest?.base?.sha),
+          ref: text(pullRequest?.base?.ref),
+        },
+      }))
+      : [],
+  };
+}
+
+function mapIndependentReviewJob(job) {
+  return {
+    id: job?.id ?? null,
+    name: text(job?.name),
+    run_attempt: Number(job?.run_attempt ?? 0),
+    run_url: text(job?.run_url),
+    status: text(job?.status),
+    conclusion: text(job?.conclusion),
+  };
+}
+
+function exactGitHubActionsReviewer(comment = {}) {
+  return text(comment?.user?.login).toLowerCase() === TRUSTED_GITHUB_ACTIONS_REVIEWER.login
+    && text(comment?.user?.type).toLowerCase() === TRUSTED_GITHUB_ACTIONS_REVIEWER.type
+    && Number(comment?.user?.id) === TRUSTED_GITHUB_ACTIONS_REVIEWER.id;
+}
+
+function candidateIndependentReviewSessions(comments = []) {
+  const sessions = new Map();
+  for (const comment of Array.isArray(comments) ? comments : []) {
+    if (!exactGitHubActionsReviewer(comment)) continue;
+    const body = text(comment?.body);
+    if (!body.includes(PROTECTED_REVIEW_MARKER)) continue;
+    for (const match of body.matchAll(/github-actions-independent-review-run-([1-9][0-9]*)-attempt-([1-9][0-9]*)/g)) {
+      const workflowRunId = positiveInteger(match[1], 0);
+      const workflowRunAttempt = positiveInteger(match[2], 0);
+      if (!workflowRunId || !workflowRunAttempt) continue;
+      sessions.set(`${workflowRunId}:${workflowRunAttempt}`, { workflowRunId, workflowRunAttempt });
+      if (sessions.size >= MAX_INDEPENDENT_REVIEW_SESSIONS) return [...sessions.values()];
+    }
+  }
+  return [...sessions.values()];
+}
+
+async function loadIndependentReviewEvidence({ owner, repo, repository, token, comments }) {
+  const sessions = candidateIndependentReviewSessions(comments);
+  const empty = {
+    independentReviewWorkflowId: 0,
+    independentReviewRuns: [],
+    independentReviewJobsByRunId: {},
+  };
+  if (!sessions.length) return empty;
+
+  const definitions = await githubPages(`/repos/${owner}/${repo}/actions/workflows`, {
+    token,
+    itemKey: 'workflows',
+  });
+  const pathMatches = definitions.filter((workflow) => (
+    text(workflow?.path) === INDEPENDENT_REVIEW_WORKFLOW_PATH
+  ));
+  const nameCollisions = definitions.filter((workflow) => (
+    text(workflow?.name) === INDEPENDENT_REVIEW_WORKFLOW_NAME
+    && text(workflow?.path) !== INDEPENDENT_REVIEW_WORKFLOW_PATH
+  ));
+  const definition = pathMatches.length === 1 ? pathMatches[0] : null;
+  const independentReviewWorkflowId = definition
+    && text(definition?.name) === INDEPENDENT_REVIEW_WORKFLOW_NAME
+    && text(definition?.state).toLowerCase() === 'active'
+    && nameCollisions.length === 0
+    ? positiveInteger(definition?.id, 0)
+    : 0;
+  if (!independentReviewWorkflowId) return empty;
+
+  const independentReviewRuns = [];
+  const independentReviewJobsByRunId = {};
+  for (const session of sessions) {
+    try {
+      const rawRun = await githubRequest(
+        `/repos/${owner}/${repo}/actions/runs/${session.workflowRunId}`,
+        { token },
+      );
+      const rawJobs = await githubPages(
+        `/repos/${owner}/${repo}/actions/runs/${session.workflowRunId}/attempts/${session.workflowRunAttempt}/jobs`,
+        { token, itemKey: 'jobs' },
+      );
+      independentReviewRuns.push(mapIndependentReviewRun(rawRun));
+      independentReviewJobsByRunId[String(session.workflowRunId)] = rawJobs.map(mapIndependentReviewJob);
+    } catch (error) {
+      console.warn(`INDEPENDENT_REVIEW_EVIDENCE_UNAVAILABLE=${session.workflowRunId}:${session.workflowRunAttempt}:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return {
+    independentReviewWorkflowId,
+    independentReviewRuns,
+    independentReviewJobsByRunId,
+  };
+}
+
 async function listOpenPullRequests({ owner, repo, token }) {
   return githubPages(`/repos/${owner}/${repo}/pulls?state=open&sort=updated&direction=desc`, { token });
 }
 
-async function loadPrContext({ owner, repo, repository, token, prNumber, trustedCoordinatorLogin: coordinatorLogin }) {
+async function loadPrContext({ owner, repo, repository, token, prNumber, laneAuthorityLogin }) {
   const pr = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { token });
   const comments = (await githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token })).map(mapComment);
   const reviews = (await githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { token })).map(mapReview);
@@ -167,21 +297,31 @@ async function loadPrContext({ owner, repo, repository, token, prNumber, trusted
     `/repos/${owner}/${repo}/actions/runs?head_sha=${encodeURIComponent(text(pr?.head?.sha))}&event=pull_request`,
     { token, itemKey: 'workflow_runs' },
   )).map(mapWorkflowRun);
+  const independentReviewEvidence = await loadIndependentReviewEvidence({
+    owner,
+    repo,
+    repository,
+    token,
+    comments,
+  });
   const laneEvidence = canonicalLaneEvidence(comments, {
     prNumber,
-    trustedCoordinatorLogin: coordinatorLogin,
+    trustedCoordinatorLogin: laneAuthorityLogin,
   });
   return {
     rawPr: pr,
     comments,
     reviews,
     workflowRuns: runs,
+    ...independentReviewEvidence,
     canonicalLaneConfirmed: laneEvidence.confirmed,
     canonicalLaneCommentId: laneEvidence.commentId,
     pr: {
       number: positiveInteger(pr?.number),
       state: text(pr?.state),
       baseRef: text(pr?.base?.ref),
+      baseSha: text(pr?.base?.sha),
+      headRef: text(pr?.head?.ref),
       headSha: text(pr?.head?.sha),
       sameRepository: text(pr?.head?.repo?.full_name).toLowerCase() === repository.toLowerCase(),
     },
@@ -197,7 +337,7 @@ async function postPrComment({ owner, repo, token, prNumber, body }) {
   return result?.id ?? null;
 }
 
-async function discoverCanonicalContexts({ owner, repo, repository, token, trustedCoordinatorLogin: coordinatorLogin }) {
+async function discoverCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin }) {
   const numbers = (await listOpenPullRequests({ owner, repo, token }))
     .map((pr) => positiveInteger(pr?.number))
     .filter(Boolean);
@@ -209,7 +349,7 @@ async function discoverCanonicalContexts({ owner, repo, repository, token, trust
       repository,
       token,
       prNumber,
-      trustedCoordinatorLogin: coordinatorLogin,
+      laneAuthorityLogin,
     });
     if (context.canonicalLaneConfirmed) contexts.push(context);
   }
@@ -219,13 +359,26 @@ async function discoverCanonicalContexts({ owner, repo, repository, token, trust
 async function main() {
   const repository = text(process.env.GITHUB_REPOSITORY);
   const { owner, repo } = repositoryParts(repository);
-  const token = authToken();
+  const credential = selectReviewCoordinatorCredential(process.env);
+  const token = credential.token;
   if (!token) throw new Error('a bounded GitHub token is required');
-  const coordinatorLogin = trustedCoordinatorLogin(owner);
-  const authenticatedUser = await githubRequest('/user', { token });
-  if (text(authenticatedUser?.login).toLowerCase() !== coordinatorLogin.toLowerCase()) {
-    throw new Error(`bounded GitHub token actor must match trusted coordinator ${coordinatorLogin}`);
+  const laneAuthorityLogin = trustedLaneAuthorityLogin(owner);
+  const authenticatedUser = credential.source === REVIEW_COORDINATOR_CREDENTIAL_SOURCE.GITHUB_ACTIONS
+    ? {}
+    : await githubRequest('/user', { token });
+  const coordinatorActor = validateReviewCoordinatorCredential({
+    credential,
+    authenticatedUser,
+    laneAuthorityLogin,
+    environment: process.env,
+  });
+  if (!coordinatorActor.valid) {
+    throw new Error(`bounded GitHub token actor is not authorised: ${coordinatorActor.reason}`);
   }
+  console.log(`EXACT_HEAD_REVIEW_COORDINATOR_ACTOR=${coordinatorActor.actorLogin}`);
+  console.log(`EXACT_HEAD_REVIEW_COORDINATOR_MODE=${coordinatorActor.mode}`);
+  console.log(`EXACT_HEAD_REVIEW_COORDINATOR_CREDENTIAL_SOURCE=${coordinatorActor.credentialSource}`);
+  console.log(`EXACT_HEAD_REVIEW_LANE_AUTHORITY=${laneAuthorityLogin}`);
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
   const manualPrNumber = parseOptionalManualPrNumber(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
@@ -235,7 +388,7 @@ async function main() {
     repo,
     repository,
     token,
-    trustedCoordinatorLogin: coordinatorLogin,
+    laneAuthorityLogin,
   });
 
   if (contexts.length === 0) {
@@ -255,14 +408,22 @@ async function main() {
     return;
   }
   const timeoutMinutes = positiveInteger(process.env.STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES, Math.round(DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS / 60000));
+  const coordinatorComments = normalizeReviewCoordinatorMarkerComments(
+    context.comments,
+    { laneAuthorityLogin },
+  );
   const decision = evaluateExactHeadReviewDispatch({
+    repository,
     now: new Date().toISOString(),
     receiptTimeoutMs: timeoutMinutes * 60 * 1000,
-    trustedCoordinatorLogin: coordinatorLogin,
+    trustedCoordinatorLogin: MACHINE_COORDINATOR_SENTINEL_LOGIN,
     canonicalLaneConfirmed: context.canonicalLaneConfirmed,
     pr: context.pr,
     workflowRuns: context.workflowRuns,
-    comments: context.comments,
+    independentReviewWorkflowId: context.independentReviewWorkflowId,
+    independentReviewRuns: context.independentReviewRuns,
+    independentReviewJobsByRunId: context.independentReviewJobsByRunId,
+    comments: coordinatorComments,
     reviews: context.reviews,
   });
 

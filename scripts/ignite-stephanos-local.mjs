@@ -2160,10 +2160,10 @@ export async function run() {
       const servedCommit = refreshedState.distMetadata?.gitCommit || 'missing';
       const sourceFingerprint = refreshedState.distMetadata?.sourceFingerprint || refreshedState.expectedMetadata?.sourceFingerprint || 'missing';
       const buildTimestamp = refreshedState.distMetadata?.buildTimestamp || 'missing';
-      const currentCommit = normalizeCaptureStdout(runStepCapture('git-current-commit-pre-serve', 'git', ['rev-parse', '--short', 'HEAD']));
+      const currentCommit = normalizeCaptureStdout(runStepCapture('git-current-commit-pre-serve', 'git', ['rev-parse', 'HEAD']));
       let originMainCommit = currentCommit;
       try {
-        originMainCommit = normalizeCaptureStdout(runStepCapture('git-origin-main-commit-pre-serve', 'git', ['rev-parse', '--short', 'origin/main']));
+        originMainCommit = normalizeCaptureStdout(runStepCapture('git-origin-main-commit-pre-serve', 'git', ['rev-parse', 'origin/main']));
       } catch {
         originMainCommit = currentCommit;
       }
