@@ -86,13 +86,16 @@ jobs:
               script = script.replace(old_main, current_main)
               script = script.replace(old_pr_head, current_pr_head)
               if name == 'Wire deterministic specialist sealing into the trusted reviewer':
-                  old = '''            "  const candidates = (Array.isArray(input.reviews) ? input.reviews : [])\\n",
-            `${deterministicBranch}  const candidates = (Array.isArray(input.reviews) ? input.reviews : [])\\n`,'''
-                  new = '''            "  const reviews = Array.isArray(input.reviews) ? input.reviews : [];\\n",
-            `${deterministicBranch}  const reviews = Array.isArray(input.reviews) ? input.reviews : [];\\n`,'''
-                  if script.count(old) != 1:
-                      raise SystemExit(f'adjudication seam count changed: {script.count(old)}')
-                  script = script.replace(old, new)
+                  old_target = '"  const candidates = (Array.isArray(input.reviews) ? input.reviews : [])\\n"'
+                  new_target = '"  const reviews = Array.isArray(input.reviews) ? input.reviews : [];\\n"'
+                  old_replacement = '`${deterministicBranch}  const candidates = (Array.isArray(input.reviews) ? input.reviews : [])\\n`'
+                  new_replacement = '`${deterministicBranch}  const reviews = Array.isArray(input.reviews) ? input.reviews : [];\\n`'
+                  if script.count(old_target) != 1:
+                      raise SystemExit(f'adjudication target token count changed: {script.count(old_target)}')
+                  if script.count(old_replacement) != 1:
+                      raise SystemExit(f'adjudication replacement token count changed: {script.count(old_replacement)}')
+                  script = script.replace(old_target, new_target)
+                  script = script.replace(old_replacement, new_replacement)
               if name == 'Remove bootstrap and verify exact six-file estate':
                   old = 'rm -f .github/workflows/windows-authority-specialist-v1-bootstrap.yml'
                   new = 'rm -f .github/workflows/windows-authority-specialist-v1-bootstrap.yml .github/workflows/windows-authority-specialist-v1-retry.yml .github/workflows/windows-authority-specialist-v1-retry2.yml .github/workflows/windows-authority-specialist-v1-retry3.yml'
