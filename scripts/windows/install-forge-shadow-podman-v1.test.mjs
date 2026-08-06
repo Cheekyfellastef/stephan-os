@@ -197,13 +197,29 @@ test('backup is content hashed bounded and proved by a real restored service and
   has("'cd /source && tar -cf - . | (cd /destination && tar -xf -)'");
   has("'label=stephanos.backup=forge-shadow'");
   has("if (@($existingBackups).Count -ge 7) { Fail 'FORGE_BACKUP_RETENTION_CAPACITY_REACHED' }");
+  has('$backupDigest = Get-VolumeDigest $Podman $backupName');
+  has("Fail 'FORGE_BACKUP_COPY_DIGEST_MISMATCH'");
+  has('$restoreDigest = Get-VolumeDigest $Podman $RestoreVolume');
+  has("Fail 'FORGE_RESTORE_COPY_DIGEST_MISMATCH'");
   has("$RestoreContainerName = 'stephanos-forge-shadow-restore-probe'");
   has('$RestorePort = 3341');
   has('Get-FixedEnvironment $Final $Port');
   has('Assert-ContainerIdentity $Podman $RestoreContainerName $RestoreVolume $RestorePort');
   has("Fail 'FORGE_RESTORE_PROBE_HEALTH_FAILED'");
   has("Fail 'FORGE_RESTORE_PROBE_HEAD_MISMATCH'");
+  has("Fail 'FORGE_BACKUP_RESTORE_PROOF_INCOMPLETE'");
   has('restoreDrillPassed = $true');
+});
+
+test('backup restore probe always cleans temporary state and restarts the canonical Forge container', () => {
+  has('$mainStopped = $false');
+  has('$mainStopped = $true');
+  has("Invoke-PodmanRemote $Podman @('rm', '-f', $RestoreContainerName) -AllowFailure");
+  has("Invoke-PodmanRemote $Podman @('volume', 'rm', '-f', $RestoreVolume) -AllowFailure");
+  has("Invoke-PodmanRemote $Podman @('start', $ContainerName) -AllowFailure");
+  has('if ($mainStopped -and (Get-ContainerExists $Podman $ContainerName))');
+  has("Fail 'FORGE_POST_BACKUP_RESTART_HEALTH_FAILED'");
+  has('Assert-ContainerIdentity $Podman $ContainerName $DataVolume $HostPort');
 });
 
 test('M2 ready requires exact object tree and privilege proofs and emits no mutation authority', () => {
