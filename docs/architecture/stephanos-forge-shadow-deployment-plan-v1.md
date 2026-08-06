@@ -10,6 +10,8 @@ It is deliberately not an installer. It cannot start a service, pull an image, c
 
 GitHub remains the canonical public ledger, final review boundary and merge authority.
 
+The repository identity is fixed to exactly `Cheekyfellastef/stephan-os`; no alternate `owner/repo` value is admissible in either deployment planning or parity proof.
+
 ## Accepted boundary
 
 The plan accepts one of three isolation classes:
