@@ -6,7 +6,7 @@ import {
   mergeCatalogResultIntoExistingTrack,
   planCatalogResultEnrichment,
 } from '../apps/music-tile/engine/nativeCatalogSearch.js';
-import { mergePersistedCatalogState } from '../apps/music-tile/engine/nativeCatalogAutoApply.js';
+import { mergePersistedCatalogState, resolveUnlinkedDeckTracks } from '../apps/music-tile/engine/nativeCatalogAutoApply.js';
 import { buildArtistAwareCandidates } from '../apps/music-tile/engine/musicCandidateEngine.js';
 import { planFreshJourneyState } from '../apps/music-tile/engine/freshJourneyPlanner.js';
 
@@ -18,7 +18,9 @@ const freshJourneyControllerSource = readFileSync(new URL('../apps/music-tile/en
 const AUTO_SPOTIFY_ID = '4uLU6hMCjMI75M1A2tKUQC';
 const AUTO_SPOTIFY_URL = `https://open.spotify.com/track/${AUTO_SPOTIFY_ID}`;
 const AUTO_SPOTIFY_URI = `spotify:track:${AUTO_SPOTIFY_ID}`;
+const AUTO_ARTWORK_URL = 'https://i.scdn.co/image/ab67616d00001e02f7f1f53af3505f5638d7d8b1';
 const OTHER_SPOTIFY_URI = 'spotify:track:0VjIjW4GlUZAMYd2vXMi3b';
+const STORAGE_KEY_FOR_TEST = 'stephanos.musicTile.dashboardState.v1';
 
 function verifiedCatalogResult(overrides = {}) {
   return {
@@ -77,16 +79,23 @@ test('setup, diagnostics, Taste DNA editing and legacy controls remain available
   ].forEach((id) => assert.match(html, new RegExp(`id="${id}"`)));
 });
 
-test('Surprise Me reuses stored truth and never labels an unverified candidate as playable', () => {
-  assert.match(js, /async function startSurpriseJourney\(\)/);
-  assert.match(js, /const seedArtist = getJourneySeedArtist\(\)/);
-  assert.match(js, /const buildOutcome = await buildJourney\(\)/);
-  assert.match(js, /if \(!buildOutcome\?\.ok\) return/);
+test('all journey entrances use the complete fresh controller while playback truth remains guarded', () => {
+  assert.doesNotMatch(js, /surpriseBtn\?\.addEventListener\('click', startSurpriseJourney\)/);
+  assert.doesNotMatch(js, /ui\.buildBtn\?\.addEventListener\('click', buildJourney\)/);
+  assert.doesNotMatch(js, /ui\.startBtn\?\.addEventListener\('click', startJourney\)/);
+  assert.match(freshJourneyControllerSource, /#start-journey-btn, #surprise-me-btn, #build-journey-btn/);
+  assert.match(freshJourneyControllerSource, /listeningRoomAdditionCount: 10/);
   assert.match(js, /isVerifiedCandidateTrack\(track\) && spotify\.valid && spotify\.type === 'track'/);
   assert.match(js, /AI lead · unverified/);
   assert.match(js, /Local candidate · verify/);
-  assert.match(js, /wider listening history is unavailable/);
-  assert.match(js, /Evidence unavailable/);
+});
+
+test('legacy Surprise Me helper cannot publish a stale operation result', () => {
+  assert.match(js, /async function startSurpriseJourney\(\{ operationGeneration = musicOperationGeneration \} = \{\}\)/);
+  assert.match(js, /const seedArtist = getJourneySeedArtist\(\)/);
+  assert.match(js, /const buildOutcome = await buildJourney\(\{ operationGeneration \}\)/);
+  assert.match(js, /if \(!isCurrentMusicOperation\(operationGeneration\)\) return \{ ok: false, doorwayTrack: null, reason: 'operation-invalidated' \}/);
+  assert.match(js, /if \(!buildOutcome\?\.ok\) return/);
 });
 
 test('listening tools are progressively disclosed without removing their existing controls', () => {
@@ -115,7 +124,7 @@ test('journey build returns an explicit outcome so persistence failures cannot b
 });
 
 test('journey-built presence evidence is emitted only after persistence and rendering succeed', () => {
-  const buildSource = js.slice(js.indexOf('async function buildJourney()'), js.indexOf('function startJourney()'));
+  const buildSource = js.slice(js.indexOf('async function buildJourney('), js.indexOf('function startJourney()'));
   const saveIndex = buildSource.indexOf('saveState();');
   const renderIndex = buildSource.indexOf("safeRenderAll('buildJourney')");
   const successIndex = buildSource.indexOf('emitJourneyBuildSuccess(term, state.candidates.length)');
@@ -300,11 +309,13 @@ test('fresh journey planning preserves existing truth and adds only unseen track
   const plan = planFreshJourneyState({ snapshot, candidates: incoming, startedAt: '2026-08-04T03:00:00.000Z' });
   assert.equal(plan.ok, true);
   assert.equal(plan.freshCount, 7);
-  assert.equal(plan.addedCount, 3);
+  assert.equal(plan.addedCount, 7);
   assert.equal(plan.catalogueCount, 3);
   assert.equal(plan.recycledCount, 0);
   assert.ok(plan.selected.every((track) => track.id.startsWith('fresh-')));
-  assert.deepEqual(plan.state.listeningDeck.slice(0, 3).map((track) => track.id), ['fresh-1', 'fresh-2', 'fresh-3']);
+  assert.deepEqual(plan.state.listeningDeck.slice(0, 7).map((track) => track.id), ['fresh-1', 'fresh-2', 'fresh-3', 'fresh-4', 'fresh-5', 'fresh-6', 'fresh-7']);
+  assert.equal(plan.state.lastFreshJourneySummary.activeJourneyCount, 7);
+  assert.equal(plan.state.lastFreshJourneySummary.roomCount, 8);
   assert.equal(plan.state.listeningDeck.at(-1).id, 'playing-track');
   assert.equal(plan.state.ratings['playing-track'], 2);
   assert.deepEqual(plan.state.tags['playing-track'], ['ghost in the track']);
@@ -315,11 +326,111 @@ test('fresh journey planning preserves existing truth and adds only unseen track
 test('Start Journey is split into fresh-start and non-mutating continue actions', () => {
   assert.match(freshJourneyControllerSource, /startButton\.textContent = 'Start New Journey'/);
   assert.match(freshJourneyControllerSource, /continueButton\.textContent = 'Continue Current Journey'/);
-  assert.match(freshJourneyControllerSource, /requestNativeCatalogSearch\(artist/);
+  assert.match(freshJourneyControllerSource, /requestNativeCatalogSearch\(query/);
+  assert.match(freshJourneyControllerSource, /CATALOGUE_QUERY_VARIANTS/);
+  assert.match(freshJourneyControllerSource, /#build-journey-btn/);
   assert.match(freshJourneyControllerSource, /planFreshJourneyState\(/);
   assert.match(freshJourneyControllerSource, /event\.stopImmediatePropagation\(\)/);
   assert.match(freshJourneyControllerSource, /document\.addEventListener\('click',[\s\S]*true\)/);
   assert.match(freshJourneyControllerSource, /recycledCount: 0/);
   assert.match(freshJourneyControllerSource, /reload\(\)/);
   assert.match(freshJourneyControllerSource, /No songs were replaced or added/);
+});
+
+
+test('automatic deck resolution persists verified Spotify URL and artwork without manual search', async () => {
+  const snapshot = {
+    listeningDeck: [existingCatalogTrack()],
+    ratings: { 'journey-enjoy-the-silence': 2 },
+    tags: { 'journey-enjoy-the-silence': ['ghost in the track'] },
+    trackFeedback: { 'journey-enjoy-the-silence': 'Keep this.' },
+  };
+  const data = new Map([[STORAGE_KEY_FOR_TEST, JSON.stringify(snapshot)]]);
+  const storage = {
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+  };
+  let requestedUrl = '';
+  const result = await resolveUnlinkedDeckTracks({
+    storage,
+    fetchImpl: async (url) => {
+      requestedUrl = String(url);
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          results: [verifiedCatalogResult({ artworkUrl: AUTO_ARTWORK_URL })],
+        }),
+      };
+    },
+  });
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY_FOR_TEST));
+  assert.equal(result.ok, true);
+  assert.equal(result.attemptedCount, 1);
+  assert.equal(result.resolvedCount, 1);
+  assert.match(requestedUrl, /Depeche%20Mode%20Enjoy%20the%20Silence/);
+  assert.equal(stored.listeningDeck[0].spotifyUrl, AUTO_SPOTIFY_URL);
+  assert.equal(stored.listeningDeck[0].artworkUrl, AUTO_ARTWORK_URL);
+  assert.equal(stored.listeningDeck[0].artworkSource, 'spotify-catalogue');
+  assert.equal(stored.ratings['journey-enjoy-the-silence'], 2);
+  assert.deepEqual(stored.tags['journey-enjoy-the-silence'], ['ghost in the track']);
+  assert.equal(stored.trackFeedback['journey-enjoy-the-silence'], 'Keep this.');
+});
+
+test('automatic deck resolution rejects the wrong track identity and unsafe artwork', async () => {
+  const snapshot = { listeningDeck: [existingCatalogTrack({ id: 'journey-wrong-identity', title: 'Wrong Expected Track', artist: 'Wrong Expected Artist' })], ratings: {}, tags: {}, trackFeedback: {} };
+  const data = new Map([[STORAGE_KEY_FOR_TEST, JSON.stringify(snapshot)]]);
+  const storage = {
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+  };
+  const result = await resolveUnlinkedDeckTracks({
+    storage,
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        results: [verifiedCatalogResult({
+          title: 'Personal Jesus',
+          artworkUrl: 'https://attacker.invalid/cover.jpg',
+        })],
+      }),
+    }),
+  });
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY_FOR_TEST));
+  assert.equal(result.resolvedCount, 0);
+  assert.equal(stored.listeningDeck[0].spotifyUrl, undefined);
+  assert.equal(stored.listeningDeck[0].artworkUrl, undefined);
+});
+
+
+test('automatic deck resolution rejects a same-title result with only incidental artist overlap', async () => {
+  const snapshot = {
+    listeningDeck: [existingCatalogTrack()],
+    ratings: {},
+    tags: {},
+    trackFeedback: {},
+  };
+  const data = new Map([[STORAGE_KEY_FOR_TEST, JSON.stringify(snapshot)]]);
+  const storage = {
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+  };
+  const result = await resolveUnlinkedDeckTracks({
+    storage,
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        results: [verifiedCatalogResult({ artist: 'Mode Seven' })],
+      }),
+    }),
+  });
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY_FOR_TEST));
+  assert.equal(result.resolvedCount, 0);
+  assert.equal(stored.listeningDeck[0].spotifyUrl, undefined);
+  assert.equal(stored.listeningDeck[0].artworkUrl, undefined);
 });

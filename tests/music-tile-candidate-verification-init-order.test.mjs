@@ -7,9 +7,13 @@ const mainJs = readFileSync(new URL('../apps/music-tile/main.js', import.meta.ur
 
 test('main.js declares candidate verification imports before startup render call', () => {
   const importIndex = mainJs.indexOf("import { AI_CANDIDATE_STATUSES, getCandidateVerificationStatus, isVerifiedCandidateTrack } from './engine/candidateVerification.js';");
-  const startupIndex = mainJs.indexOf('const state = loadState(); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel();');
+  const stateLoadIndex = mainJs.indexOf('const state = loadState();');
+  const panelInitIndex = mainJs.indexOf("initStephanosSurfacePanels({ surfaceId: 'music-tile' });", stateLoadIndex);
+  const renderIndex = mainJs.indexOf('renderAll();', stateLoadIndex);
   assert.ok(importIndex >= 0);
-  assert.ok(startupIndex > importIndex);
+  assert.ok(stateLoadIndex > importIndex);
+  assert.ok(panelInitIndex > stateLoadIndex);
+  assert.ok(renderIndex > panelInitIndex);
 });
 
 test('getCandidateVerificationStatus runs safely for persisted/legacy data', () => {
