@@ -1,7 +1,7 @@
 const SHA40 = /^[a-f0-9]{40}$/;
 const SHA256_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
-const REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
+const FIXED_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const BOUNDARY_KINDS = new Set(['wsl2', 'vm', 'container']);
 
 export const FORGE_SHADOW_DEPLOYMENT_PLAN_SCHEMA = 'stephanos.forge-shadow-deployment-plan.v1';
@@ -162,7 +162,7 @@ export function planForgeShadowDeployment(input = {}) {
   if (!sameKeys(backup, BACKUP_KEYS)) blockers.push('backup-schema-unbounded');
   if (!sameKeys(sharedWorkspace, SHARED_WORKSPACE_KEYS)) blockers.push('shared-workspace-schema-unbounded');
 
-  if (!REPOSITORY.test(repository)) blockers.push('repository-invalid');
+  if (repository !== FIXED_REPOSITORY) blockers.push('repository-not-allowlisted');
   if (!SHA40.test(canonicalMainHead)) blockers.push('canonical-main-head-invalid');
   if (text(image.component) !== 'forgejo') blockers.push('image-component-not-forgejo');
   if (!SHA256_DIGEST.test(text(image.digest).toLowerCase())) blockers.push('image-digest-not-immutable');
