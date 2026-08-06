@@ -1,0 +1,76 @@
+name: One-shot ChatGPT Scoped Live Status V1
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/one-shot-chatgpt-scoped-live-status-v1.mjs'
+      - '.github/workflows/one-shot-chatgpt-scoped-live-status-v1.yml'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: one-shot-chatgpt-scoped-live-status-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/chatgpt-scoped-live-status-v1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact completion branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/chatgpt-scoped-live-status-v1
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Bind exact parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git merge-base HEAD origin/main)" = "b83f7df46d9d52233f0b4f5dc2e034f50c0bae93"
+          git merge-base --is-ancestor b83f7df46d9d52233f0b4f5dc2e034f50c0bae93 HEAD
+
+      - name: Apply bounded Shared Workspace completion
+        run: node scripts/one-shot-chatgpt-scoped-live-status-v1.mjs
+
+      - name: Verify syntax and focused contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs
+          node --check shared/agents/chatGptParticipantBridgeV1.mjs
+          node --check scripts/chatgpt-shared-workspace-github-relay.mjs
+          node --test shared/agents/sharedWorkspaceScopedDeliveryStatusV1.test.mjs
+          node --test shared/agents/chatGptParticipantBridgeV1.test.mjs
+          node --test scripts/chatgpt-shared-workspace-github-relay.test.mjs
+          git diff --check
+
+      - name: Publish only permanent source tests and operating contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Stephanos GitHub Repair"
+          git config user.email "actions@users.noreply.github.com"
+          rm -f scripts/one-shot-chatgpt-scoped-live-status-v1.mjs
+          rm -f .github/workflows/one-shot-chatgpt-scoped-live-status-v1.yml
+          git add \
+            shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs \
+            shared/agents/sharedWorkspaceScopedDeliveryStatusV1.test.mjs \
+            shared/agents/chatGptParticipantBridgeV1.mjs \
+            shared/agents/chatGptParticipantBridgeV1.test.mjs \
+            scripts/chatgpt-shared-workspace-github-relay.mjs \
+            scripts/chatgpt-shared-workspace-github-relay.test.mjs \
+            docs/operations/chatgpt-shared-workspace-live-status.md \
+            scripts/one-shot-chatgpt-scoped-live-status-v1.mjs \
+            .github/workflows/one-shot-chatgpt-scoped-live-status-v1.yml
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "9"
+          git diff --cached --check
+          git commit -m "Scope ChatGPT live status to exact delivery evidence"
+          git push origin HEAD:fix/chatgpt-scoped-live-status-v1
