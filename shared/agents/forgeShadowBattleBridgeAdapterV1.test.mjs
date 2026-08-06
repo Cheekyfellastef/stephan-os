@@ -15,6 +15,8 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
+const INSTALLER_BLOB = 'e'.repeat(40);
+const INSTALLER_PATH = 'scripts/windows/install-forge-shadow-podman-v1.ps1';
 
 function command(overrides = {}) {
   return {
@@ -44,6 +46,7 @@ function readyReceipt(overrides = {}) {
     expectedHead: HEAD,
     imageDigest: DIGEST,
     forgejoVersion: '15.0.6',
+    podmanVersion: '6.0.2',
     listener: '127.0.0.1:3340',
     mirrorHead: HEAD,
     mirrorTree: 'c'.repeat(40),
@@ -73,6 +76,23 @@ function readyReceipt(overrides = {}) {
     readyForM3: true,
     ...overrides,
   };
+}
+
+function createFixtureRoot(prefix = 'forge-shadow-adapter-') {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  mkdirSync(join(root, 'scripts', 'windows'), { recursive: true });
+  writeFileSync(join(root, 'scripts', 'windows', 'install-forge-shadow-podman-v1.ps1'), '# test fixture\n');
+  return root;
+}
+
+function fixedSourceRead(args, { head = HEAD, workingBlob = INSTALLER_BLOB } = {}) {
+  if (args[0] === 'branch') return { status: 0, stdout: 'main\n', stderr: '' };
+  if (args[0] === 'rev-parse' && args[1] === 'HEAD') return { status: 0, stdout: `${head}\n`, stderr: '' };
+  if (args[0] === 'rev-parse' && args[1] === `${HEAD}:${INSTALLER_PATH}`) {
+    return { status: 0, stdout: `${INSTALLER_BLOB}\n`, stderr: '' };
+  }
+  if (args[0] === 'hash-object') return { status: 0, stdout: `${workingBlob}\n`, stderr: '' };
+  return null;
 }
 
 test('adapter exposes only four operation-specific command fields', () => {
@@ -130,21 +150,21 @@ test('executor is Windows-only and requires fixed local source', async () => {
   assert.equal(missing.blocker, 'FORGE_SHADOW_LOCAL_SOURCE_MISSING');
 });
 
-test('executor rebinds exact main head before and after fixed installer execution', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'forge-shadow-adapter-'));
-  mkdirSync(join(root, 'scripts', 'windows'), { recursive: true });
-  writeFileSync(join(root, 'scripts', 'windows', 'install-forge-shadow-podman-v1.ps1'), '# test fixture\n');
+test('executor rebinds exact main head and installer blob before and after execution', async () => {
+  const root = createFixtureRoot();
   const calls = [];
-  let gitReadCount = 0;
+  let headReads = 0;
+  let blobReads = 0;
   const result = await executeForgeShadowM2OnBattleBridge(command(), {
     platform: 'win32',
     repositoryRoot: root,
     runCommand(executable, args) {
       calls.push({ executable, args: [...args] });
-      if (args[0] === 'branch') return { status: 0, stdout: 'main\n', stderr: '' };
-      if (args[0] === 'rev-parse') {
-        gitReadCount += 1;
-        return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
+      const fixed = fixedSourceRead(args);
+      if (fixed) {
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD') headReads += 1;
+        if (args[0] === 'hash-object') blobReads += 1;
+        return fixed;
       }
       if (args.includes('-File')) return { status: 0, stdout: JSON.stringify(readyReceipt()), stderr: '' };
       return { status: 1, stdout: '', stderr: 'unexpected' };
@@ -154,7 +174,11 @@ test('executor rebinds exact main head before and after fixed installer executio
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'FORGE_SHADOW_M2_READY');
   assert.equal(result.readyForM3, true);
-  assert.equal(gitReadCount, 2);
+  assert.equal(result.installerBlob, INSTALLER_BLOB);
+  assert.equal(headReads, 2);
+  assert.equal(blobReads, 2);
+  const hashCall = calls.find((call) => call.args[0] === 'hash-object');
+  assert.ok(hashCall.args.includes(`--path=${INSTALLER_PATH}`));
   const powershellCall = calls.find((call) => call.args.includes('-File'));
   assert.ok(powershellCall);
   assert.deepEqual(powershellCall.args.slice(0, 4), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass']);
@@ -165,19 +189,16 @@ test('executor rebinds exact main head before and after fixed installer executio
   assert.ok(powershellCall.args.includes('-OperatorApproved'));
 });
 
-test('pre-install source movement blocks before PowerShell is called', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'forge-shadow-adapter-head-'));
-  mkdirSync(join(root, 'scripts', 'windows'), { recursive: true });
-  writeFileSync(join(root, 'scripts', 'windows', 'install-forge-shadow-podman-v1.ps1'), '# test fixture\n');
+test('pre-install source head movement blocks before PowerShell is called', async () => {
+  const root = createFixtureRoot('forge-shadow-adapter-head-');
   let powershellCalled = false;
   const result = await executeForgeShadowM2OnBattleBridge(command(), {
     platform: 'win32',
     repositoryRoot: root,
     runCommand(_executable, args) {
       if (args.includes('-File')) powershellCalled = true;
-      if (args[0] === 'branch') return { status: 0, stdout: 'main\n', stderr: '' };
-      if (args[0] === 'rev-parse') return { status: 0, stdout: `${'c'.repeat(40)}\n`, stderr: '' };
-      return { status: 1, stdout: '', stderr: '' };
+      const fixed = fixedSourceRead(args, { head: 'c'.repeat(40) });
+      return fixed || { status: 1, stdout: '', stderr: '' };
     },
   });
   assert.equal(result.ok, false);
@@ -185,24 +206,43 @@ test('pre-install source movement blocks before PowerShell is called', async () 
   assert.equal(powershellCalled, false);
 });
 
-test('installer failure or malformed output is not promoted to M2 ready', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'forge-shadow-adapter-fail-'));
-  mkdirSync(join(root, 'scripts', 'windows'), { recursive: true });
-  writeFileSync(join(root, 'scripts', 'windows', 'install-forge-shadow-podman-v1.ps1'), '# test fixture\n');
+test('dirty or replaced installer blocks even when branch and HEAD remain exact', async () => {
+  const root = createFixtureRoot('forge-shadow-adapter-dirty-');
+  let powershellCalled = false;
+  const result = await executeForgeShadowM2OnBattleBridge(command(), {
+    platform: 'win32',
+    repositoryRoot: root,
+    runCommand(_executable, args) {
+      if (args.includes('-File')) powershellCalled = true;
+      const fixed = fixedSourceRead(args, { workingBlob: 'f'.repeat(40) });
+      return fixed || { status: 1, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'FORGE_SHADOW_SOURCE_IDENTITY_CHANGED');
+  assert.equal(powershellCalled, false);
+});
 
+test('installer failure or malformed runtime identity is not promoted to M2 ready', async () => {
+  const root = createFixtureRoot('forge-shadow-adapter-fail-');
   for (const installerResult of [
     { status: 1, stdout: '', stderr: 'failed' },
     { status: 0, stdout: '{bad', stderr: '' },
     { status: 0, stdout: JSON.stringify(readyReceipt({ restoreDrillPassed: false })), stderr: '' },
     { status: 0, stdout: JSON.stringify(readyReceipt({ rootFilesystemReadOnly: false })), stderr: '' },
     { status: 0, stdout: JSON.stringify(readyReceipt({ githubCredentialUsed: true })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ podmanVersion: '6.0.1' })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ listener: '0.0.0.0:3340' })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ mirrorHead: 'c'.repeat(40) })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ mirrorTree: 'short' })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ backupVolume: '../unsafe' })), stderr: '' },
   ]) {
     const result = await executeForgeShadowM2OnBattleBridge(command(), {
       platform: 'win32',
       repositoryRoot: root,
       runCommand(_executable, args) {
-        if (args[0] === 'branch') return { status: 0, stdout: 'main\n', stderr: '' };
-        if (args[0] === 'rev-parse') return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
+        const fixed = fixedSourceRead(args);
+        if (fixed) return fixed;
         if (args.includes('-File')) return installerResult;
         return { status: 1, stdout: '', stderr: '' };
       },
@@ -211,16 +251,35 @@ test('installer failure or malformed output is not promoted to M2 ready', async 
   }
 });
 
-test('success result is sanitized and contains no token or arbitrary authority', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'forge-shadow-adapter-safe-'));
-  mkdirSync(join(root, 'scripts', 'windows'), { recursive: true });
-  writeFileSync(join(root, 'scripts', 'windows', 'install-forge-shadow-podman-v1.ps1'), '# test fixture\n');
+test('post-install installer or source drift invalidates an otherwise ready receipt', async () => {
+  const root = createFixtureRoot('forge-shadow-adapter-post-drift-');
+  let hashReads = 0;
   const result = await executeForgeShadowM2OnBattleBridge(command(), {
     platform: 'win32',
     repositoryRoot: root,
     runCommand(_executable, args) {
-      if (args[0] === 'branch') return { status: 0, stdout: 'main\n', stderr: '' };
-      if (args[0] === 'rev-parse') return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
+      if (args[0] === 'hash-object') {
+        hashReads += 1;
+        return { status: 0, stdout: `${hashReads === 1 ? INSTALLER_BLOB : 'f'.repeat(40)}\n`, stderr: '' };
+      }
+      const fixed = fixedSourceRead(args);
+      if (fixed) return fixed;
+      if (args.includes('-File')) return { status: 0, stdout: JSON.stringify(readyReceipt()), stderr: '' };
+      return { status: 1, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'FORGE_SHADOW_POST_INSTALL_SOURCE_IDENTITY_CHANGED');
+});
+
+test('success result is sanitized and contains no token or arbitrary authority', async () => {
+  const root = createFixtureRoot('forge-shadow-adapter-safe-');
+  const result = await executeForgeShadowM2OnBattleBridge(command(), {
+    platform: 'win32',
+    repositoryRoot: root,
+    runCommand(_executable, args) {
+      const fixed = fixedSourceRead(args);
+      if (fixed) return fixed;
       return { status: 0, stdout: JSON.stringify(readyReceipt()), stderr: '' };
     },
   });
