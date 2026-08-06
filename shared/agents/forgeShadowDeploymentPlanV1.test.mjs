@@ -80,6 +80,16 @@ test('valid M2 input produces a fixed zero-authority runtime request', () => {
   assert.equal(result.authority.requiresSeparateRuntimeAuthorization, true);
 });
 
+test('repository identity is fixed to canonical Stephanos repository', () => {
+  const result = planForgeShadowDeployment(validInput({
+    repository: 'other/repo',
+    mirror: { ...validInput().mirror, repository: 'other/repo' },
+  }));
+  assert.equal(result.valid, false);
+  assert.equal(result.decision, FORGE_SHADOW_DEPLOYMENT_PLAN_DECISIONS.BLOCKED);
+  assert.ok(result.blockers.includes('repository-not-allowlisted'));
+});
+
 test('mutable image references and unknown components fail closed', () => {
   for (const image of [
     { component: 'forgejo', digest: 'forgejo:latest' },
