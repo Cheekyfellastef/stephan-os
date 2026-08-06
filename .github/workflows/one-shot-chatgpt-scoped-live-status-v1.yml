@@ -1,6 +1,12 @@
 name: One-shot ChatGPT Scoped Live Status V1
 
 on:
+  push:
+    branches:
+      - fix/chatgpt-scoped-live-status-v1
+    paths:
+      - 'scripts/one-shot-chatgpt-scoped-live-status-v1.mjs'
+      - '.github/workflows/one-shot-chatgpt-scoped-live-status-v1.yml'
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
@@ -13,12 +19,14 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: one-shot-chatgpt-scoped-live-status-${{ github.event.pull_request.number }}
+  group: one-shot-chatgpt-scoped-live-status-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   build:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/chatgpt-scoped-live-status-v1'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/fix/chatgpt-scoped-live-status-v1') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/chatgpt-scoped-live-status-v1')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
