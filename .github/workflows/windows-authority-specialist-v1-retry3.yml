@@ -46,7 +46,6 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import os
-          import re
           from pathlib import Path
 
           workflow = Path('.github/workflows/windows-authority-specialist-v1-bootstrap.yml')
@@ -86,19 +85,6 @@ jobs:
               script = extract(name)
               script = script.replace(old_main, current_main)
               script = script.replace(old_pr_head, current_pr_head)
-              if name == 'Wire deterministic specialist sealing into the trusted reviewer':
-                  old_start = script.index('const oldAdjudication = `')
-                  old_end = script.index('const newAdjudication = `', old_start)
-                  old_block = script[old_start:old_end]
-                  old_block, count = re.subn(
-                      r'(?m)^(\s*)baseSha,\n\1workflowRunId: runId,\n\1workflowRunAttempt: runAttempt,\n',
-                      r'\1baseSha,\n',
-                      old_block,
-                      count=1,
-                  )
-                  if count != 1:
-                      raise SystemExit(f'reviewer stale workflow identity fields changed: {count}')
-                  script = script[:old_start] + old_block + script[old_end:]
               if name == 'Remove bootstrap and verify exact six-file estate':
                   old = 'rm -f .github/workflows/windows-authority-specialist-v1-bootstrap.yml'
                   new = 'rm -f .github/workflows/windows-authority-specialist-v1-bootstrap.yml .github/workflows/windows-authority-specialist-v1-retry.yml .github/workflows/windows-authority-specialist-v1-retry2.yml .github/workflows/windows-authority-specialist-v1-retry3.yml'
