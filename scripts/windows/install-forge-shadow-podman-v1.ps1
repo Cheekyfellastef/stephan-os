@@ -370,37 +370,61 @@ function Copy-Volume([string]$Podman, [string]$Source, [string]$Destination) {
 }
 
 function Create-And-ProveBackup([string]$Podman, [string]$Git) {
-    [void](Invoke-PodmanRemote $Podman @('stop', '--time', '20', $ContainerName))
-    $digest = Get-VolumeDigest $Podman $DataVolume
-    if ($digest -notmatch '^[0-9a-f]{64}$') { Fail 'FORGE_BACKUP_DIGEST_FAILED' }
+    $mainStopped = $false
+    $backupResult = $null
+    try {
+        if (Get-ContainerExists $Podman $RestoreContainerName) { [void](Invoke-PodmanRemote $Podman @('rm', '-f', $RestoreContainerName)) }
+        if (Get-VolumeExists $Podman $RestoreVolume) { [void](Invoke-PodmanRemote $Podman @('volume', 'rm', '-f', $RestoreVolume)) }
 
-    $backupName = "stephanos-forge-shadow-backup-$($digest.Substring(0, 16))"
-    $existingBackups = (Invoke-PodmanRemote $Podman @('volume', 'ls', '--filter', 'label=stephanos.backup=forge-shadow', '--format', '{{.Name}}')).Output | Where-Object { $_ }
-    if (-not (Get-VolumeExists $Podman $backupName)) {
-        if (@($existingBackups).Count -ge 7) { Fail 'FORGE_BACKUP_RETENTION_CAPACITY_REACHED' }
-        [void](Invoke-PodmanRemote $Podman @('volume', 'create', '--label', 'stephanos.backup=forge-shadow', '--label', "stephanos.backup-digest=$digest", $backupName))
-        Copy-Volume $Podman $DataVolume $backupName
+        [void](Invoke-PodmanRemote $Podman @('stop', '--time', '20', $ContainerName))
+        $mainStopped = $true
+        $digest = Get-VolumeDigest $Podman $DataVolume
+        if ($digest -notmatch '^[0-9a-f]{64}$') { Fail 'FORGE_BACKUP_DIGEST_FAILED' }
+
+        $backupName = "stephanos-forge-shadow-backup-$($digest.Substring(0, 16))"
+        $existingBackups = (Invoke-PodmanRemote $Podman @('volume', 'ls', '--filter', 'label=stephanos.backup=forge-shadow', '--format', '{{.Name}}')).Output | Where-Object { $_ }
+        if (-not (Get-VolumeExists $Podman $backupName)) {
+            if (@($existingBackups).Count -ge 7) { Fail 'FORGE_BACKUP_RETENTION_CAPACITY_REACHED' }
+            [void](Invoke-PodmanRemote $Podman @('volume', 'create', '--label', 'stephanos.backup=forge-shadow', '--label', "stephanos.backup-digest=$digest", $backupName))
+            Copy-Volume $Podman $DataVolume $backupName
+        }
+        $backupDigest = Get-VolumeDigest $Podman $backupName
+        if ($backupDigest -ne $digest) {
+            Fail 'FORGE_BACKUP_COPY_DIGEST_MISMATCH' @{ sourceDigest = $digest; backupDigest = $backupDigest }
+        }
+
+        [void](Invoke-PodmanRemote $Podman @('volume', 'create', $RestoreVolume))
+        Copy-Volume $Podman $backupName $RestoreVolume
+        $restoreDigest = Get-VolumeDigest $Podman $RestoreVolume
+        if ($restoreDigest -ne $digest) {
+            Fail 'FORGE_RESTORE_COPY_DIGEST_MISMATCH' @{ backupDigest = $digest; restoreDigest = $restoreDigest }
+        }
+
+        if (-not (Test-PortFree $RestorePort)) { Fail 'FORGE_RESTORE_PROBE_PORT_NOT_AVAILABLE' }
+        Start-FixedContainer $Podman $true $RestoreContainerName $RestoreVolume $RestorePort
+        $restoreVersion = Wait-Forgejo $RestoreApiRoot
+        if (-not $restoreVersion) { Fail 'FORGE_RESTORE_PROBE_HEALTH_FAILED' }
+        [void](Assert-ContainerIdentity $Podman $RestoreContainerName $RestoreVolume $RestorePort)
+        $restoreHead = Get-MirrorHead $Git $RestorePort
+        if ($restoreHead -ne $ExpectedHead) { Fail 'FORGE_RESTORE_PROBE_HEAD_MISMATCH' @{ observedHead = $restoreHead } }
+        $backupResult = [pscustomobject]@{ Digest = $digest; Volume = $backupName }
+    } finally {
+        if (Get-ContainerExists $Podman $RestoreContainerName) {
+            [void](Invoke-PodmanRemote $Podman @('rm', '-f', $RestoreContainerName) -AllowFailure)
+        }
+        if (Get-VolumeExists $Podman $RestoreVolume) {
+            [void](Invoke-PodmanRemote $Podman @('volume', 'rm', '-f', $RestoreVolume) -AllowFailure)
+        }
+        if ($mainStopped -and (Get-ContainerExists $Podman $ContainerName)) {
+            [void](Invoke-PodmanRemote $Podman @('start', $ContainerName) -AllowFailure)
+        }
     }
 
-    if (Get-ContainerExists $Podman $RestoreContainerName) { [void](Invoke-PodmanRemote $Podman @('rm', '-f', $RestoreContainerName)) }
-    if (Get-VolumeExists $Podman $RestoreVolume) { [void](Invoke-PodmanRemote $Podman @('volume', 'rm', '-f', $RestoreVolume)) }
-    [void](Invoke-PodmanRemote $Podman @('volume', 'create', $RestoreVolume))
-    Copy-Volume $Podman $backupName $RestoreVolume
-
-    if (-not (Test-PortFree $RestorePort)) { Fail 'FORGE_RESTORE_PROBE_PORT_NOT_AVAILABLE' }
-    Start-FixedContainer $Podman $true $RestoreContainerName $RestoreVolume $RestorePort
-    $restoreVersion = Wait-Forgejo $RestoreApiRoot
-    if (-not $restoreVersion) { Fail 'FORGE_RESTORE_PROBE_HEALTH_FAILED' }
-    [void](Assert-ContainerIdentity $Podman $RestoreContainerName $RestoreVolume $RestorePort)
-    $restoreHead = Get-MirrorHead $Git $RestorePort
-    if ($restoreHead -ne $ExpectedHead) { Fail 'FORGE_RESTORE_PROBE_HEAD_MISMATCH' @{ observedHead = $restoreHead } }
-    [void](Invoke-PodmanRemote $Podman @('rm', '-f', $RestoreContainerName))
-    [void](Invoke-PodmanRemote $Podman @('volume', 'rm', '-f', $RestoreVolume))
-    [void](Invoke-PodmanRemote $Podman @('start', $ContainerName))
+    if ($null -eq $backupResult) { Fail 'FORGE_BACKUP_RESTORE_PROOF_INCOMPLETE' }
     $mainVersion = Wait-Forgejo $ApiRoot
     if (-not $mainVersion) { Fail 'FORGE_POST_BACKUP_RESTART_HEALTH_FAILED' }
     [void](Assert-ContainerIdentity $Podman $ContainerName $DataVolume $HostPort)
-    return [pscustomobject]@{ Digest = $digest; Volume = $backupName; Version = $mainVersion }
+    return [pscustomobject]@{ Digest = $backupResult.Digest; Volume = $backupResult.Volume; Version = $mainVersion }
 }
 
 if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) { Fail 'CANONICAL_REPOSITORY_ROOT_MISSING' }
