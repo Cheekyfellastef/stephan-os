@@ -43,6 +43,7 @@ test('specialist wrapper and workflow remain read-only and trusted-base bound', 
   assert.match(wrapper, /independent-merge-security-review-v2\.mjs/);
   assert.match(wrapper, /buildIndependentReviewArtifact/);
   assert.doesNotMatch(wrapper, /gh\s+pr\s+(?:merge|ready)|git\s+(?:push|reset|clean|rebase)|Stop-Process|Restart-Computer|shell\s*:\s*true|\beval\s*\(/i);
+  assert.doesNotMatch(wrapper, /method\s*:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i);
 
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
