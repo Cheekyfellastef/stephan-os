@@ -79,6 +79,22 @@ test('repository, head, digest and fact schemas fail closed', () => {
   }
 });
 
+test('runtime fact observations require exact boolean and string types', () => {
+  for (const patch of [
+    { machineRootful: 'false' },
+    { machineRunning: 1 },
+    { githubCredentialPresent: 'false' },
+    { parityReady: null },
+    { podmanVersion: 6.002 },
+    { mirrorSourceHead: false },
+  ]) {
+    const result = planForgeShadowPodmanRuntime(input(patch));
+    assert.equal(result.valid, false);
+    assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.BLOCKED);
+    assert.ok(result.blockers.some((blocker) => blocker.startsWith('runtime-fact-type-invalid:')));
+  }
+});
+
 test('Windows 11, WSL2 and rootless machine proof are mandatory', () => {
   for (const patch of [
     { windows11OrNewer: false },
@@ -160,7 +176,7 @@ test('wrong mirrored source head blocks rather than being silently resynchronize
   assert.ok(result.blockers.includes('mirror-source-head-mismatch'));
 });
 
-test('sealed posture disables all write, new-mirror and runner surfaces before parity proof', () => {
+test('sealed posture requires read-only rootfs, no capabilities and no-new-privileges', () => {
   const seal = planForgeShadowPodmanRuntime(input({ sealedReadOnlyPosture: false }));
   assert.equal(seal.decision, FORGE_SHADOW_PODMAN_DECISIONS.SEAL_REQUIRED);
   assert.equal(seal.nextAction.disableActions, true);
@@ -168,6 +184,11 @@ test('sealed posture disables all write, new-mirror and runner surfaces before p
   assert.equal(seal.nextAction.disableMigrations, true);
   assert.equal(seal.nextAction.disableNewMirrors, true);
   assert.equal(seal.nextAction.disablePeriodicMirrorUpdates, true);
+  assert.equal(seal.nextAction.readOnlyRootFilesystem, true);
+  assert.equal(seal.nextAction.dropAllCapabilities, true);
+  assert.equal(seal.nextAction.noNewPrivileges, true);
+  assert.equal(seal.nextAction.writableDataSurface, '/var/lib/gitea');
+  assert.deepEqual(seal.nextAction.boundedEphemeralWritableSurfaces, ['/run', '/tmp', '/var/tmp']);
   assert.equal(seal.nextAction.runnerRegistration, false);
   assert.equal(seal.nextAction.publicExposure, false);
 });
