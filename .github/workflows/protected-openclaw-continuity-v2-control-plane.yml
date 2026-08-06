@@ -1,0 +1,210 @@
+name: Protected OpenClaw Continuity V2 Control Plane
+
+on:
+  push:
+    branches:
+      - fix/protected-openclaw-merge-continuity-v2
+
+permissions:
+  contents: write
+
+concurrency:
+  group: protected-openclaw-continuity-v2-control-plane
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/protected-openclaw-merge-continuity-v2
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact parent and temporary workflow-only commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_parent='aaf87855d246ccf65f6c2052e54b37913b91cf10'
+          bootstrap='.github/workflows/protected-openclaw-continuity-v2-control-plane.yml'
+          test "$(git branch --show-current)" = 'fix/protected-openclaw-merge-continuity-v2'
+          test "$(git rev-parse HEAD^)" = "$expected_parent"
+          test "$(git diff --name-only HEAD^..HEAD)" = "$bootstrap"
+          test "$(git rev-parse origin/main)" = 'e41d7a90da563fe1e54cc6c799b0a9c275c30592'
+
+      - name: Repair coordinator publication and bounded review lookup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, content):
+              Path(path).write_text(content, encoding='utf-8', newline='\n')
+
+          def replace_once(content, old, new, label):
+              count = content.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one seam, observed {count}')
+              return content.replace(old, new, 1)
+
+          workflow_path = '.github/workflows/exact-head-review-dispatch.yml'
+          workflow = read(workflow_path)
+          workflow = replace_once(
+              workflow,
+              '      pull-requests: read',
+              '      pull-requests: write',
+              'coordinator pull-request comment authority',
+          )
+          write(workflow_path, workflow)
+
+          retry_path = 'scripts/retry-independent-review.mjs'
+          retry = read(retry_path)
+          old_function = '''async function loadRecentReviewRuns(owner, repo, workflowId, prNumber) {
+            const listed = await githubPages(
+              `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=pull_request_target`,
+              'workflow_runs',
+            );
+            const candidates = listed
+              .filter((run) => (
+                Array.isArray(run?.pull_requests)
+                && run.pull_requests.some((pr) => positiveInteger(pr?.number) === prNumber)
+              ))
+              .sort((left, right) => positiveInteger(right?.id) - positiveInteger(left?.id))
+              .slice(0, MAX_RUN_DETAILS);
+            const details = [];
+            for (const candidate of candidates) {
+              details.push(mapRun(await githubRequest(`/repos/${owner}/${repo}/actions/runs/${positiveInteger(candidate.id)}`)));
+            }
+            return details;
+          }
+          '''
+          new_function = '''async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, expectedHead) {
+            const encodedHead = encodeURIComponent(expectedHead);
+            const path = `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=pull_request_target&head_sha=${encodedHead}&per_page=100&page=1`;
+            const payload = await githubRequest(path);
+            const listed = payload?.workflow_runs;
+            if (!Array.isArray(listed)) {
+              throw new Error('bounded exact-head review-run payload is not workflow_runs');
+            }
+            if (positiveInteger(payload?.total_count) > listed.length) {
+              throw new Error('bounded exact-head review-run query exceeded 100 records');
+            }
+            const candidates = listed
+              .filter((run) => (
+                text(run?.head_sha).toLowerCase() === expectedHead
+                && Array.isArray(run?.pull_requests)
+                && run.pull_requests.some((pr) => positiveInteger(pr?.number) === prNumber)
+              ))
+              .sort((left, right) => positiveInteger(right?.id) - positiveInteger(left?.id))
+              .slice(0, MAX_RUN_DETAILS);
+            const details = [];
+            for (const candidate of candidates) {
+              details.push(mapRun(await githubRequest(`/repos/${owner}/${repo}/actions/runs/${positiveInteger(candidate.id)}`)));
+            }
+            return details;
+          }
+          '''
+          retry = replace_once(retry, old_function, new_function, 'bounded exact-head review lookup')
+          retry = replace_once(
+              retry,
+              '  const runs = await loadRecentReviewRuns(owner, repo, workflow.id, prNumber);',
+              '  const runs = await loadRecentReviewRuns(owner, repo, workflow.id, prNumber, expectedHead);',
+              'exact-head review lookup call',
+          )
+          write(retry_path, retry)
+
+          regression_path = 'scripts/protected-openclaw-merge-continuity-v2.test.mjs'
+          regression = read(regression_path)
+          addition = '''
+
+test('review coordinator has exact PR-comment publication authority', () => {
+  const workflow = readFileSync(
+    new URL('../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
+    'utf8',
+  );
+  const coordinate = workflow.match(/  coordinate:[\\s\\S]*$/)?.[0] || '';
+
+  assert.match(coordinate, /permissions:[\\s\\S]*pull-requests: write/);
+});
+
+test('independent review retry scans one bounded exact-head page', () => {
+  const source = readFileSync(new URL('./retry-independent-review.mjs', import.meta.url), 'utf8');
+  const loader = source.match(
+    /async function loadRecentReviewRuns[\\s\\S]*?\\n}\\n\\nasync function main/,
+  )?.[0] || '';
+
+  assert.match(loader, /head_sha=\\$\\{encodedHead}/);
+  assert.match(loader, /per_page=100&page=1/);
+  assert.doesNotMatch(loader, /githubPages\\(/);
+  assert.match(
+    source,
+    /loadRecentReviewRuns\\(owner, repo, workflow\\.id, prNumber, expectedHead\\)/,
+  );
+});
+'''
+          if 'review coordinator has exact PR-comment publication authority' in regression:
+              raise SystemExit('control-plane regressions already present')
+          regression = regression.rstrip() + addition
+          write(regression_path, regression.rstrip() + '\n')
+          PY
+
+      - name: Parse and test the complete V2 repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/retry-independent-review.mjs
+          node --check scripts/protected-openclaw-merge-continuity-v2.test.mjs
+          node --test \
+            scripts/ignite-stephanos-local.test.mjs \
+            scripts/battle-bridge-ui-4173-repair.test.mjs \
+            scripts/protected-openclaw-merge-continuity-v2.test.mjs \
+            shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
+            shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs \
+            shared/agents/independentReviewRetryPlanner.test.mjs
+          git diff --check
+
+      - name: Commit exact eight-file repair and remove bootstrap
+        shell: bash
+        env:
+          BASE_SHA: e41d7a90da563fe1e54cc6c799b0a9c275c30592
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/protected-openclaw-continuity-v2-control-plane.yml
+
+          expected="$(
+            printf '%s\n' \
+              .github/workflows/exact-head-review-dispatch.yml \
+              scripts/battle-bridge-github-command-mailbox.mjs \
+              scripts/battle-bridge-ui-4173-repair.mjs \
+              scripts/battle-bridge-ui-4173-repair.test.mjs \
+              scripts/ignite-stephanos-local.mjs \
+              scripts/ignite-stephanos-local.test.mjs \
+              scripts/protected-openclaw-merge-continuity-v2.test.mjs \
+              scripts/retry-independent-review.mjs |
+              sort
+          )"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+          actual="$(git diff --cached --name-only "$BASE_SHA" | sort)"
+          printf 'EXPECTED FILE ESTATE\n%s\nACTUAL FILE ESTATE\n%s\n' "$expected" "$actual"
+          test "$actual" = "$expected"
+
+          git commit -m 'Repair exact-head review control-plane continuity'
+          git push origin HEAD:fix/protected-openclaw-merge-continuity-v2
+          test "$(git diff --name-only "$BASE_SHA..HEAD" | sort)" = "$expected"
