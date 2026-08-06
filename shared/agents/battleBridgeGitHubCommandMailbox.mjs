@@ -9,6 +9,12 @@ import {
   readCodexBankedResetStatusOnBattleBridge,
 } from './codexBankedResetStatusBattleBridgeReader.mjs';
 import { MUSIC_SPOTIFY_LINK_OPERATION, MUSIC_SPOTIFY_LINK_SOURCE, validateMusicSpotifyLinkCandidate } from './musicSpotifyLinkBridge.mjs';
+import {
+  PROTECTED_OPENCLAW_MERGE_OPERATION,
+  executeProtectedOpenClawMergeOnBattleBridge,
+  protectedOpenClawMergeFields,
+  validateProtectedOpenClawMergeCommand,
+} from './protectedOpenClawMergeMailboxAdapter.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -30,6 +36,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
   'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+  PROTECTED_OPENCLAW_MERGE_OPERATION,
   MUSIC_SPOTIFY_LINK_OPERATION,
   CODEX_BANKED_RESET_STATUS_OPERATION,
   CODEX_BANKED_RESET_OPERATION,
@@ -155,6 +162,17 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
     return fail('RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
   }
+  let protectedMerge = null;
+  if (command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION) {
+    const validation = validateProtectedOpenClawMergeCommand(command, { now });
+    if (!validation.ok) return fail(validation.blocker, validation.details || {});
+    protectedMerge = validation.command;
+  } else {
+    const unexpectedProtectedMergeField = protectedOpenClawMergeFields().find((field) => hasValue(command[field]));
+    if (unexpectedProtectedMergeField) {
+      return fail('PROTECTED_MERGE_FIELD_NOT_ALLOWED', { field: unexpectedProtectedMergeField });
+    }
+  }
   if (command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF') {
     if (!SHA_PATTERN.test(String(command.expectedHead || ''))) {
       return fail('WINDOWS_BROWSER_PROOF_EXPECTED_HEAD_REQUIRED');
@@ -175,8 +193,9 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     if (proofTarget === 'PULL_REQUEST_HEAD' && hasValue(command.pullRequestHead)) {
       return fail('WINDOWS_BROWSER_PROOF_PR_PROVENANCE_HEAD_NOT_ALLOWED');
     }
-  } else if (hasValue(command.prNumber) || hasValue(command.proofScenario)
-    || hasValue(command.proofTarget) || hasValue(command.pullRequestHead)) {
+  } else if (command.operation !== PROTECTED_OPENCLAW_MERGE_OPERATION
+    && (hasValue(command.prNumber) || hasValue(command.proofScenario)
+      || hasValue(command.proofTarget) || hasValue(command.pullRequestHead))) {
     return fail('WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
   }
   let musicSpotifyCandidate = null;
@@ -240,7 +259,9 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       operatorApproval: 'operator-approved',
       expectedHead: String(command.expectedHead || ''),
       targetRequestId: command.operation === 'READ_MAILBOX_RECEIPT' ? targetRequestId : '',
-      prNumber: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? Number(command.prNumber) : 0,
+      prNumber: ['RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF', PROTECTED_OPENCLAW_MERGE_OPERATION].includes(command.operation)
+        ? Number(command.prNumber)
+        : 0,
       proofScenario: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? String(command.proofScenario) : '',
       proofTarget: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
         ? String(command.proofTarget || 'PULL_REQUEST_HEAD')
@@ -248,6 +269,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       pullRequestHead: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
         ? String(command.pullRequestHead || '').toLowerCase()
         : '',
+      ...(protectedMerge || {}),
       ...(musicSpotifyCandidate ? {
         source: MUSIC_SPOTIFY_LINK_SOURCE,
         spotifyUri: musicSpotifyCandidate.spotifyUri,
@@ -307,6 +329,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   runMonitorMultiplexerAcceptance,
   runExactHeadWindowsBrowserProof,
   queueVerifiedSpotifyLink,
+  executeProtectedOpenClawMerge = executeProtectedOpenClawMergeOnBattleBridge,
   readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
   redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
 } = {}) {
@@ -324,6 +347,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     WAKE_BATTLE_BRIDGE_RECOVERY_MESH: wakeRecoveryMesh,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
     RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF: runExactHeadWindowsBrowserProof,
+    [PROTECTED_OPENCLAW_MERGE_OPERATION]: executeProtectedOpenClawMerge,
     [MUSIC_SPOTIFY_LINK_OPERATION]: queueVerifiedSpotifyLink,
     [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
     [CODEX_BANKED_RESET_OPERATION]: redeemBankedCodexReset,
@@ -368,7 +392,16 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
-    prNumber: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? Number(command?.prNumber || 0) : 0,
+    prNumber: ['RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF', PROTECTED_OPENCLAW_MERGE_OPERATION].includes(command?.operation)
+      ? Number(command?.prNumber || 0)
+      : 0,
+    expectedBase: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? String(command?.expectedBase || '') : '',
+    reviewRunId: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? Number(command?.reviewRunId || 0) : 0,
+    reviewRunAttempt: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? Number(command?.reviewRunAttempt || 0) : 0,
+    reviewJobId: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? Number(command?.reviewJobId || 0) : 0,
+    reviewArtifactId: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? Number(command?.reviewArtifactId || 0) : 0,
+    reviewArtifactDigest: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? String(command?.reviewArtifactDigest || '') : '',
+    reviewPayloadSha256: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? String(command?.reviewPayloadSha256 || '') : '',
     proofScenario: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? String(command?.proofScenario || '') : '',
     proofTarget: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
       ? String(command?.proofTarget || 'PULL_REQUEST_HEAD')
