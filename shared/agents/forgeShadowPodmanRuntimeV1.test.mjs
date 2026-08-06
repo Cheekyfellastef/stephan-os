@@ -59,7 +59,8 @@ test('fixed runtime identity selects current Forgejo LTS and loopback-only port'
   assert.equal(result.identity.host, '127.0.0.1');
   assert.equal(result.identity.remoteUrl, 'https://github.com/Cheekyfellastef/stephan-os.git');
   assert.equal(result.authority.githubCredentialUse, false);
-  assert.equal(result.authority.credentialExport, false);
+  assert.equal(result.authority.credentialPersistence, false);
+  assert.equal(result.authority.credentialLogging, false);
   assert.equal(result.authority.hostSourceMount, false);
   assert.equal(result.authority.hostSocketMount, false);
 });
@@ -89,7 +90,7 @@ test('Windows 11, WSL2 and rootless machine proof are mandatory', () => {
   }
 });
 
-test('GitHub credentials and exported bootstrap credentials are forbidden', () => {
+test('GitHub credentials and uncontained bootstrap credentials are forbidden', () => {
   assert.equal(planForgeShadowPodmanRuntime(input({ githubCredentialPresent: true })).valid, false);
   assert.equal(planForgeShadowPodmanRuntime(input({ bootstrapCredentialContained: false })).valid, false);
 });
@@ -128,12 +129,20 @@ test('fixed loopback port collision fails closed', () => {
   assert.ok(result.blockers.includes('fixed-loopback-port-not-available'));
 });
 
-test('bootstrap grants one local contained credential but never a GitHub credential', () => {
+test('bootstrap grants one local ephemeral credential but never persistence, logging or GitHub use', () => {
   const result = planForgeShadowPodmanRuntime(input({ containerExists: false }));
   assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.SERVICE_BOOTSTRAP_REQUIRED);
   assert.equal(result.nextAction.localCredentialCreation, 'isolated-random-local-only');
-  assert.equal(result.nextAction.credentialExportAllowed, false);
+  assert.equal(result.nextAction.credentialPersistenceAllowed, false);
+  assert.equal(result.nextAction.credentialLoggingAllowed, false);
   assert.equal(result.nextAction.githubCredentialAllowed, false);
+
+  const bootstrap = planForgeShadowPodmanRuntime(input({ serviceHealthy: false }));
+  assert.equal(bootstrap.nextAction.temporaryTokenTransport, 'fixed-installer-process-memory-only');
+  assert.equal(bootstrap.nextAction.tokenPersistenceAllowed, false);
+  assert.equal(bootstrap.nextAction.tokenLoggingAllowed, false);
+  assert.equal(bootstrap.nextAction.tokenMustBeRevokedImmediatelyAfterMirrorCreation, true);
+  assert.equal(bootstrap.nextAction.temporaryRepositoryTokenScope, 'write:repository,write:user');
 });
 
 test('only one exact unauthenticated public pull mirror may be created', () => {
@@ -151,12 +160,14 @@ test('wrong mirrored source head blocks rather than being silently resynchronize
   assert.ok(result.blockers.includes('mirror-source-head-mismatch'));
 });
 
-test('sealed posture disables all write and runner surfaces before parity proof', () => {
+test('sealed posture disables all write, new-mirror and runner surfaces before parity proof', () => {
   const seal = planForgeShadowPodmanRuntime(input({ sealedReadOnlyPosture: false }));
   assert.equal(seal.decision, FORGE_SHADOW_PODMAN_DECISIONS.SEAL_REQUIRED);
   assert.equal(seal.nextAction.disableActions, true);
   assert.equal(seal.nextAction.disablePackages, true);
   assert.equal(seal.nextAction.disableMigrations, true);
+  assert.equal(seal.nextAction.disableNewMirrors, true);
+  assert.equal(seal.nextAction.disablePeriodicMirrorUpdates, true);
   assert.equal(seal.nextAction.runnerRegistration, false);
   assert.equal(seal.nextAction.publicExposure, false);
 });
