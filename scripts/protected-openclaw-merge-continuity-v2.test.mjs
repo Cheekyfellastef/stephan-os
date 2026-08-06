@@ -68,4 +68,3 @@ test('mailbox source no longer paginates the complete historical issue thread', 
   assert.match(commandLoad, /loadBoundedMailboxComments\(\)/);
   assert.doesNotMatch(commandLoad, /--paginate/);
 });
-
