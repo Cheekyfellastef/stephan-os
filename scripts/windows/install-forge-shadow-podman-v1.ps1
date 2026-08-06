@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'Cheekyfellastef/stephan-os'
-$ForgejoVersion = '15.0.5'
+$ForgejoVersion = '15.0.6'
 $PodmanVersion = '6.0.2'
 $ImageRepository = 'code.forgejo.org/forgejo/forgejo'
 $MachineName = 'stephanos-forge-shadow'
