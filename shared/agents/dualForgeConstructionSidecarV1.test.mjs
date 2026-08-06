@@ -202,3 +202,49 @@ test('unsafe paths, duplicate packet identities and invented authority are rejec
   assert.equal(result.authority.forcePush, false);
   assert.equal(Object.hasOwn(result.authority, 'approval'), false);
 });
+
+test('proof references must be bounded repository-relative evidence paths', () => {
+  for (const proofRef of [
+    '/absolute/proof.json',
+    '../outside.json',
+    'proofs/../outside.json',
+    'https://example.com/proof',
+    'C:\\temp\\proof.json',
+    'unscoped-proof.json',
+  ]) {
+    const result = planDualForgeConstructionSidecar(input({
+      packets: [packet({ proofRefs: [proofRef] })],
+    }));
+    assert.equal(result.valid, false, proofRef);
+    assert.ok(result.blockers.includes('packet-proof-ref-unsafe:packet-1'), proofRef);
+  }
+});
+
+test('published packet history is bounded before a Set is allocated', () => {
+  const result = planDualForgeConstructionSidecar(input({
+    publishedPacketIds: Array.from({ length: 1025 }, (_, index) => `published-${index}`),
+  }));
+  assert.equal(result.valid, false);
+  assert.ok(result.blockers.includes('published-packet-ids-exceed-bound'));
+});
+
+test('malformed active integration identity cannot lock the publication lane', () => {
+  for (const activeIntegration of [
+    {},
+    { packetId: 'bad packet', head: 'e'.repeat(40) },
+    { packetId: 'packet-active', head: 'bad' },
+    [],
+  ]) {
+    const result = planDualForgeConstructionSidecar(input({ activeIntegration }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('active-integration-invalid'));
+  }
+});
+
+test('a packet cannot depend on itself forever', () => {
+  const result = planDualForgeConstructionSidecar(input({
+    packets: [packet({ dependsOnPacketIds: ['packet-1'] })],
+  }));
+  assert.equal(result.valid, false);
+  assert.ok(result.blockers.includes('packet-dependency-self:packet-1'));
+});
