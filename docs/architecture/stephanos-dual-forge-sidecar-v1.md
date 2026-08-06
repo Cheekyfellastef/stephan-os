@@ -103,3 +103,7 @@ Holding publication does not block construction lanes. The planner returns GitHu
 - no duplicate scheduler, mission queue, source lease or truth store;
 - no claim that local evidence is GitHub acceptance evidence;
 - no Forgejo installation or runtime claim from this source slice.
+
+## M2 read-only shadow parity contract
+
+`stephanos.forge-shadow-parity.v1` admits no installation or runtime authority. It can call a future isolated Forge shadow ready only when the observed Git commit and tree equal canonical GitHub exactly, the mirror is fetch-only, writes/public exposure/runner registration are disabled, the service observation is fresh, and a current restorable backup is bound to the same repository head. Drift becomes `FORGE_SHADOW_PARITY_REQUIRED`; missing or stale backup proof becomes `FORGE_SHADOW_BACKUP_REQUIRED`; malformed or authority-bearing evidence fails closed.
