@@ -70,12 +70,14 @@ test('classifies every live v2 approval-boundary path', () => {
     '.github/workflows/stephanos-deploy.yml',
     'scripts/operator-protected-merge-gate-v2.mjs',
     'scripts/independent-merge-security-review-v2.mjs',
+    'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
     'shared/agents/operatorMergeApprovalGate.mjs',
     'shared/agents/operatorMergeApprovalGateV2.mjs',
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
     'shared/agents/operatorMergeBaseBindingV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
     'shared/agents/providerNeutralReviewV1.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   ]);
 });
 
@@ -207,10 +209,12 @@ test('failed independent reviews still publish immutable findings evidence', () 
   assert.ok(findingsBranch.indexOf('throw new Error') > findingsBranch.indexOf('writeReviewArtifact(artifact)'));
 });
 
-test('protects the live v2 policy engine and wrapper from clean self-attestation', () => {
+test('protects every live v2 reviewer policy and wrapper from clean self-attestation', () => {
   for (const path of [
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
     'shared/agents/operatorMergeApprovalGateV2.mjs',
+    'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   ]) {
     const result = analyzeIndependentSecurityReviewV2({
       changedFiles: [path],
@@ -263,33 +267,54 @@ test('rejects new live v2 merge authority without exact-head protection', () => 
   assert.ok(result.findings.some((item) => item.code === 'operator-v2-exact-head-guard-missing'));
 });
 
-test('rejects mutation authority in the live v2 independent reviewer', () => {
-  const path = 'scripts/independent-merge-security-review-v2.mjs';
-  const result = analyzeIndependentSecurityReviewV2({
-    changedFiles: [path],
-    diff: diffFor(path, ["runRequired('gh', ['pr', 'merge', String(prNumber)]);"]),
-  });
-  assert.ok(result.findings.some((item) => item.code === 'independent-reviewer-v2-gained-mutation-authority'));
+test('rejects mutation authority in every live v2 independent reviewer entrypoint', () => {
+  for (const path of [
+    'scripts/independent-merge-security-review-v2.mjs',
+    'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
+  ]) {
+    const mutation = analyzeIndependentSecurityReviewV2({
+      changedFiles: [path],
+      diff: diffFor(path, ["runRequired('gh', ['pr', 'merge', String(prNumber)]);"]),
+    });
+    assert.ok(mutation.findings.some((item) => item.code === 'independent-reviewer-v2-gained-mutation-authority'));
 
-  const boundedRead = analyzeIndependentSecurityReviewV2({
-    changedFiles: [path],
-    diff: diffFor(path, [
-      'await githubRequest(`/repos/${owner}/${repo}/contents/${encodedPath}?ref=${sourceHead}`);',
-    ]),
-  });
-  assert.equal(boundedRead.findings.some((item) => (
-    item.code === 'independent-reviewer-v2-gained-mutation-authority'
-  )), false);
+    const boundedRead = analyzeIndependentSecurityReviewV2({
+      changedFiles: [path],
+      diff: diffFor(path, [
+        'await githubRequest(`/repos/${owner}/${repo}/contents/${encodedPath}?ref=${sourceHead}`);',
+      ]),
+    });
+    assert.equal(boundedRead.findings.some((item) => (
+      item.code === 'independent-reviewer-v2-gained-mutation-authority'
+    )), false);
 
-  const contentMutation = analyzeIndependentSecurityReviewV2({
-    changedFiles: [path],
-    diff: diffFor(path, [
-      'await githubRequest(`/repos/${owner}/${repo}/contents/${encodedPath}`, { method: "PUT" });',
-    ]),
-  });
-  assert.ok(contentMutation.findings.some((item) => (
-    item.code === 'independent-reviewer-v2-gained-mutation-authority'
-  )));
+    const contentMutation = analyzeIndependentSecurityReviewV2({
+      changedFiles: [path],
+      diff: diffFor(path, [
+        'await githubRequest(`/repos/${owner}/${repo}/contents/${encodedPath}`, { method: "PUT" });',
+      ]),
+    });
+    assert.ok(contentMutation.findings.some((item) => (
+      item.code === 'independent-reviewer-v2-gained-mutation-authority'
+    )));
+  }
+});
+
+test('rejects command filesystem and network authority in the pure Windows specialist policy', () => {
+  const path = 'shared/agents/windowsAuthoritySpecialistReviewV1.mjs';
+  for (const addition of [
+    "import { spawnSync } from 'node:child_process';",
+    "import fs from 'node:fs';",
+    'await fetch("https://example.com");',
+  ]) {
+    const result = analyzeIndependentSecurityReviewV2({
+      changedFiles: [path],
+      diff: diffFor(path, [addition]),
+    });
+    assert.ok(result.findings.some((item) => (
+      item.code === 'windows-specialist-policy-gained-command-or-io-authority'
+    )));
+  }
 });
 
 test('rejects command authority in the exact-base binding module', () => {
