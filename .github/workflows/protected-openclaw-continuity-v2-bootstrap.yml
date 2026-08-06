@@ -308,12 +308,14 @@ jobs:
               scripts/protected-openclaw-merge-continuity-v2.test.mjs |
               sort
           )"
-          actual="$(git diff --name-only "$BASE_SHA" | sort)"
-          test "$actual" = "$expected"
-
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add --all
+
+          actual="$(git diff --cached --name-only "$BASE_SHA" | sort)"
+          printf 'EXPECTED FILE ESTATE\n%s\nACTUAL FILE ESTATE\n%s\n' "$expected" "$actual"
+          test "$actual" = "$expected"
+
           git commit -m 'Repair protected merge and runtime continuity V2'
           git push origin HEAD:fix/protected-openclaw-merge-continuity-v2
 
