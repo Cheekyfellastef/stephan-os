@@ -54,6 +54,8 @@ const FACT_KEYS = Object.freeze([
   'parityReady',
   'backupReady',
 ]);
+const BOOLEAN_FACT_KEYS = Object.freeze(FACT_KEYS.filter((key) => !['podmanVersion', 'mirrorSourceHead'].includes(key)));
+const STRING_FACT_KEYS = Object.freeze(['podmanVersion', 'mirrorSourceHead']);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -64,6 +66,17 @@ function exactKeys(value, keys) {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function factTypeBlockers(facts) {
+  const blockers = [];
+  for (const key of BOOLEAN_FACT_KEYS) {
+    if (typeof facts?.[key] !== 'boolean') blockers.push(`runtime-fact-type-invalid:${key}`);
+  }
+  for (const key of STRING_FACT_KEYS) {
+    if (typeof facts?.[key] !== 'string') blockers.push(`runtime-fact-type-invalid:${key}`);
+  }
+  return blockers;
 }
 
 function authority() {
@@ -117,21 +130,25 @@ export function planForgeShadowPodmanRuntime(input = {}) {
   const repository = text(input.repository);
   const canonicalMainHead = text(input.canonicalMainHead).toLowerCase();
   const imageDigest = text(input.imageDigest).toLowerCase();
-  const facts = input.facts && typeof input.facts === 'object' ? input.facts : {};
+  const facts = input.facts && typeof input.facts === 'object' && !Array.isArray(input.facts) ? input.facts : {};
   if (!exactKeys(facts, FACT_KEYS)) blockers.push('runtime-facts-schema-unbounded');
+  blockers.push(...factTypeBlockers(facts));
 
   if (repository !== FORGE_SHADOW_PODMAN_RUNTIME_REPOSITORY) blockers.push('repository-not-allowlisted');
   if (!SHA40.test(canonicalMainHead)) blockers.push('canonical-main-head-invalid');
   if (!SHA256_DIGEST.test(imageDigest)) blockers.push('forgejo-image-digest-invalid');
-  if (facts.windows11OrNewer !== true) blockers.push('windows-11-or-newer-not-proved');
-  if (facts.wsl2Available !== true) blockers.push('wsl2-not-proved');
-  if (facts.githubCredentialPresent !== false) blockers.push('github-credential-not-allowed');
-  if (facts.machineRootful === true) blockers.push('podman-machine-rootful-not-allowed');
-  if (facts.bootstrapCredentialContained === false && facts.bootstrapIdentityPresent === true) {
-    blockers.push('bootstrap-credential-not-contained');
-  }
-  if (facts.mirrorPresent === true && text(facts.mirrorSourceHead).toLowerCase() !== canonicalMainHead) {
-    blockers.push('mirror-source-head-mismatch');
+
+  if (!blockers.some((blocker) => blocker.startsWith('runtime-fact-type-invalid:'))) {
+    if (facts.windows11OrNewer !== true) blockers.push('windows-11-or-newer-not-proved');
+    if (facts.wsl2Available !== true) blockers.push('wsl2-not-proved');
+    if (facts.githubCredentialPresent !== false) blockers.push('github-credential-not-allowed');
+    if (facts.machineRootful === true) blockers.push('podman-machine-rootful-not-allowed');
+    if (facts.bootstrapCredentialContained === false && facts.bootstrapIdentityPresent === true) {
+      blockers.push('bootstrap-credential-not-contained');
+    }
+    if (facts.mirrorPresent === true && facts.mirrorSourceHead.trim().toLowerCase() !== canonicalMainHead) {
+      blockers.push('mirror-source-head-mismatch');
+    }
   }
 
   const base = {
@@ -153,7 +170,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
     });
   }
 
-  if (facts.podmanPresent !== true || text(facts.podmanVersion) !== '6.0.2') {
+  if (facts.podmanPresent !== true || facts.podmanVersion.trim() !== '6.0.2') {
     return Object.freeze({
       ...base,
       valid: true,
@@ -282,6 +299,11 @@ export function planForgeShadowPodmanRuntime(input = {}) {
         disablePushCreate: true,
         disableNewMirrors: true,
         disablePeriodicMirrorUpdates: true,
+        readOnlyRootFilesystem: true,
+        dropAllCapabilities: true,
+        noNewPrivileges: true,
+        writableDataSurface: '/var/lib/gitea',
+        boundedEphemeralWritableSurfaces: Object.freeze(['/run', '/tmp', '/var/tmp']),
         runnerRegistration: false,
         webhookCreation: false,
         publicExposure: false,
