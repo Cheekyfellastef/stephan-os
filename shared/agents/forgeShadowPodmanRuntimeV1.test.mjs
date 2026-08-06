@@ -53,8 +53,8 @@ test('fixed runtime identity selects current Forgejo LTS and loopback-only port'
   assert.equal(result.valid, true);
   assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.READY);
   assert.equal(result.readyForM3, true);
-  assert.equal(FORGE_SHADOW_PODMAN_RUNTIME_VERSION, '15.0.5');
-  assert.equal(FORGE_SHADOW_PODMAN_IMAGE_TAG, '15.0.5-rootless');
+  assert.equal(FORGE_SHADOW_PODMAN_RUNTIME_VERSION, '15.0.6');
+  assert.equal(FORGE_SHADOW_PODMAN_IMAGE_TAG, '15.0.6-rootless');
   assert.equal(FORGE_SHADOW_PODMAN_PORT, 3340);
   assert.equal(result.identity.host, '127.0.0.1');
   assert.equal(result.identity.remoteUrl, 'https://github.com/Cheekyfellastef/stephan-os.git');
