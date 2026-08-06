@@ -1,0 +1,338 @@
+name: Protected OpenClaw Continuity V2 Finalize
+
+on:
+  push:
+    branches:
+      - fix/protected-openclaw-merge-continuity-v2
+
+permissions:
+  contents: write
+
+concurrency:
+  group: protected-openclaw-continuity-v2-finalize
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/protected-openclaw-merge-continuity-v2
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact base and temporary estate
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='e41d7a90da563fe1e54cc6c799b0a9c275c30592'
+          old='.github/workflows/protected-openclaw-continuity-v2-bootstrap.yml'
+          new='.github/workflows/protected-openclaw-continuity-v2-finalize.yml'
+          test "$(git rev-parse origin/main)" = "$expected"
+          test "$(git branch --show-current)" = 'fix/protected-openclaw-merge-continuity-v2'
+          git merge-base --is-ancestor "$expected" HEAD
+          actual="$(git diff --name-only "$expected..HEAD" | sort)"
+          wanted="$(printf '%s\n%s\n' "$old" "$new" | sort)"
+          printf 'TEMPORARY ESTATE\n%s\n' "$actual"
+          test "$actual" = "$wanted"
+
+      - name: Apply complete bounded V2 repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, content):
+              Path(path).write_text(content, encoding='utf-8', newline='\n')
+
+          def replace_once(content, old, new, label):
+              count = content.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one seam, observed {count}')
+              return content.replace(old, new, 1)
+
+          def transform_test_block(content, title, transform):
+              marker = f"test('{title}'"
+              start = content.find(marker)
+              if start < 0:
+                  raise SystemExit(f'test block missing: {title}')
+              end = content.find("\ntest('", start + len(marker))
+              if end < 0:
+                  end = len(content)
+              block = content[start:end]
+              updated = transform(block)
+              if updated == block:
+                  raise SystemExit(f'test block unchanged: {title}')
+              return content[:start] + updated + content[end:]
+
+          ignition_path = 'scripts/ignite-stephanos-local.mjs'
+          ignition = read(ignition_path)
+          ignition = replace_once(
+              ignition,
+              "const currentCommit = normalizeCaptureStdout(runStepCapture('git-current-commit-pre-serve', 'git', ['rev-parse', '--short', 'HEAD']));",
+              "const currentCommit = normalizeCaptureStdout(runStepCapture('git-current-commit-pre-serve', 'git', ['rev-parse', 'HEAD']));",
+              'current pre-serve full SHA',
+          )
+          ignition = replace_once(
+              ignition,
+              "originMainCommit = normalizeCaptureStdout(runStepCapture('git-origin-main-commit-pre-serve', 'git', ['rev-parse', '--short', 'origin/main']));",
+              "originMainCommit = normalizeCaptureStdout(runStepCapture('git-origin-main-commit-pre-serve', 'git', ['rev-parse', 'origin/main']));",
+              'origin/main pre-serve full SHA',
+          )
+          write(ignition_path, ignition)
+
+          ignition_test_path = 'scripts/ignite-stephanos-local.test.mjs'
+          ignition_test = read(ignition_test_path)
+          ignition_test = replace_once(
+              ignition_test,
+              "  assert.equal(packageJson.scripts['stephanos:ignite'], 'node scripts/battle-bridge-ignition-supervisor.mjs');",
+              "  assert.equal(packageJson.scripts['stephanos:ignite'], 'node scripts/run-battle-bridge-ignition.mjs');",
+              'canonical ignition alias expectation',
+          )
+          write(ignition_test_path, ignition_test)
+
+          ui_path = 'scripts/battle-bridge-ui-4173-repair.mjs'
+          ui = read(ui_path)
+          ui = replace_once(
+              ui,
+              '  return result.allowedToStart || dryRun ? 0 : 2;',
+              "  if (dryRun) return 0;\n  if (!result.allowedToStart) return 2;\n  return result.ready === true ? 0 : 1;",
+              'truthful UI repair exit',
+          )
+          write(ui_path, ui)
+
+          ui_test_path = 'scripts/battle-bridge-ui-4173-repair.test.mjs'
+          ui_test = read(ui_test_path)
+
+          def spawned_not_ready(block):
+              old = '  assert.equal(code, 0);'
+              if block.count(old) != 1:
+                  raise SystemExit('spawned-not-ready code assertion seam changed')
+              return block.replace(old, '  assert.equal(code, 1);', 1)
+
+          ui_test = transform_test_block(
+              ui_test,
+              'spawned but port never opens reports not ready with log paths under shared workspace',
+              spawned_not_ready,
+          )
+
+          def early_exit(block):
+              exit_race = "  queueMicrotask(() => { child.exitCode = 1; child.signalCode = null; child.emit('exit', 1, null); });"
+              if block.count(exit_race) != 1:
+                  raise SystemExit('early-exit timing seam changed')
+              block = block.replace(
+                  exit_race,
+                  '  child.exitCode = 1;\n  child.signalCode = null;',
+                  1,
+              )
+              old_call = '  await runUi4173Repair('
+              if block.count(old_call) != 1:
+                  raise SystemExit('early-exit invocation seam changed')
+              block = block.replace(old_call, '  const code = await runUi4173Repair(', 1)
+              action = "  assert.equal(output.action, 'start-ui-4173-failed');"
+              if block.count(action) != 1:
+                  raise SystemExit('early-exit action assertion seam changed')
+              return block.replace(action, '  assert.equal(code, 1);\n' + action, 1)
+
+          ui_test = transform_test_block(
+              ui_test,
+              'child exits early reports failed with exit metadata',
+              early_exit,
+          )
+          write(ui_test_path, ui_test)
+
+          mailbox_path = 'scripts/battle-bridge-github-command-mailbox.mjs'
+          mailbox = read(mailbox_path)
+          old_call = "  const comments = ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments`, '--paginate']);"
+          mailbox = replace_once(
+              mailbox,
+              old_call,
+              '  const comments = loadBoundedMailboxComments();',
+              'bounded mailbox retrieval',
+          )
+
+          marker = 'function postReceipt(receipt) {'
+          if mailbox.count(marker) != 1:
+              raise SystemExit('mailbox helper insertion marker changed')
+
+          helper = '''
+          export function latestMailboxCommentPage(commentCount, perPage = 100) {
+            const count = Number(commentCount);
+            const pageSize = Number(perPage);
+            if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+              throw new Error('MAILBOX_COMMENT_PAGE_SIZE_INVALID');
+            }
+            const boundedCount = Number.isSafeInteger(count) && count >= 0 ? count : 0;
+            return Math.max(1, Math.ceil(boundedCount / pageSize));
+          }
+
+          function loadBoundedMailboxComments() {
+            const issue = ghJson([
+              'api',
+              `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}`,
+            ]);
+            const page = latestMailboxCommentPage(issue?.comments, 100);
+            const comments = ghJson([
+              'api',
+              `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments?per_page=100&page=${page}`,
+            ]);
+            if (!Array.isArray(comments)) {
+              throw new Error('MAILBOX_COMMENT_PAGE_INVALID');
+            }
+            return comments;
+          }
+
+          '''
+          mailbox = mailbox.replace(marker, textwrap.dedent(helper) + marker, 1)
+          write(mailbox_path, mailbox)
+
+          regression_path = 'scripts/protected-openclaw-merge-continuity-v2.test.mjs'
+          regression = '''
+          import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import {
+            evaluateDistFreshnessAgainstOrigin,
+          } from './ignite-stephanos-local.mjs';
+          import {
+            latestMailboxCommentPage,
+          } from './battle-bridge-github-command-mailbox.mjs';
+
+          const exactHead = 'e41d7a90da563fe1e54cc6c799b0a9c275c30592';
+
+          test('pre-serve freshness accepts one exact full SHA identity', () => {
+            const result = evaluateDistFreshnessAgainstOrigin({
+              distMetadata: {
+                gitCommit: exactHead,
+                sourceFingerprint: 'fingerprint',
+                buildTimestamp: '2026-08-05T21:32:40.105Z',
+              },
+              currentCommit: exactHead,
+              originMainCommit: exactHead,
+            });
+
+            assert.equal(result.ignitionStatus, 'READY');
+            assert.equal(result.reason, 'dist-source-commit-current');
+            assert.equal(result.servedCommit, exactHead);
+            assert.equal(result.expectedSourceCommit, exactHead);
+          });
+
+          test('pre-serve call site requests full Git identities rather than abbreviated SHAs', () => {
+            const source = readFileSync(new URL('./ignite-stephanos-local.mjs', import.meta.url), 'utf8');
+
+            assert.match(
+              source,
+              /git-current-commit-pre-serve'[\\s\\S]{0,160}\\['rev-parse', 'HEAD'\\]/,
+            );
+            assert.match(
+              source,
+              /git-origin-main-commit-pre-serve'[\\s\\S]{0,160}\\['rev-parse', 'origin\\/main'\\]/,
+            );
+            assert.doesNotMatch(
+              source,
+              /git-(?:current-commit|origin-main-commit)-pre-serve[\\s\\S]{0,180}--short/,
+            );
+          });
+
+          test('mailbox comment page selection is bounded to the newest REST page', () => {
+            assert.equal(latestMailboxCommentPage(0), 1);
+            assert.equal(latestMailboxCommentPage(1), 1);
+            assert.equal(latestMailboxCommentPage(100), 1);
+            assert.equal(latestMailboxCommentPage(101), 2);
+            assert.equal(latestMailboxCommentPage(12_345), 124);
+            assert.throws(
+              () => latestMailboxCommentPage(10, 101),
+              /MAILBOX_COMMENT_PAGE_SIZE_INVALID/,
+            );
+          });
+
+          test('mailbox source no longer paginates the complete historical issue thread', () => {
+            const source = readFileSync(
+              new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url),
+              'utf8',
+            );
+            const commandLoad = source.match(
+              /export async function runBattleBridgeGitHubCommandMailbox[\\s\\S]*?const state = loadState\\(\\);/,
+            )?.[0] || '';
+
+            assert.match(commandLoad, /loadBoundedMailboxComments\\(\\)/);
+            assert.doesNotMatch(commandLoad, /--paginate/);
+          });
+
+          '''
+          write(regression_path, textwrap.dedent(regression).lstrip())
+          PY
+
+      - name: Parse repaired sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/ignite-stephanos-local.mjs
+          node --check scripts/ignite-stephanos-local.test.mjs
+          node --check scripts/battle-bridge-ui-4173-repair.mjs
+          node --check scripts/battle-bridge-ui-4173-repair.test.mjs
+          node --check scripts/battle-bridge-github-command-mailbox.mjs
+          node --check scripts/protected-openclaw-merge-continuity-v2.test.mjs
+
+      - name: Run focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=(
+            scripts/ignite-stephanos-local.test.mjs
+            scripts/battle-bridge-ui-4173-repair.test.mjs
+            scripts/protected-openclaw-merge-continuity-v2.test.mjs
+          )
+          if [[ -f scripts/battle-bridge-github-command-mailbox.test.mjs ]]; then
+            tests+=(scripts/battle-bridge-github-command-mailbox.test.mjs)
+          fi
+          node --test "${tests[@]}"
+          git diff --check
+
+      - name: Commit clean six-file repair and remove bootstraps
+        shell: bash
+        env:
+          BASE_SHA: e41d7a90da563fe1e54cc6c799b0a9c275c30592
+        run: |
+          set -euo pipefail
+          rm -f \
+            .github/workflows/protected-openclaw-continuity-v2-bootstrap.yml \
+            .github/workflows/protected-openclaw-continuity-v2-finalize.yml
+
+          expected="$(
+            printf '%s\n' \
+              scripts/battle-bridge-github-command-mailbox.mjs \
+              scripts/battle-bridge-ui-4173-repair.mjs \
+              scripts/battle-bridge-ui-4173-repair.test.mjs \
+              scripts/ignite-stephanos-local.mjs \
+              scripts/ignite-stephanos-local.test.mjs \
+              scripts/protected-openclaw-merge-continuity-v2.test.mjs |
+              sort
+          )"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+
+          actual="$(git diff --cached --name-only "$BASE_SHA" | sort)"
+          printf 'EXPECTED FILE ESTATE\n%s\nACTUAL FILE ESTATE\n%s\n' "$expected" "$actual"
+          test "$actual" = "$expected"
+
+          git commit -m 'Repair protected merge and runtime continuity V2'
+          git push origin HEAD:fix/protected-openclaw-merge-continuity-v2
+          test "$(git diff --name-only "$BASE_SHA..HEAD" | sort)" = "$expected"
