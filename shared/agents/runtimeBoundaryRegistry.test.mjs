@@ -80,4 +80,5 @@ test('serializable registry exposes both approved roots and resolved destination
   assert.equal(registry.unknownPathsFailClosed, true);
   assert.match(registry.entries.receipts.resolvedExternalPath, /receipts$/);
   assert.match(registry.entries.dreams.resolvedExternalPath, /openclaw[\\/]memory$/);
+  assert.equal(registry.entries.dreams.reconciliation, 'copy-hash-verify-or-versioned-preserve-before-switch');
 });
