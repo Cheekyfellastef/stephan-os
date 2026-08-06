@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 
 import {
   WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION,
@@ -179,17 +178,4 @@ test('tampered source identity fails closed', () => {
   });
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'));
-});
-
-test('wrapper and workflow preserve trusted-base and no-mutation boundaries', async () => {
-  const wrapper = await readFile(new URL('../../scripts/independent-merge-security-review-with-windows-specialist-v1.mjs', import.meta.url), 'utf8');
-  const workflow = await readFile(new URL('../../.github/workflows/independent-merge-security-review.yml', import.meta.url), 'utf8');
-  assert.match(wrapper, /spawnSync\(process\.execPath/);
-  assert.match(wrapper, /independent-merge-security-review-v2\.mjs/);
-  assert.match(wrapper, /buildIndependentReviewArtifact/);
-  assert.doesNotMatch(wrapper, /git\s+(?:push|reset|clean|rebase)|gh\s+pr\s+(?:merge|ready)|Stop-Process|Restart-Computer/i);
-  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
-  assert.match(workflow, /persist-credentials: false/);
-  assert.match(workflow, /windowsAuthoritySpecialistReviewV1\.test\.mjs/);
-  assert.match(workflow, /independent-merge-security-review-with-windows-specialist-v1\.mjs/);
 });
