@@ -112,14 +112,47 @@ function Get-Machine([string]$Podman) {
     try { return (($result.Output -join "`n") | ConvertFrom-Json) } catch { return $null }
 }
 
-function Assert-ContainerIdentity([string]$Podman, [string]$Name) {
-    $labelsResult = Invoke-Fixed $Podman @('inspect', '--format', '{{json .Config.Labels}}', $Name)
-    $labels = ($labelsResult.Output -join "`n") | ConvertFrom-Json
+function Assert-ContainerIdentity(
+    [string]$Podman,
+    [string]$Name,
+    [string]$ExpectedVolume = $DataVolume,
+    [int]$ExpectedPort = $HostPort
+) {
+    $inspectResult = Invoke-Fixed $Podman @('inspect', '--format', '{{json .}}', $Name)
+    try { $inspect = (($inspectResult.Output -join "`n") | ConvertFrom-Json) } catch { Fail 'FORGE_CONTAINER_INSPECTION_INVALID' }
+    $labels = $inspect.Config.Labels
     if ([string]$labels.'stephanos.repository' -ne $Repository) { Fail 'FORGE_CONTAINER_REPOSITORY_LABEL_MISMATCH' }
     if ([string]$labels.'stephanos.main-head' -ne $ExpectedHead) { Fail 'FORGE_CONTAINER_HEAD_LABEL_MISMATCH' }
     if ([string]$labels.'stephanos.image-digest' -ne $ForgejoImageDigest) { Fail 'FORGE_CONTAINER_DIGEST_LABEL_MISMATCH' }
+    if ([string]$inspect.Config.User -ne '1000:1000') { Fail 'FORGE_CONTAINER_USER_NOT_ROOTLESS' }
+    if ($inspect.HostConfig.ReadonlyRootfs -ne $true) { Fail 'FORGE_CONTAINER_ROOTFS_NOT_READ_ONLY' }
+
+    $capDrop = @($inspect.HostConfig.CapDrop | ForEach-Object { ([string]$_).ToUpperInvariant() })
+    if ($capDrop -notcontains 'ALL') { Fail 'FORGE_CONTAINER_CAPABILITIES_NOT_DROPPED' }
+    $securityOptions = @($inspect.HostConfig.SecurityOpt | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    if ($securityOptions -notcontains 'no-new-privileges') { Fail 'FORGE_CONTAINER_NO_NEW_PRIVILEGES_NOT_PROVED' }
+
+    $mounts = @($inspect.Mounts)
+    $dataMounts = @($mounts | Where-Object {
+        [string]$_.Destination -eq '/var/lib/gitea' -and
+        [string]$_.Type -eq 'volume' -and
+        [string]$_.Name -eq $ExpectedVolume -and
+        $_.RW -eq $true
+    })
+    if ($dataMounts.Count -ne 1) { Fail 'FORGE_CONTAINER_DATA_VOLUME_MISMATCH' }
+    $allowedDestinations = @('/var/lib/gitea', '/run', '/tmp', '/var/tmp')
+    $unexpectedMounts = @($mounts | Where-Object { $allowedDestinations -notcontains [string]$_.Destination })
+    if ($unexpectedMounts.Count -ne 0) { Fail 'FORGE_CONTAINER_UNEXPECTED_WRITABLE_SURFACE' }
+
+    $tmpfsNames = @()
+    if ($null -ne $inspect.HostConfig.Tmpfs) {
+        $tmpfsNames = @($inspect.HostConfig.Tmpfs.PSObject.Properties.Name | Sort-Object)
+    }
+    $expectedTmpfs = @('/run', '/tmp', '/var/tmp') | Sort-Object
+    if (($tmpfsNames -join '|') -ne ($expectedTmpfs -join '|')) { Fail 'FORGE_CONTAINER_TMPFS_SURFACE_MISMATCH' }
+
     $port = (Invoke-Fixed $Podman @('port', $Name, '3000/tcp')).Output -join ''
-    if ($port.Trim() -ne "$HostAddress`:$HostPort") { Fail 'FORGE_CONTAINER_PORT_BINDING_MISMATCH' }
+    if ($port.Trim() -ne "$HostAddress`:$ExpectedPort") { Fail 'FORGE_CONTAINER_PORT_BINDING_MISMATCH' }
     return [string]$labels.'stephanos.sealed'
 }
 
@@ -179,6 +212,16 @@ function Start-FixedContainer([string]$Podman, [bool]$Final, [string]$Name = $Co
         'run', '-d', '--name', $Name,
         '--user', '1000:1000',
         '--restart', 'no',
+        '--read-only',
+        '--read-only-tmpfs=false',
+        '--cap-drop', 'ALL',
+        '--security-opt', 'no-new-privileges',
+        '--pids-limit', '512',
+        '--memory', '2g',
+        '--cpus', '2',
+        '--tmpfs', '/run:rw,nosuid,nodev,noexec,size=16m',
+        '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=64m',
+        '--tmpfs', '/var/tmp:rw,nosuid,nodev,noexec,size=32m',
         '--label', "stephanos.repository=$Repository",
         '--label', "stephanos.main-head=$ExpectedHead",
         '--label', "stephanos.image-digest=$ForgejoImageDigest",
@@ -259,14 +302,18 @@ function Get-ForgeTree([string]$Root, [string]$Head) {
 
 function Assert-BackupTools([string]$Podman) {
     $fixedToolProbe = 'command -v tar >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1'
-    $probe = Invoke-Fixed $Podman @('run', '--rm', $ImageRef, 'sh', '-c', $fixedToolProbe) -AllowFailure
+    $probe = Invoke-Fixed $Podman @(
+        'run', '--rm', '--read-only', '--read-only-tmpfs=false', '--cap-drop', 'ALL',
+        '--security-opt', 'no-new-privileges', $ImageRef, 'sh', '-c', $fixedToolProbe
+    ) -AllowFailure
     if ($probe.ExitCode -ne 0) { Fail 'FORGE_BACKUP_HELPER_TOOLS_UNAVAILABLE' }
 }
 
 function Get-VolumeDigest([string]$Podman, [string]$Volume) {
     $fixedHashCommand = 'cd /source && tar -cf - . | sha256sum'
     $result = Invoke-Fixed $Podman @(
-        'run', '--rm', '--user', '1000:1000',
+        'run', '--rm', '--user', '1000:1000', '--read-only', '--read-only-tmpfs=false',
+        '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
         '-v', "$Volume`:/source:ro",
         $ImageRef, 'sh', '-c', $fixedHashCommand
     )
@@ -278,7 +325,8 @@ function Get-VolumeDigest([string]$Podman, [string]$Volume) {
 function Copy-Volume([string]$Podman, [string]$Source, [string]$Destination) {
     $fixedCopyCommand = 'cd /source && tar -cf - . | (cd /destination && tar -xf -)'
     [void](Invoke-Fixed $Podman @(
-        'run', '--rm', '--user', '1000:1000',
+        'run', '--rm', '--user', '1000:1000', '--read-only', '--read-only-tmpfs=false',
+        '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
         '-v', "$Source`:/source:ro",
         '-v', "$Destination`:/destination",
         $ImageRef, 'sh', '-c', $fixedCopyCommand
@@ -307,6 +355,7 @@ function Create-And-ProveBackup([string]$Podman, [string]$Git) {
     Start-FixedContainer $Podman $true $RestoreContainerName $RestoreVolume $RestorePort
     $restoreVersion = Wait-Forgejo $RestoreApiRoot
     if (-not $restoreVersion) { Fail 'FORGE_RESTORE_PROBE_HEALTH_FAILED' }
+    [void](Assert-ContainerIdentity $Podman $RestoreContainerName $RestoreVolume $RestorePort)
     $restoreHead = Get-MirrorHead $Git $RestorePort
     if ($restoreHead -ne $ExpectedHead) { Fail 'FORGE_RESTORE_PROBE_HEAD_MISMATCH' @{ observedHead = $restoreHead } }
     [void](Invoke-Fixed $Podman @('rm', '-f', $RestoreContainerName))
@@ -314,6 +363,7 @@ function Create-And-ProveBackup([string]$Podman, [string]$Git) {
     [void](Invoke-Fixed $Podman @('start', $ContainerName))
     $mainVersion = Wait-Forgejo $ApiRoot
     if (-not $mainVersion) { Fail 'FORGE_POST_BACKUP_RESTART_HEALTH_FAILED' }
+    [void](Assert-ContainerIdentity $Podman $ContainerName $DataVolume $HostPort)
     return [pscustomobject]@{ Digest = $digest; Volume = $backupName; Version = $mainVersion }
 }
 
@@ -386,7 +436,7 @@ try {
 
     $sealed = ''
     if (Get-ContainerExists $PodmanExe $ContainerName) {
-        $sealed = Assert-ContainerIdentity $PodmanExe $ContainerName
+        $sealed = Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort
     } else {
         if (-not (Test-PortFree $HostPort)) { Fail 'FIXED_LOOPBACK_PORT_NOT_AVAILABLE' }
         if (-not $PSCmdlet.ShouldProcess($ContainerName, 'Start fixed Forgejo bootstrap container')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
@@ -395,6 +445,7 @@ try {
 
     $version = Wait-Forgejo $ApiRoot
     if (-not $version) { Fail 'FORGE_SERVICE_HEALTH_FAILED' }
+    [void](Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort)
 
     $mirrorHead = Get-MirrorHead $GitExe
     if (-not $mirrorHead) {
@@ -410,7 +461,7 @@ try {
         if (-not $PSCmdlet.ShouldProcess($ContainerName, 'Seal Forgejo read-only M2 posture')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
         [void](Invoke-Fixed $PodmanExe @('rm', '-f', $ContainerName))
         Start-FixedContainer $PodmanExe $true
-        $sealed = Assert-ContainerIdentity $PodmanExe $ContainerName
+        $sealed = Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort
         if ($sealed -ne 'true') { Fail 'FORGE_FINAL_SEAL_NOT_PROVED' }
         $version = Wait-Forgejo $ApiRoot
         if (-not $version) { Fail 'FORGE_SEALED_SERVICE_HEALTH_FAILED' }
@@ -443,6 +494,11 @@ try {
         container = $ContainerName
         listener = "$HostAddress`:$HostPort"
         readOnlySealed = $true
+        rootFilesystemReadOnly = $true
+        allCapabilitiesDropped = $true
+        noNewPrivileges = $true
+        persistentWritableSurface = '/var/lib/gitea'
+        boundedEphemeralWritableSurfaces = @('/run', '/tmp', '/var/tmp')
         automaticMirrorUpdatesEnabled = $false
         githubCredentialUsed = $false
         bootstrapTokenRevoked = $true
