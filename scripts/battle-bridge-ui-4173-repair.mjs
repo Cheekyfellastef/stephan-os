@@ -278,7 +278,9 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, s
     result.started = null;
   }
   stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  return result.allowedToStart || dryRun ? 0 : 2;
+  if (dryRun) return 0;
+  if (!result.allowedToStart) return 2;
+  return result.ready === true ? 0 : 1;
 }
 
 function parseArgs(argv) {

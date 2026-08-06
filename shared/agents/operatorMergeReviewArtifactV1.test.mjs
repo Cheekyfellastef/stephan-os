@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   INDEPENDENT_REVIEW_ARTIFACT_FILE,
+  INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_KIND,
+  buildIndependentReviewFindingsArtifact,
   buildIndependentReviewArtifact,
+  independentReviewFindingsArtifactPayloadSha256,
   independentReviewArtifactName,
   validateIndependentReviewArtifact,
   validateIndependentReviewArtifactSet,
@@ -42,6 +45,32 @@ function bootstrapAnalysis() {
     verdict: 'findings',
     proofRefs: ['proofs/approval-boundary-v2/shared/agents/operatorMergeApprovalGate.mjs'],
     finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
+  };
+}
+
+function blockingAnalysis() {
+  return {
+    schemaVersion: 'stephanos.independent-security-analysis.v1',
+    findings: [{
+      severity: 'P0',
+      code: 'unsupported-high-risk-surface',
+      summary: 'A qualified specialist review is required.',
+      path: 'scripts/windows/dream-runtime-artifact-io.ps1',
+    }],
+    counts: { P0: 1, P1: 0, P2: 0 },
+    verdict: 'findings',
+    proofRefs: ['proofs/changed-file/scripts/windows/dream-runtime-artifact-io.ps1'],
+    finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
+  };
+}
+
+function oversizedBlockingAnalysis() {
+  return {
+    ...blockingAnalysis(),
+    proofRefs: Array.from(
+      { length: 201 },
+      (_, index) => `proofs/changed-file/oversized-review/path-${index}.mjs`,
+    ),
   };
 }
 
@@ -98,6 +127,74 @@ test('builds and validates exact-run clean and bootstrap artifacts', () => {
   const bootstrapValidation = validateIndependentReviewArtifact(bootstrap, options());
   assert.equal(bootstrapValidation.valid, true);
   assert.equal(bootstrapValidation.review.operatorBootstrapRequired, true);
+});
+
+test('builds immutable exact-run evidence for blocking findings without minting a clean receipt', () => {
+  const findings = buildIndependentReviewFindingsArtifact({
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+    createdAtUtc: '2026-08-02T19:00:00.000Z',
+    analysis: blockingAnalysis(),
+  });
+  assert.equal(findings.kind, INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_KIND);
+  assert.equal(findings.artifactFile, INDEPENDENT_REVIEW_ARTIFACT_FILE);
+  assert.equal(findings.analysis.findings[0].code, 'unsupported-high-risk-surface');
+  assert.equal(findings.payloadSha256, independentReviewFindingsArtifactPayloadSha256(findings));
+  assert.equal(Object.hasOwn(findings, 'receipt'), false);
+  assert.throws(() => buildIndependentReviewFindingsArtifact({
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+    analysis: cleanAnalysis(),
+  }), /bounded findings analysis/);
+});
+
+test('preserves oversized review findings with a bounded digest-bound proof handoff', () => {
+  const analysis = oversizedBlockingAnalysis();
+  const findings = buildIndependentReviewFindingsArtifact({
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+    createdAtUtc: '2026-08-02T19:00:00.000Z',
+    analysis,
+  });
+  assert.equal(analysis.proofRefs.length, 201);
+  assert.equal(findings.analysis.proofRefs.length, 200);
+  assert.deepEqual(findings.analysis.proofRefs.slice(0, 199), analysis.proofRefs.slice(0, 199));
+  const overflowRef = findings.analysis.proofRefs.at(-1);
+  assert.match(
+    overflowRef,
+    /^proofs\/independent-review\/proof-ref-overflow\/total-201\/included-199\/omitted-2\/sha256-[a-f0-9]{64}$/,
+  );
+  assert.equal(findings.payloadSha256, independentReviewFindingsArtifactPayloadSha256(findings));
+
+  const changedAnalysis = oversizedBlockingAnalysis();
+  changedAnalysis.proofRefs[200] = 'proofs/changed-file/oversized-review/tampered-last-path.mjs';
+  const changedFindings = buildIndependentReviewFindingsArtifact({
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+    createdAtUtc: '2026-08-02T19:00:00.000Z',
+    analysis: changedAnalysis,
+  });
+  assert.notEqual(changedFindings.analysis.proofRefs.at(-1), overflowRef);
 });
 
 test('artifact payload binds repository, PR, branch, head, base, run and attempt', () => {
