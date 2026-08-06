@@ -3,6 +3,12 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 import {
+  INDEPENDENT_REVIEW_JOB,
+  INDEPENDENT_REVIEW_WORKFLOW_NAME,
+  INDEPENDENT_REVIEW_WORKFLOW_PATH,
+  buildProtectedSecurityReviewReceipt,
+} from './operatorMergeApprovalGate.mjs';
+import {
   EXACT_HEAD_REVIEW_DECISION,
   EXACT_HEAD_REVIEW_MARKERS,
   REQUIRED_EXACT_HEAD_WORKFLOWS,
@@ -21,11 +27,55 @@ const OLD_HEAD = 'b'.repeat(40);
 const NOW = '2026-07-19T16:30:00Z';
 const TRUSTED_COORDINATOR = 'Cheekyfellastef';
 const UNTRUSTED_ACTOR = 'untrusted-commenter';
+const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const BRANCH = 'agent/provider-neutral-review';
+const BASE_SHA = 'c'.repeat(40);
+const REVIEW_RUN_ID = 123;
+const REVIEW_RUN_ATTEMPT = 1;
+const REVIEW_WORKFLOW_ID = 456;
 const TRUSTED_CODEX_REVIEWER = Object.freeze({
   login: 'chatgpt-codex-connector[bot]',
   type: 'Bot',
   id: 199175422,
 });
+const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({
+  login: 'github-actions[bot]',
+  type: 'Bot',
+  id: 41898282,
+});
+
+function independentReviewRun(overrides = {}) {
+  const run = {
+    id: REVIEW_RUN_ID,
+    run_attempt: REVIEW_RUN_ATTEMPT,
+    workflow_id: REVIEW_WORKFLOW_ID,
+    name: INDEPENDENT_REVIEW_WORKFLOW_NAME,
+    path: INDEPENDENT_REVIEW_WORKFLOW_PATH,
+    event: 'pull_request_target',
+    repository: { full_name: REPOSITORY },
+    head_sha: BASE_SHA,
+    status: 'completed',
+    conclusion: 'success',
+    pull_requests: [{
+      number: 1559,
+      head: { sha: HEAD, ref: BRANCH },
+      base: { sha: BASE_SHA, ref: 'main' },
+    }],
+  };
+  return { ...run, ...overrides };
+}
+
+function independentReviewJobs(overrides = {}) {
+  return [{
+    id: 9001,
+    name: INDEPENDENT_REVIEW_JOB,
+    run_attempt: REVIEW_RUN_ATTEMPT,
+    run_url: `https://api.github.com/repos/${REPOSITORY}/actions/runs/${REVIEW_RUN_ID}`,
+    status: 'completed',
+    conclusion: 'success',
+    ...overrides,
+  }];
+}
 
 function successfulRuns(headSha = HEAD) {
   return REQUIRED_EXACT_HEAD_WORKFLOWS.map((name, index) => ({
@@ -41,6 +91,7 @@ function successfulRuns(headSha = HEAD) {
 
 function baseInput(overrides = {}) {
   return {
+    repository: REPOSITORY,
     now: NOW,
     trustedCoordinatorLogin: TRUSTED_COORDINATOR,
     canonicalLaneConfirmed: true,
@@ -48,10 +99,17 @@ function baseInput(overrides = {}) {
       number: 1559,
       state: 'open',
       baseRef: 'main',
+      baseSha: BASE_SHA,
+      headRef: BRANCH,
       headSha: HEAD,
       sameRepository: true,
     },
     workflowRuns: successfulRuns(),
+    independentReviewWorkflowId: REVIEW_WORKFLOW_ID,
+    independentReviewRuns: [independentReviewRun()],
+    independentReviewJobsByRunId: {
+      [String(REVIEW_RUN_ID)]: independentReviewJobs(),
+    },
     comments: [],
     reviews: [],
     ...overrides,
@@ -144,6 +202,108 @@ test('records a matching Codex receipt once and then remains terminal for that h
   }));
   assert.equal(recorded.decision, EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED);
   assert.equal(recorded.actionRequired, false);
+});
+
+
+function providerNeutralComment({
+  id = 93,
+  headSha = HEAD,
+  user = TRUSTED_GITHUB_ACTIONS_REVIEWER,
+  createdAt = '2026-07-19T16:29:30Z',
+  workflowRunId = REVIEW_RUN_ID,
+  workflowRunAttempt = REVIEW_RUN_ATTEMPT,
+} = {}) {
+  const receipt = buildProtectedSecurityReviewReceipt({
+    repository: REPOSITORY,
+    prNumber: 1559,
+    branch: BRANCH,
+    sourceHead: headSha,
+    workflowRunId,
+    workflowRunAttempt,
+    timestampUtc: createdAt,
+    analysis: {
+      schemaVersion: 'stephanos.independent-security-analysis.v1',
+      findings: [],
+      counts: { P0: 0, P1: 0, P2: 0 },
+      verdict: 'clean',
+      proofRefs: ['proofs/changed-file/shared/agents/example.mjs'],
+      finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN',
+    },
+  });
+  return {
+    id,
+    body: `<!-- stephanos-protected-security-review -->
+\`\`\`json
+${JSON.stringify(receipt, null, 2)}
+\`\`\``,
+    user,
+    createdAt,
+  };
+}
+
+test('records only a workflow-bound authenticated provider-neutral GitHub Actions receipt', () => {
+  const result = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+  }));
+  assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  assert.equal(result.externalReceiptId, 93);
+  assert.match(result.reason, /authenticated exact-head review receipt/i);
+});
+
+test('rejects forged, stale or workflow-unbound provider-neutral review comments', () => {
+  const forgedActor = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment({
+      user: { ...TRUSTED_GITHUB_ACTIONS_REVIEWER, id: 7 },
+    })],
+  }));
+  assert.equal(forgedActor.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const staleHead = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment({ headSha: OLD_HEAD })],
+  }));
+  assert.equal(staleHead.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const missingRun = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+    independentReviewRuns: [],
+    independentReviewJobsByRunId: {},
+  }));
+  assert.equal(missingRun.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const lookalikeWorkflow = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+    independentReviewRuns: [independentReviewRun({
+      path: '.github/workflows/lookalike-independent-review.yml',
+    })],
+  }));
+  assert.equal(lookalikeWorkflow.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const wrongBase = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+    independentReviewRuns: [independentReviewRun({
+      pull_requests: [{
+        number: 1559,
+        head: { sha: HEAD, ref: BRANCH },
+        base: { sha: OLD_HEAD, ref: 'main' },
+      }],
+    })],
+  }));
+  assert.equal(wrongBase.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const failedJob = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [providerNeutralComment()],
+    independentReviewJobsByRunId: {
+      [String(REVIEW_RUN_ID)]: independentReviewJobs({ conclusion: 'failure' }),
+    },
+  }));
+  assert.equal(failedJob.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+});
+
+test('provider-neutral handoff never dispatches the Codex reviewer', () => {
+  const body = buildReviewDispatchComment({ prNumber: 1559, headSha: HEAD });
+  assert.match(body, /Provider-neutral exact-head review handoff/);
+  assert.match(body, /does not request or consume Codex review capacity/);
+  assert.doesNotMatch(body, /@codex review/);
 });
 
 test('accepts a review object only when its exact commit matches', () => {
@@ -483,19 +643,23 @@ test('requires workflow completion timestamps and ignores pre-proof dispatch mar
 test('wires the trusted coordinator identity through the runner and trusted workflow', () => {
   const runner = fs.readFileSync(new URL('../../scripts/exact-head-review-dispatch.mjs', import.meta.url), 'utf8');
   const workflow = fs.readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8');
-  assert.match(runner, /bounded GitHub token actor must match trusted coordinator/);
-  assert.match(runner, /trustedCoordinatorLogin:\s*coordinatorLogin/);
+  assert.match(runner, /bounded GitHub token actor is not authorised/);
+  assert.match(runner, /selectReviewCoordinatorCredential\(process\.env\)/);
+  assert.match(runner, /const laneAuthorityLogin = trustedLaneAuthorityLogin\(owner\)/);
+  assert.match(runner, /trustedCoordinatorLogin:\s*MACHINE_COORDINATOR_SENTINEL_LOGIN/);
   assert.match(runner, /parseOptionalManualPrNumber\(process\.env\.STEPHANOS_EXACT_HEAD_REVIEW_PR\)/);
   assert.match(runner, /const numbers = \(await listOpenPullRequests/);
   assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);
   assert.match(runner, /GitHub pagination exceeded.*refusing partial evidence/);
-  assert.match(workflow, /STEPHANOS_REVIEW_COORDINATOR_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);
+  assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
+  assert.match(workflow, /STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:\s*\$\{\{ secrets\.STEPHANOS_REVIEW_DISPATCH_TOKEN \}\}/);
-  assert.doesNotMatch(workflow, /\|\|\s*github\.token/);
+  assert.doesNotMatch(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:[^\n]*\|\|/);
 });
 
 test('runs every required proof workflow for every pull request head', () => {
   const workflowPaths = [
+    '../../.github/workflows/exact-head-review-dispatch.yml',
     '../../.github/workflows/openclaw-github-operator.yml',
     '../../.github/workflows/pr-clean.yml',
     '../../.github/workflows/build-stephanos-ui.yml',
@@ -524,7 +688,9 @@ test('runs every required proof workflow for every pull request head', () => {
 test('renders exact-head dispatch, receipt and escalation comments with durable markers', () => {
   const dispatch = buildReviewDispatchComment({ prNumber: 1559, headSha: HEAD });
   assert.match(dispatch, new RegExp(EXACT_HEAD_REVIEW_MARKERS.DISPATCH));
-  assert.match(dispatch, /@codex review/);
+  assert.match(dispatch, /Provider-neutral exact-head review handoff/);
+  assert.match(dispatch, /does not request or consume Codex review capacity/);
+  assert.doesNotMatch(dispatch, /@codex review/);
   assert.match(dispatch, new RegExp(HEAD));
 
   const receipt = buildReviewReceiptComment({ prNumber: 1559, headSha: HEAD, externalReceiptId: 91 });
@@ -533,7 +699,7 @@ test('renders exact-head dispatch, receipt and escalation comments with durable 
 
   const escalation = buildMissingReceiptEscalationComment({ prNumber: 1559, headSha: HEAD, timeoutMinutes: 10, dispatchCommentId: 40 });
   assert.match(escalation, new RegExp(EXACT_HEAD_REVIEW_MARKERS.ESCALATION));
-  assert.match(escalation, /Duplicate review dispatch is rejected/);
+  assert.match(escalation, /Duplicate dispatch is rejected/);
 
   assert.throws(() => buildReviewDispatchComment({ prNumber: 0, headSha: HEAD }), /valid PR number/);
   assert.throws(() => buildReviewReceiptComment({ prNumber: -1, headSha: HEAD }), /valid PR number/);

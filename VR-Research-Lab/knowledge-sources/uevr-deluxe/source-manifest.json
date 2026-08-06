@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "source_id": "github-oduis-uevr-deluxe",
+  "title": "Unreal Easy Injector / UEVR Deluxe",
+  "priority": "P0",
+  "status": "registered-analysis-and-operational-evidence-only",
+  "repository": "oduis/UEVRDeluxe",
+  "documentation_repository": "oduis/UEVRDeluxe-docs",
+  "snapshot_commit": "0adc70d57421e7aa9354423f99e22a2039882d2e",
+  "snapshot_release": "3.3.2",
+  "snapshot_date": "2026-07-29",
+  "licence": "All rights reserved; free for non-commercial use. Embedded UEVR DLL modules retain Praydog copyright.",
+  "local_manifest": "VR-Research-Lab/knowledge-sources/uevr-deluxe/source-manifest.json",
+  "local_extraction": "VR-Research-Lab/knowledge-sources/uevr-deluxe/knowledge-extraction.md",
+  "relevance": [
+    "installed Unreal game discovery",
+    "one-click UEVR profile installation",
+    "multiple UEVR backend selection and updates",
+    "profile metadata and documentation",
+    "runtime switching",
+    "voice commands and global hotkeys",
+    "profile publishing and community validation",
+    "beginner-oriented failure prevention"
+  ],
+  "programme_links": [1593, 1594, 1595, 1596, 1597],
+  "refresh_owner": 1596,
+  "promotion_rule": "Study public behaviour, workflow and metadata architecture. Do not copy, redistribute or commercially reuse source without permission; treat UEVR and profile artefacts under their own rights."
+}

@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import {
   acquireExecutionReceiptHistoryLock,
+  acquireSharedWorkspaceOperationLock,
   appendExecutionReceipt,
   buildExecutionWorkerAdapterContract,
   classifyExecutionReceiptSet,
@@ -29,6 +30,40 @@ import {
 } from './codexDispatchQueue.mjs';
 
 const HEAD = 'a'.repeat(40);
+
+test('shared workspace operation lock exposes existing lock machinery only for lock paths', async () => {
+  const refused = await acquireSharedWorkspaceOperationLock(
+    process.cwd(),
+    ['status', 'source-mutation-lease-current.json'],
+  );
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, 'SHARED_WORKSPACE_OPERATION_LOCK_PATH_INVALID');
+});
+
+test('operation lock remains bound to the acquired directory after pathname replacement', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-lock-identity-'));
+  const segments = ['receipt-locks', 'dream-migration', 'migration.lock'];
+  const lockPath = join(root, ...segments);
+  const displacedPath = `${lockPath}.displaced`;
+  try {
+    const first = await acquireSharedWorkspaceOperationLock(root, segments);
+    assert.equal(first.ok, true);
+    assert.equal(await first.verifyOwnership(), true);
+    await rename(lockPath, displacedPath);
+    const second = await acquireSharedWorkspaceOperationLock(root, segments, {
+      operationLockTimeoutMs: 50,
+      operationLockRetryMs: 2,
+    });
+    assert.equal(second.ok, true, 'replacement pathname can be acquired only as a different inode');
+    assert.equal(await first.verifyOwnership(), false);
+    assert.equal(await first.release(), false);
+    assert.equal(await second.verifyOwnership(), true);
+    assert.equal(await second.release(), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 const BASE = {
   repository: 'Cheekyfellastef/stephan-os',
   issueNumber: 1568,

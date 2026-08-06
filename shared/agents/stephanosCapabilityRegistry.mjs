@@ -1,5 +1,5 @@
 export const STEPHANOS_CAPABILITY_REGISTRY_SCHEMA = 'stephanos.capability-registry.v1';
-export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.1.0';
+export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.3.0';
 export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 const SAFE_CAPABILITY_ID = /^[a-z0-9][a-z0-9.-]{2,80}$/;
@@ -81,6 +81,8 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
       'READ_SHARED_WORKSPACE_STATUS',
       'READ_MAILBOX_RECEIPT',
       'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+      'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
+      'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
     ],
     requiresOperatorApproval: true,
     runtimeMutationAllowed: true,
@@ -123,6 +125,26 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
     statusSource: 'shared-agent-workspace',
     operations: ['INSPECT_WORKER', 'START_APPROVED_WORKER_TASK'],
     runtimeMutationAllowed: true,
+  }),
+  descriptor({
+    capabilityId: 'battle-bridge-recovery-mesh',
+    category: 'runtime-supervision',
+    purpose: 'Five independently authenticated recovery entrances feed one locked coordinator that may start only fixed canonical Battle Bridge tasks.',
+    ownerIssue: 1291,
+    discoveryRoute: 'shared-workspace:battle-bridge-recovery-mesh-current',
+    statusSource: 'shared-agent-workspace',
+    operations: ['INSPECT_FIXED_SERVICES', 'RECOVER_FIXED_SERVICES', 'COALESCE_RECOVERY_WAKE', 'READ_RECOVERY_RECEIPT'],
+    requiresOperatorApproval: true,
+    runtimeMutationAllowed: true,
+  }),
+  descriptor({
+    capabilityId: 'programme-stall-monitor',
+    category: 'programme-monitoring',
+    purpose: 'Deterministically diagnoses durable programme stalls and publishes through the existing Monitor Multiplexer without scheduling or mutation.',
+    ownerIssue: 1497,
+    discoveryRoute: 'shared-workspace:monitor-programme-stall-monitor',
+    statusSource: 'monitor-multiplexer',
+    operations: ['DIAGNOSE_PROGRAMME_STALL', 'PUBLISH_MONITOR_RESULT'],
   }),
   descriptor({
     capabilityId: 'verification-harness',

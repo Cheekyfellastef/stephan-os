@@ -1,0 +1,44 @@
+name: Memory Adequacy Proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'shared/runtime/stephanosMemoryAdequacy.mjs'
+      - 'shared/runtime/stephanosMemoryAdequacy.test.mjs'
+      - 'shared/agents/stephanosMemoryAdequacyInputs.mjs'
+      - 'shared/agents/stephanosMemoryAdequacyInputs.test.mjs'
+      - 'docs/stephanos-memory-adequacy-v1.md'
+      - '.github/workflows/memory-adequacy-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Parse memory adequacy sources
+        run: |
+          node --check shared/runtime/stephanosMemoryAdequacy.mjs
+          node --check shared/agents/stephanosMemoryAdequacyInputs.mjs
+
+      - name: Run memory adequacy truth regressions
+        run: node --test shared/runtime/stephanosMemoryAdequacy.test.mjs shared/agents/stephanosMemoryAdequacyInputs.test.mjs
+
+      - name: Check exact diff
+        run: git diff --check origin/main...HEAD

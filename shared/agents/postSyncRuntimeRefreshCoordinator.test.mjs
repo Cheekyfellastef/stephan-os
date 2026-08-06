@@ -67,6 +67,17 @@ test('launcher-critical shell sources select the UI refresh target', () => {
   }
 });
 
+test('merged Music Intelligence Centre changes automatically select the served UI refresh', () => {
+  const plan = classifyPostSyncRefresh([
+    'apps/music-tile/index.html',
+    'apps/music-tile/main.js',
+    'apps/music-tile/style.css',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('actual UI build verify serve and exact-proof tools select UI refresh', () => {
   for (const path of [
     'scripts/build-stephanos-ui.mjs',
