@@ -79,6 +79,23 @@ test('review coordinator has exact PR-comment publication authority', () => {
   assert.match(coordinate, /permissions:[\s\S]*pull-requests: write/);
 });
 
+test('pull-request verification is isolated from the shared coordinator queue', () => {
+  const workflow = readFileSync(
+    new URL('../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    workflow,
+    /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-\$\{\{ github\.event_name == 'pull_request' && format\('pr-\{0\}', github\.event\.pull_request\.number\) \|\| 'coordinator' \}\}/,
+  );
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.doesNotMatch(
+    workflow,
+    /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}\s*\n/,
+  );
+});
+
 test('independent review retry scans one bounded exact-head page', () => {
   const source = readFileSync(new URL('./retry-independent-review.mjs', import.meta.url), 'utf8');
   const loader = source.match(
