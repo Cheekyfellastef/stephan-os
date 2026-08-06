@@ -1,0 +1,79 @@
+name: PR 1677 Single Finding Bootstrap
+
+on:
+  push:
+    branches:
+      - fix/qualified-specialist-review-sealing-v1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr-1677-single-finding-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  narrow:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/qualified-specialist-review-sealing-v1
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify exact checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = '4fcaf5d656f3348efa95fffec58431222ee8677a'
+          test "$(git rev-parse origin/main)" = '5272af4d998d3a4f82841ddf735d0850e97f09a6'
+          test "$(git diff --name-only HEAD^..HEAD)" = '.github/workflows/pr-1677-single-finding-bootstrap.yml'
+      - name: Narrow approval-boundary bootstrap to one protected path
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show origin/main:shared/agents/operatorMergeApprovalBoundaryV2.mjs > shared/agents/operatorMergeApprovalBoundaryV2.mjs
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const path = 'shared/agents/operatorMergeApprovalBoundaryV2.test.mjs';
+          let source = readFileSync(path, 'utf8');
+          const needle = "    'shared/agents/qualifiedSpecialistReviewV1.mjs',\n";
+          const count = source.split(needle).length - 1;
+          if (count !== 1) throw new Error(`specialist inventory expectation count changed: ${count}`);
+          source = source.replace(needle, '');
+          writeFileSync(path, source, 'utf8');
+          NODE
+          rm -f .github/workflows/pr-1677-single-finding-bootstrap.yml
+          git add --all
+          expected="$(printf '%s\n' \
+            scripts/independent-merge-security-review-v2.mjs \
+            shared/agents/operatorMergeApprovalBoundaryV2.test.mjs \
+            shared/agents/qualifiedSpecialistReviewV1.mjs | sort)"
+          actual="$(git diff --cached --name-only origin/main | sort)"
+          test "$actual" = "$expected"
+          git diff --cached --check origin/main
+      - name: Run protected review suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check shared/agents/qualifiedSpecialistReviewV1.mjs
+          node --check shared/agents/operatorMergeApprovalBoundaryV2.test.mjs
+          node --check scripts/independent-merge-security-review-v2.mjs
+          npm run stephanos:operator-merge-approval:test
+          npm run stephanos:provider-neutral-review:test
+      - name: Commit and push normally
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = '5272af4d998d3a4f82841ddf735d0850e97f09a6'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Narrow specialist sealing bootstrap to one protected path'
+          git push origin HEAD:fix/qualified-specialist-review-sealing-v1
+          echo "PR_1677_NARROWED_HEAD=$(git rev-parse HEAD)"
