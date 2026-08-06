@@ -5,10 +5,20 @@ on:
     paths:
       - 'scripts/battle-bridge-ignition-supervisor.mjs'
       - 'scripts/battle-bridge-ignition-supervisor.test.mjs'
+      - 'scripts/battle-bridge-recovery-mesh.mjs'
+      - 'scripts/battle-bridge-recovery-mesh.test.mjs'
+      - 'scripts/battle-bridge-recovery-mesh-installer.test.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox.test.mjs'
+      - 'scripts/windows/*battle-bridge-recovery-mesh.ps1'
+      - 'scripts/windows/request-battle-bridge-recovery.ps1'
       - 'scripts/windows-launcher-supervisor-freshness.test.mjs'
       - 'scripts/windows-launcher-defaults.test.mjs'
       - 'tests/windows-launcher-ignition.test.mjs'
       - 'windows/Launch-Stephanos-Local.ps1'
+      - 'shared/agents/battleBridgeRecoveryMeshV1.mjs'
+      - 'shared/agents/battleBridgeRecoveryMeshV1.test.mjs'
+      - 'integrations/openclaw/stephanos-ignite-command/**'
       - '.github/workflows/battle-bridge-resilience-proof.yml'
 
 permissions:
@@ -37,6 +47,12 @@ jobs:
           scripts/windows-launcher-supervisor-freshness.test.mjs
           scripts/windows-launcher-defaults.test.mjs
           tests/windows-launcher-ignition.test.mjs
+          shared/agents/battleBridgeRecoveryMeshV1.test.mjs
+          scripts/battle-bridge-recovery-mesh.test.mjs
+          scripts/battle-bridge-recovery-mesh-installer.test.mjs
+          scripts/battle-bridge-github-command-mailbox.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/recovery-wake.test.mjs
+          integrations/openclaw/stephanos-ignite-command/manifest.test.mjs
 
       - name: Launcher script guard
         run: npm run stephanos:guard:scripts

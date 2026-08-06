@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseMonitorMultiplexerCanaryArguments,
   resolveMonitorMultiplexerCanaryWorkspace,
@@ -58,7 +60,7 @@ test('canary workspace uses the canonical resolver and rejects secret-shaped tar
   assert.equal(unsafe.arbitraryFilesystemAccess, false);
 
   const safe = resolveMonitorMultiplexerCanaryWorkspace({
-    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    env: { HOME: join(tmpdir(), 'stephanos-monitor-canary-home') },
   });
   assert.equal(safe.ok, true);
   assert.equal(safe.source, 'default-documents');

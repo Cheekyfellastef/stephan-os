@@ -1,5 +1,13 @@
+import {
+  INDEPENDENT_REVIEW_JOB,
+  PROTECTED_REVIEW_MARKER,
+  parseIndependentReviewSessionId,
+  validateIndependentReviewWorkflowRun,
+  validateTrustedProtectedReviewReceipt,
+} from './operatorMergeApprovalGate.mjs';
+
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.6';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.8';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -43,6 +51,11 @@ const TRUSTED_CODEX_REVIEWER = Object.freeze({
   login: 'chatgpt-codex-connector[bot]',
   type: 'bot',
   id: 199175422,
+});
+const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({
+  login: 'github-actions[bot]',
+  type: 'bot',
+  id: 41898282,
 });
 const POSITIVE_LANE_STATE_PATTERN = /\b(?:sole active implementation lane|single active(?: GitHub)? implementation lane|sole canonical implementation lane|canonical implementation lane|canonical-lane receipt|active lane)\b/gi;
 const SELF_REFERENTIAL_LANE_PATTERN = /(?:\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b[^\n.]{0,120}\b(?:sole|single|canonical|active)\b[^\n.]{0,80}\blane\b|\b(?:sole|single|canonical|active)\b[^\n.]{0,100}\blane\b[^\n.]{0,80}\bthis\s+(?:existing\s+|current\s+)?(?:draft\s+)?PR\b)/i;
@@ -142,24 +155,98 @@ function reviewedCommitSha(body) {
   return match?.[1]?.toLowerCase() || '';
 }
 
-function isKnownCodexReviewer(item) {
+function actorMatches(item, expected) {
   const actor = item?.user ?? item?.author ?? {};
-  return normalizedLogin(actor?.login) === TRUSTED_CODEX_REVIEWER.login
-    && normalizedLogin(actor?.type) === TRUSTED_CODEX_REVIEWER.type
-    && Number(actor?.id) === TRUSTED_CODEX_REVIEWER.id;
+  return normalizedLogin(actor?.login) === expected.login
+    && normalizedLogin(actor?.type) === expected.type
+    && Number(actor?.id) === expected.id;
 }
 
-function reviewMatchesHead(item, headSha) {
-  if (!isKnownCodexReviewer(item)) return false;
-  const commitId = text(item?.commitId ?? item?.commit_id);
-  if (commitId && sameSha(commitId, headSha)) return true;
-  return sameSha(reviewedCommitSha(commentBody(item)), headSha);
+function isKnownCodexReviewer(item) {
+  return actorMatches(item, TRUSTED_CODEX_REVIEWER);
 }
 
-function latestExternalReceipt(comments, reviews, headSha, notBeforeMs) {
+function isKnownGitHubActionsReviewer(item) {
+  return actorMatches(item, TRUSTED_GITHUB_ACTIONS_REVIEWER);
+}
+
+function fencedJsonObjects(body) {
+  const objects = [];
+  for (const match of text(body).matchAll(/```json\s*([\s\S]*?)```/gi)) {
+    try {
+      const value = JSON.parse(match[1]);
+      if (value && typeof value === 'object' && !Array.isArray(value)) objects.push(value);
+    } catch {
+      // Malformed display JSON is not review evidence.
+    }
+  }
+  return objects;
+}
+
+function providerNeutralReviewMatchesHead(item, context = {}) {
+  if (!isKnownGitHubActionsReviewer(item)) return false;
+  const body = commentBody(item);
+  if (!body.includes(PROTECTED_REVIEW_MARKER)) return false;
+  const receipt = fencedJsonObjects(body).find((candidate) => (
+    candidate?.kind === 'stephanos.provider-neutral.review'
+  ));
+  const session = parseIndependentReviewSessionId(receipt?.reviewerSessionId);
+  if (!receipt || receipt.verdict !== 'clean' || !session) return false;
+
+  const workflowRunId = Number(session.workflowRunId);
+  const workflowRunAttempt = Number(session.workflowRunAttempt);
+  const workflowId = Number(context.independentReviewWorkflowId);
+  const run = (Array.isArray(context.independentReviewRuns) ? context.independentReviewRuns : []).find((candidate) => (
+    Number(candidate?.id) === workflowRunId
+    && Number(candidate?.run_attempt ?? candidate?.runAttempt) === workflowRunAttempt
+  ));
+  const jobsByRunId = context.independentReviewJobsByRunId
+    && typeof context.independentReviewJobsByRunId === 'object'
+    && !Array.isArray(context.independentReviewJobsByRunId)
+    ? context.independentReviewJobsByRunId
+    : {};
+  const jobs = Array.isArray(jobsByRunId[String(workflowRunId)])
+    ? jobsByRunId[String(workflowRunId)]
+    : [];
+
+  const receiptValidation = validateTrustedProtectedReviewReceipt(receipt, {
+    repository: text(context.repository),
+    prNumber: Number(context.prNumber),
+    branch: text(context.branch),
+    expectedHead: text(context.headSha).toLowerCase(),
+    workflowRunId,
+    workflowRunAttempt,
+  });
+  if (!receiptValidation.valid || receiptValidation.operatorBootstrapRequired === true) return false;
+
+  const workflowValidation = validateIndependentReviewWorkflowRun(run || {}, jobs, {
+    repository: text(context.repository),
+    prNumber: Number(context.prNumber),
+    expectedHead: text(context.headSha).toLowerCase(),
+    expectedBranch: text(context.branch),
+    expectedBaseBranch: text(context.baseRef),
+    expectedBaseSha: text(context.baseSha).toLowerCase(),
+    expectedWorkflowId: workflowId,
+    workflowRunId,
+    workflowRunAttempt,
+  });
+  return workflowValidation.valid
+    && jobs.some((job) => text(job?.name) === INDEPENDENT_REVIEW_JOB);
+}
+
+function reviewMatchesHead(item, context = {}) {
+  if (isKnownCodexReviewer(item)) {
+    const commitId = text(item?.commitId ?? item?.commit_id);
+    if (commitId && sameSha(commitId, context.headSha)) return true;
+    return sameSha(reviewedCommitSha(commentBody(item)), context.headSha);
+  }
+  return providerNeutralReviewMatchesHead(item, context);
+}
+
+function latestExternalReceipt(comments, reviews, context, notBeforeMs) {
   return newest([
-    ...(comments || []).filter((item) => reviewMatchesHead(item, headSha)),
-    ...(reviews || []).filter((item) => reviewMatchesHead(item, headSha)),
+    ...(comments || []).filter((item) => reviewMatchesHead(item, context)),
+    ...(reviews || []).filter((item) => reviewMatchesHead(item, context)),
   ].filter((item) => {
     const timestamp = itemTimestamp(item);
     return timestamp !== null && timestamp > notBeforeMs;
@@ -362,7 +449,17 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     const run = latestRuns.get(name);
     return asTime(run?.completedAt ?? run?.completed_at ?? run?.updatedAt ?? run?.updated_at);
   }));
-  const externalReceipt = latestExternalReceipt(comments, reviews, headSha, workflowsCompletedAtMs);
+  const externalReceipt = latestExternalReceipt(comments, reviews, {
+    repository: text(input.repository),
+    prNumber: base.prNumber,
+    branch: text(pr.headRef ?? pr.head_ref),
+    headSha,
+    baseRef,
+    baseSha: text(pr.baseSha ?? pr.base_sha),
+    independentReviewWorkflowId: input.independentReviewWorkflowId,
+    independentReviewRuns: input.independentReviewRuns,
+    independentReviewJobsByRunId: input.independentReviewJobsByRunId,
+  }, workflowsCompletedAtMs);
   const externalReceiptTime = itemTimestamp(externalReceipt);
   const recordedReceipt = externalReceipt && externalReceiptTime !== null
     ? markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.RECEIPT, headSha, {
@@ -375,7 +472,7 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     return Object.freeze({
       ...base,
       decision: EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT,
-      reason: 'a Codex exact-head review receipt exists and needs one durable coordinator receipt',
+      reason: 'an authenticated exact-head review receipt exists and needs one durable coordinator receipt',
       actionRequired: true,
       externalReceiptId: externalReceipt.id ?? null,
       externalReceiptTimestamp: externalReceipt.createdAt ?? externalReceipt.created_at ?? externalReceipt.submittedAt ?? externalReceipt.submitted_at ?? null,
@@ -437,14 +534,14 @@ export function buildReviewDispatchComment({ prNumber, headSha, workflowNames = 
   if (!Number.isSafeInteger(Number(prNumber)) || Number(prNumber) <= 0 || !FULL_SHA_PATTERN.test(head)) throw new Error('valid PR number and exact head SHA are required');
   return [
     markerFor(EXACT_HEAD_REVIEW_MARKERS.DISPATCH, head),
-    '@codex review',
+    '## Provider-neutral exact-head review handoff',
     '',
-    `Automated bounded exact-head review request for PR #${Number(prNumber)}.`,
-    '',
-    `Review exact head \`${head}\` only.`,
+    `Automated bounded review handoff for PR #${Number(prNumber)} at exact head \`${head}\`.`,
     '',
     'All required exact-head workflows succeeded:',
     ...workflowNames.map((name) => `- ${name}`),
+    '',
+    'The trusted GitHub Actions independent-review lane is expected to publish an authenticated exact-head receipt. This coordinator does not request or consume Codex review capacity.',
     '',
     'Return any current P0/P1/P2 findings with exact file references and explicitly confirm when no unresolved P0 or P1 remains.',
     '',
@@ -479,6 +576,6 @@ export function buildMissingReceiptEscalationComment({ prNumber, headSha, timeou
     `Dispatch receipt: ${dispatchCommentId ?? 'present'}`,
     `Bounded wait exceeded: ${Number(timeoutMinutes)} minutes`,
     '',
-    'One exact-head review request was posted, but no matching Codex review receipt has appeared. Duplicate review dispatch is rejected. The Programme Completion Controller should inspect the external review route; no merge, mark-ready action, implementation dispatch, or runtime mutation is authorised.',
+    'One exact-head review handoff was posted, but no matching authenticated provider-neutral or Codex receipt has appeared. Duplicate dispatch is rejected. The Programme Completion Controller should inspect the independent review route; no merge, mark-ready action, implementation dispatch, or runtime mutation is authorised.',
   ].join('\n');
 }
