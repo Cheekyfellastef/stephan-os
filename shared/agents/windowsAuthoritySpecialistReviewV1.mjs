@@ -117,6 +117,7 @@ function reviewStarter(source, path, findings) {
   requirePattern(findings, source, /Start-Process\s+-FilePath\s+\$canonicalNpm[\s\S]*-ArgumentList\s+\$arguments/, 'windows-backend-starter-process-not-pinned', 'Backend process launch must use canonical npm and fixed arguments.', path);
   requirePattern(findings, source, /STEPHANOS_BACKEND_SOURCE_HEAD\s*=\s*\$headSha/, 'windows-backend-starter-head-env-missing', 'Backend process must receive the exact source head.', path);
   requirePattern(findings, source, /Write-BackendRuntimeReceipt[\s\S]*ProcessStartTimeUtc/, 'windows-backend-starter-runtime-receipt-incomplete', 'Backend startup receipt must include process start identity.', path);
+  requirePattern(findings, source, /\$existingListener[\s\S]*if\s*\(\$existingListener\)[\s\S]*Write-BackendRuntimeReceipt[\s\S]*exit\s+0/, 'windows-backend-starter-reuse-receipt-missing', 'Reusing an already-current backend must refresh its exact PID and process-start receipt before success.', path);
 }
 
 function generalAuthorityScan(source, path, findings) {
