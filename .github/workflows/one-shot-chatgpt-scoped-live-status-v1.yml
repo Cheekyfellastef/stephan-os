@@ -68,7 +68,12 @@ jobs:
           node scripts/guard-import-structure.mjs
 
       - name: Apply bounded Shared Workspace completion
-        run: node scripts/one-shot-chatgpt-scoped-live-status-v1.mjs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p docs/operations
+          node scripts/one-shot-chatgpt-scoped-live-status-v1.mjs
+          test -f docs/operations/chatgpt-shared-workspace-live-status.md
 
       - name: Verify syntax and focused contracts
         shell: bash
