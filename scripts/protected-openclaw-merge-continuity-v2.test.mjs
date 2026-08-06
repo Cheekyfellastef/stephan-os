@@ -68,3 +68,28 @@ test('mailbox source no longer paginates the complete historical issue thread', 
   assert.match(commandLoad, /loadBoundedMailboxComments\(\)/);
   assert.doesNotMatch(commandLoad, /--paginate/);
 });
+
+test('review coordinator has exact PR-comment publication authority', () => {
+  const workflow = readFileSync(
+    new URL('../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
+    'utf8',
+  );
+  const coordinate = workflow.match(/  coordinate:[\s\S]*$/)?.[0] || '';
+
+  assert.match(coordinate, /permissions:[\s\S]*pull-requests: write/);
+});
+
+test('independent review retry scans one bounded exact-head page', () => {
+  const source = readFileSync(new URL('./retry-independent-review.mjs', import.meta.url), 'utf8');
+  const loader = source.match(
+    /async function loadRecentReviewRuns[\s\S]*?\n}\n\nasync function main/,
+  )?.[0] || '';
+
+  assert.match(loader, /head_sha=\$\{encodedHead}/);
+  assert.match(loader, /per_page=100&page=1/);
+  assert.doesNotMatch(loader, /githubPages\(/);
+  assert.match(
+    source,
+    /loadRecentReviewRuns\(owner, repo, workflow\.id, prNumber, expectedHead\)/,
+  );
+});
