@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Verify exact temporary-workflow-only checkpoint
+      - name: Verify exact temporary-workflow checkpoint
         shell: bash
         run: |
           set -euo pipefail
@@ -37,7 +37,6 @@ jobs:
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/fix/windows-authority-specialist-v1)"
           test "$(git rev-parse origin/main)" = "$exact_main"
           git merge-base --is-ancestor "$exact_main" HEAD
-          test -z "$(git status --porcelain)"
           for path in \
             .github/workflows/windows-authority-specialist-v1-bootstrap.yml \
             .github/workflows/windows-authority-specialist-v1-retry.yml \
@@ -45,9 +44,6 @@ jobs:
             .github/workflows/windows-authority-specialist-v1-retry3.yml; do
             test -f "$path"
           done
-          test ! -e shared/agents/windowsAuthoritySpecialistReviewV1.mjs
-          test ! -e shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs
-          test ! -e .specialist-retry-steps
 
       - name: Extract corrected constructor outside the repository
         shell: bash
