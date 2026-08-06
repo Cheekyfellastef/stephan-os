@@ -259,7 +259,13 @@ test('Mission Operations is integrated inside the canonical Mission Command Deck
 test('server mounts the read-only mission operations route', async () => {
   const source = await readFile(new URL('../stephanos-server/server.js', import.meta.url), 'utf8');
   const route = await readFile(new URL('../stephanos-server/routes/mission-operations.js', import.meta.url), 'utf8');
-  assert.match(source, /app\.use\('\/api\/mission-operations', missionOperationsRouter\)/);
+  const mountStart = source.indexOf("app.use('/api/mission-operations'");
+  const mountEnd = source.indexOf("app.use('/api/build-concierge'", mountStart);
+  assert.notEqual(mountStart, -1);
+  assert.notEqual(mountEnd, -1);
+  const mount = source.slice(mountStart, mountEnd);
+  assert.match(mount, /backendIdentity/);
+  assert.match(mount, /missionOperationsRouter/);
   assert.match(route, /router\.get\('\/', async/);
   assert.doesNotMatch(route, /router\.(post|put|patch|delete)/);
 });

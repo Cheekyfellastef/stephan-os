@@ -87,6 +87,26 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   ]) assert.match(probe, new RegExp(task));
   assert.match(probe, /\[ValidateSet\('Inspect', 'Recover'\)\]/);
   assert.match(probe, /Start-ScheduledTask -TaskName \$spec\.Name/);
+  assert.match(probe, /function Test-TaskAuthority/);
+  assert.match(probe, /Principal\.UserId/);
+  assert.match(probe, /Principal\.LogonType\s+-eq\s+'Interactive'/);
+  assert.match(probe, /Principal\.RunLevel\s+-eq\s+'Limited'/);
+  assert.match(probe, /Settings\.MultipleInstances\s+-eq\s+'IgnoreNew'/);
+  assert.match(probe, /Settings\.Enabled\s+-eq\s+\$true/);
+  assert.match(probe, /if \(-not \$observed\.authorityCanonical\) \{ continue \}/);
+  assert.match(probe, /mailboxTask\.lastTaskResult -eq 0/);
+  assert.match(probe, /battle-bridge-backend-freshness-probe\.mjs/);
+  assert.match(probe, /\/api\/mission-operations/);
+  assert.match(probe, /BACKEND_CURRENT/);
+  assert.match(probe, /Get-NetTCPConnection -LocalPort 8787 -State Listen/);
+  assert.match(probe, /Get-CimInstance Win32_Process/);
+  assert.match(probe, /BACKEND_LISTENER_IDENTITY_CHANGED/);
+  assert.match(probe, /BACKEND_TASK_PROCESS_OWNERSHIP_STALE_OR_INVALID/);
+  assert.match(probe, /BACKEND_TASK_PROCESS_LINEAGE_NOT_PROVEN/);
+  assert.match(probe, /processStartTimeUtc/);
+  assert.match(probe, /--expected-source-head \$ExpectedSourceHead/);
+  assert.match(probe, /BACKEND_LISTENER_OWNERSHIP_UNVERIFIABLE/);
+  assert.doesNotMatch(probe, /function Test-HttpHealth/);
   assert.match(probe, /http:\/\/127\.0\.0\.1:18789\/health/);
   assert.match(probe, /http:\/\/127\.0\.0\.1:18789\/identity/);
   assert.match(probe, /product\s+-eq\s+'OpenClaw'/);
@@ -101,6 +121,39 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   assert.match(probe, /\[string\]::Equals\(\$arguments, \$expectedArguments/);
   assert.doesNotMatch(probe, /arguments -match/);
   assert.doesNotMatch(probe, /Restart-Computer|Stop-Process|Invoke-Expression|git\s+(?:reset|clean|checkout|switch)|Remove-Item/i);
+});
+
+test('backend autostart contract rejects overlapping task instances', async () => {
+  const installer = await source('install-stephanos-backend-autostart.ps1');
+  assert.match(installer, /New-ScheduledTaskPrincipal -UserId \$currentUser -LogonType Interactive -RunLevel Limited/);
+  assert.match(installer, /New-ScheduledTaskSettingsSet[^\r\n]*-MultipleInstances IgnoreNew/);
+  assert.doesNotMatch(installer, /RunLevel Highest|-MultipleInstances Parallel/);
+});
+
+test('canonical task definition beside an unrelated listener cannot establish backend ownership', async () => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  assert.match(probe, /Equals\(\$executable, \$canonicalNode/);
+  assert.match(probe, /BACKEND_LISTENER_EXECUTABLE_FOREIGN/);
+  assert.match(probe, /expectedQuotedCommand = [^\r\n]*stephanos-server\/server\.js/);
+  assert.match(probe, /Equals\(\$commandLine, \$expectedQuotedCommand/);
+  assert.match(probe, /BACKEND_LISTENER_COMMAND_FOREIGN/);
+  assert.match(probe, /receipt\.pid -eq \$listenerAfter\.pid/);
+});
+
+test('listener identity change between response probe and ownership recheck fails closed', async () => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  assert.match(probe, /\$listenerBefore = Get-BackendListenerIdentity[\s\S]*& \$canonicalNode[\s\S]*\$listenerAfter = Get-BackendListenerIdentity/);
+  assert.match(probe, /listenerBefore\.pid -ne \$listenerAfter\.pid/);
+  assert.match(probe, /listenerBefore\.creationTimeUtc -ne \$listenerAfter\.creationTimeUtc/);
+  assert.match(probe, /BACKEND_LISTENER_IDENTITY_CHANGED/);
+});
+
+test('unsupported ownership inspection reports an explicit fail-closed blocker', async () => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  assert.match(probe, /Get-NetTCPConnection[^\r\n]*-ErrorAction Stop/);
+  assert.match(probe, /Get-CimInstance Win32_Process[^\r\n]*-ErrorAction Stop/);
+  assert.match(probe, /\$reason = 'BACKEND_LISTENER_OWNERSHIP_UNVERIFIABLE'/);
+  assert.doesNotMatch(probe, /BACKEND_LISTENER_OWNERSHIP_UNVERIFIABLE'\s*}\s*catch\s*{\s*return[^\r\n]*healthy = \$true/);
 });
 
 test('ingress adapter has four fixed routes and nonce-gates break glass', async () => {
@@ -152,4 +205,36 @@ test('uninstall removes only the coordinator and preserves every underlying serv
   assert.match(uninstall, /mailboxPreserved = \$true/);
   assert.match(uninstall, /sharedWorkspaceReceiptsPreserved = \$true/);
   assert.doesNotMatch(uninstall, /Remove-Item|git\s+|Stop-Process|Restart-Computer/i);
+});
+
+test('exact-head backend authority fails closed on tracked worktree drift', async () => {
+  const [starter, probe] = await Promise.all([
+    source('start-stephanos-backend.ps1'),
+    source('probe-battle-bridge-recovery-mesh.ps1'),
+  ]);
+  assert.match(starter, /status '--porcelain=v1' '--untracked-files=no'/);
+  assert.match(starter, /Backend startup requires an unmodified tracked worktree at exact head/);
+  assert.match(starter, /trackedWorktreeClean = \$true/);
+  assert.match(probe, /function Assert-CanonicalTrackedWorktreeClean/);
+  assert.equal((probe.match(/Assert-CanonicalTrackedWorktreeClean -GitExecutable/g) || []).length, 2);
+  assert.match(probe, /RECOVERY_CANONICAL_TRACKED_WORKTREE_INSPECTION_FAILED/);
+  assert.match(probe, /RECOVERY_CANONICAL_TRACKED_WORKTREE_DIRTY/);
+  assert.match(probe, /receipt\.trackedWorktreeClean -eq \$true/);
+  assert.match(probe, /trackedWorktreeClean = \$true/);
+  assert.doesNotMatch(starter, /--untracked-files=all/);
+  assert.doesNotMatch(probe, /--untracked-files=all/);
+});
+
+test('recovery does not re-run an already verified backend task', async () => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  const sourceIdentityIndex = probe.indexOf("$sourceControlExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe'");
+  const beforeIndex = probe.indexOf('$before = @{}');
+  const preflightIndex = probe.indexOf("$backendBeforeRecovery = if ($Mode -eq 'Recover')");
+  const recoveryLoopIndex = probe.indexOf("if ($Mode -eq 'Recover') {", preflightIndex + 1);
+  assert.ok(sourceIdentityIndex >= 0 && sourceIdentityIndex < beforeIndex);
+  assert.ok(beforeIndex < preflightIndex && preflightIndex < recoveryLoopIndex);
+  assert.match(probe, /Get-BackendFreshnessHealth -ExpectedSourceHead \$sourceHead -BackendTask \$before\.backend/);
+  assert.match(probe, /if \(\$spec\.Id -eq 'backend' -and \$backendBeforeRecovery\.healthy\) \{[\s\S]*?\$backendRestartSkippedAsCurrent = \$true[\s\S]*?continue/);
+  assert.match(probe, /backendRestartSkippedAsCurrent = \[bool\]\$backendRestartSkippedAsCurrent/);
+  assert.doesNotMatch(probe, /\$spec\.Id -eq 'backend' -and \[string\]\$observed\.state/);
 });
