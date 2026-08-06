@@ -107,9 +107,9 @@ function Get-VolumeExists([string]$Podman, [string]$Name) {
 }
 
 function Get-Machine([string]$Podman) {
-    $result = Invoke-Fixed $Podman @('machine', 'inspect', $MachineName) -AllowFailure
+    $result = Invoke-Fixed $Podman @('machine', 'inspect', '--format', '{{json .}}', $MachineName) -AllowFailure
     if ($result.ExitCode -ne 0) { return $null }
-    try { return (($result.Output -join "`n") | ConvertFrom-Json)[0] } catch { return $null }
+    try { return (($result.Output -join "`n") | ConvertFrom-Json) } catch { return $null }
 }
 
 function Assert-ContainerIdentity([string]$Podman, [string]$Name) {
@@ -123,15 +123,18 @@ function Assert-ContainerIdentity([string]$Podman, [string]$Name) {
     return [string]$labels.'stephanos.sealed'
 }
 
-function Get-FixedEnvironment([bool]$Final) {
+function Get-FixedEnvironment([bool]$Final, [int]$PublicPort = $HostPort) {
     $environment = @(
         'USER_UID=1000',
         'USER_GID=1000',
         'FORGEJO__database__DB_TYPE=sqlite3',
         'FORGEJO__database__PATH=/var/lib/gitea/data/forgejo.db',
         'FORGEJO__security__INSTALL_LOCK=true',
+        'FORGEJO__security__DISABLE_GIT_HOOKS=true',
+        'FORGEJO__security__DISABLE_WEBHOOKS=true',
+        'FORGEJO__security__IMPORT_LOCAL_PATHS=false',
         'FORGEJO__server__DOMAIN=127.0.0.1',
-        "FORGEJO__server__ROOT_URL=http://127.0.0.1:$HostPort/",
+        "FORGEJO__server__ROOT_URL=http://127.0.0.1:$PublicPort/",
         'FORGEJO__server__HTTP_PORT=3000',
         'FORGEJO__server__DISABLE_SSH=true',
         'FORGEJO__server__START_SSH_SERVER=false',
@@ -139,10 +142,12 @@ function Get-FixedEnvironment([bool]$Final) {
         'FORGEJO__service__SHOW_REGISTRATION_BUTTON=false',
         'FORGEJO__service__DEFAULT_ALLOW_CREATE_ORGANIZATION=false',
         'FORGEJO__admin__DISABLE_REGULAR_ORG_CREATION=true',
+        'FORGEJO__admin__USER_DISABLED_FEATURES=deletion,manage_ssh_keys,manage_gpg_keys,manage_password',
         'FORGEJO__repository__MAX_CREATION_LIMIT=1',
         'FORGEJO__repository__ENABLE_PUSH_CREATE_USER=false',
         'FORGEJO__repository__ENABLE_PUSH_CREATE_ORG=false',
         'FORGEJO__repository__DISABLE_FORKS=true',
+        'FORGEJO__repository__ALLOW_FORK_WITHOUT_MAXIMUM_LIMIT=false',
         'FORGEJO__repository__DISABLED_REPO_UNITS=repo.issues,repo.pulls,repo.wiki,repo.projects,repo.packages,repo.actions',
         'FORGEJO__actions__ENABLED=false',
         'FORGEJO__packages__ENABLED=false',
@@ -181,25 +186,29 @@ function Start-FixedContainer([string]$Podman, [bool]$Final, [string]$Name = $Co
         '-p', "127.0.0.1:$Port`:3000",
         '-v', "$Volume`:/var/lib/gitea"
     )
-    foreach ($entry in (Get-FixedEnvironment $Final)) { $args += @('-e', $entry) }
+    foreach ($entry in (Get-FixedEnvironment $Final $Port)) { $args += @('-e', $entry) }
     $args += $ImageRef
     [void](Invoke-Fixed $Podman $args)
 }
 
 function Ensure-LocalOwner([string]$Podman) {
     $users = Invoke-Fixed $Podman @('exec', $ContainerName, 'forgejo', 'admin', 'user', 'list')
-    if (($users.Output -join "`n") -match "(?m)^\s*\d+\s+$([regex]::Escape($Owner))\s") { return }
+    if (($users.Output -join "`n") -match "(?m)^\s*\d+\s+$([regex]::Escape($Owner))\s") {
+        $users = $null
+        return
+    }
     $created = Invoke-Fixed $Podman @(
         'exec', $ContainerName, 'forgejo', 'admin', 'user', 'create',
         '--username', $Owner,
         '--email', 'stephanos-shadow@invalid.local',
-        '--admin',
         '--random-password',
         '--random-password-length', '40',
         '--must-change-password=false'
     )
     if ($created.ExitCode -ne 0) { Fail 'FORGE_LOCAL_OWNER_CREATE_FAILED' }
     $created = $null
+    $users = $null
+    [GC]::Collect()
 }
 
 function Invoke-LocalMigration([string]$Podman) {
@@ -246,6 +255,12 @@ function Get-ForgeTree([string]$Root, [string]$Head) {
         $commit = Invoke-RestMethod -Method Get -Uri "$Root/repos/$Owner/$RepoName/git/commits/$Head" -TimeoutSec 10
         return ([string]$commit.tree.sha).ToLowerInvariant()
     } catch { return '' }
+}
+
+function Assert-BackupTools([string]$Podman) {
+    $fixedToolProbe = 'command -v tar >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1'
+    $probe = Invoke-Fixed $Podman @('run', '--rm', $ImageRef, 'sh', '-c', $fixedToolProbe) -AllowFailure
+    if ($probe.ExitCode -ne 0) { Fail 'FORGE_BACKUP_HELPER_TOOLS_UNAVAILABLE' }
 }
 
 function Get-VolumeDigest([string]$Podman, [string]$Volume) {
@@ -362,6 +377,7 @@ try {
         if (-not $PSCmdlet.ShouldProcess($ImageRef, 'Pull exact Forgejo OCI digest')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
         [void](Invoke-Fixed $PodmanExe @('pull', $ImageRef))
     }
+    Assert-BackupTools $PodmanExe
 
     if (-not (Get-VolumeExists $PodmanExe $DataVolume)) {
         if (-not $PSCmdlet.ShouldProcess($DataVolume, 'Create fixed Forgejo data volume')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
