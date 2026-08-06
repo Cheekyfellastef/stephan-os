@@ -73,6 +73,12 @@ function Invoke-Fixed([string]$Exe, [string[]]$Arguments, [switch]$AllowFailure)
     return [pscustomobject]@{ ExitCode = $code; Output = $output }
 }
 
+function Invoke-PodmanRemote([string]$Podman, [string[]]$Arguments, [switch]$AllowFailure) {
+    $boundArguments = @('--connection', $MachineName) + @($Arguments)
+    if ($AllowFailure) { return Invoke-Fixed $Podman $boundArguments -AllowFailure }
+    return Invoke-Fixed $Podman $boundArguments
+}
+
 function Get-PodmanExe {
     if (Test-Path -LiteralPath $PodmanUserExe -PathType Leaf) { return $PodmanUserExe }
     if (Test-Path -LiteralPath $PodmanSystemExe -PathType Leaf) { return $PodmanSystemExe }
@@ -97,12 +103,12 @@ function Wait-Forgejo([string]$Root, [int]$Attempts = 30) {
 }
 
 function Get-ContainerExists([string]$Podman, [string]$Name) {
-    $result = Invoke-Fixed $Podman @('container', 'exists', $Name) -AllowFailure
+    $result = Invoke-PodmanRemote $Podman @('container', 'exists', $Name) -AllowFailure
     return $result.ExitCode -eq 0
 }
 
 function Get-VolumeExists([string]$Podman, [string]$Name) {
-    $result = Invoke-Fixed $Podman @('volume', 'exists', $Name) -AllowFailure
+    $result = Invoke-PodmanRemote $Podman @('volume', 'exists', $Name) -AllowFailure
     return $result.ExitCode -eq 0
 }
 
@@ -118,7 +124,7 @@ function Assert-ContainerIdentity(
     [string]$ExpectedVolume = $DataVolume,
     [int]$ExpectedPort = $HostPort
 ) {
-    $inspectResult = Invoke-Fixed $Podman @('inspect', '--format', '{{json .}}', $Name)
+    $inspectResult = Invoke-PodmanRemote $Podman @('inspect', '--format', '{{json .}}', $Name)
     try { $inspect = (($inspectResult.Output -join "`n") | ConvertFrom-Json) } catch { Fail 'FORGE_CONTAINER_INSPECTION_INVALID' }
     $labels = $inspect.Config.Labels
     if ([string]$labels.'stephanos.repository' -ne $Repository) { Fail 'FORGE_CONTAINER_REPOSITORY_LABEL_MISMATCH' }
@@ -151,7 +157,7 @@ function Assert-ContainerIdentity(
     $expectedTmpfs = @('/run', '/tmp', '/var/tmp') | Sort-Object
     if (($tmpfsNames -join '|') -ne ($expectedTmpfs -join '|')) { Fail 'FORGE_CONTAINER_TMPFS_SURFACE_MISMATCH' }
 
-    $port = (Invoke-Fixed $Podman @('port', $Name, '3000/tcp')).Output -join ''
+    $port = (Invoke-PodmanRemote $Podman @('port', $Name, '3000/tcp')).Output -join ''
     if ($port.Trim() -ne "$HostAddress`:$ExpectedPort") { Fail 'FORGE_CONTAINER_PORT_BINDING_MISMATCH' }
     return [string]$labels.'stephanos.sealed'
 }
@@ -231,16 +237,16 @@ function Start-FixedContainer([string]$Podman, [bool]$Final, [string]$Name = $Co
     )
     foreach ($entry in (Get-FixedEnvironment $Final $Port)) { $args += @('-e', $entry) }
     $args += $ImageRef
-    [void](Invoke-Fixed $Podman $args)
+    [void](Invoke-PodmanRemote $Podman $args)
 }
 
 function Ensure-LocalOwner([string]$Podman) {
-    $users = Invoke-Fixed $Podman @('exec', $ContainerName, 'forgejo', 'admin', 'user', 'list')
+    $users = Invoke-PodmanRemote $Podman @('exec', $ContainerName, 'forgejo', 'admin', 'user', 'list')
     if (($users.Output -join "`n") -match "(?m)^\s*\d+\s+$([regex]::Escape($Owner))\s") {
         $users = $null
         return
     }
-    $created = Invoke-Fixed $Podman @(
+    $created = Invoke-PodmanRemote $Podman @(
         'exec', $ContainerName, 'forgejo', 'admin', 'user', 'create',
         '--username', $Owner,
         '--email', 'stephanos-shadow@invalid.local',
@@ -255,7 +261,7 @@ function Ensure-LocalOwner([string]$Podman) {
 }
 
 function Invoke-LocalMigration([string]$Podman) {
-    $tokenResult = Invoke-Fixed $Podman @(
+    $tokenResult = Invoke-PodmanRemote $Podman @(
         'exec', $ContainerName, 'forgejo', 'admin', 'user', 'generate-access-token',
         '--username', $Owner,
         '--token-name', $BootstrapTokenName,
@@ -264,23 +270,53 @@ function Invoke-LocalMigration([string]$Podman) {
     )
     $token = (($tokenResult.Output -join '').Trim())
     if ($token -notmatch '^[A-Za-z0-9._-]{20,}$') { Fail 'FORGE_BOOTSTRAP_TOKEN_INVALID' }
+
+    $migrationSucceeded = $false
+    $revocationSucceeded = $false
+    $migrationErrorType = ''
+    $revocationErrorType = ''
+    $headers = @{ Authorization = "token $token"; Accept = 'application/json' }
+    $body = @{
+        clone_addr = $RemoteUrl
+        repo_name = $RepoName
+        service = 'git'
+        mirror = $true
+        private = $false
+    } | ConvertTo-Json -Compress
     try {
-        $headers = @{ Authorization = "token $token"; Accept = 'application/json' }
-        $body = @{
-            clone_addr = $RemoteUrl
-            repo_name = $RepoName
-            service = 'git'
-            mirror = $true
-            private = $false
-        } | ConvertTo-Json -Compress
-        [void](Invoke-RestMethod -Method Post -Uri "$ApiRoot/repos/migrate" -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec 180)
-        [void](Invoke-RestMethod -Method Delete -Uri "$ApiRoot/users/$Owner/tokens/$BootstrapTokenName" -Headers $headers -TimeoutSec 20)
+        try {
+            [void](Invoke-RestMethod -Method Post -Uri "$ApiRoot/repos/migrate" -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec 180)
+            $migrationSucceeded = $true
+        } catch {
+            $migrationErrorType = $_.Exception.GetType().FullName
+        } finally {
+            try {
+                [void](Invoke-RestMethod -Method Delete -Uri "$ApiRoot/users/$Owner/tokens/$BootstrapTokenName" -Headers $headers -TimeoutSec 20)
+                $revocationSucceeded = $true
+            } catch {
+                $revocationErrorType = $_.Exception.GetType().FullName
+            }
+        }
     } finally {
         $headers = $null
         $body = $null
         $token = $null
         $tokenResult = $null
         [GC]::Collect()
+    }
+
+    if (-not $revocationSucceeded) {
+        Fail 'FORGE_BOOTSTRAP_TOKEN_REVOCATION_FAILED' @{
+            bootstrapTokenRevoked = $false
+            credentialPersisted = $true
+            errorType = $revocationErrorType
+        }
+    }
+    if (-not $migrationSucceeded) {
+        Fail 'FORGE_MIRROR_MIGRATION_FAILED' @{
+            bootstrapTokenRevoked = $true
+            errorType = $migrationErrorType
+        }
     }
 }
 
@@ -302,7 +338,7 @@ function Get-ForgeTree([string]$Root, [string]$Head) {
 
 function Assert-BackupTools([string]$Podman) {
     $fixedToolProbe = 'command -v tar >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1'
-    $probe = Invoke-Fixed $Podman @(
+    $probe = Invoke-PodmanRemote $Podman @(
         'run', '--rm', '--read-only', '--read-only-tmpfs=false', '--cap-drop', 'ALL',
         '--security-opt', 'no-new-privileges', $ImageRef, 'sh', '-c', $fixedToolProbe
     ) -AllowFailure
@@ -311,7 +347,7 @@ function Assert-BackupTools([string]$Podman) {
 
 function Get-VolumeDigest([string]$Podman, [string]$Volume) {
     $fixedHashCommand = 'cd /source && tar -cf - . | sha256sum'
-    $result = Invoke-Fixed $Podman @(
+    $result = Invoke-PodmanRemote $Podman @(
         'run', '--rm', '--user', '1000:1000', '--read-only', '--read-only-tmpfs=false',
         '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
         '-v', "$Volume`:/source:ro",
@@ -324,7 +360,7 @@ function Get-VolumeDigest([string]$Podman, [string]$Volume) {
 
 function Copy-Volume([string]$Podman, [string]$Source, [string]$Destination) {
     $fixedCopyCommand = 'cd /source && tar -cf - . | (cd /destination && tar -xf -)'
-    [void](Invoke-Fixed $Podman @(
+    [void](Invoke-PodmanRemote $Podman @(
         'run', '--rm', '--user', '1000:1000', '--read-only', '--read-only-tmpfs=false',
         '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
         '-v', "$Source`:/source:ro",
@@ -334,21 +370,21 @@ function Copy-Volume([string]$Podman, [string]$Source, [string]$Destination) {
 }
 
 function Create-And-ProveBackup([string]$Podman, [string]$Git) {
-    [void](Invoke-Fixed $Podman @('stop', '--time', '20', $ContainerName))
+    [void](Invoke-PodmanRemote $Podman @('stop', '--time', '20', $ContainerName))
     $digest = Get-VolumeDigest $Podman $DataVolume
     if ($digest -notmatch '^[0-9a-f]{64}$') { Fail 'FORGE_BACKUP_DIGEST_FAILED' }
 
     $backupName = "stephanos-forge-shadow-backup-$($digest.Substring(0, 16))"
-    $existingBackups = (Invoke-Fixed $Podman @('volume', 'ls', '--filter', 'label=stephanos.backup=forge-shadow', '--format', '{{.Name}}')).Output | Where-Object { $_ }
+    $existingBackups = (Invoke-PodmanRemote $Podman @('volume', 'ls', '--filter', 'label=stephanos.backup=forge-shadow', '--format', '{{.Name}}')).Output | Where-Object { $_ }
     if (-not (Get-VolumeExists $Podman $backupName)) {
         if (@($existingBackups).Count -ge 7) { Fail 'FORGE_BACKUP_RETENTION_CAPACITY_REACHED' }
-        [void](Invoke-Fixed $Podman @('volume', 'create', '--label', 'stephanos.backup=forge-shadow', '--label', "stephanos.backup-digest=$digest", $backupName))
+        [void](Invoke-PodmanRemote $Podman @('volume', 'create', '--label', 'stephanos.backup=forge-shadow', '--label', "stephanos.backup-digest=$digest", $backupName))
         Copy-Volume $Podman $DataVolume $backupName
     }
 
-    if (Get-ContainerExists $Podman $RestoreContainerName) { [void](Invoke-Fixed $Podman @('rm', '-f', $RestoreContainerName)) }
-    if (Get-VolumeExists $Podman $RestoreVolume) { [void](Invoke-Fixed $Podman @('volume', 'rm', '-f', $RestoreVolume)) }
-    [void](Invoke-Fixed $Podman @('volume', 'create', $RestoreVolume))
+    if (Get-ContainerExists $Podman $RestoreContainerName) { [void](Invoke-PodmanRemote $Podman @('rm', '-f', $RestoreContainerName)) }
+    if (Get-VolumeExists $Podman $RestoreVolume) { [void](Invoke-PodmanRemote $Podman @('volume', 'rm', '-f', $RestoreVolume)) }
+    [void](Invoke-PodmanRemote $Podman @('volume', 'create', $RestoreVolume))
     Copy-Volume $Podman $backupName $RestoreVolume
 
     if (-not (Test-PortFree $RestorePort)) { Fail 'FORGE_RESTORE_PROBE_PORT_NOT_AVAILABLE' }
@@ -358,9 +394,9 @@ function Create-And-ProveBackup([string]$Podman, [string]$Git) {
     [void](Assert-ContainerIdentity $Podman $RestoreContainerName $RestoreVolume $RestorePort)
     $restoreHead = Get-MirrorHead $Git $RestorePort
     if ($restoreHead -ne $ExpectedHead) { Fail 'FORGE_RESTORE_PROBE_HEAD_MISMATCH' @{ observedHead = $restoreHead } }
-    [void](Invoke-Fixed $Podman @('rm', '-f', $RestoreContainerName))
-    [void](Invoke-Fixed $Podman @('volume', 'rm', '-f', $RestoreVolume))
-    [void](Invoke-Fixed $Podman @('start', $ContainerName))
+    [void](Invoke-PodmanRemote $Podman @('rm', '-f', $RestoreContainerName))
+    [void](Invoke-PodmanRemote $Podman @('volume', 'rm', '-f', $RestoreVolume))
+    [void](Invoke-PodmanRemote $Podman @('start', $ContainerName))
     $mainVersion = Wait-Forgejo $ApiRoot
     if (-not $mainVersion) { Fail 'FORGE_POST_BACKUP_RESTART_HEALTH_FAILED' }
     [void](Assert-ContainerIdentity $Podman $ContainerName $DataVolume $HostPort)
@@ -416,22 +452,29 @@ try {
         $machine = Get-Machine $PodmanExe
     }
     if ($null -eq $machine) { Fail 'PODMAN_MACHINE_INSPECTION_FAILED' }
-    if ($machine.Rootful -eq $true) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }
-    if ($machine.State -ne 'running') {
+    if ($machine.Rootful -ne $false) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }
+    if ([string]$machine.State -ne 'running') {
         if (-not $PSCmdlet.ShouldProcess($MachineName, 'Start fixed Podman machine')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
         [void](Invoke-Fixed $PodmanExe @('machine', 'start', '--update-connection=false', $MachineName))
+        $machine = Get-Machine $PodmanExe
     }
+    if ($null -eq $machine -or $machine.Rootful -ne $false -or [string]$machine.State -ne 'running') {
+        Fail 'PODMAN_MACHINE_RUNNING_ROOTLESS_NOT_PROVED'
+    }
+    $connectionProbe = Invoke-PodmanRemote $PodmanExe @('info') -AllowFailure
+    if ($connectionProbe.ExitCode -ne 0) { Fail 'PODMAN_MACHINE_CONNECTION_UNAVAILABLE' }
+    $connectionProbe = $null
 
-    $imageExists = Invoke-Fixed $PodmanExe @('image', 'exists', $ImageRef) -AllowFailure
+    $imageExists = Invoke-PodmanRemote $PodmanExe @('image', 'exists', $ImageRef) -AllowFailure
     if ($imageExists.ExitCode -ne 0) {
         if (-not $PSCmdlet.ShouldProcess($ImageRef, 'Pull exact Forgejo OCI digest')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
-        [void](Invoke-Fixed $PodmanExe @('pull', $ImageRef))
+        [void](Invoke-PodmanRemote $PodmanExe @('pull', $ImageRef))
     }
     Assert-BackupTools $PodmanExe
 
     if (-not (Get-VolumeExists $PodmanExe $DataVolume)) {
         if (-not $PSCmdlet.ShouldProcess($DataVolume, 'Create fixed Forgejo data volume')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
-        [void](Invoke-Fixed $PodmanExe @('volume', 'create', $DataVolume))
+        [void](Invoke-PodmanRemote $PodmanExe @('volume', 'create', $DataVolume))
     }
 
     $sealed = ''
@@ -459,7 +502,7 @@ try {
 
     if ($sealed -ne 'true') {
         if (-not $PSCmdlet.ShouldProcess($ContainerName, 'Seal Forgejo read-only M2 posture')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
-        [void](Invoke-Fixed $PodmanExe @('rm', '-f', $ContainerName))
+        [void](Invoke-PodmanRemote $PodmanExe @('rm', '-f', $ContainerName))
         Start-FixedContainer $PodmanExe $true
         $sealed = Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort
         if ($sealed -ne 'true') { Fail 'FORGE_FINAL_SEAL_NOT_PROVED' }
@@ -491,6 +534,7 @@ try {
         forgejoVersion = $backup.Version
         podmanVersion = $PodmanVersion
         machine = $MachineName
+        podmanConnection = $MachineName
         container = $ContainerName
         listener = "$HostAddress`:$HostPort"
         readOnlySealed = $true
