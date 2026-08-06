@@ -34,19 +34,20 @@ jobs:
         run: |
           set -euo pipefail
           exact_main='2c9d5666839a1b31205d397baec075e4e758784d'
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/fix/windows-authority-specialist-v1)"
           test "$(git rev-parse origin/main)" = "$exact_main"
           git merge-base --is-ancestor "$exact_main" HEAD
-          actual_file="$RUNNER_TEMP/windows-specialist-actual-files.txt"
-          git diff --name-only "$exact_main" HEAD -- | sort > "$actual_file"
-          cat "$actual_file"
-          test "$(wc -l < "$actual_file" | tr -d ' ')" -eq 4
+          test -z "$(git status --porcelain)"
           for path in \
             .github/workflows/windows-authority-specialist-v1-bootstrap.yml \
             .github/workflows/windows-authority-specialist-v1-retry.yml \
             .github/workflows/windows-authority-specialist-v1-retry2.yml \
             .github/workflows/windows-authority-specialist-v1-retry3.yml; do
-            grep -Fqx -- "$path" "$actual_file"
+            test -f "$path"
           done
+          test ! -e shared/agents/windowsAuthoritySpecialistReviewV1.mjs
+          test ! -e shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs
+          test ! -e .specialist-retry-steps
 
       - name: Extract corrected constructor outside the repository
         shell: bash
