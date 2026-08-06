@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          exact_main='2709de26355c4660f2a2e94a31549f237f21fb13'
+          exact_main='b83f7df46d9d52233f0b4f5dc2e034f50c0bae93'
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/fix/windows-authority-specialist-v1)"
           test "$(git rev-parse origin/main)" = "$exact_main"
           git merge-base --is-ancestor "$exact_main" HEAD
@@ -59,9 +59,9 @@ jobs:
               'Revalidate main, commit and push normally',
           ]
           old_main = '2c9d5666839a1b31205d397baec075e4e758784d'
-          current_main = '2709de26355c4660f2a2e94a31549f237f21fb13'
+          current_main = 'b83f7df46d9d52233f0b4f5dc2e034f50c0bae93'
           old_pr_head = '208df2ca79a9067c36ceccf099e84c9db1322212'
-          current_pr_head = '30b9de7e3a0af2d49aeb5dc8c897b1c355c68f36'
+          current_pr_head = '81f01edde49ed73b60be9886c75eaddbc6101614'
 
           def extract(name: str) -> str:
               marker = f'      - name: {name}'
