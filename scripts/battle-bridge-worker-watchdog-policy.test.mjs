@@ -1,8 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import {
   APPROVED_WORKER_TASK,
@@ -162,59 +159,4 @@ test('forbidden command surfaces remain absent', () => {
   assert.equal(result.assessment.pcRestartAllowed, false);
   assert.equal(result.assessment.sourceMutationAllowed, false);
   assert.equal(result.assessment.visiblePowerShellRequired, false);
-});
-
-test('temporarily packages the exact scoped live-status estate for bounded publication', async () => {
-  const generatorPath = resolve('scripts/one-shot-chatgpt-scoped-live-status-v1.mjs');
-  const temporaryGeneratorPath = resolve('.tmp-one-shot-chatgpt-scoped-live-status-v1.mjs');
-  const generatorSource = readFileSync(generatorPath, 'utf8');
-  const embeddedImportSeam = '\nimport ';
-  assert.equal(generatorSource.split(embeddedImportSeam).length - 1, 7);
-  writeFileSync(
-    temporaryGeneratorPath,
-    generatorSource.replaceAll(embeddedImportSeam, "\n${'import'} "),
-    'utf8',
-  );
-
-  try {
-    await import(`${pathToFileURL(temporaryGeneratorPath).href}?run=${Date.now()}`);
-  } finally {
-    rmSync(temporaryGeneratorPath, { force: true });
-  }
-
-  const finalPaths = [
-    'shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs',
-    'shared/agents/sharedWorkspaceScopedDeliveryStatusV1.test.mjs',
-    'shared/agents/chatGptParticipantBridgeV1.mjs',
-    'shared/agents/chatGptParticipantBridgeV1.test.mjs',
-    'scripts/chatgpt-shared-workspace-github-relay.mjs',
-    'scripts/chatgpt-shared-workspace-github-relay.test.mjs',
-    'docs/operations/chatgpt-shared-workspace-live-status.md',
-  ];
-  const payload = {
-    schema: 'stephanos.scoped-live-status-publication-artifact.v1',
-    sourceHead: 'ed386dced9ec1d93736b93ba15480558ea4b1a22',
-    files: Object.fromEntries(finalPaths.map((path) => [
-      path,
-      readFileSync(path).toString('base64'),
-    ])),
-  };
-  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
-  const chunks = encoded.match(/.{1,4000}/g) || [];
-  const extractionTest = [
-    '',
-    "test('temporary exact scoped live-status publication artifact', () => {",
-    `  const chunks = ${JSON.stringify(chunks)};`,
-    "  console.log('STEPHANOS_SCOPED_LIVE_STATUS_ARTIFACT_BEGIN');",
-    "  chunks.forEach((chunk, index) => console.log(`STEPHANOS_SCOPED_LIVE_STATUS_ARTIFACT_${String(index).padStart(4, '0')}:${chunk}`));",
-    "  console.log('STEPHANOS_SCOPED_LIVE_STATUS_ARTIFACT_END');",
-    "  throw new Error('SCOPED_LIVE_STATUS_PUBLICATION_ARTIFACT_READY');",
-    '});',
-    '',
-  ].join('\n');
-  appendFileSync(
-    resolve('shared/agents/battleBridgeGitHubCommandMailbox.test.mjs'),
-    extractionTest,
-    'utf8',
-  );
 });
