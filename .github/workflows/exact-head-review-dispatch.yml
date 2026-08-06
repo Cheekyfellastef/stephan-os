@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: exact-head-review-dispatch-${{ github.repository }}
+  group: exact-head-review-dispatch-${{ github.repository }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'coordinator' }}
   cancel-in-progress: false
 
 jobs:
