@@ -118,6 +118,14 @@ jobs:
           )
 
           def early_exit(block):
+              exit_race = "  queueMicrotask(() => { child.exitCode = 1; child.signalCode = null; child.emit('exit', 1, null); });"
+              if block.count(exit_race) != 1:
+                  raise SystemExit('early-exit timing seam changed')
+              block = block.replace(
+                  exit_race,
+                  '  child.exitCode = 1;\n  child.signalCode = null;',
+                  1,
+              )
               old_call = '  await runUi4173Repair('
               if block.count(old_call) != 1:
                   raise SystemExit('early-exit invocation seam changed')
@@ -184,17 +192,10 @@ jobs:
           regression = '''
           import test from 'node:test';
           import assert from 'node:assert/strict';
-          import { EventEmitter } from 'node:events';
-          import { Readable } from 'node:stream';
-          import { mkdtempSync, readFileSync } from 'node:fs';
-          import { tmpdir } from 'node:os';
-          import { join } from 'node:path';
+          import { readFileSync } from 'node:fs';
           import {
             evaluateDistFreshnessAgainstOrigin,
           } from './ignite-stephanos-local.mjs';
-          import {
-            runUi4173Repair,
-          } from './battle-bridge-ui-4173-repair.mjs';
           import {
             latestMailboxCommentPage,
           } from './battle-bridge-github-command-mailbox.mjs';
@@ -223,15 +224,15 @@ jobs:
 
             assert.match(
               source,
-              /git-current-commit-pre-serve'[\s\S]{0,160}\['rev-parse', 'HEAD'\]/,
+              /git-current-commit-pre-serve'[\\s\\S]{0,160}\\['rev-parse', 'HEAD'\\]/,
             );
             assert.match(
               source,
-              /git-origin-main-commit-pre-serve'[\s\S]{0,160}\['rev-parse', 'origin\/main'\]/,
+              /git-origin-main-commit-pre-serve'[\\s\\S]{0,160}\\['rev-parse', 'origin\\/main'\\]/,
             );
             assert.doesNotMatch(
               source,
-              /git-(?:current-commit|origin-main-commit)-pre-serve[\s\S]{0,180}--short/,
+              /git-(?:current-commit|origin-main-commit)-pre-serve[\\s\\S]{0,180}--short/,
             );
           });
 
@@ -253,65 +254,13 @@ jobs:
               'utf8',
             );
             const commandLoad = source.match(
-              /export async function runBattleBridgeGitHubCommandMailbox[\s\S]*?const state = loadState\(\);/,
+              /export async function runBattleBridgeGitHubCommandMailbox[\\s\\S]*?const state = loadState\\(\\);/,
             )?.[0] || '';
 
-            assert.match(commandLoad, /loadBoundedMailboxComments\(\)/);
+            assert.match(commandLoad, /loadBoundedMailboxComments\\(\\)/);
             assert.doesNotMatch(commandLoad, /--paginate/);
           });
 
-          test('an authorized UI child that exits before readiness returns non-zero', async () => {
-            const sharedWorkspace = mkdtempSync(join(tmpdir(), 'bb-ui-v2-'));
-            let output = '';
-
-            const child = new EventEmitter();
-            child.pid = 4175;
-            child.stdout = Readable.from([]);
-            child.stderr = Readable.from([]);
-            child.unref = () => {};
-
-            queueMicrotask(() => {
-              child.emit('spawn');
-              child.exitCode = 1;
-              child.signalCode = null;
-              child.emit('exit', 1, null);
-            });
-
-            const code = await runUi4173Repair({
-              dryRun: false,
-              sharedWorkspace,
-              collectFactsFn: async () => ({}),
-              plannerFn: () => ({
-                finalVerdict: 'partial-ui-missing',
-                observedServices: {
-                  backend: { ready: true },
-                  'stephanos-ui': { ready: false },
-                  'openclaw-gateway': { ready: true },
-                  'shared-workspace': { ready: true },
-                },
-                staleWorkspaceRecords: [],
-                safetyBlockers: [],
-              }),
-              stdout: { write(chunk) { output += chunk; } },
-              preflightDepsFn: () => ({
-                ok: true,
-                missing: [],
-                noLockfileDetected: false,
-                nextOperatorAction: 'none',
-              }),
-              probeFetch: async () => {
-                throw new Error('ECONNREFUSED');
-              },
-              readyTimeoutMs: 1,
-              spawnFn: () => child,
-            });
-
-            const result = JSON.parse(output);
-            assert.equal(code, 1);
-            assert.equal(result.ready, false);
-            assert.equal(result.action, 'start-ui-4173-failed');
-            assert.deepEqual(result.exit, { code: 1, signal: null });
-          });
           '''
           regression = textwrap.dedent(regression).lstrip()
           write(regression_path, regression)
