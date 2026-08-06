@@ -9,6 +9,23 @@ function normalizedIdentity(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+const SPOTIFY_ARTWORK_HOST_SUFFIXES = Object.freeze(['scdn.co', 'spotifycdn.com']);
+
+export function normalizeCatalogArtworkUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    const trustedHost = SPOTIFY_ARTWORK_HOST_SUFFIXES.some((suffix) => (
+      host === suffix || host.endsWith(`.${suffix}`)
+    ));
+    return url.protocol === 'https:' && trustedHost ? url.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
 function catalogIdentityMatches(existing = {}, result = {}) {
   const universalId = String(result.universalId || '').trim();
   if (universalId && String(existing.universalMusicId || existing.id || '') === universalId) return true;
@@ -72,6 +89,8 @@ export function catalogResultToMusicTileTrack(result = {}) {
   const title = String(result.title || '').trim();
   const artist = String(result.artist || 'Unknown Artist').trim() || 'Unknown Artist';
   const universalId = String(result.universalId || `${provider}:track:${providerItemId}`).trim();
+  const spotify = resolveSpotifyReference(result.spotifyUrl || result.spotifyUri || '');
+  const artworkUrl = normalizeCatalogArtworkUrl(result.artworkUrl);
   return {
     id: universalId,
     universalMusicId: universalId,
@@ -87,9 +106,12 @@ export function catalogResultToMusicTileTrack(result = {}) {
     catalogConfidence: String(result.confidence || 'unknown'),
     catalogVerificationStatus: String(result.verificationStatus || 'unknown'),
     catalogPlaybackAvailability: String(result.playbackAvailability || 'unavailable'),
-    spotifyUrl: String(result.spotifyUrl || ''),
-    spotifyUri: String(result.spotifyUri || ''),
+    spotifyUrl: spotify.valid && spotify.type === 'track' ? spotify.openUrl : '',
+    spotifyUri: spotify.valid && spotify.type === 'track' ? spotify.uri : '',
     spotifySearchUrl: String(result.spotifySearchUrl || ''),
+    artworkUrl,
+    artworkSource: artworkUrl ? 'spotify-catalogue' : '',
+    catalogLinkSource: spotify.valid && spotify.type === 'track' ? 'native-catalog-search' : '',
     candidateVerificationStatus: 'search-only',
     verificationStatus: 'catalogue_identity_only',
     discoveryReason: `Found by native Music Search through ${String(result.providerLabel || provider || 'catalogue')}.`,
@@ -121,7 +143,7 @@ export function planCatalogResultEnrichment(existing, result = {}) {
     return { ok: false, changed: false, reason: 'spotify-track-conflict' };
   }
 
-  const enrichment = Object.freeze({
+  const enrichment = {
     spotifyUrl: incomingSpotify.openUrl,
     spotifyUri: incomingSpotify.uri,
     catalogProvider: catalogTrack.catalogProvider,
@@ -132,7 +154,12 @@ export function planCatalogResultEnrichment(existing, result = {}) {
     catalogVerificationStatus: catalogTrack.catalogVerificationStatus,
     catalogPlaybackAvailability: catalogTrack.catalogPlaybackAvailability,
     catalogLinkSource: 'native-catalog-search',
-  });
+  };
+  if (catalogTrack.artworkUrl) {
+    enrichment.artworkUrl = catalogTrack.artworkUrl;
+    enrichment.artworkSource = 'spotify-catalogue';
+  }
+  Object.freeze(enrichment);
   const changed = Object.entries(enrichment)
     .some(([key, value]) => String(existing[key] ?? '') !== String(value ?? ''));
   return { ok: true, changed, spotify: incomingSpotify, enrichment };
