@@ -16,12 +16,14 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   '.github/workflows/stephanos-deploy.yml',
   'scripts/operator-protected-merge-gate-v2.mjs',
   'scripts/independent-merge-security-review-v2.mjs',
+  'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
   'shared/agents/operatorMergeApprovalGate.mjs',
   'shared/agents/operatorMergeApprovalGateV2.mjs',
   'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
   'shared/agents/operatorMergeBaseBindingV1.mjs',
   'shared/agents/operatorMergeReviewArtifactV1.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
+  'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
 ]);
 
 const OPERATOR_EXECUTOR_PATHS = Object.freeze([
@@ -30,10 +32,15 @@ const OPERATOR_EXECUTOR_PATHS = Object.freeze([
 
 const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
   'scripts/independent-merge-security-review-v2.mjs',
+  'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
 ]);
 
 const BASE_BINDING_PATHS = Object.freeze([
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+]);
+
+const SPECIALIST_POLICY_PATHS = Object.freeze([
+  'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
 ]);
 
 function text(value) {
@@ -140,6 +147,18 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
       findings.push(finding(
         'base-binding-module-gained-command-authority',
         'The exact-base binding module must remain a pure validation and receipt-binding surface.',
+        path,
+      ));
+    }
+  }
+
+  for (const path of SPECIALIST_POLICY_PATHS.filter((item) => changedFiles.includes(item))) {
+    const patch = diffForPath(diff, path);
+    const additions = addedLines(patch);
+    if (/node:(?:child_process|fs)|\b(?:spawnSync|execSync|eval)\s*\(|shell\s*:\s*true|\bfetch\s*\(|\bgh\s+pr\s+(?:ready|merge)\b|git\s+(?:push|reset|clean|rebase)/.test(additions)) {
+      findings.push(finding(
+        'windows-specialist-policy-gained-command-or-io-authority',
+        'The Windows specialist policy must remain a pure exact-source analyzer without command, filesystem, network or merge authority.',
         path,
       ));
     }
