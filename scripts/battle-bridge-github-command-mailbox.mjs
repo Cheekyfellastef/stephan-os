@@ -569,6 +569,33 @@ function ghJson(args) {
   return parseBoundedGitHubJson(result.stdout);
 }
 
+
+export function latestMailboxCommentPage(commentCount, perPage = 100) {
+  const count = Number(commentCount);
+  const pageSize = Number(perPage);
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new Error('MAILBOX_COMMENT_PAGE_SIZE_INVALID');
+  }
+  const boundedCount = Number.isSafeInteger(count) && count >= 0 ? count : 0;
+  return Math.max(1, Math.ceil(boundedCount / pageSize));
+}
+
+function loadBoundedMailboxComments() {
+  const issue = ghJson([
+    'api',
+    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}`,
+  ]);
+  const page = latestMailboxCommentPage(issue?.comments, 100);
+  const comments = ghJson([
+    'api',
+    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments?per_page=100&page=${page}`,
+  ]);
+  if (!Array.isArray(comments)) {
+    throw new Error('MAILBOX_COMMENT_PAGE_INVALID');
+  }
+  return comments;
+}
+
 function postReceipt(receipt) {
   const body = [
     '<!-- stephanos-battle-bridge-command-receipt -->',
@@ -897,7 +924,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
     return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
   }
-  const comments = ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments`, '--paginate']);
+  const comments = loadBoundedMailboxComments();
   const state = loadState();
   const selected = selectNextBattleBridgeGitHubCommand(comments, {
     consumedRequestIds: new Set(state.consumedRequestIds || []),

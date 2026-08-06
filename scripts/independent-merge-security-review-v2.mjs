@@ -23,6 +23,7 @@ import {
   buildIndependentReviewArtifact,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import { resolve } from 'node:path';
+import { adjudicateQualifiedSpecialistReview } from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
 import { TextDecoder } from 'node:util';
 
 const API_VERSION = '2022-11-28';
@@ -321,7 +322,7 @@ async function main() {
     throw new Error(`Required workflow identity binding failed: ${workflowIdentityBinding.blockers.join(', ')}`);
   }
 
-  const [{ verdict: workflowVerdict }, files, diff, threads] = await Promise.all([
+  const [{ verdict: workflowVerdict }, files, diff, threads, reviews] = await Promise.all([
     waitForExactHeadWorkflows(
       owner,
       repo,
@@ -336,6 +337,7 @@ async function main() {
     githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/files`),
     githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { accept: 'application/vnd.github.v3.diff' }),
     unresolvedThreadCount(owner, repo, prNumber),
+    githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
   ]);
   if (!workflowVerdict.valid) throw new Error('Exact-head workflows are not green.');
   if (threads !== 0) throw new Error(`Independent review blocked by ${threads} unresolved review thread(s).`);
@@ -346,7 +348,7 @@ async function main() {
     protectedWorkflowSourceAtHead(owner, repo, repository, path, sourceHead)
   )));
 
-  const analysis = analyzeIndependentSecurityReview({
+  const deterministicAnalysis = analyzeIndependentSecurityReview({
     repository,
     sourceHead,
     changedFiles: files,
@@ -354,6 +356,20 @@ async function main() {
     protectedWorkflowSources,
     requireReviewerFilesInDiff: false,
   });
+  const specialist = adjudicateQualifiedSpecialistReview({
+    analysis: deterministicAnalysis,
+    reviews,
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+  });
+  const analysis = specialist.required && specialist.valid
+    ? specialist.analysis
+    : deterministicAnalysis;
+  console.log(`SPECIALIST_REVIEW_DECISION=${specialist.required ? (specialist.valid ? 'SEALED' : 'REQUIRED') : 'NOT_REQUIRED'}`);
+  console.log(`SPECIALIST_REVIEW_ID=${specialist.reviewId || ''}`);
 
   const bootstrapRequired = isApprovalBoundaryBootstrapAnalysis(analysis);
   const finalPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
