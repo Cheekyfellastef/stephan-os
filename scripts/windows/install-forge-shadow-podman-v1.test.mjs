@@ -61,6 +61,25 @@ test('Forgejo is current-LTS digest pinned and exposes only loopback HTTP with n
   lacks('podman.sock');
 });
 
+test('service container root filesystem and privilege posture are explicitly sealed', () => {
+  has("'--read-only'");
+  has("'--read-only-tmpfs=false'");
+  has("'--cap-drop', 'ALL'");
+  has("'--security-opt', 'no-new-privileges'");
+  has("'--pids-limit', '512'");
+  has("'--memory', '2g'");
+  has("'--cpus', '2'");
+  has("'--tmpfs', '/run:rw,nosuid,nodev,noexec,size=16m'");
+  has("'--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=64m'");
+  has("'--tmpfs', '/var/tmp:rw,nosuid,nodev,noexec,size=32m'");
+  has("if ($inspect.HostConfig.ReadonlyRootfs -ne $true) { Fail 'FORGE_CONTAINER_ROOTFS_NOT_READ_ONLY' }");
+  has("if ($capDrop -notcontains 'ALL') { Fail 'FORGE_CONTAINER_CAPABILITIES_NOT_DROPPED' }");
+  has("if ($securityOptions -notcontains 'no-new-privileges') { Fail 'FORGE_CONTAINER_NO_NEW_PRIVILEGES_NOT_PROVED' }");
+  has("if ($dataMounts.Count -ne 1) { Fail 'FORGE_CONTAINER_DATA_VOLUME_MISMATCH' }");
+  has("if ($unexpectedMounts.Count -ne 0) { Fail 'FORGE_CONTAINER_UNEXPECTED_WRITABLE_SURFACE' }");
+  has("if (($tmpfsNames -join '|') -ne ($expectedTmpfs -join '|')) { Fail 'FORGE_CONTAINER_TMPFS_SURFACE_MISMATCH' }");
+});
+
 test('bootstrap is closed to signup org creation extra repos forks hooks and unsafe migrations', () => {
   has("'FORGEJO__service__DISABLE_REGISTRATION=true'");
   has("'FORGEJO__service__DEFAULT_ALLOW_CREATE_ORGANIZATION=false'");
@@ -127,19 +146,23 @@ test('mirror creation is exactly the canonical public unauthenticated repository
   lacks('github.com/login');
 });
 
-test('existing runtime identity is rebound to exact repository head digest labels and fixed port', () => {
+test('existing runtime identity is rebound to exact repository head digest labels fixed port and privilege proof', () => {
   has("'stephanos.repository'");
   has("'stephanos.main-head'");
   has("'stephanos.image-digest'");
   has("Fail 'FORGE_CONTAINER_REPOSITORY_LABEL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_HEAD_LABEL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_DIGEST_LABEL_MISMATCH'");
+  has("Fail 'FORGE_CONTAINER_USER_NOT_ROOTLESS'");
   has("Fail 'FORGE_CONTAINER_PORT_BINDING_MISMATCH'");
+  has('Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort');
 });
 
-test('backup helper tools are proved before any content hashing or copy', () => {
+test('backup helpers inherit the same read-only no-capability no-new-privilege posture', () => {
   has("$fixedToolProbe = 'command -v tar >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1'");
   has("Fail 'FORGE_BACKUP_HELPER_TOOLS_UNAVAILABLE'");
+  has("'run', '--rm', '--read-only', '--read-only-tmpfs=false', '--cap-drop', 'ALL'");
+  has("'--security-opt', 'no-new-privileges'");
   has('Assert-BackupTools $PodmanExe');
 });
 
@@ -151,18 +174,24 @@ test('backup is content hashed bounded and proved by a real restored service and
   has("$RestoreContainerName = 'stephanos-forge-shadow-restore-probe'");
   has('$RestorePort = 3341');
   has('Get-FixedEnvironment $Final $Port');
+  has('Assert-ContainerIdentity $Podman $RestoreContainerName $RestoreVolume $RestorePort');
   has("Fail 'FORGE_RESTORE_PROBE_HEALTH_FAILED'");
   has("Fail 'FORGE_RESTORE_PROBE_HEAD_MISMATCH'");
   has('restoreDrillPassed = $true');
 });
 
-test('M2 ready requires exact object and tree parity and emits no mutation authority', () => {
+test('M2 ready requires exact object tree and privilege proofs and emits no mutation authority', () => {
   has("$localTree = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'rev-parse', \"$ExpectedHead^{tree}\"))");
   has("$forgeTree = Get-ForgeTree $ApiRoot $ExpectedHead");
   has("Fail 'FORGE_TREE_PARITY_MISMATCH'");
   has("status = 'FORGE_SHADOW_M2_READY'");
   has('exactObjectParity = $true');
   has('exactTreeParity = $true');
+  has('rootFilesystemReadOnly = $true');
+  has('allCapabilitiesDropped = $true');
+  has('noNewPrivileges = $true');
+  has("persistentWritableSurface = '/var/lib/gitea'");
+  has("boundedEphemeralWritableSurfaces = @('/run', '/tmp', '/var/tmp')");
   has('readyForM3 = $true');
   has('runnerRegistration = $false');
   has('actionsExecution = $false');
