@@ -118,14 +118,21 @@ async function loadCanonicalWorkflow(owner, repo) {
   };
 }
 
-async function loadRecentReviewRuns(owner, repo, workflowId, prNumber) {
-  const listed = await githubPages(
-    `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=pull_request_target`,
-    'workflow_runs',
-  );
+async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, expectedHead) {
+  const encodedHead = encodeURIComponent(expectedHead);
+  const path = `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=pull_request_target&head_sha=${encodedHead}&per_page=100&page=1`;
+  const payload = await githubRequest(path);
+  const listed = payload?.workflow_runs;
+  if (!Array.isArray(listed)) {
+    throw new Error('bounded exact-head review-run payload is not workflow_runs');
+  }
+  if (positiveInteger(payload?.total_count) > listed.length) {
+    throw new Error('bounded exact-head review-run query exceeded 100 records');
+  }
   const candidates = listed
     .filter((run) => (
-      Array.isArray(run?.pull_requests)
+      text(run?.head_sha).toLowerCase() === expectedHead
+      && Array.isArray(run?.pull_requests)
       && run.pull_requests.some((pr) => positiveInteger(pr?.number) === prNumber)
     ))
     .sort((left, right) => positiveInteger(right?.id) - positiveInteger(left?.id))
@@ -172,7 +179,7 @@ async function main() {
     throw new Error('pull-request base is not exact current main');
   }
 
-  const runs = await loadRecentReviewRuns(owner, repo, workflow.id, prNumber);
+  const runs = await loadRecentReviewRuns(owner, repo, workflow.id, prNumber, expectedHead);
   const plan = planIndependentReviewRetry({ repository, workflow, pr, runs });
   console.log(`INDEPENDENT_REVIEW_RETRY_DECISION=${plan.decision}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_PR=${plan.prNumber ?? ''}`);
