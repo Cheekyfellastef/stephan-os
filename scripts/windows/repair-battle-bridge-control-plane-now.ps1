@@ -137,7 +137,7 @@ if (-not $PSCmdlet.ShouldProcess($repoRoot, 'Start the three existing reviewed B
         sourceMutationPerformedByRescue = $false
         sourceConvergenceDelegatedToExistingReviewedSync = $true
         tailscaleCredentialRequired = $false
-        finalVerdict = 'BATTLE_BRIDGE_NO_FAF_RESCUE_PLAN_READY'
+        finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_PLAN_READY'
     } | ConvertTo-Json -Depth 6
     return
 }
@@ -216,7 +216,7 @@ $success = [ordered]@{
     tailscaleCredentialRequired = $false
     forgeMutationPerformed = $false
     completedAt = (Get-Date).ToUniversalTime().ToString('o')
-    finalVerdict = 'BATTLE_BRIDGE_NO_FAF_RESCUE_READY'
+    finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_READY'
 }
 Write-BoundedReceipt -Receipt $success -Path $script:receiptPath
 $success | ConvertTo-Json -Depth 10
