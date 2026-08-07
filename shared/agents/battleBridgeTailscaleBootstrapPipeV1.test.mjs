@@ -74,7 +74,7 @@ test('fixed remote PowerShell only bootstraps canonical GitHub Sync and proves e
   assert.match(source, /status-battle-bridge-github-sync\.ps1/);
   assert.match(source, /Stephanos Battle Bridge GitHub Sync/);
   assert.match(source, /-StartNow/);
-  assert.match(source, /C:\\\\Program Files\\\\Git\\\\cmd\\\\git\.exe/);
+  assert.ok(source.includes(String.raw`C:\Program Files\Git\cmd\git.exe`));
   assert.match(source, new RegExp(HEAD));
   assert.match(source, /BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY/);
   assert.doesNotMatch(source, /reset --hard|git clean|git stash|git rebase|git push|Restart-Computer|Stop-Computer|Invoke-Expression/i);
