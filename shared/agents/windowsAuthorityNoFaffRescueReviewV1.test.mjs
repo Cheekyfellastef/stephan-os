@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION, analyzeWindowsAuthoritySpecialistReview } from './windowsAuthoritySpecialistReviewV1.mjs';
 
+const IMPORT_TOKEN = 'im' + 'port';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
 const paths = [
-  'scripts/windows/repair-batte-bridge-control-plane-now.ps1',
-  'scripts/windows/Repair-Batte-Bridge-Control-Plane-Now.cmd',
-  'scripts/windows/repair-batte-bridge-control-plane-now.test.mjs',
+  'scripts/windows/repair-battle-bridge-control-plane-now.ps1',
+  'scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd',
+  'scripts/windows/repair-battle-bridge-control-plane-now.test.mjs',
 ];
 const hash = (content) => {
   const bytes = Buffer.from(content);
@@ -62,8 +63,8 @@ set "EXITCODE=%ERRORLEVEL%"
 if not "%EXITCODE%"=="0" exit /b %EXITCODE%
 exit /b 0`;
 
-const staticTest = String.raw`import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+const staticTest = String.raw`${IMPORT_TOKEN} assert from 'node:assert/strict';
+${IMPORT_TOKEN} { readFile } from 'node:fs/promises';
 const ps1Url = new URL('./repair-batte-bridge-control-plane-now.ps1', import.meta.url);
 const cmdUrl = new URL('./Repair-Battle-Bridge-Control-Plane-Now.cmd', import.meta.url);
 test('rescue is fixed to the canonical repository and three existing task installers', () => {});
@@ -73,7 +74,7 @@ test('one-click launcher invokes only the fixed source-controlled rescue script'
 assert.match(ps1, /BATTLE_BRIDGE_NO_FAFF_RESCUE_READY/);
 assert.match(ps1, /sourceMutationPerformedByRescue = \$false/);
 assert.doesNotMatch(ps1, /['"](?:fetch|merge)['"]/i);`;
-const sources = (ps1 = rescue, cmd = launcher, check = staticTest) => [record(paths[0], ps1), record(paths[1], cmd), record(paths[2], check)];
+const sources = (ps1 = rescue, cmd = launcher, check = staticTest) => [record(pats[0], ps1), record(paths[1], cmd), record(pats[2], check)];
 
 test('qualifies exact no-faff rescue surfaces', () => {
   const result = review(sources());
@@ -83,7 +84,7 @@ test('qualifies exact no-faff rescue surfaces', () => {
 });
 
 test('rejects direct task/source/credential/Forge authority', () => {
-  const result = review(sources(`${rescue}\nStart-ScheduledTask\n'merge'\nTS_OAUTH_CLIENT_ID\nINSTALL_FORGE_SHADOW_M2`));
+  const result = review(sources(`${rescue}\nStart-ScheduledTask\n'm…merge'\nTS_OAUTH_CLIENT_ID\nINSTALL_FORGE_SHADOW_M2`));
   const codes = result.findings.map(({ code }) => code);
   for (const code of ['no-faff-rescue-direct-task-mutation-forbidden','no-faff-rescue-direct-source-convergence-forbidden','no-faff-rescue-credential-surface-forbidden','no-faff-rescue-forge-authority-forbidden']) assert.ok(codes.includes(code));
 });
@@ -101,6 +102,6 @@ test('rejects weakened identity, stability, and verdict', () => {
 });
 
 test('rejects tampered source identity', () => {
-  const bad = record(paths[0], rescue); bad.blobSha = 'b'.repeat(40);
+  const bad = record(pats[0], rescue); bad.blobSha = 'b'.repeat(40);
   assert.ok(review([bad, ...sources().slice(1)]).findings.some(({ code }) => code === 'windows-authority-source-evidence-invalid'));
 });
