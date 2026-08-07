@@ -14,8 +14,10 @@ import {
 } from './forgeShadowBattleBridgeAdapterV1.mjs';
 
 const HEAD = 'a'.repeat(40);
+const TREE = 'c'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
 const INSTALLER_BLOB = 'e'.repeat(40);
+const BACKUP_DIGEST = `deadbeefdeadbeef${'d'.repeat(48)}`;
 const INSTALLER_PATH = 'scripts/windows/install-forge-shadow-podman-v1.ps1';
 
 function command(overrides = {}) {
@@ -44,12 +46,16 @@ function readyReceipt(overrides = {}) {
     status: 'FORGE_SHADOW_M2_READY',
     repository: 'Cheekyfellastef/stephan-os',
     expectedHead: HEAD,
+    canonicalTree: TREE,
     imageDigest: DIGEST,
     forgejoVersion: '15.0.6',
     podmanVersion: '6.0.2',
+    machine: 'stephanos-forge-shadow',
+    podmanConnection: 'stephanos-forge-shadow',
+    container: 'stephanos-forge-shadow',
     listener: '127.0.0.1:3340',
     mirrorHead: HEAD,
-    mirrorTree: 'c'.repeat(40),
+    mirrorTree: TREE,
     exactObjectParity: true,
     exactTreeParity: true,
     readOnlySealed: true,
@@ -63,7 +69,7 @@ function readyReceipt(overrides = {}) {
     bootstrapTokenRevoked: true,
     credentialPersisted: false,
     credentialLogged: false,
-    backupDigest: 'd'.repeat(64),
+    backupDigest: BACKUP_DIGEST,
     backupVolume: 'stephanos-forge-shadow-backup-deadbeefdeadbeef',
     restoreDrillPassed: true,
     arbitraryShellAllowed: false,
@@ -85,9 +91,10 @@ function createFixtureRoot(prefix = 'forge-shadow-adapter-') {
   return root;
 }
 
-function fixedSourceRead(args, { head = HEAD, workingBlob = INSTALLER_BLOB } = {}) {
+function fixedSourceRead(args, { head = HEAD, tree = TREE, workingBlob = INSTALLER_BLOB } = {}) {
   if (args[0] === 'branch') return { status: 0, stdout: 'main\n', stderr: '' };
   if (args[0] === 'rev-parse' && args[1] === 'HEAD') return { status: 0, stdout: `${head}\n`, stderr: '' };
+  if (args[0] === 'rev-parse' && args[1] === `${HEAD}^{tree}`) return { status: 0, stdout: `${tree}\n`, stderr: '' };
   if (args[0] === 'rev-parse' && args[1] === `${HEAD}:${INSTALLER_PATH}`) {
     return { status: 0, stdout: `${INSTALLER_BLOB}\n`, stderr: '' };
   }
@@ -150,10 +157,11 @@ test('executor is Windows-only and requires fixed local source', async () => {
   assert.equal(missing.blocker, 'FORGE_SHADOW_LOCAL_SOURCE_MISSING');
 });
 
-test('executor rebinds exact main head and installer blob before and after execution', async () => {
+test('executor rebinds exact main head, tree and installer blob before and after execution', async () => {
   const root = createFixtureRoot();
   const calls = [];
   let headReads = 0;
+  let treeReads = 0;
   let blobReads = 0;
   const result = await executeForgeShadowM2OnBattleBridge(command(), {
     platform: 'win32',
@@ -163,6 +171,7 @@ test('executor rebinds exact main head and installer blob before and after execu
       const fixed = fixedSourceRead(args);
       if (fixed) {
         if (args[0] === 'rev-parse' && args[1] === 'HEAD') headReads += 1;
+        if (args[0] === 'rev-parse' && args[1] === `${HEAD}^{tree}`) treeReads += 1;
         if (args[0] === 'hash-object') blobReads += 1;
         return fixed;
       }
@@ -174,8 +183,10 @@ test('executor rebinds exact main head and installer blob before and after execu
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'FORGE_SHADOW_M2_READY');
   assert.equal(result.readyForM3, true);
+  assert.equal(result.canonicalTree, TREE);
   assert.equal(result.installerBlob, INSTALLER_BLOB);
   assert.equal(headReads, 2);
+  assert.equal(treeReads, 2);
   assert.equal(blobReads, 2);
   const hashCall = calls.find((call) => call.args[0] === 'hash-object');
   assert.ok(hashCall.args.includes(`--path=${INSTALLER_PATH}`));
@@ -197,7 +208,7 @@ test('pre-install source head movement blocks before PowerShell is called', asyn
     repositoryRoot: root,
     runCommand(_executable, args) {
       if (args.includes('-File')) powershellCalled = true;
-      const fixed = fixedSourceRead(args, { head: 'c'.repeat(40) });
+      const fixed = fixedSourceRead(args, { head: 'f'.repeat(40) });
       return fixed || { status: 1, stdout: '', stderr: '' };
     },
   });
@@ -233,8 +244,13 @@ test('installer failure or malformed runtime identity is not promoted to M2 read
     { status: 0, stdout: JSON.stringify(readyReceipt({ githubCredentialUsed: true })), stderr: '' },
     { status: 0, stdout: JSON.stringify(readyReceipt({ podmanVersion: '6.0.1' })), stderr: '' },
     { status: 0, stdout: JSON.stringify(readyReceipt({ listener: '0.0.0.0:3340' })), stderr: '' },
-    { status: 0, stdout: JSON.stringify(readyReceipt({ mirrorHead: 'c'.repeat(40) })), stderr: '' },
-    { status: 0, stdout: JSON.stringify(readyReceipt({ mirrorTree: 'short' })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ machine: 'default' })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ podmanConnection: 'default' })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ container: 'other' })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ mirrorHead: 'f'.repeat(40) })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ canonicalTree: 'f'.repeat(40) })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ mirrorTree: 'f'.repeat(40) })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ backupDigest: 'f'.repeat(64) })), stderr: '' },
     { status: 0, stdout: JSON.stringify(readyReceipt({ backupVolume: '../unsafe' })), stderr: '' },
   ]) {
     const result = await executeForgeShadowM2OnBattleBridge(command(), {
@@ -251,16 +267,16 @@ test('installer failure or malformed runtime identity is not promoted to M2 read
   }
 });
 
-test('post-install installer or source drift invalidates an otherwise ready receipt', async () => {
+test('post-install installer or exact tree drift invalidates an otherwise ready receipt', async () => {
   const root = createFixtureRoot('forge-shadow-adapter-post-drift-');
-  let hashReads = 0;
+  let treeReads = 0;
   const result = await executeForgeShadowM2OnBattleBridge(command(), {
     platform: 'win32',
     repositoryRoot: root,
     runCommand(_executable, args) {
-      if (args[0] === 'hash-object') {
-        hashReads += 1;
-        return { status: 0, stdout: `${hashReads === 1 ? INSTALLER_BLOB : 'f'.repeat(40)}\n`, stderr: '' };
+      if (args[0] === 'rev-parse' && args[1] === `${HEAD}^{tree}`) {
+        treeReads += 1;
+        return { status: 0, stdout: `${treeReads === 1 ? TREE : 'f'.repeat(40)}\n`, stderr: '' };
       }
       const fixed = fixedSourceRead(args);
       if (fixed) return fixed;
@@ -272,7 +288,7 @@ test('post-install installer or source drift invalidates an otherwise ready rece
   assert.equal(result.blocker, 'FORGE_SHADOW_POST_INSTALL_SOURCE_IDENTITY_CHANGED');
 });
 
-test('success result is sanitized and contains no token or arbitrary authority', async () => {
+test('success result is sanitized and contains exact proof identity but no token or arbitrary authority', async () => {
   const root = createFixtureRoot('forge-shadow-adapter-safe-');
   const result = await executeForgeShadowM2OnBattleBridge(command(), {
     platform: 'win32',
@@ -284,6 +300,12 @@ test('success result is sanitized and contains no token or arbitrary authority',
     },
   });
   const serialized = JSON.stringify(result);
+  assert.equal(result.canonicalTree, TREE);
+  assert.equal(result.machine, 'stephanos-forge-shadow');
+  assert.equal(result.podmanConnection, 'stephanos-forge-shadow');
+  assert.equal(result.container, 'stephanos-forge-shadow');
+  assert.equal(result.backupDigest, BACKUP_DIGEST);
+  assert.equal(result.backupVolume, 'stephanos-forge-shadow-backup-deadbeefdeadbeef');
   assert.equal(result.githubCredentialUsed, false);
   assert.equal(result.credentialPersisted, false);
   assert.equal(result.credentialLogged, false);
