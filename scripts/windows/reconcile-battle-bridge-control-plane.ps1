@@ -16,9 +16,11 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) {
 
 $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 if (-not (Test-Path -LiteralPath $gitExe -PathType Leaf)) { throw 'CONTROL_PLANE_CANONICAL_GIT_MISSING' }
-$branch = ((& $gitExe -C $repoRoot branch --show-current 2>$null | Select-Object -First 1) -as [string]).Trim()
+$branchRaw = & $gitExe -C $repoRoot branch --show-current 2>$null | Select-Object -First 1
+$branch = ([string]$branchRaw).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { throw 'CONTROL_PLANE_SOURCE_BRANCH_NOT_MAIN' }
-$sourceHead = ((& $gitExe -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1) -as [string]).Trim().ToLowerInvariant()
+$sourceHeadRaw = & $gitExe -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
+$sourceHead = ([string]$sourceHeadRaw).Trim().ToLowerInvariant()
 if ($LASTEXITCODE -ne 0 -or $sourceHead -notmatch '^[0-9a-f]{40}$') { throw 'CONTROL_PLANE_SOURCE_HEAD_INVALID' }
 $trackedStatus = @(& $gitExe -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
 if ($LASTEXITCODE -ne 0) { throw 'CONTROL_PLANE_TRACKED_SOURCE_STATUS_FAILED' }
