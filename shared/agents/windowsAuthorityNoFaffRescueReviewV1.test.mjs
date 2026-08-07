@@ -140,7 +140,7 @@ test('rejects direct task/source/credential/Forge authority', () => {
 test('rejects dynamic launcher and executable regression', () => {
   const result = review(sources(
     rescue,
-    launcher.replace('-File "%SCRIPT%"', '-Command "%SCRIPT% *"'),
+    launcher.replace('-File "%SCRIPT%"', '-Command "%SCRIPT% %*"'),
     `${staticTest}\nimport 'node:child_process';`,
   ));
   const codes = result.findings.map(({ code }) => code);
