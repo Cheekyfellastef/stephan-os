@@ -2,41 +2,138 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const reconcileUrl = new URL('./windows/reconcile-battle-bridge-control-plane.ps1', import.meta.url);
-const syncLauncherUrl = new URL('./windows/run-battle-bridge-github-sync-hidden.ps1', import.meta.url);
+import {
+  BATTLE_BRIDGE_CONTROL_PLANE_TASKS,
+  reconcileBattleBridgeControlPlane,
+} from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 
-test('control-plane reconciler is fixed to exactly the canonical recovery mesh and mailbox tasks', async () => {
-  const source = await readFile(reconcileUrl, 'utf8');
-  const taskNames = [...source.matchAll(/Name = '([^']+)'/g)].map((match) => match[1]);
-  assert.deepEqual(taskNames, [
-    'Stephanos Battle Bridge Recovery Mesh',
-    'Stephanos Battle Bridge GitHub Command Mailbox',
+const HEAD = 'a'.repeat(40);
+
+function recoveryReceipt() {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-recovery-mesh-install.v1',
+    taskName: 'Stephanos Battle Bridge Recovery Mesh',
+    installed: true,
+    startedNow: true,
+    taskPresentAfter: true,
+    whatIf: false,
+    intervalMinutes: 1,
+    atLogon: true,
+    hidden: true,
+    runLevel: 'Limited',
+    multipleInstances: 'IgnoreNew',
+    maximumConcurrentExecutors: 1,
+    arbitraryShellAllowed: false,
+    arbitraryTaskNameAllowed: false,
+    sourceMutationAllowed: false,
+    pcRestartAllowed: false,
+    visiblePowerShellRequired: false,
+  };
+}
+
+function mailboxReceipt() {
+  return {
+    taskName: 'Stephanos Battle Bridge GitHub Command Mailbox',
+    installed: true,
+    receiptIndexEnabled: true,
+    intervalMinutes: 5,
+    atLogon: true,
+    hidden: true,
+    runLevel: 'Limited',
+    startedNow: true,
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    liveOpenClawUpdateAllowed: false,
+    headlessLauncher: true,
+  };
+}
+
+function scriptedSpawn({ head = HEAD, status = '', recovery = recoveryReceipt(), mailbox = mailboxReceipt() } = {}) {
+  const calls = [];
+  const spawn = (command, args, options) => {
+    calls.push({ command, args: [...args], options: { ...options } });
+    if (args.includes('branch') && args.includes('--show-current')) return { status: 0, stdout: 'main\n', stderr: '' };
+    if (args.includes('rev-parse') && args.includes('HEAD')) return { status: 0, stdout: `${head}\n`, stderr: '' };
+    if (args.includes('status') && args.includes('--porcelain=v1')) return { status: 0, stdout: status, stderr: '' };
+    if (args.includes('install-battle-bridge-recovery-mesh.ps1')) return { status: 0, stdout: `${JSON.stringify(recovery)}\n`, stderr: '' };
+    if (args.includes('install-battle-bridge-github-command-mailbox.ps1')) return { status: 0, stdout: `${JSON.stringify(mailbox)}\n`, stderr: '' };
+    throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
+  };
+  spawn.calls = calls;
+  return spawn;
+}
+
+test('control-plane repair is fixed to exactly the existing recovery mesh and mailbox installers', () => {
+  assert.deepEqual(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map(({ id, taskName, installerRelativePath }) => ({ id, taskName, installerRelativePath })), [
+    {
+      id: 'recoveryMesh',
+      taskName: 'Stephanos Battle Bridge Recovery Mesh',
+      installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
+    },
+    {
+      id: 'githubCommandMailbox',
+      taskName: 'Stephanos Battle Bridge GitHub Command Mailbox',
+      installerRelativePath: 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
+    },
   ]);
-  assert.match(source, /LauncherId = 'recovery-mesh'/);
-  assert.match(source, /LauncherId = 'github-command-mailbox'/);
-  assert.match(source, /install-battle-bridge-recovery-mesh\.ps1/);
-  assert.match(source, /install-battle-bridge-github-command-mailbox\.ps1/);
-  assert.match(source, /-StartNow/);
-  assert.match(source, /arbitraryTaskNameAllowed = \$false/);
-  assert.match(source, /arbitraryExecutableAllowed = \$false/);
-  assert.match(source, /arbitraryShellAllowed = \$false/);
-  assert.match(source, /sourceMutationAllowed = \$false/);
-  assert.match(source, /gitMutationAllowed = \$false/);
-  assert.match(source, /pcRestartAllowed = \$false/);
-  assert.doesNotMatch(source, /param\([^)]*TaskName|param\([^)]*Executable|param\([^)]*Command|param\([^)]*Path/i);
-  assert.doesNotMatch(source, /Invoke-Expression|Start-Process|cmd\.exe|reset --hard|git clean|git stash|git checkout|git push|Restart-Computer/i);
 });
 
-test('unattended sync repairs the control plane only after canonical source sync succeeds', async () => {
-  const source = await readFile(syncLauncherUrl, 'utf8');
-  const syncCall = source.indexOf('& $nodeCommand.Source $coordinatorPath');
-  const syncGuard = source.indexOf('if ($syncExitCode -ne 0) { exit $syncExitCode }');
-  const reconcileResolve = source.indexOf('reconcile-battle-bridge-control-plane.ps1');
-  const reconcileCall = source.indexOf('-File $reconcilePath');
-  assert.ok(syncCall >= 0);
-  assert.ok(syncGuard > syncCall);
-  assert.ok(reconcileResolve > syncGuard);
-  assert.ok(reconcileCall > reconcileResolve);
-  assert.match(source, /-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$reconcilePath/);
-  assert.doesNotMatch(source, /reconcile-battle-bridge-control-plane\.ps1[\s\S]*before.*coordinatorPath/i);
+test('control-plane repair proves exact main and tracked-clean source before starting fixed installers', () => {
+  const spawnSyncFn = scriptedSpawn();
+  const result = reconcileBattleBridgeControlPlane({
+    repoRoot: '/repo',
+    expectedHead: HEAD,
+    platform: 'win32',
+    spawnSyncFn,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceHead, HEAD);
+  assert.equal(result.trackedSourceClean, true);
+  assert.equal(result.taskCount, 2);
+  assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED');
+  assert.equal(result.arbitraryTaskNameAllowed, false);
+  assert.equal(result.arbitraryExecutableAllowed, false);
+  assert.equal(result.arbitraryShellAllowed, false);
+  assert.equal(result.sourceMutationAllowed, false);
+  assert.equal(result.gitMutationAllowed, false);
+  assert.equal(result.pcRestartAllowed, false);
+  assert.equal(result.publicExposureChanged, false);
+
+  const powerShellCalls = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
+  assert.equal(powerShellCalls.length, 2);
+  assert.deepEqual(powerShellCalls.map((call) => call.args.slice(-1)), [['-StartNow'], ['-StartNow']]);
+  assert.equal(powerShellCalls.every((call) => call.options.shell === false), true);
+  assert.equal(powerShellCalls[0].args.some((arg) => arg.endsWith('install-battle-bridge-recovery-mesh.ps1')), true);
+  assert.equal(powerShellCalls[1].args.some((arg) => arg.endsWith('install-battle-bridge-github-command-mailbox.ps1')), true);
+});
+
+test('control-plane repair blocks stale or dirty source before any task mutation', () => {
+  for (const fixture of [
+    { head: 'b'.repeat(40), expected: 'CONTROL_PLANE_SOURCE_HEAD_MISMATCH' },
+    { status: ' M shared/agents/example.mjs\n', expected: 'CONTROL_PLANE_TRACKED_SOURCE_DIRTY' },
+  ]) {
+    const spawnSyncFn = scriptedSpawn(fixture);
+    const result = reconcileBattleBridgeControlPlane({ repoRoot: '/repo', expectedHead: HEAD, platform: 'win32', spawnSyncFn });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, fixture.expected);
+    assert.equal(spawnSyncFn.calls.some((call) => call.command.includes('WindowsPowerShell')), false);
+  }
+});
+
+test('control-plane repair fails closed on an invalid installer receipt', () => {
+  const spawnSyncFn = scriptedSpawn({ recovery: { ...recoveryReceipt(), startedNow: false } });
+  const result = reconcileBattleBridgeControlPlane({ repoRoot: '/repo', expectedHead: HEAD, platform: 'win32', spawnSyncFn });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID');
+  assert.equal(result.failedTaskId, 'recoveryMesh');
+});
+
+test('control-plane repair source exposes no caller-selected task, executable, installer or shell surface', async () => {
+  const source = await readFile(new URL('../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs', import.meta.url), 'utf8');
+  assert.match(source, /shell: false/);
+  assert.match(source, /install-battle-bridge-recovery-mesh\.ps1/);
+  assert.match(source, /install-battle-bridge-github-command-mailbox\.ps1/);
+  assert.doesNotMatch(source, /taskName\s*=\s*options|installerRelativePath\s*=\s*options|executable\s*=\s*options|shell\s*=\s*true/);
+  assert.doesNotMatch(source, /Invoke-Expression|cmd\.exe|reset --hard|git clean|git stash|git checkout|git push|Restart-Computer/i);
 });
