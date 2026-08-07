@@ -80,7 +80,7 @@ function requireLiteral(findings, source, literal, code, summary, path) {
 
 function reviewInstaller(source, path, findings) {
   requirePattern(findings, source, /\$taskName\s*=\s*'Stephanos Battle Bridge Backend'/, 'windows-backend-task-name-not-fixed', 'Backend scheduled-task identity must remain fixed.', path);
-  requirePattern(findings, source, /\$wscriptExe\s*=\s*'C:\\\\Windows\\\\System32\\\\wscript\.exe'/, 'windows-backend-task-host-not-fixed', 'Backend scheduled-task host must remain the fixed Windows wscript executable.', path);
+  requirePattern(findings, source, /\$wscriptExe\s*=\s*'C:\\Windows\\System32\\wscript\.exe'/, 'windows-backend-task-host-not-fixed', 'Backend scheduled-task host must remain the fixed Windows wscript executable.', path);
   requirePattern(findings, source, /Test-Path -LiteralPath \$wscriptExe -PathType Leaf/, 'windows-backend-task-host-not-proved', 'Backend scheduled-task host must be proved before registration.', path);
   requirePattern(findings, source, /New-ScheduledTaskPrincipal[^\r\n]*-LogonType\s+Interactive[^\r\n]*-RunLevel\s+Limited/, 'windows-backend-task-principal-not-limited', 'Backend task principal must remain interactive and limited.', path);
   requirePattern(findings, source, /New-ScheduledTaskSettingsSet[^\r\n]*-MultipleInstances\s+IgnoreNew/, 'windows-backend-task-overlap-not-rejected', 'Backend task must reject overlapping instances.', path);
@@ -91,10 +91,10 @@ function reviewInstaller(source, path, findings) {
 
 function reviewProbe(source, path, findings) {
   for (const literal of [
-    "'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe'",
-    "'C:\\\\Program Files\\\\nodejs\\\\node.exe'",
-    "'C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe'",
-    "'C:\\\\Windows\\\\System32\\\\wscript.exe'",
+    "'C:\\Program Files\\Git\\cmd\\git.exe'",
+    "'C:\\Program Files\\nodejs\\node.exe'",
+    "'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
+    "'C:\\Windows\\System32\\wscript.exe'",
   ]) {
     if (!source.includes(literal)) findings.push(finding(
       'windows-recovery-canonical-executable-missing',
@@ -114,9 +114,9 @@ function reviewProbe(source, path, findings) {
 }
 
 function reviewStarter(source, path, findings) {
-  requirePattern(findings, source, /\$canonicalGit\s*=\s*'C:\\\\Program Files\\\\Git\\\\cmd\\\\git\.exe'/, 'windows-backend-starter-git-unpinned', 'Backend startup must pin the canonical Git executable instead of resolving PATH.', path);
-  requirePattern(findings, source, /\$canonicalNpm\s*=\s*'C:\\\\Program Files\\\\nodejs\\\\npm\.cmd'/, 'windows-backend-starter-npm-unpinned', 'Backend startup must pin the canonical npm executable instead of resolving PATH.', path);
-  requirePattern(findings, source, /\$canonicalNode\s*=\s*'C:\\\\Program Files\\\\nodejs\\\\node\.exe'/, 'windows-backend-starter-node-unpinned', 'Backend startup must pin canonical Node for listener identity.', path);
+  requirePattern(findings, source, /\$canonicalGit\s*=\s*'C:\\Program Files\\Git\\cmd\\git\.exe'/, 'windows-backend-starter-git-unpinned', 'Backend startup must pin the canonical Git executable instead of resolving PATH.', path);
+  requirePattern(findings, source, /\$canonicalNpm\s*=\s*'C:\\Program Files\\nodejs\\npm\.cmd'/, 'windows-backend-starter-npm-unpinned', 'Backend startup must pin the canonical npm executable instead of resolving PATH.', path);
+  requirePattern(findings, source, /\$canonicalNode\s*=\s*'C:\\Program Files\\nodejs\\node\.exe'/, 'windows-backend-starter-node-unpinned', 'Backend startup must pin canonical Node for listener identity.', path);
   requirePattern(findings, source, /\[string\]::Equals\(\$executable,\s*\$canonicalNode/, 'windows-backend-starter-listener-executable-not-exact', 'Backend startup must prove the listener executable exactly.', path);
   requirePattern(findings, source, /\[string\]::Equals\(\$commandLine,\s*\$expectedQuotedCommand[\s\S]*\[string\]::Equals\(\$commandLine,\s*\$expectedUnquotedCommand/, 'windows-backend-starter-listener-command-not-exact', 'Backend startup must prove the listener command line exactly.', path);
   forbidPattern(findings, source, /\.Contains\(['"]stephanos-server\/server\.js['"]\)/i, 'windows-backend-starter-substring-listener-proof', 'Substring listener proof cannot mint an exact-head runtime receipt.', path);
