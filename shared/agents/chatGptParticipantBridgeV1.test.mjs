@@ -226,6 +226,7 @@ test('scoped delivery reads require exact bounded subject identity', () => {
     repository: 'Cheekyfellastef/stephan-os',
     prNumber: 1668,
     mergeCommit: 'b83f7df46d9d52233f0b4f5dc2e034f50c0bae93',
+    deploymentHead: 'c094260434fbe7cf35b9472f69ed07099216da0c',
     deploymentRequestId: 'req-1507-deploy-1668-20260806T1459Z',
     featureId: 'music-tile-auto-url-artwork',
   };
@@ -236,6 +237,13 @@ test('scoped delivery reads require exact bounded subject identity', () => {
   }));
   assert.equal(accepted.responseStatus, 'BRIDGE_VERIFIED_PASS');
   assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP.READ_DELIVERY_STATUS, CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS);
+
+  const missingDeploymentHead = verify(validRequest({
+    operation: 'READ_DELIVERY_STATUS',
+    recordKind: CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS,
+    boundedPayload: { statusSubject: { ...statusSubject, deploymentHead: undefined } },
+  }));
+  assert.equal(missingDeploymentHead.responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
 
   const rejected = verify(validRequest({
     operation: 'READ_DELIVERY_STATUS',

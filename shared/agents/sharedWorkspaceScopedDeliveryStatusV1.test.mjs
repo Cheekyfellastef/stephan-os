@@ -14,6 +14,7 @@ const SUBJECT = Object.freeze({
   repository: 'Cheekyfellastef/stephan-os',
   prNumber: 1668,
   mergeCommit: 'b83f7df46d9d52233f0b4f5dc2e034f50c0bae93',
+  deploymentHead: 'c094260434fbe7cf35b9472f69ed07099216da0c',
   deploymentRequestId: 'req-1507-deploy-1668-20260806T1459Z',
   featureId: 'music-tile-auto-url-artwork',
 });
@@ -27,6 +28,7 @@ function record(overrides = {}) {
     repository: SUBJECT.repository,
     relatedPr: '#1668',
     mergeCommit: SUBJECT.mergeCommit,
+    deploymentHead: SUBJECT.deploymentHead,
     correlationId: SUBJECT.deploymentRequestId,
     featureId: SUBJECT.featureId,
     proofRefs: ['proof/music-tile-live.json'],
@@ -48,6 +50,8 @@ test('subject identity is fixed, exact and rejects extra authority fields', () =
   assert.equal(validateDeliveryStatusSubject(SUBJECT).ok, true);
   assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, repository: 'other/repo' }).ok, false);
   assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, mergeCommit: 'short' }).ok, false);
+  assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, deploymentHead: 'short' }).ok, false);
+  assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, deploymentHead: undefined }).ok, false);
   assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, command: 'dir' }).ok, false);
   assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, deploymentRequestId: 'bad request id' }).ok, false);
   assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, deploymentRequestId: undefined }).ok, false);
@@ -68,6 +72,10 @@ test('scoped evidence requires exact repository, PR, merge, deployment and featu
     record({ repository: 'Other/example' }),
     record({ relatedPr: '#1667' }),
     record({ mergeCommit: '1111111111111111111111111111111111111111' }),
+    record({ deploymentHead: '1111111111111111111111111111111111111111' }),
+    record({ result: { mergeCommit: '1111111111111111111111111111111111111111' } }),
+    record({ result: { deploymentHead: '1111111111111111111111111111111111111111' } }),
+    record({ result: { featureId: 'another-feature' } }),
     record({ correlationId: 'req-1507-other-deployment' }),
     record({ featureId: 'another-feature' }),
   ];
@@ -85,7 +93,7 @@ test('records cannot splice matching identity dimensions across separate evidenc
     record({ repository: 'Other/example', status: 'PASS', updatedMusicTileServed: true }),
     record({ relatedPr: '#1667', status: 'PASS', playbackContinuedAfterRating: true }),
     record({ featureId: 'another-feature', status: 'PASS', autoUrlAndArtworkRuntimeProof: true }),
-    record({ correlationId: 'req-1507-other-deployment', finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD', servedBrowserHead: SUBJECT.mergeCommit }),
+    record({ correlationId: 'req-1507-other-deployment', finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD', servedBrowserHead: SUBJECT.deploymentHead }),
   ]);
   assert.equal(result.matchedRecordCount, 0);
   assert.equal(result.overallStatus, 'NO_MATCHING_RUNTIME_EVIDENCE');
@@ -96,22 +104,22 @@ test('delivery stages advance only from exact subject evidence', () => {
   const accepted = record({ state: 'ACCEPTED', requestId: SUBJECT.deploymentRequestId });
   assert.equal(projection([accepted]).overallStatus, 'MERGED_NOT_SYNCED');
 
-  const synced = record({ classification: 'SYNC_FAST_FORWARD_APPLIED', localHeadAfter: SUBJECT.mergeCommit });
+  const synced = record({ classification: 'SYNC_FAST_FORWARD_APPLIED', localHeadAfter: SUBJECT.deploymentHead });
   assert.equal(projection([accepted, synced]).overallStatus, 'ON_BATTLE_BRIDGE_DISK');
 
-  const built = record({ status: 'BUILD_PASS', builtDistHead: SUBJECT.mergeCommit });
+  const built = record({ status: 'BUILD_PASS', builtDistHead: SUBJECT.deploymentHead });
   assert.equal(projection([accepted, synced, built]).overallStatus, 'BUILT_NOT_SERVED');
 
-  const served = record({ finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD', servedBrowserHead: SUBJECT.mergeCommit });
+  const served = record({ finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD', servedBrowserHead: SUBJECT.deploymentHead });
   assert.equal(projection([accepted, synced, built, served]).overallStatus, 'SERVED_NOT_FEATURE_PROVEN');
 });
 
 test('LIVE requires served exact head plus every Music Tile experience proof', () => {
   const result = projection([
     record({ state: 'ACCEPTED', requestId: SUBJECT.deploymentRequestId }),
-    record({ classification: 'SYNC_FAST_FORWARD_APPLIED', localHeadAfter: SUBJECT.mergeCommit }),
-    record({ status: 'BUILD_PASS', builtDistHead: SUBJECT.mergeCommit }),
-    record({ finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD', servedBrowserHead: SUBJECT.mergeCommit }),
+    record({ classification: 'SYNC_FAST_FORWARD_APPLIED', localHeadAfter: SUBJECT.deploymentHead }),
+    record({ status: 'BUILD_PASS', builtDistHead: SUBJECT.deploymentHead }),
+    record({ finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD', servedBrowserHead: SUBJECT.deploymentHead }),
     record({ status: 'PASS', updatedMusicTileServed: true }),
     record({ status: 'PASS', playbackContinuedAfterRating: true }),
     record({ status: 'PASS', autoUrlAndArtworkRuntimeProof: true }),
@@ -121,6 +129,39 @@ test('LIVE requires served exact head plus every Music Tile experience proof', (
   assert.equal(result.stages.featureProof.updatedMusicTileServed, true);
   assert.equal(result.stages.featureProof.playbackContinuedAfterRating, true);
   assert.equal(result.stages.featureProof.autoUrlAndArtworkRuntimeProof, true);
+});
+
+test('conflicting feature booleans fail closed inside one otherwise matching record', () => {
+  const result = projection([
+    record({
+      finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD',
+      servedBrowserHead: SUBJECT.deploymentHead,
+      updatedMusicTileServed: true,
+      playbackContinuedAfterRating: true,
+      autoUrlAndArtworkRuntimeProof: true,
+      result: { playbackContinuedAfterRating: false },
+    }),
+  ]);
+  assert.equal(result.live, false);
+  assert.equal(result.overallStatus, 'SERVED_NOT_FEATURE_PROVEN');
+  assert.equal(result.stages.featureProof.playbackContinuedAfterRating, false);
+});
+
+test('feature merge identity cannot substitute for the exact deployment head', () => {
+  const result = projection([
+    record({ state: 'ACCEPTED', requestId: SUBJECT.deploymentRequestId }),
+    record({ classification: 'SYNC_FAST_FORWARD_APPLIED', localHeadAfter: SUBJECT.deploymentHead }),
+    record({ status: 'BUILD_PASS', builtDistHead: SUBJECT.deploymentHead }),
+    record({
+      finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD',
+      servedBrowserHead: SUBJECT.mergeCommit,
+      updatedMusicTileServed: true,
+      playbackContinuedAfterRating: true,
+      autoUrlAndArtworkRuntimeProof: true,
+    }),
+  ]);
+  assert.equal(result.live, false);
+  assert.equal(result.overallStatus, 'BUILT_NOT_SERVED');
 });
 
 test('wrong served head, stale proof and current blockers fail closed', () => {
@@ -135,7 +176,7 @@ test('wrong served head, stale proof and current blockers fail closed', () => {
     record({
       timestampUtc: '2026-08-06T12:00:00.000Z',
       finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD',
-      servedBrowserHead: SUBJECT.mergeCommit,
+      servedBrowserHead: SUBJECT.deploymentHead,
       updatedMusicTileServed: true,
       playbackContinuedAfterRating: true,
       autoUrlAndArtworkRuntimeProof: true,
