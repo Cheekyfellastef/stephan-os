@@ -17,6 +17,10 @@ import {
   verifyChatGptBridgeRequest,
 } from '../shared/agents/chatGptParticipantBridgeV1.mjs';
 import {
+  buildScopedDeliveryStatusProjection,
+  loadScopedDeliveryStatusEvidence,
+} from '../shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs';
+import {
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceReceiptRecord,
   resolveSharedWorkspacePath,
@@ -304,6 +308,8 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   readFileFn = readFile,
   verifyRequestFn = verifyChatGptBridgeRequest,
   projectionBuilder = createSanitizedSharedWorkspaceProjection,
+  deliveryEvidenceLoader = loadScopedDeliveryStatusEvidence,
+  deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
   recordBuilder = buildChatGptBridgeRecord,
   writeAtomicJsonFn = writeAtomicJson,
 } = {}) {
@@ -376,13 +382,29 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   let primaryWrite = { ok: true, reason: 'NO_PRIMARY_WRITE_REQUIRED', bytes: 0 };
 
   if (verification.accepted && CHATGPT_BRIDGE_READ_OPERATIONS.includes(request.operation)) {
-    projection = await projectionBuilder({
-      workspaceRoot: paths.workspaceRoot,
-      repoRoot: paths.repoRoot,
-      timestampUtc,
-      nowMs,
-    });
-    projection = readProjectionForOperation(request.operation, projection);
+    if (request.operation === 'READ_DELIVERY_STATUS') {
+      const loadStatus = await deliveryEvidenceLoader({
+        workspaceRoot: paths.workspaceRoot,
+        repoRoot: paths.repoRoot,
+        subject: request.boundedPayload?.statusSubject,
+        nowMs,
+      });
+      projection = deliveryProjectionBuilder({
+        subject: request.boundedPayload?.statusSubject,
+        records: loadStatus.records,
+        loadStatus,
+        timestampUtc,
+        nowMs,
+      });
+    } else {
+      projection = await projectionBuilder({
+        workspaceRoot: paths.workspaceRoot,
+        repoRoot: paths.repoRoot,
+        timestampUtc,
+        nowMs,
+      });
+      projection = readProjectionForOperation(request.operation, projection);
+    }
     deliveryStatus = projection?.aggregationOk === false ? 'WORKSPACE_READ_BLOCKED' : 'WORKSPACE_READ_PASS';
   } else if (verification.accepted) {
     const built = recordBuilder(request, {
