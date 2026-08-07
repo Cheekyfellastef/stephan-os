@@ -269,22 +269,24 @@ test('installer failure or malformed runtime identity is not promoted to M2 read
 
 test('post-install installer or exact tree drift invalidates an otherwise ready receipt', async () => {
   const root = createFixtureRoot('forge-shadow-adapter-post-drift-');
-  let treeReads = 0;
+  let installerRan = false;
   const result = await executeForgeShadowM2OnBattleBridge(command(), {
     platform: 'win32',
     repositoryRoot: root,
     runCommand(_executable, args) {
+      if (args.includes('-File')) {
+        installerRan = true;
+        return { status: 0, stdout: JSON.stringify(readyReceipt()), stderr: '' };
+      }
       if (args[0] === 'rev-parse' && args[1] === `${HEAD}^{tree}`) {
-        treeReads += 1;
-        return { status: 0, stdout: `${treeReads === 1 ? TREE : 'f'.repeat(40)}\n`, stderr: '' };
+        return { status: 0, stdout: `${installerRan ? 'f'.repeat(40) : TREE}\n`, stderr: '' };
       }
       const fixed = fixedSourceRead(args);
-      if (fixed) return fixed;
-      if (args.includes('-File')) return { status: 0, stdout: JSON.stringify(readyReceipt()), stderr: '' };
-      return { status: 1, stdout: '', stderr: '' };
+      return fixed || { status: 1, stdout: '', stderr: '' };
     },
   });
   assert.equal(result.ok, false);
+  assert.equal(installerRan, true);
   assert.equal(result.blocker, 'FORGE_SHADOW_POST_INSTALL_SOURCE_IDENTITY_CHANGED');
 });
 
