@@ -14,6 +14,18 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) {
     throw "Control-plane reconciler must run from the canonical checkout: $expectedRepoRoot"
 }
 
+$gitExe = 'C:\Program Files\Git\cmd\git.exe'
+if (-not (Test-Path -LiteralPath $gitExe -PathType Leaf)) { throw 'CONTROL_PLANE_CANONICAL_GIT_MISSING' }
+$branch = ((& $gitExe -C $repoRoot branch --show-current 2>$null | Select-Object -First 1) -as [string]).Trim()
+if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { throw 'CONTROL_PLANE_SOURCE_BRANCH_NOT_MAIN' }
+$sourceHead = ((& $gitExe -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1) -as [string]).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0 -or $sourceHead -notmatch '^[0-9a-f]{40}$') { throw 'CONTROL_PLANE_SOURCE_HEAD_INVALID' }
+$trackedStatus = @(& $gitExe -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+if ($LASTEXITCODE -ne 0) { throw 'CONTROL_PLANE_TRACKED_SOURCE_STATUS_FAILED' }
+if (@($trackedStatus | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -ne 0) {
+    throw 'CONTROL_PLANE_TRACKED_SOURCE_DIRTY'
+}
+
 $launcherPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs')).Path
 $wscriptExe = 'C:\Windows\System32\wscript.exe'
 if (-not (Test-Path -LiteralPath $wscriptExe -PathType Leaf)) { throw 'CONTROL_PLANE_WINDOWLESS_HOST_MISSING' }
@@ -93,7 +105,9 @@ foreach ($spec in $taskSpecs) {
     schemaVersion = 'stephanos.battle-bridge-control-plane-reconcile.v1'
     ok = $true
     repository = 'Cheekyfellastef/stephan-os'
-    branch = 'main'
+    branch = $branch
+    sourceHead = $sourceHead
+    trackedSourceClean = $true
     taskCount = $results.Count
     tasks = $results
     canonicalTaskNames = @(
