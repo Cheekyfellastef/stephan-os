@@ -27,15 +27,16 @@ function blobSha(content) {
 }
 
 function record(path, content) {
+  const exactContent = content.replaceAll('\\\\', '\\');
   return {
     schemaVersion: WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION,
     repository: REPOSITORY,
     path,
     ref: HEAD,
     exists: true,
-    size: Buffer.byteLength(content),
-    blobSha: blobSha(content),
-    content,
+    size: Buffer.byteLength(exactContent),
+    blobSha: blobSha(exactContent),
+    content: exactContent,
   };
 }
 
