@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
+import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
+
 export const BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_SCHEMA = 'stephanos.battle-bridge-control-plane-reconcile.v1';
 export const BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT = 'BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED';
 export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
@@ -25,6 +27,10 @@ const MAX_OUTPUT_BYTES = 128 * 1024;
 
 function text(value) {
   return String(value ?? '').trim();
+}
+
+function splitLines(value) {
+  return String(value ?? '').split(/\r?\n/).filter((line) => line.trim());
 }
 
 function capture(spawnSyncFn, executable, args, { cwd, timeout = 180_000 } = {}) {
@@ -70,7 +76,9 @@ function blocked(blocker, details = {}) {
     repository: 'Cheekyfellastef/stephan-os',
     branch: '',
     sourceHead: '',
-    trackedSourceClean: false,
+    sourceDirtSafe: false,
+    runtimeOnlyDirtCount: 0,
+    generatedSourceDirtCount: 0,
     taskCount: BATTLE_BRIDGE_CONTROL_PLANE_TASKS.length,
     tasks: Object.freeze([]),
     arbitraryTaskNameAllowed: false,
@@ -135,10 +143,36 @@ function sourceIdentity({ repoRoot, expectedHead, spawnSyncFn }) {
   if (!head.ok || sourceHead !== text(expectedHead).toLowerCase()) {
     return blocked('CONTROL_PLANE_SOURCE_HEAD_MISMATCH', { branch: 'main', sourceHead });
   }
-  const status = capture(spawnSyncFn, GIT_EXE, ['-C', repoRoot, 'status', '--porcelain=v1', '--untracked-files=no'], { cwd: repoRoot });
-  if (!status.ok) return blocked('CONTROL_PLANE_TRACKED_SOURCE_STATUS_FAILED', { branch: 'main', sourceHead });
-  if (text(status.stdout)) return blocked('CONTROL_PLANE_TRACKED_SOURCE_DIRTY', { branch: 'main', sourceHead });
-  return Object.freeze({ ok: true, branch: 'main', sourceHead, trackedSourceClean: true });
+  const status = capture(spawnSyncFn, GIT_EXE, ['-C', repoRoot, 'status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot });
+  if (!status.ok) return blocked('CONTROL_PLANE_SOURCE_STATUS_FAILED', { branch: 'main', sourceHead });
+  const dirt = classifyDirt(splitLines(status.stdout));
+  const dirtSummary = Object.freeze({
+    trackedSourceCount: dirt.trackedSource.length,
+    untrackedSourceCount: dirt.untrackedSource.length,
+    runtimeOnlyCount: dirt.runtimeOnly.length,
+    generatedSourceCount: dirt.generatedSource.length,
+    unknownCount: dirt.unknown.length,
+    blocksSync: dirt.blocksSync === true,
+  });
+  if (dirt.blocksSync) {
+    return blocked('CONTROL_PLANE_SOURCE_DIRT_BLOCKED', {
+      branch: 'main',
+      sourceHead,
+      sourceDirtSafe: false,
+      runtimeOnlyDirtCount: dirt.runtimeOnly.length,
+      generatedSourceDirtCount: dirt.generatedSource.length,
+      dirtSummary,
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    branch: 'main',
+    sourceHead,
+    sourceDirtSafe: true,
+    runtimeOnlyDirtCount: dirt.runtimeOnly.length,
+    generatedSourceDirtCount: dirt.generatedSource.length,
+    dirtSummary,
+  });
 }
 
 export function reconcileBattleBridgeControlPlane({
@@ -166,7 +200,10 @@ export function reconcileBattleBridgeControlPlane({
       return blocked('CONTROL_PLANE_FIXED_INSTALLER_FAILED', {
         branch: identity.branch,
         sourceHead: identity.sourceHead,
-        trackedSourceClean: true,
+        sourceDirtSafe: true,
+        runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
+        generatedSourceDirtCount: identity.generatedSourceDirtCount,
+        dirtSummary: identity.dirtSummary,
         failedTaskId: task.id,
       });
     }
@@ -178,7 +215,10 @@ export function reconcileBattleBridgeControlPlane({
       return blocked('CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID', {
         branch: identity.branch,
         sourceHead: identity.sourceHead,
-        trackedSourceClean: true,
+        sourceDirtSafe: true,
+        runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
+        generatedSourceDirtCount: identity.generatedSourceDirtCount,
+        dirtSummary: identity.dirtSummary,
         failedTaskId: task.id,
       });
     }
@@ -200,7 +240,10 @@ export function reconcileBattleBridgeControlPlane({
     repository: 'Cheekyfellastef/stephan-os',
     branch: identity.branch,
     sourceHead: identity.sourceHead,
-    trackedSourceClean: true,
+    sourceDirtSafe: true,
+    runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
+    generatedSourceDirtCount: identity.generatedSourceDirtCount,
+    dirtSummary: identity.dirtSummary,
     taskCount: results.length,
     tasks: Object.freeze(results),
     canonicalTaskNames: Object.freeze(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map((task) => task.taskName)),
