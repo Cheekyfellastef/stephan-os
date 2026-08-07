@@ -8,6 +8,12 @@ import {
   CODEX_BANKED_RESET_STATUS_OPERATION,
   readCodexBankedResetStatusOnBattleBridge,
 } from './codexBankedResetStatusBattleBridgeReader.mjs';
+import {
+  FORGE_SHADOW_BATTLE_BRIDGE_OPERATION,
+  executeForgeShadowM2OnBattleBridge,
+  forgeShadowBattleBridgeFields,
+  validateForgeShadowBattleBridgeCommand,
+} from './forgeShadowBattleBridgeAdapterV1.mjs';
 import { MUSIC_SPOTIFY_LINK_OPERATION, MUSIC_SPOTIFY_LINK_SOURCE, validateMusicSpotifyLinkCandidate } from './musicSpotifyLinkBridge.mjs';
 import {
   PROTECTED_OPENCLAW_MERGE_OPERATION,
@@ -36,6 +42,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
   'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+  FORGE_SHADOW_BATTLE_BRIDGE_OPERATION,
   PROTECTED_OPENCLAW_MERGE_OPERATION,
   MUSIC_SPOTIFY_LINK_OPERATION,
   CODEX_BANKED_RESET_STATUS_OPERATION,
@@ -162,6 +169,15 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
     return fail('RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
   }
+  let forgeShadow = null;
+  if (command.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION) {
+    const validation = validateForgeShadowBattleBridgeCommand(command);
+    if (!validation.ok) return fail(validation.blocker, validation.details || {});
+    forgeShadow = validation.command;
+  } else {
+    const unexpectedForgeField = forgeShadowBattleBridgeFields().find((field) => hasValue(command[field]));
+    if (unexpectedForgeField) return fail('FORGE_SHADOW_FIELD_NOT_ALLOWED', { field: unexpectedForgeField });
+  }
   let protectedMerge = null;
   if (command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION) {
     const validation = validateProtectedOpenClawMergeCommand(command, { now });
@@ -269,6 +285,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       pullRequestHead: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
         ? String(command.pullRequestHead || '').toLowerCase()
         : '',
+      ...(forgeShadow || {}),
       ...(protectedMerge || {}),
       ...(musicSpotifyCandidate ? {
         source: MUSIC_SPOTIFY_LINK_SOURCE,
@@ -329,6 +346,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   runMonitorMultiplexerAcceptance,
   runExactHeadWindowsBrowserProof,
   queueVerifiedSpotifyLink,
+  executeForgeShadowM2 = executeForgeShadowM2OnBattleBridge,
   executeProtectedOpenClawMerge = executeProtectedOpenClawMergeOnBattleBridge,
   readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
   redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
@@ -347,6 +365,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     WAKE_BATTLE_BRIDGE_RECOVERY_MESH: wakeRecoveryMesh,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
     RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF: runExactHeadWindowsBrowserProof,
+    [FORGE_SHADOW_BATTLE_BRIDGE_OPERATION]: executeForgeShadowM2,
     [PROTECTED_OPENCLAW_MERGE_OPERATION]: executeProtectedOpenClawMerge,
     [MUSIC_SPOTIFY_LINK_OPERATION]: queueVerifiedSpotifyLink,
     [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
@@ -392,6 +411,10 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
+    forgejoVersion: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? String(command?.forgejoVersion || '') : '',
+    forgejoImageDigest: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? String(command?.forgejoImageDigest || '') : '',
+    runtimeBoundary: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? String(command?.runtimeBoundary || '') : '',
+    m2Only: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? command?.m2Only === true : false,
     prNumber: ['RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF', PROTECTED_OPENCLAW_MERGE_OPERATION].includes(command?.operation)
       ? Number(command?.prNumber || 0)
       : 0,
