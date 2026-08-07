@@ -12,6 +12,7 @@ import {
   DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import { resolveForgeShadowM2DigestOnBattleBridge } from './forgeShadowM2DigestResolverV1.mjs';
 
 export const DEFAULT_CODEX_DISPATCH_REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 export const DEFAULT_BATTLE_BRIDGE_ENDPOINTS = Object.freeze([
@@ -25,6 +26,7 @@ export const CODEX_DISPATCH_TEST_ARGS = Object.freeze([
   'shared/agents/localCodexExecIntegration.test.mjs',
   'shared/agents/codexDispatchMcp.test.mjs',
   'shared/agents/codexDispatchHostOps.test.mjs',
+  'shared/agents/forgeShadowM2DigestResolverV1.test.mjs',
   'shared/agents/stephanosChatUpdate.test.mjs',
   'shared/agents/remoteCodexTaskVisibility.test.mjs',
   'scripts/remote-codex-task-visibility-observer.test.mjs',
@@ -629,6 +631,12 @@ export async function runBattleBridgeDiagnostics({
     workerInspection: inspection,
     readRecord,
   });
+  const forgeShadowM2DigestResolution = resolveForgeShadowM2DigestOnBattleBridge({
+    repoRoot,
+    platform,
+    env,
+    spawnSyncFn,
+  });
   const passed = gitPassed && healthPassed && workerTelemetry.ok;
   const blocker = !gitPassed
     ? 'GIT_DIAGNOSTICS_FAILED'
@@ -659,6 +667,7 @@ export async function runBattleBridgeDiagnostics({
     latestExecutionReceipt: workerTelemetry.latestExecutionReceipt,
     testsChecksReview: workerTelemetry.testsChecksReview,
     operatorActionRequired: workerTelemetry.operatorActionRequired,
+    forgeShadowM2DigestResolution,
     safety: {
       sourceMutationDetected: false,
       generatedRuntimeMutationDetected: false,
