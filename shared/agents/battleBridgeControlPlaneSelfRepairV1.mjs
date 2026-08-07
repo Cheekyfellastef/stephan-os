@@ -45,8 +45,14 @@ function capture(spawnSyncFn, executable, args, { cwd, timeout = 180_000 } = {})
   });
 }
 
-function parseLastJson(stdout) {
-  const lines = String(stdout ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+function parseInstallerJson(stdout) {
+  const payload = text(stdout);
+  if (!payload) return null;
+  try {
+    const parsed = JSON.parse(payload);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch {}
+  const lines = payload.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
       const parsed = JSON.parse(lines[index]);
@@ -164,7 +170,7 @@ export function reconcileBattleBridgeControlPlane({
         failedTaskId: task.id,
       });
     }
-    const payload = parseLastJson(command.stdout);
+    const payload = parseInstallerJson(command.stdout);
     const receiptValid = task.id === 'recoveryMesh'
       ? validateRecoveryMeshReceipt(payload)
       : validateMailboxReceipt(payload);
