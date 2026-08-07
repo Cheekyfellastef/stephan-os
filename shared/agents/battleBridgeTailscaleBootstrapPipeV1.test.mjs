@@ -77,8 +77,9 @@ test('fixed remote PowerShell only bootstraps canonical GitHub Sync and proves e
   assert.ok(source.includes(String.raw`C:\Program Files\Git\cmd\git.exe`));
   assert.match(source, new RegExp(HEAD));
   assert.match(source, /BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY/);
+  assert.match(source, /liveOpenClawUpdateAllowed -ne \$false/);
   assert.doesNotMatch(source, /reset --hard|git clean|git stash|git rebase|git push|Restart-Computer|Stop-Computer|Invoke-Expression/i);
-  assert.doesNotMatch(source, /Codex|openclaw/i);
+  assert.doesNotMatch(source, /Codex|openclaw-gateway|gateway\.cmd|\.openclaw/i);
   const encoded = buildFixedBattleBridgeBootstrapEncodedCommand(HEAD);
   assert.match(encoded, /^[A-Za-z0-9+/=]+$/);
   assert.ok(encoded.length > 100);
