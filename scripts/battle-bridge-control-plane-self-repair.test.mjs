@@ -31,8 +31,8 @@ test('unattended sync repairs the control plane only after canonical source sync
   const source = await readFile(syncLauncherUrl, 'utf8');
   const syncCall = source.indexOf('& $nodeCommand.Source $coordinatorPath');
   const syncGuard = source.indexOf('if ($syncExitCode -ne 0) { exit $syncExitCode }');
-  const reconcileResolve = source.indexOf("reconcile-battle-bridge-control-plane.ps1");
-  const reconcileCall = source.indexOf("& 'C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe'");
+  const reconcileResolve = source.indexOf('reconcile-battle-bridge-control-plane.ps1');
+  const reconcileCall = source.indexOf('-File $reconcilePath');
   assert.ok(syncCall >= 0);
   assert.ok(syncGuard > syncCall);
   assert.ok(reconcileResolve > syncGuard);
