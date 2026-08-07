@@ -25,12 +25,23 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   'shared/agents/qualifiedSpecialistReviewV1.mjs',
 ]);
 
+export const WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
+  'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
+  'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
+]);
+
+const ALL_APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
+  ...APPROVAL_BOUNDARY_PATHS_V2,
+  ...WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
+]);
+
 const OPERATOR_EXECUTOR_PATHS = Object.freeze([
   'scripts/operator-protected-merge-gate-v2.mjs',
 ]);
 
 const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
   'scripts/independent-merge-security-review-v2.mjs',
+  'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
 ]);
 
 const BASE_BINDING_PATHS = Object.freeze([
@@ -79,7 +90,7 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
   const findings = [...(Array.isArray(legacy.findings) ? legacy.findings : [])];
   const proofRefs = [...(Array.isArray(legacy.proofRefs) ? legacy.proofRefs : [])];
 
-  for (const path of APPROVAL_BOUNDARY_PATHS_V2.filter((item) => changedFiles.includes(item))) {
+  for (const path of ALL_APPROVAL_BOUNDARY_PATHS_V2.filter((item) => changedFiles.includes(item))) {
     proofRefs.push(`proofs/approval-boundary-v2/${path}`);
     findings.push(finding(
       APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE,

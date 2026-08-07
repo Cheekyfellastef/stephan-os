@@ -40,7 +40,14 @@ test('machine creation and inspection are WSL rootless bounded identities', () =
   has("'machine', 'init', '--provider', 'wsl', '--rootful=false', '--cpus', '4', '--memory', '4096', '--disk-size', '40'");
   has("'machine', 'inspect', '--format', '{{json .}}', $MachineName");
   has("$MachineName = 'stephanos-forge-shadow'");
+  has('function Assert-MachineIdentity');
+  has("if ([string]$Machine.Name -ne $MachineName) { Fail 'PODMAN_MACHINE_NAME_MISMATCH' }");
   has("if ($machine.Rootful -ne $false) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }");
+  has("if ([int]$Machine.Resources.CPUs -ne 4) { Fail 'PODMAN_MACHINE_CPU_LIMIT_MISMATCH' }");
+  has("if ([int64]$Machine.Resources.Memory -ne 4096) { Fail 'PODMAN_MACHINE_MEMORY_LIMIT_MISMATCH' }");
+  has("if ([int64]$Machine.Resources.DiskSize -ne 40) { Fail 'PODMAN_MACHINE_DISK_LIMIT_MISMATCH' }");
+  has("Fail 'PODMAN_MACHINE_PROVIDER_NOT_WSL'");
+  has('Assert-MachineIdentity $machine');
   has("Fail 'PODMAN_MACHINE_RUNNING_ROOTLESS_NOT_PROVED'");
   lacks('--privileged');
 });
@@ -74,13 +81,15 @@ test('Forgejo is current-LTS digest pinned and exposes only loopback HTTP with n
   has("'FORGEJO__server__DISABLE_SSH=true'");
   has("'FORGEJO__server__START_SSH_SERVER=false'");
   has("Invoke-PodmanRemote $PodmanExe @('pull', $ImageRef)");
+  has("if ([string]$inspect.ImageName -ne $ImageRef) { Fail 'FORGE_CONTAINER_IMAGE_REFERENCE_MISMATCH' }");
+  has("if ([string]$inspect.ImageDigest -ne $ForgejoImageDigest) { Fail 'FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH' }");
   lacks('0.0.0.0:');
   lacks(':2222');
   lacks('/var/run/docker.sock');
   lacks('podman.sock');
 });
 
-test('service container root filesystem and privilege posture are explicitly sealed', () => {
+test('service container root filesystem resource and privilege posture are explicitly reproved', () => {
   has("'--read-only'");
   has("'--read-only-tmpfs=false'");
   has("'--cap-drop', 'ALL'");
@@ -94,9 +103,17 @@ test('service container root filesystem and privilege posture are explicitly sea
   has("if ($inspect.HostConfig.ReadonlyRootfs -ne $true) { Fail 'FORGE_CONTAINER_ROOTFS_NOT_READ_ONLY' }");
   has("if ($capDrop -notcontains 'ALL') { Fail 'FORGE_CONTAINER_CAPABILITIES_NOT_DROPPED' }");
   has("if ($securityOptions -notcontains 'no-new-privileges') { Fail 'FORGE_CONTAINER_NO_NEW_PRIVILEGES_NOT_PROVED' }");
+  has("if ([int64]$inspect.HostConfig.PidsLimit -ne 512) { Fail 'FORGE_CONTAINER_PIDS_LIMIT_MISMATCH' }");
+  has("if ([int64]$inspect.HostConfig.Memory -ne 2GB) { Fail 'FORGE_CONTAINER_MEMORY_LIMIT_MISMATCH' }");
+  has("if ([int64]$inspect.HostConfig.CpuPeriod -ne 100000 -or [int64]$inspect.HostConfig.CpuQuota -ne 200000)");
+  has("Fail 'FORGE_CONTAINER_CPU_LIMIT_MISMATCH'");
   has("if ($dataMounts.Count -ne 1) { Fail 'FORGE_CONTAINER_DATA_VOLUME_MISMATCH' }");
   has("if ($unexpectedMounts.Count -ne 0) { Fail 'FORGE_CONTAINER_UNEXPECTED_WRITABLE_SURFACE' }");
-  has("if (($tmpfsNames -join '|') -ne ($expectedTmpfs -join '|')) { Fail 'FORGE_CONTAINER_TMPFS_SURFACE_MISMATCH' }");
+  has("if (($tmpfsNames -join '|') -ne ($expectedTmpfsNames -join '|')) { Fail 'FORGE_CONTAINER_TMPFS_SURFACE_MISMATCH' }");
+  has("Fail 'FORGE_CONTAINER_TMPFS_OPTIONS_MISMATCH'");
+  has("Fail 'FORGE_CONTAINER_TMPFS_SIZE_MISMATCH'");
+  has('function Convert-TmpfsSizeToBytes');
+  has("Fail 'FORGE_CONTAINER_ENVIRONMENT_SEAL_MISMATCH'");
 });
 
 test('bootstrap is closed to signup org creation extra repos forks hooks and unsafe migrations', () => {
@@ -172,14 +189,18 @@ test('mirror creation is exactly the canonical public unauthenticated repository
   lacks('github.com/login');
 });
 
-test('existing runtime identity is rebound to exact repository head digest labels fixed port and privilege proof', () => {
+test('existing runtime identity is rebound to exact repository head digest image environment labels fixed port and privilege proof', () => {
   has("'stephanos.repository'");
   has("'stephanos.main-head'");
   has("'stephanos.image-digest'");
   has("Fail 'FORGE_CONTAINER_REPOSITORY_LABEL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_HEAD_LABEL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_DIGEST_LABEL_MISMATCH'");
+  has("Fail 'FORGE_CONTAINER_SEAL_LABEL_INVALID'");
+  has("Fail 'FORGE_CONTAINER_IMAGE_REFERENCE_MISMATCH'");
+  has("Fail 'FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_USER_NOT_ROOTLESS'");
+  has("Fail 'FORGE_CONTAINER_ENVIRONMENT_SEAL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_PORT_BINDING_MISMATCH'");
   has('Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort');
 });
