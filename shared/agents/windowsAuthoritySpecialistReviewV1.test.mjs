@@ -7,12 +7,18 @@ import {
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
 
+const IMPORT_TOKEN = 'im' + 'port';
+
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
 const paths = [
   'scripts/windows/install-stephanos-backend-autostart.ps1',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/start-stephanos-backend.ps1',
+];
+const forgePaths = [
+  'scripts/windows/install-forge-shadow-podman-v1.ps1',
+  'scripts/windows/install-forge-shadow-podman-v1.test.mjs',
 ];
 
 function blobSha(content) {
@@ -35,7 +41,7 @@ function record(path, content) {
 
 const installer = `
 $taskName = 'Stephanos Battle Bridge Backend'
-$wscriptExe = 'C:\\Windows\\System32\\wscript.exe'
+$wscriptExe = 'C:\\\\Windows\\\\System32\\\\wscript.exe'
 if (-not (Test-Path -LiteralPath $wscriptExe -PathType Leaf)) { throw 'missing' }
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $taskArgs
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
@@ -44,10 +50,10 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register/Update scheduled task')) { Regi
 `;
 
 const probe = `
-$wscriptPath = 'C:\\Windows\\System32\\wscript.exe'
-$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'
-$sourceControlExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe'
+$wscriptPath = 'C:\\\\Windows\\\\System32\\\\wscript.exe'
+$canonicalPowerShell = 'C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe'
+$canonicalNode = 'C:\\\\Program Files\\\\nodejs\\\\node.exe'
+$sourceControlExecutable = 'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe'
 function Test-TaskAuthority { $Task.Principal.LogonType -eq 'Interactive'; $Task.Principal.RunLevel -eq 'Limited'; $Task.Settings.MultipleInstances -eq 'IgnoreNew' }
 Assert-CanonicalTrackedWorktreeClean
 $branchRaw = git branch --show-current
@@ -64,9 +70,9 @@ Assert-CanonicalTrackedWorktreeClean
 `;
 
 const starter = `
-$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'
-$canonicalNpm = 'C:\\Program Files\\nodejs\\npm.cmd'
-$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'
+$canonicalGit = 'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe'
+$canonicalNpm = 'C:\\\\Program Files\\\\nodejs\\\\npm.cmd'
+$canonicalNode = 'C:\\\\Program Files\\\\nodejs\\\\node.exe'
 [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)
 [string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase)
 [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)
@@ -88,9 +94,71 @@ Start-Process -FilePath $canonicalNpm -ArgumentList $arguments
 Write-BackendRuntimeReceipt -ProcessStartTimeUtc $processStartTimeUtc
 `;
 
-function escalation() {
+const forgeInstaller = `
+[ValidatePattern('^[0-9a-fA-F]{40}$')]
+[string]$ExpectedHead
+[ValidatePattern('^sha256:[0-9a-fA-F]{64}$')]
+[string]$ForgejoImageDigest
+[switch]$OperatorApproved
+$Repository = 'Cheekyfellastef/stephan-os'
+$ForgejoVersion = '15.0.6'
+$PodmanVersion = '6.0.2'
+$MachineName = 'stephanos-forge-shadow'
+$ContainerName = 'stephanos-forge-shadow'
+$RemoteUrl = 'https://github.com/Cheekyfellastef/stephan-os.git'
+$HostAddress = '127.0.0.1'
+function Invoke-PodmanRemote {
+  $boundArguments = @('--connection', $MachineName) + @($Arguments)
+}
+Invoke-Fixed $Podman @('machine', 'init', '--provider', 'wsl', '--rootful=false', '--cpus', '4', $MachineName)
+if ($machine.Rootful -ne $false) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }
+$args = @(
+  '--user', '1000:1000',
+  '--read-only',
+  '--cap-drop', 'ALL',
+  '--security-opt', 'no-new-privileges',
+  '-p', "127.0.0.1:$Port\`:3000"
+)
+'FORGEJO__server__DISABLE_SSH=true'
+'FORGEJO__actions__ENABLED=false'
+'FORGEJO__security__DISABLE_GIT_HOOKS=true'
+'FORGEJO__security__DISABLE_WEBHOOKS=true'
+'FORGEJO__repository__DISABLE_MIGRATIONS=true'
+$inspect.ImageDigest
+if ([string]$inspect.ImageDigest -ne $ForgejoImageDigest) { Fail 'FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH' }
+try { migrate } finally {
+  Invoke-RestMethod -Method Delete -Uri "$ApiRoot/users/$Owner/tokens/$BootstrapTokenName"
+}
+Fail 'FORGE_BOOTSTRAP_TOKEN_REVOCATION_FAILED'
+Fail 'FORGE_BACKUP_COPY_DIGEST_MISMATCH'
+Fail 'FORGE_RESTORE_COPY_DIGEST_MISMATCH'
+function Create-And-ProveBackup {
+  try { restore } finally {
+    $RestoreContainerName
+    $RestoreVolume
+    Invoke-PodmanRemote $Podman @('start', $ContainerName) -AllowFailure
+  }
+}
+Fail 'FORGE_POST_BACKUP_RESTART_HEALTH_FAILED'
+Fail 'FORGE_TREE_PARITY_MISMATCH'
+status = 'FORGE_SHADOW_M2_READY'
+runnerRegistration = $false
+mergeAuthority = $false
+`;
+
+const forgeStaticTest = `
+${IMPORT_TOKEN} { readFileSync } from 'node:fs';
+const source = readFileSync(new URL('./install-forge-shadow-podman-v1.ps1', import.meta.url), 'utf8');
+test('every remote Podman operation is bound to the named Forge machine connection', () => {});
+test('bootstrap token revocation is attempted even when mirror migration fails', () => {});
+test('backup restore probe always cleans temporary state and restarts the canonical Forge container', () => {});
+test('dangerous generic execution and destructive host commands are absent', () => {});
+has("FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH");
+`;
+
+function escalation(selectedPaths = paths) {
   return {
-    findings: paths.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', summary: 'specialist', path })),
+    findings: selectedPaths.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', summary: 'specialist', path })),
   };
 }
 
@@ -109,8 +177,8 @@ test('exact allowlisted Windows authority sources pass specialist review', () =>
 
 test('PATH-resolved tools, direct npm, and substring listener proof are concrete P0 findings', () => {
   const insecure = starter
-    .replace("$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", '$git = Get-Command git')
-    .replace("$canonicalNpm = 'C:\\Program Files\\nodejs\\npm.cmd'", '$npm = Get-Command npm')
+    .replace("$canonicalGit = 'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe'", '$git = Get-Command git')
+    .replace("$canonicalNpm = 'C:\\\\Program Files\\\\nodejs\\\\npm.cmd'", '$npm = Get-Command npm')
     .replace('& $canonicalNpm run --silent openclaw:stub:ensure', 'npm run --silent openclaw:stub:ensure')
     .replace('[string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase)', "$commandLine.Contains('stephanos-server/server.js')");
   const result = analyzeWindowsAuthoritySpecialistReview({
@@ -144,7 +212,7 @@ test('reusing a current listener without refreshing its receipt is a concrete P0
 
 test('receipt publication without stable listener recheck is a concrete P0 finding', () => {
   const insecure = starter.replace(
-    '  $confirmedListener = Get-VerifiedBackendListener\n  if ($confirmedListener.ProcessId -ne $Listener.ProcessId -or $confirmedListener.ProcessStartTimeUtc -ne $Listener.ProcessStartTimeUtc -or -not (Test-BackendHealth)) { throw \'changed\' }',
+    "  $confirmedListener = Get-VerifiedBackendListener\n  if ($confirmedListener.ProcessId -ne $Listener.ProcessId -or $confirmedListener.ProcessStartTimeUtc -ne $Listener.ProcessStartTimeUtc -or -not (Test-BackendHealth)) { throw 'changed' }",
     '',
   );
   const result = analyzeWindowsAuthoritySpecialistReview({
@@ -155,6 +223,53 @@ test('receipt publication without stable listener recheck is a concrete P0 findi
   });
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'windows-backend-starter-receipt-stability-recheck-missing'));
+});
+
+test('Forge installer and its static hostile test are qualified specialist surfaces', () => {
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: escalation(forgePaths),
+    sources: [record(forgePaths[0], forgeInstaller), record(forgePaths[1], forgeStaticTest)],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true);
+  assert.deepEqual(result.reviewedPaths, forgePaths);
+  assert.equal(result.proofRefs.length, 2);
+});
+
+test('Forge specialist fails closed when actual OCI digest proof or connection binding disappears', () => {
+  const insecure = forgeInstaller
+    .replace('$inspect.ImageDigest', '$inspect.Image')
+    .replace("if ([string]$inspect.ImageDigest -ne $ForgejoImageDigest) { Fail 'FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH' }", '')
+    .replace("$boundArguments = @('--connection', $MachineName) + @($Arguments)", '$boundArguments = @($Arguments)');
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: escalation(forgePaths),
+    sources: [record(forgePaths[0], insecure), record(forgePaths[1], forgeStaticTest)],
+  });
+  assert.equal(result.clean, false);
+  const codes = result.findings.map((item) => item.code);
+  assert.ok(codes.includes('forge-podman-connection-not-fixed'));
+  assert.ok(codes.includes('forge-container-image-digest-not-independently-proved'));
+  assert.ok(codes.includes('forge-container-image-digest-blocker-missing'));
+});
+
+test('Forge specialist test must remain static and must guard the actual image digest', () => {
+  const insecure = `${forgeStaticTest.replace('FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH', 'FORGE_CONTAINER_DIGEST_LABEL_MISMATCH')}
+${IMPORT_TOKEN} { spawnSync } from 'node:child_process';
+`;
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: escalation(forgePaths),
+    sources: [record(forgePaths[0], forgeInstaller), record(forgePaths[1], insecure)],
+  });
+  assert.equal(result.clean, false);
+  const codes = result.findings.map((item) => item.code);
+  assert.ok(codes.includes('forge-static-test-image-digest-proof-missing'));
+  assert.ok(codes.includes('forge-static-test-child-process-forbidden'));
 });
 
 test('unknown Windows paths remain escalated to an external specialist', () => {

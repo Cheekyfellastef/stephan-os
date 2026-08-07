@@ -10,6 +10,8 @@ const ALLOWED_PATHS = Object.freeze([
   'scripts/windows/install-stephanos-backend-autostart.ps1',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/start-stephanos-backend.ps1',
+  'scripts/windows/install-forge-shadow-podman-v1.ps1',
+  'scripts/windows/install-forge-shadow-podman-v1.test.mjs',
 ]);
 
 function text(value) {
@@ -72,9 +74,13 @@ function forbidPattern(findings, source, pattern, code, summary, path) {
   if (pattern.test(source)) findings.push(finding(code, summary, path));
 }
 
+function requireLiteral(findings, source, literal, code, summary, path) {
+  if (!source.includes(literal)) findings.push(finding(code, summary, path));
+}
+
 function reviewInstaller(source, path, findings) {
   requirePattern(findings, source, /\$taskName\s*=\s*'Stephanos Battle Bridge Backend'/, 'windows-backend-task-name-not-fixed', 'Backend scheduled-task identity must remain fixed.', path);
-  requirePattern(findings, source, /\$wscriptExe\s*=\s*'C:\\Windows\\System32\\wscript\.exe'/, 'windows-backend-task-host-not-fixed', 'Backend scheduled-task host must remain the fixed Windows wscript executable.', path);
+  requirePattern(findings, source, /\$wscriptExe\s*=\s*'C:\\\\Windows\\\\System32\\\\wscript\.exe'/, 'windows-backend-task-host-not-fixed', 'Backend scheduled-task host must remain the fixed Windows wscript executable.', path);
   requirePattern(findings, source, /Test-Path -LiteralPath \$wscriptExe -PathType Leaf/, 'windows-backend-task-host-not-proved', 'Backend scheduled-task host must be proved before registration.', path);
   requirePattern(findings, source, /New-ScheduledTaskPrincipal[^\r\n]*-LogonType\s+Interactive[^\r\n]*-RunLevel\s+Limited/, 'windows-backend-task-principal-not-limited', 'Backend task principal must remain interactive and limited.', path);
   requirePattern(findings, source, /New-ScheduledTaskSettingsSet[^\r\n]*-MultipleInstances\s+IgnoreNew/, 'windows-backend-task-overlap-not-rejected', 'Backend task must reject overlapping instances.', path);
@@ -85,10 +91,10 @@ function reviewInstaller(source, path, findings) {
 
 function reviewProbe(source, path, findings) {
   for (const literal of [
-    "'C:\\Program Files\\Git\\cmd\\git.exe'",
-    "'C:\\Program Files\\nodejs\\node.exe'",
-    "'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
-    "'C:\\Windows\\System32\\wscript.exe'",
+    "'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe'",
+    "'C:\\\\Program Files\\\\nodejs\\\\node.exe'",
+    "'C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe'",
+    "'C:\\\\Windows\\\\System32\\\\wscript.exe'",
   ]) {
     if (!source.includes(literal)) findings.push(finding(
       'windows-recovery-canonical-executable-missing',
@@ -108,9 +114,9 @@ function reviewProbe(source, path, findings) {
 }
 
 function reviewStarter(source, path, findings) {
-  requirePattern(findings, source, /\$canonicalGit\s*=\s*'C:\\Program Files\\Git\\cmd\\git\.exe'/, 'windows-backend-starter-git-unpinned', 'Backend startup must pin the canonical Git executable instead of resolving PATH.', path);
-  requirePattern(findings, source, /\$canonicalNpm\s*=\s*'C:\\Program Files\\nodejs\\npm\.cmd'/, 'windows-backend-starter-npm-unpinned', 'Backend startup must pin the canonical npm executable instead of resolving PATH.', path);
-  requirePattern(findings, source, /\$canonicalNode\s*=\s*'C:\\Program Files\\nodejs\\node\.exe'/, 'windows-backend-starter-node-unpinned', 'Backend startup must pin canonical Node for listener identity.', path);
+  requirePattern(findings, source, /\$canonicalGit\s*=\s*'C:\\\\Program Files\\\\Git\\\\cmd\\\\git\.exe'/, 'windows-backend-starter-git-unpinned', 'Backend startup must pin the canonical Git executable instead of resolving PATH.', path);
+  requirePattern(findings, source, /\$canonicalNpm\s*=\s*'C:\\\\Program Files\\\\nodejs\\\\npm\.cmd'/, 'windows-backend-starter-npm-unpinned', 'Backend startup must pin the canonical npm executable instead of resolving PATH.', path);
+  requirePattern(findings, source, /\$canonicalNode\s*=\s*'C:\\\\Program Files\\\\nodejs\\\\node\.exe'/, 'windows-backend-starter-node-unpinned', 'Backend startup must pin canonical Node for listener identity.', path);
   requirePattern(findings, source, /\[string\]::Equals\(\$executable,\s*\$canonicalNode/, 'windows-backend-starter-listener-executable-not-exact', 'Backend startup must prove the listener executable exactly.', path);
   requirePattern(findings, source, /\[string\]::Equals\(\$commandLine,\s*\$expectedQuotedCommand[\s\S]*\[string\]::Equals\(\$commandLine,\s*\$expectedUnquotedCommand/, 'windows-backend-starter-listener-command-not-exact', 'Backend startup must prove the listener command line exactly.', path);
   forbidPattern(findings, source, /\.Contains\(['"]stephanos-server\/server\.js['"]\)/i, 'windows-backend-starter-substring-listener-proof', 'Substring listener proof cannot mint an exact-head runtime receipt.', path);
@@ -123,6 +129,75 @@ function reviewStarter(source, path, findings) {
   requirePattern(findings, source, /Write-BackendRuntimeReceipt[\s\S]*ProcessStartTimeUtc/, 'windows-backend-starter-runtime-receipt-incomplete', 'Backend startup receipt must include process start identity.', path);
   requirePattern(findings, source, /function\s+Publish-VerifiedBackendRuntimeReceipt[\s\S]*Write-BackendRuntimeReceipt[\s\S]*\$confirmedListener[\s\S]*ProcessId\s+-ne\s+\$Listener\.ProcessId[\s\S]*ProcessStartTimeUtc\s+-ne\s+\$Listener\.ProcessStartTimeUtc[\s\S]*Test-BackendHealth/, 'windows-backend-starter-receipt-stability-recheck-missing', 'Runtime receipt publication must recheck exact listener PID, process start identity, and exact-head health.', path);
   requirePattern(findings, source, /\$existingListener[\s\S]*if\s*\(\$existingListener\)[\s\S]*Publish-VerifiedBackendRuntimeReceipt[\s\S]*exit\s+0/, 'windows-backend-starter-reuse-receipt-missing', 'Reusing an already-current backend must refresh and recheck its exact runtime receipt before success.', path);
+}
+
+function reviewForgeInstaller(source, path, findings) {
+  for (const [literal, code, summary] of [
+    ["[ValidatePattern('^[0-9a-fA-F]{40}$')]", 'forge-expected-head-input-not-fixed', 'Forge installer must accept only an exact 40-character head.'],
+    ["[ValidatePattern('^sha256:[0-9a-fA-F]{64}$')]", 'forge-image-digest-input-not-fixed', 'Forge installer must accept only an immutable sha256 image digest.'],
+    ["[switch]$OperatorApproved", 'forge-operator-approval-input-missing', 'Forge installer mutation must require explicit operator approval.'],
+    ["$Repository = 'Cheekyfellastef/stephan-os'", 'forge-repository-identity-not-fixed', 'Forge repository identity must remain fixed.'],
+    ["$ForgejoVersion = '15.0.6'", 'forge-version-not-fixed', 'Forgejo version must remain fixed to the reviewed LTS line.'],
+    ["$PodmanVersion = '6.0.2'", 'forge-podman-version-not-fixed', 'Podman version must remain fixed.'],
+    ["$MachineName = 'stephanos-forge-shadow'", 'forge-machine-identity-not-fixed', 'Forge Podman machine identity must remain fixed.'],
+    ["$ContainerName = 'stephanos-forge-shadow'", 'forge-container-identity-not-fixed', 'Forge container identity must remain fixed.'],
+    ["$RemoteUrl = 'https://github.com/Cheekyfellastef/stephan-os.git'", 'forge-remote-not-fixed', 'Forge mirror source must remain the exact public canonical repository.'],
+    ["$HostAddress = '127.0.0.1'", 'forge-listener-host-not-loopback', 'Forge listener must remain loopback-only.'],
+    ["function Invoke-PodmanRemote", 'forge-podman-remote-wrapper-missing', 'Forge remote Podman operations must use one fixed wrapper.'],
+    ["$boundArguments = @('--connection', $MachineName) + @($Arguments)", 'forge-podman-connection-not-fixed', 'Every remote Podman operation must bind the named machine connection.'],
+    ["'machine', 'init', '--provider', 'wsl', '--rootful=false'", 'forge-rootless-machine-init-not-fixed', 'Forge Podman machine must be initialized rootless on WSL.'],
+    ["if ($machine.Rootful -ne $false)", 'forge-rootless-machine-proof-missing', 'Forge machine must prove Rootful=false.'],
+    ["'--user', '1000:1000'", 'forge-container-user-not-fixed', 'Forge containers must run as the fixed rootless user.'],
+    ["'--read-only'", 'forge-container-rootfs-not-readonly', 'Forge container root filesystem must remain read-only.'],
+    ["'--cap-drop', 'ALL'", 'forge-container-capabilities-not-dropped', 'Forge containers must drop all capabilities.'],
+    ["'--security-opt', 'no-new-privileges'", 'forge-container-new-privileges-not-blocked', 'Forge containers must set no-new-privileges.'],
+    ["'FORGEJO__server__DISABLE_SSH=true'", 'forge-ssh-not-disabled', 'Forge SSH must remain disabled.'],
+    ["'FORGEJO__actions__ENABLED=false'", 'forge-actions-not-disabled', 'Forge Actions must remain disabled.'],
+    ["'FORGEJO__security__DISABLE_GIT_HOOKS=true'", 'forge-git-hooks-not-disabled', 'Forge custom Git hooks must remain disabled.'],
+    ["'FORGEJO__security__DISABLE_WEBHOOKS=true'", 'forge-webhooks-not-disabled', 'Forge webhooks must remain disabled.'],
+    ["'FORGEJO__repository__DISABLE_MIGRATIONS=true'", 'forge-final-migrations-not-disabled', 'Forge migrations must be disabled in the sealed posture.'],
+    ["Invoke-RestMethod -Method Delete -Uri \"$ApiRoot/users/$Owner/tokens/$BootstrapTokenName\"", 'forge-bootstrap-token-revocation-missing', 'Forge bootstrap token must be explicitly revoked.'],
+    ["Fail 'FORGE_BOOTSTRAP_TOKEN_REVOCATION_FAILED'", 'forge-token-revocation-failclosed-missing', 'Token revocation failure must block readiness.'],
+    ["Fail 'FORGE_BACKUP_COPY_DIGEST_MISMATCH'", 'forge-backup-copy-hash-proof-missing', 'Forge backup copy must be content-hash verified.'],
+    ["Fail 'FORGE_RESTORE_COPY_DIGEST_MISMATCH'", 'forge-restore-copy-hash-proof-missing', 'Forge restore copy must be content-hash verified.'],
+    ["Invoke-PodmanRemote $Podman @('start', $ContainerName) -AllowFailure", 'forge-canonical-restart-cleanup-missing', 'Forge canonical service restart must occur from bounded cleanup.'],
+    ["Fail 'FORGE_POST_BACKUP_RESTART_HEALTH_FAILED'", 'forge-post-backup-health-proof-missing', 'Forge canonical service must be re-proved healthy after restore cleanup.'],
+    ["Fail 'FORGE_TREE_PARITY_MISMATCH'", 'forge-tree-parity-proof-missing', 'Forge mirror tree must match the exact canonical tree.'],
+    ["Fail 'FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH'", 'forge-container-image-digest-blocker-missing', 'Forge container identity must fail closed when the actual OCI image digest drifts.'],
+    ["status = 'FORGE_SHADOW_M2_READY'", 'forge-m2-ready-receipt-missing', 'Forge installer must emit only the bounded M2-ready receipt after proof.'],
+    ["runnerRegistration = $false", 'forge-runner-authority-not-denied', 'M2 must explicitly deny runner registration.'],
+    ["mergeAuthority = $false", 'forge-merge-authority-not-denied', 'M2 must explicitly deny merge authority.'],
+  ]) requireLiteral(findings, source, literal, code, summary, path);
+
+  requirePattern(findings, source, /'-p',\s*"127\.0\.0\.1:\$Port`:3000"/, 'forge-published-port-not-loopback', 'Forge HTTP publication must remain bound to loopback.', path);
+  requirePattern(findings, source, /finally\s*\{[\s\S]*Invoke-RestMethod -Method Delete -Uri "\$ApiRoot\/users\/\$Owner\/tokens\/\$BootstrapTokenName"/, 'forge-token-revocation-not-finally-bound', 'Forge temporary-token cleanup must be in a finally path.', path);
+  requirePattern(findings, source, /function Create-And-ProveBackup[\s\S]*finally\s*\{[\s\S]*\$RestoreContainerName[\s\S]*\$RestoreVolume[\s\S]*\('start', \$ContainerName\) -AllowFailure/, 'forge-backup-restore-finally-cleanup-missing', 'Forge restore artifacts and canonical restart must be handled in finally cleanup.', path);
+  requirePattern(findings, source, /\$inspect\.ImageDigest[\s\S]*\$ForgejoImageDigest|image inspect[\s\S]*\.Digest/, 'forge-container-image-digest-not-independently-proved', 'Forge container identity must independently prove the actual OCI image digest, not only a caller-controlled label.', path);
+
+  for (const [pattern, code, summary] of [
+    [/Get-Command\s+podman/i, 'forge-podman-path-resolution-forbidden', 'Forge installer must not resolve Podman from PATH.'],
+    [/--privileged/i, 'forge-privileged-container-forbidden', 'Forge containers must never run privileged.'],
+    [/0\.0\.0\.0:/, 'forge-public-listener-forbidden', 'Forge must not expose a wildcard listener.'],
+    [/auth_(?:token|password)\s*=/i, 'forge-github-credential-forbidden', 'Forge public mirror migration must not receive GitHub credentials.'],
+    [/Invoke-Expression/i, 'forge-arbitrary-expression-forbidden', 'Forge installer must not gain arbitrary expression authority.'],
+  ]) forbidPattern(findings, source, pattern, code, summary, path);
+}
+
+function reviewForgeInstallerStaticTest(source, path, findings) {
+  for (const [literal, code, summary] of [
+    ["readFileSync(new URL('./install-forge-shadow-podman-v1.ps1'", 'forge-static-test-source-not-fixed', 'Forge specialist test must inspect only its adjacent fixed installer source.'],
+    ["test('every remote Podman operation is bound to the named Forge machine connection'", 'forge-static-test-connection-proof-missing', 'Forge static regression must guard named Podman connection binding.'],
+    ["test('bootstrap token revocation is attempted even when mirror migration fails'", 'forge-static-test-token-proof-missing', 'Forge static regression must guard temporary-token cleanup.'],
+    ["test('backup restore probe always cleans temporary state and restarts the canonical Forge container'", 'forge-static-test-backup-cleanup-proof-missing', 'Forge static regression must guard restore cleanup and canonical restart.'],
+    ["test('dangerous generic execution and destructive host commands are absent'", 'forge-static-test-dangerous-command-guard-missing', 'Forge static regression must guard dangerous generic execution and host commands.'],
+    ["FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH", 'forge-static-test-image-digest-proof-missing', 'Forge static regression must guard actual image-digest proof.'],
+  ]) requireLiteral(findings, source, literal, code, summary, path);
+
+  for (const [pattern, code, summary] of [
+    [/node:child_process/, 'forge-static-test-child-process-forbidden', 'Forge specialist test must remain static and must not execute child processes.'],
+    [/\b(?:writeFileSync|appendFileSync|rmSync|unlinkSync|renameSync)\b/, 'forge-static-test-filesystem-mutation-forbidden', 'Forge specialist test must not mutate the filesystem.'],
+    [/\bfetch\s*\(/, 'forge-static-test-network-forbidden', 'Forge specialist test must not gain network authority.'],
+  ]) forbidPattern(findings, source, pattern, code, summary, path);
 }
 
 function generalAuthorityScan(source, path, findings) {
@@ -168,10 +243,12 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
       continue;
     }
     const source = candidates[0].content;
-    generalAuthorityScan(source, path, findings);
+    if (path.endsWith('.ps1')) generalAuthorityScan(source, path, findings);
     if (path.endsWith('install-stephanos-backend-autostart.ps1')) reviewInstaller(source, path, findings);
     if (path.endsWith('probe-battle-bridge-recovery-mesh.ps1')) reviewProbe(source, path, findings);
     if (path.endsWith('start-stephanos-backend.ps1')) reviewStarter(source, path, findings);
+    if (path.endsWith('install-forge-shadow-podman-v1.ps1')) reviewForgeInstaller(source, path, findings);
+    if (path.endsWith('install-forge-shadow-podman-v1.test.mjs')) reviewForgeInstallerStaticTest(source, path, findings);
     proofRefs.push(`proofs/windows-authority-specialist/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
   }
 
