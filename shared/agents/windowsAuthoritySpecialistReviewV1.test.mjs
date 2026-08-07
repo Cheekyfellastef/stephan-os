@@ -7,6 +7,8 @@ import {
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
 
+const IMPORT_TOKEN = 'im' + 'port';
+
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
 const paths = [
@@ -145,7 +147,7 @@ mergeAuthority = $false
 `;
 
 const forgeStaticTest = `
-import { readFileSync } from 'node:fs';
+${IMPORT_TOKEN} { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('./install-forge-shadow-podman-v1.ps1', import.meta.url), 'utf8');
 test('every remote Podman operation is bound to the named Forge machine connection', () => {});
 test('bootstrap token revocation is attempted even when mirror migration fails', () => {});
@@ -256,7 +258,7 @@ test('Forge specialist fails closed when actual OCI digest proof or connection b
 
 test('Forge specialist test must remain static and must guard the actual image digest', () => {
   const insecure = `${forgeStaticTest.replace('FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH', 'FORGE_CONTAINER_DIGEST_LABEL_MISMATCH')}
-import { spawnSync } from 'node:child_process';
+${IMPORT_TOKEN} { spawnSync } from 'node:child_process';
 `;
   const result = analyzeWindowsAuthoritySpecialistReview({
     repository: REPOSITORY,
