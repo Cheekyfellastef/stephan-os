@@ -50,6 +50,8 @@ test('subject identity is fixed, exact and rejects extra authority fields', () =
   assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, mergeCommit: 'short' }).ok, false);
   assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, command: 'dir' }).ok, false);
   assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, deploymentRequestId: 'bad request id' }).ok, false);
+  assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, deploymentRequestId: undefined }).ok, false);
+  assert.equal(validateDeliveryStatusSubject({ ...SUBJECT, featureId: undefined }).ok, false);
 });
 
 test('unrelated newest global status cannot answer the scoped Music Tile question', () => {

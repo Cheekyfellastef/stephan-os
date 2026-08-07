@@ -264,8 +264,8 @@ export function validateDeliveryStatusSubject(input = {}) {
   if (repository !== FIXED_REPOSITORY) errors.push('repository-not-allowlisted');
   if (!prNumber) errors.push('invalid-pr-number');
   if (!FULL_SHA.test(mergeCommit)) errors.push('invalid-merge-commit');
-  if (text(input.deploymentRequestId) && deploymentRequestId !== text(input.deploymentRequestId)) errors.push('invalid-deployment-request-id');
-  if (text(input.featureId) && featureId !== text(input.featureId)) errors.push('invalid-feature-id');
+  if (!deploymentRequestId || deploymentRequestId !== text(input.deploymentRequestId)) errors.push('invalid-deployment-request-id');
+  if (!featureId || featureId !== text(input.featureId)) errors.push('invalid-feature-id');
 
   return Object.freeze({
     ok: errors.length === 0,
