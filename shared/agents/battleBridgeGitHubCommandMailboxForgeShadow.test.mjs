@@ -37,6 +37,17 @@ function command(overrides = {}) {
   };
 }
 
+function nonForgeCommand(overrides = {}) {
+  const {
+    forgejoVersion: _forgejoVersion,
+    forgejoImageDigest: _forgejoImageDigest,
+    runtimeBoundary: _runtimeBoundary,
+    m2Only: _m2Only,
+    ...base
+  } = command({ operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' });
+  return { ...base, ...overrides };
+}
+
 test('Forge M2 is one named canonical mailbox operation', () => {
   assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(FORGE_SHADOW_BATTLE_BRIDGE_OPERATION));
   assert.equal(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.filter((value) => value === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION).length, 1);
@@ -67,11 +78,10 @@ test('Forge-specific fields are forbidden on every non-Forge mailbox command', (
     ['runtimeBoundary', 'podman-wsl-rootless'],
     ['m2Only', true],
   ]) {
-    const result = validateBattleBridgeGitHubCommand({
-      ...command(),
-      operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
-      [field]: value,
-    }, { authorLogin: 'Cheekyfellastef', now: NOW });
+    const result = validateBattleBridgeGitHubCommand(nonForgeCommand({ [field]: value }), {
+      authorLogin: 'Cheekyfellastef',
+      now: NOW,
+    });
     assert.equal(result.ok, false);
     assert.equal(result.blocker, 'FORGE_SHADOW_FIELD_NOT_ALLOWED');
     assert.equal(result.field, field);
