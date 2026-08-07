@@ -63,12 +63,12 @@ jobs:
           actual="$(mktemp)"
           cat > "${expected}" <<'EOF'
           docs/operations/chatgpt-shared-workspace-live-status.md
+          scripts/chatgpt-shared-workspace-github-relay.test.mjs
           shared/agents/battleBridgeGitHubCommandMailbox.mjs
           shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
           shared/agents/chatGptParticipantBridgeV1.test.mjs
           shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs
           shared/agents/sharedWorkspaceScopedDeliveryStatusV1.test.mjs
-          scripts/chatgpt-shared-workspace-github-relay.test.mjs
           EOF
           git diff --name-only --diff-filter=ACMRT HEAD | sort > "${actual}"
           diff -u "${expected}" "${actual}"
