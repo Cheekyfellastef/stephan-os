@@ -78,8 +78,11 @@ test('fixed remote PowerShell only bootstraps canonical GitHub Sync and proves e
   assert.match(source, new RegExp(HEAD));
   assert.match(source, /BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY/);
   assert.match(source, /liveOpenClawUpdateAllowed -ne \$false/);
+  assert.match(source, /codexRequired = \$false/);
+  assert.match(source, /try \{ \$installerOutput = @\(& \$installer -StartNow\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_FAILED' \}/);
+  assert.match(source, /try \{ \$statusOutput = @\(& \$statusScript\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_SYNC_STATUS_FAILED' \}/);
   assert.doesNotMatch(source, /reset --hard|git clean|git stash|git rebase|git push|Restart-Computer|Stop-Computer|Invoke-Expression/i);
-  assert.doesNotMatch(source, /Codex|openclaw-gateway|gateway\.cmd|\.openclaw/i);
+  assert.doesNotMatch(source, /codex\.exe|codex\.cmd|codex\s+(?:exec|run|dispatch)|openclaw-gateway|gateway\.cmd|\.openclaw/i);
   const encoded = buildFixedBattleBridgeBootstrapEncodedCommand(HEAD);
   assert.match(encoded, /^[A-Za-z0-9+/=]+$/);
   assert.ok(encoded.length > 100);
