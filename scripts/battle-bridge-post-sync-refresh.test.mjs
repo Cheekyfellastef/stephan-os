@@ -11,17 +11,14 @@ test('fresh coordinator compares immutable heads through fixed shell-free git ar
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression/);
 });
 
-test('runtime adapters are fixed to UI backend worker natural reload and bounded control-plane recovery', () => {
+test('runtime adapters are fixed to UI backend worker natural reload and bounded control-plane repair', () => {
   assert.match(source, /refreshStephanosUi4173/);
   assert.match(source, /restart-approved-stephanos-runtime\.ps1/);
   assert.match(source, /target: 'backend'/);
   assert.match(source, /target: 'mission-worker'/);
   assert.match(source, /confirmNaturalReload/);
-  assert.match(source, /reconcile-battle-bridge-control-plane\.ps1/);
-  assert.match(source, /CONTROL_PLANE_TASK_NAMES/);
-  assert.match(source, /Stephanos Battle Bridge Recovery Mesh/);
-  assert.match(source, /Stephanos Battle Bridge GitHub Command Mailbox/);
-  assert.match(source, /BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED/);
+  assert.match(source, /reconcileBattleBridgeControlPlane/);
+  assert.doesNotMatch(source, /reconcile-battle-bridge-control-plane\.ps1/);
   assert.doesNotMatch(source, /WAKE_BATTLE_BRIDGE_RECOVERY_MESH/);
 });
 
@@ -31,7 +28,6 @@ test('control-plane repair runs only after normal exact-head refresh execution p
   assert.ok(executeIndex >= 0);
   assert.ok(reconcileIndex > executeIndex);
   assert.match(source, /execution\.ok === true\s*\? adapter\.reconcileControlPlane/);
-  assert.match(source, /CONTROL_PLANE_RECONCILE_POSTCONDITION_FAILED/);
   assert.match(source, /exactHeadProofOk: effectiveExecution\.exactHeadProofOk === true && controlPlaneReconcile\.ok === true/);
 });
 
