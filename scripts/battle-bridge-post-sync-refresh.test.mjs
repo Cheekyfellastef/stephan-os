@@ -11,12 +11,24 @@ test('fresh coordinator compares immutable heads through fixed shell-free git ar
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression/);
 });
 
-test('runtime adapters are fixed to UI backend worker and natural reload', () => {
+test('runtime adapters are fixed to UI backend worker natural reload and bounded control-plane repair', () => {
   assert.match(source, /refreshStephanosUi4173/);
   assert.match(source, /restart-approved-stephanos-runtime\.ps1/);
   assert.match(source, /target: 'backend'/);
   assert.match(source, /target: 'mission-worker'/);
   assert.match(source, /confirmNaturalReload/);
+  assert.match(source, /reconcileBattleBridgeControlPlane/);
+  assert.doesNotMatch(source, /reconcile-battle-bridge-control-plane\.ps1/);
+  assert.doesNotMatch(source, /WAKE_BATTLE_BRIDGE_RECOVERY_MESH/);
+});
+
+test('control-plane repair runs only after normal exact-head refresh execution passes', () => {
+  const executeIndex = source.indexOf('executePostSyncRefreshPlan({');
+  const reconcileIndex = source.indexOf('adapter.reconcileControlPlane({ afterHead: normalizedAfter, paths })');
+  assert.ok(executeIndex >= 0);
+  assert.ok(reconcileIndex > executeIndex);
+  assert.match(source, /execution\.ok === true\s*\? adapter\.reconcileControlPlane/);
+  assert.match(source, /exactHeadProofOk: effectiveExecution\.exactHeadProofOk === true && controlPlaneReconcile\.ok === true/);
 });
 
 test('workspace publication contains bounded projections and relative proof refs', () => {
