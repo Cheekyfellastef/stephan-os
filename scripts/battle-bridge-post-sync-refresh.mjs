@@ -6,6 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import {
   buildPostSyncRefreshProjection,
   classifyPostSyncRefresh,
@@ -26,10 +27,6 @@ export const POST_SYNC_REFRESH_RESULT_MARKER = 'POST_SYNC_REFRESH_RESULT=';
 export const POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS = 15 * 60 * 1000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const MAX_CHANGED_PATHS = 4000;
-const CONTROL_PLANE_TASK_NAMES = Object.freeze([
-  'Stephanos Battle Bridge Recovery Mesh',
-  'Stephanos Battle Bridge GitHub Command Mailbox',
-]);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -61,7 +58,6 @@ export function resolveCanonicalPostSyncRefreshPaths({ env = process.env, home =
     repoRoot,
     workspaceRoot,
     restartScript: path.resolve(repoRoot, 'scripts', 'windows', 'restart-approved-stephanos-runtime.ps1'),
-    controlPlaneReconcileScript: path.resolve(repoRoot, 'scripts', 'windows', 'reconcile-battle-bridge-control-plane.ps1'),
     receiptRelative: '',
   });
 }
@@ -93,33 +89,6 @@ function parseJsonOutput(stdout) {
     } catch {}
   }
   return null;
-}
-
-function validateControlPlaneReconcilePayload(payload, afterHead) {
-  const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
-  const taskNames = Array.isArray(payload?.canonicalTaskNames) ? payload.canonicalTaskNames.map(String) : [];
-  const safe = payload?.schemaVersion === 'stephanos.battle-bridge-control-plane-reconcile.v1'
-    && payload?.ok === true
-    && payload?.repository === 'Cheekyfellastef/stephan-os'
-    && payload?.branch === 'main'
-    && text(payload?.sourceHead).toLowerCase() === text(afterHead).toLowerCase()
-    && payload?.trackedSourceClean === true
-    && Number(payload?.taskCount) === 2
-    && tasks.length === 2
-    && tasks.every((task) => task?.canonicalAfter === true && task?.startRequested === true)
-    && taskNames.length === CONTROL_PLANE_TASK_NAMES.length
-    && CONTROL_PLANE_TASK_NAMES.every((name, index) => taskNames[index] === name)
-    && payload?.arbitraryTaskNameAllowed === false
-    && payload?.arbitraryExecutableAllowed === false
-    && payload?.arbitraryShellAllowed === false
-    && payload?.sourceMutationAllowed === false
-    && payload?.gitMutationAllowed === false
-    && payload?.pcRestartAllowed === false
-    && payload?.publicExposureChanged === false
-    && payload?.finalVerdict === 'BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED';
-  return safe
-    ? Object.freeze({ ok: true, blocker: '', sourceHead: text(payload.sourceHead).toLowerCase(), exactHeadProofOk: true, payload })
-    : Object.freeze({ ok: false, blocker: 'CONTROL_PLANE_RECONCILE_POSTCONDITION_FAILED', sourceHead: '', exactHeadProofOk: false, payload });
 }
 
 export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, refreshUiFn = refreshStephanosUi4173 } = {}) {
@@ -178,16 +147,12 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
       };
     },
     reconcileControlPlane({ afterHead, paths }) {
-      const result = fixedRun('powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy', 'Bypass',
-        '-File', paths.controlPlaneReconcileScript,
-      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 180_000 });
-      if (!result.ok) return { ok: false, blocker: 'CONTROL_PLANE_RECONCILE_EXECUTION_FAILED', sourceHead: '', exactHeadProofOk: false };
-      const payload = parseJsonOutput(result.stdout);
-      if (!payload) return { ok: false, blocker: 'CONTROL_PLANE_RECONCILE_RESPONSE_INVALID', sourceHead: '', exactHeadProofOk: false };
-      return validateControlPlaneReconcilePayload(payload, afterHead);
+      return reconcileBattleBridgeControlPlane({
+        repoRoot: paths.repoRoot,
+        expectedHead: afterHead,
+        platform: process.platform,
+        spawnSyncFn,
+      });
     },
     confirmNaturalReload({ afterHead, repoRoot }) {
       const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: repoRoot, spawnSyncFn });
