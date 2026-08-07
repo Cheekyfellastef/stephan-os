@@ -37,6 +37,7 @@ jobs:
           shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs
           shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs
           scripts/independent-merge-security-review-with-windows-specialist-v1.test.mjs
+      # The specialist wrapper preserves scripts/independent-merge-security-review-v2.mjs as the trusted base reviewer.
       - name: Review the complete exact-head and exact-base diff without mutation authority
         env:
           GH_TOKEN: ${{ github.token }}
