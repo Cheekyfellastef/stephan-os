@@ -8,10 +8,15 @@ on:
       - 'scripts/battle-bridge-recovery-mesh.mjs'
       - 'scripts/battle-bridge-recovery-mesh.test.mjs'
       - 'scripts/battle-bridge-recovery-mesh-installer.test.mjs'
+      - 'scripts/battle-bridge-backend-freshness-probe.mjs'
+      - 'scripts/battle-bridge-backend-freshness-probe.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.test.mjs'
       - 'scripts/windows/*battle-bridge-recovery-mesh.ps1'
       - 'scripts/windows/request-battle-bridge-recovery.ps1'
+      - 'scripts/windows/install-stephanos-backend-autostart.ps1'
+      - 'shared/agents/backendFreshnessSupervisor.mjs'
+      - 'shared/agents/backendFreshnessSupervisor.test.mjs'
       - 'scripts/windows-launcher-supervisor-freshness.test.mjs'
       - 'scripts/windows-launcher-defaults.test.mjs'
       - 'tests/windows-launcher-ignition.test.mjs'
@@ -48,6 +53,8 @@ jobs:
           scripts/windows-launcher-defaults.test.mjs
           tests/windows-launcher-ignition.test.mjs
           shared/agents/battleBridgeRecoveryMeshV1.test.mjs
+          shared/agents/backendFreshnessSupervisor.test.mjs
+          scripts/battle-bridge-backend-freshness-probe.test.mjs
           scripts/battle-bridge-recovery-mesh.test.mjs
           scripts/battle-bridge-recovery-mesh-installer.test.mjs
           scripts/battle-bridge-github-command-mailbox.test.mjs
