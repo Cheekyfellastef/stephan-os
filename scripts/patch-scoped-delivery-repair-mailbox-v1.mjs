@@ -50,7 +50,7 @@ function validateScopedDelivery(command = {}) {
   const unexpectedField = Object.keys(command.scopedDelivery)
     .find((field) => !SCOPED_DELIVERY_FIELDS.has(field));
   if (unexpectedField) {
-    return fail('SCOPED_DELIVERY_FIELD_NOT_ALLOWED', { field: `scopedDelivery.${unexpectedField}` });
+    return fail('SCOPED_DELIVERY_FIELD_NOT_ALLOWED', { field: 'scopedDelivery.' + unexpectedField });
   }
 
   const prNumber = Number(command.scopedDelivery.prNumber);
@@ -75,7 +75,7 @@ function validateScopedDelivery(command = {}) {
     ok: true,
     scopedDelivery: Object.freeze({
       repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
-      relatedPr: `#${prNumber}`,
+      relatedPr: '#' + prNumber,
       prNumber,
       mergeCommit,
       deploymentHead,
