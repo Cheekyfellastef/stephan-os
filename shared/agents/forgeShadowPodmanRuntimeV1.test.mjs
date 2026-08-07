@@ -53,16 +53,18 @@ test('fixed runtime identity selects current Forgejo LTS and loopback-only port'
   assert.equal(result.valid, true);
   assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.READY);
   assert.equal(result.readyForM3, true);
-  assert.equal(FORGE_SHADOW_PODMAN_RUNTIME_VERSION, '15.0.5');
-  assert.equal(FORGE_SHADOW_PODMAN_IMAGE_TAG, '15.0.5-rootless');
+  assert.equal(FORGE_SHADOW_PODMAN_RUNTIME_VERSION, '15.0.6');
+  assert.equal(FORGE_SHADOW_PODMAN_IMAGE_TAG, '15.0.6-rootless');
   assert.equal(FORGE_SHADOW_PODMAN_PORT, 3340);
   assert.equal(result.identity.host, '127.0.0.1');
+  assert.equal(result.identity.connectionName, 'stephanos-forge-shadow');
   assert.equal(result.identity.remoteUrl, 'https://github.com/Cheekyfellastef/stephan-os.git');
   assert.equal(result.authority.githubCredentialUse, false);
   assert.equal(result.authority.credentialPersistence, false);
   assert.equal(result.authority.credentialLogging, false);
   assert.equal(result.authority.hostSourceMount, false);
   assert.equal(result.authority.hostSocketMount, false);
+  assert.equal(result.authority.defaultPodmanConnectionUse, false);
 });
 
 test('repository, head, digest and fact schemas fail closed', () => {
@@ -76,6 +78,22 @@ test('repository, head, digest and fact schemas fail closed', () => {
     const result = planForgeShadowPodmanRuntime(candidate);
     assert.equal(result.valid, false);
     assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.BLOCKED);
+  }
+});
+
+test('runtime fact observations require exact boolean and string types', () => {
+  for (const patch of [
+    { machineRootful: 'false' },
+    { machineRunning: 1 },
+    { githubCredentialPresent: 'false' },
+    { parityReady: null },
+    { podmanVersion: 6.002 },
+    { mirrorSourceHead: false },
+  ]) {
+    const result = planForgeShadowPodmanRuntime(input(patch));
+    assert.equal(result.valid, false);
+    assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.BLOCKED);
+    assert.ok(result.blockers.some((blocker) => blocker.startsWith('runtime-fact-type-invalid:')));
   }
 });
 
@@ -117,10 +135,13 @@ test('machine init and start plans are fixed and explicitly rootless', () => {
   ]);
 });
 
-test('exact digest pull is required before any service bootstrap', () => {
+test('exact digest pull is bound to the named Forge Podman connection', () => {
   const result = planForgeShadowPodmanRuntime(input({ imagePresentByDigest: false }));
   assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.IMAGE_PULL_REQUIRED);
-  assert.deepEqual(result.nextAction.argv, ['pull', `code.forgejo.org/forgejo/forgejo@${DIGEST}`]);
+  assert.deepEqual(result.nextAction.argv, [
+    '--connection', 'stephanos-forge-shadow',
+    'pull', `code.forgejo.org/forgejo/forgejo@${DIGEST}`,
+  ]);
 });
 
 test('fixed loopback port collision fails closed', () => {
@@ -132,12 +153,14 @@ test('fixed loopback port collision fails closed', () => {
 test('bootstrap grants one local ephemeral credential but never persistence, logging or GitHub use', () => {
   const result = planForgeShadowPodmanRuntime(input({ containerExists: false }));
   assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.SERVICE_BOOTSTRAP_REQUIRED);
+  assert.equal(result.nextAction.podmanConnection, 'stephanos-forge-shadow');
   assert.equal(result.nextAction.localCredentialCreation, 'isolated-random-local-only');
   assert.equal(result.nextAction.credentialPersistenceAllowed, false);
   assert.equal(result.nextAction.credentialLoggingAllowed, false);
   assert.equal(result.nextAction.githubCredentialAllowed, false);
 
   const bootstrap = planForgeShadowPodmanRuntime(input({ serviceHealthy: false }));
+  assert.equal(bootstrap.nextAction.podmanConnection, 'stephanos-forge-shadow');
   assert.equal(bootstrap.nextAction.temporaryTokenTransport, 'fixed-installer-process-memory-only');
   assert.equal(bootstrap.nextAction.tokenPersistenceAllowed, false);
   assert.equal(bootstrap.nextAction.tokenLoggingAllowed, false);
@@ -160,14 +183,20 @@ test('wrong mirrored source head blocks rather than being silently resynchronize
   assert.ok(result.blockers.includes('mirror-source-head-mismatch'));
 });
 
-test('sealed posture disables all write, new-mirror and runner surfaces before parity proof', () => {
+test('sealed posture requires read-only rootfs, no capabilities and no-new-privileges', () => {
   const seal = planForgeShadowPodmanRuntime(input({ sealedReadOnlyPosture: false }));
   assert.equal(seal.decision, FORGE_SHADOW_PODMAN_DECISIONS.SEAL_REQUIRED);
+  assert.equal(seal.nextAction.podmanConnection, 'stephanos-forge-shadow');
   assert.equal(seal.nextAction.disableActions, true);
   assert.equal(seal.nextAction.disablePackages, true);
   assert.equal(seal.nextAction.disableMigrations, true);
   assert.equal(seal.nextAction.disableNewMirrors, true);
   assert.equal(seal.nextAction.disablePeriodicMirrorUpdates, true);
+  assert.equal(seal.nextAction.readOnlyRootFilesystem, true);
+  assert.equal(seal.nextAction.dropAllCapabilities, true);
+  assert.equal(seal.nextAction.noNewPrivileges, true);
+  assert.equal(seal.nextAction.writableDataSurface, '/var/lib/gitea');
+  assert.deepEqual(seal.nextAction.boundedEphemeralWritableSurfaces, ['/run', '/tmp', '/var/tmp']);
   assert.equal(seal.nextAction.runnerRegistration, false);
   assert.equal(seal.nextAction.publicExposure, false);
 });
@@ -179,6 +208,7 @@ test('M2 cannot be ready until exact parity and restorable backup both pass', ()
   ]) {
     const result = planForgeShadowPodmanRuntime(input(patch));
     assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.PARITY_REQUIRED);
+    assert.equal(result.nextAction.podmanConnection, 'stephanos-forge-shadow');
     assert.equal(result.nextAction.requiredParitySchema, 'stephanos.forge-shadow-parity.v1');
   }
 });

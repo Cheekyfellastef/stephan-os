@@ -40,13 +40,39 @@ test('machine creation and inspection are WSL rootless bounded identities', () =
   has("'machine', 'init', '--provider', 'wsl', '--rootful=false', '--cpus', '4', '--memory', '4096', '--disk-size', '40'");
   has("'machine', 'inspect', '--format', '{{json .}}', $MachineName");
   has("$MachineName = 'stephanos-forge-shadow'");
-  has("if ($machine.Rootful -eq $true) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }");
-  has("if ($machine.State -ne 'running')");
+  has('function Assert-MachineIdentity');
+  has("if ([string]$Machine.Name -ne $MachineName) { Fail 'PODMAN_MACHINE_NAME_MISMATCH' }");
+  has("if ($Machine.Rootful -ne $false) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }");
+  has("if ([int]$Machine.Resources.CPUs -ne 4) { Fail 'PODMAN_MACHINE_CPU_LIMIT_MISMATCH' }");
+  has("if ([int64]$Machine.Resources.Memory -ne 4096) { Fail 'PODMAN_MACHINE_MEMORY_LIMIT_MISMATCH' }");
+  has("if ([int64]$Machine.Resources.DiskSize -ne 40) { Fail 'PODMAN_MACHINE_DISK_LIMIT_MISMATCH' }");
+  has("Fail 'PODMAN_MACHINE_PROVIDER_NOT_WSL'");
+  has('Assert-MachineIdentity $machine');
+  has("Fail 'PODMAN_MACHINE_RUNNING_ROOTLESS_NOT_PROVED'");
   lacks('--privileged');
 });
 
-test('Forgejo is digest pinned and exposes only loopback HTTP with no SSH port', () => {
-  has("$ForgejoVersion = '15.0.5'");
+test('every remote Podman operation is bound to the named Forge machine connection', () => {
+  has('function Invoke-PodmanRemote');
+  has("$boundArguments = @('--connection', $MachineName) + @($Arguments)");
+  has("$connectionProbe = Invoke-PodmanRemote $PodmanExe @('info') -AllowFailure");
+  has("Fail 'PODMAN_MACHINE_CONNECTION_UNAVAILABLE'");
+  has('podmanConnection = $MachineName');
+  for (const unbound of [
+    "Invoke-Fixed $Podman @('container'",
+    "Invoke-Fixed $Podman @('volume'",
+    "Invoke-Fixed $Podman @('inspect'",
+    "Invoke-Fixed $Podman @('port'",
+    "Invoke-Fixed $Podman @('run'",
+    "Invoke-Fixed $Podman @('exec'",
+    "Invoke-Fixed $Podman @('stop'",
+    "Invoke-Fixed $Podman @('start'",
+    "Invoke-Fixed $Podman @('rm'",
+  ]) lacks(unbound);
+});
+
+test('Forgejo is current-LTS digest pinned and exposes only loopback HTTP with no SSH port', () => {
+  has("$ForgejoVersion = '15.0.6'");
   has("$HostAddress = '127.0.0.1'");
   has('$HostPort = 3340');
   has("'-p', \"127.0.0.1:$Port`:3000\"");
@@ -54,11 +80,39 @@ test('Forgejo is digest pinned and exposes only loopback HTTP with no SSH port',
   has("\"FORGEJO__server__ROOT_URL=http://127.0.0.1:$PublicPort/\"");
   has("'FORGEJO__server__DISABLE_SSH=true'");
   has("'FORGEJO__server__START_SSH_SERVER=false'");
-  has("'pull', $ImageRef");
+  has("Invoke-PodmanRemote $PodmanExe @('pull', $ImageRef)");
+  has("if ([string]$inspect.ImageName -ne $ImageRef) { Fail 'FORGE_CONTAINER_IMAGE_REFERENCE_MISMATCH' }");
   lacks('0.0.0.0:');
   lacks(':2222');
   lacks('/var/run/docker.sock');
   lacks('podman.sock');
+});
+
+test('service container root filesystem resource and privilege posture are explicitly reproved', () => {
+  has("'--read-only'");
+  has("'--read-only-tmpfs=false'");
+  has("'--cap-drop', 'ALL'");
+  has("'--security-opt', 'no-new-privileges'");
+  has("'--pids-limit', '512'");
+  has("'--memory', '2g'");
+  has("'--cpus', '2'");
+  has("'--tmpfs', '/run:rw,nosuid,nodev,noexec,size=16m'");
+  has("'--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=64m'");
+  has("'--tmpfs', '/var/tmp:rw,nosuid,nodev,noexec,size=32m'");
+  has("if ($inspect.HostConfig.ReadonlyRootfs -ne $true) { Fail 'FORGE_CONTAINER_ROOTFS_NOT_READ_ONLY' }");
+  has("if ($capDrop -notcontains 'ALL') { Fail 'FORGE_CONTAINER_CAPABILITIES_NOT_DROPPED' }");
+  has("if ($securityOptions -notcontains 'no-new-privileges') { Fail 'FORGE_CONTAINER_NO_NEW_PRIVILEGES_NOT_PROVED' }");
+  has("if ([int64]$inspect.HostConfig.PidsLimit -ne 512) { Fail 'FORGE_CONTAINER_PIDS_LIMIT_MISMATCH' }");
+  has("if ([int64]$inspect.HostConfig.Memory -ne 2GB) { Fail 'FORGE_CONTAINER_MEMORY_LIMIT_MISMATCH' }");
+  has("if ([int64]$inspect.HostConfig.CpuPeriod -ne 100000 -or [int64]$inspect.HostConfig.CpuQuota -ne 200000)");
+  has("Fail 'FORGE_CONTAINER_CPU_LIMIT_MISMATCH'");
+  has("if ($dataMounts.Count -ne 1) { Fail 'FORGE_CONTAINER_DATA_VOLUME_MISMATCH' }");
+  has("if ($unexpectedMounts.Count -ne 0) { Fail 'FORGE_CONTAINER_UNEXPECTED_WRITABLE_SURFACE' }");
+  has("if (($tmpfsNames -join '|') -ne ($expectedTmpfsNames -join '|')) { Fail 'FORGE_CONTAINER_TMPFS_SURFACE_MISMATCH' }");
+  has("Fail 'FORGE_CONTAINER_TMPFS_OPTIONS_MISMATCH'");
+  has("Fail 'FORGE_CONTAINER_TMPFS_SIZE_MISMATCH'");
+  has('function Convert-TmpfsSizeToBytes');
+  has("Fail 'FORGE_CONTAINER_ENVIRONMENT_SEAL_MISMATCH'");
 });
 
 test('bootstrap is closed to signup org creation extra repos forks hooks and unsafe migrations', () => {
@@ -99,12 +153,19 @@ test('Actions packages federation and scheduled mirror updates are disabled', ()
   has("'FORGEJO__mirror__DISABLE_NEW_PUSH=true'");
 });
 
-test('one local bootstrap token is scoped memory-only and revoked after the mirror operation', () => {
+test('bootstrap token revocation is attempted even when mirror migration fails', () => {
   has("$BootstrapTokenName = 'stephanos-m2-bootstrap'");
   has("'--scopes', 'write:repository,write:user'");
   has("$token = (($tokenResult.Output -join '').Trim())");
+  has('$migrationSucceeded = $false');
+  has('$revocationSucceeded = $false');
   has("Invoke-RestMethod -Method Post -Uri \"$ApiRoot/repos/migrate\"");
   has("Invoke-RestMethod -Method Delete -Uri \"$ApiRoot/users/$Owner/tokens/$BootstrapTokenName\"");
+  has("Fail 'FORGE_BOOTSTRAP_TOKEN_REVOCATION_FAILED'");
+  has('bootstrapTokenRevoked = $false');
+  has('credentialPersisted = $true');
+  has("Fail 'FORGE_MIRROR_MIGRATION_FAILED'");
+  has('bootstrapTokenRevoked = $true');
   has('$token = $null');
   has('$tokenResult = $null');
   has('[GC]::Collect()');
@@ -127,19 +188,26 @@ test('mirror creation is exactly the canonical public unauthenticated repository
   lacks('github.com/login');
 });
 
-test('existing runtime identity is rebound to exact repository head digest labels and fixed port', () => {
+test('existing runtime identity is rebound to exact repository head digest image environment labels fixed port and privilege proof', () => {
   has("'stephanos.repository'");
   has("'stephanos.main-head'");
   has("'stephanos.image-digest'");
   has("Fail 'FORGE_CONTAINER_REPOSITORY_LABEL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_HEAD_LABEL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_DIGEST_LABEL_MISMATCH'");
+  has("Fail 'FORGE_CONTAINER_SEAL_LABEL_INVALID'");
+  has("Fail 'FORGE_CONTAINER_IMAGE_REFERENCE_MISMATCH'");
+  has("Fail 'FORGE_CONTAINER_USER_NOT_ROOTLESS'");
+  has("Fail 'FORGE_CONTAINER_ENVIRONMENT_SEAL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_PORT_BINDING_MISMATCH'");
+  has('Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort');
 });
 
-test('backup helper tools are proved before any content hashing or copy', () => {
+test('backup helpers inherit the same read-only no-capability no-new-privilege posture', () => {
   has("$fixedToolProbe = 'command -v tar >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1'");
   has("Fail 'FORGE_BACKUP_HELPER_TOOLS_UNAVAILABLE'");
+  has("'run', '--rm', '--read-only', '--read-only-tmpfs=false', '--cap-drop', 'ALL'");
+  has("'--security-opt', 'no-new-privileges'");
   has('Assert-BackupTools $PodmanExe');
 });
 
@@ -148,21 +216,43 @@ test('backup is content hashed bounded and proved by a real restored service and
   has("'cd /source && tar -cf - . | (cd /destination && tar -xf -)'");
   has("'label=stephanos.backup=forge-shadow'");
   has("if (@($existingBackups).Count -ge 7) { Fail 'FORGE_BACKUP_RETENTION_CAPACITY_REACHED' }");
+  has('$backupDigest = Get-VolumeDigest $Podman $backupName');
+  has("Fail 'FORGE_BACKUP_COPY_DIGEST_MISMATCH'");
+  has('$restoreDigest = Get-VolumeDigest $Podman $RestoreVolume');
+  has("Fail 'FORGE_RESTORE_COPY_DIGEST_MISMATCH'");
   has("$RestoreContainerName = 'stephanos-forge-shadow-restore-probe'");
   has('$RestorePort = 3341');
   has('Get-FixedEnvironment $Final $Port');
+  has('Assert-ContainerIdentity $Podman $RestoreContainerName $RestoreVolume $RestorePort');
   has("Fail 'FORGE_RESTORE_PROBE_HEALTH_FAILED'");
   has("Fail 'FORGE_RESTORE_PROBE_HEAD_MISMATCH'");
+  has("Fail 'FORGE_BACKUP_RESTORE_PROOF_INCOMPLETE'");
   has('restoreDrillPassed = $true');
 });
 
-test('M2 ready requires exact object and tree parity and emits no mutation authority', () => {
+test('backup restore probe always cleans temporary state and restarts the canonical Forge container', () => {
+  has('$mainStopped = $false');
+  has('$mainStopped = $true');
+  has("Invoke-PodmanRemote $Podman @('rm', '-f', $RestoreContainerName) -AllowFailure");
+  has("Invoke-PodmanRemote $Podman @('volume', 'rm', '-f', $RestoreVolume) -AllowFailure");
+  has("Invoke-PodmanRemote $Podman @('start', $ContainerName) -AllowFailure");
+  has('if ($mainStopped -and (Get-ContainerExists $Podman $ContainerName))');
+  has("Fail 'FORGE_POST_BACKUP_RESTART_HEALTH_FAILED'");
+  has('Assert-ContainerIdentity $Podman $ContainerName $DataVolume $HostPort');
+});
+
+test('M2 ready requires exact object tree and privilege proofs and emits no mutation authority', () => {
   has("$localTree = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'rev-parse', \"$ExpectedHead^{tree}\"))");
   has("$forgeTree = Get-ForgeTree $ApiRoot $ExpectedHead");
   has("Fail 'FORGE_TREE_PARITY_MISMATCH'");
   has("status = 'FORGE_SHADOW_M2_READY'");
   has('exactObjectParity = $true');
   has('exactTreeParity = $true');
+  has('rootFilesystemReadOnly = $true');
+  has('allCapabilitiesDropped = $true');
+  has('noNewPrivileges = $true');
+  has("persistentWritableSurface = '/var/lib/gitea'");
+  has("boundedEphemeralWritableSurfaces = @('/run', '/tmp', '/var/tmp')");
   has('readyForM3 = $true');
   has('runnerRegistration = $false');
   has('actionsExecution = $false');

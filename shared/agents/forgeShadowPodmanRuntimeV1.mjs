@@ -3,7 +3,7 @@ const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
 
 export const FORGE_SHADOW_PODMAN_RUNTIME_SCHEMA = 'stephanos.forge-shadow-podman-runtime.v1';
 export const FORGE_SHADOW_PODMAN_RUNTIME_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const FORGE_SHADOW_PODMAN_RUNTIME_VERSION = '15.0.5';
+export const FORGE_SHADOW_PODMAN_RUNTIME_VERSION = '15.0.6';
 export const FORGE_SHADOW_PODMAN_IMAGE = 'code.forgejo.org/forgejo/forgejo';
 export const FORGE_SHADOW_PODMAN_IMAGE_TAG = `${FORGE_SHADOW_PODMAN_RUNTIME_VERSION}-rootless`;
 export const FORGE_SHADOW_PODMAN_MACHINE = 'stephanos-forge-shadow';
@@ -54,6 +54,8 @@ const FACT_KEYS = Object.freeze([
   'parityReady',
   'backupReady',
 ]);
+const BOOLEAN_FACT_KEYS = Object.freeze(FACT_KEYS.filter((key) => !['podmanVersion', 'mirrorSourceHead'].includes(key)));
+const STRING_FACT_KEYS = Object.freeze(['podmanVersion', 'mirrorSourceHead']);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -64,6 +66,17 @@ function exactKeys(value, keys) {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function factTypeBlockers(facts) {
+  const blockers = [];
+  for (const key of BOOLEAN_FACT_KEYS) {
+    if (typeof facts?.[key] !== 'boolean') blockers.push(`runtime-fact-type-invalid:${key}`);
+  }
+  for (const key of STRING_FACT_KEYS) {
+    if (typeof facts?.[key] !== 'string') blockers.push(`runtime-fact-type-invalid:${key}`);
+  }
+  return blockers;
 }
 
 function authority() {
@@ -87,6 +100,7 @@ function authority() {
     credentialLogging: false,
     hostSourceMount: false,
     hostSocketMount: false,
+    defaultPodmanConnectionUse: false,
     merge: false,
   });
 }
@@ -98,6 +112,7 @@ function fixedIdentity(imageDigest) {
     imageReference: `${FORGE_SHADOW_PODMAN_IMAGE}@${imageDigest}`,
     imageTagForResolutionOnly: `${FORGE_SHADOW_PODMAN_IMAGE}:${FORGE_SHADOW_PODMAN_IMAGE_TAG}`,
     machineName: FORGE_SHADOW_PODMAN_MACHINE,
+    connectionName: FORGE_SHADOW_PODMAN_MACHINE,
     containerName: FORGE_SHADOW_PODMAN_CONTAINER,
     dataVolume: FORGE_SHADOW_PODMAN_DATA_VOLUME,
     host: FORGE_SHADOW_PODMAN_HOST,
@@ -117,21 +132,25 @@ export function planForgeShadowPodmanRuntime(input = {}) {
   const repository = text(input.repository);
   const canonicalMainHead = text(input.canonicalMainHead).toLowerCase();
   const imageDigest = text(input.imageDigest).toLowerCase();
-  const facts = input.facts && typeof input.facts === 'object' ? input.facts : {};
+  const facts = input.facts && typeof input.facts === 'object' && !Array.isArray(input.facts) ? input.facts : {};
   if (!exactKeys(facts, FACT_KEYS)) blockers.push('runtime-facts-schema-unbounded');
+  blockers.push(...factTypeBlockers(facts));
 
   if (repository !== FORGE_SHADOW_PODMAN_RUNTIME_REPOSITORY) blockers.push('repository-not-allowlisted');
   if (!SHA40.test(canonicalMainHead)) blockers.push('canonical-main-head-invalid');
   if (!SHA256_DIGEST.test(imageDigest)) blockers.push('forgejo-image-digest-invalid');
-  if (facts.windows11OrNewer !== true) blockers.push('windows-11-or-newer-not-proved');
-  if (facts.wsl2Available !== true) blockers.push('wsl2-not-proved');
-  if (facts.githubCredentialPresent !== false) blockers.push('github-credential-not-allowed');
-  if (facts.machineRootful === true) blockers.push('podman-machine-rootful-not-allowed');
-  if (facts.bootstrapCredentialContained === false && facts.bootstrapIdentityPresent === true) {
-    blockers.push('bootstrap-credential-not-contained');
-  }
-  if (facts.mirrorPresent === true && text(facts.mirrorSourceHead).toLowerCase() !== canonicalMainHead) {
-    blockers.push('mirror-source-head-mismatch');
+
+  if (!blockers.some((blocker) => blocker.startsWith('runtime-fact-type-invalid:'))) {
+    if (facts.windows11OrNewer !== true) blockers.push('windows-11-or-newer-not-proved');
+    if (facts.wsl2Available !== true) blockers.push('wsl2-not-proved');
+    if (facts.githubCredentialPresent !== false) blockers.push('github-credential-not-allowed');
+    if (facts.machineRootful === true) blockers.push('podman-machine-rootful-not-allowed');
+    if (facts.bootstrapCredentialContained === false && facts.bootstrapIdentityPresent === true) {
+      blockers.push('bootstrap-credential-not-contained');
+    }
+    if (facts.mirrorPresent === true && facts.mirrorSourceHead.trim().toLowerCase() !== canonicalMainHead) {
+      blockers.push('mirror-source-head-mismatch');
+    }
   }
 
   const base = {
@@ -153,7 +172,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
     });
   }
 
-  if (facts.podmanPresent !== true || text(facts.podmanVersion) !== '6.0.2') {
+  if (facts.podmanPresent !== true || facts.podmanVersion.trim() !== '6.0.2') {
     return Object.freeze({
       ...base,
       valid: true,
@@ -202,7 +221,10 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       blockers: Object.freeze([]),
       nextAction: action('PULL_EXACT_FORGEJO_DIGEST', {
         executable: 'podman.exe',
-        argv: Object.freeze(['pull', `${FORGE_SHADOW_PODMAN_IMAGE}@${imageDigest}`]),
+        argv: Object.freeze([
+          '--connection', FORGE_SHADOW_PODMAN_MACHINE,
+          'pull', `${FORGE_SHADOW_PODMAN_IMAGE}@${imageDigest}`,
+        ]),
       }),
     });
   }
@@ -224,6 +246,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       blockers: Object.freeze([]),
       nextAction: action('START_FIXED_FORGEJO_BOOTSTRAP_CONTAINER', {
         bootstrapOnly: true,
+        podmanConnection: FORGE_SHADOW_PODMAN_MACHINE,
         localCredentialCreation: 'isolated-random-local-only',
         credentialPersistenceAllowed: false,
         credentialLoggingAllowed: false,
@@ -239,6 +262,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       decision: FORGE_SHADOW_PODMAN_DECISIONS.SERVICE_BOOTSTRAP_REQUIRED,
       blockers: Object.freeze([]),
       nextAction: action('COMPLETE_LOCAL_ONLY_FORGE_BOOTSTRAP', {
+        podmanConnection: FORGE_SHADOW_PODMAN_MACHINE,
         localOwner: FORGE_SHADOW_LOCAL_OWNER,
         randomPasswordGeneratedByForgeCli: true,
         temporaryRepositoryTokenScope: 'write:repository,write:user',
@@ -274,6 +298,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       decision: FORGE_SHADOW_PODMAN_DECISIONS.SEAL_REQUIRED,
       blockers: Object.freeze([]),
       nextAction: action('SEAL_FINAL_READ_ONLY_FORGE_POSTURE', {
+        podmanConnection: FORGE_SHADOW_PODMAN_MACHINE,
         disableRegistration: true,
         disableSsh: true,
         disableActions: true,
@@ -282,6 +307,11 @@ export function planForgeShadowPodmanRuntime(input = {}) {
         disablePushCreate: true,
         disableNewMirrors: true,
         disablePeriodicMirrorUpdates: true,
+        readOnlyRootFilesystem: true,
+        dropAllCapabilities: true,
+        noNewPrivileges: true,
+        writableDataSurface: '/var/lib/gitea',
+        boundedEphemeralWritableSurfaces: Object.freeze(['/run', '/tmp', '/var/tmp']),
         runnerRegistration: false,
         webhookCreation: false,
         publicExposure: false,
@@ -297,6 +327,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       decision: FORGE_SHADOW_PODMAN_DECISIONS.PARITY_REQUIRED,
       blockers: Object.freeze([]),
       nextAction: action('PROVE_EXACT_PARITY_AND_RESTORABLE_BACKUP', {
+        podmanConnection: FORGE_SHADOW_PODMAN_MACHINE,
         requiredParitySchema: 'stephanos.forge-shadow-parity.v1',
         statusRecord: 'status/forge-shadow-runtime.json',
         proofRecord: 'proofs/forge-shadow-parity.json',
