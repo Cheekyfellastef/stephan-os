@@ -1,0 +1,147 @@
+name: Battle Bridge Tailscale Bootstrap Pipe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/battle-bridge-tailscale-bootstrap-pipe.yml'
+      - 'scripts/battle-bridge-tailscale-bootstrap-pipe.mjs'
+      - 'shared/agents/battleBridgeTailscaleBootstrapPipeV1.mjs'
+      - 'shared/agents/battleBridgeTailscaleBootstrapPipeV1.test.mjs'
+      - 'docs/architecture/battle-bridge-tailscale-bootstrap-pipe-v1.md'
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: battle-bridge-tailscale-bootstrap-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  contract-proof:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run bounded bootstrap contract tests
+        run: node --test shared/agents/battleBridgeTailscaleBootstrapPipeV1.test.mjs
+
+      - name: Parse runner and contract
+        run: |
+          node --check scripts/battle-bridge-tailscale-bootstrap-pipe.mjs
+          node --check shared/agents/battleBridgeTailscaleBootstrapPipeV1.mjs
+
+      - name: Diff check
+        run: git diff --check origin/main...HEAD
+
+  bootstrap-canonical-github-sync:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.number == 1507 &&
+      github.actor == 'Cheekyfellastef' &&
+      contains(github.event.comment.body, '```stephanos-battle-bridge-tailscale-bootstrap')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      BOOTSTRAP_HOST: ${{ vars.STEPHANOS_BATTLE_BRIDGE_TAILSCALE_HOST }}
+      BOOTSTRAP_USER: ${{ vars.STEPHANOS_BATTLE_BRIDGE_SSH_USER }}
+    steps:
+      - name: Check out canonical main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate exact owner-authored bootstrap request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN_HEAD="$(git rev-parse HEAD | tr '[:upper:]' '[:lower:]')"
+          node scripts/battle-bridge-tailscale-bootstrap-pipe.mjs validate-event "$GITHUB_EVENT_PATH" "$MAIN_HEAD" > "$RUNNER_TEMP/bootstrap-request.json"
+          EXPECTED_HEAD="$(node -e "const r=require(process.argv[1]); process.stdout.write(r.request.expectedHead)" "$RUNNER_TEMP/bootstrap-request.json")"
+          test "$EXPECTED_HEAD" = "$MAIN_HEAD"
+          echo "expected_head=$EXPECTED_HEAD" >> "$GITHUB_OUTPUT"
+
+      - name: Fail closed if fixed pipe prerequisites are absent
+        shell: bash
+        env:
+          TS_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_AUDIENCE_VALUE: ${{ secrets.TS_AUDIENCE }}
+          SSH_PRIVATE_KEY: ${{ secrets.STEPHANOS_BATTLE_BRIDGE_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.STEPHANOS_BATTLE_BRIDGE_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$TS_CLIENT_ID" || { echo 'TAILSCALE_BOOTSTRAP_TS_OAUTH_CLIENT_ID_REQUIRED'; exit 2; }
+          test -n "$TS_AUDIENCE_VALUE" || { echo 'TAILSCALE_BOOTSTRAP_TS_AUDIENCE_REQUIRED'; exit 2; }
+          test -n "$SSH_PRIVATE_KEY" || { echo 'TAILSCALE_BOOTSTRAP_SSH_PRIVATE_KEY_REQUIRED'; exit 2; }
+          test -n "$SSH_KNOWN_HOSTS" || { echo 'TAILSCALE_BOOTSTRAP_SSH_KNOWN_HOSTS_REQUIRED'; exit 2; }
+          [[ "$BOOTSTRAP_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || { echo 'TAILSCALE_BOOTSTRAP_HOST_INVALID_OR_MISSING'; exit 2; }
+          [[ "$BOOTSTRAP_USER" =~ ^[A-Za-z0-9._-][A-Za-z0-9._\ -]{0,63}$ ]] || { echo 'TAILSCALE_BOOTSTRAP_USER_INVALID_OR_MISSING'; exit 2; }
+
+      - name: Join tailnet as fixed ephemeral recovery identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:stephanos-github-recovery
+          ping: ${{ vars.STEPHANOS_BATTLE_BRIDGE_TAILSCALE_HOST }}
+
+      - name: Bootstrap canonical GitHub Sync over private Tailscale path
+        id: bootstrap
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ steps.request.outputs.expected_head }}
+          SSH_PRIVATE_KEY: ${{ secrets.STEPHANOS_BATTLE_BRIDGE_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.STEPHANOS_BATTLE_BRIDGE_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          KEY_FILE="$RUNNER_TEMP/stephanos-battle-bridge-ssh-key"
+          KNOWN_HOSTS_FILE="$RUNNER_TEMP/stephanos-battle-bridge-known-hosts"
+          RAW_RECEIPT="$RUNNER_TEMP/bootstrap-raw-receipt.txt"
+          VALIDATED_RECEIPT="$RUNNER_TEMP/bootstrap-receipt.json"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$KEY_FILE"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$KNOWN_HOSTS_FILE"
+          ENCODED_COMMAND="$(node scripts/battle-bridge-tailscale-bootstrap-pipe.mjs encoded-command "$EXPECTED_HEAD")"
+          ssh \
+            -i "$KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$KNOWN_HOSTS_FILE" \
+            -o ConnectTimeout=15 \
+            -l "$BOOTSTRAP_USER" \
+            "$BOOTSTRAP_HOST" \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand "$ENCODED_COMMAND" \
+            > "$RAW_RECEIPT"
+          node scripts/battle-bridge-tailscale-bootstrap-pipe.mjs validate-receipt "$EXPECTED_HEAD" "$RAW_RECEIPT" > "$VALIDATED_RECEIPT"
+          echo "receipt_path=$VALIDATED_RECEIPT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bounded bootstrap receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: battle-bridge-tailscale-bootstrap-${{ steps.request.outputs.expected_head }}
+          path: ${{ steps.bootstrap.outputs.receipt_path }}
+          if-no-files-found: error
+          retention-days: 7
