@@ -82,8 +82,8 @@ test('control-plane repair is fixed to exactly the existing recovery mesh and ma
   ]);
 });
 
-test('control-plane repair proves exact main and tracked-clean source before starting fixed installers', () => {
-  const spawnSyncFn = scriptedSpawn();
+test('control-plane repair proves exact main and safe source dirt before starting fixed installers', () => {
+  const spawnSyncFn = scriptedSpawn({ status: ' M apps/stephanos/dist/index.html\n?? logs/runtime-probe.json\n' });
   const result = reconcileBattleBridgeControlPlane({
     repoRoot: '/repo',
     expectedHead: HEAD,
@@ -93,7 +93,9 @@ test('control-plane repair proves exact main and tracked-clean source before sta
 
   assert.equal(result.ok, true);
   assert.equal(result.sourceHead, HEAD);
-  assert.equal(result.trackedSourceClean, true);
+  assert.equal(result.sourceDirtSafe, true);
+  assert.equal(result.runtimeOnlyDirtCount, 2);
+  assert.equal(result.dirtSummary.blocksSync, false);
   assert.equal(result.taskCount, 2);
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED');
   assert.equal(result.arbitraryTaskNameAllowed, false);
@@ -112,10 +114,11 @@ test('control-plane repair proves exact main and tracked-clean source before sta
   assert.equal(powerShellCalls[1].args.some((arg) => String(arg).endsWith('install-battle-bridge-github-command-mailbox.ps1')), true);
 });
 
-test('control-plane repair blocks stale or dirty source before any task mutation', () => {
+test('control-plane repair blocks stale or real source dirt before any task mutation', () => {
   for (const fixture of [
     { head: 'b'.repeat(40), expected: 'CONTROL_PLANE_SOURCE_HEAD_MISMATCH' },
-    { status: ' M shared/agents/example.mjs\n', expected: 'CONTROL_PLANE_TRACKED_SOURCE_DIRTY' },
+    { status: ' M shared/agents/example.mjs\n', expected: 'CONTROL_PLANE_SOURCE_DIRT_BLOCKED' },
+    { status: '?? scripts/unreviewed-helper.mjs\n', expected: 'CONTROL_PLANE_SOURCE_DIRT_BLOCKED' },
   ]) {
     const spawnSyncFn = scriptedSpawn(fixture);
     const result = reconcileBattleBridgeControlPlane({ repoRoot: '/repo', expectedHead: HEAD, platform: 'win32', spawnSyncFn });
@@ -136,6 +139,7 @@ test('control-plane repair fails closed on an invalid installer receipt', () => 
 test('control-plane repair source exposes no caller-selected task, executable, installer or shell surface', async () => {
   const source = await readFile(new URL('../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs', import.meta.url), 'utf8');
   assert.match(source, /shell: false/);
+  assert.match(source, /classifyDirt/);
   assert.match(source, /install-battle-bridge-recovery-mesh\.ps1/);
   assert.match(source, /install-battle-bridge-github-command-mailbox\.ps1/);
   assert.doesNotMatch(source, /taskName\s*=\s*options|installerRelativePath\s*=\s*options|executable\s*=\s*options|shell\s*=\s*true/);
