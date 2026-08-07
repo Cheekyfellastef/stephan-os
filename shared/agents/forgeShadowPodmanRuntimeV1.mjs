@@ -100,6 +100,7 @@ function authority() {
     credentialLogging: false,
     hostSourceMount: false,
     hostSocketMount: false,
+    defaultPodmanConnectionUse: false,
     merge: false,
   });
 }
@@ -111,6 +112,7 @@ function fixedIdentity(imageDigest) {
     imageReference: `${FORGE_SHADOW_PODMAN_IMAGE}@${imageDigest}`,
     imageTagForResolutionOnly: `${FORGE_SHADOW_PODMAN_IMAGE}:${FORGE_SHADOW_PODMAN_IMAGE_TAG}`,
     machineName: FORGE_SHADOW_PODMAN_MACHINE,
+    connectionName: FORGE_SHADOW_PODMAN_MACHINE,
     containerName: FORGE_SHADOW_PODMAN_CONTAINER,
     dataVolume: FORGE_SHADOW_PODMAN_DATA_VOLUME,
     host: FORGE_SHADOW_PODMAN_HOST,
@@ -219,7 +221,10 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       blockers: Object.freeze([]),
       nextAction: action('PULL_EXACT_FORGEJO_DIGEST', {
         executable: 'podman.exe',
-        argv: Object.freeze(['pull', `${FORGE_SHADOW_PODMAN_IMAGE}@${imageDigest}`]),
+        argv: Object.freeze([
+          '--connection', FORGE_SHADOW_PODMAN_MACHINE,
+          'pull', `${FORGE_SHADOW_PODMAN_IMAGE}@${imageDigest}`,
+        ]),
       }),
     });
   }
@@ -241,6 +246,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       blockers: Object.freeze([]),
       nextAction: action('START_FIXED_FORGEJO_BOOTSTRAP_CONTAINER', {
         bootstrapOnly: true,
+        podmanConnection: FORGE_SHADOW_PODMAN_MACHINE,
         localCredentialCreation: 'isolated-random-local-only',
         credentialPersistenceAllowed: false,
         credentialLoggingAllowed: false,
@@ -256,6 +262,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       decision: FORGE_SHADOW_PODMAN_DECISIONS.SERVICE_BOOTSTRAP_REQUIRED,
       blockers: Object.freeze([]),
       nextAction: action('COMPLETE_LOCAL_ONLY_FORGE_BOOTSTRAP', {
+        podmanConnection: FORGE_SHADOW_PODMAN_MACHINE,
         localOwner: FORGE_SHADOW_LOCAL_OWNER,
         randomPasswordGeneratedByForgeCli: true,
         temporaryRepositoryTokenScope: 'write:repository,write:user',
@@ -291,6 +298,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       decision: FORGE_SHADOW_PODMAN_DECISIONS.SEAL_REQUIRED,
       blockers: Object.freeze([]),
       nextAction: action('SEAL_FINAL_READ_ONLY_FORGE_POSTURE', {
+        podmanConnection: FORGE_SHADOW_PODMAN_MACHINE,
         disableRegistration: true,
         disableSsh: true,
         disableActions: true,
@@ -319,6 +327,7 @@ export function planForgeShadowPodmanRuntime(input = {}) {
       decision: FORGE_SHADOW_PODMAN_DECISIONS.PARITY_REQUIRED,
       blockers: Object.freeze([]),
       nextAction: action('PROVE_EXACT_PARITY_AND_RESTORABLE_BACKUP', {
+        podmanConnection: FORGE_SHADOW_PODMAN_MACHINE,
         requiredParitySchema: 'stephanos.forge-shadow-parity.v1',
         statusRecord: 'status/forge-shadow-runtime.json',
         proofRecord: 'proofs/forge-shadow-parity.json',
