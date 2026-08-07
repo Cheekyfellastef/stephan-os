@@ -121,7 +121,7 @@ if ($branch -ne 'main') {
 }
 
 $origin = Read-FixedGitText -Arguments @('-C', $repoRoot, 'remote', 'get-url', 'origin')
-if ($origin -notmatch '^(https://github\.com/Cheekyfellastef/stephan-os(?:\.git)?/?|git@github\.com:Cheekyfellastef/stephan-os(?:\.git)?|ssh://git@github\.com/Cheekyfellastef/stephan-os(?:\.git)?/?)$') {
+if ($origin -notmatch '^(https:\/\/github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?|git@github\.com:Cheekyfellastef\/stephan-os(?:\.git)?|ssh:\/\/git@github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?)$') {
     Stop-BoundedRescue -Blocker 'CANONICAL_ORIGIN_REQUIRED' -Detail $origin
 }
 
