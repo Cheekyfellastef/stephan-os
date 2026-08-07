@@ -42,7 +42,7 @@ test('machine creation and inspection are WSL rootless bounded identities', () =
   has("$MachineName = 'stephanos-forge-shadow'");
   has('function Assert-MachineIdentity');
   has("if ([string]$Machine.Name -ne $MachineName) { Fail 'PODMAN_MACHINE_NAME_MISMATCH' }");
-  has("if ($Machine.Rootful -ne $false) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }");
+  has("if ($machine.Rootful -ne $false) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }");
   has("if ([int]$Machine.Resources.CPUs -ne 4) { Fail 'PODMAN_MACHINE_CPU_LIMIT_MISMATCH' }");
   has("if ([int64]$Machine.Resources.Memory -ne 4096) { Fail 'PODMAN_MACHINE_MEMORY_LIMIT_MISMATCH' }");
   has("if ([int64]$Machine.Resources.DiskSize -ne 40) { Fail 'PODMAN_MACHINE_DISK_LIMIT_MISMATCH' }");
@@ -82,6 +82,7 @@ test('Forgejo is current-LTS digest pinned and exposes only loopback HTTP with n
   has("'FORGEJO__server__START_SSH_SERVER=false'");
   has("Invoke-PodmanRemote $PodmanExe @('pull', $ImageRef)");
   has("if ([string]$inspect.ImageName -ne $ImageRef) { Fail 'FORGE_CONTAINER_IMAGE_REFERENCE_MISMATCH' }");
+  has("if ([string]$inspect.ImageDigest -ne $ForgejoImageDigest) { Fail 'FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH' }");
   lacks('0.0.0.0:');
   lacks(':2222');
   lacks('/var/run/docker.sock');
@@ -197,6 +198,7 @@ test('existing runtime identity is rebound to exact repository head digest image
   has("Fail 'FORGE_CONTAINER_DIGEST_LABEL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_SEAL_LABEL_INVALID'");
   has("Fail 'FORGE_CONTAINER_IMAGE_REFERENCE_MISMATCH'");
+  has("Fail 'FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_USER_NOT_ROOTLESS'");
   has("Fail 'FORGE_CONTAINER_ENVIRONMENT_SEAL_MISMATCH'");
   has("Fail 'FORGE_CONTAINER_PORT_BINDING_MISMATCH'");
