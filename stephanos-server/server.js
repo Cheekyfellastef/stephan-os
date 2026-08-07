@@ -35,6 +35,12 @@ const PORT = getServerPort();
 const allowedOrigins = resolveAllowedOrigins();
 const allowedOriginsSet = new Set(allowedOrigins);
 const healthUrl = `http://127.0.0.1:${PORT}/api/health`;
+const backendSourceHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
+const backendIdentity = Object.freeze({
+  schemaVersion: 'stephanos.backend-runtime-identity.v1',
+  runtimeId: 'stephanos-battle-bridge-backend',
+  sourceHead: /^[0-9a-f]{40}$/.test(backendSourceHead) ? backendSourceHead : '',
+});
 
 app.use(
   cors({
@@ -63,10 +69,14 @@ app.use(
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (req, res) => {
-  res.json(buildHealthDiagnostics(process.env, req, {
-    providerSecretStatus: providerSecretStore.getMaskedStatusSnapshot(),
-    secretAuthority: 'backend-local-secret-store',
-  }));
+  res.json({
+    ...buildHealthDiagnostics(process.env, req, {
+      providerSecretStatus: providerSecretStore.getMaskedStatusSnapshot(),
+      secretAuthority: 'backend-local-secret-store',
+    }),
+    schemaVersion: 'stephanos.backend-health.v1',
+    backendIdentity,
+  });
 });
 
 memoryService.load();
@@ -80,7 +90,11 @@ app.use('/api/local', localShellRouter);
 app.use('/api/music', musicRouter);
 app.use('/api/setup', setupRouter);
 app.use('/api/github', githubRouter);
-app.use('/api/mission-operations', missionOperationsRouter);
+app.use('/api/mission-operations', (req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = (body) => originalJson({ ...body, backendIdentity });
+  next();
+}, missionOperationsRouter);
 app.use('/api/build-concierge', buildConciergeRouter);
 app.use('/api/goal-projection', goalProjectionRouter);
 app.use('/api/shared-workspace', sharedWorkspaceRouter);
