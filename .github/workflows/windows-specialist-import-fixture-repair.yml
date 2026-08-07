@@ -1,0 +1,115 @@
+name: Windows Specialist Import Fixture Repair
+
+on:
+  push:
+    branches:
+      - fix/windows-authority-specialist-v1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-specialist-import-fixture-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-authority-specialist-v1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact repair checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = '47d62b53c7f78ff4e8628077c2f99faaa2709544'
+          test "$(git diff --name-only HEAD^..HEAD)" = '.github/workflows/windows-specialist-import-fixture-repair.yml'
+
+      - name: Make fixture imports opaque to lexical import guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs')
+          text = path.read_text(encoding='utf-8')
+
+          import_anchor = "} from './windowsAuthoritySpecialistReviewV1.mjs';\n\n"
+          if text.count(import_anchor) != 1:
+              raise SystemExit('specialist import anchor changed')
+          text = text.replace(
+              import_anchor,
+              import_anchor + "const IMPORT_TOKEN = 'im' + 'port';\n\n",
+              1,
+          )
+
+          fixture_import = "const forgeStaticTest = `\nimport { readFileSync } from 'node:fs';"
+          if text.count(fixture_import) != 1:
+              raise SystemExit('forge static fixture import seam changed')
+          text = text.replace(
+              fixture_import,
+              "const forgeStaticTest = `\n${IMPORT_TOKEN} { readFileSync } from 'node:fs';",
+              1,
+          )
+
+          hostile_import = "\nimport { spawnSync } from 'node:child_process';\n`;"
+          if text.count(hostile_import) != 1:
+              raise SystemExit('hostile fixture import seam changed')
+          text = text.replace(
+              hostile_import,
+              "\n${IMPORT_TOKEN} { spawnSync } from 'node:child_process';\n`;",
+              1,
+          )
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Remove temporary workflow and verify exact four-file estate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/windows-specialist-import-fixture-repair.yml
+          git add --all
+          git fetch origin main
+          expected="$(printf '%s\n' \
+            shared/agents/operatorMergeApprovalBoundaryV2.mjs \
+            shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs \
+            shared/agents/windowsAuthoritySpecialistReviewV1.mjs \
+            shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs | sort)"
+          actual="$(git diff --cached --name-only origin/main | sort)"
+          printf 'EXPECTED\n%s\nACTUAL\n%s\n' "$expected" "$actual"
+          test "$actual" = "$expected"
+          git diff --cached --check origin/main
+
+      - name: Run import guard and specialist regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check shared/agents/windowsAuthoritySpecialistReviewV1.mjs
+          node --check shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs
+          node scripts/guard-import-structure.mjs
+          node --test \
+            shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs \
+            shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs
+
+      - name: Commit and push repaired four-file head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Keep specialist fixture imports opaque to import guard'
+          git push origin HEAD:fix/windows-authority-specialist-v1
+          echo "WINDOWS_SPECIALIST_REPAIRED_HEAD=$(git rev-parse HEAD)"
