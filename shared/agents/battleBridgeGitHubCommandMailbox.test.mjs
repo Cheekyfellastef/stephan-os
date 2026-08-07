@@ -35,6 +35,16 @@ function command(overrides = {}) {
   };
 }
 
+function scopedDelivery(overrides = {}) {
+  return {
+    prNumber: 1668,
+    mergeCommit: 'b83f7df46d9d52233f0b4f5dc2e034f50c0bae93',
+    deploymentRequestId: 'req-1507-0001',
+    featureId: 'music-tile-auto-url-artwork',
+    ...overrides,
+  };
+}
+
 function resetCommand(overrides = {}) {
   return command({
     requestId: 'codex-reset-20260720-001',
@@ -77,6 +87,41 @@ test('extracts and accepts an owner-authored bounded command', () => {
   });
   assert.equal(validated.verdict, 'COMMAND_ACCEPTED');
   assert.equal(validated.command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
+});
+
+test('scoped delivery identity is exact, operation-bound and preserved in receipts', () => {
+  const validated = validateBattleBridgeGitHubCommand(command({
+    scopedDelivery: scopedDelivery(),
+  }), { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(validated.ok, true);
+  assert.equal(validated.command.scopedDelivery.deploymentHead, command().expectedHead);
+  assert.equal(validated.command.scopedDelivery.relatedPr, '#1668');
+
+  const receipt = buildBattleBridgeGitHubCommandReceipt({
+    command: validated.command,
+    state: 'ACCEPTED',
+    acceptedAt: now.toISOString(),
+    heartbeatAt: now.toISOString(),
+  });
+  assert.equal(receipt.relatedPr, '#1668');
+  assert.equal(receipt.mergeCommit, scopedDelivery().mergeCommit);
+  assert.equal(receipt.deploymentHead, command().expectedHead);
+  assert.equal(receipt.deploymentRequestId, command().requestId);
+  assert.equal(receipt.featureId, 'music-tile-auto-url-artwork');
+
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    scopedDelivery: scopedDelivery({ deploymentRequestId: 'req-1507-other1' }),
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'SCOPED_DELIVERY_REQUEST_ID_MISMATCH');
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    scopedDelivery: scopedDelivery({ mergeCommit: 'short' }),
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'SCOPED_DELIVERY_MERGE_COMMIT_INVALID');
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    scopedDelivery: scopedDelivery({ command: 'dir' }),
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'SCOPED_DELIVERY_FIELD_NOT_ALLOWED');
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    operation: 'READ_DEPLOYMENT_STATUS',
+    scopedDelivery: scopedDelivery(),
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'SCOPED_DELIVERY_FIELD_NOT_ALLOWED');
 });
 
 test('control-plane and banked reset commands are allowlisted', () => {
@@ -153,6 +198,28 @@ test('accepts a merged-main proof only with a distinct immutable PR provenance h
   assert.equal(validateBattleBridgeGitHubCommand(command({ pullRequestHead }), {
     authorLogin: 'Cheekyfellastef', now,
   }).blocker, 'WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
+});
+
+test('scoped browser proof fails closed when observed merge identity differs', async () => {
+  const proof = validateBattleBridgeGitHubCommand(command({
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    prNumber: 1668,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead: 'a'.repeat(40),
+    scopedDelivery: scopedDelivery(),
+  }), { authorLogin: 'Cheekyfellastef', now }).command;
+  const result = await executeBattleBridgeGitHubCommand(proof, {
+    runExactHeadWindowsBrowserProof: async () => ({
+      ok: true,
+      expectedHead: proof.expectedHead,
+      githubMainHead: proof.expectedHead,
+      localHead: proof.expectedHead,
+      mergeCommitHead: 'd'.repeat(40),
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SCOPED_DELIVERY_MERGE_COMMIT_MISMATCH');
 });
 
 test('dispatches Windows browser proof only through its named handler', async () => {
