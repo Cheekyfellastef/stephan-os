@@ -118,6 +118,30 @@ function Get-Machine([string]$Podman) {
     try { return (($result.Output -join "`n") | ConvertFrom-Json) } catch { return $null }
 }
 
+function Assert-MachineIdentity([object]$Machine) {
+    if ($null -eq $Machine) { Fail 'PODMAN_MACHINE_INSPECTION_FAILED' }
+    if ([string]$Machine.Name -ne $MachineName) { Fail 'PODMAN_MACHINE_NAME_MISMATCH' }
+    if ($Machine.Rootful -ne $false) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }
+    if ([int]$Machine.Resources.CPUs -ne 4) { Fail 'PODMAN_MACHINE_CPU_LIMIT_MISMATCH' }
+    if ([int64]$Machine.Resources.Memory -ne 4096) { Fail 'PODMAN_MACHINE_MEMORY_LIMIT_MISMATCH' }
+    if ([int64]$Machine.Resources.DiskSize -ne 40) { Fail 'PODMAN_MACHINE_DISK_LIMIT_MISMATCH' }
+    $configPath = [string]$Machine.ConfigDir.Path
+    if ($configPath -notmatch '(?i)(?:^|[\\/])wsl(?:[\\/]|$)') { Fail 'PODMAN_MACHINE_PROVIDER_NOT_WSL' }
+}
+
+function Convert-TmpfsSizeToBytes([string]$Token) {
+    $normalized = $Token.Trim().ToLowerInvariant()
+    if ($normalized -notmatch '^size=(\d+)([kmgt]?)$') { return [int64]-1 }
+    $value = [int64]$Matches[1]
+    switch ($Matches[2]) {
+        'k' { return $value * 1KB }
+        'm' { return $value * 1MB }
+        'g' { return $value * 1GB }
+        't' { return $value * 1TB }
+        default { return $value }
+    }
+}
+
 function Assert-ContainerIdentity(
     [string]$Podman,
     [string]$Name,
@@ -130,6 +154,9 @@ function Assert-ContainerIdentity(
     if ([string]$labels.'stephanos.repository' -ne $Repository) { Fail 'FORGE_CONTAINER_REPOSITORY_LABEL_MISMATCH' }
     if ([string]$labels.'stephanos.main-head' -ne $ExpectedHead) { Fail 'FORGE_CONTAINER_HEAD_LABEL_MISMATCH' }
     if ([string]$labels.'stephanos.image-digest' -ne $ForgejoImageDigest) { Fail 'FORGE_CONTAINER_DIGEST_LABEL_MISMATCH' }
+    $sealed = [string]$labels.'stephanos.sealed'
+    if (@('true', 'false') -notcontains $sealed) { Fail 'FORGE_CONTAINER_SEAL_LABEL_INVALID' }
+    if ([string]$inspect.ImageName -ne $ImageRef) { Fail 'FORGE_CONTAINER_IMAGE_REFERENCE_MISMATCH' }
     if ([string]$inspect.Config.User -ne '1000:1000') { Fail 'FORGE_CONTAINER_USER_NOT_ROOTLESS' }
     if ($inspect.HostConfig.ReadonlyRootfs -ne $true) { Fail 'FORGE_CONTAINER_ROOTFS_NOT_READ_ONLY' }
 
@@ -137,6 +164,11 @@ function Assert-ContainerIdentity(
     if ($capDrop -notcontains 'ALL') { Fail 'FORGE_CONTAINER_CAPABILITIES_NOT_DROPPED' }
     $securityOptions = @($inspect.HostConfig.SecurityOpt | ForEach-Object { ([string]$_).ToLowerInvariant() })
     if ($securityOptions -notcontains 'no-new-privileges') { Fail 'FORGE_CONTAINER_NO_NEW_PRIVILEGES_NOT_PROVED' }
+    if ([int64]$inspect.HostConfig.PidsLimit -ne 512) { Fail 'FORGE_CONTAINER_PIDS_LIMIT_MISMATCH' }
+    if ([int64]$inspect.HostConfig.Memory -ne 2GB) { Fail 'FORGE_CONTAINER_MEMORY_LIMIT_MISMATCH' }
+    if ([int64]$inspect.HostConfig.CpuPeriod -ne 100000 -or [int64]$inspect.HostConfig.CpuQuota -ne 200000) {
+        Fail 'FORGE_CONTAINER_CPU_LIMIT_MISMATCH'
+    }
 
     $mounts = @($inspect.Mounts)
     $dataMounts = @($mounts | Where-Object {
@@ -146,20 +178,61 @@ function Assert-ContainerIdentity(
         $_.RW -eq $true
     })
     if ($dataMounts.Count -ne 1) { Fail 'FORGE_CONTAINER_DATA_VOLUME_MISMATCH' }
-    $allowedDestinations = @('/var/lib/gitea', '/run', '/tmp', '/var/tmp')
-    $unexpectedMounts = @($mounts | Where-Object { $allowedDestinations -notcontains [string]$_.Destination })
+    $expectedTmpfsSizes = [ordered]@{
+        '/run' = [int64](16MB)
+        '/tmp' = [int64](64MB)
+        '/var/tmp' = [int64](32MB)
+    }
+    $unexpectedMounts = @($mounts | Where-Object {
+        $destination = [string]$_.Destination
+        if ($destination -eq '/var/lib/gitea') {
+            return -not (
+                [string]$_.Type -eq 'volume' -and
+                [string]$_.Name -eq $ExpectedVolume -and
+                $_.RW -eq $true
+            )
+        }
+        if ($expectedTmpfsSizes.Contains($destination)) {
+            return [string]$_.Type -ne 'tmpfs'
+        }
+        return $true
+    })
     if ($unexpectedMounts.Count -ne 0) { Fail 'FORGE_CONTAINER_UNEXPECTED_WRITABLE_SURFACE' }
 
     $tmpfsNames = @()
     if ($null -ne $inspect.HostConfig.Tmpfs) {
         $tmpfsNames = @($inspect.HostConfig.Tmpfs.PSObject.Properties.Name | Sort-Object)
     }
-    $expectedTmpfs = @('/run', '/tmp', '/var/tmp') | Sort-Object
-    if (($tmpfsNames -join '|') -ne ($expectedTmpfs -join '|')) { Fail 'FORGE_CONTAINER_TMPFS_SURFACE_MISMATCH' }
+    $expectedTmpfsNames = @($expectedTmpfsSizes.Keys | Sort-Object)
+    if (($tmpfsNames -join '|') -ne ($expectedTmpfsNames -join '|')) { Fail 'FORGE_CONTAINER_TMPFS_SURFACE_MISMATCH' }
+    foreach ($tmpfsPath in $expectedTmpfsSizes.Keys) {
+        $rawOptions = [string]$inspect.HostConfig.Tmpfs.PSObject.Properties[$tmpfsPath].Value
+        $options = @($rawOptions.ToLowerInvariant().Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        foreach ($requiredOption in @('rw', 'nosuid', 'nodev', 'noexec')) {
+            if ($options -notcontains $requiredOption) { Fail 'FORGE_CONTAINER_TMPFS_OPTIONS_MISMATCH' @{ tmpfs = $tmpfsPath } }
+        }
+        $sizeOptions = @($options | Where-Object { $_ -like 'size=*' })
+        if ($sizeOptions.Count -ne 1 -or (Convert-TmpfsSizeToBytes $sizeOptions[0]) -ne [int64]$expectedTmpfsSizes[$tmpfsPath]) {
+            Fail 'FORGE_CONTAINER_TMPFS_SIZE_MISMATCH' @{ tmpfs = $tmpfsPath }
+        }
+    }
+
+    $actualEnvironment = @($inspect.Config.Env | ForEach-Object { [string]$_ })
+    $expectedEnvironment = @(Get-FixedEnvironment ($sealed -eq 'true') $ExpectedPort)
+    foreach ($expectedEntry in $expectedEnvironment) {
+        $separator = $expectedEntry.IndexOf('=')
+        if ($separator -lt 1) { Fail 'FORGE_CONTAINER_EXPECTED_ENVIRONMENT_INVALID' }
+        $key = $expectedEntry.Substring(0, $separator)
+        $prefix = "$key="
+        $matches = @($actualEnvironment | Where-Object { $_.StartsWith($prefix, [StringComparison]::Ordinal) })
+        if ($matches.Count -ne 1 -or $matches[0] -ne $expectedEntry) {
+            Fail 'FORGE_CONTAINER_ENVIRONMENT_SEAL_MISMATCH' @{ environmentKey = $key }
+        }
+    }
 
     $port = (Invoke-PodmanRemote $Podman @('port', $Name, '3000/tcp')).Output -join ''
     if ($port.Trim() -ne "$HostAddress`:$ExpectedPort") { Fail 'FORGE_CONTAINER_PORT_BINDING_MISMATCH' }
-    return [string]$labels.'stephanos.sealed'
+    return $sealed
 }
 
 function Get-FixedEnvironment([bool]$Final, [int]$PublicPort = $HostPort) {
@@ -475,14 +548,14 @@ try {
         [void](Invoke-Fixed $PodmanExe @('machine', 'init', '--provider', 'wsl', '--rootful=false', '--cpus', '4', '--memory', '4096', '--disk-size', '40', '--update-connection=false', $MachineName))
         $machine = Get-Machine $PodmanExe
     }
-    if ($null -eq $machine) { Fail 'PODMAN_MACHINE_INSPECTION_FAILED' }
-    if ($machine.Rootful -ne $false) { Fail 'PODMAN_MACHINE_ROOTFUL_NOT_ALLOWED' }
+    Assert-MachineIdentity $machine
     if ([string]$machine.State -ne 'running') {
         if (-not $PSCmdlet.ShouldProcess($MachineName, 'Start fixed Podman machine')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
         [void](Invoke-Fixed $PodmanExe @('machine', 'start', '--update-connection=false', $MachineName))
         $machine = Get-Machine $PodmanExe
     }
-    if ($null -eq $machine -or $machine.Rootful -ne $false -or [string]$machine.State -ne 'running') {
+    Assert-MachineIdentity $machine
+    if ([string]$machine.State -ne 'running') {
         Fail 'PODMAN_MACHINE_RUNNING_ROOTLESS_NOT_PROVED'
     }
     $connectionProbe = Invoke-PodmanRemote $PodmanExe @('info') -AllowFailure
