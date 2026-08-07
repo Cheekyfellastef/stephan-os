@@ -11,9 +11,12 @@ export const FORGE_SHADOW_BATTLE_BRIDGE_BOUNDARY = 'podman-wsl-rootless';
 export const FORGE_SHADOW_BATTLE_BRIDGE_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 const SHA40 = /^[0-9a-f]{40}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
 const OCI_DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SAFE_BACKUP_VOLUME = /^stephanos-forge-shadow-backup-[0-9a-f]{16}$/;
 const INSTALLER_RELATIVE_PATH = 'scripts/windows/install-forge-shadow-podman-v1.ps1';
+const MACHINE_NAME = 'stephanos-forge-shadow';
+const CONTAINER_NAME = 'stephanos-forge-shadow';
 const FORBIDDEN_FIELDS = Object.freeze([
   'command', 'commands', 'executable', 'args', 'arguments', 'shell', 'powershell',
   'script', 'path', 'url', 'uri', 'environment', 'env', 'token', 'credential',
@@ -103,14 +106,16 @@ function runExact(runCommand, executable, args, options = {}) {
 function readSourceIdentity(runCommand, repositoryRoot, expectedHead, installerPath) {
   const branch = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['branch', '--show-current'], { cwd: repositoryRoot, timeout: 120000 });
   const head = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', 'HEAD'], { cwd: repositoryRoot, timeout: 120000 });
+  const tree = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', `${expectedHead}^{tree}`], { cwd: repositoryRoot, timeout: 120000 });
   const installerBlob = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', `${expectedHead}:${INSTALLER_RELATIVE_PATH}`], { cwd: repositoryRoot, timeout: 120000 });
   const workingInstallerBlob = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, [
     'hash-object', `--path=${INSTALLER_RELATIVE_PATH}`, installerPath,
   ], { cwd: repositoryRoot, timeout: 120000 });
   return Object.freeze({
-    ok: branch.ok && head.ok && installerBlob.ok && workingInstallerBlob.ok,
+    ok: branch.ok && head.ok && tree.ok && installerBlob.ok && workingInstallerBlob.ok,
     branch: branch.stdout.trim(),
     head: head.stdout.trim().toLowerCase(),
+    tree: tree.stdout.trim().toLowerCase(),
     installerBlob: installerBlob.stdout.trim().toLowerCase(),
     workingInstallerBlob: workingInstallerBlob.stdout.trim().toLowerCase(),
   });
@@ -121,14 +126,21 @@ function sourceIdentityMatches(identity, expectedHead) {
     identity?.ok
     && identity.branch === 'main'
     && identity.head === expectedHead
+    && SHA40.test(identity.tree)
     && SHA40.test(identity.installerBlob)
     && identity.workingInstallerBlob === identity.installerBlob
   );
 }
 
-function validInstallerReceipt(receipt, command) {
+function validInstallerReceipt(receipt, command, expectedTree) {
+  const canonicalTree = String(receipt?.canonicalTree || '').toLowerCase();
   const mirrorHead = String(receipt?.mirrorHead || '').toLowerCase();
   const mirrorTree = String(receipt?.mirrorTree || '').toLowerCase();
+  const backupDigest = String(receipt?.backupDigest || '').toLowerCase();
+  const backupVolume = String(receipt?.backupVolume || '');
+  const expectedBackupVolume = SHA256.test(backupDigest)
+    ? `stephanos-forge-shadow-backup-${backupDigest.slice(0, 16)}`
+    : '';
   return Boolean(
     receipt
     && typeof receipt === 'object'
@@ -141,9 +153,13 @@ function validInstallerReceipt(receipt, command) {
     && String(receipt.imageDigest || '').toLowerCase() === command.forgejoImageDigest
     && String(receipt.forgejoVersion || '').startsWith(FORGE_SHADOW_BATTLE_BRIDGE_VERSION)
     && String(receipt.podmanVersion || '') === '6.0.2'
+    && String(receipt.machine || '') === MACHINE_NAME
+    && String(receipt.podmanConnection || '') === MACHINE_NAME
+    && String(receipt.container || '') === CONTAINER_NAME
     && String(receipt.listener || '') === '127.0.0.1:3340'
     && mirrorHead === command.expectedHead
-    && SHA40.test(mirrorTree)
+    && canonicalTree === expectedTree
+    && mirrorTree === expectedTree
     && receipt.exactObjectParity === true
     && receipt.exactTreeParity === true
     && receipt.readOnlySealed === true
@@ -161,8 +177,9 @@ function validInstallerReceipt(receipt, command) {
     && receipt.bootstrapTokenRevoked === true
     && receipt.credentialPersisted === false
     && receipt.credentialLogged === false
-    && /^[0-9a-f]{64}$/.test(String(receipt.backupDigest || ''))
-    && SAFE_BACKUP_VOLUME.test(String(receipt.backupVolume || ''))
+    && SHA256.test(backupDigest)
+    && SAFE_BACKUP_VOLUME.test(backupVolume)
+    && backupVolume === expectedBackupVolume
     && receipt.restoreDrillPassed === true
     && receipt.arbitraryShellAllowed === false
     && receipt.arbitraryPowerShellAllowed === false
@@ -195,6 +212,7 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
     return fail('FORGE_SHADOW_SOURCE_IDENTITY_CHANGED', {
       observedBranch: sourceBefore.branch,
       observedHead: sourceBefore.head,
+      observedTree: sourceBefore.tree,
       expectedInstallerBlob: sourceBefore.installerBlob,
       observedInstallerBlob: sourceBefore.workingInstallerBlob,
     });
@@ -218,12 +236,12 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
     return fail('FORGE_SHADOW_INSTALLER_RECEIPT_TOO_LARGE');
   }
   const receipt = parseJson(invocation.stdout.trim());
-  if (!validInstallerReceipt(receipt, normalized)) {
+  if (!validInstallerReceipt(receipt, normalized, sourceBefore.tree)) {
     return fail('FORGE_SHADOW_INSTALLER_RECEIPT_INVALID');
   }
 
   const sourceAfter = readSourceIdentity(runCommand, repositoryRoot, normalized.expectedHead, installerPath);
-  if (!sourceIdentityMatches(sourceAfter, normalized.expectedHead)) {
+  if (!sourceIdentityMatches(sourceAfter, normalized.expectedHead) || sourceAfter.tree !== sourceBefore.tree) {
     return fail('FORGE_SHADOW_POST_INSTALL_SOURCE_IDENTITY_CHANGED');
   }
 
@@ -233,11 +251,15 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
     finalVerdict: 'FORGE_SHADOW_M2_READY',
     repository: FORGE_SHADOW_BATTLE_BRIDGE_REPOSITORY,
     sourceHead: normalized.expectedHead,
+    canonicalTree: sourceAfter.tree,
     installerBlob: sourceAfter.installerBlob,
     forgejoVersion: FORGE_SHADOW_BATTLE_BRIDGE_VERSION,
     podmanVersion: '6.0.2',
     forgejoImageDigest: normalized.forgejoImageDigest,
     runtimeBoundary: FORGE_SHADOW_BATTLE_BRIDGE_BOUNDARY,
+    machine: MACHINE_NAME,
+    podmanConnection: MACHINE_NAME,
+    container: CONTAINER_NAME,
     listener: '127.0.0.1:3340',
     mirrorHead: String(receipt.mirrorHead || '').toLowerCase(),
     mirrorTree: String(receipt.mirrorTree || '').toLowerCase(),
