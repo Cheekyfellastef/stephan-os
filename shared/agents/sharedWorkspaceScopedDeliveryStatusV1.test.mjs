@@ -24,8 +24,11 @@ function record(overrides = {}) {
     schemaVersion: 'stephanos.runtime-proof.v1',
     recordId: 'record-' + Math.random().toString(16).slice(2),
     timestampUtc: '2026-08-06T15:50:00.000Z',
+    repository: SUBJECT.repository,
     relatedPr: '#1668',
+    mergeCommit: SUBJECT.mergeCommit,
     correlationId: SUBJECT.deploymentRequestId,
+    featureId: SUBJECT.featureId,
     proofRefs: ['proof/music-tile-live.json'],
     ...overrides,
   };
@@ -55,6 +58,35 @@ test('unrelated newest global status cannot answer the scoped Music Tile questio
   ]);
   assert.equal(result.overallStatus, 'NO_MATCHING_RUNTIME_EVIDENCE');
   assert.equal(result.matchedRecordCount, 0);
+  assert.equal(result.live, false);
+});
+
+test('scoped evidence requires exact repository, PR, merge, deployment and feature identity', () => {
+  const mismatches = [
+    record({ repository: 'Other/example' }),
+    record({ relatedPr: '#1667' }),
+    record({ mergeCommit: '1111111111111111111111111111111111111111' }),
+    record({ correlationId: 'req-1507-other-deployment' }),
+    record({ featureId: 'another-feature' }),
+  ];
+
+  for (const evidence of mismatches) {
+    const result = projection([evidence]);
+    assert.equal(result.overallStatus, 'NO_MATCHING_RUNTIME_EVIDENCE');
+    assert.equal(result.matchedRecordCount, 0);
+    assert.equal(result.live, false);
+  }
+});
+
+test('records cannot splice matching identity dimensions across separate evidence', () => {
+  const result = projection([
+    record({ repository: 'Other/example', status: 'PASS', updatedMusicTileServed: true }),
+    record({ relatedPr: '#1667', status: 'PASS', playbackContinuedAfterRating: true }),
+    record({ featureId: 'another-feature', status: 'PASS', autoUrlAndArtworkRuntimeProof: true }),
+    record({ correlationId: 'req-1507-other-deployment', finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD', servedBrowserHead: SUBJECT.mergeCommit }),
+  ]);
+  assert.equal(result.matchedRecordCount, 0);
+  assert.equal(result.overallStatus, 'NO_MATCHING_RUNTIME_EVIDENCE');
   assert.equal(result.live, false);
 });
 
