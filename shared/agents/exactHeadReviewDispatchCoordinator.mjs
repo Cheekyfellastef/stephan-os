@@ -29,7 +29,9 @@ export const EXACT_HEAD_REVIEW_DECISION = Object.freeze({
   INVALID_INPUT: 'INVALID_INPUT',
   INELIGIBLE: 'INELIGIBLE',
   WAIT_WORKFLOWS: 'WAIT_WORKFLOWS',
+  WAIT_WORKFLOWS_REVIEW_READY: 'WAIT_WORKFLOWS_REVIEW_READY',
   BLOCKED_WORKFLOWS: 'BLOCKED_WORKFLOWS',
+  BLOCKED_REVIEW_THREADS: 'BLOCKED_REVIEW_THREADS',
   DISPATCH_REVIEW: 'DISPATCH_REVIEW',
   WAIT_REVIEW_RECEIPT: 'WAIT_REVIEW_RECEIPT',
   ESCALATE_MISSING_RECEIPT: 'ESCALATE_MISSING_RECEIPT',
@@ -41,6 +43,7 @@ export const EXACT_HEAD_REVIEW_DECISION = Object.freeze({
 export const EXACT_HEAD_REVIEW_PROGRESS = Object.freeze({
   VERIFIED_ONLY: 'VERIFIED_ONLY',
   WAITING_FOR_WORKFLOWS: 'WAITING_FOR_WORKFLOWS',
+  REVIEW_PRECOMPUTED: 'REVIEW_PRECOMPUTED',
   REVIEW_DISPATCHED: 'REVIEW_DISPATCHED',
   WAITING_FOR_RECEIPT: 'WAITING_FOR_RECEIPT',
   STALLED_MISSING_RECEIPT: 'STALLED_MISSING_RECEIPT',
@@ -152,6 +155,8 @@ export function exactHeadReviewProgress(decision) {
   switch (text(decision)) {
     case EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS:
       return EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_WORKFLOWS;
+    case EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY:
+      return EXACT_HEAD_REVIEW_PROGRESS.REVIEW_PRECOMPUTED;
     case EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW:
       return EXACT_HEAD_REVIEW_PROGRESS.REVIEW_DISPATCHED;
     case EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT:
@@ -291,13 +296,25 @@ function reviewMatchesHead(item, context = {}) {
   return providerNeutralReviewMatchesHead(item, context);
 }
 
+function latestPrecomputedProviderNeutralReceipt(comments, context) {
+  return newest((comments || []).filter((item) => (
+    providerNeutralReviewMatchesHead(item, context)
+    && itemTimestamp(item) !== null
+  )));
+}
+
 function latestExternalReceipt(comments, reviews, context, notBeforeMs) {
   return newest([
     ...(comments || []).filter((item) => reviewMatchesHead(item, context)),
     ...(reviews || []).filter((item) => reviewMatchesHead(item, context)),
   ].filter((item) => {
     const timestamp = itemTimestamp(item);
-    return timestamp !== null && timestamp > notBeforeMs;
+    if (timestamp === null) return false;
+    // A protected provider-neutral receipt is already bound to the exact PR,
+    // head, base, workflow run and successful review job. It may be computed
+    // while CI is still running and consumed once CI becomes green. A generic
+    // app review is not exact-base-bound, so it retains the post-workflow rule.
+    return providerNeutralReviewMatchesHead(item, context) || timestamp > notBeforeMs;
   }));
 }
 
@@ -468,15 +485,36 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
       && asTime(run.completedAt ?? run.completed_at ?? run.updatedAt ?? run.updated_at) === null;
   });
 
+  const comments = Array.isArray(input.comments) ? input.comments : [];
+  const reviews = Array.isArray(input.reviews) ? input.reviews : [];
+  const reviewContext = {
+    repository: text(input.repository),
+    prNumber: base.prNumber,
+    branch: text(pr.headRef ?? pr.head_ref),
+    headSha,
+    baseRef,
+    baseSha: text(pr.baseSha ?? pr.base_sha),
+    independentReviewWorkflowId: input.independentReviewWorkflowId,
+    independentReviewRuns: input.independentReviewRuns,
+    independentReviewJobsByRunId: input.independentReviewJobsByRunId,
+  };
+  const precomputedReceipt = latestPrecomputedProviderNeutralReceipt(comments, reviewContext);
+
   if (missingWorkflows.length || pendingWorkflows.length || unboundWorkflows.length) {
     return Object.freeze({
       ...base,
-      decision: EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS,
-      reason: 'required exact-head workflows are missing, still running or lack completion timestamps',
+      decision: precomputedReceipt
+        ? EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY
+        : EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS,
+      reason: precomputedReceipt
+        ? 'exact-head and exact-base review is precomputed while required workflows finish'
+        : 'required exact-head workflows are missing, still running or lack completion timestamps',
       missingWorkflows: Object.freeze(missingWorkflows),
       pendingWorkflows: Object.freeze(pendingWorkflows),
       unboundWorkflows: Object.freeze(unboundWorkflows),
       failedWorkflows: Object.freeze(failedWorkflows),
+      reviewReady: Boolean(precomputedReceipt),
+      externalReceiptId: precomputedReceipt?.id ?? null,
     });
   }
 
@@ -491,23 +529,32 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     });
   }
 
-  const comments = Array.isArray(input.comments) ? input.comments : [];
-  const reviews = Array.isArray(input.reviews) ? input.reviews : [];
+  const unresolvedThreadCount = input.unresolvedThreadCount;
+  if (!Number.isSafeInteger(unresolvedThreadCount) || unresolvedThreadCount < 0 || unresolvedThreadCount > 0) {
+    return Object.freeze({
+      ...base,
+      decision: EXACT_HEAD_REVIEW_DECISION.BLOCKED_REVIEW_THREADS,
+      reason: !Number.isSafeInteger(unresolvedThreadCount) || unresolvedThreadCount < 0
+        ? 'unresolved review-thread evidence is unavailable at receipt consumption'
+        : `${unresolvedThreadCount} unresolved review thread(s) block receipt consumption`,
+      unresolvedThreadCount: Number.isSafeInteger(unresolvedThreadCount) && unresolvedThreadCount >= 0
+        ? unresolvedThreadCount
+        : null,
+      reviewReady: Boolean(precomputedReceipt),
+      externalReceiptId: precomputedReceipt?.id ?? null,
+    });
+  }
+
   const workflowsCompletedAtMs = Math.max(...requiredWorkflows.map((name) => {
     const run = latestRuns.get(name);
     return asTime(run?.completedAt ?? run?.completed_at ?? run?.updatedAt ?? run?.updated_at);
   }));
-  const externalReceipt = latestExternalReceipt(comments, reviews, {
-    repository: text(input.repository),
-    prNumber: base.prNumber,
-    branch: text(pr.headRef ?? pr.head_ref),
-    headSha,
-    baseRef,
-    baseSha: text(pr.baseSha ?? pr.base_sha),
-    independentReviewWorkflowId: input.independentReviewWorkflowId,
-    independentReviewRuns: input.independentReviewRuns,
-    independentReviewJobsByRunId: input.independentReviewJobsByRunId,
-  }, workflowsCompletedAtMs);
+  const externalReceipt = latestExternalReceipt(
+    comments,
+    reviews,
+    reviewContext,
+    workflowsCompletedAtMs,
+  );
   const externalReceiptTime = itemTimestamp(externalReceipt);
   const recordedReceipt = externalReceipt && externalReceiptTime !== null
     ? markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.RECEIPT, headSha, {

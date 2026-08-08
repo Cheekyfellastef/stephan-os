@@ -200,6 +200,20 @@ function mapIndependentReviewJob(job) {
   };
 }
 
+async function unresolvedThreadCount(owner, repo, prNumber, token) {
+  const query = `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}`;
+  const payload = await githubRequest('/graphql', {
+    method: 'POST',
+    body: { query, variables: { owner, repo, number: prNumber } },
+    token,
+  });
+  const threads = payload?.data?.repository?.pullRequest?.reviewThreads;
+  if (!threads || threads.pageInfo?.hasNextPage) {
+    throw new Error('Review-thread evidence is missing or exceeds the bounded first page.');
+  }
+  return (threads.nodes || []).filter((thread) => thread?.isResolved !== true).length;
+}
+
 function exactGitHubActionsReviewer(comment = {}) {
   return text(comment?.user?.login).toLowerCase() === TRUSTED_GITHUB_ACTIONS_REVIEWER.login
     && text(comment?.user?.type).toLowerCase() === TRUSTED_GITHUB_ACTIONS_REVIEWER.type
@@ -283,13 +297,14 @@ async function listOpenPullRequests({ owner, repo, token }) {
 
 async function loadPrContext({ owner, repo, repository, token, prNumber, laneAuthorityLogin, rawPr = null, mappedComments = null }) {
   const pr = rawPr ?? await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { token });
-  const [comments, reviews, runs] = await Promise.all([
+  const [comments, reviews, runs, unresolvedThreads] = await Promise.all([
     mappedComments ?? githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token }).then((items) => items.map(mapComment)),
     githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { token }).then((items) => items.map(mapReview)),
     githubPages(
       `/repos/${owner}/${repo}/actions/runs?head_sha=${encodeURIComponent(text(pr?.head?.sha))}&event=pull_request`,
       { token, itemKey: 'workflow_runs' },
     ).then((items) => items.map(mapWorkflowRun)),
+    unresolvedThreadCount(owner, repo, prNumber, token),
   ]);
   const independentReviewEvidence = await loadIndependentReviewEvidence({
     owner,
@@ -307,6 +322,7 @@ async function loadPrContext({ owner, repo, repository, token, prNumber, laneAut
     comments,
     reviews,
     workflowRuns: runs,
+    unresolvedThreadCount: unresolvedThreads,
     ...independentReviewEvidence,
     canonicalLaneConfirmed: laneEvidence.confirmed,
     canonicalLaneCommentId: laneEvidence.commentId,
@@ -442,6 +458,7 @@ async function main() {
       independentReviewWorkflowId: context.independentReviewWorkflowId,
       independentReviewRuns: context.independentReviewRuns,
       independentReviewJobsByRunId: context.independentReviewJobsByRunId,
+      unresolvedThreadCount: context.unresolvedThreadCount,
       comments: coordinatorComments,
       reviews: context.reviews,
     });
