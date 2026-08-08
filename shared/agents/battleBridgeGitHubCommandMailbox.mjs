@@ -49,6 +49,22 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   CODEX_BANKED_RESET_OPERATION,
 ]);
 
+export const BATTLE_BRIDGE_MAILBOX_MAX_BATCH = 4;
+export const BATTLE_BRIDGE_MAILBOX_PARTITION = Object.freeze({
+  CONTROL: 'CONTROL',
+  OBSERVATION: 'OBSERVATION',
+});
+
+const OBSERVATION_OPERATIONS = new Set([
+  'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
+  'READ_DEPLOYMENT_STATUS',
+  'READ_CAPABILITY_REGISTRY',
+  'READ_SHARED_WORKSPACE_STATUS',
+  'READ_CRITICAL_BACKLOG_STATUS',
+  'READ_MAILBOX_RECEIPT',
+  CODEX_BANKED_RESET_STATUS_OPERATION,
+]);
+
 export const WINDOWS_BROWSER_PROOF_SCENARIOS = Object.freeze([
   'MUSIC_RATING_PRESERVES_PLAYBACK',
 ]);
@@ -367,12 +383,25 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   });
 }
 
-export function selectNextBattleBridgeGitHubCommand(comments = [], {
+export function classifyBattleBridgeMailboxOperation(operation = '') {
+  return OBSERVATION_OPERATIONS.has(String(operation || ''))
+    ? BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION
+    : BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
+}
+
+export function selectBattleBridgeGitHubCommandBatch(comments = [], {
   consumedRequestIds = new Set(),
   now = new Date(),
+  maxBatch = BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
 } = {}) {
+  const boundedMaxBatch = Number(maxBatch);
+  if (!Number.isSafeInteger(boundedMaxBatch) || boundedMaxBatch < 1 || boundedMaxBatch > BATTLE_BRIDGE_MAILBOX_MAX_BATCH) {
+    return fail('MAILBOX_BATCH_SIZE_INVALID', { maxBatch });
+  }
   const ordered = [...comments].sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0));
   const rejected = [];
+  const ready = [];
+  const seenRequestIds = new Set();
   for (const comment of ordered) {
     const extracted = extractBattleBridgeGitHubCommand(comment?.body || '');
     if (!extracted.ok) continue;
@@ -385,16 +414,147 @@ export function selectNextBattleBridgeGitHubCommand(comments = [], {
       continue;
     }
     if (consumedRequestIds.has(validated.command.requestId)) continue;
-    return Object.freeze({
-      ok: true,
-      verdict: 'COMMAND_READY',
+    if (seenRequestIds.has(validated.command.requestId)) continue;
+    seenRequestIds.add(validated.command.requestId);
+    ready.push(Object.freeze({
       commentId: comment?.id || null,
       commentUrl: comment?.html_url || comment?.url || '',
       command: validated.command,
-      rejected,
+      partition: classifyBattleBridgeMailboxOperation(validated.command.operation),
+    }));
+  }
+  if (ready.length === 0) return Object.freeze({ ok: true, verdict: 'NO_COMMAND_READY', rejected });
+  const commands = Object.freeze(ready.slice(0, boundedMaxBatch));
+  const controlCount = commands.filter((entry) => entry.partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL).length;
+  const observationCount = commands.length - controlCount;
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_BATCH_READY',
+    commands,
+    selectedCount: commands.length,
+    readyCount: ready.length,
+    deferredCount: Math.max(0, ready.length - commands.length),
+    controlCount,
+    observationCount,
+    maximumBatchSize: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+    controlSerialized: true,
+    duplicateWorkerAllowed: false,
+    rejected,
+  });
+}
+
+export function selectNextBattleBridgeGitHubCommand(comments = [], options = {}) {
+  const batch = selectBattleBridgeGitHubCommandBatch(comments, { ...options, maxBatch: 1 });
+  if (!batch.ok || batch.verdict === 'NO_COMMAND_READY') return batch;
+  const selected = batch.commands[0];
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_READY',
+    commentId: selected.commentId,
+    commentUrl: selected.commentUrl,
+    command: selected.command,
+    partition: selected.partition,
+    rejected: batch.rejected,
+  });
+}
+
+export function revalidateBattleBridgeGitHubCommandForExecution(command = {}, {
+  now = new Date(),
+} = {}) {
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
+  const expiresAtMs = Date.parse(String(command?.expiresAt || ''));
+  if (!Number.isFinite(nowMs) || !Number.isFinite(expiresAtMs)) {
+    return fail('COMMAND_REVALIDATION_FAILED', {
+      requestId: String(command?.requestId || ''),
+      operation: String(command?.operation || ''),
+      validationBlocker: 'COMMAND_EXPIRY_INVALID',
     });
   }
-  return Object.freeze({ ok: true, verdict: 'NO_COMMAND_READY', rejected });
+  if (expiresAtMs <= nowMs) {
+    return fail('COMMAND_EXPIRED_BEFORE_EXECUTION', {
+      requestId: String(command?.requestId || ''),
+      operation: String(command?.operation || ''),
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_EXECUTION_SLOT_READY',
+    command,
+  });
+}
+
+export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
+  now = () => new Date(),
+  beforeExecute,
+  executeCommand,
+  onTerminal,
+} = {}) {
+  const entries = Array.isArray(batch?.commands) ? batch.commands : [];
+  if (batch?.verdict !== 'COMMAND_BATCH_READY' || entries.length < 1
+    || entries.length > BATTLE_BRIDGE_MAILBOX_MAX_BATCH || typeof now !== 'function'
+    || typeof executeCommand !== 'function'
+    || (beforeExecute !== undefined && typeof beforeExecute !== 'function')
+    || (onTerminal !== undefined && typeof onTerminal !== 'function')) {
+    return fail('MAILBOX_BATCH_EXECUTION_INVALID');
+  }
+  const results = new Array(entries.length);
+  let activeExecutions = 0;
+  let maxConcurrencyObserved = 0;
+  let terminalCheckpoint = Promise.resolve();
+  const checkpointTerminal = (entry, result) => {
+    if (!onTerminal) return Promise.resolve(result);
+    terminalCheckpoint = terminalCheckpoint
+      .catch(() => undefined)
+      .then(() => onTerminal(entry, result));
+    return terminalCheckpoint;
+  };
+  const executeEntry = async (entry, index) => {
+    const executionValidation = revalidateBattleBridgeGitHubCommandForExecution(entry.command, {
+      now: now(),
+    });
+    if (!executionValidation.ok) {
+      results[index] = Object.freeze({
+        entry,
+        result: await checkpointTerminal(entry, executionValidation),
+      });
+      return;
+    }
+    activeExecutions += 1;
+    maxConcurrencyObserved = Math.max(maxConcurrencyObserved, activeExecutions);
+    try {
+      if (beforeExecute) await beforeExecute(entry);
+      const execution = await executeCommand(entry);
+      results[index] = Object.freeze({
+        entry,
+        result: await checkpointTerminal(entry, execution),
+      });
+    } finally {
+      activeExecutions -= 1;
+    }
+  };
+
+  let index = 0;
+  while (index < entries.length) {
+    if (entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL) {
+      await executeEntry(entries[index], index);
+      index += 1;
+      continue;
+    }
+    const observationStart = index;
+    while (index < entries.length && entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION) index += 1;
+    await Promise.all(entries.slice(observationStart, index).map((entry, offset) => executeEntry(entry, observationStart + offset)));
+  }
+
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_BATCH_EXECUTION_COMPLETE',
+    results: Object.freeze(results),
+    selectedCount: entries.length,
+    maxConcurrencyObserved,
+    controlSerialized: true,
+    observationParallelismBounded: true,
+    duplicateWorkerAllowed: false,
+  });
 }
 
 function validateScopedDeliveryExecution(command = {}, result = {}) {
