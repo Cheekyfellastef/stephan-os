@@ -28,6 +28,9 @@ Select Case taskId
   Case "recovery-mesh"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-recovery-mesh-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
+  Case "recovery-mesh-guardian"
+    targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-recovery-mesh-guardian-hidden.ps1")
+    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
   Case "github-sync"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-github-sync-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
