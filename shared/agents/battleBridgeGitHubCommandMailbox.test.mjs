@@ -4,9 +4,13 @@ import {
   BATTLE_BRIDGE_GITHUB_COMMAND_MARKER,
   BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
+  BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+  BATTLE_BRIDGE_MAILBOX_PARTITION,
   buildBattleBridgeGitHubCommandReceipt,
   executeBattleBridgeGitHubCommand,
+  executeBattleBridgeGitHubCommandBatch,
   extractBattleBridgeGitHubCommand,
+  selectBattleBridgeGitHubCommandBatch,
   selectNextBattleBridgeGitHubCommand,
   validateBattleBridgeGitHubCommand,
 } from './battleBridgeGitHubCommandMailbox.mjs';
@@ -351,6 +355,77 @@ test('selects only an unconsumed valid command', () => {
   });
   assert.equal(selected.verdict, 'COMMAND_READY');
   assert.equal(selected.command.requestId, 'req-1507-new2');
+});
+
+test('selects a bounded partitioned batch and reports backpressure without duplicating request IDs', () => {
+  const comments = [
+    comment(command({ requestId: 'req-1507-control-1' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-observe-2', operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-observe-3', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 3 }),
+    comment(command({ requestId: 'req-1507-control-4', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 4 }),
+    comment(command({ requestId: 'req-1507-control-4', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 5 }),
+    comment(command({ requestId: 'req-1507-deferred-5', operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 6 }),
+  ];
+  const batch = selectBattleBridgeGitHubCommandBatch(comments, { now });
+  assert.equal(batch.verdict, 'COMMAND_BATCH_READY');
+  assert.equal(batch.maximumBatchSize, BATTLE_BRIDGE_MAILBOX_MAX_BATCH);
+  assert.equal(batch.selectedCount, 4);
+  assert.equal(batch.readyCount, 5);
+  assert.equal(batch.deferredCount, 1);
+  assert.equal(batch.controlCount, 2);
+  assert.equal(batch.observationCount, 2);
+  assert.deepEqual(batch.commands.map((entry) => entry.partition), [
+    BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+    BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION,
+    BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION,
+    BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+  ]);
+  assert.equal(batch.controlSerialized, true);
+  assert.equal(batch.duplicateWorkerAllowed, false);
+});
+
+test('serializes control commands while running only adjacent observations concurrently', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-control-1' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-observe-2', operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-observe-3', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 3 }),
+    comment(command({ requestId: 'req-1507-control-4', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 4 }),
+  ], { now });
+  const events = [];
+  let observationStarts = 0;
+  let releaseObservations;
+  const observationsStarted = new Promise((resolve) => {
+    releaseObservations = { resolveStarted: resolve, release: null };
+  });
+  const observationGate = new Promise((resolve) => { releaseObservations.release = resolve; });
+  const executionPromise = executeBattleBridgeGitHubCommandBatch(batch, {
+    executeCommand: async (entry) => {
+      const id = entry.command.requestId;
+      events.push(`start:${id}`);
+      if (entry.partition === BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION) {
+        observationStarts += 1;
+        if (observationStarts === 2) releaseObservations.resolveStarted();
+        await observationGate;
+      }
+      events.push(`end:${id}`);
+      return { ok: true, requestId: id };
+    },
+  });
+  await observationsStarted;
+  assert.deepEqual(events, [
+    'start:req-1507-control-1',
+    'end:req-1507-control-1',
+    'start:req-1507-observe-2',
+    'start:req-1507-observe-3',
+  ]);
+  releaseObservations.release();
+  const executed = await executionPromise;
+  assert.equal(executed.ok, true);
+  assert.equal(executed.maxConcurrencyObserved, 2);
+  assert.equal(events.at(-1), 'end:req-1507-control-4');
+  assert.ok(events.indexOf('start:req-1507-control-4') > events.indexOf('end:req-1507-observe-3'));
+  assert.equal(executed.controlSerialized, true);
+  assert.equal(executed.duplicateWorkerAllowed, false);
 });
 
 test('dispatches read-only reset status only through its named handler', async () => {

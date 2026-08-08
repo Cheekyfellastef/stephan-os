@@ -29,7 +29,7 @@ $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger `
     -Once `
     -At (Get-Date).AddMinutes(1) `
-    -RepetitionInterval (New-TimeSpan -Minutes 5) `
+    -RepetitionInterval (New-TimeSpan -Minutes 1) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet `
@@ -47,7 +47,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
         -Trigger @($logonTrigger, $intervalTrigger) `
         -Principal $principal `
         -Settings $settings `
-        -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507 and publishes a bounded Shared Workspace receipt index. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
+        -Description 'Consumes up to four owner-authored, expiring, allowlisted Stephanos commands from issue 1507 per poll using serialized control and bounded observation partitions, and publishes a Shared Workspace receipt index. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
         -Force | Out-Null
     if ($StartNow) {
         Start-ScheduledTask -TaskName $taskName
@@ -62,7 +62,11 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     launcherPath = $launcherPath
     runnerPath = $runnerPath
     receiptIndexEnabled = $true
-    intervalMinutes = 5
+    intervalMinutes = 1
+    maximumBatchSize = 4
+    controlSerialized = $true
+    observationParallelismBounded = $true
+    duplicateMailboxAllowed = $false
     atLogon = $true
     hidden = $true
     runLevel = 'Limited'

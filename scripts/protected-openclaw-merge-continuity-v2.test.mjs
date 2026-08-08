@@ -5,6 +5,7 @@ import {
   evaluateDistFreshnessAgainstOrigin,
 } from './ignite-stephanos-local.mjs';
 import {
+  boundedMailboxCommentPages,
   latestMailboxCommentPage,
 } from './battle-bridge-github-command-mailbox.mjs';
 
@@ -44,7 +45,7 @@ test('pre-serve call site requests full Git identities rather than abbreviated S
   );
 });
 
-test('mailbox comment page selection is bounded to the newest REST page', () => {
+test('mailbox comment page selection is bounded around the newest REST page', () => {
   assert.equal(latestMailboxCommentPage(0), 1);
   assert.equal(latestMailboxCommentPage(1), 1);
   assert.equal(latestMailboxCommentPage(100), 1);
@@ -54,6 +55,9 @@ test('mailbox comment page selection is bounded to the newest REST page', () => 
     () => latestMailboxCommentPage(10, 101),
     /MAILBOX_COMMENT_PAGE_SIZE_INVALID/,
   );
+  assert.deepEqual(boundedMailboxCommentPages(0), [1, 2]);
+  assert.deepEqual(boundedMailboxCommentPages(536), [5, 6, 7]);
+  assert.deepEqual(boundedMailboxCommentPages(12_345), [123, 124, 125]);
 });
 
 test('mailbox source no longer paginates the complete historical issue thread', () => {

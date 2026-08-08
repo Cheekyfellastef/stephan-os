@@ -29,9 +29,22 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(installer, /run-stephanos-scheduled-task-windowless\.vbs/);
   assert.match(installer, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
   assert.match(installer, /receiptIndexEnabled = \$true/);
+  assert.match(installer, /RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
+  assert.match(installer, /maximumBatchSize = 4/);
+  assert.match(installer, /controlSerialized = \$true/);
+  assert.match(installer, /observationParallelismBounded = \$true/);
+  assert.match(installer, /duplicateMailboxAllowed = \$false/);
   assert.match(installer, /\/\/B \/\/NoLogo/);
   assert.match(installer, /github-command-mailbox/);
   assert.doesNotMatch(installer, /New-ScheduledTaskAction -Execute \$(?:node|nodeExe|npm)/);
+
+  const mailboxSource = await readFile(mailboxSourcePath, 'utf8');
+  assert.match(mailboxSource, /selectBattleBridgeGitHubCommandBatch\(comments/);
+  assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
+  assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
+  assert.match(mailboxSource, /deferredCount: batch\.deferredCount/);
+  assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
+  assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);
 
   assert.match(
     windowlessLauncher,

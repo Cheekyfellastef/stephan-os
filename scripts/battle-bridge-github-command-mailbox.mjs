@@ -18,11 +18,13 @@ import {
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
+  BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
   BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
   buildBattleBridgeGitHubCommandReceipt,
   executeBattleBridgeGitHubCommand,
-  selectNextBattleBridgeGitHubCommand,
+  executeBattleBridgeGitHubCommandBatch,
+  selectBattleBridgeGitHubCommandBatch,
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { dispatchExactHeadWindowsBrowserProof } from '../shared/agents/exactHeadWindowsBrowserProofDispatch.mjs';
 import { appendMusicSpotifyLinkCandidate } from '../shared/agents/musicSpotifyLinkBridge.mjs';
@@ -580,20 +582,31 @@ export function latestMailboxCommentPage(commentCount, perPage = 100) {
   return Math.max(1, Math.ceil(boundedCount / pageSize));
 }
 
+export function boundedMailboxCommentPages(commentCount, perPage = 100) {
+  const latest = latestMailboxCommentPage(commentCount, perPage);
+  return Object.freeze([...new Set([Math.max(1, latest - 1), latest, latest + 1])]);
+}
+
 function loadBoundedMailboxComments() {
   const issue = ghJson([
     'api',
     `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}`,
   ]);
-  const page = latestMailboxCommentPage(issue?.comments, 100);
-  const comments = ghJson([
-    'api',
-    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments?per_page=100&page=${page}`,
-  ]);
-  if (!Array.isArray(comments)) {
-    throw new Error('MAILBOX_COMMENT_PAGE_INVALID');
+  const commentsById = new Map();
+  for (const page of boundedMailboxCommentPages(issue?.comments, 100)) {
+    const comments = ghJson([
+      'api',
+      `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments?per_page=100&page=${page}`,
+    ]);
+    if (!Array.isArray(comments)) {
+      throw new Error('MAILBOX_COMMENT_PAGE_INVALID');
+    }
+    for (const comment of comments) {
+      const id = Number(comment?.id || 0);
+      if (Number.isSafeInteger(id) && id > 0) commentsById.set(id, comment);
+    }
   }
-  return comments;
+  return [...commentsById.values()].sort((left, right) => Number(left.id) - Number(right.id));
 }
 
 function postReceipt(receipt) {
@@ -919,28 +932,13 @@ export async function readMailboxReceipt(command = {}, {
   return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
 }
 
-export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
-  if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
-  if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
-    return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
-  }
-  const comments = loadBoundedMailboxComments();
-  const state = loadState();
-  const selected = selectNextBattleBridgeGitHubCommand(comments, {
-    consumedRequestIds: new Set(state.consumedRequestIds || []),
-    now: now(),
-  });
-  if (selected.verdict === 'NO_COMMAND_READY') return selected;
-  if (!selected.ok) return selected;
-
-  const acceptedAt = now().toISOString();
-  let receipt = buildBattleBridgeGitHubCommandReceipt({ command: selected.command, state: 'ACCEPTED', acceptedAt, heartbeatAt: acceptedAt, proofRefs: [selected.commentUrl] });
-  const receiptLocation = writeReceipt(receipt);
-  const receiptRef = receiptLocation.ref;
-  postReceipt({ ...receipt, receiptRef });
-
-  const execution = await executeBattleBridgeGitHubCommand(selected.command, {
-    updateStephanos: (command) => updateStephanosFromChat({ operatorApproval: command.operatorApproval, expectedBranch: 'main' }),
+async function executeSelectedMailboxCommand(selected, receiptRef) {
+  return executeBattleBridgeGitHubCommand(selected.command, {
+    updateStephanos: (command) => updateStephanosFromChat({
+      operatorApproval: command.operatorApproval,
+      expectedBranch: 'main',
+      expectedHead: command.expectedHead,
+    }),
     installUnattendedSync,
     runDiagnostics: () => runBattleBridgeDiagnostics(),
     readDeploymentStatus,
@@ -964,24 +962,101 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
       });
     },
   });
+}
 
-  const completedAt = now().toISOString();
-  receipt = buildBattleBridgeGitHubCommandReceipt({
-    command: selected.command,
-    state: execution.ok ? 'DONE' : 'BLOCKED',
-    acceptedAt,
-    heartbeatAt: completedAt,
-    completedAt,
-    result: execution,
-    blocker: execution.blocker || execution.result?.blocker || '',
-    proofRefs: [selected.commentUrl, receiptRef],
+export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
+  if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
+  if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
+    return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
+  }
+  const comments = loadBoundedMailboxComments();
+  const state = loadState();
+  const batch = selectBattleBridgeGitHubCommandBatch(comments, {
+    consumedRequestIds: new Set(state.consumedRequestIds || []),
+    now: now(),
+    maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
   });
-  writeReceipt(receipt);
-  state.consumedRequestIds = [...new Set([...(state.consumedRequestIds || []), selected.command.requestId])].slice(-500);
-  state.lastReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
+  if (batch.verdict === 'NO_COMMAND_READY') return batch;
+  if (!batch.ok) return batch;
+
+  const accepted = new Map();
+  for (const selected of batch.commands) {
+    const acceptedAt = now().toISOString();
+    const receipt = buildBattleBridgeGitHubCommandReceipt({
+      command: selected.command,
+      state: 'ACCEPTED',
+      acceptedAt,
+      heartbeatAt: acceptedAt,
+      proofRefs: [selected.commentUrl],
+    });
+    const receiptLocation = writeReceipt(receipt);
+    postReceipt({ ...receipt, receiptRef: receiptLocation.ref });
+    accepted.set(selected.command.requestId, Object.freeze({ acceptedAt, receiptLocation }));
+  }
+
+  const executionBatch = await executeBattleBridgeGitHubCommandBatch(batch, {
+    executeCommand: async (selected) => {
+      const prepared = accepted.get(selected.command.requestId);
+      const execution = await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      const completedAt = now().toISOString();
+      const receipt = buildBattleBridgeGitHubCommandReceipt({
+        command: selected.command,
+        state: execution.ok ? 'DONE' : 'BLOCKED',
+        acceptedAt: prepared.acceptedAt,
+        heartbeatAt: completedAt,
+        completedAt,
+        result: execution,
+        blocker: execution.blocker || execution.result?.blocker || '',
+        proofRefs: [selected.commentUrl, prepared.receiptLocation.ref],
+      });
+      writeReceipt(receipt);
+      postReceipt({ ...receipt, receiptRef: prepared.receiptLocation.ref });
+      return Object.freeze({ receipt, execution, receiptLocation: prepared.receiptLocation });
+    },
+  });
+
+  const terminal = executionBatch.results.map(({ entry, result }) => Object.freeze({
+    requestId: entry.command.requestId,
+    operation: entry.command.operation,
+    partition: entry.partition,
+    state: result.receipt.state,
+    blocker: result.receipt.blocker || '',
+    receiptRef: result.receiptLocation.ref,
+  }));
+  for (const item of executionBatch.results) {
+    const receipt = item.result.receipt;
+    state.consumedRequestIds = [...new Set([...(state.consumedRequestIds || []), receipt.requestId])].slice(-500);
+    state.lastReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
+  }
+  state.lastBatch = {
+    completedAt: now().toISOString(),
+    requestIds: terminal.map((item) => item.requestId),
+    selectedCount: batch.selectedCount,
+    deferredCount: batch.deferredCount,
+    controlCount: batch.controlCount,
+    observationCount: batch.observationCount,
+    maxConcurrencyObserved: executionBatch.maxConcurrencyObserved,
+  };
   saveState(state);
-  postReceipt({ ...receipt, receiptRef });
-  return { ...receipt, receiptPath: receiptLocation.path, receiptRef };
+
+  const blockedCount = terminal.filter((item) => item.state === 'BLOCKED').length;
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_BATCH_COMPLETE',
+    finalVerdict: blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS',
+    selectedCount: batch.selectedCount,
+    readyCount: batch.readyCount,
+    deferredCount: batch.deferredCount,
+    controlCount: batch.controlCount,
+    observationCount: batch.observationCount,
+    blockedCount,
+    doneCount: terminal.length - blockedCount,
+    maximumBatchSize: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+    maxConcurrencyObserved: executionBatch.maxConcurrencyObserved,
+    controlSerialized: true,
+    duplicateWorkerAllowed: false,
+    terminal: Object.freeze(terminal),
+  });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
