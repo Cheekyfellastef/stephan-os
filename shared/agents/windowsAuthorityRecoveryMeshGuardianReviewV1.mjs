@@ -156,7 +156,7 @@ function reviewUninstaller(source, path, findings) {
     [/Unregister-ScheduledTask -TaskName \$guardianTaskName[\s\S]*Unregister-ScheduledTask -TaskName \$taskName/, 'recovery-guardian-uninstall-order-not-proved'],
   ]);
   forbidPatterns(findings, source, path, [
-    [/(?:^|[\s;|&])(?:Register-ScheduledTask|Start-ScheduledTask|New-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?)(?=\s|$)/im, 'recovery-guardian-uninstall-start-or-register-forbidden'],
+    [/(?:^|[^A-Za-z0-9_-])(?:[A-Za-z0-9_.-]+\\)?(?:Register-ScheduledTask|Start-ScheduledTask|New-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?)(?=\s|$)/im, 'recovery-guardian-uninstall-start-or-register-forbidden'],
     [/Invoke-Expression|Start-Process|Restart-Computer|shutdown\.exe|Stop-Process/i, 'windows-authority-expanded'],
     [/\bgit(?:\.exe)?\b/i, 'recovery-guardian-uninstall-git-forbidden'],
   ]);
