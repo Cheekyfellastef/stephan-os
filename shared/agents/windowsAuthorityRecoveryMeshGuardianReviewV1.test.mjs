@@ -122,3 +122,23 @@ test('uninstaller review requires guardian-first parent shutdown order', () => {
   const result = review(path, reversed);
   assert.ok(codes(result).includes('recovery-guardian-uninstall-order-not-proved'));
 });
+
+test('uninstaller is routed only through uninstaller rules', () => {
+  const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[3];
+  const boundedUninstaller = [
+    '[CmdletBinding(SupportsShouldProcess = $true)]',
+    "$taskName = 'Stephanos Battle Bridge Recovery Mesh'",
+    "$guardianTaskName = 'Stephanos Battle Bridge Recovery Mesh Guardian'",
+    'Unregister-ScheduledTask -TaskName $guardianTaskName -Confirm:$false',
+    "throw 'RECOVERY_MESH_GUARDIAN_UNINSTALL_FAILED'",
+    'Unregister-ScheduledTask -TaskName $taskName -Confirm:$false',
+    'guardianRemovedBeforeRecoveryMesh = $true',
+    'workerPreserved = $true',
+    'mailboxPreserved = $true',
+    'sourcePreserved = $true',
+  ].join('\n');
+  const result = review(path, boundedUninstaller);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.equal(codes(result).some((code) => code.startsWith('recovery-guardian-install-')), false);
+  assert.equal(codes(result).includes('recovery-guardian-recursion-guard-missing'), false);
+});
