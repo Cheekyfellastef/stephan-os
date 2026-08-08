@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import readline from 'node:readline';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   createCodexQueueRecord,
@@ -20,6 +23,7 @@ import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mj
 
 export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp.v1';
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
+export const STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA = 'stephanos.codex-dispatch-surface-attachment.v1';
 
 const TOOLS = Object.freeze([
   {
@@ -113,6 +117,79 @@ const TOOLS = Object.freeze([
   },
 ]);
 
+function boundedText(value, maxLength = 160) {
+  return String(value ?? '').trim().slice(0, maxLength);
+}
+
+function readSourceHead(repoRoot) {
+  if (!repoRoot) return '';
+  const gitExecutable = process.env.STEPHANOS_GIT_EXE
+    || (process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git');
+  try {
+    return boundedText(execFileSync(gitExecutable, ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 15_000,
+    }), 40).toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function currentServerSourceSha256() {
+  try {
+    return createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex');
+  } catch {
+    return '';
+  }
+}
+
+export function createCodexDispatchAttachmentProof({
+  clientInfo = {},
+  now = new Date().toISOString(),
+  platform = process.platform,
+  repositoryRoot = process.env.STEPHANOS_REPO_ROOT || '',
+  sourceHead = readSourceHead(repositoryRoot),
+  serverSourceSha256 = currentServerSourceSha256(),
+  surfaceReceipt = `codex-dispatch-surface-${randomUUID()}`,
+} = {}) {
+  const toolNames = TOOLS.map((tool) => tool.name);
+  const windows = platform === 'win32';
+  const exactSourceHead = /^[0-9a-f]{40}$/.test(sourceHead) ? sourceHead : '';
+  const exactServerSourceSha256 = /^[0-9a-f]{64}$/.test(serverSourceSha256) ? serverSourceSha256 : '';
+  return Object.freeze({
+    schemaVersion: STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA,
+    observedAt: now,
+    surfaceReceipt,
+    surfaceId: 'stephanos-codex-dispatch-local-mcp',
+    attached: windows && Boolean(exactSourceHead) && Boolean(exactServerSourceSha256),
+    platform,
+    can_local_windows_proof: windows && Boolean(exactSourceHead) && Boolean(exactServerSourceSha256),
+    repositoryRoot: repositoryRoot ? resolve(repositoryRoot) : '',
+    sourceHead: exactSourceHead,
+    serverSourceSha256: exactServerSourceSha256,
+    clientInfo: Object.freeze({
+      name: boundedText(clientInfo?.name, 80),
+      version: boundedText(clientInfo?.version, 40),
+    }),
+    toolsListed: Object.freeze(toolNames),
+    requiredDispatchToolsPresent: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result']
+      .every((name) => toolNames.includes(name)),
+  });
+}
+
+export function publishCodexDispatchAttachmentProof(proof, {
+  sharedWorkspace = process.env.STEPHANOS_SHARED_WORKSPACE || '',
+} = {}) {
+  if (!sharedWorkspace || proof?.platform !== 'win32' || proof?.attached !== true) return null;
+  const proofPath = join(sharedWorkspace, 'codex-dispatch', 'surface-attachment-latest.json');
+  const tempPath = `${proofPath}.${process.pid}.${randomUUID()}.tmp`;
+  mkdirSync(dirname(proofPath), { recursive: true });
+  writeFileSync(tempPath, `${JSON.stringify(proof, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+  renameSync(tempPath, proofPath);
+  return proofPath;
+}
+
 function asTextResult(value, isError = false) {
   const text = JSON.stringify(value, null, 2);
   return { content: [{ type: 'text', text }], structuredContent: value, isError };
@@ -151,9 +228,26 @@ export function createCodexDispatchMcpHandler({
   integration = createLocalCodexExecIntegration(),
   hostOps = { syncCodexDispatchBridge, updateStephanosFromChat, runBattleBridgeDiagnostics },
   now = () => new Date().toISOString(),
+  attachmentProofPublisher = publishCodexDispatchAttachmentProof,
+  attachmentIdentity = {},
 } = {}) {
+  let clientInfo = {};
+  let toolsListed = false;
+  const repositoryRoot = attachmentIdentity.repositoryRoot || process.env.STEPHANOS_REPO_ROOT || '';
+  const processAttachmentIdentity = Object.freeze({
+    platform: attachmentIdentity.platform || process.platform,
+    repositoryRoot,
+    sourceHead: attachmentIdentity.sourceHead || readSourceHead(repositoryRoot),
+    serverSourceSha256: attachmentIdentity.serverSourceSha256 || currentServerSourceSha256(),
+  });
+  const publishAttachmentHeartbeat = () => attachmentProofPublisher(createCodexDispatchAttachmentProof({
+    clientInfo,
+    now: now(),
+    ...processAttachmentIdentity,
+  }));
   return async function handle(method, params = {}) {
     if (method === 'initialize') {
+      clientInfo = params.clientInfo && typeof params.clientInfo === 'object' ? params.clientInfo : {};
       return {
         protocolVersion: params.protocolVersion || '2025-06-18',
         capabilities: { tools: { listChanged: false } },
@@ -161,9 +255,17 @@ export function createCodexDispatchMcpHandler({
         instructions: 'Prefer direct GitHub work for source changes. Use update_stephanos_from_chat for an approved complete Battle Bridge update, sync_codex_dispatch_bridge for source-only bridge updates, run_battle_bridge_diagnostics for deterministic local proof, and dispatch_codex_task only when a real Codex child is genuinely required.',
       };
     }
-    if (method === 'ping') return {};
-    if (method === 'tools/list') return { tools: TOOLS };
+    if (method === 'ping') {
+      if (toolsListed) publishAttachmentHeartbeat();
+      return {};
+    }
+    if (method === 'tools/list') {
+      toolsListed = true;
+      publishAttachmentHeartbeat();
+      return { tools: TOOLS };
+    }
     if (method === 'tools/call') {
+      if (toolsListed) publishAttachmentHeartbeat();
       const name = String(params.name || '');
       const args = params.arguments || {};
       if (name === 'dispatch_codex_task') {
