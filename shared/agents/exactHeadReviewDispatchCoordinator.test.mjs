@@ -681,7 +681,13 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);
   assert.match(runner, /GitHub pagination exceeded.*refusing partial evidence/);
   assert.match(runner, /EXACT_HEAD_REVIEW_PROGRESS_PR_/);
-  assert.match(workflow, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
+  assert.doesNotMatch(workflow, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
+  assert.match(workflow, /retry_targets:\s*\$\{\{ steps\.coordinate\.outputs\.retry_targets \}\}/);
+  assert.match(workflow, /target:\s*\$\{\{ fromJSON\(needs\.coordinate\.outputs\.retry_targets\) \}\}/);
+  assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
+  assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ matrix\.target\.exactHead \}\}/);
+  assert.match(workflow, /max-parallel:\s*4/);
+  assert.doesNotMatch(workflow, /steps\.coordinate\.outputs\.decision ==/);
   assert.match(workflow, /Progress: `VERIFIED_ONLY`/);
   assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);

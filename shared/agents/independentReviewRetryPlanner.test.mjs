@@ -341,29 +341,26 @@ test('normalizes only trusted mechanical markers while preserving owner lane evi
   assert.equal(normalized[4], ownerLaneReceipt);
 });
 
-test('trusted workflow re-evaluates a bounded retry after dispatch, wait and one escalation', () => {
+test('trusted workflow fans every bounded retry target into an exact-head matrix', () => {
   assert.match(COORDINATOR_WORKFLOW, /permissions:\s*\n\s+actions: write\b/);
   const retryStepStart = COORDINATOR_WORKFLOW.indexOf(
-    '- name: Retry only the exact failed canonical independent review',
+    '- name: Retry one exact failed canonical independent review',
   );
   assert.ok(retryStepStart >= 0, 'bounded retry step must exist');
   const retryStep = COORDINATOR_WORKFLOW.slice(retryStepStart);
 
-  assert.match(retryStep, /if:\s*>-\s*\n\s+always\(\) &&/);
-  for (const decision of [
-    'DISPATCH_REVIEW',
-    'WAIT_REVIEW_RECEIPT',
-    'ESCALATE_MISSING_RECEIPT',
-  ]) {
-    assert.match(retryStep, new RegExp(`steps\\.coordinate\\.outputs\\.decision == '${decision}'`));
-  }
+  assert.match(COORDINATOR_WORKFLOW, /retry_targets:\s*\$\{\{ steps\.coordinate\.outputs\.retry_targets \}\}/);
+  assert.match(COORDINATOR_WORKFLOW, /needs\.coordinate\.outputs\.retry_targets != '\[\]'/);
+  assert.match(COORDINATOR_WORKFLOW, /target:\s*\$\{\{ fromJSON\(needs\.coordinate\.outputs\.retry_targets\) \}\}/);
+  assert.match(COORDINATOR_WORKFLOW, /max-parallel:\s*4/);
+  assert.doesNotMatch(COORDINATOR_WORKFLOW, /steps\.coordinate\.outputs\.decision ==/);
   assert.match(
     retryStep,
-    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ steps\.coordinate\.outputs\.pr_number \}\}/,
+    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/,
   );
   assert.match(
     retryStep,
-    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ steps\.coordinate\.outputs\.exact_head \}\}/,
+    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ matrix\.target\.exactHead \}\}/,
   );
   assert.match(retryStep, /run: node scripts\/retry-independent-review\.mjs/);
   assert.doesNotMatch(retryStep, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_(?:RUN|WORKFLOW)_ID/);
