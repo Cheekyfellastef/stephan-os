@@ -10,6 +10,7 @@ import {
   executeBattleBridgeGitHubCommand,
   executeBattleBridgeGitHubCommandBatch,
   extractBattleBridgeGitHubCommand,
+  revalidateBattleBridgeGitHubCommandForExecution,
   selectBattleBridgeGitHubCommandBatch,
   selectNextBattleBridgeGitHubCommand,
   validateBattleBridgeGitHubCommand,
@@ -399,6 +400,7 @@ test('serializes control commands while running only adjacent observations concu
   });
   const observationGate = new Promise((resolve) => { releaseObservations.release = resolve; });
   const executionPromise = executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
     executeCommand: async (entry) => {
       const id = entry.command.requestId;
       events.push(`start:${id}`);
@@ -426,6 +428,68 @@ test('serializes control commands while running only adjacent observations concu
   assert.ok(events.indexOf('start:req-1507-control-4') > events.indexOf('end:req-1507-observe-3'));
   assert.equal(executed.controlSerialized, true);
   assert.equal(executed.duplicateWorkerAllowed, false);
+});
+
+test('revalidates command authority immediately before every execution slot', async () => {
+  const expiresAt = '2026-07-20T23:30:00.000Z';
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-control-1', expiresAt }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-control-2', expiresAt }), { id: 2 }),
+  ], { now });
+  const slotTimes = [
+    new Date('2026-07-20T23:29:59.000Z'),
+    new Date('2026-07-20T23:30:00.000Z'),
+  ];
+  const executedIds = [];
+  const terminal = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => slotTimes.shift(),
+    executeCommand: async (entry) => {
+      executedIds.push(entry.command.requestId);
+      return { ok: true };
+    },
+    onTerminal: async (entry, execution) => {
+      terminal.push(`${entry.command.requestId}:${execution.blocker || 'DONE'}`);
+      return execution;
+    },
+  });
+  assert.deepEqual(executedIds, ['req-1507-control-1']);
+  assert.deepEqual(terminal, [
+    'req-1507-control-1:DONE',
+    'req-1507-control-2:COMMAND_EXPIRED_BEFORE_EXECUTION',
+  ]);
+  assert.equal(result.results[1].result.blocker, 'COMMAND_EXPIRED_BEFORE_EXECUTION');
+  assert.equal(revalidateBattleBridgeGitHubCommandForExecution(batch.commands[1].command, {
+    now: new Date(expiresAt),
+  }).ok, false);
+});
+
+test('publishes acceptance only at slot start and checkpoints terminal state before advancing', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-control-1' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-control-2' }), { id: 2 }),
+  ], { now });
+  const events = [];
+  await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    beforeExecute: async (entry) => events.push(`accepted:${entry.command.requestId}`),
+    executeCommand: async (entry) => {
+      events.push(`execute:${entry.command.requestId}`);
+      return { ok: true };
+    },
+    onTerminal: async (entry, execution) => {
+      events.push(`checkpoint:${entry.command.requestId}`);
+      return execution;
+    },
+  });
+  assert.deepEqual(events, [
+    'accepted:req-1507-control-1',
+    'execute:req-1507-control-1',
+    'checkpoint:req-1507-control-1',
+    'accepted:req-1507-control-2',
+    'execute:req-1507-control-2',
+    'checkpoint:req-1507-control-2',
+  ]);
 });
 
 test('dispatches read-only reset status only through its named handler', async () => {

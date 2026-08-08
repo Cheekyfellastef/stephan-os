@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  checkpointTerminalMailboxReceipt,
   createSanitizedMailboxReceiptProjection,
   createWindowsSafeMailboxReceiptFilename,
   parseBoundedGitHubJson,
@@ -36,6 +37,10 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   const mailboxSource = await readFile(mailboxSourcePath, 'utf8');
   assert.match(mailboxSource, /selectBattleBridgeGitHubCommandBatch\(comments/);
   assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
+  assert.match(mailboxSource, /beforeExecute:\s*async \(selected\)/);
+  assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);
+  assert.match(mailboxSource, /checkpointTerminalMailboxReceipt\(state, receipt\)/);
+  assert.doesNotMatch(mailboxSource, /for \(const selected of batch\.commands\) \{[\s\S]{0,500}state: 'ACCEPTED'/);
   assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
   assert.match(mailboxSource, /deferredCount: batch\.deferredCount/);
   assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
@@ -54,6 +59,26 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(hiddenLauncher, /Get-Command node\.exe/);
   assert.match(hiddenLauncher, /\*> \$null/);
   assert.doesNotMatch(hiddenLauncher, /\[string\]\s*\$|Invoke-Expression|Start-Process|cmd\.exe/i);
+});
+
+test('terminal checkpoint persists each request immediately and bounds replay history', () => {
+  const state = { consumedRequestIds: ['req-1507-old-1'] };
+  const snapshots = [];
+  const receipt = {
+    requestId: 'req-1507-done-2',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'DONE',
+  };
+  checkpointTerminalMailboxReceipt(state, receipt, {
+    persist: (value) => snapshots.push(JSON.parse(JSON.stringify(value))),
+  });
+  assert.deepEqual(snapshots[0].consumedRequestIds, ['req-1507-old-1', 'req-1507-done-2']);
+  assert.equal(snapshots[0].lastReceipt.requestId, 'req-1507-done-2');
+  assert.equal(snapshots[0].lastReceipt.state, 'DONE');
+  assert.throws(
+    () => checkpointTerminalMailboxReceipt({}, { ...receipt, state: 'ACCEPTED' }),
+    /MAILBOX_TERMINAL_CHECKPOINT_INVALID/,
+  );
 });
 
 test('GitHub recovery wake binds the authenticated mailbox receipt instead of self-asserting a route boolean', async () => {

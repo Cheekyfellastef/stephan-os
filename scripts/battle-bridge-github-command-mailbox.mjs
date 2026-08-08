@@ -545,6 +545,22 @@ function saveState(state) {
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
 
+export function checkpointTerminalMailboxReceipt(state, receipt, {
+  persist = saveState,
+} = {}) {
+  if (!state || typeof state !== 'object' || !receipt || !['DONE', 'BLOCKED'].includes(receipt.state)
+    || !SAFE_REQUEST_ID_PATTERN.test(String(receipt.requestId || '')) || typeof persist !== 'function') {
+    throw new Error('MAILBOX_TERMINAL_CHECKPOINT_INVALID');
+  }
+  state.consumedRequestIds = [...new Set([
+    ...(Array.isArray(state.consumedRequestIds) ? state.consumedRequestIds : []),
+    receipt.requestId,
+  ])].slice(-500);
+  state.lastReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
+  persist(state);
+  return state;
+}
+
 function writeReceipt(receipt) {
   mkdirSync(mailboxStateRoot, { recursive: true });
   mkdirSync(canonicalReceiptRoot, { recursive: true });
@@ -980,38 +996,42 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
   if (!batch.ok) return batch;
 
   const accepted = new Map();
-  for (const selected of batch.commands) {
-    const acceptedAt = now().toISOString();
-    const receipt = buildBattleBridgeGitHubCommandReceipt({
-      command: selected.command,
-      state: 'ACCEPTED',
-      acceptedAt,
-      heartbeatAt: acceptedAt,
-      proofRefs: [selected.commentUrl],
-    });
-    const receiptLocation = writeReceipt(receipt);
-    postReceipt({ ...receipt, receiptRef: receiptLocation.ref });
-    accepted.set(selected.command.requestId, Object.freeze({ acceptedAt, receiptLocation }));
-  }
-
   const executionBatch = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now,
+    beforeExecute: async (selected) => {
+      const acceptedAt = now().toISOString();
+      const receipt = buildBattleBridgeGitHubCommandReceipt({
+        command: selected.command,
+        state: 'ACCEPTED',
+        acceptedAt,
+        heartbeatAt: acceptedAt,
+        proofRefs: [selected.commentUrl],
+      });
+      const receiptLocation = writeReceipt(receipt);
+      postReceipt({ ...receipt, receiptRef: receiptLocation.ref });
+      accepted.set(selected.command.requestId, Object.freeze({ acceptedAt, receiptLocation }));
+    },
     executeCommand: async (selected) => {
       const prepared = accepted.get(selected.command.requestId);
-      const execution = await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      return executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+    },
+    onTerminal: async (selected, execution) => {
+      const prepared = accepted.get(selected.command.requestId) || null;
       const completedAt = now().toISOString();
       const receipt = buildBattleBridgeGitHubCommandReceipt({
         command: selected.command,
         state: execution.ok ? 'DONE' : 'BLOCKED',
-        acceptedAt: prepared.acceptedAt,
+        acceptedAt: prepared?.acceptedAt || '',
         heartbeatAt: completedAt,
         completedAt,
         result: execution,
         blocker: execution.blocker || execution.result?.blocker || '',
-        proofRefs: [selected.commentUrl, prepared.receiptLocation.ref],
+        proofRefs: [selected.commentUrl, prepared?.receiptLocation?.ref].filter(Boolean),
       });
-      writeReceipt(receipt);
-      postReceipt({ ...receipt, receiptRef: prepared.receiptLocation.ref });
-      return Object.freeze({ receipt, execution, receiptLocation: prepared.receiptLocation });
+      const receiptLocation = writeReceipt(receipt);
+      checkpointTerminalMailboxReceipt(state, receipt);
+      postReceipt({ ...receipt, receiptRef: receiptLocation.ref });
+      return Object.freeze({ receipt, execution, receiptLocation });
     },
   });
 
@@ -1023,11 +1043,6 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     blocker: result.receipt.blocker || '',
     receiptRef: result.receiptLocation.ref,
   }));
-  for (const item of executionBatch.results) {
-    const receipt = item.result.receipt;
-    state.consumedRequestIds = [...new Set([...(state.consumedRequestIds || []), receipt.requestId])].slice(-500);
-    state.lastReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
-  }
   state.lastBatch = {
     completedAt: now().toISOString(),
     requestIds: terminal.map((item) => item.requestId),

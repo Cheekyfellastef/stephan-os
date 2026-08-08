@@ -458,22 +458,76 @@ export function selectNextBattleBridgeGitHubCommand(comments = [], options = {})
   });
 }
 
+export function revalidateBattleBridgeGitHubCommandForExecution(command = {}, {
+  now = new Date(),
+} = {}) {
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
+  const expiresAtMs = Date.parse(String(command?.expiresAt || ''));
+  if (!Number.isFinite(nowMs) || !Number.isFinite(expiresAtMs)) {
+    return fail('COMMAND_REVALIDATION_FAILED', {
+      requestId: String(command?.requestId || ''),
+      operation: String(command?.operation || ''),
+      validationBlocker: 'COMMAND_EXPIRY_INVALID',
+    });
+  }
+  if (expiresAtMs <= nowMs) {
+    return fail('COMMAND_EXPIRED_BEFORE_EXECUTION', {
+      requestId: String(command?.requestId || ''),
+      operation: String(command?.operation || ''),
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_EXECUTION_SLOT_READY',
+    command,
+  });
+}
+
 export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
+  now = () => new Date(),
+  beforeExecute,
   executeCommand,
+  onTerminal,
 } = {}) {
   const entries = Array.isArray(batch?.commands) ? batch.commands : [];
   if (batch?.verdict !== 'COMMAND_BATCH_READY' || entries.length < 1
-    || entries.length > BATTLE_BRIDGE_MAILBOX_MAX_BATCH || typeof executeCommand !== 'function') {
+    || entries.length > BATTLE_BRIDGE_MAILBOX_MAX_BATCH || typeof now !== 'function'
+    || typeof executeCommand !== 'function'
+    || (beforeExecute !== undefined && typeof beforeExecute !== 'function')
+    || (onTerminal !== undefined && typeof onTerminal !== 'function')) {
     return fail('MAILBOX_BATCH_EXECUTION_INVALID');
   }
   const results = new Array(entries.length);
   let activeExecutions = 0;
   let maxConcurrencyObserved = 0;
+  let terminalCheckpoint = Promise.resolve();
+  const checkpointTerminal = (entry, result) => {
+    if (!onTerminal) return Promise.resolve(result);
+    terminalCheckpoint = terminalCheckpoint
+      .catch(() => undefined)
+      .then(() => onTerminal(entry, result));
+    return terminalCheckpoint;
+  };
   const executeEntry = async (entry, index) => {
+    const executionValidation = revalidateBattleBridgeGitHubCommandForExecution(entry.command, {
+      now: now(),
+    });
+    if (!executionValidation.ok) {
+      results[index] = Object.freeze({
+        entry,
+        result: await checkpointTerminal(entry, executionValidation),
+      });
+      return;
+    }
     activeExecutions += 1;
     maxConcurrencyObserved = Math.max(maxConcurrencyObserved, activeExecutions);
     try {
-      results[index] = Object.freeze({ entry, result: await executeCommand(entry) });
+      if (beforeExecute) await beforeExecute(entry);
+      const execution = await executeCommand(entry);
+      results[index] = Object.freeze({
+        entry,
+        result: await checkpointTerminal(entry, execution),
+      });
     } finally {
       activeExecutions -= 1;
     }
