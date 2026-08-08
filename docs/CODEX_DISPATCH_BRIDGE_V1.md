@@ -66,6 +66,8 @@ The installer:
 
 Restart ChatGPT desktop after installation. Install or enable the local `stephanos-codex-dispatch` plugin in the plugin/developer interface, then open a new compatible chat. Installation is not considered complete until that chat lists all three tools.
 
+The one-click Battle Bridge control-plane rescue now reuses this installer and status check. It may restore the existing control-plane tasks and prepare the plugin automatically, but it fails closed as `BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_ATTACHMENT_REQUIRED` until a compatible Windows chat actually requests `tools/list`. That request publishes a fresh, exact-source-head attachment proof; local files or an MCP registration alone are not treated as a connected Remote Codex surface.
+
 ## Cross-device boundary
 
 The source-controlled V1 server is local stdio MCP. It proves direct dispatch from compatible chats running with access to the Battle Bridge plugin. Phone and remote web chats require a separately authenticated ChatGPT app or secure MCP transport to the Battle Bridge. Do not expose the MCP server or backend directly to the public internet.

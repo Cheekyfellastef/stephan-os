@@ -17,6 +17,7 @@ $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $syncTaskName = 'Stephanos Battle Bridge GitHub Sync'
 $recoveryTaskName = 'Stephanos Battle Bridge Recovery Mesh'
 $mailboxTaskName = 'Stephanos Battle Bridge GitHub Command Mailbox'
+$fixedPowerShellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
 function Write-BoundedReceipt {
     param(
@@ -128,12 +129,16 @@ if ($origin -notmatch '^(https:\/\/github\.com\/Cheekyfellastef\/stephan-os(?:\.
 $syncInstaller = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-github-sync.ps1'
 $recoveryInstaller = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-recovery-mesh.ps1'
 $mailboxInstaller = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-github-command-mailbox.ps1'
+$dispatchInstaller = Join-Path $repoRoot 'scripts\windows\install-stephanos-codex-dispatch-plugin.ps1'
+$dispatchStatus = Join-Path $repoRoot 'scripts\windows\status-stephanos-codex-dispatch-plugin.ps1'
 
-if (-not $PSCmdlet.ShouldProcess($repoRoot, 'Start the three existing reviewed Battle Bridge control-plane tasks and converge to public main')) {
+if (-not $PSCmdlet.ShouldProcess($repoRoot, 'Start the three existing reviewed Battle Bridge control-plane tasks, converge to public main, and repair the existing Codex dispatch attachment')) {
     [pscustomobject]@{
         schemaVersion = 'stephanos.battle-bridge-no-faff-rescue-plan.v1'
         repository = $repository
         taskNames = @($syncTaskName, $recoveryTaskName, $mailboxTaskName)
+        codexDispatchInstaller = 'scripts/windows/install-stephanos-codex-dispatch-plugin.ps1'
+        codexDispatchStatus = 'scripts/windows/status-stephanos-codex-dispatch-plugin.ps1'
         sourceMutationPerformedByRescue = $false
         sourceConvergenceDelegatedToExistingReviewedSync = $true
         tailscaleCredentialRequired = $false
@@ -196,8 +201,68 @@ if (($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) {
     Stop-BoundedRescue -Blocker 'CONTROL_PLANE_TASK_PROOF_FAILED'
 }
 
+if (-not (Test-Path -LiteralPath $fixedPowerShellExe -PathType Leaf)) {
+    Stop-BoundedRescue -Blocker 'FIXED_WINDOWS_POWERSHELL_MISSING' -Detail $fixedPowerShellExe
+}
+foreach ($fixedDispatchScript in @($dispatchInstaller, $dispatchStatus)) {
+    if (-not (Test-Path -LiteralPath $fixedDispatchScript -PathType Leaf)) {
+        Stop-BoundedRescue -Blocker 'FIXED_CODEX_DISPATCH_SCRIPT_MISSING' -Detail $fixedDispatchScript
+    }
+}
+
+function Read-CodexDispatchStatus {
+    $raw = (& $fixedPowerShellExe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $dispatchStatus -RepositoryRoot $repoRoot 2>&1 | Out-String).Trim()
+    try { return $raw | ConvertFrom-Json }
+    catch { Stop-BoundedRescue -Blocker 'CODEX_DISPATCH_STATUS_INVALID' -Detail $raw }
+}
+
+$dispatchInstallPerformed = $false
+$dispatchInstallExitCode = $null
+$dispatchProof = Read-CodexDispatchStatus
+if ($dispatchProof.localBridgeReady -ne $true) {
+    $dispatchInstallPerformed = $true
+    $dispatchInstallOutput = (& $fixedPowerShellExe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $dispatchInstaller -RepositoryRoot $repoRoot 2>&1 | Out-String).Trim()
+    $dispatchInstallExitCode = $LASTEXITCODE
+    if ($dispatchInstallExitCode -ne 0) {
+        Stop-BoundedRescue -Blocker 'CODEX_DISPATCH_INSTALL_FAILED' -Detail $dispatchInstallOutput
+    }
+    $dispatchProof = Read-CodexDispatchStatus
+}
+
+if ($dispatchProof.readyForRemoteChatDispatch -ne $true) {
+    $pending = [ordered]@{
+        schemaVersion = 'stephanos.battle-bridge-no-faff-rescue.v2'
+        repository = $repository
+        status = 'CONTROL_PLANE_READY_REMOTE_CODEX_BLOCKED'
+        branch = 'main'
+        publicMainHead = $targetHead
+        observedHead = $observedHead
+        observedTree = $observedTree
+        syncReceipts = @($syncReceipts)
+        recoveryMesh = $recoveryReceipt
+        githubCommandMailbox = $mailboxReceipt
+        taskProof = @($taskProof)
+        codexDispatchInstallPerformed = $dispatchInstallPerformed
+        codexDispatchInstallExitCode = $dispatchInstallExitCode
+        codexDispatchStatus = $dispatchProof
+        blocker = if ($dispatchProof.localBridgeReady -eq $true) { 'CHATGPT_DESKTOP_PLUGIN_ATTACHMENT_REQUIRED' } else { [string]$dispatchProof.finalVerdict }
+        exactNextAction = if ($dispatchProof.localBridgeReady -eq $true) { 'Restart ChatGPT desktop, enable the existing stephanos-codex-dispatch plugin, and open one compatible chat so its exact-head tools/list proof is published.' } else { 'Repair the fixed local Codex CLI/plugin prerequisite named by codexDispatchStatus.' }
+        sourceMutationPerformedByRescue = $false
+        sourceConvergencePerformedByExistingReviewedSync = $true
+        newWorkerCreated = $false
+        newMailboxCreated = $false
+        destructiveGitAllowed = $false
+        arbitraryShellAllowed = $false
+        completedAt = (Get-Date).ToUniversalTime().ToString('o')
+        finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_ATTACHMENT_REQUIRED'
+    }
+    Write-BoundedReceipt -Receipt $pending -Path $script:receiptPath
+    $pending | ConvertTo-Json -Depth 12
+    exit 2
+}
+
 $success = [ordered]@{
-    schemaVersion = 'stephanos.battle-bridge-no-faff-rescue.v1'
+    schemaVersion = 'stephanos.battle-bridge-no-faff-rescue.v2'
     repository = $repository
     status = 'READY'
     branch = 'main'
@@ -209,6 +274,12 @@ $success = [ordered]@{
     recoveryMesh = $recoveryReceipt
     githubCommandMailbox = $mailboxReceipt
     taskProof = @($taskProof)
+    codexDispatchInstallPerformed = $dispatchInstallPerformed
+    codexDispatchInstallExitCode = $dispatchInstallExitCode
+    codexDispatchStatus = $dispatchProof
+    remoteCodexAttachmentReady = $true
+    newWorkerCreated = $false
+    newMailboxCreated = $false
     sourceMutationPerformedByRescue = $false
     sourceConvergencePerformedByExistingReviewedSync = $true
     destructiveGitAllowed = $false
@@ -216,7 +287,7 @@ $success = [ordered]@{
     tailscaleCredentialRequired = $false
     forgeMutationPerformed = $false
     completedAt = (Get-Date).ToUniversalTime().ToString('o')
-    finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_READY'
+    finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_READY'
 }
 Write-BoundedReceipt -Receipt $success -Path $script:receiptPath
 $success | ConvertTo-Json -Depth 10
