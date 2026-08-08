@@ -11,6 +11,7 @@ on:
       - Build Stephanos UI
       - Battle Bridge Publisher Proof
       - Codex Dispatch Queue Proof
+      - Independent Merge Security Review
     types:
       - completed
   issue_comment:

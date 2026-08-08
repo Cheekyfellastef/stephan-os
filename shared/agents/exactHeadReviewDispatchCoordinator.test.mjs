@@ -152,6 +152,23 @@ test('waits when any required workflow is missing or still running', () => {
   assert.deepEqual(pending.pendingWorkflows, [REQUIRED_EXACT_HEAD_WORKFLOWS[2]]);
 });
 
+test('surfaces an exact-head and exact-base review as precomputed while workflows finish', () => {
+  const pendingRuns = successfulRuns();
+  pendingRuns[2] = { ...pendingRuns[2], status: 'in_progress', conclusion: null };
+  const result = evaluateExactHeadReviewDispatch(baseInput({
+    workflowRuns: pendingRuns,
+    comments: [providerNeutralComment({ createdAt: '2026-07-19T16:10:00Z' })],
+  }));
+  assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY);
+  assert.equal(result.reviewReady, true);
+  assert.equal(result.externalReceiptId, 93);
+  assert.deepEqual(result.pendingWorkflows, [REQUIRED_EXACT_HEAD_WORKFLOWS[2]]);
+  assert.equal(
+    exactHeadReviewProgress(result.decision),
+    EXACT_HEAD_REVIEW_PROGRESS.REVIEW_PRECOMPUTED,
+  );
+});
+
 test('blocks review dispatch when a required workflow fails', () => {
   const runs = successfulRuns();
   runs[4] = { ...runs[4], conclusion: 'failure' };
@@ -383,6 +400,7 @@ test('escalates once when a posted request has no receipt after the bounded time
 
 test('keeps normal waiting distinct from a persistent missing-receipt stall', () => {
   assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS), EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_WORKFLOWS);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY), EXACT_HEAD_REVIEW_PROGRESS.REVIEW_PRECOMPUTED);
   assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW), EXACT_HEAD_REVIEW_PROGRESS.REVIEW_DISPATCHED);
   assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_RECEIPT);
   assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.STALLED_MISSING_RECEIPT);
@@ -588,7 +606,7 @@ test('ignores forged coordinator markers for dispatch, receipt and escalation st
   assert.equal(forgedEscalation.decision, EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT);
 });
 
-test('accepts review receipts only after successful exact-head workflow completion', () => {
+test('consumes precomputed exact-base receipts after workflows while generic app reviews remain post-workflow', () => {
   const earlyExternal = {
     id: 90,
     body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
@@ -606,6 +624,16 @@ test('accepts review receipts only after successful exact-head workflow completi
   const ambiguousSameSecond = { ...earlyExternal, id: 95, createdAt: '2026-07-19T16:24:00Z' };
   const ambiguous = evaluateExactHeadReviewDispatch(baseInput({ comments: [ambiguousSameSecond] }));
   assert.equal(ambiguous.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+
+  const precomputedProviderReceipt = providerNeutralComment({
+    id: 96,
+    createdAt: '2026-07-19T16:10:00Z',
+  });
+  const providerReady = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [precomputedProviderReceipt],
+  }));
+  assert.equal(providerReady.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  assert.equal(providerReady.externalReceiptId, 96);
 
   const postWorkflowExternal = { ...earlyExternal, id: 92, createdAt: '2026-07-19T16:24:01Z' };
   const beforeExternalMarker = coordinatorComment({
@@ -689,6 +717,7 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(workflow, /max-parallel:\s*4/);
   assert.doesNotMatch(workflow, /steps\.coordinate\.outputs\.decision ==/);
   assert.match(workflow, /Progress: `VERIFIED_ONLY`/);
+  assert.match(workflow, /workflows:[\s\S]*Independent Merge Security Review/);
   assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:\s*\$\{\{ secrets\.STEPHANOS_REVIEW_DISPATCH_TOKEN \}\}/);

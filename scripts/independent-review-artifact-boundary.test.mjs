@@ -28,6 +28,16 @@ test('independent review publishes one exact-run immutable result artifact', asy
   assert.match(script, /protectedWorkflowSources/);
   assert.doesNotMatch(script, /node:child_process|\bspawnSync\b|\bexecSync\b|\beval\s*\(/);
   assert.match(script, /const artifactPath = writeReviewArtifact\(artifact\);[\s\S]*const comment = await postDisplayComment/);
+  assert.doesNotMatch(script, /waitForExactHeadWorkflows|POLL_(?:INTERVAL|TIMEOUT)_MS/);
+  assert.doesNotMatch(script, /actions\/runs\?head_sha=.*event=pull_request/);
+  assert.doesNotMatch(script, /unresolvedThreadCount|reviewThreads\(first:/);
+  assert.match(script, /CI success and zero unresolved threads remain mandatory when the receipt is consumed/);
+  const displayComment = script.slice(
+    script.indexOf('async function postDisplayComment'),
+    script.indexOf('function writeReviewArtifact'),
+  );
+  assert.match(displayComment, /return postComment/);
+  assert.doesNotMatch(displayComment, /catch|console\.warn|return null/);
 });
 
 test('operator review authority comes from the exact artifact, never a bot review comment', async () => {
