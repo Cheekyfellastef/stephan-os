@@ -5,6 +5,7 @@ import {
   FORGE_SHADOW_M3_OFFICIAL_RELEASE_OBSERVATION_EXECUTION_CONTRACT_BLOCKED,
   FORGE_SHADOW_M3_OFFICIAL_RELEASE_OBSERVATION_EXECUTION_CONTRACT_READY,
   buildForgeShadowM3OfficialReleaseObservationExecutionBindingDigest,
+  parseForgeShadowM3StrictExplicitTimezoneInstant,
   planForgeShadowM3OfficialReleaseObservationExecutionContract,
 } from './forgeShadowM3OfficialReleaseObservationExecutionContractV1.mjs';
 
@@ -59,6 +60,26 @@ test('binds the request to repository, current main head, tree, timestamp, and d
   ]) {
     assert.equal(planForgeShadowM3OfficialReleaseObservationExecutionContract(input(patch)).valid, false);
   }
+});
+
+test('rejects impossible or normalized calendar timestamps while accepting real leap dates', () => {
+  for (const requestedAtUtc of [
+    '2026-02-30T04:00:00Z',
+    '2025-02-29T04:00:00Z',
+    '2026-13-01T04:00:00Z',
+    '2026-08-08T24:00:00Z',
+    '2026-08-08T04:60:00Z',
+    '2026-08-08T04:00:60Z',
+    '2026-08-08T04:00:00+24:00',
+  ]) {
+    const result = planForgeShadowM3OfficialReleaseObservationExecutionContract(input({ requestedAtUtc }));
+    assert.equal(result.valid, false, requestedAtUtc);
+    assert.ok(result.blockers.includes('requested-at-strict-explicit-timezone-required'));
+    assert.equal(Number.isNaN(parseForgeShadowM3StrictExplicitTimezoneInstant(requestedAtUtc)), true);
+  }
+  assert.equal(planForgeShadowM3OfficialReleaseObservationExecutionContract(input({
+    requestedAtUtc: '2024-02-29T04:00:00.123+01:00',
+  })).valid, true);
 });
 
 test('rejects missing, extra, or malformed input fields', () => {
@@ -143,6 +164,10 @@ test('preserves the merged observation receipt verification requirements', () =>
   assert.equal(receipt.callerSourceSelectionAccepted, false);
   assert.equal(receipt.artifactPayloadAccepted, false);
   assert.equal(receipt.filesystemMutationAccepted, false);
+  assert.equal(receipt.requestIdEchoRequired, true);
+  assert.equal(receipt.requestedAtUtcEchoRequired, true);
+  assert.equal(receipt.requestBindingDigestRequired, true);
+  assert.equal(receipt.requestBindingDigestMustEqualExecutionRequest, true);
 });
 
 test('projects zero runtime, source, credential, merge, and deployment authority', () => {

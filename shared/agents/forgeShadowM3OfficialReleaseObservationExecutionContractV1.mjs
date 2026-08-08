@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{2,127}$/i;
-const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const STRICT_EXPLICIT_TIMEZONE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?(Z|([+-])(\d{2}):(\d{2}))$/i;
 
 export const FORGE_SHADOW_M3_OFFICIAL_RELEASE_OBSERVATION_EXECUTION_CONTRACT_SCHEMA =
   'stephanos.forge-shadow-m3-official-release-observation-execution-contract.v1';
@@ -111,10 +111,28 @@ function findForbiddenField(value, trail = []) {
   return '';
 }
 
-function instant(value) {
+export function parseForgeShadowM3StrictExplicitTimezoneInstant(value) {
   const normalized = text(value);
-  if (!EXPLICIT_TIMEZONE.test(normalized)) return Number.NaN;
-  const parsed = Date.parse(normalized);
+  const match = STRICT_EXPLICIT_TIMEZONE.exec(normalized);
+  if (!match) return Number.NaN;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const millisecond = Number((match[7] || '').slice(1).padEnd(3, '0'));
+  const offsetHour = Number(match[10] || 0);
+  const offsetMinute = Number(match[11] || 0);
+  if (year < 1000 || month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59
+      || offsetHour > 23 || offsetMinute > 59) return Number.NaN;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > daysInMonth) return Number.NaN;
+  const offsetSign = match[9] === '-' ? -1 : 1;
+  const offsetMs = match[8].toUpperCase() === 'Z'
+    ? 0
+    : offsetSign * ((offsetHour * 60) + offsetMinute) * 60 * 1000;
+  const parsed = Date.UTC(year, month - 1, day, hour, minute, second, millisecond) - offsetMs;
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
@@ -192,6 +210,10 @@ function receiptContract() {
     artifactPayloadAccepted: false,
     filesystemMutationAccepted: false,
     boundedSafeProofReferencesRequired: true,
+    requestIdEchoRequired: true,
+    requestedAtUtcEchoRequired: true,
+    requestBindingDigestRequired: true,
+    requestBindingDigestMustEqualExecutionRequest: true,
   });
 }
 
@@ -239,7 +261,9 @@ export function planForgeShadowM3OfficialReleaseObservationExecutionContract(inp
   if (!SAFE_ID.test(requestId)) blockers.push('request-id-invalid');
   if (!SAFE_ID.test(observationId)) blockers.push('observation-id-invalid');
   if (requestId && requestId === observationId) blockers.push('request-and-observation-id-must-differ');
-  if (!Number.isFinite(instant(requestedAtUtc))) blockers.push('requested-at-explicit-timezone-required');
+  if (!Number.isFinite(parseForgeShadowM3StrictExplicitTimezoneInstant(requestedAtUtc))) {
+    blockers.push('requested-at-strict-explicit-timezone-required');
+  }
 
   const normalizedBlockers = uniqueSorted(blockers);
   const valid = normalizedBlockers.length === 0;

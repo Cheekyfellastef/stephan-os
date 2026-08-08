@@ -33,10 +33,10 @@ The request is bound to:
 - the exact canonical `main` tree;
 - one safe request identity;
 - one distinct safe observation identity;
-- an explicit-timezone request timestamp;
+- a strict, calendar-valid ISO request timestamp with an explicit timezone;
 - the fixed observer, discovery route, source identity and stable channel.
 
-A deterministic SHA-256 request-binding digest seals those values. Copying a request to another repository, head, tree, identity or timestamp changes the digest or fails validation.
+A deterministic SHA-256 request-binding digest seals those values. The observer receipt must echo the exact request identity, timestamp and digest, and the canonical observation boundary recomputes and verifies all three. Copying a request or receipt to another repository, head, tree, identity or timestamp therefore changes the digest or fails validation.
 
 ## Fixed artifact observation estate
 
@@ -65,6 +65,7 @@ Each observation requires immutable artifact, checksum and manifest-entry SHA-25
 A future observer receipt must retain the merged observation boundary requirements:
 
 - explicit timezone and maximum age of 24 hours;
+- exact request ID, request timestamp and request-binding digest echoed from the authorised execution request;
 - stable semantic version;
 - TLS verification;
 - verified release, checksum and provenance manifests;

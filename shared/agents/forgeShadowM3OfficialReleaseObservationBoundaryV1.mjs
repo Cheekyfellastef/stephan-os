@@ -3,13 +3,16 @@ import {
   FORGE_SHADOW_M3_ARTIFACT_RESOLUTION_READY,
   resolveForgeShadowM3RunnerArtifacts,
 } from './forgeShadowM3RunnerArtifactResolverV1.mjs';
+import {
+  buildForgeShadowM3OfficialReleaseObservationExecutionBindingDigest,
+  parseForgeShadowM3StrictExplicitTimezoneInstant,
+} from './forgeShadowM3OfficialReleaseObservationExecutionContractV1.mjs';
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{2,127}$/i;
 const SAFE_PROOF_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
-const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const MAX_OBSERVATION_AGE_MS = 24 * 60 * 60 * 1000;
 const MIN_ARTIFACT_BYTES = 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
@@ -31,12 +34,18 @@ const INPUT_KEYS = Object.freeze([
   'repository',
   'canonicalMainHead',
   'canonicalMainTree',
+  'requestId',
+  'requestedAtUtc',
+  'requestBindingDigest',
   'nowUtc',
   'observationReceipt',
 ]);
 
 const RECEIPT_KEYS = Object.freeze([
   'schemaVersion',
+  'requestId',
+  'requestedAtUtc',
+  'requestBindingDigest',
   'observationId',
   'observerClass',
   'sourceIdentity',
@@ -109,13 +118,6 @@ const integer = (value) => (typeof value === 'number' && Number.isSafeInteger(va
   : Number.NaN);
 const unique = (values) => [...new Set(values)];
 
-function instant(value) {
-  const normalized = text(value);
-  if (!EXPLICIT_TIMEZONE.test(normalized)) return Number.NaN;
-  const parsed = Date.parse(normalized);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
-}
-
 function exactKeys(value, expected) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const actual = Object.keys(value).sort();
@@ -167,12 +169,18 @@ export function buildForgeShadowM3OfficialReleaseSourceBindingDigest({
   repository,
   canonicalMainHead,
   canonicalMainTree,
+  requestId,
+  requestedAtUtc,
+  requestBindingDigest,
   observationId,
 } = {}) {
   return `sha256:${sha256({
     repository: text(repository),
     canonicalMainHead: text(canonicalMainHead).toLowerCase(),
     canonicalMainTree: text(canonicalMainTree).toLowerCase(),
+    requestId: text(requestId),
+    requestedAtUtc: text(requestedAtUtc),
+    requestBindingDigest: text(requestBindingDigest).toLowerCase(),
     observationId: text(observationId),
     observerClass: FORGE_SHADOW_M3_OFFICIAL_RELEASE_OBSERVER_CLASS,
     sourceIdentity: FORGE_SHADOW_M3_OFFICIAL_RELEASE_SOURCE,
@@ -277,8 +285,12 @@ export function planForgeShadowM3OfficialReleaseObservation(input = {}) {
   const repository = text(input.repository);
   const canonicalMainHead = text(input.canonicalMainHead).toLowerCase();
   const canonicalMainTree = text(input.canonicalMainTree).toLowerCase();
+  const requestId = text(input.requestId);
+  const requestedAtUtc = text(input.requestedAtUtc);
+  const requestedAtMs = parseForgeShadowM3StrictExplicitTimezoneInstant(requestedAtUtc);
+  const requestBindingDigest = text(input.requestBindingDigest).toLowerCase();
   const nowUtc = text(input.nowUtc);
-  const nowMs = instant(nowUtc);
+  const nowMs = parseForgeShadowM3StrictExplicitTimezoneInstant(nowUtc);
   const receipt = input.observationReceipt;
 
   if (repository !== FORGE_SHADOW_M3_OFFICIAL_RELEASE_REPOSITORY) {
@@ -286,16 +298,21 @@ export function planForgeShadowM3OfficialReleaseObservation(input = {}) {
   }
   if (!SHA40.test(canonicalMainHead)) blockers.push('canonical-main-head-invalid');
   if (!SHA40.test(canonicalMainTree)) blockers.push('canonical-main-tree-invalid');
+  if (!SAFE_ID.test(requestId)) blockers.push('request-id-invalid');
+  if (!Number.isFinite(requestedAtMs)) blockers.push('requested-at-invalid');
   if (!Number.isFinite(nowMs)) blockers.push('now-invalid');
 
   if (!exactKeys(receipt, RECEIPT_KEYS)) blockers.push('observation-receipt-fields-invalid');
   const observationId = text(receipt?.observationId);
+  const receiptRequestId = text(receipt?.requestId);
+  const receiptRequestedAtUtc = text(receipt?.requestedAtUtc);
+  const receiptRequestBindingDigest = text(receipt?.requestBindingDigest).toLowerCase();
   const observerClass = text(receipt?.observerClass);
   const sourceIdentity = text(receipt?.sourceIdentity);
   const releaseChannel = text(receipt?.releaseChannel).toLowerCase();
   const version = text(receipt?.version);
   const observedAtUtc = text(receipt?.observedAtUtc);
-  const observedMs = instant(observedAtUtc);
+  const observedMs = parseForgeShadowM3StrictExplicitTimezoneInstant(observedAtUtc);
   const sourceBindingDigest = text(receipt?.sourceBindingDigest).toLowerCase();
   const releaseManifestDigest = text(receipt?.releaseManifestDigest).toLowerCase();
   const checksumManifestDigest = text(receipt?.checksumManifestDigest).toLowerCase();
@@ -306,6 +323,23 @@ export function planForgeShadowM3OfficialReleaseObservation(input = {}) {
     blockers.push('observation-receipt-schema-mismatch');
   }
   if (!SAFE_ID.test(observationId)) blockers.push('observation-id-invalid');
+  const expectedRequestBindingDigest = buildForgeShadowM3OfficialReleaseObservationExecutionBindingDigest({
+    repository,
+    canonicalMainHead,
+    canonicalMainTree,
+    requestedAtUtc,
+    requestId,
+    observationId,
+  });
+  if (!DIGEST.test(requestBindingDigest) || requestBindingDigest !== expectedRequestBindingDigest) {
+    blockers.push('request-binding-digest-mismatch');
+  }
+  if (receiptRequestId !== requestId) blockers.push('receipt-request-id-mismatch');
+  if (receiptRequestedAtUtc !== requestedAtUtc) blockers.push('receipt-request-time-mismatch');
+  if (!DIGEST.test(receiptRequestBindingDigest)
+      || receiptRequestBindingDigest !== requestBindingDigest) {
+    blockers.push('receipt-request-binding-digest-mismatch');
+  }
   if (observerClass !== FORGE_SHADOW_M3_OFFICIAL_RELEASE_OBSERVER_CLASS) {
     blockers.push('observer-class-mismatch');
   }
@@ -324,6 +358,9 @@ export function planForgeShadowM3OfficialReleaseObservation(input = {}) {
     repository,
     canonicalMainHead,
     canonicalMainTree,
+    requestId,
+    requestedAtUtc,
+    requestBindingDigest,
     observationId,
   });
   if (!DIGEST.test(sourceBindingDigest) || sourceBindingDigest !== expectedBindingDigest) {
@@ -427,6 +464,9 @@ export function planForgeShadowM3OfficialReleaseObservation(input = {}) {
       repository,
       canonicalMainHead,
       canonicalMainTree,
+      requestId,
+      requestedAtUtc,
+      requestBindingDigest,
       observationId,
       observerClass,
       sourceBindingDigest,
@@ -440,6 +480,9 @@ export function planForgeShadowM3OfficialReleaseObservation(input = {}) {
     repository,
     canonicalMainHead,
     canonicalMainTree,
+    requestId,
+    requestedAtUtc,
+    requestBindingDigest: valid ? requestBindingDigest : '',
     observationId,
     observerClass,
     sourceIdentity,
@@ -470,6 +513,7 @@ export function planForgeShadowM3OfficialReleaseObservation(input = {}) {
       binaryContentAccepted: false,
       artifactDownloadPerformed: false,
       filesystemWritePerformed: false,
+      requestBindingRequired: true,
       separateObservationExecutionAuthorizationRequired: true,
     }),
     authority: authorityProjection(),
