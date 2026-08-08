@@ -47,6 +47,7 @@ sourceMutationAllowed = $false
 gitMutationAllowed = $false
 mergeAuthority = $false`;
 
+const tick = '`';
 const guardian = String.raw`[ValidateRange(2, 15)]
 [int]$StaleAfterMinutes = 4
 $taskName = 'Stephanos Battle Bridge Recovery Mesh'
@@ -56,7 +57,7 @@ $wscriptExe = 'C:\Windows\System32\wscript.exe'
 $scheduledTaskMutationScope = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_ONLY'
 $repoRoot = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'
 function Test-RecoveryTaskIdentity {
-  $expectedArguments = "//B //NoLogo `"$ExpectedLauncherPath`" recovery-mesh"
+  $expectedArguments = "//B //NoLogo ${tick}"$ExpectedLauncherPath${tick}" recovery-mesh"
   $x = $Task.Principal.LogonType
   $y = $Task.Principal.RunLevel
   $z = $Task.Settings.MultipleInstances
