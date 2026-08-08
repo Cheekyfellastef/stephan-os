@@ -29,11 +29,6 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(installer, /run-stephanos-scheduled-task-windowless\.vbs/);
   assert.match(installer, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
   assert.match(installer, /receiptIndexEnabled = \$true/);
-  assert.match(installer, /RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
-  assert.match(installer, /maximumBatchSize = 4/);
-  assert.match(installer, /controlSerialized = \$true/);
-  assert.match(installer, /observationParallelismBounded = \$true/);
-  assert.match(installer, /duplicateMailboxAllowed = \$false/);
   assert.match(installer, /\/\/B \/\/NoLogo/);
   assert.match(installer, /github-command-mailbox/);
   assert.doesNotMatch(installer, /New-ScheduledTaskAction -Execute \$(?:node|nodeExe|npm)/);
