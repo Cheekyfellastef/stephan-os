@@ -61,13 +61,44 @@ function exactKeys(value, expected) {
     && actual.every((key, index) => key === wanted[index]);
 }
 
-function stable(value) {
-  if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']';
-  if (value && typeof value === 'object') {
-    return '{' + Object.keys(value).sort()
-      .map((key) => JSON.stringify(key) + ':' + stable(value[key])).join(',') + '}';
+function stable(value, seen = new Set()) {
+  if (value === undefined || typeof value === 'bigint'
+      || typeof value === 'function' || typeof value === 'symbol') {
+    throw new TypeError('non-json-value');
   }
-  return JSON.stringify(value);
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new TypeError('non-json-number');
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) throw new TypeError('cyclic-json-value');
+    seen.add(value);
+    try {
+      return '[' + value.map((entry) => stable(entry, seen)).join(',') + ']';
+    } finally {
+      seen.delete(value);
+    }
+  }
+  if (value && typeof value === 'object') {
+    if (seen.has(value)) throw new TypeError('cyclic-json-value');
+    seen.add(value);
+    try {
+      return '{' + Object.keys(value).sort()
+        .map((key) => JSON.stringify(key) + ':' + stable(value[key], seen)).join(',') + '}';
+    } finally {
+      seen.delete(value);
+    }
+  }
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) throw new TypeError('non-json-value');
+  return serialized;
+}
+
+function safeStable(value) {
+  try {
+    return Object.freeze({ ok: true, value: stable(value) });
+  } catch {
+    return Object.freeze({ ok: false, value: '' });
+  }
 }
 
 const sha256 = (value) => 'sha256:' + createHash('sha256').update(stable(value), 'utf8').digest('hex');
@@ -127,8 +158,12 @@ export function planForgeShadowM3OfficialReleaseMetadataObserverAdapter(input = 
   if (!Number.isFinite(preparedAtMs)) blockers.push('prepared-at-invalid');
   if (!plannedRequest.valid || !plannedRequest.executionRequest) {
     blockers.push('execution-request-invalid');
-  } else if (stable(request) !== stable(plannedRequest.executionRequest)) {
-    blockers.push('execution-request-contract-mismatch');
+  } else {
+    const observedRequest = safeStable(request);
+    const expectedRequest = safeStable(plannedRequest.executionRequest);
+    if (!observedRequest.ok || !expectedRequest.ok || observedRequest.value !== expectedRequest.value) {
+      blockers.push('execution-request-contract-mismatch');
+    }
   }
   if (request?.schemaVersion !== FORGE_SHADOW_M3_OFFICIAL_RELEASE_OBSERVATION_EXECUTION_REQUEST_SCHEMA) {
     blockers.push('execution-request-schema-mismatch');
