@@ -74,6 +74,32 @@ test('rejects a forged request binding or changed nested contract', () => {
   }
 });
 
+test('fails closed for BigInt and cyclic execution-request values without throwing', () => {
+  const request = executionRequest();
+  const bigintRequest = {
+    ...request,
+    discoveryContract: { ...request.discoveryContract, hostile: 1n },
+  };
+  const cyclicRequest = {
+    ...request,
+    discoveryContract: { ...request.discoveryContract },
+  };
+  cyclicRequest.discoveryContract.hostile = cyclicRequest;
+
+  for (const hostileRequest of [bigintRequest, cyclicRequest]) {
+    let result;
+    assert.doesNotThrow(() => {
+      result = planForgeShadowM3OfficialReleaseMetadataObserverAdapter(
+        input({ executionRequest: hostileRequest }),
+      );
+    });
+    assert.equal(result.valid, false);
+    assert.equal(result.adapterPlan, null);
+    assert.equal(result.planDigest, '');
+    assert.ok(result.blockers.includes('execution-request-contract-mismatch'));
+  }
+});
+
 test('rejects malformed, impossible, early, or stale preparation timestamps', () => {
   for (const preparedAtUtc of [
     '2026-02-30T07:05:00Z',
