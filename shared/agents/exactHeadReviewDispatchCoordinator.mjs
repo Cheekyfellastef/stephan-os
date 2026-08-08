@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.8';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.1.0';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -33,8 +33,20 @@ export const EXACT_HEAD_REVIEW_DECISION = Object.freeze({
   DISPATCH_REVIEW: 'DISPATCH_REVIEW',
   WAIT_REVIEW_RECEIPT: 'WAIT_REVIEW_RECEIPT',
   ESCALATE_MISSING_RECEIPT: 'ESCALATE_MISSING_RECEIPT',
+  STALLED_MISSING_RECEIPT: 'STALLED_MISSING_RECEIPT',
   RECORD_REVIEW_RECEIPT: 'RECORD_REVIEW_RECEIPT',
   REVIEW_RECEIPT_RECORDED: 'REVIEW_RECEIPT_RECORDED',
+});
+
+export const EXACT_HEAD_REVIEW_PROGRESS = Object.freeze({
+  VERIFIED_ONLY: 'VERIFIED_ONLY',
+  WAITING_FOR_WORKFLOWS: 'WAITING_FOR_WORKFLOWS',
+  REVIEW_DISPATCHED: 'REVIEW_DISPATCHED',
+  WAITING_FOR_RECEIPT: 'WAITING_FOR_RECEIPT',
+  STALLED_MISSING_RECEIPT: 'STALLED_MISSING_RECEIPT',
+  RECEIPT_RECORDED: 'RECEIPT_RECORDED',
+  REVIEW_COMPLETE: 'REVIEW_COMPLETE',
+  BLOCKED: 'BLOCKED',
 });
 
 export const EXACT_HEAD_REVIEW_MARKERS = Object.freeze({
@@ -118,6 +130,42 @@ export function parseOptionalManualPrNumber(value) {
     throw new Error('STEPHANOS_EXACT_HEAD_REVIEW_PR must be a safe positive decimal integer');
   }
   return parsed;
+}
+
+export function candidateReviewPrNumbers({ event = {}, manualPrNumber = null } = {}) {
+  if (manualPrNumber !== null && manualPrNumber !== undefined) {
+    const parsed = Number(manualPrNumber);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error('manual review PR number must be a safe positive integer');
+    return Object.freeze([parsed]);
+  }
+  const directNumbers = [
+    event?.pull_request?.number,
+    event?.issue?.pull_request ? event?.issue?.number : null,
+    ...(Array.isArray(event?.workflow_run?.pull_requests)
+      ? event.workflow_run.pull_requests.map((pr) => pr?.number)
+      : []),
+  ].map(Number).filter((number) => Number.isSafeInteger(number) && number > 0);
+  return Object.freeze([...new Set(directNumbers)]);
+}
+
+export function exactHeadReviewProgress(decision) {
+  switch (text(decision)) {
+    case EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS:
+      return EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_WORKFLOWS;
+    case EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW:
+      return EXACT_HEAD_REVIEW_PROGRESS.REVIEW_DISPATCHED;
+    case EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT:
+      return EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_RECEIPT;
+    case EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT:
+    case EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT:
+      return EXACT_HEAD_REVIEW_PROGRESS.STALLED_MISSING_RECEIPT;
+    case EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT:
+      return EXACT_HEAD_REVIEW_PROGRESS.RECEIPT_RECORDED;
+    case EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED:
+      return EXACT_HEAD_REVIEW_PROGRESS.REVIEW_COMPLETE;
+    default:
+      return EXACT_HEAD_REVIEW_PROGRESS.BLOCKED;
+  }
 }
 
 function itemTimestamp(item) {
@@ -517,15 +565,24 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     });
   }
 
+  if (escalation) {
+    return Object.freeze({
+      ...base,
+      decision: EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT,
+      reason: 'review dispatch remains without a matching receipt after its bounded escalation',
+      dispatchCommentId: dispatch.id ?? null,
+      dispatchAgeMs: ageMs,
+      escalated: true,
+    });
+  }
+
   return Object.freeze({
     ...base,
     decision: EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT,
-    reason: escalation
-      ? 'missing review receipt has already been escalated once'
-      : 'review dispatch exists and remains inside the bounded receipt window',
+    reason: 'review dispatch exists and remains inside the bounded receipt window',
     dispatchCommentId: dispatch.id ?? null,
     dispatchAgeMs: ageMs,
-    escalated: Boolean(escalation),
+    escalated: false,
   });
 }
 
