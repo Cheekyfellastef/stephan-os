@@ -8,6 +8,88 @@ import {
   STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA,
   STEPHANOS_CODEX_DISPATCH_MCP_NAME,
 } from '../../scripts/stephanos-codex-dispatch-mcp.mjs';
+import {
+  buildRemoteCodexDispatchCall,
+  createRemoteCodexBattleBridgeHandoff,
+  createRemoteCodexOperatorApprovalReceipt,
+} from './remoteCodexBattleBridgeHandoffV1.mjs';
+
+const HEAD = 'a'.repeat(40);
+const OTHER_HEAD = 'c'.repeat(40);
+const NOW = '2026-08-08T12:00:00.000Z';
+const TASK = 'Run the exact Battle Bridge ignition proof and return evidence.';
+
+function exactHeadProof() {
+  return {
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 1706,
+    expectedHead: HEAD,
+    proofTarget: 'PULL_REQUEST_HEAD',
+    pullRequestHead: '',
+    mergeCommitHead: '',
+    githubMainHead: '',
+    mergeCommitIncluded: false,
+    proofScenario: 'battle-bridge-ignition-proof',
+  };
+}
+
+function remoteDispatchArgs({ observedAt = NOW } = {}) {
+  const proof = exactHeadProof();
+  const receiptResult = createRemoteCodexOperatorApprovalReceipt({
+    approvalId: 'approval-battle-bridge-ignition',
+    requestId: 'remote-battle-bridge-ignition-1706',
+    owningIssue: 1293,
+    expectedHead: HEAD,
+    task: TASK,
+    requestedProofCommands: ['git rev-parse HEAD'],
+    exactHeadProof: proof,
+    approvedAt: '2026-08-08T11:58:00.000Z',
+    expiresAt: '2026-08-08T14:00:00.000Z',
+  });
+  assert.equal(receiptResult.ok, true);
+  const handoffResult = createRemoteCodexBattleBridgeHandoff({
+    requestId: 'remote-battle-bridge-ignition-1706',
+    owningIssue: 1293,
+    task: TASK,
+    operatorApproval: 'operator-approved',
+    operatorApprovalReceipt: receiptResult.receipt,
+    expectedHead: HEAD,
+    exactHeadProof: proof,
+    requestedProofCommands: ['git rev-parse HEAD'],
+    createdAt: '2026-08-08T11:59:00.000Z',
+    expiresAt: '2026-08-08T14:00:00.000Z',
+  });
+  assert.equal(handoffResult.ok, true);
+  const call = buildRemoteCodexDispatchCall(handoffResult.handoff, {
+    schemaVersion: 'stephanos.codex-dispatch-surface-attachment.v1',
+    observedAt,
+    surfaceReceipt: 'surface-battle-bridge-ignition',
+    surfaceId: 'stephanos-codex-dispatch-local-mcp',
+    attached: true,
+    platform: 'win32',
+    can_local_windows_proof: true,
+    repositoryRoot: 'C:\\repo',
+    sourceHead: HEAD,
+    serverSourceSha256: 'b'.repeat(64),
+    toolsListed: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result'],
+    requiredDispatchToolsPresent: true,
+  }, { now: new Date(NOW) });
+  assert.equal(call.ok, true);
+  return call.args;
+}
+
+function windowsAttachmentOptions(overrides = {}) {
+  return {
+    now: () => NOW,
+    attachmentIdentity: {
+      platform: 'win32',
+      repositoryRoot: 'C:\\repo',
+      serverSourceSha256: 'b'.repeat(64),
+    },
+    readRepositoryHead: () => HEAD,
+    ...overrides,
+  };
+}
 
 function fakeIntegration() {
   const calls = [];
@@ -52,17 +134,18 @@ function fakeHostOps() {
 
 test('MCP server advertises guarded dispatch, sync, full update, and deterministic diagnostics tools', async () => {
   const attachmentProofs = [];
+  const observedHeads = [HEAD, OTHER_HEAD];
   const handler = createCodexDispatchMcpHandler({
     integration: fakeIntegration(),
     hostOps: fakeHostOps(),
-    now: () => '2026-08-08T12:00:00.000Z',
+    now: () => NOW,
     attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
     attachmentIdentity: {
       platform: 'win32',
       repositoryRoot: 'C:\\repo',
-      sourceHead: 'a'.repeat(40),
       serverSourceSha256: 'b'.repeat(64),
     },
+    readRepositoryHead: () => observedHeads.shift() || OTHER_HEAD,
   });
   const initialized = await handler('initialize', {
     protocolVersion: '2025-06-18',
@@ -90,10 +173,11 @@ test('MCP server advertises guarded dispatch, sync, full update, and determinist
   assert.equal(attachmentProofs[0].clientInfo.name, 'ChatGPT Desktop');
   assert.equal(attachmentProofs[0].requiredDispatchToolsPresent, true);
   assert.equal(attachmentProofs[0].attached, true);
-  assert.equal(attachmentProofs[0].sourceHead, 'a'.repeat(40));
+  assert.equal(attachmentProofs[0].sourceHead, HEAD);
   assert.equal(attachmentProofs[0].serverSourceSha256, 'b'.repeat(64));
   await handler('ping');
   assert.equal(attachmentProofs.length, 2);
+  assert.equal(attachmentProofs[1].sourceHead, OTHER_HEAD);
 });
 
 test('surface attachment proof fails closed away from an exact Windows source head', () => {
@@ -141,16 +225,11 @@ test('dispatch tool requires explicit operator approval', async () => {
 
 test('dispatch tool creates canonical approved queue packet and returns a real receipt', async () => {
   const integration = fakeIntegration();
-  const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), now: () => '2026-07-15T21:00:00.000Z' });
+  const args = remoteDispatchArgs();
+  const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), ...windowsAttachmentOptions() });
   const result = await handler('tools/call', {
     name: 'dispatch_codex_task',
-    arguments: {
-      issueNumber: 1293,
-      task: 'Run the exact Battle Bridge ignition proof and return evidence.',
-      operatorApproval: 'operator-approved',
-      branch: 'main',
-      requestedProofCommands: ['git rev-parse HEAD'],
-    },
+    arguments: args,
   });
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.ok, true);
@@ -159,7 +238,73 @@ test('dispatch tool creates canonical approved queue packet and returns a real r
   assert.equal(integration.calls[0].issueNumber, 1293);
   assert.equal(integration.calls[0].branch, 'main');
   assert.equal(integration.calls[0].mergeAuthority, false);
-  assert.match(integration.calls[0].approvalRequirements.approvalReceipt, /^chatgpt-mcp-/);
+  assert.equal(integration.calls[0].approvalRequirements.approvalReceipt, args.operatorApprovalReceipt.bindingSha256);
+  assert.deepEqual(integration.calls[0].exactHeadProof, args.exactHeadProof);
+});
+
+test('dispatch rejects missing, forged, or mismatched authority without reaching the queue', async () => {
+  const cases = [
+    (args) => { delete args.operatorApprovalReceipt; },
+    (args) => { args.task = `${args.task} tampered`; },
+    (args) => { args.authorityEnvelope.operatorApproval = 'denied'; },
+    (args) => { args.authorityEnvelope.operatorApprovalReceipt.bindingSha256 = 'f'.repeat(64); },
+    (args) => { args.exactHeadProof.proofScenario = 'tampered-proof'; },
+    (args) => { args.authorityEnvelope.extraAuthority = true; },
+  ];
+  for (const tamper of cases) {
+    const integration = fakeIntegration();
+    const args = structuredClone(remoteDispatchArgs());
+    tamper(args);
+    const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), ...windowsAttachmentOptions() });
+    const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.ok, false);
+    assert.equal(integration.calls.length, 0);
+  }
+});
+
+test('dispatch rejects stale or mismatched transported attachments', async () => {
+  for (const tamper of [
+    (args) => { args.surfaceAttachment.observedAt = '2026-08-08T11:40:00.000Z'; },
+    (args) => { args.surfaceAttachment.sourceHead = OTHER_HEAD; },
+    (args) => { args.surfaceAttachment.requiredDispatchToolsPresent = false; },
+    (args) => { args.surfaceAttachment.repositoryRoot = 'C:\\other-repo'; },
+  ]) {
+    const integration = fakeIntegration();
+    const args = structuredClone(remoteDispatchArgs());
+    tamper(args);
+    const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), ...windowsAttachmentOptions() });
+    const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+    assert.equal(result.isError, true);
+    assert.equal(integration.calls.length, 0);
+  }
+});
+
+test('dispatch revalidates approval expiry at the MCP boundary', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({ now: () => '2026-08-08T14:01:00.000Z' }),
+  });
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.blocker, 'REMOTE_CODEX_HANDOFF_EXPIRED');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('dispatch fails closed if local HEAD advances after attachment and before queue creation', async () => {
+  const integration = fakeIntegration();
+  const heads = [HEAD, OTHER_HEAD];
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({ readRepositoryHead: () => heads.shift() || OTHER_HEAD }),
+  });
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.blocker, 'BATTLE_BRIDGE_EXECUTION_HEAD_CHANGED');
+  assert.equal(integration.calls.length, 0);
 });
 
 test('status and result tools return structured truth without claiming missing work', async () => {
