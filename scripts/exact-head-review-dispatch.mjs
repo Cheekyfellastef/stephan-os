@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import {
   DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS,
   EXACT_HEAD_REVIEW_DECISION,
+  EXACT_HEAD_REVIEW_MARKERS,
   buildMissingReceiptEscalationComment,
   buildReviewDispatchComment,
   buildReviewReceiptComment,
@@ -26,6 +27,10 @@ import {
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
   PROTECTED_REVIEW_MARKER,
 } from '../shared/agents/operatorMergeApprovalGate.mjs';
+import {
+  INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES,
+  validateIndependentReviewArtifact,
+} from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-exact-head-review-dispatch-v1';
@@ -50,6 +55,28 @@ function positiveInteger(value, fallback = null) {
 function readJson(path) {
   if (!path || !fs.existsSync(path)) return {};
   return JSON.parse(fs.readFileSync(path, 'utf8'));
+}
+
+function triggeringIndependentReviewArtifact() {
+  const required = text(process.env.STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED).toLowerCase() === 'true';
+  if (!required) return null;
+  const path = text(process.env.STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH);
+  if (!path || !fs.existsSync(path)) {
+    throw new Error('the triggering independent-review artifact is required but unavailable');
+  }
+  const size = fs.statSync(path).size;
+  if (size < 1 || size > INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES) {
+    throw new Error('the triggering independent-review artifact exceeds its bounded size');
+  }
+  const artifact = readJson(path);
+  const expectedRunId = positiveInteger(process.env.STEPHANOS_TRIGGER_REVIEW_RUN_ID, 0);
+  const expectedRunAttempt = positiveInteger(process.env.STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT, 0);
+  if (!expectedRunId || !expectedRunAttempt
+      || artifact?.workflowRunId !== expectedRunId
+      || artifact?.workflowRunAttempt !== expectedRunAttempt) {
+    throw new Error('the triggering independent-review artifact does not match the workflow-run event');
+  }
+  return artifact;
 }
 
 function appendOutput(name, value) {
@@ -220,10 +247,16 @@ function exactGitHubActionsReviewer(comment = {}) {
     && Number(comment?.user?.id) === TRUSTED_GITHUB_ACTIONS_REVIEWER.id;
 }
 
-function candidateIndependentReviewSessions(comments = []) {
+function trustedArtifactIndex(comment, laneAuthorityLogin) {
+  const login = text(comment?.user?.login).toLowerCase();
+  return comment?.body?.includes(`<!-- ${EXACT_HEAD_REVIEW_MARKERS.ARTIFACT_INDEX} -->`)
+    && (login === text(laneAuthorityLogin).toLowerCase() || exactGitHubActionsReviewer(comment));
+}
+
+function candidateIndependentReviewSessions(comments = [], { laneAuthorityLogin = '', artifact = null } = {}) {
   const sessions = new Map();
   for (const comment of Array.isArray(comments) ? comments : []) {
-    if (!exactGitHubActionsReviewer(comment)) continue;
+    if (!exactGitHubActionsReviewer(comment) && !trustedArtifactIndex(comment, laneAuthorityLogin)) continue;
     const body = text(comment?.body);
     if (!body.includes(PROTECTED_REVIEW_MARKER)) continue;
     for (const match of body.matchAll(/github-actions-independent-review-run-([1-9][0-9]*)-attempt-([1-9][0-9]*)/g)) {
@@ -234,15 +267,21 @@ function candidateIndependentReviewSessions(comments = []) {
       if (sessions.size >= MAX_INDEPENDENT_REVIEW_SESSIONS) return [...sessions.values()];
     }
   }
+  const workflowRunId = positiveInteger(artifact?.workflowRunId, 0);
+  const workflowRunAttempt = positiveInteger(artifact?.workflowRunAttempt, 0);
+  if (workflowRunId && workflowRunAttempt && sessions.size < MAX_INDEPENDENT_REVIEW_SESSIONS) {
+    sessions.set(`${workflowRunId}:${workflowRunAttempt}`, { workflowRunId, workflowRunAttempt });
+  }
   return [...sessions.values()];
 }
 
-async function loadIndependentReviewEvidence({ owner, repo, repository, token, comments }) {
-  const sessions = candidateIndependentReviewSessions(comments);
+async function loadIndependentReviewEvidence({ owner, repo, repository, token, comments, laneAuthorityLogin, artifact, pr }) {
+  const sessions = candidateIndependentReviewSessions(comments, { laneAuthorityLogin, artifact });
   const empty = {
     independentReviewWorkflowId: 0,
     independentReviewRuns: [],
     independentReviewJobsByRunId: {},
+    independentReviewArtifactComments: [],
   };
   if (!sessions.length) return empty;
 
@@ -284,10 +323,41 @@ async function loadIndependentReviewEvidence({ owner, repo, repository, token, c
       console.warn(`INDEPENDENT_REVIEW_EVIDENCE_UNAVAILABLE=${session.workflowRunId}:${session.workflowRunAttempt}:${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  const independentReviewArtifactComments = [];
+  if (artifact) {
+    const validation = validateIndependentReviewArtifact(artifact, {
+      repository,
+      prNumber: positiveInteger(pr?.number, 0),
+      branch: text(pr?.head?.ref),
+      expectedHead: text(pr?.head?.sha).toLowerCase(),
+      expectedBaseSha: text(pr?.base?.sha).toLowerCase(),
+      workflowRunId: positiveInteger(artifact?.workflowRunId, 0),
+      workflowRunAttempt: positiveInteger(artifact?.workflowRunAttempt, 0),
+    });
+    if (!validation.valid) {
+      throw new Error(`triggering independent-review artifact is invalid: ${validation.blockers.join(', ')}`);
+    }
+    independentReviewArtifactComments.push({
+      id: `artifact-${artifact.workflowRunId}-attempt-${artifact.workflowRunAttempt}`,
+      body: [
+        PROTECTED_REVIEW_MARKER,
+        '```json',
+        JSON.stringify(artifact.receipt, null, 2),
+        '```',
+      ].join('\n'),
+      user: {
+        login: 'github-actions[bot]',
+        type: 'Bot',
+        id: 41898282,
+      },
+      createdAt: artifact.createdAtUtc,
+    });
+  }
   return {
     independentReviewWorkflowId,
     independentReviewRuns,
     independentReviewJobsByRunId,
+    independentReviewArtifactComments,
   };
 }
 
@@ -295,7 +365,7 @@ async function listOpenPullRequests({ owner, repo, token }) {
   return githubPages(`/repos/${owner}/${repo}/pulls?state=open&sort=updated&direction=desc`, { token });
 }
 
-async function loadPrContext({ owner, repo, repository, token, prNumber, laneAuthorityLogin, rawPr = null, mappedComments = null }) {
+async function loadPrContext({ owner, repo, repository, token, prNumber, laneAuthorityLogin, triggeringArtifact = null, rawPr = null, mappedComments = null }) {
   const pr = rawPr ?? await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { token });
   const [comments, reviews, runs, unresolvedThreads] = await Promise.all([
     mappedComments ?? githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token }).then((items) => items.map(mapComment)),
@@ -312,6 +382,9 @@ async function loadPrContext({ owner, repo, repository, token, prNumber, laneAut
     repository,
     token,
     comments,
+    laneAuthorityLogin,
+    artifact: triggeringArtifact,
+    pr,
   });
   const laneEvidence = canonicalLaneEvidence(comments, {
     prNumber,
@@ -319,7 +392,7 @@ async function loadPrContext({ owner, repo, repository, token, prNumber, laneAut
   });
   return {
     rawPr: pr,
-    comments,
+    comments: [...comments, ...independentReviewEvidence.independentReviewArtifactComments],
     reviews,
     workflowRuns: runs,
     unresolvedThreadCount: unresolvedThreads,
@@ -362,7 +435,7 @@ async function postPrComment({ owner, repo, token, prNumber, body }) {
   return result?.id ?? null;
 }
 
-async function discoverCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin }) {
+async function discoverCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin, triggeringArtifact }) {
   const openPullRequests = await listOpenPullRequests({ owner, repo, token });
   const candidates = (await mapWithConcurrency(openPullRequests, 8, async (rawPr) => {
     const prNumber = positiveInteger(rawPr?.number);
@@ -380,11 +453,12 @@ async function discoverCanonicalContexts({ owner, repo, repository, token, laneA
     repository,
     token,
     laneAuthorityLogin,
+    triggeringArtifact,
     ...candidate,
   }));
 }
 
-async function loadRequestedCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin, prNumbers }) {
+async function loadRequestedCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin, prNumbers, triggeringArtifact }) {
   const contexts = await mapWithConcurrency([...new Set(prNumbers)], 4, (prNumber) => loadPrContext({
     owner,
     repo,
@@ -392,6 +466,7 @@ async function loadRequestedCanonicalContexts({ owner, repo, repository, token, 
     token,
     prNumber,
     laneAuthorityLogin,
+    triggeringArtifact,
   }));
   return contexts.filter((context) => context.canonicalLaneConfirmed);
 }
@@ -427,10 +502,11 @@ async function main() {
   console.log(`EXACT_HEAD_REVIEW_LANE_AUTHORITY=${laneAuthorityLogin}`);
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
+  const triggeringArtifact = triggeringIndependentReviewArtifact();
   const manualPrNumber = parseOptionalManualPrNumber(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
   const requestedNumbers = candidateReviewPrNumbers({ event, manualPrNumber });
   const contextLoader = requestedNumbers.length ? loadRequestedCanonicalContexts : discoverCanonicalContexts;
-  const contexts = await contextLoader({ owner, repo, repository, token, laneAuthorityLogin, prNumbers: requestedNumbers });
+  const contexts = await contextLoader({ owner, repo, repository, token, laneAuthorityLogin, prNumbers: requestedNumbers, triggeringArtifact });
 
   if (requestedNumbers.length && contexts.length === 0) {
     console.log('EXACT_HEAD_REVIEW_DISPATCH_DECISION=REQUESTED_PR_NOT_CANONICAL');
@@ -492,6 +568,7 @@ async function main() {
             prNumber: decision.prNumber,
             headSha: decision.exactHead,
             externalReceiptId: decision.externalReceiptId,
+            providerNeutralReceipt: decision.providerNeutralReceipt,
           }),
         });
         console.log(`EXACT_HEAD_REVIEW_RECEIPT_COMMENT_ID=${commentId}`);

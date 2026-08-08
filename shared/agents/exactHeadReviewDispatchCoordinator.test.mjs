@@ -205,6 +205,12 @@ test('precomputes during CI but blocks receipt consumption until every review th
   }));
   assert.equal(unavailable.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_REVIEW_THREADS);
   assert.equal(unavailable.unresolvedThreadCount, null);
+
+  const dispatchWithoutReceipt = evaluateExactHeadReviewDispatch(baseInput({
+    unresolvedThreadCount: 2,
+  }));
+  assert.equal(dispatchWithoutReceipt.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+  assert.equal(dispatchWithoutReceipt.actionRequired, true);
 });
 
 test('binds required workflow proofs to source-controlled workflow paths', () => {
@@ -288,6 +294,7 @@ ${JSON.stringify(receipt, null, 2)}
 \`\`\``,
     user,
     createdAt,
+    receipt,
   };
 }
 
@@ -298,6 +305,33 @@ test('records only a workflow-bound authenticated provider-neutral GitHub Action
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
   assert.equal(result.externalReceiptId, 93);
   assert.match(result.reason, /authenticated exact-head review receipt/i);
+});
+
+test('keeps a validated artifact receipt durably discoverable through the trusted coordinator index', () => {
+  const external = providerNeutralComment({ createdAt: '2026-07-19T16:10:00Z' });
+  const body = buildReviewReceiptComment({
+    prNumber: 1559,
+    headSha: HEAD,
+    externalReceiptId: external.id,
+    providerNeutralReceipt: external.receipt,
+  });
+  assert.match(body, new RegExp(EXACT_HEAD_REVIEW_MARKERS.ARTIFACT_INDEX));
+  assert.match(body, /stephanos-protected-security-review/);
+  assert.match(body, /stephanos\.provider-neutral\.review/);
+
+  const durableIndex = coordinatorComment({
+    id: 94,
+    body,
+    createdAt: '2026-07-19T16:29:40Z',
+  });
+  const recorded = evaluateExactHeadReviewDispatch(baseInput({ comments: [durableIndex] }));
+  assert.equal(recorded.decision, EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED);
+  assert.equal(recorded.receiptCommentId, 94);
+
+  const forged = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [{ ...durableIndex, user: { login: UNTRUSTED_ACTOR } }],
+  }));
+  assert.equal(forged.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
 test('rejects forged, stale or workflow-unbound provider-neutral review comments', () => {
@@ -736,6 +770,9 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(runner, /requestedNumbers\.length \? loadRequestedCanonicalContexts : discoverCanonicalContexts/);
   assert.match(runner, /unresolvedThreadCount\(owner, repo, prNumber, token\)/);
   assert.match(runner, /unresolvedThreadCount: context\.unresolvedThreadCount/);
+  assert.match(runner, /validateIndependentReviewArtifact\(artifact/);
+  assert.match(runner, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED/);
+  assert.match(runner, /independentReviewArtifactComments/);
   assert.match(runner, /mapWithConcurrency\(openPullRequests, 8/);
   assert.doesNotMatch(runner, /multiple canonical review lanes detected/);
   assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);
@@ -747,6 +784,9 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
   assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ matrix\.target\.exactHead \}\}/);
   assert.match(workflow, /max-parallel:\s*4/);
+  assert.match(workflow, /uses: actions\/download-artifact@v4/);
+  assert.match(workflow, /run-id: \$\{\{ github\.event\.workflow_run\.id \}\}/);
+  assert.match(workflow, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED/);
   assert.doesNotMatch(workflow, /steps\.coordinate\.outputs\.decision ==/);
   assert.match(workflow, /Progress: `VERIFIED_ONLY`/);
   assert.match(workflow, /workflows:[\s\S]*Independent Merge Security Review/);
