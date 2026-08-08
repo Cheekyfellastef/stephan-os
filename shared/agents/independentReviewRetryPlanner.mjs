@@ -104,7 +104,7 @@ export function planIndependentReviewRetry(input = {}) {
     && text(workflow.state).toLowerCase() === 'active'
     && positiveInteger(pr.number) > 0
     && text(pr.state).toLowerCase() === 'open'
-    && pr.draft === false
+    && typeof pr.draft === 'boolean'
     && pr.sameRepository === true
     && text(pr.baseRef) === 'main'
     && text(pr.headRef)
