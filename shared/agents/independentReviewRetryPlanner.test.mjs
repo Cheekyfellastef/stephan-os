@@ -191,7 +191,7 @@ test('rejects invalid workflow or pull-request authority before considering runs
     input({ workflow: workflow({ state: 'disabled_manually' }) }),
     input({ workflow: workflow({ path: '.github/workflows/lookalike-review.yml' }) }),
     input({ pr: pullRequest({ state: 'closed' }) }),
-    input({ pr: pullRequest({ draft: true }) }),
+    input({ pr: pullRequest({ draft: null }) }),
     input({ pr: pullRequest({ sameRepository: false }) }),
     input({ pr: pullRequest({ baseRef: 'other' }) }),
     input({ pr: pullRequest({ headSha: 'short' }) }),
@@ -201,6 +201,15 @@ test('rejects invalid workflow or pull-request authority before considering runs
     assert.equal(plan.decision, INDEPENDENT_REVIEW_RETRY_DECISION.INVALID_INPUT);
     assert.equal(plan.mutationAllowed, false);
   }
+});
+
+test('retries a failed exact-head review while the PR is still draft', () => {
+  const result = planIndependentReviewRetry(input({
+    pr: pullRequest({ draft: true }),
+  }));
+  assert.equal(result.decision, INDEPENDENT_REVIEW_RETRY_DECISION.RERUN_FAILED_JOBS);
+  assert.equal(result.mutationAllowed, true);
+  assert.equal(result.operation, 'rerun-failed-jobs');
 });
 
 test('selects the first nonblank coordinator credential and does not let an empty secret mask the repository token', () => {
