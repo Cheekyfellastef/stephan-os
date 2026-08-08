@@ -113,6 +113,7 @@ function baseInput(overrides = {}) {
     independentReviewJobsByRunId: {
       [String(REVIEW_RUN_ID)]: independentReviewJobs(),
     },
+    unresolvedThreadCount: 0,
     comments: [],
     reviews: [],
     ...overrides,
@@ -175,6 +176,35 @@ test('blocks review dispatch when a required workflow fails', () => {
   const result = evaluateExactHeadReviewDispatch(baseInput({ workflowRuns: runs }));
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_WORKFLOWS);
   assert.deepEqual(result.failedWorkflows, [REQUIRED_EXACT_HEAD_WORKFLOWS[4]]);
+});
+
+test('precomputes during CI but blocks receipt consumption until every review thread is resolved', () => {
+  const pendingRuns = successfulRuns();
+  pendingRuns[2] = { ...pendingRuns[2], status: 'in_progress', conclusion: null };
+  const receipt = providerNeutralComment({ createdAt: '2026-07-19T16:10:00Z' });
+  const precomputed = evaluateExactHeadReviewDispatch(baseInput({
+    workflowRuns: pendingRuns,
+    comments: [receipt],
+    unresolvedThreadCount: 1,
+  }));
+  assert.equal(precomputed.decision, EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY);
+  assert.equal(precomputed.reviewReady, true);
+
+  const blocked = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [receipt],
+    unresolvedThreadCount: 1,
+  }));
+  assert.equal(blocked.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_REVIEW_THREADS);
+  assert.equal(blocked.unresolvedThreadCount, 1);
+  assert.equal(blocked.reviewReady, true);
+  assert.equal(exactHeadReviewProgress(blocked.decision), EXACT_HEAD_REVIEW_PROGRESS.BLOCKED);
+
+  const unavailable = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [receipt],
+    unresolvedThreadCount: null,
+  }));
+  assert.equal(unavailable.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_REVIEW_THREADS);
+  assert.equal(unavailable.unresolvedThreadCount, null);
 });
 
 test('binds required workflow proofs to source-controlled workflow paths', () => {
@@ -704,6 +734,8 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(runner, /trustedCoordinatorLogin:\s*MACHINE_COORDINATOR_SENTINEL_LOGIN/);
   assert.match(runner, /parseOptionalManualPrNumber\(process\.env\.STEPHANOS_EXACT_HEAD_REVIEW_PR\)/);
   assert.match(runner, /requestedNumbers\.length \? loadRequestedCanonicalContexts : discoverCanonicalContexts/);
+  assert.match(runner, /unresolvedThreadCount\(owner, repo, prNumber, token\)/);
+  assert.match(runner, /unresolvedThreadCount: context\.unresolvedThreadCount/);
   assert.match(runner, /mapWithConcurrency\(openPullRequests, 8/);
   assert.doesNotMatch(runner, /multiple canonical review lanes detected/);
   assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);

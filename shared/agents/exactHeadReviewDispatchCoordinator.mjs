@@ -31,6 +31,7 @@ export const EXACT_HEAD_REVIEW_DECISION = Object.freeze({
   WAIT_WORKFLOWS: 'WAIT_WORKFLOWS',
   WAIT_WORKFLOWS_REVIEW_READY: 'WAIT_WORKFLOWS_REVIEW_READY',
   BLOCKED_WORKFLOWS: 'BLOCKED_WORKFLOWS',
+  BLOCKED_REVIEW_THREADS: 'BLOCKED_REVIEW_THREADS',
   DISPATCH_REVIEW: 'DISPATCH_REVIEW',
   WAIT_REVIEW_RECEIPT: 'WAIT_REVIEW_RECEIPT',
   ESCALATE_MISSING_RECEIPT: 'ESCALATE_MISSING_RECEIPT',
@@ -525,6 +526,22 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
       missingWorkflows: Object.freeze([]),
       pendingWorkflows: Object.freeze([]),
       failedWorkflows: Object.freeze(failedWorkflows),
+    });
+  }
+
+  const unresolvedThreadCount = input.unresolvedThreadCount;
+  if (!Number.isSafeInteger(unresolvedThreadCount) || unresolvedThreadCount < 0 || unresolvedThreadCount > 0) {
+    return Object.freeze({
+      ...base,
+      decision: EXACT_HEAD_REVIEW_DECISION.BLOCKED_REVIEW_THREADS,
+      reason: !Number.isSafeInteger(unresolvedThreadCount) || unresolvedThreadCount < 0
+        ? 'unresolved review-thread evidence is unavailable at receipt consumption'
+        : `${unresolvedThreadCount} unresolved review thread(s) block receipt consumption`,
+      unresolvedThreadCount: Number.isSafeInteger(unresolvedThreadCount) && unresolvedThreadCount >= 0
+        ? unresolvedThreadCount
+        : null,
+      reviewReady: Boolean(precomputedReceipt),
+      externalReceiptId: precomputedReceipt?.id ?? null,
     });
   }
 
