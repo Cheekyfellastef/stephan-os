@@ -13,6 +13,7 @@ const paths = [
   'scripts/windows/repair-battle-bridge-control-plane-now.ps1',
   'scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd',
   'scripts/windows/repair-battle-bridge-control-plane-now.test.mjs',
+  'scripts/windows/status-stephanos-codex-dispatch-plugin.ps1',
 ];
 
 function hash(content) {
@@ -66,11 +67,14 @@ $mailboxTaskName = 'Stephanos Battle Bridge GitHub Command Mailbox'
 $syncInstaller = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-github-sync.ps1'
 $recoveryInstaller = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-recovery-mesh.ps1'
 $mailboxInstaller = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-github-command-mailbox.ps1'
+$dispatchInstaller = Join-Path $repoRoot 'scripts\windows\install-stephanos-codex-dispatch-plugin.ps1'
+$dispatchStatus = Join-Path $repoRoot 'scripts\windows\status-stephanos-codex-dispatch-plugin.ps1'
+$fixedPowerShellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 function Read-PublicMainHead { Read-FixedGitText -Arguments @('ls-remote', $publicRemote, 'refs/heads/main') }
 function Invoke-FixedInstaller { if ([string]$receipt.taskName -ne $ExpectedTaskName) { throw 'wrong' }; if ($receipt.installed -ne $true -or $receipt.startedNow -ne $true) { throw 'bad' } }
 $origin = Read-FixedGitText -Arguments @('-C', $repoRoot, 'remote', 'get-url', 'origin')
 if ($origin -notmatch '^(https:\/\/github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?|git@github\.com:Cheekyfellastef\/stephan-os(?:\.git)?|ssh:\/\/git@github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?)$') { throw 'bad' }
-if (-not $PSCmdlet.ShouldProcess($repoRoot, 'Start the three existing reviewed Battle Bridge control-plane tasks and converge to public main')) { return }
+if (-not $PSCmdlet.ShouldProcess($repoRoot, 'Start the three existing reviewed Battle Bridge control-plane tasks, converge to public main, and repair the existing Codex dispatch attachment')) { return }
 for ($round = 1; $round -le 3; $round += 1) { Invoke-FixedInstaller -Path $syncInstaller -ExpectedTaskName $syncTaskName }
 Stop-BoundedRescue -Blocker 'EXACT_MAIN_CONVERGENCE_TIMEOUT'
 Stop-BoundedRescue -Blocker 'PUBLIC_MAIN_MOVED_DURING_RESCUE'
@@ -80,13 +84,19 @@ Invoke-FixedInstaller -Path $recoveryInstaller -ExpectedTaskName $recoveryTaskNa
 Invoke-FixedInstaller -Path $mailboxInstaller -ExpectedTaskName $mailboxTaskName
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) { throw 'missing' }
+& $fixedPowerShellExe -File $dispatchInstaller -RepositoryRoot $repoRoot
+& $fixedPowerShellExe -File $dispatchStatus -RepositoryRoot $repoRoot
+blocker = if ($dispatchProof.localBridgeReady -eq $true) { 'CHATGPT_DESKTOP_PLUGIN_ATTACHMENT_REQUIRED' }
+newWorkerCreated = $false
+newMailboxCreated = $false
 sourceMutationPerformedByRescue = $false
 sourceConvergencePerformedByExistingReviewedSync = $true
 destructiveGitAllowed = $false
 arbitraryShellAllowed = $false
 tailscaleCredentialRequired = $false
 forgeMutationPerformed = $false
-finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_READY'`.replace('__TREE__', '`${tree}');
+finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_ATTACHMENT_REQUIRED'
+finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_READY'`.replace('__TREE__', '`${tree}');
 
 const launcher = String.raw`@echo off
 setlocal
@@ -103,19 +113,41 @@ const staticTest = String.raw`${IMPORT_TOKEN} assert from 'node:assert/strict';
 ${IMPORT_TOKEN} { readFile } from 'node:fs/promises';
 const ps1Url = new URL('./repair-battle-bridge-control-plane-now.ps1', import.meta.url);
 const cmdUrl = new URL('./Repair-Battle-Bridge-Control-Plane-Now.cmd', import.meta.url);
+const statusUrl = new URL('./status-stephanos-codex-dispatch-plugin.ps1', import.meta.url);
 test('rescue is fixed to the canonical repository and three existing task installers', () => {});
 test('rescue reads Git identity but delegates all source convergence to the reviewed sync task', () => {});
 test('rescue does not require or expose Tailscale and Forge credentials or mutate Forge', () => {});
 test('one-click launcher invokes only the fixed source-controlled rescue script', () => {});
-assert.match(ps1, /BATTLE_BRIDGE_NO_FAFF_RESCUE_READY/);
+test('dispatch readiness requires a fresh exact-head Windows tools-list attachment proof', () => {});
+assert.match(ps1, /BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_READY/);
 assert.match(ps1, /sourceMutationPerformedByRescue = \$false/);
 assert.doesNotMatch(ps1, /['"](?:fetch|merge)['"]/i);`;
 
-function sources(ps1 = rescue, cmd = launcher, check = staticTest) {
+const dispatchStatus = String.raw`$installRoot = Join-Path $env:USERPROFILE ".codex\plugins\stephanos-codex-dispatch"
+$mcpServerPath = Join-Path $RepositoryRoot "scripts\stephanos-codex-dispatch-mcp.mjs"
+$attachmentProofPath = Join-Path $SharedWorkspace "codex-dispatch\surface-attachment-latest.json"
+$fixedGitPath = 'C:\Program Files\Git\cmd\git.exe'
+$serverSourceSha256 = (Get-FileHash -LiteralPath $mcpServerPath -Algorithm SHA256).Hash
+$attachmentProof.schemaVersion -eq 'stephanos.codex-dispatch-surface-attachment.v1'
+[string]$attachmentProof.sourceHead -eq $sourceHead
+[string]$attachmentProof.serverSourceSha256 -eq $serverSourceSha256
+$age.TotalMinutes -le 10
+$requiredTools = @('dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result')
+executionSurfaceHandshake = [ordered]@{
+can_local_windows_proof = $attachmentProofValid
+heartbeatFresh = $attachmentProofFresh -and $attachmentProofValid
+}
+$status.readyForRemoteChatDispatch = $status.localBridgeReady -and $attachmentProofValid
+STEPHANOS_CODEX_DISPATCH_BRIDGE_ATTACHED_READY
+BLOCKED_CHATGPT_PLUGIN_ATTACHMENT_UNPROVEN
+if (-not $status.readyForRemoteChatDispatch) { exit 1 }`;
+
+function sources(ps1 = rescue, cmd = launcher, check = staticTest, status = dispatchStatus) {
   return [
     record(paths[0], ps1),
     record(paths[1], cmd),
     record(paths[2], check),
+    record(paths[3], status),
   ];
 }
 
@@ -156,7 +188,7 @@ test('rejects weakened identity, stability, and verdict', () => {
   const insecure = rescue
     .replace("$publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'", '$publicRemote = $env:REMOTE')
     .replace('for ($round = 1; $round -le 3; $round += 1)', 'while ($true)')
-    .replace("finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_READY'", "finalVerdict = 'READY'");
+    .replace("finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_READY'", "finalVerdict = 'READY'");
   const codes = review(sources(insecure)).findings.map(({ code }) => code);
   for (const code of [
     'no-faff-rescue-public-remote-not-fixed',

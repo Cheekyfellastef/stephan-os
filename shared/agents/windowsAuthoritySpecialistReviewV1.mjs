@@ -4,11 +4,12 @@ import { readFileSync } from 'node:fs';
 const CORE_PATH = './windowsAuthoritySpecialistReviewCoreV1.mjs';
 const NO_FAFF_PATH = './windowsAuthorityNoFaffRescueReviewV1.mjs';
 const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
-const NO_FAFF_BLOB_SHA = '41aac351dfb5339889d3faee166b7fe1c61e6c4c';
+const NO_FAFF_BLOB_SHA = '06d3d9da13f930be1f907187d13e7f0df898b6a2';
 const EXPECTED_NO_FAFF_PATHS = Object.freeze([
   'scripts/windows/repair-battle-bridge-control-plane-now.ps1',
   'scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd',
   'scripts/windows/repair-battle-bridge-control-plane-now.test.mjs',
+  'scripts/windows/status-stephanos-codex-dispatch-plugin.ps1',
 ]);
 
 function gitBlobSha(content) {
