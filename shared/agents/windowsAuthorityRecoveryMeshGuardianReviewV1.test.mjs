@@ -36,6 +36,19 @@ function codes(result) {
   return result.findings.map((item) => item.code);
 }
 
+const validUninstaller = [
+  '[CmdletBinding(SupportsShouldProcess = $true)]',
+  "$taskName = 'Stephanos Battle Bridge Recovery Mesh'",
+  "$guardianTaskName = 'Stephanos Battle Bridge Recovery Mesh Guardian'",
+  'Unregister-ScheduledTask -TaskName $guardianTaskName -Confirm:$false',
+  "throw 'RECOVERY_MESH_GUARDIAN_UNINSTALL_FAILED'",
+  'Unregister-ScheduledTask -TaskName $taskName -Confirm:$false',
+  'guardianRemovedBeforeRecoveryMesh = $true',
+  'workerPreserved = $true',
+  'mailboxPreserved = $true',
+  'sourcePreserved = $true',
+].join('\n');
+
 test('reviewer recognizes exactly the four bounded Recovery Mesh guardian authority paths', () => {
   assert.deepEqual(WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1, [
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
@@ -103,6 +116,21 @@ test('launcher review rejects a second caller-controlled argument and dynamic co
   const result = review(path, 'value = WScript.Arguments(1)\nEval(value)');
   assert.ok(codes(result).includes('recovery-guardian-launcher-extra-argument-forbidden'));
   assert.ok(codes(result).includes('recovery-guardian-launcher-dynamic-code-forbidden'));
+});
+
+test('uninstaller review is isolated from installer rules and accepts unregister commands', () => {
+  const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[3];
+  const result = review(path, validUninstaller);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.deepEqual(result.findings, []);
+});
+
+test('uninstaller review still rejects actual registration or task start authority', () => {
+  const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[3];
+  for (const command of ['Register-ScheduledTask -TaskName x', 'Start-ScheduledTask -TaskName x', 'New-ScheduledTaskAction -Execute x']) {
+    const result = review(path, `${validUninstaller}\n${command}`);
+    assert.ok(codes(result).includes('recovery-guardian-uninstall-start-or-register-forbidden'), command);
+  }
 });
 
 test('uninstaller review requires guardian-first parent shutdown order', () => {
