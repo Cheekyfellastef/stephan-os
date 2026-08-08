@@ -36,8 +36,10 @@ test('independent review publishes one exact-run immutable result artifact', asy
     script.indexOf('async function postDisplayComment'),
     script.indexOf('function writeReviewArtifact'),
   );
-  assert.match(displayComment, /return postComment/);
-  assert.doesNotMatch(displayComment, /catch|console\.warn|return null/);
+  assert.match(displayComment, /return await postComment/);
+  assert.match(displayComment, /INDEPENDENT_SECURITY_REVIEW_DISPLAY_COMMENT_UNAVAILABLE/);
+  assert.match(displayComment, /catch[\s\S]*return null/);
+  assert.match(displayComment, /immutable artifact is the merge authority/);
 });
 
 test('operator review authority comes from the exact artifact, never a bot review comment', async () => {

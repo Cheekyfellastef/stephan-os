@@ -162,10 +162,16 @@ async function postComment(owner, repo, prNumber, body) {
 }
 
 async function postDisplayComment(owner, repo, prNumber, body) {
-  // The immutable artifact is the merge authority, while this exact-head
-  // comment is its discovery index for the coordinator. A green run without
-  // that index is an unusable review and must be retried, not silently passed.
-  return postComment(owner, repo, prNumber, body);
+  // The immutable artifact is the merge authority. This comment is only a
+  // discovery index and some GitHub App-triggered workflows cannot publish it
+  // even with the bounded workflow permission. Preserve the exact artifact;
+  // the protected merge consumer reads and validates it directly.
+  try {
+    return await postComment(owner, repo, prNumber, body);
+  } catch (error) {
+    console.warn(`INDEPENDENT_SECURITY_REVIEW_DISPLAY_COMMENT_UNAVAILABLE=${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
 }
 
 function writeReviewArtifact(artifact) {
