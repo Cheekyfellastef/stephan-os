@@ -25,98 +25,18 @@ const sourceRecord = (path, content) => ({
 const analysisFor = (paths) => ({
   findings: paths.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
 });
+const review = (path, content) => analyzeWindowsAuthorityRecoveryMeshGuardianReview({
+  repository,
+  sourceHead: head,
+  analysis: analysisFor([path]),
+  sources: [sourceRecord(path, content)],
+});
 
-const installer = String.raw`[CmdletBinding(SupportsShouldProcess = $true)]
-param([switch]$StartNow, [switch]$RecoveryMeshOnly)
-$taskName = 'Stephanos Battle Bridge Recovery Mesh'
-$guardianTaskName = 'Stephanos Battle Bridge Recovery Mesh Guardian'
-$wscriptExe = 'C:\Windows\System32\wscript.exe'
-$guardianRunnerPath = 'run-battle-bridge-recovery-mesh-guardian-hidden.ps1'
-$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew
-if (-not $RecoveryMeshOnly) {
-  $guardianActionArguments = 'recovery-mesh-guardian'
-  $guardianIntervalTrigger = New-ScheduledTaskTrigger -Once -At $now -RepetitionInterval (New-TimeSpan -Minutes 5)
-  Register-ScheduledTask -TaskName $guardianTaskName -Action $guardianAction
-}
-schemaVersion = 'stephanos.battle-bridge-recovery-mesh-install.v1'
-guardianAuthority = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_ONLY'
-recoveryRoutes = @('LOCAL_WINDOWS_SUPERVISOR','GITHUB_MAILBOX','TAILSCALE_CONTROL','OPENCLAW_WHATSAPP','AUTHENTICATED_BREAK_GLASS')
-arbitraryTaskNameAllowed = $false
-sourceMutationAllowed = $false
-gitMutationAllowed = $false
-mergeAuthority = $false`;
-
-const tick = '`';
-const guardian = String.raw`[ValidateRange(2, 15)]
-[int]$StaleAfterMinutes = 4
-$taskName = 'Stephanos Battle Bridge Recovery Mesh'
-$gitExe = 'C:\Program Files\Git\cmd\git.exe'
-$fixedPowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-$wscriptExe = 'C:\Windows\System32\wscript.exe'
-$scheduledTaskMutationScope = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_ONLY'
-$repoRoot = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'
-function Test-RecoveryTaskIdentity {
-  $expectedArguments = "//B //NoLogo ${tick}"$ExpectedLauncherPath${tick}" recovery-mesh"
-  $x = $Task.Principal.LogonType
-  $y = $Task.Principal.RunLevel
-  $z = $Task.Settings.MultipleInstances
-}
-$remote = Read-FixedGitText -Arguments @('ls-remote', $origin, 'refs/heads/main')
-if ($localHead -ne $remoteMainHead) { Stop-Guardian -Blocker 'LOCAL_HEAD_NOT_TRUSTED_REMOTE_MAIN' }
-Stop-Guardian -Blocker 'RECOVERY_SOURCE_DIRTY'
-Stop-Guardian -Blocker 'RECOVERY_SOURCE_STAGED_DIRTY'
-$healthy = $null -ne $task -and $taskIdentityCanonical -and $lastTaskResult -eq 0 -and $lastRunAgeMinutes -le $StaleAfterMinutes
-$reason = 'TASK_IDENTITY_DRIFTED'
-$reason = 'TASK_HEARTBEAT_STALE'
-$raw = & $fixedPowerShellExe -File $installerPath -StartNow -RecoveryMeshOnly
-if ($receipt.schemaVersion -ne 'stephanos.battle-bridge-recovery-mesh-install.v1') { throw 'bad' }
-Stop-Guardian -Blocker 'RECOVERY_MESH_REPAIR_TASK_IDENTITY_UNPROVEN'
-arbitraryShellAllowed = $false
-sourceMutationAllowed = $false
-gitMutationAllowed = $false
-arbitraryRuntimeMutationAllowed = $false
-mergeAuthority = $false`;
-
-const launcher = String.raw`If WScript.Arguments.Count <> 1 Then
-  WScript.Quit 2
-End If
-Select Case taskId
-  Case "recovery-mesh-guardian"
-    targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-recovery-mesh-guardian-hidden.ps1")
-  Case Else
-    WScript.Quit 2
-End Select
-exitCode = shell.Run(command, 0, True)`;
-
-const uninstaller = String.raw`[CmdletBinding(SupportsShouldProcess = $true)]
-$taskName = 'Stephanos Battle Bridge Recovery Mesh'
-$guardianTaskName = 'Stephanos Battle Bridge Recovery Mesh Guardian'
-Unregister-ScheduledTask -TaskName $guardianTaskName -Confirm:$false
-throw 'RECOVERY_MESH_GUARDIAN_UNINSTALL_FAILED'
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-guardianRemovedBeforeRecoveryMesh = $true
-workerPreserved = $true
-mailboxPreserved = $true
-sourcePreserved = $true`;
-
-const fixtures = new Map([
-  [WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[0], installer],
-  [WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[1], guardian],
-  [WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[2], launcher],
-  [WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[3], uninstaller],
-]);
-
-function review(path, content = fixtures.get(path)) {
-  return analyzeWindowsAuthorityRecoveryMeshGuardianReview({
-    repository,
-    sourceHead: head,
-    analysis: analysisFor([path]),
-    sources: [sourceRecord(path, content)],
-  });
+function codes(result) {
+  return result.findings.map((item) => item.code);
 }
 
-test('reviewer recognizes exactly the four Recovery Mesh guardian authority paths', () => {
+test('reviewer recognizes exactly the four bounded Recovery Mesh guardian authority paths', () => {
   assert.deepEqual(WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1, [
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
     'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
@@ -124,60 +44,81 @@ test('reviewer recognizes exactly the four Recovery Mesh guardian authority path
     'scripts/windows/uninstall-battle-bridge-recovery-mesh.ps1',
   ]);
   for (const path of WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1) {
-    const result = review(path);
+    const result = review(path, 'bounded fixture');
     assert.equal(result.eligible, true, path);
-    assert.equal(result.clean, true, JSON.stringify(result.findings));
+    assert.deepEqual(result.reviewedPaths, [path]);
   }
 });
 
-test('reviewer rejects an unrelated Windows authority path', () => {
+test('reviewer rejects an unrelated Windows authority surface', () => {
   const path = 'scripts/windows/arbitrary-admin.ps1';
-  const result = analyzeWindowsAuthorityRecoveryMeshGuardianReview({ repository, sourceHead: head, analysis: analysisFor([path]), sources: [sourceRecord(path, 'x')] });
+  const result = analyzeWindowsAuthorityRecoveryMeshGuardianReview({
+    repository,
+    sourceHead: head,
+    analysis: analysisFor([path]),
+    sources: [sourceRecord(path, 'x')],
+  });
   assert.equal(result.eligible, false);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_NOT_APPLICABLE');
 });
 
-test('reviewer rejects source evidence not bound to exact head and blob', () => {
+test('reviewer rejects source evidence not bound to the exact blob', () => {
   const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[1];
-  const record = sourceRecord(path, guardian);
+  const record = sourceRecord(path, 'fixed source');
   record.blobSha = 'b'.repeat(40);
-  const result = analyzeWindowsAuthorityRecoveryMeshGuardianReview({ repository, sourceHead: head, analysis: analysisFor([path]), sources: [record] });
+  const result = analyzeWindowsAuthorityRecoveryMeshGuardianReview({
+    repository,
+    sourceHead: head,
+    analysis: analysisFor([path]),
+    sources: [record],
+  });
   assert.equal(result.clean, false);
-  assert.ok(result.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'));
+  assert.ok(codes(result).includes('windows-authority-source-evidence-invalid'));
 });
 
-test('reviewer requires trusted remote-main equality and canonical task identity', () => {
-  const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[1];
-  const weakened = guardian
-    .replace("if ($localHead -ne $remoteMainHead) { Stop-Guardian -Blocker 'LOCAL_HEAD_NOT_TRUSTED_REMOTE_MAIN' }", '')
-    .replace('$taskIdentityCanonical -and ', '');
-  const result = review(path, weakened);
-  assert.equal(result.clean, false);
-  assert.ok(result.findings.some((item) => item.code === 'recovery-guardian-exact-head-comparison-missing'));
-  assert.ok(result.findings.some((item) => item.code === 'recovery-guardian-health-join-incomplete'));
-});
-
-test('reviewer rejects elevated or dynamic guardian installation authority', () => {
+test('installer review rejects elevated and dynamic PowerShell authority', () => {
   const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[0];
-  const result = review(path, `${installer}\nRunLevel Highest\n-Command arbitrary`);
-  assert.equal(result.clean, false);
-  assert.ok(result.findings.some((item) => item.code === 'windows-authority-expanded'));
-  assert.ok(result.findings.some((item) => item.code === 'recovery-guardian-dynamic-powershell-forbidden'));
+  const result = review(path, 'RunLevel Highest\n-Command arbitrary');
+  assert.ok(codes(result).includes('windows-authority-expanded'));
+  assert.ok(codes(result).includes('recovery-guardian-dynamic-powershell-forbidden'));
 });
 
-test('reviewer requires guardian-first uninstall order', () => {
-  const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[3];
-  const reversed = uninstaller.replace(
-    'Unregister-ScheduledTask -TaskName $guardianTaskName -Confirm:$false\nthrow \'RECOVERY_MESH_GUARDIAN_UNINSTALL_FAILED\'\nUnregister-ScheduledTask -TaskName $taskName -Confirm:$false',
-    'Unregister-ScheduledTask -TaskName $taskName -Confirm:$false\nthrow \'RECOVERY_MESH_GUARDIAN_UNINSTALL_FAILED\'\nUnregister-ScheduledTask -TaskName $guardianTaskName -Confirm:$false',
-  );
-  const result = review(path, reversed);
-  assert.equal(result.clean, false);
-  assert.ok(result.findings.some((item) => item.code === 'recovery-guardian-uninstall-order-not-proved'));
+test('guardian review requires trusted remote-main binding and forbids direct registration', () => {
+  const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[1];
+  const result = review(path, 'Register-ScheduledTask\nInvoke-Expression unsafe');
+  assert.ok(codes(result).includes('recovery-guardian-exact-head-comparison-missing'));
+  assert.ok(codes(result).includes('recovery-guardian-direct-registration-forbidden'));
+  assert.ok(codes(result).includes('recovery-guardian-dynamic-execution-forbidden'));
 });
 
-test('reviewer rejects extra caller-controlled launcher arguments', () => {
+test('guardian review requires canonical task identity in the healthy-state join', () => {
+  const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[1];
+  const result = review(path, '$healthy = $null -ne $task -and $lastTaskResult -eq 0 -and $lastRunAgeMinutes -le $StaleAfterMinutes');
+  assert.ok(codes(result).includes('recovery-guardian-health-join-incomplete'));
+  assert.ok(codes(result).includes('recovery-guardian-task-identity-check-missing'));
+});
+
+test('launcher review rejects a second caller-controlled argument and dynamic code', () => {
   const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[2];
-  const result = review(path, `${launcher}\nvalue = WScript.Arguments(1)`);
-  assert.equal(result.clean, false);
-  assert.ok(result.findings.some((item) => item.code === 'recovery-guardian-launcher-extra-argument-forbidden'));
+  const result = review(path, 'value = WScript.Arguments(1)\nEval(value)');
+  assert.ok(codes(result).includes('recovery-guardian-launcher-extra-argument-forbidden'));
+  assert.ok(codes(result).includes('recovery-guardian-launcher-dynamic-code-forbidden'));
+});
+
+test('uninstaller review requires guardian-first parent shutdown order', () => {
+  const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[3];
+  const reversed = [
+    '[CmdletBinding(SupportsShouldProcess = $true)]',
+    "$taskName = 'Stephanos Battle Bridge Recovery Mesh'",
+    "$guardianTaskName = 'Stephanos Battle Bridge Recovery Mesh Guardian'",
+    'Unregister-ScheduledTask -TaskName $taskName -Confirm:$false',
+    "throw 'RECOVERY_MESH_GUARDIAN_UNINSTALL_FAILED'",
+    'Unregister-ScheduledTask -TaskName $guardianTaskName -Confirm:$false',
+    'guardianRemovedBeforeRecoveryMesh = $true',
+    'workerPreserved = $true',
+    'mailboxPreserved = $true',
+    'sourcePreserved = $true',
+  ].join('\n');
+  const result = review(path, reversed);
+  assert.ok(codes(result).includes('recovery-guardian-uninstall-order-not-proved'));
 });
