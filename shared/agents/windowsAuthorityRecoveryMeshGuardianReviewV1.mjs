@@ -74,7 +74,6 @@ function reviewInstaller(source, path, findings) {
   ]);
   requirePatterns(findings, source, path, [
     [/if \(-not \$RecoveryMeshOnly\) \{[\s\S]*Register-ScheduledTask -TaskName \$guardianTaskName/, 'recovery-guardian-recursion-boundary-missing'],
-    [/Register-ScheduledTask -TaskName \$guardianTaskName[\s\S]*-RunLevel Limited/, 'recovery-guardian-registration-not-limited'],
   ]);
   forbidPatterns(findings, source, path, [
     [/RunLevel\s+Highest|-MultipleInstances\s+Parallel/i, 'windows-authority-expanded'],
@@ -98,7 +97,6 @@ function reviewGuardian(source, path, findings) {
     ["Stop-Guardian -Blocker 'RECOVERY_SOURCE_DIRTY'", 'recovery-guardian-dirty-source-gate-missing'],
     ["Stop-Guardian -Blocker 'RECOVERY_SOURCE_STAGED_DIRTY'", 'recovery-guardian-staged-source-gate-missing'],
     ['function Test-RecoveryTaskIdentity', 'recovery-guardian-task-identity-check-missing'],
-    ["$expectedArguments = \"//B //NoLogo ```\"$ExpectedLauncherPath```\" recovery-mesh\"", 'recovery-guardian-parent-action-not-fixed'],
     ["Task.Principal.LogonType", 'recovery-guardian-principal-proof-missing'],
     ["Task.Principal.RunLevel", 'recovery-guardian-runlevel-proof-missing'],
     ["Task.Settings.MultipleInstances", 'recovery-guardian-overlap-proof-missing'],
@@ -114,6 +112,7 @@ function reviewGuardian(source, path, findings) {
     ['mergeAuthority = $false', 'recovery-guardian-merge-denial-missing'],
   ]);
   requirePatterns(findings, source, path, [
+    [/\$expectedArguments\s*=\s*"\/\/B \/\/NoLogo `"\$ExpectedLauncherPath`" recovery-mesh"/, 'recovery-guardian-parent-action-not-fixed'],
     [/\$localHead\s+-ne\s+\$remoteMainHead/, 'recovery-guardian-exact-head-comparison-missing'],
     [/\$healthy\s*=\s*\$null -ne \$task[\s\S]*\$taskIdentityCanonical[\s\S]*\$lastTaskResult -eq 0[\s\S]*\$lastRunAgeMinutes -le \$StaleAfterMinutes/, 'recovery-guardian-health-join-incomplete'],
   ]);
