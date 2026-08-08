@@ -11,12 +11,15 @@ import {
 import {
   EXACT_HEAD_REVIEW_DECISION,
   EXACT_HEAD_REVIEW_MARKERS,
+  EXACT_HEAD_REVIEW_PROGRESS,
   REQUIRED_EXACT_HEAD_WORKFLOWS,
   REQUIRED_EXACT_HEAD_WORKFLOW_PATHS,
   buildMissingReceiptEscalationComment,
   buildReviewDispatchComment,
   buildReviewReceiptComment,
+  candidateReviewPrNumbers,
   canonicalLaneEvidence,
+  exactHeadReviewProgress,
   evaluateExactHeadReviewDispatch,
   isCanonicalReviewLaneComment,
   parseOptionalManualPrNumber,
@@ -373,9 +376,20 @@ test('escalates once when a posted request has no receipt after the bounded time
     ],
     receiptTimeoutMs: 10 * 60 * 1000,
   }));
-  assert.equal(alreadyEscalated.decision, EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT);
+  assert.equal(alreadyEscalated.decision, EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT);
   assert.equal(alreadyEscalated.escalated, true);
   assert.equal(alreadyEscalated.actionRequired, false);
+});
+
+test('keeps normal waiting distinct from a persistent missing-receipt stall', () => {
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS), EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_WORKFLOWS);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW), EXACT_HEAD_REVIEW_PROGRESS.REVIEW_DISPATCHED);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_RECEIPT);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.STALLED_MISSING_RECEIPT);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.STALLED_MISSING_RECEIPT);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.RECEIPT_RECORDED);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED), EXACT_HEAD_REVIEW_PROGRESS.REVIEW_COMPLETE);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.BLOCKED_WORKFLOWS), EXACT_HEAD_REVIEW_PROGRESS.BLOCKED);
 });
 
 test('fails closed without canonical lane evidence or for an external head repository', () => {
@@ -514,6 +528,19 @@ test('manual PR numbers accept only safe positive decimal digits', () => {
   }
 });
 
+test('targets the event PR directly and preserves independent workflow-run lanes', () => {
+  assert.deepEqual(candidateReviewPrNumbers({ event: { issue: { number: 1706, pull_request: {} } } }), [1706]);
+  assert.deepEqual(candidateReviewPrNumbers({
+    event: { workflow_run: { pull_requests: [{ number: 1706 }, { number: 1703 }, { number: 1706 }] } },
+  }), [1706, 1703]);
+  assert.deepEqual(candidateReviewPrNumbers({
+    event: { issue: { number: 1706, pull_request: {} } },
+    manualPrNumber: 1703,
+  }), [1703]);
+  assert.deepEqual(candidateReviewPrNumbers({ event: {} }), []);
+  assert.throws(() => candidateReviewPrNumbers({ manualPrNumber: 0 }), /safe positive integer/);
+});
+
 test('ignores forged coordinator markers for dispatch, receipt and escalation state', () => {
   const forgedDispatch = evaluateExactHeadReviewDispatch(baseInput({
     comments: [{
@@ -648,9 +675,20 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(runner, /const laneAuthorityLogin = trustedLaneAuthorityLogin\(owner\)/);
   assert.match(runner, /trustedCoordinatorLogin:\s*MACHINE_COORDINATOR_SENTINEL_LOGIN/);
   assert.match(runner, /parseOptionalManualPrNumber\(process\.env\.STEPHANOS_EXACT_HEAD_REVIEW_PR\)/);
-  assert.match(runner, /const numbers = \(await listOpenPullRequests/);
+  assert.match(runner, /requestedNumbers\.length \? loadRequestedCanonicalContexts : discoverCanonicalContexts/);
+  assert.match(runner, /mapWithConcurrency\(openPullRequests, 8/);
+  assert.doesNotMatch(runner, /multiple canonical review lanes detected/);
   assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);
   assert.match(runner, /GitHub pagination exceeded.*refusing partial evidence/);
+  assert.match(runner, /EXACT_HEAD_REVIEW_PROGRESS_PR_/);
+  assert.doesNotMatch(workflow, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
+  assert.match(workflow, /retry_targets:\s*\$\{\{ steps\.coordinate\.outputs\.retry_targets \}\}/);
+  assert.match(workflow, /target:\s*\$\{\{ fromJSON\(needs\.coordinate\.outputs\.retry_targets\) \}\}/);
+  assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
+  assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ matrix\.target\.exactHead \}\}/);
+  assert.match(workflow, /max-parallel:\s*4/);
+  assert.doesNotMatch(workflow, /steps\.coordinate\.outputs\.decision ==/);
+  assert.match(workflow, /Progress: `VERIFIED_ONLY`/);
   assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:\s*\$\{\{ secrets\.STEPHANOS_REVIEW_DISPATCH_TOKEN \}\}/);
