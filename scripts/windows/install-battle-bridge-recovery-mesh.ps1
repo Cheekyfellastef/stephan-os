@@ -56,7 +56,7 @@ if (-not $RecoveryMeshOnly) {
 }
 
 [pscustomobject]@{
-    schemaVersion = 'stephanos.battle-bridge-recovery-mesh-install.v2'
+    schemaVersion = 'stephanos.battle-bridge-recovery-mesh-install.v1'
     taskName = $taskName
     installed = [bool]$registrationApplied
     startedNow = [bool]$startApplied
@@ -75,7 +75,7 @@ if (-not $RecoveryMeshOnly) {
     runLevel = 'Limited'
     multipleInstances = 'IgnoreNew'
     maximumConcurrentExecutors = 1
-    recoveryRoutes = @('LOCAL_WINDOWS_GUARDIAN','GITHUB_MAILBOX','TAILSCALE_CONTROL','OPENCLAW_WHATSAPP','AUTHENTICATED_BREAK_GLASS')
+    recoveryRoutes = @('LOCAL_WINDOWS_SUPERVISOR','GITHUB_MAILBOX','TAILSCALE_CONTROL','OPENCLAW_WHATSAPP','AUTHENTICATED_BREAK_GLASS')
     guardianAuthority = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_ONLY'
     arbitraryShellAllowed = $false
     arbitraryTaskNameAllowed = $false
