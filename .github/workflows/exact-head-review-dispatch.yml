@@ -11,6 +11,7 @@ on:
       - Build Stephanos UI
       - Battle Bridge Publisher Proof
       - Codex Dispatch Queue Proof
+      - Independent Merge Security Review
     types:
       - completed
   issue_comment:
@@ -104,6 +105,18 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Download the exact triggering independent-review artifact
+        if: >-
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.name == 'Independent Merge Security Review' &&
+          github.event.workflow_run.conclusion == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: stephanos-independent-review-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/triggering-independent-review
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
       - name: Evaluate and advance exact-head review state
         id: coordinate
         env:
@@ -112,6 +125,10 @@ jobs:
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
           STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Independent Merge Security Review' && github.event.workflow_run.conclusion == 'success' }}
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/triggering-independent-review/independent-review-result.json
+          STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+          STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
         run: node scripts/exact-head-review-dispatch.mjs
 
   retry:
