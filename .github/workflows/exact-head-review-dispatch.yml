@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: exact-head-review-dispatch-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || inputs.pr_number || github.event_name }}
+  group: exact-head-review-dispatch-${{ github.repository }}-${{ github.event_name == 'pull_request' && format('verify-pr-{0}', github.event.pull_request.number) || github.event_name == 'issue_comment' && format('mutate-pr-{0}', github.event.issue.number) || github.event_name == 'workflow_dispatch' && inputs.pr_number && format('mutate-pr-{0}', inputs.pr_number) || github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[1].number && 'mutate-coordinator' || github.event_name == 'workflow_run' && format('mutate-pr-{0}', github.event.workflow_run.pull_requests[0].number) || 'mutate-coordinator' }}
   cancel-in-progress: false
 
 jobs:
@@ -115,6 +115,7 @@ jobs:
       - name: Retry only the exact failed canonical independent review
         if: >-
           always() &&
+          steps.coordinate.outputs.decision != 'MULTIPLE_PR_RESULTS' &&
           (steps.coordinate.outputs.decision == 'DISPATCH_REVIEW' ||
            steps.coordinate.outputs.decision == 'WAIT_REVIEW_RECEIPT' ||
            steps.coordinate.outputs.decision == 'ESCALATE_MISSING_RECEIPT' ||
@@ -124,3 +125,35 @@ jobs:
           STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR: ${{ steps.coordinate.outputs.pr_number }}
           STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD: ${{ steps.coordinate.outputs.exact_head }}
         run: node scripts/retry-independent-review.mjs
+
+      - name: Retry exact failed reviews from a bounded batch
+        if: >-
+          always() &&
+          steps.coordinate.outputs.decision == 'MULTIPLE_PR_RESULTS' &&
+          steps.coordinate.outputs.retry_targets != '' &&
+          steps.coordinate.outputs.retry_targets != '[]'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_REVIEW_RETRY_TARGETS: ${{ steps.coordinate.outputs.retry_targets }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          const targets = JSON.parse(process.env.STEPHANOS_REVIEW_RETRY_TARGETS || '[]');
+          if (!Array.isArray(targets) || targets.length > 20) throw new Error('bounded retry target inventory required');
+          let failed = false;
+          for (const target of targets) {
+            if (!Number.isSafeInteger(target?.prNumber) || target.prNumber <= 0 || !/^[0-9a-f]{40}$/.test(String(target?.exactHead || ''))) {
+              throw new Error('invalid exact-head retry target');
+            }
+            const result = spawnSync(process.execPath, ['scripts/retry-independent-review.mjs'], {
+              stdio: 'inherit',
+              env: {
+                ...process.env,
+                STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR: String(target.prNumber),
+                STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD: String(target.exactHead),
+              },
+            });
+            if (result.status !== 0) failed = true;
+          }
+          if (failed) process.exitCode = 1;
+          NODE
