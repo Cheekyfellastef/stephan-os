@@ -27,6 +27,8 @@ export const STALL_SENTINEL_CAPACITY_ROUTE = Object.freeze({
 });
 
 const FULL_SHA = /^[0-9a-f]{40}$/i;
+const SHA256 = /^[0-9a-f]{64}$/i;
+const DIGEST = /^sha256:[0-9a-f]{64}$/i;
 const SAFE_BRANCH = /^[a-z0-9](?:[a-z0-9._/-]{0,238}[a-z0-9])?$/i;
 const DEFAULT_RECEIPT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_RECEIPT_TIMEOUT_MS = 60 * 60 * 1000;
@@ -34,8 +36,26 @@ const MAX_LANES = 50;
 const SAFE_RECEIPT_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
 const SAFE_EVIDENCE_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
 const FORGE_M2_READY = 'FORGE_SHADOW_M2_READY';
+const FORGE_M2_RECEIPT_SCHEMA = 'stephanos.forge-shadow-m2-runtime-receipt.v1';
 const FORGE_M3_RUNTIME_RECEIPT_SCHEMA = 'stephanos.forge-shadow-m3-runner-runtime-receipt.v1';
 const FORGE_M3_RUNTIME_READY = 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY';
+const REVIEW_RECEIPT_SCHEMA = 'stephanos.independent-review-route-receipt.v1';
+
+const M2_RECEIPT_KEYS = Object.freeze([
+  'schemaVersion', 'receiptId', 'repository', 'sourceHead', 'sourceTree', 'mirrorHead',
+  'mirrorTree', 'operation', 'state', 'finalVerdict', 'completedAt', 'payloadSha256',
+]);
+const M3_RECEIPT_KEYS = Object.freeze([
+  'schemaVersion', 'receiptId', 'repository', 'sourceHead', 'sourceTree',
+  'artifactSetDigest', 'runnerIdentities', 'linuxReviewRunnerConnected',
+  'windowsProofRunnerConnected', 'teardownComplete', 'zeroResidualRegistration',
+  'zeroResidualCredential', 'zeroResidualWorkspace', 'canCarryRealWork',
+  'finalVerdict', 'completedAt', 'payloadSha256',
+]);
+const REVIEW_RECEIPT_KEYS = Object.freeze([
+  'schemaVersion', 'receiptId', 'repository', 'prNumber', 'branch', 'sourceHead',
+  'baseSha', 'conclusion', 'findingsCount', 'artifactDigest', 'completedAt', 'payloadSha256',
+]);
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -61,11 +81,95 @@ function normalizedConclusion(value) {
   return text(value).toLowerCase();
 }
 
-function actionKey(repository, prNumber, headSha, rule) {
+function actionKey(repository, prNumber, headSha, rule, capacityRoute = '', exactNextSafeAction = '') {
   return `stall-sentinel-${createHash('sha256')
-    .update(`${repository}\n${prNumber}\n${headSha}\n${rule}`)
+    .update(`${repository}\n${prNumber}\n${headSha}\n${rule}\n${capacityRoute}\n${exactNextSafeAction}`)
     .digest('hex')
     .slice(0, 24)}`;
+}
+
+function exactKeys(value, expected) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
+function payloadSha256(receipt) {
+  const core = Object.fromEntries(Object.entries(receipt).filter(([key]) => key !== 'payloadSha256'));
+  return createHash('sha256').update(canonicalJson(core), 'utf8').digest('hex');
+}
+
+function validCompletedAt(value) {
+  return timestamp(value) !== null && /(?:Z|[+-]\d{2}:\d{2})$/i.test(text(value));
+}
+
+function validM2Receipt(receipt, { repository, head, tree }) {
+  return exactKeys(receipt, M2_RECEIPT_KEYS)
+    && receipt.schemaVersion === FORGE_M2_RECEIPT_SCHEMA
+    && SAFE_RECEIPT_ID.test(text(receipt.receiptId))
+    && receipt.repository === repository
+    && text(receipt.sourceHead).toLowerCase() === head
+    && text(receipt.sourceTree).toLowerCase() === tree
+    && text(receipt.mirrorHead).toLowerCase() === head
+    && text(receipt.mirrorTree).toLowerCase() === tree
+    && receipt.operation === 'INSTALL_FORGE_SHADOW_M2'
+    && receipt.state === 'DONE'
+    && receipt.finalVerdict === FORGE_M2_READY
+    && validCompletedAt(receipt.completedAt)
+    && SHA256.test(text(receipt.payloadSha256))
+    && text(receipt.payloadSha256).toLowerCase() === payloadSha256(receipt);
+}
+
+function validM3Receipt(receipt, { repository, head, tree }) {
+  const runnerIdentities = Array.isArray(receipt?.runnerIdentities)
+    ? receipt.runnerIdentities.map(text)
+    : [];
+  return exactKeys(receipt, M3_RECEIPT_KEYS)
+    && receipt.schemaVersion === FORGE_M3_RUNTIME_RECEIPT_SCHEMA
+    && SAFE_RECEIPT_ID.test(text(receipt.receiptId))
+    && receipt.repository === repository
+    && text(receipt.sourceHead).toLowerCase() === head
+    && text(receipt.sourceTree).toLowerCase() === tree
+    && DIGEST.test(text(receipt.artifactSetDigest))
+    && runnerIdentities.length === 2
+    && new Set(runnerIdentities).size === 2
+    && runnerIdentities.includes('stephanos-forge-linux-runner-01')
+    && runnerIdentities.includes('stephanos-forge-windows-proof-runner-01')
+    && receipt.linuxReviewRunnerConnected === true
+    && receipt.windowsProofRunnerConnected === true
+    && receipt.teardownComplete === true
+    && receipt.zeroResidualRegistration === true
+    && receipt.zeroResidualCredential === true
+    && receipt.zeroResidualWorkspace === true
+    && receipt.canCarryRealWork === true
+    && receipt.finalVerdict === FORGE_M3_RUNTIME_READY
+    && validCompletedAt(receipt.completedAt)
+    && SHA256.test(text(receipt.payloadSha256))
+    && text(receipt.payloadSha256).toLowerCase() === payloadSha256(receipt);
+}
+
+function validReviewReceipt(receipt, lane, repository) {
+  return exactKeys(receipt, REVIEW_RECEIPT_KEYS)
+    && receipt.schemaVersion === REVIEW_RECEIPT_SCHEMA
+    && SAFE_RECEIPT_ID.test(text(receipt.receiptId))
+    && receipt.repository === repository
+    && positiveInteger(receipt.prNumber) === lane.prNumber
+    && receipt.branch === lane.branch
+    && text(receipt.sourceHead).toLowerCase() === lane.headSha
+    && FULL_SHA.test(text(receipt.baseSha))
+    && receipt.conclusion === 'success'
+    && receipt.findingsCount === 0
+    && DIGEST.test(text(receipt.artifactDigest))
+    && validCompletedAt(receipt.completedAt)
+    && SHA256.test(text(receipt.payloadSha256))
+    && text(receipt.payloadSha256).toLowerCase() === payloadSha256(receipt);
 }
 
 function invalid(reason) {
@@ -98,48 +202,51 @@ function normalizeForgeSidecar(value) {
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const allowedKeys = new Set([
-    'goalId', 'canonicalMainHead', 'mirrorHead', 'sourceReady', 'm2Verdict', 'm2ReceiptId',
-    'm3RuntimeReceiptSchema', 'm3RuntimeVerdict', 'm3RuntimeReceiptId',
-    'linuxReviewRunnerConnected', 'windowsProofRunnerConnected', 'canCarryRealWork', 'evidenceRefs',
+    'goalId', 'repository', 'canonicalMainHead', 'canonicalMainTree', 'mirrorHead', 'mirrorTree',
+    'sourceReady', 'm2Receipt', 'm3RuntimeReceipt', 'evidenceRefs',
   ]);
   if (Object.keys(value).some((key) => !allowedKeys.has(key))) return null;
   const goalId = text(value.goalId);
+  const repository = text(value.repository);
   const canonicalMainHead = text(value.canonicalMainHead).toLowerCase();
+  const canonicalMainTree = text(value.canonicalMainTree).toLowerCase();
   const mirrorHead = text(value.mirrorHead).toLowerCase();
-  const m2ReceiptId = text(value.m2ReceiptId);
-  const m3RuntimeReceiptId = text(value.m3RuntimeReceiptId);
+  const mirrorTree = text(value.mirrorTree).toLowerCase();
   const evidenceRefs = Array.isArray(value.evidenceRefs)
     ? [...new Set(value.evidenceRefs.map(text).filter(Boolean))]
     : null;
-  if (goalId !== '#1671' || !FULL_SHA.test(canonicalMainHead) || !FULL_SHA.test(mirrorHead)
+  if (goalId !== '#1671' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
+    || !FULL_SHA.test(canonicalMainHead) || !FULL_SHA.test(canonicalMainTree)
+    || !FULL_SHA.test(mirrorHead) || !FULL_SHA.test(mirrorTree)
     || !Array.isArray(evidenceRefs) || evidenceRefs.length > 20
-    || evidenceRefs.some((ref) => !SAFE_EVIDENCE_REF.test(ref) || ref.includes('..'))
-    || (m2ReceiptId && !SAFE_RECEIPT_ID.test(m2ReceiptId))
-    || (m3RuntimeReceiptId && !SAFE_RECEIPT_ID.test(m3RuntimeReceiptId))) return null;
+    || evidenceRefs.some((ref) => !SAFE_EVIDENCE_REF.test(ref) || ref.includes('..'))) return null;
   const sourceReady = value.sourceReady === true;
+  const exactMirrorParity = canonicalMainHead === mirrorHead && canonicalMainTree === mirrorTree;
+  const binding = { repository, head: canonicalMainHead, tree: canonicalMainTree };
+  const m2ReceiptValid = validM2Receipt(value.m2Receipt, binding);
+  const m3RuntimeReceiptValid = validM3Receipt(value.m3RuntimeReceipt, binding);
   const runtimeReady = sourceReady
-    && canonicalMainHead === mirrorHead
-    && value.m2Verdict === FORGE_M2_READY
-    && Boolean(m2ReceiptId)
-    && value.m3RuntimeReceiptSchema === FORGE_M3_RUNTIME_RECEIPT_SCHEMA
-    && value.m3RuntimeVerdict === FORGE_M3_RUNTIME_READY
-    && Boolean(m3RuntimeReceiptId)
-    && value.linuxReviewRunnerConnected === true
-    && value.windowsProofRunnerConnected === true
-    && value.canCarryRealWork === true
+    && exactMirrorParity
+    && m2ReceiptValid
+    && m3RuntimeReceiptValid
     && evidenceRefs.length >= 2;
   return Object.freeze({
     declared: true,
     goalId,
+    repository,
     canonicalMainHead,
+    canonicalMainTree,
     mirrorHead,
+    mirrorTree,
     sourceReady,
     runtimeReady,
     activationRequired: sourceReady && !runtimeReady,
     exactHeadReviewReady: runtimeReady,
     canCarryRealWork: runtimeReady,
-    m2ReceiptId: m2ReceiptId || null,
-    m3RuntimeReceiptId: m3RuntimeReceiptId || null,
+    m2ReceiptValid,
+    m3RuntimeReceiptValid,
+    m2ReceiptId: m2ReceiptValid ? text(value.m2Receipt.receiptId) : null,
+    m3RuntimeReceiptId: m3RuntimeReceiptValid ? text(value.m3RuntimeReceipt.receiptId) : null,
     evidenceRefs: Object.freeze(evidenceRefs),
   });
 }
@@ -160,7 +267,7 @@ function normalizeLane(lane, repository) {
   const rateLimitResetAtMs = review.rateLimitResetAt == null ? null : timestamp(review.rateLimitResetAt);
   if ((review.dispatchAt != null && dispatchAtMs === null)
     || (review.rateLimitResetAt != null && rateLimitResetAtMs === null)) return null;
-  return Object.freeze({
+  const normalized = {
     repository,
     goalId: text(lane.goalId),
     prNumber,
@@ -178,7 +285,6 @@ function normalizeLane(lane, repository) {
     dispatchCommentId: positiveInteger(review.dispatchCommentId) || null,
     dispatchAt: dispatchAtMs === null ? null : new Date(dispatchAtMs).toISOString(),
     dispatchAtMs,
-    receiptId: text(review.receiptId) || null,
     independentReviewStatus: normalizedConclusion(review.independentReviewStatus),
     independentReviewConclusion: normalizedConclusion(review.independentReviewConclusion),
     independentReviewErrorClass: text(review.independentReviewErrorClass).toUpperCase(),
@@ -188,6 +294,12 @@ function normalizeLane(lane, repository) {
     rateLimitResetAtMs,
     providerNeutralFallbackAvailable: review.providerNeutralFallbackAvailable === true,
     evidenceRefs: Object.freeze([...new Set((Array.isArray(lane.evidenceRefs) ? lane.evidenceRefs : []).map(text).filter(Boolean))]),
+  };
+  const receiptValid = validReviewReceipt(review.receipt, normalized, repository);
+  return Object.freeze({
+    ...normalized,
+    receiptValid,
+    receiptId: receiptValid ? text(review.receipt.receiptId) : null,
   });
 }
 
@@ -222,10 +334,10 @@ function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys, forgeSide
       nextOwner = 'existing-forge-sidecar-controller';
       exactNextSafeAction = 'ACTIVATE_EXISTING_FORGE_SIDECAR_AND_CONTINUE_NONCONFLICTING_LOCAL_CONSTRUCTION';
       capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.FORGE_ACTIVATION;
-    } else if (lane.independentReviewAttempt <= 1 && lane.rateLimitResetAtMs !== null && lane.rateLimitResetAtMs > nowMs) {
+    } else if (lane.independentReviewAttempt <= 1 && lane.rateLimitResetAtMs !== null) {
       state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
       exactNextSafeAction = 'RERUN_FAILED_REVIEW_JOB_ONCE_AFTER_RATE_LIMIT_RESET';
-      notBefore = lane.rateLimitResetAt;
+      notBefore = lane.rateLimitResetAtMs > nowMs ? lane.rateLimitResetAt : null;
       capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.QUOTA_RETRY;
     } else {
       state = STALL_SENTINEL_STATE.CAPTAIN_DECISION;
@@ -256,7 +368,7 @@ function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys, forgeSide
 
   const recoveryKey = rule === STALL_SENTINEL_RULE.NONE
     ? null
-    : actionKey(lane.repository, lane.prNumber, lane.headSha, rule);
+    : actionKey(lane.repository, lane.prNumber, lane.headSha, rule, capacityRoute, exactNextSafeAction);
   const recoveryAlreadyRecorded = recoveryKey !== null && existingRecoveryKeys.has(recoveryKey);
   if (recoveryAlreadyRecorded && state === STALL_SENTINEL_STATE.STALLED_RECOVERABLE) {
     state = STALL_SENTINEL_STATE.WATCHING;
@@ -264,7 +376,14 @@ function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys, forgeSide
   }
 
   return Object.freeze({
-    stallId: recoveryKey ?? actionKey(lane.repository, lane.prNumber, lane.headSha, STALL_SENTINEL_RULE.NONE),
+    stallId: recoveryKey ?? actionKey(
+      lane.repository,
+      lane.prNumber,
+      lane.headSha,
+      STALL_SENTINEL_RULE.NONE,
+      capacityRoute,
+      exactNextSafeAction,
+    ),
     goalId: lane.goalId || null,
     prNumber: lane.prNumber,
     prReference: lane.prReference,
@@ -303,7 +422,8 @@ export function projectStallSentinelReviewPipeline(input = {}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
     || nowMs === null || !denseArray(lanes) || lanes.length > MAX_LANES
     || !Number.isSafeInteger(receiptTimeoutMs) || receiptTimeoutMs <= 0 || receiptTimeoutMs > MAX_RECEIPT_TIMEOUT_MS
-    || forgeSidecar === null) {
+    || forgeSidecar === null
+    || (forgeSidecar.declared && forgeSidecar.repository !== repository)) {
     return invalid('valid repository, clock, dense bounded lanes and receipt timeout are required');
   }
   const normalized = lanes.map((lane) => normalizeLane(lane, repository));
