@@ -1,0 +1,249 @@
+import { createHash } from 'node:crypto';
+
+export const STALL_SENTINEL_REVIEW_PIPELINE_SCHEMA = 'stephanos.stall-sentinel.review-pipeline.v1';
+
+export const STALL_SENTINEL_STATE = Object.freeze({
+  ACTIVE: 'ACTIVE',
+  WATCHING: 'WATCHING',
+  STALLED_RECOVERABLE: 'STALLED_RECOVERABLE',
+  STALLED_BLOCKED: 'STALLED_BLOCKED',
+  CAPTAIN_DECISION: 'CAPTAIN_DECISION',
+});
+
+export const STALL_SENTINEL_RULE = Object.freeze({
+  NONE: 'NONE',
+  GREEN_COORDINATOR_SKIPPED: 'GREEN_COORDINATOR_SKIPPED',
+  REVIEW_DISPATCH_NO_RECEIPT: 'REVIEW_DISPATCH_NO_RECEIPT',
+  REVIEW_RATE_LIMIT_NO_ARTIFACT: 'REVIEW_RATE_LIMIT_NO_ARTIFACT',
+});
+
+const FULL_SHA = /^[0-9a-f]{40}$/i;
+const SAFE_BRANCH = /^[a-z0-9](?:[a-z0-9._/-]{0,238}[a-z0-9])?$/i;
+const DEFAULT_RECEIPT_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_RECEIPT_TIMEOUT_MS = 60 * 60 * 1000;
+const MAX_LANES = 50;
+
+function text(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function timestamp(value) {
+  const parsed = Date.parse(text(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function positiveInteger(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function denseArray(value) {
+  if (!Array.isArray(value)) return false;
+  for (let index = 0; index < value.length; index += 1) if (!Object.hasOwn(value, index)) return false;
+  return true;
+}
+
+function normalizedConclusion(value) {
+  return text(value).toLowerCase();
+}
+
+function actionKey(repository, prNumber, headSha, rule) {
+  return `stall-sentinel-${createHash('sha256')
+    .update(`${repository}\n${prNumber}\n${headSha}\n${rule}`)
+    .digest('hex')
+    .slice(0, 24)}`;
+}
+
+function invalid(reason) {
+  return Object.freeze({
+    schemaVersion: STALL_SENTINEL_REVIEW_PIPELINE_SCHEMA,
+    valid: false,
+    reason,
+    records: Object.freeze([]),
+    summary: Object.freeze({ active: 0, watching: 0, recoverable: 0, blocked: 0, captainDecision: 0 }),
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    finalVerdict: 'STALL_SENTINEL_REVIEW_PIPELINE_INVALID',
+  });
+}
+
+function normalizeLane(lane, repository) {
+  if (!lane || typeof lane !== 'object' || Array.isArray(lane)) return null;
+  const prNumber = positiveInteger(lane.prNumber);
+  const title = text(lane.title);
+  const branch = text(lane.branch);
+  const headSha = text(lane.headSha).toLowerCase();
+  const lastMeaningfulActivityMs = timestamp(lane.lastMeaningfulActivityAt);
+  if (!prNumber || !title || !SAFE_BRANCH.test(branch) || branch.includes('..')
+    || !FULL_SHA.test(headSha) || lastMeaningfulActivityMs === null) return null;
+  const review = lane.review && typeof lane.review === 'object' && !Array.isArray(lane.review)
+    ? lane.review
+    : {};
+  const dispatchAtMs = review.dispatchAt == null ? null : timestamp(review.dispatchAt);
+  const rateLimitResetAtMs = review.rateLimitResetAt == null ? null : timestamp(review.rateLimitResetAt);
+  if ((review.dispatchAt != null && dispatchAtMs === null)
+    || (review.rateLimitResetAt != null && rateLimitResetAtMs === null)) return null;
+  return Object.freeze({
+    repository,
+    goalId: text(lane.goalId),
+    prNumber,
+    title,
+    prReference: `PR #${prNumber} — ${title}`,
+    branch,
+    headSha,
+    lastMeaningfulActivityAt: new Date(lastMeaningfulActivityMs).toISOString(),
+    lastMeaningfulActivityMs,
+    sourceChanging: lane.sourceChanging === true,
+    requiredChecksSuccessful: lane.requiredChecksSuccessful === true,
+    reviewRequired: lane.reviewRequired !== false,
+    coordinatorWorkflowConclusion: normalizedConclusion(review.coordinatorWorkflowConclusion),
+    coordinateJobConclusion: normalizedConclusion(review.coordinateJobConclusion),
+    dispatchCommentId: positiveInteger(review.dispatchCommentId) || null,
+    dispatchAt: dispatchAtMs === null ? null : new Date(dispatchAtMs).toISOString(),
+    dispatchAtMs,
+    receiptId: text(review.receiptId) || null,
+    independentReviewStatus: normalizedConclusion(review.independentReviewStatus),
+    independentReviewConclusion: normalizedConclusion(review.independentReviewConclusion),
+    independentReviewErrorClass: text(review.independentReviewErrorClass).toUpperCase(),
+    independentReviewArtifactId: positiveInteger(review.independentReviewArtifactId) || null,
+    independentReviewAttempt: positiveInteger(review.independentReviewAttempt),
+    rateLimitResetAt: rateLimitResetAtMs === null ? null : new Date(rateLimitResetAtMs).toISOString(),
+    rateLimitResetAtMs,
+    providerNeutralFallbackAvailable: review.providerNeutralFallbackAvailable === true,
+    evidenceRefs: Object.freeze([...new Set((Array.isArray(lane.evidenceRefs) ? lane.evidenceRefs : []).map(text).filter(Boolean))]),
+  });
+}
+
+function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys) {
+  let rule = STALL_SENTINEL_RULE.NONE;
+  let state = STALL_SENTINEL_STATE.ACTIVE;
+  let nextOwner = 'existing-lane-owner';
+  let exactNextSafeAction = 'CONTINUE_EXISTING_LANE';
+  let notBefore = null;
+  let operatorNotificationRequired = false;
+
+  if (lane.sourceChanging || !lane.reviewRequired || !lane.requiredChecksSuccessful) {
+    state = lane.sourceChanging ? STALL_SENTINEL_STATE.ACTIVE : STALL_SENTINEL_STATE.WATCHING;
+    exactNextSafeAction = lane.sourceChanging ? 'OBSERVE_ACTIVE_HEAD_MOVEMENT' : 'WAIT_FOR_REQUIRED_EXACT_HEAD_CHECKS';
+  } else if (lane.independentReviewConclusion === 'failure'
+    && lane.independentReviewErrorClass === 'API_RATE_LIMIT_EXCEEDED'
+    && !lane.independentReviewArtifactId) {
+    rule = STALL_SENTINEL_RULE.REVIEW_RATE_LIMIT_NO_ARTIFACT;
+    nextOwner = 'provider-neutral-review-controller';
+    if (lane.independentReviewAttempt <= 1 && lane.rateLimitResetAtMs !== null && lane.rateLimitResetAtMs > nowMs) {
+      state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
+      exactNextSafeAction = 'RERUN_FAILED_REVIEW_JOB_ONCE_AFTER_RATE_LIMIT_RESET';
+      notBefore = lane.rateLimitResetAt;
+    } else if (lane.providerNeutralFallbackAvailable) {
+      state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
+      exactNextSafeAction = 'ROUTE_EXISTING_EXACT_HEAD_TO_PROVIDER_NEUTRAL_REVIEW_FALLBACK';
+    } else {
+      state = STALL_SENTINEL_STATE.CAPTAIN_DECISION;
+      exactNextSafeAction = 'CHOOSE_REVIEW_CAPACITY_OR_WAIT_FOR_QUOTA_RESET';
+      operatorNotificationRequired = true;
+    }
+  } else if (lane.dispatchCommentId && !lane.receiptId
+    && lane.dispatchAtMs !== null && nowMs - lane.dispatchAtMs >= receiptTimeoutMs) {
+    rule = STALL_SENTINEL_RULE.REVIEW_DISPATCH_NO_RECEIPT;
+    state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
+    nextOwner = 'exact-head-review-coordinator';
+    exactNextSafeAction = 'INSPECT_OR_RETRY_EXISTING_INDEPENDENT_REVIEW_WITHOUT_DUPLICATE_DISPATCH';
+  } else if (lane.coordinatorWorkflowConclusion === 'success'
+    && lane.coordinateJobConclusion === 'skipped'
+    && !lane.dispatchCommentId && !lane.receiptId) {
+    rule = STALL_SENTINEL_RULE.GREEN_COORDINATOR_SKIPPED;
+    state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
+    nextOwner = 'exact-head-review-coordinator';
+    exactNextSafeAction = 'TRIGGER_RESOURCE_SCOPED_COORDINATION_FOR_EVENT_PR';
+  } else if (lane.independentReviewStatus === 'queued' || lane.independentReviewStatus === 'in_progress'
+    || (lane.dispatchCommentId && !lane.receiptId)) {
+    state = STALL_SENTINEL_STATE.WATCHING;
+    exactNextSafeAction = 'WAIT_INSIDE_BOUNDED_REVIEW_RECEIPT_WINDOW';
+  } else if (lane.receiptId) {
+    exactNextSafeAction = 'ADVANCE_EXISTING_EXACT_HEAD_GATE';
+  }
+
+  const recoveryKey = rule === STALL_SENTINEL_RULE.NONE
+    ? null
+    : actionKey(lane.repository, lane.prNumber, lane.headSha, rule);
+  const recoveryAlreadyRecorded = recoveryKey !== null && existingRecoveryKeys.has(recoveryKey);
+  if (recoveryAlreadyRecorded && state === STALL_SENTINEL_STATE.STALLED_RECOVERABLE) {
+    state = STALL_SENTINEL_STATE.WATCHING;
+    exactNextSafeAction = 'OBSERVE_EXISTING_IDEMPOTENT_RECOVERY';
+  }
+
+  return Object.freeze({
+    stallId: recoveryKey ?? actionKey(lane.repository, lane.prNumber, lane.headSha, STALL_SENTINEL_RULE.NONE),
+    goalId: lane.goalId || null,
+    prNumber: lane.prNumber,
+    prReference: lane.prReference,
+    branch: lane.branch,
+    liveHeadSha: lane.headSha,
+    reportedTestedSha: null,
+    evidenceRefs: lane.evidenceRefs,
+    detectedRule: rule,
+    lastMeaningfulActivityAt: lane.lastMeaningfulActivityAt,
+    currentOwner: 'existing-lane-owner',
+    nextOwner,
+    exactNextSafeAction,
+    notBefore,
+    confidence: 'VERIFIED_FACTS_ONLY',
+    state,
+    recoveryKey,
+    recoveryAlreadyRecorded,
+    duplicateRecoveryAllowed: false,
+    operatorNotificationRequired,
+  });
+}
+
+export function projectStallSentinelReviewPipeline(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return invalid('one object input is required');
+  const repository = text(input.repository);
+  const nowMs = timestamp(input.now);
+  const lanes = input.lanes;
+  const receiptTimeoutMs = input.receiptTimeoutMs === undefined
+    ? DEFAULT_RECEIPT_TIMEOUT_MS
+    : Number(input.receiptTimeoutMs);
+  const existingRecoveryKeys = new Set(Array.isArray(input.existingRecoveryKeys)
+    ? input.existingRecoveryKeys.map(text).filter(Boolean)
+    : []);
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
+    || nowMs === null || !denseArray(lanes) || lanes.length > MAX_LANES
+    || !Number.isSafeInteger(receiptTimeoutMs) || receiptTimeoutMs <= 0 || receiptTimeoutMs > MAX_RECEIPT_TIMEOUT_MS) {
+    return invalid('valid repository, clock, dense bounded lanes and receipt timeout are required');
+  }
+  const normalized = lanes.map((lane) => normalizeLane(lane, repository));
+  if (normalized.some((lane) => lane === null)) return invalid('one or more lane identities are malformed');
+  const seenPrs = new Set();
+  if (normalized.some((lane) => seenPrs.has(lane.prNumber) || !seenPrs.add(lane.prNumber))) return invalid('duplicate PR lanes are not accepted');
+
+  const records = Object.freeze(normalized
+    .map((lane) => classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys))
+    .sort((left, right) => left.prNumber - right.prNumber));
+  const count = (state) => records.filter((record) => record.state === state).length;
+  const summary = Object.freeze({
+    active: count(STALL_SENTINEL_STATE.ACTIVE),
+    watching: count(STALL_SENTINEL_STATE.WATCHING),
+    recoverable: count(STALL_SENTINEL_STATE.STALLED_RECOVERABLE),
+    blocked: count(STALL_SENTINEL_STATE.STALLED_BLOCKED),
+    captainDecision: count(STALL_SENTINEL_STATE.CAPTAIN_DECISION),
+    oldestMeaningfulInactivityAt: records.map((record) => record.lastMeaningfulActivityAt).sort()[0] ?? null,
+  });
+  return Object.freeze({
+    schemaVersion: STALL_SENTINEL_REVIEW_PIPELINE_SCHEMA,
+    valid: true,
+    records,
+    summary,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    finalVerdict: summary.captainDecision > 0
+      ? 'STALL_SENTINEL_CAPTAIN_DECISION_REQUIRED'
+      : (summary.recoverable > 0 ? 'STALL_SENTINEL_AUTONOMOUS_RECOVERY_REQUIRED' : 'STALL_SENTINEL_REVIEW_PIPELINE_OBSERVED'),
+  });
+}
