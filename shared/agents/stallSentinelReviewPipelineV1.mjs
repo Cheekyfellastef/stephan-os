@@ -17,11 +17,25 @@ export const STALL_SENTINEL_RULE = Object.freeze({
   REVIEW_RATE_LIMIT_NO_ARTIFACT: 'REVIEW_RATE_LIMIT_NO_ARTIFACT',
 });
 
+export const STALL_SENTINEL_CAPACITY_ROUTE = Object.freeze({
+  EXISTING_LANE: 'EXISTING_LANE',
+  FORGE_SIDECAR: 'FORGE_SIDECAR',
+  FORGE_ACTIVATION: 'FORGE_ACTIVATION',
+  PROVIDER_NEUTRAL: 'PROVIDER_NEUTRAL',
+  QUOTA_RETRY: 'QUOTA_RETRY',
+  CAPTAIN_DECISION: 'CAPTAIN_DECISION',
+});
+
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_BRANCH = /^[a-z0-9](?:[a-z0-9._/-]{0,238}[a-z0-9])?$/i;
 const DEFAULT_RECEIPT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_RECEIPT_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_LANES = 50;
+const SAFE_RECEIPT_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
+const SAFE_EVIDENCE_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
+const FORGE_M2_READY = 'FORGE_SHADOW_M2_READY';
+const FORGE_M3_RUNTIME_RECEIPT_SCHEMA = 'stephanos.forge-shadow-m3-runner-runtime-receipt.v1';
+const FORGE_M3_RUNTIME_READY = 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY';
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -67,6 +81,66 @@ function invalid(reason) {
     runtimeMutationAllowed: false,
     arbitraryShellAllowed: false,
     finalVerdict: 'STALL_SENTINEL_REVIEW_PIPELINE_INVALID',
+  });
+}
+
+function normalizeForgeSidecar(value) {
+  if (value === undefined || value === null) {
+    return Object.freeze({
+      declared: false,
+      sourceReady: false,
+      runtimeReady: false,
+      activationRequired: false,
+      exactHeadReviewReady: false,
+      canCarryRealWork: false,
+      evidenceRefs: Object.freeze([]),
+    });
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const allowedKeys = new Set([
+    'goalId', 'canonicalMainHead', 'mirrorHead', 'sourceReady', 'm2Verdict', 'm2ReceiptId',
+    'm3RuntimeReceiptSchema', 'm3RuntimeVerdict', 'm3RuntimeReceiptId',
+    'linuxReviewRunnerConnected', 'windowsProofRunnerConnected', 'canCarryRealWork', 'evidenceRefs',
+  ]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) return null;
+  const goalId = text(value.goalId);
+  const canonicalMainHead = text(value.canonicalMainHead).toLowerCase();
+  const mirrorHead = text(value.mirrorHead).toLowerCase();
+  const m2ReceiptId = text(value.m2ReceiptId);
+  const m3RuntimeReceiptId = text(value.m3RuntimeReceiptId);
+  const evidenceRefs = Array.isArray(value.evidenceRefs)
+    ? [...new Set(value.evidenceRefs.map(text).filter(Boolean))]
+    : null;
+  if (goalId !== '#1671' || !FULL_SHA.test(canonicalMainHead) || !FULL_SHA.test(mirrorHead)
+    || !Array.isArray(evidenceRefs) || evidenceRefs.length > 20
+    || evidenceRefs.some((ref) => !SAFE_EVIDENCE_REF.test(ref) || ref.includes('..'))
+    || (m2ReceiptId && !SAFE_RECEIPT_ID.test(m2ReceiptId))
+    || (m3RuntimeReceiptId && !SAFE_RECEIPT_ID.test(m3RuntimeReceiptId))) return null;
+  const sourceReady = value.sourceReady === true;
+  const runtimeReady = sourceReady
+    && canonicalMainHead === mirrorHead
+    && value.m2Verdict === FORGE_M2_READY
+    && Boolean(m2ReceiptId)
+    && value.m3RuntimeReceiptSchema === FORGE_M3_RUNTIME_RECEIPT_SCHEMA
+    && value.m3RuntimeVerdict === FORGE_M3_RUNTIME_READY
+    && Boolean(m3RuntimeReceiptId)
+    && value.linuxReviewRunnerConnected === true
+    && value.windowsProofRunnerConnected === true
+    && value.canCarryRealWork === true
+    && evidenceRefs.length >= 2;
+  return Object.freeze({
+    declared: true,
+    goalId,
+    canonicalMainHead,
+    mirrorHead,
+    sourceReady,
+    runtimeReady,
+    activationRequired: sourceReady && !runtimeReady,
+    exactHeadReviewReady: runtimeReady,
+    canCarryRealWork: runtimeReady,
+    m2ReceiptId: m2ReceiptId || null,
+    m3RuntimeReceiptId: m3RuntimeReceiptId || null,
+    evidenceRefs: Object.freeze(evidenceRefs),
   });
 }
 
@@ -117,13 +191,14 @@ function normalizeLane(lane, repository) {
   });
 }
 
-function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys) {
+function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys, forgeSidecar) {
   let rule = STALL_SENTINEL_RULE.NONE;
   let state = STALL_SENTINEL_STATE.ACTIVE;
   let nextOwner = 'existing-lane-owner';
   let exactNextSafeAction = 'CONTINUE_EXISTING_LANE';
   let notBefore = null;
   let operatorNotificationRequired = false;
+  let capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.EXISTING_LANE;
 
   if (lane.sourceChanging || !lane.reviewRequired || !lane.requiredChecksSuccessful) {
     state = lane.sourceChanging ? STALL_SENTINEL_STATE.ACTIVE : STALL_SENTINEL_STATE.WATCHING;
@@ -133,17 +208,30 @@ function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys) {
     && !lane.independentReviewArtifactId) {
     rule = STALL_SENTINEL_RULE.REVIEW_RATE_LIMIT_NO_ARTIFACT;
     nextOwner = 'provider-neutral-review-controller';
-    if (lane.independentReviewAttempt <= 1 && lane.rateLimitResetAtMs !== null && lane.rateLimitResetAtMs > nowMs) {
+    if (forgeSidecar.exactHeadReviewReady) {
       state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
-      exactNextSafeAction = 'RERUN_FAILED_REVIEW_JOB_ONCE_AFTER_RATE_LIMIT_RESET';
-      notBefore = lane.rateLimitResetAt;
+      nextOwner = 'existing-forge-sidecar-controller';
+      exactNextSafeAction = 'ROUTE_EXISTING_EXACT_HEAD_TO_PROVEN_FORGE_REVIEW_CAPACITY';
+      capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.FORGE_SIDECAR;
     } else if (lane.providerNeutralFallbackAvailable) {
       state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
       exactNextSafeAction = 'ROUTE_EXISTING_EXACT_HEAD_TO_PROVIDER_NEUTRAL_REVIEW_FALLBACK';
+      capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.PROVIDER_NEUTRAL;
+    } else if (forgeSidecar.activationRequired) {
+      state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
+      nextOwner = 'existing-forge-sidecar-controller';
+      exactNextSafeAction = 'ACTIVATE_EXISTING_FORGE_SIDECAR_AND_CONTINUE_NONCONFLICTING_LOCAL_CONSTRUCTION';
+      capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.FORGE_ACTIVATION;
+    } else if (lane.independentReviewAttempt <= 1 && lane.rateLimitResetAtMs !== null && lane.rateLimitResetAtMs > nowMs) {
+      state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
+      exactNextSafeAction = 'RERUN_FAILED_REVIEW_JOB_ONCE_AFTER_RATE_LIMIT_RESET';
+      notBefore = lane.rateLimitResetAt;
+      capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.QUOTA_RETRY;
     } else {
       state = STALL_SENTINEL_STATE.CAPTAIN_DECISION;
       exactNextSafeAction = 'CHOOSE_REVIEW_CAPACITY_OR_WAIT_FOR_QUOTA_RESET';
       operatorNotificationRequired = true;
+      capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.CAPTAIN_DECISION;
     }
   } else if (lane.dispatchCommentId && !lane.receiptId
     && lane.dispatchAtMs !== null && nowMs - lane.dispatchAtMs >= receiptTimeoutMs) {
@@ -189,6 +277,7 @@ function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys) {
     currentOwner: 'existing-lane-owner',
     nextOwner,
     exactNextSafeAction,
+    capacityRoute,
     notBefore,
     confidence: 'VERIFIED_FACTS_ONLY',
     state,
@@ -210,9 +299,11 @@ export function projectStallSentinelReviewPipeline(input = {}) {
   const existingRecoveryKeys = new Set(Array.isArray(input.existingRecoveryKeys)
     ? input.existingRecoveryKeys.map(text).filter(Boolean)
     : []);
+  const forgeSidecar = normalizeForgeSidecar(input.forgeSidecar);
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
     || nowMs === null || !denseArray(lanes) || lanes.length > MAX_LANES
-    || !Number.isSafeInteger(receiptTimeoutMs) || receiptTimeoutMs <= 0 || receiptTimeoutMs > MAX_RECEIPT_TIMEOUT_MS) {
+    || !Number.isSafeInteger(receiptTimeoutMs) || receiptTimeoutMs <= 0 || receiptTimeoutMs > MAX_RECEIPT_TIMEOUT_MS
+    || forgeSidecar === null) {
     return invalid('valid repository, clock, dense bounded lanes and receipt timeout are required');
   }
   const normalized = lanes.map((lane) => normalizeLane(lane, repository));
@@ -221,7 +312,7 @@ export function projectStallSentinelReviewPipeline(input = {}) {
   if (normalized.some((lane) => seenPrs.has(lane.prNumber) || !seenPrs.add(lane.prNumber))) return invalid('duplicate PR lanes are not accepted');
 
   const records = Object.freeze(normalized
-    .map((lane) => classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys))
+    .map((lane) => classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys, forgeSidecar))
     .sort((left, right) => left.prNumber - right.prNumber));
   const count = (state) => records.filter((record) => record.state === state).length;
   const summary = Object.freeze({
@@ -230,6 +321,8 @@ export function projectStallSentinelReviewPipeline(input = {}) {
     recoverable: count(STALL_SENTINEL_STATE.STALLED_RECOVERABLE),
     blocked: count(STALL_SENTINEL_STATE.STALLED_BLOCKED),
     captainDecision: count(STALL_SENTINEL_STATE.CAPTAIN_DECISION),
+    forgeRouted: records.filter((record) => record.capacityRoute === STALL_SENTINEL_CAPACITY_ROUTE.FORGE_SIDECAR).length,
+    forgeActivationRequired: records.filter((record) => record.capacityRoute === STALL_SENTINEL_CAPACITY_ROUTE.FORGE_ACTIVATION).length,
     oldestMeaningfulInactivityAt: records.map((record) => record.lastMeaningfulActivityAt).sort()[0] ?? null,
   });
   return Object.freeze({
@@ -237,6 +330,7 @@ export function projectStallSentinelReviewPipeline(input = {}) {
     valid: true,
     records,
     summary,
+    forgeSidecar,
     sourceMutationAllowed: false,
     mergeAuthority: false,
     deploymentAuthority: false,

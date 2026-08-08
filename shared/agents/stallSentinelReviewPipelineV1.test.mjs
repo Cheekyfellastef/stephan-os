@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  STALL_SENTINEL_CAPACITY_ROUTE,
   STALL_SENTINEL_RULE,
   STALL_SENTINEL_STATE,
   projectStallSentinelReviewPipeline,
@@ -9,6 +10,7 @@ import {
 
 const NOW = '2026-08-08T16:40:00Z';
 const HEAD = 'a'.repeat(40);
+const MAIN = 'b'.repeat(40);
 
 function lane(overrides = {}) {
   return {
@@ -35,6 +37,25 @@ function projection(lanes, overrides = {}) {
     receiptTimeoutMs: 10 * 60 * 1000,
     ...overrides,
   });
+}
+
+function forgeSidecar(overrides = {}) {
+  return {
+    goalId: '#1671',
+    canonicalMainHead: MAIN,
+    mirrorHead: MAIN,
+    sourceReady: true,
+    m2Verdict: 'FORGE_SHADOW_M2_READY',
+    m2ReceiptId: 'forge-m2-runtime-receipt-001',
+    m3RuntimeReceiptSchema: 'stephanos.forge-shadow-m3-runner-runtime-receipt.v1',
+    m3RuntimeVerdict: 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY',
+    m3RuntimeReceiptId: 'forge-m3-runtime-receipt-001',
+    linuxReviewRunnerConnected: true,
+    windowsProofRunnerConnected: true,
+    canCarryRealWork: true,
+    evidenceRefs: ['receipts/forge/m2-001.json', 'receipts/forge/m3-001.json'],
+    ...overrides,
+  };
 }
 
 test('detects a green verification workflow whose coordinate job was skipped', () => {
@@ -74,8 +95,55 @@ test('rate-limited review without artifact schedules one retry after quota reset
   assert.equal(record.detectedRule, STALL_SENTINEL_RULE.REVIEW_RATE_LIMIT_NO_ARTIFACT);
   assert.equal(record.state, STALL_SENTINEL_STATE.STALLED_RECOVERABLE);
   assert.equal(record.exactNextSafeAction, 'RERUN_FAILED_REVIEW_JOB_ONCE_AFTER_RATE_LIMIT_RESET');
+  assert.equal(record.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.QUOTA_RETRY);
   assert.equal(record.notBefore, '2026-08-08T17:00:00.000Z');
   assert.equal(record.operatorNotificationRequired, false);
+});
+
+test('proven Forge runtime preempts quota waiting and takes the exact-head review', () => {
+  const result = projection([lane({
+    review: {
+      independentReviewConclusion: 'failure',
+      independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
+      independentReviewAttempt: 1,
+      rateLimitResetAt: '2026-08-08T17:00:00Z',
+    },
+  })], { forgeSidecar: forgeSidecar() });
+  const [record] = result.records;
+  assert.equal(record.state, STALL_SENTINEL_STATE.STALLED_RECOVERABLE);
+  assert.equal(record.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.FORGE_SIDECAR);
+  assert.equal(record.exactNextSafeAction, 'ROUTE_EXISTING_EXACT_HEAD_TO_PROVEN_FORGE_REVIEW_CAPACITY');
+  assert.equal(record.notBefore, null);
+  assert.equal(result.forgeSidecar.runtimeReady, true);
+  assert.equal(result.summary.forgeRouted, 1);
+});
+
+test('source-ready Forge without runtime receipts is activated but never reported available', () => {
+  const result = projection([lane({
+    review: {
+      independentReviewConclusion: 'failure',
+      independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
+      independentReviewAttempt: 2,
+    },
+  })], { forgeSidecar: forgeSidecar({
+    m2Verdict: '',
+    m2ReceiptId: '',
+    m3RuntimeReceiptSchema: '',
+    m3RuntimeVerdict: '',
+    m3RuntimeReceiptId: '',
+    linuxReviewRunnerConnected: false,
+    windowsProofRunnerConnected: false,
+    canCarryRealWork: false,
+    evidenceRefs: [],
+  }) });
+  const [record] = result.records;
+  assert.equal(result.forgeSidecar.sourceReady, true);
+  assert.equal(result.forgeSidecar.runtimeReady, false);
+  assert.equal(result.forgeSidecar.activationRequired, true);
+  assert.equal(record.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.FORGE_ACTIVATION);
+  assert.equal(record.exactNextSafeAction, 'ACTIVATE_EXISTING_FORGE_SIDECAR_AND_CONTINUE_NONCONFLICTING_LOCAL_CONSTRUCTION');
+  assert.equal(record.operatorNotificationRequired, false);
+  assert.equal(result.summary.forgeActivationRequired, 1);
 });
 
 test('retry exhaustion selects existing provider-neutral fallback without asking the operator', () => {
@@ -90,6 +158,7 @@ test('retry exhaustion selects existing provider-neutral fallback without asking
   const [record] = result.records;
   assert.equal(record.state, STALL_SENTINEL_STATE.STALLED_RECOVERABLE);
   assert.equal(record.exactNextSafeAction, 'ROUTE_EXISTING_EXACT_HEAD_TO_PROVIDER_NEUTRAL_REVIEW_FALLBACK');
+  assert.equal(record.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.PROVIDER_NEUTRAL);
   assert.equal(record.operatorNotificationRequired, false);
 });
 
@@ -158,4 +227,6 @@ test('fails closed on malformed, duplicate, sparse or oversized lane evidence', 
     title: `Lane ${index + 1}`,
     branch: `agent/lane-${index + 1}`,
   }))).valid, false);
+  assert.equal(projection([lane()], { forgeSidecar: forgeSidecar({ mirrorHead: 'c'.repeat(39) }) }).valid, false);
+  assert.equal(projection([lane()], { forgeSidecar: forgeSidecar({ evidenceRefs: ['https://unsafe.example/proof'] }) }).valid, false);
 });

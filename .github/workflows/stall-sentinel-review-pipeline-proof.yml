@@ -28,5 +28,10 @@ jobs:
         run: node --check shared/agents/stallSentinelReviewPipelineV1.mjs
       - name: Run deterministic review-pipeline regressions
         run: node --test shared/agents/stallSentinelReviewPipelineV1.test.mjs
+      - name: Prove existing Forge capacity contracts remain parseable
+        run: |
+          node --check shared/agents/dualForgeConstructionSidecarV1.mjs
+          node --check shared/agents/forgeShadowM3RunnerAdmissionV1.mjs
+          node --check shared/agents/forgeShadowM3RunnerRuntimePlanV1.mjs
       - name: Check exact diff whitespace
         run: git diff --check origin/main...HEAD
