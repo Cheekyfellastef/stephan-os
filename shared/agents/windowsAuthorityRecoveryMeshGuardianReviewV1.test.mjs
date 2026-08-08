@@ -127,7 +127,13 @@ test('uninstaller review is isolated from installer rules and accepts unregister
 
 test('uninstaller review still rejects actual registration or task start authority', () => {
   const path = WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[3];
-  for (const command of ['Register-ScheduledTask -TaskName x', 'Start-ScheduledTask -TaskName x', 'New-ScheduledTaskAction -Execute x']) {
+  for (const command of [
+    'Register-ScheduledTask -TaskName x',
+    'Start-ScheduledTask -TaskName x',
+    'New-ScheduledTaskAction -Execute x',
+    '(Register-ScheduledTask -TaskName x)',
+    'ScheduledTasks\\Register-ScheduledTask -TaskName x',
+  ]) {
     const result = review(path, `${validUninstaller}\n${command}`);
     assert.ok(codes(result).includes('recovery-guardian-uninstall-start-or-register-forbidden'), command);
   }
