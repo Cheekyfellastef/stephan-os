@@ -4,6 +4,7 @@ export const WINDOWS_AUTHORITY_NO_FAFF_RESCUE_PATHS_V1 = Object.freeze([
   'scripts/windows/repair-battle-bridge-control-plane-now.ps1',
   'scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd',
   'scripts/windows/repair-battle-bridge-control-plane-now.test.mjs',
+  'scripts/windows/status-stephanos-codex-dispatch-plugin.ps1',
 ]);
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -66,8 +67,11 @@ function reviewRescue(source, path, findings) {
     ["'scripts\\windows\\install-battle-bridge-github-sync.ps1'", 'no-faff-rescue-sync-installer-not-fixed'],
     ["'scripts\\windows\\install-battle-bridge-recovery-mesh.ps1'", 'no-faff-rescue-recovery-installer-not-fixed'],
     ["'scripts\\windows\\install-battle-bridge-github-command-mailbox.ps1'", 'no-faff-rescue-mailbox-installer-not-fixed'],
+    ["'scripts\\windows\\install-stephanos-codex-dispatch-plugin.ps1'", 'no-faff-rescue-dispatch-installer-not-fixed'],
+    ["'scripts\\windows\\status-stephanos-codex-dispatch-plugin.ps1'", 'no-faff-rescue-dispatch-status-not-fixed'],
+    ["Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'", 'no-faff-rescue-powershell-not-fixed'],
     ["@('ls-remote', $publicRemote, 'refs/heads/main')", 'no-faff-rescue-main-read-not-fixed'],
-    ["$PSCmdlet.ShouldProcess($repoRoot, 'Start the three existing reviewed Battle Bridge control-plane tasks and converge to public main')", 'no-faff-rescue-mutation-gate-missing'],
+    ["$PSCmdlet.ShouldProcess($repoRoot, 'Start the three existing reviewed Battle Bridge control-plane tasks, converge to public main, and repair the existing Codex dispatch attachment')", 'no-faff-rescue-mutation-gate-missing'],
     ['Invoke-FixedInstaller -Path $syncInstaller -ExpectedTaskName $syncTaskName', 'no-faff-rescue-sync-call-not-fixed'],
     ['Invoke-FixedInstaller -Path $recoveryInstaller -ExpectedTaskName $recoveryTaskName', 'no-faff-rescue-recovery-call-not-fixed'],
     ['Invoke-FixedInstaller -Path $mailboxInstaller -ExpectedTaskName $mailboxTaskName', 'no-faff-rescue-mailbox-call-not-fixed'],
@@ -78,13 +82,19 @@ function reviewRescue(source, path, findings) {
     ["Stop-BoundedRescue -Blocker 'PUBLIC_MAIN_MOVED_DURING_RESCUE'", 'no-faff-rescue-moving-main-failclosed-missing'],
     ["Stop-BoundedRescue -Blocker 'EXACT_TREE_PROOF_FAILED'", 'no-faff-rescue-tree-failclosed-missing'],
     ['Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue', 'no-faff-rescue-task-presence-proof-missing'],
+    ['-File $dispatchInstaller -RepositoryRoot $repoRoot', 'no-faff-rescue-dispatch-install-call-not-fixed'],
+    ['-File $dispatchStatus -RepositoryRoot $repoRoot', 'no-faff-rescue-dispatch-status-call-not-fixed'],
+    ["blocker = if ($dispatchProof.localBridgeReady -eq $true) { 'CHATGPT_DESKTOP_PLUGIN_ATTACHMENT_REQUIRED' }", 'no-faff-rescue-attachment-blocker-missing'],
+    ['newWorkerCreated = $false', 'no-faff-rescue-new-worker-denial-missing'],
+    ['newMailboxCreated = $false', 'no-faff-rescue-new-mailbox-denial-missing'],
     ['sourceMutationPerformedByRescue = $false', 'no-faff-rescue-source-mutation-denial-missing'],
     ['sourceConvergencePerformedByExistingReviewedSync = $true', 'no-faff-rescue-sync-delegation-proof-missing'],
     ['destructiveGitAllowed = $false', 'no-faff-rescue-destructive-git-denial-missing'],
     ['arbitraryShellAllowed = $false', 'no-faff-rescue-arbitrary-shell-denial-missing'],
     ['tailscaleCredentialRequired = $false', 'no-faff-rescue-tailscale-denial-missing'],
     ['forgeMutationPerformed = $false', 'no-faff-rescue-forge-mutation-denial-missing'],
-    ["finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_READY'", 'no-faff-rescue-ready-verdict-missing'],
+    ["finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_ATTACHMENT_REQUIRED'", 'no-faff-rescue-attachment-verdict-missing'],
+    ["finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_READY'", 'no-faff-rescue-ready-verdict-missing'],
   ]);
   requirePatterns(findings, source, path, [
     [/Read-FixedGitText -Arguments @\('-C', \$repoRoot, 'rev-parse', "\$observedHead`\$\{tree\}"\)/, 'no-faff-rescue-tree-binding-missing'],
@@ -101,6 +111,34 @@ function reviewRescue(source, path, findings) {
     [/(?:^|\s)-(?:EncodedCommand|Command)\b/im, 'no-faff-rescue-dynamic-powershell-forbidden'],
     [/Invoke-Expression|Restart-Computer|shutdown\.exe|Stop-Process|RunLevel\s+Highest/i, 'windows-authority-expanded'],
     [/git(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch)\b/i, 'windows-authority-source-mutation-forbidden'],
+  ]);
+}
+
+function reviewDispatchStatus(source, path, findings) {
+  requireLiterals(findings, source, path, [
+    ['.codex\\plugins\\stephanos-codex-dispatch', 'dispatch-status-install-root-not-fixed'],
+    ['scripts\\stephanos-codex-dispatch-mcp.mjs', 'dispatch-status-server-path-not-fixed'],
+    ['codex-dispatch\\surface-attachment-latest.json', 'dispatch-status-attachment-path-not-fixed'],
+    ["$fixedGitPath = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'dispatch-status-git-not-fixed'],
+    ['Get-FileHash -LiteralPath $mcpServerPath -Algorithm SHA256', 'dispatch-status-server-hash-proof-missing'],
+    ["'stephanos.codex-dispatch-surface-attachment.v1'", 'dispatch-status-attachment-schema-missing'],
+    ['[string]$attachmentProof.sourceHead -eq $sourceHead', 'dispatch-status-head-binding-missing'],
+    ['[string]$attachmentProof.serverSourceSha256 -eq $serverSourceSha256', 'dispatch-status-source-hash-binding-missing'],
+    ['$age.TotalMinutes -le 10', 'dispatch-status-freshness-bound-missing'],
+    ["@('dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result')", 'dispatch-status-required-tools-not-fixed'],
+    ['executionSurfaceHandshake = [ordered]@{', 'dispatch-status-handshake-missing'],
+    ['can_local_windows_proof = $attachmentProofValid', 'dispatch-status-windows-capability-proof-missing'],
+    ['heartbeatFresh = $attachmentProofFresh -and $attachmentProofValid', 'dispatch-status-heartbeat-proof-missing'],
+    ['readyForRemoteChatDispatch = $status.localBridgeReady -and $attachmentProofValid', 'dispatch-status-readiness-join-missing'],
+    ['STEPHANOS_CODEX_DISPATCH_BRIDGE_ATTACHED_READY', 'dispatch-status-ready-verdict-missing'],
+    ['BLOCKED_CHATGPT_PLUGIN_ATTACHMENT_UNPROVEN', 'dispatch-status-blocked-verdict-missing'],
+    ['if (-not $status.readyForRemoteChatDispatch) { exit 1 }', 'dispatch-status-failclosed-exit-missing'],
+  ]);
+  forbidPatterns(findings, source, path, [
+    [/\b(?:Start-ScheduledTask|Register-ScheduledTask|New-ScheduledTask|Start-Process)\b/i, 'dispatch-status-process-mutation-forbidden'],
+    [/\b(?:Invoke-WebRequest|Invoke-RestMethod|curl|wget|bitsadmin|certutil)\b/i, 'dispatch-status-network-forbidden'],
+    [/Invoke-Expression|Restart-Computer|shutdown\.exe|Stop-Process|RunLevel\s+Highest/i, 'windows-authority-expanded'],
+    [/git(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|fetch)\b/i, 'windows-authority-source-mutation-forbidden'],
   ]);
 }
 
@@ -125,11 +163,13 @@ function reviewStaticTest(source, path, findings) {
   requireLiterals(findings, source, path, [
     ["new URL('./repair-battle-bridge-control-plane-now.ps1'", 'no-faff-static-test-ps1-not-fixed'],
     ["new URL('./Repair-Battle-Bridge-Control-Plane-Now.cmd'", 'no-faff-static-test-launcher-not-fixed'],
+    ["new URL('./status-stephanos-codex-dispatch-plugin.ps1'", 'no-faff-static-test-status-not-fixed'],
     ["test('rescue is fixed to the canonical repository and three existing task installers'", 'no-faff-static-test-identity-guard-missing'],
     ["test('rescue reads Git identity but delegates all source convergence to the reviewed sync task'", 'no-faff-static-test-source-boundary-missing'],
     ["test('rescue does not require or expose Tailscale and Forge credentials or mutate Forge'", 'no-faff-static-test-credential-boundary-missing'],
     ["test('one-click launcher invokes only the fixed source-controlled rescue script'", 'no-faff-static-test-launcher-boundary-missing'],
-    ['BATTLE_BRIDGE_NO_FAFF_RESCUE_READY', 'no-faff-static-test-verdict-guard-missing'],
+    ['BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_READY', 'no-faff-static-test-verdict-guard-missing'],
+    ["test('dispatch readiness requires a fresh exact-head Windows tools-list attachment proof'", 'no-faff-static-test-attachment-guard-missing'],
     ['sourceMutationPerformedByRescue = \\$false', 'no-faff-static-test-source-denial-missing'],
     ['[\'\"](?:fetch|merge)[\'\"]', 'no-faff-static-test-convergence-denial-missing'],
   ]);
@@ -161,6 +201,7 @@ export function analyzeWindowsAuthorityNoFaffRescueReview(input = {}) {
     if (path.endsWith('repair-battle-bridge-control-plane-now.ps1')) reviewRescue(source, path, findings);
     if (path.endsWith('Repair-Battle-Bridge-Control-Plane-Now.cmd')) reviewLauncher(source, path, findings);
     if (path.endsWith('repair-battle-bridge-control-plane-now.test.mjs')) reviewStaticTest(source, path, findings);
+    if (path.endsWith('status-stephanos-codex-dispatch-plugin.ps1')) reviewDispatchStatus(source, path, findings);
     proofRefs.push(`proofs/windows-authority-specialist/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
   }
   const clean = findings.length === 0;

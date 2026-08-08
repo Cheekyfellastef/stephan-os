@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import {
+  createCodexDispatchAttachmentProof,
   createCodexDispatchMcpHandler,
   runStdioMcpServer,
+  STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA,
   STEPHANOS_CODEX_DISPATCH_MCP_NAME,
 } from '../../scripts/stephanos-codex-dispatch-mcp.mjs';
 
@@ -49,8 +51,23 @@ function fakeHostOps() {
 }
 
 test('MCP server advertises guarded dispatch, sync, full update, and deterministic diagnostics tools', async () => {
-  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
-  const initialized = await handler('initialize', { protocolVersion: '2025-06-18' });
+  const attachmentProofs = [];
+  const handler = createCodexDispatchMcpHandler({
+    integration: fakeIntegration(),
+    hostOps: fakeHostOps(),
+    now: () => '2026-08-08T12:00:00.000Z',
+    attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
+    attachmentIdentity: {
+      platform: 'win32',
+      repositoryRoot: 'C:\\repo',
+      sourceHead: 'a'.repeat(40),
+      serverSourceSha256: 'b'.repeat(64),
+    },
+  });
+  const initialized = await handler('initialize', {
+    protocolVersion: '2025-06-18',
+    clientInfo: { name: 'ChatGPT Desktop', version: '1.2.3' },
+  });
   assert.equal(initialized.serverInfo.name, STEPHANOS_CODEX_DISPATCH_MCP_NAME);
   assert.equal(initialized.serverInfo.version, '1.2.0');
   const listed = await handler('tools/list');
@@ -67,6 +84,47 @@ test('MCP server advertises guarded dispatch, sync, full update, and determinist
   assert.equal(listed.tools[3].annotations.destructiveHint, true);
   assert.equal(listed.tools[4].annotations.destructiveHint, true);
   assert.equal(listed.tools[5].annotations.readOnlyHint, true);
+  assert.equal(attachmentProofs.length, 1);
+  assert.equal(attachmentProofs[0].schemaVersion, STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA);
+  assert.equal(attachmentProofs[0].observedAt, '2026-08-08T12:00:00.000Z');
+  assert.equal(attachmentProofs[0].clientInfo.name, 'ChatGPT Desktop');
+  assert.equal(attachmentProofs[0].requiredDispatchToolsPresent, true);
+  assert.equal(attachmentProofs[0].attached, true);
+  assert.equal(attachmentProofs[0].sourceHead, 'a'.repeat(40));
+  assert.equal(attachmentProofs[0].serverSourceSha256, 'b'.repeat(64));
+  await handler('ping');
+  assert.equal(attachmentProofs.length, 2);
+});
+
+test('surface attachment proof fails closed away from an exact Windows source head', () => {
+  const linux = createCodexDispatchAttachmentProof({
+    platform: 'linux',
+    repositoryRoot: '/repo',
+    sourceHead: 'a'.repeat(40),
+    serverSourceSha256: 'b'.repeat(64),
+    surfaceReceipt: 'surface-1',
+  });
+  assert.equal(linux.attached, false);
+  assert.equal(linux.can_local_windows_proof, false);
+
+  const unknownHead = createCodexDispatchAttachmentProof({
+    platform: 'win32',
+    repositoryRoot: 'C:\\repo',
+    sourceHead: '',
+    serverSourceSha256: 'b'.repeat(64),
+    surfaceReceipt: 'surface-2',
+  });
+  assert.equal(unknownHead.attached, false);
+  assert.equal(unknownHead.can_local_windows_proof, false);
+
+  const unknownServer = createCodexDispatchAttachmentProof({
+    platform: 'win32',
+    repositoryRoot: 'C:\\repo',
+    sourceHead: 'a'.repeat(40),
+    serverSourceSha256: '',
+    surfaceReceipt: 'surface-3',
+  });
+  assert.equal(unknownServer.attached, false);
 });
 
 test('dispatch tool requires explicit operator approval', async () => {

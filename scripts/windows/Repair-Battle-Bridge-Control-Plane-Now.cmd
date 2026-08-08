@@ -29,7 +29,7 @@ if not "%EXITCODE%"=="0" (
   exit /b %EXITCODE%
 )
 
-echo Battle Bridge control plane restored and the existing mailbox started.
+echo Battle Bridge control plane restored, the existing mailbox started, and Remote Codex attachment proven.
 echo Forge remains gated until its real Windows proof completes.
 pause
 exit /b 0
