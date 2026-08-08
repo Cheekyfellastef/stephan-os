@@ -33,6 +33,7 @@ const SAFE_BRANCH = /^[a-z0-9](?:[a-z0-9._/-]{0,238}[a-z0-9])?$/i;
 const DEFAULT_RECEIPT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_RECEIPT_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_LANES = 50;
+const MAX_AUTHORITY_RECEIPT_AGE_MS = 24 * 60 * 60 * 1000;
 const SAFE_RECEIPT_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
 const SAFE_EVIDENCE_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
 const FORGE_M2_READY = 'FORGE_SHADOW_M2_READY';
@@ -43,18 +44,19 @@ const REVIEW_RECEIPT_SCHEMA = 'stephanos.independent-review-route-receipt.v1';
 
 const M2_RECEIPT_KEYS = Object.freeze([
   'schemaVersion', 'receiptId', 'repository', 'sourceHead', 'sourceTree', 'mirrorHead',
-  'mirrorTree', 'operation', 'state', 'finalVerdict', 'completedAt', 'payloadSha256',
+  'mirrorTree', 'operation', 'state', 'finalVerdict', 'completedAt', 'proofRefs', 'payloadSha256',
 ]);
 const M3_RECEIPT_KEYS = Object.freeze([
   'schemaVersion', 'receiptId', 'repository', 'sourceHead', 'sourceTree',
   'artifactSetDigest', 'runnerIdentities', 'linuxReviewRunnerConnected',
   'windowsProofRunnerConnected', 'teardownComplete', 'zeroResidualRegistration',
   'zeroResidualCredential', 'zeroResidualWorkspace', 'canCarryRealWork',
-  'finalVerdict', 'completedAt', 'payloadSha256',
+  'finalVerdict', 'completedAt', 'proofRefs', 'payloadSha256',
 ]);
 const REVIEW_RECEIPT_KEYS = Object.freeze([
   'schemaVersion', 'receiptId', 'repository', 'prNumber', 'branch', 'sourceHead',
-  'baseSha', 'conclusion', 'findingsCount', 'artifactDigest', 'completedAt', 'payloadSha256',
+  'baseSha', 'reviewClass', 'conclusion', 'findingsCount', 'artifactDigest',
+  'completedAt', 'payloadSha256',
 ]);
 
 function text(value) {
@@ -81,9 +83,17 @@ function normalizedConclusion(value) {
   return text(value).toLowerCase();
 }
 
-function actionKey(repository, prNumber, headSha, rule, capacityRoute = '', exactNextSafeAction = '') {
+function actionKey(
+  repository,
+  prNumber,
+  headSha,
+  rule,
+  capacityRoute = '',
+  exactNextSafeAction = '',
+  evidenceIdentity = '',
+) {
   return `stall-sentinel-${createHash('sha256')
-    .update(`${repository}\n${prNumber}\n${headSha}\n${rule}\n${capacityRoute}\n${exactNextSafeAction}`)
+    .update(`${repository}\n${prNumber}\n${headSha}\n${rule}\n${capacityRoute}\n${exactNextSafeAction}\n${evidenceIdentity}`)
     .digest('hex')
     .slice(0, 24)}`;
 }
@@ -106,11 +116,23 @@ function payloadSha256(receipt) {
   return createHash('sha256').update(canonicalJson(core), 'utf8').digest('hex');
 }
 
-function validCompletedAt(value) {
-  return timestamp(value) !== null && /(?:Z|[+-]\d{2}:\d{2})$/i.test(text(value));
+function freshCompletedAt(value, nowMs) {
+  const completedAtMs = timestamp(value);
+  return completedAtMs !== null
+    && /(?:Z|[+-]\d{2}:\d{2})$/i.test(text(value))
+    && completedAtMs <= nowMs
+    && nowMs - completedAtMs <= MAX_AUTHORITY_RECEIPT_AGE_MS;
 }
 
-function validM2Receipt(receipt, { repository, head, tree }) {
+function validReceiptProofRefs(value) {
+  return Array.isArray(value)
+    && value.length >= 1
+    && value.length <= 20
+    && new Set(value).size === value.length
+    && value.every((ref) => SAFE_EVIDENCE_REF.test(text(ref)) && !text(ref).includes('..'));
+}
+
+function validM2Receipt(receipt, { repository, head, tree, nowMs }) {
   return exactKeys(receipt, M2_RECEIPT_KEYS)
     && receipt.schemaVersion === FORGE_M2_RECEIPT_SCHEMA
     && SAFE_RECEIPT_ID.test(text(receipt.receiptId))
@@ -122,12 +144,13 @@ function validM2Receipt(receipt, { repository, head, tree }) {
     && receipt.operation === 'INSTALL_FORGE_SHADOW_M2'
     && receipt.state === 'DONE'
     && receipt.finalVerdict === FORGE_M2_READY
-    && validCompletedAt(receipt.completedAt)
+    && freshCompletedAt(receipt.completedAt, nowMs)
+    && validReceiptProofRefs(receipt.proofRefs)
     && SHA256.test(text(receipt.payloadSha256))
     && text(receipt.payloadSha256).toLowerCase() === payloadSha256(receipt);
 }
 
-function validM3Receipt(receipt, { repository, head, tree }) {
+function validM3Receipt(receipt, { repository, head, tree, nowMs }) {
   const runnerIdentities = Array.isArray(receipt?.runnerIdentities)
     ? receipt.runnerIdentities.map(text)
     : [];
@@ -150,12 +173,13 @@ function validM3Receipt(receipt, { repository, head, tree }) {
     && receipt.zeroResidualWorkspace === true
     && receipt.canCarryRealWork === true
     && receipt.finalVerdict === FORGE_M3_RUNTIME_READY
-    && validCompletedAt(receipt.completedAt)
+    && freshCompletedAt(receipt.completedAt, nowMs)
+    && validReceiptProofRefs(receipt.proofRefs)
     && SHA256.test(text(receipt.payloadSha256))
     && text(receipt.payloadSha256).toLowerCase() === payloadSha256(receipt);
 }
 
-function validReviewReceipt(receipt, lane, repository) {
+function validReviewReceipt(receipt, lane, repository, nowMs) {
   return exactKeys(receipt, REVIEW_RECEIPT_KEYS)
     && receipt.schemaVersion === REVIEW_RECEIPT_SCHEMA
     && SAFE_RECEIPT_ID.test(text(receipt.receiptId))
@@ -163,11 +187,12 @@ function validReviewReceipt(receipt, lane, repository) {
     && positiveInteger(receipt.prNumber) === lane.prNumber
     && receipt.branch === lane.branch
     && text(receipt.sourceHead).toLowerCase() === lane.headSha
-    && FULL_SHA.test(text(receipt.baseSha))
+    && text(receipt.baseSha).toLowerCase() === lane.baseSha
+    && receipt.reviewClass === lane.reviewClass
     && receipt.conclusion === 'success'
     && receipt.findingsCount === 0
     && DIGEST.test(text(receipt.artifactDigest))
-    && validCompletedAt(receipt.completedAt)
+    && freshCompletedAt(receipt.completedAt, nowMs)
     && SHA256.test(text(receipt.payloadSha256))
     && text(receipt.payloadSha256).toLowerCase() === payloadSha256(receipt);
 }
@@ -188,7 +213,7 @@ function invalid(reason) {
   });
 }
 
-function normalizeForgeSidecar(value) {
+function normalizeForgeSidecar(value, nowMs) {
   if (value === undefined || value === null) {
     return Object.freeze({
       declared: false,
@@ -222,14 +247,20 @@ function normalizeForgeSidecar(value) {
     || evidenceRefs.some((ref) => !SAFE_EVIDENCE_REF.test(ref) || ref.includes('..'))) return null;
   const sourceReady = value.sourceReady === true;
   const exactMirrorParity = canonicalMainHead === mirrorHead && canonicalMainTree === mirrorTree;
-  const binding = { repository, head: canonicalMainHead, tree: canonicalMainTree };
+  const binding = { repository, head: canonicalMainHead, tree: canonicalMainTree, nowMs };
   const m2ReceiptValid = validM2Receipt(value.m2Receipt, binding);
   const m3RuntimeReceiptValid = validM3Receipt(value.m3RuntimeReceipt, binding);
+  const receiptEvidenceRefs = m2ReceiptValid && m3RuntimeReceiptValid
+    ? [...new Set([...value.m2Receipt.proofRefs, ...value.m3RuntimeReceipt.proofRefs])].sort()
+    : [];
+  const evidenceBound = receiptEvidenceRefs.length === evidenceRefs.length
+    && receiptEvidenceRefs.every((ref, index) => ref === [...evidenceRefs].sort()[index]);
   const runtimeReady = sourceReady
     && exactMirrorParity
     && m2ReceiptValid
     && m3RuntimeReceiptValid
-    && evidenceRefs.length >= 2;
+    && evidenceRefs.length >= 2
+    && evidenceBound;
   return Object.freeze({
     declared: true,
     goalId,
@@ -245,21 +276,23 @@ function normalizeForgeSidecar(value) {
     canCarryRealWork: runtimeReady,
     m2ReceiptValid,
     m3RuntimeReceiptValid,
+    evidenceBound,
     m2ReceiptId: m2ReceiptValid ? text(value.m2Receipt.receiptId) : null,
     m3RuntimeReceiptId: m3RuntimeReceiptValid ? text(value.m3RuntimeReceipt.receiptId) : null,
     evidenceRefs: Object.freeze(evidenceRefs),
   });
 }
 
-function normalizeLane(lane, repository) {
+function normalizeLane(lane, repository, nowMs) {
   if (!lane || typeof lane !== 'object' || Array.isArray(lane)) return null;
   const prNumber = positiveInteger(lane.prNumber);
   const title = text(lane.title);
   const branch = text(lane.branch);
   const headSha = text(lane.headSha).toLowerCase();
+  const baseSha = text(lane.baseSha).toLowerCase();
   const lastMeaningfulActivityMs = timestamp(lane.lastMeaningfulActivityAt);
   if (!prNumber || !title || !SAFE_BRANCH.test(branch) || branch.includes('..')
-    || !FULL_SHA.test(headSha) || lastMeaningfulActivityMs === null) return null;
+    || !FULL_SHA.test(headSha) || !FULL_SHA.test(baseSha) || lastMeaningfulActivityMs === null) return null;
   const review = lane.review && typeof lane.review === 'object' && !Array.isArray(lane.review)
     ? lane.review
     : {};
@@ -275,6 +308,7 @@ function normalizeLane(lane, repository) {
     prReference: `PR #${prNumber} — ${title}`,
     branch,
     headSha,
+    baseSha,
     lastMeaningfulActivityAt: new Date(lastMeaningfulActivityMs).toISOString(),
     lastMeaningfulActivityMs,
     sourceChanging: lane.sourceChanging === true,
@@ -293,9 +327,13 @@ function normalizeLane(lane, repository) {
     rateLimitResetAt: rateLimitResetAtMs === null ? null : new Date(rateLimitResetAtMs).toISOString(),
     rateLimitResetAtMs,
     providerNeutralFallbackAvailable: review.providerNeutralFallbackAvailable === true,
+    providerNeutralFallbackReceiptId: SAFE_RECEIPT_ID.test(text(review.providerNeutralFallbackReceiptId))
+      ? text(review.providerNeutralFallbackReceiptId)
+      : null,
+    reviewClass: text(review.reviewClass) || 'independent-exact-head',
     evidenceRefs: Object.freeze([...new Set((Array.isArray(lane.evidenceRefs) ? lane.evidenceRefs : []).map(text).filter(Boolean))]),
   };
-  const receiptValid = validReviewReceipt(review.receipt, normalized, repository);
+  const receiptValid = validReviewReceipt(review.receipt, normalized, repository, nowMs);
   return Object.freeze({
     ...normalized,
     receiptValid,
@@ -325,7 +363,7 @@ function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys, forgeSide
       nextOwner = 'existing-forge-sidecar-controller';
       exactNextSafeAction = 'ROUTE_EXISTING_EXACT_HEAD_TO_PROVEN_FORGE_REVIEW_CAPACITY';
       capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.FORGE_SIDECAR;
-    } else if (lane.providerNeutralFallbackAvailable) {
+    } else if (lane.providerNeutralFallbackAvailable && lane.providerNeutralFallbackReceiptId) {
       state = STALL_SENTINEL_STATE.STALLED_RECOVERABLE;
       exactNextSafeAction = 'ROUTE_EXISTING_EXACT_HEAD_TO_PROVIDER_NEUTRAL_REVIEW_FALLBACK';
       capacityRoute = STALL_SENTINEL_CAPACITY_ROUTE.PROVIDER_NEUTRAL;
@@ -366,9 +404,26 @@ function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys, forgeSide
     exactNextSafeAction = 'ADVANCE_EXISTING_EXACT_HEAD_GATE';
   }
 
+  const recoveryEvidenceIdentity = capacityRoute === STALL_SENTINEL_CAPACITY_ROUTE.FORGE_SIDECAR
+    ? `${forgeSidecar.m2ReceiptId}:${forgeSidecar.m3RuntimeReceiptId}`
+    : (capacityRoute === STALL_SENTINEL_CAPACITY_ROUTE.FORGE_ACTIVATION
+      ? `${forgeSidecar.canonicalMainHead}:${forgeSidecar.canonicalMainTree}`
+      : (capacityRoute === STALL_SENTINEL_CAPACITY_ROUTE.PROVIDER_NEUTRAL
+        ? lane.providerNeutralFallbackReceiptId
+        : (capacityRoute === STALL_SENTINEL_CAPACITY_ROUTE.QUOTA_RETRY
+          ? `${lane.independentReviewAttempt}:${lane.rateLimitResetAt}`
+          : `${lane.dispatchCommentId ?? ''}:${lane.receiptId ?? ''}`)));
   const recoveryKey = rule === STALL_SENTINEL_RULE.NONE
     ? null
-    : actionKey(lane.repository, lane.prNumber, lane.headSha, rule, capacityRoute, exactNextSafeAction);
+    : actionKey(
+      lane.repository,
+      lane.prNumber,
+      lane.headSha,
+      rule,
+      capacityRoute,
+      exactNextSafeAction,
+      recoveryEvidenceIdentity,
+    );
   const recoveryAlreadyRecorded = recoveryKey !== null && existingRecoveryKeys.has(recoveryKey);
   if (recoveryAlreadyRecorded && state === STALL_SENTINEL_STATE.STALLED_RECOVERABLE) {
     state = STALL_SENTINEL_STATE.WATCHING;
@@ -383,6 +438,7 @@ function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys, forgeSide
       STALL_SENTINEL_RULE.NONE,
       capacityRoute,
       exactNextSafeAction,
+      recoveryEvidenceIdentity,
     ),
     goalId: lane.goalId || null,
     prNumber: lane.prNumber,
@@ -401,6 +457,7 @@ function classify(lane, nowMs, receiptTimeoutMs, existingRecoveryKeys, forgeSide
     confidence: 'VERIFIED_FACTS_ONLY',
     state,
     recoveryKey,
+    recoveryEvidenceIdentity,
     recoveryAlreadyRecorded,
     duplicateRecoveryAllowed: false,
     operatorNotificationRequired,
@@ -418,7 +475,7 @@ export function projectStallSentinelReviewPipeline(input = {}) {
   const existingRecoveryKeys = new Set(Array.isArray(input.existingRecoveryKeys)
     ? input.existingRecoveryKeys.map(text).filter(Boolean)
     : []);
-  const forgeSidecar = normalizeForgeSidecar(input.forgeSidecar);
+  const forgeSidecar = normalizeForgeSidecar(input.forgeSidecar, nowMs);
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
     || nowMs === null || !denseArray(lanes) || lanes.length > MAX_LANES
     || !Number.isSafeInteger(receiptTimeoutMs) || receiptTimeoutMs <= 0 || receiptTimeoutMs > MAX_RECEIPT_TIMEOUT_MS
@@ -426,7 +483,7 @@ export function projectStallSentinelReviewPipeline(input = {}) {
     || (forgeSidecar.declared && forgeSidecar.repository !== repository)) {
     return invalid('valid repository, clock, dense bounded lanes and receipt timeout are required');
   }
-  const normalized = lanes.map((lane) => normalizeLane(lane, repository));
+  const normalized = lanes.map((lane) => normalizeLane(lane, repository, nowMs));
   if (normalized.some((lane) => lane === null)) return invalid('one or more lane identities are malformed');
   const seenPrs = new Set();
   if (normalized.some((lane) => seenPrs.has(lane.prNumber) || !seenPrs.add(lane.prNumber))) return invalid('duplicate PR lanes are not accepted');

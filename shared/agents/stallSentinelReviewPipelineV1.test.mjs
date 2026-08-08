@@ -35,6 +35,7 @@ function lane(overrides = {}) {
     title: 'Add independent Recovery Mesh guardian V1',
     branch: 'fix/battle-bridge-recovery-mesh-guardian-v1',
     headSha: HEAD,
+    baseSha: BASE,
     lastMeaningfulActivityAt: '2026-08-08T16:10:00Z',
     sourceChanging: false,
     requiredChecksSuccessful: true,
@@ -76,6 +77,7 @@ function forgeSidecar(overrides = {}) {
       state: 'DONE',
       finalVerdict: 'FORGE_SHADOW_M2_READY',
       completedAt: '2026-08-08T16:30:00Z',
+      proofRefs: ['receipts/forge/m2-001.json'],
     }),
     m3RuntimeReceipt: signedReceipt({
       schemaVersion: 'stephanos.forge-shadow-m3-runner-runtime-receipt.v1',
@@ -94,6 +96,7 @@ function forgeSidecar(overrides = {}) {
       canCarryRealWork: true,
       finalVerdict: 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY',
       completedAt: '2026-08-08T16:35:00Z',
+      proofRefs: ['receipts/forge/m3-001.json'],
     }),
     evidenceRefs: ['receipts/forge/m2-001.json', 'receipts/forge/m3-001.json'],
     ...overrides,
@@ -109,6 +112,7 @@ function reviewReceipt(overrides = {}) {
     branch: 'fix/battle-bridge-recovery-mesh-guardian-v1',
     sourceHead: HEAD,
     baseSha: BASE,
+    reviewClass: 'independent-exact-head',
     conclusion: 'success',
     findingsCount: 0,
     artifactDigest: `sha256:${'f'.repeat(64)}`,
@@ -206,6 +210,7 @@ test('self-asserted or payload-tampered Forge readiness never preempts a proven 
       independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
       independentReviewAttempt: 2,
       providerNeutralFallbackAvailable: true,
+      providerNeutralFallbackReceiptId: 'provider-neutral-capacity-receipt-001',
     },
   })], { forgeSidecar: {
     ...forgeSidecar(),
@@ -213,6 +218,14 @@ test('self-asserted or payload-tampered Forge readiness never preempts a proven 
   } });
   assert.equal(rawClaims.forgeSidecar.runtimeReady, false);
   assert.equal(rawClaims.records[0].capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.PROVIDER_NEUTRAL);
+
+  const unboundEvidence = projection([lane({ review: {
+    independentReviewConclusion: 'failure',
+    independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
+    independentReviewAttempt: 2,
+  } })], { forgeSidecar: forgeSidecar({ evidenceRefs: ['receipts/forge/m2-001.json'] }) });
+  assert.equal(unboundEvidence.forgeSidecar.runtimeReady, false);
+  assert.equal(unboundEvidence.forgeSidecar.evidenceBound, false);
 });
 
 test('retry exhaustion selects existing provider-neutral fallback without asking the operator', () => {
@@ -222,6 +235,7 @@ test('retry exhaustion selects existing provider-neutral fallback without asking
       independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
       independentReviewAttempt: 2,
       providerNeutralFallbackAvailable: true,
+      providerNeutralFallbackReceiptId: 'provider-neutral-capacity-receipt-001',
     },
   })]);
   const [record] = result.records;
@@ -258,6 +272,30 @@ test('attempt-one retry remains eligible after reset and runs immediately', () =
   assert.equal(record.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.QUOTA_RETRY);
   assert.equal(record.state, STALL_SENTINEL_STATE.STALLED_RECOVERABLE);
   assert.equal(record.notBefore, null);
+});
+
+test('stale Forge receipts and missing teardown cannot claim runtime capacity', () => {
+  const staleM3 = signedReceipt({
+    ...Object.fromEntries(Object.entries(forgeSidecar().m3RuntimeReceipt).filter(([key]) => key !== 'payloadSha256')),
+    completedAt: '2026-08-07T16:39:59Z',
+  });
+  const stale = projection([lane({ review: {
+    independentReviewConclusion: 'failure',
+    independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
+    independentReviewAttempt: 2,
+  } })], { forgeSidecar: forgeSidecar({ m3RuntimeReceipt: staleM3 }) });
+  assert.equal(stale.forgeSidecar.runtimeReady, false);
+
+  const noTeardown = signedReceipt({
+    ...Object.fromEntries(Object.entries(forgeSidecar().m3RuntimeReceipt).filter(([key]) => key !== 'payloadSha256')),
+    teardownComplete: false,
+  });
+  const missingTeardown = projection([lane({ review: {
+    independentReviewConclusion: 'failure',
+    independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
+    independentReviewAttempt: 2,
+  } })], { forgeSidecar: forgeSidecar({ m3RuntimeReceipt: noTeardown }) });
+  assert.equal(missingTeardown.forgeSidecar.runtimeReady, false);
 });
 
 test('active source movement and bounded receipt waiting are not false-positive stalls', () => {
@@ -304,6 +342,7 @@ test('idempotency distinguishes a later higher-priority recovery route', () => {
   assert.equal(forged.state, STALL_SENTINEL_STATE.STALLED_RECOVERABLE);
   assert.equal(forged.recoveryAlreadyRecorded, false);
   assert.notEqual(forged.recoveryKey, quota.recoveryKey);
+  assert.equal(forged.recoveryEvidenceIdentity, 'forge-m2-runtime-receipt-001:forge-m3-runtime-receipt-001');
 });
 
 test('only a payload-valid review receipt bound to the live lane advances the gate', () => {
@@ -316,6 +355,18 @@ test('only a payload-valid review receipt bound to the live lane advances the ga
 
   const arbitrary = projection([lane({ review: { receiptId: 'x' } })]).records[0];
   assert.notEqual(arbitrary.exactNextSafeAction, 'ADVANCE_EXISTING_EXACT_HEAD_GATE');
+
+  const wrongBase = reviewReceipt({ baseSha: '8'.repeat(40) });
+  assert.notEqual(
+    projection([lane({ review: { receipt: wrongBase } })]).records[0].exactNextSafeAction,
+    'ADVANCE_EXISTING_EXACT_HEAD_GATE',
+  );
+
+  const wrongClass = reviewReceipt({ reviewClass: 'generic' });
+  assert.notEqual(
+    projection([lane({ review: { receipt: wrongClass } })]).records[0].exactNextSafeAction,
+    'ADVANCE_EXISTING_EXACT_HEAD_GATE',
+  );
 });
 
 test('records remain title-first, exact-head bound and authority-free', () => {
@@ -333,6 +384,7 @@ test('records remain title-first, exact-head bound and authority-free', () => {
 test('fails closed on malformed, duplicate, sparse or oversized lane evidence', () => {
   assert.equal(projectStallSentinelReviewPipeline().valid, false);
   assert.equal(projection([lane({ headSha: 'short' })]).valid, false);
+  assert.equal(projection([lane({ baseSha: 'short' })]).valid, false);
   assert.equal(projection([lane(), lane()]).valid, false);
   const sparse = [];
   sparse[1] = lane();
