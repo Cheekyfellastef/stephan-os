@@ -12,6 +12,7 @@ $taskName = 'Stephanos Battle Bridge Recovery Mesh'
 $guardianId = 'stephanos-battle-bridge-recovery-mesh-guardian-v1'
 $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $fixedPowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$scheduledTaskMutationScope = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_ONLY'
 
 function Stop-Guardian {
     param(
@@ -27,10 +28,11 @@ function Stop-Guardian {
         repairAttempted = $false
         blocker = $Blocker
         detail = $Detail
+        scheduledTaskMutationScope = $scheduledTaskMutationScope
         arbitraryShellAllowed = $false
         sourceMutationAllowed = $false
         gitMutationAllowed = $false
-        runtimeMutationAllowed = $false
+        arbitraryRuntimeMutationAllowed = $false
         mergeAuthority = $false
         finalVerdict = 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_BLOCKED'
         observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
@@ -87,10 +89,11 @@ if ($healthy) {
         staleAfterMinutes = $StaleAfterMinutes
         repairAttempted = $false
         repairApplied = $false
+        scheduledTaskMutationScope = $scheduledTaskMutationScope
         arbitraryShellAllowed = $false
         sourceMutationAllowed = $false
         gitMutationAllowed = $false
-        runtimeMutationAllowed = $false
+        arbitraryRuntimeMutationAllowed = $false
         mergeAuthority = $false
         finalVerdict = 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_HEALTHY'
         observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
@@ -123,10 +126,11 @@ if ([string]$receipt.taskName -ne $taskName -or $receipt.taskPresentAfter -ne $t
     repairAttempted = $true
     repairApplied = $true
     repairReceipt = $receipt
+    scheduledTaskMutationScope = $scheduledTaskMutationScope
     arbitraryShellAllowed = $false
     sourceMutationAllowed = $false
     gitMutationAllowed = $false
-    runtimeMutationAllowed = $false
+    arbitraryRuntimeMutationAllowed = $false
     mergeAuthority = $false
     finalVerdict = 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_REPAIRED'
     observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
