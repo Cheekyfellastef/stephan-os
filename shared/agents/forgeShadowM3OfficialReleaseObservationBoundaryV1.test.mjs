@@ -11,6 +11,9 @@ import {
   FORGE_SHADOW_M3_ARTIFACT_RESOLUTION_READY,
   resolveForgeShadowM3RunnerArtifacts,
 } from './forgeShadowM3RunnerArtifactResolverV1.mjs';
+import {
+  buildForgeShadowM3OfficialReleaseObservationExecutionBindingDigest,
+} from './forgeShadowM3OfficialReleaseObservationExecutionContractV1.mjs';
 
 const HEAD = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);
@@ -20,6 +23,9 @@ const PROVENANCE = `sha256:${'3'.repeat(64)}`;
 const LINUX = `sha256:${'4'.repeat(64)}`;
 const WINDOWS = `sha256:${'5'.repeat(64)}`;
 const NOW = '2026-08-08T01:15:00Z';
+const REQUESTED_AT = '2026-08-08T00:55:00Z';
+const REQUEST_ID = 'forge-m3-official-release-observation-request-001';
+const OBSERVATION_ID = 'forge-m3-official-release-observation-001';
 
 function asset(platform, patch = {}) {
   const linux = platform === 'linux/amd64';
@@ -47,15 +53,32 @@ function asset(platform, patch = {}) {
 }
 
 function receipt(patch = {}) {
-  const observationId = patch.observationId || 'forge-m3-official-release-observation-001';
+  const observationId = patch.observationId || OBSERVATION_ID;
+  const requestId = patch.requestId || REQUEST_ID;
+  const requestedAtUtc = patch.requestedAtUtc || REQUESTED_AT;
+  const requestBindingDigest = patch.requestBindingDigest
+    || buildForgeShadowM3OfficialReleaseObservationExecutionBindingDigest({
+      repository: 'Cheekyfellastef/stephan-os',
+      canonicalMainHead: HEAD,
+      canonicalMainTree: TREE,
+      requestId,
+      requestedAtUtc,
+      observationId,
+    });
   const sourceBindingDigest = buildForgeShadowM3OfficialReleaseSourceBindingDigest({
     repository: 'Cheekyfellastef/stephan-os',
     canonicalMainHead: HEAD,
     canonicalMainTree: TREE,
+    requestId,
+    requestedAtUtc,
+    requestBindingDigest,
     observationId,
   });
   return {
     schemaVersion: FORGE_SHADOW_M3_OFFICIAL_RELEASE_RECEIPT_SCHEMA,
+    requestId,
+    requestedAtUtc,
+    requestBindingDigest,
     observationId,
     observerClass: 'source-controlled-readonly-official-release-observer',
     sourceIdentity: 'forgejo-official-runner-release',
@@ -82,10 +105,25 @@ function receipt(patch = {}) {
 }
 
 function input(patch = {}) {
+  const requestId = patch.requestId || REQUEST_ID;
+  const requestedAtUtc = patch.requestedAtUtc || REQUESTED_AT;
+  const observationId = patch.observationReceipt?.observationId || OBSERVATION_ID;
+  const requestBindingDigest = patch.requestBindingDigest
+    || buildForgeShadowM3OfficialReleaseObservationExecutionBindingDigest({
+      repository: patch.repository || 'Cheekyfellastef/stephan-os',
+      canonicalMainHead: patch.canonicalMainHead || HEAD,
+      canonicalMainTree: patch.canonicalMainTree || TREE,
+      requestId,
+      requestedAtUtc,
+      observationId,
+    });
   return {
     repository: 'Cheekyfellastef/stephan-os',
     canonicalMainHead: HEAD,
     canonicalMainTree: TREE,
+    requestId,
+    requestedAtUtc,
+    requestBindingDigest,
     nowUtc: NOW,
     observationReceipt: receipt(),
     ...patch,
@@ -143,6 +181,30 @@ test('binds the observation to the exact repository, head, tree, and observation
     observationReceipt: receipt({ sourceBindingDigest: `sha256:${'9'.repeat(64)}` }),
   }));
   assert.ok(blockers(forged).has('source-binding-digest-mismatch'));
+});
+
+test('binds receipts to one exact execution request and rejects replay across request identity or time', () => {
+  const ready = planForgeShadowM3OfficialReleaseObservation(input());
+  assert.equal(ready.valid, true);
+  assert.equal(ready.requestId, REQUEST_ID);
+  assert.equal(ready.requestedAtUtc, REQUESTED_AT);
+  assert.equal(ready.requestBindingDigest, receipt().requestBindingDigest);
+
+  const secondRequestId = 'forge-m3-official-release-observation-request-002';
+  const secondRequestedAt = '2026-08-08T00:56:00Z';
+  for (const replay of [
+    input({ requestId: secondRequestId }),
+    input({ requestedAtUtc: secondRequestedAt }),
+    input({ requestBindingDigest: `sha256:${'8'.repeat(64)}` }),
+    input({ observationReceipt: receipt({ requestId: secondRequestId }) }),
+    input({ observationReceipt: receipt({ requestedAtUtc: secondRequestedAt }) }),
+    input({ observationReceipt: receipt({ requestBindingDigest: `sha256:${'8'.repeat(64)}` }) }),
+  ]) {
+    const blocked = planForgeShadowM3OfficialReleaseObservation(replay);
+    assert.equal(blocked.valid, false);
+    assert.equal(blocked.requestBindingDigest, '');
+    assert.equal(blocked.releaseObservation, null);
+  }
 });
 
 test('rejects caller locations, commands, credentials, and binary-shaped surfaces recursively', () => {
