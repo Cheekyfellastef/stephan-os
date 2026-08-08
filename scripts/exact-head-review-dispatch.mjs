@@ -8,7 +8,9 @@ import {
   buildMissingReceiptEscalationComment,
   buildReviewDispatchComment,
   buildReviewReceiptComment,
+  candidateReviewPrNumbers,
   canonicalLaneEvidence,
+  exactHeadReviewProgress,
   evaluateExactHeadReviewDispatch,
   parseOptionalManualPrNumber,
 } from '../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
@@ -112,16 +114,6 @@ async function githubPages(path, { token, itemKey = null } = {}) {
     }
   }
   return items;
-}
-
-function candidatePrNumbers(event, manualPrNumber) {
-  if (manualPrNumber) return [manualPrNumber];
-  const issuePr = event?.issue?.pull_request && positiveInteger(event?.issue?.number);
-  if (issuePr) return [issuePr];
-  const workflowPrs = Array.isArray(event?.workflow_run?.pull_requests)
-    ? event.workflow_run.pull_requests.map((pr) => positiveInteger(pr?.number)).filter(Boolean)
-    : [];
-  return [...new Set(workflowPrs)];
 }
 
 function mapComment(comment) {
@@ -289,14 +281,16 @@ async function listOpenPullRequests({ owner, repo, token }) {
   return githubPages(`/repos/${owner}/${repo}/pulls?state=open&sort=updated&direction=desc`, { token });
 }
 
-async function loadPrContext({ owner, repo, repository, token, prNumber, laneAuthorityLogin }) {
-  const pr = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { token });
-  const comments = (await githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token })).map(mapComment);
-  const reviews = (await githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { token })).map(mapReview);
-  const runs = (await githubPages(
-    `/repos/${owner}/${repo}/actions/runs?head_sha=${encodeURIComponent(text(pr?.head?.sha))}&event=pull_request`,
-    { token, itemKey: 'workflow_runs' },
-  )).map(mapWorkflowRun);
+async function loadPrContext({ owner, repo, repository, token, prNumber, laneAuthorityLogin, rawPr = null, mappedComments = null }) {
+  const pr = rawPr ?? await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { token });
+  const [comments, reviews, runs] = await Promise.all([
+    mappedComments ?? githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token }).then((items) => items.map(mapComment)),
+    githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { token }).then((items) => items.map(mapReview)),
+    githubPages(
+      `/repos/${owner}/${repo}/actions/runs?head_sha=${encodeURIComponent(text(pr?.head?.sha))}&event=pull_request`,
+      { token, itemKey: 'workflow_runs' },
+    ).then((items) => items.map(mapWorkflowRun)),
+  ]);
   const independentReviewEvidence = await loadIndependentReviewEvidence({
     owner,
     repo,
@@ -328,6 +322,21 @@ async function loadPrContext({ owner, repo, repository, token, prNumber, laneAut
   };
 }
 
+async function mapWithConcurrency(values, concurrency, mapper) {
+  const items = Array.from(values || []);
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, worker));
+  return results;
+}
+
 async function postPrComment({ owner, repo, token, prNumber, body }) {
   const result = await githubRequest(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
     method: 'POST',
@@ -338,22 +347,43 @@ async function postPrComment({ owner, repo, token, prNumber, body }) {
 }
 
 async function discoverCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin }) {
-  const numbers = (await listOpenPullRequests({ owner, repo, token }))
-    .map((pr) => positiveInteger(pr?.number))
-    .filter(Boolean);
-  const contexts = [];
-  for (const prNumber of [...new Set(numbers)]) {
-    const context = await loadPrContext({
-      owner,
-      repo,
-      repository,
-      token,
+  const openPullRequests = await listOpenPullRequests({ owner, repo, token });
+  const candidates = (await mapWithConcurrency(openPullRequests, 8, async (rawPr) => {
+    const prNumber = positiveInteger(rawPr?.number);
+    if (!prNumber) return null;
+    const mappedComments = (await githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token })).map(mapComment);
+    const laneEvidence = canonicalLaneEvidence(mappedComments, {
       prNumber,
-      laneAuthorityLogin,
+      trustedCoordinatorLogin: laneAuthorityLogin,
     });
-    if (context.canonicalLaneConfirmed) contexts.push(context);
-  }
-  return contexts;
+    return laneEvidence.confirmed ? { prNumber, rawPr, mappedComments } : null;
+  })).filter(Boolean);
+  return mapWithConcurrency(candidates, 4, (candidate) => loadPrContext({
+    owner,
+    repo,
+    repository,
+    token,
+    laneAuthorityLogin,
+    ...candidate,
+  }));
+}
+
+async function loadRequestedCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin, prNumbers }) {
+  const contexts = await mapWithConcurrency([...new Set(prNumbers)], 4, (prNumber) => loadPrContext({
+    owner,
+    repo,
+    repository,
+    token,
+    prNumber,
+    laneAuthorityLogin,
+  }));
+  return contexts.filter((context) => context.canonicalLaneConfirmed);
+}
+
+function appendSummary(lines) {
+  const summaryPath = text(process.env.GITHUB_STEP_SUMMARY);
+  if (!summaryPath) return;
+  fs.appendFileSync(summaryPath, `${lines.join('\n')}\n`);
 }
 
 async function main() {
@@ -382,111 +412,131 @@ async function main() {
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
   const manualPrNumber = parseOptionalManualPrNumber(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
-  const requestedNumbers = candidatePrNumbers(event, manualPrNumber);
-  const contexts = await discoverCanonicalContexts({
-    owner,
-    repo,
-    repository,
-    token,
-    laneAuthorityLogin,
-  });
+  const requestedNumbers = candidateReviewPrNumbers({ event, manualPrNumber });
+  const contextLoader = requestedNumbers.length ? loadRequestedCanonicalContexts : discoverCanonicalContexts;
+  const contexts = await contextLoader({ owner, repo, repository, token, laneAuthorityLogin, prNumbers: requestedNumbers });
 
+  if (requestedNumbers.length && contexts.length === 0) {
+    console.log('EXACT_HEAD_REVIEW_DISPATCH_DECISION=REQUESTED_PR_NOT_CANONICAL');
+    appendOutput('decision', 'REQUESTED_PR_NOT_CANONICAL');
+    return;
+  }
   if (contexts.length === 0) {
     console.log('EXACT_HEAD_REVIEW_DISPATCH_DECISION=NO_CANONICAL_LANE');
     appendOutput('decision', 'NO_CANONICAL_LANE');
     return;
   }
-  if (contexts.length > 1) {
-    const candidates = contexts.map((context) => `#${context.pr.number}@${context.pr.headSha}`).join(',');
-    throw new Error(`multiple canonical review lanes detected; refusing mutation: ${candidates}`);
-  }
-
-  const [context] = contexts;
-  if (requestedNumbers.length && !requestedNumbers.includes(context.pr.number)) {
-    console.log('EXACT_HEAD_REVIEW_DISPATCH_DECISION=REQUESTED_PR_NOT_CANONICAL');
-    appendOutput('decision', 'REQUESTED_PR_NOT_CANONICAL');
-    return;
-  }
   const timeoutMinutes = positiveInteger(process.env.STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES, Math.round(DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS / 60000));
-  const coordinatorComments = normalizeReviewCoordinatorMarkerComments(
-    context.comments,
-    { laneAuthorityLogin },
-  );
-  const decision = evaluateExactHeadReviewDispatch({
-    repository,
-    now: new Date().toISOString(),
-    receiptTimeoutMs: timeoutMinutes * 60 * 1000,
-    trustedCoordinatorLogin: MACHINE_COORDINATOR_SENTINEL_LOGIN,
-    canonicalLaneConfirmed: context.canonicalLaneConfirmed,
-    pr: context.pr,
-    workflowRuns: context.workflowRuns,
-    independentReviewWorkflowId: context.independentReviewWorkflowId,
-    independentReviewRuns: context.independentReviewRuns,
-    independentReviewJobsByRunId: context.independentReviewJobsByRunId,
-    comments: coordinatorComments,
-    reviews: context.reviews,
-  });
+  const results = [];
+  let stalled = false;
+  for (const context of contexts.sort((left, right) => left.pr.number - right.pr.number)) {
+    const coordinatorComments = normalizeReviewCoordinatorMarkerComments(context.comments, { laneAuthorityLogin });
+    const decision = evaluateExactHeadReviewDispatch({
+      repository,
+      now: new Date().toISOString(),
+      receiptTimeoutMs: timeoutMinutes * 60 * 1000,
+      trustedCoordinatorLogin: MACHINE_COORDINATOR_SENTINEL_LOGIN,
+      canonicalLaneConfirmed: context.canonicalLaneConfirmed,
+      pr: context.pr,
+      workflowRuns: context.workflowRuns,
+      independentReviewWorkflowId: context.independentReviewWorkflowId,
+      independentReviewRuns: context.independentReviewRuns,
+      independentReviewJobsByRunId: context.independentReviewJobsByRunId,
+      comments: coordinatorComments,
+      reviews: context.reviews,
+    });
+    const progress = exactHeadReviewProgress(decision.decision);
+    console.log(`EXACT_HEAD_REVIEW_DISPATCH_DECISION_PR_${decision.prNumber}=${decision.decision}`);
+    console.log(`EXACT_HEAD_REVIEW_PROGRESS_PR_${decision.prNumber}=${progress}`);
+    console.log(`EXACT_HEAD_REVIEW_HEAD_PR_${decision.prNumber}=${decision.exactHead}`);
+    console.log(`EXACT_HEAD_REVIEW_REASON_PR_${decision.prNumber}=${decision.reason}`);
 
-  console.log(`EXACT_HEAD_REVIEW_DISPATCH_DECISION=${decision.decision}`);
-  console.log(`EXACT_HEAD_REVIEW_PR=${decision.prNumber}`);
-  console.log(`EXACT_HEAD_REVIEW_HEAD=${decision.exactHead}`);
-  console.log(`EXACT_HEAD_REVIEW_REASON=${decision.reason}`);
-  appendOutput('decision', decision.decision);
-  appendOutput('pr_number', decision.prNumber ?? '');
-  appendOutput('exact_head', decision.exactHead);
-  appendOutput('reason', decision.reason);
-
-  let commentId = null;
-  switch (decision.decision) {
-    case EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW:
-      commentId = await postPrComment({
-        owner,
-        repo,
-        token,
-        prNumber: decision.prNumber,
-        body: buildReviewDispatchComment({ prNumber: decision.prNumber, headSha: decision.exactHead }),
-      });
-      console.log(`EXACT_HEAD_REVIEW_DISPATCH_COMMENT_ID=${commentId}`);
-      appendOutput('comment_id', commentId ?? '');
-      break;
-
-    case EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT:
-      commentId = await postPrComment({
-        owner,
-        repo,
-        token,
-        prNumber: decision.prNumber,
-        body: buildReviewReceiptComment({
+    let commentId = null;
+    switch (decision.decision) {
+      case EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW:
+        commentId = await postPrComment({
+          owner,
+          repo,
+          token,
           prNumber: decision.prNumber,
-          headSha: decision.exactHead,
-          externalReceiptId: decision.externalReceiptId,
-        }),
-      });
-      console.log(`EXACT_HEAD_REVIEW_RECEIPT_COMMENT_ID=${commentId}`);
-      appendOutput('comment_id', commentId ?? '');
-      break;
+          body: buildReviewDispatchComment({ prNumber: decision.prNumber, headSha: decision.exactHead }),
+        });
+        console.log(`EXACT_HEAD_REVIEW_DISPATCH_COMMENT_ID=${commentId}`);
+        appendOutput('comment_id', commentId ?? '');
+        break;
 
-    case EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT:
-      commentId = await postPrComment({
-        owner,
-        repo,
-        token,
-        prNumber: decision.prNumber,
-        body: buildMissingReceiptEscalationComment({
+      case EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT:
+        commentId = await postPrComment({
+          owner,
+          repo,
+          token,
           prNumber: decision.prNumber,
-          headSha: decision.exactHead,
-          timeoutMinutes,
-          dispatchCommentId: decision.dispatchCommentId,
-        }),
-      });
-      console.log(`EXACT_HEAD_REVIEW_ESCALATION_COMMENT_ID=${commentId}`);
-      appendOutput('comment_id', commentId ?? '');
-      process.exitCode = 2;
-      break;
+          body: buildReviewReceiptComment({
+            prNumber: decision.prNumber,
+            headSha: decision.exactHead,
+            externalReceiptId: decision.externalReceiptId,
+          }),
+        });
+        console.log(`EXACT_HEAD_REVIEW_RECEIPT_COMMENT_ID=${commentId}`);
+        appendOutput('comment_id', commentId ?? '');
+        break;
 
-    default:
-      break;
+      case EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT:
+        commentId = await postPrComment({
+          owner,
+          repo,
+          token,
+          prNumber: decision.prNumber,
+          body: buildMissingReceiptEscalationComment({
+            prNumber: decision.prNumber,
+            headSha: decision.exactHead,
+            timeoutMinutes,
+            dispatchCommentId: decision.dispatchCommentId,
+          }),
+        });
+        console.log(`EXACT_HEAD_REVIEW_ESCALATION_COMMENT_ID=${commentId}`);
+        appendOutput('comment_id', commentId ?? '');
+        stalled = true;
+        break;
+
+      case EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT:
+        stalled = true;
+        break;
+
+      default:
+        break;
+    }
+    results.push({
+      prNumber: decision.prNumber,
+      exactHead: decision.exactHead,
+      decision: decision.decision,
+      progress,
+      reason: decision.reason,
+      commentId,
+    });
   }
+
+  const single = results.length === 1 ? results[0] : null;
+  appendOutput('decision', single?.decision ?? 'MULTIPLE_PR_RESULTS');
+  appendOutput('progress', single?.progress ?? 'MULTIPLE_PR_RESULTS');
+  appendOutput('pr_number', single?.prNumber ?? '');
+  appendOutput('exact_head', single?.exactHead ?? '');
+  appendOutput('reason', single?.reason ?? `${results.length} independent canonical review lanes evaluated`);
+  appendOutput('results', JSON.stringify(results));
+  appendOutput('retry_targets', JSON.stringify(results.filter((result) => [
+    EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW,
+    EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT,
+    EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT,
+    EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT,
+  ].includes(result.decision)).map(({ prNumber, exactHead }) => ({ prNumber, exactHead }))));
+  appendSummary([
+    '## Exact-head review coordination',
+    '',
+    '| PR | Exact head | Progress | Decision |',
+    '|---:|---|---|---|',
+    ...results.map((result) => `| #${result.prNumber} | \`${result.exactHead.slice(0, 12)}\` | ${result.progress} | ${result.decision} |`),
+  ]);
+  if (stalled) process.exitCode = 2;
 }
 
 main().catch((error) => {
