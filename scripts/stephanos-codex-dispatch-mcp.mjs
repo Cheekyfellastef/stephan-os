@@ -25,6 +25,15 @@ export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
 export const STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA = 'stephanos.codex-dispatch-surface-attachment.v1';
 
+const SUPPORTED_CODEX_CLIENT_NAMES = Object.freeze(new Set(['codex-mcp-client']));
+const SUPPORTED_MCP_PROTOCOL_VERSIONS = Object.freeze(new Set([
+  '2024-11-05',
+  '2025-03-26',
+  '2025-06-18',
+]));
+const CLIENT_VERSION = /^[0-9A-Za-z][0-9A-Za-z._+-]{0,39}$/;
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const TOOLS = Object.freeze([
   {
     name: 'dispatch_codex_task',
@@ -121,6 +130,40 @@ function boundedText(value, maxLength = 160) {
   return String(value ?? '').trim().slice(0, maxLength);
 }
 
+function normalizeClientInfo(clientInfo = {}) {
+  const name = boundedText(clientInfo?.name, 80);
+  const version = boundedText(clientInfo?.version, 40);
+  return Object.freeze({
+    name,
+    version,
+    supported: SUPPORTED_CODEX_CLIENT_NAMES.has(name.toLowerCase()) && CLIENT_VERSION.test(version),
+  });
+}
+
+function normalizeClientSession(clientSession = {}, clientInfo = {}) {
+  const normalizedClient = normalizeClientInfo(clientInfo);
+  const session = Object.freeze({
+    sessionId: boundedText(clientSession?.sessionId, 36),
+    protocolVersion: boundedText(clientSession?.protocolVersion, 24),
+    initializeReceived: clientSession?.initializeReceived === true,
+    initializedNotificationReceived: clientSession?.initializedNotificationReceived === true,
+    initializedAt: boundedText(clientSession?.initializedAt, 40),
+    readyAt: boundedText(clientSession?.readyAt, 40),
+    supportedClient: normalizedClient.supported,
+  });
+  const initializedAt = Date.parse(session.initializedAt);
+  const readyAt = Date.parse(session.readyAt);
+  const ready = SESSION_ID.test(session.sessionId)
+    && SUPPORTED_MCP_PROTOCOL_VERSIONS.has(session.protocolVersion)
+    && session.initializeReceived
+    && session.initializedNotificationReceived
+    && session.supportedClient
+    && Number.isFinite(initializedAt)
+    && Number.isFinite(readyAt)
+    && readyAt >= initializedAt;
+  return Object.freeze({ ...session, ready });
+}
+
 function readSourceHead(repoRoot) {
   if (!repoRoot) return '';
   const gitExecutable = process.env.STEPHANOS_GIT_EXE
@@ -146,6 +189,7 @@ function currentServerSourceSha256() {
 
 export function createCodexDispatchAttachmentProof({
   clientInfo = {},
+  clientSession = {},
   now = new Date().toISOString(),
   platform = process.platform,
   repositoryRoot = process.env.STEPHANOS_REPO_ROOT || '',
@@ -157,20 +201,26 @@ export function createCodexDispatchAttachmentProof({
   const windows = platform === 'win32';
   const exactSourceHead = /^[0-9a-f]{40}$/.test(sourceHead) ? sourceHead : '';
   const exactServerSourceSha256 = /^[0-9a-f]{64}$/.test(serverSourceSha256) ? serverSourceSha256 : '';
+  const normalizedClient = normalizeClientInfo(clientInfo);
+  const normalizedSession = normalizeClientSession(clientSession, normalizedClient);
+  const attached = windows && Boolean(exactSourceHead) && Boolean(exactServerSourceSha256) && normalizedSession.ready;
   return Object.freeze({
     schemaVersion: STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA,
     observedAt: now,
     surfaceReceipt,
     surfaceId: 'stephanos-codex-dispatch-local-mcp',
-    attached: windows && Boolean(exactSourceHead) && Boolean(exactServerSourceSha256),
+    attached,
     platform,
-    can_local_windows_proof: windows && Boolean(exactSourceHead) && Boolean(exactServerSourceSha256),
+    can_local_windows_proof: attached,
     repositoryRoot: repositoryRoot ? resolve(repositoryRoot) : '',
     sourceHead: exactSourceHead,
     serverSourceSha256: exactServerSourceSha256,
-    clientInfo: Object.freeze({
-      name: boundedText(clientInfo?.name, 80),
-      version: boundedText(clientInfo?.version, 40),
+    clientInfo: Object.freeze({ name: normalizedClient.name, version: normalizedClient.version }),
+    clientSession: normalizedSession,
+    transport: Object.freeze({
+      kind: 'local-stdio',
+      clientIdentityAuthenticated: false,
+      remoteTransportAuthenticated: false,
     }),
     toolsListed: Object.freeze(toolNames),
     requiredDispatchToolsPresent: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result']
@@ -232,6 +282,7 @@ export function createCodexDispatchMcpHandler({
   attachmentIdentity = {},
 } = {}) {
   let clientInfo = {};
+  let clientSession = null;
   let toolsListed = false;
   const repositoryRoot = attachmentIdentity.repositoryRoot || process.env.STEPHANOS_REPO_ROOT || '';
   const processAttachmentIdentity = Object.freeze({
@@ -242,12 +293,24 @@ export function createCodexDispatchMcpHandler({
   });
   const publishAttachmentHeartbeat = () => attachmentProofPublisher(createCodexDispatchAttachmentProof({
     clientInfo,
+    clientSession,
     now: now(),
     ...processAttachmentIdentity,
   }));
+  const clientSessionReady = () => normalizeClientSession(clientSession, clientInfo).ready;
   return async function handle(method, params = {}) {
     if (method === 'initialize') {
       clientInfo = params.clientInfo && typeof params.clientInfo === 'object' ? params.clientInfo : {};
+      const initializedAt = now();
+      clientSession = {
+        sessionId: randomUUID(),
+        protocolVersion: boundedText(params.protocolVersion, 24),
+        initializeReceived: true,
+        initializedNotificationReceived: false,
+        initializedAt,
+        readyAt: '',
+      };
+      toolsListed = false;
       return {
         protocolVersion: params.protocolVersion || '2025-06-18',
         capabilities: { tools: { listChanged: false } },
@@ -256,15 +319,18 @@ export function createCodexDispatchMcpHandler({
       };
     }
     if (method === 'ping') {
-      if (toolsListed) publishAttachmentHeartbeat();
+      if (toolsListed && clientSessionReady()) publishAttachmentHeartbeat();
       return {};
     }
     if (method === 'tools/list') {
-      toolsListed = true;
-      publishAttachmentHeartbeat();
+      toolsListed = clientSessionReady();
+      if (toolsListed) publishAttachmentHeartbeat();
       return { tools: TOOLS };
     }
     if (method === 'tools/call') {
+      if (!clientSessionReady()) {
+        return asTextResult({ ok: false, blocker: 'MCP_CLIENT_SESSION_NOT_READY' }, true);
+      }
       if (toolsListed) publishAttachmentHeartbeat();
       const name = String(params.name || '');
       const args = params.arguments || {};
@@ -313,6 +379,16 @@ export function createCodexDispatchMcpHandler({
         return asTextResult(result, !result.ok);
       }
       return asTextResult({ ok: false, blocker: 'UNKNOWN_TOOL', tool: name }, true);
+    }
+    if (method === 'notifications/initialized') {
+      if (clientSession?.initializeReceived === true) {
+        clientSession = {
+          ...clientSession,
+          initializedNotificationReceived: true,
+          readyAt: now(),
+        };
+      }
+      return undefined;
     }
     if (method.startsWith('notifications/')) return undefined;
     throw new Error(`Unsupported MCP method: ${method}`);
