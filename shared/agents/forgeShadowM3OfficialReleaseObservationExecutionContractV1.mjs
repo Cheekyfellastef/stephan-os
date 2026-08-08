@@ -113,7 +113,7 @@ function findForbiddenField(value, trail = []) {
 
 export function parseForgeShadowM3StrictExplicitTimezoneInstant(value) {
   const normalized = text(value);
-  const match = STRICT_EXPLICIT_TIMEZONE.exec(normalized);
+  const match = normalized.match(STRICT_EXPLICIT_TIMEZONE);
   if (!match) return Number.NaN;
   const year = Number(match[1]);
   const month = Number(match[2]);
