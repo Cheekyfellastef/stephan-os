@@ -6,7 +6,7 @@ const NO_FAFF_PATH = './windowsAuthorityNoFaffRescueReviewV1.mjs';
 const RECOVERY_GUARDIAN_PATH = './windowsAuthorityRecoveryMeshGuardianReviewV1.mjs';
 const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
 const NO_FAFF_BLOB_SHA = '06d3d9da13f930be1f907187d13e7f0df898b6a2';
-const RECOVERY_GUARDIAN_BLOB_SHA = '6bbdc1158d80c3abd3836b7f8a04a926192f66b8';
+const RECOVERY_GUARDIAN_BLOB_SHA = 'faf909c98f9136d71ed45d37a6775cb8b3df8f42';
 const EXPECTED_NO_FAFF_PATHS = Object.freeze([
   'scripts/windows/repair-battle-bridge-control-plane-now.ps1',
   'scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd',
