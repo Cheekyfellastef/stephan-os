@@ -38,6 +38,8 @@ The response projects these truths separately:
 
 Matching head strings alone are insufficient. Evidence older than 35 minutes is `STALE`, missing sync evidence is blocked, source drift is `WINDOWS_CHECKOUT_NOT_AT_GITHUB_MAIN`, and served drift is `SERVED_RUNTIME_NOT_AT_WINDOWS_HEAD`. A stale or missing response must never be described as current or live.
 
+The same projection exposes the updater observation separately as `HEALTHY`, `RUNNING_BLOCKED`, `STALE_OR_NOT_RUNNING`, or `UNPROVEN`, including its last observed timestamp and expected 15-minute interval. This distinguishes a watcher that is alive but safely blocked from one that has silently stopped producing evidence.
+
 ## Stephanos as the conversation surface
 
 The Shared Workspace remains the one canonical conversation substrate. Participants address bounded messages to `stephanos`; Stephanos projects current status, proof, blockers and responses from those records. This contract does not create another mailbox, workspace, status database, execution authority or unrestricted chat transport. It makes the existing participant and relay paths converge on one evidence-backed Stephanos conversation.

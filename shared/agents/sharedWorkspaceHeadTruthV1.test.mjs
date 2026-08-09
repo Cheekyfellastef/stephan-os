@@ -45,6 +45,8 @@ test('projects exact GitHub, Windows, built and served heads when all current ev
   assert.equal(result.sourceHeadsAgree, true);
   assert.equal(result.servedMatchesCheckout, true);
   assert.equal(result.blocker, '');
+  assert.equal(result.syncTaskHealth, 'HEALTHY');
+  assert.equal(result.syncTaskExpectedIntervalMinutes, 15);
 });
 
 test('reports exact source drift without allowing a stale live claim', () => {
@@ -68,6 +70,7 @@ test('stale evidence is explicit and never treated as current even when heads ag
   assert.equal(result.state, 'STALE');
   assert.equal(result.freshness, 'STALE');
   assert.equal(result.blocker, 'HEAD_TRUTH_SYNC_RECORD_STALE');
+  assert.equal(result.syncTaskHealth, 'STALE_OR_NOT_RUNNING');
   assert.equal(result.builtRuntimeHead, '');
   assert.equal(result.servedRuntimeHead, '');
 });
@@ -77,6 +80,17 @@ test('missing sync evidence fails closed while optional runtime records may be a
   assert.equal(result.state, 'BLOCKED');
   assert.equal(result.freshness, 'UNKNOWN');
   assert.equal(result.blocker, 'HEAD_TRUTH_SYNC_RECORD_MISSING');
+  assert.equal(result.syncTaskHealth, 'UNPROVEN');
+});
+
+test('a fresh published sync blocker proves the watcher ran but could not converge', () => {
+  const value = records();
+  value.sync = { ...value.sync, classification: 'BLOCKED_DIRTY_SOURCE', exactNextAction: 'Preserve source dirt.' };
+  const result = buildSharedWorkspaceHeadTruthProjection({ records: value, timestampUtc: '2026-08-09T01:00:00.000Z', nowMs: NOW });
+  assert.equal(result.state, 'BLOCKED');
+  assert.equal(result.syncTaskHealth, 'RUNNING_BLOCKED');
+  assert.equal(result.blocker, 'BLOCKED_DIRTY_SOURCE');
+  assert.equal(result.exactNextAction, 'Preserve source dirt.');
 });
 
 test('bounded loader reads only the three fixed Shared Workspace status records', async () => {

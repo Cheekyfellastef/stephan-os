@@ -93,6 +93,14 @@ export function buildSharedWorkspaceHeadTruthProjection({
   const builtRuntimeHead = builtHead(refresh);
   const sourceHeadsAgree = Boolean(githubMainHead && windowsCheckoutHead && githubMainHead === windowsCheckoutHead);
   const servedMatchesCheckout = Boolean(runtime.servedHead && windowsCheckoutHead && runtime.servedHead === windowsCheckoutHead);
+  const syncClassification = text(sync?.classification) || 'UNKNOWN';
+  const syncTaskHealth = !sync
+    ? 'UNPROVEN'
+    : freshness === 'STALE'
+      ? 'STALE_OR_NOT_RUNNING'
+      : syncClassification.startsWith('BLOCKED_')
+        ? 'RUNNING_BLOCKED'
+        : 'HEALTHY';
 
   let blocker = '';
   let exactNextAction = 'Continue observing canonical Shared Workspace head truth.';
@@ -102,8 +110,8 @@ export function buildSharedWorkspaceHeadTruthProjection({
   } else if (freshness === 'STALE') {
     blocker = 'HEAD_TRUTH_SYNC_RECORD_STALE';
     exactNextAction = 'Repair the existing Battle Bridge control plane; do not trust the last observed Windows or served head as current.';
-  } else if (text(sync.classification).startsWith('BLOCKED_')) {
-    blocker = text(sync.classification);
+  } else if (syncClassification.startsWith('BLOCKED_')) {
+    blocker = syncClassification;
     exactNextAction = text(sync.exactNextAction) || 'Resolve the published sync blocker through the existing recovery lane.';
   } else if (!githubMainHead || !windowsCheckoutHead) {
     blocker = 'HEAD_TRUTH_EXACT_HEAD_MISSING';
@@ -134,8 +142,11 @@ export function buildSharedWorkspaceHeadTruthProjection({
     servedRuntimeHead: runtime.servedHead,
     sourceHeadsAgree,
     servedMatchesCheckout,
-    syncClassification: text(sync?.classification) || 'UNKNOWN',
+    syncClassification,
     syncTaskName: text(sync?.taskName) || 'Stephanos Battle Bridge GitHub Sync',
+    syncTaskExpectedIntervalMinutes: 15,
+    syncTaskLastObservedUtc: timestamp(sync?.timestampUtc),
+    syncTaskHealth,
     runtimeExactHeadProofOk: runtime.exactHeadProofOk,
     blocker,
     exactNextAction,
