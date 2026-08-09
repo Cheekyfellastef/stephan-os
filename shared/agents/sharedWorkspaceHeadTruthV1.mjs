@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises';
 
-import { resolveSharedWorkspacePath } from './sharedAgentWorkspaceStore.mjs';
+import {
+  SHARED_WORKSPACE_RECORD_KINDS,
+  SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+  resolveSharedWorkspacePath,
+  validateSharedWorkspaceRecord,
+} from './sharedAgentWorkspaceStore.mjs';
 
 export const SHARED_WORKSPACE_HEAD_TRUTH_SCHEMA = 'stephanos.shared-workspace.head-truth.v1';
 export const SHARED_WORKSPACE_HEAD_TRUTH_STALE_AFTER_MS = 35 * 60 * 1000;
@@ -18,6 +23,29 @@ export const SHARED_WORKSPACE_HEAD_TRUTH_RECORDS = Object.freeze({
 
 const FIXED_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SHA = /^[0-9a-f]{40}$/i;
+const FIXED_SYNC_STATUS_ID = 'battle-bridge-github-sync-current';
+const FIXED_SYNC_TASK_NAME = 'Stephanos Battle Bridge GitHub Sync';
+const SYNC_CLASSIFICATIONS = new Set([
+  'SYNC_NO_CHANGE',
+  'SYNC_FAST_FORWARD_READY',
+  'SYNC_FAST_FORWARD_APPLIED',
+  'BLOCKED_DIRTY_SOURCE',
+  'BLOCKED_NON_MAIN_BRANCH',
+  'BLOCKED_REMOTE_MISMATCH',
+  'BLOCKED_HEAD_PROOF_MISSING',
+  'BLOCKED_DIVERGED_HISTORY',
+  'BLOCKED_FETCH_FAILED',
+  'BLOCKED_FAST_FORWARD_FAILED',
+  'BLOCKED_POST_SYNC_REFRESH_REQUIRED',
+  'BLOCKED_RUNTIME_PROOF_FAILED',
+  'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED',
+]);
+const SYNC_RECORD_KINDS = new Set([
+  'battle-bridge-github-sync-heartbeat',
+  'battle-bridge-github-sync-plan',
+  'battle-bridge-github-sync-blocker',
+  'battle-bridge-github-sync-receipt',
+]);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -31,6 +59,36 @@ function head(value) {
 function timestamp(value) {
   const candidate = text(value);
   return Number.isFinite(Date.parse(candidate)) ? candidate : '';
+}
+
+function validateSyncAuthorityRecord(record) {
+  const base = validateSharedWorkspaceRecord(record);
+  const classification = text(record?.classification);
+  const proofRefsValid = Array.isArray(record?.proofRefs)
+    && record.proofRefs.length > 0
+    && record.proofRefs.every((ref) => /^(?:proof|proofs|receipts|evidence\/receipts)\/[a-z0-9][a-z0-9._\/-]{0,240}$/i.test(text(ref).replace(/\\/g, '/')));
+  const authority = record?.authority;
+  const valid = base.valid
+    && record?.schemaVersion === SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    && record?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && record?.statusId === FIXED_SYNC_STATUS_ID
+    && record?.repositoryIdentity === FIXED_REPOSITORY
+    && record?.branch === 'main'
+    && record?.remote === 'origin'
+    && record?.taskName === FIXED_SYNC_TASK_NAME
+    && SYNC_RECORD_KINDS.has(text(record?.syncRecordKind))
+    && SYNC_CLASSIFICATIONS.has(classification)
+    && text(record?.status) === classification
+    && proofRefsValid
+    && authority?.canonicalRepositoryOnly === true
+    && authority?.fastForwardOnly === true
+    && authority?.arbitraryShellAllowed === false
+    && authority?.pushAllowed === false
+    && authority?.mergeToGitHubAllowed === false;
+  return Object.freeze({
+    valid,
+    reason: valid ? 'HEAD_TRUTH_SYNC_RECORD_VALID' : 'HEAD_TRUTH_SYNC_RECORD_INVALID',
+  });
 }
 
 function latestTimestamp(records = {}) {
@@ -193,7 +251,11 @@ export function buildSharedWorkspaceHeadTruthProjection({
   nowMs = Date.parse(timestampUtc),
   staleAfterMs = SHARED_WORKSPACE_HEAD_TRUTH_STALE_AFTER_MS,
 } = {}) {
-  const sync = records.sync || null;
+  const syncCandidate = records.sync || null;
+  const syncValidation = syncCandidate
+    ? validateSyncAuthorityRecord(syncCandidate)
+    : Object.freeze({ valid: false, reason: 'HEAD_TRUTH_SYNC_RECORD_MISSING' });
+  const sync = syncValidation.valid ? syncCandidate : null;
   const refresh = records.refresh || null;
   const supervisor = records.supervisor || null;
   const githubMainHead = head(sync?.remoteHeadObserved);
@@ -204,9 +266,23 @@ export function buildSharedWorkspaceHeadTruthProjection({
   const freshness = ageMs === null ? 'UNKNOWN' : (ageMs > staleAfterMs ? 'STALE' : 'CURRENT');
   const runtime = runtimeTruth(supervisor);
   const builtRuntimeHead = builtHead(refresh);
+  const builtEvidence = evidenceState({
+    timestampUtc: timestamp(refresh?.timestampUtc),
+    nowMs,
+    staleAfterMs,
+    proven: Boolean(builtRuntimeHead),
+  });
+  const servedEvidence = evidenceState({
+    timestampUtc: timestamp(supervisor?.generatedAt || supervisor?.timestampUtc),
+    nowMs,
+    staleAfterMs: 5 * 60 * 1000,
+    proven: Boolean(runtime.servedHead),
+  });
   const sourceHeadsAgree = Boolean(githubMainHead && windowsCheckoutHead && githubMainHead === windowsCheckoutHead);
-  const servedMatchesCheckout = Boolean(runtime.servedHead && windowsCheckoutHead && runtime.servedHead === windowsCheckoutHead);
-  const builtMatchesCheckout = Boolean(builtRuntimeHead && windowsCheckoutHead && builtRuntimeHead === windowsCheckoutHead);
+  const servedMatchesCheckout = servedEvidence.state === 'PROVEN'
+    && Boolean(runtime.servedHead && windowsCheckoutHead && runtime.servedHead === windowsCheckoutHead);
+  const builtMatchesCheckout = builtEvidence.state === 'PROVEN'
+    && Boolean(builtRuntimeHead && windowsCheckoutHead && builtRuntimeHead === windowsCheckoutHead);
   const syncClassification = text(sync?.classification) || 'UNKNOWN';
   const syncTaskHealth = !sync
     ? 'UNPROVEN'
@@ -218,7 +294,10 @@ export function buildSharedWorkspaceHeadTruthProjection({
 
   let blocker = '';
   let exactNextAction = 'Continue observing canonical Shared Workspace head truth.';
-  if (!sync) {
+  if (syncCandidate && !syncValidation.valid) {
+    blocker = 'HEAD_TRUTH_SYNC_RECORD_INVALID';
+    exactNextAction = 'Restore the canonical Battle Bridge GitHub Sync status contract before trusting its head evidence.';
+  } else if (!sync) {
     blocker = 'HEAD_TRUTH_SYNC_RECORD_MISSING';
     exactNextAction = 'Restore the existing Battle Bridge GitHub Sync task and require a fresh exact-head status receipt.';
   } else if (freshness === 'STALE') {
@@ -253,8 +332,8 @@ export function buildSharedWorkspaceHeadTruthProjection({
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_HEAD_TRUTH_SCHEMA,
     projectionKind: 'shared-workspace-head-truth',
-    aggregationOk: Boolean(sync),
-    aggregationReason: sync ? 'HEAD_TRUTH_EVIDENCE_LOADED' : 'HEAD_TRUTH_SYNC_RECORD_MISSING',
+    aggregationOk: syncValidation.valid,
+    aggregationReason: syncValidation.valid ? 'HEAD_TRUTH_EVIDENCE_LOADED' : syncValidation.reason,
     repository: FIXED_REPOSITORY,
     timestampUtc,
     observedAtUtc,
@@ -270,7 +349,7 @@ export function buildSharedWorkspaceHeadTruthProjection({
     builtMatchesCheckout,
     servedMatchesCheckout,
     syncClassification,
-    syncTaskName: text(sync?.taskName) || 'Stephanos Battle Bridge GitHub Sync',
+    syncTaskName: text(sync?.taskName) || FIXED_SYNC_TASK_NAME,
     syncTaskExpectedIntervalMinutes: 15,
     syncTaskLastObservedUtc: timestamp(sync?.timestampUtc),
     syncTaskHealth,
@@ -285,7 +364,7 @@ export function buildSharedWorkspaceHeadTruthProjection({
   });
 }
 
-async function readFixedRecord({ workspaceRoot, repoRoot, segments, readFileFn = readFile }) {
+async function readFixedRecord({ workspaceRoot, repoRoot, recordKey, segments, readFileFn = readFile }) {
   const resolved = resolveSharedWorkspacePath({ root: workspaceRoot, repoRoot, segments });
   if (!resolved.ok) return { ok: false, reason: resolved.reason, record: null };
   try {
@@ -295,6 +374,10 @@ async function readFixedRecord({ workspaceRoot, repoRoot, segments, readFileFn =
     }
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false, reason: 'HEAD_TRUTH_RECORD_INVALID', record: null };
+    if (recordKey === 'sync') {
+      const validation = validateSyncAuthorityRecord(parsed);
+      if (!validation.valid) return { ok: false, reason: validation.reason, record: null };
+    }
     return { ok: true, reason: 'HEAD_TRUTH_RECORD_LOADED', record: parsed };
   } catch (error) {
     return { ok: false, reason: error?.code === 'ENOENT' ? 'HEAD_TRUTH_RECORD_MISSING' : 'HEAD_TRUTH_RECORD_READ_FAILED', record: null };
@@ -304,7 +387,7 @@ async function readFixedRecord({ workspaceRoot, repoRoot, segments, readFileFn =
 export async function loadSharedWorkspaceHeadTruthEvidence({ workspaceRoot, repoRoot, readFileFn = readFile } = {}) {
   const entries = await Promise.all(Object.entries(SHARED_WORKSPACE_HEAD_TRUTH_RECORDS).map(async ([key, segments]) => [
     key,
-    await readFixedRecord({ workspaceRoot, repoRoot, segments, readFileFn }),
+    await readFixedRecord({ workspaceRoot, repoRoot, recordKey: key, segments, readFileFn }),
   ]));
   const loads = Object.fromEntries(entries);
   return Object.freeze({

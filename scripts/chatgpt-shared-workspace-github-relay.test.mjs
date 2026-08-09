@@ -50,6 +50,33 @@ function projection() {
   };
 }
 
+function syncRecord(head = 'a'.repeat(40), timestampUtc = '2026-07-16T19:09:00.000Z') {
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'battle-bridge-github-sync-current',
+    participantId: 'codex',
+    timestampUtc,
+    classification: 'SYNC_NO_CHANGE',
+    status: 'SYNC_NO_CHANGE',
+    localHeadBefore: head,
+    remoteHeadObserved: head,
+    repositoryIdentity: 'Cheekyfellastef/stephan-os',
+    branch: 'main',
+    remote: 'origin',
+    taskName: 'Stephanos Battle Bridge GitHub Sync',
+    syncRecordKind: 'battle-bridge-github-sync-receipt',
+    proofRefs: ['receipts/battle-bridge-github-sync/current.json'],
+    authority: {
+      canonicalRepositoryOnly: true,
+      fastForwardOnly: true,
+      arbitraryShellAllowed: false,
+      pushAllowed: false,
+      mergeToGitHubAllowed: false,
+    },
+  };
+}
+
 function fakeWorkspace() {
   const records = new Map();
   const writes = [];
@@ -79,14 +106,7 @@ function baseOptions(workspace, adapter) {
     receiptExistsFn: workspace.receiptExistsFn,
     recordExistsFn: workspace.recordExistsFn,
     writeAtomicJsonFn: workspace.writeAtomicJsonFn,
-    headTruthEvidenceLoader: async () => ({ records: {
-      sync: {
-        timestampUtc: '2026-07-16T19:09:00.000Z',
-        classification: 'SYNC_NO_CHANGE',
-        localHeadBefore: 'a'.repeat(40),
-        remoteHeadObserved: 'a'.repeat(40),
-      },
-    } }),
+    headTruthEvidenceLoader: async () => ({ records: { sync: syncRecord() } }),
   };
 }
 
@@ -178,14 +198,7 @@ test('current-status read uses canonical head truth and does not let unrelated g
       writeResponse: (body) => { responseBody = body; return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }; },
     }),
     projectionBuilder: async () => { globalProjectionCalls += 1; return projection(); },
-    headTruthEvidenceLoader: async () => ({ records: {
-      sync: {
-        timestampUtc: '2026-07-16T19:09:00.000Z',
-        classification: 'SYNC_NO_CHANGE',
-        localHeadBefore: main,
-        remoteHeadObserved: main,
-      },
-    } }),
+    headTruthEvidenceLoader: async () => ({ records: { sync: syncRecord(main) } }),
   });
 
   assert.equal(result.ok, true);
