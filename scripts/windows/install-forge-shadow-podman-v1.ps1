@@ -677,7 +677,7 @@ try {
     if ($mirrorHead -ne $ExpectedHead) {
         if ($sealed -ne 'true') { Fail 'FORGE_MIRROR_HEAD_MISMATCH' @{ observedHead = $mirrorHead } }
         Assert-FixedMirrorMetadata
-        if (-not $PSCmdlet.ShouldProcess("$Owner/$RepoName", "Run one fixed loopback-only mirror refresh to $ExpectedHead, revoke its local token, and reseal")) {
+        if (-not $PSCmdlet.ShouldProcess("$Owner/$RepoName", "Run one fixed loopback-only mirror refresh to ${ExpectedHead}, revoke its local token, and reseal")) {
             Fail 'RUNTIME_MUTATION_NOT_CONFIRMED'
         }
 

@@ -212,7 +212,7 @@ test('one-shot refresh verifies the stored pull mirror still has the one canonic
 test('one-shot refresh opens a bounded migration window then reseals and reproves exact head', () => {
   has('function Wait-ExpectedMirrorHead');
   has("if ($sealed -ne 'true') { Fail 'FORGE_MIRROR_HEAD_MISMATCH' @{ observedHead = $mirrorHead } }");
-  has('Run one fixed loopback-only mirror refresh to $ExpectedHead, revoke its local token, and reseal');
+  has('Run one fixed loopback-only mirror refresh to ${ExpectedHead}, revoke its local token, and reseal');
   has('Start-FixedContainer $PodmanExe $false');
   has('$refreshResult = Invoke-OneShotLocalMirrorRefresh $PodmanExe');
   has('$refreshedMirrorHead = Wait-ExpectedMirrorHead $GitExe');
