@@ -23,6 +23,7 @@ export const DEFAULT_BATTLE_BRIDGE_ENDPOINTS = Object.freeze([
 export const BATTLE_BRIDGE_WORKER_TELEMETRY_SCHEMA = 'stephanos.battle-bridge.worker-telemetry.v1';
 export const CODEX_DISPATCH_TEST_ARGS = Object.freeze([
   '--test',
+  '--test-reporter=tap',
   'shared/agents/localCodexExecIntegration.test.mjs',
   'shared/agents/codexDispatchMcp.test.mjs',
   'shared/agents/codexDispatchHostOps.test.mjs',

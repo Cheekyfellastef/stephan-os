@@ -69,6 +69,7 @@ test('sync bridge fast-forwards latest canonical main and runs tests through the
   assert.equal(result.destructiveCleanupPerformed, false);
   assert.equal(result.tests.command, 'node.exe');
   assert.deepEqual(result.tests.args, CODEX_DISPATCH_TEST_ARGS);
+  assert.equal(result.tests.args.includes('--test-reporter=tap'), true);
   assert.equal(spawnSyncFn.calls.includes('git rev-list --left-right --count HEAD...new-head'), true);
   assert.equal(spawnSyncFn.calls.includes('git merge --ff-only new-head'), true);
   assert.equal(spawnSyncFn.calls.includes('git merge --ff-only origin/main'), false);
