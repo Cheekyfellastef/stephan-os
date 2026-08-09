@@ -216,6 +216,7 @@ async function publishProjection({ workspaceRoot, repoRoot, projection, afterHea
   const proofRefs = [receiptRelative];
   const summary = `Post-sync runtime refresh ${projection.classification}`;
   const proof = Object.freeze({
+    ...projection,
     ...createSharedWorkspaceProofRecord({
       proofId: `post-sync-refresh-${afterHead.slice(0, 16)}-${phase}`,
       timestampUtc: now.toISOString(),
@@ -231,12 +232,12 @@ async function publishProjection({ workspaceRoot, repoRoot, projection, afterHea
     proofRefs,
     receiptType: 'post-sync-runtime-refresh',
     phase,
-    ...projection,
   });
   const receiptWrite = await writeAtomicJson(workspaceRoot, ['receipts', 'post-sync-runtime-refresh', receiptFile], proof, { repoRoot });
   if (!receiptWrite.ok) return { ok: false, blocker: 'POST_SYNC_REFRESH_RECEIPT_WRITE_FAILED' };
 
   const status = Object.freeze({
+    ...projection,
     ...createSharedWorkspaceStatusRecord({
       statusId: 'post-sync-runtime-refresh-current',
       participantId: 'mission-orchestrator',
@@ -246,7 +247,6 @@ async function publishProjection({ workspaceRoot, repoRoot, projection, afterHea
       proofRefs,
     }),
     phase,
-    ...projection,
   });
   const statusWrite = await writeAtomicJson(workspaceRoot, ['status', 'post-sync-runtime-refresh-current.json'], status, { repoRoot });
   if (!statusWrite.ok) return { ok: false, blocker: 'POST_SYNC_REFRESH_STATUS_WRITE_FAILED' };

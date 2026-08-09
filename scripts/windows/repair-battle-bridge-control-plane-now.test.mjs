@@ -26,15 +26,25 @@ test('rescue repairs the existing Codex dispatch plugin without creating another
   assert.match(ps1, /install-stephanos-codex-dispatch-plugin\.ps1/);
   assert.match(ps1, /status-stephanos-codex-dispatch-plugin\.ps1/);
   assert.match(ps1, /readyForRemoteChatDispatch/);
-  assert.match(ps1, /CHATGPT_DESKTOP_PLUGIN_ATTACHMENT_REQUIRED/);
-  assert.match(ps1, /BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_ATTACHMENT_REQUIRED/);
+  assert.match(ps1, /readyForCodexCliDispatch/);
+  assert.match(ps1, /finalVerdict = \$dispatchBlocker/);
+  assert.match(ps1, /separately reviewed authenticated ChatGPT transport/);
+  assert.match(ps1, /elseif \(\$dispatchProof\.localBridgeReady -eq \$true\)/);
+  assert.match(ps1, /\$attachmentBlocker = \[string\]\$dispatchProof\.attachmentBlocker/);
+  assert.match(ps1, /complete initialize\/initialized\/tools-list/);
+  assert.doesNotMatch(ps1, /Restart ChatGPT desktop.*tools\/list/);
   assert.match(ps1, /BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_READY/);
   assert.match(ps1, /newWorkerCreated = \$false/);
   assert.match(ps1, /newMailboxCreated = \$false/);
   assert.doesNotMatch(ps1, /New-ScheduledTask|Register-ScheduledTask|Start-Job/i);
 });
 
-test('dispatch readiness requires a fresh exact-head Windows tools-list attachment proof', () => {
+test('rescue resolves the exact commit tree without leaking a literal PowerShell placeholder to Git', () => {
+  assert.match(ps1, /\(\$observedHead \+ '\^\{tree\}'\)/);
+  assert.doesNotMatch(ps1, /\$observedHead`\$\{tree\}/);
+});
+
+test('dispatch readiness requires a fresh exact-head Windows tools-list attachment proof and separates local Codex from remote transport', () => {
   assert.match(status, /surface-attachment-latest\.json/);
   assert.match(status, /stephanos\.codex-dispatch-surface-attachment\.v1/);
   assert.match(status, /can_local_windows_proof/);
@@ -47,6 +57,14 @@ test('dispatch readiness requires a fresh exact-head Windows tools-list attachme
   assert.match(status, /dispatch_codex_task/);
   assert.match(status, /get_codex_task_status/);
   assert.match(status, /read_codex_task_result/);
+  assert.match(status, /clientSession\.initializeReceived/);
+  assert.match(status, /clientSession\.initializedNotificationReceived/);
+  assert.match(status, /LOCAL_CODEX_SESSION_PROOF_INVALID/);
+  assert.match(status, /verified-initialized-local-codex-session-tools-list/);
+  assert.match(status, /remoteTransportAuthenticated = \$false/);
+  assert.match(status, /readyForRemoteChatDispatch = \$status\.localBridgeReady -and \$attachmentProofValid/);
+  assert.match(status, /readyForRemoteChatDispatch = \$status\.readyForRemoteChatDispatch -and \$remoteTransportAuthenticated/);
+  assert.match(status, /BLOCKED_AUTHENTICATED_REMOTE_MCP_TRANSPORT_REQUIRED/);
   assert.match(status, /BLOCKED_CHATGPT_PLUGIN_ATTACHMENT_UNPROVEN/);
   assert.match(status, /STEPHANOS_CODEX_DISPATCH_BRIDGE_ATTACHED_READY/);
 });
