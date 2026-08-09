@@ -123,6 +123,31 @@ function Test-CanonicalWorkerProcessCommandLine {
 
 $taskActionMatchesCanonicalWorker = Test-CanonicalWorkerTaskAction -ScheduledTask $task
 
+$repositoryBranch = ''
+$repositoryHead = ''
+$repositoryHeadReadError = ''
+try {
+    $gitCommand = Get-Command git.exe -ErrorAction Stop
+    $repositoryBranchOutput = @(& $gitCommand.Source -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw ('git symbolic-ref failed: {0}' -f (($repositoryBranchOutput | ForEach-Object { [string]$_ }) -join ' '))
+    }
+    $repositoryBranch = ([string]$repositoryBranchOutput[0]).Trim()
+    $repositoryHeadOutput = @(& $gitCommand.Source -C $repositoryRoot rev-parse --verify HEAD 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw ('git rev-parse failed: {0}' -f (($repositoryHeadOutput | ForEach-Object { [string]$_ }) -join ' '))
+    }
+    $repositoryHead = ([string]$repositoryHeadOutput[0]).Trim().ToLowerInvariant()
+    if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$') {
+        throw 'Canonical repository branch/head proof is invalid.'
+    }
+}
+catch {
+    $repositoryBranch = ''
+    $repositoryHead = ''
+    $repositoryHeadReadError = $_.Exception.Message
+}
+
 if ($Mode -eq 'StartApprovedWorkerTask') {
     if (-not $task -or [string]$task.TaskName -ne $taskName) {
         throw 'The fixed Mission Orchestrator worker task is not installed.'
@@ -173,6 +198,13 @@ $commandLineMatchesCanonicalWorker = Test-CanonicalWorkerProcessCommandLine `
         taskPath = if ($task) { [string]$task.TaskPath } else { '' }
         status = if ($task) { [string]$task.State } else { 'Missing' }
         actionMatchesCanonicalWorker = [bool]$taskActionMatchesCanonicalWorker
+    }
+    repository = [pscustomobject]@{
+        repositoryRoot = $repositoryRoot
+        branch = $repositoryBranch
+        headSha = $repositoryHead
+        headProven = (-not [string]::IsNullOrWhiteSpace($repositoryHead))
+        headReadError = $repositoryHeadReadError
     }
     process = [pscustomobject]@{
         running = [bool]$workerProcess
