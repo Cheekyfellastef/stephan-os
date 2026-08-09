@@ -1,5 +1,8 @@
 import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
+import { vrResearchContextProvider } from './vrResearchContextProvider.js';
+
 const PROVIDER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9-]*$/;
+const VR_RESEARCH_INTENT_PATTERN = /\b(vr|virtual reality|flat-to-vr|starfield|creation kit|skyrim vr|vorpx|mutar|halo mcc vr|uevr|reframework|openxr|vrik|higgs|planck|air link|virtual desktop|cutscene theatre|cutscene theater)\b/i;
 
 const requiredMethods = [
   'getSummary',
@@ -25,6 +28,24 @@ function isValidProvider(provider) {
   return requiredMethods.every((method) => typeof provider[method] === 'function');
 }
 
+function deduplicate(value) {
+  return [...new Set(normalizeList(value))];
+}
+
+export function inferContextProviderIds(input = {}) {
+  const responseMode = String(input.responseMode || input.operatorIntent || '').trim();
+  const researchText = [
+    input.operatorMessage,
+    input.operatorPrompt,
+    input.retrieval_query,
+    input.retrievalQuery,
+    input.raw_input,
+    input.rawInput,
+  ].filter(Boolean).join(' ');
+  const vrResearchRequested = responseMode === 'research-scouting' || VR_RESEARCH_INTENT_PATTERN.test(researchText);
+  return vrResearchRequested ? ['vrResearch'] : [];
+}
+
 export function registerContextProvider(provider) {
   if (!isValidProvider(provider)) return false;
   if (providers.some((existing) => existing.id === provider.id)) return false;
@@ -39,9 +60,11 @@ export function getRegisteredContextProviders() {
 
 export function buildContextProviderSnapshot(input = {}) {
   const requestedProviderIds = normalizeList(input.contextProviderIdsRequested);
-  const selectedProviders = requestedProviderIds.length > 0
-    ? providers.filter((provider) => requestedProviderIds.includes(provider.id))
-    : providers.slice();
+  const inferredProviderIds = inferContextProviderIds(input);
+  const selectedProviderIds = deduplicate([...requestedProviderIds, ...inferredProviderIds]);
+  const selectedProviders = selectedProviderIds.length > 0
+    ? providers.filter((provider) => selectedProviderIds.includes(provider.id))
+    : providers.filter((provider) => provider.defaultEnabled !== false);
   const usedProviders = [];
   const warnings = [];
   const nextActions = [];
@@ -64,6 +87,7 @@ export function buildContextProviderSnapshot(input = {}) {
   return {
     contextProviderRegistryStatus: providers.length > 0 ? 'active' : 'inactive',
     contextProviderIdsRegistered: providers.map((provider) => provider.id),
+    contextProviderIdsInferred: inferredProviderIds,
     providerSummaries,
     providerWarnings: warnings,
     providerNextActions: nextActions,
@@ -179,6 +203,7 @@ const builtinProviders = [
     ],
     getSourceRefs: () => ['chatContextOrchestrator.CANON_RULES'],
   },
+  vrResearchContextProvider,
   {
     id: 'memoryContinuity', label: 'Memory Continuity', priority: 70,
     getSummary: (input) => ({
