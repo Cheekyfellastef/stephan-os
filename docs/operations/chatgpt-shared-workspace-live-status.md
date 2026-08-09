@@ -28,6 +28,11 @@ The bridge remains read-only for status queries and grants no arbitrary filesyst
 - `status/battle-bridge-github-sync-current.json`
 - `status/post-sync-runtime-refresh-current.json`
 - `status/battle-bridge-ignition-supervisor-current.json`
+- `status/battle-bridge-current.json`
+- `status/battle-bridge-recovery-mesh-current.json`
+- `status/battle-bridge-mailbox-receipt-index.json`
+- `status/mission-orchestrator-worker-heartbeat.json`
+- `codex-dispatch/surface-attachment-latest.json`
 
 The response projects these truths separately:
 
@@ -36,9 +41,13 @@ The response projects these truths separately:
 - the exact-head-proven built UI head when a UI refresh occurred;
 - the exact-head-proven served runtime head.
 
-Matching head strings alone are insufficient. Evidence older than 35 minutes is `STALE`, missing sync evidence is blocked, source drift is `WINDOWS_CHECKOUT_NOT_AT_GITHUB_MAIN`, and served drift is `SERVED_RUNTIME_NOT_AT_WINDOWS_HEAD`. A stale or missing response must never be described as current or live.
+Matching head strings alone are insufficient. Evidence older than its surface-specific freshness window is `STALE`; a newer unrelated runtime record cannot refresh an old sync observation. Missing sync evidence is blocked, source drift is `WINDOWS_CHECKOUT_NOT_AT_GITHUB_MAIN`, missing built proof is `BUILT_RUNTIME_HEAD_UNPROVEN`, and absent or mismatched served proof is `SERVED_RUNTIME_NOT_AT_WINDOWS_HEAD`. A stale or missing response must never be described as current or live.
 
 The same projection exposes the updater observation separately as `HEALTHY`, `RUNNING_BLOCKED`, `STALE_OR_NOT_RUNNING`, or `UNPROVEN`, including its last observed timestamp and expected 15-minute interval. This distinguishes a watcher that is alive but safely blocked from one that has silently stopped producing evidence.
+
+The response also contains `windowsProofCoverage`. Each of source, built runtime, served runtime, UI 4173, backend 8787, OpenClaw 18789, Shared Workspace, Recovery Mesh, GitHub Command Mailbox, Mission Worker and the Windows execution surface is independently labelled `PROVEN`, `BLOCKED`, `STALE` or `UNPROVEN`, with its original observation timestamp and age. The aggregate may report `WINDOWS_PROOF_COVERAGE_COMPLETE` only when every required surface is currently proven. Regenerating the response never changes an evidence source timestamp.
+
+Authorised chats obtain read-only Windows diagnostics through the existing #1507 `RUN_BATTLE_BRIDGE_DIAGNOSTICS` mailbox operation and read the correlated terminal receipt. Stephan is not a PowerShell, screenshot or copy/paste courier. A dormant mailbox is itself a typed control-plane blocker; it is not an instruction to ask the operator to relay the proof manually.
 
 ## Stephanos as the conversation surface
 

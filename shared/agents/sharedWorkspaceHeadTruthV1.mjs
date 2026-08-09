@@ -9,6 +9,11 @@ export const SHARED_WORKSPACE_HEAD_TRUTH_RECORDS = Object.freeze({
   sync: Object.freeze(['status', 'battle-bridge-github-sync-current.json']),
   refresh: Object.freeze(['status', 'post-sync-runtime-refresh-current.json']),
   supervisor: Object.freeze(['status', 'battle-bridge-ignition-supervisor-current.json']),
+  publisher: Object.freeze(['status', 'battle-bridge-current.json']),
+  recoveryMesh: Object.freeze(['status', 'battle-bridge-recovery-mesh-current.json']),
+  mailbox: Object.freeze(['status', 'battle-bridge-mailbox-receipt-index.json']),
+  worker: Object.freeze(['status', 'mission-orchestrator-worker-heartbeat.json']),
+  attachment: Object.freeze(['codex-dispatch', 'surface-attachment-latest.json']),
 });
 
 const FIXED_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -34,7 +39,115 @@ function latestTimestamp(records = {}) {
     records.refresh?.timestampUtc,
     records.supervisor?.generatedAt,
     records.supervisor?.timestampUtc,
+    records.publisher?.timestampUtc,
+    records.recoveryMesh?.timestampUtc,
+    records.mailbox?.timestampUtc,
+    records.worker?.timestampUtc,
+    records.attachment?.observedAt,
   ].map(timestamp).filter(Boolean).sort((a, b) => Date.parse(b) - Date.parse(a))[0] || '';
+}
+
+function evidenceAge(timestampUtc, nowMs) {
+  const observedMs = Date.parse(timestampUtc);
+  return Number.isFinite(observedMs) && Number.isFinite(nowMs) ? Math.max(0, nowMs - observedMs) : null;
+}
+
+function evidenceState({ timestampUtc, nowMs, staleAfterMs, proven }) {
+  const ageMs = evidenceAge(timestampUtc, nowMs);
+  if (ageMs === null) return Object.freeze({ state: 'UNPROVEN', observedAtUtc: '', ageSeconds: null });
+  if (ageMs > staleAfterMs) return Object.freeze({ state: 'STALE', observedAtUtc: timestampUtc, ageSeconds: Math.floor(ageMs / 1000) });
+  return Object.freeze({ state: proven ? 'PROVEN' : 'BLOCKED', observedAtUtc: timestampUtc, ageSeconds: Math.floor(ageMs / 1000) });
+}
+
+function serviceCoverage(publisher, serviceId, nowMs) {
+  const timestampUtc = timestamp(publisher?.timestampUtc);
+  const service = publisher?.observedServiceFacts?.[serviceId] || null;
+  return Object.freeze({
+    ...evidenceState({ timestampUtc, nowMs, staleAfterMs: 5 * 60 * 1000, proven: service?.ready === true }),
+    ready: service?.ready === true,
+  });
+}
+
+function buildWindowsProofCoverage({ records, nowMs, githubMainHead, windowsCheckoutHead, builtRuntimeHead, servedRuntimeHead }) {
+  const syncTimestamp = timestamp(records.sync?.timestampUtc);
+  const refreshTimestamp = timestamp(records.refresh?.timestampUtc);
+  const supervisorTimestamp = timestamp(records.supervisor?.generatedAt || records.supervisor?.timestampUtc);
+  const recoveryTimestamp = timestamp(records.recoveryMesh?.timestampUtc);
+  const mailboxTimestamp = timestamp(records.mailbox?.timestampUtc);
+  const workerTimestamp = timestamp(records.worker?.timestampUtc);
+  const attachmentTimestamp = timestamp(records.attachment?.observedAt);
+  const source = evidenceState({
+    timestampUtc: syncTimestamp,
+    nowMs,
+    staleAfterMs: SHARED_WORKSPACE_HEAD_TRUTH_STALE_AFTER_MS,
+    proven: Boolean(githubMainHead && windowsCheckoutHead && githubMainHead === windowsCheckoutHead),
+  });
+  const built = evidenceState({
+    timestampUtc: refreshTimestamp,
+    nowMs,
+    staleAfterMs: SHARED_WORKSPACE_HEAD_TRUTH_STALE_AFTER_MS,
+    proven: Boolean(builtRuntimeHead && builtRuntimeHead === windowsCheckoutHead),
+  });
+  const served = evidenceState({
+    timestampUtc: supervisorTimestamp,
+    nowMs,
+    staleAfterMs: 5 * 60 * 1000,
+    proven: Boolean(servedRuntimeHead && servedRuntimeHead === windowsCheckoutHead),
+  });
+  const recoveryMesh = evidenceState({
+    timestampUtc: recoveryTimestamp,
+    nowMs,
+    staleAfterMs: 10 * 60 * 1000,
+    proven: records.recoveryMesh?.classification === 'RECOVERY_MESH_ALL_SERVICES_HEALTHY',
+  });
+  const mailbox = evidenceState({
+    timestampUtc: mailboxTimestamp,
+    nowMs,
+    staleAfterMs: 5 * 60 * 1000,
+    proven: ['MAILBOX_RECEIPT_INDEX_READY', 'MAILBOX_RECEIPT_INDEX_ACTIVE'].includes(text(records.mailbox?.finalVerdict)),
+  });
+  const workerHead = head(records.worker?.headSha);
+  const worker = evidenceState({
+    timestampUtc: workerTimestamp,
+    nowMs,
+    staleAfterMs: 2 * 60 * 1000,
+    proven: records.worker?.taskName === 'Stephanos Mission Orchestrator Worker'
+      && records.worker?.branch === 'main'
+      && workerHead === windowsCheckoutHead
+      && ['MISSION_WORKER_RUNNING', 'MISSION_WORKER_TICK_RUNNING', 'MISSION_WORKER_TICK_PASS'].includes(text(records.worker?.lastTickVerdict)),
+  });
+  const attachmentHead = head(records.attachment?.sourceHead);
+  const executionSurface = evidenceState({
+    timestampUtc: attachmentTimestamp,
+    nowMs,
+    staleAfterMs: 10 * 60 * 1000,
+    proven: records.attachment?.attached === true
+      && records.attachment?.can_local_windows_proof === true
+      && records.attachment?.requiredDispatchToolsPresent === true
+      && attachmentHead === windowsCheckoutHead,
+  });
+  const checks = Object.freeze({
+    source: Object.freeze({ ...source, githubMainHead, windowsCheckoutHead }),
+    builtRuntime: Object.freeze({ ...built, head: builtRuntimeHead }),
+    servedRuntime: Object.freeze({ ...served, head: servedRuntimeHead }),
+    ui4173: serviceCoverage(records.publisher, 'stephanos-ui', nowMs),
+    backend8787: serviceCoverage(records.publisher, 'backend', nowMs),
+    openClaw18789: serviceCoverage(records.publisher, 'openclaw-gateway', nowMs),
+    sharedWorkspace: serviceCoverage(records.publisher, 'shared-workspace', nowMs),
+    recoveryMesh: Object.freeze({ ...recoveryMesh, classification: text(records.recoveryMesh?.classification) }),
+    commandMailbox: Object.freeze({ ...mailbox, finalVerdict: text(records.mailbox?.finalVerdict) }),
+    missionWorker: Object.freeze({ ...worker, head: workerHead }),
+    windowsExecutionSurface: Object.freeze({ ...executionSurface, head: attachmentHead, canLocalWindowsProof: records.attachment?.can_local_windows_proof === true }),
+  });
+  const blockers = Object.entries(checks)
+    .filter(([, value]) => value.state !== 'PROVEN')
+    .map(([key, value]) => `${key.toUpperCase()}_${value.state}`);
+  return Object.freeze({
+    complete: blockers.length === 0,
+    finalVerdict: blockers.length === 0 ? 'WINDOWS_PROOF_COVERAGE_COMPLETE' : 'WINDOWS_PROOF_COVERAGE_INCOMPLETE',
+    blockers: Object.freeze(blockers),
+    checks,
+  });
 }
 
 function proofRefs(records = {}) {
@@ -86,13 +199,14 @@ export function buildSharedWorkspaceHeadTruthProjection({
   const githubMainHead = head(sync?.remoteHeadObserved);
   const windowsCheckoutHead = head(sync?.localHeadAfter || sync?.localHeadBefore);
   const observedAtUtc = latestTimestamp(records);
-  const observedAtMs = Date.parse(observedAtUtc);
-  const ageMs = Number.isFinite(observedAtMs) && Number.isFinite(nowMs) ? Math.max(0, nowMs - observedAtMs) : null;
+  const syncObservedAtUtc = timestamp(sync?.timestampUtc);
+  const ageMs = evidenceAge(syncObservedAtUtc, nowMs);
   const freshness = ageMs === null ? 'UNKNOWN' : (ageMs > staleAfterMs ? 'STALE' : 'CURRENT');
   const runtime = runtimeTruth(supervisor);
   const builtRuntimeHead = builtHead(refresh);
   const sourceHeadsAgree = Boolean(githubMainHead && windowsCheckoutHead && githubMainHead === windowsCheckoutHead);
   const servedMatchesCheckout = Boolean(runtime.servedHead && windowsCheckoutHead && runtime.servedHead === windowsCheckoutHead);
+  const builtMatchesCheckout = Boolean(builtRuntimeHead && windowsCheckoutHead && builtRuntimeHead === windowsCheckoutHead);
   const syncClassification = text(sync?.classification) || 'UNKNOWN';
   const syncTaskHealth = !sync
     ? 'UNPROVEN'
@@ -119,11 +233,22 @@ export function buildSharedWorkspaceHeadTruthProjection({
   } else if (!sourceHeadsAgree) {
     blocker = 'WINDOWS_CHECKOUT_NOT_AT_GITHUB_MAIN';
     exactNextAction = 'Let the existing fast-forward-only sync and refresh lane converge Windows to the observed GitHub main head.';
-  } else if (runtime.expectedHead && !servedMatchesCheckout) {
+  } else if (!builtMatchesCheckout) {
+    blocker = 'BUILT_RUNTIME_HEAD_UNPROVEN';
+    exactNextAction = 'Run the existing post-sync runtime refresh and publish its exact built-head receipt.';
+  } else if (!servedMatchesCheckout) {
     blocker = 'SERVED_RUNTIME_NOT_AT_WINDOWS_HEAD';
     exactNextAction = 'Run the existing post-sync runtime refresh and exact served-head proof.';
   }
 
+  const windowsProofCoverage = buildWindowsProofCoverage({
+    records,
+    nowMs,
+    githubMainHead,
+    windowsCheckoutHead,
+    builtRuntimeHead,
+    servedRuntimeHead: runtime.servedHead,
+  });
   const state = blocker ? (freshness === 'STALE' ? 'STALE' : 'BLOCKED') : 'CURRENT';
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_HEAD_TRUTH_SCHEMA,
@@ -133,6 +258,7 @@ export function buildSharedWorkspaceHeadTruthProjection({
     repository: FIXED_REPOSITORY,
     timestampUtc,
     observedAtUtc,
+    syncObservedAtUtc,
     ageSeconds: ageMs === null ? null : Math.floor(ageMs / 1000),
     freshness,
     state,
@@ -141,6 +267,7 @@ export function buildSharedWorkspaceHeadTruthProjection({
     builtRuntimeHead,
     servedRuntimeHead: runtime.servedHead,
     sourceHeadsAgree,
+    builtMatchesCheckout,
     servedMatchesCheckout,
     syncClassification,
     syncTaskName: text(sync?.taskName) || 'Stephanos Battle Bridge GitHub Sync',
@@ -151,6 +278,7 @@ export function buildSharedWorkspaceHeadTruthProjection({
     blocker,
     exactNextAction,
     proofRefs: proofRefs(records),
+    windowsProofCoverage,
     arbitraryFilesystemAccess: false,
     commandExecutionAccess: false,
     sourceMutationAccess: false,

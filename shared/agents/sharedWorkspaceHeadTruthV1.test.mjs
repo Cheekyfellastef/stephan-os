@@ -75,6 +75,77 @@ test('stale evidence is explicit and never treated as current even when heads ag
   assert.equal(result.servedRuntimeHead, '');
 });
 
+test('fresh unrelated runtime evidence cannot launder a stale sync observation', () => {
+  const value = records();
+  value.sync = { ...value.sync, timestampUtc: '2026-08-08T22:00:00.000Z' };
+  value.supervisor = { ...value.supervisor, generatedAt: '2026-08-09T00:59:30.000Z' };
+  const result = buildSharedWorkspaceHeadTruthProjection({ records: value, timestampUtc: '2026-08-09T01:00:00.000Z', nowMs: NOW });
+  assert.equal(result.observedAtUtc, '2026-08-09T00:59:30.000Z');
+  assert.equal(result.syncObservedAtUtc, '2026-08-08T22:00:00.000Z');
+  assert.equal(result.freshness, 'STALE');
+  assert.equal(result.blocker, 'HEAD_TRUTH_SYNC_RECORD_STALE');
+});
+
+test('matching source heads cannot claim current when built or served exact-head proof is missing', () => {
+  const withoutBuild = buildSharedWorkspaceHeadTruthProjection({
+    records: records({ refresh: null }),
+    timestampUtc: '2026-08-09T01:00:00.000Z',
+    nowMs: NOW,
+  });
+  assert.equal(withoutBuild.state, 'BLOCKED');
+  assert.equal(withoutBuild.blocker, 'BUILT_RUNTIME_HEAD_UNPROVEN');
+
+  const withoutServed = buildSharedWorkspaceHeadTruthProjection({
+    records: records({ supervisor: null }),
+    timestampUtc: '2026-08-09T01:00:00.000Z',
+    nowMs: NOW,
+  });
+  assert.equal(withoutServed.state, 'BLOCKED');
+  assert.equal(withoutServed.blocker, 'SERVED_RUNTIME_NOT_AT_WINDOWS_HEAD');
+});
+
+test('reports explicit Windows proof coverage with original evidence timestamps', () => {
+  const value = records({
+    publisher: {
+      timestampUtc: '2026-08-09T00:59:00.000Z',
+      observedServiceFacts: {
+        'stephanos-ui': { ready: true },
+        backend: { ready: true },
+        'openclaw-gateway': { ready: true },
+        'shared-workspace': { ready: true },
+      },
+    },
+    recoveryMesh: {
+      timestampUtc: '2026-08-09T00:58:00.000Z',
+      classification: 'RECOVERY_MESH_ALL_SERVICES_HEALTHY',
+    },
+    mailbox: {
+      timestampUtc: '2026-08-09T00:59:20.000Z',
+      finalVerdict: 'MAILBOX_RECEIPT_INDEX_READY',
+    },
+    worker: {
+      timestampUtc: '2026-08-09T00:59:30.000Z',
+      taskName: 'Stephanos Mission Orchestrator Worker',
+      branch: 'main',
+      headSha: MAIN,
+      lastTickVerdict: 'MISSION_WORKER_TICK_PASS',
+    },
+    attachment: {
+      observedAt: '2026-08-09T00:59:40.000Z',
+      attached: true,
+      can_local_windows_proof: true,
+      requiredDispatchToolsPresent: true,
+      sourceHead: MAIN,
+    },
+  });
+  const result = buildSharedWorkspaceHeadTruthProjection({ records: value, timestampUtc: '2026-08-09T01:00:00.000Z', nowMs: NOW });
+  assert.equal(result.windowsProofCoverage.complete, true);
+  assert.equal(result.windowsProofCoverage.finalVerdict, 'WINDOWS_PROOF_COVERAGE_COMPLETE');
+  assert.equal(result.windowsProofCoverage.checks.commandMailbox.observedAtUtc, '2026-08-09T00:59:20.000Z');
+  assert.equal(result.windowsProofCoverage.checks.windowsExecutionSurface.canLocalWindowsProof, true);
+  assert.deepEqual(result.windowsProofCoverage.blockers, []);
+});
+
 test('missing sync evidence fails closed while optional runtime records may be absent', () => {
   const result = buildSharedWorkspaceHeadTruthProjection({ records: { sync: null, refresh: null, supervisor: null }, timestampUtc: '2026-08-09T01:00:00.000Z', nowMs: NOW });
   assert.equal(result.state, 'BLOCKED');
@@ -93,7 +164,7 @@ test('a fresh published sync blocker proves the watcher ran but could not conver
   assert.equal(result.exactNextAction, 'Preserve source dirt.');
 });
 
-test('bounded loader reads only the three fixed Shared Workspace status records', async () => {
+test('bounded loader reads only the fixed Shared Workspace proof records', async () => {
   const seen = [];
   const result = await loadSharedWorkspaceHeadTruthEvidence({
     workspaceRoot: '/shared',
@@ -110,6 +181,6 @@ test('bounded loader reads only the three fixed Shared Workspace status records'
   assert.equal(result.records.sync.remoteHeadObserved, MAIN);
   assert.equal(result.records.refresh, null);
   assert.equal(result.records.supervisor, null);
-  assert.equal(seen.length, 3);
-  assert.equal(seen.every((file) => file.startsWith('/shared/status/')), true);
+  assert.equal(seen.length, 8);
+  assert.equal(seen.every((file) => file.startsWith('/shared/status/') || file.startsWith('/shared/codex-dispatch/')), true);
 });
