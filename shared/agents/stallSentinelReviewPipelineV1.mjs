@@ -81,6 +81,10 @@ function positiveInteger(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function strictPositiveInteger(value) {
+  return Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
 function denseArray(value) {
   if (!Array.isArray(value)) return false;
   for (let index = 0; index < value.length; index += 1) if (!Object.hasOwn(value, index)) return false;
@@ -192,7 +196,7 @@ function validReviewReceipt(receipt, lane, repository, nowMs) {
     && receipt.schemaVersion === REVIEW_RECEIPT_SCHEMA
     && SAFE_RECEIPT_ID.test(text(receipt.receiptId))
     && receipt.repository === repository
-    && positiveInteger(receipt.prNumber) === lane.prNumber
+    && strictPositiveInteger(receipt.prNumber) === lane.prNumber
     && receipt.branch === lane.branch
     && text(receipt.sourceHead).toLowerCase() === lane.headSha
     && text(receipt.baseSha).toLowerCase() === lane.baseSha
@@ -212,7 +216,7 @@ function validProviderNeutralCapacityReceipt(receipt, lane, repository, nowMs) {
     && receipt.schemaVersion === PROVIDER_NEUTRAL_CAPACITY_RECEIPT_SCHEMA
     && SAFE_RECEIPT_ID.test(text(receipt.receiptId))
     && receipt.repository === repository
-    && positiveInteger(receipt.prNumber) === lane.prNumber
+    && strictPositiveInteger(receipt.prNumber) === lane.prNumber
     && receipt.branch === lane.branch
     && text(receipt.sourceHead).toLowerCase() === lane.headSha
     && text(receipt.baseSha).toLowerCase() === lane.baseSha
@@ -333,7 +337,7 @@ function normalizeLane(lane, repository, nowMs) {
   const dispatchCommentIdSupplied = review.dispatchCommentId !== undefined && review.dispatchCommentId !== null;
   const dispatchAtSupplied = review.dispatchAt !== undefined && review.dispatchAt !== null;
   if (dispatchCommentIdSupplied !== dispatchAtSupplied) return null;
-  const dispatchCommentId = dispatchCommentIdSupplied ? positiveInteger(review.dispatchCommentId) : null;
+  const dispatchCommentId = dispatchCommentIdSupplied ? strictPositiveInteger(review.dispatchCommentId) : null;
   const dispatchAtMs = dispatchAtSupplied ? timestamp(review.dispatchAt) : null;
   const rateLimitResetAtMs = review.rateLimitResetAt == null ? null : timestamp(review.rateLimitResetAt);
   if ((dispatchCommentIdSupplied && !dispatchCommentId)
@@ -362,7 +366,7 @@ function normalizeLane(lane, repository, nowMs) {
     independentReviewConclusion: normalizedConclusion(review.independentReviewConclusion),
     independentReviewErrorClass: text(review.independentReviewErrorClass).toUpperCase(),
     independentReviewArtifactId: positiveInteger(review.independentReviewArtifactId) || null,
-    independentReviewAttempt: positiveInteger(review.independentReviewAttempt),
+    independentReviewAttempt: strictPositiveInteger(review.independentReviewAttempt),
     rateLimitResetAt: rateLimitResetAtMs === null ? null : new Date(rateLimitResetAtMs).toISOString(),
     rateLimitResetAtMs,
     reviewClass: text(review.reviewClass) || 'independent-exact-head',

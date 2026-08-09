@@ -166,6 +166,9 @@ test('rejects incomplete dispatch identity instead of waiting forever', () => {
   assert.equal(projection([lane({
     review: { dispatchCommentId: 'not-an-id', dispatchAt: '2026-08-08T16:20:00Z' },
   })]).valid, false);
+  assert.equal(projection([lane({
+    review: { dispatchCommentId: '5226946191', dispatchAt: '2026-08-08T16:20:00Z' },
+  })]).valid, false);
 });
 
 test('rate-limited review without artifact schedules one retry after quota reset', () => {
@@ -285,6 +288,7 @@ test('provider-neutral fallback requires a fresh payload-valid receipt bound to 
   for (const receipt of [
     providerNeutralCapacityReceipt({ sourceHead: '9'.repeat(40) }),
     providerNeutralCapacityReceipt({ prNumber: 1707 }),
+    providerNeutralCapacityReceipt({ prNumber: '1706' }),
     providerNeutralCapacityReceipt({ completedAt: '2026-08-07T16:39:59Z' }),
     { ...providerNeutralCapacityReceipt(), payloadSha256: '0'.repeat(64) },
   ]) {
@@ -310,8 +314,8 @@ test('only bounded recovery exhaustion without a fallback becomes a Captain deci
   assert.equal(result.finalVerdict, 'STALL_SENTINEL_CAPTAIN_DECISION_REQUIRED');
 });
 
-test('quota retry requires an explicit first attempt', () => {
-  for (const independentReviewAttempt of [undefined, 0, 'malformed', -1, 2]) {
+test('quota retry requires an explicit numeric first attempt', () => {
+  for (const independentReviewAttempt of [undefined, 0, '1', 'malformed', -1, 2]) {
     const review = {
       independentReviewConclusion: 'failure',
       independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
