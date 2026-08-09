@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 const CORE_PATH = './windowsAuthoritySpecialistReviewCoreV1.mjs';
-const NO_FAFF_PATH = './windowsAuthorityNoFaffRescueReviewV1.mjs';
+const NO_FAFF_PATH = './windowsAuthorityNoFaffRescueReviewV2.mjs';
 const RECOVERY_GUARDIAN_PATH = './windowsAuthorityRecoveryMeshGuardianReviewV1.mjs';
 const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
-const NO_FAFF_BLOB_SHA = '06d3d9da13f930be1f907187d13e7f0df898b6a2';
+const NO_FAFF_BLOB_SHA = 'b4684ddc6a1570958bed90d73aeb1004fbd5064c';
 const RECOVERY_GUARDIAN_BLOB_SHA = '462186df8116118c3a945b9cf7fa358a9ae5e0ba';
 const EXPECTED_NO_FAFF_PATHS = Object.freeze([
   'scripts/windows/repair-battle-bridge-control-plane-now.ps1',
