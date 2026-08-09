@@ -35,11 +35,12 @@ function healthyInput() {
   };
 }
 
-test('healthy canonical worker is a no-op', () => {
+test('healthy canonical worker is a no-op and exposes its exact validated source head', () => {
   const result = buildWorkerWatchdogRecoveryDecision(healthyInput());
   assert.equal(result.action, 'NO_OP');
   assert.equal(result.assessment.healthy, true);
   assert.equal(result.assessment.taskActionMatchesCanonicalWorker, true);
+  assert.equal(result.assessment.sourceHead, 'a'.repeat(40));
   assert.equal(result.restartTaskName, '');
 });
 
@@ -100,12 +101,13 @@ test('malformed heartbeat is detected', () => {
   assert.ok(result.blockers.includes('worker-heartbeat-malformed'));
 });
 
-test('wrong repository or branch cannot prove canonical main', () => {
+test('wrong repository or branch cannot prove canonical main or expose a repair source head', () => {
   const input = healthyInput();
   input.heartbeat.repositoryRoot = 'C:\\temp\\stephan-os';
   input.heartbeat.branch = 'feature';
   const result = assessMissionOrchestratorWorker(input);
   assert.equal(result.repositoryFromCanonicalMain, false);
+  assert.equal(result.sourceHead, '');
   assert.ok(result.blockers.includes('worker-not-proven-from-canonical-main'));
 });
 
