@@ -121,6 +121,24 @@ function reviewReceipt(overrides = {}) {
   });
 }
 
+function providerNeutralCapacityReceipt(overrides = {}) {
+  return signedReceipt({
+    schemaVersion: 'stephanos.provider-neutral-review-capacity-receipt.v1',
+    receiptId: 'provider-neutral-capacity-receipt-001',
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 1706,
+    branch: 'fix/battle-bridge-recovery-mesh-guardian-v1',
+    sourceHead: HEAD,
+    baseSha: BASE,
+    reviewClass: 'external-qualified',
+    supportedOperations: ['EXACT_HEAD_INDEPENDENT_REVIEW'],
+    completedAt: '2026-08-08T16:38:00Z',
+    expiresAt: '2026-08-08T17:38:00Z',
+    evidenceRefs: ['receipts/provider-neutral/capacity-001.json'],
+    ...overrides,
+  });
+}
+
 test('detects a green verification workflow whose coordinate job was skipped', () => {
   const result = projection([lane({
     review: { coordinatorWorkflowConclusion: 'success', coordinateJobConclusion: 'skipped' },
@@ -140,6 +158,14 @@ test('detects a dispatch with no matching receipt after the bounded window', () 
   assert.equal(record.detectedRule, STALL_SENTINEL_RULE.REVIEW_DISPATCH_NO_RECEIPT);
   assert.equal(record.state, STALL_SENTINEL_STATE.STALLED_RECOVERABLE);
   assert.match(record.exactNextSafeAction, /WITHOUT_DUPLICATE_DISPATCH/);
+});
+
+test('rejects incomplete dispatch identity instead of waiting forever', () => {
+  assert.equal(projection([lane({ review: { dispatchCommentId: 5226946191 } })]).valid, false);
+  assert.equal(projection([lane({ review: { dispatchAt: '2026-08-08T16:20:00Z' } })]).valid, false);
+  assert.equal(projection([lane({
+    review: { dispatchCommentId: 'not-an-id', dispatchAt: '2026-08-08T16:20:00Z' },
+  })]).valid, false);
 });
 
 test('rate-limited review without artifact schedules one retry after quota reset', () => {
@@ -203,14 +229,13 @@ test('source-ready Forge without runtime receipts is activated but never reporte
   assert.equal(result.summary.forgeActivationRequired, 1);
 });
 
-test('self-asserted or payload-tampered Forge readiness never preempts a proven fallback', () => {
+test('payload-tampered Forge readiness never preempts a receipt-proven fallback', () => {
   const rawClaims = projection([lane({
     review: {
       independentReviewConclusion: 'failure',
       independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
       independentReviewAttempt: 2,
-      providerNeutralFallbackAvailable: true,
-      providerNeutralFallbackReceiptId: 'provider-neutral-capacity-receipt-001',
+      providerNeutralCapacityReceipt: providerNeutralCapacityReceipt(),
     },
   })], { forgeSidecar: {
     ...forgeSidecar(),
@@ -234,8 +259,7 @@ test('retry exhaustion selects existing provider-neutral fallback without asking
       independentReviewConclusion: 'failure',
       independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
       independentReviewAttempt: 2,
-      providerNeutralFallbackAvailable: true,
-      providerNeutralFallbackReceiptId: 'provider-neutral-capacity-receipt-001',
+      providerNeutralCapacityReceipt: providerNeutralCapacityReceipt(),
     },
   })]);
   const [record] = result.records;
@@ -245,19 +269,59 @@ test('retry exhaustion selects existing provider-neutral fallback without asking
   assert.equal(record.operatorNotificationRequired, false);
 });
 
+test('provider-neutral fallback requires a fresh payload-valid receipt bound to the live lane', () => {
+  const baseReview = {
+    independentReviewConclusion: 'failure',
+    independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
+    independentReviewAttempt: 2,
+  };
+  const selfAsserted = projection([lane({ review: {
+    ...baseReview,
+    providerNeutralFallbackAvailable: true,
+    providerNeutralFallbackReceiptId: 'provider-neutral-capacity-receipt-001',
+  } })]).records[0];
+  assert.equal(selfAsserted.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.CAPTAIN_DECISION);
+
+  for (const receipt of [
+    providerNeutralCapacityReceipt({ sourceHead: '9'.repeat(40) }),
+    providerNeutralCapacityReceipt({ prNumber: 1707 }),
+    providerNeutralCapacityReceipt({ completedAt: '2026-08-07T16:39:59Z' }),
+    { ...providerNeutralCapacityReceipt(), payloadSha256: '0'.repeat(64) },
+  ]) {
+    const record = projection([lane({ review: {
+      ...baseReview,
+      providerNeutralCapacityReceipt: receipt,
+    } })]).records[0];
+    assert.equal(record.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.CAPTAIN_DECISION);
+  }
+});
+
 test('only bounded recovery exhaustion without a fallback becomes a Captain decision', () => {
   const result = projection([lane({
     review: {
       independentReviewConclusion: 'failure',
       independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
       independentReviewAttempt: 2,
-      providerNeutralFallbackAvailable: false,
     },
   })]);
   const [record] = result.records;
   assert.equal(record.state, STALL_SENTINEL_STATE.CAPTAIN_DECISION);
   assert.equal(record.operatorNotificationRequired, true);
   assert.equal(result.finalVerdict, 'STALL_SENTINEL_CAPTAIN_DECISION_REQUIRED');
+});
+
+test('quota retry requires an explicit first attempt', () => {
+  for (const independentReviewAttempt of [undefined, 0, 'malformed', -1, 2]) {
+    const review = {
+      independentReviewConclusion: 'failure',
+      independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
+      rateLimitResetAt: '2026-08-08T17:00:00Z',
+    };
+    if (independentReviewAttempt !== undefined) review.independentReviewAttempt = independentReviewAttempt;
+    const [record] = projection([lane({ review })]).records;
+    assert.notEqual(record.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.QUOTA_RETRY);
+    assert.equal(record.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.CAPTAIN_DECISION);
+  }
 });
 
 test('attempt-one retry remains eligible after reset and runs immediately', () => {
@@ -310,6 +374,16 @@ test('active source movement and bounded receipt waiting are not false-positive 
   assert.equal(waiting.detectedRule, STALL_SENTINEL_RULE.NONE);
 });
 
+test('a stationary checked lane advances immediately when review is not required', () => {
+  const [record] = projection([lane({ reviewRequired: false })]).records;
+  assert.equal(record.state, STALL_SENTINEL_STATE.ACTIVE);
+  assert.equal(record.exactNextSafeAction, 'ADVANCE_WITHOUT_REVIEW');
+
+  const [waiting] = projection([lane({ reviewRequired: false, requiredChecksSuccessful: false })]).records;
+  assert.equal(waiting.state, STALL_SENTINEL_STATE.WATCHING);
+  assert.equal(waiting.exactNextSafeAction, 'WAIT_FOR_REQUIRED_EXACT_HEAD_CHECKS');
+});
+
 test('repeated scans observe one existing idempotent recovery instead of duplicating it', () => {
   const first = projection([lane({
     review: { coordinatorWorkflowConclusion: 'success', coordinateJobConclusion: 'skipped' },
@@ -343,6 +417,31 @@ test('idempotency distinguishes a later higher-priority recovery route', () => {
   assert.equal(forged.recoveryAlreadyRecorded, false);
   assert.notEqual(forged.recoveryKey, quota.recoveryKey);
   assert.equal(forged.recoveryEvidenceIdentity, 'forge-m2-runtime-receipt-001:forge-m3-runtime-receipt-001');
+});
+
+test('idempotency is bound to the validated provider-neutral receipt identity', () => {
+  const baseReview = {
+    independentReviewConclusion: 'failure',
+    independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
+    independentReviewAttempt: 2,
+  };
+  const firstLane = lane({ review: {
+    ...baseReview,
+    providerNeutralCapacityReceipt: providerNeutralCapacityReceipt(),
+  } });
+  const first = projection([firstLane]).records[0];
+  const nextReceipt = providerNeutralCapacityReceipt({
+    receiptId: 'provider-neutral-capacity-receipt-002',
+    evidenceRefs: ['receipts/provider-neutral/capacity-002.json'],
+  });
+  const second = projection([lane({ review: {
+    ...baseReview,
+    providerNeutralCapacityReceipt: nextReceipt,
+  } })], { existingRecoveryKeys: [first.recoveryKey] }).records[0];
+  assert.equal(second.capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.PROVIDER_NEUTRAL);
+  assert.equal(second.recoveryEvidenceIdentity, 'provider-neutral-capacity-receipt-002');
+  assert.equal(second.recoveryAlreadyRecorded, false);
+  assert.notEqual(second.recoveryKey, first.recoveryKey);
 });
 
 test('only a payload-valid review receipt bound to the live lane advances the gate', () => {
