@@ -64,72 +64,46 @@ function forbidPattern(findings, source, path, pattern, code) {
 }
 
 function reviewAuthenticatedTransportRescue(source, findings) {
-  requireLiteral(
-    findings, source, RESCUE_PATH,
+  requireLiteral(findings, source, RESCUE_PATH,
     "if ($dispatchProof.readyForRemoteChatDispatch -ne $true)",
-    'no-faff-v2-remote-readiness-gate-missing',
-  );
-  requireLiteral(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-remote-readiness-gate-missing');
+  requireLiteral(findings, source, RESCUE_PATH,
     '$dispatchBlocker = [string]$dispatchProof.finalVerdict',
-    'no-faff-v2-status-blocker-binding-missing',
-  );
-  requireLiteral(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-status-blocker-binding-missing');
+  requireLiteral(findings, source, RESCUE_PATH,
     '$dispatchProof.readyForCodexCliDispatch -eq $true',
-    'no-faff-v2-local-codex-readiness-branch-missing',
-  );
-  requireLiteral(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-local-codex-readiness-branch-missing');
+  requireLiteral(findings, source, RESCUE_PATH,
     'readyForCodexCliDispatch = ($dispatchProof.readyForCodexCliDispatch -eq $true)',
-    'no-faff-v2-local-codex-readiness-receipt-missing',
-  );
-  requireLiteral(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-local-codex-readiness-receipt-missing');
+  requireLiteral(findings, source, RESCUE_PATH,
     'readyForRemoteChatDispatch = $false',
-    'no-faff-v2-remote-readiness-failclosed-missing',
-  );
-  requireLiteral(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-remote-readiness-failclosed-missing');
+  requireLiteral(findings, source, RESCUE_PATH,
     'blocker = $dispatchBlocker',
-    'no-faff-v2-blocker-projection-missing',
-  );
-  requireLiteral(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-blocker-projection-missing');
+  requireLiteral(findings, source, RESCUE_PATH,
     'finalVerdict = $dispatchBlocker',
-    'no-faff-v2-blocker-verdict-projection-missing',
-  );
-  requireLiteral(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-blocker-verdict-projection-missing');
+  requireLiteral(findings, source, RESCUE_PATH,
     'separately reviewed authenticated ChatGPT transport',
-    'no-faff-v2-authenticated-transport-next-action-missing',
-  );
-  requireLiteral(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-authenticated-transport-next-action-missing');
+  requireLiteral(findings, source, RESCUE_PATH,
     "($observedHead + '^{tree}')",
-    'no-faff-v2-tree-binding-missing',
-  );
+    'no-faff-v2-tree-binding-missing');
 
-  forbidPattern(
-    findings, source, RESCUE_PATH,
+  forbidPattern(findings, source, RESCUE_PATH,
     /CHATGPT_DESKTOP_PLUGIN_ATTACHMENT_REQUIRED/,
-    'no-faff-v2-obsolete-plugin-attachment-blocker-forbidden',
-  );
-  forbidPattern(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-obsolete-plugin-attachment-blocker-forbidden');
+  forbidPattern(findings, source, RESCUE_PATH,
     /BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_ATTACHMENT_REQUIRED/,
-    'no-faff-v2-obsolete-attachment-verdict-forbidden',
-  );
-  forbidPattern(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-obsolete-attachment-verdict-forbidden');
+  forbidPattern(findings, source, RESCUE_PATH,
     /\$observedHead`\$\{tree\}/,
-    'no-faff-v2-literal-tree-placeholder-forbidden',
-  );
-  forbidPattern(
-    findings, source, RESCUE_PATH,
+    'no-faff-v2-literal-tree-placeholder-forbidden');
+  forbidPattern(findings, source, RESCUE_PATH,
     /Restart ChatGPT desktop[\s\S]{0,160}tools\/list/i,
-    'no-faff-v2-obsolete-restart-guidance-forbidden',
-  );
+    'no-faff-v2-obsolete-restart-guidance-forbidden');
 }
 
 function reviewAuthenticatedTransportStatus(source, findings) {
@@ -148,45 +122,20 @@ function reviewAuthenticatedTransportStatus(source, findings) {
     ['clientIdentityAuthenticated = $false', 'dispatch-status-v2-handshake-client-auth-denial-missing'],
     ['remoteTransportAuthenticated = $remoteTransportAuthenticated', 'dispatch-status-v2-handshake-remote-auth-projection-missing'],
   ];
-  for (const [literal, code] of requirements) {
-    requireLiteral(findings, source, STATUS_PATH, literal, code);
-  }
+  for (const [literal, code] of requirements) requireLiteral(findings, source, STATUS_PATH, literal, code);
 }
 
 function reviewAuthenticatedTransportStaticTest(source, findings) {
   const requirements = [
-    [
-      "test('rescue repairs the existing Codex dispatch plugin without creating another execution lane'",
-      'no-faff-static-test-v2-rescue-transport-guard-missing',
-    ],
-    [
-      "test('rescue resolves the exact commit tree without leaking a literal PowerShell placeholder to Git'",
-      'no-faff-static-test-v2-tree-guard-missing',
-    ],
-    [
-      "test('dispatch readiness requires a fresh exact-head Windows tools-list attachment proof and separates local Codex from remote transport'",
-      'no-faff-static-test-v2-attachment-guard-missing',
-    ],
-    [
-      'finalVerdict = \\\\$dispatchBlocker',
-      'no-faff-static-test-v2-dynamic-blocker-verdict-guard-missing',
-    ],
-    [
-      'separately reviewed authenticated ChatGPT transport',
-      'no-faff-static-test-v2-authenticated-transport-guidance-guard-missing',
-    ],
-    [
-      'BLOCKED_AUTHENTICATED_REMOTE_MCP_TRANSPORT_REQUIRED',
-      'no-faff-static-test-v2-authenticated-transport-blocker-guard-missing',
-    ],
-    [
-      'remoteTransportAuthenticated = \\\\$false',
-      'no-faff-static-test-v2-remote-auth-denial-guard-missing',
-    ],
+    ["test('rescue repairs the existing Codex dispatch plugin without creating another execution lane'", 'no-faff-static-test-v2-rescue-transport-guard-missing'],
+    ["test('rescue resolves the exact commit tree without leaking a literal PowerShell placeholder to Git'", 'no-faff-static-test-v2-tree-guard-missing'],
+    ["test('dispatch readiness requires a fresh exact-head Windows tools-list attachment proof and separates local Codex from remote transport'", 'no-faff-static-test-v2-attachment-guard-missing'],
+    ['dispatchBlocker', 'no-faff-static-test-v2-dynamic-blocker-verdict-guard-missing'],
+    ['separately reviewed authenticated ChatGPT transport', 'no-faff-static-test-v2-authenticated-transport-guidance-guard-missing'],
+    ['BLOCKED_AUTHENTICATED_REMOTE_MCP_TRANSPORT_REQUIRED', 'no-faff-static-test-v2-authenticated-transport-blocker-guard-missing'],
+    ['remoteTransportAuthenticated', 'no-faff-static-test-v2-remote-auth-denial-guard-missing'],
   ];
-  for (const [literal, code] of requirements) {
-    requireLiteral(findings, source, STATIC_TEST_PATH, literal, code);
-  }
+  for (const [literal, code] of requirements) requireLiteral(findings, source, STATIC_TEST_PATH, literal, code);
 }
 
 export function upgradeWindowsAuthorityNoFaffRescueReviewV2(baseResult, input = {}) {
@@ -194,14 +143,15 @@ export function upgradeWindowsAuthorityNoFaffRescueReviewV2(baseResult, input = 
 
   const findings = (Array.isArray(baseResult.findings) ? baseResult.findings : [])
     .filter((item) => !SUPERSEDED_V1_CODES.has(item?.code));
+  const reviewedPaths = new Set(Array.isArray(baseResult.reviewedPaths) ? baseResult.reviewedPaths : []);
 
-  if (!baseSourceInvalid(baseResult, RESCUE_PATH)) {
+  if (reviewedPaths.has(RESCUE_PATH) && !baseSourceInvalid(baseResult, RESCUE_PATH)) {
     reviewAuthenticatedTransportRescue(sourceContent(input, RESCUE_PATH), findings);
   }
-  if (!baseSourceInvalid(baseResult, STATUS_PATH)) {
+  if (reviewedPaths.has(STATUS_PATH) && !baseSourceInvalid(baseResult, STATUS_PATH)) {
     reviewAuthenticatedTransportStatus(sourceContent(input, STATUS_PATH), findings);
   }
-  if (!baseSourceInvalid(baseResult, STATIC_TEST_PATH)) {
+  if (reviewedPaths.has(STATIC_TEST_PATH) && !baseSourceInvalid(baseResult, STATIC_TEST_PATH)) {
     reviewAuthenticatedTransportStaticTest(sourceContent(input, STATIC_TEST_PATH), findings);
   }
 
@@ -215,9 +165,7 @@ export function upgradeWindowsAuthorityNoFaffRescueReviewV2(baseResult, input = 
     reviewedPaths: Object.freeze([...(baseResult.reviewedPaths || [])]),
     findings: Object.freeze(deduped),
     proofRefs: Object.freeze([...(baseResult.proofRefs || [])]),
-    finalVerdict: clean
-      ? 'WINDOWS_AUTHORITY_SPECIALIST_CLEAN'
-      : 'WINDOWS_AUTHORITY_SPECIALIST_FINDINGS',
+    finalVerdict: clean ? 'WINDOWS_AUTHORITY_SPECIALIST_CLEAN' : 'WINDOWS_AUTHORITY_SPECIALIST_FINDINGS',
   });
 }
 
