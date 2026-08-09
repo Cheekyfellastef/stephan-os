@@ -74,7 +74,7 @@ test('conflicting active claims are withheld from ACTIVE portfolio projection', 
   assert.equal(result.failClosed, true);
   assert.equal(result.activeGoal, null);
   assert.equal(result.portfolio.some(({ lifecycle }) => lifecycle === 'ACTIVE'), false);
-  assert.ok(result.contradictions.some(({ code }) => code === 'MULTIPLE_ACTIVE_LANES'));
+  assert.ok(result.contradictions.some(({ code }) => code === 'ACTIVE_RESOURCE_SCOPE_MISSING'));
 });
 
 test('malformed exact-head proof evidence fails closed', () => {

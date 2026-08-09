@@ -21,7 +21,7 @@ test('V9 detects live-created goal receipt, classifies, enriches proof, and emit
   assert.match(engine.dispatchPackets[0].packet, /Build Concierge V9 mission packet/);
 });
 
-test('V9 rejects unsafe or unknown goals with exact reasons and preserves one-active-lane guardrail', () => {
+test('V9 rejects unsafe or unknown goals and multiple unscoped active lanes', () => {
   const unknown = { receiptId: 'r2', goal: { id: 'mystery', title: 'Think about stuff', intent: 'Make it better somehow' } };
   const unsafe = { receiptId: 'r3', goal: { id: 'bad', title: 'Merge and push secrets', intent: 'merge deploy token' } };
   assert.equal(classifyBuildConciergeGoal(unknown).classification, 'unknown');
@@ -29,7 +29,49 @@ test('V9 rejects unsafe or unknown goals with exact reasons and preserves one-ac
   assert.equal(engine.classifiedGoalCount, 0);
   assert.match(engine.blockers.join(' '), /unknown stays unknown/);
   assert.match(engine.blockers.join(' '), /unsafe automation/);
-  assert.match(engine.blockers.join(' '), /One active proof lane/);
+  assert.match(engine.blockers.join(' '), /require explicit resource scopes/);
+});
+
+test('V9 admits five resource-disjoint build candidates and keeps authority model-only', () => {
+  const receipts = Array.from({ length:6 }, (_, index) => ({
+    receiptId:`parallel-${index + 1}`,
+    goal:{
+      id:`goal-${index + 1}`,
+      title:`Build source capability ${index + 1}`,
+      intent:'Add bounded source code and deterministic tests',
+      resourceIds:[`goal:${index + 1}`],
+    },
+  }));
+  const engine = buildConciergeExecutionEngineV9({
+    receipts,
+    dispatchAdapterAvailable:true,
+    sourceApproved:true,
+    maximumParallelLanes:5,
+    availableExecutorSlots:8,
+  });
+  assert.deepEqual(engine.parallelDispatchCandidates,['goal-1','goal-2','goal-3','goal-4','goal-5']);
+  assert.equal(engine.dispatchReadyCount,5);
+  assert.equal(engine.parallelHeld.find(({candidateId}) => candidateId === 'goal-6').reasonCode,'PARALLEL_CAPACITY_FULL');
+  assert.equal(engine.commandExecutionAllowed,false);
+  assert.equal(engine.mergeAllowed,false);
+  assert.equal(engine.codexDispatchAllowed,false);
+});
+
+test('V9 keeps conflicting candidates held while independent capacity continues', () => {
+  const parallelReceipt = (id, resourceId) => ({
+    receiptId:id,
+    goal:{ id, title:`Build ${id}`, intent:'Add bounded source code and tests', resourceIds:[resourceId] },
+  });
+  const engine = buildConciergeExecutionEngineV9({
+    receipts:[parallelReceipt('one','repo:main'),parallelReceipt('two','repo:main'),parallelReceipt('three','goal:three')],
+    activeExecutionLanes:[{ laneId:'active-review', resourceIds:['pr:1712'] }],
+    dispatchAdapterAvailable:true,
+    sourceApproved:true,
+    availableExecutorSlots:8,
+  });
+  assert.deepEqual(engine.parallelDispatchCandidates,['one','three']);
+  assert.equal(engine.parallelHeld.find(({candidateId}) => candidateId === 'two').reasonCode,'RESOURCE_CONFLICT');
+  assert.equal(engine.elasticCapacity.status,'RUNNING');
 });
 
 test('V9 exact-head approval boundary is preserved and dispatch is model-only without source approval', () => {

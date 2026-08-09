@@ -1,4 +1,10 @@
 import { validateConciergeCommand } from './battleBridgeBuildConciergeV2.mjs';
+import {
+  MAXIMUM_BUILD_LANES,
+  MINIMUM_BUILD_LANES,
+  deriveElasticBuildWidth,
+  selectResourceDisjointCandidates,
+} from './elasticBuildCapacityV1.mjs';
 
 export const BUILD_CONCIERGE_EXECUTION_ENGINE_V9_SCHEMA = 'stephanos.build-concierge.execution-engine.v9';
 export const CONNECTOR_CAPABILITY_PROBE_V1_SCHEMA = 'stephanos.connector-capability-probe.v1';
@@ -43,6 +49,14 @@ function goalFromReceipt(receipt = {}) { return receipt.goal && typeof receipt.g
 function candidateId(receipt = {}, index = 0) { const goal = goalFromReceipt(receipt); return text(goal.id || receipt.receiptId || `live-goal-${index + 1}`); }
 function boolCapability(value) { return value === true ? 'OK' : (value === false ? 'BLOCKED' : 'UNKNOWN'); }
 function issueKey(issue) { return `#${issue}`; }
+function normalizedResourceIds(value) {
+  return unique(list(value).map((entry) => text(entry).toLowerCase()));
+}
+function activeLane(value, index) {
+  if (typeof value === 'string') return { laneId:text(value, `active-lane-${index + 1}`), resourceIds:[] };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { laneId:'', resourceIds:[] };
+  return { laneId:text(value.laneId || value.id), resourceIds:normalizedResourceIds(value.resourceIds) };
+}
 
 export function buildConnectorCapabilityProbeV1(input = {}) {
   const github = input.github || input.githubConnector || {};
@@ -181,9 +195,15 @@ export function buildConciergeExecutionEngineV9(input = {}) {
   const receipts = list(input.receipts || input.goalReceipts);
   const adapterAvailable = input.dispatchAdapterAvailable === true || input.githubCodexMissionDispatchAvailable === true;
   const sourceApproved = input.sourceApproved === true || input.explicitSourceApproval === true;
-  const requestedActive = list(input.activeExecutionLane || input.activeProofLane).filter(Boolean);
+  const requestedActive = list(input.activeExecutionLanes || input.activeExecutionLane || input.activeProofLane).filter(Boolean).map(activeLane);
+  const minimumParallelLanes = input.minimumParallelLanes ?? MINIMUM_BUILD_LANES;
+  const maximumParallelLanes = input.maximumParallelLanes ?? MAXIMUM_BUILD_LANES;
+  const availableExecutorSlots = input.availableExecutorSlots ?? MAXIMUM_BUILD_LANES;
   const blockers = [];
-  if (requestedActive.length > 1) blockers.push('One active proof lane guardrail blocks multiple active execution lanes unless explicitly isolated.');
+  if (requestedActive.some((lane) => !lane.laneId)) blockers.push('Active execution lane identity is invalid.');
+  if (requestedActive.length > 1 && requestedActive.some((lane) => lane.resourceIds.length === 0)) blockers.push('Multiple active execution lanes require explicit resource scopes.');
+  const activeResources = requestedActive.flatMap((lane) => lane.resourceIds);
+  if (new Set(activeResources).size !== activeResources.length) blockers.push('Multiple active execution lanes conflict on a declared resource scope.');
   const buildEngineReadiness = buildBuildEngineReadinessV1(input.buildEngineReadiness || input);
   const enrichedCandidates = receipts.map((receipt, index) => {
     const goal = goalFromReceipt(receipt);
@@ -192,16 +212,17 @@ export function buildConciergeExecutionEngineV9(input = {}) {
     const commandProof = commands.map(validateConciergeCommand);
     const unsafeCommandBlockers = commandProof.filter((proof) => !proof.allowed).map((proof) => proof.blocker);
     const manualDispatchRequired = classified.classification !== 'unknown' && !adapterAvailable;
-    const dispatchReady = classified.classification !== 'unknown' && adapterAvailable && sourceApproved && !classified.blockers.length && !unsafeCommandBlockers.length && requestedActive.length <= 1;
+    const dispatchReady = classified.classification !== 'unknown' && adapterAvailable && sourceApproved && !classified.blockers.length && !unsafeCommandBlockers.length;
     const candidate = {
       candidateId: candidateId(receipt, index),
       title: text(goal.title, 'Untitled Build Concierge goal'),
       classification: classified.classification,
       suggestedLane: LANES[classified.classification],
+      resourceIds: normalizedResourceIds(goal.resourceIds),
       requiredProofFamilies: PROOFS[classified.classification] || [],
       declaredAllowlistedProofCommands: commandProof.filter((proof) => proof.allowed).map((proof) => proof.command),
-      dispatchReadiness: dispatchReady ? 'READY_MODEL_ONLY_SOURCE_APPROVED' : (manualDispatchRequired ? 'MANUAL_DISPATCH_REQUIRED' : 'BLOCKED_OR_UNKNOWN'),
-      dispatchReady,
+      dispatchReadiness: dispatchReady ? 'ELIGIBLE_FOR_RESOURCE_ADMISSION' : (manualDispatchRequired ? 'MANUAL_DISPATCH_REQUIRED' : 'BLOCKED_OR_UNKNOWN'),
+      dispatchReady:false,
       blockerReasons: unique([...classified.blockers, ...unsafeCommandBlockers, ...(adapterAvailable && !sourceApproved && classified.classification !== 'unknown' ? ['Safe dispatch adapter present, but exact source approval for dispatch is absent; readiness is modeled only.'] : [])]),
       nextOperatorAction: manualDispatchRequired ? 'Copy the Codex mission packet into an explicitly approved Codex dispatch surface.' : (dispatchReady ? 'Operator may dispatch through the approved adapter; this projection does not execute dispatch.' : 'Resolve blockers or leave the goal unknown/blocked.'),
       commandExecutionAllowed: false,
@@ -210,21 +231,51 @@ export function buildConciergeExecutionEngineV9(input = {}) {
     };
     return { ...candidate, codexMissionPacket: manualDispatchRequired ? buildCodexMissionPacket({ receipt, candidate }) : '' };
   });
+  const eligible = enrichedCandidates.filter((candidate) => candidate.dispatchReadiness === 'ELIGIBLE_FOR_RESOURCE_ADMISSION');
+  const capacity = deriveElasticBuildWidth({
+    minimumLanes:minimumParallelLanes,
+    maximumLanes:maximumParallelLanes,
+    activeLaneCount:requestedActive.length,
+    readyIndependentWorkCount:eligible.length,
+    availableExecutorSlots,
+  });
+  if (capacity.status === 'SAFE_HOLD_INVALID_CAPACITY') blockers.push('Parallel execution capacity evidence is invalid.');
+  const selection = blockers.length || capacity.status === 'SAFE_HOLD_INVALID_CAPACITY'
+    ? { selected:[], held:eligible.map(({ candidateId }) => ({ candidateId, reasonCode:'SAFE_HOLD' })), reasonCodes:['SAFE_HOLD'] }
+    : eligible.length === 1 && requestedActive.length === 0 && eligible[0].resourceIds.length === 0
+      ? { selected:eligible, held:[], reasonCodes:['LEGACY_SINGLE_LANE'] }
+      : selectResourceDisjointCandidates(eligible, { limit:capacity.remainingAdmissionSlots, activeResourceIds:activeResources });
+  const selectedIds = new Set(selection.selected.map(({ candidateId }) => candidateId));
+  const heldById = new Map(selection.held.map((entry) => [entry.candidateId, entry]));
+  const admittedCandidates = enrichedCandidates.map((candidate) => {
+    const admitted = selectedIds.has(candidate.candidateId);
+    const held = heldById.get(candidate.candidateId);
+    return {
+      ...candidate,
+      dispatchReady:admitted,
+      dispatchReadiness:admitted ? 'READY_MODEL_ONLY_SOURCE_APPROVED' : candidate.dispatchReadiness === 'ELIGIBLE_FOR_RESOURCE_ADMISSION' ? (held?.reasonCode || 'SAFE_HOLD') : candidate.dispatchReadiness,
+      parallelAdmission:admitted ? 'ADMITTED_MODEL_ONLY' : (held?.reasonCode || 'NOT_ELIGIBLE'),
+    };
+  });
   const dispatchPackets = enrichedCandidates.filter((c) => c.dispatchReadiness === 'MANUAL_DISPATCH_REQUIRED').map((c) => ({ candidateId: c.candidateId, status: 'MANUAL_DISPATCH_REQUIRED', packet: c.codexMissionPacket }));
-  const classifiedGoalCount = enrichedCandidates.filter((c) => c.classification !== 'unknown').length;
-  const allBlockers = unique([...blockers, ...enrichedCandidates.flatMap((c) => c.blockerReasons)]);
+  const classifiedGoalCount = admittedCandidates.filter((c) => c.classification !== 'unknown').length;
+  const allBlockers = unique([...blockers, ...admittedCandidates.flatMap((c) => c.blockerReasons)]);
   return {
     schemaVersion: BUILD_CONCIERGE_EXECUTION_ENGINE_V9_SCHEMA,
     status: allBlockers.length ? 'blocked_or_manual' : (enrichedCandidates.length ? 'ready_model_only' : 'idle'),
     watchedGoalCount: receipts.length,
     classifiedGoalCount,
-    enrichedCandidateCount: enrichedCandidates.length,
-    dispatchReadyCount: enrichedCandidates.filter((c) => c.dispatchReady).length,
+    enrichedCandidateCount: admittedCandidates.length,
+    dispatchReadyCount: admittedCandidates.filter((c) => c.dispatchReady).length,
     manualDispatchRequiredCount: dispatchPackets.length,
-    activeExecutionLane: requestedActive[0] || enrichedCandidates.find((c) => c.classification !== 'unknown')?.suggestedLane || 'none',
+    activeExecutionLane: requestedActive[0]?.laneId || admittedCandidates.find((c) => c.classification !== 'unknown')?.suggestedLane || 'none',
+    activeExecutionLanes:requestedActive,
+    elasticCapacity:capacity,
+    parallelDispatchCandidates:selection.selected.map(({ candidateId }) => candidateId),
+    parallelHeld:selection.held,
     buildEngineReadiness,
     connectorCapabilityProbe: buildEngineReadiness.connectorCapabilityProbe,
-    enrichedCandidates,
+    enrichedCandidates:admittedCandidates,
     dispatchPackets,
     blockers: allBlockers,
     nextOperatorAction: dispatchPackets.length ? 'Copy a MANUAL_DISPATCH_REQUIRED Codex mission packet; do not claim Codex ran until a receipt exists.' : (allBlockers[0] || 'Continue guarded Build Concierge execution modeling; no commands or merges executed.'),

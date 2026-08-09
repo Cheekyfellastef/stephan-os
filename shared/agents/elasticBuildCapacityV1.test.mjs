@@ -1,0 +1,59 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  MAXIMUM_BUILD_LANES,
+  MINIMUM_BUILD_LANES,
+  deriveElasticBuildWidth,
+  selectResourceDisjointCandidates,
+} from './elasticBuildCapacityV1.mjs';
+
+test('healthy fabric preserves five baseline lanes and widens to independent demand', () => {
+  const baseline = deriveElasticBuildWidth({ activeLaneCount:0, readyIndependentWorkCount:2, availableExecutorSlots:8 });
+  assert.equal(baseline.status, 'RUNNING');
+  assert.equal(baseline.desiredWidth, MINIMUM_BUILD_LANES);
+  assert.equal(baseline.remainingAdmissionSlots, MINIMUM_BUILD_LANES);
+
+  const widened = deriveElasticBuildWidth({ activeLaneCount:4, readyIndependentWorkCount:5, availableExecutorSlots:12 });
+  assert.equal(widened.desiredWidth, 9);
+  assert.equal(widened.remainingAdmissionSlots, 5);
+  assert.equal(widened.scaleAction, 'SCALE_OUT');
+});
+
+test('capacity evidence fails closed and policy cannot shrink below five or exceed sixteen', () => {
+  for (const input of [
+    { activeLaneCount:0, readyIndependentWorkCount:1, availableExecutorSlots:8, minimumLanes:4 },
+    { activeLaneCount:0, readyIndependentWorkCount:1, availableExecutorSlots:8, maximumLanes:MAXIMUM_BUILD_LANES + 1 },
+    { activeLaneCount:-1, readyIndependentWorkCount:1, availableExecutorSlots:8 },
+  ]) assert.equal(deriveElasticBuildWidth(input).status, 'SAFE_HOLD_INVALID_CAPACITY');
+
+  const degraded = deriveElasticBuildWidth({ activeLaneCount:2, readyIndependentWorkCount:8, availableExecutorSlots:3 });
+  assert.equal(degraded.status, 'DEGRADED_CAPACITY');
+  assert.equal(degraded.scaleAction, 'SAFE_HOLD');
+  assert.ok(degraded.reasonCodes.includes('BASELINE_CAPACITY_SHORTFALL'));
+});
+
+test('resource selection admits five isolated candidates and holds only conflicts or overflow', () => {
+  const candidates = Array.from({ length:7 }, (_, index) => ({
+    candidateId:`goal-${index + 1}`,
+    resourceIds:[`goal:${index + 1}`],
+  }));
+  candidates[5] = { candidateId:'goal-6', resourceIds:['goal:1'] };
+  const result = selectResourceDisjointCandidates(candidates, { limit:5, activeResourceIds:[] });
+  assert.deepEqual(result.selected.map(({ candidateId }) => candidateId), ['goal-1','goal-2','goal-3','goal-4','goal-5']);
+  assert.equal(result.held.find(({ candidateId }) => candidateId === 'goal-6').reasonCode, 'RESOURCE_CONFLICT');
+  assert.equal(result.held.find(({ candidateId }) => candidateId === 'goal-7').reasonCode, 'PARALLEL_CAPACITY_FULL');
+});
+
+test('missing, malformed, sparse or active-conflicting resource scope is never admitted', () => {
+  const result = selectResourceDisjointCandidates([
+    { candidateId:'missing' },
+    { candidateId:'malformed', resourceIds:['../unsafe'] },
+    { candidateId:'conflict', resourceIds:['repo:main'] },
+    { candidateId:'safe', resourceIds:['goal:42'] },
+  ], { limit:5, activeResourceIds:['repo:main'] });
+  assert.deepEqual(result.selected.map(({ candidateId }) => candidateId), ['safe']);
+  assert.equal(result.held.find(({ candidateId }) => candidateId === 'conflict').reasonCode, 'RESOURCE_CONFLICT');
+
+  const sparse = selectResourceDisjointCandidates(new Array(1), { limit:5, activeResourceIds:[] });
+  assert.deepEqual(sparse.reasonCodes, ['INVALID_CANDIDATE_INVENTORY']);
+});
