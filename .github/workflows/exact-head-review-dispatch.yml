@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: exact-head-review-dispatch-${{ github.repository }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'coordinator' }}
+  group: exact-head-review-dispatch-${{ github.repository }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'issue_comment' && format('pr-{0}', github.event.issue.number) || format('coordinator-{0}', github.event_name) }}
   cancel-in-progress: false
 
 jobs:
@@ -55,6 +55,7 @@ jobs:
           npm run stephanos:exact-head-review:test
           node --test shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
+          node --test shared/agents/exactHeadReviewDispatchWorkflow.test.mjs
 
       - name: Parse review coordinator sources
         run: |
