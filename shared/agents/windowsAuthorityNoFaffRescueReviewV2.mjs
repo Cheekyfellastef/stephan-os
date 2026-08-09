@@ -59,6 +59,11 @@ function requireLiteral(findings, source, path, literal, code) {
   if (!source.includes(literal)) findings.push(finding(code, path));
 }
 
+function requireSingleAssignment(findings, source, path, pattern, code) {
+  const matches = source.match(pattern) ?? [];
+  if (matches.length !== 1) findings.push(finding(code, path));
+}
+
 function forbidPattern(findings, source, path, pattern, code) {
   if (pattern.test(source)) findings.push(finding(code, path));
 }
@@ -123,6 +128,14 @@ function reviewAuthenticatedTransportStatus(source, findings) {
     ['remoteTransportAuthenticated = $remoteTransportAuthenticated', 'dispatch-status-v2-handshake-remote-auth-projection-missing'],
   ];
   for (const [literal, code] of requirements) requireLiteral(findings, source, STATUS_PATH, literal, code);
+
+  requireSingleAssignment(
+    findings,
+    source,
+    STATUS_PATH,
+    /^\s*\$status\.readyForRemoteChatDispatch\s*=/gm,
+    'dispatch-status-v2-remote-readiness-assignment-not-unique',
+  );
 }
 
 function reviewAuthenticatedTransportStaticTest(source, findings) {
