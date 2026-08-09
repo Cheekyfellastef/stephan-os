@@ -132,12 +132,20 @@ function fakeHostOps() {
   };
 }
 
+function requestMeta(id = 1) {
+  return { jsonrpc: '2.0', id, isRequest: true, isNotification: false };
+}
+
+function notificationMeta() {
+  return { jsonrpc: '2.0', isRequest: false, isNotification: true };
+}
+
 async function initializeCompatibleSession(handler) {
   const initialized = await handler('initialize', {
     protocolVersion: '2025-06-18',
     clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
-  });
-  await handler('notifications/initialized');
+  }, requestMeta());
+  await handler('notifications/initialized', {}, notificationMeta());
   return initialized;
 }
 
@@ -243,30 +251,37 @@ test('bare or out-of-order MCP callers cannot publish attachment readiness', asy
   for (const exercise of [
     async (handler) => handler('tools/list'),
     async (handler) => {
-      await handler('notifications/initialized');
+      await assert.rejects(
+        handler('notifications/initialized', {}, notificationMeta()),
+        /MCP_INITIALIZE_REQUIRED/,
+      );
       return handler('tools/list');
     },
     async (handler) => {
       await handler('initialize', {
         protocolVersion: '2025-06-18',
         clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
-      });
+      }, requestMeta());
       return handler('tools/list');
     },
     async (handler) => {
-      await handler('initialize', {
-        protocolVersion: '2025-06-18',
-        clientInfo: { name: 'Unrelated MCP Client', version: '1.2.3' },
-      });
-      await handler('notifications/initialized');
+      await assert.rejects(
+        handler('initialize', {
+          protocolVersion: '2025-06-18',
+          clientInfo: { name: 'Unrelated MCP Client', version: '1.2.3' },
+        }, requestMeta()),
+        /MCP_CLIENT_NOT_SUPPORTED/,
+      );
       return handler('tools/list');
     },
     async (handler) => {
-      await handler('initialize', {
-        protocolVersion: '2099-01-01',
-        clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
-      });
-      await handler('notifications/initialized');
+      await assert.rejects(
+        handler('initialize', {
+          protocolVersion: '2099-01-01',
+          clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
+        }, requestMeta()),
+        /MCP_PROTOCOL_NOT_SUPPORTED/,
+      );
       return handler('tools/list');
     },
   ]) {
@@ -285,6 +300,26 @@ test('bare or out-of-order MCP callers cannot publish attachment readiness', asy
     await exercise(handler);
     assert.equal(attachmentProofs.length, 0);
   }
+});
+
+test('lifecycle messages require exact request and notification forms and cannot be replayed', async () => {
+  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
+  const params = {
+    protocolVersion: '2025-06-18',
+    clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
+  };
+  await assert.rejects(handler('initialize', params, notificationMeta()), /MCP_INITIALIZE_REQUEST_REQUIRED/);
+  await handler('initialize', params, requestMeta());
+  await assert.rejects(handler('initialize', params, requestMeta(2)), /MCP_SESSION_ALREADY_INITIALIZED/);
+  await assert.rejects(
+    handler('notifications/initialized', {}, requestMeta(3)),
+    /MCP_INITIALIZED_NOTIFICATION_REQUIRED/,
+  );
+  await handler('notifications/initialized', {}, notificationMeta());
+  await assert.rejects(
+    handler('notifications/initialized', {}, notificationMeta()),
+    /MCP_SESSION_ALREADY_READY/,
+  );
 });
 
 test('tool calls fail closed until a supported client completes initialization', async () => {
@@ -352,6 +387,7 @@ test('dispatch rejects missing, forged, or mismatched authority without reaching
     const args = structuredClone(remoteDispatchArgs());
     tamper(args);
     const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), ...windowsAttachmentOptions() });
+    await initializeCompatibleSession(handler);
     const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.ok, false);
@@ -370,6 +406,7 @@ test('dispatch rejects stale or mismatched transported attachments', async () =>
     const args = structuredClone(remoteDispatchArgs());
     tamper(args);
     const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), ...windowsAttachmentOptions() });
+    await initializeCompatibleSession(handler);
     const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
     assert.equal(result.isError, true);
     assert.equal(integration.calls.length, 0);
@@ -383,6 +420,7 @@ test('dispatch revalidates approval expiry at the MCP boundary', async () => {
     hostOps: fakeHostOps(),
     ...windowsAttachmentOptions({ now: () => '2026-08-08T14:01:00.000Z' }),
   });
+  await initializeCompatibleSession(handler);
   const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
   assert.equal(result.isError, true);
   assert.equal(result.structuredContent.blocker, 'REMOTE_CODEX_HANDOFF_EXPIRED');
@@ -397,6 +435,7 @@ test('dispatch fails closed if local HEAD advances after attachment and before q
     hostOps: fakeHostOps(),
     ...windowsAttachmentOptions({ readRepositoryHead: () => heads.shift() || OTHER_HEAD }),
   });
+  await initializeCompatibleSession(handler);
   const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
   assert.equal(result.isError, true);
   assert.equal(result.structuredContent.blocker, 'BATTLE_BRIDGE_EXECUTION_HEAD_CHANGED');
@@ -483,4 +522,33 @@ test('stdio transport returns JSON-RPC responses and ignores initialized notific
   const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2]);
   assert.equal(responses[1].result.tools.length, 6);
+});
+
+test('stdio transport rejects lifecycle messages with request and notification identities reversed', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const attachmentProofs = [];
+  let captured = '';
+  output.on('data', (chunk) => { captured += chunk.toString(); });
+  const handler = createCodexDispatchMcpHandler({
+    integration: fakeIntegration(),
+    hostOps: fakeHostOps(),
+    attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
+    ...windowsAttachmentOptions(),
+  });
+  const server = runStdioMcpServer({ input, output, handler });
+  const params = { protocolVersion: '2025-06-18', clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' } };
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialize', params })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'notifications/initialized', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} })}\n`);
+  input.end();
+  await server;
+  const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
+  assert.deepEqual(responses.map((response) => response.id), [1, 2, 3, 4]);
+  assert.equal(responses[1].error.message, 'MCP_INITIALIZED_NOTIFICATION_REQUIRED');
+  assert.equal(attachmentProofs.length, 1);
+  assert.equal(attachmentProofs[0].clientSession.ready, true);
 });

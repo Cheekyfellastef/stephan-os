@@ -345,13 +345,27 @@ export function createCodexDispatchMcpHandler({
     ...processAttachmentIdentity,
   }));
   const clientSessionReady = () => normalizeClientSession(clientSession, clientInfo).ready;
-  return async function handle(method, params = {}) {
+  return async function handle(method, params = {}, message = {}) {
+    const messageIsRequest = message.isRequest === true
+      && message.isNotification !== true
+      && message.id !== undefined
+      && message.id !== null;
+    const messageIsNotification = message.isNotification === true
+      && message.isRequest !== true
+      && message.id === undefined;
     if (method === 'initialize') {
-      clientInfo = params.clientInfo && typeof params.clientInfo === 'object' ? params.clientInfo : {};
+      if (!messageIsRequest) throw new Error('MCP_INITIALIZE_REQUEST_REQUIRED');
+      if (clientSession !== null) throw new Error('MCP_SESSION_ALREADY_INITIALIZED');
+      const requestedClientInfo = params.clientInfo && typeof params.clientInfo === 'object' ? params.clientInfo : {};
+      const normalizedClient = normalizeClientInfo(requestedClientInfo);
+      const requestedProtocolVersion = boundedText(params.protocolVersion, 24);
+      if (!normalizedClient.supported) throw new Error('MCP_CLIENT_NOT_SUPPORTED');
+      if (!SUPPORTED_MCP_PROTOCOL_VERSIONS.has(requestedProtocolVersion)) throw new Error('MCP_PROTOCOL_NOT_SUPPORTED');
+      clientInfo = requestedClientInfo;
       const initializedAt = now();
       clientSession = {
         sessionId: randomUUID(),
-        protocolVersion: boundedText(params.protocolVersion, 24),
+        protocolVersion: requestedProtocolVersion,
         initializeReceived: true,
         initializedNotificationReceived: false,
         initializedAt,
@@ -359,7 +373,7 @@ export function createCodexDispatchMcpHandler({
       };
       toolsListed = false;
       return {
-        protocolVersion: params.protocolVersion || '2025-06-18',
+        protocolVersion: requestedProtocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: STEPHANOS_CODEX_DISPATCH_MCP_NAME, version: '1.2.0' },
         instructions: 'Prefer direct GitHub work for source changes. Use update_stephanos_from_chat for an approved complete Battle Bridge update, sync_codex_dispatch_bridge for source-only bridge updates, run_battle_bridge_diagnostics for deterministic local proof, and dispatch_codex_task only when a real Codex child is genuinely required.',
@@ -413,6 +427,7 @@ export function createCodexDispatchMcpHandler({
         }
         const liveAttachment = createCodexDispatchAttachmentProof({
           clientInfo,
+          clientSession,
           now: timestamp,
           sourceHead: liveHead,
           ...processAttachmentIdentity,
@@ -474,13 +489,14 @@ export function createCodexDispatchMcpHandler({
       return asTextResult({ ok: false, blocker: 'UNKNOWN_TOOL', tool: name }, true);
     }
     if (method === 'notifications/initialized') {
-      if (clientSession?.initializeReceived === true) {
-        clientSession = {
-          ...clientSession,
-          initializedNotificationReceived: true,
-          readyAt: now(),
-        };
-      }
+      if (!messageIsNotification) throw new Error('MCP_INITIALIZED_NOTIFICATION_REQUIRED');
+      if (clientSession?.initializeReceived !== true) throw new Error('MCP_INITIALIZE_REQUIRED');
+      if (clientSession.initializedNotificationReceived === true) throw new Error('MCP_SESSION_ALREADY_READY');
+      clientSession = {
+        ...clientSession,
+        initializedNotificationReceived: true,
+        readyAt: now(),
+      };
       return undefined;
     }
     if (method.startsWith('notifications/')) return undefined;
@@ -502,9 +518,25 @@ export async function runStdioMcpServer({ input = process.stdin, output = proces
       output.write(`${JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })}\n`);
       continue;
     }
-    const isNotification = request.id === undefined || request.id === null;
+    const structurallyObject = Boolean(request) && typeof request === 'object' && !Array.isArray(request);
+    const hasId = structurallyObject && Object.prototype.hasOwnProperty.call(request, 'id');
+    const isRequest = hasId && request.id !== null;
+    const isNotification = structurallyObject && !hasId;
+    if (!structurallyObject
+        || request.jsonrpc !== '2.0' || typeof request.method !== 'string'
+        || (!isRequest && !isNotification)) {
+      if (!isNotification) {
+        output.write(`${JSON.stringify({ jsonrpc: '2.0', id: hasId ? request.id : null, error: { code: -32600, message: 'Invalid Request' } })}\n`);
+      }
+      continue;
+    }
     try {
-      const result = await handler(request.method, request.params || {});
+      const result = await handler(request.method, request.params || {}, {
+        jsonrpc: request.jsonrpc,
+        id: request.id,
+        isRequest,
+        isNotification,
+      });
       if (!isNotification && result !== undefined) output.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`);
     } catch (error) {
       if (!isNotification) output.write(`${JSON.stringify(jsonRpcError(request.id, error))}\n`);

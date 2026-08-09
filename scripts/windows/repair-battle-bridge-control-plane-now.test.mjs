@@ -26,12 +26,19 @@ test('rescue repairs the existing Codex dispatch plugin without creating another
   assert.match(ps1, /install-stephanos-codex-dispatch-plugin\.ps1/);
   assert.match(ps1, /status-stephanos-codex-dispatch-plugin\.ps1/);
   assert.match(ps1, /readyForRemoteChatDispatch/);
-  assert.match(ps1, /CHATGPT_DESKTOP_PLUGIN_ATTACHMENT_REQUIRED/);
-  assert.match(ps1, /BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_ATTACHMENT_REQUIRED/);
+  assert.match(ps1, /readyForCodexCliDispatch/);
+  assert.match(ps1, /finalVerdict = \$dispatchBlocker/);
+  assert.match(ps1, /separately reviewed authenticated ChatGPT transport/);
+  assert.doesNotMatch(ps1, /Restart ChatGPT desktop.*tools\/list/);
   assert.match(ps1, /BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_READY/);
   assert.match(ps1, /newWorkerCreated = \$false/);
   assert.match(ps1, /newMailboxCreated = \$false/);
   assert.doesNotMatch(ps1, /New-ScheduledTask|Register-ScheduledTask|Start-Job/i);
+});
+
+test('rescue resolves the exact commit tree without leaking a literal PowerShell placeholder to Git', () => {
+  assert.match(ps1, /\(\$observedHead \+ '\^\{tree\}'\)/);
+  assert.doesNotMatch(ps1, /\$observedHead`\$\{tree\}/);
 });
 
 test('dispatch readiness requires a fresh exact-head Windows tools-list attachment proof and separates local Codex from remote transport', () => {

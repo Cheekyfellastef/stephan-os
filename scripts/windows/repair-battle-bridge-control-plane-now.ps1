@@ -177,7 +177,7 @@ if (-not $stable) {
     Stop-BoundedRescue -Blocker 'PUBLIC_MAIN_MOVED_DURING_RESCUE' -Detail "observed=$observedHead latest=$(Read-PublicMainHead)"
 }
 
-$observedTree = (Read-FixedGitText -Arguments @('-C', $repoRoot, 'rev-parse', "$observedHead`${tree}")).ToLowerInvariant()
+$observedTree = (Read-FixedGitText -Arguments @('-C', $repoRoot, 'rev-parse', ($observedHead + '^{tree}'))).ToLowerInvariant()
 if ($observedTree -notmatch '^[0-9a-f]{40}$') {
     Stop-BoundedRescue -Blocker 'EXACT_TREE_PROOF_FAILED'
 }
@@ -230,6 +230,13 @@ if ($dispatchProof.localBridgeReady -ne $true) {
 }
 
 if ($dispatchProof.readyForRemoteChatDispatch -ne $true) {
+    $dispatchBlocker = [string]$dispatchProof.finalVerdict
+    $dispatchNextAction = if ($dispatchProof.readyForCodexCliDispatch -eq $true) {
+        'Establish the separately reviewed authenticated ChatGPT transport; the proven local Codex stdio session cannot establish remote transport identity.'
+    }
+    else {
+        'Repair the fixed local Codex CLI/plugin prerequisite named by codexDispatchStatus.'
+    }
     $pending = [ordered]@{
         schemaVersion = 'stephanos.battle-bridge-no-faff-rescue.v2'
         repository = $repository
@@ -245,8 +252,10 @@ if ($dispatchProof.readyForRemoteChatDispatch -ne $true) {
         codexDispatchInstallPerformed = $dispatchInstallPerformed
         codexDispatchInstallExitCode = $dispatchInstallExitCode
         codexDispatchStatus = $dispatchProof
-        blocker = if ($dispatchProof.localBridgeReady -eq $true) { 'CHATGPT_DESKTOP_PLUGIN_ATTACHMENT_REQUIRED' } else { [string]$dispatchProof.finalVerdict }
-        exactNextAction = if ($dispatchProof.localBridgeReady -eq $true) { 'Restart ChatGPT desktop, enable the existing stephanos-codex-dispatch plugin, and open one compatible chat so its exact-head tools/list proof is published.' } else { 'Repair the fixed local Codex CLI/plugin prerequisite named by codexDispatchStatus.' }
+        readyForCodexCliDispatch = ($dispatchProof.readyForCodexCliDispatch -eq $true)
+        readyForRemoteChatDispatch = $false
+        blocker = $dispatchBlocker
+        exactNextAction = $dispatchNextAction
         sourceMutationPerformedByRescue = $false
         sourceConvergencePerformedByExistingReviewedSync = $true
         newWorkerCreated = $false
@@ -254,7 +263,7 @@ if ($dispatchProof.readyForRemoteChatDispatch -ne $true) {
         destructiveGitAllowed = $false
         arbitraryShellAllowed = $false
         completedAt = (Get-Date).ToUniversalTime().ToString('o')
-        finalVerdict = 'BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_ATTACHMENT_REQUIRED'
+        finalVerdict = $dispatchBlocker
     }
     Write-BoundedReceipt -Receipt $pending -Path $script:receiptPath
     $pending | ConvertTo-Json -Depth 12
