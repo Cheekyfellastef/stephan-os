@@ -10,6 +10,10 @@ test('resource-scopes PR-correlated coordination while global scans stay seriali
   assert.match(workflow, /github\.event_name == 'issue_comment' && format\('pr-\{0\}', github\.event\.issue\.number\)/);
   assert.match(
     workflow,
+    /github\.event_name == 'workflow_run' && github\.event\.workflow_run\.name == 'Independent Merge Security Review' && github\.event\.workflow_run\.id && format\('review-run-\{0\}', github\.event\.workflow_run\.id\)/,
+  );
+  assert.match(
+    workflow,
     /github\.event_name == 'workflow_run' && github\.event\.workflow_run\.head_sha && format\('head-\{0\}', github\.event\.workflow_run\.head_sha\)/,
   );
   assert.match(workflow, /format\('coordinator-\{0\}', github\.event_name\)/);
