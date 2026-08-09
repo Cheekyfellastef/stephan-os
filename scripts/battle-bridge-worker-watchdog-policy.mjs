@@ -41,13 +41,23 @@ export function assessMissionOrchestratorWorker(input = {}) {
   const heartbeatTimestamp = Date.parse(text(input.heartbeat?.timestampUtc));
   const heartbeatAgeMs = Number.isFinite(heartbeatTimestamp) ? nowMs - heartbeatTimestamp : null;
   const repositoryRoot = normalizePath(input.heartbeat?.repositoryRoot);
+  const heartbeatHead = text(input.heartbeat?.headSha).toLowerCase();
+  const canonicalRepositoryRoot = normalizePath(input.repository?.repositoryRoot);
+  const canonicalRepositoryBranch = text(input.repository?.branch).toLowerCase();
+  const canonicalRepositoryHead = text(input.repository?.headSha).toLowerCase();
+  const canonicalRepositoryHeadProven = canonicalRepositoryRoot.endsWith(CANONICAL_REPOSITORY_SUFFIX)
+    && canonicalRepositoryBranch === 'main'
+    && SHA_40.test(canonicalRepositoryHead);
   const heartbeatTaskName = text(input.heartbeat?.taskName);
   const processPid = positiveInteger(input.process?.pid);
   const heartbeatPid = positiveInteger(input.heartbeat?.pid);
   const repositoryFromCanonicalMain = repositoryRoot.endsWith(CANONICAL_REPOSITORY_SUFFIX)
     && text(input.heartbeat?.branch).toLowerCase() === 'main'
-    && SHA_40.test(text(input.heartbeat?.headSha));
-  const sourceHead = repositoryFromCanonicalMain ? text(input.heartbeat?.headSha).toLowerCase() : '';
+    && SHA_40.test(heartbeatHead);
+  const heartbeatMatchesCanonicalRepositoryHead = canonicalRepositoryHeadProven
+    && repositoryFromCanonicalMain
+    && heartbeatHead === canonicalRepositoryHead;
+  const sourceHead = heartbeatMatchesCanonicalRepositoryHead ? canonicalRepositoryHead : '';
   const taskIdentityObserved = Boolean(observedTaskName);
   const taskApproved = taskIdentityObserved && observedTaskName === APPROVED_WORKER_TASK;
   const taskActionMatchesCanonicalWorker = input.scheduledTask?.actionMatchesCanonicalWorker === true;
@@ -66,6 +76,7 @@ export function assessMissionOrchestratorWorker(input = {}) {
     && heartbeatAgeMs <= heartbeatMaxAgeMs;
   const heartbeatHealthy = heartbeatFresh
     && repositoryFromCanonicalMain
+    && heartbeatMatchesCanonicalRepositoryHead
     && heartbeatTaskApproved
     && heartbeatPidMatchesProcess;
   const healthy = taskStateHealthy && processHealthy && heartbeatHealthy;
@@ -81,7 +92,11 @@ export function assessMissionOrchestratorWorker(input = {}) {
   if (input.process?.running === true && !processCommandLineVerified) blockers.push('worker-command-line-not-canonical');
   if (!Number.isFinite(heartbeatTimestamp)) blockers.push('worker-heartbeat-malformed');
   else if (!heartbeatFresh) blockers.push('worker-heartbeat-stale');
+  if (!canonicalRepositoryHeadProven) blockers.push('canonical-repository-head-unproven');
   if (!repositoryFromCanonicalMain) blockers.push('worker-not-proven-from-canonical-main');
+  else if (canonicalRepositoryHeadProven && !heartbeatMatchesCanonicalRepositoryHead) {
+    blockers.push('worker-heartbeat-head-mismatch');
+  }
   if (!heartbeatTaskApproved) blockers.push('worker-heartbeat-task-not-allowlisted');
   if (!heartbeatPidMatchesProcess) blockers.push('worker-heartbeat-pid-mismatch');
 
@@ -100,10 +115,16 @@ export function assessMissionOrchestratorWorker(input = {}) {
     heartbeatTaskApproved,
     heartbeatPidMatchesProcess,
     repositoryFromCanonicalMain,
+    canonicalRepositoryHead,
+    canonicalRepositoryHeadProven,
+    heartbeatMatchesCanonicalRepositoryHead,
     sourceHead,
     heartbeatAgeMs,
     healthy,
-    restartPermitted: !healthy && taskApproved && taskActionMatchesCanonicalWorker,
+    restartPermitted: !healthy
+      && taskApproved
+      && taskActionMatchesCanonicalWorker
+      && canonicalRepositoryHeadProven,
     blockers,
     arbitraryShellAllowed: false,
     arbitraryPowerShellAllowed: false,
