@@ -13,11 +13,120 @@ import {
   serializeBoundedReceiptJson,
   validateBattleBridgeRecoveryMeshInstallReceipt,
 } from './battle-bridge-github-command-mailbox.mjs';
+import { planForgeShadowM3RunnerAdmission } from '../shared/agents/forgeShadowM3RunnerAdmissionV1.mjs';
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-command-mailbox-hidden.ps1', import.meta.url);
 const windowlessLauncherPath = new URL('./windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url);
 const mailboxSourcePath = new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url);
+
+const FORGE_HEAD = 'a'.repeat(40);
+const FORGE_TREE = 'b'.repeat(40);
+const FORGE_IMAGE = `sha256:${'c'.repeat(64)}`;
+const FORGE_BACKUP = 'd'.repeat(64);
+
+function forgeM2Receipt(overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'forge-m2-install-ready-001',
+    operation: 'INSTALL_FORGE_SHADOW_M2',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1507,
+    branch: 'main',
+    expectedHead: FORGE_HEAD,
+    forgejoVersion: '15.0.6',
+    forgejoImageDigest: FORGE_IMAGE,
+    runtimeBoundary: 'podman-wsl-rootless',
+    m2Only: true,
+    state: 'DONE',
+    acceptedAt: '2026-08-09T17:00:00Z',
+    heartbeatAt: '2026-08-09T17:05:00Z',
+    completedAt: '2026-08-09T17:10:00Z',
+    blocker: '',
+    proofRefs: ['receipts/github-command-mailbox/forge-m2-install-ready-001.json'],
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'INSTALL_FORGE_SHADOW_M2',
+      requestId: 'forge-m2-install-ready-001',
+      result: {
+        ok: true,
+        blocker: '',
+        finalVerdict: 'FORGE_SHADOW_M2_READY',
+        repository: 'Cheekyfellastef/stephan-os',
+        sourceHead: FORGE_HEAD,
+        canonicalTree: FORGE_TREE,
+        installerBlob: 'e'.repeat(40),
+        forgejoVersion: '15.0.6',
+        podmanVersion: '6.0.2',
+        forgejoImageDigest: FORGE_IMAGE,
+        runtimeBoundary: 'podman-wsl-rootless',
+        machine: 'stephanos-forge-shadow',
+        podmanConnection: 'stephanos-forge-shadow',
+        container: 'stephanos-forge-shadow',
+        listener: '127.0.0.1:3340',
+        mirrorHead: FORGE_HEAD,
+        mirrorTree: FORGE_TREE,
+        backupDigest: FORGE_BACKUP,
+        backupVolume: `stephanos-forge-shadow-backup-${FORGE_BACKUP.slice(0, 16)}`,
+        restoreDrillPassed: true,
+        rootFilesystemReadOnly: true,
+        allCapabilitiesDropped: true,
+        noNewPrivileges: true,
+        githubCredentialUsed: false,
+        credentialPersisted: false,
+        credentialLogged: false,
+        runnerRegistration: false,
+        actionsExecution: false,
+        mergeAuthority: false,
+        readyForM3: true,
+      },
+    },
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    credentialsMayBeReadOrExported: false,
+    ...overrides,
+  };
+}
+
+function forgeRunnerPool(runnerClass) {
+  const linux = runnerClass === 'linux-isolated';
+  return {
+    poolId: linux ? 'forge-linux-build-test-v1' : 'forge-windows-proof-v1',
+    runnerClass,
+    count: linux ? 3 : 1,
+    runtimeBoundary: linux ? 'forge-linux-rootless-ephemeral' : 'battle-bridge-windows-proof-sandbox',
+    runtimeArtifactDigest: `sha256:${(linux ? '1' : '2').repeat(64)}`,
+    workloadIds: linux ? ['linux-shared-agent-tests', 'linux-stephanos-ui-build'] : ['windows-source-controlled-proof'],
+    cpuLimit: linux ? 4 : 2,
+    memoryMiB: 4096,
+    diskMiB: 16384,
+    maxJobMinutes: linux ? 45 : 60,
+    maxConcurrentJobs: linux ? 3 : 1,
+    artifactRetentionDays: 14,
+    maxArtifactBytes: 512 * 1024 * 1024,
+    workspacePolicy: 'ephemeral-per-job',
+    artifactPolicy: 'immutable-content-addressed',
+    networkPolicy: linux ? 'forge-loopback-and-approved-readonly-egress' : 'battle-bridge-loopback-and-approved-readonly-egress',
+    registrationMode: 'disabled-pending-runtime-authorization',
+    ephemeralWorkspace: true,
+    limitedUser: true,
+    privileged: false,
+    hostNetwork: false,
+    hostProcessAccess: false,
+    canonicalCheckoutMounted: false,
+    containerSocketMounted: false,
+    githubCredentialAvailable: false,
+    persistentSecrets: false,
+    publicInbound: false,
+    tailscaleInbound: false,
+    sourceMutationAuthority: false,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    registrationRequested: false,
+    executed: false,
+  };
+}
 
 test('mailbox task uses the fixed windowless launcher instead of allocating a Node console', async () => {
   const [installer, hiddenLauncher, windowlessLauncher] = await Promise.all([
@@ -389,6 +498,112 @@ test('exact-head proof projections retain the verified PR and local heads', () =
     },
   });
   assert.equal(missingAncestry.operationResult.expectedHeadMatch, false);
+});
+
+test('Forge M2 receipt serialization preserves the closed-world proof required by M3 admission', () => {
+  const receipt = forgeM2Receipt({
+    token: 'ghp_this-must-not-leak',
+    result: {
+      ...forgeM2Receipt().result,
+      result: {
+        ...forgeM2Receipt().result.result,
+        command: 'powershell.exe -File C:\\Users\\Stephan\\secret.ps1',
+        credential: 'must-not-leak',
+      },
+    },
+  });
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+
+  assert.equal(serialized.forgejoVersion, '15.0.6');
+  assert.equal(serialized.forgejoImageDigest, FORGE_IMAGE);
+  assert.equal(serialized.runtimeBoundary, 'podman-wsl-rootless');
+  assert.equal(serialized.m2Only, true);
+  assert.equal(serialized.credentialsMayBeReadOrExported, false);
+  assert.equal(serialized.result.result.canonicalTree, FORGE_TREE);
+  assert.equal(serialized.result.result.mirrorHead, FORGE_HEAD);
+  assert.equal(serialized.result.result.mirrorTree, FORGE_TREE);
+  assert.equal(serialized.result.result.backupDigest, FORGE_BACKUP);
+  assert.equal(serialized.result.result.restoreDrillPassed, true);
+  assert.equal(serialized.result.result.rootFilesystemReadOnly, true);
+  assert.equal(serialized.result.result.allCapabilitiesDropped, true);
+  assert.equal(serialized.result.result.noNewPrivileges, true);
+  assert.equal(serialized.result.result.githubCredentialUsed, false);
+  assert.equal(serialized.result.result.credentialPersisted, false);
+  assert.equal(serialized.result.result.credentialLogged, false);
+  assert.equal(serialized.result.result.readyForM3, true);
+  assert.doesNotMatch(JSON.stringify(serialized), /ghp_this|must-not-leak|secret\.ps1/i);
+  assert.equal(Object.hasOwn(serialized, 'token'), false);
+  assert.equal(Object.hasOwn(serialized.result.result, 'command'), false);
+  assert.equal(Object.hasOwn(serialized.result.result, 'credential'), false);
+
+  const admission = planForgeShadowM3RunnerAdmission({
+    repository: 'Cheekyfellastef/stephan-os',
+    canonicalMainHead: FORGE_HEAD,
+    canonicalMainTree: FORGE_TREE,
+    nowUtc: '2026-08-09T17:30:00Z',
+    m2Receipt: serialized,
+    runnerPools: [forgeRunnerPool('windows-proof-isolated'), forgeRunnerPool('linux-isolated')],
+  });
+  assert.equal(admission.valid, true, admission.blockers.join(','));
+  assert.equal(admission.m2Evidence.sourceHead, FORGE_HEAD);
+  assert.equal(admission.m2Evidence.sourceTree, FORGE_TREE);
+});
+
+test('Forge digest diagnostics survive bounded serialization without path or credential leakage', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'forge-m2-diagnostics-001',
+    operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
+    state: 'BLOCKED',
+    result: {
+      ok: false,
+      result: {
+        blocker: 'worker-head-mismatch',
+        forgeShadowM2DigestResolution: {
+          ok: true,
+          status: 'FORGE_SHADOW_M2_DIGEST_READY',
+          blocker: '',
+          imageTag: 'code.forgejo.org/forgejo/forgejo:15.0.6-rootless',
+          imageDigest: FORGE_IMAGE,
+          forgejoVersion: '15.0.6',
+          podmanVersion: '6.0.2',
+          podmanExecutableIdentity: 'fixed-user-podman',
+          runtimePlatform: 'linux/amd64',
+          tlsVerified: true,
+          registryCredentialUsed: false,
+          mutationPerformed: false,
+          pullPerformed: false,
+          containerMutationPerformed: false,
+          observedVersion: 'token=ghp_this-must-not-leak at C:\\Users\\Stephan\\podman.exe',
+        },
+      },
+    },
+  };
+
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const resolution = serialized.result.result.forgeShadowM2DigestResolution;
+  assert.equal(resolution.ok, true);
+  assert.equal(resolution.imageDigest, FORGE_IMAGE);
+  assert.equal(resolution.podmanVersion, '6.0.2');
+  assert.equal(resolution.tlsVerified, true);
+  assert.equal(resolution.registryCredentialUsed, false);
+  assert.equal(resolution.observedVersion, '');
+  assert.doesNotMatch(JSON.stringify(serialized), /ghp_this|C:\\Users/i);
+});
+
+test('malformed Forge proof values fail closed during projection', () => {
+  const receipt = forgeM2Receipt({ expectedHead: '', forgejoImageDigest: 'latest' });
+  receipt.result.result.expectedHead = FORGE_HEAD;
+  receipt.result.result.backupVolume = '..\\unsafe';
+  receipt.result.result.readyForM3 = 'true';
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(serialized.expectedHead, '');
+  assert.equal(serialized.forgejoImageDigest, '');
+  assert.equal(serialized.result.result.backupVolume, '');
+  assert.equal(serialized.result.result.readyForM3, null);
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.forgejoImageDigest, '');
+  assert.equal(projected.operationResult.readyForM3, null);
 });
 
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {
