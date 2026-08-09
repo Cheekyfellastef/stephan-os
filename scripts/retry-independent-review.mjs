@@ -118,9 +118,13 @@ async function loadCanonicalWorkflow(owner, repo) {
   };
 }
 
-async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, expectedHead) {
-  const encodedHead = encodeURIComponent(expectedHead);
-  const path = `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=pull_request_target&head_sha=${encodedHead}&per_page=100&page=1`;
+async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, expectedHead, expectedBase) {
+  // pull_request_target runs execute against the trusted default-branch commit,
+  // so GitHub indexes their workflow-run head_sha by the PR base rather than the
+  // untrusted PR head. The embedded pull_request identity remains the authority
+  // for selecting the exact PR head after this base-scoped discovery query.
+  const encodedBase = encodeURIComponent(expectedBase);
+  const path = `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=pull_request_target&head_sha=${encodedBase}&per_page=100&page=1`;
   const payload = await githubRequest(path);
   const listed = payload?.workflow_runs;
   if (!Array.isArray(listed)) {
@@ -131,9 +135,14 @@ async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, expectedH
   }
   const candidates = listed
     .filter((run) => (
-      text(run?.head_sha).toLowerCase() === expectedHead
+      text(run?.head_sha).toLowerCase() === expectedBase
       && Array.isArray(run?.pull_requests)
-      && run.pull_requests.some((pr) => positiveInteger(pr?.number) === prNumber)
+      && run.pull_requests.some((pr) => (
+        positiveInteger(pr?.number) === prNumber
+        && text(pr?.head?.sha).toLowerCase() === expectedHead
+        && text(pr?.base?.ref) === 'main'
+        && text(pr?.base?.sha).toLowerCase() === expectedBase
+      ))
     ))
     .sort((left, right) => positiveInteger(right?.id) - positiveInteger(left?.id))
     .slice(0, MAX_RUN_DETAILS);
@@ -179,7 +188,14 @@ async function main() {
     throw new Error('pull-request base is not exact current main');
   }
 
-  const runs = await loadRecentReviewRuns(owner, repo, workflow.id, prNumber, expectedHead);
+  const runs = await loadRecentReviewRuns(
+    owner,
+    repo,
+    workflow.id,
+    prNumber,
+    expectedHead,
+    pr.baseSha,
+  );
   const plan = planIndependentReviewRetry({ repository, workflow, pr, runs });
   console.log(`INDEPENDENT_REVIEW_RETRY_DECISION=${plan.decision}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_PR=${plan.prNumber ?? ''}`);
