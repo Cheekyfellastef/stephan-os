@@ -18,6 +18,7 @@ export const SHARED_WORKSPACE_RECORD_KINDS = Object.freeze({
   RECEIPT: 'stephanos.shared_workspace.record.receipt',
   HANDOFF: 'stephanos.shared_workspace.record.handoff',
   PARTICIPANT_STATUS: 'stephanos.shared_workspace.record.participant_status',
+  CONVERSATION_CONNECTION: 'stephanos.shared_workspace.record.conversation_connection',
 });
 export const SHARED_WORKSPACE_RUNTIME_DIRECTORIES = Object.freeze([
   ...SHARED_WORKSPACE_DIRECTORIES,
@@ -38,6 +39,7 @@ const SAFE_SEGMENT = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const MAX_RECORD_BODY_BYTES = 16 * 1024;
 const FORBIDDEN_KEY = /secret|token|session|env|password|credential|privatekey|private_key|api[_-]?key|cache|log/i;
 const FORBIDDEN_VALUE = /BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|\.env\b|node_modules|apps\/stephanos\/dist|runtime-data|session\b/i;
+const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -81,7 +83,7 @@ function list(value) {
 }
 
 function firstRecordId(record = {}) {
-  return record.recordId || record.messageId || record.receiptId || record.handoffId || record.participantStatusId || record.agentId || record.goalId || record.proofId || record.statusId || record.eventId;
+  return record.recordId || record.messageId || record.receiptId || record.handoffId || record.participantStatusId || record.connectionReceiptId || record.agentId || record.goalId || record.proofId || record.statusId || record.eventId;
 }
 
 function hasRequiredIssueOrPr(record = {}) {
@@ -110,6 +112,7 @@ function isWorkspaceRuntimeRecordKind(kind) {
     SHARED_WORKSPACE_RECORD_KINDS.RECEIPT,
     SHARED_WORKSPACE_RECORD_KINDS.HANDOFF,
     SHARED_WORKSPACE_RECORD_KINDS.PARTICIPANT_STATUS,
+    SHARED_WORKSPACE_RECORD_KINDS.CONVERSATION_CONNECTION,
   ].includes(kind);
 }
 
@@ -153,6 +156,8 @@ export function createAgentCapabilityRecord(input = {}) {
     trustedBuilder: defaults.agentId === 'openclaw' ? false : input.trustedBuilder === true,
     mergeAuthority: false,
     arbitraryShellAllowed: false,
+    conversationAdapterId: safeId(input.conversationAdapterId),
+    conversationOperations: list(input.conversationOperations).filter((operation) => ['RECEIVE_TURN', 'REPLY_TURN'].includes(operation)),
     proofRefs: Array.isArray(input.proofRefs) ? input.proofRefs.map(String) : [],
   };
 }
@@ -169,11 +174,39 @@ export function validateSharedWorkspaceRecord(record = {}, options = {}) {
   if (requiresCorrelationAndProofRefs(record?.kind) && !hasRequiredIssueOrPr(record)) errors.push('missing-related-issue-or-pr');
   if (requiresCorrelationAndProofRefs(record?.kind) && list(record?.proofRefs).length === 0) errors.push('missing-proofRefs');
   if (bytes(record?.body) > MAX_RECORD_BODY_BYTES) errors.push('body-too-large');
+  if (record?.kind === SHARED_WORKSPACE_RECORD_KINDS.MESSAGE && record?.channel === 'stephanos-conversation') {
+    for (const field of ['senderParticipantId', 'recipientParticipantId', 'requestedEntityId', 'conversationId', 'threadId']) {
+      if (!safeId(record?.[field])) errors.push(`invalid-${field}`);
+    }
+    if (record.recipientParticipantId !== 'stephanos' && record.recipientParticipantId !== 'chatgpt') errors.push('conversation-recipient-outside-canonical-surface');
+    if (!['QUEUED', 'ACCEPTED', 'IN_PROGRESS', 'REPLIED', 'BLOCKED', 'EXPIRED'].includes(text(record.deliveryState))) errors.push('invalid-conversation-delivery-state');
+    if (!Number.isFinite(timestampMs(record.originTimestampUtc))) errors.push('invalid-conversation-origin-timestamp');
+    if (!Number.isFinite(timestampMs(record.expiresAtUtc))) errors.push('invalid-conversation-expiry');
+    if (Number.isFinite(timestampMs(record.originTimestampUtc)) && Number.isFinite(timestampMs(record.expiresAtUtc))
+      && timestampMs(record.expiresAtUtc) <= timestampMs(record.originTimestampUtc)) errors.push('conversation-expiry-not-after-origin');
+    if (text(record.replyToMessageId) && !safeId(record.replyToMessageId)) errors.push('invalid-replyToMessageId');
+    if (text(record.expectedTargetSourceHead) && !SHA_PATTERN.test(text(record.expectedTargetSourceHead))) errors.push('invalid-expected-target-source-head');
+  }
+  if (record?.kind === SHARED_WORKSPACE_RECORD_KINDS.CONVERSATION_CONNECTION) {
+    if (!safeId(record.participantId)) errors.push('invalid-conversation-participant-id');
+    if (!safeId(record.conversationAdapterId)) errors.push('invalid-conversation-adapter-id');
+    if (!SHA_PATTERN.test(text(record.sourceHead))) errors.push('invalid-conversation-source-head');
+    if (!Number.isFinite(timestampMs(record.observedAtUtc)) || text(record.observedAtUtc) !== text(record.timestampUtc)) errors.push('invalid-conversation-observed-at');
+    for (const field of ['receiveProven', 'replyProven', 'exactCorrelationProven', 'authenticatedIdentityProven']) {
+      if (typeof record[field] !== 'boolean') errors.push(`invalid-${field}`);
+    }
+    if (record.sourceMutationAllowed !== false || record.commandExecutionGrantedByConversation !== false
+      || record.mergeAuthority !== false || record.selfApprovalAllowed !== false) errors.push('conversation-authority-boundary-violated');
+  }
   for (const ref of list(record?.proofRefs)) if (!isSafeProofRef(ref)) errors.push('unsafe-proof-ref');
   if (record?.kind === SHARED_WORKSPACE_RECORD_KINDS.CAPABILITY) {
     if (record.mergeAuthority === true) errors.push('merge-authority-forbidden');
     if (record.arbitraryShellAllowed === true) errors.push('arbitrary-shell-forbidden');
     if (record.agentId === 'openclaw' && (record.mode !== 'design_only' || record.boundedWritePath !== '/courier-open' || record.trustedBuilder !== false)) errors.push('openclaw-default-capability-violated');
+    if (list(record.conversationOperations).length > 0) {
+      if (!safeId(record.conversationAdapterId)) errors.push('invalid-conversation-adapter-id');
+      if (list(record.conversationOperations).some((operation) => !['RECEIVE_TURN', 'REPLY_TURN'].includes(operation))) errors.push('invalid-conversation-operation');
+    }
   }
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(options.staleAfterMs) ? options.staleAfterMs : DEFAULT_STALE_AFTER_MS;
@@ -266,7 +299,24 @@ function createBaseRuntimeRecord(input = {}, kind, idField, fallbackId) {
 }
 
 export function createSharedWorkspaceMessageRecord(input = {}) {
-  return { ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.MESSAGE, 'messageId', 'message-current'), channel: text(input.channel, 'shared-workspace'), summary: text(input.summary, 'No summary supplied.'), body: text(input.body, '') };
+  return {
+    ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.MESSAGE, 'messageId', 'message-current'),
+    channel: text(input.channel, 'shared-workspace'),
+    summary: text(input.summary, 'No summary supplied.'),
+    body: text(input.body, ''),
+    ...(text(input.channel) === 'stephanos-conversation' ? {
+      senderParticipantId: safeId(input.senderParticipantId || input.participantId || input.sender),
+      recipientParticipantId: safeId(input.recipientParticipantId),
+      requestedEntityId: safeId(input.requestedEntityId),
+      conversationId: safeId(input.conversationId),
+      threadId: safeId(input.threadId),
+      replyToMessageId: safeId(input.replyToMessageId),
+      deliveryState: text(input.deliveryState, 'QUEUED'),
+      originTimestampUtc: text(input.originTimestampUtc || input.timestampUtc),
+      expiresAtUtc: text(input.expiresAtUtc),
+      expectedTargetSourceHead: text(input.expectedTargetSourceHead).toLowerCase(),
+    } : {}),
+  };
 }
 
 export function createSharedWorkspaceReceiptRecord(input = {}) {
@@ -279,6 +329,24 @@ export function createSharedWorkspaceHandoffRecord(input = {}) {
 
 export function createSharedWorkspaceParticipantStatusRecord(input = {}) {
   return { ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.PARTICIPANT_STATUS, 'participantStatusId', 'participant-status-current'), status: text(input.status, 'available'), summary: text(input.summary, 'No participant status supplied.') };
+}
+
+export function createSharedWorkspaceConversationConnectionRecord(input = {}) {
+  return {
+    ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.CONVERSATION_CONNECTION, 'connectionReceiptId', 'conversation-connection-current'),
+    participantId: safeId(input.participantId) || 'future-agent',
+    conversationAdapterId: safeId(input.conversationAdapterId),
+    observedAtUtc: text(input.observedAtUtc || input.timestampUtc),
+    sourceHead: text(input.sourceHead).toLowerCase(),
+    receiveProven: input.receiveProven === true,
+    replyProven: input.replyProven === true,
+    exactCorrelationProven: input.exactCorrelationProven === true,
+    authenticatedIdentityProven: input.authenticatedIdentityProven === true,
+    sourceMutationAllowed: false,
+    commandExecutionGrantedByConversation: false,
+    mergeAuthority: false,
+    selfApprovalAllowed: false,
+  };
 }
 
 export function readCommandInboxInert() {

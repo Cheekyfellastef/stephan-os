@@ -1,5 +1,5 @@
 export const STEPHANOS_CAPABILITY_REGISTRY_SCHEMA = 'stephanos.capability-registry.v1';
-export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.4.0';
+export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.5.0';
 export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 const SAFE_CAPABILITY_ID = /^[a-z0-9][a-z0-9.-]{2,80}$/;
@@ -95,13 +95,26 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
       'READ_CURRENT_STATUS',
       'READ_LATEST_PROOF',
       'READ_OPERATOR_ATTENTION',
+      'READ_CONVERSATION_REPLY',
       'WRITE_GOAL_INTENT_PROPOSAL',
       'WRITE_NEXT_ACTION_PACKET',
       'WRITE_BLOCKER_CLASSIFICATION',
       'WRITE_OPERATOR_ATTENTION_REQUEST',
       'WRITE_APPROVAL_REQUEST',
+      'WRITE_CONVERSATION_TURN',
     ],
     requiresOperatorApproval: true,
+  }),
+  descriptor({
+    capabilityId: 'shared-conversation-router',
+    category: 'bounded-conversation',
+    purpose: 'Routes addressed conversation turns through Stephanos and exposes only exact correlated entity replies with fresh identity and source-head proof.',
+    ownerIssue: 1506,
+    discoveryRoute: 'github-fixed-comment-relay:stephanos-conversation',
+    statusSource: 'shared-agent-workspace',
+    operations: ['WRITE_CONVERSATION_TURN', 'READ_CONVERSATION_REPLY', 'READ_PARTICIPANT_CONNECTIONS'],
+    requiresOperatorApproval: false,
+    runtimeMutationAllowed: false,
   }),
   descriptor({
     capabilityId: 'battle-bridge-github-command-mailbox',

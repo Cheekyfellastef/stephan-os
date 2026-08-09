@@ -52,3 +52,19 @@ Authorised chats obtain read-only Windows diagnostics through the existing #1507
 ## Stephanos as the conversation surface
 
 The Shared Workspace remains the one canonical conversation substrate. Participants address bounded messages to `stephanos`; Stephanos projects current status, proof, blockers and responses from those records. This contract does not create another mailbox, workspace, status database, execution authority or unrestricted chat transport. It makes the existing participant and relay paths converge on one evidence-backed Stephanos conversation.
+
+An endpoint, process, gateway or dispatch attachment is not by itself a conversational connection. A participant is `CONNECTED` only after a fresh receipt proves all of:
+
+- authenticated participant and adapter identity;
+- exact participant source head;
+- receipt of one addressed turn;
+- a reply bound to the exact conversation, thread, correlation and request-message IDs;
+- original observation time and bounded proof references.
+
+Missing identity or source head is `UNPROVEN`, a fresh one-way route is `DEGRADED`, and an older-than-five-minute round-trip receipt is `OFFLINE`. Regenerating a projection cannot refresh the original receipt time.
+
+`WRITE_CONVERSATION_TURN` queues one bounded message from ChatGPT to the canonical `stephanos` recipient. `requestedEntityId` selects Stephanos, OpenClaw, Codex or an explicitly registered future-agent capability; it never grants the selected entity command, source-mutation, merge, deployment or approval authority. The turn preserves conversation, thread, correlation, message, expiry and expected entity-head identity.
+
+`READ_CONVERSATION_REPLY` reads only the exact deterministic outbox record for the originating message. A reply is usable only when recipient, requested entity, conversation, thread, correlation, reply-to message and expected source head all match. Missing, mismatched, invalid or stale records return a typed blocker rather than the latest unrelated message.
+
+The source contract is not live conversational acceptance. #1506/#1507 remain incomplete until fresh no-courier round trips separately prove Stephanos, OpenClaw and Codex replies from the Windows Shared Workspace, and until a newly registered future participant can join through a capability record without source changes to the relay. A healthy port without a correlated reply does not satisfy that gate.

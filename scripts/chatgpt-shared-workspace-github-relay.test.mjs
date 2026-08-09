@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {
+  createSharedWorkspaceConversationConnectionRecord,
+  createSharedWorkspaceMessageRecord,
+  createAgentCapabilityRecord,
+} from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 import {
   CHATGPT_SHARED_WORKSPACE_OWNER,
@@ -7,6 +12,11 @@ import {
   CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER,
   CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID,
   createFixedChatGptSharedWorkspaceGitHubAdapter,
+  buildConversationReplyProjection,
+  buildParticipantConnectionsProjection,
+  loadConversationReply,
+  loadParticipantConnectionReceipts,
+  loadConversationTargetRegistration,
   parseChatGptSharedWorkspaceRequestComment,
   runChatGptSharedWorkspaceGitHubRelay,
   validateChatGptSharedWorkspaceResponseBody,
@@ -234,6 +244,242 @@ test('authenticated bounded write persists only the canonical message, audit, ev
   assert.equal(workspace.events.length, 1);
   assert.equal(workspace.writes[0].record.channel, 'chatgpt-participant-bridge');
   assert.match(responseBody, /"completed": true/);
+});
+
+test('conversation write persists one addressed Stephanos turn without granting execution authority', async () => {
+  let responseBody = '';
+  const workspace = fakeWorkspace();
+  const boundedPayload = {
+    conversationId: 'conversation-1506',
+    threadId: 'thread-1506',
+    requestMessageId: 'message-1506-1',
+    requestedEntityId: 'openclaw',
+    correlationId: 'turn-1506-1',
+    body: 'Give a grounded conversational reply through Stephanos.',
+    createdAtUtc: '2026-07-16T19:00:00.000Z',
+    expiresAtUtc: '2026-07-16T19:20:00.000Z',
+    expectedTargetSourceHead: 'a'.repeat(40),
+  };
+  const result = await runChatGptSharedWorkspaceGitHubRelay(baseOptions(workspace, {
+    readRequest: () => ({
+      ok: true,
+      body: envelope(request({
+        operation: 'WRITE_CONVERSATION_TURN',
+        recordKind: 'conversation-turn',
+        correlationId: boundedPayload.correlationId,
+        boundedPayload,
+      })),
+      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+    }),
+    writeResponse: (body) => { responseBody = body; return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }; },
+  }));
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(workspace.writes[0].segments, ['inbox', 'conversation-message-1506-1.json']);
+  const record = workspace.writes[0].record;
+  assert.equal(record.channel, 'stephanos-conversation');
+  assert.equal(record.senderParticipantId, 'chatgpt');
+  assert.equal(record.recipientParticipantId, 'stephanos');
+  assert.equal(record.requestedEntityId, 'openclaw');
+  assert.equal(record.deliveryState, 'QUEUED');
+  assert.match(responseBody, /"commandExecutionAccess": false/);
+  assert.match(responseBody, /"sourceMutationAccess": false/);
+});
+
+test('conversation reply reads require the exact responder, thread, reply-to, correlation and source head', async () => {
+  const requestEnvelope = request({
+    operation: 'READ_CONVERSATION_REPLY',
+    recordKind: 'conversation-reply-projection',
+    correlationId: 'turn-1506-1',
+    boundedPayload: {
+      conversationId: 'conversation-1506',
+      threadId: 'thread-1506',
+      requestMessageId: 'message-1506-1',
+      requestedEntityId: 'openclaw',
+      correlationId: 'turn-1506-1',
+      expectedTargetSourceHead: 'a'.repeat(40),
+    },
+  });
+  const reply = createSharedWorkspaceMessageRecord({
+    messageId: 'message-1506-2',
+    timestampUtc: '2026-07-16T19:09:00.000Z',
+    participantId: 'openclaw',
+    correlationId: 'turn-1506-1',
+    relatedIssue: '#1506',
+    proofRefs: ['receipts/openclaw-turn-1506-1'],
+    channel: 'stephanos-conversation',
+    senderParticipantId: 'openclaw',
+    recipientParticipantId: 'chatgpt',
+    requestedEntityId: 'openclaw',
+    conversationId: 'conversation-1506',
+    threadId: 'thread-1506',
+    replyToMessageId: 'message-1506-1',
+    deliveryState: 'REPLIED',
+    originTimestampUtc: '2026-07-16T19:09:00.000Z',
+    expiresAtUtc: '2026-07-16T19:15:00.000Z',
+    expectedTargetSourceHead: 'a'.repeat(40),
+    body: 'OpenClaw grounded reply.',
+  });
+  const readFileFn = async (file) => {
+    assert.match(file.replace(/\\/g, '/'), /\/outbox\/conversation-reply-message-1506-1\.json$/);
+    return JSON.stringify(reply);
+  };
+  const loaded = await loadConversationReply({
+    workspaceRoot: '/shared', repoRoot: '/repo', request: requestEnvelope,
+    nowMs: Date.parse('2026-07-16T19:10:00.000Z'), readFileFn,
+  });
+  assert.equal(loaded.ok, true);
+  const projected = buildConversationReplyProjection({ loadStatus: loaded, request: requestEnvelope, timestampUtc: '2026-07-16T19:10:00.000Z' });
+  assert.equal(projected.state, 'REPLIED');
+  assert.equal(projected.reply.senderParticipantId, 'openclaw');
+  assert.equal(projected.reply.replyToMessageId, 'message-1506-1');
+
+  const mismatch = await loadConversationReply({
+    workspaceRoot: '/shared', repoRoot: '/repo', request: { ...requestEnvelope, boundedPayload: { ...requestEnvelope.boundedPayload, threadId: 'wrong-thread' } },
+    nowMs: Date.parse('2026-07-16T19:10:00.000Z'), readFileFn,
+  });
+  assert.equal(mismatch.reason, 'CONVERSATION_REPLY_IDENTITY_MISMATCH');
+});
+
+test('missing conversation reply is a terminal UNPROVEN projection, not a fabricated answer', async () => {
+  let responseBody = '';
+  const workspace = fakeWorkspace();
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, {
+      readRequest: () => ({
+        ok: true,
+        body: envelope(request({
+          operation: 'READ_CONVERSATION_REPLY',
+          recordKind: 'conversation-reply-projection',
+          correlationId: 'turn-1506-1',
+          boundedPayload: {
+            conversationId: 'conversation-1506', threadId: 'thread-1506', requestMessageId: 'message-1506-1',
+            requestedEntityId: 'codex', correlationId: 'turn-1506-1',
+          },
+        })),
+        authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      }),
+      writeResponse: (body) => { responseBody = body; return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }; },
+    }),
+    conversationReplyLoader: async () => ({ ok: false, reason: 'CONVERSATION_REPLY_NOT_READY', record: null }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_READ_PASS');
+  assert.match(responseBody, /"state": "UNPROVEN"/);
+  assert.match(responseBody, /CONVERSATION_REPLY_NOT_READY/);
+  assert.doesNotMatch(responseBody, /fabricated reply/i);
+});
+
+test('participant connection projection requires fresh authenticated exact-correlated round-trip receipts', async () => {
+  const head = 'a'.repeat(40);
+  const openClawReceipt = createSharedWorkspaceConversationConnectionRecord({
+    connectionReceiptId: 'openclaw-conversation-current',
+    participantId: 'openclaw',
+    conversationAdapterId: 'openclaw-readonly-agent',
+    timestampUtc: '2026-07-16T19:09:00.000Z',
+    observedAtUtc: '2026-07-16T19:09:00.000Z',
+    sourceHead: head,
+    correlationId: 'conversation-roundtrip-openclaw',
+    relatedIssue: '#1506',
+    proofRefs: ['receipts/openclaw-conversation-roundtrip'],
+    receiveProven: true,
+    replyProven: true,
+    exactCorrelationProven: true,
+    authenticatedIdentityProven: true,
+  });
+  const loadStatus = await loadParticipantConnectionReceipts({
+    workspaceRoot: '/shared',
+    repoRoot: '/repo',
+    participantIds: ['stephanos', 'openclaw', 'codex'],
+    nowMs: Date.parse('2026-07-16T19:10:00.000Z'),
+    readFileFn: async (file) => {
+      if (file.includes('conversation-participant-openclaw-current.json')) return JSON.stringify(openClawReceipt);
+      const error = new Error('missing');
+      error.code = 'ENOENT';
+      throw error;
+    },
+  });
+  const projection = buildParticipantConnectionsProjection({
+    loadStatus,
+    participantIds: ['stephanos', 'openclaw', 'codex'],
+    nowMs: Date.parse('2026-07-16T19:10:00.000Z'),
+  });
+  assert.equal(projection.connections.find((entry) => entry.participant.participantId === 'openclaw').connection.state, 'CONNECTED');
+  assert.equal(projection.connections.find((entry) => entry.participant.participantId === 'stephanos').connection.state, 'UNPROVEN');
+  assert.equal(projection.connections.find((entry) => entry.participant.participantId === 'codex').connection.state, 'UNPROVEN');
+  assert.equal(projection.allConnected, false);
+  assert.equal(projection.loads.stephanos, 'CONVERSATION_CONNECTION_RECEIPT_MISSING');
+});
+
+test('future entities become routable only through a fresh exact capability record', async () => {
+  const requestEnvelope = request({
+    operation: 'WRITE_CONVERSATION_TURN',
+    recordKind: 'conversation-turn',
+    boundedPayload: {
+      conversationId: 'conversation-1506',
+      threadId: 'thread-1506',
+      requestMessageId: 'message-1506-future',
+      requestedEntityId: 'future-agent-42',
+      targetCapabilityId: 'future-agent-42-adapter',
+      correlationId: 'turn-1506-future',
+      body: 'Join the canonical Stephanos conversation.',
+      createdAtUtc: '2026-07-16T19:00:00.000Z',
+      expiresAtUtc: '2026-07-16T19:20:00.000Z',
+    },
+  });
+  const capability = createAgentCapabilityRecord({
+    agentId: 'future-agent-42',
+    timestampUtc: '2026-07-16T19:09:00.000Z',
+    conversationAdapterId: 'future-agent-42-adapter',
+    conversationOperations: ['RECEIVE_TURN', 'REPLY_TURN'],
+    proofRefs: ['receipts/future-agent-42-capability'],
+  });
+  const registered = await loadConversationTargetRegistration({
+    workspaceRoot: '/shared', repoRoot: '/repo', request: requestEnvelope,
+    nowMs: Date.parse('2026-07-16T19:10:00.000Z'), readFileFn: async () => JSON.stringify(capability),
+  });
+  assert.equal(registered.registered, true);
+
+  const mismatched = await loadConversationTargetRegistration({
+    workspaceRoot: '/shared', repoRoot: '/repo', request: { ...requestEnvelope, boundedPayload: { ...requestEnvelope.boundedPayload, targetCapabilityId: 'wrong-adapter' } },
+    nowMs: Date.parse('2026-07-16T19:10:00.000Z'), readFileFn: async () => JSON.stringify(capability),
+  });
+  assert.equal(mismatched.registered, false);
+  assert.equal(mismatched.reason, 'CONVERSATION_TARGET_NOT_REGISTERED');
+});
+
+test('live participant connection read returns separate Stephanos, OpenClaw and Codex truth', async () => {
+  let responseBody = '';
+  const workspace = fakeWorkspace();
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, {
+      readRequest: () => ({
+        ok: true,
+        body: envelope(request({
+          operation: 'READ_PARTICIPANT_CONNECTIONS',
+          recordKind: 'participant-connections-projection',
+          boundedPayload: {},
+        })),
+        authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      }),
+      writeResponse: (body) => { responseBody = body; return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }; },
+    }),
+    participantConnectionLoader: async () => ({
+      receipts: [],
+      loads: {
+        stephanos: 'CONVERSATION_CONNECTION_RECEIPT_MISSING',
+        openclaw: 'CONVERSATION_CONNECTION_RECEIPT_MISSING',
+        codex: 'CONVERSATION_CONNECTION_RECEIPT_MISSING',
+      },
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_READ_PASS');
+  assert.match(responseBody, /SHARED_CONVERSATION_CONNECTIONS_INCOMPLETE/);
+  assert.match(responseBody, /CONVERSATION_CONNECTION_RECEIPT_MISSING/);
+  assert.match(responseBody, /"participantId": "stephanos"/);
+  assert.match(responseBody, /"participantId": "openclaw"/);
+  assert.match(responseBody, /"participantId": "codex"/);
 });
 
 test('unsafe requests are rejected once, audited and projected without failing the watchdog lane', async () => {

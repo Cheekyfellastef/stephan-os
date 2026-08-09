@@ -14,6 +14,7 @@ import {
   createSharedWorkspaceHandoffRecord,
   createSharedWorkspaceMessageRecord,
   createSharedWorkspaceParticipantStatusRecord,
+  createSharedWorkspaceConversationConnectionRecord,
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceReceiptRecord,
   createSharedWorkspaceStatusRecord,
@@ -198,6 +199,85 @@ test('Shared Workspace Record Store V1 accepts message proof receipt status hand
     const result = validateSharedWorkspaceRecord(record, { nowMs: Date.parse('2026-07-09T00:10:00.000Z') });
     assert.equal(result.valid, true, `${record.kind}: ${result.errors.join(',')}`);
   }
+});
+
+test('conversation records require canonical addressing, exact timing and bounded authority', () => {
+  const base = {
+    messageId: 'conversation-message-1',
+    timestampUtc: '2026-08-09T02:00:00.000Z',
+    participantId: 'chatgpt-bridge',
+    correlationId: 'conversation-1506',
+    relatedIssue: '#1506',
+    proofRefs: ['receipts/conversation-message-1'],
+    channel: 'stephanos-conversation',
+    senderParticipantId: 'chatgpt',
+    recipientParticipantId: 'stephanos',
+    requestedEntityId: 'openclaw',
+    conversationId: 'conversation-1506',
+    threadId: 'thread-1506',
+    deliveryState: 'QUEUED',
+    originTimestampUtc: '2026-08-09T02:00:00.000Z',
+    expiresAtUtc: '2026-08-09T02:10:00.000Z',
+    expectedTargetSourceHead: 'a'.repeat(40),
+    body: 'Bounded conversation turn.',
+  };
+  const record = createSharedWorkspaceMessageRecord(base);
+  assert.equal(validateSharedWorkspaceRecord(record).valid, true);
+  assert.equal(record.senderParticipantId, 'chatgpt');
+  assert.equal(record.recipientParticipantId, 'stephanos');
+
+  for (const invalid of [
+    { ...record, recipientParticipantId: 'openclaw' },
+    { ...record, requestedEntityId: '' },
+    { ...record, deliveryState: 'UNKNOWN' },
+    { ...record, expiresAtUtc: record.originTimestampUtc },
+    { ...record, expectedTargetSourceHead: 'not-a-head' },
+  ]) {
+    assert.equal(validateSharedWorkspaceRecord(invalid).valid, false);
+  }
+});
+
+test('conversation connection receipts preserve round-trip truth without granting authority', () => {
+  const record = createSharedWorkspaceConversationConnectionRecord({
+    connectionReceiptId: 'openclaw-conversation-current',
+    participantId: 'openclaw',
+    conversationAdapterId: 'openclaw-readonly-agent',
+    timestampUtc: '2026-08-09T02:00:00.000Z',
+    observedAtUtc: '2026-08-09T02:00:00.000Z',
+    sourceHead: 'a'.repeat(40),
+    correlationId: 'conversation-roundtrip-openclaw',
+    relatedIssue: '#1506',
+    proofRefs: ['receipts/openclaw-conversation-roundtrip'],
+    receiveProven: true,
+    replyProven: true,
+    exactCorrelationProven: true,
+    authenticatedIdentityProven: true,
+    sourceMutationAllowed: true,
+  });
+  assert.equal(validateSharedWorkspaceRecord(record).valid, true);
+  assert.equal(record.sourceMutationAllowed, false);
+  assert.equal(record.commandExecutionGrantedByConversation, false);
+  assert.equal(record.mergeAuthority, false);
+  assert.equal(record.selfApprovalAllowed, false);
+
+  const forged = { ...record, commandExecutionGrantedByConversation: true };
+  assert.equal(validateSharedWorkspaceRecord(forged).errors.includes('conversation-authority-boundary-violated'), true);
+});
+
+test('future entity conversation capability records require a bounded adapter and receive/reply operations', () => {
+  const capability = createAgentCapabilityRecord({
+    agentId: 'future-agent-42',
+    timestampUtc: '2026-08-09T02:00:00.000Z',
+    conversationAdapterId: 'future-agent-42-adapter',
+    conversationOperations: ['RECEIVE_TURN', 'REPLY_TURN', 'EXECUTE'],
+    proofRefs: ['receipts/future-agent-42-capability'],
+  });
+  assert.equal(validateSharedWorkspaceRecord(capability).valid, true);
+  assert.deepEqual(capability.conversationOperations, ['RECEIVE_TURN', 'REPLY_TURN']);
+  assert.equal(capability.arbitraryShellAllowed, false);
+
+  const forged = { ...capability, conversationOperations: ['RECEIVE_TURN', 'EXECUTE'] };
+  assert.equal(validateSharedWorkspaceRecord(forged).errors.includes('invalid-conversation-operation'), true);
 });
 
 test('Shared Workspace Record Store V1 requires issue or PR correlation and proof refs', () => {
