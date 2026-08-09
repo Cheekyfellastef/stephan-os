@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { analyzeWindowsAuthorityNoFaffRescueReview } from './windowsAuthorityNoFaffRescueReviewV1.mjs';
+import './windowsAuthorityNoFaffRescueReviewV2.test.mjs';
 
 const WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION = 'stephanos.windows-authority-source.v1';
 const IMPORT_TOKEN = 'im' + 'port';
