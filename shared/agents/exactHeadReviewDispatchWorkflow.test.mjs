@@ -4,23 +4,31 @@ import test from 'node:test';
 
 const workflowUrl = new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url);
 
-test('resource-scopes PR-correlated coordination while global scans stay serialized by event', () => {
+test('serializes every mutating coordinator trigger through one PR-scoped authority lock', () => {
   const workflow = fs.readFileSync(workflowUrl, 'utf8');
-  assert.match(workflow, /github\.event_name == 'pull_request' && format\('pr-\{0\}', github\.event\.pull_request\.number\)/);
-  assert.match(workflow, /github\.event_name == 'issue_comment' && format\('pr-\{0\}', github\.event\.issue\.number\)/);
+
+  assert.match(workflow, /\n  plan:\n[\s\S]*STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY:\s*'true'/);
+  assert.match(workflow, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(workflow, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
   assert.match(
     workflow,
-    /github\.event_name == 'workflow_dispatch' && inputs\.pr_number && format\('pr-\{0\}', inputs\.pr_number\)/,
+    /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/,
   );
-  assert.match(
-    workflow,
-    /github\.event_name == 'workflow_run' && github\.event\.workflow_run\.name == 'Independent Merge Security Review' && github\.event\.workflow_run\.id && format\('review-run-\{0\}', github\.event\.workflow_run\.id\)/,
-  );
-  assert.match(
-    workflow,
-    /github\.event_name == 'workflow_run' && github\.event\.workflow_run\.head_sha && format\('head-\{0\}', github\.event\.workflow_run\.head_sha\)/,
-  );
-  assert.match(workflow, /format\('coordinator-\{0\}', github\.event_name\)/);
   assert.match(workflow, /cancel-in-progress:\s*false/);
-  assert.doesNotMatch(workflow, /\|\| 'coordinator' \}\}/);
+  assert.match(workflow, /STEPHANOS_EXACT_HEAD_REVIEW_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
+  assert.match(
+    workflow,
+    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ fromJSON\(steps\.coordinate\.outputs\.retry_targets\)\[0\]\.exactHead \}\}/,
+  );
+  assert.doesNotMatch(workflow, /format\('review-run-/);
+  assert.doesNotMatch(workflow, /format\('head-/);
+  assert.doesNotMatch(workflow, /format\('coordinator-/);
+});
+
+test('keeps verification read-only and plans global scans before per-PR mutation', () => {
+  const workflow = fs.readFileSync(workflowUrl, 'utf8');
+  assert.match(workflow, /verify:\n[\s\S]*Progress: `VERIFIED_ONLY`/);
+  assert.match(workflow, /plan:\n[\s\S]*Discover canonical PR targets without mutation/);
+  assert.match(workflow, /coordinate:\n\s+needs: plan/);
+  assert.match(workflow, /max-parallel:\s*4/);
 });

@@ -29,10 +29,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: exact-head-review-dispatch-${{ github.repository }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'issue_comment' && format('pr-{0}', github.event.issue.number) || github.event_name == 'workflow_dispatch' && inputs.pr_number && format('pr-{0}', inputs.pr_number) || github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Independent Merge Security Review' && github.event.workflow_run.id && format('review-run-{0}', github.event.workflow_run.id) || github.event_name == 'workflow_run' && github.event.workflow_run.head_sha && format('head-{0}', github.event.workflow_run.head_sha) || format('coordinator-{0}', github.event_name) }}
-  cancel-in-progress: false
-
 jobs:
   verify:
     if: github.event_name == 'pull_request'
@@ -80,10 +76,71 @@ jobs:
             echo 'This pull-request job verifies coordinator source and does not claim that a review was dispatched or received.'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  coordinate:
+  plan:
     if: >-
       github.event_name != 'pull_request' &&
       (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - name: Check out trusted default-branch planner
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download the exact triggering independent-review artifact
+        if: >-
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.name == 'Independent Merge Security Review' &&
+          github.event.workflow_run.conclusion == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: stephanos-independent-review-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/triggering-independent-review
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Discover canonical PR targets without mutation
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_REVIEW_DISPATCH_TOKEN: ${{ secrets.STEPHANOS_REVIEW_DISPATCH_TOKEN }}
+          STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY: 'true'
+          STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
+          STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Independent Merge Security Review' && github.event.workflow_run.conclusion == 'success' }}
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/triggering-independent-review/independent-review-result.json
+          STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+          STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
+        run: node scripts/exact-head-review-dispatch.mjs
+
+  coordinate:
+    needs: plan
+    if: >-
+      needs.plan.outputs.targets != '' &&
+      needs.plan.outputs.targets != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    concurrency:
+      group: exact-head-review-dispatch-${{ github.repository }}-pr-${{ matrix.target.prNumber }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -91,8 +148,6 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    outputs:
-      retry_targets: ${{ steps.coordinate.outputs.retry_targets }}
     steps:
       - name: Check out trusted default-branch coordinator
         uses: actions/checkout@v4
@@ -118,12 +173,12 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Evaluate and advance exact-head review state
+      - name: Evaluate and advance one PR-scoped exact-head review state
         id: coordinate
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_REVIEW_DISPATCH_TOKEN: ${{ secrets.STEPHANOS_REVIEW_DISPATCH_TOKEN }}
-          STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
+          STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
           STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Independent Merge Security Review' && github.event.workflow_run.conclusion == 'success' }}
@@ -132,38 +187,13 @@ jobs:
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
         run: node scripts/exact-head-review-dispatch.mjs
 
-  retry:
-    needs: coordinate
-    if: >-
-      always() &&
-      needs.coordinate.outputs.retry_targets != '' &&
-      needs.coordinate.outputs.retry_targets != '[]'
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        target: ${{ fromJSON(needs.coordinate.outputs.retry_targets) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Check out trusted default-branch retry controller
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
       - name: Retry one exact failed canonical independent review
+        if: >-
+          always() &&
+          steps.coordinate.outputs.retry_targets != '' &&
+          steps.coordinate.outputs.retry_targets != '[]'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR: ${{ matrix.target.prNumber }}
-          STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD: ${{ matrix.target.exactHead }}
+          STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD: ${{ fromJSON(steps.coordinate.outputs.retry_targets)[0].exactHead }}
         run: node scripts/retry-independent-review.mjs
