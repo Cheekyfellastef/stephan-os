@@ -82,7 +82,6 @@ jobs:
       - name: Run surface, ignition, and build utility tests
         run: |
           node --test --test-concurrency=1 \
-            stephanos-ui/src/components/StatusPanel.render.test.mjs \
             scripts/stephanos-build-utils.test.mjs \
             scripts/windows-ignition-browser-surfaces.test.mjs \
             scripts/run-battle-bridge-ignition.test.mjs \
@@ -126,6 +125,8 @@ jobs:
       - name: Install dependencies
         working-directory: stephanos-ui
         run: npm ci
+      - name: Run dependency-backed surface render test
+        run: node --test --test-concurrency=1 stephanos-ui/src/components/StatusPanel.render.test.mjs
       - name: Build Stephanos UI pipeline from repo root
         run: npm run stephanos:build
       - name: Verify generated Stephanos dist from repo root
