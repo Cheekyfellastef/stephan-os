@@ -21,12 +21,23 @@ function canonicalPaths(root) {
   };
 }
 
-function workerObservation({ paths, healthy = true, timestampUtc = new Date(Date.now() - 1_000).toISOString() } = {}) {
+function workerObservation({
+  paths,
+  healthy = true,
+  timestampUtc = new Date(Date.now() - 1_000).toISOString(),
+  repositoryHead = 'a'.repeat(40),
+  heartbeatHead = repositoryHead,
+} = {}) {
   return {
     scheduledTask: {
       taskName: APPROVED_WORKER_TASK,
       status: healthy ? 'Running' : 'Ready',
       actionMatchesCanonicalWorker: true,
+    },
+    repository: {
+      repositoryRoot: paths.repoRoot,
+      branch: 'main',
+      headSha: repositoryHead,
     },
     process: {
       running: healthy,
@@ -38,7 +49,7 @@ function workerObservation({ paths, healthy = true, timestampUtc = new Date(Date
       timestampUtc,
       repositoryRoot: paths.repoRoot,
       branch: 'main',
-      headSha: 'a'.repeat(40),
+      headSha: heartbeatHead,
       taskName: APPROVED_WORKER_TASK,
       pid: healthy ? 1291 : 0,
     },
@@ -106,6 +117,46 @@ test('initial assessment samples time after the probe so a concurrently refreshe
     assert.equal(result.classification, 'WORKER_WATCHDOG_HEALTHY');
     assert.equal(result.decision.assessment.heartbeatAgeMs, 500);
     assert.equal(starts, 0);
+  });
+});
+
+test('old-head live worker is restarted once and recovery requires a current-head heartbeat', async () => {
+  await withFixture(async ({ paths }) => {
+    let starts = 0;
+    let inspections = 0;
+    const currentHead = 'a'.repeat(40);
+    const oldHead = 'b'.repeat(40);
+    const probeAdapter = {
+      run(mode) {
+        if (mode === 'StartApprovedWorkerTask') {
+          starts += 1;
+          return { ok: true, data: { started: true, taskName: APPROVED_WORKER_TASK } };
+        }
+        inspections += 1;
+        return {
+          ok: true,
+          data: workerObservation({
+            paths,
+            repositoryHead: currentHead,
+            heartbeatHead: inspections > 1 ? currentHead : oldHead,
+          }),
+        };
+      },
+    };
+    const result = await runBattleBridgeWorkerWatchdog({
+      paths,
+      expectedPaths: paths,
+      probeAdapter,
+      now: new Date(),
+      sleep: async () => {},
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.classification, 'WORKER_WATCHDOG_RECOVERED');
+    assert.equal(result.initialAssessment.heartbeatMatchesCanonicalRepositoryHead, false);
+    assert.ok(result.initialAssessment.blockers.includes('worker-heartbeat-head-mismatch'));
+    assert.equal(result.finalAssessment.heartbeatMatchesCanonicalRepositoryHead, true);
+    assert.equal(result.finalAssessment.sourceHead, currentHead);
+    assert.equal(starts, 1);
   });
 });
 
